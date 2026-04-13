@@ -1,0 +1,22 @@
+{
+	"name": "@sprocket/native",
+	"version": "0.0.0",
+	"private": true,
+	"type": "commonjs",
+	"main": "./index.js",
+	"types": "./index.d.ts",
+	"files": [
+		"Cargo.toml",
+		"build.rs",
+		"index.d.ts",
+		"index.js",
+		"src"
+	],
+	"scripts": {
+		"build": "napi build --platform",
+		"build:release": "napi build --platform --release"
+	},
+	"devDependencies": {
+		"@napi-rs/cli": "^3.3.0"
+	}
+}

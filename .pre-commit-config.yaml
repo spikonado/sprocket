@@ -1,0 +1,75 @@
+# To use:
+#
+#     prek run -a --hook-stage manual
+#
+# Or:
+#
+#     prek install --prepare-hooks -f  # (runs every time you commit in git)
+#
+# To update this file:
+#
+#     prek autoupdate
+#
+# See https://prek.j178.dev/
+
+default_stages:
+  - manual
+  - pre-commit
+
+repos:
+  - repo: builtin
+    hooks:
+      - id: check-added-large-files
+      - id: check-case-conflict
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-symlinks
+      - id: check-yaml
+      - id: check-xml
+      - id: end-of-file-fixer
+      - id: fix-byte-order-marker
+      - id: mixed-line-ending
+      - id: trailing-whitespace
+
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.2
+    hooks:
+      - id: codespell
+        exclude: ^bun\.lock$
+        exclude_types: [svg]
+
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: 0.37.1
+    hooks:
+      - id: check-github-actions
+        args: ['--verbose']
+      - id: check-github-workflows
+        args: ['--verbose']
+
+  - repo: local
+    hooks:
+      - id: commitlint
+        name: commitlint
+        language: system
+        entry: commitlint --edit
+        stages: [commit-msg]
+
+      - id: eslint
+        name: eslint
+        language: system
+        entry: bun turbo run lint
+        pass_filenames: false
+
+      - id: prettier-check
+        name: prettier
+        language: system
+        entry: bun prettier --check .
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: prettier-write
+        name: prettier
+        language: system
+        entry: bun prettier --write .
+        pass_filenames: false
+        stages: [manual]

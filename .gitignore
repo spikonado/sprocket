@@ -1,0 +1,30 @@
+# Dependencies
+.pnp
+.pnp.js
+node_modules
+
+# Env
+.env
+.env.*
+!.env.example
+!.env.test
+
+# macOS-specific files
+.DS_Store
+
+# Nix
+.direnv
+
+# Svelte
+.svelte-kit
+
+# Testing
+coverage
+
+# Turbo
+.turbo
+turbo-cache-key.json
+
+dist
+target
+*.node

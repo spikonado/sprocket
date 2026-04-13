@@ -1,0 +1,52 @@
+{
+	"name": "@sprocket/desktop",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"main": "./main.mjs",
+	"scripts": {
+		"dev": "bun run --cwd ../../packages/native build && wait-on http-get://localhost:5173 && electron .",
+		"build": "electron-builder"
+	},
+	"build": {
+		"appId": "com.spikonado.sprocket",
+		"productName": "Sprocket",
+		"directories": {
+			"output": "dist"
+		},
+		"files": [
+			"main.mjs",
+			"preload.mjs",
+			"package.json",
+			{
+				"from": "../../packages/native/",
+				"to": "node_modules/@sprocket/native/",
+				"filter": [
+					"index.js",
+					"*.node"
+				]
+			},
+			{
+				"from": "../web/dist/",
+				"to": "web/dist/",
+				"filter": [
+					"**/*"
+				]
+			}
+		],
+		"linux": {
+			"target": [
+				"AppImage"
+			],
+			"category": "Development"
+		}
+	},
+	"dependencies": {
+		"@sprocket/native": "workspace:*"
+	},
+	"devDependencies": {
+		"electron": "^41.2.0",
+		"electron-builder": "^26.8.1",
+		"wait-on": "^9.0.5"
+	}
+}

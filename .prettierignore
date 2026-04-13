@@ -1,0 +1,5 @@
+# Nix
+flake*
+
+# Package Managers
+bun.lock

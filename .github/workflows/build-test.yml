@@ -1,0 +1,44 @@
+name: Build and Test
+
+on:
+  merge_group:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  run_prek:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - uses: cachix/install-nix-action@v31.10.4
+        with:
+          extra_nix_config: |
+            accept-flake-config = true
+
+      - uses: cachix/cachix-action@v17
+        with:
+          name: spikonado
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+
+      - name: Build and Cache Shell Environment
+        run: |
+          nix develop --profile sprocket-shell -c true
+          cachix push spikonado sprocket-shell
+
+      - name: Install dependencies
+        shell: 'nix develop --profile sprocket-shell -c bash -e {0}'
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        shell: 'nix develop --profile sprocket-shell -c bash -e {0}'
+        run: bun run build
+
+      - name: Test
+        shell: 'nix develop --profile sprocket-shell -c bash -e {0}'
+        run: bun run test
