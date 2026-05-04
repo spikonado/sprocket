@@ -1,6 +1,6 @@
 # To use:
 #
-#     prek run -a --hook-stage manual
+#     prek run -a
 #
 # Or:
 #
@@ -11,10 +11,6 @@
 #     prek autoupdate
 #
 # See https://prek.j178.dev/
-
-default_stages:
-  - manual
-  - pre-commit
 
 repos:
   - repo: builtin
@@ -48,6 +44,18 @@ repos:
 
   - repo: local
     hooks:
+      - id: cargo-fmt
+        name: cargo-fmt
+        language: system
+        entry: cargo fmt
+        pass_filenames: false
+
+      - id: cargo-check
+        name: cargo-check
+        language: system
+        entry: cargo check
+        pass_filenames: false
+
       - id: commitlint
         name: commitlint
         language: system
@@ -60,16 +68,8 @@ repos:
         entry: bun turbo run lint
         pass_filenames: false
 
-      - id: prettier-check
-        name: prettier
-        language: system
-        entry: bun prettier --check .
-        pass_filenames: false
-        stages: [pre-commit]
-
-      - id: prettier-write
+      - id: prettier
         name: prettier
         language: system
         entry: bun prettier --write .
         pass_filenames: false
-        stages: [manual]

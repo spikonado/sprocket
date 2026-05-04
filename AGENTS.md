@@ -6,11 +6,13 @@ Sprocket is an agentic cross-platform robotics IDE.
 
 ## Testing
 
-1. `prek run -a --hook-stage manual` for formatting and linting
-2. `bun run build --ui stream`
-3. `bun run test --ui stream`
+1. `cargo test`
+2. `bun run test`
+3. `bun convex dev --once in ./apps/web/` -> After every convex-related change
+4. `bun run build`
+5. `prek run -a` -> Always run this for ALL formatting and linting
 
-After you are done with your changes, run only the tests relevant to them unless instructed otherwise.
+Run only the tests relevant to your changes unless instructed otherwise.
 
 ### Nix Environment
 
@@ -30,6 +32,8 @@ Don't be afraid to change existing code in order to improve on any of the priori
 If you add new functionality, first check if there is shared logic that can be extracted to a separate module.
 Duplicate logic across multiple files should be avoided.
 Don't take shortcuts by just adding local logic to solve a problem.
+Make sure that changes are made in all the layers of the app when needed.
+Don't maintain backwards compatibility in any of the code unless explicitly asked. It's recommended to add temporary migration functions for the backend data instead.
 
 ## Dependency Documentation
 
@@ -54,3 +58,11 @@ bunx nia-docs <link-to-doc> -c "tree -L 1"
 ```
 
 The shell starts in the docs root. Use `.` for relative paths — all standard Unix tools work (grep, find, cat, tree, ls, head, tail, wc).
+
+## Reference Repos
+
+To properly go through these, feel free to clone them into `./ref-repos`.
+
+- https://github.com/openai/codex
+- https://github.com/anomalyco/opencode
+- https://github.com/pingdotgg/t3code

@@ -1,0 +1,35 @@
+{
+	"authKit": {
+		"dev": {
+			"configure": {
+				"redirectUris": ["http://localhost:5173/callback", "sprocket://app/callback"],
+				"appHomepageUrl": "http://localhost:5173",
+				"corsOrigins": ["http://localhost:5173"]
+			}
+		},
+		"preview": {
+			"configure": {
+				"redirectUris": [
+					"https://${buildEnv.VERCEL_BRANCH_URL}/callback",
+					"sprocket://app/callback"
+				],
+				"appHomepageUrl": "https://${buildEnv.VERCEL_PROJECT_PRODUCTION_URL}",
+				"corsOrigins": ["https://${buildEnv.VERCEL_BRANCH_URL}"]
+			}
+		},
+		"prod": {
+			"configure": {
+				"redirectUris": [
+					"https://${buildEnv.VERCEL_PROJECT_PRODUCTION_URL}/callback",
+					"sprocket://app/callback"
+				],
+				"appHomepageUrl": "https://${buildEnv.VERCEL_PROJECT_PRODUCTION_URL}",
+				"corsOrigins": ["https://${buildEnv.VERCEL_PROJECT_PRODUCTION_URL}"]
+			}
+		}
+	},
+	"aiFiles": {
+		"enabled": false
+	},
+	"functions": "src/convex/"
+}

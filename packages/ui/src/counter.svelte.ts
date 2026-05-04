@@ -1,4 +1,4 @@
-import type { Counter } from './types';
+import type { Counter } from '$ui/types';
 
 /**
  * An example store based on the svelte tutorial for custom stores:

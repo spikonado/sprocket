@@ -1,22 +1,32 @@
 {
 	"name": "@sprocket/native",
-	"version": "0.0.0",
+	"version": "0.1.0",
 	"private": true,
-	"type": "commonjs",
-	"main": "./index.js",
-	"types": "./index.d.ts",
+	"description": "Native desktop bindings for Sprocket",
+	"main": "index.js",
+	"types": "index.d.ts",
 	"files": [
-		"Cargo.toml",
-		"build.rs",
-		"index.d.ts",
 		"index.js",
-		"src"
+		"index.d.ts",
+		"*.node"
 	],
+	"napi": {
+		"binaryName": "sprocket-native",
+		"targets": [
+			"x86_64-pc-windows-msvc",
+			"x86_64-apple-darwin",
+			"aarch64-apple-darwin",
+			"x86_64-unknown-linux-gnu"
+		]
+	},
+	"engines": {
+		"node": ">=18.17.0"
+	},
 	"scripts": {
-		"build": "napi build --platform",
-		"build:release": "napi build --platform --release"
+		"build": "napi build --platform --release",
+		"build:debug": "napi build --platform"
 	},
 	"devDependencies": {
-		"@napi-rs/cli": "^3.3.0"
+		"@napi-rs/cli": "^3.6.2"
 	}
 }

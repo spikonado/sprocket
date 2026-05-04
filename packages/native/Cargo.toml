@@ -7,8 +7,11 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-napi = { version = "3", default-features = false, features = ["napi4"] }
-napi-derive = "3"
+anyhow = "1.0.102"
+napi = { version = "3.8.6", features = ["tokio_rt"] }
+napi-derive = "3.5.5"
+sprocket-core = { path = "../../crates/sprocket-core" }
+sprocket-rig = { path = "../../crates/sprocket-rig" }
 
 [build-dependencies]
 napi-build = "2"

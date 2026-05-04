@@ -72,7 +72,7 @@ function requireNative() {
 	} else if (process.platform === 'android') {
 		if (process.arch === 'arm64') {
 			try {
-				return require('./index.android-arm64.node');
+				return require('./sprocket-native.android-arm64.node');
 			} catch (e) {
 				loadErrors.push(e);
 			}
@@ -81,12 +81,12 @@ function requireNative() {
 				const bindingPackageVersion =
 					require('@sprocket/native-android-arm64/package.json').version;
 				if (
-					bindingPackageVersion !== '0.0.0' &&
+					bindingPackageVersion !== '0.1.0' &&
 					process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
 					process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
 				) {
 					throw new Error(
-						`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+						`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
 					);
 				}
 				return binding;
@@ -95,7 +95,7 @@ function requireNative() {
 			}
 		} else if (process.arch === 'arm') {
 			try {
-				return require('./index.android-arm-eabi.node');
+				return require('./sprocket-native.android-arm-eabi.node');
 			} catch (e) {
 				loadErrors.push(e);
 			}
@@ -104,12 +104,12 @@ function requireNative() {
 				const bindingPackageVersion =
 					require('@sprocket/native-android-arm-eabi/package.json').version;
 				if (
-					bindingPackageVersion !== '0.0.0' &&
+					bindingPackageVersion !== '0.1.0' &&
 					process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
 					process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
 				) {
 					throw new Error(
-						`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+						`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
 					);
 				}
 				return binding;
@@ -126,7 +126,7 @@ function requireNative() {
 				process.config?.variables?.node_target_type === 'shared_library'
 			) {
 				try {
-					return require('./index.win32-x64-gnu.node');
+					return require('./sprocket-native.win32-x64-gnu.node');
 				} catch (e) {
 					loadErrors.push(e);
 				}
@@ -135,12 +135,12 @@ function requireNative() {
 					const bindingPackageVersion =
 						require('@sprocket/native-win32-x64-gnu/package.json').version;
 					if (
-						bindingPackageVersion !== '0.0.0' &&
+						bindingPackageVersion !== '0.1.0' &&
 						process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
 						process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
 					) {
 						throw new Error(
-							`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+							`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
 						);
 					}
 					return binding;
@@ -149,7 +149,7 @@ function requireNative() {
 				}
 			} else {
 				try {
-					return require('./index.win32-x64-msvc.node');
+					return require('./sprocket-native.win32-x64-msvc.node');
 				} catch (e) {
 					loadErrors.push(e);
 				}
@@ -158,12 +158,12 @@ function requireNative() {
 					const bindingPackageVersion =
 						require('@sprocket/native-win32-x64-msvc/package.json').version;
 					if (
-						bindingPackageVersion !== '0.0.0' &&
+						bindingPackageVersion !== '0.1.0' &&
 						process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
 						process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
 					) {
 						throw new Error(
-							`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+							`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
 						);
 					}
 					return binding;
@@ -173,7 +173,7 @@ function requireNative() {
 			}
 		} else if (process.arch === 'ia32') {
 			try {
-				return require('./index.win32-ia32-msvc.node');
+				return require('./sprocket-native.win32-ia32-msvc.node');
 			} catch (e) {
 				loadErrors.push(e);
 			}
@@ -182,12 +182,12 @@ function requireNative() {
 				const bindingPackageVersion =
 					require('@sprocket/native-win32-ia32-msvc/package.json').version;
 				if (
-					bindingPackageVersion !== '0.0.0' &&
+					bindingPackageVersion !== '0.1.0' &&
 					process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
 					process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
 				) {
 					throw new Error(
-						`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+						`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
 					);
 				}
 				return binding;
@@ -196,7 +196,7 @@ function requireNative() {
 			}
 		} else if (process.arch === 'arm64') {
 			try {
-				return require('./index.win32-arm64-msvc.node');
+				return require('./sprocket-native.win32-arm64-msvc.node');
 			} catch (e) {
 				loadErrors.push(e);
 			}
@@ -205,12 +205,12 @@ function requireNative() {
 				const bindingPackageVersion =
 					require('@sprocket/native-win32-arm64-msvc/package.json').version;
 				if (
-					bindingPackageVersion !== '0.0.0' &&
+					bindingPackageVersion !== '0.1.0' &&
 					process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
 					process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
 				) {
 					throw new Error(
-						`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+						`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
 					);
 				}
 				return binding;
@@ -222,7 +222,7 @@ function requireNative() {
 		}
 	} else if (process.platform === 'darwin') {
 		try {
-			return require('./index.darwin-universal.node');
+			return require('./sprocket-native.darwin-universal.node');
 		} catch (e) {
 			loadErrors.push(e);
 		}
@@ -231,12 +231,12 @@ function requireNative() {
 			const bindingPackageVersion =
 				require('@sprocket/native-darwin-universal/package.json').version;
 			if (
-				bindingPackageVersion !== '0.0.0' &&
+				bindingPackageVersion !== '0.1.0' &&
 				process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
 				process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
 			) {
 				throw new Error(
-					`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+					`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
 				);
 			}
 			return binding;
@@ -245,7 +245,7 @@ function requireNative() {
 		}
 		if (process.arch === 'x64') {
 			try {
-				return require('./index.darwin-x64.node');
+				return require('./sprocket-native.darwin-x64.node');
 			} catch (e) {
 				loadErrors.push(e);
 			}
@@ -253,12 +253,12 @@ function requireNative() {
 				const binding = require('@sprocket/native-darwin-x64');
 				const bindingPackageVersion = require('@sprocket/native-darwin-x64/package.json').version;
 				if (
-					bindingPackageVersion !== '0.0.0' &&
+					bindingPackageVersion !== '0.1.0' &&
 					process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
 					process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
 				) {
 					throw new Error(
-						`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+						`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
 					);
 				}
 				return binding;
@@ -267,7 +267,7 @@ function requireNative() {
 			}
 		} else if (process.arch === 'arm64') {
 			try {
-				return require('./index.darwin-arm64.node');
+				return require('./sprocket-native.darwin-arm64.node');
 			} catch (e) {
 				loadErrors.push(e);
 			}
@@ -275,12 +275,12 @@ function requireNative() {
 				const binding = require('@sprocket/native-darwin-arm64');
 				const bindingPackageVersion = require('@sprocket/native-darwin-arm64/package.json').version;
 				if (
-					bindingPackageVersion !== '0.0.0' &&
+					bindingPackageVersion !== '0.1.0' &&
 					process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
 					process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
 				) {
 					throw new Error(
-						`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+						`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
 					);
 				}
 				return binding;
@@ -293,7 +293,7 @@ function requireNative() {
 	} else if (process.platform === 'freebsd') {
 		if (process.arch === 'x64') {
 			try {
-				return require('./index.freebsd-x64.node');
+				return require('./sprocket-native.freebsd-x64.node');
 			} catch (e) {
 				loadErrors.push(e);
 			}
@@ -301,12 +301,12 @@ function requireNative() {
 				const binding = require('@sprocket/native-freebsd-x64');
 				const bindingPackageVersion = require('@sprocket/native-freebsd-x64/package.json').version;
 				if (
-					bindingPackageVersion !== '0.0.0' &&
+					bindingPackageVersion !== '0.1.0' &&
 					process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
 					process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
 				) {
 					throw new Error(
-						`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+						`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
 					);
 				}
 				return binding;
@@ -315,7 +315,7 @@ function requireNative() {
 			}
 		} else if (process.arch === 'arm64') {
 			try {
-				return require('./index.freebsd-arm64.node');
+				return require('./sprocket-native.freebsd-arm64.node');
 			} catch (e) {
 				loadErrors.push(e);
 			}
@@ -324,12 +324,12 @@ function requireNative() {
 				const bindingPackageVersion =
 					require('@sprocket/native-freebsd-arm64/package.json').version;
 				if (
-					bindingPackageVersion !== '0.0.0' &&
+					bindingPackageVersion !== '0.1.0' &&
 					process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
 					process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
 				) {
 					throw new Error(
-						`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+						`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
 					);
 				}
 				return binding;
@@ -343,7 +343,7 @@ function requireNative() {
 		if (process.arch === 'x64') {
 			if (isMusl()) {
 				try {
-					return require('./index.linux-x64-musl.node');
+					return require('./sprocket-native.linux-x64-musl.node');
 				} catch (e) {
 					loadErrors.push(e);
 				}
@@ -352,12 +352,12 @@ function requireNative() {
 					const bindingPackageVersion =
 						require('@sprocket/native-linux-x64-musl/package.json').version;
 					if (
-						bindingPackageVersion !== '0.0.0' &&
+						bindingPackageVersion !== '0.1.0' &&
 						process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
 						process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
 					) {
 						throw new Error(
-							`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+							`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
 						);
 					}
 					return binding;
@@ -366,7 +366,7 @@ function requireNative() {
 				}
 			} else {
 				try {
-					return require('./index.linux-x64-gnu.node');
+					return require('./sprocket-native.linux-x64-gnu.node');
 				} catch (e) {
 					loadErrors.push(e);
 				}
@@ -375,12 +375,12 @@ function requireNative() {
 					const bindingPackageVersion =
 						require('@sprocket/native-linux-x64-gnu/package.json').version;
 					if (
-						bindingPackageVersion !== '0.0.0' &&
+						bindingPackageVersion !== '0.1.0' &&
 						process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
 						process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
 					) {
 						throw new Error(
-							`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+							`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
 						);
 					}
 					return binding;
@@ -391,7 +391,7 @@ function requireNative() {
 		} else if (process.arch === 'arm64') {
 			if (isMusl()) {
 				try {
-					return require('./index.linux-arm64-musl.node');
+					return require('./sprocket-native.linux-arm64-musl.node');
 				} catch (e) {
 					loadErrors.push(e);
 				}
@@ -400,12 +400,12 @@ function requireNative() {
 					const bindingPackageVersion =
 						require('@sprocket/native-linux-arm64-musl/package.json').version;
 					if (
-						bindingPackageVersion !== '0.0.0' &&
+						bindingPackageVersion !== '0.1.0' &&
 						process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
 						process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
 					) {
 						throw new Error(
-							`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+							`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
 						);
 					}
 					return binding;
@@ -414,7 +414,7 @@ function requireNative() {
 				}
 			} else {
 				try {
-					return require('./index.linux-arm64-gnu.node');
+					return require('./sprocket-native.linux-arm64-gnu.node');
 				} catch (e) {
 					loadErrors.push(e);
 				}
@@ -423,12 +423,12 @@ function requireNative() {
 					const bindingPackageVersion =
 						require('@sprocket/native-linux-arm64-gnu/package.json').version;
 					if (
-						bindingPackageVersion !== '0.0.0' &&
+						bindingPackageVersion !== '0.1.0' &&
 						process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
 						process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
 					) {
 						throw new Error(
-							`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+							`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
 						);
 					}
 					return binding;
@@ -439,7 +439,7 @@ function requireNative() {
 		} else if (process.arch === 'arm') {
 			if (isMusl()) {
 				try {
-					return require('./index.linux-arm-musleabihf.node');
+					return require('./sprocket-native.linux-arm-musleabihf.node');
 				} catch (e) {
 					loadErrors.push(e);
 				}
@@ -448,12 +448,12 @@ function requireNative() {
 					const bindingPackageVersion =
 						require('@sprocket/native-linux-arm-musleabihf/package.json').version;
 					if (
-						bindingPackageVersion !== '0.0.0' &&
+						bindingPackageVersion !== '0.1.0' &&
 						process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
 						process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
 					) {
 						throw new Error(
-							`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+							`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
 						);
 					}
 					return binding;
@@ -462,7 +462,7 @@ function requireNative() {
 				}
 			} else {
 				try {
-					return require('./index.linux-arm-gnueabihf.node');
+					return require('./sprocket-native.linux-arm-gnueabihf.node');
 				} catch (e) {
 					loadErrors.push(e);
 				}
@@ -471,12 +471,12 @@ function requireNative() {
 					const bindingPackageVersion =
 						require('@sprocket/native-linux-arm-gnueabihf/package.json').version;
 					if (
-						bindingPackageVersion !== '0.0.0' &&
+						bindingPackageVersion !== '0.1.0' &&
 						process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
 						process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
 					) {
 						throw new Error(
-							`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+							`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
 						);
 					}
 					return binding;
@@ -487,7 +487,7 @@ function requireNative() {
 		} else if (process.arch === 'loong64') {
 			if (isMusl()) {
 				try {
-					return require('./index.linux-loong64-musl.node');
+					return require('./sprocket-native.linux-loong64-musl.node');
 				} catch (e) {
 					loadErrors.push(e);
 				}
@@ -496,12 +496,12 @@ function requireNative() {
 					const bindingPackageVersion =
 						require('@sprocket/native-linux-loong64-musl/package.json').version;
 					if (
-						bindingPackageVersion !== '0.0.0' &&
+						bindingPackageVersion !== '0.1.0' &&
 						process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
 						process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
 					) {
 						throw new Error(
-							`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+							`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
 						);
 					}
 					return binding;
@@ -510,7 +510,7 @@ function requireNative() {
 				}
 			} else {
 				try {
-					return require('./index.linux-loong64-gnu.node');
+					return require('./sprocket-native.linux-loong64-gnu.node');
 				} catch (e) {
 					loadErrors.push(e);
 				}
@@ -519,12 +519,12 @@ function requireNative() {
 					const bindingPackageVersion =
 						require('@sprocket/native-linux-loong64-gnu/package.json').version;
 					if (
-						bindingPackageVersion !== '0.0.0' &&
+						bindingPackageVersion !== '0.1.0' &&
 						process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
 						process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
 					) {
 						throw new Error(
-							`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+							`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
 						);
 					}
 					return binding;
@@ -535,7 +535,7 @@ function requireNative() {
 		} else if (process.arch === 'riscv64') {
 			if (isMusl()) {
 				try {
-					return require('./index.linux-riscv64-musl.node');
+					return require('./sprocket-native.linux-riscv64-musl.node');
 				} catch (e) {
 					loadErrors.push(e);
 				}
@@ -544,12 +544,12 @@ function requireNative() {
 					const bindingPackageVersion =
 						require('@sprocket/native-linux-riscv64-musl/package.json').version;
 					if (
-						bindingPackageVersion !== '0.0.0' &&
+						bindingPackageVersion !== '0.1.0' &&
 						process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
 						process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
 					) {
 						throw new Error(
-							`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+							`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
 						);
 					}
 					return binding;
@@ -558,7 +558,7 @@ function requireNative() {
 				}
 			} else {
 				try {
-					return require('./index.linux-riscv64-gnu.node');
+					return require('./sprocket-native.linux-riscv64-gnu.node');
 				} catch (e) {
 					loadErrors.push(e);
 				}
@@ -567,12 +567,12 @@ function requireNative() {
 					const bindingPackageVersion =
 						require('@sprocket/native-linux-riscv64-gnu/package.json').version;
 					if (
-						bindingPackageVersion !== '0.0.0' &&
+						bindingPackageVersion !== '0.1.0' &&
 						process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
 						process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
 					) {
 						throw new Error(
-							`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+							`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
 						);
 					}
 					return binding;
@@ -582,7 +582,7 @@ function requireNative() {
 			}
 		} else if (process.arch === 'ppc64') {
 			try {
-				return require('./index.linux-ppc64-gnu.node');
+				return require('./sprocket-native.linux-ppc64-gnu.node');
 			} catch (e) {
 				loadErrors.push(e);
 			}
@@ -591,12 +591,12 @@ function requireNative() {
 				const bindingPackageVersion =
 					require('@sprocket/native-linux-ppc64-gnu/package.json').version;
 				if (
-					bindingPackageVersion !== '0.0.0' &&
+					bindingPackageVersion !== '0.1.0' &&
 					process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
 					process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
 				) {
 					throw new Error(
-						`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+						`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
 					);
 				}
 				return binding;
@@ -605,7 +605,7 @@ function requireNative() {
 			}
 		} else if (process.arch === 's390x') {
 			try {
-				return require('./index.linux-s390x-gnu.node');
+				return require('./sprocket-native.linux-s390x-gnu.node');
 			} catch (e) {
 				loadErrors.push(e);
 			}
@@ -614,12 +614,12 @@ function requireNative() {
 				const bindingPackageVersion =
 					require('@sprocket/native-linux-s390x-gnu/package.json').version;
 				if (
-					bindingPackageVersion !== '0.0.0' &&
+					bindingPackageVersion !== '0.1.0' &&
 					process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
 					process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
 				) {
 					throw new Error(
-						`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+						`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
 					);
 				}
 				return binding;
@@ -632,7 +632,7 @@ function requireNative() {
 	} else if (process.platform === 'openharmony') {
 		if (process.arch === 'arm64') {
 			try {
-				return require('./index.openharmony-arm64.node');
+				return require('./sprocket-native.openharmony-arm64.node');
 			} catch (e) {
 				loadErrors.push(e);
 			}
@@ -641,12 +641,12 @@ function requireNative() {
 				const bindingPackageVersion =
 					require('@sprocket/native-openharmony-arm64/package.json').version;
 				if (
-					bindingPackageVersion !== '0.0.0' &&
+					bindingPackageVersion !== '0.1.0' &&
 					process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
 					process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
 				) {
 					throw new Error(
-						`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+						`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
 					);
 				}
 				return binding;
@@ -655,7 +655,7 @@ function requireNative() {
 			}
 		} else if (process.arch === 'x64') {
 			try {
-				return require('./index.openharmony-x64.node');
+				return require('./sprocket-native.openharmony-x64.node');
 			} catch (e) {
 				loadErrors.push(e);
 			}
@@ -664,12 +664,12 @@ function requireNative() {
 				const bindingPackageVersion =
 					require('@sprocket/native-openharmony-x64/package.json').version;
 				if (
-					bindingPackageVersion !== '0.0.0' &&
+					bindingPackageVersion !== '0.1.0' &&
 					process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
 					process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
 				) {
 					throw new Error(
-						`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+						`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
 					);
 				}
 				return binding;
@@ -678,7 +678,7 @@ function requireNative() {
 			}
 		} else if (process.arch === 'arm') {
 			try {
-				return require('./index.openharmony-arm.node');
+				return require('./sprocket-native.openharmony-arm.node');
 			} catch (e) {
 				loadErrors.push(e);
 			}
@@ -687,12 +687,12 @@ function requireNative() {
 				const bindingPackageVersion =
 					require('@sprocket/native-openharmony-arm/package.json').version;
 				if (
-					bindingPackageVersion !== '0.0.0' &&
+					bindingPackageVersion !== '0.1.0' &&
 					process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
 					process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
 				) {
 					throw new Error(
-						`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+						`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
 					);
 				}
 				return binding;
@@ -715,7 +715,7 @@ if (!nativeBinding || process.env.NAPI_RS_FORCE_WASI) {
 	let wasiBinding = null;
 	let wasiBindingError = null;
 	try {
-		wasiBinding = require('./index.wasi.cjs');
+		wasiBinding = require('./sprocket-native.wasi.cjs');
 		nativeBinding = wasiBinding;
 	} catch (err) {
 		if (process.env.NAPI_RS_FORCE_WASI) {
@@ -762,4 +762,9 @@ if (!nativeBinding) {
 }
 
 module.exports = nativeBinding;
-module.exports.getRuntimeInfo = nativeBinding.getRuntimeInfo;
+module.exports.createFile = nativeBinding.createFile;
+module.exports.getWorkspaceInstructions = nativeBinding.getWorkspaceInstructions;
+module.exports.getWorkspaceOverview = nativeBinding.getWorkspaceOverview;
+module.exports.readFile = nativeBinding.readFile;
+module.exports.replaceInFile = nativeBinding.replaceInFile;
+module.exports.runAgent = nativeBinding.runAgent;

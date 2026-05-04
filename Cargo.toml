@@ -1,0 +1,7 @@
+[workspace]
+members = ["crates/sprocket-core", "crates/sprocket-rig", "packages/native"]
+resolver = "3"
+
+[profile.release]
+lto = true
+strip = "symbols"

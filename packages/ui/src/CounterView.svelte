@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { newCounter } from './counter.svelte';
+	import { newCounter } from '$ui/counter.svelte';
 
 	let _counter = newCounter();
 </script>
