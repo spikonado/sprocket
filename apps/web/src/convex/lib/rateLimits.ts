@@ -91,35 +91,30 @@ async function enforceLimit(
 }
 
 export async function enforceSignedInSendLimit(ctx: RateLimitCtx, userId: string) {
-	await enforceLimit(ctx, 'signedInSendMessage', `user:${userId}`, 'Signed-in message limit');
+	await enforceLimit(ctx, 'signedInSendMessage', userId, 'Signed-in message limit');
 }
 
-export async function enforceGuestSendLimit(ctx: RateLimitCtx, guestId: string) {
-	await enforceLimit(ctx, 'guestSendMessage', `guest:${guestId}`, 'Guest message limit');
+export async function enforceGuestSendLimit(ctx: RateLimitCtx, userId: string) {
+	await enforceLimit(ctx, 'guestSendMessage', userId, 'Guest message limit');
 }
 
 export async function enforceSignedInThreadCreateLimit(ctx: RateLimitCtx, userId: string) {
-	await enforceLimit(ctx, 'signedInCreateThread', `user:${userId}`, 'Signed-in thread limit');
+	await enforceLimit(ctx, 'signedInCreateThread', userId, 'Signed-in thread limit');
 }
 
-export async function enforceGuestThreadCreateLimit(ctx: RateLimitCtx, guestId: string) {
-	await enforceLimit(ctx, 'guestCreateThread', `guest:${guestId}`, 'Guest thread limit');
+export async function enforceGuestThreadCreateLimit(ctx: RateLimitCtx, userId: string) {
+	await enforceLimit(ctx, 'guestCreateThread', userId, 'Guest thread limit');
 }
 
 export async function enforceSignedInWorkspaceWriteLimit(ctx: RateLimitCtx, userId: string) {
 	await enforceLimit(
 		ctx,
 		'signedInWorkspaceMutation',
-		`user:${userId}`,
+		userId,
 		'Signed-in workspace mutation limit'
 	);
 }
 
-export async function enforceGuestWorkspaceWriteLimit(ctx: RateLimitCtx, guestId: string) {
-	await enforceLimit(
-		ctx,
-		'guestWorkspaceMutation',
-		`guest:${guestId}`,
-		'Guest workspace mutation limit'
-	);
+export async function enforceGuestWorkspaceWriteLimit(ctx: RateLimitCtx, userId: string) {
+	await enforceLimit(ctx, 'guestWorkspaceMutation', userId, 'Guest workspace mutation limit');
 }

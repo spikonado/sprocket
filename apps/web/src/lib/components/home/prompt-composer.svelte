@@ -83,10 +83,10 @@
 </script>
 
 <footer class="shrink-0 px-6 py-4">
-	<div class="mx-auto max-w-[84rem]">
+	<div class="mx-auto max-w-336">
 		{#if elapsedLabel}
 			<div class="mb-3 flex items-center gap-2 px-4 text-[11px] text-slate-400">
-				<span class="inline-flex items-center gap-[3px]">
+				<span class="inline-flex items-center gap-0.75">
 					<span class="size-1 animate-pulse rounded-full bg-white/28"></span>
 					<span class="size-1 animate-pulse rounded-full bg-white/28 [animation-delay:200ms]"
 					></span>
@@ -99,7 +99,7 @@
 
 		<div class={composerShellClass}>
 			<div class={composerInnerClass}>
-				<div class="relative flex min-h-[132px] flex-col px-4 pt-4 pb-2.5">
+				<div class="relative flex min-h-33 flex-col px-4 pt-4 pb-2.5">
 					<div class="min-h-0 flex-1">
 						<textarea
 							bind:this={composerTextarea}
@@ -185,7 +185,7 @@
 
 		{#if workspaceSession}
 			<div
-				class="mx-auto mt-2.5 flex w-full max-w-[48rem] items-center justify-between px-1 text-xs text-slate-500"
+				class="mx-auto mt-2.5 flex w-full max-w-3xl items-center justify-between px-1 text-xs text-slate-500"
 			>
 				<div class="flex min-w-0 items-center gap-2" title={workspaceSession.workspacePath}>
 					<Folder class="size-3.5 shrink-0" />

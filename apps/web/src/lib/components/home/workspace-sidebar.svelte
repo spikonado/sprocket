@@ -8,7 +8,7 @@
 		SquarePen,
 		Trash2
 	} from 'lucide-svelte';
-	import { formatRelativeTime, truncatePreview } from '$lib/format';
+	import { formatRelativeTime } from '$lib/format';
 	import type { Id } from '$convex/_generated/dataModel';
 	import type { ThreadSummary, WorkspaceThreadGroup } from '$lib/types/sprocket';
 
@@ -199,11 +199,6 @@
 																{/if}
 																<p class="truncate text-[13px] leading-5">{thread.title}</p>
 															</div>
-															{#if thread.lastMessagePreview}
-																<p class="mt-0.5 truncate text-[11px] text-slate-500">
-																	{truncatePreview(thread.lastMessagePreview, 44)}
-																</p>
-															{/if}
 														</div>
 														<span class="shrink-0 pt-0.5 text-[11px] text-slate-500">
 															{formatRelativeTime(thread.lastMessageAt)}

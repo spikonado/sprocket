@@ -68,7 +68,6 @@ function makeThreadSummary(overrides: Partial<ThreadSummary> = {}): ThreadSummar
 		selectedModel: 'gpt-5.5',
 		reasoningEffort: 'medium',
 		lastMessageAt: 0,
-		lastMessagePreview: undefined,
 		threadStatus: 'active',
 		latestRunStatus: null,
 		latestRunStartedAt: undefined,

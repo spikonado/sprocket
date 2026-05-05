@@ -22,20 +22,19 @@ export const upsertSelected = mutation({
 	},
 	handler: async (ctx, args) => {
 		const actor = await resolveActor(ctx, args.guestId);
-		if (actor.guestId) {
-			await enforceGuestWorkspaceWriteLimit(ctx, actor.guestId);
+		if (actor.userId.startsWith('guest:')) {
+			await enforceGuestWorkspaceWriteLimit(ctx, actor.userId);
 		} else {
-			await enforceSignedInWorkspaceWriteLimit(ctx, actor.ownerId);
+			await enforceSignedInWorkspaceWriteLimit(ctx, actor.userId);
 		}
 		const now = Date.now();
 		const existing = await getWorkspaceSessionByUserAndPath(
 			ctx.db,
-			actor.ownerId,
+			actor.userId,
 			args.workspacePath
 		);
 
 		const patch = {
-			guestId: actor.guestId,
 			subject: actor.identity?.subject,
 			email: actor.identity?.email,
 			name: actor.identity?.name,
@@ -57,7 +56,7 @@ export const upsertSelected = mutation({
 		}
 
 		const id = await ctx.db.insert('workspaceSessions', {
-			userId: actor.ownerId,
+			userId: actor.userId,
 			...patch
 		});
 		return await ctx.db.get(id);
@@ -72,7 +71,7 @@ export const listMine = query({
 		const actor = await resolveActor(ctx, args.guestId);
 		const sessions = await ctx.db
 			.query('workspaceSessions')
-			.withIndex('by_userId_lastSeenAt', (query) => query.eq('userId', actor.ownerId))
+			.withIndex('by_userId_lastSeenAt', (query) => query.eq('userId', actor.userId))
 			.order('desc')
 			.collect();
 		const now = Date.now();
@@ -93,14 +92,14 @@ export const heartbeatAttached = mutation({
 
 		for (const workspaceSessionId of args.workspaceSessionIds) {
 			const workspaceSession = await ctx.db.get(workspaceSessionId);
-			if (!workspaceSession || workspaceSession.userId !== actor.ownerId) {
+			if (!workspaceSession || workspaceSession.userId !== actor.userId) {
 				throw new Error('Workspace session not found.');
 			}
 		}
 
 		const sessions = await ctx.db
 			.query('workspaceSessions')
-			.withIndex('by_userId', (query) => query.eq('userId', actor.ownerId))
+			.withIndex('by_userId', (query) => query.eq('userId', actor.userId))
 			.collect();
 		const detachedSessionIds = getDetachedWorkspaceSessionIdsForClient(
 			sessions,

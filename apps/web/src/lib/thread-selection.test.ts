@@ -16,7 +16,6 @@ function makeThreadSummary(overrides: Partial<ThreadSummary> = {}): ThreadSummar
 		selectedModel: overrides.selectedModel ?? defaultModelId,
 		reasoningEffort: overrides.reasoningEffort ?? defaultReasoningEffort,
 		lastMessageAt: overrides.lastMessageAt ?? 1,
-		lastMessagePreview: overrides.lastMessagePreview,
 		threadStatus: overrides.threadStatus ?? 'active',
 		latestRunStatus: overrides.latestRunStatus ?? null,
 		latestRunStartedAt: overrides.latestRunStartedAt,

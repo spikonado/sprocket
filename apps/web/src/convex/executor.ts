@@ -1,7 +1,7 @@
 import { internalMutation, internalQuery, mutation, query } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getOwnedExecutorJob, getOwnedWorkspaceSession } from '@convex/lib/access';
-import { getActorId } from '@convex/lib/auth';
+import { resolveActor } from '@convex/lib/auth';
 import { patchJobFinalState, patchRunFinalState } from '@convex/lib/state';
 import {
 	isRunFinalStatus,
@@ -22,8 +22,8 @@ export const listPending = query({
 		workspaceSessionId: v.id('workspaceSessions')
 	},
 	handler: async (ctx, args) => {
-		const actorId: string = await getActorId(ctx, args.guestId);
-		await getOwnedWorkspaceSession(ctx.db, actorId, args.workspaceSessionId);
+		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		await getOwnedWorkspaceSession(ctx.db, userId, args.workspaceSessionId);
 
 		const [pendingJobs, claimedJobs] = await Promise.all([
 			ctx.db
@@ -50,11 +50,11 @@ export const listPendingForClient = query({
 		clientId: v.string()
 	},
 	handler: async (ctx, args) => {
-		const actorId: string = await getActorId(ctx, args.guestId);
+		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
 		const now = Date.now();
 		const workspaceSessions = await ctx.db
 			.query('workspaceSessions')
-			.withIndex('by_userId', (query) => query.eq('userId', actorId))
+			.withIndex('by_userId', (query) => query.eq('userId', userId))
 			.collect();
 		const attachedSessionIds = getAttachedWorkspaceSessionsForClient(
 			workspaceSessions,
@@ -100,17 +100,13 @@ export const claim = mutation({
 		clientId: v.string()
 	},
 	handler: async (ctx, args) => {
-		const actorId: string = await getActorId(ctx, args.guestId);
-		const job = await getOwnedExecutorJob(ctx.db, actorId, args.jobId);
+		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const job = await getOwnedExecutorJob(ctx.db, userId, args.jobId);
 		const run = await ctx.db.get(job.runId);
 		if (!run || isRunFinalStatus(run.status)) {
 			return null;
 		}
-		const workspaceSession = await getOwnedWorkspaceSession(
-			ctx.db,
-			actorId,
-			job.workspaceSessionId
-		);
+		const workspaceSession = await getOwnedWorkspaceSession(ctx.db, userId, job.workspaceSessionId);
 		if (!canClientClaimWorkspaceSession(workspaceSession, args.clientId)) {
 			return null;
 		}
@@ -144,8 +140,8 @@ export const complete = mutation({
 		result: vExecutorJobResult
 	},
 	handler: async (ctx, args) => {
-		const actorId: string = await getActorId(ctx, args.guestId);
-		const job = await getOwnedExecutorJob(ctx.db, actorId, args.jobId);
+		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const job = await getOwnedExecutorJob(ctx.db, userId, args.jobId);
 		const run = await ctx.db.get(job.runId);
 		if (job.status === 'cancelled' || job.status === 'failed') {
 			return false;
@@ -176,8 +172,8 @@ export const fail = mutation({
 		error: v.string()
 	},
 	handler: async (ctx, args) => {
-		const actorId: string = await getActorId(ctx, args.guestId);
-		const job = await getOwnedExecutorJob(ctx.db, actorId, args.jobId);
+		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const job = await getOwnedExecutorJob(ctx.db, userId, args.jobId);
 		if (job.status === 'cancelled' || job.status === 'completed' || job.status === 'failed') {
 			return false;
 		}

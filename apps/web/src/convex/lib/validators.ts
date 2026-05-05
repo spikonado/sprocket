@@ -133,13 +133,22 @@ export const vThreadMessageRole = v.union(v.literal('user'), v.literal('assistan
 export type ThreadMessageRole = Infer<typeof vThreadMessageRole>;
 
 export const vThreadMessageStatus = v.union(
-	v.literal('pending'),
 	v.literal('streaming'),
 	v.literal('success'),
 	v.literal('failed')
 );
 
 export type ThreadMessageStatus = Infer<typeof vThreadMessageStatus>;
+
+export const threadMessageFinalStatus = ['success', 'failed'] as const;
+
+export const vThreadMessageFinalStatus = v.union(...literals(threadMessageFinalStatus));
+
+export function isThreadMessageFinalStatus(
+	status: Infer<typeof vThreadMessageStatus>
+): status is Infer<typeof vThreadMessageFinalStatus> {
+	return (threadMessageFinalStatus as readonly string[]).includes(status);
+}
 
 export const vWorkspaceToolRequest = v.object({
 	jobId: v.optional(v.string()),

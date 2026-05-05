@@ -17,12 +17,10 @@ import {
 export default defineSchema({
 	uiPreferences: defineTable({
 		userId: v.string(),
-		guestId: v.optional(v.string()),
 		lastThreadId: v.optional(v.string())
 	}).index('by_userId', ['userId']),
 	workspaceSessions: defineTable({
 		userId: v.string(),
-		guestId: v.optional(v.string()),
 		subject: v.optional(v.string()),
 		email: v.optional(v.string()),
 		name: v.optional(v.string()),
@@ -42,18 +40,16 @@ export default defineSchema({
 		.index('by_user_workspacePath', ['userId', 'workspacePath']),
 	threadRecords: defineTable({
 		userId: v.string(),
-		guestId: v.optional(v.string()),
 		threadId: v.string(),
 		workspaceSessionId: v.id('workspaceSessions'),
 		workspacePath: v.string(),
 		workspaceName: v.optional(v.string()),
-		title: v.string(),
+		title: v.optional(v.string()),
 		summary: v.optional(v.string()),
 		selectedModel: vModelId,
 		reasoningEffort: vReasoningEffort,
 		nextMessageOrder: v.optional(v.number()),
-		lastMessageAt: v.number(),
-		lastMessagePreview: v.optional(v.string())
+		lastMessageAt: v.number()
 	})
 		.index('by_userId_lastMessageAt', ['userId', 'lastMessageAt'])
 		.index('by_threadId', ['threadId'])
@@ -61,7 +57,6 @@ export default defineSchema({
 	runs: defineTable({
 		threadId: v.string(),
 		userId: v.string(),
-		guestId: v.optional(v.string()),
 		workspaceSessionId: v.id('workspaceSessions'),
 		status: vRunStatus,
 		selectedModel: vModelId,
@@ -70,12 +65,12 @@ export default defineSchema({
 		completedAt: v.optional(v.number()),
 		lastError: v.optional(v.string()),
 		activeJobId: v.optional(v.id('executorJobs')),
-		promptMessageId: v.optional(v.id('threadMessage'))
+		promptMessageId: v.optional(v.id('threadMessages'))
 	})
 		.index('by_threadId_startedAt', ['threadId', 'startedAt'])
 		.index('by_workspaceSessionId', ['workspaceSessionId'])
 		.index('by_userId_startedAt', ['userId', 'startedAt']),
-	threadMessage: defineTable({
+	threadMessages: defineTable({
 		threadId: v.string(),
 		runId: v.optional(v.id('runs')),
 		role: vThreadMessageRole,

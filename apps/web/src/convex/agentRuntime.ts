@@ -6,8 +6,8 @@ import {
 	getOwnedWorkspaceSession,
 	getThreadRecordByThreadId
 } from '@convex/lib/access';
-import { getActorId } from '@convex/lib/auth';
-import { patchRunFinalState } from '@convex/lib/state';
+import { resolveActor } from '@convex/lib/auth';
+import { patchJobFinalState, patchRunFinalState } from '@convex/lib/state';
 import {
 	appendThreadMessage,
 	getThreadMessage,
@@ -18,9 +18,10 @@ import {
 	vExecutorJobKind,
 	vExecutorJobPayload,
 	vRunFinalStatus,
+	vThreadMessageFinalStatus,
 	vThreadMessageStatus
 } from '@convex/lib/validators';
-import { Doc } from './_generated/dataModel';
+import { Doc, Id } from './_generated/dataModel';
 
 export const start = mutation({
 	args: {
@@ -28,8 +29,8 @@ export const start = mutation({
 		runId: v.id('runs')
 	},
 	handler: async (ctx, args) => {
-		const actorId: string = await getActorId(ctx, args.guestId);
-		const run: Doc<'runs'> = await getOwnedRun(ctx.db, actorId, args.runId);
+		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		if (isRunFinalStatus(run.status)) {
 			return run;
 		}
@@ -49,19 +50,19 @@ export const getContext = query({
 		runId: v.id('runs')
 	},
 	handler: async (ctx, args) => {
-		const actorId: string = await getActorId(ctx, args.guestId);
-		const run: Doc<'runs'> = await getOwnedRun(ctx.db, actorId, args.runId);
+		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		const threadRecord: Doc<'threadRecords'> = await getOwnedThreadRecord(
 			ctx.db,
-			actorId,
+			userId,
 			run.threadId
 		);
 		const workspaceSession: Doc<'workspaceSessions'> = await getOwnedWorkspaceSession(
 			ctx.db,
-			actorId,
+			userId,
 			run.workspaceSessionId
 		);
-		const messages: Doc<'threadMessage'>[] = await listThreadMessages(ctx, run.threadId);
+		const messages: Doc<'threadMessages'>[] = await listThreadMessages(ctx, run.threadId);
 
 		return {
 			run,
@@ -83,8 +84,8 @@ export const isFinished = query({
 		runId: v.id('runs')
 	},
 	handler: async (ctx, args) => {
-		const actorId: string = await getActorId(ctx, args.guestId);
-		const run: Doc<'runs'> = await getOwnedRun(ctx.db, actorId, args.runId);
+		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		return isRunFinalStatus(run.status);
 	}
 });
@@ -95,13 +96,13 @@ export const beginAssistantMessage = mutation({
 		runId: v.id('runs')
 	},
 	handler: async (ctx, args) => {
-		const actorId: string = await getActorId(ctx, args.guestId);
-		const run: Doc<'runs'> = await getOwnedRun(ctx.db, actorId, args.runId);
-		const existing: Doc<'threadMessage'>[] = await ctx.db
-			.query('threadMessage')
+		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
+		const existing: Doc<'threadMessages'>[] = await ctx.db
+			.query('threadMessages')
 			.withIndex('by_runId', (query) => query.eq('runId', args.runId))
 			.collect();
-		const assistantMessage: Doc<'threadMessage'> | undefined = existing.find(
+		const assistantMessage: Doc<'threadMessages'> | undefined = existing.find(
 			(message) => message.role === 'assistant'
 		);
 		if (assistantMessage) {
@@ -112,14 +113,16 @@ export const beginAssistantMessage = mutation({
 			return assistantMessage;
 		}
 
-		const { messageId } = await appendThreadMessage(ctx, {
-			threadId: run.threadId,
-			runId: args.runId,
-			role: 'assistant',
-			status: 'streaming',
-			text: '',
-			agentName: 'Sprocket'
-		});
+		const messageId: Id<'threadMessages'> = (
+			await appendThreadMessage(ctx, {
+				threadId: run.threadId,
+				runId: args.runId,
+				role: 'assistant',
+				status: 'streaming',
+				text: '',
+				agentName: 'Sprocket'
+			})
+		).messageId;
 		return await getThreadMessage(ctx, messageId);
 	}
 });
@@ -127,14 +130,14 @@ export const beginAssistantMessage = mutation({
 export const updateAssistantMessage = mutation({
 	args: {
 		guestId: v.optional(v.string()),
-		messageId: v.id('threadMessage'),
+		messageId: v.id('threadMessages'),
 		text: v.string(),
 		status: v.optional(vThreadMessageStatus)
 	},
 	handler: async (ctx, args) => {
-		const actorId: string = await getActorId(ctx, args.guestId);
-		const message: Doc<'threadMessage'> = await getThreadMessage(ctx, args.messageId);
-		await getOwnedThreadRecord(ctx.db, actorId, message.threadId);
+		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const message: Doc<'threadMessages'> = await getThreadMessage(ctx, args.messageId);
+		await getOwnedThreadRecord(ctx.db, userId, message.threadId);
 		await ctx.db.patch(args.messageId, {
 			text: args.text,
 			...(args.status ? { status: args.status } : {})
@@ -145,14 +148,14 @@ export const updateAssistantMessage = mutation({
 export const finishAssistantMessage = mutation({
 	args: {
 		guestId: v.optional(v.string()),
-		messageId: v.id('threadMessage'),
+		messageId: v.id('threadMessages'),
 		text: v.string(),
-		status: v.union(v.literal('success'), v.literal('failed'))
+		status: vThreadMessageFinalStatus
 	},
 	handler: async (ctx, args) => {
-		const actorId: string = await getActorId(ctx, args.guestId);
-		const message: Doc<'threadMessage'> = await getThreadMessage(ctx, args.messageId);
-		await getOwnedThreadRecord(ctx.db, actorId, message.threadId);
+		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const message: Doc<'threadMessages'> = await getThreadMessage(ctx, args.messageId);
+		await getOwnedThreadRecord(ctx.db, userId, message.threadId);
 		await ctx.db.patch(args.messageId, {
 			text: args.text,
 			status: args.status,
@@ -169,13 +172,19 @@ export const finishRun = mutation({
 		lastError: v.optional(v.string())
 	},
 	handler: async (ctx, args) => {
-		const actorId = await getActorId(ctx, args.guestId);
-		const run: Doc<'runs'> = await getOwnedRun(ctx.db, actorId, args.runId);
+		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		if (!isRunFinalStatus(run.status)) {
 			await patchRunFinalState(ctx, args.runId, {
 				status: args.status,
 				lastError: args.lastError
 			});
+			if (run.activeJobId) {
+				await patchJobFinalState(ctx, run.activeJobId, {
+					status: args.status,
+					error: args.lastError
+				});
+			}
 		}
 	}
 });
@@ -189,28 +198,30 @@ export const beginToolJob = mutation({
 		hidden: v.optional(v.boolean())
 	},
 	handler: async (ctx, args) => {
-		const actorId = await getActorId(ctx, args.guestId);
-		const run = await getOwnedRun(ctx.db, actorId, args.runId);
+		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		if (isRunFinalStatus(run.status)) {
 			throw new Error('Run is no longer active.');
 		}
-		const workspaceSession = await getOwnedWorkspaceSession(
+		const workspaceSession: Doc<'workspaceSessions'> = await getOwnedWorkspaceSession(
 			ctx.db,
-			actorId,
+			userId,
 			run.workspaceSessionId
 		);
-		const threadRecord = await getThreadRecordByThreadId(ctx.db, run.threadId);
+		const threadRecord: Doc<'threadRecords'> | null = await getThreadRecordByThreadId(
+			ctx.db,
+			run.threadId
+		);
 		if (!threadRecord) {
 			throw new Error('Thread not found.');
 		}
 
-		const nextSequence = workspaceSession.nextExecutorSequence ?? 0;
-		const now = Date.now();
+		const nextSequence: number = workspaceSession.nextExecutorSequence ?? 0;
 		await ctx.db.patch(workspaceSession._id, {
 			nextExecutorSequence: nextSequence + 1
 		});
 
-		const jobId = await ctx.db.insert('executorJobs', {
+		const jobId: Id<'executorJobs'> = await ctx.db.insert('executorJobs', {
 			workspaceSessionId: run.workspaceSessionId,
 			threadId: run.threadId,
 			runId: args.runId,
@@ -218,8 +229,8 @@ export const beginToolJob = mutation({
 			payload: args.payload,
 			hidden: args.hidden ?? false,
 			status: 'claimed',
-			enqueuedAt: now,
-			claimedAt: now,
+			enqueuedAt: Date.now(),
+			claimedAt: Date.now(),
 			claimedBy: 'native',
 			sequence: nextSequence
 		});

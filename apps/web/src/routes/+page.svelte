@@ -369,9 +369,10 @@
 		}
 
 		try {
-			await convexClient.mutation(api.chat.cancel, {
+			await convexClient.mutation(api.agentRuntime.finishRun, {
 				...getViewerArgs(),
-				runId: runState._id
+				runId: runState._id,
+				status: 'cancelled'
 			});
 		} catch (error) {
 			currentError = error instanceof Error ? error.message : 'Failed to cancel run.';

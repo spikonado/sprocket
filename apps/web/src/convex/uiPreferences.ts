@@ -7,10 +7,10 @@ export const getMine = query({
 		guestId: v.optional(v.string())
 	},
 	handler: async (ctx, args) => {
-		const actor = await resolveActor(ctx, args.guestId);
+		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
 		return await ctx.db
 			.query('uiPreferences')
-			.withIndex('by_userId', (query) => query.eq('userId', actor.ownerId))
+			.withIndex('by_userId', (query) => query.eq('userId', userId))
 			.unique();
 	}
 });
@@ -21,23 +21,21 @@ export const setLastThread = mutation({
 		threadId: v.string()
 	},
 	handler: async (ctx, args) => {
-		const actor = await resolveActor(ctx, args.guestId);
+		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
 		const existing = await ctx.db
 			.query('uiPreferences')
-			.withIndex('by_userId', (query) => query.eq('userId', actor.ownerId))
+			.withIndex('by_userId', (query) => query.eq('userId', userId))
 			.unique();
 
 		if (existing) {
 			await ctx.db.patch(existing._id, {
-				guestId: actor.guestId,
 				lastThreadId: args.threadId
 			});
 			return await ctx.db.get(existing._id);
 		}
 
 		const id = await ctx.db.insert('uiPreferences', {
-			userId: actor.ownerId,
-			guestId: actor.guestId,
+			userId,
 			lastThreadId: args.threadId
 		});
 		return await ctx.db.get(id);

@@ -2,8 +2,7 @@ import type { GenericMutationCtx, GenericQueryCtx } from 'convex/server';
 import type { DataModel } from '@convex/_generated/dataModel';
 
 export type ResolvedActor = {
-	ownerId: string;
-	guestId?: string;
+	userId: string;
 	identity: {
 		subject?: string;
 		email?: string;
@@ -12,11 +11,6 @@ export type ResolvedActor = {
 	} | null;
 };
 
-function normalizeGuestId(guestId?: string) {
-	const trimmed = guestId?.trim();
-	return trimmed ? trimmed : undefined;
-}
-
 export async function resolveActor(
 	ctx: GenericMutationCtx<DataModel> | GenericQueryCtx<DataModel>,
 	guestId?: string
@@ -24,7 +18,7 @@ export async function resolveActor(
 	const identity = await ctx.auth.getUserIdentity();
 	if (identity?.tokenIdentifier) {
 		return {
-			ownerId: identity.tokenIdentifier,
+			userId: identity.tokenIdentifier,
 			identity: {
 				subject: identity.subject ?? undefined,
 				email: identity.email ?? undefined,
@@ -34,21 +28,12 @@ export async function resolveActor(
 		};
 	}
 
-	const normalizedGuestId = normalizeGuestId(guestId);
+	const normalizedGuestId: string | undefined = guestId?.trim();
 	if (!normalizedGuestId) {
 		throw new Error('Authentication required.');
 	}
-
 	return {
-		ownerId: normalizedGuestId,
-		guestId: normalizedGuestId,
+		userId: `guest:${normalizedGuestId}`,
 		identity: null
 	};
-}
-
-export async function getActorId(
-	ctx: GenericMutationCtx<DataModel> | GenericQueryCtx<DataModel>,
-	guestId?: string
-): Promise<string> {
-	return (await resolveActor(ctx, guestId)).ownerId;
 }

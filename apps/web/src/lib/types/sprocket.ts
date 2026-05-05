@@ -1,5 +1,15 @@
 import type { Id } from '$convex/_generated/dataModel';
-import type { SupportedModelId, SupportedReasoningEffort } from '$lib/models';
+import type { Infer } from 'convex/values';
+import {
+	vExecutorJobKind,
+	vExecutorJobStatus,
+	vExecutorStatus,
+	vModelId,
+	vReasoningEffort,
+	vRunStatus,
+	vThreadMessageRole,
+	vThreadMessageStatus
+} from '$convex/lib/validators';
 
 export type WorkspaceEntry = {
 	name: string;
@@ -46,12 +56,7 @@ export type FileEditOutput = {
 	bytesWritten: number;
 };
 
-export type WorkspaceToolName =
-	| 'get_workspace_overview'
-	| 'get_workspace_instructions'
-	| 'read_file'
-	| 'create_file'
-	| 'replace_in_file';
+export type WorkspaceToolName = Infer<typeof vExecutorJobKind>;
 
 export type WorkspaceToolRequest =
 	| {
@@ -116,7 +121,7 @@ export type WorkspaceSession = {
 	workspaceOverview: WorkspaceOverview;
 	gitBranch: string | null;
 	gitDirty: boolean;
-	executorStatus: 'connected' | 'disconnected';
+	executorStatus: Infer<typeof vExecutorStatus>;
 	lastHeartbeatAt?: number;
 	connectedClientId?: string;
 	lastSeenAt: number;
@@ -130,10 +135,9 @@ export type ThreadSummary = {
 	workspaceName: string;
 	title: string;
 	summary?: string;
-	selectedModel: SupportedModelId;
-	reasoningEffort: SupportedReasoningEffort;
+	selectedModel: Infer<typeof vModelId>;
+	reasoningEffort: Infer<typeof vReasoningEffort>;
 	lastMessageAt: number;
-	lastMessagePreview?: string;
 	threadStatus: 'active' | 'archived';
 	latestRunStatus: RunState['status'] | null;
 	latestRunStartedAt?: number;
@@ -162,7 +166,7 @@ export type ExecutorJob = {
 	kind: WorkspaceToolName;
 	payload: ExecutorJobPayload;
 	hidden?: boolean;
-	status: 'pending' | 'claimed' | 'completed' | 'failed' | 'cancelled';
+	status: Infer<typeof vExecutorJobStatus>;
 	enqueuedAt: number;
 	claimedBy?: string;
 	claimedAt?: number;
@@ -177,23 +181,23 @@ export type RunState = {
 	threadId: string;
 	userId: string;
 	workspaceSessionId: Id<'workspaceSessions'>;
-	status: 'queued' | 'running' | 'awaiting_executor' | 'completed' | 'failed' | 'cancelled';
-	selectedModel: SupportedModelId;
-	reasoningEffort: SupportedReasoningEffort;
+	status: Infer<typeof vRunStatus>;
+	selectedModel: Infer<typeof vModelId>;
+	reasoningEffort: Infer<typeof vReasoningEffort>;
 	startedAt: number;
 	completedAt?: number;
 	lastError?: string;
 	activeJobId?: Id<'executorJobs'>;
-	promptMessageId?: Id<'threadMessage'>;
+	promptMessageId?: Id<'threadMessages'>;
 	jobs: ExecutorJob[];
 };
 
 export type ThreadMessage = {
-	_id: Id<'threadMessage'>;
+	_id: Id<'threadMessages'>;
 	threadId: string;
 	runId?: Id<'runs'>;
-	role: 'user' | 'assistant';
-	status: 'pending' | 'streaming' | 'success' | 'failed';
+	role: Infer<typeof vThreadMessageRole>;
+	status: Infer<typeof vThreadMessageStatus>;
 	text: string;
 	order: number;
 	stepOrder: number;
