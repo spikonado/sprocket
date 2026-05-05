@@ -21,9 +21,6 @@ export default defineSchema({
 	}).index('by_userId', ['userId']),
 	workspaceSessions: defineTable({
 		userId: v.string(),
-		subject: v.optional(v.string()),
-		email: v.optional(v.string()),
-		name: v.optional(v.string()),
 		workspacePath: v.string(),
 		workspaceName: v.string(),
 		workspaceOverview: vWorkspaceOverview,

@@ -9,11 +9,13 @@
  */
 
 import type * as agentRuntime from '../agentRuntime.js';
+import type * as auth from '../auth.js';
 import type * as authBootstrap from '../authBootstrap.js';
 import type * as chat from '../chat.js';
 import type * as completion from '../completion.js';
 import type * as executor from '../executor.js';
 import type * as executorNode from '../executorNode.js';
+import type * as http from '../http.js';
 import type * as lib_access from '../lib/access.js';
 import type * as lib_auth from '../lib/auth.js';
 import type * as lib_modelRegistry from '../lib/modelRegistry.js';
@@ -33,11 +35,13 @@ import type { ApiFromModules, FilterApi, FunctionReference } from 'convex/server
 
 declare const fullApi: ApiFromModules<{
 	agentRuntime: typeof agentRuntime;
+	auth: typeof auth;
 	authBootstrap: typeof authBootstrap;
 	chat: typeof chat;
 	completion: typeof completion;
 	executor: typeof executor;
 	executorNode: typeof executorNode;
+	http: typeof http;
 	'lib/access': typeof lib_access;
 	'lib/auth': typeof lib_auth;
 	'lib/modelRegistry': typeof lib_modelRegistry;
@@ -76,4 +80,5 @@ export declare const internal: FilterApi<typeof fullApi, FunctionReference<any, 
 
 export declare const components: {
 	rateLimiter: import('@convex-dev/rate-limiter/_generated/component.js').ComponentApi<'rateLimiter'>;
+	workOSAuthKit: import('@convex-dev/workos-authkit/_generated/component.js').ComponentApi<'workOSAuthKit'>;
 };

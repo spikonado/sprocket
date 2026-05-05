@@ -13,6 +13,7 @@
 	"dependencies": {
 		"@ai-sdk/openai": "^3.0.58",
 		"@convex-dev/rate-limiter": "^0.3.2",
+		"@convex-dev/workos-authkit": "^0.2.3",
 		"@fontsource/dm-sans": "^5.2.8",
 		"@workos-inc/authkit-js": "^0.20.0",
 		"ai": "^6.0.174",
@@ -24,7 +25,6 @@
 		"lucide-svelte": "^1.0.1",
 		"marked": "^18.0.3",
 		"tailwind-merge": "^3.5.0",
-		"workos": "^0.12.3",
 		"zod": "^3.25.76"
 	},
 	"devDependencies": {

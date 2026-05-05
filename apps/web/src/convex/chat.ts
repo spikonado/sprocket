@@ -2,7 +2,7 @@ import type { Doc, Id } from '@convex/_generated/dataModel';
 import { mutation, query } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
-import { resolveActor } from '@convex/lib/auth';
+import { getUserId } from '@convex/lib/auth';
 import { enforceGuestSendLimit, enforceSignedInSendLimit } from '@convex/lib/rateLimits';
 import { appendThreadMessage } from '@convex/lib/threadMessages';
 import { vModelId, vReasoningEffort } from '@convex/lib/validators';
@@ -16,7 +16,7 @@ export const send = mutation({
 		reasoningEffort: vReasoningEffort
 	},
 	handler: async (ctx, args) => {
-		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const userId: string = await getUserId(ctx, args.guestId);
 		if (userId.startsWith('guest:')) {
 			await enforceGuestSendLimit(ctx, userId);
 		} else {
@@ -68,7 +68,7 @@ export const latestRunForThread = query({
 		threadId: v.string()
 	},
 	handler: async (ctx, args) => {
-		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const userId: string = await getUserId(ctx, args.guestId);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 
 		const latestRun: Doc<'runs'> | null = await ctx.db

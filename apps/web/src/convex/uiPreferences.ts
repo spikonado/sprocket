@@ -1,13 +1,13 @@
 import { mutation, query } from '@convex/_generated/server';
 import { v } from 'convex/values';
-import { resolveActor } from '@convex/lib/auth';
+import { getUserId } from '@convex/lib/auth';
 
 export const getMine = query({
 	args: {
 		guestId: v.optional(v.string())
 	},
 	handler: async (ctx, args) => {
-		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const userId: string = await getUserId(ctx, args.guestId);
 		return await ctx.db
 			.query('uiPreferences')
 			.withIndex('by_userId', (query) => query.eq('userId', userId))
@@ -21,7 +21,7 @@ export const setLastThread = mutation({
 		threadId: v.string()
 	},
 	handler: async (ctx, args) => {
-		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const userId: string = await getUserId(ctx, args.guestId);
 		const existing = await ctx.db
 			.query('uiPreferences')
 			.withIndex('by_userId', (query) => query.eq('userId', userId))

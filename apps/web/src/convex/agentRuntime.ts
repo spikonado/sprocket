@@ -6,7 +6,7 @@ import {
 	getOwnedWorkspaceSession,
 	getThreadRecordByThreadId
 } from '@convex/lib/access';
-import { resolveActor } from '@convex/lib/auth';
+import { getUserId } from '@convex/lib/auth';
 import { patchJobFinalState, patchRunFinalState } from '@convex/lib/state';
 import {
 	appendThreadMessage,
@@ -29,7 +29,7 @@ export const start = mutation({
 		runId: v.id('runs')
 	},
 	handler: async (ctx, args) => {
-		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		if (isRunFinalStatus(run.status)) {
 			return run;
@@ -50,7 +50,7 @@ export const getContext = query({
 		runId: v.id('runs')
 	},
 	handler: async (ctx, args) => {
-		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		const threadRecord: Doc<'threadRecords'> = await getOwnedThreadRecord(
 			ctx.db,
@@ -84,7 +84,7 @@ export const isFinished = query({
 		runId: v.id('runs')
 	},
 	handler: async (ctx, args) => {
-		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		return isRunFinalStatus(run.status);
 	}
@@ -96,7 +96,7 @@ export const beginAssistantMessage = mutation({
 		runId: v.id('runs')
 	},
 	handler: async (ctx, args) => {
-		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		const existing: Doc<'threadMessages'>[] = await ctx.db
 			.query('threadMessages')
@@ -135,7 +135,7 @@ export const updateAssistantMessage = mutation({
 		status: v.optional(vThreadMessageStatus)
 	},
 	handler: async (ctx, args) => {
-		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const userId: string = await getUserId(ctx, args.guestId);
 		const message: Doc<'threadMessages'> = await getThreadMessage(ctx, args.messageId);
 		await getOwnedThreadRecord(ctx.db, userId, message.threadId);
 		await ctx.db.patch(args.messageId, {
@@ -153,7 +153,7 @@ export const finishAssistantMessage = mutation({
 		status: vThreadMessageFinalStatus
 	},
 	handler: async (ctx, args) => {
-		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const userId: string = await getUserId(ctx, args.guestId);
 		const message: Doc<'threadMessages'> = await getThreadMessage(ctx, args.messageId);
 		await getOwnedThreadRecord(ctx.db, userId, message.threadId);
 		await ctx.db.patch(args.messageId, {
@@ -172,7 +172,7 @@ export const finishRun = mutation({
 		lastError: v.optional(v.string())
 	},
 	handler: async (ctx, args) => {
-		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		if (!isRunFinalStatus(run.status)) {
 			await patchRunFinalState(ctx, args.runId, {
@@ -198,7 +198,7 @@ export const beginToolJob = mutation({
 		hidden: v.optional(v.boolean())
 	},
 	handler: async (ctx, args) => {
-		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		if (isRunFinalStatus(run.status)) {
 			throw new Error('Run is no longer active.');

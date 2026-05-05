@@ -1,4 +1,5 @@
 # Dependencies
+.bun-cache
 .pnp
 .pnp.js
 node_modules

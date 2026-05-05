@@ -23,9 +23,6 @@ function makeWorkspaceSession(
 		_creationTime: 0,
 		userId: 'user-1',
 		guestId: undefined,
-		subject: undefined,
-		email: undefined,
-		name: undefined,
 		workspacePath: '/tmp/workspace',
 		workspaceName: 'Workspace',
 		workspaceOverview: {

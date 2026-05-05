@@ -1,7 +1,7 @@
 import { mutation, query } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getOwnedThreadRecord, getOwnedWorkspaceSession } from '@convex/lib/access';
-import { resolveActor } from '@convex/lib/auth';
+import { getUserId } from '@convex/lib/auth';
 import {
 	enforceGuestThreadCreateLimit,
 	enforceSignedInThreadCreateLimit
@@ -18,7 +18,7 @@ export const create = mutation({
 		reasoningEffort: vReasoningEffort
 	},
 	handler: async (ctx, args) => {
-		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const userId: string = await getUserId(ctx, args.guestId);
 		if (userId.startsWith('guest:')) {
 			await enforceGuestThreadCreateLimit(ctx, userId);
 		} else {
@@ -57,10 +57,10 @@ export const listMine = query({
 		guestId: v.optional(v.string())
 	},
 	handler: async (ctx, args) => {
-		const actor = await resolveActor(ctx, args.guestId);
+		const userId: string = await getUserId(ctx, args.guestId);
 		const records = await ctx.db
 			.query('threadRecords')
-			.withIndex('by_userId_lastMessageAt', (query) => query.eq('userId', actor.userId))
+			.withIndex('by_userId_lastMessageAt', (query) => query.eq('userId', userId))
 			.order('desc')
 			.collect();
 		return await Promise.all(
@@ -89,8 +89,8 @@ export const getByThreadId = query({
 		threadId: v.string()
 	},
 	handler: async (ctx, args) => {
-		const actor = await resolveActor(ctx, args.guestId);
-		return await getOwnedThreadRecord(ctx.db, actor.userId, args.threadId);
+		const userId: string = await getUserId(ctx, args.guestId);
+		return await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 	}
 });
 
@@ -100,8 +100,8 @@ export const remove = mutation({
 		threadId: v.string()
 	},
 	handler: async (ctx, args) => {
-		const actor = await resolveActor(ctx, args.guestId);
-		const threadRecord = await getOwnedThreadRecord(ctx.db, actor.userId, args.threadId);
+		const userId: string = await getUserId(ctx, args.guestId);
+		const threadRecord = await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 
 		const runs = await ctx.db
 			.query('runs')
@@ -130,7 +130,7 @@ export const remove = mutation({
 
 		const preferences = await ctx.db
 			.query('uiPreferences')
-			.withIndex('by_userId', (query) => query.eq('userId', actor.userId))
+			.withIndex('by_userId', (query) => query.eq('userId', userId))
 			.unique();
 		if (preferences?.lastThreadId === args.threadId) {
 			await ctx.db.patch(preferences._id, {

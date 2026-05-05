@@ -1,7 +1,7 @@
 import { internalMutation, internalQuery, mutation, query } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getOwnedExecutorJob, getOwnedWorkspaceSession } from '@convex/lib/access';
-import { resolveActor } from '@convex/lib/auth';
+import { getUserId } from '@convex/lib/auth';
 import { patchJobFinalState, patchRunFinalState } from '@convex/lib/state';
 import {
 	isRunFinalStatus,
@@ -22,7 +22,7 @@ export const listPending = query({
 		workspaceSessionId: v.id('workspaceSessions')
 	},
 	handler: async (ctx, args) => {
-		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const userId: string = await getUserId(ctx, args.guestId);
 		await getOwnedWorkspaceSession(ctx.db, userId, args.workspaceSessionId);
 
 		const [pendingJobs, claimedJobs] = await Promise.all([
@@ -50,7 +50,7 @@ export const listPendingForClient = query({
 		clientId: v.string()
 	},
 	handler: async (ctx, args) => {
-		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const userId: string = await getUserId(ctx, args.guestId);
 		const now = Date.now();
 		const workspaceSessions = await ctx.db
 			.query('workspaceSessions')
@@ -100,7 +100,7 @@ export const claim = mutation({
 		clientId: v.string()
 	},
 	handler: async (ctx, args) => {
-		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const userId: string = await getUserId(ctx, args.guestId);
 		const job = await getOwnedExecutorJob(ctx.db, userId, args.jobId);
 		const run = await ctx.db.get(job.runId);
 		if (!run || isRunFinalStatus(run.status)) {
@@ -140,7 +140,7 @@ export const complete = mutation({
 		result: vExecutorJobResult
 	},
 	handler: async (ctx, args) => {
-		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const userId: string = await getUserId(ctx, args.guestId);
 		const job = await getOwnedExecutorJob(ctx.db, userId, args.jobId);
 		const run = await ctx.db.get(job.runId);
 		if (job.status === 'cancelled' || job.status === 'failed') {
@@ -172,7 +172,7 @@ export const fail = mutation({
 		error: v.string()
 	},
 	handler: async (ctx, args) => {
-		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const userId: string = await getUserId(ctx, args.guestId);
 		const job = await getOwnedExecutorJob(ctx.db, userId, args.jobId);
 		if (job.status === 'cancelled' || job.status === 'completed' || job.status === 'failed') {
 			return false;

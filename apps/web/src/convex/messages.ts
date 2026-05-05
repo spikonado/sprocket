@@ -2,7 +2,7 @@ import { paginationOptsValidator } from 'convex/server';
 import { query } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
-import { resolveActor } from '@convex/lib/auth';
+import { getUserId } from '@convex/lib/auth';
 import { listThreadMessages } from '@convex/lib/threadMessages';
 
 export const listForThread = query({
@@ -12,7 +12,7 @@ export const listForThread = query({
 		paginationOpts: paginationOptsValidator
 	},
 	handler: async (ctx, args) => {
-		const userId: string = (await resolveActor(ctx, args.guestId)).userId;
+		const userId: string = await getUserId(ctx, args.guestId);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 		const allMessages = await listThreadMessages(ctx, args.threadId);
 		const total = allMessages.length;
