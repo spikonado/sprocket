@@ -12,7 +12,7 @@ use rig::completion::{
     GetTokenUsage, Message, ToolDefinition, Usage,
 };
 use rig::message::{ToolCall, ToolChoice, ToolFunction};
-use rig::streaming::{RawStreamingChoice, StreamingCompletionResponse};
+use rig::streaming::{RawStreamingChoice, RawStreamingToolCall, StreamingCompletionResponse};
 use rustls::crypto::ring::default_provider;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -27,6 +27,8 @@ pub struct ConvexRigClient {
     pub(crate) inner: Arc<Mutex<ConvexClient>>,
     completion_action: Arc<str>,
     default_reasoning_effort: Option<Arc<str>>,
+    stream_message_id: Option<Arc<str>>,
+    guest_id: Option<Arc<str>>,
 }
 
 impl ConvexRigClient {
@@ -42,6 +44,8 @@ impl ConvexRigClient {
             inner: Arc::new(Mutex::new(client)),
             completion_action: completion_action.into().into(),
             default_reasoning_effort: None,
+            stream_message_id: None,
+            guest_id: None,
         })
     }
 
@@ -51,6 +55,16 @@ impl ConvexRigClient {
 
     pub fn with_reasoning_effort(mut self, reasoning_effort: impl Into<String>) -> Self {
         self.default_reasoning_effort = Some(reasoning_effort.into().into());
+        self
+    }
+
+    pub fn with_stream_target(
+        mut self,
+        stream_message_id: Option<String>,
+        guest_id: Option<String>,
+    ) -> Self {
+        self.stream_message_id = stream_message_id.map(Into::into);
+        self.guest_id = guest_id.map(Into::into);
         self
     }
 }
@@ -75,13 +89,23 @@ pub struct ConvexCompletionOutput {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ConvexUsage {
-    #[serde(deserialize_with = "deserialize_convex_u64")]
+    #[serde(default, deserialize_with = "deserialize_convex_u64")]
     pub input_tokens: u64,
-    #[serde(deserialize_with = "deserialize_convex_u64")]
+    #[serde(default, deserialize_with = "deserialize_convex_u64")]
     pub output_tokens: u64,
-    #[serde(deserialize_with = "deserialize_convex_u64")]
+    #[serde(default, deserialize_with = "deserialize_convex_u64")]
     pub total_tokens: u64,
+    #[serde(default)]
+    pub input_token_details: ConvexInputTokenDetails,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConvexInputTokenDetails {
+    #[serde(default, deserialize_with = "deserialize_convex_u64")]
+    pub cache_read_tokens: u64,
 }
 
 impl GetTokenUsage for ConvexCompletionOutput {
@@ -90,7 +114,7 @@ impl GetTokenUsage for ConvexCompletionOutput {
             input_tokens: self.usage.input_tokens,
             output_tokens: self.usage.output_tokens,
             total_tokens: self.usage.total_tokens,
-            cached_input_tokens: 0,
+            cached_input_tokens: self.usage.input_token_details.cache_read_tokens,
             cache_creation_input_tokens: 0,
         })
     }
@@ -103,6 +127,8 @@ struct ConvexActionArgs {
     system: Option<String>,
     prompt: Option<String>,
     messages_json: String,
+    guest_id: Option<String>,
+    stream_message_id: Option<String>,
     tools: Vec<ToolDefinition>,
     tool_choice: Option<ConvexToolChoice>,
 }
@@ -151,6 +177,8 @@ impl CompletionModel for ConvexCompletionModel {
             system,
             prompt: None,
             messages_json: messages.to_string(),
+            guest_id: self.client.guest_id.as_deref().map(str::to_owned),
+            stream_message_id: self.client.stream_message_id.as_deref().map(str::to_owned),
             tools: request.tools.clone(),
             tool_choice: request.tool_choice.as_ref().map(convert_tool_choice),
         };
@@ -173,10 +201,27 @@ impl CompletionModel for ConvexCompletionModel {
         request: CompletionRequest,
     ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
         let completion = self.completion(request).await?;
-        let message_chunk =
-            RawStreamingChoice::Message(text_from_choice(&completion.choice).unwrap_or_default());
-        let final_chunk = RawStreamingChoice::FinalResponse(completion.raw_response.clone());
-        let stream = stream::iter(vec![Ok(message_chunk), Ok(final_chunk)]);
+        let mut chunks: Vec<Result<RawStreamingChoice<ConvexCompletionOutput>, CompletionError>> =
+            Vec::new();
+        if !completion.raw_response.text.is_empty() {
+            chunks.push(Ok(RawStreamingChoice::Message(
+                completion.raw_response.text.clone(),
+            )));
+        }
+        for tool_call in &completion.raw_response.tool_calls {
+            chunks.push(Ok(RawStreamingChoice::ToolCall(
+                RawStreamingToolCall::new(
+                    tool_call.id.clone(),
+                    tool_call.name.clone(),
+                    tool_call.arguments.clone(),
+                )
+                .with_call_id(tool_call.id.clone()),
+            )));
+        }
+        chunks.push(Ok(RawStreamingChoice::FinalResponse(
+            completion.raw_response.clone(),
+        )));
+        let stream = stream::iter(chunks);
         Ok(StreamingCompletionResponse::stream(Box::pin(stream)))
     }
 }
@@ -216,6 +261,15 @@ fn action_args(args: &ConvexActionArgs) -> BTreeMap<String, Value> {
         "messagesJson".to_string(),
         args.messages_json.clone().into(),
     );
+    if let Some(guest_id) = &args.guest_id {
+        payload.insert("guestId".to_string(), guest_id.clone().into());
+    }
+    if let Some(stream_message_id) = &args.stream_message_id {
+        payload.insert(
+            "streamMessageId".to_string(),
+            stream_message_id.clone().into(),
+        );
+    }
     if let Some(system) = &args.system {
         payload.insert("system".to_string(), system.clone().into());
     }
@@ -345,7 +399,7 @@ pub(crate) fn build_model_messages(
                         }
                         rig::completion::message::UserContent::ToolResult(result) => {
                             let tool_call_id =
-                                result.call_id.clone().unwrap_or_else(|| result.id.clone());
+                                require_tool_call_id(result.call_id.as_deref(), "tool result")?;
                             let output = result
                                 .content
                                 .iter()
@@ -361,7 +415,7 @@ pub(crate) fn build_model_messages(
                                 "type": "tool-result",
                                 "toolCallId": tool_call_id,
                                 "toolName": tool_names_by_call_id
-                                    .get(result.call_id.as_deref().unwrap_or(&result.id))
+                                    .get(tool_call_id)
                                     .cloned()
                                     .unwrap_or_else(|| "unknown_tool".to_string()),
                                 "output": tool_result_output(&output)
@@ -409,10 +463,9 @@ pub(crate) fn build_model_messages(
                             }
                         }
                         rig::completion::message::AssistantContent::ToolCall(tool_call) => {
-                            let tool_call_id = tool_call
-                                .call_id
-                                .clone()
-                                .unwrap_or_else(|| tool_call.id.clone());
+                            let tool_call_id =
+                                require_tool_call_id(tool_call.call_id.as_deref(), "tool call")?
+                                    .to_string();
                             tool_names_by_call_id
                                 .insert(tool_call_id.clone(), tool_call.function.name.clone());
                             parts.push(serde_json::json!({
@@ -441,6 +494,15 @@ pub(crate) fn build_model_messages(
     }
 
     Ok(serde_json::Value::Array(messages))
+}
+
+fn require_tool_call_id<'a>(
+    call_id: Option<&'a str>,
+    what: &str,
+) -> Result<&'a str, CompletionError> {
+    call_id.ok_or_else(|| {
+        CompletionError::ProviderError(format!("{what} is missing call_id in agent history"))
+    })
 }
 
 fn tool_result_output(output: &str) -> serde_json::Value {
@@ -495,23 +557,6 @@ pub(crate) fn system_text(request: &CompletionRequest) -> Option<String> {
             Message::System { content } => Some(content.clone()),
             _ => None,
         })
-}
-
-fn text_from_choice(choice: &OneOrMany<AssistantContent>) -> Option<String> {
-    let parts = choice
-        .iter()
-        .filter_map(|content| match content {
-            AssistantContent::Text(text) => Some(text.text.clone()),
-            AssistantContent::Reasoning(reasoning) => Some(reasoning.display_text()),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-
-    if parts.is_empty() {
-        None
-    } else {
-        Some(parts.join("\n"))
-    }
 }
 
 pub(crate) fn to_completion_error(error: anyhow::Error) -> CompletionError {

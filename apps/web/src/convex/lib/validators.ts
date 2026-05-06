@@ -140,6 +140,103 @@ export const vThreadMessageStatus = v.union(
 
 export type ThreadMessageStatus = Infer<typeof vThreadMessageStatus>;
 
+export const vAssistantTextPart = v.object({
+	type: v.literal('text'),
+	id: v.string(),
+	text: v.string()
+});
+
+export const vAssistantReasoningPart = v.object({
+	type: v.literal('reasoning'),
+	id: v.string(),
+	text: v.string()
+});
+
+export const vAssistantToolCallPart = v.object({
+	type: v.literal('tool-call'),
+	callId: v.string(),
+	name: v.string(),
+	input: v.any()
+});
+
+export const vAssistantToolResultPart = v.object({
+	type: v.literal('tool-result'),
+	callId: v.string(),
+	name: v.optional(v.string()),
+	output: v.any()
+});
+
+export const vAssistantMessagePart = v.union(
+	vAssistantTextPart,
+	vAssistantReasoningPart,
+	vAssistantToolCallPart,
+	vAssistantToolResultPart
+);
+
+export const vAgentHistoryRole = v.union(
+	v.literal('system'),
+	v.literal('user'),
+	v.literal('assistant')
+);
+
+export const vAgentHistoryToolResultItem = v.union(
+	v.object({
+		type: v.literal('text'),
+		text: v.string()
+	}),
+	v.object({
+		type: v.literal('image'),
+		imageJson: v.string()
+	})
+);
+
+export const vAgentHistoryContent = v.union(
+	v.object({
+		type: v.literal('text'),
+		text: v.string()
+	}),
+	v.object({
+		type: v.literal('reasoning'),
+		id: v.optional(v.string()),
+		blocksJson: v.string()
+	}),
+	v.object({
+		type: v.literal('toolCall'),
+		callId: v.string(),
+		name: v.string(),
+		argumentsJson: v.string(),
+		signature: v.optional(v.string()),
+		additionalParamsJson: v.optional(v.string())
+	}),
+	v.object({
+		type: v.literal('toolResult'),
+		callId: v.string(),
+		items: v.array(vAgentHistoryToolResultItem)
+	}),
+	v.object({
+		type: v.literal('image'),
+		imageJson: v.string()
+	}),
+	v.object({
+		type: v.literal('audio'),
+		audioJson: v.string()
+	}),
+	v.object({
+		type: v.literal('video'),
+		videoJson: v.string()
+	}),
+	v.object({
+		type: v.literal('document'),
+		documentJson: v.string()
+	})
+);
+
+export const vAgentHistoryMessage = v.object({
+	role: vAgentHistoryRole,
+	assistantId: v.optional(v.string()),
+	contents: v.array(vAgentHistoryContent)
+});
+
 export const threadMessageFinalStatus = ['success', 'failed'] as const;
 
 export const vThreadMessageFinalStatus = v.union(...literals(threadMessageFinalStatus));

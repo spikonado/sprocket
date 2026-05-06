@@ -199,6 +199,12 @@ export type ThreadMessage = {
 	role: Infer<typeof vThreadMessageRole>;
 	status: Infer<typeof vThreadMessageStatus>;
 	text: string;
+	parts?: Array<
+		| { type: 'text'; id: string; text: string }
+		| { type: 'reasoning'; id: string; text: string }
+		| { type: 'tool-call'; callId: string; name: string; input: unknown }
+		| { type: 'tool-result'; callId: string; name?: string; output: unknown }
+	>;
 	order: number;
 	stepOrder: number;
 	agentName?: string;

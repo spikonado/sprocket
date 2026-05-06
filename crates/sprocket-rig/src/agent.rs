@@ -1,6 +1,8 @@
 use anyhow::anyhow;
+use futures::StreamExt;
 use rig::client::CompletionClient;
-use rig::completion::Prompt;
+use rig::completion::Message;
+use rig::streaming::StreamingPrompt;
 use sprocket_core::{
     WorkspaceInstruction, WorkspaceOverview, build_workspace_overview, load_workspace_instructions,
     resolve_workspace_root,
@@ -8,9 +10,10 @@ use sprocket_core::{
 
 use crate::runtime::RuntimeClient;
 use crate::tools::workspace_tools;
-use crate::types::{RunAgentRequest, ThreadMessageSnapshot};
+use crate::types::{RunAgentRequest, ThreadMessageSnapshot, deserialize_agent_history};
 
 const AGENT_MAX_TURNS: usize = 75;
+const MAX_PERSISTED_HISTORY_MESSAGES: usize = 200;
 
 fn build_workspace_preamble(
     workspace_path: &str,
@@ -78,35 +81,20 @@ fn build_workspace_preamble(
     .join("\n")
 }
 
-fn build_prompt(messages: &[ThreadMessageSnapshot]) -> anyhow::Result<String> {
-    let latest_user_index = messages
+fn latest_user_prompt(messages: &[ThreadMessageSnapshot]) -> anyhow::Result<String> {
+    messages
         .iter()
-        .rposition(|message| message.role == "user" && !message.text.trim().is_empty())
-        .ok_or_else(|| anyhow!("run does not contain a user prompt"))?;
+        .rfind(|message| message.role == "user" && !message.text.trim().is_empty())
+        .map(|message| message.text.trim().to_string())
+        .ok_or_else(|| anyhow!("run does not contain a user prompt"))
+}
 
-    let history = messages[..latest_user_index]
-        .iter()
-        .filter(|message| !message.text.trim().is_empty())
-        .map(|message| {
-            let role = if message.role == "assistant" {
-                "Assistant"
-            } else {
-                "User"
-            };
-            format!("{role}:\n{}", message.text.trim())
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n");
-
-    let current_prompt = messages[latest_user_index].text.trim();
-
-    if history.is_empty() {
-        Ok(current_prompt.to_string())
-    } else {
-        Ok(format!(
-            "Conversation so far:\n{history}\n\nCurrent user request:\n{current_prompt}"
-        ))
+fn trim_history(mut history: Vec<Message>) -> Vec<Message> {
+    if history.len() > MAX_PERSISTED_HISTORY_MESSAGES {
+        let keep_from = history.len() - MAX_PERSISTED_HISTORY_MESSAGES;
+        history.drain(0..keep_from);
     }
+    history
 }
 
 pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
@@ -127,7 +115,8 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
 
     let workspace_overview = build_workspace_overview(&workspace_root)?;
     let workspace_instructions = load_workspace_instructions(&workspace_root)?;
-    let prompt = build_prompt(&context.messages)?;
+    let prompt = latest_user_prompt(&context.messages)?;
+    let prior_history = deserialize_agent_history(context.agent_history)?;
     let preamble = build_workspace_preamble(
         &context.workspace_session.workspace_path,
         &workspace_overview,
@@ -137,7 +126,8 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
     let completion_client = runtime
         .client
         .clone()
-        .with_reasoning_effort(context.run.reasoning_effort.clone());
+        .with_reasoning_effort(context.run.reasoning_effort.clone())
+        .with_stream_target(Some(assistant_message_id.clone()), request.guest_id.clone());
 
     let tools = workspace_tools(
         runtime.clone(),
@@ -158,30 +148,55 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
     }
 
     eprintln!("sprocket-rig: prompting model {}", request.run_id);
-    match agent.prompt(prompt).max_turns(AGENT_MAX_TURNS).await {
-        Ok(response) => {
-            eprintln!("sprocket-rig: model completed {}", request.run_id);
-            runtime
-                .finish_assistant_message(&assistant_message_id, &response, "success")
-                .await?;
-            runtime
-                .finish_run(&request.run_id, "completed", None)
-                .await?;
-            Ok(())
-        }
-        Err(error) => {
-            let error_text = error.to_string();
-            eprintln!(
-                "sprocket-rig: model failed {}: {}",
-                request.run_id, error_text
-            );
-            runtime
-                .finish_assistant_message(&assistant_message_id, "", "failed")
-                .await?;
-            runtime
-                .finish_run(&request.run_id, "failed", Some(&error_text))
-                .await?;
-            Err(anyhow!(error))
+    let mut stream = agent
+        .stream_prompt(prompt)
+        .with_history(prior_history)
+        .multi_turn(AGENT_MAX_TURNS)
+        .await;
+    let mut final_text = String::new();
+    let mut final_history: Option<Vec<Message>> = None;
+
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(rig::agent::MultiTurnStreamItem::FinalResponse(response)) => {
+                final_text = response.response().to_string();
+                final_history = response.history().map(|history| history.to_vec());
+            }
+            Ok(_) => {}
+            Err(error) => {
+                let error_text = error.to_string();
+                eprintln!(
+                    "sprocket-rig: model failed {}: {}",
+                    request.run_id, error_text
+                );
+                runtime
+                    .finish_assistant_message(&assistant_message_id, &final_text, "failed")
+                    .await?;
+                runtime
+                    .finish_run(&request.run_id, "failed", Some(&error_text))
+                    .await?;
+                return Err(anyhow!(error));
+            }
         }
     }
+
+    eprintln!("sprocket-rig: model completed {}", request.run_id);
+    runtime
+        .finish_assistant_message(&assistant_message_id, &final_text, "success")
+        .await?;
+    runtime
+        .finish_run(&request.run_id, "completed", None)
+        .await?;
+    if let Some(history) = final_history {
+        if let Err(error) = runtime
+            .update_agent_history(&request.run_id, trim_history(history))
+            .await
+        {
+            eprintln!(
+                "sprocket-rig: failed to persist agent history for {}: {}",
+                request.run_id, error
+            );
+        }
+    }
+    Ok(())
 }

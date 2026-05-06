@@ -18,10 +18,11 @@ import {
 	vExecutorJobKind,
 	vExecutorJobPayload,
 	vRunFinalStatus,
-	vThreadMessageFinalStatus,
-	vThreadMessageStatus
+	vAssistantMessagePart,
+	vAgentHistoryMessage,
+	vThreadMessageFinalStatus
 } from '@convex/lib/validators';
-import { Doc, Id } from './_generated/dataModel';
+import type { Doc, Id } from './_generated/dataModel';
 
 export const start = mutation({
 	args: {
@@ -62,11 +63,16 @@ export const getContext = query({
 			userId,
 			run.workspaceSessionId
 		);
+		const historyRecord: Doc<'agentHistoryRecords'> | null = await ctx.db
+			.query('agentHistoryRecords')
+			.withIndex('by_threadId', (query) => query.eq('threadId', run.threadId))
+			.first();
 		const messages: Doc<'threadMessages'>[] = await listThreadMessages(ctx, run.threadId);
 
 		return {
 			run,
 			threadRecord,
+			agentHistory: historyRecord?.history,
 			workspaceSession,
 			messages: messages.sort((left, right) => {
 				if (left.order !== right.order) {
@@ -87,6 +93,19 @@ export const isFinished = query({
 		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		return isRunFinalStatus(run.status);
+	}
+});
+
+export const getAssistantMessage = query({
+	args: {
+		guestId: v.optional(v.string()),
+		messageId: v.id('threadMessages')
+	},
+	handler: async (ctx, args) => {
+		const userId: string = await getUserId(ctx, args.guestId);
+		const message: Doc<'threadMessages'> = await getThreadMessage(ctx, args.messageId);
+		await getOwnedThreadRecord(ctx.db, userId, message.threadId);
+		return message;
 	}
 });
 
@@ -132,7 +151,7 @@ export const updateAssistantMessage = mutation({
 		guestId: v.optional(v.string()),
 		messageId: v.id('threadMessages'),
 		text: v.string(),
-		status: v.optional(vThreadMessageStatus)
+		parts: v.optional(v.array(vAssistantMessagePart))
 	},
 	handler: async (ctx, args) => {
 		const userId: string = await getUserId(ctx, args.guestId);
@@ -140,7 +159,7 @@ export const updateAssistantMessage = mutation({
 		await getOwnedThreadRecord(ctx.db, userId, message.threadId);
 		await ctx.db.patch(args.messageId, {
 			text: args.text,
-			...(args.status ? { status: args.status } : {})
+			...(args.parts ? { parts: args.parts } : {})
 		});
 	}
 });
@@ -156,8 +175,10 @@ export const finishAssistantMessage = mutation({
 		const userId: string = await getUserId(ctx, args.guestId);
 		const message: Doc<'threadMessages'> = await getThreadMessage(ctx, args.messageId);
 		await getOwnedThreadRecord(ctx.db, userId, message.threadId);
+		const nextText =
+			args.text.trim().length === 0 && message.text.trim().length > 0 ? message.text : args.text;
 		await ctx.db.patch(args.messageId, {
-			text: args.text,
+			text: nextText,
 			status: args.status,
 			completedAt: Date.now()
 		});
@@ -186,6 +207,37 @@ export const finishRun = mutation({
 				});
 			}
 		}
+	}
+});
+
+export const updateAgentHistory = mutation({
+	args: {
+		guestId: v.optional(v.string()),
+		runId: v.id('runs'),
+		history: v.array(vAgentHistoryMessage)
+	},
+	handler: async (ctx, args) => {
+		const userId: string = await getUserId(ctx, args.guestId);
+		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
+		await getOwnedThreadRecord(ctx.db, userId, run.threadId);
+		const existingRecord: Doc<'agentHistoryRecords'> | null = await ctx.db
+			.query('agentHistoryRecords')
+			.withIndex('by_threadId', (query) => query.eq('threadId', run.threadId))
+			.first();
+		if (existingRecord) {
+			await ctx.db.patch(existingRecord._id, {
+				history: args.history,
+				updatedAt: Date.now()
+			});
+			return;
+		}
+
+		await ctx.db.insert('agentHistoryRecords', {
+			userId,
+			threadId: run.threadId,
+			history: args.history,
+			updatedAt: Date.now()
+		});
 	}
 });
 

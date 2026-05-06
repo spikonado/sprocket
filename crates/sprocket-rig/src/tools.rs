@@ -123,7 +123,7 @@ impl rig::tool::Tool for ReadFileTool {
                 )
                 .await
                 .map_err(tool_error)?;
-                Ok(serde_json::json!({
+                let mut value = serde_json::json!({
                     "path": output.path,
                     "exists": output.exists,
                     "startLine": output.start_line,
@@ -131,8 +131,11 @@ impl rig::tool::Tool for ReadFileTool {
                     "totalLines": output.total_lines,
                     "truncated": output.truncated,
                     "contents": output.contents,
-                    "error": output.error,
-                }))
+                });
+                if let Some(error) = output.error {
+                    value["error"] = serde_json::json!(error);
+                }
+                Ok(value)
             },
         )
         .await

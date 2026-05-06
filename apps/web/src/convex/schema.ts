@@ -9,6 +9,8 @@ import {
 	vModelId,
 	vReasoningEffort,
 	vRunStatus,
+	vAssistantMessagePart,
+	vAgentHistoryMessage,
 	vThreadMessageRole,
 	vThreadMessageStatus,
 	vWorkspaceOverview
@@ -51,6 +53,14 @@ export default defineSchema({
 		.index('by_userId_lastMessageAt', ['userId', 'lastMessageAt'])
 		.index('by_threadId', ['threadId'])
 		.index('by_workspaceSessionId', ['workspaceSessionId']),
+	agentHistoryRecords: defineTable({
+		userId: v.string(),
+		threadId: v.string(),
+		history: v.array(vAgentHistoryMessage),
+		updatedAt: v.number()
+	})
+		.index('by_threadId', ['threadId'])
+		.index('by_userId_updatedAt', ['userId', 'updatedAt']),
 	runs: defineTable({
 		threadId: v.string(),
 		userId: v.string(),
@@ -73,6 +83,7 @@ export default defineSchema({
 		role: vThreadMessageRole,
 		status: vThreadMessageStatus,
 		text: v.string(),
+		parts: v.optional(v.array(vAssistantMessagePart)),
 		order: v.number(),
 		stepOrder: v.number(),
 		agentName: v.optional(v.string()),
