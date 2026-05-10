@@ -18,7 +18,7 @@ export const getMine = query({
 export const setLastThread = mutation({
 	args: {
 		guestId: v.optional(v.string()),
-		threadId: v.string()
+		threadId: v.id('threadRecords')
 	},
 	handler: async (ctx, args) => {
 		const userId: string = await getUserId(ctx, args.guestId);

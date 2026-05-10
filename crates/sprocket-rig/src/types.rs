@@ -2,7 +2,7 @@ use anyhow::{Context, anyhow};
 use rig::OneOrMany;
 use rig::completion::Message;
 use rig::message::{
-    AssistantContent, Reasoning, ReasoningContent, Text, ToolCall, ToolFunction, ToolResult,
+    AssistantContent, ReasoningContent, Text, ToolCall, ToolFunction, ToolResult,
     ToolResultContent, UserContent,
 };
 use serde::{Deserialize, Deserializer, Serialize};
@@ -32,23 +32,23 @@ pub struct ThreadMessageSnapshot {
 pub struct RunContextResponse {
     pub run: RunSnapshot,
     pub thread_record: ThreadRecordSnapshot,
-    pub agent_history: Option<Vec<PersistedAgentHistoryMessage>>,
+    pub agent_history: Vec<AgentHistoryMessage>,
     pub workspace_session: WorkspaceSessionSnapshot,
     pub messages: Vec<ThreadMessageSnapshot>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PersistedAgentHistoryMessage {
-    pub role: PersistedAgentHistoryRole,
+pub struct AgentHistoryMessage {
+    pub role: AgentHistoryRole,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assistant_id: Option<String>,
-    pub contents: Vec<PersistedAgentHistoryContent>,
+    pub contents: Vec<AgentHistoryContent>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum PersistedAgentHistoryRole {
+pub enum AgentHistoryRole {
     System,
     User,
     Assistant,
@@ -60,7 +60,7 @@ pub enum PersistedAgentHistoryRole {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
-pub enum PersistedAgentHistoryContent {
+pub enum AgentHistoryContent {
     Text {
         text: String,
     },
@@ -80,7 +80,7 @@ pub enum PersistedAgentHistoryContent {
     },
     ToolResult {
         call_id: String,
-        items: Vec<PersistedAgentHistoryToolResultItem>,
+        items: Vec<AgentHistoryToolResultItem>,
     },
     Image {
         image_json: String,
@@ -102,7 +102,7 @@ pub enum PersistedAgentHistoryContent {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
-pub enum PersistedAgentHistoryToolResultItem {
+pub enum AgentHistoryToolResultItem {
     Text { text: String },
     Image { image_json: String },
 }
@@ -121,7 +121,9 @@ pub struct RunSnapshot {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadRecordSnapshot {
-    pub thread_id: String,
+    #[serde(rename = "_id")]
+    pub id: String,
+    pub workspace_session_id: String,
     pub workspace_path: String,
     pub title: Option<String>,
 }
@@ -157,75 +159,11 @@ fn vec_to_one_or_many<T: Clone>(items: Vec<T>, what: &str) -> anyhow::Result<One
     OneOrMany::many(items).map_err(|_| anyhow!("{what} cannot be empty"))
 }
 
-fn to_json_string<T: Serialize>(value: &T, what: &str) -> anyhow::Result<String> {
-    serde_json::to_string(value).with_context(|| format!("failed to serialize {what}"))
-}
-
 fn from_json_string<T: for<'de> Deserialize<'de>>(value: &str, what: &str) -> anyhow::Result<T> {
     serde_json::from_str(value).with_context(|| format!("failed to deserialize {what}"))
 }
 
-fn require_call_id(call_id: Option<String>, what: &str) -> anyhow::Result<String> {
-    call_id.ok_or_else(|| anyhow!("{what} is missing call_id"))
-}
-
-impl PersistedAgentHistoryContent {
-    fn from_user_content(content: UserContent) -> anyhow::Result<Self> {
-        match content {
-            UserContent::Text(Text { text }) => Ok(Self::Text { text }),
-            UserContent::ToolResult(ToolResult {
-                call_id, content, ..
-            }) => Ok(Self::ToolResult {
-                call_id: require_call_id(call_id, "tool result")?,
-                items: content
-                    .into_iter()
-                    .map(PersistedAgentHistoryToolResultItem::from_tool_result_content)
-                    .collect::<anyhow::Result<Vec<_>>>()?,
-            }),
-            UserContent::Image(image) => Ok(Self::Image {
-                image_json: to_json_string(&image, "history image")?,
-            }),
-            UserContent::Audio(audio) => Ok(Self::Audio {
-                audio_json: to_json_string(&audio, "history audio")?,
-            }),
-            UserContent::Video(video) => Ok(Self::Video {
-                video_json: to_json_string(&video, "history video")?,
-            }),
-            UserContent::Document(document) => Ok(Self::Document {
-                document_json: to_json_string(&document, "history document")?,
-            }),
-        }
-    }
-
-    fn from_assistant_content(content: AssistantContent) -> anyhow::Result<Self> {
-        match content {
-            AssistantContent::Text(Text { text }) => Ok(Self::Text { text }),
-            AssistantContent::Reasoning(Reasoning { id, content, .. }) => Ok(Self::Reasoning {
-                id,
-                blocks_json: to_json_string(&content, "reasoning blocks")?,
-            }),
-            AssistantContent::ToolCall(ToolCall {
-                call_id,
-                function,
-                signature,
-                additional_params,
-                ..
-            }) => Ok(Self::ToolCall {
-                call_id: require_call_id(call_id, "tool call")?,
-                name: function.name,
-                arguments_json: to_json_string(&function.arguments, "tool call arguments")?,
-                signature,
-                additional_params_json: additional_params
-                    .as_ref()
-                    .map(|params| to_json_string(params, "tool call additional params"))
-                    .transpose()?,
-            }),
-            AssistantContent::Image(image) => Ok(Self::Image {
-                image_json: to_json_string(&image, "assistant image")?,
-            }),
-        }
-    }
-
+impl AgentHistoryContent {
     fn into_user_content(self) -> anyhow::Result<UserContent> {
         match self {
             Self::Text { text } => Ok(UserContent::Text(Text { text })),
@@ -235,7 +173,7 @@ impl PersistedAgentHistoryContent {
                 content: vec_to_one_or_many(
                     items
                         .into_iter()
-                        .map(PersistedAgentHistoryToolResultItem::into_tool_result_content)
+                        .map(AgentHistoryToolResultItem::into_tool_result_content)
                         .collect::<anyhow::Result<Vec<_>>>()?,
                     "tool result items",
                 )?,
@@ -308,16 +246,7 @@ impl PersistedAgentHistoryContent {
     }
 }
 
-impl PersistedAgentHistoryToolResultItem {
-    fn from_tool_result_content(content: ToolResultContent) -> anyhow::Result<Self> {
-        match content {
-            ToolResultContent::Text(Text { text }) => Ok(Self::Text { text }),
-            ToolResultContent::Image(image) => Ok(Self::Image {
-                image_json: to_json_string(&image, "tool result image")?,
-            }),
-        }
-    }
-
+impl AgentHistoryToolResultItem {
     fn into_tool_result_content(self) -> anyhow::Result<ToolResultContent> {
         match self {
             Self::Text { text } => Ok(ToolResultContent::Text(Text { text })),
@@ -329,69 +258,39 @@ impl PersistedAgentHistoryToolResultItem {
     }
 }
 
-impl TryFrom<Message> for PersistedAgentHistoryMessage {
+impl TryFrom<AgentHistoryMessage> for Message {
     type Error = anyhow::Error;
 
-    fn try_from(message: Message) -> Result<Self, Self::Error> {
-        match message {
-            Message::System { content } => Ok(Self {
-                role: PersistedAgentHistoryRole::System,
-                assistant_id: None,
-                contents: vec![PersistedAgentHistoryContent::Text { text: content }],
-            }),
-            Message::User { content } => Ok(Self {
-                role: PersistedAgentHistoryRole::User,
-                assistant_id: None,
-                contents: content
-                    .into_iter()
-                    .map(PersistedAgentHistoryContent::from_user_content)
-                    .collect::<anyhow::Result<Vec<_>>>()?,
-            }),
-            Message::Assistant { id, content } => Ok(Self {
-                role: PersistedAgentHistoryRole::Assistant,
-                assistant_id: id,
-                contents: content
-                    .into_iter()
-                    .map(PersistedAgentHistoryContent::from_assistant_content)
-                    .collect::<anyhow::Result<Vec<_>>>()?,
-            }),
-        }
-    }
-}
-
-impl TryFrom<PersistedAgentHistoryMessage> for Message {
-    type Error = anyhow::Error;
-
-    fn try_from(message: PersistedAgentHistoryMessage) -> Result<Self, Self::Error> {
+    fn try_from(message: AgentHistoryMessage) -> Result<Self, Self::Error> {
         match message.role {
-            PersistedAgentHistoryRole::System => {
+            AgentHistoryRole::System => {
                 let text = message
                     .contents
                     .into_iter()
                     .find_map(|content| match content {
-                        PersistedAgentHistoryContent::Text { text } => Some(text),
+                        AgentHistoryContent::Text { text } => Some(text),
                         _ => None,
                     })
                     .ok_or_else(|| anyhow!("system history message is missing text content"))?;
                 Ok(Message::System { content: text })
             }
-            PersistedAgentHistoryRole::User => Ok(Message::User {
+            AgentHistoryRole::User => Ok(Message::User {
                 content: vec_to_one_or_many(
                     message
                         .contents
                         .into_iter()
-                        .map(PersistedAgentHistoryContent::into_user_content)
+                        .map(AgentHistoryContent::into_user_content)
                         .collect::<anyhow::Result<Vec<_>>>()?,
                     "user history contents",
                 )?,
             }),
-            PersistedAgentHistoryRole::Assistant => Ok(Message::Assistant {
+            AgentHistoryRole::Assistant => Ok(Message::Assistant {
                 id: message.assistant_id,
                 content: vec_to_one_or_many(
                     message
                         .contents
                         .into_iter()
-                        .map(PersistedAgentHistoryContent::into_assistant_content)
+                        .map(AgentHistoryContent::into_assistant_content)
                         .collect::<anyhow::Result<Vec<_>>>()?,
                     "assistant history contents",
                 )?,
@@ -400,91 +299,29 @@ impl TryFrom<PersistedAgentHistoryMessage> for Message {
     }
 }
 
-pub(crate) fn serialize_agent_history(
-    history: Vec<Message>,
-) -> anyhow::Result<Vec<PersistedAgentHistoryMessage>> {
-    history
-        .into_iter()
-        .map(PersistedAgentHistoryMessage::try_from)
-        .collect()
-}
-
 pub(crate) fn deserialize_agent_history(
-    history: Option<Vec<PersistedAgentHistoryMessage>>,
+    history: Vec<AgentHistoryMessage>,
 ) -> anyhow::Result<Vec<Message>> {
-    history
-        .unwrap_or_default()
-        .into_iter()
-        .map(Message::try_from)
-        .collect()
+    history.into_iter().map(Message::try_from).collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use rig::OneOrMany;
     use rig::completion::Message;
-    use rig::message::{AssistantContent, ToolResultContent, UserContent};
+    use rig::message::{AssistantContent, UserContent};
 
     use super::{
-        PersistedAgentHistoryContent, PersistedAgentHistoryMessage, PersistedAgentHistoryRole,
-        deserialize_agent_history, serialize_agent_history,
+        AgentHistoryContent, AgentHistoryMessage, AgentHistoryRole, AgentHistoryToolResultItem,
+        deserialize_agent_history,
     };
-
-    #[test]
-    fn serializes_tool_history_with_call_id_only() {
-        let history = vec![
-            Message::Assistant {
-                id: None,
-                content: OneOrMany::many(vec![AssistantContent::tool_call_with_call_id(
-                    "tool_call_1",
-                    "call_1".to_string(),
-                    "read_file",
-                    serde_json::json!({ "path": "src/lib.rs" }),
-                )])
-                .expect("assistant content"),
-            },
-            Message::User {
-                content: OneOrMany::many(vec![UserContent::tool_result_with_call_id(
-                    "tool_result_1",
-                    "call_1".to_string(),
-                    OneOrMany::one(ToolResultContent::text("{\"ok\":true}")),
-                )])
-                .expect("user content"),
-            },
-        ];
-
-        let persisted = serialize_agent_history(history).expect("persisted history");
-
-        match &persisted[0].contents[0] {
-            PersistedAgentHistoryContent::ToolCall { call_id, .. } => {
-                assert_eq!(call_id, "call_1");
-            }
-            other => panic!("expected tool call, got {other:?}"),
-        }
-
-        match &persisted[1].contents[0] {
-            PersistedAgentHistoryContent::ToolResult { call_id, .. } => {
-                assert_eq!(call_id, "call_1");
-            }
-            other => panic!("expected tool result, got {other:?}"),
-        }
-
-        let json = serde_json::to_value(&persisted).expect("persisted json");
-        let first = &json[0]["contents"][0];
-        let second = &json[1]["contents"][0];
-        assert!(first.get("id").is_none());
-        assert_eq!(first["callId"], "call_1");
-        assert!(second.get("id").is_none());
-        assert_eq!(second["callId"], "call_1");
-    }
 
     #[test]
     fn deserializes_tool_history_into_rig_messages_with_matching_ids() {
         let history = vec![
-            PersistedAgentHistoryMessage {
-                role: PersistedAgentHistoryRole::Assistant,
+            AgentHistoryMessage {
+                role: AgentHistoryRole::Assistant,
                 assistant_id: None,
-                contents: vec![PersistedAgentHistoryContent::ToolCall {
+                contents: vec![AgentHistoryContent::ToolCall {
                     call_id: "call_1".to_string(),
                     name: "read_file".to_string(),
                     arguments_json: "{\"path\":\"src/lib.rs\"}".to_string(),
@@ -492,19 +329,19 @@ mod tests {
                     additional_params_json: None,
                 }],
             },
-            PersistedAgentHistoryMessage {
-                role: PersistedAgentHistoryRole::User,
+            AgentHistoryMessage {
+                role: AgentHistoryRole::User,
                 assistant_id: None,
-                contents: vec![PersistedAgentHistoryContent::ToolResult {
+                contents: vec![AgentHistoryContent::ToolResult {
                     call_id: "call_1".to_string(),
-                    items: vec![super::PersistedAgentHistoryToolResultItem::Text {
+                    items: vec![AgentHistoryToolResultItem::Text {
                         text: "{\"ok\":true}".to_string(),
                     }],
                 }],
             },
         ];
 
-        let messages = deserialize_agent_history(Some(history)).expect("messages");
+        let messages = deserialize_agent_history(history).expect("messages");
 
         match &messages[0] {
             Message::Assistant { content, .. } => match content.iter().next() {

@@ -6,7 +6,9 @@ import type { ThreadSummary } from '$lib/types/sprocket';
 function makeThreadSummary(overrides: Partial<ThreadSummary> = {}): ThreadSummary {
 	return {
 		_id: (overrides._id ?? 'thread-record-1') as ThreadSummary['_id'],
-		threadId: overrides.threadId ?? 'thread-1',
+		threadId: (overrides.threadId ??
+			overrides._id ??
+			'thread-record-1') as ThreadSummary['threadId'],
 		workspaceSessionId: (overrides.workspaceSessionId ??
 			'workspace-1') as ThreadSummary['workspaceSessionId'],
 		workspacePath: overrides.workspacePath ?? '/tmp/workspace',
@@ -27,8 +29,8 @@ describe('thread selection helpers', () => {
 	it('finds a persisted thread when it still exists', () => {
 		const thread = makeThreadSummary();
 
-		expect(findThreadById([thread], 'thread-1')).toEqual(thread);
-		expect(findThreadById([thread], 'missing-thread')).toBeNull();
+		expect(findThreadById([thread], thread.threadId)).toEqual(thread);
+		expect(findThreadById([thread], 'missing-thread' as ThreadSummary['threadId'])).toBeNull();
 	});
 
 	it('preserves a blank draft selection for the current workspace', () => {
@@ -46,8 +48,8 @@ describe('thread selection helpers', () => {
 
 	it('falls back to the newest thread when no current selection is available', () => {
 		const threads = [
-			makeThreadSummary({ threadId: 'thread-2', lastMessageAt: 20 }),
-			makeThreadSummary({ threadId: 'thread-1', lastMessageAt: 10 })
+			makeThreadSummary({ _id: 'thread-record-2' as ThreadSummary['_id'], lastMessageAt: 20 }),
+			makeThreadSummary({ _id: 'thread-record-1' as ThreadSummary['_id'], lastMessageAt: 10 })
 		];
 
 		expect(
@@ -57,6 +59,6 @@ describe('thread selection helpers', () => {
 				currentWorkspaceSessionId: 'workspace-1' as ThreadSummary['workspaceSessionId'],
 				draftWorkspaceSessionId: null
 			})
-		).toBe('thread-2');
+		).toBe('thread-record-2');
 	});
 });

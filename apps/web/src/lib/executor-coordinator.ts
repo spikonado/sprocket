@@ -103,11 +103,9 @@ export function groupExecutorJobsByWorkspace(executorJobs: ExecutorJob[]) {
 	return jobsByWorkspace;
 }
 
-export function pickNextExecutorJobForWorkspace(executorJobs: ExecutorJob[], clientId: string) {
+export function pickNextExecutorJobForWorkspace(executorJobs: ExecutorJob[]) {
 	return (
-		executorJobs.find(
-			(executorJob) => executorJob.status === 'claimed' && executorJob.claimedBy === clientId
-		) ??
+		executorJobs.find((executorJob) => executorJob.status === 'claimed') ??
 		executorJobs.find((executorJob) => executorJob.status === 'pending') ??
 		null
 	);

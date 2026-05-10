@@ -16,7 +16,7 @@
 		isAuthenticated: boolean;
 		desktopAvailable: boolean;
 		currentWorkspaceSessionId: Id<'workspaceSessions'> | null;
-		currentThreadId: string | null;
+		currentThreadId: Id<'threadRecords'> | null;
 		groups: WorkspaceThreadGroup[];
 		onChooseWorkspace: () => void;
 		onAccountAction: () => void;

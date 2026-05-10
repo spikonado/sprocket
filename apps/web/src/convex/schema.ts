@@ -10,7 +10,6 @@ import {
 	vReasoningEffort,
 	vRunStatus,
 	vAssistantMessagePart,
-	vAgentHistoryMessage,
 	vThreadMessageRole,
 	vThreadMessageStatus,
 	vWorkspaceOverview
@@ -19,7 +18,7 @@ import {
 export default defineSchema({
 	uiPreferences: defineTable({
 		userId: v.string(),
-		lastThreadId: v.optional(v.string())
+		lastThreadId: v.optional(v.id('threadRecords'))
 	}).index('by_userId', ['userId']),
 	workspaceSessions: defineTable({
 		userId: v.string(),
@@ -39,7 +38,6 @@ export default defineSchema({
 		.index('by_user_workspacePath', ['userId', 'workspacePath']),
 	threadRecords: defineTable({
 		userId: v.string(),
-		threadId: v.string(),
 		workspaceSessionId: v.id('workspaceSessions'),
 		workspacePath: v.string(),
 		workspaceName: v.optional(v.string()),
@@ -51,18 +49,9 @@ export default defineSchema({
 		lastMessageAt: v.number()
 	})
 		.index('by_userId_lastMessageAt', ['userId', 'lastMessageAt'])
-		.index('by_threadId', ['threadId'])
 		.index('by_workspaceSessionId', ['workspaceSessionId']),
-	agentHistoryRecords: defineTable({
-		userId: v.string(),
-		threadId: v.string(),
-		history: v.array(vAgentHistoryMessage),
-		updatedAt: v.number()
-	})
-		.index('by_threadId', ['threadId'])
-		.index('by_userId_updatedAt', ['userId', 'updatedAt']),
 	runs: defineTable({
-		threadId: v.string(),
+		threadId: v.id('threadRecords'),
 		userId: v.string(),
 		workspaceSessionId: v.id('workspaceSessions'),
 		status: vRunStatus,
@@ -78,8 +67,8 @@ export default defineSchema({
 		.index('by_workspaceSessionId', ['workspaceSessionId'])
 		.index('by_userId_startedAt', ['userId', 'startedAt']),
 	threadMessages: defineTable({
-		threadId: v.string(),
-		runId: v.optional(v.id('runs')),
+		threadId: v.id('threadRecords'),
+		runId: v.id('runs'),
 		role: vThreadMessageRole,
 		status: vThreadMessageStatus,
 		text: v.string(),
@@ -91,17 +80,17 @@ export default defineSchema({
 		completedAt: v.optional(v.number())
 	})
 		.index('by_threadId_order', ['threadId', 'order'])
-		.index('by_runId', ['runId']),
+		.index('by_runId', ['runId'])
+		.index('by_runId_role', ['runId', 'role']),
 	executorJobs: defineTable({
 		workspaceSessionId: v.id('workspaceSessions'),
-		threadId: v.string(),
+		threadId: v.id('threadRecords'),
 		runId: v.id('runs'),
 		kind: vExecutorJobKind,
 		payload: vExecutorJobPayload,
 		hidden: v.optional(v.boolean()),
 		status: vExecutorJobStatus,
 		enqueuedAt: v.number(),
-		claimedBy: v.optional(v.string()),
 		claimedAt: v.optional(v.number()),
 		completedAt: v.optional(v.number()),
 		result: v.optional(vExecutorJobResult),
@@ -109,6 +98,7 @@ export default defineSchema({
 		sequence: v.number()
 	})
 		.index('by_workspaceSessionId_sequence', ['workspaceSessionId', 'sequence'])
+		.index('by_threadId_sequence', ['threadId', 'sequence'])
 		.index('by_runId_sequence', ['runId', 'sequence'])
 		.index('by_workspaceSessionId_status_sequence', ['workspaceSessionId', 'status', 'sequence'])
 });

@@ -16,7 +16,7 @@ async function sleep(milliseconds: number) {
 export const invoke = internalAction({
 	args: {
 		runId: v.id('runs'),
-		threadId: v.string(),
+		threadId: v.id('threadRecords'),
 		workspaceSessionId: v.id('workspaceSessions'),
 		kind: vExecutorJobKind,
 		payload: vExecutorJobPayload,

@@ -1,7 +1,6 @@
 use anyhow::anyhow;
 use futures::StreamExt;
 use rig::client::CompletionClient;
-use rig::completion::Message;
 use rig::streaming::StreamingPrompt;
 use sprocket_core::{
     WorkspaceInstruction, WorkspaceOverview, build_workspace_overview, load_workspace_instructions,
@@ -13,7 +12,7 @@ use crate::tools::workspace_tools;
 use crate::types::{RunAgentRequest, ThreadMessageSnapshot, deserialize_agent_history};
 
 const AGENT_MAX_TURNS: usize = 75;
-const MAX_PERSISTED_HISTORY_MESSAGES: usize = 200;
+const RUN_CANCELLED_ERROR: &str = "Run cancelled.";
 
 fn build_workspace_preamble(
     workspace_path: &str,
@@ -89,12 +88,8 @@ fn latest_user_prompt(messages: &[ThreadMessageSnapshot]) -> anyhow::Result<Stri
         .ok_or_else(|| anyhow!("run does not contain a user prompt"))
 }
 
-fn trim_history(mut history: Vec<Message>) -> Vec<Message> {
-    if history.len() > MAX_PERSISTED_HISTORY_MESSAGES {
-        let keep_from = history.len() - MAX_PERSISTED_HISTORY_MESSAGES;
-        history.drain(0..keep_from);
-    }
-    history
+fn is_run_cancelled_error(error: &str) -> bool {
+    error.contains(RUN_CANCELLED_ERROR)
 }
 
 pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
@@ -154,17 +149,25 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
         .multi_turn(AGENT_MAX_TURNS)
         .await;
     let mut final_text = String::new();
-    let mut final_history: Option<Vec<Message>> = None;
 
     while let Some(item) = stream.next().await {
         match item {
             Ok(rig::agent::MultiTurnStreamItem::FinalResponse(response)) => {
                 final_text = response.response().to_string();
-                final_history = response.history().map(|history| history.to_vec());
             }
             Ok(_) => {}
             Err(error) => {
                 let error_text = error.to_string();
+                if is_run_cancelled_error(&error_text) {
+                    eprintln!("sprocket-rig: run cancelled {}", request.run_id);
+                    runtime
+                        .finish_assistant_message(&assistant_message_id, &final_text, "failed")
+                        .await?;
+                    runtime
+                        .finish_run(&request.run_id, "cancelled", None)
+                        .await?;
+                    return Ok(());
+                }
                 eprintln!(
                     "sprocket-rig: model failed {}: {}",
                     request.run_id, error_text
@@ -180,6 +183,17 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
         }
     }
 
+    if runtime.run_finished(&request.run_id).await? {
+        eprintln!(
+            "sprocket-rig: run finished before completion finalization {}",
+            request.run_id
+        );
+        runtime
+            .finish_assistant_message(&assistant_message_id, &final_text, "failed")
+            .await?;
+        return Ok(());
+    }
+
     eprintln!("sprocket-rig: model completed {}", request.run_id);
     runtime
         .finish_assistant_message(&assistant_message_id, &final_text, "success")
@@ -187,16 +201,5 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
     runtime
         .finish_run(&request.run_id, "completed", None)
         .await?;
-    if let Some(history) = final_history {
-        if let Err(error) = runtime
-            .update_agent_history(&request.run_id, trim_history(history))
-            .await
-        {
-            eprintln!(
-                "sprocket-rig: failed to persist agent history for {}: {}",
-                request.run_id, error
-            );
-        }
-    }
     Ok(())
 }

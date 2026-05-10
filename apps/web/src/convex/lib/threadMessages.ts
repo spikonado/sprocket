@@ -1,7 +1,6 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
 import { ConvexError } from 'convex/values';
-import { getThreadRecordByThreadId } from '@convex/lib/access';
 import {
 	isThreadMessageFinalStatus,
 	type ThreadMessageRole,
@@ -9,8 +8,8 @@ import {
 } from '@convex/lib/validators';
 
 export type AppendThreadMessageArgs = {
-	threadId: string;
-	runId?: Id<'runs'>;
+	threadId: Id<'threadRecords'>;
+	runId: Id<'runs'>;
 	role: ThreadMessageRole;
 	status: ThreadMessageStatus;
 	text: string;
@@ -19,7 +18,7 @@ export type AppendThreadMessageArgs = {
 
 export async function listThreadMessages(
 	ctx: MutationCtx | QueryCtx,
-	threadId: string
+	threadId: Id<'threadRecords'>
 ): Promise<Doc<'threadMessages'>[]> {
 	return await ctx.db
 		.query('threadMessages')
@@ -42,10 +41,7 @@ export async function appendThreadMessage(
 	ctx: MutationCtx,
 	args: AppendThreadMessageArgs
 ): Promise<{ messageId: Id<'threadMessages'>; order: number }> {
-	const threadRecord: Doc<'threadRecords'> | null = await getThreadRecordByThreadId(
-		ctx.db,
-		args.threadId
-	);
+	const threadRecord = await ctx.db.get(args.threadId);
 	if (!threadRecord) {
 		throw new ConvexError('Thread not found.');
 	}

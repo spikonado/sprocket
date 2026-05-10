@@ -37,6 +37,15 @@ export type PersistedToolLogEntry = {
 	output?: unknown;
 };
 
+export type PersistableExecutorToolJob = {
+	id: string;
+	kind: string;
+	payload: unknown;
+	status: string;
+	result?: unknown;
+	error?: string;
+};
+
 export function cloneAssistantToolPayload<T>(value: T): T {
 	return value === undefined ? value : structuredClone(value);
 }
@@ -134,4 +143,67 @@ export function buildPersistedToolLogs(parts: AssistantPart[]): PersistedToolLog
 	}
 
 	return orderedLogs;
+}
+
+export function ensureAssistantToolPartsFromJobs(
+	parts: AssistantPart[],
+	jobs: PersistableExecutorToolJob[]
+): AssistantPart[] {
+	if (
+		parts.some((part) => {
+			return part.type === 'tool-call' || part.type === 'tool-result';
+		})
+	) {
+		return parts;
+	}
+
+	if (jobs.length === 0) {
+		return parts;
+	}
+
+	const nextParts = [...parts];
+	for (const job of jobs) {
+		const callId = `executor-job:${job.id}`;
+		nextParts.push({
+			type: 'tool-call',
+			callId,
+			name: job.kind,
+			input: cloneAssistantToolPayload(job.payload)
+		});
+
+		if (job.status === 'completed' && job.result !== undefined) {
+			nextParts.push({
+				type: 'tool-result',
+				callId,
+				name: job.kind,
+				output: cloneAssistantToolPayload(job.result)
+			});
+			continue;
+		}
+
+		if (job.status === 'failed') {
+			nextParts.push({
+				type: 'tool-result',
+				callId,
+				name: job.kind,
+				output: {
+					error: job.error ?? 'Executor job failed.'
+				}
+			});
+			continue;
+		}
+
+		if (job.status === 'cancelled') {
+			nextParts.push({
+				type: 'tool-result',
+				callId,
+				name: job.kind,
+				output: {
+					error: job.error ?? 'Executor job cancelled before completion.'
+				}
+			});
+		}
+	}
+
+	return nextParts;
 }

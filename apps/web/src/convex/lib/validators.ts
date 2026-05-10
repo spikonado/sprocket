@@ -237,6 +237,8 @@ export const vAgentHistoryMessage = v.object({
 	contents: v.array(vAgentHistoryContent)
 });
 
+export type AgentHistoryMessage = Infer<typeof vAgentHistoryMessage>;
+
 export const threadMessageFinalStatus = ['success', 'failed'] as const;
 
 export const vThreadMessageFinalStatus = v.union(...literals(threadMessageFinalStatus));

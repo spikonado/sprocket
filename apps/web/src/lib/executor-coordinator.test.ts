@@ -39,14 +39,13 @@ function makeExecutorJob(overrides: Partial<ExecutorJob> = {}): ExecutorJob {
 		_id: (overrides._id ?? 'job-1') as ExecutorJob['_id'],
 		workspaceSessionId: (overrides.workspaceSessionId ??
 			'ws-1') as ExecutorJob['workspaceSessionId'],
-		threadId: overrides.threadId ?? 'thread-1',
+		threadId: (overrides.threadId ?? 'thread-record-1') as ExecutorJob['threadId'],
 		runId: (overrides.runId ?? 'run-1') as ExecutorJob['runId'],
 		kind: overrides.kind ?? 'read_file',
 		payload: overrides.payload ?? { path: 'README.md' },
 		hidden: overrides.hidden,
 		status: overrides.status ?? 'pending',
 		enqueuedAt: overrides.enqueuedAt ?? 0,
-		claimedBy: overrides.claimedBy,
 		claimedAt: overrides.claimedAt,
 		completedAt: overrides.completedAt,
 		result: overrides.result,
@@ -58,7 +57,9 @@ function makeExecutorJob(overrides: Partial<ExecutorJob> = {}): ExecutorJob {
 function makeThreadSummary(overrides: Partial<ThreadSummary> = {}): ThreadSummary {
 	return {
 		_id: (overrides._id ?? 'thread-record-1') as ThreadSummary['_id'],
-		threadId: overrides.threadId ?? 'thread-1',
+		threadId: (overrides.threadId ??
+			overrides._id ??
+			'thread-record-1') as ThreadSummary['threadId'],
 		workspaceSessionId: (overrides.workspaceSessionId ??
 			'ws-1') as ThreadSummary['workspaceSessionId'],
 		workspacePath: '/tmp/workspace',
@@ -128,18 +129,14 @@ describe('executor coordinator helpers', () => {
 	});
 
 	it('prefers an already-claimed job for the same workspace before a pending job', () => {
-		const selectedJob = pickNextExecutorJobForWorkspace(
-			[
-				makeExecutorJob({ _id: 'job-1' as ExecutorJob['_id'], status: 'pending', sequence: 0 }),
-				makeExecutorJob({
-					_id: 'job-2' as ExecutorJob['_id'],
-					status: 'claimed',
-					claimedBy: 'client-1',
-					sequence: 1
-				})
-			],
-			'client-1'
-		);
+		const selectedJob = pickNextExecutorJobForWorkspace([
+			makeExecutorJob({ _id: 'job-1' as ExecutorJob['_id'], status: 'pending', sequence: 0 }),
+			makeExecutorJob({
+				_id: 'job-2' as ExecutorJob['_id'],
+				status: 'claimed',
+				sequence: 1
+			})
+		]);
 
 		expect(selectedJob?._id).toBe('job-2');
 	});
@@ -168,12 +165,12 @@ describe('executor coordinator helpers', () => {
 				makeThreadSummary({ hasActiveRun: true }),
 				makeThreadSummary({
 					_id: 'thread-record-2' as ThreadSummary['_id'],
-					threadId: 'thread-2',
+					threadId: 'thread-record-2' as ThreadSummary['threadId'],
 					hasActiveRun: false
 				}),
 				makeThreadSummary({
 					_id: 'thread-record-3' as ThreadSummary['_id'],
-					threadId: 'thread-3',
+					threadId: 'thread-record-3' as ThreadSummary['threadId'],
 					hasActiveRun: true
 				})
 			])

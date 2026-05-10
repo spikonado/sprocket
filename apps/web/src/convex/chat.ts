@@ -10,7 +10,7 @@ import { vModelId, vReasoningEffort } from '@convex/lib/validators';
 export const send = mutation({
 	args: {
 		guestId: v.optional(v.string()),
-		threadId: v.string(),
+		threadId: v.id('threadRecords'),
 		prompt: v.string(),
 		selectedModel: vModelId,
 		reasoningEffort: vReasoningEffort
@@ -30,14 +30,6 @@ export const send = mutation({
 		);
 		const prompt = args.prompt.trim();
 
-		const messageId: Id<'threadMessages'> = (
-			await appendThreadMessage(ctx, {
-				threadId: args.threadId,
-				role: 'user',
-				status: 'success',
-				text: prompt
-			})
-		).messageId;
 		const runId: Id<'runs'> = await ctx.db.insert('runs', {
 			threadId: args.threadId,
 			userId,
@@ -45,9 +37,17 @@ export const send = mutation({
 			status: 'queued',
 			selectedModel: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
-			startedAt: Date.now(),
-			promptMessageId: messageId
+			startedAt: Date.now()
 		});
+		const messageId: Id<'threadMessages'> = (
+			await appendThreadMessage(ctx, {
+				threadId: args.threadId,
+				runId: runId,
+				role: 'user',
+				status: 'success',
+				text: prompt
+			})
+		).messageId;
 
 		await ctx.db.patch(threadRecord._id, {
 			title: threadRecord.title ?? prompt.slice(0, 72),
@@ -65,7 +65,7 @@ export const send = mutation({
 export const latestRunForThread = query({
 	args: {
 		guestId: v.optional(v.string()),
-		threadId: v.string()
+		threadId: v.id('threadRecords')
 	},
 	handler: async (ctx, args) => {
 		const userId: string = await getUserId(ctx, args.guestId);

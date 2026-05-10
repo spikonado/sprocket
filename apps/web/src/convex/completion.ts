@@ -3,8 +3,8 @@
 import { generateText, jsonSchema, streamText, tool, type ModelMessage } from 'ai';
 import { v } from 'convex/values';
 import { action, type ActionCtx } from '@convex/_generated/server';
-import { api } from '@convex/_generated/api';
-import type { Id } from '@convex/_generated/dataModel';
+import { api, internal } from '@convex/_generated/api';
+import type { Doc, Id } from '@convex/_generated/dataModel';
 import {
 	upsertAssistantToolCallPart,
 	upsertAssistantToolResultPart,
@@ -105,16 +105,15 @@ export const complete = action({
 
 const UPDATE_THROTTLE_MS = 120;
 const UPDATE_MIN_DELTA_CHARS = 40;
+const RUN_CANCELLED_ERROR = 'Run cancelled.';
 
 async function streamAndPersistDeltas(
 	ctx: ActionCtx,
 	args: { guestId?: string; streamMessageId?: Id<'threadMessages'> },
 	request: Parameters<typeof streamText>[0]
 ): Promise<CompletionActionResult> {
-	const existingMessage: Awaited<
-		ReturnType<typeof ctx.runQuery<typeof api.agentRuntime.getAssistantMessage>>
-	> | null = args.streamMessageId
-		? await ctx.runQuery(api.agentRuntime.getAssistantMessage, {
+	const existingMessage: Doc<'threadMessages'> | null = args.streamMessageId
+		? await ctx.runQuery(internal.agentRuntime.getAssistantMessage, {
 				...(args.guestId ? { guestId: args.guestId } : {}),
 				messageId: args.streamMessageId
 			})
@@ -142,6 +141,23 @@ async function streamAndPersistDeltas(
 	let lastPersistedAt = 0;
 
 	for await (const chunk of result.fullStream) {
+		if (
+			await ctx.runQuery(api.agentRuntime.isFinished, {
+				guestId: args.guestId,
+				runId: existingMessage?.runId
+			})
+		) {
+			const text = buildAssistantText(parts);
+			if (text.length !== lastPersistedLength) {
+				await ctx.runMutation(internal.agentRuntime.updateAssistantMessage, {
+					messageId: existingMessage?._id,
+					text,
+					parts
+				});
+			}
+			throw new Error(RUN_CANCELLED_ERROR);
+		}
+
 		if (chunk.type === 'text-start') {
 			ensureTextPart(parts, textPartIndexById, chunk.id);
 		}
@@ -179,15 +195,38 @@ async function streamAndPersistDeltas(
 		}
 		const text = buildAssistantText(parts);
 		if (shouldPersistPartial(text, lastPersistedLength, lastPersistedAt)) {
-			await persistAssistantDelta(ctx, args, text, parts);
+			await ctx.runMutation(internal.agentRuntime.updateAssistantMessage, {
+				messageId: existingMessage?._id,
+				text,
+				parts
+			});
 			lastPersistedLength = text.length;
 			lastPersistedAt = Date.now();
 		}
 	}
 
 	const text = buildAssistantText(parts);
+	if (
+		await ctx.runQuery(api.agentRuntime.isFinished, {
+			guestId: args.guestId,
+			runId: existingMessage?.runId
+		})
+	) {
+		if (text.length !== lastPersistedLength) {
+			await ctx.runMutation(internal.agentRuntime.updateAssistantMessage, {
+				messageId: existingMessage?._id,
+				text,
+				parts
+			});
+		}
+		throw new Error(RUN_CANCELLED_ERROR);
+	}
 	if (text.length !== lastPersistedLength) {
-		await persistAssistantDelta(ctx, args, text, pruneAssistantParts(parts));
+		await ctx.runMutation(internal.agentRuntime.updateAssistantMessage, {
+			messageId: existingMessage?._id,
+			text,
+			parts
+		});
 	}
 
 	const [finalText, usage, response, toolCalls] = await Promise.all([
@@ -210,23 +249,6 @@ function shouldPersistPartial(text: string, persistedLength: number, persistedAt
 		return false;
 	}
 	return Date.now() - persistedAt >= UPDATE_THROTTLE_MS;
-}
-
-async function persistAssistantDelta(
-	ctx: ActionCtx,
-	args: { guestId?: string; streamMessageId?: Id<'threadMessages'> },
-	text: string,
-	parts?: PersistedAssistantPart[]
-) {
-	if (!args.streamMessageId) {
-		return;
-	}
-	await ctx.runMutation(api.agentRuntime.updateAssistantMessage, {
-		...(args.guestId ? { guestId: args.guestId } : {}),
-		messageId: args.streamMessageId,
-		text,
-		...(parts ? { parts: pruneAssistantParts(parts) } : {})
-	});
 }
 
 function buildAssistantText(parts: PersistedAssistantPart[]): string {
@@ -264,15 +286,6 @@ function ensureReasoningPart(
 	const nextIndex = parts.push({ type: 'reasoning', id, text: '' }) - 1;
 	indexById.set(id, nextIndex);
 	return nextIndex;
-}
-
-function pruneAssistantParts(parts: PersistedAssistantPart[]): PersistedAssistantPart[] {
-	return parts.filter((part) => {
-		if (part.type === 'text' || part.type === 'reasoning') {
-			return part.text.trim().length > 0;
-		}
-		return true;
-	});
 }
 
 function parseJson<T>(json: string, fieldName: string): T {

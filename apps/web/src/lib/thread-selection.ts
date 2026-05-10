@@ -3,7 +3,7 @@ import type { ThreadSummary } from '$lib/types/sprocket';
 
 export function findThreadById(
 	threads: ThreadSummary[],
-	threadId: string | null
+	threadId: Id<'threadRecords'> | null
 ): ThreadSummary | null {
 	if (!threadId) {
 		return null;
@@ -14,7 +14,7 @@ export function findThreadById(
 
 export function resolveWorkspaceThreadSelection(args: {
 	threads: ThreadSummary[];
-	currentThreadId: string | null;
+	currentThreadId: Id<'threadRecords'> | null;
 	currentWorkspaceSessionId: Id<'workspaceSessions'> | null;
 	draftWorkspaceSessionId: Id<'workspaceSessions'> | null;
 }) {

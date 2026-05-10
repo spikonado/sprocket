@@ -8,7 +8,7 @@ import { listThreadMessages } from '@convex/lib/threadMessages';
 export const listForThread = query({
 	args: {
 		guestId: v.optional(v.string()),
-		threadId: v.string(),
+		threadId: v.id('threadRecords'),
 		paginationOpts: paginationOptsValidator
 	},
 	handler: async (ctx, args) => {

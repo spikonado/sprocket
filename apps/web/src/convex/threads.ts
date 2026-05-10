@@ -30,11 +30,9 @@ export const create = mutation({
 			args.workspaceSessionId
 		);
 
-		const threadId = crypto.randomUUID();
 		const now = Date.now();
 		const recordId = await ctx.db.insert('threadRecords', {
 			userId: userId,
-			threadId,
 			workspaceSessionId: args.workspaceSessionId,
 			workspacePath: workspaceSession.workspacePath,
 			workspaceName: workspaceSession.workspaceName,
@@ -46,8 +44,7 @@ export const create = mutation({
 		});
 
 		return {
-			threadId,
-			recordId
+			threadId: recordId
 		};
 	}
 });
@@ -67,11 +64,12 @@ export const listMine = query({
 			records.map(async (record) => {
 				const latestRun = await ctx.db
 					.query('runs')
-					.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', record.threadId))
+					.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', record._id))
 					.order('desc')
 					.first();
 				return {
 					...record,
+					threadId: record._id,
 					threadStatus: 'active',
 					workspaceName: record.workspaceName ?? record.workspacePath,
 					latestRunStatus: latestRun?.status ?? null,
@@ -86,7 +84,7 @@ export const listMine = query({
 export const getByThreadId = query({
 	args: {
 		guestId: v.optional(v.string()),
-		threadId: v.string()
+		threadId: v.id('threadRecords')
 	},
 	handler: async (ctx, args) => {
 		const userId: string = await getUserId(ctx, args.guestId);
@@ -97,7 +95,7 @@ export const getByThreadId = query({
 export const remove = mutation({
 	args: {
 		guestId: v.optional(v.string()),
-		threadId: v.string()
+		threadId: v.id('threadRecords')
 	},
 	handler: async (ctx, args) => {
 		const userId: string = await getUserId(ctx, args.guestId);

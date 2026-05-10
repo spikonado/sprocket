@@ -37,26 +37,12 @@ export async function getOwnedWorkspaceSession(
 	return await getOwnedRecord(db, userId, workspaceSessionId, 'Workspace session not found.');
 }
 
-export async function getThreadRecordByThreadId(
-	db: DatabaseReader,
-	threadId: string
-): Promise<Doc<'threadRecords'> | null> {
-	return await db
-		.query('threadRecords')
-		.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
-		.unique();
-}
-
 export async function getOwnedThreadRecord(
 	db: DatabaseReader,
 	userId: string,
-	threadId: string
+	threadRecordId: Id<'threadRecords'>
 ): Promise<Doc<'threadRecords'>> {
-	const threadRecord = await getThreadRecordByThreadId(db, threadId);
-	if (!threadRecord || threadRecord.userId !== userId) {
-		throw new Error('Thread not found.');
-	}
-	return threadRecord;
+	return await getOwnedRecord(db, userId, threadRecordId, 'Thread not found.');
 }
 
 export async function getOwnedRun(

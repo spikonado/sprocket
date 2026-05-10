@@ -129,7 +129,7 @@ export type WorkspaceSession = {
 
 export type ThreadSummary = {
 	_id: Id<'threadRecords'>;
-	threadId: string;
+	threadId: Id<'threadRecords'>;
 	workspaceSessionId: Id<'workspaceSessions'>;
 	workspacePath: string;
 	workspaceName: string;
@@ -161,14 +161,13 @@ export type WorkspaceThreadGroup = {
 export type ExecutorJob = {
 	_id: Id<'executorJobs'>;
 	workspaceSessionId: Id<'workspaceSessions'>;
-	threadId: string;
+	threadId: Id<'threadRecords'>;
 	runId: Id<'runs'>;
 	kind: WorkspaceToolName;
 	payload: ExecutorJobPayload;
 	hidden?: boolean;
 	status: Infer<typeof vExecutorJobStatus>;
 	enqueuedAt: number;
-	claimedBy?: string;
 	claimedAt?: number;
 	completedAt?: number;
 	result?: ExecutorJobResult;
@@ -178,7 +177,7 @@ export type ExecutorJob = {
 
 export type RunState = {
 	_id: Id<'runs'>;
-	threadId: string;
+	threadId: Id<'threadRecords'>;
 	userId: string;
 	workspaceSessionId: Id<'workspaceSessions'>;
 	status: Infer<typeof vRunStatus>;
@@ -194,7 +193,7 @@ export type RunState = {
 
 export type ThreadMessage = {
 	_id: Id<'threadMessages'>;
-	threadId: string;
+	threadId: Id<'threadRecords'>;
 	runId?: Id<'runs'>;
 	role: Infer<typeof vThreadMessageRole>;
 	status: Infer<typeof vThreadMessageStatus>;

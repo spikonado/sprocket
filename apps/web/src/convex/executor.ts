@@ -79,7 +79,7 @@ export const listPendingForClient = query({
 							)
 							.collect()
 					]);
-					return [...pendingJobs, ...claimedJobs.filter((job) => job.claimedBy === args.clientId)];
+					return [...pendingJobs, ...claimedJobs];
 				})
 			)
 		).flat();
@@ -111,17 +111,16 @@ export const claim = mutation({
 			return null;
 		}
 
-		if (job.status === 'claimed' && job.claimedBy === args.clientId) {
+		if (job.status === 'claimed') {
 			return job;
 		}
-		if (job.status !== 'pending' && job.claimedBy !== args.clientId) {
+		if (job.status !== 'pending') {
 			return null;
 		}
 
 		const now = Date.now();
 		await ctx.db.patch(args.jobId, {
 			status: 'claimed',
-			claimedBy: args.clientId,
 			claimedAt: now
 		});
 		await ctx.db.patch(job.runId, {
@@ -221,7 +220,7 @@ export const getJobForInternal = internalQuery({
 export const enqueueJob = internalMutation({
 	args: {
 		workspaceSessionId: v.id('workspaceSessions'),
-		threadId: v.string(),
+		threadId: v.id('threadRecords'),
 		runId: v.id('runs'),
 		kind: vExecutorJobKind,
 		payload: vExecutorJobPayload,

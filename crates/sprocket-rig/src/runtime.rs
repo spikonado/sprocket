@@ -7,7 +7,7 @@ use serde::Deserialize;
 use tokio::time::timeout;
 
 use crate::completion::ConvexRigClient;
-use crate::types::{RunAgentRequest, RunContextResponse, serialize_agent_history};
+use crate::types::{RunAgentRequest, RunContextResponse};
 
 const CONVEX_RPC_TIMEOUT: Duration = Duration::from_secs(20 * 60);
 
@@ -83,15 +83,8 @@ impl RuntimeClient {
     }
 
     pub(crate) async fn begin_assistant_message(&self, run_id: &str) -> anyhow::Result<String> {
-        let assistant_message: serde_json::Value = self
-            .mutation_json("agentRuntime:beginAssistantMessage", self.run_args(run_id))
-            .await?;
-
-        assistant_message
-            .get("_id")
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_owned)
-            .ok_or_else(|| anyhow!("beginAssistantMessage did not return a message id"))
+        self.mutation_json("agentRuntime:beginAssistantMessage", self.run_args(run_id))
+            .await
     }
 
     pub(crate) async fn finish_assistant_message(
@@ -100,7 +93,7 @@ impl RuntimeClient {
         text: &str,
         status: &str,
     ) -> anyhow::Result<()> {
-        let mut args = self.args_with_actor();
+        let mut args = BTreeMap::new();
         args.insert("messageId".to_string(), message_id.to_string().into());
         args.insert("text".to_string(), text.to_string().into());
         args.insert("status".to_string(), status.to_string().into());
@@ -125,18 +118,6 @@ impl RuntimeClient {
             args.insert("lastError".to_string(), last_error.to_string().into());
         }
         self.mutation_unit("agentRuntime:finishRun", args).await
-    }
-
-    pub(crate) async fn update_agent_history(
-        &self,
-        run_id: &str,
-        history: Vec<rig::completion::Message>,
-    ) -> anyhow::Result<()> {
-        let mut args = self.run_args(run_id);
-        let history_json = serde_json::to_value(serialize_agent_history(history)?)?;
-        args.insert("history".to_string(), json_to_convex_value(history_json)?);
-        self.mutation_unit("agentRuntime:updateAgentHistory", args)
-            .await
     }
 
     pub(crate) fn args_with_actor(&self) -> BTreeMap<String, Value> {
@@ -193,34 +174,5 @@ fn convex_value_to_plain_json(value: Value) -> serde_json::Value {
                 .map(|(key, value)| (key, convex_value_to_plain_json(value)))
                 .collect(),
         ),
-    }
-}
-
-fn json_to_convex_value(value: serde_json::Value) -> anyhow::Result<Value> {
-    match value {
-        serde_json::Value::Null => Ok(Value::Null),
-        serde_json::Value::Bool(boolean) => Ok(Value::Boolean(boolean)),
-        serde_json::Value::Number(number) => {
-            if let Some(integer) = number.as_i64() {
-                return Ok(Value::Int64(integer));
-            }
-            if let Some(float) = number.as_f64() {
-                return Ok(Value::Float64(float));
-            }
-            Err(anyhow!("unsupported JSON number value: {number}"))
-        }
-        serde_json::Value::String(text) => Ok(Value::String(text)),
-        serde_json::Value::Array(values) => Ok(Value::Array(
-            values
-                .into_iter()
-                .map(json_to_convex_value)
-                .collect::<anyhow::Result<Vec<_>>>()?,
-        )),
-        serde_json::Value::Object(fields) => Ok(Value::Object(
-            fields
-                .into_iter()
-                .map(|(key, value)| Ok((key, json_to_convex_value(value)?)))
-                .collect::<anyhow::Result<BTreeMap<_, _>>>()?,
-        )),
     }
 }

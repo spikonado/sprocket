@@ -39,7 +39,7 @@
 
 	let desktopApi = $state<DesktopApi | null>(null);
 	let currentWorkspaceSessionId = $state<Id<'workspaceSessions'> | null>(null);
-	let currentThreadId = $state<string | null>(null);
+	let currentThreadId = $state<Id<'threadRecords'> | null>(null);
 	let draftWorkspaceSessionId = $state<Id<'workspaceSessions'> | null>(null);
 	let selectedModel = $state<SupportedModelId>(defaultModelId);
 	let selectedReasoningEffort = $state<SupportedReasoningEffort>(defaultReasoningEffort);
@@ -51,7 +51,7 @@
 	let guestSessionId = $state<string | null>(null);
 	let hasResolvedInitialSelection = $state(false);
 	let restoredWorkspaceSessionIdToAttach = $state<Id<'workspaceSessions'> | null>(null);
-	let lastSavedThreadId = $state<string | null>(null);
+	let lastSavedThreadId = $state<Id<'threadRecords'> | null>(null);
 	let processingJobIdsByWorkspace: Record<string, Id<'executorJobs'>> = {};
 	let executorProcessing = false;
 	let executorProcessQueued = false;
@@ -163,7 +163,7 @@
 
 	function setWorkspaceSelection(args: {
 		workspaceSessionId: Id<'workspaceSessions'>;
-		threadId?: string | null;
+		threadId?: Id<'threadRecords'> | null;
 		draft?: boolean;
 	}) {
 		const { workspaceSessionId, threadId = null, draft = false } = args;
@@ -183,7 +183,7 @@
 
 	async function openWorkspaceSession(
 		workspaceSessionId: Id<'workspaceSessions'>,
-		selection: { threadId?: string | null; draft?: boolean } = {}
+		selection: { threadId?: Id<'threadRecords'> | null; draft?: boolean } = {}
 	) {
 		await attachWorkspaceSession(workspaceSessionId);
 		setWorkspaceSelection({ workspaceSessionId, ...selection });
@@ -426,7 +426,7 @@
 				continue;
 			}
 
-			const nextJob = pickNextExecutorJobForWorkspace(workspaceJobs, executorClientId);
+			const nextJob = pickNextExecutorJobForWorkspace(workspaceJobs);
 			if (!nextJob) {
 				continue;
 			}

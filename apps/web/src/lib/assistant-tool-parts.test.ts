@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	buildPersistedToolLogs,
+	ensureAssistantToolPartsFromJobs,
 	upsertAssistantToolCallPart,
 	upsertAssistantToolResultPart,
 	type AssistantPart
@@ -50,5 +51,51 @@ describe('assistant tool parts', () => {
 			'claude',
 			'agents'
 		]);
+	});
+
+	it('backfills work-log parts from executor jobs when no streamed tool parts were persisted', () => {
+		const parts: AssistantPart[] = [{ type: 'text', id: 'text-1', text: 'Done.' }];
+
+		const hydratedParts = ensureAssistantToolPartsFromJobs(parts, [
+			{
+				id: 'job-1',
+				kind: 'read_file',
+				payload: { path: 'AGENTS.md' },
+				status: 'completed',
+				result: { path: 'AGENTS.md', contents: 'instructions' }
+			}
+		]);
+		const logs = buildPersistedToolLogs(hydratedParts);
+
+		expect(logs).toHaveLength(1);
+		expect(logs[0]).toEqual({
+			callId: 'executor-job:job-1',
+			name: 'read_file',
+			input: { path: 'AGENTS.md' },
+			output: { path: 'AGENTS.md', contents: 'instructions' }
+		});
+	});
+
+	it('does not duplicate executor jobs when tool parts are already persisted', () => {
+		const parts: AssistantPart[] = [
+			{
+				type: 'tool-call',
+				callId: 'call-1',
+				name: 'read_file',
+				input: { path: 'AGENTS.md' }
+			}
+		];
+
+		const hydratedParts = ensureAssistantToolPartsFromJobs(parts, [
+			{
+				id: 'job-1',
+				kind: 'read_file',
+				payload: { path: 'AGENTS.md' },
+				status: 'completed',
+				result: { path: 'AGENTS.md', contents: 'instructions' }
+			}
+		]);
+
+		expect(hydratedParts).toEqual(parts);
 	});
 });

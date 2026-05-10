@@ -1,35 +1,201 @@
-import { mutation, query } from '@convex/_generated/server';
-import { v } from 'convex/values';
+import type { Doc, Id } from '@convex/_generated/dataModel';
 import {
-	getOwnedRun,
-	getOwnedThreadRecord,
-	getOwnedWorkspaceSession,
-	getThreadRecordByThreadId
-} from '@convex/lib/access';
+	internalMutation,
+	internalQuery,
+	mutation,
+	query,
+	type MutationCtx,
+	type QueryCtx
+} from '@convex/_generated/server';
+import { v } from 'convex/values';
+import { getOwnedRun, getOwnedThreadRecord, getOwnedWorkspaceSession } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
+import { shouldIncludeMessageInCanonicalAgentHistory } from '@convex/lib/agentHistory';
 import { patchJobFinalState, patchRunFinalState } from '@convex/lib/state';
 import {
 	appendThreadMessage,
 	getThreadMessage,
 	listThreadMessages
 } from '@convex/lib/threadMessages';
+import { ensureAssistantToolPartsFromJobs, type AssistantPart } from '../lib/assistant-tool-parts';
 import {
+	type AgentHistoryMessage,
 	isRunFinalStatus,
 	vExecutorJobKind,
 	vExecutorJobPayload,
 	vRunFinalStatus,
 	vAssistantMessagePart,
-	vAgentHistoryMessage,
 	vThreadMessageFinalStatus
 } from '@convex/lib/validators';
-import type { Doc, Id } from './_generated/dataModel';
+
+function compareThreadMessages(left: Doc<'threadMessages'>, right: Doc<'threadMessages'>) {
+	if (left.order !== right.order) {
+		return left.order - right.order;
+	}
+	return left.stepOrder - right.stepOrder;
+}
+
+function buildAgentHistoryFromAssistantMessage(args: {
+	message: Doc<'threadMessages'>;
+	jobs: Doc<'executorJobs'>[];
+}): AgentHistoryMessage[] {
+	const persistedParts = (args.message.parts ?? []) as AssistantPart[];
+	const shouldRebuildToolPartsFromJobs = args.message.status !== 'success';
+	const baseParts = shouldRebuildToolPartsFromJobs
+		? persistedParts.filter((part) => part.type === 'text' || part.type === 'reasoning')
+		: persistedParts;
+	const parts = ensureAssistantToolPartsFromJobs(
+		baseParts,
+		args.jobs
+			.filter((job) => !job.hidden)
+			.sort((left, right) => left.sequence - right.sequence)
+			.map((job) => ({
+				id: job._id,
+				kind: job.kind,
+				payload: job.payload,
+				status: job.status,
+				result: job.result,
+				error: job.error
+			}))
+	);
+	const history: AgentHistoryMessage[] = [];
+	let assistantContents: AgentHistoryMessage['contents'] = [];
+	let sawAssistantTextPart = false;
+
+	const flushAssistantContents = () => {
+		if (assistantContents.length === 0) {
+			return;
+		}
+		history.push({
+			role: 'assistant',
+			contents: assistantContents
+		});
+		assistantContents = [];
+	};
+
+	for (const part of parts) {
+		if (part.type === 'text') {
+			if (part.text.trim().length === 0) {
+				continue;
+			}
+			sawAssistantTextPart = true;
+			assistantContents.push({
+				type: 'text',
+				text: part.text
+			});
+			continue;
+		}
+
+		if (part.type === 'reasoning') {
+			continue;
+		}
+
+		if (part.type === 'tool-call') {
+			assistantContents.push({
+				type: 'toolCall',
+				callId: part.callId,
+				name: part.name,
+				argumentsJson: JSON.stringify(part.input)
+			});
+			continue;
+		}
+
+		flushAssistantContents();
+		history.push({
+			role: 'user',
+			contents: [
+				{
+					type: 'toolResult',
+					callId: part.callId,
+					items: [
+						{
+							type: 'text',
+							text: JSON.stringify(part.output)
+						}
+					]
+				}
+			]
+		});
+	}
+
+	if (!sawAssistantTextPart && args.message.text.trim().length > 0) {
+		assistantContents.push({
+			type: 'text',
+			text: args.message.text
+		});
+	}
+
+	flushAssistantContents();
+	return history;
+}
+
+async function buildCanonicalAgentHistory(
+	ctx: MutationCtx | QueryCtx,
+	threadId: Id<'threadRecords'>
+): Promise<AgentHistoryMessage[]> {
+	const messages = (await listThreadMessages(ctx, threadId)).slice().sort(compareThreadMessages);
+	const runIds = [...new Set(messages.map((message) => message.runId))];
+	const runs = await Promise.all(runIds.map(async (runId) => await ctx.db.get(runId)));
+	const runStatusById = new Map(
+		runs.filter((run): run is Doc<'runs'> => run !== null).map((run) => [run._id, run.status])
+	);
+	const canonicalMessages = messages.filter((message) => {
+		if (message.role !== 'user' && message.role !== 'assistant') {
+			return false;
+		}
+		return shouldIncludeMessageInCanonicalAgentHistory({
+			role: message.role,
+			messageStatus: message.status,
+			runStatus: runStatusById.get(message.runId) ?? null
+		});
+	});
+	const jobs = await ctx.db
+		.query('executorJobs')
+		.withIndex('by_threadId_sequence', (query) => query.eq('threadId', threadId))
+		.collect();
+	const jobsByRunId = new Map<Id<'runs'>, Doc<'executorJobs'>[]>();
+	for (const job of jobs) {
+		const runJobs = jobsByRunId.get(job.runId) ?? [];
+		runJobs.push(job);
+		jobsByRunId.set(job.runId, runJobs);
+	}
+
+	const history: AgentHistoryMessage[] = [];
+	for (const message of canonicalMessages) {
+		if (message.role === 'user') {
+			const text = message.text.trim();
+			if (text.length === 0) {
+				continue;
+			}
+			history.push({
+				role: 'user',
+				contents: [
+					{
+						type: 'text',
+						text
+					}
+				]
+			});
+			continue;
+		}
+
+		history.push(
+			...buildAgentHistoryFromAssistantMessage({
+				message,
+				jobs: jobsByRunId.get(message.runId) ?? []
+			})
+		);
+	}
+
+	return history;
+}
 
 export const start = mutation({
 	args: {
 		guestId: v.optional(v.string()),
 		runId: v.id('runs')
 	},
-	handler: async (ctx, args) => {
+	handler: async (ctx, args): Promise<Doc<'runs'>> => {
 		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		if (isRunFinalStatus(run.status)) {
@@ -41,7 +207,11 @@ export const start = mutation({
 			lastError: undefined
 		});
 
-		return await ctx.db.get(args.runId);
+		return {
+			...run,
+			status: 'running',
+			lastError: undefined
+		};
 	}
 });
 
@@ -50,7 +220,16 @@ export const getContext = query({
 		guestId: v.optional(v.string()),
 		runId: v.id('runs')
 	},
-	handler: async (ctx, args) => {
+	handler: async (
+		ctx,
+		args
+	): Promise<{
+		run: Doc<'runs'>;
+		threadRecord: Doc<'threadRecords'>;
+		workspaceSession: Doc<'workspaceSessions'>;
+		agentHistory: AgentHistoryMessage[];
+		messages: Doc<'threadMessages'>[];
+	}> => {
 		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		const threadRecord: Doc<'threadRecords'> = await getOwnedThreadRecord(
@@ -63,23 +242,15 @@ export const getContext = query({
 			userId,
 			run.workspaceSessionId
 		);
-		const historyRecord: Doc<'agentHistoryRecords'> | null = await ctx.db
-			.query('agentHistoryRecords')
-			.withIndex('by_threadId', (query) => query.eq('threadId', run.threadId))
-			.first();
 		const messages: Doc<'threadMessages'>[] = await listThreadMessages(ctx, run.threadId);
+		const agentHistory = await buildCanonicalAgentHistory(ctx, run.threadId);
 
 		return {
 			run,
 			threadRecord,
-			agentHistory: historyRecord?.history,
+			agentHistory,
 			workspaceSession,
-			messages: messages.sort((left, right) => {
-				if (left.order !== right.order) {
-					return left.order - right.order;
-				}
-				return left.stepOrder - right.stepOrder;
-			})
+			messages: messages.sort(compareThreadMessages)
 		};
 	}
 });
@@ -87,21 +258,24 @@ export const getContext = query({
 export const isFinished = query({
 	args: {
 		guestId: v.optional(v.string()),
-		runId: v.id('runs')
+		runId: v.optional(v.id('runs'))
 	},
-	handler: async (ctx, args) => {
+	handler: async (ctx, args): Promise<boolean> => {
 		const userId: string = await getUserId(ctx, args.guestId);
-		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
-		return isRunFinalStatus(run.status);
+		if (args.runId) {
+			const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
+			return isRunFinalStatus(run.status);
+		}
+		return false;
 	}
 });
 
-export const getAssistantMessage = query({
+export const getAssistantMessage = internalQuery({
 	args: {
 		guestId: v.optional(v.string()),
 		messageId: v.id('threadMessages')
 	},
-	handler: async (ctx, args) => {
+	handler: async (ctx, args): Promise<Doc<'threadMessages'>> => {
 		const userId: string = await getUserId(ctx, args.guestId);
 		const message: Doc<'threadMessages'> = await getThreadMessage(ctx, args.messageId);
 		await getOwnedThreadRecord(ctx.db, userId, message.threadId);
@@ -114,22 +288,19 @@ export const beginAssistantMessage = mutation({
 		guestId: v.optional(v.string()),
 		runId: v.id('runs')
 	},
-	handler: async (ctx, args) => {
+	handler: async (ctx, args): Promise<Id<'threadMessages'>> => {
 		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
-		const existing: Doc<'threadMessages'>[] = await ctx.db
+		const assistantMessage: Doc<'threadMessages'> | null = await ctx.db
 			.query('threadMessages')
-			.withIndex('by_runId', (query) => query.eq('runId', args.runId))
-			.collect();
-		const assistantMessage: Doc<'threadMessages'> | undefined = existing.find(
-			(message) => message.role === 'assistant'
-		);
+			.withIndex('by_runId_role', (query) => query.eq('runId', args.runId).eq('role', 'assistant'))
+			.unique();
 		if (assistantMessage) {
 			await ctx.db.patch(assistantMessage._id, {
 				status: 'streaming',
 				text: ''
 			});
-			return assistantMessage;
+			return assistantMessage._id;
 		}
 
 		const messageId: Id<'threadMessages'> = (
@@ -142,43 +313,62 @@ export const beginAssistantMessage = mutation({
 				agentName: 'Sprocket'
 			})
 		).messageId;
-		return await getThreadMessage(ctx, messageId);
+		return messageId;
 	}
 });
 
-export const updateAssistantMessage = mutation({
+export const updateAssistantMessage = internalMutation({
 	args: {
-		guestId: v.optional(v.string()),
-		messageId: v.id('threadMessages'),
+		messageId: v.optional(v.id('threadMessages')),
 		text: v.string(),
-		parts: v.optional(v.array(vAssistantMessagePart))
+		parts: v.array(vAssistantMessagePart)
 	},
-	handler: async (ctx, args) => {
-		const userId: string = await getUserId(ctx, args.guestId);
-		const message: Doc<'threadMessages'> = await getThreadMessage(ctx, args.messageId);
-		await getOwnedThreadRecord(ctx.db, userId, message.threadId);
-		await ctx.db.patch(args.messageId, {
-			text: args.text,
-			...(args.parts ? { parts: args.parts } : {})
-		});
+	handler: async (ctx, args): Promise<void> => {
+		if (args.messageId) {
+			await ctx.db.patch(args.messageId, {
+				text: args.text,
+				parts: args.parts.filter((part) => {
+					if (part.type === 'text' || part.type === 'reasoning') {
+						return part.text.trim().length > 0;
+					}
+					return true;
+				})
+			});
+		}
 	}
 });
 
 export const finishAssistantMessage = mutation({
 	args: {
-		guestId: v.optional(v.string()),
 		messageId: v.id('threadMessages'),
 		text: v.string(),
 		status: vThreadMessageFinalStatus
 	},
-	handler: async (ctx, args) => {
-		const userId: string = await getUserId(ctx, args.guestId);
+	handler: async (ctx, args): Promise<void> => {
 		const message: Doc<'threadMessages'> = await getThreadMessage(ctx, args.messageId);
-		await getOwnedThreadRecord(ctx.db, userId, message.threadId);
 		const nextText =
 			args.text.trim().length === 0 && message.text.trim().length > 0 ? message.text : args.text;
+		const jobs: Doc<'executorJobs'>[] = await ctx.db
+			.query('executorJobs')
+			.withIndex('by_runId_sequence', (query) => query.eq('runId', message.runId))
+			.collect();
+		const nextParts = ensureAssistantToolPartsFromJobs(
+			(message.parts ?? []) as AssistantPart[],
+			jobs
+				.filter((job) => !job.hidden)
+				.sort((left, right) => left.sequence - right.sequence)
+				.map((job) => ({
+					id: job._id,
+					kind: job.kind,
+					payload: job.payload,
+					status: job.status,
+					result: job.result,
+					error: job.error
+				}))
+		);
 		await ctx.db.patch(args.messageId, {
 			text: nextText,
+			parts: nextParts,
 			status: args.status,
 			completedAt: Date.now()
 		});
@@ -192,7 +382,7 @@ export const finishRun = mutation({
 		status: vRunFinalStatus,
 		lastError: v.optional(v.string())
 	},
-	handler: async (ctx, args) => {
+	handler: async (ctx, args): Promise<void> => {
 		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		if (!isRunFinalStatus(run.status)) {
@@ -210,37 +400,6 @@ export const finishRun = mutation({
 	}
 });
 
-export const updateAgentHistory = mutation({
-	args: {
-		guestId: v.optional(v.string()),
-		runId: v.id('runs'),
-		history: v.array(vAgentHistoryMessage)
-	},
-	handler: async (ctx, args) => {
-		const userId: string = await getUserId(ctx, args.guestId);
-		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
-		await getOwnedThreadRecord(ctx.db, userId, run.threadId);
-		const existingRecord: Doc<'agentHistoryRecords'> | null = await ctx.db
-			.query('agentHistoryRecords')
-			.withIndex('by_threadId', (query) => query.eq('threadId', run.threadId))
-			.first();
-		if (existingRecord) {
-			await ctx.db.patch(existingRecord._id, {
-				history: args.history,
-				updatedAt: Date.now()
-			});
-			return;
-		}
-
-		await ctx.db.insert('agentHistoryRecords', {
-			userId,
-			threadId: run.threadId,
-			history: args.history,
-			updatedAt: Date.now()
-		});
-	}
-});
-
 export const beginToolJob = mutation({
 	args: {
 		guestId: v.optional(v.string()),
@@ -249,7 +408,13 @@ export const beginToolJob = mutation({
 		payload: vExecutorJobPayload,
 		hidden: v.optional(v.boolean())
 	},
-	handler: async (ctx, args) => {
+	handler: async (
+		ctx,
+		args
+	): Promise<{
+		jobId: Id<'executorJobs'>;
+		sequence: number;
+	}> => {
 		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		if (isRunFinalStatus(run.status)) {
@@ -260,13 +425,6 @@ export const beginToolJob = mutation({
 			userId,
 			run.workspaceSessionId
 		);
-		const threadRecord: Doc<'threadRecords'> | null = await getThreadRecordByThreadId(
-			ctx.db,
-			run.threadId
-		);
-		if (!threadRecord) {
-			throw new Error('Thread not found.');
-		}
 
 		const nextSequence: number = workspaceSession.nextExecutorSequence ?? 0;
 		await ctx.db.patch(workspaceSession._id, {
@@ -283,7 +441,6 @@ export const beginToolJob = mutation({
 			status: 'claimed',
 			enqueuedAt: Date.now(),
 			claimedAt: Date.now(),
-			claimedBy: 'native',
 			sequence: nextSequence
 		});
 
