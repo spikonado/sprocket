@@ -9,6 +9,6 @@ pub use completion::{
     ConvexCompletionModel, ConvexCompletionOutput, ConvexRigClient, ConvexToolCall, ConvexUsage,
 };
 pub use types::{
-    RunAgentRequest, RunContextResponse, RunSnapshot, ThreadMessageSnapshot, ThreadRecordSnapshot,
+    RunAgentRequest, RunContextResponse, RunSnapshot, ThreadRecordSnapshot,
     WorkspaceSessionSnapshot,
 };

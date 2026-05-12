@@ -1,30 +1,8 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
 import { ConvexError } from 'convex/values';
-import {
-	isThreadMessageFinalStatus,
-	type ThreadMessageRole,
-	type ThreadMessageStatus
-} from '@convex/lib/validators';
-
-export type AppendThreadMessageArgs = {
-	threadId: Id<'threadRecords'>;
-	runId: Id<'runs'>;
-	role: ThreadMessageRole;
-	status: ThreadMessageStatus;
-	text: string;
-	agentName?: string;
-};
-
-export async function listThreadMessages(
-	ctx: MutationCtx | QueryCtx,
-	threadId: Id<'threadRecords'>
-): Promise<Doc<'threadMessages'>[]> {
-	return await ctx.db
-		.query('threadMessages')
-		.withIndex('by_threadId_order', (query) => query.eq('threadId', threadId))
-		.collect();
-}
+import type { ThreadMessageType } from '@convex/lib/validators';
+import { getOwnedThreadRecord } from './access';
 
 export async function getThreadMessage(
 	ctx: MutationCtx | QueryCtx,
@@ -39,34 +17,31 @@ export async function getThreadMessage(
 
 export async function appendThreadMessage(
 	ctx: MutationCtx,
-	args: AppendThreadMessageArgs
-): Promise<{ messageId: Id<'threadMessages'>; order: number }> {
-	const threadRecord = await ctx.db.get(args.threadId);
-	if (!threadRecord) {
-		throw new ConvexError('Thread not found.');
+	args: {
+		threadId: Id<'threadRecords'>;
+		runId: Id<'runs'>;
+		userId: string;
+		type: ThreadMessageType;
+		text: string;
 	}
-
-	const order = threadRecord.nextMessageOrder ?? 0;
+): Promise<Id<'threadMessages'>> {
+	const threadRecord: Doc<'threadRecords'> = await getOwnedThreadRecord(
+		ctx.db,
+		args.userId,
+		args.threadId
+	);
 
 	const messageId: Id<'threadMessages'> = await ctx.db.insert('threadMessages', {
 		threadId: args.threadId,
 		runId: args.runId,
-		role: args.role,
-		status: args.status,
+		userId: args.userId,
+		type: args.type,
 		text: args.text,
-		order,
-		stepOrder: 0,
-		agentName: args.agentName,
-		createdAt: Date.now(),
-		completedAt: isThreadMessageFinalStatus(args.status) ? Date.now() : undefined
+		parts: undefined
 	});
 	await ctx.db.patch(threadRecord._id, {
-		nextMessageOrder: order + 1,
 		lastMessageAt: Date.now()
 	});
 
-	return {
-		messageId,
-		order
-	};
+	return messageId;
 }

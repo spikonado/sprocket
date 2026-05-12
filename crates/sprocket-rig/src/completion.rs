@@ -27,7 +27,7 @@ pub struct ConvexRigClient {
     pub(crate) inner: Arc<Mutex<ConvexClient>>,
     completion_action: Arc<str>,
     default_reasoning_effort: Option<Arc<str>>,
-    stream_message_id: Option<Arc<str>>,
+    stream_run_id: Option<Arc<str>>,
     guest_id: Option<Arc<str>>,
 }
 
@@ -44,7 +44,7 @@ impl ConvexRigClient {
             inner: Arc::new(Mutex::new(client)),
             completion_action: completion_action.into().into(),
             default_reasoning_effort: None,
-            stream_message_id: None,
+            stream_run_id: None,
             guest_id: None,
         })
     }
@@ -60,10 +60,10 @@ impl ConvexRigClient {
 
     pub fn with_stream_target(
         mut self,
-        stream_message_id: Option<String>,
+        stream_run_id: Option<String>,
         guest_id: Option<String>,
     ) -> Self {
-        self.stream_message_id = stream_message_id.map(Into::into);
+        self.stream_run_id = stream_run_id.map(Into::into);
         self.guest_id = guest_id.map(Into::into);
         self
     }
@@ -128,7 +128,7 @@ struct ConvexActionArgs {
     prompt: Option<String>,
     messages_json: String,
     guest_id: Option<String>,
-    stream_message_id: Option<String>,
+    stream_run_id: Option<String>,
     tools: Vec<ToolDefinition>,
     tool_choice: Option<ConvexToolChoice>,
 }
@@ -178,7 +178,7 @@ impl CompletionModel for ConvexCompletionModel {
             prompt: None,
             messages_json: messages.to_string(),
             guest_id: self.client.guest_id.as_deref().map(str::to_owned),
-            stream_message_id: self.client.stream_message_id.as_deref().map(str::to_owned),
+            stream_run_id: self.client.stream_run_id.as_deref().map(str::to_owned),
             tools: request.tools.clone(),
             tool_choice: request.tool_choice.as_ref().map(convert_tool_choice),
         };
@@ -264,11 +264,8 @@ fn action_args(args: &ConvexActionArgs) -> BTreeMap<String, Value> {
     if let Some(guest_id) = &args.guest_id {
         payload.insert("guestId".to_string(), guest_id.clone().into());
     }
-    if let Some(stream_message_id) = &args.stream_message_id {
-        payload.insert(
-            "streamMessageId".to_string(),
-            stream_message_id.clone().into(),
-        );
+    if let Some(stream_run_id) = &args.stream_run_id {
+        payload.insert("streamRunId".to_string(), stream_run_id.clone().into());
     }
     if let Some(system) = &args.system {
         payload.insert("system".to_string(), system.clone().into());

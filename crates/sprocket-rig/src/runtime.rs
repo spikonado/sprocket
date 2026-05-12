@@ -82,21 +82,18 @@ impl RuntimeClient {
             .await
     }
 
-    pub(crate) async fn begin_assistant_message(&self, run_id: &str) -> anyhow::Result<String> {
-        self.mutation_json("agentRuntime:beginAssistantMessage", self.run_args(run_id))
+    pub(crate) async fn begin_assistant_message(&self, run_id: &str) -> anyhow::Result<()> {
+        self.mutation_unit("agentRuntime:beginAssistantMessage", self.run_args(run_id))
             .await
     }
 
     pub(crate) async fn finish_assistant_message(
         &self,
-        message_id: &str,
+        run_id: &str,
         text: &str,
-        status: &str,
     ) -> anyhow::Result<()> {
-        let mut args = BTreeMap::new();
-        args.insert("messageId".to_string(), message_id.to_string().into());
+        let mut args = self.run_args(run_id);
         args.insert("text".to_string(), text.to_string().into());
-        args.insert("status".to_string(), status.to_string().into());
         self.mutation_unit("agentRuntime:finishAssistantMessage", args)
             .await
     }

@@ -5,14 +5,11 @@ import {
 	vExecutorJobPayload,
 	vExecutorJobResult,
 	vExecutorJobStatus,
-	vExecutorStatus,
 	vModelId,
 	vReasoningEffort,
 	vRunStatus,
 	vAssistantMessagePart,
-	vThreadMessageRole,
-	vThreadMessageStatus,
-	vWorkspaceOverview
+	vThreadMessageType
 } from '@convex/lib/validators';
 
 export default defineSchema({
@@ -24,10 +21,8 @@ export default defineSchema({
 		userId: v.string(),
 		workspacePath: v.string(),
 		workspaceName: v.string(),
-		workspaceOverview: vWorkspaceOverview,
 		gitBranch: v.union(v.string(), v.null()),
 		gitDirty: v.boolean(),
-		executorStatus: vExecutorStatus,
 		lastHeartbeatAt: v.optional(v.number()),
 		connectedClientId: v.optional(v.string()),
 		nextExecutorSequence: v.optional(v.number()),
@@ -39,13 +34,9 @@ export default defineSchema({
 	threadRecords: defineTable({
 		userId: v.string(),
 		workspaceSessionId: v.id('workspaceSessions'),
-		workspacePath: v.string(),
-		workspaceName: v.optional(v.string()),
 		title: v.optional(v.string()),
-		summary: v.optional(v.string()),
 		selectedModel: vModelId,
 		reasoningEffort: vReasoningEffort,
-		nextMessageOrder: v.optional(v.number()),
 		lastMessageAt: v.number()
 	})
 		.index('by_userId_lastMessageAt', ['userId', 'lastMessageAt'])
@@ -61,7 +52,8 @@ export default defineSchema({
 		completedAt: v.optional(v.number()),
 		lastError: v.optional(v.string()),
 		activeJobId: v.optional(v.id('executorJobs')),
-		promptMessageId: v.optional(v.id('threadMessages'))
+		promptMessageId: v.optional(v.id('threadMessages')),
+		responseMessageId: v.optional(v.id('threadMessages'))
 	})
 		.index('by_threadId_startedAt', ['threadId', 'startedAt'])
 		.index('by_workspaceSessionId', ['workspaceSessionId'])
@@ -69,19 +61,11 @@ export default defineSchema({
 	threadMessages: defineTable({
 		threadId: v.id('threadRecords'),
 		runId: v.id('runs'),
-		role: vThreadMessageRole,
-		status: vThreadMessageStatus,
+		userId: v.string(),
+		type: vThreadMessageType,
 		text: v.string(),
-		parts: v.optional(v.array(vAssistantMessagePart)),
-		order: v.number(),
-		stepOrder: v.number(),
-		agentName: v.optional(v.string()),
-		createdAt: v.number(),
-		completedAt: v.optional(v.number())
-	})
-		.index('by_threadId_order', ['threadId', 'order'])
-		.index('by_runId', ['runId'])
-		.index('by_runId_role', ['runId', 'role']),
+		parts: v.optional(v.array(vAssistantMessagePart))
+	}),
 	executorJobs: defineTable({
 		workspaceSessionId: v.id('workspaceSessions'),
 		threadId: v.id('threadRecords'),

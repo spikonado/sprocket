@@ -4,6 +4,7 @@ import { v } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
 import { enforceGuestSendLimit, enforceSignedInSendLimit } from '@convex/lib/rateLimits';
+import { assertThreadCanStartRun } from '@convex/lib/runs';
 import { appendThreadMessage } from '@convex/lib/threadMessages';
 import { vModelId, vReasoningEffort } from '@convex/lib/validators';
 
@@ -15,7 +16,13 @@ export const send = mutation({
 		selectedModel: vModelId,
 		reasoningEffort: vReasoningEffort
 	},
-	handler: async (ctx, args) => {
+	handler: async (
+		ctx,
+		args
+	): Promise<{
+		runId: Id<'runs'>;
+		promptMessageId: Id<'threadMessages'>;
+	}> => {
 		const userId: string = await getUserId(ctx, args.guestId);
 		if (userId.startsWith('guest:')) {
 			await enforceGuestSendLimit(ctx, userId);
@@ -28,7 +35,13 @@ export const send = mutation({
 			userId,
 			args.threadId
 		);
-		const prompt = args.prompt.trim();
+		const latestRun: Doc<'runs'> | null = await ctx.db
+			.query('runs')
+			.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', args.threadId))
+			.order('desc')
+			.first();
+		assertThreadCanStartRun(latestRun?.status);
+		const prompt: string = args.prompt.trim();
 
 		const runId: Id<'runs'> = await ctx.db.insert('runs', {
 			threadId: args.threadId,
@@ -39,15 +52,16 @@ export const send = mutation({
 			reasoningEffort: args.reasoningEffort,
 			startedAt: Date.now()
 		});
-		const messageId: Id<'threadMessages'> = (
-			await appendThreadMessage(ctx, {
-				threadId: args.threadId,
-				runId: runId,
-				role: 'user',
-				status: 'success',
-				text: prompt
-			})
-		).messageId;
+		const messageId: Id<'threadMessages'> = await appendThreadMessage(ctx, {
+			threadId: args.threadId,
+			runId,
+			userId,
+			type: 'prompt',
+			text: prompt
+		});
+		await ctx.db.patch(runId, {
+			promptMessageId: messageId
+		});
 
 		await ctx.db.patch(threadRecord._id, {
 			title: threadRecord.title ?? prompt.slice(0, 72),
@@ -67,7 +81,7 @@ export const latestRunForThread = query({
 		guestId: v.optional(v.string()),
 		threadId: v.id('threadRecords')
 	},
-	handler: async (ctx, args) => {
+	handler: async (ctx, args): Promise<{ run: Doc<'runs'>; jobs: Doc<'executorJobs'>[] } | null> => {
 		const userId: string = await getUserId(ctx, args.guestId);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 
@@ -86,7 +100,7 @@ export const latestRunForThread = query({
 			.collect();
 
 		return {
-			...latestRun,
+			run: latestRun,
 			jobs: jobs.filter((job) => !job.hidden).sort((left, right) => left.sequence - right.sequence)
 		};
 	}

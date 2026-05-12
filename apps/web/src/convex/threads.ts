@@ -6,9 +6,7 @@ import {
 	enforceGuestThreadCreateLimit,
 	enforceSignedInThreadCreateLimit
 } from '@convex/lib/rateLimits';
-import { isActiveRunStatus } from '@convex/lib/runs';
-import { listThreadMessages } from '@convex/lib/threadMessages';
-import { vModelId, vReasoningEffort } from '@convex/lib/validators';
+import { isRunFinalStatus, vModelId, vReasoningEffort } from '@convex/lib/validators';
 
 export const create = mutation({
 	args: {
@@ -24,22 +22,14 @@ export const create = mutation({
 		} else {
 			await enforceSignedInThreadCreateLimit(ctx, userId);
 		}
-		const workspaceSession = await getOwnedWorkspaceSession(
-			ctx.db,
-			userId,
-			args.workspaceSessionId
-		);
+		await getOwnedWorkspaceSession(ctx.db, userId, args.workspaceSessionId);
 
 		const now = Date.now();
 		const recordId = await ctx.db.insert('threadRecords', {
 			userId: userId,
 			workspaceSessionId: args.workspaceSessionId,
-			workspacePath: workspaceSession.workspacePath,
-			workspaceName: workspaceSession.workspaceName,
-			summary: workspaceSession.workspacePath,
 			selectedModel: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
-			nextMessageOrder: 0,
 			lastMessageAt: now
 		});
 
@@ -55,13 +45,23 @@ export const listMine = query({
 	},
 	handler: async (ctx, args) => {
 		const userId: string = await getUserId(ctx, args.guestId);
-		const records = await ctx.db
-			.query('threadRecords')
-			.withIndex('by_userId_lastMessageAt', (query) => query.eq('userId', userId))
-			.order('desc')
-			.collect();
+		const [records, workspaceSessions] = await Promise.all([
+			ctx.db
+				.query('threadRecords')
+				.withIndex('by_userId_lastMessageAt', (query) => query.eq('userId', userId))
+				.order('desc')
+				.collect(),
+			ctx.db
+				.query('workspaceSessions')
+				.withIndex('by_userId', (query) => query.eq('userId', userId))
+				.collect()
+		]);
+		const workspaceSessionLookup = new Map(
+			workspaceSessions.map((workspaceSession) => [workspaceSession._id, workspaceSession])
+		);
 		return await Promise.all(
 			records.map(async (record) => {
+				const workspaceSession = workspaceSessionLookup.get(record.workspaceSessionId);
 				const latestRun = await ctx.db
 					.query('runs')
 					.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', record._id))
@@ -71,10 +71,11 @@ export const listMine = query({
 					...record,
 					threadId: record._id,
 					threadStatus: 'active',
-					workspaceName: record.workspaceName ?? record.workspacePath,
+					workspaceName: workspaceSession?.workspaceName ?? 'Unknown workspace',
+					workspacePath: workspaceSession?.workspacePath ?? '',
 					latestRunStatus: latestRun?.status ?? null,
 					latestRunStartedAt: latestRun?.startedAt,
-					hasActiveRun: latestRun ? isActiveRunStatus(latestRun.status) : false
+					hasActiveRun: latestRun ? !isRunFinalStatus(latestRun.status) : false
 				};
 			})
 		);
@@ -105,15 +106,15 @@ export const remove = mutation({
 			.query('runs')
 			.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', args.threadId))
 			.collect();
-		if (runs.some((run) => isActiveRunStatus(run.status))) {
+		if (runs.some((run) => !isRunFinalStatus(run.status))) {
 			throw new Error('Cannot delete a thread while a run is active.');
 		}
-		const messages = await listThreadMessages(ctx, args.threadId);
-		for (const message of messages) {
-			await ctx.db.delete(message._id);
-		}
-
 		for (const run of runs) {
+			for (const messageId of [run.promptMessageId, run.responseMessageId]) {
+				if (messageId) {
+					await ctx.db.delete(messageId);
+				}
+			}
 			const jobs = await ctx.db
 				.query('executorJobs')
 				.withIndex('by_runId_sequence', (query) => query.eq('runId', run._id))

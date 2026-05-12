@@ -7,8 +7,7 @@ import {
 	vModelId,
 	vReasoningEffort,
 	vRunStatus,
-	vThreadMessageRole,
-	vThreadMessageStatus
+	vThreadMessageType
 } from '$convex/lib/validators';
 
 export type WorkspaceEntry = {
@@ -115,10 +114,10 @@ export type ExecutorJobResult = WorkspaceToolResult;
 
 export type WorkspaceSession = {
 	_id: Id<'workspaceSessions'>;
+	_creationTime?: number;
 	userId: string;
 	workspacePath: string;
 	workspaceName: string;
-	workspaceOverview: WorkspaceOverview;
 	gitBranch: string | null;
 	gitDirty: boolean;
 	executorStatus: Infer<typeof vExecutorStatus>;
@@ -134,7 +133,6 @@ export type ThreadSummary = {
 	workspacePath: string;
 	workspaceName: string;
 	title: string;
-	summary?: string;
 	selectedModel: Infer<typeof vModelId>;
 	reasoningEffort: Infer<typeof vReasoningEffort>;
 	lastMessageAt: number;
@@ -193,10 +191,11 @@ export type RunState = {
 
 export type ThreadMessage = {
 	_id: Id<'threadMessages'>;
+	_creationTime?: number;
 	threadId: Id<'threadRecords'>;
-	runId?: Id<'runs'>;
-	role: Infer<typeof vThreadMessageRole>;
-	status: Infer<typeof vThreadMessageStatus>;
+	runId: Id<'runs'>;
+	userId: string;
+	type: Infer<typeof vThreadMessageType>;
 	text: string;
 	parts?: Array<
 		| { type: 'text'; id: string; text: string }
@@ -204,11 +203,9 @@ export type ThreadMessage = {
 		| { type: 'tool-call'; callId: string; name: string; input: unknown }
 		| { type: 'tool-result'; callId: string; name?: string; output: unknown }
 	>;
-	order: number;
-	stepOrder: number;
-	agentName?: string;
-	createdAt: number;
-	completedAt?: number;
+	runStatus: Infer<typeof vRunStatus>;
+	runStartedAt: number;
+	runCompletedAt?: number;
 };
 
 export type AgentRunRequest = {

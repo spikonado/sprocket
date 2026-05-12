@@ -2,7 +2,6 @@ import { internalMutation, internalQuery, mutation, query } from '@convex/_gener
 import { v } from 'convex/values';
 import { getOwnedExecutorJob, getOwnedWorkspaceSession } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
-import { patchJobFinalState, patchRunFinalState } from '@convex/lib/state';
 import {
 	isRunFinalStatus,
 	vExecutorJobKind,
@@ -152,9 +151,10 @@ export const complete = mutation({
 			return false;
 		}
 
-		await patchJobFinalState(ctx, args.jobId, {
+		await ctx.db.patch(args.jobId, {
 			status: 'completed',
-			result: args.result
+			result: args.result,
+			completedAt: Date.now()
 		});
 		await ctx.db.patch(run._id, {
 			status: 'running',
@@ -177,13 +177,17 @@ export const fail = mutation({
 			return false;
 		}
 
-		await patchJobFinalState(ctx, args.jobId, {
+		const completedAt = Date.now();
+		await ctx.db.patch(args.jobId, {
 			status: 'failed',
-			error: args.error
+			error: args.error,
+			completedAt
 		});
-		await patchRunFinalState(ctx, job.runId, {
+		await ctx.db.patch(job.runId, {
 			status: 'failed',
-			lastError: args.error
+			lastError: args.error,
+			activeJobId: undefined,
+			completedAt
 		});
 		return true;
 	}
@@ -282,9 +286,11 @@ export const finishRun = internalMutation({
 		lastError: v.optional(v.string())
 	},
 	handler: async (ctx, args) => {
-		await patchRunFinalState(ctx, args.runId, {
+		await ctx.db.patch(args.runId, {
 			status: args.status,
-			lastError: args.lastError
+			lastError: args.lastError,
+			activeJobId: undefined,
+			completedAt: Date.now()
 		});
 	}
 });
@@ -303,9 +309,10 @@ export const cancelJob = internalMutation({
 			return;
 		}
 
-		await patchJobFinalState(ctx, args.jobId, {
+		await ctx.db.patch(args.jobId, {
 			status: 'cancelled',
-			error: args.error
+			error: args.error,
+			completedAt: Date.now()
 		});
 
 		const run = await ctx.db.get(job.runId);

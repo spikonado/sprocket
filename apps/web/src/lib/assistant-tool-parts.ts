@@ -1,3 +1,8 @@
+import type { Infer } from 'convex/values';
+import { vExecutorJobKind, vExecutorJobStatus } from '@convex/lib/validators';
+import type { ExecutorJobPayload, ExecutorJobResult } from '@convex/lib/validators';
+import type { JsonValue } from '@web-lib/types/json';
+
 export type AssistantTextPart = {
 	type: 'text';
 	id: string;
@@ -14,14 +19,14 @@ export type AssistantToolCallPart = {
 	type: 'tool-call';
 	callId: string;
 	name: string;
-	input: unknown;
+	input: JsonValue;
 };
 
 export type AssistantToolResultPart = {
 	type: 'tool-result';
 	callId: string;
 	name?: string;
-	output: unknown;
+	output: JsonValue;
 };
 
 export type AssistantPart =
@@ -33,16 +38,16 @@ export type AssistantPart =
 export type PersistedToolLogEntry = {
 	callId: string;
 	name: string;
-	input: unknown;
-	output?: unknown;
+	input: JsonValue;
+	output?: JsonValue;
 };
 
 export type PersistableExecutorToolJob = {
 	id: string;
-	kind: string;
-	payload: unknown;
-	status: string;
-	result?: unknown;
+	kind: Infer<typeof vExecutorJobKind>;
+	payload: ExecutorJobPayload;
+	status: Infer<typeof vExecutorJobStatus>;
+	result?: ExecutorJobResult;
 	error?: string;
 };
 
@@ -55,7 +60,7 @@ export function upsertAssistantToolCallPart(
 	indexByCallId: Map<string, number>,
 	name: string,
 	callId: string,
-	input: unknown
+	input: JsonValue
 ) {
 	const nextPart: AssistantToolCallPart = {
 		type: 'tool-call',
@@ -78,7 +83,7 @@ export function upsertAssistantToolResultPart(
 	callId: string,
 	toolResult: {
 		name?: string;
-		output: unknown;
+		output: JsonValue;
 	}
 ) {
 	const nextPart: AssistantToolResultPart = {

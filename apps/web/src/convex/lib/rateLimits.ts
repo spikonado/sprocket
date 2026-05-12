@@ -1,4 +1,9 @@
-import { HOUR, RateLimiter, isRateLimitError } from '@convex-dev/rate-limiter';
+import {
+	HOUR,
+	RateLimiter,
+	isRateLimitError,
+	type RateLimitConfig
+} from '@convex-dev/rate-limiter';
 import { components } from '@convex/_generated/api';
 import type { ActionCtx, MutationCtx } from '@convex/_generated/server';
 
@@ -9,7 +14,7 @@ const guestHourlyThreadCreateLimit = 20;
 const signedInHourlyWorkspaceWriteLimit = 180;
 const guestHourlyWorkspaceWriteLimit = 60;
 
-export const rateLimiter = new RateLimiter(components.rateLimiter, {
+const rateLimitConfigs = {
 	signedInSendMessage: {
 		kind: 'fixed window',
 		period: HOUR,
@@ -40,11 +45,11 @@ export const rateLimiter = new RateLimiter(components.rateLimiter, {
 		period: HOUR,
 		rate: guestHourlyWorkspaceWriteLimit
 	}
-});
+} satisfies Record<string, RateLimitConfig>;
 
-type RateLimitCtx = ActionCtx | MutationCtx;
+export const rateLimiter = new RateLimiter(components.rateLimiter, rateLimitConfigs);
 
-function formatRetryAfter(milliseconds: number) {
+function formatRetryAfter(milliseconds: number): string {
 	const totalSeconds = Math.max(1, Math.ceil(milliseconds / 1000));
 	const hours = Math.floor(totalSeconds / 3600);
 	const minutes = Math.floor((totalSeconds % 3600) / 60);
@@ -65,17 +70,11 @@ function formatRetryAfter(milliseconds: number) {
 }
 
 async function enforceLimit(
-	ctx: RateLimitCtx,
-	name:
-		| 'signedInSendMessage'
-		| 'guestSendMessage'
-		| 'signedInCreateThread'
-		| 'guestCreateThread'
-		| 'signedInWorkspaceMutation'
-		| 'guestWorkspaceMutation',
+	ctx: ActionCtx | MutationCtx,
+	name: keyof typeof rateLimitConfigs,
 	key: string,
 	label: string
-) {
+): Promise<void> {
 	try {
 		await rateLimiter.limit(ctx, name, {
 			key,
@@ -90,23 +89,38 @@ async function enforceLimit(
 	}
 }
 
-export async function enforceSignedInSendLimit(ctx: RateLimitCtx, userId: string) {
+export async function enforceSignedInSendLimit(
+	ctx: ActionCtx | MutationCtx,
+	userId: string
+): Promise<void> {
 	await enforceLimit(ctx, 'signedInSendMessage', userId, 'Signed-in message limit');
 }
 
-export async function enforceGuestSendLimit(ctx: RateLimitCtx, userId: string) {
+export async function enforceGuestSendLimit(
+	ctx: ActionCtx | MutationCtx,
+	userId: string
+): Promise<void> {
 	await enforceLimit(ctx, 'guestSendMessage', userId, 'Guest message limit');
 }
 
-export async function enforceSignedInThreadCreateLimit(ctx: RateLimitCtx, userId: string) {
+export async function enforceSignedInThreadCreateLimit(
+	ctx: ActionCtx | MutationCtx,
+	userId: string
+): Promise<void> {
 	await enforceLimit(ctx, 'signedInCreateThread', userId, 'Signed-in thread limit');
 }
 
-export async function enforceGuestThreadCreateLimit(ctx: RateLimitCtx, userId: string) {
+export async function enforceGuestThreadCreateLimit(
+	ctx: ActionCtx | MutationCtx,
+	userId: string
+): Promise<void> {
 	await enforceLimit(ctx, 'guestCreateThread', userId, 'Guest thread limit');
 }
 
-export async function enforceSignedInWorkspaceWriteLimit(ctx: RateLimitCtx, userId: string) {
+export async function enforceSignedInWorkspaceWriteLimit(
+	ctx: ActionCtx | MutationCtx,
+	userId: string
+): Promise<void> {
 	await enforceLimit(
 		ctx,
 		'signedInWorkspaceMutation',
@@ -115,6 +129,9 @@ export async function enforceSignedInWorkspaceWriteLimit(ctx: RateLimitCtx, user
 	);
 }
 
-export async function enforceGuestWorkspaceWriteLimit(ctx: RateLimitCtx, userId: string) {
+export async function enforceGuestWorkspaceWriteLimit(
+	ctx: ActionCtx | MutationCtx,
+	userId: string
+): Promise<void> {
 	await enforceLimit(ctx, 'guestWorkspaceMutation', userId, 'Guest workspace mutation limit');
 }

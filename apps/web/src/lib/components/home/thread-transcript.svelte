@@ -6,6 +6,7 @@
 		type AssistantPart,
 		type PersistedToolLogEntry
 	} from '$lib/assistant-tool-parts';
+	import { isJsonObject } from '$lib/types/json';
 	import ScrollArea from '$lib/components/ui/scroll-area/scroll-area.svelte';
 	import ChatMarkdown from '$lib/components/chat-markdown.svelte';
 	import type { ExecutorJob, ThreadMessage, WorkspaceSession } from '$lib/types/sprocket';
@@ -83,29 +84,31 @@
 	}
 
 	function actionSummary(job: ExecutorJob) {
-		const payload = job.payload as Record<string, unknown> | undefined;
-		const result = job.result as Record<string, unknown> | undefined;
+		const payload = 'path' in job.payload ? job.payload : undefined;
 		switch (job.kind) {
 			case 'read_file':
-				if (typeof payload?.path === 'string') {
-					return result?.exists === false
+				if (payload?.path) {
+					const result = isJsonObject(job.result) ? job.result : undefined;
+					const exists =
+						result && 'exists' in result && typeof result.exists === 'boolean'
+							? result.exists
+							: undefined;
+					return exists === false
 						? `${actionTitle(job)} - ${payload.path} (not found)`
 						: `${actionTitle(job)} - ${payload.path}`;
 				}
 				return actionTitle(job);
 			case 'create_file':
 			case 'replace_in_file':
-				return typeof payload?.path === 'string'
-					? `${actionTitle(job)} - ${payload.path}`
-					: actionTitle(job);
+				return payload?.path ? `${actionTitle(job)} - ${payload.path}` : actionTitle(job);
 			default:
 				return actionTitle(job);
 		}
 	}
 
 	function toolLogSummary(toolLog: PersistedToolLogEntry) {
-		const input = toolLog.input as Record<string, unknown> | undefined;
-		const output = toolLog.output as Record<string, unknown> | undefined;
+		const input = isJsonObject(toolLog.input) ? toolLog.input : undefined;
+		const output = isJsonObject(toolLog.output) ? toolLog.output : undefined;
 		const title = toolDisplayName(toolLog.name);
 
 		switch (toolLog.name) {
@@ -127,7 +130,7 @@
 	const latestAssistantMessageId = $derived.by(() => {
 		for (let index = messages.length - 1; index >= 0; index -= 1) {
 			const message = messages[index];
-			if (message?.role === 'assistant') {
+			if (message?.type === 'response') {
 				return message._id;
 			}
 		}
@@ -191,7 +194,7 @@
 			{:else}
 				<div class="space-y-8 pb-14">
 					{#each messages as message (message._id)}
-						{#if message.role === 'user'}
+						{#if message.type === 'prompt'}
 							<div class="flex justify-end">
 								<div class={userMessageClass}>
 									<ChatMarkdown content={message.text || ' '} className="text-slate-100" />
@@ -221,7 +224,7 @@
 									</div>
 								{:else}
 									<ChatMarkdown
-										content={message.text || (message.status === 'streaming' ? '...' : ' ')}
+										content={message.text || (message.runStatus === 'completed' ? ' ' : '...')}
 										className="text-slate-200"
 									/>
 								{/if}

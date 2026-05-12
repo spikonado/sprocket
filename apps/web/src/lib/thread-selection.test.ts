@@ -14,7 +14,6 @@ function makeThreadSummary(overrides: Partial<ThreadSummary> = {}): ThreadSummar
 		workspacePath: overrides.workspacePath ?? '/tmp/workspace',
 		workspaceName: overrides.workspaceName ?? 'Workspace',
 		title: overrides.title ?? 'Workspace Thread',
-		summary: overrides.summary,
 		selectedModel: overrides.selectedModel ?? defaultModelId,
 		reasoningEffort: overrides.reasoningEffort ?? defaultReasoningEffort,
 		lastMessageAt: overrides.lastMessageAt ?? 1,

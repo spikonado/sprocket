@@ -68,6 +68,12 @@ repos:
         entry: bun turbo run lint
         pass_filenames: false
 
+      - id: svelte-check
+        name: svelte-check
+        language: system
+        entry: bun turbo run check
+        pass_filenames: false
+
       - id: prettier
         name: prettier
         language: system

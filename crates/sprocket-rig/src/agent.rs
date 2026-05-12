@@ -9,7 +9,7 @@ use sprocket_core::{
 
 use crate::runtime::RuntimeClient;
 use crate::tools::workspace_tools;
-use crate::types::{RunAgentRequest, ThreadMessageSnapshot, deserialize_agent_history};
+use crate::types::{RunAgentRequest, deserialize_agent_history};
 
 const AGENT_MAX_TURNS: usize = 75;
 const RUN_CANCELLED_ERROR: &str = "Run cancelled.";
@@ -38,7 +38,7 @@ fn build_workspace_preamble(
         "No AGENTS.md instructions were preloaded for the current workspace.".to_string()
     } else {
         format!(
-            "# AGENTS.md instructions: \n\n<INSTRUCTIONS>\n{}\n</INSTRUCTIONS>",
+            "# AGENTS.md instructions for {workspace_path}:\n<INSTRUCTIONS>\n{}\n</INSTRUCTIONS>",
             workspace_instructions
                 .iter()
                 .map(|instruction| instruction.contents.as_str())
@@ -49,43 +49,40 @@ fn build_workspace_preamble(
 
     [
         "You are a coding agent operating in the user’s real local workspace.",
-        "Behave like a careful senior software engineer: inspect before editing, prefer root-cause fixes, and keep changes tightly scoped to the user request.",
-        "When feasible, persist until the task is handled end-to-end. Do not stop at analysis if the user is asking for implementation.",
-        "Do not guess about repository state or file contents.",
-        "Fix the underlying problem when practical instead of applying surface-level patches.",
-        "Do not try to fix unrelated bugs, broken tests, or unrelated files unless the user asked for that work.",
+        "Persist until the task is handled end-to-end. Do not stop at analysis if the user is asking for implementation.",
+        "Behave like a careful senior software engineer.",
+        "Do not guess about repo state or file contents. Always inspect before editing.",
+        "Fix the root-cause of problems.",
+        "Keep changes minimal, consistent with the existing codebase, and completely focused on the requested task.",
         "If the workspace is already dirty, protect user changes and work around them rather than reverting them.",
+        "Use commands for inspection, builds, tests, and formatting, but do not mutate files through shell redirection or destructive git commands.",
         "Validate your work when the repo has relevant tests or build checks. Start with the most targeted checks for the code you changed.",
+        "AGENTS.md spec:",
+        "- AGENTS.md files can appear anywhere in the repository tree.",
+        "- Each AGENTS.md file applies to the directory tree rooted at the folder that contains it.",
+        "- For every file you change, follow all applicable AGENTS.md instructions, with deeper files taking precedence.",
+        "- System and user instructions override AGENTS.md instructions.",
+        "- The AGENTS.md instructions for the current workspace path are already included below and do not need to be re-read.",
+        "- If you move into a deeper subdirectory before editing, check for additional nested AGENTS.md files there.",
         "",
-        &format!("Workspace root: {}", workspace_path),
+        "Workspace root:",
+        workspace_path,
         "Workspace summary:",
         &format!("- Name: {}", workspace_overview.name),
         &format!(
             "- Git branch: {}",
             workspace_overview.git_branch.as_deref().unwrap_or("unknown")
         ),
-        &format!(
-            "- Git dirty: {}",
-            if workspace_overview.git_dirty {
-                "yes"
-            } else {
-                "no"
-            }
-        ),
+        &format!("- Git dirty: {}", workspace_overview.git_dirty),
+        &format!("- File count: {}", workspace_overview.file_count),
+        &format!("- Directory count: {}", workspace_overview.directory_count),
         &format!("- Top level entries: {}", top_level_entries),
         &format!("- Recent files: {}", recent_files),
+        "When you finish, respond with a concise summary of what changed and which checks you ran.",
         "",
         &instruction_block,
     ]
     .join("\n")
-}
-
-fn latest_user_prompt(messages: &[ThreadMessageSnapshot]) -> anyhow::Result<String> {
-    messages
-        .iter()
-        .rfind(|message| message.role == "user" && !message.text.trim().is_empty())
-        .map(|message| message.text.trim().to_string())
-        .ok_or_else(|| anyhow!("run does not contain a user prompt"))
 }
 
 fn is_run_cancelled_error(error: &str) -> bool {
@@ -102,15 +99,18 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
     runtime.start_run(&request.run_id).await?;
     eprintln!("sprocket-rig: marked run running {}", request.run_id);
 
-    let assistant_message_id = runtime.begin_assistant_message(&request.run_id).await?;
+    runtime.begin_assistant_message(&request.run_id).await?;
     eprintln!(
-        "sprocket-rig: created assistant message {}",
-        assistant_message_id
+        "sprocket-rig: prepared assistant response {}",
+        request.run_id
     );
 
     let workspace_overview = build_workspace_overview(&workspace_root)?;
     let workspace_instructions = load_workspace_instructions(&workspace_root)?;
-    let prompt = latest_user_prompt(&context.messages)?;
+    let prompt = context.prompt.trim().to_string();
+    if prompt.is_empty() {
+        return Err(anyhow!("run does not contain a user prompt"));
+    }
     let prior_history = deserialize_agent_history(context.agent_history)?;
     let preamble = build_workspace_preamble(
         &context.workspace_session.workspace_path,
@@ -122,7 +122,7 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
         .client
         .clone()
         .with_reasoning_effort(context.run.reasoning_effort.clone())
-        .with_stream_target(Some(assistant_message_id.clone()), request.guest_id.clone());
+        .with_stream_target(Some(request.run_id.clone()), request.guest_id.clone());
 
     let tools = workspace_tools(
         runtime.clone(),
@@ -161,7 +161,7 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
                 if is_run_cancelled_error(&error_text) {
                     eprintln!("sprocket-rig: run cancelled {}", request.run_id);
                     runtime
-                        .finish_assistant_message(&assistant_message_id, &final_text, "failed")
+                        .finish_assistant_message(&request.run_id, &final_text)
                         .await?;
                     runtime
                         .finish_run(&request.run_id, "cancelled", None)
@@ -173,7 +173,7 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
                     request.run_id, error_text
                 );
                 runtime
-                    .finish_assistant_message(&assistant_message_id, &final_text, "failed")
+                    .finish_assistant_message(&request.run_id, &final_text)
                     .await?;
                 runtime
                     .finish_run(&request.run_id, "failed", Some(&error_text))
@@ -189,14 +189,14 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
             request.run_id
         );
         runtime
-            .finish_assistant_message(&assistant_message_id, &final_text, "failed")
+            .finish_assistant_message(&request.run_id, &final_text)
             .await?;
         return Ok(());
     }
 
     eprintln!("sprocket-rig: model completed {}", request.run_id);
     runtime
-        .finish_assistant_message(&assistant_message_id, &final_text, "success")
+        .finish_assistant_message(&request.run_id, &final_text)
         .await?;
     runtime
         .finish_run(&request.run_id, "completed", None)

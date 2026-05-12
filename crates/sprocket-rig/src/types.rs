@@ -17,24 +17,12 @@ pub struct RunAgentRequest {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ThreadMessageSnapshot {
-    pub role: String,
-    pub status: String,
-    pub text: String,
-    #[serde(deserialize_with = "deserialize_convex_u64")]
-    pub order: u64,
-    #[serde(deserialize_with = "deserialize_convex_u64")]
-    pub step_order: u64,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct RunContextResponse {
     pub run: RunSnapshot,
     pub thread_record: ThreadRecordSnapshot,
+    pub prompt: String,
     pub agent_history: Vec<AgentHistoryMessage>,
     pub workspace_session: WorkspaceSessionSnapshot,
-    pub messages: Vec<ThreadMessageSnapshot>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -124,7 +112,6 @@ pub struct ThreadRecordSnapshot {
     #[serde(rename = "_id")]
     pub id: String,
     pub workspace_session_id: String,
-    pub workspace_path: String,
     pub title: Option<String>,
 }
 

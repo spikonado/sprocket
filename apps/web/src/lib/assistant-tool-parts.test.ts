@@ -62,7 +62,14 @@ describe('assistant tool parts', () => {
 				kind: 'read_file',
 				payload: { path: 'AGENTS.md' },
 				status: 'completed',
-				result: { path: 'AGENTS.md', contents: 'instructions' }
+				result: {
+					path: 'AGENTS.md',
+					startLine: 1,
+					endLine: 1,
+					totalLines: 1,
+					truncated: false,
+					contents: 'instructions'
+				}
 			}
 		]);
 		const logs = buildPersistedToolLogs(hydratedParts);
@@ -72,7 +79,14 @@ describe('assistant tool parts', () => {
 			callId: 'executor-job:job-1',
 			name: 'read_file',
 			input: { path: 'AGENTS.md' },
-			output: { path: 'AGENTS.md', contents: 'instructions' }
+			output: {
+				path: 'AGENTS.md',
+				startLine: 1,
+				endLine: 1,
+				totalLines: 1,
+				truncated: false,
+				contents: 'instructions'
+			}
 		});
 	});
 
@@ -92,7 +106,14 @@ describe('assistant tool parts', () => {
 				kind: 'read_file',
 				payload: { path: 'AGENTS.md' },
 				status: 'completed',
-				result: { path: 'AGENTS.md', contents: 'instructions' }
+				result: {
+					path: 'AGENTS.md',
+					startLine: 1,
+					endLine: 1,
+					totalLines: 1,
+					truncated: false,
+					contents: 'instructions'
+				}
 			}
 		]);
 

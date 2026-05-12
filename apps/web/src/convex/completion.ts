@@ -4,19 +4,24 @@ import { generateText, jsonSchema, streamText, tool, type ModelMessage } from 'a
 import { v } from 'convex/values';
 import { action, type ActionCtx } from '@convex/_generated/server';
 import { api, internal } from '@convex/_generated/api';
-import type { Doc, Id } from '@convex/_generated/dataModel';
+import type { Id } from '@convex/_generated/dataModel';
+import type { JsonValue } from '@web-lib/types/json';
 import {
 	upsertAssistantToolCallPart,
 	upsertAssistantToolResultPart,
 	type AssistantPart as PersistedAssistantPart
-} from '../lib/assistant-tool-parts';
+} from '@web-lib/assistant-tool-parts';
 import { resolveLanguageModel, resolveProviderOptions } from '@convex/lib/modelRegistry';
 import { vModelId, vReasoningEffort } from '@convex/lib/validators';
+import { type SupportedModelId, type SupportedReasoningEffort } from '@web-lib/models';
 
 type JsonSchema = Parameters<typeof jsonSchema>[0];
 type ToolChoice = NonNullable<Parameters<typeof generateText>[0]['toolChoice']>;
 type GenerateTextResult = Awaited<ReturnType<typeof generateText>>;
 type CompletionActionResult = Pick<GenerateTextResult, 'text' | 'usage' | 'response' | 'toolCalls'>;
+type CompletionRequest = Parameters<typeof generateText>[0];
+type StreamingCompletionRequest = Parameters<typeof streamText>[0];
+type SharedCompletionRequest = Omit<CompletionRequest, 'prompt' | 'messages'>;
 
 export const complete = action({
 	args: {
@@ -26,7 +31,7 @@ export const complete = action({
 		prompt: v.optional(v.string()),
 		messagesJson: v.optional(v.string()),
 		guestId: v.optional(v.string()),
-		streamMessageId: v.optional(v.id('threadMessages')),
+		streamRunId: v.optional(v.id('runs')),
 		toolChoiceJson: v.optional(v.string()),
 		tools: v.optional(
 			v.array(
@@ -45,7 +50,7 @@ export const complete = action({
 		text: string;
 		usage: CompletionActionResult['usage'];
 		message_id: string | undefined;
-		tool_calls: Array<{ id: string; name: string; arguments: unknown }>;
+		tool_calls: Array<{ id: string; name: string; arguments: JsonValue }>;
 	}> => {
 		const tools: Record<string, ReturnType<typeof tool>> = Object.fromEntries(
 			(args.tools ?? []).map((toolDefinition) => [
@@ -61,34 +66,26 @@ export const complete = action({
 		const messages: ModelMessage[] | undefined = args.messagesJson
 			? parseJson<ModelMessage[]>(args.messagesJson, 'messagesJson')
 			: undefined;
-		const toolChoice = args.toolChoiceJson
+		const toolChoice: ToolChoice | undefined = args.toolChoiceJson
 			? parseJson<ToolChoice>(args.toolChoiceJson, 'toolChoiceJson')
 			: undefined;
-		const sharedArgs = {
-			model: resolveLanguageModel(args.modelId),
-			...(args.system ? { system: args.system } : {}),
-			...(args.tools?.length ? { tools } : {}),
-			...(toolChoice ? { toolChoice } : {}),
-			...(args.reasoningEffort
-				? {
-						providerOptions: resolveProviderOptions(args.modelId, args.reasoningEffort)
-					}
-				: {})
-		};
-		const requestInput = args.prompt ? { prompt: args.prompt } : messages ? { messages } : null;
-		if (!requestInput) {
+		const sharedArgs = buildSharedCompletionRequest(args, tools, toolChoice);
+		let request: CompletionRequest & StreamingCompletionRequest;
+		if (args.prompt !== undefined) {
+			request = buildCompletionRequest(sharedArgs, args.prompt, undefined);
+		} else if (messages !== undefined) {
+			request = buildCompletionRequest(sharedArgs, undefined, messages);
+		} else {
 			throw new Error('Either prompt or messagesJson is required.');
 		}
 
-		const result: CompletionActionResult = args.streamMessageId
-			? await streamAndPersistDeltas(ctx, args, {
-					...sharedArgs,
-					...requestInput
-				})
-			: await generateText({
-					...sharedArgs,
-					...requestInput
-				});
+		const result: CompletionActionResult = args.streamRunId
+			? await streamAndPersistDeltas(
+					ctx,
+					{ guestId: args.guestId, streamRunId: args.streamRunId },
+					request
+				)
+			: await generateText(request);
 
 		return {
 			text: result.text,
@@ -97,7 +94,7 @@ export const complete = action({
 			tool_calls: (result.toolCalls ?? []).map((toolCall: (typeof result.toolCalls)[number]) => ({
 				id: toolCall.toolCallId,
 				name: toolCall.toolName,
-				arguments: toolCall.input
+				arguments: toolCall.input as JsonValue
 			}))
 		};
 	}
@@ -105,19 +102,15 @@ export const complete = action({
 
 const UPDATE_THROTTLE_MS = 120;
 const UPDATE_MIN_DELTA_CHARS = 40;
-const RUN_CANCELLED_ERROR = 'Run cancelled.';
 
 async function streamAndPersistDeltas(
 	ctx: ActionCtx,
-	args: { guestId?: string; streamMessageId?: Id<'threadMessages'> },
+	args: { guestId?: string; streamRunId: Id<'runs'> },
 	request: Parameters<typeof streamText>[0]
 ): Promise<CompletionActionResult> {
-	const existingMessage: Doc<'threadMessages'> | null = args.streamMessageId
-		? await ctx.runQuery(internal.agentRuntime.getAssistantMessage, {
-				...(args.guestId ? { guestId: args.guestId } : {}),
-				messageId: args.streamMessageId
-			})
-		: null;
+	const existingMessage = await ctx.runQuery(internal.agentRuntime.getAssistantMessageState, {
+		runId: args.streamRunId
+	});
 	const result = streamText(request);
 	const parts: PersistedAssistantPart[] = (
 		(existingMessage?.parts ?? []) as PersistedAssistantPart[]
@@ -137,25 +130,25 @@ async function streamAndPersistDeltas(
 			toolResultPartIndexByCallId.set(part.callId, index);
 		}
 	}
-	let lastPersistedLength = 0;
-	let lastPersistedAt = 0;
+	let lastPersistedLength = buildAssistantText(parts).length;
+	let lastPersistedAt = Date.now();
 
 	for await (const chunk of result.fullStream) {
 		if (
 			await ctx.runQuery(api.agentRuntime.isFinished, {
 				guestId: args.guestId,
-				runId: existingMessage?.runId
+				runId: args.streamRunId
 			})
 		) {
 			const text = buildAssistantText(parts);
 			if (text.length !== lastPersistedLength) {
 				await ctx.runMutation(internal.agentRuntime.updateAssistantMessage, {
-					messageId: existingMessage?._id,
+					runId: args.streamRunId,
 					text,
 					parts
 				});
 			}
-			throw new Error(RUN_CANCELLED_ERROR);
+			throw new Error('Run is cancelled,');
 		}
 
 		if (chunk.type === 'text-start') {
@@ -196,7 +189,7 @@ async function streamAndPersistDeltas(
 		const text = buildAssistantText(parts);
 		if (shouldPersistPartial(text, lastPersistedLength, lastPersistedAt)) {
 			await ctx.runMutation(internal.agentRuntime.updateAssistantMessage, {
-				messageId: existingMessage?._id,
+				runId: args.streamRunId,
 				text,
 				parts
 			});
@@ -209,21 +202,21 @@ async function streamAndPersistDeltas(
 	if (
 		await ctx.runQuery(api.agentRuntime.isFinished, {
 			guestId: args.guestId,
-			runId: existingMessage?.runId
+			runId: args.streamRunId
 		})
 	) {
 		if (text.length !== lastPersistedLength) {
 			await ctx.runMutation(internal.agentRuntime.updateAssistantMessage, {
-				messageId: existingMessage?._id,
+				runId: args.streamRunId,
 				text,
 				parts
 			});
 		}
-		throw new Error(RUN_CANCELLED_ERROR);
+		throw new Error('Run is cancelled.');
 	}
 	if (text.length !== lastPersistedLength) {
 		await ctx.runMutation(internal.agentRuntime.updateAssistantMessage, {
-			messageId: existingMessage?._id,
+			runId: args.streamRunId,
 			text,
 			parts
 		});
@@ -286,6 +279,53 @@ function ensureReasoningPart(
 	const nextIndex = parts.push({ type: 'reasoning', id, text: '' }) - 1;
 	indexById.set(id, nextIndex);
 	return nextIndex;
+}
+
+function buildSharedCompletionRequest(
+	args: {
+		modelId: SupportedModelId;
+		reasoningEffort?: SupportedReasoningEffort;
+		system?: string;
+		tools?: Array<{ name: string }>;
+	},
+	tools: Record<string, ReturnType<typeof tool>>,
+	toolChoice: ToolChoice | undefined
+): SharedCompletionRequest {
+	return {
+		model: resolveLanguageModel(args.modelId),
+		...(args.system !== undefined ? { system: args.system } : {}),
+		...(args.tools?.length ? { tools } : {}),
+		...(toolChoice !== undefined ? { toolChoice } : {}),
+		...(args.reasoningEffort !== undefined
+			? {
+					providerOptions: resolveProviderOptions(args.modelId, args.reasoningEffort)
+				}
+			: {})
+	};
+}
+
+function buildCompletionRequest(
+	sharedArgs: SharedCompletionRequest,
+	prompt: string,
+	messages: undefined
+): CompletionRequest & StreamingCompletionRequest;
+function buildCompletionRequest(
+	sharedArgs: SharedCompletionRequest,
+	prompt: undefined,
+	messages: ModelMessage[]
+): CompletionRequest & StreamingCompletionRequest;
+function buildCompletionRequest(
+	sharedArgs: SharedCompletionRequest,
+	prompt: string | undefined,
+	messages: ModelMessage[] | undefined
+): CompletionRequest & StreamingCompletionRequest {
+	if (prompt !== undefined) {
+		return { ...sharedArgs, prompt };
+	}
+	if (messages !== undefined) {
+		return { ...sharedArgs, messages };
+	}
+	throw new Error('Either prompt or messagesJson is required.');
 }
 
 function parseJson<T>(json: string, fieldName: string): T {

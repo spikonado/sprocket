@@ -15,7 +15,6 @@ function makeWorkspaceSession(
 		_id: Id<'workspaceSessions'>;
 		connectedClientId?: string;
 		lastHeartbeatAt?: number;
-		executorStatus: 'connected' | 'disconnected';
 	}> = {}
 ) {
 	return {
@@ -25,19 +24,8 @@ function makeWorkspaceSession(
 		guestId: undefined,
 		workspacePath: '/tmp/workspace',
 		workspaceName: 'Workspace',
-		workspaceOverview: {
-			rootPath: '/tmp/workspace',
-			name: 'Workspace',
-			gitBranch: 'main',
-			gitDirty: false,
-			fileCount: 1,
-			directoryCount: 1,
-			topLevelEntries: [],
-			recentFiles: []
-		},
 		gitBranch: 'main',
 		gitDirty: false,
-		executorStatus: overrides.executorStatus ?? 'disconnected',
 		lastHeartbeatAt: overrides.lastHeartbeatAt,
 		connectedClientId: overrides.connectedClientId,
 		nextExecutorSequence: 0,

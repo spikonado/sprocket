@@ -33,10 +33,8 @@ export const upsertSelected = mutation({
 		const patch = {
 			workspacePath: args.workspacePath,
 			workspaceName: args.workspaceOverview.name,
-			workspaceOverview: args.workspaceOverview,
 			gitBranch: args.workspaceOverview.gitBranch,
 			gitDirty: args.workspaceOverview.gitDirty,
-			executorStatus: args.connectedClientId ? ('connected' as const) : ('disconnected' as const),
 			lastHeartbeatAt: args.connectedClientId ? now : undefined,
 			connectedClientId: args.connectedClientId,
 			nextExecutorSequence: existing?.nextExecutorSequence ?? 0,
@@ -106,7 +104,6 @@ export const heartbeatAttached = mutation({
 				if (requestedIds.has(session._id)) {
 					if (shouldRefreshWorkspaceHeartbeat(session, args.clientId, now)) {
 						await ctx.db.patch(session._id, {
-							executorStatus: 'connected',
 							connectedClientId: args.clientId,
 							lastHeartbeatAt: now
 						});
@@ -116,7 +113,6 @@ export const heartbeatAttached = mutation({
 
 				if (detachedSessionIdSet.has(session._id)) {
 					await ctx.db.patch(session._id, {
-						executorStatus: 'disconnected',
 						connectedClientId: undefined
 					});
 				}

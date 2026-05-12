@@ -1,7 +1,10 @@
-import type { Doc } from '@convex/_generated/dataModel';
+import type { Infer } from 'convex/values';
+import { isRunFinalStatus, vRunStatus } from '@convex/lib/validators';
 
-type RunStatus = Doc<'runs'>['status'];
+export function assertThreadCanStartRun(status: Infer<typeof vRunStatus> | null | undefined) {
+	if (!status || isRunFinalStatus(status)) {
+		return;
+	}
 
-export function isActiveRunStatus(status: RunStatus) {
-	return status === 'queued' || status === 'running' || status === 'awaiting_executor';
+	throw new Error('Finish or cancel the active run before sending another message.');
 }

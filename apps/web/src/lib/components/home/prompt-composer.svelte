@@ -18,6 +18,7 @@
 		selectedReasoningEffort?: SupportedReasoningEffort;
 		workspaceSession: WorkspaceSession | null;
 		canSend: boolean;
+		isSubmitting: boolean;
 		isRunning: boolean;
 		elapsedLabel: string | null;
 		onSubmit: () => void;
@@ -30,6 +31,7 @@
 		selectedReasoningEffort = $bindable(defaultReasoningEffort),
 		workspaceSession,
 		canSend,
+		isSubmitting,
 		isRunning,
 		elapsedLabel,
 		onSubmit,
@@ -55,6 +57,10 @@
 	}
 
 	function handleComposerKeydown(event: KeyboardEvent) {
+		if (!canSend || isSubmitting || isRunning || !prompt.trim()) {
+			return;
+		}
+
 		if (!shouldSubmitComposerFromKeydown(event)) {
 			return;
 		}
@@ -107,7 +113,7 @@
 							rows="1"
 							class="min-h-0 w-full resize-none border-0 bg-transparent px-0 py-0 text-[14px] leading-6 text-slate-100 outline-none placeholder:text-slate-500"
 							placeholder="Ask anything, @tag files/folders, or use / to show available commands"
-							disabled={isRunning}
+							disabled={isRunning || isSubmitting}
 							onkeydown={handleComposerKeydown}
 						></textarea>
 					</div>
@@ -171,7 +177,7 @@
 									type="button"
 									class="bg-primary/90 text-primary-foreground hover:bg-primary flex h-10 w-10 items-center justify-center rounded-full transition-all duration-150 hover:scale-105 enabled:cursor-pointer disabled:pointer-events-none disabled:opacity-30 disabled:hover:scale-100"
 									onclick={onSubmit}
-									disabled={!canSend || !prompt.trim()}
+									disabled={!canSend || isSubmitting || !prompt.trim()}
 									aria-label="Send message"
 								>
 									<ArrowUp class="size-4" />

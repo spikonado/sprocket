@@ -9,7 +9,7 @@ async function getOwnedRecord<TableName extends OwnerScopedTable>(
 	id: Id<TableName>,
 	errorMessage: string
 ): Promise<Doc<TableName>> {
-	const record = await db.get(id);
+	const record: Doc<TableName> | null = await db.get(id);
 	if (!record || record.userId !== userId) {
 		throw new Error(errorMessage);
 	}
@@ -34,7 +34,12 @@ export async function getOwnedWorkspaceSession(
 	userId: string,
 	workspaceSessionId: Id<'workspaceSessions'>
 ): Promise<Doc<'workspaceSessions'>> {
-	return await getOwnedRecord(db, userId, workspaceSessionId, 'Workspace session not found.');
+	return await getOwnedRecord<'workspaceSessions'>(
+		db,
+		userId,
+		workspaceSessionId,
+		'Workspace session not found.'
+	);
 }
 
 export async function getOwnedThreadRecord(
@@ -42,7 +47,7 @@ export async function getOwnedThreadRecord(
 	userId: string,
 	threadRecordId: Id<'threadRecords'>
 ): Promise<Doc<'threadRecords'>> {
-	return await getOwnedRecord(db, userId, threadRecordId, 'Thread not found.');
+	return await getOwnedRecord<'threadRecords'>(db, userId, threadRecordId, 'Thread not found.');
 }
 
 export async function getOwnedRun(
@@ -50,7 +55,7 @@ export async function getOwnedRun(
 	userId: string,
 	runId: Id<'runs'>
 ): Promise<Doc<'runs'>> {
-	return await getOwnedRecord(db, userId, runId, 'Run not found.');
+	return await getOwnedRecord<'runs'>(db, userId, runId, 'Run not found.');
 }
 
 export async function getOwnedExecutorJob(
@@ -58,13 +63,10 @@ export async function getOwnedExecutorJob(
 	userId: string,
 	jobId: Id<'executorJobs'>
 ): Promise<Doc<'executorJobs'>> {
-	const job = await db.get(jobId);
+	const job: Doc<'executorJobs'> | null = await db.get(jobId);
 	if (!job) {
 		throw new Error('Job not found.');
 	}
-	const workspaceSession = await db.get(job.workspaceSessionId);
-	if (!workspaceSession || workspaceSession.userId !== userId) {
-		throw new Error('Job not found.');
-	}
+	await getOwnedWorkspaceSession(db, userId, job.workspaceSessionId);
 	return job;
 }

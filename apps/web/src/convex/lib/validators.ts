@@ -7,8 +7,6 @@ function literals<const TValues extends readonly string[]>(values: TValues) {
 	};
 }
 
-export { modelIds, reasoningEffortIds };
-
 export const vReasoningEffort = v.union(...literals(reasoningEffortIds));
 
 export const vModelId = v.union(...literals(modelIds));
@@ -128,17 +126,9 @@ export const vExecutorJobStatus = v.union(
 	v.literal('cancelled')
 );
 
-export const vThreadMessageRole = v.union(v.literal('user'), v.literal('assistant'));
+export const vThreadMessageType = v.union(v.literal('prompt'), v.literal('response'));
 
-export type ThreadMessageRole = Infer<typeof vThreadMessageRole>;
-
-export const vThreadMessageStatus = v.union(
-	v.literal('streaming'),
-	v.literal('success'),
-	v.literal('failed')
-);
-
-export type ThreadMessageStatus = Infer<typeof vThreadMessageStatus>;
+export type ThreadMessageType = Infer<typeof vThreadMessageType>;
 
 export const vAssistantTextPart = v.object({
 	type: v.literal('text'),
@@ -238,16 +228,6 @@ export const vAgentHistoryMessage = v.object({
 });
 
 export type AgentHistoryMessage = Infer<typeof vAgentHistoryMessage>;
-
-export const threadMessageFinalStatus = ['success', 'failed'] as const;
-
-export const vThreadMessageFinalStatus = v.union(...literals(threadMessageFinalStatus));
-
-export function isThreadMessageFinalStatus(
-	status: Infer<typeof vThreadMessageStatus>
-): status is Infer<typeof vThreadMessageFinalStatus> {
-	return (threadMessageFinalStatus as readonly string[]).includes(status);
-}
 
 export const vWorkspaceToolRequest = v.object({
 	jobId: v.optional(v.string()),

@@ -34,6 +34,10 @@
 		WorkspaceOverview
 	} from '$lib/types/sprocket';
 
+	type WorkspaceSelectionResult = {
+		_id: Id<'workspaceSessions'>;
+	};
+
 	const guestStorageKey = 'sprocket.guest-session-id';
 	const convexClient = useConvexClient();
 
@@ -49,6 +53,7 @@
 	let visibleMessages = $state<ThreadMessage[]>([]);
 	let elapsedSeconds = $state(0);
 	let guestSessionId = $state<string | null>(null);
+	let isSubmittingPrompt = $state(false);
 	let hasResolvedInitialSelection = $state(false);
 	let restoredWorkspaceSessionIdToAttach = $state<Id<'workspaceSessions'> | null>(null);
 	let lastSavedThreadId = $state<Id<'threadRecords'> | null>(null);
@@ -131,14 +136,16 @@
 		getWorkspaceThreadGroups(workspaceSessions, threads)
 	);
 
-	const runState = $derived(latestRunQuery.data);
-	const visibleActions = $derived((runState?.jobs ?? []).slice(-60));
+	const runState = $derived(latestRunQuery.data?.run);
+	const visibleActions = $derived((latestRunQuery.data?.jobs ?? []).slice(-60));
 	const isRunning = $derived(
 		runState?.status === 'queued' ||
 			runState?.status === 'running' ||
 			runState?.status === 'awaiting_executor'
 	);
-	const canSend = $derived(Boolean(currentWorkspaceSessionId && desktopApi && !isRunning));
+	const canSend = $derived(
+		Boolean(currentWorkspaceSessionId && desktopApi && !isRunning && !isSubmittingPrompt)
+	);
 	const attachedWorkspaceSessionIds = $derived.by<Id<'workspaceSessions'>[]>(() =>
 		getAttachedWorkspaceSessionIds(workspaceSessions, executorClientId)
 	);
@@ -213,7 +220,7 @@
 				workspacePath: workspaceRoot,
 				workspaceOverview: overview,
 				connectedClientId: executorClientId
-			})) as WorkspaceSession;
+			})) as WorkspaceSelectionResult;
 			setWorkspaceSelection({ workspaceSessionId: session._id, draft: true });
 			currentError = null;
 		} catch (error) {
@@ -310,6 +317,10 @@
 	}
 
 	async function submitPrompt() {
+		if (isSubmittingPrompt) {
+			return;
+		}
+
 		if (!prompt.trim()) {
 			return;
 		}
@@ -328,6 +339,8 @@
 			currentError = 'You need an active workspace session before sending.';
 			return;
 		}
+
+		isSubmittingPrompt = true;
 
 		try {
 			await attachWorkspaceSession(currentWorkspaceSessionId);
@@ -360,6 +373,8 @@
 			}
 		} catch (error) {
 			currentError = error instanceof Error ? error.message : 'Failed to send prompt.';
+		} finally {
+			isSubmittingPrompt = false;
 		}
 	}
 
@@ -495,12 +510,7 @@
 			return;
 		}
 
-		visibleMessages = [...(data.page ?? [])].sort((left, right) => {
-			if (left.order !== right.order) {
-				return left.order - right.order;
-			}
-			return left.stepOrder - right.stepOrder;
-		});
+		visibleMessages = [...(data.page ?? [])];
 	});
 
 	$effect(() => {
@@ -738,6 +748,7 @@
 				bind:selectedReasoningEffort
 				workspaceSession={currentWorkspaceSession}
 				{canSend}
+				isSubmitting={isSubmittingPrompt}
 				{isRunning}
 				elapsedLabel={isRunning ? formatElapsedDuration(elapsedSeconds) : null}
 				onSubmit={() => {
