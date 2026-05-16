@@ -2795,6 +2795,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "sprocket-convex-provider"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "convex",
+ "futures",
+ "rig-core",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "sprocket-core"
 version = "0.0.0"
 dependencies = [
@@ -2827,9 +2841,9 @@ dependencies = [
  "convex",
  "futures",
  "rig-core",
- "rustls",
  "serde",
  "serde_json",
+ "sprocket-convex-provider",
  "sprocket-core",
  "thiserror",
  "tokio",

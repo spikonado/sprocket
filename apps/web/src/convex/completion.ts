@@ -109,6 +109,7 @@ async function streamAndPersistDeltas(
 	request: Parameters<typeof streamText>[0]
 ): Promise<CompletionActionResult> {
 	const existingMessage = await ctx.runQuery(internal.agentRuntime.getAssistantMessageState, {
+		guestId: args.guestId,
 		runId: args.streamRunId
 	});
 	const result = streamText(request);
@@ -189,6 +190,7 @@ async function streamAndPersistDeltas(
 		const text = buildAssistantText(parts);
 		if (shouldPersistPartial(text, lastPersistedLength, lastPersistedAt)) {
 			await ctx.runMutation(internal.agentRuntime.updateAssistantMessage, {
+				guestId: args.guestId,
 				runId: args.streamRunId,
 				text,
 				parts
@@ -207,6 +209,7 @@ async function streamAndPersistDeltas(
 	) {
 		if (text.length !== lastPersistedLength) {
 			await ctx.runMutation(internal.agentRuntime.updateAssistantMessage, {
+				guestId: args.guestId,
 				runId: args.streamRunId,
 				text,
 				parts
@@ -216,6 +219,7 @@ async function streamAndPersistDeltas(
 	}
 	if (text.length !== lastPersistedLength) {
 		await ctx.runMutation(internal.agentRuntime.updateAssistantMessage, {
+			guestId: args.guestId,
 			runId: args.streamRunId,
 			text,
 			parts

@@ -1,19 +1,14 @@
-use std::collections::BTreeMap;
-use std::time::Duration;
-
 use anyhow::{Context, anyhow};
 use convex::{FunctionResult, Value};
 use serde::Deserialize;
-use tokio::time::timeout;
+use sprocket_convex_provider::Client as ConvexProviderClient;
+use std::collections::BTreeMap;
 
-use crate::completion::ConvexRigClient;
 use crate::types::{RunAgentRequest, RunContextResponse};
-
-const CONVEX_RPC_TIMEOUT: Duration = Duration::from_secs(20 * 60);
 
 #[derive(Clone)]
 pub(crate) struct RuntimeClient {
-    pub(crate) client: ConvexRigClient,
+    pub(crate) client: ConvexProviderClient,
     guest_id: Option<String>,
 }
 
@@ -23,7 +18,8 @@ impl RuntimeClient {
             "sprocket-rig: initializing Convex client for run {}",
             request.run_id
         );
-        let client = ConvexRigClient::new(&request.deployment_url, "completion:complete").await?;
+        let client =
+            ConvexProviderClient::new(&request.deployment_url, "completion:complete").await?;
         client.set_auth_token(request.auth_token.clone()).await;
         eprintln!(
             "sprocket-rig: Convex client ready for run {}",
@@ -41,10 +37,7 @@ impl RuntimeClient {
         args: BTreeMap<String, Value>,
     ) -> anyhow::Result<T> {
         eprintln!("sprocket-rig: query start {function}");
-        let mut convex = self.client.inner.lock().await;
-        let result = timeout(CONVEX_RPC_TIMEOUT, convex.query(function, args))
-            .await
-            .with_context(|| format!("query timed out for {function}"))??;
+        let result = self.client.query(function, args).await?;
         eprintln!("sprocket-rig: query done {function}");
         decode_function_result(result, function)
     }
@@ -55,10 +48,7 @@ impl RuntimeClient {
         args: BTreeMap<String, Value>,
     ) -> anyhow::Result<T> {
         eprintln!("sprocket-rig: mutation start {function}");
-        let mut convex = self.client.inner.lock().await;
-        let result = timeout(CONVEX_RPC_TIMEOUT, convex.mutation(function, args))
-            .await
-            .with_context(|| format!("mutation timed out for {function}"))??;
+        let result = self.client.mutation(function, args).await?;
         eprintln!("sprocket-rig: mutation done {function}");
         decode_function_result(result, function)
     }

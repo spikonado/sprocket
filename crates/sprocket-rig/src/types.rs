@@ -5,7 +5,7 @@ use rig::message::{
     AssistantContent, ReasoningContent, Text, ToolCall, ToolFunction, ToolResult,
     ToolResultContent, UserContent,
 };
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RunAgentRequest {
@@ -122,24 +122,6 @@ pub struct WorkspaceSessionSnapshot {
     pub id: String,
     pub workspace_path: String,
     pub workspace_name: String,
-}
-
-pub(crate) fn deserialize_convex_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = Option::<f64>::deserialize(deserializer)?;
-    let Some(value) = value else {
-        return Ok(0);
-    };
-
-    if !value.is_finite() || value < 0.0 || value.fract() != 0.0 {
-        return Err(serde::de::Error::custom(format!(
-            "expected a non-negative integer-compatible Convex number, got {value}"
-        )));
-    }
-
-    Ok(value as u64)
 }
 
 fn vec_to_one_or_many<T: Clone>(items: Vec<T>, what: &str) -> anyhow::Result<OneOrMany<T>> {

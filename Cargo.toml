@@ -1,5 +1,10 @@
 [workspace]
-members = ["crates/sprocket-core", "crates/sprocket-rig", "packages/native"]
+members = [
+    "crates/sprocket-convex-provider",
+    "crates/sprocket-core",
+    "crates/sprocket-rig",
+    "packages/native",
+]
 resolver = "3"
 
 [profile.release]
