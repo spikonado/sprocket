@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ArrowUp, ChevronDown, Cpu, Folder, LockOpen, Square } from 'lucide-svelte';
+	import { ArrowUp, ChevronDown, Cpu, LockOpen, Square } from 'lucide-svelte';
 	import ModelSelector from '$lib/components/model-selector.svelte';
 	import ReasoningSelector from '$lib/components/reasoning-selector.svelte';
 	import { shouldSubmitComposerFromKeydown } from '$lib/composer';
@@ -10,13 +10,11 @@
 		type SupportedModelId,
 		type SupportedReasoningEffort
 	} from '$lib/models';
-	import type { WorkspaceSession } from '$lib/types/sprocket';
 
 	type Props = {
 		prompt?: string;
 		selectedModel?: SupportedModelId;
 		selectedReasoningEffort?: SupportedReasoningEffort;
-		workspaceSession: WorkspaceSession | null;
 		canSend: boolean;
 		isSubmitting: boolean;
 		isRunning: boolean;
@@ -29,7 +27,6 @@
 		prompt = $bindable(''),
 		selectedModel = $bindable(defaultModelId),
 		selectedReasoningEffort = $bindable(defaultReasoningEffort),
-		workspaceSession,
 		canSend,
 		isSubmitting,
 		isRunning,
@@ -188,22 +185,5 @@
 				</div>
 			</div>
 		</div>
-
-		{#if workspaceSession}
-			<div
-				class="mx-auto mt-2.5 flex w-full max-w-3xl items-center justify-between px-1 text-xs text-slate-500"
-			>
-				<div class="flex min-w-0 items-center gap-2" title={workspaceSession.workspacePath}>
-					<Folder class="size-3.5 shrink-0" />
-					<span class="truncate">Local checkout</span>
-				</div>
-				{#if workspaceSession.gitBranch}
-					<div class="ml-4 flex shrink-0 items-center gap-1.5">
-						<span>{workspaceSession.gitBranch}</span>
-						<ChevronDown class="size-3.5 text-slate-500" />
-					</div>
-				{/if}
-			</div>
-		{/if}
 	</div>
 </footer>

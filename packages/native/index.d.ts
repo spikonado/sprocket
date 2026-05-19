@@ -62,6 +62,7 @@ export interface RunAgentRequest {
 	authToken?: string;
 	guestId?: string;
 	runId: string;
+	workspacePath: string;
 }
 
 export interface WorkspaceEntry {

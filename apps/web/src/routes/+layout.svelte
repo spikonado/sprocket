@@ -8,11 +8,10 @@
 	const { children } = $props();
 
 	const convexUrl = PUBLIC_CONVEX_URL;
-	const isDesktopShell = browser && Boolean(window.sprocketDesktop);
 
 	setupConvex(convexUrl || 'https://invalid.invalid', {
 		disabled: !browser || !convexUrl,
-		unsavedChangesWarning: !isDesktopShell
+		unsavedChangesWarning: false
 	});
 
 	const convexClient = useConvexClient();

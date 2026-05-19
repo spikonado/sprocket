@@ -11,7 +11,6 @@ function makeThreadSummary(overrides: Partial<ThreadSummary> = {}): ThreadSummar
 			'thread-record-1') as ThreadSummary['threadId'],
 		workspaceSessionId: (overrides.workspaceSessionId ??
 			'workspace-1') as ThreadSummary['workspaceSessionId'],
-		workspacePath: overrides.workspacePath ?? '/tmp/workspace',
 		workspaceName: overrides.workspaceName ?? 'Workspace',
 		title: overrides.title ?? 'Workspace Thread',
 		selectedModel: overrides.selectedModel ?? defaultModelId,

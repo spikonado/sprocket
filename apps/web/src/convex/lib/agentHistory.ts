@@ -64,6 +64,7 @@ function buildAgentHistoryFromAssistantMessage(args: {
 		if (part.type === 'tool-call') {
 			assistantContents.push({
 				type: 'toolCall',
+				id: part.callId,
 				callId: part.callId,
 				name: part.name,
 				argumentsJson: JSON.stringify(part.input)
@@ -77,6 +78,7 @@ function buildAgentHistoryFromAssistantMessage(args: {
 			contents: [
 				{
 					type: 'toolResult',
+					id: part.callId,
 					callId: part.callId,
 					items: [
 						{

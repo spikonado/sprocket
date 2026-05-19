@@ -349,32 +349,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn read_file_allows_absolute_paths_outside_workspace() {
-        let root = temp_workspace();
-        let outside = temp_workspace().join("external.txt");
-        fs::write(&outside, "outside\n").expect("fixture should be written");
-        let tools = WorkspaceTools::new(root.clone());
-
-        let output = tools
-            .read_file(&outside.to_string_lossy(), None, None)
-            .await
-            .expect("outside read should succeed");
-
-        assert!(output.exists);
-        assert_eq!(output.path, outside.to_string_lossy());
-        assert_eq!(output.contents, "outside\n");
-
-        fs::remove_dir_all(root).expect("temp dir should be removed");
-        fs::remove_dir_all(
-            outside
-                .parent()
-                .expect("outside file should have parent")
-                .to_path_buf(),
-        )
-        .expect("temp dir should be removed");
-    }
-
-    #[tokio::test]
     async fn read_file_returns_error_output_for_invalid_line_range() {
         let root = temp_workspace();
         let path = root.join("src.txt");

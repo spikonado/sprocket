@@ -18,7 +18,6 @@
 	import {
 		getAttachedWorkspaceSessionIds,
 		getWorkspaceThreadGroups,
-		getWorkspaceSessionLookup,
 		groupExecutorJobsByWorkspace,
 		pickNextExecutorJobForWorkspace
 	} from '$lib/executor-coordinator';
@@ -26,22 +25,29 @@
 	import type {
 		DesktopApi,
 		ExecutorJob,
+		LocalWorkspaceAvailability,
 		ThreadMessage,
 		ThreadSummary,
 		WorkspaceSession,
+		WorkspaceSessionLocation,
 		WorkspaceThreadGroup,
-		WorkspaceToolRequest,
-		WorkspaceOverview
+		WorkspaceToolRequest
 	} from '$lib/types/sprocket';
 
 	type WorkspaceSelectionResult = {
 		_id: Id<'workspaceSessions'>;
 	};
+	type WorkspaceSessionState = WorkspaceSession & {
+		localWorkspaceAvailability: LocalWorkspaceAvailability;
+	};
 
 	const guestStorageKey = 'sprocket.guest-session-id';
 	const convexClient = useConvexClient();
+	const desktopShellRequiredMessage =
+		'Sprocket must be opened from the desktop app. Browser mode is disabled.';
 
 	let desktopApi = $state<DesktopApi | null>(null);
+	let desktopMode = $state<'checking' | 'available' | 'unavailable'>('checking');
 	let currentWorkspaceSessionId = $state<Id<'workspaceSessions'> | null>(null);
 	let currentThreadId = $state<Id<'threadRecords'> | null>(null);
 	let draftWorkspaceSessionId = $state<Id<'workspaceSessions'> | null>(null);
@@ -57,6 +63,7 @@
 	let hasResolvedInitialSelection = $state(false);
 	let restoredWorkspaceSessionIdToAttach = $state<Id<'workspaceSessions'> | null>(null);
 	let lastSavedThreadId = $state<Id<'threadRecords'> | null>(null);
+	let desktopWorkspaceSessionsById = $state<Record<string, WorkspaceSessionLocation>>({});
 	let processingJobIdsByWorkspace: Record<string, Id<'executorJobs'>> = {};
 	let executorProcessing = false;
 	let executorProcessQueued = false;
@@ -111,10 +118,22 @@
 			: 'skip'
 	);
 
-	const workspaceSessions = $derived((workspaceSessionsQuery.data ?? []) as WorkspaceSession[]);
+	const workspaceSessions = $derived.by<WorkspaceSessionState[]>(() =>
+		((workspaceSessionsQuery.data ?? []) as WorkspaceSession[]).map((session) => {
+			const desktopWorkspace = desktopWorkspaceSessionsById[session._id];
+			return {
+				...session,
+				workspacePath: desktopWorkspace?.workspacePath,
+				localWorkspaceAvailability: desktopWorkspace
+					? desktopWorkspace.availability
+					: ('unlinked' as const),
+				localWorkspaceError: desktopWorkspace?.unavailableReason
+			};
+		})
+	);
 	const threads = $derived((threadsQuery.data ?? []) as ThreadSummary[]);
 
-	const currentWorkspaceSession = $derived.by<WorkspaceSession | null>(() => {
+	const currentWorkspaceSession = $derived.by<WorkspaceSessionState | null>(() => {
 		if (!currentWorkspaceSessionId) {
 			return null;
 		}
@@ -144,7 +163,12 @@
 			runState?.status === 'awaiting_executor'
 	);
 	const canSend = $derived(
-		Boolean(currentWorkspaceSessionId && desktopApi && !isRunning && !isSubmittingPrompt)
+		Boolean(
+			currentWorkspaceSessionId &&
+			currentWorkspaceSession?.localWorkspaceAvailability === 'available' &&
+			!isRunning &&
+			!isSubmittingPrompt
+		)
 	);
 	const attachedWorkspaceSessionIds = $derived.by<Id<'workspaceSessions'>[]>(() =>
 		getAttachedWorkspaceSessionIds(workspaceSessions, executorClientId)
@@ -152,19 +176,33 @@
 	const attachedWorkspaceSessionIdsKey = $derived.by(() =>
 		[...attachedWorkspaceSessionIds].sort().join('\0')
 	);
-	const workspaceSessionLookup = $derived.by(() => getWorkspaceSessionLookup(workspaceSessions));
 
 	function resolveDesktopApi() {
 		return window.sprocketDesktop ?? null;
 	}
 
+	async function refreshDesktopWorkspaceSessions() {
+		if (!desktopApi) {
+			desktopWorkspaceSessionsById = {};
+			return;
+		}
+
+		const desktopWorkspaceSessions = await desktopApi.listWorkspaceSessions();
+		desktopWorkspaceSessionsById = Object.fromEntries(
+			desktopWorkspaceSessions.map((workspaceSession) => [
+				workspaceSession.workspaceSessionId,
+				workspaceSession
+			])
+		);
+	}
+
 	function executorRequest(
-		workspaceRoot: string,
-		request: Omit<WorkspaceToolRequest, 'workspaceRoot'>
+		workspaceSessionId: Id<'workspaceSessions'>,
+		request: Omit<WorkspaceToolRequest, 'workspaceSessionId'>
 	): WorkspaceToolRequest {
 		return {
 			...request,
-			workspaceRoot
+			workspaceSessionId
 		} as WorkspaceToolRequest;
 	}
 
@@ -179,13 +217,38 @@
 		draftWorkspaceSessionId = draft ? workspaceSessionId : null;
 	}
 
-	function getWorkspaceSessionOrThrow(workspaceSessionId: Id<'workspaceSessions'>) {
-		const workspaceSession = workspaceSessionLookup.get(workspaceSessionId);
-		if (!workspaceSession) {
-			throw new Error('Workspace session not found.');
+	async function attachLocalWorkspaceSession(
+		workspaceSessionId: Id<'workspaceSessions'>,
+		workspacePath: string
+	) {
+		if (!desktopApi) {
+			throw new Error(desktopShellRequiredMessage);
 		}
 
-		return workspaceSession;
+		const session = await desktopApi.attachWorkspaceSession({
+			workspaceSessionId,
+			workspacePath
+		});
+		desktopWorkspaceSessionsById = {
+			...desktopWorkspaceSessionsById,
+			[session.workspaceSessionId]: session
+		};
+		return session;
+	}
+
+	async function syncAttachedWorkspaceSessions(workspaceSessionIds: Id<'workspaceSessions'>[]) {
+		if (!executorClientId) {
+			return;
+		}
+
+		const attachedSessionIds = [
+			...new Set([...attachedWorkspaceSessionIds, ...workspaceSessionIds])
+		];
+		await convexClient.mutation(api.workspaceSessions.heartbeatAttached, {
+			...getViewerArgs(),
+			clientId: executorClientId,
+			workspaceSessionIds: attachedSessionIds
+		});
 	}
 
 	async function openWorkspaceSession(
@@ -199,28 +262,22 @@
 
 	async function chooseWorkspace() {
 		if (!desktopApi || !executorClientId) {
-			currentError = 'Workspace selection is only available in the desktop app.';
+			currentError = desktopShellRequiredMessage;
 			return;
 		}
 
 		try {
-			const workspaceRoot = await desktopApi.chooseWorkspace();
-			if (!workspaceRoot) {
+			const overview = await desktopApi.chooseWorkspace();
+			if (!overview) {
 				return;
 			}
-
-			const overview = (await desktopApi.executeWorkspaceTool(
-				executorRequest(workspaceRoot, {
-					toolName: 'get_workspace_overview',
-					payload: {}
-				})
-			)) as WorkspaceOverview;
 			const session = (await convexClient.mutation(api.workspaceSessions.upsertSelected, {
 				...getViewerArgs(),
-				workspacePath: workspaceRoot,
-				workspaceOverview: overview,
+				workspaceName: overview.name,
 				connectedClientId: executorClientId
 			})) as WorkspaceSelectionResult;
+			await attachLocalWorkspaceSession(session._id, overview.rootPath);
+			await syncAttachedWorkspaceSessions([session._id]);
 			setWorkspaceSelection({ workspaceSessionId: session._id, draft: true });
 			currentError = null;
 		} catch (error) {
@@ -233,21 +290,49 @@
 			return;
 		}
 
-		const workspaceSession = getWorkspaceSessionOrThrow(workspaceSessionId);
+		try {
+			await desktopApi.getWorkspaceSessionOverview(workspaceSessionId);
+			await refreshDesktopWorkspaceSessions();
+			await syncAttachedWorkspaceSessions([workspaceSessionId]);
+		} catch (error) {
+			await refreshDesktopWorkspaceSessions();
+			throw error;
+		}
+	}
 
-		const overview = (await desktopApi.executeWorkspaceTool(
-			executorRequest(workspaceSession.workspacePath, {
-				toolName: 'get_workspace_overview',
-				payload: {}
-			})
-		)) as WorkspaceOverview;
+	async function reconnectWorkspaceSession(workspaceSessionId: Id<'workspaceSessions'>) {
+		if (!desktopApi || !executorClientId) {
+			currentError = desktopShellRequiredMessage;
+			return;
+		}
 
-		await convexClient.mutation(api.workspaceSessions.upsertSelected, {
-			...getViewerArgs(),
-			workspacePath: workspaceSession.workspacePath,
-			workspaceOverview: overview,
-			connectedClientId: executorClientId
-		});
+		const workspaceSession = workspaceSessions.find(
+			(session) => session._id === workspaceSessionId
+		);
+		if (!workspaceSession) {
+			currentError = 'Workspace session not found.';
+			return;
+		}
+
+		try {
+			const overview = await desktopApi.chooseWorkspace();
+			if (!overview) {
+				return;
+			}
+
+			if (overview.name !== workspaceSession.workspaceName) {
+				currentError = `Selected workspace must be named "${workspaceSession.workspaceName}" to reconnect this project.`;
+				return;
+			}
+
+			await attachLocalWorkspaceSession(workspaceSessionId, overview.rootPath);
+			await attachWorkspaceSession(workspaceSessionId);
+			setWorkspaceSelection({ workspaceSessionId, threadId: currentThreadId });
+			currentError = null;
+		} catch (error) {
+			await refreshDesktopWorkspaceSessions();
+			currentError = error instanceof Error ? error.message : 'Failed to reconnect workspace.';
+		}
 	}
 
 	async function createThread() {
@@ -331,12 +416,15 @@
 		}
 
 		if (!desktopApi) {
-			currentError = 'Desktop executor required to send new prompts for this workspace.';
+			currentError = desktopShellRequiredMessage;
 			return;
 		}
 
 		if (!canSend) {
-			currentError = 'You need an active workspace session before sending.';
+			currentError =
+				currentWorkspaceSession?.localWorkspaceAvailability === 'available'
+					? 'You need an active workspace session before sending.'
+					: 'This workspace needs to be attached before sending.';
 			return;
 		}
 
@@ -365,13 +453,15 @@
 					deploymentUrl: PUBLIC_CONVEX_URL,
 					...(authToken ? { authToken } : {}),
 					...getViewerArgs(),
-					runId
+					runId,
+					workspaceSessionId: currentWorkspaceSessionId
 				});
 			} catch (error) {
 				console.error('Failed to run agent', error);
 				currentError = null;
 			}
 		} catch (error) {
+			await refreshDesktopWorkspaceSessions();
 			currentError = error instanceof Error ? error.message : 'Failed to send prompt.';
 		} finally {
 			isSubmittingPrompt = false;
@@ -459,10 +549,8 @@
 						return;
 					}
 
-					const workspaceSession = getWorkspaceSessionOrThrow(claimedJob.workspaceSessionId);
-
 					const result = await desktopApi.executeWorkspaceTool(
-						executorRequest(workspaceSession.workspacePath, {
+						executorRequest(claimedJob.workspaceSessionId, {
 							jobId: claimedJob._id,
 							toolName: claimedJob.kind,
 							payload: claimedJob.payload as WorkspaceToolRequest['payload']
@@ -471,9 +559,10 @@
 					await convexClient.mutation(api.executor.complete, {
 						...getViewerArgs(),
 						jobId: claimedJob._id,
-						result
+						result: result as NonNullable<ExecutorJob['result']>
 					});
 				} catch (error) {
+					await refreshDesktopWorkspaceSessions();
 					await convexClient.mutation(api.executor.fail, {
 						...getViewerArgs(),
 						jobId: nextJob._id,
@@ -546,8 +635,20 @@
 			return;
 		}
 
+		const workspaceSession = workspaceSessions.find(
+			(session) => session._id === workspaceSessionId
+		);
+		if (!workspaceSession || workspaceSession.localWorkspaceAvailability !== 'available') {
+			restoredWorkspaceSessionIdToAttach = null;
+			if (workspaceSession?.localWorkspaceError) {
+				currentError = workspaceSession.localWorkspaceError;
+			}
+			return;
+		}
+
 		restoredWorkspaceSessionIdToAttach = null;
 		void attachWorkspaceSession(workspaceSessionId).catch((error) => {
+			void refreshDesktopWorkspaceSessions();
 			currentError = error instanceof Error ? error.message : 'Failed to attach workspace.';
 		});
 	});
@@ -655,12 +756,22 @@
 
 	onMount(() => {
 		desktopApi = resolveDesktopApi();
+		desktopMode = desktopApi ? 'available' : 'unavailable';
 		executorClientId = crypto.randomUUID();
 		const persistedGuestSessionId = localStorage.getItem(guestStorageKey);
 		guestSessionId = persistedGuestSessionId || crypto.randomUUID();
 		if (!persistedGuestSessionId) {
 			localStorage.setItem(guestStorageKey, guestSessionId);
 		}
+		if (!desktopApi) {
+			currentError = desktopShellRequiredMessage;
+			return;
+		}
+
+		void refreshDesktopWorkspaceSessions().catch((error) => {
+			currentError =
+				error instanceof Error ? error.message : 'Failed to load local workspace sessions.';
+		});
 	});
 </script>
 
@@ -668,96 +779,120 @@
 	<title>Sprocket</title>
 </svelte:head>
 
-<div class="h-screen overflow-hidden">
+{#if desktopMode === 'unavailable'}
 	<div
-		class="grid h-screen grid-cols-[292px_minmax(0,1fr)] overflow-hidden bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_26%),linear-gradient(180deg,rgba(22,22,24,0.98),rgba(15,15,17,1))]"
+		class="flex h-screen items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_26%),linear-gradient(180deg,rgba(22,22,24,0.98),rgba(15,15,17,1))] px-6"
 	>
-		<WorkspaceSidebar
-			isAuthenticated={Boolean($authState.user)}
-			desktopAvailable={Boolean(desktopApi)}
-			{currentWorkspaceSessionId}
-			{currentThreadId}
-			groups={groupedWorkspaceThreads}
-			onChooseWorkspace={chooseWorkspace}
-			onAccountAction={() => {
-				if ($authState.user) {
-					void signOut();
-					return;
-				}
-				void signIn();
-			}}
-			onStartThreadDraft={(workspaceSessionId) => {
-				void startThreadDraftForWorkspace(workspaceSessionId);
-			}}
-			onSelectThread={(thread) => {
-				void selectThread(thread);
-			}}
-			onDeleteThread={(thread) => {
-				void deleteThread(thread);
-			}}
-		/>
-
-		<main class="flex h-screen min-h-0 min-w-0 flex-col overflow-hidden">
-			<header class="flex h-12 items-center justify-between border-b border-white/6 px-5">
-				<div class="flex min-w-0 items-center gap-3">
-					<h1 class="truncate text-[1rem] font-medium tracking-[-0.03em] text-white">
-						{activeThreadQuery.data?.title ?? 'New thread'}
-					</h1>
-					{#if currentWorkspaceSession}
-						<span
-							class="truncate rounded-full border border-white/8 bg-white/3 px-2.5 py-0.5 text-[11px] text-slate-300"
-						>
-							{currentWorkspaceSession.workspaceName}
-						</span>
-					{/if}
-					{#if !$authState.user}
-						<span
-							class="truncate rounded-full border border-amber-500/20 bg-amber-500/10 px-2.5 py-0.5 text-[11px] text-amber-100"
-						>
-							Guest session
-						</span>
-					{/if}
-				</div>
-
-				<div class="flex items-center gap-2">
-					{#if currentWorkspaceSession}
-						<button
-							type="button"
-							class="rounded-full border border-white/8 bg-white/3 px-3.5 py-1.5 text-[13px] text-slate-200 transition hover:border-white/12 hover:bg-white/6 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
-							onclick={chooseWorkspace}
-							disabled={!desktopApi}
-						>
-							Open
-						</button>
-					{/if}
-				</div>
-			</header>
-
-			<ThreadTranscript
-				currentError={currentError ?? $authState.error}
-				runError={runState?.lastError ?? null}
-				messages={visibleMessages}
-				actions={visibleActions}
-				workspaceSession={currentWorkspaceSession}
-				desktopAvailable={Boolean(desktopApi)}
-			/>
-
-			<PromptComposer
-				bind:prompt
-				bind:selectedModel
-				bind:selectedReasoningEffort
-				workspaceSession={currentWorkspaceSession}
-				{canSend}
-				isSubmitting={isSubmittingPrompt}
-				{isRunning}
-				elapsedLabel={isRunning ? formatElapsedDuration(elapsedSeconds) : null}
-				onSubmit={() => {
-					void submitPrompt();
-				}}
-				onCancel={() => {
-					void cancelRun();
-				}}
-			/>
-		</main>
+		<div
+			class="w-full max-w-lg rounded-[32px] border border-white/8 bg-[linear-gradient(180deg,rgba(33,33,36,0.96),rgba(24,24,27,0.98))] p-8 shadow-[0_28px_80px_rgba(0,0,0,0.34)]"
+		>
+			<p class="text-[11px] tracking-[0.22em] text-slate-500 uppercase">Desktop Required</p>
+			<h1 class="mt-3 text-2xl font-medium tracking-tight text-white">Browser mode is disabled.</h1>
+			<p class="mt-3 text-sm leading-6 text-slate-300">
+				Open Sprocket from the desktop app to access workspaces, threads, and local execution.
+			</p>
+		</div>
 	</div>
-</div>
+{:else if desktopMode === 'available'}
+	<div class="h-screen overflow-hidden">
+		<div
+			class="grid h-screen grid-cols-[292px_minmax(0,1fr)] overflow-hidden bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_26%),linear-gradient(180deg,rgba(22,22,24,0.98),rgba(15,15,17,1))]"
+		>
+			<WorkspaceSidebar
+				isAuthenticated={Boolean($authState.user)}
+				{currentWorkspaceSessionId}
+				{currentThreadId}
+				groups={groupedWorkspaceThreads}
+				onChooseWorkspace={chooseWorkspace}
+				onReconnectWorkspace={(workspaceSessionId) => {
+					void reconnectWorkspaceSession(workspaceSessionId);
+				}}
+				onAccountAction={() => {
+					if ($authState.user) {
+						void signOut();
+						return;
+					}
+					void signIn();
+				}}
+				onStartThreadDraft={(workspaceSessionId) => {
+					void startThreadDraftForWorkspace(workspaceSessionId);
+				}}
+				onSelectThread={(thread) => {
+					void selectThread(thread);
+				}}
+				onDeleteThread={(thread) => {
+					void deleteThread(thread);
+				}}
+			/>
+
+			<main class="flex h-screen min-h-0 min-w-0 flex-col overflow-hidden">
+				<header class="flex h-12 items-center justify-between border-b border-white/6 px-5">
+					<div class="flex min-w-0 items-center gap-3">
+						<h1 class="truncate text-[1rem] font-medium tracking-[-0.03em] text-white">
+							{activeThreadQuery.data?.title ?? 'New thread'}
+						</h1>
+						{#if currentWorkspaceSession}
+							<span
+								class="truncate rounded-full border border-white/8 bg-white/3 px-2.5 py-0.5 text-[11px] text-slate-300"
+							>
+								{currentWorkspaceSession.workspaceName}
+							</span>
+						{/if}
+						{#if !$authState.user}
+							<span
+								class="truncate rounded-full border border-amber-500/20 bg-amber-500/10 px-2.5 py-0.5 text-[11px] text-amber-100"
+							>
+								Guest session
+							</span>
+						{/if}
+					</div>
+
+					<div class="flex items-center gap-2">
+						{#if currentWorkspaceSession}
+							<button
+								type="button"
+								class="rounded-full border border-white/8 bg-white/3 px-3.5 py-1.5 text-[13px] text-slate-200 transition hover:border-white/12 hover:bg-white/6 hover:text-white"
+								onclick={() => {
+									if (currentWorkspaceSession.localWorkspaceAvailability === 'available') {
+										void chooseWorkspace();
+										return;
+									}
+
+									void reconnectWorkspaceSession(currentWorkspaceSession._id);
+								}}
+							>
+								{currentWorkspaceSession.localWorkspaceAvailability === 'available'
+									? 'Open'
+									: 'Reconnect'}
+							</button>
+						{/if}
+					</div>
+				</header>
+
+				<ThreadTranscript
+					currentError={currentError ?? $authState.error}
+					runError={runState?.lastError ?? null}
+					messages={visibleMessages}
+					actions={visibleActions}
+					workspaceSession={currentWorkspaceSession}
+				/>
+
+				<PromptComposer
+					bind:prompt
+					bind:selectedModel
+					bind:selectedReasoningEffort
+					{canSend}
+					isSubmitting={isSubmittingPrompt}
+					{isRunning}
+					elapsedLabel={isRunning ? formatElapsedDuration(elapsedSeconds) : null}
+					onSubmit={() => {
+						void submitPrompt();
+					}}
+					onCancel={() => {
+						void cancelRun();
+					}}
+				/>
+			</main>
+		</div>
+	</div>
+{/if}

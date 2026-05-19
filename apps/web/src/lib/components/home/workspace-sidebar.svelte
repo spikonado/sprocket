@@ -14,11 +14,11 @@
 
 	type Props = {
 		isAuthenticated: boolean;
-		desktopAvailable: boolean;
 		currentWorkspaceSessionId: Id<'workspaceSessions'> | null;
 		currentThreadId: Id<'threadRecords'> | null;
 		groups: WorkspaceThreadGroup[];
 		onChooseWorkspace: () => void;
+		onReconnectWorkspace: (workspaceSessionId: Id<'workspaceSessions'>) => void;
 		onAccountAction: () => void;
 		onStartThreadDraft: (workspaceSessionId: Id<'workspaceSessions'>) => void;
 		onSelectThread: (thread: ThreadSummary) => void;
@@ -27,11 +27,11 @@
 
 	let {
 		isAuthenticated,
-		desktopAvailable,
 		currentWorkspaceSessionId,
 		currentThreadId,
 		groups,
 		onChooseWorkspace,
+		onReconnectWorkspace,
 		onAccountAction,
 		onStartThreadDraft,
 		onSelectThread,
@@ -65,6 +65,18 @@
 			[groupKey]: !isProjectCollapsed(groupKey)
 		};
 	}
+
+	function workspaceStatusLabel(group: WorkspaceThreadGroup) {
+		if (group.localWorkspaceAvailability === 'unavailable') {
+			return 'Missing';
+		}
+
+		if (group.localWorkspaceAvailability === 'unlinked') {
+			return 'Link';
+		}
+
+		return null;
+	}
 </script>
 
 <aside class={sidebarPanelClass}>
@@ -92,7 +104,6 @@
 				type="button"
 				class="flex h-8 w-full min-w-0 items-center gap-2 rounded-full border border-white/8 bg-white/3 px-3 text-[12px] text-slate-200 transition hover:border-white/12 hover:bg-white/6 disabled:cursor-not-allowed disabled:opacity-50"
 				onclick={onChooseWorkspace}
-				disabled={!desktopAvailable}
 			>
 				<FolderOpen class="size-3.5 shrink-0 text-slate-400" />
 				<span class="truncate">Add project</span>
@@ -108,9 +119,7 @@
 				<div
 					class="rounded-3xl border border-dashed border-white/8 bg-white/2 px-4 py-4 text-sm leading-6 text-slate-400"
 				>
-					{desktopAvailable
-						? 'Choose a workspace to start organizing threads by project.'
-						: 'Open the desktop app to attach a workspace executor.'}
+					Choose a workspace to start organizing threads by project.
 				</div>
 			{:else}
 				<div class="space-y-4">
@@ -143,6 +152,17 @@
 									<p class="truncate text-[0.88rem] font-medium tracking-[-0.02em]">
 										{group.workspaceName}
 									</p>
+									{#if workspaceStatusLabel(group)}
+										<span
+											class={`rounded-full px-1.5 py-0.5 text-[10px] ${
+												group.localWorkspaceAvailability === 'unavailable'
+													? 'border border-amber-500/20 bg-amber-500/10 text-amber-100'
+													: 'border border-sky-500/20 bg-sky-500/10 text-sky-100'
+											}`}
+										>
+											{workspaceStatusLabel(group)}
+										</span>
+									{/if}
 									{#if group.activeThreadCount > 0}
 										<span
 											class="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-1.5 py-0.5 text-[10px] text-emerald-200"
@@ -156,17 +176,38 @@
 									type="button"
 									class="absolute top-0.5 right-1 inline-flex h-6 w-6 items-center justify-center rounded-md text-slate-500 opacity-0 transition group-hover:opacity-100 hover:bg-white/6 hover:text-white focus-visible:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
 									onclick={() => {
-										onStartThreadDraft(group.workspaceSessionId);
+										if (group.localWorkspaceAvailability === 'available') {
+											onStartThreadDraft(group.workspaceSessionId);
+											return;
+										}
+
+										onReconnectWorkspace(group.workspaceSessionId);
 									}}
-									aria-label={`Create thread in ${group.workspaceName}`}
-									title={`Create thread in ${group.workspaceName}`}
+									aria-label={group.localWorkspaceAvailability === 'available'
+										? `Create thread in ${group.workspaceName}`
+										: `Reconnect ${group.workspaceName}`}
+									title={group.localWorkspaceAvailability === 'available'
+										? `Create thread in ${group.workspaceName}`
+										: (group.localWorkspaceError ?? `Reconnect ${group.workspaceName}`)}
 								>
-									<SquarePen class="size-4" />
+									{#if group.localWorkspaceAvailability === 'available'}
+										<SquarePen class="size-4" />
+									{:else}
+										<FolderOpen class="size-4" />
+									{/if}
 								</button>
 							</div>
 
 							{#if !isProjectCollapsed(group.key)}
 								<div class="ml-5 border-l border-white/6 pl-3">
+									{#if group.localWorkspaceAvailability === 'unavailable' || group.localWorkspaceAvailability === 'unlinked'}
+										<p class="pb-2 text-[12px] leading-5 text-slate-500">
+											{group.localWorkspaceError ??
+												(group.localWorkspaceAvailability === 'unlinked'
+													? 'This workspace needs a local folder attached before you can use it.'
+													: 'This workspace needs to be reconnected.')}
+										</p>
+									{/if}
 									{#if group.threads.length === 0}
 										<p class="py-1.5 text-[12px] text-slate-500">No threads yet</p>
 									{:else}

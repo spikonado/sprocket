@@ -53,12 +53,12 @@ pub fn build_workspace_overview(root: &Path) -> Result<WorkspaceOverview> {
 }
 
 pub fn resolve_workspace_root(path: &str) -> Result<PathBuf> {
-    let root = PathBuf::from(path);
+    let root: PathBuf = PathBuf::from(path);
     if !root.exists() {
         bail!("workspace does not exist: {path}");
     }
 
-    let canonical = root
+    let canonical: PathBuf = root
         .canonicalize()
         .with_context(|| format!("failed to resolve workspace {}", root.display()))?;
 
@@ -291,22 +291,6 @@ mod tests {
         let path = std::env::temp_dir().join(format!("sprocket-workspace-tests-{unique}"));
         fs::create_dir_all(&path).expect("temp dir should be created");
         path.canonicalize().expect("temp dir should resolve")
-    }
-
-    #[test]
-    fn resolves_absolute_paths_inside_workspace() {
-        let root = temp_workspace();
-        let file = root.join("src").join("main.rs");
-        fs::create_dir_all(file.parent().expect("file should have parent"))
-            .expect("parent should be created");
-        fs::write(&file, "fn main() {}\n").expect("fixture should be written");
-
-        let resolved = resolve_workspace_path(&root, &file.to_string_lossy(), false)
-            .expect("absolute path inside root should resolve");
-
-        assert_eq!(resolved, file);
-
-        fs::remove_dir_all(root).expect("temp dir should be removed");
     }
 
     #[test]

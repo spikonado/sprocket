@@ -16,17 +16,6 @@ export const vWorkspaceEntry = v.object({
 	kind: v.string()
 });
 
-export const vWorkspaceOverview = v.object({
-	rootPath: v.string(),
-	name: v.string(),
-	gitBranch: v.union(v.string(), v.null()),
-	gitDirty: v.boolean(),
-	fileCount: v.number(),
-	directoryCount: v.number(),
-	topLevelEntries: v.array(vWorkspaceEntry),
-	recentFiles: v.array(v.string())
-});
-
 export const vWorkspaceInstruction = v.object({
 	path: v.string(),
 	directory: v.string(),
@@ -82,7 +71,7 @@ export const vFileEditResult = v.object({
 });
 
 export const vExecutorJobResult = v.union(
-	vWorkspaceOverview,
+	v.string(),
 	v.array(vWorkspaceInstruction),
 	vFileReadResult,
 	vFileWriteResult,
@@ -192,7 +181,8 @@ export const vAgentHistoryContent = v.union(
 	}),
 	v.object({
 		type: v.literal('toolCall'),
-		callId: v.string(),
+		id: v.string(),
+		callId: v.optional(v.string()),
 		name: v.string(),
 		argumentsJson: v.string(),
 		signature: v.optional(v.string()),
@@ -200,7 +190,8 @@ export const vAgentHistoryContent = v.union(
 	}),
 	v.object({
 		type: v.literal('toolResult'),
-		callId: v.string(),
+		id: v.string(),
+		callId: v.optional(v.string()),
 		items: v.array(vAgentHistoryToolResultItem)
 	}),
 	v.object({
@@ -231,7 +222,7 @@ export type AgentHistoryMessage = Infer<typeof vAgentHistoryMessage>;
 
 export const vWorkspaceToolRequest = v.object({
 	jobId: v.optional(v.string()),
-	workspaceRoot: v.string(),
+	workspaceSessionId: v.string(),
 	toolName: vExecutorJobKind,
 	payload: vExecutorJobPayload
 });
@@ -244,6 +235,5 @@ export type FileReadResult = Infer<typeof vFileReadResult>;
 export type FileWriteResult = Infer<typeof vFileWriteResult>;
 export type FileEditResult = Infer<typeof vFileEditResult>;
 export type ExecutorJobResult = Infer<typeof vExecutorJobResult>;
-export type WorkspaceOverview = Infer<typeof vWorkspaceOverview>;
 export type WorkspaceInstruction = Infer<typeof vWorkspaceInstruction>;
 export type WorkspaceToolRequest = Infer<typeof vWorkspaceToolRequest>;

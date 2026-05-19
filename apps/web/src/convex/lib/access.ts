@@ -16,19 +16,6 @@ async function getOwnedRecord<TableName extends OwnerScopedTable>(
 	return record;
 }
 
-export async function getWorkspaceSessionByUserAndPath(
-	db: DatabaseReader,
-	userId: string,
-	workspacePath: string
-): Promise<Doc<'workspaceSessions'> | null> {
-	return await db
-		.query('workspaceSessions')
-		.withIndex('by_user_workspacePath', (query) =>
-			query.eq('userId', userId).eq('workspacePath', workspacePath)
-		)
-		.unique();
-}
-
 export async function getOwnedWorkspaceSession(
 	db: DatabaseReader,
 	userId: string,

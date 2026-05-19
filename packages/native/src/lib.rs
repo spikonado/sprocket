@@ -92,6 +92,7 @@ pub struct RunAgentRequest {
     pub auth_token: Option<String>,
     pub guest_id: Option<String>,
     pub run_id: String,
+    pub workspace_path: String,
 }
 
 #[napi(js_name = "getWorkspaceOverview")]
@@ -157,6 +158,7 @@ pub async fn run_agent_binding(input: RunAgentRequest) -> napi::Result<()> {
         auth_token: input.auth_token,
         guest_id: input.guest_id,
         run_id: input.run_id,
+        workspace_path: input.workspace_path,
     })
     .await
     .map_err(map_error)

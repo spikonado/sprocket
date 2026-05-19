@@ -6,39 +6,23 @@ use rig::message::{AssistantContent, ToolResultContent, UserContent};
 pub(crate) fn build_model_messages(
     request: &CompletionRequest,
 ) -> Result<serde_json::Value, CompletionError> {
-    let mut messages = Vec::new();
-    let mut tool_names_by_call_id = BTreeMap::<String, String>::new();
-
-    if !request.documents.is_empty() {
-        messages.push(serde_json::json!({
-            "role": "user",
-            "content": request
-                .documents
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join("\n\n")
-        }));
-    }
+    let mut messages: Vec<serde_json::Value> = Vec::new();
+    let mut tool_names_by_call_id: BTreeMap<String, String> = BTreeMap::<String, String>::new();
 
     for message in request.chat_history.iter() {
         match message {
             Message::System { .. } => {}
             Message::User { content } => {
-                let mut text_parts = Vec::new();
-                let mut tool_results = Vec::new();
+                let mut text_parts: Vec<String> = Vec::new();
+                let mut tool_results: Vec<serde_json::Value> = Vec::new();
                 for item in content.iter() {
                     match item {
                         UserContent::Text(text) => {
                             text_parts.push(text.text.clone());
                         }
-                        UserContent::Document(document) => {
-                            text_parts.push(document.data.to_string());
-                        }
                         UserContent::ToolResult(result) => {
-                            let tool_call_id =
-                                require_tool_call_id(result.call_id.as_deref(), "tool result")?;
-                            let output = result
+                            let tool_call_id: &str = &result.id;
+                            let output: String = result
                                 .content
                                 .iter()
                                 .filter_map(|content| match content {
@@ -59,7 +43,7 @@ pub(crate) fn build_model_messages(
                         }
                         _ => {
                             return Err(CompletionError::ProviderError(
-                                "Convex-backed Rig provider only supports text, documents, and tool results in user messages."
+                                "Convex-backed Rig provider only supports text and tool results in user messages."
                                     .to_string(),
                             ));
                         }
@@ -80,7 +64,7 @@ pub(crate) fn build_model_messages(
                 }
             }
             Message::Assistant { content, .. } => {
-                let mut parts = Vec::new();
+                let mut parts: Vec<serde_json::Value> = Vec::new();
                 for item in content.iter() {
                     match item {
                         AssistantContent::Text(text) => {
@@ -90,7 +74,7 @@ pub(crate) fn build_model_messages(
                             }));
                         }
                         AssistantContent::Reasoning(reasoning) => {
-                            let text = reasoning.display_text();
+                            let text: String = reasoning.display_text();
                             if !text.is_empty() {
                                 parts.push(serde_json::json!({
                                     "type": "text",
@@ -99,9 +83,7 @@ pub(crate) fn build_model_messages(
                             }
                         }
                         AssistantContent::ToolCall(tool_call) => {
-                            let tool_call_id =
-                                require_tool_call_id(tool_call.call_id.as_deref(), "tool call")?
-                                    .to_string();
+                            let tool_call_id: String = tool_call.id.clone();
                             tool_names_by_call_id
                                 .insert(tool_call_id.clone(), tool_call.function.name.clone());
                             parts.push(serde_json::json!({
@@ -130,15 +112,6 @@ pub(crate) fn build_model_messages(
     }
 
     Ok(serde_json::Value::Array(messages))
-}
-
-fn require_tool_call_id<'a>(
-    call_id: Option<&'a str>,
-    what: &str,
-) -> Result<&'a str, CompletionError> {
-    call_id.ok_or_else(|| {
-        CompletionError::ProviderError(format!("{what} is missing call_id in agent history"))
-    })
 }
 
 fn tool_result_output(output: &str) -> serde_json::Value {
@@ -182,10 +155,6 @@ pub(crate) fn normalize_convex_json_numbers(value: &mut serde_json::Value) {
 }
 
 pub(crate) fn system_text(request: &CompletionRequest) -> Option<String> {
-    if let Some(preamble) = &request.preamble {
-        return Some(preamble.clone());
-    }
-
     request
         .chat_history
         .iter()
@@ -205,7 +174,7 @@ mod tests {
 
     #[test]
     fn builds_structured_messages_and_extracts_system_prompt() {
-        let messages = OneOrMany::many(vec![
+        let messages: OneOrMany<Message> = OneOrMany::many(vec![
             Message::System {
                 content: "You are precise.".to_string(),
             },
@@ -214,7 +183,7 @@ mod tests {
         ])
         .expect("messages");
 
-        let structured = build_model_messages(&CompletionRequest {
+        let structured: serde_json::Value = build_model_messages(&CompletionRequest {
             model: None,
             preamble: None,
             chat_history: messages.clone(),
@@ -256,13 +225,12 @@ mod tests {
 
     #[test]
     fn preserves_tool_protocol_shape_for_follow_up_turns() {
-        let messages = OneOrMany::many(vec![
+        let messages: OneOrMany<Message> = OneOrMany::many(vec![
             Message::user("Inspect src/lib.rs"),
             Message::Assistant {
                 id: None,
-                content: OneOrMany::many(vec![AssistantContent::tool_call_with_call_id(
+                content: OneOrMany::many(vec![AssistantContent::tool_call(
                     "tool_call_1",
-                    "call_1".to_string(),
                     "read_file",
                     serde_json::json!({
                         "path": "src/lib.rs",
@@ -273,9 +241,8 @@ mod tests {
                 .expect("assistant content"),
             },
             Message::User {
-                content: OneOrMany::many(vec![UserContent::tool_result_with_call_id(
+                content: OneOrMany::many(vec![UserContent::tool_result(
                     "tool_call_1",
-                    "call_1".to_string(),
                     rig::OneOrMany::one(rig::completion::message::ToolResultContent::text(
                         "{\"path\":\"src/lib.rs\",\"contents\":\"fn main() {}\"}",
                     )),
@@ -285,7 +252,7 @@ mod tests {
         ])
         .expect("messages");
 
-        let structured = build_model_messages(&CompletionRequest {
+        let structured: serde_json::Value = build_model_messages(&CompletionRequest {
             model: None,
             preamble: None,
             chat_history: messages,
@@ -299,16 +266,16 @@ mod tests {
         })
         .expect("structured");
 
-        let array = structured.as_array().expect("array");
+        let array: &Vec<serde_json::Value> = structured.as_array().expect("array");
         assert_eq!(array.len(), 3);
         assert_eq!(array[1]["role"], "assistant");
         assert_eq!(array[1]["content"][0]["type"], "tool-call");
-        assert_eq!(array[1]["content"][0]["toolCallId"], "call_1");
+        assert_eq!(array[1]["content"][0]["toolCallId"], "tool_call_1");
         assert_eq!(array[1]["content"][0]["toolName"], "read_file");
         assert_eq!(array[1]["content"][0]["input"]["path"], "src/lib.rs");
         assert_eq!(array[2]["role"], "tool");
         assert_eq!(array[2]["content"][0]["type"], "tool-result");
-        assert_eq!(array[1]["content"][0]["toolCallId"], "call_1");
+        assert_eq!(array[1]["content"][0]["toolCallId"], "tool_call_1");
         assert_eq!(array[2]["content"][0]["toolName"], "read_file");
         assert_eq!(array[2]["content"][0]["output"]["type"], "json");
         assert_eq!(

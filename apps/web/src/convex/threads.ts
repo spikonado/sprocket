@@ -72,7 +72,6 @@ export const listMine = query({
 					threadId: record._id,
 					threadStatus: 'active',
 					workspaceName: workspaceSession?.workspaceName ?? 'Unknown workspace',
-					workspacePath: workspaceSession?.workspacePath ?? '',
 					latestRunStatus: latestRun?.status ?? null,
 					latestRunStartedAt: latestRun?.startedAt,
 					hasActiveRun: latestRun ? !isRunFinalStatus(latestRun.status) : false

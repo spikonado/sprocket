@@ -19,10 +19,7 @@ export default defineSchema({
 	}).index('by_userId', ['userId']),
 	workspaceSessions: defineTable({
 		userId: v.string(),
-		workspacePath: v.string(),
 		workspaceName: v.string(),
-		gitBranch: v.union(v.string(), v.null()),
-		gitDirty: v.boolean(),
 		lastHeartbeatAt: v.optional(v.number()),
 		connectedClientId: v.optional(v.string()),
 		nextExecutorSequence: v.optional(v.number()),
@@ -30,7 +27,7 @@ export default defineSchema({
 	})
 		.index('by_userId', ['userId'])
 		.index('by_userId_lastSeenAt', ['userId', 'lastSeenAt'])
-		.index('by_user_workspacePath', ['userId', 'workspacePath']),
+		.index('by_user_workspaceName', ['userId', 'workspaceName']),
 	threadRecords: defineTable({
 		userId: v.string(),
 		workspaceSessionId: v.id('workspaceSessions'),

@@ -18,7 +18,6 @@
 		messages: ThreadMessage[];
 		actions: ExecutorJob[];
 		workspaceSession: WorkspaceSession | null;
-		desktopAvailable: boolean;
 		emptyStateMessage?: string;
 		emptyStateHint?: string | null;
 	};
@@ -29,11 +28,10 @@
 		messages,
 		actions,
 		workspaceSession,
-		desktopAvailable,
 		emptyStateMessage = workspaceSession
 			? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands in this workspace.'
-			: 'Attach a workspace from the desktop app to begin.',
-		emptyStateHint = !desktopAvailable ? 'Desktop executor required for workspace access' : null
+			: 'Attach a workspace to begin.',
+		emptyStateHint = null
 	}: Props = $props();
 	let scrollViewport = $state<HTMLDivElement | null>(null);
 	let stickToBottom = $state(true);

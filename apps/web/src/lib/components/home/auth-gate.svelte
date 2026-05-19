@@ -34,8 +34,7 @@
 
 		<h1 class="text-2xl font-medium tracking-tight text-white">Sign in to access your threads.</h1>
 		<p class="text-muted-foreground mt-3 text-sm leading-6">
-			Sprocket now stores coding threads, streaming responses, and workspace sessions in Convex.
-			Local workspace execution still requires the desktop app.
+			Sprocket stores coding threads, streaming responses, and workspace sessions in Convex.
 		</p>
 
 		{#if authState.error}

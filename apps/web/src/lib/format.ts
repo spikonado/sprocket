@@ -14,14 +14,6 @@ export function formatCompactCount(value: number) {
 	return `${value}`;
 }
 
-export function formatWorkspaceSubtitle(gitBranch: string | null | undefined, gitDirty: boolean) {
-	if (!gitBranch) {
-		return 'No git metadata';
-	}
-
-	return `Git ${gitBranch} • ${gitDirty ? 'dirty' : 'clean'}`;
-}
-
 export function formatRelativeTime(timestamp: number, now = Date.now()) {
 	const deltaMs = Math.max(0, now - timestamp);
 	const minute = 60_000;

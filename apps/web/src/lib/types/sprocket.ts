@@ -2,6 +2,7 @@ import type { Id } from '$convex/_generated/dataModel';
 import type { Infer } from 'convex/values';
 import {
 	vExecutorJobKind,
+	vExecutorJobResult,
 	vExecutorJobStatus,
 	vExecutorStatus,
 	vModelId,
@@ -14,6 +15,8 @@ export type WorkspaceEntry = {
 	name: string;
 	kind: string;
 };
+
+export type LocalWorkspaceAvailability = 'available' | 'unavailable' | 'unlinked';
 
 export type WorkspaceOverview = {
 	rootPath: string;
@@ -60,19 +63,19 @@ export type WorkspaceToolName = Infer<typeof vExecutorJobKind>;
 export type WorkspaceToolRequest =
 	| {
 			jobId?: string;
-			workspaceRoot: string;
+			workspaceSessionId: Id<'workspaceSessions'>;
 			toolName: 'get_workspace_overview';
 			payload: Record<string, never>;
 	  }
 	| {
 			jobId?: string;
-			workspaceRoot: string;
+			workspaceSessionId: Id<'workspaceSessions'>;
 			toolName: 'get_workspace_instructions';
 			payload: Record<string, never>;
 	  }
 	| {
 			jobId?: string;
-			workspaceRoot: string;
+			workspaceSessionId: Id<'workspaceSessions'>;
 			toolName: 'read_file';
 			payload: {
 				path: string;
@@ -82,7 +85,7 @@ export type WorkspaceToolRequest =
 	  }
 	| {
 			jobId?: string;
-			workspaceRoot: string;
+			workspaceSessionId: Id<'workspaceSessions'>;
 			toolName: 'create_file';
 			payload: {
 				path: string;
@@ -91,7 +94,7 @@ export type WorkspaceToolRequest =
 	  }
 	| {
 			jobId?: string;
-			workspaceRoot: string;
+			workspaceSessionId: Id<'workspaceSessions'>;
 			toolName: 'replace_in_file';
 			payload: {
 				path: string;
@@ -110,27 +113,26 @@ export type WorkspaceToolResult =
 
 export type ExecutorJobPayload = WorkspaceToolRequest['payload'];
 
-export type ExecutorJobResult = WorkspaceToolResult;
+export type ExecutorJobResult = Infer<typeof vExecutorJobResult>;
 
 export type WorkspaceSession = {
 	_id: Id<'workspaceSessions'>;
 	_creationTime?: number;
 	userId: string;
-	workspacePath: string;
 	workspaceName: string;
-	gitBranch: string | null;
-	gitDirty: boolean;
+	workspacePath?: string;
 	executorStatus: Infer<typeof vExecutorStatus>;
 	lastHeartbeatAt?: number;
 	connectedClientId?: string;
 	lastSeenAt: number;
+	localWorkspaceAvailability?: LocalWorkspaceAvailability;
+	localWorkspaceError?: string;
 };
 
 export type ThreadSummary = {
 	_id: Id<'threadRecords'>;
 	threadId: Id<'threadRecords'>;
 	workspaceSessionId: Id<'workspaceSessions'>;
-	workspacePath: string;
 	workspaceName: string;
 	title: string;
 	selectedModel: Infer<typeof vModelId>;
@@ -145,14 +147,14 @@ export type ThreadSummary = {
 export type WorkspaceThreadGroup = {
 	key: string;
 	workspaceName: string;
-	workspacePath: string;
+	workspacePath?: string;
 	workspaceSessionId: Id<'workspaceSessions'>;
-	gitBranch: string | null;
-	gitDirty: boolean;
 	executorStatus: WorkspaceSession['executorStatus'] | null;
 	lastSeenAt: number;
 	latestThreadAt: number;
 	activeThreadCount: number;
+	localWorkspaceAvailability?: LocalWorkspaceAvailability;
+	localWorkspaceError?: string;
 	threads: ThreadSummary[];
 };
 
@@ -213,10 +215,32 @@ export type AgentRunRequest = {
 	authToken?: string;
 	guestId?: string;
 	runId: string;
+	workspaceSessionId: Id<'workspaceSessions'>;
 };
 
 export type DesktopApi = {
-	chooseWorkspace: () => Promise<string | null>;
+	chooseWorkspace: () => Promise<WorkspaceOverview | null>;
+	listWorkspaceSessions: () => Promise<WorkspaceSessionLocation[]>;
+	attachWorkspaceSession: (
+		session: WorkspaceSessionAttachment
+	) => Promise<WorkspaceSessionLocation>;
+	getWorkspaceSessionOverview: (
+		workspaceSessionId: Id<'workspaceSessions'>
+	) => Promise<WorkspaceOverview>;
 	executeWorkspaceTool: (request: WorkspaceToolRequest) => Promise<WorkspaceToolResult>;
 	runAgent: (request: AgentRunRequest) => Promise<void>;
+};
+
+export type WorkspaceSessionAttachment = {
+	workspaceSessionId: Id<'workspaceSessions'>;
+	workspacePath: string;
+};
+
+export type WorkspaceSessionLocation = {
+	workspaceSessionId: Id<'workspaceSessions'>;
+	workspacePath: string;
+	availability: Exclude<LocalWorkspaceAvailability, 'unlinked'>;
+	lastValidatedAt: number;
+	lastUsedAt: number;
+	unavailableReason?: string;
 };

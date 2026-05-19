@@ -12,9 +12,13 @@ const require = createRequire(import.meta.url);
 const isDevelopment = !app.isPackaged;
 const rendererUrl = process.env.SPROCKET_ELECTRON_RENDERER_URL ?? 'http://localhost:5173';
 const preloadEntry = path.join(__dirname, 'preload.cjs');
+const STALE_UNAVAILABLE_WORKSPACE_MS = 1000 * 60 * 60 * 24 * 30;
+const MAX_PERSISTED_WORKSPACE_SESSIONS = 200;
 
 let selectedWorkspace = isDevelopment ? process.cwd() : null;
 let nativeBinding = null;
+const workspaceSessions = new Map();
+let workspaceSessionsLoaded = false;
 
 protocol.registerSchemesAsPrivileged([
 	{
@@ -82,6 +86,209 @@ function getNativeBinding() {
 	return nativeBinding;
 }
 
+function normalizeWorkspaceSessionState(input) {
+	return {
+		workspaceSessionId: input.workspaceSessionId,
+		workspacePath: input.workspacePath,
+		availability: input.availability === 'unavailable' ? 'unavailable' : 'available',
+		lastValidatedAt: typeof input.lastValidatedAt === 'number' ? input.lastValidatedAt : Date.now(),
+		lastUsedAt: typeof input.lastUsedAt === 'number' ? input.lastUsedAt : 0,
+		...(typeof input.unavailableReason === 'string'
+			? { unavailableReason: input.unavailableReason }
+			: {})
+	};
+}
+
+function getWorkspaceSessionsStorePath() {
+	return path.join(app.getPath('userData'), 'workspace-sessions.json');
+}
+
+function loadWorkspaceSessionsFromDisk() {
+	if (workspaceSessionsLoaded) {
+		return;
+	}
+
+	workspaceSessionsLoaded = true;
+
+	try {
+		const storePath = getWorkspaceSessionsStorePath();
+		if (!fs.existsSync(storePath)) {
+			return;
+		}
+
+		const contents = fs.readFileSync(storePath, 'utf8');
+		const storedSessions = JSON.parse(contents);
+		if (!Array.isArray(storedSessions)) {
+			return;
+		}
+
+		for (const entry of storedSessions) {
+			if (
+				!entry ||
+				typeof entry.workspaceSessionId !== 'string' ||
+				typeof entry.workspacePath !== 'string'
+			) {
+				continue;
+			}
+
+			workspaceSessions.set(
+				entry.workspaceSessionId,
+				normalizeWorkspaceSessionState({
+					workspaceSessionId: entry.workspaceSessionId,
+					workspacePath: entry.workspacePath,
+					availability: entry.availability,
+					lastValidatedAt: entry.lastValidatedAt,
+					lastUsedAt: entry.lastUsedAt,
+					unavailableReason: entry.unavailableReason
+				})
+			);
+		}
+
+		refreshWorkspaceSessions();
+	} catch (error) {
+		console.warn('Failed to load workspace sessions from disk', error);
+	}
+}
+
+function saveWorkspaceSessionsToDisk() {
+	loadWorkspaceSessionsFromDisk();
+	pruneWorkspaceSessions();
+
+	try {
+		const storePath = getWorkspaceSessionsStorePath();
+		fs.mkdirSync(path.dirname(storePath), { recursive: true });
+		fs.writeFileSync(storePath, JSON.stringify([...workspaceSessions.values()], null, 2), 'utf8');
+	} catch (error) {
+		console.warn('Failed to save workspace sessions to disk', error);
+	}
+}
+
+function getErrorMessage(error) {
+	return error instanceof Error ? error.message : 'Unknown workspace error.';
+}
+
+function getWorkspaceOverviewForPath(workspacePath) {
+	const nativeBinding = getNativeBinding();
+	const overview = nativeBinding.getWorkspaceOverview(workspacePath);
+	if (!overview?.rootPath) {
+		throw new Error('Failed to resolve workspace path.');
+	}
+
+	return overview;
+}
+
+function validateWorkspaceSessionState(workspaceSession) {
+	try {
+		const overview = getWorkspaceOverviewForPath(workspaceSession.workspacePath);
+		return {
+			session: normalizeWorkspaceSessionState({
+				...workspaceSession,
+				workspacePath: overview.rootPath,
+				availability: 'available',
+				lastValidatedAt: Date.now(),
+				unavailableReason: undefined
+			}),
+			overview
+		};
+	} catch (error) {
+		return {
+			session: normalizeWorkspaceSessionState({
+				...workspaceSession,
+				availability: 'unavailable',
+				lastValidatedAt: Date.now(),
+				unavailableReason: getErrorMessage(error)
+			}),
+			error
+		};
+	}
+}
+
+function refreshWorkspaceSessions() {
+	let didChange = false;
+
+	for (const [workspaceSessionId, workspaceSession] of workspaceSessions) {
+		const { session } = validateWorkspaceSessionState(workspaceSession);
+		if (JSON.stringify(session) === JSON.stringify(workspaceSession)) {
+			continue;
+		}
+
+		workspaceSessions.set(workspaceSessionId, session);
+		didChange = true;
+	}
+
+	if (didChange) {
+		saveWorkspaceSessionsToDisk();
+	}
+}
+
+function pruneWorkspaceSessions(now = Date.now()) {
+	const sessions = [...workspaceSessions.values()]
+		.filter((workspaceSession) => {
+			if (workspaceSession.availability === 'available') {
+				return true;
+			}
+
+			return now - workspaceSession.lastValidatedAt < STALE_UNAVAILABLE_WORKSPACE_MS;
+		})
+		.sort((left, right) => right.lastUsedAt - left.lastUsedAt)
+		.slice(0, MAX_PERSISTED_WORKSPACE_SESSIONS);
+
+	workspaceSessions.clear();
+	for (const workspaceSession of sessions) {
+		workspaceSessions.set(workspaceSession.workspaceSessionId, workspaceSession);
+	}
+}
+
+function attachWorkspaceSession(input) {
+	loadWorkspaceSessionsFromDisk();
+
+	const { session, error } = validateWorkspaceSessionState({
+		workspaceSessionId: input.workspaceSessionId,
+		workspacePath: input.workspacePath,
+		availability: 'available',
+		lastUsedAt: Date.now(),
+		lastValidatedAt: Date.now()
+	});
+	workspaceSessions.set(session.workspaceSessionId, session);
+	saveWorkspaceSessionsToDisk();
+
+	if (error) {
+		throw error;
+	}
+
+	selectedWorkspace = session.workspacePath;
+	return session;
+}
+
+function getWorkspaceSessionOrThrow(workspaceSessionId) {
+	loadWorkspaceSessionsFromDisk();
+
+	const workspaceSession = workspaceSessions.get(workspaceSessionId);
+	if (!workspaceSession) {
+		throw new Error('Workspace path is unavailable. Re-open this workspace in the desktop app.');
+	}
+
+	return workspaceSession;
+}
+
+function getAttachedWorkspaceStateOrThrow(workspaceSessionId) {
+	const workspaceSession = getWorkspaceSessionOrThrow(workspaceSessionId);
+	const { session, overview, error } = validateWorkspaceSessionState(workspaceSession);
+	session.lastUsedAt = Date.now();
+	workspaceSessions.set(workspaceSessionId, session);
+	saveWorkspaceSessionsToDisk();
+
+	if (error || !overview) {
+		throw new Error(session.unavailableReason ?? 'Workspace path is unavailable.');
+	}
+
+	selectedWorkspace = session.workspacePath;
+	return {
+		workspaceSession: session,
+		overview
+	};
+}
+
 function createMainWindow() {
 	const mainWindow = new BrowserWindow({
 		width: 1280,
@@ -130,20 +337,35 @@ ipcMain.handle('sprocket:choose-workspace', async () => {
 	});
 
 	if (!result.canceled && result.filePaths[0]) {
-		selectedWorkspace = result.filePaths[0];
+		const overview = getWorkspaceOverviewForPath(result.filePaths[0]);
+		selectedWorkspace = overview.rootPath;
+		return overview;
 	}
 
-	return selectedWorkspace;
+	return null;
+});
+
+ipcMain.handle('sprocket:list-workspace-sessions', () => {
+	loadWorkspaceSessionsFromDisk();
+	return [...workspaceSessions.values()];
+});
+
+ipcMain.handle('sprocket:attach-workspace-session', async (_event, session) => {
+	return attachWorkspaceSession(session);
+});
+
+ipcMain.handle('sprocket:get-workspace-session-overview', async (_event, workspaceSessionId) => {
+	return getAttachedWorkspaceStateOrThrow(workspaceSessionId).overview;
 });
 
 ipcMain.handle('sprocket:execute-workspace-tool', async (_event, request) => {
 	const nativeBinding = getNativeBinding();
-	const workspaceRoot = request.workspaceRoot ?? selectedWorkspace;
-	if (!workspaceRoot) {
-		throw new Error('No workspace selected.');
+	const workspaceSessionId = request.workspaceSessionId;
+	if (!workspaceSessionId) {
+		throw new Error('No workspace session selected.');
 	}
-
-	selectedWorkspace = workspaceRoot;
+	const { workspaceSession } = getAttachedWorkspaceStateOrThrow(workspaceSessionId);
+	const workspaceRoot = workspaceSession.workspacePath;
 
 	switch (request.toolName) {
 		case 'get_workspace_overview':
@@ -178,12 +400,18 @@ ipcMain.handle('sprocket:execute-workspace-tool', async (_event, request) => {
 
 ipcMain.handle('sprocket:run-agent', async (_event, request) => {
 	const nativeBinding = getNativeBinding();
-	return await nativeBinding.runAgent(request);
+	const { workspaceSession } = getAttachedWorkspaceStateOrThrow(request.workspaceSessionId);
+
+	return await nativeBinding.runAgent({
+		...request,
+		workspacePath: workspaceSession.workspacePath
+	});
 });
 
 app.whenReady().then(() => {
 	Menu.setApplicationMenu(null);
 	loadRuntimeEnv();
+	loadWorkspaceSessionsFromDisk();
 
 	if (!isDevelopment) {
 		const webDistDir = path.join(__dirname, 'web/dist');

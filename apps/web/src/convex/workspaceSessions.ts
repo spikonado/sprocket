@@ -1,24 +1,22 @@
 import { mutation, query } from '@convex/_generated/server';
 import { v } from 'convex/values';
-import { getWorkspaceSessionByUserAndPath } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
 import {
 	enforceGuestWorkspaceWriteLimit,
 	enforceSignedInWorkspaceWriteLimit
 } from '@convex/lib/rateLimits';
-import { vWorkspaceOverview } from '@convex/lib/validators';
 import {
 	getDetachedWorkspaceSessionIdsForClient,
 	shouldRefreshWorkspaceHeartbeat,
 	withEffectiveWorkspaceSessionState
 } from '@convex/lib/workspaceConnection';
+import type { Doc } from '@convex/_generated/dataModel';
 
 export const upsertSelected = mutation({
 	args: {
 		guestId: v.optional(v.string()),
-		workspacePath: v.string(),
-		workspaceOverview: vWorkspaceOverview,
-		connectedClientId: v.optional(v.string())
+		workspaceName: v.string(),
+		connectedClientId: v.string()
 	},
 	handler: async (ctx, args) => {
 		const userId: string = await getUserId(ctx, args.guestId);
@@ -27,23 +25,24 @@ export const upsertSelected = mutation({
 		} else {
 			await enforceSignedInWorkspaceWriteLimit(ctx, userId);
 		}
-		const now = Date.now();
-		const existing = await getWorkspaceSessionByUserAndPath(ctx.db, userId, args.workspacePath);
+		const workspaceSession: Doc<'workspaceSessions'> | null = await ctx.db
+			.query('workspaceSessions')
+			.withIndex('by_user_workspaceName', (query) =>
+				query.eq('userId', userId).eq('workspaceName', args.workspaceName)
+			)
+			.unique();
 
 		const patch = {
-			workspacePath: args.workspacePath,
-			workspaceName: args.workspaceOverview.name,
-			gitBranch: args.workspaceOverview.gitBranch,
-			gitDirty: args.workspaceOverview.gitDirty,
-			lastHeartbeatAt: args.connectedClientId ? now : undefined,
+			workspaceName: args.workspaceName,
+			lastHeartbeatAt: Date.now(),
 			connectedClientId: args.connectedClientId,
-			nextExecutorSequence: existing?.nextExecutorSequence ?? 0,
-			lastSeenAt: now
+			nextExecutorSequence: workspaceSession?.nextExecutorSequence ?? 0,
+			lastSeenAt: Date.now()
 		};
 
-		if (existing) {
-			await ctx.db.patch(existing._id, patch);
-			return await ctx.db.get(existing._id);
+		if (workspaceSession) {
+			await ctx.db.patch(workspaceSession._id, patch);
+			return await ctx.db.get(workspaceSession._id);
 		}
 
 		const id = await ctx.db.insert('workspaceSessions', {

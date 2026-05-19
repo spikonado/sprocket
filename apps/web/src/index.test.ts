@@ -1,19 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-	formatCompactCount,
-	formatRelativeTime,
-	formatWorkspaceSubtitle,
-	truncatePreview
-} from '$lib/format';
+import { formatCompactCount, formatRelativeTime, truncatePreview } from '$lib/format';
 
 describe('workspace formatting helpers', () => {
 	it('formats large counts compactly', () => {
 		expect(formatCompactCount(15320)).toBe('15.3k');
-	});
-
-	it('builds a git subtitle with dirty state', () => {
-		expect(formatWorkspaceSubtitle('main', true)).toBe('Git main • dirty');
 	});
 
 	it('truncates long previews', () => {

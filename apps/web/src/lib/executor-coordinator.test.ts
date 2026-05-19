@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
 	countActiveThreads,
 	getAttachedWorkspaceSessionIds,
-	getWorkspaceSessionLookup,
 	groupExecutorJobsByWorkspace,
 	pickNextExecutorJobForWorkspace
 } from '$lib/executor-coordinator';
@@ -12,10 +11,7 @@ function makeWorkspaceSession(overrides: Partial<WorkspaceSession> = {}): Worksp
 	return {
 		_id: (overrides._id ?? 'ws-1') as WorkspaceSession['_id'],
 		userId: 'user-1',
-		workspacePath: '/tmp/workspace',
 		workspaceName: 'Workspace',
-		gitBranch: 'main',
-		gitDirty: false,
 		executorStatus: 'disconnected',
 		lastHeartbeatAt: undefined,
 		connectedClientId: undefined,
@@ -52,7 +48,6 @@ function makeThreadSummary(overrides: Partial<ThreadSummary> = {}): ThreadSummar
 			'thread-record-1') as ThreadSummary['threadId'],
 		workspaceSessionId: (overrides.workspaceSessionId ??
 			'ws-1') as ThreadSummary['workspaceSessionId'],
-		workspacePath: '/tmp/workspace',
 		workspaceName: 'Workspace',
 		title: 'Thread',
 		selectedModel: 'gpt-5.5',
@@ -128,24 +123,6 @@ describe('executor coordinator helpers', () => {
 		]);
 
 		expect(selectedJob?._id).toBe('job-2');
-	});
-
-	it('resolves workspace paths by job session instead of the selected workspace', () => {
-		const workspaceLookup = getWorkspaceSessionLookup([
-			makeWorkspaceSession({
-				_id: 'ws-a' as WorkspaceSession['_id'],
-				workspacePath: '/tmp/workspace-a'
-			}),
-			makeWorkspaceSession({
-				_id: 'ws-b' as WorkspaceSession['_id'],
-				workspacePath: '/tmp/workspace-b'
-			})
-		]);
-		const job = makeExecutorJob({
-			workspaceSessionId: 'ws-b' as ExecutorJob['workspaceSessionId']
-		});
-
-		expect(workspaceLookup.get(job.workspaceSessionId)?.workspacePath).toBe('/tmp/workspace-b');
 	});
 
 	it('counts active threads for sidebar indicators', () => {

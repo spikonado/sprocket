@@ -41,12 +41,12 @@ export function getWorkspaceThreadGroups(
 			workspaceName: workspaceSession.workspaceName,
 			workspacePath: workspaceSession.workspacePath,
 			workspaceSessionId: workspaceSession._id,
-			gitBranch: workspaceSession.gitBranch,
-			gitDirty: workspaceSession.gitDirty,
 			executorStatus: workspaceSession.executorStatus,
 			lastSeenAt: workspaceSession.lastSeenAt,
 			latestThreadAt: 0,
 			activeThreadCount: 0,
+			localWorkspaceAvailability: workspaceSession.localWorkspaceAvailability,
+			localWorkspaceError: workspaceSession.localWorkspaceError,
 			threads: []
 		});
 	}
@@ -62,10 +62,7 @@ export function getWorkspaceThreadGroups(
 		groups.set(thread.workspaceSessionId, {
 			key: thread.workspaceSessionId,
 			workspaceName: thread.workspaceName,
-			workspacePath: thread.workspacePath,
 			workspaceSessionId: thread.workspaceSessionId,
-			gitBranch: null,
-			gitDirty: false,
 			executorStatus: null,
 			lastSeenAt: 0,
 			latestThreadAt: thread.lastMessageAt,

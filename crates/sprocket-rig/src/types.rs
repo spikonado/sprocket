@@ -13,6 +13,7 @@ pub struct RunAgentRequest {
     pub auth_token: Option<String>,
     pub guest_id: Option<String>,
     pub run_id: String,
+    pub workspace_path: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -58,7 +59,9 @@ pub enum AgentHistoryContent {
         blocks_json: String,
     },
     ToolCall {
-        call_id: String,
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        call_id: Option<String>,
         name: String,
         arguments_json: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -67,7 +70,9 @@ pub enum AgentHistoryContent {
         additional_params_json: Option<String>,
     },
     ToolResult {
-        call_id: String,
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        call_id: Option<String>,
         items: Vec<AgentHistoryToolResultItem>,
     },
     Image {
@@ -120,7 +125,6 @@ pub struct ThreadRecordSnapshot {
 pub struct WorkspaceSessionSnapshot {
     #[serde(rename = "_id")]
     pub id: String,
-    pub workspace_path: String,
     pub workspace_name: String,
 }
 
@@ -136,9 +140,9 @@ impl AgentHistoryContent {
     fn into_user_content(self) -> anyhow::Result<UserContent> {
         match self {
             Self::Text { text } => Ok(UserContent::Text(Text { text })),
-            Self::ToolResult { call_id, items } => Ok(UserContent::ToolResult(ToolResult {
-                id: call_id.clone(),
-                call_id: Some(call_id),
+            Self::ToolResult { id, call_id, items } => Ok(UserContent::ToolResult(ToolResult {
+                id,
+                call_id,
                 content: vec_to_one_or_many(
                     items
                         .into_iter()
@@ -183,14 +187,15 @@ impl AgentHistoryContent {
                 .context("failed to reconstruct reasoning history content")?,
             )),
             Self::ToolCall {
+                id,
                 call_id,
                 name,
                 arguments_json,
                 signature,
                 additional_params_json,
             } => Ok(AssistantContent::ToolCall(ToolCall {
-                id: call_id.clone(),
-                call_id: Some(call_id),
+                id,
+                call_id,
                 function: ToolFunction {
                     name,
                     arguments: from_json_string(&arguments_json, "tool call arguments")?,
@@ -291,7 +296,8 @@ mod tests {
                 role: AgentHistoryRole::Assistant,
                 assistant_id: None,
                 contents: vec![AgentHistoryContent::ToolCall {
-                    call_id: "call_1".to_string(),
+                    id: "tool_call_1".to_string(),
+                    call_id: Some("call_1".to_string()),
                     name: "read_file".to_string(),
                     arguments_json: "{\"path\":\"src/lib.rs\"}".to_string(),
                     signature: None,
@@ -302,7 +308,8 @@ mod tests {
                 role: AgentHistoryRole::User,
                 assistant_id: None,
                 contents: vec![AgentHistoryContent::ToolResult {
-                    call_id: "call_1".to_string(),
+                    id: "tool_call_1".to_string(),
+                    call_id: Some("call_1".to_string()),
                     items: vec![AgentHistoryToolResultItem::Text {
                         text: "{\"ok\":true}".to_string(),
                     }],
@@ -315,7 +322,7 @@ mod tests {
         match &messages[0] {
             Message::Assistant { content, .. } => match content.iter().next() {
                 Some(AssistantContent::ToolCall(tool_call)) => {
-                    assert_eq!(tool_call.id, "call_1");
+                    assert_eq!(tool_call.id, "tool_call_1");
                     assert_eq!(tool_call.call_id.as_deref(), Some("call_1"));
                 }
                 other => panic!("expected assistant tool call, got {other:?}"),
@@ -326,7 +333,7 @@ mod tests {
         match &messages[1] {
             Message::User { content } => match content.iter().next() {
                 Some(UserContent::ToolResult(tool_result)) => {
-                    assert_eq!(tool_result.id, "call_1");
+                    assert_eq!(tool_result.id, "tool_call_1");
                     assert_eq!(tool_result.call_id.as_deref(), Some("call_1"));
                 }
                 other => panic!("expected user tool result, got {other:?}"),

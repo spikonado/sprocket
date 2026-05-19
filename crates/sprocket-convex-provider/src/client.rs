@@ -250,14 +250,11 @@ impl RigCompletionModel for CompletionModel {
             )));
         }
         for tool_call in &completion.raw_response.tool_calls {
-            chunks.push(Ok(RawStreamingChoice::ToolCall(
-                RawStreamingToolCall::new(
-                    tool_call.id.clone(),
-                    tool_call.name.clone(),
-                    tool_call.arguments.clone(),
-                )
-                .with_call_id(tool_call.id.clone()),
-            )));
+            chunks.push(Ok(RawStreamingChoice::ToolCall(RawStreamingToolCall::new(
+                tool_call.id.clone(),
+                tool_call.name.clone(),
+                tool_call.arguments.clone(),
+            ))));
         }
         chunks.push(Ok(RawStreamingChoice::FinalResponse(
             completion.raw_response.clone(),
@@ -385,13 +382,10 @@ fn completion_choice(output: &CompletionOutput) -> OneOrMany<AssistantContent> {
         parts.push(AssistantContent::text(output.text.clone()));
     }
     parts.extend(output.tool_calls.iter().map(|tool_call| {
-        AssistantContent::ToolCall(
-            RigToolCall::new(
-                tool_call.id.clone(),
-                ToolFunction::new(tool_call.name.clone(), tool_call.arguments.clone()),
-            )
-            .with_call_id(tool_call.id.clone()),
-        )
+        AssistantContent::ToolCall(RigToolCall::new(
+            tool_call.id.clone(),
+            ToolFunction::new(tool_call.name.clone(), tool_call.arguments.clone()),
+        ))
     }));
 
     OneOrMany::many(parts).unwrap_or_else(|_| OneOrMany::one(AssistantContent::text(String::new())))

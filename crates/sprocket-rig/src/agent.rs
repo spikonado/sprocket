@@ -7,12 +7,12 @@ use sprocket_core::{
     resolve_workspace_root,
 };
 
+use crate::RunContextResponse;
 use crate::runtime::RuntimeClient;
 use crate::tools::workspace_tools;
 use crate::types::{RunAgentRequest, deserialize_agent_history};
 
 const AGENT_MAX_TURNS: usize = 75;
-const RUN_CANCELLED_ERROR: &str = "Run cancelled.";
 
 fn build_workspace_preamble(
     workspace_path: &str,
@@ -85,16 +85,12 @@ fn build_workspace_preamble(
     .join("\n")
 }
 
-fn is_run_cancelled_error(error: &str) -> bool {
-    error.contains(RUN_CANCELLED_ERROR)
-}
-
 pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
     eprintln!("sprocket-rig: starting run {}", request.run_id);
-    let runtime = RuntimeClient::from_request(&request).await?;
-    let context = runtime.run_context(&request.run_id).await?;
+    let runtime: RuntimeClient = RuntimeClient::from_request(&request).await?;
+    let context: RunContextResponse = runtime.run_context(&request.run_id).await?;
     eprintln!("sprocket-rig: loaded run context {}", request.run_id);
-    let workspace_root = resolve_workspace_root(&context.workspace_session.workspace_path)?;
+    let workspace_root = resolve_workspace_root(&request.workspace_path)?;
 
     runtime.start_run(&request.run_id).await?;
     eprintln!("sprocket-rig: marked run running {}", request.run_id);
@@ -113,7 +109,7 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
     }
     let prior_history = deserialize_agent_history(context.agent_history)?;
     let preamble = build_workspace_preamble(
-        &context.workspace_session.workspace_path,
+        &request.workspace_path,
         &workspace_overview,
         &workspace_instructions,
     );
@@ -157,8 +153,8 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
             }
             Ok(_) => {}
             Err(error) => {
-                let error_text = error.to_string();
-                if is_run_cancelled_error(&error_text) {
+                let error_text: String = error.to_string();
+                if error_text.contains("Run cancelled.") {
                     eprintln!("sprocket-rig: run cancelled {}", request.run_id);
                     runtime
                         .finish_assistant_message(&request.run_id, &final_text)
