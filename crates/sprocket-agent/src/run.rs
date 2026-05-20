@@ -2,13 +2,13 @@ use anyhow::anyhow;
 use futures::StreamExt;
 use rig::client::CompletionClient;
 use rig::streaming::StreamingPrompt;
-use sprocket_core::{
+use sprocket_workspace::{
     WorkspaceInstruction, WorkspaceOverview, build_workspace_overview, load_workspace_instructions,
     resolve_workspace_root,
 };
 
 use crate::RunContextResponse;
-use crate::runtime::RuntimeClient;
+use crate::convex::RuntimeClient;
 use crate::tools::workspace_tools;
 use crate::types::{RunAgentRequest, deserialize_agent_history};
 
@@ -19,21 +19,6 @@ fn build_workspace_preamble(
     workspace_overview: &WorkspaceOverview,
     workspace_instructions: &[WorkspaceInstruction],
 ) -> String {
-    let top_level_entries = if workspace_overview.top_level_entries.is_empty() {
-        "none".to_string()
-    } else {
-        workspace_overview
-            .top_level_entries
-            .iter()
-            .map(|entry| format!("{} ({})", entry.name, entry.kind))
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-    let recent_files = if workspace_overview.recent_files.is_empty() {
-        "none".to_string()
-    } else {
-        workspace_overview.recent_files.join(", ")
-    };
     let instruction_block = if workspace_instructions.is_empty() {
         "No AGENTS.md instructions were preloaded for the current workspace.".to_string()
     } else {
@@ -57,6 +42,7 @@ fn build_workspace_preamble(
         "If the workspace is already dirty, protect user changes and work around them rather than reverting them.",
         "Use commands for inspection, builds, tests, and formatting, but do not mutate files through shell redirection or destructive git commands.",
         "Validate your work when the repo has relevant tests or build checks. Start with the most targeted checks for the code you changed.",
+        "When you finish, respond with a concise summary of what changed and which checks you ran.",
         "AGENTS.md spec:",
         "- AGENTS.md files can appear anywhere in the repository tree.",
         "- Each AGENTS.md file applies to the directory tree rooted at the folder that contains it.",
@@ -74,11 +60,6 @@ fn build_workspace_preamble(
             workspace_overview.git_branch.as_deref().unwrap_or("unknown")
         ),
         &format!("- Git dirty: {}", workspace_overview.git_dirty),
-        &format!("- File count: {}", workspace_overview.file_count),
-        &format!("- Directory count: {}", workspace_overview.directory_count),
-        &format!("- Top level entries: {}", top_level_entries),
-        &format!("- Recent files: {}", recent_files),
-        "When you finish, respond with a concise summary of what changed and which checks you ran.",
         "",
         &instruction_block,
     ]
@@ -86,18 +67,18 @@ fn build_workspace_preamble(
 }
 
 pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
-    eprintln!("sprocket-rig: starting run {}", request.run_id);
+    eprintln!("sprocket-agent: starting run {}", request.run_id);
     let runtime: RuntimeClient = RuntimeClient::from_request(&request).await?;
     let context: RunContextResponse = runtime.run_context(&request.run_id).await?;
-    eprintln!("sprocket-rig: loaded run context {}", request.run_id);
+    eprintln!("sprocket-agent: loaded run context {}", request.run_id);
     let workspace_root = resolve_workspace_root(&request.workspace_path)?;
 
     runtime.start_run(&request.run_id).await?;
-    eprintln!("sprocket-rig: marked run running {}", request.run_id);
+    eprintln!("sprocket-agent: marked run running {}", request.run_id);
 
     runtime.begin_assistant_message(&request.run_id).await?;
     eprintln!(
-        "sprocket-rig: prepared assistant response {}",
+        "sprocket-agent: prepared assistant response {}",
         request.run_id
     );
 
@@ -128,17 +109,17 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
     let agent = completion_client
         .agent(context.run.selected_model.clone())
         .preamble(&preamble)
-        .tool(tools.read_file)
+        .tool(tools.exec_command)
         .tool(tools.create_file)
         .tool(tools.replace_in_file)
         .build();
-    eprintln!("sprocket-rig: built rig agent {}", request.run_id);
+    eprintln!("sprocket-agent: built agent {}", request.run_id);
 
     if runtime.run_finished(&request.run_id).await? {
         return Ok(());
     }
 
-    eprintln!("sprocket-rig: prompting model {}", request.run_id);
+    eprintln!("sprocket-agent: prompting model {}", request.run_id);
     let mut stream = agent
         .stream_prompt(prompt)
         .with_history(prior_history)
@@ -155,7 +136,7 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
             Err(error) => {
                 let error_text: String = error.to_string();
                 if error_text.contains("Run cancelled.") {
-                    eprintln!("sprocket-rig: run cancelled {}", request.run_id);
+                    eprintln!("sprocket-agent: run cancelled {}", request.run_id);
                     runtime
                         .finish_assistant_message(&request.run_id, &final_text)
                         .await?;
@@ -165,7 +146,7 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
                     return Ok(());
                 }
                 eprintln!(
-                    "sprocket-rig: model failed {}: {}",
+                    "sprocket-agent: model failed {}: {}",
                     request.run_id, error_text
                 );
                 runtime
@@ -181,7 +162,7 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
 
     if runtime.run_finished(&request.run_id).await? {
         eprintln!(
-            "sprocket-rig: run finished before completion finalization {}",
+            "sprocket-agent: run finished before completion finalization {}",
             request.run_id
         );
         runtime
@@ -190,7 +171,7 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    eprintln!("sprocket-rig: model completed {}", request.run_id);
+    eprintln!("sprocket-agent: model completed {}", request.run_id);
     runtime
         .finish_assistant_message(&request.run_id, &final_text)
         .await?;

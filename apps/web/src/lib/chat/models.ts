@@ -6,17 +6,14 @@ export const defaultReasoningEffort = 'medium' as const;
 export type SupportedModelId = (typeof modelIds)[number];
 export type SupportedReasoningEffort = (typeof reasoningEffortIds)[number];
 
-export type ModelOption = {
-	id: SupportedModelId;
+type SelectorOption<T extends string> = {
+	id: T;
 	label: string;
 	triggerLabel?: string;
 };
 
-export type ReasoningEffortOption = {
-	id: SupportedReasoningEffort;
-	label: string;
-	triggerLabel?: string;
-};
+export type ModelOption = SelectorOption<SupportedModelId>;
+export type ReasoningEffortOption = SelectorOption<SupportedReasoningEffort>;
 
 export const modelOptions: ModelOption[] = [
 	{ id: 'gpt-5.5', label: 'GPT-5.5' },
@@ -31,13 +28,3 @@ export const reasoningEffortOptions: ReasoningEffortOption[] = [
 	{ id: 'high', label: 'High' },
 	{ id: 'xhigh', label: 'Extra High' }
 ];
-
-export function getModelLabel(modelId: SupportedModelId | string) {
-	const matchingOption = modelOptions.find((option) => option.id === modelId);
-	return matchingOption?.triggerLabel ?? matchingOption?.label ?? modelId;
-}
-
-export function getReasoningEffortLabel(reasoningEffort: SupportedReasoningEffort | string) {
-	const matchingOption = reasoningEffortOptions.find((option) => option.id === reasoningEffort);
-	return matchingOption?.triggerLabel ?? matchingOption?.label ?? reasoningEffort;
-}

@@ -2795,6 +2795,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "sprocket-agent"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "convex",
+ "futures",
+ "rig-core",
+ "serde",
+ "serde_json",
+ "sprocket-convex-provider",
+ "sprocket-workspace",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "sprocket-convex-provider"
 version = "0.0.0"
 dependencies = [
@@ -2809,7 +2825,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "sprocket-core"
+name = "sprocket-native"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "napi",
+ "napi-build",
+ "napi-derive",
+ "sprocket-agent",
+ "sprocket-workspace",
+]
+
+[[package]]
+name = "sprocket-workspace"
 version = "0.0.0"
 dependencies = [
  "anyhow",
@@ -2819,34 +2847,6 @@ dependencies = [
  "thiserror",
  "tokio",
  "walkdir",
-]
-
-[[package]]
-name = "sprocket-native"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "napi",
- "napi-build",
- "napi-derive",
- "sprocket-core",
- "sprocket-rig",
-]
-
-[[package]]
-name = "sprocket-rig"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "convex",
- "futures",
- "rig-core",
- "serde",
- "serde_json",
- "sprocket-convex-provider",
- "sprocket-core",
- "thiserror",
- "tokio",
 ]
 
 [[package]]

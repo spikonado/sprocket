@@ -231,11 +231,9 @@ mod tests {
                 id: None,
                 content: OneOrMany::many(vec![AssistantContent::tool_call(
                     "tool_call_1",
-                    "read_file",
+                    "exec_command",
                     serde_json::json!({
-                        "path": "src/lib.rs",
-                        "startLine": 1,
-                        "maxLines": 50
+                        "cmd": "cat src/lib.rs"
                     }),
                 )])
                 .expect("assistant content"),
@@ -271,16 +269,16 @@ mod tests {
         assert_eq!(array[1]["role"], "assistant");
         assert_eq!(array[1]["content"][0]["type"], "tool-call");
         assert_eq!(array[1]["content"][0]["toolCallId"], "tool_call_1");
-        assert_eq!(array[1]["content"][0]["toolName"], "read_file");
-        assert_eq!(array[1]["content"][0]["input"]["path"], "src/lib.rs");
+        assert_eq!(array[1]["content"][0]["toolName"], "exec_command");
+        assert_eq!(array[1]["content"][0]["input"]["cmd"], "cat src/lib.rs");
         assert_eq!(array[2]["role"], "tool");
         assert_eq!(array[2]["content"][0]["type"], "tool-result");
         assert_eq!(array[1]["content"][0]["toolCallId"], "tool_call_1");
-        assert_eq!(array[2]["content"][0]["toolName"], "read_file");
+        assert_eq!(array[2]["content"][0]["toolName"], "exec_command");
         assert_eq!(array[2]["content"][0]["output"]["type"], "json");
         assert_eq!(
-            array[2]["content"][0]["output"]["value"]["path"],
-            "src/lib.rs"
+            array[2]["content"][0]["output"]["value"]["contents"],
+            "fn main() {}"
         );
     }
 

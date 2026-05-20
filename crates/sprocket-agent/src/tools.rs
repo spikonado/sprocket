@@ -3,9 +3,9 @@ use std::path::PathBuf;
 use convex::Value;
 use rig::completion::ToolDefinition;
 use serde::{Deserialize, Serialize};
-use sprocket_core::{create_workspace_file, read_workspace_file, replace_workspace_file};
+use sprocket_workspace::{create_workspace_file, exec_workspace_command, replace_workspace_file};
 
-use crate::runtime::RuntimeClient;
+use crate::convex::RuntimeClient;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum AgentToolError {
@@ -31,7 +31,7 @@ impl WorkspaceToolContext {
 }
 
 #[derive(Clone)]
-pub(crate) struct ReadFileTool(WorkspaceToolContext);
+pub(crate) struct ExecCommandTool(WorkspaceToolContext);
 
 #[derive(Clone)]
 pub(crate) struct CreateFileTool(WorkspaceToolContext);
@@ -40,7 +40,7 @@ pub(crate) struct CreateFileTool(WorkspaceToolContext);
 pub(crate) struct ReplaceInFileTool(WorkspaceToolContext);
 
 pub(crate) struct WorkspaceToolSet {
-    pub(crate) read_file: ReadFileTool,
+    pub(crate) exec_command: ExecCommandTool,
     pub(crate) create_file: CreateFileTool,
     pub(crate) replace_in_file: ReplaceInFileTool,
 }
@@ -52,19 +52,22 @@ pub(crate) fn workspace_tools(
 ) -> WorkspaceToolSet {
     let context = WorkspaceToolContext::new(runtime, run_id, workspace_root);
     WorkspaceToolSet {
-        read_file: ReadFileTool(context.clone()),
+        exec_command: ExecCommandTool(context.clone()),
         create_file: CreateFileTool(context.clone()),
         replace_in_file: ReplaceInFileTool(context),
     }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct ReadFileArgs {
-    path: String,
-    #[serde(rename = "startLine")]
-    start_line: Option<usize>,
-    #[serde(rename = "maxLines")]
-    max_lines: Option<usize>,
+pub(crate) struct ExecCommandArgs {
+    cmd: String,
+    workdir: Option<String>,
+    shell: Option<String>,
+    login: Option<bool>,
+    #[serde(rename = "timeoutMs")]
+    timeout_ms: Option<u64>,
+    #[serde(rename = "maxOutputChars")]
+    max_output_chars: Option<usize>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -84,26 +87,28 @@ pub(crate) struct ReplaceInFileArgs {
     replace_all: Option<bool>,
 }
 
-impl rig::tool::Tool for ReadFileTool {
-    const NAME: &'static str = "read_file";
+impl rig::tool::Tool for ExecCommandTool {
+    const NAME: &'static str = "exec_command";
     type Error = AgentToolError;
-    type Args = ReadFileArgs;
+    type Args = ExecCommandArgs;
     type Output = serde_json::Value;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: Self::NAME.to_string(),
-            description:
-                "Read a UTF-8 text file by path and optional line range. Accepts relative or absolute paths."
-                    .to_string(),
+            description: "Runs a shell command inside the workspace and returns its output."
+                .to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "File path to read. Relative paths are resolved from the workspace root." },
-                    "startLine": { "type": "integer", "minimum": 1 },
-                    "maxLines": { "type": "integer", "minimum": 1, "maximum": 400 }
+                    "cmd": { "type": "string", "description": "Shell command to execute." },
+                    "workdir": { "type": "string", "description": "Relative/absolute path to the directory in which the command should be executed." },
+                    "shell": { "type": "string", "description": "Shell binary to launch." },
+                    "login": { "type": "boolean", "description": "Whether to run the shell with login semantics. Defaults to false." },
+                    "timeoutMs": { "type": "integer", "minimum": 1, "description": "Command timeout in milliseconds." },
+                    "maxOutputChars": { "type": "integer", "minimum": 1, "maximum": 80000, "description": "Maximum combined output characters returned to the model." }
                 },
-                "required": ["path"]
+                "required": ["cmd"]
             }),
         }
     }
@@ -115,27 +120,28 @@ impl rig::tool::Tool for ReadFileTool {
             Self::NAME,
             serde_json::to_value(&args).map_err(tool_error)?,
             async {
-                let output = read_workspace_file(
+                let output = exec_workspace_command(
                     self.0.workspace_root.clone(),
-                    &args.path,
-                    args.start_line,
-                    args.max_lines,
+                    &args.cmd,
+                    args.workdir.as_deref(),
+                    args.shell.as_deref(),
+                    args.login,
+                    args.timeout_ms,
+                    args.max_output_chars,
                 )
                 .await
                 .map_err(tool_error)?;
-                let mut value = serde_json::json!({
-                    "path": output.path,
-                    "exists": output.exists,
-                    "startLine": output.start_line,
-                    "endLine": output.end_line,
-                    "totalLines": output.total_lines,
+                Ok(serde_json::json!({
+                    "command": output.command,
+                    "cwd": output.cwd,
+                    "exitCode": output.exit_code,
+                    "success": output.success,
+                    "timedOut": output.timed_out,
+                    "stdout": output.stdout,
+                    "stderr": output.stderr,
+                    "output": output.output,
                     "truncated": output.truncated,
-                    "contents": output.contents,
-                });
-                if let Some(error) = output.error {
-                    value["error"] = serde_json::json!(error);
-                }
-                Ok(value)
+                }))
             },
         )
         .await
@@ -246,7 +252,7 @@ async fn execute_tool_job<F>(
 where
     F: std::future::Future<Output = Result<serde_json::Value, AgentToolError>>,
 {
-    eprintln!("sprocket-rig: starting tool {} for run {}", kind, run_id);
+    eprintln!("sprocket-agent: starting tool {} for run {}", kind, run_id);
     let mut begin_args = runtime.args_with_actor();
     begin_args.insert("runId".to_string(), run_id.to_string().into());
     begin_args.insert("kind".to_string(), kind.to_string().into());
@@ -266,7 +272,7 @@ where
 
     match future.await {
         Ok(output) => {
-            eprintln!("sprocket-rig: completed tool {} for run {}", kind, run_id);
+            eprintln!("sprocket-agent: completed tool {} for run {}", kind, run_id);
             let mut complete_args = runtime.args_with_actor();
             complete_args.insert("jobId".to_string(), job_id.into());
             complete_args.insert(
@@ -281,7 +287,7 @@ where
         }
         Err(error) => {
             eprintln!(
-                "sprocket-rig: failed tool {} for run {}: {}",
+                "sprocket-agent: failed tool {} for run {}: {}",
                 kind, run_id, error
             );
             let mut fail_args = runtime.args_with_actor();

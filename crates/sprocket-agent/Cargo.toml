@@ -1,5 +1,5 @@
 [package]
-name = "sprocket-rig"
+name = "sprocket-agent"
 version = "0.0.0"
 edition = "2024"
 
@@ -11,6 +11,6 @@ rig = { package = "rig-core", version = "0.36.0", default-features = false }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 sprocket-convex-provider = { path = "../sprocket-convex-provider" }
-sprocket-core = { path = "../sprocket-core" }
+sprocket-workspace = { path = "../sprocket-workspace" }
 thiserror = "2.0.18"
 tokio = { version = "1.52.1", features = ["sync"] }

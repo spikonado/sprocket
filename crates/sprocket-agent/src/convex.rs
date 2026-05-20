@@ -15,14 +15,14 @@ pub(crate) struct RuntimeClient {
 impl RuntimeClient {
     pub(crate) async fn from_request(request: &RunAgentRequest) -> anyhow::Result<Self> {
         eprintln!(
-            "sprocket-rig: initializing Convex client for run {}",
+            "sprocket-agent: initializing Convex client for run {}",
             request.run_id
         );
         let client =
             ConvexProviderClient::new(&request.deployment_url, "completion:complete").await?;
         client.set_auth_token(request.auth_token.clone()).await;
         eprintln!(
-            "sprocket-rig: Convex client ready for run {}",
+            "sprocket-agent: Convex client ready for run {}",
             request.run_id
         );
         Ok(Self {
@@ -36,9 +36,9 @@ impl RuntimeClient {
         function: &str,
         args: BTreeMap<String, Value>,
     ) -> anyhow::Result<T> {
-        eprintln!("sprocket-rig: query start {function}");
+        eprintln!("sprocket-agent: query start {function}");
         let result = self.client.query(function, args).await?;
-        eprintln!("sprocket-rig: query done {function}");
+        eprintln!("sprocket-agent: query done {function}");
         decode_function_result(result, function)
     }
 
@@ -47,9 +47,9 @@ impl RuntimeClient {
         function: &str,
         args: BTreeMap<String, Value>,
     ) -> anyhow::Result<T> {
-        eprintln!("sprocket-rig: mutation start {function}");
+        eprintln!("sprocket-agent: mutation start {function}");
         let result = self.client.mutation(function, args).await?;
-        eprintln!("sprocket-rig: mutation done {function}");
+        eprintln!("sprocket-agent: mutation done {function}");
         decode_function_result(result, function)
     }
 

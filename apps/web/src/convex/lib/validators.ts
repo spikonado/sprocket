@@ -1,5 +1,5 @@
 import { v, type Infer } from 'convex/values';
-import { modelIds, reasoningEffortIds } from '@web-lib/models';
+import { modelIds, reasoningEffortIds } from '@web-lib/chat/models';
 
 function literals<const TValues extends readonly string[]>(values: TValues) {
 	return values.map((value) => v.literal(value)) as {
@@ -23,10 +23,13 @@ export const vWorkspaceInstruction = v.object({
 	truncated: v.boolean()
 });
 
-export const vReadFilePayload = v.object({
-	path: v.string(),
-	startLine: v.optional(v.number()),
-	maxLines: v.optional(v.number())
+export const vExecCommandPayload = v.object({
+	cmd: v.string(),
+	workdir: v.optional(v.string()),
+	shell: v.optional(v.string()),
+	login: v.optional(v.boolean()),
+	timeoutMs: v.optional(v.number()),
+	maxOutputChars: v.optional(v.number())
 });
 
 export const vCreateFilePayload = v.object({
@@ -43,20 +46,21 @@ export const vReplaceInFilePayload = v.object({
 
 export const vExecutorJobPayload = v.union(
 	v.object({}),
-	vReadFilePayload,
+	vExecCommandPayload,
 	vCreateFilePayload,
 	vReplaceInFilePayload
 );
 
-export const vFileReadResult = v.object({
-	path: v.string(),
-	exists: v.optional(v.boolean()),
-	startLine: v.number(),
-	endLine: v.number(),
-	totalLines: v.number(),
-	truncated: v.boolean(),
-	contents: v.string(),
-	error: v.optional(v.string())
+export const vCommandExecResult = v.object({
+	command: v.string(),
+	cwd: v.string(),
+	exitCode: v.optional(v.number()),
+	success: v.boolean(),
+	timedOut: v.boolean(),
+	stdout: v.string(),
+	stderr: v.string(),
+	output: v.string(),
+	truncated: v.boolean()
 });
 
 export const vFileWriteResult = v.object({
@@ -73,7 +77,7 @@ export const vFileEditResult = v.object({
 export const vExecutorJobResult = v.union(
 	v.string(),
 	v.array(vWorkspaceInstruction),
-	vFileReadResult,
+	vCommandExecResult,
 	vFileWriteResult,
 	vFileEditResult
 );
@@ -102,7 +106,7 @@ export function isRunFinalStatus(
 export const vExecutorJobKind = v.union(
 	v.literal('get_workspace_overview'),
 	v.literal('get_workspace_instructions'),
-	v.literal('read_file'),
+	v.literal('exec_command'),
 	v.literal('create_file'),
 	v.literal('replace_in_file')
 );
@@ -227,11 +231,11 @@ export const vWorkspaceToolRequest = v.object({
 	payload: vExecutorJobPayload
 });
 
-export type ReadFilePayload = Infer<typeof vReadFilePayload>;
+export type ExecCommandPayload = Infer<typeof vExecCommandPayload>;
 export type CreateFilePayload = Infer<typeof vCreateFilePayload>;
 export type ReplaceInFilePayload = Infer<typeof vReplaceInFilePayload>;
 export type ExecutorJobPayload = Infer<typeof vExecutorJobPayload>;
-export type FileReadResult = Infer<typeof vFileReadResult>;
+export type CommandExecResult = Infer<typeof vCommandExecResult>;
 export type FileWriteResult = Infer<typeof vFileWriteResult>;
 export type FileEditResult = Infer<typeof vFileEditResult>;
 export type ExecutorJobResult = Infer<typeof vExecutorJobResult>;

@@ -372,12 +372,17 @@ ipcMain.handle('sprocket:execute-workspace-tool', async (_event, request) => {
 			return nativeBinding.getWorkspaceOverview(workspaceRoot);
 		case 'get_workspace_instructions':
 			return nativeBinding.getWorkspaceInstructions(workspaceRoot);
-		case 'read_file':
-			return nativeBinding.readFile({
+		case 'exec_command':
+			return nativeBinding.execCommand({
 				workspaceRoot,
-				path: request.payload.path,
-				...(request.payload.startLine == null ? {} : { startLine: request.payload.startLine }),
-				...(request.payload.maxLines == null ? {} : { maxLines: request.payload.maxLines })
+				cmd: request.payload.cmd,
+				...(request.payload.workdir == null ? {} : { workdir: request.payload.workdir }),
+				...(request.payload.shell == null ? {} : { shell: request.payload.shell }),
+				...(request.payload.login == null ? {} : { login: request.payload.login }),
+				...(request.payload.timeoutMs == null ? {} : { timeoutMs: request.payload.timeoutMs }),
+				...(request.payload.maxOutputChars == null
+					? {}
+					: { maxOutputChars: request.payload.maxOutputChars })
 			});
 		case 'create_file':
 			return nativeBinding.createFile({

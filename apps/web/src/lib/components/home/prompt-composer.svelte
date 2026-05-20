@@ -2,14 +2,14 @@
 	import { ArrowUp, ChevronDown, Cpu, LockOpen, Square } from 'lucide-svelte';
 	import ModelSelector from '$lib/components/model-selector.svelte';
 	import ReasoningSelector from '$lib/components/reasoning-selector.svelte';
-	import { shouldSubmitComposerFromKeydown } from '$lib/composer';
+	import { shouldSubmitComposerFromKeydown } from '$lib/chat/composer';
 	import {
 		defaultModelId,
 		defaultReasoningEffort,
 		modelOptions,
 		type SupportedModelId,
 		type SupportedReasoningEffort
-	} from '$lib/models';
+	} from '$lib/chat/models';
 
 	type Props = {
 		prompt?: string;

@@ -10,10 +10,10 @@ import {
 	upsertAssistantToolCallPart,
 	upsertAssistantToolResultPart,
 	type AssistantPart as PersistedAssistantPart
-} from '@web-lib/assistant-tool-parts';
+} from '@web-lib/chat/assistant-parts';
 import { resolveLanguageModel, resolveProviderOptions } from '@convex/lib/modelRegistry';
 import { vModelId, vReasoningEffort } from '@convex/lib/validators';
-import { type SupportedModelId, type SupportedReasoningEffort } from '@web-lib/models';
+import { type SupportedModelId, type SupportedReasoningEffort } from '@web-lib/chat/models';
 
 type JsonSchema = Parameters<typeof jsonSchema>[0];
 type ToolChoice = NonNullable<Parameters<typeof generateText>[0]['toolChoice']>;

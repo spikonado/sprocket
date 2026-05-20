@@ -1,7 +1,7 @@
 'use node';
 
 import { createOpenAI, type OpenAIProvider } from '@ai-sdk/openai';
-import { type SupportedModelId, type SupportedReasoningEffort } from '@web-lib/models';
+import { type SupportedModelId, type SupportedReasoningEffort } from '@web-lib/chat/models';
 import type { LanguageModel } from 'ai';
 
 const openai: OpenAIProvider = createOpenAI({

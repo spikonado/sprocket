@@ -34,3 +34,14 @@ export function formatRelativeTime(timestamp: number, now = Date.now()) {
 
 	return `${Math.floor(deltaMs / day)}d ago`;
 }
+
+export function formatElapsedDuration(totalSeconds: number) {
+	const minutes = Math.floor(totalSeconds / 60);
+	const seconds = totalSeconds % 60;
+
+	if (minutes === 0) {
+		return `${seconds}s`;
+	}
+
+	return `${minutes}m ${seconds}s`;
+}

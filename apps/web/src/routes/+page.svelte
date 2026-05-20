@@ -10,44 +10,43 @@
 	import ThreadTranscript from '$lib/components/home/thread-transcript.svelte';
 	import WorkspaceSidebar from '$lib/components/home/workspace-sidebar.svelte';
 	import {
+		attachLocalWorkspaceSession as attachLocalWorkspaceSessionForPath,
+		attachWorkspaceSession as attachWorkspaceSessionForExecution,
+		getViewerArgs as getViewerArgsForUser,
+		launchAgentRun,
+		processExecutorJobs as processPendingExecutorJobs,
+		refreshDesktopWorkspaceSessions as refreshDesktopWorkspaceSessionsFromDesktop,
+		syncAttachedWorkspaceSessions as syncAttachedWorkspaceSessionsForClient,
+		type WorkspaceSelectionResult,
+		type WorkspaceSessionState
+	} from '$lib/home/desktop';
+	import { formatElapsedDuration } from '$lib/format';
+	import {
 		defaultModelId,
 		defaultReasoningEffort,
 		type SupportedModelId,
 		type SupportedReasoningEffort
-	} from '$lib/models';
+	} from '$lib/chat/models';
 	import {
 		getAttachedWorkspaceSessionIds,
 		getWorkspaceThreadGroups,
-		groupExecutorJobsByWorkspace,
-		pickNextExecutorJobForWorkspace
-	} from '$lib/executor-coordinator';
-	import { findThreadById, resolveWorkspaceThreadSelection } from '$lib/thread-selection';
+		findThreadById,
+		resolveWorkspaceThreadSelection
+	} from '$lib/workspace/threads';
 	import type {
 		DesktopApi,
-		ExecutorJob,
-		LocalWorkspaceAvailability,
 		ThreadMessage,
 		ThreadSummary,
 		WorkspaceSession,
 		WorkspaceSessionLocation,
-		WorkspaceThreadGroup,
-		WorkspaceToolRequest
+		WorkspaceThreadGroup
 	} from '$lib/types/sprocket';
 
-	type WorkspaceSelectionResult = {
-		_id: Id<'workspaceSessions'>;
-	};
-	type WorkspaceSessionState = WorkspaceSession & {
-		localWorkspaceAvailability: LocalWorkspaceAvailability;
-	};
-
-	const guestStorageKey = 'sprocket.guest-session-id';
 	const convexClient = useConvexClient();
 	const desktopShellRequiredMessage =
-		'Sprocket must be opened from the desktop app. Browser mode is disabled.';
+		'Sprocket must be opened from the native app. Browser mode is disabled.';
 
 	let desktopApi = $state<DesktopApi | null>(null);
-	let desktopMode = $state<'checking' | 'available' | 'unavailable'>('checking');
 	let currentWorkspaceSessionId = $state<Id<'workspaceSessions'> | null>(null);
 	let currentThreadId = $state<Id<'threadRecords'> | null>(null);
 	let draftWorkspaceSessionId = $state<Id<'workspaceSessions'> | null>(null);
@@ -69,7 +68,7 @@
 	let executorProcessQueued = false;
 
 	function getViewerArgs() {
-		return !$authState.user && guestSessionId ? { guestId: guestSessionId } : {};
+		return getViewerArgsForUser($authState.user, guestSessionId);
 	}
 
 	const workspaceSessionsQuery = useQuery(api.workspaceSessions.listMine, () =>
@@ -177,41 +176,15 @@
 		[...attachedWorkspaceSessionIds].sort().join('\0')
 	);
 
-	function resolveDesktopApi() {
-		return window.sprocketDesktop ?? null;
-	}
-
 	async function refreshDesktopWorkspaceSessions() {
-		if (!desktopApi) {
-			desktopWorkspaceSessionsById = {};
-			return;
-		}
-
-		const desktopWorkspaceSessions = await desktopApi.listWorkspaceSessions();
-		desktopWorkspaceSessionsById = Object.fromEntries(
-			desktopWorkspaceSessions.map((workspaceSession) => [
-				workspaceSession.workspaceSessionId,
-				workspaceSession
-			])
-		);
+		desktopWorkspaceSessionsById = await refreshDesktopWorkspaceSessionsFromDesktop(desktopApi);
 	}
 
-	function executorRequest(
+	function setWorkspaceSelection(
 		workspaceSessionId: Id<'workspaceSessions'>,
-		request: Omit<WorkspaceToolRequest, 'workspaceSessionId'>
-	): WorkspaceToolRequest {
-		return {
-			...request,
-			workspaceSessionId
-		} as WorkspaceToolRequest;
-	}
-
-	function setWorkspaceSelection(args: {
-		workspaceSessionId: Id<'workspaceSessions'>;
-		threadId?: Id<'threadRecords'> | null;
-		draft?: boolean;
-	}) {
-		const { workspaceSessionId, threadId = null, draft = false } = args;
+		threadId: Id<'threadRecords'> | null = null,
+		draft: boolean = false
+	) {
 		currentWorkspaceSessionId = workspaceSessionId;
 		currentThreadId = threadId;
 		draftWorkspaceSessionId = draft ? workspaceSessionId : null;
@@ -225,7 +198,8 @@
 			throw new Error(desktopShellRequiredMessage);
 		}
 
-		const session = await desktopApi.attachWorkspaceSession({
+		const session = await attachLocalWorkspaceSessionForPath({
+			desktopApi,
 			workspaceSessionId,
 			workspacePath
 		});
@@ -237,17 +211,12 @@
 	}
 
 	async function syncAttachedWorkspaceSessions(workspaceSessionIds: Id<'workspaceSessions'>[]) {
-		if (!executorClientId) {
-			return;
-		}
-
-		const attachedSessionIds = [
-			...new Set([...attachedWorkspaceSessionIds, ...workspaceSessionIds])
-		];
-		await convexClient.mutation(api.workspaceSessions.heartbeatAttached, {
-			...getViewerArgs(),
-			clientId: executorClientId,
-			workspaceSessionIds: attachedSessionIds
+		await syncAttachedWorkspaceSessionsForClient({
+			attachedWorkspaceSessionIds,
+			convexClient,
+			executorClientId,
+			getViewerArgs,
+			workspaceSessionIds
 		});
 	}
 
@@ -256,7 +225,7 @@
 		selection: { threadId?: Id<'threadRecords'> | null; draft?: boolean } = {}
 	) {
 		await attachWorkspaceSession(workspaceSessionId);
-		setWorkspaceSelection({ workspaceSessionId, ...selection });
+		setWorkspaceSelection(workspaceSessionId, selection.threadId, selection.draft);
 		currentError = null;
 	}
 
@@ -278,7 +247,7 @@
 			})) as WorkspaceSelectionResult;
 			await attachLocalWorkspaceSession(session._id, overview.rootPath);
 			await syncAttachedWorkspaceSessions([session._id]);
-			setWorkspaceSelection({ workspaceSessionId: session._id, draft: true });
+			setWorkspaceSelection(session._id, null, true);
 			currentError = null;
 		} catch (error) {
 			currentError = error instanceof Error ? error.message : 'Failed to attach workspace.';
@@ -286,18 +255,15 @@
 	}
 
 	async function attachWorkspaceSession(workspaceSessionId: Id<'workspaceSessions'>) {
-		if (!desktopApi || !executorClientId) {
-			return;
-		}
-
-		try {
-			await desktopApi.getWorkspaceSessionOverview(workspaceSessionId);
-			await refreshDesktopWorkspaceSessions();
-			await syncAttachedWorkspaceSessions([workspaceSessionId]);
-		} catch (error) {
-			await refreshDesktopWorkspaceSessions();
-			throw error;
-		}
+		await attachWorkspaceSessionForExecution({
+			attachedWorkspaceSessionIds,
+			convexClient,
+			desktopApi,
+			executorClientId,
+			getViewerArgs,
+			refreshDesktopWorkspaceSessions,
+			workspaceSessionId
+		});
 	}
 
 	async function reconnectWorkspaceSession(workspaceSessionId: Id<'workspaceSessions'>) {
@@ -327,7 +293,7 @@
 
 			await attachLocalWorkspaceSession(workspaceSessionId, overview.rootPath);
 			await attachWorkspaceSession(workspaceSessionId);
-			setWorkspaceSelection({ workspaceSessionId, threadId: currentThreadId });
+			setWorkspaceSelection(workspaceSessionId, currentThreadId);
 			currentError = null;
 		} catch (error) {
 			await refreshDesktopWorkspaceSessions();
@@ -448,18 +414,18 @@
 				reasoningEffort: selectedReasoningEffort
 			})) as { runId: string };
 			const authToken = $authState.user ? ((await getAccessToken()) ?? undefined) : undefined;
-			try {
-				await desktopApi.runAgent({
-					deploymentUrl: PUBLIC_CONVEX_URL,
-					...(authToken ? { authToken } : {}),
-					...getViewerArgs(),
-					runId,
-					workspaceSessionId: currentWorkspaceSessionId
-				});
-			} catch (error) {
-				console.error('Failed to run agent', error);
-				currentError = null;
-			}
+			launchAgentRun({
+				authToken,
+				desktopApi,
+				deploymentUrl: PUBLIC_CONVEX_URL,
+				getViewerArgs,
+				onError: (error) => {
+					currentError =
+						error instanceof Error ? error.message : 'Failed to start the local agent run.';
+				},
+				runId,
+				workspaceSessionId: currentWorkspaceSessionId
+			});
 		} catch (error) {
 			await refreshDesktopWorkspaceSessions();
 			currentError = error instanceof Error ? error.message : 'Failed to send prompt.';
@@ -484,97 +450,6 @@
 		}
 	}
 
-	function formatElapsedDuration(totalSeconds: number) {
-		const minutes = Math.floor(totalSeconds / 60);
-		const seconds = totalSeconds % 60;
-
-		if (minutes === 0) {
-			return `${seconds}s`;
-		}
-
-		return `${minutes}m ${seconds}s`;
-	}
-
-	function setProcessingJobForWorkspace(
-		workspaceSessionId: Id<'workspaceSessions'>,
-		jobId: Id<'executorJobs'> | null
-	) {
-		if (jobId) {
-			processingJobIdsByWorkspace[workspaceSessionId] = jobId;
-		} else {
-			delete processingJobIdsByWorkspace[workspaceSessionId];
-		}
-	}
-
-	async function processExecutorJobs() {
-		if (!desktopApi || !executorClientId) {
-			return;
-		}
-
-		const jobs = (pendingJobsForClientQuery.data ?? []) as ExecutorJob[];
-		const jobsByWorkspace = groupExecutorJobsByWorkspace(jobs);
-
-		for (const [workspaceSessionId, processingJobId] of Object.entries(
-			processingJobIdsByWorkspace
-		) as [Id<'workspaceSessions'>, Id<'executorJobs'>][]) {
-			const workspaceJobs = jobsByWorkspace.get(workspaceSessionId) ?? [];
-			const stillVisible = workspaceJobs.some((job) => job._id === processingJobId);
-			if (stillVisible) {
-				continue;
-			}
-
-			setProcessingJobForWorkspace(workspaceSessionId, null);
-		}
-
-		for (const [workspaceSessionId, workspaceJobs] of jobsByWorkspace) {
-			if (processingJobIdsByWorkspace[workspaceSessionId]) {
-				continue;
-			}
-
-			const nextJob = pickNextExecutorJobForWorkspace(workspaceJobs);
-			if (!nextJob) {
-				continue;
-			}
-
-			setProcessingJobForWorkspace(workspaceSessionId, nextJob._id);
-
-			void (async () => {
-				try {
-					const claimedJob = (await convexClient.mutation(api.executor.claim, {
-						...getViewerArgs(),
-						jobId: nextJob._id,
-						clientId: executorClientId
-					})) as ExecutorJob | null;
-					if (!claimedJob) {
-						return;
-					}
-
-					const result = await desktopApi.executeWorkspaceTool(
-						executorRequest(claimedJob.workspaceSessionId, {
-							jobId: claimedJob._id,
-							toolName: claimedJob.kind,
-							payload: claimedJob.payload as WorkspaceToolRequest['payload']
-						})
-					);
-					await convexClient.mutation(api.executor.complete, {
-						...getViewerArgs(),
-						jobId: claimedJob._id,
-						result: result as NonNullable<ExecutorJob['result']>
-					});
-				} catch (error) {
-					await refreshDesktopWorkspaceSessions();
-					await convexClient.mutation(api.executor.fail, {
-						...getViewerArgs(),
-						jobId: nextJob._id,
-						error: error instanceof Error ? error.message : 'Executor job failed.'
-					});
-				} finally {
-					setProcessingJobForWorkspace(workspaceSessionId, null);
-				}
-			})();
-		}
-	}
-
 	async function processExecutorJobsSafely() {
 		if (executorProcessing) {
 			executorProcessQueued = true;
@@ -585,7 +460,15 @@
 		try {
 			do {
 				executorProcessQueued = false;
-				await processExecutorJobs();
+				await processPendingExecutorJobs(
+					desktopApi,
+					executorClientId,
+					pendingJobsForClientQuery.data ?? [],
+					processingJobIdsByWorkspace,
+					convexClient,
+					getViewerArgs,
+					refreshDesktopWorkspaceSessions
+				);
 			} while (executorProcessQueued);
 		} finally {
 			executorProcessing = false;
@@ -615,17 +498,14 @@
 		hasResolvedInitialSelection = true;
 		const restoredThread = findThreadById(threads, uiPreferences?.lastThreadId ?? null);
 		if (restoredThread) {
-			setWorkspaceSelection({
-				workspaceSessionId: restoredThread.workspaceSessionId,
-				threadId: restoredThread.threadId
-			});
+			setWorkspaceSelection(restoredThread.workspaceSessionId, restoredThread.threadId);
 			restoredWorkspaceSessionIdToAttach = restoredThread.workspaceSessionId;
 			lastSavedThreadId = restoredThread.threadId;
 			return;
 		}
 
 		if (workspaceSessions[0]) {
-			setWorkspaceSelection({ workspaceSessionId: workspaceSessions[0]._id });
+			setWorkspaceSelection(workspaceSessions[0]._id, null, false);
 		}
 	});
 
@@ -659,11 +539,11 @@
 			activeThread?.workspaceSessionId &&
 			activeThread.workspaceSessionId !== currentWorkspaceSessionId
 		) {
-			setWorkspaceSelection({
-				workspaceSessionId: activeThread.workspaceSessionId,
-				threadId: currentThreadId,
-				draft: draftWorkspaceSessionId === activeThread.workspaceSessionId
-			});
+			setWorkspaceSelection(
+				activeThread.workspaceSessionId,
+				currentThreadId,
+				draftWorkspaceSessionId === activeThread.workspaceSessionId
+			);
 		}
 	});
 
@@ -755,13 +635,14 @@
 	});
 
 	onMount(() => {
-		desktopApi = resolveDesktopApi();
-		desktopMode = desktopApi ? 'available' : 'unavailable';
+		desktopApi = window.sprocketDesktop ?? null;
 		executorClientId = crypto.randomUUID();
-		const persistedGuestSessionId = localStorage.getItem(guestStorageKey);
+		const persistedGuestSessionId: string | null = localStorage.getItem(
+			'sprocket.guest-session-id'
+		);
 		guestSessionId = persistedGuestSessionId || crypto.randomUUID();
 		if (!persistedGuestSessionId) {
-			localStorage.setItem(guestStorageKey, guestSessionId);
+			localStorage.setItem('sprocket.guest-session-id', guestSessionId);
 		}
 		if (!desktopApi) {
 			currentError = desktopShellRequiredMessage;
@@ -779,21 +660,18 @@
 	<title>Sprocket</title>
 </svelte:head>
 
-{#if desktopMode === 'unavailable'}
+{#if !desktopApi}
 	<div
 		class="flex h-screen items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_26%),linear-gradient(180deg,rgba(22,22,24,0.98),rgba(15,15,17,1))] px-6"
 	>
 		<div
-			class="w-full max-w-lg rounded-[32px] border border-white/8 bg-[linear-gradient(180deg,rgba(33,33,36,0.96),rgba(24,24,27,0.98))] p-8 shadow-[0_28px_80px_rgba(0,0,0,0.34)]"
+			class="w-full max-w-lg rounded-4xl border border-white/8 bg-[linear-gradient(180deg,rgba(33,33,36,0.96),rgba(24,24,27,0.98))] p-8 shadow-[0_28px_80px_rgba(0,0,0,0.34)]"
 		>
-			<p class="text-[11px] tracking-[0.22em] text-slate-500 uppercase">Desktop Required</p>
-			<h1 class="mt-3 text-2xl font-medium tracking-tight text-white">Browser mode is disabled.</h1>
-			<p class="mt-3 text-sm leading-6 text-slate-300">
-				Open Sprocket from the desktop app to access workspaces, threads, and local execution.
-			</p>
+			<h1 class="mt-3 text-2xl font-medium tracking-tight text-white">Browser App Disabled</h1>
+			<p class="mt-3 text-sm leading-6 text-slate-300">Please use Sprocket's native app</p>
 		</div>
 	</div>
-{:else if desktopMode === 'available'}
+{:else}
 	<div class="h-screen overflow-hidden">
 		<div
 			class="grid h-screen grid-cols-[292px_minmax(0,1fr)] overflow-hidden bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_26%),linear-gradient(180deg,rgba(22,22,24,0.98),rgba(15,15,17,1))]"

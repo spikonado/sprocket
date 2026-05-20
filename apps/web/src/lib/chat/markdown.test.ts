@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { renderMarkdown } from '$lib/markdown';
+import { renderMarkdown } from '$lib/chat/markdown';
 
 describe('renderMarkdown', () => {
 	it('renders common markdown formatting', () => {

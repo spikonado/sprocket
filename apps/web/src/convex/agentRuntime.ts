@@ -9,7 +9,7 @@ import { buildThreadTranscript, type ThreadTranscriptMessage } from '@convex/lib
 import {
 	ensureAssistantToolPartsFromJobs,
 	type AssistantPart
-} from '@web-lib/assistant-tool-parts';
+} from '@web-lib/chat/assistant-parts';
 import {
 	type AgentHistoryMessage,
 	isRunFinalStatus,

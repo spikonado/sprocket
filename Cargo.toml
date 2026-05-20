@@ -1,8 +1,8 @@
 [workspace]
 members = [
     "crates/sprocket-convex-provider",
-    "crates/sprocket-core",
-    "crates/sprocket-rig",
+    "crates/sprocket-workspace",
+    "crates/sprocket-agent",
     "packages/native",
 ]
 resolver = "3"

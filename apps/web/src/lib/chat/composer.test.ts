@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { shouldSubmitComposerFromKeydown } from '$lib/composer';
+import { shouldSubmitComposerFromKeydown } from '$lib/chat/composer';
 
 describe('shouldSubmitComposerFromKeydown', () => {
 	it('submits on enter', () => {

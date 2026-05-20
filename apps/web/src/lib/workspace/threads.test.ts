@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
 	countActiveThreads,
+	findThreadById,
 	getAttachedWorkspaceSessionIds,
 	groupExecutorJobsByWorkspace,
-	pickNextExecutorJobForWorkspace
-} from '$lib/executor-coordinator';
+	pickNextExecutorJobForWorkspace,
+	resolveWorkspaceThreadSelection
+} from '$lib/workspace/threads';
+import { defaultModelId, defaultReasoningEffort } from '$lib/chat/models';
 import type { ExecutorJob, ThreadSummary, WorkspaceSession } from '$lib/types/sprocket';
 
 function makeWorkspaceSession(overrides: Partial<WorkspaceSession> = {}): WorkspaceSession {
@@ -27,8 +30,8 @@ function makeExecutorJob(overrides: Partial<ExecutorJob> = {}): ExecutorJob {
 			'ws-1') as ExecutorJob['workspaceSessionId'],
 		threadId: (overrides.threadId ?? 'thread-record-1') as ExecutorJob['threadId'],
 		runId: (overrides.runId ?? 'run-1') as ExecutorJob['runId'],
-		kind: overrides.kind ?? 'read_file',
-		payload: overrides.payload ?? { path: 'README.md' },
+		kind: overrides.kind ?? 'exec_command',
+		payload: overrides.payload ?? { cmd: 'pwd' },
 		hidden: overrides.hidden,
 		status: overrides.status ?? 'pending',
 		enqueuedAt: overrides.enqueuedAt ?? 0,
@@ -50,8 +53,8 @@ function makeThreadSummary(overrides: Partial<ThreadSummary> = {}): ThreadSummar
 			'ws-1') as ThreadSummary['workspaceSessionId'],
 		workspaceName: 'Workspace',
 		title: 'Thread',
-		selectedModel: 'gpt-5.5',
-		reasoningEffort: 'medium',
+		selectedModel: overrides.selectedModel ?? defaultModelId,
+		reasoningEffort: overrides.reasoningEffort ?? defaultReasoningEffort,
 		lastMessageAt: 0,
 		threadStatus: 'active',
 		latestRunStatus: null,
@@ -61,7 +64,7 @@ function makeThreadSummary(overrides: Partial<ThreadSummary> = {}): ThreadSummar
 	};
 }
 
-describe('executor coordinator helpers', () => {
+describe('workspace thread helpers', () => {
 	it('returns attached workspaces for the current executor client only', () => {
 		const attached = getAttachedWorkspaceSessionIds(
 			[
@@ -141,5 +144,41 @@ describe('executor coordinator helpers', () => {
 				})
 			])
 		).toBe(2);
+	});
+
+	it('finds a persisted thread when it still exists', () => {
+		const thread = makeThreadSummary();
+
+		expect(findThreadById([thread], thread.threadId)).toEqual(thread);
+		expect(findThreadById([thread], 'missing-thread' as ThreadSummary['threadId'])).toBeNull();
+	});
+
+	it('preserves a blank draft selection for the current workspace', () => {
+		const threads = [makeThreadSummary()];
+
+		expect(
+			resolveWorkspaceThreadSelection({
+				threads,
+				currentThreadId: null,
+				currentWorkspaceSessionId: 'ws-1' as ThreadSummary['workspaceSessionId'],
+				draftWorkspaceSessionId: 'ws-1' as ThreadSummary['workspaceSessionId']
+			})
+		).toBeNull();
+	});
+
+	it('falls back to the newest thread when no current selection is available', () => {
+		const threads = [
+			makeThreadSummary({ _id: 'thread-record-2' as ThreadSummary['_id'], lastMessageAt: 20 }),
+			makeThreadSummary({ _id: 'thread-record-1' as ThreadSummary['_id'], lastMessageAt: 10 })
+		];
+
+		expect(
+			resolveWorkspaceThreadSelection({
+				threads,
+				currentThreadId: null,
+				currentWorkspaceSessionId: 'ws-1' as ThreadSummary['workspaceSessionId'],
+				draftWorkspaceSessionId: null
+			})
+		).toBe('thread-record-2');
 	});
 });

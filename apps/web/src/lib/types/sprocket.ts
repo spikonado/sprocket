@@ -36,15 +36,16 @@ export type WorkspaceInstruction = {
 	truncated: boolean;
 };
 
-export type FileReadOutput = {
-	path: string;
-	exists?: boolean;
-	startLine: number;
-	endLine: number;
-	totalLines: number;
+export type CommandExecOutput = {
+	command: string;
+	cwd: string;
+	exitCode?: number;
+	success: boolean;
+	timedOut: boolean;
+	stdout: string;
+	stderr: string;
+	output: string;
 	truncated: boolean;
-	contents: string;
-	error?: string;
 };
 
 export type FileWriteOutput = {
@@ -76,11 +77,14 @@ export type WorkspaceToolRequest =
 	| {
 			jobId?: string;
 			workspaceSessionId: Id<'workspaceSessions'>;
-			toolName: 'read_file';
+			toolName: 'exec_command';
 			payload: {
-				path: string;
-				startLine?: number;
-				maxLines?: number;
+				cmd: string;
+				workdir?: string;
+				shell?: string;
+				login?: boolean;
+				timeoutMs?: number;
+				maxOutputChars?: number;
 			};
 	  }
 	| {
@@ -107,7 +111,7 @@ export type WorkspaceToolRequest =
 export type WorkspaceToolResult =
 	| WorkspaceOverview
 	| WorkspaceInstruction[]
-	| FileReadOutput
+	| CommandExecOutput
 	| FileWriteOutput
 	| FileEditOutput;
 

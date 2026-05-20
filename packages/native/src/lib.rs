@@ -2,14 +2,14 @@
 
 use napi::Error;
 use napi_derive::napi;
-use sprocket_core::{
-    FileEditOutput as CoreFileEditOutput, FileReadOutput as CoreFileReadOutput,
+use sprocket_agent::{RunAgentRequest as AgentRunAgentRequest, run_agent};
+use sprocket_workspace::{
+    CommandExecOutput as CoreCommandExecOutput, FileEditOutput as CoreFileEditOutput,
     FileWriteOutput as CoreFileWriteOutput, WorkspaceEntry as CoreWorkspaceEntry,
     WorkspaceInstruction as CoreWorkspaceInstruction, WorkspaceOverview as CoreWorkspaceOverview,
-    build_workspace_overview, create_workspace_file, load_workspace_instructions,
-    read_workspace_file, replace_workspace_file, resolve_workspace_root,
+    build_workspace_overview, create_workspace_file, exec_workspace_command,
+    load_workspace_instructions, replace_workspace_file, resolve_workspace_root,
 };
-use sprocket_rig::{RunAgentRequest as RigRunAgentRequest, run_agent};
 
 #[napi(object)]
 pub struct WorkspaceEntry {
@@ -23,10 +23,6 @@ pub struct WorkspaceOverview {
     pub name: String,
     pub git_branch: Option<String>,
     pub git_dirty: bool,
-    pub file_count: u32,
-    pub directory_count: u32,
-    pub top_level_entries: Vec<WorkspaceEntry>,
-    pub recent_files: Vec<String>,
 }
 
 #[napi(object)]
@@ -38,23 +34,27 @@ pub struct WorkspaceInstruction {
 }
 
 #[napi(object)]
-pub struct FileReadInput {
+pub struct ExecCommandInput {
     pub workspace_root: String,
-    pub path: String,
-    pub start_line: Option<u32>,
-    pub max_lines: Option<u32>,
+    pub cmd: String,
+    pub workdir: Option<String>,
+    pub shell: Option<String>,
+    pub login: Option<bool>,
+    pub timeout_ms: Option<u32>,
+    pub max_output_chars: Option<u32>,
 }
 
 #[napi(object)]
-pub struct FileReadOutput {
-    pub path: String,
-    pub exists: bool,
-    pub start_line: u32,
-    pub end_line: u32,
-    pub total_lines: u32,
+pub struct CommandExecOutput {
+    pub command: String,
+    pub cwd: Option<String>,
+    pub exit_code: Option<i32>,
+    pub success: bool,
+    pub timed_out: bool,
+    pub stdout: String,
+    pub stderr: String,
+    pub output: String,
     pub truncated: bool,
-    pub contents: String,
-    pub error: Option<String>,
 }
 
 #[napi(object)]
@@ -113,14 +113,17 @@ pub fn get_workspace_instructions(
         .map_err(map_error)
 }
 
-#[napi(js_name = "readFile")]
-pub async fn read_file(input: FileReadInput) -> napi::Result<FileReadOutput> {
+#[napi(js_name = "execCommand")]
+pub async fn exec_command(input: ExecCommandInput) -> napi::Result<CommandExecOutput> {
     let workspace_root = resolve_workspace_root(&input.workspace_root).map_err(map_error)?;
-    read_workspace_file(
+    exec_workspace_command(
         workspace_root,
-        &input.path,
-        input.start_line.map(|value| value as usize),
-        input.max_lines.map(|value| value as usize),
+        &input.cmd,
+        input.workdir.as_deref(),
+        input.shell.as_deref(),
+        input.login,
+        input.timeout_ms.map(u64::from),
+        input.max_output_chars.map(|value| value as usize),
     )
     .await
     .map(Into::into)
@@ -153,7 +156,7 @@ pub async fn replace_in_file(input: ReplaceInFileInput) -> napi::Result<FileEdit
 
 #[napi(js_name = "runAgent")]
 pub async fn run_agent_binding(input: RunAgentRequest) -> napi::Result<()> {
-    run_agent(RigRunAgentRequest {
+    run_agent(AgentRunAgentRequest {
         deployment_url: input.deployment_url,
         auth_token: input.auth_token,
         guest_id: input.guest_id,
@@ -191,29 +194,22 @@ impl From<CoreWorkspaceOverview> for WorkspaceOverview {
             name: value.name,
             git_branch: value.git_branch,
             git_dirty: value.git_dirty,
-            file_count: value.file_count.try_into().unwrap_or(u32::MAX),
-            directory_count: value.directory_count.try_into().unwrap_or(u32::MAX),
-            top_level_entries: value
-                .top_level_entries
-                .into_iter()
-                .map(Into::into)
-                .collect(),
-            recent_files: value.recent_files,
         }
     }
 }
 
-impl From<CoreFileReadOutput> for FileReadOutput {
-    fn from(value: CoreFileReadOutput) -> Self {
+impl From<CoreCommandExecOutput> for CommandExecOutput {
+    fn from(value: CoreCommandExecOutput) -> Self {
         Self {
-            path: value.path,
-            exists: value.exists,
-            start_line: value.start_line.try_into().unwrap_or(u32::MAX),
-            end_line: value.end_line.try_into().unwrap_or(u32::MAX),
-            total_lines: value.total_lines.try_into().unwrap_or(u32::MAX),
+            command: value.command,
+            cwd: value.cwd,
+            exit_code: value.exit_code,
+            success: value.success,
+            timed_out: value.timed_out,
+            stdout: value.stdout,
+            stderr: value.stderr,
+            output: value.output,
             truncated: value.truncated,
-            contents: value.contents,
-            error: value.error,
         }
     }
 }

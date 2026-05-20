@@ -4,7 +4,7 @@
 		defaultReasoningEffort,
 		reasoningEffortOptions,
 		type SupportedReasoningEffort
-	} from '$lib/models';
+	} from '$lib/chat/models';
 	import { cn } from '$lib/utils';
 
 	type Props = {

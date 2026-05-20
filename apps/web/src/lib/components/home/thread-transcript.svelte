@@ -5,8 +5,8 @@
 		buildPersistedToolLogs,
 		type AssistantPart,
 		type PersistedToolLogEntry
-	} from '$lib/assistant-tool-parts';
-	import { isJsonObject } from '$lib/types/json';
+	} from '$lib/chat/assistant-parts';
+	import { isJsonObject, type JsonValue } from '$lib/types/json';
 	import ScrollArea from '$lib/components/ui/scroll-area/scroll-area.svelte';
 	import ChatMarkdown from '$lib/components/chat-markdown.svelte';
 	import type { ExecutorJob, ThreadMessage, WorkspaceSession } from '$lib/types/sprocket';
@@ -51,11 +51,33 @@
 		if (kind === 'check_docs') {
 			return 'Check Docs';
 		}
+		if (kind === 'exec_command') {
+			return 'Run Command';
+		}
 
 		return kind
 			.split('_')
 			.map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
 			.join(' ');
+	}
+
+	function describeExecCommandOptions(input: JsonValue | undefined) {
+		if (!isJsonObject(input)) {
+			return '';
+		}
+
+		const details: string[] = [];
+		if (typeof input.workdir === 'string' && input.workdir.trim().length > 0) {
+			details.push(`cwd ${input.workdir}`);
+		}
+		if (input.login === true) {
+			details.push('login shell');
+		}
+		if (typeof input.shell === 'string' && input.shell.trim().length > 0) {
+			details.push(input.shell);
+		}
+
+		return details.length > 0 ? ` (${details.join(', ')})` : '';
 	}
 
 	function parseAssistantParts(message: ThreadMessage): AssistantDisplayPart[] {
@@ -82,23 +104,16 @@
 	}
 
 	function actionSummary(job: ExecutorJob) {
-		const payload = 'path' in job.payload ? job.payload : undefined;
+		const pathPayload = 'path' in job.payload ? job.payload : undefined;
+		const commandPayload = 'cmd' in job.payload ? job.payload : undefined;
 		switch (job.kind) {
-			case 'read_file':
-				if (payload?.path) {
-					const result = isJsonObject(job.result) ? job.result : undefined;
-					const exists =
-						result && 'exists' in result && typeof result.exists === 'boolean'
-							? result.exists
-							: undefined;
-					return exists === false
-						? `${actionTitle(job)} - ${payload.path} (not found)`
-						: `${actionTitle(job)} - ${payload.path}`;
-				}
-				return actionTitle(job);
+			case 'exec_command':
+				return commandPayload?.cmd
+					? `${actionTitle(job)} - ${commandPayload.cmd}${describeExecCommandOptions(job.payload)}`
+					: actionTitle(job);
 			case 'create_file':
 			case 'replace_in_file':
-				return payload?.path ? `${actionTitle(job)} - ${payload.path}` : actionTitle(job);
+				return pathPayload?.path ? `${actionTitle(job)} - ${pathPayload.path}` : actionTitle(job);
 			default:
 				return actionTitle(job);
 		}
@@ -106,17 +121,13 @@
 
 	function toolLogSummary(toolLog: PersistedToolLogEntry) {
 		const input = isJsonObject(toolLog.input) ? toolLog.input : undefined;
-		const output = isJsonObject(toolLog.output) ? toolLog.output : undefined;
 		const title = toolDisplayName(toolLog.name);
 
 		switch (toolLog.name) {
-			case 'read_file':
-				if (typeof input?.path === 'string') {
-					return output?.exists === false
-						? `${title} - ${input.path} (not found)`
-						: `${title} - ${input.path}`;
-				}
-				return title;
+			case 'exec_command':
+				return typeof input?.cmd === 'string'
+					? `${title} - ${input.cmd}${describeExecCommandOptions(input)}`
+					: title;
 			case 'create_file':
 			case 'replace_in_file':
 				return typeof input?.path === 'string' ? `${title} - ${input.path}` : title;

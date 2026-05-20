@@ -298,8 +298,8 @@ mod tests {
                 contents: vec![AgentHistoryContent::ToolCall {
                     id: "tool_call_1".to_string(),
                     call_id: Some("call_1".to_string()),
-                    name: "read_file".to_string(),
-                    arguments_json: "{\"path\":\"src/lib.rs\"}".to_string(),
+                    name: "exec_command".to_string(),
+                    arguments_json: "{\"cmd\":\"cat src/lib.rs\"}".to_string(),
                     signature: None,
                     additional_params_json: None,
                 }],

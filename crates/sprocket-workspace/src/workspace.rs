@@ -3,9 +3,6 @@ use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Serialize;
-use walkdir::WalkDir;
-
-const WORKSPACE_SCAN_LIMIT: usize = 20_000;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -14,10 +11,6 @@ pub struct WorkspaceOverview {
     pub name: String,
     pub git_branch: Option<String>,
     pub git_dirty: bool,
-    pub file_count: usize,
-    pub directory_count: usize,
-    pub top_level_entries: Vec<WorkspaceEntry>,
-    pub recent_files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -27,28 +20,23 @@ pub struct WorkspaceEntry {
 }
 
 pub fn build_workspace_overview(root: &Path) -> Result<WorkspaceOverview> {
-    let canonical_root = root
+    let canonical_root: PathBuf = root
         .canonicalize()
         .with_context(|| format!("failed to resolve {}", root.display()))?;
-    let root_name = canonical_root
+    let root_name: String = canonical_root
         .file_name()
         .unwrap_or_else(|| OsStr::new("workspace"))
         .to_string_lossy()
         .to_string();
 
-    let top_level_entries = collect_top_level_entries(&canonical_root)?;
-    let (file_count, directory_count, recent_files) = scan_workspace(&canonical_root);
-    let (git_branch, git_dirty) = git_state(&canonical_root).unwrap_or((None, false));
+    let (git_branch, git_dirty): (Option<String>, bool) =
+        git_state(&canonical_root).unwrap_or((None, false));
 
     Ok(WorkspaceOverview {
         root_path: canonical_root.to_string_lossy().to_string(),
         name: root_name,
         git_branch,
         git_dirty,
-        file_count,
-        directory_count,
-        top_level_entries,
-        recent_files,
     })
 }
 
@@ -71,13 +59,13 @@ pub fn resolve_workspace_root(path: &str) -> Result<PathBuf> {
 
 pub fn resolve_workspace_path(
     root: &Path,
-    relative_path: &str,
+    path: &str,
     allow_missing_file: bool,
 ) -> Result<PathBuf> {
-    let candidate = if Path::new(relative_path).is_absolute() {
-        PathBuf::from(relative_path)
+    let candidate = if Path::new(path).is_absolute() {
+        PathBuf::from(path)
     } else {
-        root.join(relative_path)
+        root.join(path)
     };
 
     let resolved = normalize_path(&candidate)?;
@@ -103,23 +91,6 @@ pub fn resolve_workspace_path(
     }
 
     Ok(resolved)
-}
-
-pub fn resolve_read_path(root: &Path, requested_path: &str) -> Result<PathBuf> {
-    let candidate = if Path::new(requested_path).is_absolute() {
-        PathBuf::from(requested_path)
-    } else {
-        root.join(requested_path)
-    };
-
-    let normalized = normalize_path(&candidate)?;
-    if normalized.exists() {
-        normalized
-            .canonicalize()
-            .with_context(|| format!("failed to resolve {}", normalized.display()))
-    } else {
-        Ok(normalized)
-    }
 }
 
 fn normalize_path(path: &Path) -> Result<PathBuf> {
@@ -185,83 +156,17 @@ pub fn relative_to_root(root: &Path, path: &Path) -> String {
     }
 }
 
-fn collect_top_level_entries(root: &Path) -> Result<Vec<WorkspaceEntry>> {
-    let entries = std::fs::read_dir(root)?
-        .filter_map(Result::ok)
-        .take(12)
-        .map(|entry| {
-            let file_type = entry.file_type().ok();
-            let kind = if file_type
-                .as_ref()
-                .is_some_and(|file_type| file_type.is_dir())
-            {
-                "directory"
-            } else {
-                "file"
-            };
-
-            WorkspaceEntry {
-                name: entry.file_name().to_string_lossy().to_string(),
-                kind: kind.to_string(),
-            }
-        })
-        .collect();
-
-    Ok(entries)
-}
-
-fn scan_workspace(root: &Path) -> (usize, usize, Vec<String>) {
-    let mut file_count = 0;
-    let mut directory_count = 0;
-    let mut recent_entries = Vec::new();
-
-    for entry in WalkDir::new(root)
-        .into_iter()
-        .filter_map(Result::ok)
-        .take(WORKSPACE_SCAN_LIMIT)
-    {
-        if entry.file_type().is_dir() {
-            directory_count += 1;
-            continue;
-        }
-
-        if !entry.file_type().is_file() {
-            continue;
-        }
-
-        file_count += 1;
-
-        let modified = entry
-            .metadata()
-            .ok()
-            .and_then(|metadata| metadata.modified().ok());
-
-        if let Some(modified) = modified {
-            recent_entries.push((modified, relative_to_root(root, entry.path())));
-        }
-    }
-
-    recent_entries.sort_by(|left, right| right.0.cmp(&left.0));
-    let recent_files = recent_entries
-        .into_iter()
-        .take(6)
-        .map(|(_, path)| path)
-        .collect();
-
-    (file_count, directory_count, recent_files)
-}
-
 fn git_state(root: &Path) -> Result<(Option<String>, bool)> {
     let Ok(repo) = gix::discover(root) else {
         return Ok((None, false));
     };
 
-    let branch = repo
+    let branch: Option<String> = repo
         .head_name()
         .context("failed to read git head")?
         .map(|name| name.shorten().to_string())
         .or_else(|| Some("HEAD".to_string()));
-    let dirty = repo
+    let dirty: bool = repo
         .status(gix::progress::Discard)
         .context("failed to build git status")?
         .untracked_files(gix::status::UntrackedFiles::Collapsed)
@@ -281,7 +186,7 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::{resolve_read_path, resolve_workspace_path};
+    use super::resolve_workspace_path;
 
     fn temp_workspace() -> PathBuf {
         let unique = SystemTime::now()
@@ -316,21 +221,5 @@ mod tests {
         );
 
         fs::remove_dir_all(root).expect("temp dir should be removed");
-    }
-
-    #[test]
-    fn resolves_read_paths_outside_workspace() {
-        let root = temp_workspace();
-        let external_root = temp_workspace();
-        let external_file = external_root.join("external.txt");
-        fs::write(&external_file, "outside\n").expect("fixture should be written");
-
-        let resolved = resolve_read_path(&root, &external_file.to_string_lossy())
-            .expect("read path outside root should resolve");
-
-        assert_eq!(resolved, external_file);
-
-        fs::remove_dir_all(root).expect("temp dir should be removed");
-        fs::remove_dir_all(external_root).expect("temp dir should be removed");
     }
 }

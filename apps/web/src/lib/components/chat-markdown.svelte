@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { cn } from '$lib/utils';
-	import { renderMarkdown } from '$lib/markdown';
+	import { renderMarkdown } from '$lib/chat/markdown';
 
 	type Props = {
 		content: string;

@@ -763,8 +763,8 @@ if (!nativeBinding) {
 
 module.exports = nativeBinding;
 module.exports.createFile = nativeBinding.createFile;
+module.exports.execCommand = nativeBinding.execCommand;
 module.exports.getWorkspaceInstructions = nativeBinding.getWorkspaceInstructions;
 module.exports.getWorkspaceOverview = nativeBinding.getWorkspaceOverview;
-module.exports.readFile = nativeBinding.readFile;
 module.exports.replaceInFile = nativeBinding.replaceInFile;
 module.exports.runAgent = nativeBinding.runAgent;
