@@ -1,18 +1,13 @@
 import { api } from '$convex/_generated/api';
 import type { Id } from '$convex/_generated/dataModel';
 import type { ConvexClient } from 'convex/browser';
-import {
-	groupExecutorJobsByWorkspace,
-	pickNextExecutorJobForWorkspace
-} from '$lib/workspace/threads';
 import type {
+	AgentRunRequest,
 	DesktopApi,
-	ExecutorJob,
 	LocalWorkspaceAvailability,
 	WorkspaceSession,
 	WorkspaceSessionAttachment,
-	WorkspaceSessionLocation,
-	WorkspaceToolRequest
+	WorkspaceSessionLocation
 } from '$lib/types/sprocket';
 
 type MutationClient = Pick<ConvexClient, 'mutation'>;
@@ -42,7 +37,10 @@ export function launchAgentRun(args: {
 	deploymentUrl: string;
 	getViewerArgs: () => ViewerArgs;
 	onError: (error: unknown) => void;
-	runId: string;
+	threadId: Id<'threadRecords'>;
+	prompt: string;
+	selectedModel: AgentRunRequest['selectedModel'];
+	reasoningEffort: AgentRunRequest['reasoningEffort'];
 	workspaceSessionId: Id<'workspaceSessions'>;
 }) {
 	void args.desktopApi
@@ -50,7 +48,10 @@ export function launchAgentRun(args: {
 			deploymentUrl: args.deploymentUrl,
 			...(args.authToken ? { authToken: args.authToken } : {}),
 			...args.getViewerArgs(),
-			runId: args.runId,
+			threadId: args.threadId,
+			prompt: args.prompt,
+			selectedModel: args.selectedModel,
+			reasoningEffort: args.reasoningEffort,
 			workspaceSessionId: args.workspaceSessionId
 		})
 		.catch((error) => {
@@ -137,103 +138,5 @@ export async function attachWorkspaceSession(args: {
 	} catch (error) {
 		await args.refreshDesktopWorkspaceSessions();
 		throw error;
-	}
-}
-
-function executorRequest(
-	workspaceSessionId: Id<'workspaceSessions'>,
-	request: Omit<WorkspaceToolRequest, 'workspaceSessionId'>
-): WorkspaceToolRequest {
-	return {
-		...request,
-		workspaceSessionId
-	} as WorkspaceToolRequest;
-}
-
-function setProcessingJobForWorkspace(
-	processingJobIdsByWorkspace: Record<string, Id<'executorJobs'>>,
-	workspaceSessionId: Id<'workspaceSessions'>,
-	jobId: Id<'executorJobs'> | null
-) {
-	if (jobId) {
-		processingJobIdsByWorkspace[workspaceSessionId] = jobId;
-		return;
-	}
-
-	delete processingJobIdsByWorkspace[workspaceSessionId];
-}
-
-export async function processExecutorJobs(
-	desktopApi: DesktopApi | null,
-	executorClientId: string | null,
-	jobs: ExecutorJob[],
-	processingJobIdsByWorkspace: Record<string, Id<'executorJobs'>>,
-	convexClient: MutationClient,
-	getViewerArgs: () => ViewerArgs,
-	refreshDesktopWorkspaceSessions: () => Promise<void>
-) {
-	if (!desktopApi || !executorClientId) {
-		return;
-	}
-
-	const jobsByWorkspace = groupExecutorJobsByWorkspace(jobs);
-
-	for (const [workspaceSessionId, processingJobId] of Object.entries(
-		processingJobIdsByWorkspace
-	) as [Id<'workspaceSessions'>, Id<'executorJobs'>][]) {
-		const workspaceJobs = jobsByWorkspace.get(workspaceSessionId) ?? [];
-		if (workspaceJobs.some((job) => job._id === processingJobId)) {
-			continue;
-		}
-
-		setProcessingJobForWorkspace(processingJobIdsByWorkspace, workspaceSessionId, null);
-	}
-
-	for (const [workspaceSessionId, workspaceJobs] of jobsByWorkspace) {
-		if (processingJobIdsByWorkspace[workspaceSessionId]) {
-			continue;
-		}
-
-		const nextJob = pickNextExecutorJobForWorkspace(workspaceJobs);
-		if (!nextJob) {
-			continue;
-		}
-
-		setProcessingJobForWorkspace(processingJobIdsByWorkspace, workspaceSessionId, nextJob._id);
-
-		void (async () => {
-			try {
-				const claimedJob = (await convexClient.mutation(api.executor.claim, {
-					...getViewerArgs(),
-					jobId: nextJob._id,
-					clientId: executorClientId
-				})) as ExecutorJob | null;
-				if (!claimedJob) {
-					return;
-				}
-
-				const result = await desktopApi.executeWorkspaceTool(
-					executorRequest(claimedJob.workspaceSessionId, {
-						jobId: claimedJob._id,
-						toolName: claimedJob.kind,
-						payload: claimedJob.payload as WorkspaceToolRequest['payload']
-					})
-				);
-				await convexClient.mutation(api.executor.complete, {
-					...getViewerArgs(),
-					jobId: claimedJob._id,
-					result: result as NonNullable<ExecutorJob['result']>
-				});
-			} catch (error) {
-				await refreshDesktopWorkspaceSessions();
-				await convexClient.mutation(api.executor.fail, {
-					...getViewerArgs(),
-					jobId: nextJob._id,
-					error: error instanceof Error ? error.message : 'Executor job failed.'
-				});
-			} finally {
-				setProcessingJobForWorkspace(processingJobIdsByWorkspace, workspaceSessionId, null);
-			}
-		})();
 	}
 }

@@ -2,7 +2,10 @@
 
 ## Project Overview
 
-Sprocket is an agentic cross-platform robotics IDE.
+Sprocket is an agentic platform that streamlines robotics development.
+It's goal is to give its users and AI agents the best possible experience when developing robots and robot apps.
+This includes microcontroller programming, ROS 2 development, simulation workflows, robot app creation, etc.
+All of this should work seamlessly across different hardware platforms, operating systems, and Sprocket's own cloud for robotics development.
 
 ## Testing
 
@@ -29,9 +32,6 @@ All of these are core priorities; try your best to achieve all of them without h
 ## Maintaining Code
 
 Don't be afraid to change existing code in order to improve on any of the priorities.
-If you add new functionality, first check if there is shared logic that can be extracted to a separate module.
-Duplicate logic across multiple files should be avoided.
-Don't take shortcuts by just adding local logic to solve a problem.
 Make sure that changes are made in all the layers of the app when needed.
 Don't maintain backwards compatibility in any of the code unless explicitly asked. It's recommended to add temporary migration functions for the backend data instead.
 
@@ -58,11 +58,3 @@ bunx nia-docs <link-to-doc> -c "tree -L 1"
 ```
 
 The shell starts in the docs root. Use `.` for relative paths — all standard Unix tools work (grep, find, cat, tree, ls, head, tail, wc).
-
-## Reference Repos
-
-To properly go through these, feel free to clone them into `./ref-repos`.
-
-- https://github.com/openai/codex
-- https://github.com/anomalyco/opencode
-- https://github.com/pingdotgg/t3code

@@ -1,11 +1,12 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
-import { internalMutation, internalQuery, mutation, query } from '@convex/_generated/server';
+import { mutation, query } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord, getOwnedWorkspaceSession } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
 import { buildCanonicalAgentHistory, findLatestPrompt } from '@convex/lib/agentHistory';
 import { appendThreadMessage, getThreadMessage } from '@convex/lib/threadMessages';
 import { buildThreadTranscript, type ThreadTranscriptMessage } from '@convex/lib/threadTranscript';
+import { assertThreadCanStartRun } from '@convex/lib/runs';
 import {
 	ensureAssistantToolPartsFromJobs,
 	type AssistantPart
@@ -15,9 +16,76 @@ import {
 	isRunFinalStatus,
 	vExecutorJobKind,
 	vExecutorJobPayload,
+	vModelId,
+	vReasoningEffort,
 	vRunFinalStatus,
 	vAssistantMessagePart
 } from '@convex/lib/validators';
+
+export const createRun = mutation({
+	args: {
+		guestId: v.optional(v.string()),
+		threadId: v.id('threadRecords'),
+		prompt: v.string(),
+		selectedModel: vModelId,
+		reasoningEffort: vReasoningEffort
+	},
+	handler: async (
+		ctx,
+		args
+	): Promise<{
+		runId: Id<'runs'>;
+		promptMessageId: Id<'threadMessages'>;
+	}> => {
+		const userId: string = await getUserId(ctx, args.guestId);
+		const threadRecord: Doc<'threadRecords'> = await getOwnedThreadRecord(
+			ctx.db,
+			userId,
+			args.threadId
+		);
+		const latestRun: Doc<'runs'> | null = await ctx.db
+			.query('runs')
+			.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', args.threadId))
+			.order('desc')
+			.first();
+		assertThreadCanStartRun(latestRun?.status);
+
+		const prompt: string = args.prompt.trim();
+		if (!prompt) {
+			throw new Error('Prompt cannot be empty.');
+		}
+
+		const runId: Id<'runs'> = await ctx.db.insert('runs', {
+			threadId: args.threadId,
+			userId,
+			workspaceSessionId: threadRecord.workspaceSessionId,
+			status: 'queued',
+			selectedModel: args.selectedModel,
+			reasoningEffort: args.reasoningEffort,
+			startedAt: Date.now()
+		});
+		const promptMessageId: Id<'threadMessages'> = await appendThreadMessage(ctx, {
+			threadId: args.threadId,
+			runId,
+			userId,
+			type: 'prompt',
+			text: prompt
+		});
+		await ctx.db.patch(runId, {
+			promptMessageId
+		});
+		await ctx.db.patch(threadRecord._id, {
+			title: threadRecord.title ?? prompt.slice(0, 72),
+			selectedModel: args.selectedModel,
+			reasoningEffort: args.reasoningEffort
+		});
+
+		return {
+			runId,
+			promptMessageId
+		};
+	}
+});
 
 export const start = mutation({
 	args: {
@@ -77,8 +145,8 @@ export const getContext = query({
 			.withIndex('by_threadId_sequence', (query) => query.eq('threadId', run.threadId))
 			.collect();
 		const agentHistory: AgentHistoryMessage[] = buildCanonicalAgentHistory({
-			messages,
-			jobs
+			messages: messages.filter((message) => message.runId !== run._id),
+			jobs: jobs.filter((job) => job.runId !== run._id)
 		});
 		const prompt: string = findLatestPrompt(messages);
 
@@ -104,7 +172,7 @@ export const isFinished = query({
 	}
 });
 
-export const getAssistantMessageState = internalQuery({
+export const completionActor = query({
 	args: {
 		guestId: v.optional(v.string()),
 		runId: v.id('runs')
@@ -113,21 +181,14 @@ export const getAssistantMessageState = internalQuery({
 		ctx,
 		args
 	): Promise<{
-		text: string;
-		parts: Doc<'threadMessages'>['parts'];
-	} | null> => {
+		userId: string;
+		isFinished: boolean;
+	}> => {
 		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
-		if (!run.responseMessageId) {
-			return null;
-		}
-		const message: Doc<'threadMessages'> | null = await ctx.db.get(run.responseMessageId);
-		if (!message) {
-			return null;
-		}
 		return {
-			text: message.text,
-			parts: message.parts
+			userId,
+			isFinished: isRunFinalStatus(run.status)
 		};
 	}
 });
@@ -164,7 +225,7 @@ export const beginAssistantMessage = mutation({
 	}
 });
 
-export const updateAssistantMessage = internalMutation({
+export const updateAssistantMessage = mutation({
 	args: {
 		guestId: v.optional(v.string()),
 		runId: v.id('runs'),

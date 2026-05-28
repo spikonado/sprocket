@@ -4,11 +4,8 @@ use napi::Error;
 use napi_derive::napi;
 use sprocket_agent::{RunAgentRequest as AgentRunAgentRequest, run_agent};
 use sprocket_workspace::{
-    CommandExecOutput as CoreCommandExecOutput, FileEditOutput as CoreFileEditOutput,
-    FileWriteOutput as CoreFileWriteOutput, WorkspaceEntry as CoreWorkspaceEntry,
-    WorkspaceInstruction as CoreWorkspaceInstruction, WorkspaceOverview as CoreWorkspaceOverview,
-    build_workspace_overview, create_workspace_file, exec_workspace_command,
-    load_workspace_instructions, replace_workspace_file, resolve_workspace_root,
+    WorkspaceEntry as CoreWorkspaceEntry, WorkspaceOverview as CoreWorkspaceOverview,
+    build_workspace_overview, resolve_workspace_root,
 };
 
 #[napi(object)]
@@ -26,72 +23,14 @@ pub struct WorkspaceOverview {
 }
 
 #[napi(object)]
-pub struct WorkspaceInstruction {
-    pub path: String,
-    pub directory: String,
-    pub contents: String,
-    pub truncated: bool,
-}
-
-#[napi(object)]
-pub struct ExecCommandInput {
-    pub workspace_root: String,
-    pub cmd: String,
-    pub workdir: Option<String>,
-    pub shell: Option<String>,
-    pub login: Option<bool>,
-    pub timeout_ms: Option<u32>,
-    pub max_output_chars: Option<u32>,
-}
-
-#[napi(object)]
-pub struct CommandExecOutput {
-    pub command: String,
-    pub cwd: Option<String>,
-    pub exit_code: Option<i32>,
-    pub success: bool,
-    pub timed_out: bool,
-    pub stdout: String,
-    pub stderr: String,
-    pub output: String,
-    pub truncated: bool,
-}
-
-#[napi(object)]
-pub struct CreateFileInput {
-    pub workspace_root: String,
-    pub path: String,
-    pub content: String,
-}
-
-#[napi(object)]
-pub struct FileWriteOutput {
-    pub path: String,
-    pub bytes_written: u32,
-}
-
-#[napi(object)]
-pub struct ReplaceInFileInput {
-    pub workspace_root: String,
-    pub path: String,
-    pub old_text: String,
-    pub new_text: String,
-    pub replace_all: Option<bool>,
-}
-
-#[napi(object)]
-pub struct FileEditOutput {
-    pub path: String,
-    pub replacements: u32,
-    pub bytes_written: u32,
-}
-
-#[napi(object)]
 pub struct RunAgentRequest {
     pub deployment_url: String,
     pub auth_token: Option<String>,
     pub guest_id: Option<String>,
-    pub run_id: String,
+    pub thread_id: String,
+    pub prompt: String,
+    pub selected_model: String,
+    pub reasoning_effort: String,
     pub workspace_path: String,
 }
 
@@ -103,64 +42,16 @@ pub fn get_workspace_overview(workspace_root: String) -> napi::Result<WorkspaceO
         .map_err(map_error)
 }
 
-#[napi(js_name = "getWorkspaceInstructions")]
-pub fn get_workspace_instructions(
-    workspace_root: String,
-) -> napi::Result<Vec<WorkspaceInstruction>> {
-    let workspace_root = resolve_workspace_root(&workspace_root).map_err(map_error)?;
-    load_workspace_instructions(&workspace_root)
-        .map(|instructions| instructions.into_iter().map(Into::into).collect())
-        .map_err(map_error)
-}
-
-#[napi(js_name = "execCommand")]
-pub async fn exec_command(input: ExecCommandInput) -> napi::Result<CommandExecOutput> {
-    let workspace_root = resolve_workspace_root(&input.workspace_root).map_err(map_error)?;
-    exec_workspace_command(
-        workspace_root,
-        &input.cmd,
-        input.workdir.as_deref(),
-        input.shell.as_deref(),
-        input.login,
-        input.timeout_ms.map(u64::from),
-        input.max_output_chars.map(|value| value as usize),
-    )
-    .await
-    .map(Into::into)
-    .map_err(map_error)
-}
-
-#[napi(js_name = "createFile")]
-pub async fn create_file(input: CreateFileInput) -> napi::Result<FileWriteOutput> {
-    let workspace_root = resolve_workspace_root(&input.workspace_root).map_err(map_error)?;
-    create_workspace_file(workspace_root, &input.path, &input.content)
-        .await
-        .map(Into::into)
-        .map_err(map_error)
-}
-
-#[napi(js_name = "replaceInFile")]
-pub async fn replace_in_file(input: ReplaceInFileInput) -> napi::Result<FileEditOutput> {
-    let workspace_root = resolve_workspace_root(&input.workspace_root).map_err(map_error)?;
-    replace_workspace_file(
-        workspace_root,
-        &input.path,
-        &input.old_text,
-        &input.new_text,
-        input.replace_all.unwrap_or(false),
-    )
-    .await
-    .map(Into::into)
-    .map_err(map_error)
-}
-
 #[napi(js_name = "runAgent")]
 pub async fn run_agent_binding(input: RunAgentRequest) -> napi::Result<()> {
     run_agent(AgentRunAgentRequest {
         deployment_url: input.deployment_url,
         auth_token: input.auth_token,
         guest_id: input.guest_id,
-        run_id: input.run_id,
+        thread_id: input.thread_id,
+        prompt: input.prompt,
+        selected_model: input.selected_model,
+        reasoning_effort: input.reasoning_effort,
         workspace_path: input.workspace_path,
     })
     .await
@@ -176,17 +67,6 @@ impl From<CoreWorkspaceEntry> for WorkspaceEntry {
     }
 }
 
-impl From<CoreWorkspaceInstruction> for WorkspaceInstruction {
-    fn from(value: CoreWorkspaceInstruction) -> Self {
-        Self {
-            path: value.path,
-            directory: value.directory,
-            contents: value.contents,
-            truncated: value.truncated,
-        }
-    }
-}
-
 impl From<CoreWorkspaceOverview> for WorkspaceOverview {
     fn from(value: CoreWorkspaceOverview) -> Self {
         Self {
@@ -194,41 +74,6 @@ impl From<CoreWorkspaceOverview> for WorkspaceOverview {
             name: value.name,
             git_branch: value.git_branch,
             git_dirty: value.git_dirty,
-        }
-    }
-}
-
-impl From<CoreCommandExecOutput> for CommandExecOutput {
-    fn from(value: CoreCommandExecOutput) -> Self {
-        Self {
-            command: value.command,
-            cwd: value.cwd,
-            exit_code: value.exit_code,
-            success: value.success,
-            timed_out: value.timed_out,
-            stdout: value.stdout,
-            stderr: value.stderr,
-            output: value.output,
-            truncated: value.truncated,
-        }
-    }
-}
-
-impl From<CoreFileWriteOutput> for FileWriteOutput {
-    fn from(value: CoreFileWriteOutput) -> Self {
-        Self {
-            path: value.path,
-            bytes_written: value.bytes_written.try_into().unwrap_or(u32::MAX),
-        }
-    }
-}
-
-impl From<CoreFileEditOutput> for FileEditOutput {
-    fn from(value: CoreFileEditOutput) -> Self {
-        Self {
-            path: value.path,
-            replacements: value.replacements.try_into().unwrap_or(u32::MAX),
-            bytes_written: value.bytes_written.try_into().unwrap_or(u32::MAX),
         }
     }
 }

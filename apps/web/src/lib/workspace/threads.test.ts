@@ -3,12 +3,10 @@ import {
 	countActiveThreads,
 	findThreadById,
 	getAttachedWorkspaceSessionIds,
-	groupExecutorJobsByWorkspace,
-	pickNextExecutorJobForWorkspace,
 	resolveWorkspaceThreadSelection
 } from '$lib/workspace/threads';
 import { defaultModelId, defaultReasoningEffort } from '$lib/chat/models';
-import type { ExecutorJob, ThreadSummary, WorkspaceSession } from '$lib/types/sprocket';
+import type { ThreadSummary, WorkspaceSession } from '$lib/types/sprocket';
 
 function makeWorkspaceSession(overrides: Partial<WorkspaceSession> = {}): WorkspaceSession {
 	return {
@@ -20,26 +18,6 @@ function makeWorkspaceSession(overrides: Partial<WorkspaceSession> = {}): Worksp
 		connectedClientId: undefined,
 		lastSeenAt: 0,
 		...overrides
-	};
-}
-
-function makeExecutorJob(overrides: Partial<ExecutorJob> = {}): ExecutorJob {
-	return {
-		_id: (overrides._id ?? 'job-1') as ExecutorJob['_id'],
-		workspaceSessionId: (overrides.workspaceSessionId ??
-			'ws-1') as ExecutorJob['workspaceSessionId'],
-		threadId: (overrides.threadId ?? 'thread-record-1') as ExecutorJob['threadId'],
-		runId: (overrides.runId ?? 'run-1') as ExecutorJob['runId'],
-		kind: overrides.kind ?? 'exec_command',
-		payload: overrides.payload ?? { cmd: 'pwd' },
-		hidden: overrides.hidden,
-		status: overrides.status ?? 'pending',
-		enqueuedAt: overrides.enqueuedAt ?? 0,
-		claimedAt: overrides.claimedAt,
-		completedAt: overrides.completedAt,
-		result: overrides.result,
-		error: overrides.error,
-		sequence: overrides.sequence ?? 0
 	};
 }
 
@@ -88,44 +66,6 @@ describe('workspace thread helpers', () => {
 		);
 
 		expect(attached).toEqual(['ws-1']);
-	});
-
-	it('groups jobs by workspace so different workspaces can process concurrently', () => {
-		const grouped = groupExecutorJobsByWorkspace([
-			makeExecutorJob({
-				_id: 'job-1' as ExecutorJob['_id'],
-				workspaceSessionId: 'ws-a' as ExecutorJob['workspaceSessionId']
-			}),
-			makeExecutorJob({
-				_id: 'job-2' as ExecutorJob['_id'],
-				workspaceSessionId: 'ws-b' as ExecutorJob['workspaceSessionId']
-			}),
-			makeExecutorJob({
-				_id: 'job-3' as ExecutorJob['_id'],
-				workspaceSessionId: 'ws-a' as ExecutorJob['workspaceSessionId']
-			})
-		]);
-
-		expect([...grouped.keys()]).toEqual(['ws-a', 'ws-b']);
-		expect(grouped.get('ws-a' as ExecutorJob['workspaceSessionId'])?.map((job) => job._id)).toEqual(
-			['job-1', 'job-3']
-		);
-		expect(grouped.get('ws-b' as ExecutorJob['workspaceSessionId'])?.map((job) => job._id)).toEqual(
-			['job-2']
-		);
-	});
-
-	it('prefers an already-claimed job for the same workspace before a pending job', () => {
-		const selectedJob = pickNextExecutorJobForWorkspace([
-			makeExecutorJob({ _id: 'job-1' as ExecutorJob['_id'], status: 'pending', sequence: 0 }),
-			makeExecutorJob({
-				_id: 'job-2' as ExecutorJob['_id'],
-				status: 'claimed',
-				sequence: 1
-			})
-		]);
-
-		expect(selectedJob?._id).toBe('job-2');
 	});
 
 	it('counts active threads for sidebar indicators', () => {

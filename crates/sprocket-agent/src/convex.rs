@@ -4,7 +4,7 @@ use serde::Deserialize;
 use sprocket_convex_provider::Client as ConvexProviderClient;
 use std::collections::BTreeMap;
 
-use crate::types::{RunAgentRequest, RunContextResponse};
+use crate::types::{CreateRunResponse, RunAgentRequest, RunContextResponse};
 
 #[derive(Clone)]
 pub(crate) struct RuntimeClient {
@@ -15,20 +15,24 @@ pub(crate) struct RuntimeClient {
 impl RuntimeClient {
     pub(crate) async fn from_request(request: &RunAgentRequest) -> anyhow::Result<Self> {
         eprintln!(
-            "sprocket-agent: initializing Convex client for run {}",
-            request.run_id
+            "sprocket-agent: initializing Convex client for thread {}",
+            request.thread_id
         );
         let client =
             ConvexProviderClient::new(&request.deployment_url, "completion:complete").await?;
         client.set_auth_token(request.auth_token.clone()).await;
         eprintln!(
-            "sprocket-agent: Convex client ready for run {}",
-            request.run_id
+            "sprocket-agent: Convex client ready for thread {}",
+            request.thread_id
         );
         Ok(Self {
             client,
             guest_id: request.guest_id.clone(),
         })
+    }
+
+    pub(crate) fn completion_client(&self) -> &ConvexProviderClient {
+        &self.client
     }
 
     pub(crate) async fn query_json<T: for<'de> Deserialize<'de>>(
@@ -67,6 +71,24 @@ impl RuntimeClient {
             .await
     }
 
+    pub(crate) async fn create_run(
+        &self,
+        request: &RunAgentRequest,
+    ) -> anyhow::Result<CreateRunResponse> {
+        let mut args = self.args_with_actor();
+        args.insert("threadId".to_string(), request.thread_id.clone().into());
+        args.insert("prompt".to_string(), request.prompt.clone().into());
+        args.insert(
+            "selectedModel".to_string(),
+            request.selected_model.clone().into(),
+        );
+        args.insert(
+            "reasoningEffort".to_string(),
+            request.reasoning_effort.clone().into(),
+        );
+        self.mutation_json("agentRuntime:createRun", args).await
+    }
+
     pub(crate) async fn start_run(&self, run_id: &str) -> anyhow::Result<()> {
         self.mutation_unit("agentRuntime:start", self.run_args(run_id))
             .await
@@ -85,6 +107,18 @@ impl RuntimeClient {
         let mut args = self.run_args(run_id);
         args.insert("text".to_string(), text.to_string().into());
         self.mutation_unit("agentRuntime:finishAssistantMessage", args)
+            .await
+    }
+
+    pub(crate) async fn update_assistant_message(
+        &self,
+        run_id: &str,
+        text: &str,
+    ) -> anyhow::Result<()> {
+        let mut args = self.run_args(run_id);
+        args.insert("text".to_string(), text.to_string().into());
+        args.insert("parts".to_string(), Value::Array(Vec::new()));
+        self.mutation_unit("agentRuntime:updateAssistantMessage", args)
             .await
     }
 

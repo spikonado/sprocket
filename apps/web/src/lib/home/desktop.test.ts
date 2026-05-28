@@ -8,7 +8,6 @@ function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 		listWorkspaceSessions: vi.fn(),
 		attachWorkspaceSession: vi.fn(),
 		getWorkspaceSessionOverview: vi.fn(),
-		executeWorkspaceTool: vi.fn(),
 		runAgent
 	} as unknown as DesktopApi;
 }
@@ -24,7 +23,10 @@ describe('launchAgentRun', () => {
 			deploymentUrl: 'https://example.convex.cloud',
 			getViewerArgs: () => ({ guestId: 'guest-1' }),
 			onError: vi.fn(),
-			runId: 'run-1',
+			threadId: 'thread-1' as never,
+			prompt: 'Inspect src/lib.rs',
+			selectedModel: 'gpt-5.4',
+			reasoningEffort: 'medium',
 			workspaceSessionId: 'workspace-1' as never
 		});
 
@@ -32,7 +34,10 @@ describe('launchAgentRun', () => {
 			authToken: 'token-1',
 			deploymentUrl: 'https://example.convex.cloud',
 			guestId: 'guest-1',
-			runId: 'run-1',
+			threadId: 'thread-1',
+			prompt: 'Inspect src/lib.rs',
+			selectedModel: 'gpt-5.4',
+			reasoningEffort: 'medium',
 			workspaceSessionId: 'workspace-1'
 		});
 	});
@@ -47,7 +52,10 @@ describe('launchAgentRun', () => {
 			deploymentUrl: 'https://example.convex.cloud',
 			getViewerArgs: () => ({}),
 			onError,
-			runId: 'run-1',
+			threadId: 'thread-1' as never,
+			prompt: 'Inspect src/lib.rs',
+			selectedModel: 'gpt-5.4',
+			reasoningEffort: 'medium',
 			workspaceSessionId: 'workspace-1' as never
 		});
 

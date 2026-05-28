@@ -1,7 +1,4 @@
 use anyhow::anyhow;
-use futures::StreamExt;
-use rig::client::CompletionClient;
-use rig::streaming::StreamingPrompt;
 use sprocket_workspace::{
     WorkspaceInstruction, WorkspaceOverview, build_workspace_overview, load_workspace_instructions,
     resolve_workspace_root,
@@ -9,10 +6,8 @@ use sprocket_workspace::{
 
 use crate::RunContextResponse;
 use crate::convex::RuntimeClient;
-use crate::tools::workspace_tools;
+use crate::provider::{AgentProvider, AgentProviderRequest, AgentProviderResult};
 use crate::types::{RunAgentRequest, deserialize_agent_history};
-
-const AGENT_MAX_TURNS: usize = 75;
 
 fn build_workspace_preamble(
     workspace_path: &str,
@@ -67,20 +62,22 @@ fn build_workspace_preamble(
 }
 
 pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
-    eprintln!("sprocket-agent: starting run {}", request.run_id);
+    eprintln!("sprocket-agent: starting thread {}", request.thread_id);
     let runtime: RuntimeClient = RuntimeClient::from_request(&request).await?;
-    let context: RunContextResponse = runtime.run_context(&request.run_id).await?;
-    eprintln!("sprocket-agent: loaded run context {}", request.run_id);
     let workspace_root = resolve_workspace_root(&request.workspace_path)?;
 
-    runtime.start_run(&request.run_id).await?;
-    eprintln!("sprocket-agent: marked run running {}", request.run_id);
+    let created_run = runtime.create_run(&request).await?;
+    let run_id = created_run.run_id;
+    eprintln!("sprocket-agent: created run {}", run_id);
 
-    runtime.begin_assistant_message(&request.run_id).await?;
-    eprintln!(
-        "sprocket-agent: prepared assistant response {}",
-        request.run_id
-    );
+    let context: RunContextResponse = runtime.run_context(&run_id).await?;
+    eprintln!("sprocket-agent: loaded run context {}", run_id);
+
+    runtime.start_run(&run_id).await?;
+    eprintln!("sprocket-agent: marked run running {}", run_id);
+
+    runtime.begin_assistant_message(&run_id).await?;
+    eprintln!("sprocket-agent: prepared assistant response {}", run_id);
 
     let workspace_overview = build_workspace_overview(&workspace_root)?;
     let workspace_instructions = load_workspace_instructions(&workspace_root)?;
@@ -88,6 +85,7 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
     if prompt.is_empty() {
         return Err(anyhow!("run does not contain a user prompt"));
     }
+    let provider = AgentProvider::default_for_run(&runtime, &request, &context, &run_id);
     let prior_history = deserialize_agent_history(context.agent_history)?;
     let preamble = build_workspace_preamble(
         &request.workspace_path,
@@ -95,88 +93,63 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
         &workspace_instructions,
     );
 
-    let completion_client = runtime
-        .client
-        .clone()
-        .with_reasoning_effort(context.run.reasoning_effort.clone())
-        .with_stream_target(Some(request.run_id.clone()), request.guest_id.clone());
-
-    let tools = workspace_tools(
-        runtime.clone(),
-        request.run_id.clone(),
-        workspace_root.clone(),
+    eprintln!(
+        "sprocket-agent: selected provider {} for run {}",
+        provider.kind().as_str(),
+        run_id
     );
-    let agent = completion_client
-        .agent(context.run.selected_model.clone())
-        .preamble(&preamble)
-        .tool(tools.exec_command)
-        .tool(tools.create_file)
-        .tool(tools.replace_in_file)
-        .build();
-    eprintln!("sprocket-agent: built agent {}", request.run_id);
 
-    if runtime.run_finished(&request.run_id).await? {
+    if runtime.run_finished(&run_id).await? {
         return Ok(());
     }
 
-    eprintln!("sprocket-agent: prompting model {}", request.run_id);
-    let mut stream = agent
-        .stream_prompt(prompt)
-        .with_history(prior_history)
-        .multi_turn(AGENT_MAX_TURNS)
+    let provider_result = provider
+        .run(
+            runtime.clone(),
+            AgentProviderRequest {
+                run_id: run_id.clone(),
+                prompt,
+                preamble,
+                prior_history,
+                workspace_root,
+            },
+        )
         .await;
-    let mut final_text = String::new();
 
-    while let Some(item) = stream.next().await {
-        match item {
-            Ok(rig::agent::MultiTurnStreamItem::FinalResponse(response)) => {
-                final_text = response.response().to_string();
-            }
-            Ok(_) => {}
-            Err(error) => {
-                let error_text: String = error.to_string();
-                if error_text.contains("Run cancelled.") {
-                    eprintln!("sprocket-agent: run cancelled {}", request.run_id);
-                    runtime
-                        .finish_assistant_message(&request.run_id, &final_text)
-                        .await?;
-                    runtime
-                        .finish_run(&request.run_id, "cancelled", None)
-                        .await?;
-                    return Ok(());
-                }
-                eprintln!(
-                    "sprocket-agent: model failed {}: {}",
-                    request.run_id, error_text
-                );
-                runtime
-                    .finish_assistant_message(&request.run_id, &final_text)
-                    .await?;
-                runtime
-                    .finish_run(&request.run_id, "failed", Some(&error_text))
-                    .await?;
-                return Err(anyhow!(error));
-            }
+    let final_text = match provider_result {
+        AgentProviderResult::Completed { text } => text,
+        AgentProviderResult::Cancelled { text } => {
+            eprintln!("sprocket-agent: run cancelled {}", run_id);
+            runtime.finish_assistant_message(&run_id, &text).await?;
+            runtime.finish_run(&run_id, "cancelled", None).await?;
+            return Ok(());
         }
-    }
+        AgentProviderResult::Failed { text, error } => {
+            let error_text = error.to_string();
+            eprintln!("sprocket-agent: model failed {}: {}", run_id, error_text);
+            runtime.finish_assistant_message(&run_id, &text).await?;
+            runtime
+                .finish_run(&run_id, "failed", Some(&error_text))
+                .await?;
+            return Err(error);
+        }
+    };
 
-    if runtime.run_finished(&request.run_id).await? {
+    if runtime.run_finished(&run_id).await? {
         eprintln!(
             "sprocket-agent: run finished before completion finalization {}",
-            request.run_id
+            run_id
         );
         runtime
-            .finish_assistant_message(&request.run_id, &final_text)
+            .finish_assistant_message(&run_id, &final_text)
             .await?;
         return Ok(());
     }
 
-    eprintln!("sprocket-agent: model completed {}", request.run_id);
+    eprintln!("sprocket-agent: model completed {}", run_id);
     runtime
-        .finish_assistant_message(&request.run_id, &final_text)
+        .finish_assistant_message(&run_id, &final_text)
         .await?;
-    runtime
-        .finish_run(&request.run_id, "completed", None)
-        .await?;
+    runtime.finish_run(&run_id, "completed", None).await?;
     Ok(())
 }

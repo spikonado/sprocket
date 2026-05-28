@@ -55,29 +55,6 @@ export function getDetachedWorkspaceSessionIdsForClient(
 		.map((workspaceSession) => workspaceSession._id);
 }
 
-export function getAttachedWorkspaceSessionsForClient(
-	workspaceSessions: WorkspaceSessionDoc[],
-	clientId: string,
-	now: number = Date.now()
-) {
-	return workspaceSessions.filter(
-		(workspaceSession) =>
-			workspaceSession.connectedClientId === clientId &&
-			isWorkspaceSessionEffectivelyConnected(workspaceSession, now)
-	);
-}
-
-export function canClientClaimWorkspaceSession(
-	workspaceSession: Pick<WorkspaceSessionDoc, 'connectedClientId' | 'lastHeartbeatAt'>,
-	clientId: string,
-	now: number = Date.now()
-) {
-	return (
-		workspaceSession.connectedClientId === clientId &&
-		isWorkspaceSessionEffectivelyConnected(workspaceSession, now)
-	);
-}
-
 export function shouldRefreshWorkspaceHeartbeat(
 	workspaceSession: Pick<WorkspaceSessionDoc, 'connectedClientId' | 'lastHeartbeatAt'>,
 	clientId: string,

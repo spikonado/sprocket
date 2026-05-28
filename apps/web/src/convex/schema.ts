@@ -81,5 +81,4 @@ export default defineSchema({
 		.index('by_workspaceSessionId_sequence', ['workspaceSessionId', 'sequence'])
 		.index('by_threadId_sequence', ['threadId', 'sequence'])
 		.index('by_runId_sequence', ['runId', 'sequence'])
-		.index('by_workspaceSessionId_status_sequence', ['workspaceSessionId', 'status', 'sequence'])
 });

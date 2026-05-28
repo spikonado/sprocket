@@ -1,4 +1,5 @@
 mod convex;
+mod provider;
 mod run;
 mod tools;
 mod types;

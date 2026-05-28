@@ -2,10 +2,6 @@ import { mutation, query } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getUserId } from '@convex/lib/auth';
 import {
-	enforceGuestWorkspaceWriteLimit,
-	enforceSignedInWorkspaceWriteLimit
-} from '@convex/lib/rateLimits';
-import {
 	getDetachedWorkspaceSessionIdsForClient,
 	shouldRefreshWorkspaceHeartbeat,
 	withEffectiveWorkspaceSessionState
@@ -20,11 +16,6 @@ export const upsertSelected = mutation({
 	},
 	handler: async (ctx, args) => {
 		const userId: string = await getUserId(ctx, args.guestId);
-		if (userId.startsWith('guest:')) {
-			await enforceGuestWorkspaceWriteLimit(ctx, userId);
-		} else {
-			await enforceSignedInWorkspaceWriteLimit(ctx, userId);
-		}
 		const workspaceSession: Doc<'workspaceSessions'> | null = await ctx.db
 			.query('workspaceSessions')
 			.withIndex('by_user_workspaceName', (query) =>

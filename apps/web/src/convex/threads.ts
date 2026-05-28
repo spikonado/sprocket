@@ -2,10 +2,6 @@ import { mutation, query } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getOwnedThreadRecord, getOwnedWorkspaceSession } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
-import {
-	enforceGuestThreadCreateLimit,
-	enforceSignedInThreadCreateLimit
-} from '@convex/lib/rateLimits';
 import { isRunFinalStatus, vModelId, vReasoningEffort } from '@convex/lib/validators';
 
 export const create = mutation({
@@ -17,11 +13,6 @@ export const create = mutation({
 	},
 	handler: async (ctx, args) => {
 		const userId: string = await getUserId(ctx, args.guestId);
-		if (userId.startsWith('guest:')) {
-			await enforceGuestThreadCreateLimit(ctx, userId);
-		} else {
-			await enforceSignedInThreadCreateLimit(ctx, userId);
-		}
 		await getOwnedWorkspaceSession(ctx.db, userId, args.workspaceSessionId);
 
 		const now = Date.now();

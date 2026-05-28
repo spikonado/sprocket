@@ -1,10 +1,5 @@
 import type { Id } from '$convex/_generated/dataModel';
-import type {
-	ExecutorJob,
-	ThreadSummary,
-	WorkspaceSession,
-	WorkspaceThreadGroup
-} from '$lib/types/sprocket';
+import type { ThreadSummary, WorkspaceSession, WorkspaceThreadGroup } from '$lib/types/sprocket';
 
 export function getAttachedWorkspaceSessionIds(
 	workspaceSessions: WorkspaceSession[],
@@ -76,30 +71,6 @@ export function getWorkspaceThreadGroups(
 				sensitivity: 'base'
 			})
 		);
-}
-
-export function groupExecutorJobsByWorkspace(executorJobs: ExecutorJob[]) {
-	const jobsByWorkspace = new Map<Id<'workspaceSessions'>, ExecutorJob[]>();
-
-	for (const executorJob of executorJobs) {
-		const existing = jobsByWorkspace.get(executorJob.workspaceSessionId);
-		if (existing) {
-			existing.push(executorJob);
-			continue;
-		}
-
-		jobsByWorkspace.set(executorJob.workspaceSessionId, [executorJob]);
-	}
-
-	return jobsByWorkspace;
-}
-
-export function pickNextExecutorJobForWorkspace(executorJobs: ExecutorJob[]) {
-	return (
-		executorJobs.find((executorJob) => executorJob.status === 'claimed') ??
-		executorJobs.find((executorJob) => executorJob.status === 'pending') ??
-		null
-	);
 }
 
 export function countActiveThreads(threads: ThreadSummary[]) {

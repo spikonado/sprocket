@@ -224,13 +224,6 @@ export const vAgentHistoryMessage = v.object({
 
 export type AgentHistoryMessage = Infer<typeof vAgentHistoryMessage>;
 
-export const vWorkspaceToolRequest = v.object({
-	jobId: v.optional(v.string()),
-	workspaceSessionId: v.string(),
-	toolName: vExecutorJobKind,
-	payload: vExecutorJobPayload
-});
-
 export type ExecCommandPayload = Infer<typeof vExecCommandPayload>;
 export type CreateFilePayload = Infer<typeof vCreateFilePayload>;
 export type ReplaceInFilePayload = Infer<typeof vReplaceInFilePayload>;
@@ -240,4 +233,3 @@ export type FileWriteResult = Infer<typeof vFileWriteResult>;
 export type FileEditResult = Infer<typeof vFileEditResult>;
 export type ExecutorJobResult = Infer<typeof vExecutorJobResult>;
 export type WorkspaceInstruction = Infer<typeof vWorkspaceInstruction>;
-export type WorkspaceToolRequest = Infer<typeof vWorkspaceToolRequest>;

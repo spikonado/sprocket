@@ -2,6 +2,7 @@ import type { Id } from '$convex/_generated/dataModel';
 import type { Infer } from 'convex/values';
 import {
 	vExecutorJobKind,
+	vExecutorJobPayload,
 	vExecutorJobResult,
 	vExecutorJobStatus,
 	vExecutorStatus,
@@ -36,86 +37,9 @@ export type WorkspaceInstruction = {
 	truncated: boolean;
 };
 
-export type CommandExecOutput = {
-	command: string;
-	cwd: string;
-	exitCode?: number;
-	success: boolean;
-	timedOut: boolean;
-	stdout: string;
-	stderr: string;
-	output: string;
-	truncated: boolean;
-};
-
-export type FileWriteOutput = {
-	path: string;
-	bytesWritten: number;
-};
-
-export type FileEditOutput = {
-	path: string;
-	replacements: number;
-	bytesWritten: number;
-};
-
 export type WorkspaceToolName = Infer<typeof vExecutorJobKind>;
 
-export type WorkspaceToolRequest =
-	| {
-			jobId?: string;
-			workspaceSessionId: Id<'workspaceSessions'>;
-			toolName: 'get_workspace_overview';
-			payload: Record<string, never>;
-	  }
-	| {
-			jobId?: string;
-			workspaceSessionId: Id<'workspaceSessions'>;
-			toolName: 'get_workspace_instructions';
-			payload: Record<string, never>;
-	  }
-	| {
-			jobId?: string;
-			workspaceSessionId: Id<'workspaceSessions'>;
-			toolName: 'exec_command';
-			payload: {
-				cmd: string;
-				workdir?: string;
-				shell?: string;
-				login?: boolean;
-				timeoutMs?: number;
-				maxOutputChars?: number;
-			};
-	  }
-	| {
-			jobId?: string;
-			workspaceSessionId: Id<'workspaceSessions'>;
-			toolName: 'create_file';
-			payload: {
-				path: string;
-				content: string;
-			};
-	  }
-	| {
-			jobId?: string;
-			workspaceSessionId: Id<'workspaceSessions'>;
-			toolName: 'replace_in_file';
-			payload: {
-				path: string;
-				oldText: string;
-				newText: string;
-				replaceAll?: boolean;
-			};
-	  };
-
-export type WorkspaceToolResult =
-	| WorkspaceOverview
-	| WorkspaceInstruction[]
-	| CommandExecOutput
-	| FileWriteOutput
-	| FileEditOutput;
-
-export type ExecutorJobPayload = WorkspaceToolRequest['payload'];
+export type ExecutorJobPayload = Infer<typeof vExecutorJobPayload>;
 
 export type ExecutorJobResult = Infer<typeof vExecutorJobResult>;
 
@@ -218,7 +142,10 @@ export type AgentRunRequest = {
 	deploymentUrl: string;
 	authToken?: string;
 	guestId?: string;
-	runId: string;
+	threadId: Id<'threadRecords'>;
+	prompt: string;
+	selectedModel: Infer<typeof vModelId>;
+	reasoningEffort: Infer<typeof vReasoningEffort>;
 	workspaceSessionId: Id<'workspaceSessions'>;
 };
 
@@ -231,7 +158,6 @@ export type DesktopApi = {
 	getWorkspaceSessionOverview: (
 		workspaceSessionId: Id<'workspaceSessions'>
 	) => Promise<WorkspaceOverview>;
-	executeWorkspaceTool: (request: WorkspaceToolRequest) => Promise<WorkspaceToolResult>;
 	runAgent: (request: AgentRunRequest) => Promise<void>;
 };
 

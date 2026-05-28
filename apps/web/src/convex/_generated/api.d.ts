@@ -14,7 +14,6 @@ import type * as authBootstrap from '../authBootstrap.js';
 import type * as chat from '../chat.js';
 import type * as completion from '../completion.js';
 import type * as executor from '../executor.js';
-import type * as executorNode from '../executorNode.js';
 import type * as http from '../http.js';
 import type * as lib_access from '../lib/access.js';
 import type * as lib_agentHistory from '../lib/agentHistory.js';
@@ -40,7 +39,6 @@ declare const fullApi: ApiFromModules<{
 	chat: typeof chat;
 	completion: typeof completion;
 	executor: typeof executor;
-	executorNode: typeof executorNode;
 	http: typeof http;
 	'lib/access': typeof lib_access;
 	'lib/agentHistory': typeof lib_agentHistory;

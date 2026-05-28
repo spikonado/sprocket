@@ -7,6 +7,5 @@ contextBridge.exposeInMainWorld('sprocketDesktop', {
 		ipcRenderer.invoke('sprocket:attach-workspace-session', session),
 	getWorkspaceSessionOverview: (workspaceSessionId) =>
 		ipcRenderer.invoke('sprocket:get-workspace-session-overview', workspaceSessionId),
-	executeWorkspaceTool: (request) => ipcRenderer.invoke('sprocket:execute-workspace-tool', request),
 	runAgent: (request) => ipcRenderer.invoke('sprocket:run-agent', request)
 });

@@ -12,8 +12,18 @@ pub struct RunAgentRequest {
     pub deployment_url: String,
     pub auth_token: Option<String>,
     pub guest_id: Option<String>,
-    pub run_id: String,
+    pub thread_id: String,
+    pub prompt: String,
+    pub selected_model: String,
+    pub reasoning_effort: String,
     pub workspace_path: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateRunResponse {
+    pub run_id: String,
+    pub prompt_message_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

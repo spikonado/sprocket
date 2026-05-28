@@ -14,7 +14,6 @@
 		attachWorkspaceSession as attachWorkspaceSessionForExecution,
 		getViewerArgs as getViewerArgsForUser,
 		launchAgentRun,
-		processExecutorJobs as processPendingExecutorJobs,
 		refreshDesktopWorkspaceSessions as refreshDesktopWorkspaceSessionsFromDesktop,
 		syncAttachedWorkspaceSessions as syncAttachedWorkspaceSessionsForClient,
 		type WorkspaceSelectionResult,
@@ -59,13 +58,12 @@
 	let elapsedSeconds = $state(0);
 	let guestSessionId = $state<string | null>(null);
 	let isSubmittingPrompt = $state(false);
+	let hasPendingAgentLaunch = $state(false);
+	let pendingLaunchPreviousRunId = $state<Id<'runs'> | null>(null);
 	let hasResolvedInitialSelection = $state(false);
 	let restoredWorkspaceSessionIdToAttach = $state<Id<'workspaceSessions'> | null>(null);
 	let lastSavedThreadId = $state<Id<'threadRecords'> | null>(null);
 	let desktopWorkspaceSessionsById = $state<Record<string, WorkspaceSessionLocation>>({});
-	let processingJobIdsByWorkspace: Record<string, Id<'executorJobs'>> = {};
-	let executorProcessing = false;
-	let executorProcessQueued = false;
 
 	function getViewerArgs() {
 		return getViewerArgsForUser($authState.user, guestSessionId);
@@ -107,16 +105,6 @@
 					: 'skip'
 			: 'skip'
 	);
-	const pendingJobsForClientQuery = useQuery(api.executor.listPendingForClient, () =>
-		executorClientId
-			? $authState.user
-				? { clientId: executorClientId }
-				: guestSessionId
-					? { guestId: guestSessionId, clientId: executorClientId }
-					: 'skip'
-			: 'skip'
-	);
-
 	const workspaceSessions = $derived.by<WorkspaceSessionState[]>(() =>
 		((workspaceSessionsQuery.data ?? []) as WorkspaceSession[]).map((session) => {
 			const desktopWorkspace = desktopWorkspaceSessionsById[session._id];
@@ -166,7 +154,8 @@
 			currentWorkspaceSessionId &&
 			currentWorkspaceSession?.localWorkspaceAvailability === 'available' &&
 			!isRunning &&
-			!isSubmittingPrompt
+			!isSubmittingPrompt &&
+			!hasPendingAgentLaunch
 		)
 	);
 	const attachedWorkspaceSessionIds = $derived.by<Id<'workspaceSessions'>[]>(() =>
@@ -406,24 +395,24 @@
 			const nextPrompt = prompt.trim();
 			prompt = '';
 			currentError = null;
-			const { runId } = (await convexClient.mutation(api.chat.send, {
-				...getViewerArgs(),
-				threadId,
-				prompt: nextPrompt,
-				selectedModel,
-				reasoningEffort: selectedReasoningEffort
-			})) as { runId: string };
 			const authToken = $authState.user ? ((await getAccessToken()) ?? undefined) : undefined;
+			hasPendingAgentLaunch = true;
+			pendingLaunchPreviousRunId = runState?._id ?? null;
 			launchAgentRun({
 				authToken,
 				desktopApi,
 				deploymentUrl: PUBLIC_CONVEX_URL,
 				getViewerArgs,
 				onError: (error) => {
+					hasPendingAgentLaunch = false;
+					pendingLaunchPreviousRunId = null;
 					currentError =
 						error instanceof Error ? error.message : 'Failed to start the local agent run.';
 				},
-				runId,
+				threadId,
+				prompt: nextPrompt,
+				selectedModel,
+				reasoningEffort: selectedReasoningEffort,
 				workspaceSessionId: currentWorkspaceSessionId
 			});
 		} catch (error) {
@@ -447,31 +436,6 @@
 			});
 		} catch (error) {
 			currentError = error instanceof Error ? error.message : 'Failed to cancel run.';
-		}
-	}
-
-	async function processExecutorJobsSafely() {
-		if (executorProcessing) {
-			executorProcessQueued = true;
-			return;
-		}
-
-		executorProcessing = true;
-		try {
-			do {
-				executorProcessQueued = false;
-				await processPendingExecutorJobs(
-					desktopApi,
-					executorClientId,
-					pendingJobsForClientQuery.data ?? [],
-					processingJobIdsByWorkspace,
-					convexClient,
-					getViewerArgs,
-					refreshDesktopWorkspaceSessions
-				);
-			} while (executorProcessQueued);
-		} finally {
-			executorProcessing = false;
 		}
 	}
 
@@ -584,6 +548,10 @@
 
 	$effect(() => {
 		const startedAt = runState?.startedAt;
+		if (hasPendingAgentLaunch && runState?._id && runState._id !== pendingLaunchPreviousRunId) {
+			hasPendingAgentLaunch = false;
+			pendingLaunchPreviousRunId = null;
+		}
 		if (!isRunning || !startedAt) {
 			elapsedSeconds = 0;
 			return;
@@ -628,10 +596,6 @@
 		return () => {
 			window.clearInterval(intervalId);
 		};
-	});
-
-	$effect(() => {
-		void processExecutorJobsSafely();
 	});
 
 	onMount(() => {

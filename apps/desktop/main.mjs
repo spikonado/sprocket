@@ -358,51 +358,6 @@ ipcMain.handle('sprocket:get-workspace-session-overview', async (_event, workspa
 	return getAttachedWorkspaceStateOrThrow(workspaceSessionId).overview;
 });
 
-ipcMain.handle('sprocket:execute-workspace-tool', async (_event, request) => {
-	const nativeBinding = getNativeBinding();
-	const workspaceSessionId = request.workspaceSessionId;
-	if (!workspaceSessionId) {
-		throw new Error('No workspace session selected.');
-	}
-	const { workspaceSession } = getAttachedWorkspaceStateOrThrow(workspaceSessionId);
-	const workspaceRoot = workspaceSession.workspacePath;
-
-	switch (request.toolName) {
-		case 'get_workspace_overview':
-			return nativeBinding.getWorkspaceOverview(workspaceRoot);
-		case 'get_workspace_instructions':
-			return nativeBinding.getWorkspaceInstructions(workspaceRoot);
-		case 'exec_command':
-			return nativeBinding.execCommand({
-				workspaceRoot,
-				cmd: request.payload.cmd,
-				...(request.payload.workdir == null ? {} : { workdir: request.payload.workdir }),
-				...(request.payload.shell == null ? {} : { shell: request.payload.shell }),
-				...(request.payload.login == null ? {} : { login: request.payload.login }),
-				...(request.payload.timeoutMs == null ? {} : { timeoutMs: request.payload.timeoutMs }),
-				...(request.payload.maxOutputChars == null
-					? {}
-					: { maxOutputChars: request.payload.maxOutputChars })
-			});
-		case 'create_file':
-			return nativeBinding.createFile({
-				workspaceRoot,
-				path: request.payload.path,
-				content: request.payload.content
-			});
-		case 'replace_in_file':
-			return nativeBinding.replaceInFile({
-				workspaceRoot,
-				path: request.payload.path,
-				oldText: request.payload.oldText,
-				newText: request.payload.newText,
-				...(request.payload.replaceAll == null ? {} : { replaceAll: request.payload.replaceAll })
-			});
-		default:
-			throw new Error(`Unsupported workspace tool: ${request.toolName}`);
-	}
-});
-
 ipcMain.handle('sprocket:run-agent', async (_event, request) => {
 	const nativeBinding = getNativeBinding();
 	const { workspaceSession } = getAttachedWorkspaceStateOrThrow(request.workspaceSessionId);
