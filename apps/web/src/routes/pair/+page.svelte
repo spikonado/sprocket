@@ -41,7 +41,7 @@
 	async function submitPairing() {
 		const baseUrl = resolveLocalApiBaseUrl();
 		if (!baseUrl) {
-			error = 'Unable to resolve the local server URL.';
+			error = 'Unable to resolve the Sprocket server URL.';
 			return;
 		}
 
@@ -61,7 +61,7 @@
 			error =
 				submitError instanceof Error
 					? submitError.message
-					: 'Failed to pair with the local server.';
+					: 'Failed to pair with the Sprocket server.';
 		} finally {
 			isSubmitting = false;
 		}

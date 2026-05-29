@@ -55,7 +55,7 @@ export async function bootstrapLocalSession(
 
 	if (!response.ok) {
 		const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-		throw new Error(payload?.error ?? 'Failed to authenticate with the local server.');
+		throw new Error(payload?.error ?? 'Failed to authenticate with the Sprocket server.');
 	}
 }
 
@@ -95,7 +95,7 @@ export async function ensureLocalSession(baseUrl: string, bootstrap?: LocalBoots
 		return;
 	}
 
-	throw new Error('Pair with the local server to continue.');
+	throw new Error('Pair with your Sprocket server to continue.');
 }
 
 export async function fetchLocalBootstrap(baseUrl: string): Promise<LocalBootstrap | null> {
@@ -130,8 +130,11 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
 	if (!contentType.includes('application/json')) {
 		const preview = body.trim().slice(0, 120);
 		if (preview.startsWith('<!')) {
+			const baseUrl = resolveLocalApiBaseUrl();
 			throw new Error(
-				'Local API returned HTML instead of JSON. Restart dev with `bun run dev` and stop any other Sprocket servers still running on port 7731.'
+				baseUrl
+					? `The Sprocket API at ${baseUrl} returned a web page instead of JSON. Make sure the server is running correctly.`
+					: 'The Sprocket API returned a web page instead of JSON. Make sure the server is running correctly.'
 			);
 		}
 
@@ -216,7 +219,7 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 export async function resolveDesktopApi(): Promise<DesktopApi> {
 	const baseUrl = resolveLocalApiBaseUrl();
 	if (!baseUrl) {
-		throw new Error('Unable to resolve the local Sprocket server URL.');
+		throw new Error('Unable to resolve the Sprocket server URL.');
 	}
 
 	const bootstrap = await readDesktopBootstrap(baseUrl);

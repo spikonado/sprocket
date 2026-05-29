@@ -105,13 +105,14 @@ async function startLocalServer() {
 	const args = [
 		'serve',
 		'--quiet',
-		'--api-only',
+		...(isDevelopment ? ['--api-only'] : []),
 		'--host',
 		host,
 		'--port',
 		String(port),
 		'--data-dir',
-		dataDir
+		dataDir,
+		...(staticDir ? ['--static-dir', staticDir] : [])
 	];
 
 	serverProcess = spawn(serverBinary, args, {

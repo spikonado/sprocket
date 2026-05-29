@@ -49,7 +49,7 @@
 
 	const convexClient = useConvexClient();
 	const localServerRequiredMessage =
-		'Connect to a running Sprocket local server to use this workspace.';
+		'Connect to a running Sprocket server to use this workspace.';
 
 	let desktopApi = $state<DesktopApi | null>(null);
 	let currentWorkspaceName = $state<string | null>(null);
@@ -655,7 +655,7 @@
 			})
 			.catch((error) => {
 				currentError =
-					error instanceof Error ? error.message : 'Failed to connect to the local server.';
+					error instanceof Error ? error.message : 'Failed to connect to the Sprocket server.';
 			});
 	});
 </script>
@@ -673,8 +673,7 @@
 		>
 			<h1 class="mt-3 text-2xl font-medium tracking-tight text-white">Connect to Sprocket</h1>
 			<p class="mt-3 text-sm leading-6 text-slate-300">
-				{currentError ??
-					'Pair this browser tab with your running Sprocket local server to continue.'}
+				{currentError ?? 'Connect to your Sprocket server to continue.'}
 			</p>
 			<a
 				class="mt-6 inline-flex rounded-2xl bg-white px-4 py-3 text-sm font-medium text-black transition hover:bg-slate-100"
