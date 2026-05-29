@@ -149,6 +149,10 @@ export type AgentRunRequest = {
 	workspaceSessionId: Id<'workspaceSessions'>;
 };
 
+export type LocalIdentity = {
+	guestId: string;
+};
+
 export type FilesystemBrowseEntry = {
 	name: string;
 	fullPath: string;
@@ -160,6 +164,7 @@ export type FilesystemBrowseResult = {
 };
 
 export type DesktopApi = {
+	getLocalIdentity: () => Promise<LocalIdentity>;
 	browseFilesystem: (input: {
 		partialPath: string;
 		cwd?: string;

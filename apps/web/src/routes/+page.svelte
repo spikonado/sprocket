@@ -49,8 +49,6 @@
 
 	const convexClient = useConvexClient();
 	const localServerRequiredMessage = 'Connect to a running Sprocket server to use this workspace.';
-	const guestSessionIdPattern =
-		/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 	let desktopApi = $state<DesktopApi | null>(null);
 	let currentWorkspaceName = $state<string | null>(null);
@@ -641,20 +639,11 @@
 
 	onMount(() => {
 		executorClientId = crypto.randomUUID();
-		const persistedGuestSessionId: string | null = localStorage.getItem(
-			'sprocket.guest-session-id'
-		);
-		const nextGuestSessionId: string =
-			persistedGuestSessionId && guestSessionIdPattern.test(persistedGuestSessionId)
-				? persistedGuestSessionId
-				: crypto.randomUUID();
-		guestSessionId = nextGuestSessionId;
-		if (nextGuestSessionId !== persistedGuestSessionId) {
-			localStorage.setItem('sprocket.guest-session-id', nextGuestSessionId);
-		}
 
 		void resolveDesktopApi()
 			.then(async (client) => {
+				const localIdentity = await client.getLocalIdentity();
+				guestSessionId = localIdentity.guestId;
 				desktopApi = client;
 				await refreshDesktopWorkspaceSessions();
 			})

@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use crate::config::SESSION_COOKIE_NAME;
 
+const LOCAL_IDENTITY_FILE: &str = "local-identity.json";
 const PAIRING_CREDENTIAL_FILE: &str = "pairing-credential";
 const SESSION_MAX_AGE_SECS: i64 = 60 * 60 * 24 * 30;
 
@@ -35,10 +36,17 @@ pub struct BootstrapResponse {
     pub role: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalIdentityResponse {
+    pub guest_id: String,
+}
+
 pub struct AuthState {
-    _data_dir: PathBuf,
+    data_dir: PathBuf,
     pairing_credential: String,
     sessions: RwLock<HashMap<String, SessionRecord>>,
+    local_identity: RwLock<Option<LocalIdentityResponse>>,
 }
 
 #[derive(Debug, Clone)]
@@ -64,9 +72,10 @@ impl AuthState {
         }
 
         Ok(Arc::new(Self {
-            _data_dir: data_dir.to_path_buf(),
+            data_dir: data_dir.to_path_buf(),
             pairing_credential,
             sessions: RwLock::new(HashMap::new()),
+            local_identity: RwLock::new(None),
         }))
     }
 
@@ -120,6 +129,34 @@ impl AuthState {
         ))
     }
 
+    pub async fn local_identity(&self) -> anyhow::Result<LocalIdentityResponse> {
+        if let Some(identity) = self.local_identity.read().await.clone() {
+            return Ok(identity);
+        }
+
+        let mut cached = self.local_identity.write().await;
+        if let Some(identity) = cached.clone() {
+            return Ok(identity);
+        }
+
+        let identity_path = self.data_dir.join(LOCAL_IDENTITY_FILE);
+        let identity = if identity_path.exists() {
+            let contents = fs::read_to_string(&identity_path)?;
+            let stored: LocalIdentityResponse = serde_json::from_str(&contents)?;
+            validate_guest_id(&stored.guest_id)?;
+            stored
+        } else {
+            let identity = LocalIdentityResponse {
+                guest_id: Uuid::new_v4().to_string(),
+            };
+            fs::write(&identity_path, serde_json::to_string_pretty(&identity)?)?;
+            identity
+        };
+
+        *cached = Some(identity.clone());
+        Ok(identity)
+    }
+
     pub fn make_session_cookie(session_token: &str) -> Cookie<'static> {
         Cookie::build((SESSION_COOKIE_NAME, session_token.to_string()))
             .http_only(true)
@@ -156,6 +193,12 @@ pub async fn require_session(
     Ok(session_token)
 }
 
+fn validate_guest_id(guest_id: &str) -> anyhow::Result<()> {
+    Uuid::parse_str(guest_id)
+        .map(|_| ())
+        .map_err(|_| anyhow::anyhow!("local guest identity is invalid"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,6 +218,24 @@ mod tests {
 
         let session = auth.session_state(Some(&session_token)).await;
         assert!(session.authenticated);
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[tokio::test]
+    async fn local_identity_is_persisted() {
+        let temp_dir = std::env::temp_dir().join(format!("sprocket-auth-test-{}", Uuid::new_v4()));
+        let auth = AuthState::load(&temp_dir).expect("auth state");
+
+        let first = auth.local_identity().await.expect("first identity");
+        let second = auth.local_identity().await.expect("second identity");
+
+        assert_eq!(first.guest_id, second.guest_id);
+
+        let reloaded = AuthState::load(&temp_dir).expect("reloaded auth state");
+        let third = reloaded.local_identity().await.expect("reloaded identity");
+
+        assert_eq!(first.guest_id, third.guest_id);
 
         let _ = fs::remove_dir_all(temp_dir);
     }

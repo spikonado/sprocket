@@ -9,7 +9,8 @@ use axum_extra::extract::CookieJar;
 
 use crate::AppState;
 use crate::auth::{
-    AuthSessionResponse, AuthState, BootstrapRequest, BootstrapResponse, extract_session_token,
+    AuthSessionResponse, AuthState, BootstrapRequest, BootstrapResponse, LocalIdentityResponse,
+    extract_session_token, require_session,
 };
 
 const DESKTOP_BOOTSTRAP_TOKEN_HEADER: &str = "x-sprocket-desktop-bootstrap-token";
@@ -26,6 +27,7 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/auth/session", get(session))
         .route("/auth/bootstrap", post(bootstrap))
         .route("/auth/desktop-bootstrap", get(desktop_bootstrap))
+        .route("/auth/local-identity", get(local_identity))
 }
 
 async fn session(
@@ -53,6 +55,23 @@ async fn bootstrap(
     jar = jar.add(cookie);
 
     Ok((StatusCode::OK, jar, Json(response)))
+}
+
+async fn local_identity(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<LocalIdentityResponse>, ApiError> {
+    require_session(&state.auth, &headers, &jar)
+        .await
+        .map_err(|_| ApiError::unauthorized())?;
+
+    let identity = state
+        .auth
+        .local_identity()
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(Json(identity))
 }
 
 async fn desktop_bootstrap(
@@ -110,6 +129,13 @@ impl ApiError {
         Self {
             status: StatusCode::UNAUTHORIZED,
             message: "authentication required".to_string(),
+        }
+    }
+
+    fn internal(error: anyhow::Error) -> Self {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: error.to_string(),
         }
     }
 }

@@ -1,4 +1,9 @@
-import type { DesktopApi, FilesystemBrowseResult, WorkspaceOverview } from '$lib/types/sprocket';
+import type {
+	DesktopApi,
+	FilesystemBrowseResult,
+	LocalIdentity,
+	WorkspaceOverview
+} from '$lib/types/sprocket';
 
 export type LocalBootstrap = {
 	httpBaseUrl: string;
@@ -183,6 +188,7 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 	}
 
 	return {
+		getLocalIdentity: () => request<LocalIdentity>('/api/auth/local-identity'),
 		browseFilesystem: (input) =>
 			request<FilesystemBrowseResult>('/api/workspace/browse', {
 				method: 'POST',

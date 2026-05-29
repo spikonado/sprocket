@@ -62,6 +62,20 @@ function getServerBinaryPath() {
 		: path.join(__dirname, 'server/sprocket');
 }
 
+function getDefaultDataDir() {
+	const home = process.env.HOME || process.env.USERPROFILE || '.';
+	return path.join(home, '.sprocket');
+}
+
+function getLocalDataDir() {
+	const configured = process.env.SPROCKET_DATA_DIR?.trim();
+	if (configured) {
+		return path.resolve(configured);
+	}
+
+	return isDevelopment ? path.resolve(__dirname, '../../.sprocket-dev') : getDefaultDataDir();
+}
+
 function waitForServerReady(baseUrl, timeoutMs = 30_000) {
 	const startedAt = Date.now();
 
@@ -98,9 +112,7 @@ async function startLocalServer() {
 
 	const port = serverPort;
 	const host = serverHost;
-	const dataDir = isDevelopment
-		? path.resolve(__dirname, '../../.sprocket-dev')
-		: app.getPath('userData');
+	const dataDir = getLocalDataDir();
 	const serverBinary = getServerBinaryPath();
 	const staticDir = isDevelopment ? undefined : path.join(__dirname, 'web/dist');
 	const desktopBootstrapToken = randomUUID();
