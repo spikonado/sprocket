@@ -4,7 +4,8 @@ import type { DesktopApi } from '$lib/types/sprocket';
 
 function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 	return {
-		chooseWorkspace: vi.fn(),
+		browseFilesystem: vi.fn(),
+		workspaceOverviewForPath: vi.fn(),
 		listWorkspaceSessions: vi.fn(),
 		attachWorkspaceSession: vi.fn(),
 		getWorkspaceSessionOverview: vi.fn(),

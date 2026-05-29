@@ -3,7 +3,8 @@ members = [
     "crates/sprocket-convex-provider",
     "crates/sprocket-workspace",
     "crates/sprocket-agent",
-    "packages/native",
+    "crates/sprocket-server",
+    "crates/sprocket-cli",
 ]
 resolver = "3"
 

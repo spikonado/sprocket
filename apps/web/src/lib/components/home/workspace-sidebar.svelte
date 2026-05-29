@@ -14,20 +14,20 @@
 
 	type Props = {
 		isAuthenticated: boolean;
-		currentWorkspaceSessionId: Id<'workspaceSessions'> | null;
+		currentWorkspaceName: string | null;
 		currentThreadId: Id<'threadRecords'> | null;
 		groups: WorkspaceThreadGroup[];
 		onChooseWorkspace: () => void;
 		onReconnectWorkspace: (workspaceSessionId: Id<'workspaceSessions'>) => void;
 		onAccountAction: () => void;
-		onStartThreadDraft: (workspaceSessionId: Id<'workspaceSessions'>) => void;
+		onStartThreadDraft: (workspaceName: string) => void;
 		onSelectThread: (thread: ThreadSummary) => void;
 		onDeleteThread: (thread: ThreadSummary) => void;
 	};
 
 	let {
 		isAuthenticated,
-		currentWorkspaceSessionId,
+		currentWorkspaceName,
 		currentThreadId,
 		groups,
 		onChooseWorkspace,
@@ -129,7 +129,7 @@
 								<button
 									type="button"
 									class={`flex min-w-0 flex-1 items-center gap-2 rounded-xl px-2 py-1 pr-8 text-left transition ${
-										group.workspaceSessionId === currentWorkspaceSessionId
+										group.workspaceName === currentWorkspaceName
 											? 'text-white'
 											: 'text-slate-300 hover:text-white'
 									}`}
@@ -177,11 +177,13 @@
 									class="absolute top-0.5 right-1 inline-flex h-6 w-6 items-center justify-center rounded-md text-slate-500 opacity-0 transition group-hover:opacity-100 hover:bg-white/6 hover:text-white focus-visible:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
 									onclick={() => {
 										if (group.localWorkspaceAvailability === 'available') {
-											onStartThreadDraft(group.workspaceSessionId);
+											onStartThreadDraft(group.workspaceName);
 											return;
 										}
 
-										onReconnectWorkspace(group.workspaceSessionId);
+										if (group.workspaceSessionId) {
+											onReconnectWorkspace(group.workspaceSessionId);
+										}
 									}}
 									aria-label={group.localWorkspaceAvailability === 'available'
 										? `Create thread in ${group.workspaceName}`
@@ -204,7 +206,7 @@
 										<p class="pb-2 text-[12px] leading-5 text-slate-500">
 											{group.localWorkspaceError ??
 												(group.localWorkspaceAvailability === 'unlinked'
-													? 'This workspace needs a local folder attached before you can use it.'
+													? 'This workspace needs a local directory attached before you can use it.'
 													: 'This workspace needs to be reconnected.')}
 										</p>
 									{/if}

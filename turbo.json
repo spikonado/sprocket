@@ -6,7 +6,7 @@
 		"build": {
 			"dependsOn": ["^build"],
 			"inputs": ["$TURBO_DEFAULT$", ".env*", "turbo-cache-key.json"],
-			"outputs": [".svelte-kit/**", ".vercel/**", "dist/**", "*.node", "target/**"]
+			"outputs": [".svelte-kit/**", ".vercel/**", "dist/**", "target/**"]
 		},
 		"check": {
 			"dependsOn": ["^check"]

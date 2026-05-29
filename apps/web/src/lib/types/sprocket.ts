@@ -149,8 +149,25 @@ export type AgentRunRequest = {
 	workspaceSessionId: Id<'workspaceSessions'>;
 };
 
+export type FilesystemBrowseEntry = {
+	name: string;
+	fullPath: string;
+};
+
+export type FilesystemBrowseResult = {
+	parentPath: string;
+	entries: FilesystemBrowseEntry[];
+};
+
 export type DesktopApi = {
-	chooseWorkspace: () => Promise<WorkspaceOverview | null>;
+	browseFilesystem: (input: {
+		partialPath: string;
+		cwd?: string;
+	}) => Promise<FilesystemBrowseResult>;
+	workspaceOverviewForPath: (input: {
+		workspacePath: string;
+		createIfMissing?: boolean;
+	}) => Promise<WorkspaceOverview>;
 	listWorkspaceSessions: () => Promise<WorkspaceSessionLocation[]>;
 	attachWorkspaceSession: (
 		session: WorkspaceSessionAttachment

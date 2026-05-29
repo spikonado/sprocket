@@ -29,4 +29,4 @@ turbo-cache-key.json
 dist
 ref-repos
 target
-*.node
+.sprocket-dev

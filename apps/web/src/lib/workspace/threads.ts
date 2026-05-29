@@ -18,38 +18,30 @@ export function getAttachedWorkspaceSessionIds(
 		.map((workspaceSession) => workspaceSession._id);
 }
 
+export function findWorkspaceSessionByName<T extends Pick<WorkspaceSession, 'workspaceName'>>(
+	workspaceSessions: T[],
+	workspaceName: string
+): T | null {
+	return workspaceSessions.find((session) => session.workspaceName === workspaceName) ?? null;
+}
+
 export function getWorkspaceThreadGroups(
 	workspaceSessions: WorkspaceSession[],
 	threads: ThreadSummary[]
 ) {
 	const groups = new Map<string, WorkspaceThreadGroup>();
 
-	for (const workspaceSession of workspaceSessions) {
-		groups.set(workspaceSession._id, {
-			key: workspaceSession._id,
-			workspaceName: workspaceSession.workspaceName,
-			workspacePath: workspaceSession.workspacePath,
-			workspaceSessionId: workspaceSession._id,
-			executorStatus: workspaceSession.executorStatus,
-			lastSeenAt: workspaceSession.lastSeenAt,
-			latestThreadAt: 0,
-			activeThreadCount: 0,
-			localWorkspaceAvailability: workspaceSession.localWorkspaceAvailability,
-			localWorkspaceError: workspaceSession.localWorkspaceError,
-			threads: []
-		});
-	}
-
 	for (const thread of threads) {
-		const existingGroup = groups.get(thread.workspaceSessionId);
+		const existingGroup = groups.get(thread.workspaceName);
+
 		if (existingGroup) {
 			existingGroup.threads.push(thread);
 			existingGroup.latestThreadAt = Math.max(existingGroup.latestThreadAt, thread.lastMessageAt);
 			continue;
 		}
 
-		groups.set(thread.workspaceSessionId, {
-			key: thread.workspaceSessionId,
+		groups.set(thread.workspaceName, {
+			key: thread.workspaceName,
 			workspaceName: thread.workspaceName,
 			workspaceSessionId: thread.workspaceSessionId,
 			executorStatus: null,
@@ -60,17 +52,49 @@ export function getWorkspaceThreadGroups(
 		});
 	}
 
+	for (const workspaceSession of workspaceSessions) {
+		const existingGroup = groups.get(workspaceSession.workspaceName);
+
+		if (existingGroup) {
+			existingGroup.workspaceSessionId = workspaceSession._id;
+			existingGroup.executorStatus = workspaceSession.executorStatus;
+			existingGroup.lastSeenAt = workspaceSession.lastSeenAt;
+			existingGroup.localWorkspaceAvailability = workspaceSession.localWorkspaceAvailability;
+			existingGroup.localWorkspaceError = workspaceSession.localWorkspaceError;
+			existingGroup.workspacePath = workspaceSession.workspacePath;
+			continue;
+		}
+
+		groups.set(workspaceSession.workspaceName, {
+			key: workspaceSession.workspaceName,
+			workspaceName: workspaceSession.workspaceName,
+			workspaceSessionId: workspaceSession._id,
+			executorStatus: workspaceSession.executorStatus,
+			lastSeenAt: workspaceSession.lastSeenAt,
+			latestThreadAt: 0,
+			activeThreadCount: 0,
+			localWorkspaceAvailability: workspaceSession.localWorkspaceAvailability,
+			localWorkspaceError: workspaceSession.localWorkspaceError,
+			workspacePath: workspaceSession.workspacePath,
+			threads: []
+		});
+	}
+
 	return [...groups.values()]
 		.map((group) => ({
 			...group,
 			activeThreadCount: countActiveThreads(group.threads),
 			threads: [...group.threads].sort((left, right) => right.lastMessageAt - left.lastMessageAt)
 		}))
-		.sort((left, right) =>
-			left.workspaceName.localeCompare(right.workspaceName, undefined, {
-				sensitivity: 'base'
-			})
-		);
+		.sort((left, right) => {
+			const leftSortKey = left.latestThreadAt || left.lastSeenAt;
+			const rightSortKey = right.latestThreadAt || right.lastSeenAt;
+			if (rightSortKey !== leftSortKey) {
+				return rightSortKey - leftSortKey;
+			}
+
+			return left.workspaceName.localeCompare(right.workspaceName);
+		});
 }
 
 export function countActiveThreads(threads: ThreadSummary[]) {
@@ -91,12 +115,12 @@ export function findThreadById(
 export function resolveWorkspaceThreadSelection(args: {
 	threads: ThreadSummary[];
 	currentThreadId: Id<'threadRecords'> | null;
-	currentWorkspaceSessionId: Id<'workspaceSessions'> | null;
-	draftWorkspaceSessionId: Id<'workspaceSessions'> | null;
+	currentWorkspaceName: string | null;
+	draftWorkspaceName: string | null;
 }) {
-	const { threads, currentThreadId, currentWorkspaceSessionId, draftWorkspaceSessionId } = args;
+	const { threads, currentThreadId, currentWorkspaceName, draftWorkspaceName } = args;
 
-	if (currentWorkspaceSessionId && draftWorkspaceSessionId === currentWorkspaceSessionId) {
+	if (currentWorkspaceName && draftWorkspaceName === currentWorkspaceName) {
 		return null;
 	}
 

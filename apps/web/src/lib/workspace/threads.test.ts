@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-	countActiveThreads,
-	findThreadById,
+	findWorkspaceSessionByName,
 	getAttachedWorkspaceSessionIds,
+	getWorkspaceThreadGroups,
 	resolveWorkspaceThreadSelection
 } from '$lib/workspace/threads';
 import { defaultModelId, defaultReasoningEffort } from '$lib/chat/models';
@@ -68,29 +68,54 @@ describe('workspace thread helpers', () => {
 		expect(attached).toEqual(['ws-1']);
 	});
 
-	it('counts active threads for sidebar indicators', () => {
-		expect(
-			countActiveThreads([
-				makeThreadSummary({ hasActiveRun: true }),
+	it('groups threads by exact workspace name', () => {
+		const groups = getWorkspaceThreadGroups(
+			[
+				makeWorkspaceSession({
+					_id: 'ws-current' as WorkspaceSession['_id'],
+					workspaceName: 'sprocket'
+				})
+			],
+			[
+				makeThreadSummary({
+					workspaceSessionId: 'ws-current' as ThreadSummary['workspaceSessionId'],
+					workspaceName: 'sprocket',
+					lastMessageAt: 10
+				}),
 				makeThreadSummary({
 					_id: 'thread-record-2' as ThreadSummary['_id'],
 					threadId: 'thread-record-2' as ThreadSummary['threadId'],
-					hasActiveRun: false
+					workspaceSessionId: 'ws-stale' as ThreadSummary['workspaceSessionId'],
+					workspaceName: 'sprocket',
+					lastMessageAt: 20
 				}),
 				makeThreadSummary({
 					_id: 'thread-record-3' as ThreadSummary['_id'],
 					threadId: 'thread-record-3' as ThreadSummary['threadId'],
-					hasActiveRun: true
+					workspaceSessionId: 'ws-other' as ThreadSummary['workspaceSessionId'],
+					workspaceName: 'Sprocket',
+					lastMessageAt: 30
 				})
-			])
-		).toBe(2);
+			]
+		);
+
+		expect(groups).toHaveLength(2);
+		expect(groups.find((group) => group.workspaceName === 'sprocket')?.threads).toHaveLength(2);
+		expect(groups.find((group) => group.workspaceName === 'Sprocket')?.threads).toHaveLength(1);
 	});
 
-	it('finds a persisted thread when it still exists', () => {
-		const thread = makeThreadSummary();
+	it('finds a workspace session by exact name', () => {
+		const session = findWorkspaceSessionByName(
+			[
+				makeWorkspaceSession({
+					_id: 'ws-1' as WorkspaceSession['_id'],
+					workspaceName: 'Sprocket'
+				})
+			],
+			'sprocket'
+		);
 
-		expect(findThreadById([thread], thread.threadId)).toEqual(thread);
-		expect(findThreadById([thread], 'missing-thread' as ThreadSummary['threadId'])).toBeNull();
+		expect(session).toBeNull();
 	});
 
 	it('preserves a blank draft selection for the current workspace', () => {
@@ -100,25 +125,9 @@ describe('workspace thread helpers', () => {
 			resolveWorkspaceThreadSelection({
 				threads,
 				currentThreadId: null,
-				currentWorkspaceSessionId: 'ws-1' as ThreadSummary['workspaceSessionId'],
-				draftWorkspaceSessionId: 'ws-1' as ThreadSummary['workspaceSessionId']
+				currentWorkspaceName: 'Workspace',
+				draftWorkspaceName: 'Workspace'
 			})
 		).toBeNull();
-	});
-
-	it('falls back to the newest thread when no current selection is available', () => {
-		const threads = [
-			makeThreadSummary({ _id: 'thread-record-2' as ThreadSummary['_id'], lastMessageAt: 20 }),
-			makeThreadSummary({ _id: 'thread-record-1' as ThreadSummary['_id'], lastMessageAt: 10 })
-		];
-
-		expect(
-			resolveWorkspaceThreadSelection({
-				threads,
-				currentThreadId: null,
-				currentWorkspaceSessionId: 'ws-1' as ThreadSummary['workspaceSessionId'],
-				draftWorkspaceSessionId: null
-			})
-		).toBe('thread-record-2');
 	});
 });

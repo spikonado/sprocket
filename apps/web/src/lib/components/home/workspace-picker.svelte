@@ -1,0 +1,360 @@
+<script lang="ts">
+	import { CornerLeftUp, Folder, FolderPlus, LoaderCircle } from 'lucide-svelte';
+	import type { DesktopApi, FilesystemBrowseEntry, WorkspaceOverview } from '$lib/types/sprocket';
+	import {
+		appendBrowsePathSegment,
+		getBrowseLeafPathSegment,
+		isFilesystemBrowseQuery,
+		resolveWorkspacePathFromBrowse,
+		workspacePathRequiresCreation
+	} from '$lib/workspace/paths';
+
+	type RecentWorkspace = {
+		workspacePath: string;
+		workspaceName: string;
+	};
+
+	type Props = {
+		open: boolean;
+		desktopApi: DesktopApi;
+		mode?: 'add' | 'reconnect';
+		expectedWorkspaceName?: string;
+		recentWorkspaces?: RecentWorkspace[];
+		onClose: () => void;
+		onSelect: (overview: WorkspaceOverview) => void | Promise<void>;
+	};
+
+	let {
+		open,
+		desktopApi,
+		mode = 'add',
+		expectedWorkspaceName,
+		recentWorkspaces = [],
+		onClose,
+		onSelect
+	}: Props = $props();
+
+	let query = $state('~/');
+	let browseEntries = $state<FilesystemBrowseEntry[]>([]);
+	let browseParentPath = $state('');
+	let highlightedPath = $state<string | null>(null);
+	let isLoadingBrowse = $state(false);
+	let isSubmitting = $state(false);
+	let errorMessage = $state<string | null>(null);
+	let browseRequestId = 0;
+	let opened = $state(false);
+
+	const browseFilterQuery = $derived(getBrowseLeafPathSegment(query).toLowerCase());
+	const filteredEntries = $derived.by(() => {
+		const showHidden = browseFilterQuery.startsWith('.');
+		return browseEntries.filter(
+			(entry) =>
+				entry.name.toLowerCase().startsWith(browseFilterQuery) &&
+				(showHidden || !entry.name.startsWith('.'))
+		);
+	});
+	const selectedPath = $derived(query.trim());
+	const resolvedWorkspacePath = $derived(
+		resolveWorkspacePathFromBrowse({
+			query,
+			browseParentPath,
+			browseEntries
+		})
+	);
+	const willCreateDirectory = $derived(
+		workspacePathRequiresCreation({
+			query,
+			browseParentPath,
+			browseEntries
+		})
+	);
+	const canSubmit = $derived(
+		resolvedWorkspacePath.length > 0 &&
+			(isFilesystemBrowseQuery(selectedPath) || browseParentPath.length > 0)
+	);
+	const submitLabel = $derived(willCreateDirectory ? 'Create & add' : 'Add');
+	const displayedEntries = $derived.by(() => {
+		if (filteredEntries.length > 0) {
+			return filteredEntries;
+		}
+
+		const leaf = getBrowseLeafPathSegment(query).replace(/[\\/]+$/, '');
+		if (!leaf || browseFilterQuery.length === 0) {
+			return filteredEntries;
+		}
+
+		const parentName = browseParentPath.split(/[/\\]/).filter(Boolean).at(-1);
+		if (parentName && parentName.toLowerCase() === leaf.toLowerCase()) {
+			return [{ name: parentName, fullPath: browseParentPath }];
+		}
+
+		return filteredEntries;
+	});
+	const emptyListMessage = $derived(
+		isLoadingBrowse
+			? 'Loading directories…'
+			: resolvedWorkspacePath.length > 0 && !willCreateDirectory
+				? 'Press Enter to add this directory.'
+				: willCreateDirectory
+					? 'Press Enter to create and add this directory.'
+					: 'No matching directories in this path.'
+	);
+
+	$effect(() => {
+		if (!open) {
+			opened = false;
+			return;
+		}
+
+		if (opened) {
+			return;
+		}
+
+		opened = true;
+		query = '~/';
+		highlightedPath = null;
+		errorMessage = null;
+		void loadBrowse(query);
+	});
+
+	$effect(() => {
+		if (!open || !opened) {
+			return;
+		}
+
+		const nextQuery = query;
+		const timeout = window.setTimeout(() => {
+			void loadBrowse(nextQuery);
+		}, 180);
+
+		return () => {
+			window.clearTimeout(timeout);
+		};
+	});
+
+	async function loadBrowse(partialPath: string) {
+		const requestId = ++browseRequestId;
+		isLoadingBrowse = true;
+
+		try {
+			const result = await desktopApi.browseFilesystem({
+				partialPath: partialPath.trim().length > 0 ? partialPath : '~/'
+			});
+
+			if (requestId !== browseRequestId) {
+				return;
+			}
+
+			browseParentPath = result.parentPath;
+			browseEntries = result.entries;
+			errorMessage = null;
+		} catch (error) {
+			if (requestId !== browseRequestId) {
+				return;
+			}
+
+			errorMessage = error instanceof Error ? error.message : 'Failed to browse directories.';
+		} finally {
+			if (requestId === browseRequestId) {
+				isLoadingBrowse = false;
+			}
+		}
+	}
+
+	function selectEntry(entry: FilesystemBrowseEntry) {
+		if (entry.name === '..') {
+			query = `${entry.fullPath}/`;
+			highlightedPath = entry.fullPath;
+			return;
+		}
+
+		query = appendBrowsePathSegment(
+			browseParentPath.endsWith('/') || browseParentPath.endsWith('\\')
+				? browseParentPath
+				: `${browseParentPath}/`,
+			entry.name
+		);
+		highlightedPath = entry.fullPath;
+	}
+
+	function selectRecentWorkspace(recent: RecentWorkspace) {
+		query = `${recent.workspacePath}/`;
+		highlightedPath = recent.workspacePath;
+	}
+
+	async function confirmSelection() {
+		const workspacePath = resolvedWorkspacePath;
+		if (!workspacePath) {
+			errorMessage = 'Enter a project directory path.';
+			return;
+		}
+
+		isSubmitting = true;
+		errorMessage = null;
+
+		try {
+			const overview = await desktopApi.workspaceOverviewForPath({
+				workspacePath,
+				createIfMissing: willCreateDirectory
+			});
+
+			if (
+				mode === 'reconnect' &&
+				expectedWorkspaceName &&
+				overview.name !== expectedWorkspaceName
+			) {
+				errorMessage = `Selected workspace must be named "${expectedWorkspaceName}" to reconnect this project.`;
+				return;
+			}
+
+			await onSelect(overview);
+			onClose();
+		} catch (error) {
+			errorMessage =
+				error instanceof Error ? error.message : 'Failed to open the selected workspace.';
+		} finally {
+			isSubmitting = false;
+		}
+	}
+
+	function handleDialogKeydown(event: KeyboardEvent) {
+		if (event.key === 'Escape') {
+			event.preventDefault();
+			onClose();
+			return;
+		}
+
+		if (event.key === 'Enter' && !event.shiftKey && canSubmit && !isSubmitting) {
+			event.preventDefault();
+			void confirmSelection();
+		}
+	}
+</script>
+
+{#if open}
+	<div
+		class="fixed inset-0 z-50 flex items-start justify-center bg-black/50 px-4 pt-[10vh] backdrop-blur-[2px]"
+		role="presentation"
+		onclick={(event) => {
+			if (event.target === event.currentTarget) {
+				onClose();
+			}
+		}}
+	>
+		<div
+			class="flex max-h-[min(32rem,70vh)] w-full max-w-xl min-w-0 flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#1c1c1f] text-white shadow-2xl"
+			role="dialog"
+			aria-modal="true"
+			aria-labelledby="workspace-picker-title"
+			tabindex="-1"
+			onkeydown={handleDialogKeydown}
+		>
+			<div class="border-b border-white/8 px-2.5 py-1.5">
+				<div class="relative flex items-center">
+					<div class="pointer-events-none flex items-center ps-2 text-slate-500">
+						<FolderPlus class="size-4" />
+					</div>
+					<input
+						id="workspace-picker-title"
+						class="min-w-0 flex-1 bg-transparent py-2 ps-2 pe-28 text-sm text-white outline-none placeholder:text-slate-500"
+						bind:value={query}
+						placeholder="Enter project path (e.g. ~/projects/my-robot)"
+						autocomplete="off"
+						spellcheck={false}
+					/>
+					{#if isLoadingBrowse}
+						<LoaderCircle
+							class="pointer-events-none absolute end-24 top-1/2 size-4 -translate-y-1/2 animate-spin text-slate-500"
+						/>
+					{/if}
+					<button
+						type="button"
+						class="absolute end-2 top-1/2 -translate-y-1/2 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[12px] text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+						disabled={!canSubmit || isSubmitting}
+						onclick={() => {
+							void confirmSelection();
+						}}
+					>
+						{isSubmitting ? 'Working…' : submitLabel}
+					</button>
+				</div>
+				{#if mode === 'reconnect' && expectedWorkspaceName}
+					<p class="px-2 pb-1 text-[11px] text-slate-500">
+						Reconnect <span class="text-slate-300">{expectedWorkspaceName}</span> to a local directory
+					</p>
+				{/if}
+			</div>
+
+			{#if recentWorkspaces.length > 0}
+				<div class="flex flex-wrap gap-1.5 border-b border-white/6 px-3 py-2">
+					{#each recentWorkspaces as recent (recent.workspacePath)}
+						<button
+							type="button"
+							class="rounded-md px-2 py-0.5 text-[11px] text-slate-400 transition hover:bg-white/6 hover:text-slate-200"
+							onclick={() => {
+								selectRecentWorkspace(recent);
+							}}
+						>
+							{recent.workspaceName}
+						</button>
+					{/each}
+				</div>
+			{/if}
+
+			<div class="min-h-0 flex-1 overflow-y-auto py-1" role="listbox" aria-label="Directories">
+				{#if displayedEntries.length === 0}
+					<p class="px-3 py-8 text-center text-sm text-slate-500">
+						{emptyListMessage}
+					</p>
+				{:else}
+					{#each displayedEntries as entry (entry.fullPath)}
+						<button
+							type="button"
+							class={`flex min-h-8 w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition ${
+								highlightedPath === entry.fullPath
+									? 'bg-white/8 text-white'
+									: 'text-slate-300 hover:bg-white/4 hover:text-white'
+							}`}
+							role="option"
+							aria-selected={highlightedPath === entry.fullPath}
+							onclick={() => {
+								selectEntry(entry);
+							}}
+						>
+							{#if entry.name === '..'}
+								<CornerLeftUp class="size-4 shrink-0 text-slate-500" />
+							{:else}
+								<Folder class="size-4 shrink-0 text-slate-500" />
+							{/if}
+							<span class="truncate">{entry.name}</span>
+						</button>
+					{/each}
+				{/if}
+			</div>
+
+			{#if errorMessage}
+				<p class="border-t border-rose-500/20 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
+					{errorMessage}
+				</p>
+			{/if}
+
+			<footer
+				class="flex items-center justify-between gap-3 border-t border-white/8 px-3 py-2 text-[11px] text-slate-500"
+			>
+				<div class="flex flex-wrap items-center gap-3">
+					<span>↑↓ Navigate</span>
+					<span>Enter {submitLabel}</span>
+					<span>Esc Close</span>
+				</div>
+				<button
+					type="button"
+					class="text-slate-400 transition hover:text-slate-200"
+					onclick={onClose}
+					disabled={isSubmitting}
+				>
+					Cancel
+				</button>
+			</footer>
+		</div>
+	</div>
+{/if}

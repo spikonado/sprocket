@@ -41,7 +41,8 @@ pub fn build_workspace_overview(root: &Path) -> Result<WorkspaceOverview> {
 }
 
 pub fn resolve_workspace_root(path: &str) -> Result<PathBuf> {
-    let root: PathBuf = PathBuf::from(path);
+    let expanded = crate::paths::expand_home(path.trim());
+    let root: PathBuf = PathBuf::from(&expanded);
     if !root.exists() {
         bail!("workspace does not exist: {path}");
     }

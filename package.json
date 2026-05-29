@@ -3,10 +3,12 @@
 	"private": true,
 	"scripts": {
 		"build": "node ./scripts/create-turbo-cache-key.js && turbo run build",
-		"dev": "turbo run dev",
+		"dev": "concurrently -k -n api,web -c blue,green \"cargo run -p sprocket-cli -- serve --data-dir .sprocket-dev --api-only\" \"node scripts/wait-for-api.mjs && bun run --cwd apps/web dev\"",
+		"dev:desktop": "concurrently -k -n web,electron -c green,magenta \"node scripts/wait-for-api.mjs && bun run --cwd apps/web dev\" \"bun run --cwd apps/desktop dev\"",
 		"test": "turbo run test"
 	},
 	"devDependencies": {
+		"concurrently": "^9.2.1",
 		"prettier": "^3.8.3",
 		"prettier-plugin-svelte": "^3.5.1",
 		"prettier-plugin-tailwindcss": "^0.8.0",

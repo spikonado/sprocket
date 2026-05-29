@@ -109,7 +109,7 @@
 							bind:value={prompt}
 							rows="1"
 							class="min-h-0 w-full resize-none border-0 bg-transparent px-0 py-0 text-[14px] leading-6 text-slate-100 outline-none placeholder:text-slate-500"
-							placeholder="Ask anything, @tag files/folders, or use / to show available commands"
+							placeholder="Ask anything, @tag files/directories, or use / to show available commands"
 							disabled={isRunning || isSubmitting}
 							onkeydown={handleComposerKeydown}
 						></textarea>

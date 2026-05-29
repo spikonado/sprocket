@@ -5,8 +5,8 @@
 	"type": "module",
 	"main": "./main.mjs",
 	"scripts": {
-		"dev": "bun run --cwd ../../packages/native build:debug && wait-on http-get://localhost:5173 && node ./launch.cjs",
-		"build": "bun run --cwd ../../packages/native build && bun run --cwd ../web build && electron-builder"
+		"dev": "cargo build -q -p sprocket-cli && node ./launch.cjs",
+		"build": "cargo build --release -p sprocket-cli && bun run --cwd ../web build && electron-builder"
 	},
 	"build": {
 		"appId": "com.spikonado.sprocket",
@@ -26,13 +26,8 @@
 				]
 			},
 			{
-				"from": "../../packages/native/",
-				"to": "native/",
-				"filter": [
-					"index.js",
-					"index.d.ts",
-					"*.node"
-				]
+				"from": "../../target/release/sprocket",
+				"to": "server/sprocket"
 			}
 		],
 		"linux": {
@@ -44,7 +39,6 @@
 	},
 	"devDependencies": {
 		"electron": "^41.5.0",
-		"electron-builder": "^26.8.1",
-		"wait-on": "^9.0.5"
+		"electron-builder": "^26.8.1"
 	}
 }

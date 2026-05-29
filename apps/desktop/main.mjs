@@ -1,36 +1,23 @@
 import electron from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
-import { createRequire } from 'node:module';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { API_HOST, API_PORT, DEV_HOST, DEV_WEB_URL } from '../../scripts/dev-config.mjs';
 
-const { app, BrowserWindow, Menu, dialog, ipcMain, net, protocol } = electron;
+const { app, BrowserWindow, Menu, ipcMain } = electron;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const require = createRequire(import.meta.url);
 
 const isDevelopment = !app.isPackaged;
-const rendererUrl = process.env.SPROCKET_ELECTRON_RENDERER_URL ?? 'http://localhost:5173';
+const serverPort = Number(process.env.SPROCKET_PORT ?? API_PORT);
+const serverHost = process.env.SPROCKET_HOST ?? API_HOST;
+const devRendererUrl = process.env.SPROCKET_ELECTRON_RENDERER_URL ?? DEV_WEB_URL;
 const preloadEntry = path.join(__dirname, 'preload.cjs');
-const STALE_UNAVAILABLE_WORKSPACE_MS = 1000 * 60 * 60 * 24 * 30;
-const MAX_PERSISTED_WORKSPACE_SESSIONS = 200;
 
-let selectedWorkspace = isDevelopment ? process.cwd() : null;
-let nativeBinding = null;
-const workspaceSessions = new Map();
-let workspaceSessionsLoaded = false;
-
-protocol.registerSchemesAsPrivileged([
-	{
-		scheme: 'sprocket',
-		privileges: {
-			standard: true,
-			secure: true,
-			supportFetchAPI: true,
-			allowServiceWorkers: true
-		}
-	}
-]);
+let serverProcess = null;
+let serverBaseUrl = null;
+let serverPairingCredential = null;
 
 function getEnvFileCandidates() {
 	const candidates = isDevelopment
@@ -68,225 +55,140 @@ function loadRuntimeEnv() {
 	}
 }
 
-function getNativeEntryPath() {
+function getServerBinaryPath() {
 	return isDevelopment
-		? path.resolve(__dirname, '../../packages/native/index.js')
-		: path.join(__dirname, 'native', 'index.js');
+		? path.resolve(__dirname, '../../target/debug/sprocket')
+		: path.join(__dirname, 'server/sprocket');
 }
 
-function getNativeBinding() {
-	loadRuntimeEnv();
+function waitForServerReady(baseUrl, timeoutMs = 30_000) {
+	const startedAt = Date.now();
 
-	if (nativeBinding) {
-		return nativeBinding;
+	return new Promise((resolve, reject) => {
+		const poll = async () => {
+			try {
+				const response = await fetch(`${baseUrl}/api/health`);
+				if (response.ok) {
+					resolve(undefined);
+					return;
+				}
+			} catch {
+				// Server is still starting.
+			}
+
+			if (Date.now() - startedAt > timeoutMs) {
+				reject(new Error('Timed out waiting for the Sprocket local server.'));
+				return;
+			}
+
+			setTimeout(() => {
+				void poll();
+			}, 200);
+		};
+
+		void poll();
+	});
+}
+
+async function startLocalServer() {
+	if (serverBaseUrl) {
+		return serverBaseUrl;
 	}
 
-	const entryPath = getNativeEntryPath();
-	nativeBinding = require(entryPath);
-	return nativeBinding;
+	const port = serverPort;
+	const host = serverHost;
+	const dataDir = isDevelopment
+		? path.resolve(__dirname, '../../.sprocket-dev')
+		: app.getPath('userData');
+	const serverBinary = getServerBinaryPath();
+	const staticDir = isDevelopment ? undefined : path.join(__dirname, 'web/dist');
+	const args = [
+		'serve',
+		'--quiet',
+		'--api-only',
+		'--host',
+		host,
+		'--port',
+		String(port),
+		'--data-dir',
+		dataDir
+	];
+
+	serverProcess = spawn(serverBinary, args, {
+		env: {
+			...process.env,
+			SPROCKET_HOST: host,
+			SPROCKET_PORT: String(port),
+			SPROCKET_DATA_DIR: dataDir,
+			...(staticDir ? { SPROCKET_STATIC_DIR: staticDir } : {})
+		},
+		stdio: ['ignore', 'pipe', 'inherit']
+	});
+
+	serverProcess.stdout?.on('data', (chunk) => {
+		const text = chunk.toString();
+		process.stdout.write(text);
+		const match = text.match(/SPROCKET_LISTENING=(.+)/);
+		if (match?.[1]) {
+			serverBaseUrl = match[1].trim();
+		}
+	});
+
+	serverProcess.on('exit', (code, signal) => {
+		if (signal) {
+			console.warn(`Sprocket local server exited via signal ${signal}`);
+			return;
+		}
+
+		if (code && code !== 0) {
+			console.error(`Sprocket local server exited with code ${code}`);
+		}
+	});
+
+	const fallbackBaseUrl = `http://${host}:${port}`;
+	await waitForServerReady(fallbackBaseUrl);
+	serverBaseUrl ??= fallbackBaseUrl;
+
+	const bootstrapResponse = await fetch(`${serverBaseUrl}/api/auth/desktop-bootstrap`);
+	if (!bootstrapResponse.ok) {
+		throw new Error('Failed to load desktop bootstrap details from the local server.');
+	}
+
+	const bootstrap = await bootstrapResponse.json();
+	serverPairingCredential = bootstrap.pairingCredential;
+	serverBaseUrl = bootstrap.httpBaseUrl ?? serverBaseUrl;
+
+	return serverBaseUrl;
 }
 
-function normalizeWorkspaceSessionState(input) {
-	return {
-		workspaceSessionId: input.workspaceSessionId,
-		workspacePath: input.workspacePath,
-		availability: input.availability === 'unavailable' ? 'unavailable' : 'available',
-		lastValidatedAt: typeof input.lastValidatedAt === 'number' ? input.lastValidatedAt : Date.now(),
-		lastUsedAt: typeof input.lastUsedAt === 'number' ? input.lastUsedAt : 0,
-		...(typeof input.unavailableReason === 'string'
-			? { unavailableReason: input.unavailableReason }
-			: {})
-	};
-}
-
-function getWorkspaceSessionsStorePath() {
-	return path.join(app.getPath('userData'), 'workspace-sessions.json');
-}
-
-function loadWorkspaceSessionsFromDisk() {
-	if (workspaceSessionsLoaded) {
+function stopLocalServer() {
+	if (!serverProcess || serverProcess.killed) {
 		return;
 	}
 
-	workspaceSessionsLoaded = true;
+	serverProcess.kill();
+	serverProcess = null;
+}
 
-	try {
-		const storePath = getWorkspaceSessionsStorePath();
-		if (!fs.existsSync(storePath)) {
+async function loadRendererWhenReady(mainWindow, targetUrl, timeoutMs = 60_000) {
+	const startedAt = Date.now();
+
+	while (Date.now() - startedAt < timeoutMs) {
+		try {
+			await mainWindow.loadURL(targetUrl);
 			return;
-		}
-
-		const contents = fs.readFileSync(storePath, 'utf8');
-		const storedSessions = JSON.parse(contents);
-		if (!Array.isArray(storedSessions)) {
-			return;
-		}
-
-		for (const entry of storedSessions) {
-			if (
-				!entry ||
-				typeof entry.workspaceSessionId !== 'string' ||
-				typeof entry.workspacePath !== 'string'
-			) {
-				continue;
+		} catch (error) {
+			if (Date.now() - startedAt > timeoutMs - 500) {
+				throw error;
 			}
 
-			workspaceSessions.set(
-				entry.workspaceSessionId,
-				normalizeWorkspaceSessionState({
-					workspaceSessionId: entry.workspaceSessionId,
-					workspacePath: entry.workspacePath,
-					availability: entry.availability,
-					lastValidatedAt: entry.lastValidatedAt,
-					lastUsedAt: entry.lastUsedAt,
-					unavailableReason: entry.unavailableReason
-				})
-			);
+			await new Promise((resolve) => {
+				setTimeout(resolve, 500);
+			});
 		}
-
-		refreshWorkspaceSessions();
-	} catch (error) {
-		console.warn('Failed to load workspace sessions from disk', error);
-	}
-}
-
-function saveWorkspaceSessionsToDisk() {
-	loadWorkspaceSessionsFromDisk();
-	pruneWorkspaceSessions();
-
-	try {
-		const storePath = getWorkspaceSessionsStorePath();
-		fs.mkdirSync(path.dirname(storePath), { recursive: true });
-		fs.writeFileSync(storePath, JSON.stringify([...workspaceSessions.values()], null, 2), 'utf8');
-	} catch (error) {
-		console.warn('Failed to save workspace sessions to disk', error);
-	}
-}
-
-function getErrorMessage(error) {
-	return error instanceof Error ? error.message : 'Unknown workspace error.';
-}
-
-function getWorkspaceOverviewForPath(workspacePath) {
-	const nativeBinding = getNativeBinding();
-	const overview = nativeBinding.getWorkspaceOverview(workspacePath);
-	if (!overview?.rootPath) {
-		throw new Error('Failed to resolve workspace path.');
 	}
 
-	return overview;
-}
-
-function validateWorkspaceSessionState(workspaceSession) {
-	try {
-		const overview = getWorkspaceOverviewForPath(workspaceSession.workspacePath);
-		return {
-			session: normalizeWorkspaceSessionState({
-				...workspaceSession,
-				workspacePath: overview.rootPath,
-				availability: 'available',
-				lastValidatedAt: Date.now(),
-				unavailableReason: undefined
-			}),
-			overview
-		};
-	} catch (error) {
-		return {
-			session: normalizeWorkspaceSessionState({
-				...workspaceSession,
-				availability: 'unavailable',
-				lastValidatedAt: Date.now(),
-				unavailableReason: getErrorMessage(error)
-			}),
-			error
-		};
-	}
-}
-
-function refreshWorkspaceSessions() {
-	let didChange = false;
-
-	for (const [workspaceSessionId, workspaceSession] of workspaceSessions) {
-		const { session } = validateWorkspaceSessionState(workspaceSession);
-		if (JSON.stringify(session) === JSON.stringify(workspaceSession)) {
-			continue;
-		}
-
-		workspaceSessions.set(workspaceSessionId, session);
-		didChange = true;
-	}
-
-	if (didChange) {
-		saveWorkspaceSessionsToDisk();
-	}
-}
-
-function pruneWorkspaceSessions(now = Date.now()) {
-	const sessions = [...workspaceSessions.values()]
-		.filter((workspaceSession) => {
-			if (workspaceSession.availability === 'available') {
-				return true;
-			}
-
-			return now - workspaceSession.lastValidatedAt < STALE_UNAVAILABLE_WORKSPACE_MS;
-		})
-		.sort((left, right) => right.lastUsedAt - left.lastUsedAt)
-		.slice(0, MAX_PERSISTED_WORKSPACE_SESSIONS);
-
-	workspaceSessions.clear();
-	for (const workspaceSession of sessions) {
-		workspaceSessions.set(workspaceSession.workspaceSessionId, workspaceSession);
-	}
-}
-
-function attachWorkspaceSession(input) {
-	loadWorkspaceSessionsFromDisk();
-
-	const { session, error } = validateWorkspaceSessionState({
-		workspaceSessionId: input.workspaceSessionId,
-		workspacePath: input.workspacePath,
-		availability: 'available',
-		lastUsedAt: Date.now(),
-		lastValidatedAt: Date.now()
-	});
-	workspaceSessions.set(session.workspaceSessionId, session);
-	saveWorkspaceSessionsToDisk();
-
-	if (error) {
-		throw error;
-	}
-
-	selectedWorkspace = session.workspacePath;
-	return session;
-}
-
-function getWorkspaceSessionOrThrow(workspaceSessionId) {
-	loadWorkspaceSessionsFromDisk();
-
-	const workspaceSession = workspaceSessions.get(workspaceSessionId);
-	if (!workspaceSession) {
-		throw new Error('Workspace path is unavailable. Re-open this workspace in the desktop app.');
-	}
-
-	return workspaceSession;
-}
-
-function getAttachedWorkspaceStateOrThrow(workspaceSessionId) {
-	const workspaceSession = getWorkspaceSessionOrThrow(workspaceSessionId);
-	const { session, overview, error } = validateWorkspaceSessionState(workspaceSession);
-	session.lastUsedAt = Date.now();
-	workspaceSessions.set(workspaceSessionId, session);
-	saveWorkspaceSessionsToDisk();
-
-	if (error || !overview) {
-		throw new Error(session.unavailableReason ?? 'Workspace path is unavailable.');
-	}
-
-	selectedWorkspace = session.workspacePath;
-	return {
-		workspaceSession: session,
-		overview
-	};
+	throw new Error(`Timed out waiting for the renderer at ${targetUrl}.`);
 }
 
 function createMainWindow() {
@@ -321,78 +223,35 @@ function createMainWindow() {
 		console.log(`[renderer:${label}] ${sourceId}:${line} ${message}`);
 	});
 
-	if (isDevelopment) {
-		void mainWindow.loadURL(rendererUrl);
-		mainWindow.webContents.openDevTools({ mode: 'detach' });
-		return;
-	}
+	const targetUrl = isDevelopment ? devRendererUrl : `http://${serverHost}:${serverPort}`;
 
-	void mainWindow.loadURL('sprocket://app/');
+	void loadRendererWhenReady(mainWindow, targetUrl);
+	if (isDevelopment) {
+		mainWindow.webContents.openDevTools({ mode: 'detach' });
+	}
 }
 
-ipcMain.handle('sprocket:choose-workspace', async () => {
-	const result = await dialog.showOpenDialog({
-		properties: ['openDirectory'],
-		defaultPath: selectedWorkspace ?? app.getPath('home')
-	});
-
-	if (!result.canceled && result.filePaths[0]) {
-		const overview = getWorkspaceOverviewForPath(result.filePaths[0]);
-		selectedWorkspace = overview.rootPath;
-		return overview;
+ipcMain.handle('sprocket:get-local-bootstrap', () => {
+	if (!serverBaseUrl || !serverPairingCredential) {
+		throw new Error('Local server bootstrap is unavailable.');
 	}
 
-	return null;
+	return {
+		httpBaseUrl: serverBaseUrl,
+		pairingCredential: serverPairingCredential
+	};
 });
 
-ipcMain.handle('sprocket:list-workspace-sessions', () => {
-	loadWorkspaceSessionsFromDisk();
-	return [...workspaceSessions.values()];
-});
-
-ipcMain.handle('sprocket:attach-workspace-session', async (_event, session) => {
-	return attachWorkspaceSession(session);
-});
-
-ipcMain.handle('sprocket:get-workspace-session-overview', async (_event, workspaceSessionId) => {
-	return getAttachedWorkspaceStateOrThrow(workspaceSessionId).overview;
-});
-
-ipcMain.handle('sprocket:run-agent', async (_event, request) => {
-	const nativeBinding = getNativeBinding();
-	const { workspaceSession } = getAttachedWorkspaceStateOrThrow(request.workspaceSessionId);
-
-	return await nativeBinding.runAgent({
-		...request,
-		workspacePath: workspaceSession.workspacePath
-	});
-});
-
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
 	Menu.setApplicationMenu(null);
 	loadRuntimeEnv();
-	loadWorkspaceSessionsFromDisk();
 
-	if (!isDevelopment) {
-		const webDistDir = path.join(__dirname, 'web/dist');
-
-		protocol.handle('sprocket', (request) => {
-			const url = new URL(request.url);
-			if (url.hostname !== 'app') {
-				return new Response('Not Found', { status: 404 });
-			}
-
-			let pathname = url.pathname;
-			if (pathname === '/' || pathname === '') {
-				pathname = '/index.html';
-			}
-
-			const filePath = path.join(webDistDir, pathname);
-
-			return net.fetch(pathToFileURL(filePath).toString()).catch(() => {
-				return net.fetch(pathToFileURL(path.join(webDistDir, 'index.html')).toString());
-			});
-		});
+	try {
+		await startLocalServer();
+	} catch (error) {
+		console.error('Failed to start Sprocket local server', error);
+		app.quit();
+		return;
 	}
 
 	createMainWindow();
@@ -408,4 +267,8 @@ app.on('window-all-closed', () => {
 	if (process.platform !== 'darwin') {
 		app.quit();
 	}
+});
+
+app.on('before-quit', () => {
+	stopLocalServer();
 });

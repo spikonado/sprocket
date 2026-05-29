@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 	import { PUBLIC_CONVEX_URL } from '$env/static/public';
 	import { useConvexClient, useQuery } from 'convex-svelte';
 	import type { Id } from '$convex/_generated/dataModel';
@@ -8,6 +9,7 @@
 	import { authState, getAccessToken, signIn, signOut } from '$lib/auth';
 	import PromptComposer from '$lib/components/home/prompt-composer.svelte';
 	import ThreadTranscript from '$lib/components/home/thread-transcript.svelte';
+	import WorkspacePicker from '$lib/components/home/workspace-picker.svelte';
 	import WorkspaceSidebar from '$lib/components/home/workspace-sidebar.svelte';
 	import {
 		attachLocalWorkspaceSession as attachLocalWorkspaceSessionForPath,
@@ -30,25 +32,29 @@
 		getAttachedWorkspaceSessionIds,
 		getWorkspaceThreadGroups,
 		findThreadById,
+		findWorkspaceSessionByName,
 		resolveWorkspaceThreadSelection
 	} from '$lib/workspace/threads';
+	import { resolveDesktopApi } from '$lib/local/client';
+	import { resolve } from '$app/paths';
 	import type {
 		DesktopApi,
 		ThreadMessage,
 		ThreadSummary,
+		WorkspaceOverview,
 		WorkspaceSession,
 		WorkspaceSessionLocation,
 		WorkspaceThreadGroup
 	} from '$lib/types/sprocket';
 
 	const convexClient = useConvexClient();
-	const desktopShellRequiredMessage =
-		'Sprocket must be opened from the native app. Browser mode is disabled.';
+	const localServerRequiredMessage =
+		'Connect to a running Sprocket local server to use this workspace.';
 
 	let desktopApi = $state<DesktopApi | null>(null);
-	let currentWorkspaceSessionId = $state<Id<'workspaceSessions'> | null>(null);
+	let currentWorkspaceName = $state<string | null>(null);
 	let currentThreadId = $state<Id<'threadRecords'> | null>(null);
-	let draftWorkspaceSessionId = $state<Id<'workspaceSessions'> | null>(null);
+	let draftWorkspaceName = $state<string | null>(null);
 	let selectedModel = $state<SupportedModelId>(defaultModelId);
 	let selectedReasoningEffort = $state<SupportedReasoningEffort>(defaultReasoningEffort);
 	let prompt = $state('');
@@ -64,7 +70,10 @@
 	let restoredWorkspaceSessionIdToAttach = $state<Id<'workspaceSessions'> | null>(null);
 	let lastSavedThreadId = $state<Id<'threadRecords'> | null>(null);
 	let desktopWorkspaceSessionsById = $state<Record<string, WorkspaceSessionLocation>>({});
-
+	let workspacePickerOpen = $state(false);
+	let workspacePickerMode = $state<'add' | 'reconnect'>('add');
+	let workspacePickerExpectedName = $state<string | undefined>(undefined);
+	let workspacePickerReconnectSessionId = $state<Id<'workspaceSessions'> | null>(null);
 	function getViewerArgs() {
 		return getViewerArgsForUser($authState.user, guestSessionId);
 	}
@@ -121,20 +130,22 @@
 	const threads = $derived((threadsQuery.data ?? []) as ThreadSummary[]);
 
 	const currentWorkspaceSession = $derived.by<WorkspaceSessionState | null>(() => {
-		if (!currentWorkspaceSessionId) {
+		if (!currentWorkspaceName) {
 			return null;
 		}
 
-		return workspaceSessions.find((session) => session._id === currentWorkspaceSessionId) ?? null;
+		return findWorkspaceSessionByName(workspaceSessions, currentWorkspaceName);
 	});
 
+	const currentWorkspaceSessionId = $derived(currentWorkspaceSession?._id ?? null);
+
 	const currentWorkspaceThreads = $derived.by<ThreadSummary[]>(() => {
-		if (!currentWorkspaceSessionId) {
+		if (!currentWorkspaceName) {
 			return [];
 		}
 
 		return threads
-			.filter((thread) => thread.workspaceSessionId === currentWorkspaceSessionId)
+			.filter((thread) => thread.workspaceName === currentWorkspaceName)
 			.sort((left, right) => right.lastMessageAt - left.lastMessageAt);
 	});
 
@@ -164,19 +175,39 @@
 	const attachedWorkspaceSessionIdsKey = $derived.by(() =>
 		[...attachedWorkspaceSessionIds].sort().join('\0')
 	);
+	const recentWorkspaceDirectories = $derived.by(() => {
+		const seen = new SvelteSet<string>();
+		const recents: Array<{ workspacePath: string; workspaceName: string }> = [];
+
+		for (const session of Object.values(desktopWorkspaceSessionsById)) {
+			if (session.availability !== 'available' || seen.has(session.workspacePath)) {
+				continue;
+			}
+
+			seen.add(session.workspacePath);
+			const workspaceName =
+				session.workspacePath.split(/[/\\]/).filter(Boolean).at(-1) ?? session.workspacePath;
+			recents.push({
+				workspacePath: session.workspacePath,
+				workspaceName
+			});
+		}
+
+		return recents.sort((left, right) => right.workspaceName.localeCompare(left.workspaceName));
+	});
 
 	async function refreshDesktopWorkspaceSessions() {
 		desktopWorkspaceSessionsById = await refreshDesktopWorkspaceSessionsFromDesktop(desktopApi);
 	}
 
 	function setWorkspaceSelection(
-		workspaceSessionId: Id<'workspaceSessions'>,
+		workspaceName: string,
 		threadId: Id<'threadRecords'> | null = null,
 		draft: boolean = false
 	) {
-		currentWorkspaceSessionId = workspaceSessionId;
+		currentWorkspaceName = workspaceName;
 		currentThreadId = threadId;
-		draftWorkspaceSessionId = draft ? workspaceSessionId : null;
+		draftWorkspaceName = draft ? workspaceName : null;
 	}
 
 	async function attachLocalWorkspaceSession(
@@ -184,7 +215,7 @@
 		workspacePath: string
 	) {
 		if (!desktopApi) {
-			throw new Error(desktopShellRequiredMessage);
+			throw new Error(localServerRequiredMessage);
 		}
 
 		const session = await attachLocalWorkspaceSessionForPath({
@@ -210,25 +241,62 @@
 	}
 
 	async function openWorkspaceSession(
-		workspaceSessionId: Id<'workspaceSessions'>,
+		workspaceName: string,
 		selection: { threadId?: Id<'threadRecords'> | null; draft?: boolean } = {}
 	) {
-		await attachWorkspaceSession(workspaceSessionId);
-		setWorkspaceSelection(workspaceSessionId, selection.threadId, selection.draft);
+		const workspaceSession = findWorkspaceSessionByName(workspaceSessions, workspaceName);
+		if (!workspaceSession) {
+			currentError = 'Choose a workspace first.';
+			return;
+		}
+
+		await attachWorkspaceSession(workspaceSession._id);
+		setWorkspaceSelection(workspaceName, selection.threadId, selection.draft);
 		currentError = null;
 	}
 
-	async function chooseWorkspace() {
+	function openWorkspacePicker(
+		mode: 'add' | 'reconnect' = 'add',
+		workspaceSessionId: Id<'workspaceSessions'> | null = null
+	) {
 		if (!desktopApi || !executorClientId) {
-			currentError = desktopShellRequiredMessage;
+			currentError = localServerRequiredMessage;
+			return;
+		}
+
+		workspacePickerMode = mode;
+		workspacePickerReconnectSessionId = workspaceSessionId;
+		workspacePickerExpectedName =
+			mode === 'reconnect' && workspaceSessionId
+				? workspaceSessions.find((session) => session._id === workspaceSessionId)?.workspaceName
+				: undefined;
+		workspacePickerOpen = true;
+		currentError = null;
+	}
+
+	async function handleWorkspaceSelected(overview: WorkspaceOverview) {
+		if (!desktopApi || !executorClientId) {
+			currentError = localServerRequiredMessage;
 			return;
 		}
 
 		try {
-			const overview = await desktopApi.chooseWorkspace();
-			if (!overview) {
+			if (workspacePickerMode === 'reconnect' && workspacePickerReconnectSessionId) {
+				const reconnectSession = workspaceSessions.find(
+					(session) => session._id === workspacePickerReconnectSessionId
+				);
+				if (!reconnectSession) {
+					currentError = 'Workspace session not found.';
+					return;
+				}
+
+				await attachLocalWorkspaceSession(workspacePickerReconnectSessionId, overview.rootPath);
+				await attachWorkspaceSession(workspacePickerReconnectSessionId);
+				setWorkspaceSelection(reconnectSession.workspaceName, currentThreadId);
+				currentError = null;
 				return;
 			}
+
 			const session = (await convexClient.mutation(api.workspaceSessions.upsertSelected, {
 				...getViewerArgs(),
 				workspaceName: overview.name,
@@ -236,10 +304,11 @@
 			})) as WorkspaceSelectionResult;
 			await attachLocalWorkspaceSession(session._id, overview.rootPath);
 			await syncAttachedWorkspaceSessions([session._id]);
-			setWorkspaceSelection(session._id, null, true);
+			setWorkspaceSelection(overview.name, null, true);
 			currentError = null;
 		} catch (error) {
 			currentError = error instanceof Error ? error.message : 'Failed to attach workspace.';
+			throw error;
 		}
 	}
 
@@ -255,39 +324,8 @@
 		});
 	}
 
-	async function reconnectWorkspaceSession(workspaceSessionId: Id<'workspaceSessions'>) {
-		if (!desktopApi || !executorClientId) {
-			currentError = desktopShellRequiredMessage;
-			return;
-		}
-
-		const workspaceSession = workspaceSessions.find(
-			(session) => session._id === workspaceSessionId
-		);
-		if (!workspaceSession) {
-			currentError = 'Workspace session not found.';
-			return;
-		}
-
-		try {
-			const overview = await desktopApi.chooseWorkspace();
-			if (!overview) {
-				return;
-			}
-
-			if (overview.name !== workspaceSession.workspaceName) {
-				currentError = `Selected workspace must be named "${workspaceSession.workspaceName}" to reconnect this project.`;
-				return;
-			}
-
-			await attachLocalWorkspaceSession(workspaceSessionId, overview.rootPath);
-			await attachWorkspaceSession(workspaceSessionId);
-			setWorkspaceSelection(workspaceSessionId, currentThreadId);
-			currentError = null;
-		} catch (error) {
-			await refreshDesktopWorkspaceSessions();
-			currentError = error instanceof Error ? error.message : 'Failed to reconnect workspace.';
-		}
+	function reconnectWorkspaceSession(workspaceSessionId: Id<'workspaceSessions'>) {
+		openWorkspacePicker('reconnect', workspaceSessionId);
 	}
 
 	async function createThread() {
@@ -304,13 +342,13 @@
 			reasoningEffort: selectedReasoningEffort
 		});
 		currentThreadId = result.threadId;
-		draftWorkspaceSessionId = null;
+		draftWorkspaceName = null;
 		return result.threadId;
 	}
 
-	async function startThreadDraftForWorkspace(workspaceSessionId: Id<'workspaceSessions'>) {
+	async function startThreadDraftForWorkspace(workspaceName: string) {
 		try {
-			await openWorkspaceSession(workspaceSessionId, { draft: true });
+			await openWorkspaceSession(workspaceName, { draft: true });
 			return null;
 		} catch (error) {
 			currentError = error instanceof Error ? error.message : 'Failed to open thread draft.';
@@ -320,7 +358,7 @@
 
 	async function selectThread(thread: ThreadSummary) {
 		try {
-			await openWorkspaceSession(thread.workspaceSessionId, { threadId: thread.threadId });
+			await openWorkspaceSession(thread.workspaceName, { threadId: thread.threadId });
 		} catch (error) {
 			currentError = error instanceof Error ? error.message : 'Failed to attach workspace.';
 		}
@@ -371,7 +409,7 @@
 		}
 
 		if (!desktopApi) {
-			currentError = desktopShellRequiredMessage;
+			currentError = localServerRequiredMessage;
 			return;
 		}
 
@@ -462,14 +500,16 @@
 		hasResolvedInitialSelection = true;
 		const restoredThread = findThreadById(threads, uiPreferences?.lastThreadId ?? null);
 		if (restoredThread) {
-			setWorkspaceSelection(restoredThread.workspaceSessionId, restoredThread.threadId);
-			restoredWorkspaceSessionIdToAttach = restoredThread.workspaceSessionId;
+			setWorkspaceSelection(restoredThread.workspaceName, restoredThread.threadId);
+			restoredWorkspaceSessionIdToAttach =
+				findWorkspaceSessionByName(workspaceSessions, restoredThread.workspaceName)?._id ??
+				restoredThread.workspaceSessionId;
 			lastSavedThreadId = restoredThread.threadId;
 			return;
 		}
 
 		if (workspaceSessions[0]) {
-			setWorkspaceSelection(workspaceSessions[0]._id, null, false);
+			setWorkspaceSelection(workspaceSessions[0].workspaceName, null, false);
 		}
 	});
 
@@ -498,30 +538,30 @@
 	});
 
 	$effect(() => {
-		const activeThread = activeThreadQuery.data;
+		const activeThreadSummary = currentThreadId ? findThreadById(threads, currentThreadId) : null;
 		if (
-			activeThread?.workspaceSessionId &&
-			activeThread.workspaceSessionId !== currentWorkspaceSessionId
+			activeThreadSummary?.workspaceName &&
+			activeThreadSummary.workspaceName !== currentWorkspaceName
 		) {
 			setWorkspaceSelection(
-				activeThread.workspaceSessionId,
+				activeThreadSummary.workspaceName,
 				currentThreadId,
-				draftWorkspaceSessionId === activeThread.workspaceSessionId
+				draftWorkspaceName === activeThreadSummary.workspaceName
 			);
 		}
 	});
 
 	$effect(() => {
 		const threads = currentWorkspaceThreads;
-		if (!hasResolvedInitialSelection || !currentWorkspaceSessionId) {
+		if (!hasResolvedInitialSelection || !currentWorkspaceName) {
 			return;
 		}
 
 		const nextThreadId = resolveWorkspaceThreadSelection({
 			threads,
 			currentThreadId,
-			currentWorkspaceSessionId,
-			draftWorkspaceSessionId
+			currentWorkspaceName,
+			draftWorkspaceName
 		});
 		if (nextThreadId === currentThreadId) {
 			return;
@@ -599,7 +639,6 @@
 	});
 
 	onMount(() => {
-		desktopApi = window.sprocketDesktop ?? null;
 		executorClientId = crypto.randomUUID();
 		const persistedGuestSessionId: string | null = localStorage.getItem(
 			'sprocket.guest-session-id'
@@ -608,15 +647,16 @@
 		if (!persistedGuestSessionId) {
 			localStorage.setItem('sprocket.guest-session-id', guestSessionId);
 		}
-		if (!desktopApi) {
-			currentError = desktopShellRequiredMessage;
-			return;
-		}
 
-		void refreshDesktopWorkspaceSessions().catch((error) => {
-			currentError =
-				error instanceof Error ? error.message : 'Failed to load local workspace sessions.';
-		});
+		void resolveDesktopApi()
+			.then(async (client) => {
+				desktopApi = client;
+				await refreshDesktopWorkspaceSessions();
+			})
+			.catch((error) => {
+				currentError =
+					error instanceof Error ? error.message : 'Failed to connect to the local server.';
+			});
 	});
 </script>
 
@@ -631,8 +671,17 @@
 		<div
 			class="w-full max-w-lg rounded-4xl border border-white/8 bg-[linear-gradient(180deg,rgba(33,33,36,0.96),rgba(24,24,27,0.98))] p-8 shadow-[0_28px_80px_rgba(0,0,0,0.34)]"
 		>
-			<h1 class="mt-3 text-2xl font-medium tracking-tight text-white">Browser App Disabled</h1>
-			<p class="mt-3 text-sm leading-6 text-slate-300">Please use Sprocket's native app</p>
+			<h1 class="mt-3 text-2xl font-medium tracking-tight text-white">Connect to Sprocket</h1>
+			<p class="mt-3 text-sm leading-6 text-slate-300">
+				{currentError ??
+					'Pair this browser tab with your running Sprocket local server to continue.'}
+			</p>
+			<a
+				class="mt-6 inline-flex rounded-2xl bg-white px-4 py-3 text-sm font-medium text-black transition hover:bg-slate-100"
+				href={resolve('/pair')}
+			>
+				Open pairing
+			</a>
 		</div>
 	</div>
 {:else}
@@ -642,10 +691,12 @@
 		>
 			<WorkspaceSidebar
 				isAuthenticated={Boolean($authState.user)}
-				{currentWorkspaceSessionId}
+				{currentWorkspaceName}
 				{currentThreadId}
 				groups={groupedWorkspaceThreads}
-				onChooseWorkspace={chooseWorkspace}
+				onChooseWorkspace={() => {
+					openWorkspacePicker('add');
+				}}
 				onReconnectWorkspace={(workspaceSessionId) => {
 					void reconnectWorkspaceSession(workspaceSessionId);
 				}}
@@ -656,8 +707,8 @@
 					}
 					void signIn();
 				}}
-				onStartThreadDraft={(workspaceSessionId) => {
-					void startThreadDraftForWorkspace(workspaceSessionId);
+				onStartThreadDraft={(workspaceName) => {
+					void startThreadDraftForWorkspace(workspaceName);
 				}}
 				onSelectThread={(thread) => {
 					void selectThread(thread);
@@ -696,11 +747,11 @@
 								class="rounded-full border border-white/8 bg-white/3 px-3.5 py-1.5 text-[13px] text-slate-200 transition hover:border-white/12 hover:bg-white/6 hover:text-white"
 								onclick={() => {
 									if (currentWorkspaceSession.localWorkspaceAvailability === 'available') {
-										void chooseWorkspace();
+										openWorkspacePicker('add');
 										return;
 									}
 
-									void reconnectWorkspaceSession(currentWorkspaceSession._id);
+									reconnectWorkspaceSession(currentWorkspaceSession._id);
 								}}
 							>
 								{currentWorkspaceSession.localWorkspaceAvailability === 'available'
@@ -736,5 +787,27 @@
 				/>
 			</main>
 		</div>
+
+		{#if desktopApi && workspacePickerOpen}
+			<WorkspacePicker
+				open={workspacePickerOpen}
+				{desktopApi}
+				mode={workspacePickerMode}
+				expectedWorkspaceName={workspacePickerExpectedName}
+				recentWorkspaces={recentWorkspaceDirectories}
+				onClose={() => {
+					workspacePickerOpen = false;
+					workspacePickerReconnectSessionId = null;
+					workspacePickerExpectedName = undefined;
+				}}
+				onSelect={async (overview) => {
+					try {
+						await handleWorkspaceSelected(overview);
+					} catch {
+						await refreshDesktopWorkspaceSessions();
+					}
+				}}
+			/>
+		{/if}
 	</div>
 {/if}
