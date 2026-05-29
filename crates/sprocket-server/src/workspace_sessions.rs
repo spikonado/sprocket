@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -146,10 +145,11 @@ impl WorkspaceSessionStore {
             return Ok(());
         }
 
-        fs::create_dir_all(&self.data_dir)?;
+        tokio::fs::create_dir_all(&self.data_dir).await?;
         let store_path = self.data_dir.join(WORKSPACE_SESSIONS_FILE);
-        if store_path.exists() {
-            let contents = fs::read_to_string(&store_path)
+        if tokio::fs::try_exists(&store_path).await? {
+            let contents = tokio::fs::read_to_string(&store_path)
+                .await
                 .with_context(|| format!("failed to read {}", store_path.display()))?;
             let stored: Vec<WorkspaceSessionRecord> = serde_json::from_str(&contents)
                 .with_context(|| "failed to parse workspace sessions")?;
@@ -196,9 +196,11 @@ impl WorkspaceSessionStore {
     async fn save_to_disk(&self) -> Result<()> {
         self.prune().await;
         let store_path = self.data_dir.join(WORKSPACE_SESSIONS_FILE);
-        let sessions = self.sessions.read().await;
-        let payload = serde_json::to_string_pretty(&sessions.values().collect::<Vec<_>>())?;
-        fs::write(store_path, payload)?;
+        let payload = {
+            let sessions = self.sessions.read().await;
+            serde_json::to_string_pretty(&sessions.values().collect::<Vec<_>>())?
+        };
+        tokio::fs::write(store_path, payload).await?;
         Ok(())
     }
 

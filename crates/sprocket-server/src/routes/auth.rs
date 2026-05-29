@@ -1,7 +1,5 @@
-use std::net::SocketAddr;
-
 use axum::Json;
-use axum::extract::{ConnectInfo, State};
+use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -76,13 +74,8 @@ async fn local_identity(
 
 async fn desktop_bootstrap(
     State(state): State<AppState>,
-    ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> Result<Json<DesktopBootstrapResponse>, ApiError> {
-    if peer_addr.ip().is_loopback() {
-        return Ok(desktop_bootstrap_response(&state));
-    }
-
     let Some(desktop_bootstrap_token) = &state.desktop_bootstrap_token else {
         return Err(ApiError::unauthorized());
     };

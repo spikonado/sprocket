@@ -9,6 +9,7 @@ import type { ActionCtx } from '@convex/_generated/server';
 
 const signedInHourlyModelCompletionLimit = 300;
 const guestHourlyModelCompletionLimit = 80;
+const globalGuestHourlyModelCompletionLimit = 80;
 
 const rateLimitConfigs = {
 	signedInModelCompletion: {
@@ -20,6 +21,11 @@ const rateLimitConfigs = {
 		kind: 'fixed window',
 		period: HOUR,
 		rate: guestHourlyModelCompletionLimit
+	},
+	globalGuestModelCompletion: {
+		kind: 'fixed window',
+		period: HOUR,
+		rate: globalGuestHourlyModelCompletionLimit
 	}
 } satisfies Record<string, RateLimitConfig>;
 
@@ -76,5 +82,11 @@ export async function enforceGuestModelCompletionLimit(
 	ctx: ActionCtx,
 	userId: string
 ): Promise<void> {
+	await enforceLimit(
+		ctx,
+		'globalGuestModelCompletion',
+		'all-guests',
+		'Global guest model completion limit'
+	);
 	await enforceLimit(ctx, 'guestModelCompletion', userId, 'Guest model completion limit');
 }

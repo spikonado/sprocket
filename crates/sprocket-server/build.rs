@@ -17,6 +17,9 @@ fn main() {
 
     let mut generated = String::from("pub const COMPILE_TIME_ENV: &[(&str, &str)] = &[\n");
     for (key, value) in entries {
+        if !key.starts_with("PUBLIC_") {
+            continue;
+        }
         generated.push_str("    (");
         generated.push_str(&format!("{key:?}"));
         generated.push_str(", ");

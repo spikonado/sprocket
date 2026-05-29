@@ -225,7 +225,7 @@ export const updateAssistantMessage = mutation({
 		guestId: v.optional(v.string()),
 		runId: v.id('runs'),
 		text: v.string(),
-		parts: v.array(vAssistantMessagePart)
+		parts: v.optional(v.array(vAssistantMessagePart))
 	},
 	handler: async (ctx, args): Promise<void> => {
 		const userId: string = await getUserId(ctx, args.guestId);
@@ -235,12 +235,16 @@ export const updateAssistantMessage = mutation({
 		}
 		await ctx.db.patch(run.responseMessageId, {
 			text: args.text,
-			parts: args.parts.filter((part) => {
-				if (part.type === 'text' || part.type === 'reasoning') {
-					return part.text.trim().length > 0;
-				}
-				return true;
-			})
+			...(args.parts
+				? {
+						parts: args.parts.filter((part) => {
+							if (part.type === 'text' || part.type === 'reasoning') {
+								return part.text.trim().length > 0;
+							}
+							return true;
+						})
+					}
+				: {})
 		});
 	}
 });

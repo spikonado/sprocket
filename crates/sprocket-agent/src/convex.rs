@@ -117,7 +117,6 @@ impl RuntimeClient {
     ) -> anyhow::Result<()> {
         let mut args = self.run_args(run_id);
         args.insert("text".to_string(), text.to_string().into());
-        args.insert("parts".to_string(), Value::Array(Vec::new()));
         self.mutation_unit("agentRuntime:updateAssistantMessage", args)
             .await
     }
