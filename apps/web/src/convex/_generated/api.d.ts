@@ -16,6 +16,7 @@ import type * as completion from '../completion.js';
 import type * as executor from '../executor.js';
 import type * as http from '../http.js';
 import type * as lib_access from '../lib/access.js';
+import type * as lib_agentErrors from '../lib/agentErrors.js';
 import type * as lib_agentHistory from '../lib/agentHistory.js';
 import type * as lib_auth from '../lib/auth.js';
 import type * as lib_guestIdentity from '../lib/guestIdentity.js';
@@ -42,6 +43,7 @@ declare const fullApi: ApiFromModules<{
 	executor: typeof executor;
 	http: typeof http;
 	'lib/access': typeof lib_access;
+	'lib/agentErrors': typeof lib_agentErrors;
 	'lib/agentHistory': typeof lib_agentHistory;
 	'lib/auth': typeof lib_auth;
 	'lib/guestIdentity': typeof lib_guestIdentity;

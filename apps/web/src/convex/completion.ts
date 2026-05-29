@@ -7,6 +7,7 @@ import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import type { JsonValue } from '@web-lib/types/json';
 import { resolveLanguageModel, resolveProviderOptions } from '@convex/lib/modelRegistry';
+import { assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
 import {
 	enforceGuestModelCompletionLimit,
 	enforceSignedInModelCompletionLimit
@@ -124,9 +125,7 @@ async function enforceCompletionLimit(
 		...(guestId ? { guestId } : {}),
 		runId
 	});
-	if (actor.isFinished) {
-		throw new Error('Run is cancelled.');
-	}
+	assertRunAcceptsModelCompletion(actor.status);
 	if (actor.userId.startsWith('guest:')) {
 		await enforceGuestModelCompletionLimit(ctx, actor.userId);
 		return;

@@ -1,11 +1,12 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { mutation, query } from '@convex/_generated/server';
-import { v } from 'convex/values';
+import { v, type Infer } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord, getOwnedWorkspaceSession } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
 import { buildCanonicalAgentHistory, findLatestPrompt } from '@convex/lib/agentHistory';
 import { appendThreadMessage, getThreadMessage } from '@convex/lib/threadMessages';
 import { buildThreadTranscript, type ThreadTranscriptMessage } from '@convex/lib/threadTranscript';
+import { assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
 import { assertThreadCanStartRun } from '@convex/lib/runs';
 import {
 	ensureAssistantToolPartsFromJobs,
@@ -19,7 +20,8 @@ import {
 	vModelId,
 	vReasoningEffort,
 	vRunFinalStatus,
-	vAssistantMessagePart
+	vAssistantMessagePart,
+	vRunStatus
 } from '@convex/lib/validators';
 
 export const createRun = mutation({
@@ -182,13 +184,13 @@ export const completionActor = query({
 		args
 	): Promise<{
 		userId: string;
-		isFinished: boolean;
+		status: Infer<typeof vRunStatus>;
 	}> => {
 		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		return {
 			userId,
-			isFinished: isRunFinalStatus(run.status)
+			status: run.status
 		};
 	}
 });
@@ -330,9 +332,7 @@ export const beginToolJob = mutation({
 	}> => {
 		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
-		if (isRunFinalStatus(run.status)) {
-			throw new Error('Run is no longer active.');
-		}
+		assertRunAcceptsModelCompletion(run.status);
 		const workspaceSession: Doc<'workspaceSessions'> = await getOwnedWorkspaceSession(
 			ctx.db,
 			userId,
