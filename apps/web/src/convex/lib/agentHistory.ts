@@ -5,7 +5,7 @@ import { isRunFinalStatus } from '@convex/lib/validators';
 import {
 	ensureAssistantToolPartsFromJobs,
 	type AssistantPart
-} from '@web-lib/chat/assistant-parts';
+} from '@convex/lib/assistantParts';
 
 function buildAgentHistoryFromAssistantMessage(args: {
 	message: ThreadTranscriptMessage;

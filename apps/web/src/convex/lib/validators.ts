@@ -1,5 +1,5 @@
 import { v, type Infer } from 'convex/values';
-import { modelIds, reasoningEffortIds } from '@web-lib/chat/models';
+import { modelIds, reasoningEffortIds } from '@convex/lib/models';
 
 function literals<const TValues extends readonly string[]>(values: TValues) {
 	return values.map((value) => v.literal(value)) as {

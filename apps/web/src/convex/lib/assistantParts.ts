@@ -1,7 +1,7 @@
 import type { Infer } from 'convex/values';
+import type { JsonValue } from '@convex/lib/json';
 import { vExecutorJobKind, vExecutorJobStatus } from '@convex/lib/validators';
 import type { ExecutorJobPayload, ExecutorJobResult } from '@convex/lib/validators';
-import type { JsonValue } from '@web-lib/types/json';
 
 export type AssistantTextPart = {
 	type: 'text';

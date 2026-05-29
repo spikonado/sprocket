@@ -3,13 +3,9 @@
 	import ModelSelector from '$lib/components/model-selector.svelte';
 	import ReasoningSelector from '$lib/components/reasoning-selector.svelte';
 	import { shouldSubmitComposerFromKeydown } from '$lib/chat/composer';
-	import {
-		defaultModelId,
-		defaultReasoningEffort,
-		modelOptions,
-		type SupportedModelId,
-		type SupportedReasoningEffort
-	} from '$lib/chat/models';
+	import { defaultModelId, defaultReasoningEffort } from '$convex/lib/models';
+	import type { SupportedModelId, SupportedReasoningEffort } from '$convex/lib/models';
+	import { modelOptions } from '$lib/chat/model-options';
 
 	type Props = {
 		prompt?: string;

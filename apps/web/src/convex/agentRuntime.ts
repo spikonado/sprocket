@@ -11,7 +11,7 @@ import { assertThreadCanStartRun } from '@convex/lib/runs';
 import {
 	ensureAssistantToolPartsFromJobs,
 	type AssistantPart
-} from '@web-lib/chat/assistant-parts';
+} from '@convex/lib/assistantParts';
 import {
 	type AgentHistoryMessage,
 	isRunFinalStatus,

@@ -26,7 +26,7 @@
 		defaultReasoningEffort,
 		type SupportedModelId,
 		type SupportedReasoningEffort
-	} from '$lib/chat/models';
+	} from '$convex/lib/models';
 	import {
 		getAttachedWorkspaceSessionIds,
 		getWorkspaceThreadGroups,

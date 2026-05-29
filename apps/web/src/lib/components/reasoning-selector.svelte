@@ -1,10 +1,8 @@
 <script lang="ts">
 	import { Check, ChevronDown } from 'lucide-svelte';
-	import {
-		defaultReasoningEffort,
-		reasoningEffortOptions,
-		type SupportedReasoningEffort
-	} from '$lib/chat/models';
+	import { defaultReasoningEffort } from '$convex/lib/models';
+	import type { SupportedReasoningEffort } from '$convex/lib/models';
+	import { reasoningEffortOptions } from '$lib/chat/model-options';
 	import { cn } from '$lib/utils';
 
 	type Props = {

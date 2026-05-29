@@ -5,7 +5,7 @@ import {
 	upsertAssistantToolCallPart,
 	upsertAssistantToolResultPart,
 	type AssistantPart
-} from '$lib/chat/assistant-parts';
+} from '$convex/lib/assistantParts';
 
 describe('assistant tool parts', () => {
 	it('keeps parallel tool calls distinct when stream ids collide', () => {

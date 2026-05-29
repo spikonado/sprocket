@@ -5,7 +5,7 @@ import {
 	getWorkspaceThreadGroups,
 	resolveWorkspaceThreadSelection
 } from '$lib/workspace/threads';
-import { defaultModelId, defaultReasoningEffort } from '$lib/chat/models';
+import { defaultModelId, defaultReasoningEffort } from '$convex/lib/models';
 import type { ThreadSummary, WorkspaceSession } from '$lib/types/sprocket';
 
 function makeWorkspaceSession(overrides: Partial<WorkspaceSession> = {}): WorkspaceSession {

@@ -4,8 +4,7 @@
 		"strict": true,
 		"baseUrl": ".",
 		"paths": {
-			"@convex/*": ["./*"],
-			"@web-lib/*": ["../lib/*"]
+			"@convex/*": ["./*"]
 		},
 		"moduleResolution": "Bundler",
 		"jsx": "react-jsx",

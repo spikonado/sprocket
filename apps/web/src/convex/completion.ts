@@ -5,7 +5,7 @@ import { v } from 'convex/values';
 import { action, type ActionCtx } from '@convex/_generated/server';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
-import type { JsonValue } from '@web-lib/types/json';
+import type { JsonValue } from '@convex/lib/json';
 import { resolveLanguageModel, resolveProviderOptions } from '@convex/lib/modelRegistry';
 import { assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
 import {
@@ -13,7 +13,7 @@ import {
 	enforceSignedInModelCompletionLimit
 } from '@convex/lib/rateLimits';
 import { vModelId, vReasoningEffort } from '@convex/lib/validators';
-import { type SupportedModelId, type SupportedReasoningEffort } from '@web-lib/chat/models';
+import { type SupportedModelId, type SupportedReasoningEffort } from '@convex/lib/models';
 
 type JsonSchema = Parameters<typeof jsonSchema>[0];
 type ToolChoice = NonNullable<Parameters<typeof generateText>[0]['toolChoice']>;

@@ -5,8 +5,8 @@
 		buildPersistedToolLogs,
 		type AssistantPart,
 		type PersistedToolLogEntry
-	} from '$lib/chat/assistant-parts';
-	import { isJsonObject, type JsonValue } from '$lib/types/json';
+	} from '$convex/lib/assistantParts';
+	import { isJsonObject, type JsonValue } from '$convex/lib/json';
 	import ScrollArea from '$lib/components/ui/scroll-area/scroll-area.svelte';
 	import ChatMarkdown from '$lib/components/chat-markdown.svelte';
 	import type { ExecutorJob, ThreadMessage, WorkspaceSession } from '$lib/types/sprocket';

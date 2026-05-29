@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Check, ChevronDown } from 'lucide-svelte';
 	import OpenAiBlossom from '$lib/components/openai-blossom.svelte';
-	import type { ModelOption } from '$lib/chat/models';
+	import type { ModelOption } from '$lib/chat/model-options';
 	import { cn } from '$lib/utils';
 
 	type Props = {
