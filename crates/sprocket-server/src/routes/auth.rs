@@ -1,5 +1,7 @@
+use std::net::SocketAddr;
+
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{ConnectInfo, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -9,6 +11,8 @@ use crate::AppState;
 use crate::auth::{
     AuthSessionResponse, AuthState, BootstrapRequest, BootstrapResponse, extract_session_token,
 };
+
+const DESKTOP_BOOTSTRAP_TOKEN_HEADER: &str = "x-sprocket-desktop-bootstrap-token";
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -51,7 +55,37 @@ async fn bootstrap(
     Ok((StatusCode::OK, jar, Json(response)))
 }
 
-async fn desktop_bootstrap(State(state): State<AppState>) -> Json<DesktopBootstrapResponse> {
+async fn desktop_bootstrap(
+    State(state): State<AppState>,
+    ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Result<Json<DesktopBootstrapResponse>, ApiError> {
+    if peer_addr.ip().is_loopback() {
+        return Ok(desktop_bootstrap_response(&state));
+    }
+
+    let Some(desktop_bootstrap_token) = &state.desktop_bootstrap_token else {
+        return Err(ApiError::unauthorized());
+    };
+    let Some(provided_token) = headers
+        .get(DESKTOP_BOOTSTRAP_TOKEN_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Err(ApiError::unauthorized());
+    };
+
+    let mut expected_token = desktop_bootstrap_token.lock().await;
+    if expected_token.as_deref() != Some(provided_token) {
+        return Err(ApiError::unauthorized());
+    }
+    *expected_token = None;
+
+    Ok(desktop_bootstrap_response(&state))
+}
+
+fn desktop_bootstrap_response(state: &AppState) -> Json<DesktopBootstrapResponse> {
     Json(DesktopBootstrapResponse {
         http_base_url: state.http_base_url.clone(),
         pairing_credential: state.auth.pairing_credential().to_string(),
@@ -69,6 +103,13 @@ impl ApiError {
         Self {
             status: StatusCode::BAD_REQUEST,
             message: error.to_string(),
+        }
+    }
+
+    fn unauthorized() -> Self {
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            message: "authentication required".to_string(),
         }
     }
 }

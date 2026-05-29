@@ -205,10 +205,6 @@ export const beginAssistantMessage = mutation({
 			? await ctx.db.get(run.responseMessageId)
 			: null;
 		if (assistantMessage) {
-			await ctx.db.patch(assistantMessage._id, {
-				text: '',
-				parts: undefined
-			});
 			return;
 		}
 

@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use sprocket_server::{INSTALLED_WEB_DIR, RunOptions, ServerConfig, run};
+use sprocket_server::{INSTALLED_WEB_DIR, RunOptions, ServerConfig, load_env_files, run};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Parser)]
@@ -37,8 +37,12 @@ struct ServeArgs {
     quiet: bool,
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
+    // SAFETY: this runs before the Tokio runtime is constructed.
+    unsafe {
+        load_env_files();
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::from_default_env().add_directive("sprocket_server=error".parse()?),
@@ -58,12 +62,14 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    run(
-        serve.server,
-        RunOptions {
-            quiet: serve.quiet,
-            open_browser: serve.open,
-        },
-    )
-    .await
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(run(
+            serve.server,
+            RunOptions {
+                quiet: serve.quiet,
+                open_browser: serve.open,
+            },
+        ))
 }

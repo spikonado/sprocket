@@ -8,6 +8,7 @@ mod workspace_sessions;
 pub use config::{DEFAULT_DEV_WEB_URL, DEFAULT_PORT, SESSION_COOKIE_NAME, ServerConfig};
 pub use static_dir::{INSTALLED_WEB_DIR, is_valid_static_dir, resolve_static_dir};
 
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -15,6 +16,7 @@ use axum::Json;
 use axum::Router;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
+use tokio::sync::Mutex;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RunOptions {
@@ -54,6 +56,7 @@ pub struct AppState {
     pub auth: Arc<auth::AuthState>,
     pub workspace_sessions: Arc<workspace_sessions::WorkspaceSessionStore>,
     pub http_base_url: String,
+    pub desktop_bootstrap_token: Option<Arc<Mutex<Option<String>>>>,
 }
 
 pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
@@ -72,8 +75,6 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
 }
 
 pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()> {
-    load_env_files();
-
     let data_dir = config.resolve_data_dir();
     let auth = auth::AuthState::load(&data_dir)?;
     let pairing_credential = auth.pairing_credential().to_string();
@@ -84,11 +85,17 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         .is_some_and(|dir| is_valid_static_dir(&dir));
 
     let static_dir = config.resolve_static_dir();
+    let desktop_bootstrap_token = std::env::var("SPROCKET_DESKTOP_BOOTSTRAP_TOKEN")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(|value| Arc::new(Mutex::new(Some(value))));
 
     let state = AppState {
         auth,
         workspace_sessions,
         http_base_url: http_base_url.clone(),
+        desktop_bootstrap_token,
     };
 
     let startup = StartupInfo {
@@ -122,7 +129,11 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
     let router = build_router(state, static_dir);
     let listener = tokio::net::TcpListener::bind(config.bind_address()).await?;
 
-    axum::serve(listener, router).await?;
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 
@@ -141,7 +152,13 @@ fn default_dev_web_url() -> Option<String> {
         .or_else(|| Some(config::DEFAULT_DEV_WEB_URL.to_string()))
 }
 
-fn load_env_files() {
+/// Load environment variables from local `.env` files.
+///
+/// # Safety
+///
+/// This must be called during single-threaded startup, before any async runtime
+/// or other threads that may read environment variables are started.
+pub unsafe fn load_env_files() {
     for candidate in [".env", "../.env", "../../.env"] {
         let path = PathBuf::from(candidate);
         if path.exists()
@@ -156,7 +173,7 @@ fn load_env_files() {
                     continue;
                 };
                 if std::env::var(key).is_err() {
-                    // SAFETY: single-threaded startup before any other threads read env.
+                    // SAFETY: the caller guarantees single-threaded startup.
                     unsafe {
                         std::env::set_var(key, value);
                     }

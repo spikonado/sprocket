@@ -2,6 +2,7 @@ import electron from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { API_HOST, API_PORT, DEV_HOST, DEV_WEB_URL } from '../../scripts/dev-config.mjs';
 
@@ -102,6 +103,7 @@ async function startLocalServer() {
 		: app.getPath('userData');
 	const serverBinary = getServerBinaryPath();
 	const staticDir = isDevelopment ? undefined : path.join(__dirname, 'web/dist');
+	const desktopBootstrapToken = randomUUID();
 	const args = [
 		'serve',
 		'--quiet',
@@ -121,6 +123,7 @@ async function startLocalServer() {
 			SPROCKET_HOST: host,
 			SPROCKET_PORT: String(port),
 			SPROCKET_DATA_DIR: dataDir,
+			SPROCKET_DESKTOP_BOOTSTRAP_TOKEN: desktopBootstrapToken,
 			...(staticDir ? { SPROCKET_STATIC_DIR: staticDir } : {})
 		},
 		stdio: ['ignore', 'pipe', 'inherit']
@@ -150,7 +153,11 @@ async function startLocalServer() {
 	await waitForServerReady(fallbackBaseUrl);
 	serverBaseUrl ??= fallbackBaseUrl;
 
-	const bootstrapResponse = await fetch(`${serverBaseUrl}/api/auth/desktop-bootstrap`);
+	const bootstrapResponse = await fetch(`${serverBaseUrl}/api/auth/desktop-bootstrap`, {
+		headers: {
+			'x-sprocket-desktop-bootstrap-token': desktopBootstrapToken
+		}
+	});
 	if (!bootstrapResponse.ok) {
 		throw new Error('Failed to load desktop bootstrap details from the local server.');
 	}

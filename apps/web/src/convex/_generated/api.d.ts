@@ -18,6 +18,7 @@ import type * as http from '../http.js';
 import type * as lib_access from '../lib/access.js';
 import type * as lib_agentHistory from '../lib/agentHistory.js';
 import type * as lib_auth from '../lib/auth.js';
+import type * as lib_guestIdentity from '../lib/guestIdentity.js';
 import type * as lib_modelRegistry from '../lib/modelRegistry.js';
 import type * as lib_rateLimits from '../lib/rateLimits.js';
 import type * as lib_runs from '../lib/runs.js';
@@ -43,6 +44,7 @@ declare const fullApi: ApiFromModules<{
 	'lib/access': typeof lib_access;
 	'lib/agentHistory': typeof lib_agentHistory;
 	'lib/auth': typeof lib_auth;
+	'lib/guestIdentity': typeof lib_guestIdentity;
 	'lib/modelRegistry': typeof lib_modelRegistry;
 	'lib/rateLimits': typeof lib_rateLimits;
 	'lib/runs': typeof lib_runs;
