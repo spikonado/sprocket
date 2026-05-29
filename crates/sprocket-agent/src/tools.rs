@@ -61,12 +61,15 @@ pub(crate) fn workspace_tools(
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct ExecCommandArgs {
     cmd: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     workdir: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     shell: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     login: Option<bool>,
-    #[serde(rename = "timeoutMs")]
+    #[serde(rename = "timeoutMs", skip_serializing_if = "Option::is_none")]
     timeout_ms: Option<u64>,
-    #[serde(rename = "maxOutputChars")]
+    #[serde(rename = "maxOutputChars", skip_serializing_if = "Option::is_none")]
     max_output_chars: Option<usize>,
 }
 
