@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
+use crate::repo_env::compile_time_env_var;
 use crate::static_dir::resolve_static_dir;
 
 pub const DEFAULT_PORT: u16 = 7731;
@@ -26,9 +27,42 @@ pub struct ServerConfig {
     /// Serve only the local API (no bundled web app). Use with `bun run dev`.
     #[arg(long, env = "SPROCKET_API_ONLY")]
     pub api_only: bool,
+
+    /// Convex deployment URL for the local agent runtime (overrides compile-time repo `.env`).
+    #[arg(long, env = "PUBLIC_CONVEX_URL")]
+    pub convex_deployment_url: Option<String>,
 }
 
 impl ServerConfig {
+    pub fn resolve_convex_deployment_url(&self) -> anyhow::Result<String> {
+        if let Some(url) = self
+            .convex_deployment_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return Ok(url.to_string());
+        }
+
+        if let Ok(url) = std::env::var("PUBLIC_CONVEX_URL") {
+            let url = url.trim();
+            if !url.is_empty() {
+                return Ok(url.to_string());
+            }
+        }
+
+        if let Some(url) = compile_time_env_var("PUBLIC_CONVEX_URL")
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return Ok(url.to_string());
+        }
+
+        anyhow::bail!(
+            "PUBLIC_CONVEX_URL must be set in the repo `.env` for the local agent runtime"
+        )
+    }
+
     pub fn bind_address(&self) -> String {
         format!("{}:{}", self.host, self.port)
     }

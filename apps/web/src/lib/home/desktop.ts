@@ -34,7 +34,6 @@ export function getViewerArgs(
 export function launchAgentRun(args: {
 	authToken?: string;
 	desktopApi: DesktopApi;
-	deploymentUrl: string;
 	getViewerArgs: () => ViewerArgs;
 	onError: (error: unknown) => void;
 	threadId: Id<'threadRecords'>;
@@ -45,7 +44,6 @@ export function launchAgentRun(args: {
 }) {
 	void args.desktopApi
 		.runAgent({
-			deploymentUrl: args.deploymentUrl,
 			...(args.authToken ? { authToken: args.authToken } : {}),
 			...args.getViewerArgs(),
 			threadId: args.threadId,

@@ -29,36 +29,43 @@ function resolveWaylandDisplay(env) {
 	return null;
 }
 
-const env = { ...process.env };
-const waylandDisplay = resolveWaylandDisplay(env);
+async function main() {
+	const env = { ...process.env };
+	const waylandDisplay = resolveWaylandDisplay(env);
 
-if (waylandDisplay) {
-	env.WAYLAND_DISPLAY = waylandDisplay;
-	env.XDG_SESSION_TYPE ??= 'wayland';
-}
-
-const electronBinary = path.join(
-	__dirname,
-	'node_modules',
-	'.bin',
-	process.platform === 'win32' ? 'electron.cmd' : 'electron'
-);
-const child = spawn(electronBinary, ['.'], {
-	cwd: __dirname,
-	env,
-	stdio: 'inherit'
-});
-
-child.on('exit', (code, signal) => {
-	if (signal) {
-		process.kill(process.pid, signal);
-		return;
+	if (waylandDisplay) {
+		env.WAYLAND_DISPLAY = waylandDisplay;
+		env.XDG_SESSION_TYPE ??= 'wayland';
 	}
 
-	process.exit(code ?? 0);
-});
+	const electronBinary = path.join(
+		__dirname,
+		'node_modules',
+		'.bin',
+		process.platform === 'win32' ? 'electron.cmd' : 'electron'
+	);
+	const child = spawn(electronBinary, ['.'], {
+		cwd: __dirname,
+		env,
+		stdio: 'inherit'
+	});
 
-child.on('error', (error) => {
+	child.on('exit', (code, signal) => {
+		if (signal) {
+			process.kill(process.pid, signal);
+			return;
+		}
+
+		process.exit(code ?? 0);
+	});
+
+	child.on('error', (error) => {
+		console.error('Failed to launch Electron.', error);
+		process.exit(1);
+	});
+}
+
+main().catch((error) => {
 	console.error('Failed to launch Electron.', error);
 	process.exit(1);
 });

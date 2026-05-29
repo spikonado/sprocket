@@ -139,7 +139,6 @@ export type ThreadMessage = {
 };
 
 export type AgentRunRequest = {
-	deploymentUrl: string;
 	authToken?: string;
 	guestId?: string;
 	threadId: Id<'threadRecords'>;

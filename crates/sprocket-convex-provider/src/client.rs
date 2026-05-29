@@ -273,7 +273,12 @@ async fn call_completion_action(
         "sprocket-convex-provider: action start {}",
         client.completion_action
     );
-    let result = convex.action(&client.completion_action, action_args(args));
+    let stream_run_id = args.stream_run_id.as_ref().ok_or_else(|| {
+        CompletionError::ProviderError(
+            "streamRunId is required for completion:complete".to_string(),
+        )
+    })?;
+    let result = convex.action(&client.completion_action, action_args(args, stream_run_id));
     let result = timeout(CONVEX_RPC_TIMEOUT, result)
         .await
         .map_err(|error| {
@@ -295,7 +300,7 @@ async fn call_completion_action(
     }
 }
 
-fn action_args(args: &ConvexActionArgs) -> BTreeMap<String, Value> {
+fn action_args(args: &ConvexActionArgs, stream_run_id: &str) -> BTreeMap<String, Value> {
     let mut payload = BTreeMap::new();
     payload.insert("modelId".to_string(), args.model_id.clone().into());
     if let Some(prompt) = &args.prompt {
@@ -308,9 +313,7 @@ fn action_args(args: &ConvexActionArgs) -> BTreeMap<String, Value> {
     if let Some(guest_id) = &args.guest_id {
         payload.insert("guestId".to_string(), guest_id.clone().into());
     }
-    if let Some(stream_run_id) = &args.stream_run_id {
-        payload.insert("streamRunId".to_string(), stream_run_id.clone().into());
-    }
+    payload.insert("streamRunId".to_string(), stream_run_id.to_string().into());
     if let Some(system) = &args.system {
         payload.insert("system".to_string(), system.clone().into());
     }

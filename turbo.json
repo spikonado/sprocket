@@ -1,11 +1,11 @@
 {
 	"$schema": "https://turborepo.dev/schema.json",
 	"ui": "tui",
-	"globalDependencies": ["turbo-cache-key.json"],
+	"globalDependencies": [".env", "turbo-cache-key.json"],
 	"tasks": {
 		"build": {
 			"dependsOn": ["^build"],
-			"inputs": ["$TURBO_DEFAULT$", ".env*", "turbo-cache-key.json"],
+			"inputs": ["$TURBO_DEFAULT$", "turbo-cache-key.json"],
 			"outputs": [".svelte-kit/**", ".vercel/**", "dist/**", "target/**"]
 		},
 		"check": {

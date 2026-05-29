@@ -1,11 +1,11 @@
 use clap::Parser;
-use sprocket_server::{RunOptions, ServerConfig, load_env_files, run};
+use sprocket_server::{RunOptions, ServerConfig, load_repo_env, run};
 use tracing_subscriber::EnvFilter;
 
 fn main() -> anyhow::Result<()> {
     // SAFETY: this runs before the Tokio runtime is constructed.
     unsafe {
-        load_env_files();
+        load_repo_env();
     }
 
     tracing_subscriber::fmt()

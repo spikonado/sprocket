@@ -21,7 +21,6 @@ describe('launchAgentRun', () => {
 		launchAgentRun({
 			authToken: 'token-1',
 			desktopApi,
-			deploymentUrl: 'https://example.convex.cloud',
 			getViewerArgs: () => ({ guestId: 'guest-1' }),
 			onError: vi.fn(),
 			threadId: 'thread-1' as never,
@@ -33,7 +32,6 @@ describe('launchAgentRun', () => {
 
 		expect(runAgent).toHaveBeenCalledWith({
 			authToken: 'token-1',
-			deploymentUrl: 'https://example.convex.cloud',
 			guestId: 'guest-1',
 			threadId: 'thread-1',
 			prompt: 'Inspect src/lib.rs',
@@ -50,7 +48,6 @@ describe('launchAgentRun', () => {
 
 		launchAgentRun({
 			desktopApi,
-			deploymentUrl: 'https://example.convex.cloud',
 			getViewerArgs: () => ({}),
 			onError,
 			threadId: 'thread-1' as never,

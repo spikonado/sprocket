@@ -1,16 +1,16 @@
 <script lang="ts">
-	import { PUBLIC_CONVEX_URL } from '$env/static/public';
 	import '../app.css';
 	import { browser } from '$app/environment';
 	import { setupConvex, useConvexClient } from 'convex-svelte';
 	import { authState, getAccessToken, initializeAuth } from '$lib/auth';
+	import type { RuntimeConfig } from './+layout';
 
-	const { children } = $props();
+	const { children, data }: { children: import('svelte').Snippet; data: RuntimeConfig } = $props();
 
-	const convexUrl = PUBLIC_CONVEX_URL;
+	const convexUrl = () => data.env.PUBLIC_CONVEX_URL;
 
-	setupConvex(convexUrl || 'https://invalid.invalid', {
-		disabled: !browser || !convexUrl,
+	setupConvex(convexUrl() || 'https://invalid.invalid', {
+		disabled: !browser || !convexUrl(),
 		unsavedChangesWarning: false
 	});
 
@@ -30,7 +30,7 @@
 	});
 
 	$effect(() => {
-		if (!browser || !convexUrl) {
+		if (!browser || !convexUrl()) {
 			return;
 		}
 

@@ -1,5 +1,4 @@
 import electron from 'electron';
-import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -19,42 +18,6 @@ const preloadEntry = path.join(__dirname, 'preload.cjs');
 let serverProcess = null;
 let serverBaseUrl = null;
 let serverPairingCredential = null;
-
-function getEnvFileCandidates() {
-	const candidates = isDevelopment
-		? [path.resolve(process.cwd(), '.env'), path.resolve(__dirname, '../../.env')]
-		: [
-				path.resolve(process.cwd(), '.env'),
-				path.join(app.getPath('userData'), '.env'),
-				path.join(path.dirname(process.execPath), '.env'),
-				process.env.APPIMAGE ? path.join(path.dirname(process.env.APPIMAGE), '.env') : null
-			];
-
-	const seen = new Set();
-
-	return candidates.filter((candidate) => {
-		if (!candidate || seen.has(candidate)) {
-			return false;
-		}
-
-		seen.add(candidate);
-		return true;
-	});
-}
-
-function loadRuntimeEnv() {
-	for (const envFile of getEnvFileCandidates()) {
-		if (!fs.existsSync(envFile)) {
-			continue;
-		}
-
-		try {
-			process.loadEnvFile(envFile);
-		} catch (error) {
-			console.warn(`Failed to load environment from ${envFile}`, error);
-		}
-	}
-}
 
 function getServerBinaryPath() {
 	return isDevelopment
@@ -264,7 +227,6 @@ ipcMain.handle('sprocket:get-local-bootstrap', () => {
 
 app.whenReady().then(async () => {
 	Menu.setApplicationMenu(null);
-	loadRuntimeEnv();
 
 	try {
 		await startLocalServer();

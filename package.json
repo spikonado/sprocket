@@ -2,7 +2,7 @@
 	"name": "@sprocket/monorepo",
 	"private": true,
 	"scripts": {
-		"build": "node ./scripts/create-turbo-cache-key.js && turbo run build",
+		"build": "node ./scripts/create-turbo-cache-key.js && bunx turbo run build",
 		"dev": "concurrently -k -n api,web -c blue,green \"cargo run -p sprocket-cli -- serve --data-dir .sprocket-dev --api-only\" \"node scripts/wait-for-api.mjs && bun run --cwd apps/web dev\"",
 		"dev:desktop": "concurrently -k -n web,electron -c green,magenta \"node scripts/wait-for-api.mjs && bun run --cwd apps/web dev\" \"bun run --cwd apps/desktop dev\"",
 		"test": "turbo run test"

@@ -30,7 +30,7 @@ export const complete = action({
 		prompt: v.optional(v.string()),
 		messagesJson: v.optional(v.string()),
 		guestId: v.optional(v.string()),
-		streamRunId: v.optional(v.id('runs')),
+		streamRunId: v.id('runs'),
 		toolChoiceJson: v.optional(v.string()),
 		tools: v.optional(
 			v.array(
@@ -78,13 +78,8 @@ export const complete = action({
 			throw new Error('Either prompt or messagesJson is required.');
 		}
 
-		let result: CompletionActionResult;
-		if (args.streamRunId) {
-			await enforceCompletionLimit(ctx, args.guestId, args.streamRunId);
-			result = await collectStreamingCompletion(streamText(request));
-		} else {
-			result = await generateText(request);
-		}
+		await enforceCompletionLimit(ctx, args.guestId, args.streamRunId);
+		const result = await collectStreamingCompletion(streamText(request));
 
 		return {
 			text: result.text,

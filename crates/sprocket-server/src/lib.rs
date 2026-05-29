@@ -1,5 +1,6 @@
 mod auth;
 mod config;
+pub mod repo_env;
 mod routes;
 mod static_dir;
 mod static_files;
@@ -56,12 +57,14 @@ pub struct AppState {
     pub auth: Arc<auth::AuthState>,
     pub workspace_sessions: Arc<workspace_sessions::WorkspaceSessionStore>,
     pub http_base_url: String,
+    pub convex_deployment_url: String,
     pub desktop_bootstrap_token: Option<Arc<Mutex<Option<String>>>>,
 }
 
 pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
     let api = Router::new()
         .merge(routes::health::routes())
+        .merge(routes::config::routes())
         .merge(routes::auth::routes())
         .merge(routes::workspace::routes())
         .merge(routes::agent::routes())
@@ -75,6 +78,7 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
 }
 
 pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()> {
+    let convex_deployment_url = config.resolve_convex_deployment_url()?;
     let data_dir = config.resolve_data_dir();
     let auth = auth::AuthState::load(&data_dir)?;
     let pairing_credential = auth.pairing_credential().to_string();
@@ -95,6 +99,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         auth,
         workspace_sessions,
         http_base_url: http_base_url.clone(),
+        convex_deployment_url,
         desktop_bootstrap_token,
     };
 
@@ -152,33 +157,4 @@ fn default_dev_web_url() -> Option<String> {
         .or_else(|| Some(config::DEFAULT_DEV_WEB_URL.to_string()))
 }
 
-/// Load environment variables from local `.env` files.
-///
-/// # Safety
-///
-/// This must be called during single-threaded startup, before any async runtime
-/// or other threads that may read environment variables are started.
-pub unsafe fn load_env_files() {
-    for candidate in [".env", "../.env", "../../.env"] {
-        let path = PathBuf::from(candidate);
-        if path.exists()
-            && let Ok(contents) = std::fs::read_to_string(&path)
-        {
-            for line in contents.lines() {
-                let line = line.trim();
-                if line.is_empty() || line.starts_with('#') {
-                    continue;
-                }
-                let Some((key, value)) = line.split_once('=') else {
-                    continue;
-                };
-                if std::env::var(key).is_err() {
-                    // SAFETY: the caller guarantees single-threaded startup.
-                    unsafe {
-                        std::env::set_var(key, value);
-                    }
-                }
-            }
-        }
-    }
-}
+pub use repo_env::load_repo_env;

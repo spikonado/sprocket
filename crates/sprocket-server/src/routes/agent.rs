@@ -13,7 +13,6 @@ use crate::auth::require_session;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RunAgentApiRequest {
-    deployment_url: String,
     auth_token: Option<String>,
     guest_id: Option<String>,
     thread_id: String,
@@ -50,7 +49,7 @@ async fn run_agent_handler(
         .map_err(ApiError::bad_request)?;
 
     let request = RunAgentRequest {
-        deployment_url: payload.deployment_url,
+        deployment_url: state.convex_deployment_url.clone(),
         auth_token: payload.auth_token,
         guest_id: payload.guest_id,
         thread_id: payload.thread_id,

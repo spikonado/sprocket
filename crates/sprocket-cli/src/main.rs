@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use sprocket_server::{INSTALLED_WEB_DIR, RunOptions, ServerConfig, load_env_files, run};
+use sprocket_server::{INSTALLED_WEB_DIR, RunOptions, ServerConfig, load_repo_env, run};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Parser)]
@@ -40,7 +40,7 @@ struct ServeArgs {
 fn main() -> anyhow::Result<()> {
     // SAFETY: this runs before the Tokio runtime is constructed.
     unsafe {
-        load_env_files();
+        load_repo_env();
     }
 
     tracing_subscriber::fmt()

@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
-	import { PUBLIC_CONVEX_URL } from '$env/static/public';
 	import { useConvexClient, useQuery } from 'convex-svelte';
 	import type { Id } from '$convex/_generated/dataModel';
 	import { api } from '$convex/_generated/api';
@@ -438,7 +437,6 @@
 			launchAgentRun({
 				authToken,
 				desktopApi,
-				deploymentUrl: PUBLIC_CONVEX_URL,
 				getViewerArgs,
 				onError: (error) => {
 					hasPendingAgentLaunch = false;
