@@ -8,10 +8,7 @@ import { appendThreadMessage, getThreadMessage } from '@convex/lib/threadMessage
 import { buildThreadTranscript, type ThreadTranscriptMessage } from '@convex/lib/threadTranscript';
 import { assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
 import { assertThreadCanStartRun } from '@convex/lib/runs';
-import {
-	ensureAssistantToolPartsFromJobs,
-	type AssistantPart
-} from '@convex/lib/assistantParts';
+import { ensureAssistantToolPartsFromJobs, type AssistantPart } from '@convex/lib/assistantParts';
 import {
 	type AgentHistoryMessage,
 	isRunFinalStatus,

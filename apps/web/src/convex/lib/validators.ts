@@ -53,7 +53,7 @@ export const vExecutorJobPayload = v.union(
 
 export const vCommandExecResult = v.object({
 	command: v.string(),
-	cwd: v.string(),
+	cwd: v.optional(v.string()),
 	exitCode: v.optional(v.number()),
 	success: v.boolean(),
 	timedOut: v.boolean(),

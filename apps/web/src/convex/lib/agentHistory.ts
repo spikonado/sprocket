@@ -2,10 +2,7 @@ import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { ThreadTranscriptMessage } from '@convex/lib/threadTranscript';
 import type { AgentHistoryMessage } from '@convex/lib/validators';
 import { isRunFinalStatus } from '@convex/lib/validators';
-import {
-	ensureAssistantToolPartsFromJobs,
-	type AssistantPart
-} from '@convex/lib/assistantParts';
+import { ensureAssistantToolPartsFromJobs, type AssistantPart } from '@convex/lib/assistantParts';
 
 function buildAgentHistoryFromAssistantMessage(args: {
 	message: ThreadTranscriptMessage;
