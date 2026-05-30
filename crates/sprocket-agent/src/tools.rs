@@ -86,7 +86,7 @@ pub(crate) struct ReplaceInFileArgs {
     old_text: String,
     #[serde(rename = "newText")]
     new_text: String,
-    #[serde(rename = "replaceAll")]
+    #[serde(rename = "replaceAll", skip_serializing_if = "Option::is_none")]
     replace_all: Option<bool>,
 }
 
