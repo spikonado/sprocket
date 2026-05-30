@@ -261,7 +261,7 @@ export const finishAssistantMessage = mutation({
 	handler: async (ctx, args): Promise<void> => {
 		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
-		if (!run.responseMessageId || isRunFinalStatus(run.status)) {
+		if (!run.responseMessageId) {
 			return;
 		}
 		const message: Doc<'threadMessages'> = await getThreadMessage(ctx, run.responseMessageId);
