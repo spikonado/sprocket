@@ -134,17 +134,7 @@ impl rig::tool::Tool for ExecCommandTool {
                 )
                 .await
                 .map_err(tool_error)?;
-                Ok(serde_json::json!({
-                    "command": output.command,
-                    "cwd": output.cwd,
-                    "exitCode": output.exit_code,
-                    "success": output.success,
-                    "timedOut": output.timed_out,
-                    "stdout": output.stdout,
-                    "stderr": output.stderr,
-                    "output": output.output,
-                    "truncated": output.truncated,
-                }))
+                serde_json::to_value(output).map_err(tool_error)
             },
         )
         .await

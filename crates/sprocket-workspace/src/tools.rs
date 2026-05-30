@@ -213,7 +213,9 @@ fn combine_command_output(stdout: &str, stderr: &str) -> String {
 #[serde(rename_all = "camelCase")]
 pub struct CommandExecOutput {
     pub command: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
     pub success: bool,
     pub timed_out: bool,
