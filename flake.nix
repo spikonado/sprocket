@@ -50,10 +50,13 @@
               bun
               commitlint
               cargo
+              cargo-edit
               gcc
               nodejs_24
               prek
               rustc
+              rustfmt
+              rust-analyzer
             ]
             ++ electronRuntimeLibs;
 

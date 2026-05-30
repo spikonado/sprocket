@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 jobs:
-  run_prek:
+  build_and_test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6.0.2
@@ -31,14 +31,18 @@ jobs:
           nix develop --profile sprocket-shell -c true
           cachix push spikonado sprocket-shell
 
-      - name: Install dependencies
+      - name: Bun install
         shell: 'nix develop --profile sprocket-shell -c bash -e {0}'
         run: bun install --frozen-lockfile
 
-      - name: Build
+      - name: Bun build
         shell: 'nix develop --profile sprocket-shell -c bash -e {0}'
         run: bun run build
 
-      - name: Test
+      - name: Bun test
         shell: 'nix develop --profile sprocket-shell -c bash -e {0}'
         run: bun run test
+
+      - name: Cargo test
+        shell: 'nix develop --profile sprocket-shell -c bash -e {0}'
+        run: cargo test

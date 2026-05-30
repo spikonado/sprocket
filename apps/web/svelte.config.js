@@ -5,6 +5,14 @@ import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 const config = {
 	preprocess: vitePreprocess(),
 	kit: {
+		alias: {
+			'@convex': './src/convex',
+			'@convex/*': './src/convex/*',
+			'@web-lib': './src/lib',
+			'@web-lib/*': './src/lib/*',
+			$convex: './src/convex',
+			'$convex/*': './src/convex/*'
+		},
 		adapter: adapter({
 			pages: 'dist',
 			assets: 'dist',

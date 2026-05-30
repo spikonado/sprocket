@@ -1,0 +1,15 @@
+[package]
+name = "sprocket-cli"
+version = "0.0.0"
+edition = "2024"
+
+[[bin]]
+name = "sprocket"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.102"
+clap = { version = "4.5.60", features = ["derive", "env"] }
+sprocket-server = { path = "../sprocket-server" }
+tokio = { version = "1.52.1", features = ["macros", "rt-multi-thread"] }
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }

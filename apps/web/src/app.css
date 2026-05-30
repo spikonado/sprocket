@@ -1,0 +1,232 @@
+@import '@fontsource/dm-sans';
+@import 'tailwindcss';
+
+@theme inline {
+	--font-sans: 'DM Sans', ui-sans-serif, system-ui, sans-serif;
+	--color-background: hsl(var(--background));
+	--color-foreground: hsl(var(--foreground));
+	--color-card: hsl(var(--card));
+	--color-card-foreground: hsl(var(--card-foreground));
+	--color-popover: hsl(var(--popover));
+	--color-popover-foreground: hsl(var(--popover-foreground));
+	--color-primary: hsl(var(--primary));
+	--color-primary-foreground: hsl(var(--primary-foreground));
+	--color-secondary: hsl(var(--secondary));
+	--color-secondary-foreground: hsl(var(--secondary-foreground));
+	--color-muted: hsl(var(--muted));
+	--color-muted-foreground: hsl(var(--muted-foreground));
+	--color-accent: hsl(var(--accent));
+	--color-accent-foreground: hsl(var(--accent-foreground));
+	--color-destructive: hsl(var(--destructive));
+	--color-destructive-foreground: hsl(var(--destructive-foreground));
+	--color-border: hsl(var(--border));
+	--color-input: hsl(var(--input));
+	--color-ring: hsl(var(--ring));
+	--radius-sm: calc(var(--radius) - 4px);
+	--radius-md: calc(var(--radius) - 2px);
+	--radius-lg: var(--radius);
+	--radius-xl: calc(var(--radius) + 6px);
+}
+
+:root {
+	--background: 30 8% 8%;
+	--foreground: 30 9% 93%;
+	--muted: 24 6% 14%;
+	--muted-foreground: 24 5% 57%;
+	--popover: 30 8% 10%;
+	--popover-foreground: 30 9% 93%;
+	--card: 24 6% 12%;
+	--card-foreground: 30 9% 93%;
+	--border: 24 6% 18%;
+	--input: 24 6% 20%;
+	--primary: 223 73% 58%;
+	--primary-foreground: 0 0% 100%;
+	--secondary: 24 6% 16%;
+	--secondary-foreground: 30 9% 93%;
+	--accent: 24 6% 16%;
+	--accent-foreground: 30 9% 93%;
+	--destructive: 0 72% 58%;
+	--destructive-foreground: 0 0% 100%;
+	--ring: 223 73% 58%;
+	--radius: 0.9rem;
+}
+
+@layer base {
+	* {
+		border-color: hsl(var(--border));
+	}
+
+	html {
+		color-scheme: dark;
+		height: 100%;
+		overflow: hidden;
+	}
+
+	body {
+		height: 100%;
+		min-height: 100vh;
+		background:
+			radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.045), transparent 24%),
+			linear-gradient(180deg, rgba(24, 24, 26, 1) 0%, rgba(15, 15, 17, 1) 100%);
+		color: hsl(var(--foreground));
+		font-family: var(--font-sans);
+		font-feature-settings: 'ss01' 1;
+		margin: 0;
+		overflow: hidden;
+	}
+
+	button,
+	input,
+	textarea {
+		font: inherit;
+	}
+
+	::selection {
+		background: rgba(108, 128, 214, 0.28);
+	}
+}
+
+body::after {
+	content: '';
+	position: fixed;
+	inset: 0;
+	pointer-events: none;
+	opacity: 0.018;
+	background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+	background-repeat: repeat;
+	background-size: 256px 256px;
+}
+
+.chat-markdown {
+	min-width: 0;
+	overflow-wrap: anywhere;
+	word-break: break-word;
+	font-size: 0.9375rem;
+	line-height: 1.9;
+}
+
+.chat-markdown > :first-child {
+	margin-top: 0;
+}
+
+.chat-markdown > :last-child {
+	margin-bottom: 0;
+}
+
+.chat-markdown p,
+.chat-markdown ul,
+.chat-markdown ol,
+.chat-markdown blockquote,
+.chat-markdown pre,
+.chat-markdown table,
+.chat-markdown h1,
+.chat-markdown h2,
+.chat-markdown h3,
+.chat-markdown h4 {
+	margin: 0.8rem 0;
+}
+
+.chat-markdown h1,
+.chat-markdown h2,
+.chat-markdown h3,
+.chat-markdown h4 {
+	line-height: 1.35;
+	font-weight: 600;
+	letter-spacing: -0.02em;
+	color: hsl(var(--foreground));
+}
+
+.chat-markdown h1 {
+	font-size: 1.5rem;
+}
+
+.chat-markdown h2 {
+	font-size: 1.25rem;
+}
+
+.chat-markdown h3 {
+	font-size: 1.1rem;
+}
+
+.chat-markdown ul,
+.chat-markdown ol {
+	padding-left: 1.4rem;
+}
+
+.chat-markdown ul {
+	list-style: disc;
+}
+
+.chat-markdown ol {
+	list-style: decimal;
+}
+
+.chat-markdown li + li {
+	margin-top: 0.2rem;
+}
+
+.chat-markdown a {
+	color: hsl(var(--primary));
+	text-decoration: underline;
+	text-decoration-color: color-mix(in srgb, hsl(var(--primary)) 45%, transparent);
+	text-underline-offset: 0.16rem;
+}
+
+.chat-markdown a:hover {
+	opacity: 0.85;
+}
+
+.chat-markdown blockquote {
+	border-left: 2px solid hsl(var(--border));
+	padding-left: 0.9rem;
+	color: hsl(var(--muted-foreground));
+}
+
+.chat-markdown :not(pre) > code {
+	border: 1px solid hsl(var(--border));
+	border-radius: 0.5rem;
+	background: color-mix(in srgb, hsl(var(--muted)) 82%, hsl(var(--background)));
+	padding: 0.14rem 0.42rem;
+	font-family: 'SF Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+	font-size: 0.8em;
+}
+
+.chat-markdown pre {
+	overflow-x: auto;
+	border: 1px solid hsl(var(--border));
+	border-radius: 1rem;
+	background: color-mix(in srgb, hsl(var(--background)) 82%, black);
+	padding: 0.95rem 1rem;
+}
+
+.chat-markdown pre code {
+	background: transparent;
+	padding: 0;
+	font-family: 'SF Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+	font-size: 0.82rem;
+	line-height: 1.7;
+}
+
+.chat-markdown hr {
+	border: 0;
+	border-top: 1px solid hsl(var(--border));
+	margin: 1rem 0;
+}
+
+.chat-markdown table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 0.92em;
+}
+
+.chat-markdown th,
+.chat-markdown td {
+	border: 1px solid hsl(var(--border));
+	padding: 0.5rem 0.65rem;
+	text-align: left;
+}
+
+.chat-markdown th {
+	background: color-mix(in srgb, hsl(var(--muted)) 88%, hsl(var(--background)));
+	font-weight: 600;
+}

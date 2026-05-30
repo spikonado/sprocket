@@ -1,0 +1,13 @@
+[workspace]
+members = [
+    "crates/sprocket-convex-provider",
+    "crates/sprocket-workspace",
+    "crates/sprocket-agent",
+    "crates/sprocket-server",
+    "crates/sprocket-cli",
+]
+resolver = "3"
+
+[profile.release]
+lto = true
+strip = "symbols"

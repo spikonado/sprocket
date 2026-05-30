@@ -1,3 +1,3 @@
-export type { Counter } from './types';
-export { newCounter } from './counter.svelte.js';
-export { default as CounterView } from './CounterView.svelte';
+export type { Counter } from '$ui/types';
+export { newCounter } from '$ui/counter.svelte.js';
+export { default as CounterView } from '$ui/CounterView.svelte';
