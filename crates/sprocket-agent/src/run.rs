@@ -9,6 +9,23 @@ use crate::convex::RuntimeClient;
 use crate::provider::{AgentProvider, AgentProviderRequest, AgentProviderResult};
 use crate::types::{RunAgentRequest, deserialize_agent_history};
 
+#[derive(Clone, Copy)]
+enum RunFinalStatus {
+    Completed,
+    Cancelled,
+    Failed,
+}
+
+impl RunFinalStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Cancelled => "cancelled",
+            Self::Failed => "failed",
+        }
+    }
+}
+
 fn build_workspace_preamble(
     workspace_path: &str,
     workspace_overview: &WorkspaceOverview,
@@ -67,7 +84,11 @@ async fn fail_run_early(
     error: &anyhow::Error,
 ) -> anyhow::Result<()> {
     runtime
-        .finish_run(run_id, "failed", Some(&error.to_string()))
+        .finish_run(
+            run_id,
+            RunFinalStatus::Failed.as_str(),
+            Some(&error.to_string()),
+        )
         .await?;
     Ok(())
 }
@@ -76,20 +97,25 @@ async fn finalize_run(
     runtime: &RuntimeClient,
     run_id: &str,
     assistant_text: &str,
-    status: &str,
+    status: RunFinalStatus,
     error_message: Option<&str>,
 ) -> anyhow::Result<()> {
+    let status_text = status.as_str();
     let assistant_error = runtime
         .finish_assistant_message(run_id, assistant_text)
         .await;
-    let finish_error = runtime.finish_run(run_id, status, error_message).await;
+    let finish_error = runtime.finish_run(run_id, status_text, error_message).await;
 
     match (assistant_error, finish_error) {
         (Ok(()), Ok(())) => Ok(()),
-        (Err(assistant_error), Ok(())) => Err(assistant_error),
-        (Ok(()), Err(finish_error)) => Err(finish_error),
+        (Err(assistant_error), Ok(())) => Err(anyhow!(
+            "failed to finish assistant message for {status_text} run: {assistant_error}"
+        )),
+        (Ok(()), Err(finish_error)) => Err(anyhow!(
+            "failed to mark run as {status_text}: {finish_error}"
+        )),
         (Err(assistant_error), Err(finish_error)) => Err(anyhow!(
-            "failed to finish assistant message: {assistant_error}; failed to finish run as {status}: {finish_error}"
+            "failed to finalize {status_text} run: assistant message update failed: {assistant_error}; run status update failed: {finish_error}"
         )),
     }
 }
@@ -104,10 +130,46 @@ async fn fail_run_setup(
         runtime,
         run_id,
         &message,
-        "failed",
+        RunFinalStatus::Failed,
         Some(&error.to_string()),
     )
     .await
+}
+
+async fn finalize_provider_result(
+    runtime: &RuntimeClient,
+    run_id: &str,
+    provider_result: AgentProviderResult,
+) -> anyhow::Result<()> {
+    match provider_result {
+        AgentProviderResult::Completed { text } => {
+            eprintln!("sprocket-agent: model completed {}", run_id);
+            finalize_run(runtime, run_id, &text, RunFinalStatus::Completed, None).await
+        }
+        AgentProviderResult::Cancelled { text } => {
+            eprintln!("sprocket-agent: run cancelled {}", run_id);
+            finalize_run(runtime, run_id, &text, RunFinalStatus::Cancelled, None).await
+        }
+        AgentProviderResult::Failed { text, error } => {
+            let error_text = error.to_string();
+            eprintln!("sprocket-agent: model failed {}: {}", run_id, error_text);
+
+            match finalize_run(
+                runtime,
+                run_id,
+                &text,
+                RunFinalStatus::Failed,
+                Some(&error_text),
+            )
+            .await
+            {
+                Ok(()) => Err(error),
+                Err(finalization_error) => Err(anyhow!(
+                    "model failed: {error}; additionally failed to finalize run: {finalization_error}"
+                )),
+            }
+        }
+    }
 }
 
 pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
@@ -195,39 +257,5 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
         )
         .await;
 
-    let final_text = match provider_result {
-        AgentProviderResult::Completed { text } => text,
-        AgentProviderResult::Cancelled { text } => {
-            if runtime.run_finished(&run_id).await? {
-                return Ok(());
-            }
-            eprintln!("sprocket-agent: run cancelled {}", run_id);
-            finalize_run(&runtime, &run_id, &text, "cancelled", None).await?;
-            return Ok(());
-        }
-        AgentProviderResult::Failed { text, error } => {
-            if runtime.run_finished(&run_id).await? {
-                return Ok(());
-            }
-            let error_text = error.to_string();
-            eprintln!("sprocket-agent: model failed {}: {}", run_id, error_text);
-            finalize_run(&runtime, &run_id, &text, "failed", Some(&error_text)).await?;
-            return Err(error);
-        }
-    };
-
-    if runtime.run_finished(&run_id).await? {
-        eprintln!(
-            "sprocket-agent: run finished before completion finalization {}",
-            run_id
-        );
-        runtime
-            .finish_assistant_message(&run_id, &final_text)
-            .await?;
-        return Ok(());
-    }
-
-    eprintln!("sprocket-agent: model completed {}", run_id);
-    finalize_run(&runtime, &run_id, &final_text, "completed", None).await?;
-    Ok(())
+    finalize_provider_result(&runtime, &run_id, provider_result).await
 }
