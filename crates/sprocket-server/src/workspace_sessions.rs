@@ -206,10 +206,8 @@ impl WorkspaceSessionStore {
 
     async fn prune(&self) {
         let now = now_ms();
-        let mut sessions: Vec<WorkspaceSessionRecord> = self
-            .sessions
-            .read()
-            .await
+        let mut store = self.sessions.write().await;
+        let mut sessions: Vec<WorkspaceSessionRecord> = store
             .values()
             .filter(|session| {
                 session.availability == WorkspaceAvailability::Available
@@ -222,7 +220,6 @@ impl WorkspaceSessionStore {
         sessions.sort_by_key(|session| std::cmp::Reverse(session.last_used_at));
         sessions.truncate(MAX_PERSISTED_WORKSPACE_SESSIONS);
 
-        let mut store = self.sessions.write().await;
         store.clear();
         for session in sessions {
             store.insert(session.workspace_session_id.clone(), session);

@@ -29,10 +29,12 @@ export const complete = mutation({
 			result: args.result,
 			completedAt: Date.now()
 		});
-		await ctx.db.patch(run._id, {
-			status: 'running',
-			activeJobId: undefined
-		});
+		if (run.activeJobId === args.jobId) {
+			await ctx.db.patch(run._id, {
+				status: 'running',
+				activeJobId: undefined
+			});
+		}
 		return true;
 	}
 });
@@ -56,12 +58,15 @@ export const fail = mutation({
 			error: args.error,
 			completedAt
 		});
-		await ctx.db.patch(job.runId, {
-			status: 'failed',
-			lastError: args.error,
-			activeJobId: undefined,
-			completedAt
-		});
+		const run = await ctx.db.get(job.runId);
+		if (run && run.activeJobId === args.jobId) {
+			await ctx.db.patch(job.runId, {
+				status: 'failed',
+				lastError: args.error,
+				activeJobId: undefined,
+				completedAt
+			});
+		}
 		return true;
 	}
 });

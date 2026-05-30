@@ -94,7 +94,7 @@ export const start = mutation({
 	handler: async (ctx, args): Promise<Doc<'runs'>> => {
 		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
-		if (isRunFinalStatus(run.status)) {
+		if (isRunFinalStatus(run.status) || run.status !== 'queued') {
 			return run;
 		}
 
@@ -200,6 +200,9 @@ export const beginAssistantMessage = mutation({
 	handler: async (ctx, args): Promise<void> => {
 		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
+		if (isRunFinalStatus(run.status)) {
+			return;
+		}
 		const assistantMessage: Doc<'threadMessages'> | null = run.responseMessageId
 			? await ctx.db.get(run.responseMessageId)
 			: null;
@@ -230,7 +233,7 @@ export const updateAssistantMessage = mutation({
 	handler: async (ctx, args): Promise<void> => {
 		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
-		if (!run.responseMessageId) {
+		if (!run.responseMessageId || isRunFinalStatus(run.status)) {
 			return;
 		}
 		await ctx.db.patch(run.responseMessageId, {
@@ -258,7 +261,7 @@ export const finishAssistantMessage = mutation({
 	handler: async (ctx, args): Promise<void> => {
 		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
-		if (!run.responseMessageId) {
+		if (!run.responseMessageId || isRunFinalStatus(run.status)) {
 			return;
 		}
 		const message: Doc<'threadMessages'> = await getThreadMessage(ctx, run.responseMessageId);

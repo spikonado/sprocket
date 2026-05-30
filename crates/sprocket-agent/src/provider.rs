@@ -15,6 +15,8 @@ const AGENT_MAX_TURNS: usize = 75;
 
 /// Must match `RUN_CANCELLED_BY_USER` in `apps/web/src/convex/lib/agentErrors.ts`.
 const RUN_CANCELLED_BY_USER: &str = "Run is cancelled.";
+/// Must match `RUN_NO_LONGER_ACTIVE` in `apps/web/src/convex/lib/agentErrors.ts`.
+const RUN_NO_LONGER_ACTIVE: &str = "Run is no longer active.";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProviderKind {
@@ -148,7 +150,9 @@ where
             Ok(_) => {}
             Err(error) => {
                 let error_text = error.to_string();
-                if error_text.contains(RUN_CANCELLED_BY_USER) {
+                if error_text.contains(RUN_CANCELLED_BY_USER)
+                    || error_text.contains(RUN_NO_LONGER_ACTIVE)
+                {
                     return AgentProviderResult::Cancelled { text: final_text };
                 }
                 return AgentProviderResult::Failed {

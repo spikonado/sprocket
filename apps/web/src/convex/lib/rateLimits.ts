@@ -82,11 +82,11 @@ export async function enforceGuestModelCompletionLimit(
 	ctx: ActionCtx,
 	userId: string
 ): Promise<void> {
+	await enforceLimit(ctx, 'guestModelCompletion', userId, 'Guest model completion limit');
 	await enforceLimit(
 		ctx,
 		'globalGuestModelCompletion',
 		'all-guests',
 		'Global guest model completion limit'
 	);
-	await enforceLimit(ctx, 'guestModelCompletion', userId, 'Guest model completion limit');
 }
