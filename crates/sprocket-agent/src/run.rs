@@ -125,6 +125,7 @@ async fn fail_run_setup(
     run_id: &str,
     error: &anyhow::Error,
 ) -> anyhow::Result<()> {
+    let _ = runtime.begin_assistant_message(run_id).await;
     let message = format!("Run failed before the model started: {error}");
     finalize_run(
         runtime,
@@ -196,12 +197,6 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
     }
     eprintln!("sprocket-agent: marked run running {}", run_id);
 
-    if let Err(error) = runtime.begin_assistant_message(&run_id).await {
-        fail_run_setup(&runtime, &run_id, &error).await?;
-        return Err(error);
-    }
-    eprintln!("sprocket-agent: prepared assistant response {}", run_id);
-
     let prepared = (|| {
         let workspace_overview = build_workspace_overview(&workspace_root)?;
         let workspace_instructions = load_workspace_instructions(&workspace_root)?;
@@ -243,6 +238,12 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
     if runtime.run_finished(&run_id).await? {
         return Ok(());
     }
+
+    if let Err(error) = runtime.begin_assistant_message(&run_id).await {
+        fail_run_setup(&runtime, &run_id, &error).await?;
+        return Err(error);
+    }
+    eprintln!("sprocket-agent: prepared assistant response {}", run_id);
 
     let provider_result = provider
         .run(
