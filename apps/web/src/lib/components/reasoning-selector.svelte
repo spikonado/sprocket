@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Check, ChevronDown } from 'lucide-svelte';
+	import { Check, ChevronDown } from '@lucide/svelte';
 	import { defaultReasoningEffort } from '$convex/lib/models';
 	import type { SupportedReasoningEffort } from '$convex/lib/models';
 	import { reasoningEffortOptions } from '$lib/chat/model-options';

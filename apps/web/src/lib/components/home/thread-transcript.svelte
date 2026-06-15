@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { tick } from 'svelte';
-	import { TerminalSquare } from 'lucide-svelte';
+	import { TerminalSquare } from '@lucide/svelte';
 	import {
 		buildPersistedToolLogs,
 		type AssistantPart,

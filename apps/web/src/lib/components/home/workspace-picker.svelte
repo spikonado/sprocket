@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { CornerLeftUp, Folder, FolderPlus, LoaderCircle } from 'lucide-svelte';
+	import { CornerLeftUp, Folder, FolderPlus, LoaderCircle } from '@lucide/svelte';
 	import type { DesktopApi, FilesystemBrowseEntry, WorkspaceOverview } from '$lib/types/sprocket';
 	import {
 		appendBrowsePathSegment,

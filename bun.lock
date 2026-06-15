@@ -28,6 +28,7 @@
         "@convex-dev/rate-limiter": "^0.3.2",
         "@convex-dev/workos-authkit": "^0.2.3",
         "@fontsource/dm-sans": "^5.2.8",
+        "@lucide/svelte": "^1.18.0",
         "@workos-inc/authkit-js": "^0.20.0",
         "ai": "^6.0.174",
         "class-variance-authority": "^0.7.1",
@@ -35,7 +36,6 @@
         "convex": "^1.37.0",
         "convex-svelte": "^0.0.12",
         "isomorphic-dompurify": "^3.12.0",
-        "lucide-svelte": "^1.0.1",
         "marked": "^18.0.3",
         "tailwind-merge": "^3.5.0",
         "zod": "^3.25.76",
@@ -295,6 +295,8 @@
     "@jridgewell/sourcemap-codec": ["@jridgewell/sourcemap-codec@1.5.5", "", {}, "sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og=="],
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
+
+    "@lucide/svelte": ["@lucide/svelte@1.18.0", "", { "peerDependencies": { "svelte": "^5" } }, "sha512-S1cjiJflMLIirDZtZ8ou2Vy0xMrOqEQzYzDo29AUxoJiOjUfMHUeClvprJsGUEr60RYDJzEgkjSkWm1nlN9iyQ=="],
 
     "@malept/cross-spawn-promise": ["@malept/cross-spawn-promise@2.0.0", "", { "dependencies": { "cross-spawn": "^7.0.1" } }, "sha512-1DpKU0Z5ThltBwjNySMC14g0CkbyhCaz9FkhxqNsZI6uAPJXFS8cMXlBKo26FJ8ZuW6S9GCMcR9IO5k2X5/9Fg=="],
 
@@ -1093,8 +1095,6 @@
     "lowercase-keys": ["lowercase-keys@2.0.0", "", {}, "sha512-tqNXrS78oMOE73NMxK4EMLQsQowWf8jKooH9g7xPavRT706R6bkQJ6DY2Te7QukaZsulxa30wQ7bk0pm4XiHmA=="],
 
     "lru-cache": ["lru-cache@11.3.5", "", {}, "sha512-NxVFwLAnrd9i7KUBxC4DrUhmgjzOs+1Qm50D3oF1/oL+r1NpZ4gA7xvG0/zJ8evR7zIKn4vLf7qTNduWFtCrRw=="],
-
-    "lucide-svelte": ["lucide-svelte@1.0.1", "", { "peerDependencies": { "svelte": "^3 || ^4 || ^5.0.0-next.42" } }, "sha512-WvzZgk0pqzgda+AErLvgWxHkfg/+GgUwqKMRHvzt0IqyMdmyEDzDCk3Z+Wo/3y753oIgx8u9Q4eUbWkghFa8Jg=="],
 
     "lz-string": ["lz-string@1.5.0", "", { "bin": { "lz-string": "bin/bin.js" } }, "sha512-h5bgJWpxJNswbU7qCrV0tIKQCaS3blPDrqKWx+QxzuzL1zGUzij9XCWLrSLsJPu5t+eWA/ycetzYAO5IOMcWAQ=="],
 

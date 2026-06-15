@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Sparkles, UserRound } from 'lucide-svelte';
+	import { Sparkles, UserRound } from '@lucide/svelte';
 	import Button from '$lib/components/ui/button/button.svelte';
 
 	type AuthGateState = {

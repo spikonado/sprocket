@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ArrowUp, ChevronDown, Cpu, LockOpen, Square } from 'lucide-svelte';
+	import { ArrowUp, ChevronDown, Cpu, LockOpen, Square } from '@lucide/svelte';
 	import ModelSelector from '$lib/components/model-selector.svelte';
 	import ReasoningSelector from '$lib/components/reasoning-selector.svelte';
 	import { shouldSubmitComposerFromKeydown } from '$lib/chat/composer';
