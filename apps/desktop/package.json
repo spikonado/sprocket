@@ -4,6 +4,7 @@
 	"private": true,
 	"type": "module",
 	"main": "./main.mjs",
+	"desktopName": "com.spikonado.sprocket.desktop",
 	"scripts": {
 		"dev": "cargo build -q -p sprocket-cli && node ./launch.cjs",
 		"build": "cargo build --release -p sprocket-cli && bun run --cwd ../web build && electron-builder"
@@ -11,6 +12,8 @@
 	"build": {
 		"appId": "com.spikonado.sprocket",
 		"productName": "Sprocket",
+		"executableName": "sprocket",
+		"icon": "../web/static/favicon.png",
 		"directories": {
 			"output": "dist"
 		},
@@ -34,11 +37,12 @@
 			"target": [
 				"AppImage"
 			],
-			"category": "Development"
+			"category": "Development",
+			"syncDesktopName": true
 		}
 	},
 	"devDependencies": {
 		"electron": "^41.5.0",
-		"electron-builder": "^26.8.1"
+		"electron-builder": "^26.15.3"
 	}
 }
