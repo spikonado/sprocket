@@ -7,7 +7,7 @@
 		LogOut,
 		SquarePen,
 		Trash2
-	} from 'lucide-svelte';
+	} from '@lucide/svelte';
 	import { formatRelativeTime } from '$lib/format';
 	import type { Id } from '$convex/_generated/dataModel';
 	import type { ThreadSummary, WorkspaceThreadGroup } from '$lib/types/sprocket';

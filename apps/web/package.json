@@ -22,7 +22,7 @@
 		"convex": "^1.37.0",
 		"convex-svelte": "^0.0.12",
 		"isomorphic-dompurify": "^3.12.0",
-		"lucide-svelte": "^1.0.1",
+		"@lucide/svelte": "^1.18.0",
 		"marked": "^18.0.3",
 		"tailwind-merge": "^3.5.0",
 		"zod": "^3.25.76"
