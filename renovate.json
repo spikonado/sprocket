@@ -4,13 +4,19 @@
 		"config:recommended",
 		"schedule:earlyMondays",
 		":dependencyDashboard",
-		":semanticCommitTypeAll(build)",
-		":prConcurrentLimit10"
+		":semanticCommitTypeAll(build)"
 	],
+	"prConcurrentLimit": 10,
+	"prHourlyLimit": 10,
 	"packageRules": [
 		{
+			"matchUpdateTypes": ["lockFileMaintenance"],
+			"prPriority": 100
+		},
+		{
 			"matchDepTypes": ["action", "devDependencies", "uses-with"],
-			"automerge": true
+			"automerge": true,
+			"prPriority": 20
 		}
 	],
 	"lockFileMaintenance": {
