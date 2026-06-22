@@ -14,7 +14,7 @@ jobs:
   run_prek:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
 
       - uses: cachix/install-nix-action@v31.10.6
         with:
