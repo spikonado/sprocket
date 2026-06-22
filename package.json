@@ -9,7 +9,7 @@
 		"test": "turbo run test"
 	},
 	"devDependencies": {
-		"concurrently": "^9.2.1",
+		"concurrently": "^10.0.0",
 		"prettier": "^3.8.3",
 		"prettier-plugin-svelte": "^3.5.1",
 		"prettier-plugin-tailwindcss": "^0.8.0",
