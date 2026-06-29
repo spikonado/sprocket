@@ -67,7 +67,9 @@ async function enforceLimit(
 			throw error;
 		}
 
-		throw new Error(`${label} reached. Try again in ${formatRetryAfter(error.data.retryAfter)}.`);
+		throw new Error(`${label} reached. Try again in ${formatRetryAfter(error.data.retryAfter)}.`, {
+			cause: error
+		});
 	}
 }
 

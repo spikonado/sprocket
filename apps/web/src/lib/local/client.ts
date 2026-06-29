@@ -176,7 +176,7 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 					throw error;
 				}
 
-				throw new Error(`Local request failed (${response.status}).`);
+				throw new Error(`Local request failed (${response.status}).`, { cause: error });
 			}
 		}
 

@@ -180,6 +180,6 @@ function parseJson<T>(json: string, fieldName: string): T {
 		return JSON.parse(json) as T;
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`Invalid ${fieldName}: ${message}`);
+		throw new Error(`Invalid ${fieldName}: ${message}`, { cause: error });
 	}
 }
