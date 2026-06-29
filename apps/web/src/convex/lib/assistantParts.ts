@@ -30,10 +30,7 @@ export type AssistantToolResultPart = {
 };
 
 export type AssistantPart =
-	| AssistantTextPart
-	| AssistantReasoningPart
-	| AssistantToolCallPart
-	| AssistantToolResultPart;
+	AssistantTextPart | AssistantReasoningPart | AssistantToolCallPart | AssistantToolResultPart;
 
 export type PersistedToolLogEntry = {
 	callId: string;
