@@ -2,7 +2,6 @@
 	"compilerOptions": {
 		"allowJs": true,
 		"strict": true,
-		"baseUrl": ".",
 		"paths": {
 			"@convex/*": ["./*"]
 		},
@@ -13,6 +12,7 @@
 
 		"target": "ESNext",
 		"lib": ["ES2023", "dom"],
+		"types": ["node"],
 		"forceConsistentCasingInFileNames": true,
 		"module": "ESNext",
 		"isolatedModules": true,
