@@ -48,7 +48,7 @@
 		"globals": "^17.6.0",
 		"playwright": "^1.58.2",
 		"prettier": "^3.8.1",
-		"prettier-plugin-svelte": "^3.5.1",
+		"prettier-plugin-svelte": "^4.0.0",
 		"publint": "^0.3.18",
 		"svelte": "^5.55.5",
 		"svelte-check": "^4.4.7",
