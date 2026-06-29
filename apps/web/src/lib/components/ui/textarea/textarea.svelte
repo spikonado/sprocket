@@ -23,5 +23,4 @@
 	class={cn(
 		'border-input bg-background/55 text-foreground placeholder:text-muted-foreground focus-visible:ring-ring/60 flex min-h-28 w-full rounded-2xl border px-4 py-3 text-sm transition outline-none focus-visible:ring-2',
 		className
-	)}
-></textarea>
+	)}></textarea>
