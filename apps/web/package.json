@@ -12,7 +12,7 @@
 		"lint": "eslint . && convex typecheck"
 	},
 	"dependencies": {
-		"@ai-sdk/openai": "^3.0.58",
+		"@ai-sdk/openai": "^4.0.0",
 		"@convex-dev/rate-limiter": "^0.3.2",
 		"@convex-dev/workos-authkit": "^0.2.3",
 		"@fontsource/dm-sans": "^5.2.8",
