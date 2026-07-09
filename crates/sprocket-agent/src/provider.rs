@@ -1,17 +1,20 @@
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use anyhow::anyhow;
 use futures::StreamExt;
 use rig::client::CompletionClient;
 use rig::completion::{CompletionModel, Message};
-use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
+use rig::streaming::StreamingPrompt;
 use sprocket_convex_provider::Client as ConvexProviderClient;
 
 use crate::convex::RuntimeClient;
+use crate::hooks::AgentPromptHook;
 use crate::tools::workspace_tools;
 use crate::types::{RunAgentRequest, RunContextResponse};
 
 const AGENT_MAX_TURNS: usize = 75;
+const MAX_INVALID_TOOL_CALL_RETRIES: usize = 3;
 
 /// Must match `RUN_CANCELLED_BY_USER` in `apps/web/src/convex/lib/agentErrors.ts`.
 const RUN_CANCELLED_BY_USER: &str = "Run is cancelled.";
@@ -121,10 +124,19 @@ where
     eprintln!("sprocket-agent: built agent {}", request.run_id);
     eprintln!("sprocket-agent: prompting model {}", request.run_id);
 
+    let aggregated_text = Arc::new(Mutex::new(String::new()));
+    let hook = AgentPromptHook::new(
+        runtime,
+        request.run_id.clone(),
+        Arc::clone(&aggregated_text),
+    );
+
     let mut stream = agent
         .stream_prompt(request.prompt)
         .with_history(request.prior_history)
         .multi_turn(AGENT_MAX_TURNS)
+        .with_hook(hook)
+        .max_invalid_tool_call_retries(MAX_INVALID_TOOL_CALL_RETRIES)
         .await;
     let mut final_text = String::new();
 
@@ -133,34 +145,35 @@ where
             Ok(rig::agent::MultiTurnStreamItem::FinalResponse(response)) => {
                 final_text = response.response().to_string();
             }
-            Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
-                StreamedAssistantContent::Text(text),
-            )) => {
-                final_text.push_str(&text.text);
-                if let Err(error) = runtime
-                    .update_assistant_message(&request.run_id, &final_text)
-                    .await
-                {
-                    return AgentProviderResult::Failed {
-                        text: final_text,
-                        error,
-                    };
-                }
-            }
             Ok(_) => {}
             Err(error) => {
+                let text = if final_text.is_empty() {
+                    aggregated_text
+                        .lock()
+                        .map(|guard| guard.clone())
+                        .unwrap_or_default()
+                } else {
+                    final_text
+                };
                 let error_text = error.to_string();
                 if error_text.contains(RUN_CANCELLED_BY_USER)
                     || error_text.contains(RUN_NO_LONGER_ACTIVE)
                 {
-                    return AgentProviderResult::Cancelled { text: final_text };
+                    return AgentProviderResult::Cancelled { text };
                 }
                 return AgentProviderResult::Failed {
-                    text: final_text,
+                    text,
                     error: anyhow!(error),
                 };
             }
         }
+    }
+
+    if final_text.is_empty() {
+        final_text = aggregated_text
+            .lock()
+            .map(|guard| guard.clone())
+            .unwrap_or_default();
     }
 
     AgentProviderResult::Completed { text: final_text }

@@ -2944,6 +2944,7 @@ dependencies = [
  "convex",
  "futures",
  "rig-core",
+ "schemars",
  "serde",
  "serde_json",
  "sprocket-convex-provider",
