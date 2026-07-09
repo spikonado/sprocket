@@ -17,7 +17,7 @@
 		"@convex-dev/workos-authkit": "^0.2.3",
 		"@fontsource/dm-sans": "^5.2.8",
 		"@workos-inc/authkit-js": "^0.20.0",
-		"ai": "^6.0.174",
+		"ai": "^7.0.0",
 		"class-variance-authority": "^0.7.1",
 		"clsx": "^2.1.1",
 		"convex": "^1.37.0",
