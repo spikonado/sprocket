@@ -150,14 +150,16 @@ pub struct InputTokenDetails {
 }
 
 impl GetTokenUsage for CompletionOutput {
-    fn token_usage(&self) -> Option<RigUsage> {
-        Some(RigUsage {
+    fn token_usage(&self) -> RigUsage {
+        RigUsage {
             input_tokens: self.usage.input_tokens,
             output_tokens: self.usage.output_tokens,
             total_tokens: self.usage.total_tokens,
             cached_input_tokens: self.usage.input_token_details.cache_read_tokens,
             cache_creation_input_tokens: 0,
-        })
+            tool_use_prompt_tokens: 0,
+            reasoning_tokens: 0,
+        }
     }
 }
 
@@ -226,7 +228,7 @@ impl RigCompletionModel for CompletionModel {
 
         let value = call_completion_action(&self.client, &args).await?;
         let output = parse_completion_output(value)?;
-        let usage = output.token_usage().unwrap_or_else(RigUsage::new);
+        let usage = output.token_usage();
         let choice = completion_choice(&output);
 
         Ok(CompletionResponse {

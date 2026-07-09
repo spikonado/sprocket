@@ -149,7 +149,7 @@ fn from_json_string<T: for<'de> Deserialize<'de>>(value: &str, what: &str) -> an
 impl AgentHistoryContent {
     fn into_user_content(self) -> anyhow::Result<UserContent> {
         match self {
-            Self::Text { text } => Ok(UserContent::Text(Text { text })),
+            Self::Text { text } => Ok(UserContent::Text(Text::new(text))),
             Self::ToolResult { id, call_id, items } => Ok(UserContent::ToolResult(ToolResult {
                 id,
                 call_id,
@@ -185,7 +185,7 @@ impl AgentHistoryContent {
 
     fn into_assistant_content(self) -> anyhow::Result<AssistantContent> {
         match self {
-            Self::Text { text } => Ok(AssistantContent::Text(Text { text })),
+            Self::Text { text } => Ok(AssistantContent::Text(Text::new(text))),
             Self::Reasoning { id, blocks_json } => Ok(AssistantContent::Reasoning(
                 serde_json::from_value(serde_json::json!({
                     "id": id,
@@ -233,7 +233,7 @@ impl AgentHistoryContent {
 impl AgentHistoryToolResultItem {
     fn into_tool_result_content(self) -> anyhow::Result<ToolResultContent> {
         match self {
-            Self::Text { text } => Ok(ToolResultContent::Text(Text { text })),
+            Self::Text { text } => Ok(ToolResultContent::Text(Text::new(text))),
             Self::Image { image_json } => Ok(ToolResultContent::Image(from_json_string(
                 &image_json,
                 "tool result image",

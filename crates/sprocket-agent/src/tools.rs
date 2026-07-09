@@ -2,7 +2,9 @@ use std::path::PathBuf;
 
 use convex::Value;
 use rig::completion::ToolDefinition;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sprocket_workspace::{create_workspace_file, exec_workspace_command, replace_workspace_file};
 
 use crate::convex::RuntimeClient;
@@ -58,34 +60,46 @@ pub(crate) fn workspace_tools(
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct ExecCommandArgs {
+    /// Shell command to execute.
     cmd: String,
+    /// Relative/absolute path to the directory in which the command should be executed.
     #[serde(skip_serializing_if = "Option::is_none")]
     workdir: Option<String>,
+    /// Shell binary to launch.
     #[serde(skip_serializing_if = "Option::is_none")]
     shell: Option<String>,
+    /// Whether to run the shell with login semantics. Defaults to false.
     #[serde(skip_serializing_if = "Option::is_none")]
     login: Option<bool>,
+    /// Command timeout in milliseconds.
     #[serde(rename = "timeoutMs", skip_serializing_if = "Option::is_none")]
     timeout_ms: Option<u64>,
+    /// Maximum combined output characters returned to the model.
     #[serde(rename = "maxOutputChars", skip_serializing_if = "Option::is_none")]
     max_output_chars: Option<usize>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct CreateFileArgs {
+    /// Relative file path inside the workspace.
     path: String,
+    /// Entire file contents.
     content: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct ReplaceInFileArgs {
+    /// Relative file path inside the workspace.
     path: String,
+    /// Exact existing text to replace.
     #[serde(rename = "oldText")]
     old_text: String,
+    /// Replacement text.
     #[serde(rename = "newText")]
     new_text: String,
+    /// When true, replace every occurrence of oldText; otherwise replace the first match only.
     #[serde(rename = "replaceAll", skip_serializing_if = "Option::is_none")]
     replace_all: Option<bool>,
 }
@@ -101,18 +115,7 @@ impl rig::tool::Tool for ExecCommandTool {
             name: Self::NAME.to_string(),
             description: "Runs a shell command inside the workspace and returns its output."
                 .to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "cmd": { "type": "string", "description": "Shell command to execute." },
-                    "workdir": { "type": "string", "description": "Relative/absolute path to the directory in which the command should be executed." },
-                    "shell": { "type": "string", "description": "Shell binary to launch." },
-                    "login": { "type": "boolean", "description": "Whether to run the shell with login semantics. Defaults to false." },
-                    "timeoutMs": { "type": "integer", "minimum": 1, "description": "Command timeout in milliseconds." },
-                    "maxOutputChars": { "type": "integer", "minimum": 1, "maximum": 80000, "description": "Maximum combined output characters returned to the model." }
-                },
-                "required": ["cmd"]
-            }),
+            parameters: json!(schemars::schema_for!(ExecCommandArgs)),
         }
     }
 
@@ -152,14 +155,7 @@ impl rig::tool::Tool for CreateFileTool {
             name: Self::NAME.to_string(),
             description: "Create a new UTF-8 text file. Fails if the file already exists."
                 .to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "path": { "type": "string", "description": "Relative file path inside the workspace" },
-                    "content": { "type": "string", "description": "Entire file contents" }
-                },
-                "required": ["path", "content"]
-            }),
+            parameters: json!(schemars::schema_for!(CreateFileArgs)),
         }
     }
 
@@ -195,16 +191,7 @@ impl rig::tool::Tool for ReplaceInFileTool {
             name: Self::NAME.to_string(),
             description: "Apply an exact text replacement inside an existing UTF-8 file."
                 .to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "path": { "type": "string", "description": "Relative file path inside the workspace" },
-                    "oldText": { "type": "string", "description": "Exact existing text to replace" },
-                    "newText": { "type": "string", "description": "Replacement text" },
-                    "replaceAll": { "type": "boolean" }
-                },
-                "required": ["path", "oldText", "newText"]
-            }),
+            parameters: json!(schemars::schema_for!(ReplaceInFileArgs)),
         }
     }
 
