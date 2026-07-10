@@ -8,62 +8,66 @@
  * @module
  */
 
-import type * as agentRuntime from '../agentRuntime.js';
-import type * as auth from '../auth.js';
-import type * as authBootstrap from '../authBootstrap.js';
-import type * as chat from '../chat.js';
-import type * as completion from '../completion.js';
-import type * as executor from '../executor.js';
-import type * as http from '../http.js';
-import type * as lib_access from '../lib/access.js';
-import type * as lib_agentErrors from '../lib/agentErrors.js';
-import type * as lib_agentHistory from '../lib/agentHistory.js';
-import type * as lib_assistantParts from '../lib/assistantParts.js';
-import type * as lib_auth from '../lib/auth.js';
-import type * as lib_guestIdentity from '../lib/guestIdentity.js';
-import type * as lib_json from '../lib/json.js';
-import type * as lib_modelRegistry from '../lib/modelRegistry.js';
-import type * as lib_models from '../lib/models.js';
-import type * as lib_rateLimits from '../lib/rateLimits.js';
-import type * as lib_runs from '../lib/runs.js';
-import type * as lib_threadMessages from '../lib/threadMessages.js';
-import type * as lib_threadTranscript from '../lib/threadTranscript.js';
-import type * as lib_validators from '../lib/validators.js';
-import type * as lib_workspaceConnection from '../lib/workspaceConnection.js';
-import type * as messages from '../messages.js';
-import type * as threads from '../threads.js';
-import type * as uiPreferences from '../uiPreferences.js';
-import type * as workspaceSessions from '../workspaceSessions.js';
+import type * as agentRuntime from "../agentRuntime.js";
+import type * as auth from "../auth.js";
+import type * as authBootstrap from "../authBootstrap.js";
+import type * as chat from "../chat.js";
+import type * as completion from "../completion.js";
+import type * as executor from "../executor.js";
+import type * as http from "../http.js";
+import type * as lib_access from "../lib/access.js";
+import type * as lib_agentErrors from "../lib/agentErrors.js";
+import type * as lib_agentHistory from "../lib/agentHistory.js";
+import type * as lib_assistantParts from "../lib/assistantParts.js";
+import type * as lib_auth from "../lib/auth.js";
+import type * as lib_guestIdentity from "../lib/guestIdentity.js";
+import type * as lib_json from "../lib/json.js";
+import type * as lib_modelRegistry from "../lib/modelRegistry.js";
+import type * as lib_models from "../lib/models.js";
+import type * as lib_rateLimits from "../lib/rateLimits.js";
+import type * as lib_runs from "../lib/runs.js";
+import type * as lib_threadMessages from "../lib/threadMessages.js";
+import type * as lib_threadTranscript from "../lib/threadTranscript.js";
+import type * as lib_validators from "../lib/validators.js";
+import type * as lib_workspaceConnection from "../lib/workspaceConnection.js";
+import type * as messages from "../messages.js";
+import type * as threads from "../threads.js";
+import type * as uiPreferences from "../uiPreferences.js";
+import type * as workspaceSessions from "../workspaceSessions.js";
 
-import type { ApiFromModules, FilterApi, FunctionReference } from 'convex/server';
+import type {
+  ApiFromModules,
+  FilterApi,
+  FunctionReference,
+} from "convex/server";
 
 declare const fullApi: ApiFromModules<{
-	agentRuntime: typeof agentRuntime;
-	auth: typeof auth;
-	authBootstrap: typeof authBootstrap;
-	chat: typeof chat;
-	completion: typeof completion;
-	executor: typeof executor;
-	http: typeof http;
-	'lib/access': typeof lib_access;
-	'lib/agentErrors': typeof lib_agentErrors;
-	'lib/agentHistory': typeof lib_agentHistory;
-	'lib/assistantParts': typeof lib_assistantParts;
-	'lib/auth': typeof lib_auth;
-	'lib/guestIdentity': typeof lib_guestIdentity;
-	'lib/json': typeof lib_json;
-	'lib/modelRegistry': typeof lib_modelRegistry;
-	'lib/models': typeof lib_models;
-	'lib/rateLimits': typeof lib_rateLimits;
-	'lib/runs': typeof lib_runs;
-	'lib/threadMessages': typeof lib_threadMessages;
-	'lib/threadTranscript': typeof lib_threadTranscript;
-	'lib/validators': typeof lib_validators;
-	'lib/workspaceConnection': typeof lib_workspaceConnection;
-	messages: typeof messages;
-	threads: typeof threads;
-	uiPreferences: typeof uiPreferences;
-	workspaceSessions: typeof workspaceSessions;
+  agentRuntime: typeof agentRuntime;
+  auth: typeof auth;
+  authBootstrap: typeof authBootstrap;
+  chat: typeof chat;
+  completion: typeof completion;
+  executor: typeof executor;
+  http: typeof http;
+  "lib/access": typeof lib_access;
+  "lib/agentErrors": typeof lib_agentErrors;
+  "lib/agentHistory": typeof lib_agentHistory;
+  "lib/assistantParts": typeof lib_assistantParts;
+  "lib/auth": typeof lib_auth;
+  "lib/guestIdentity": typeof lib_guestIdentity;
+  "lib/json": typeof lib_json;
+  "lib/modelRegistry": typeof lib_modelRegistry;
+  "lib/models": typeof lib_models;
+  "lib/rateLimits": typeof lib_rateLimits;
+  "lib/runs": typeof lib_runs;
+  "lib/threadMessages": typeof lib_threadMessages;
+  "lib/threadTranscript": typeof lib_threadTranscript;
+  "lib/validators": typeof lib_validators;
+  "lib/workspaceConnection": typeof lib_workspaceConnection;
+  messages: typeof messages;
+  threads: typeof threads;
+  uiPreferences: typeof uiPreferences;
+  workspaceSessions: typeof workspaceSessions;
 }>;
 
 /**
@@ -74,7 +78,10 @@ declare const fullApi: ApiFromModules<{
  * const myFunctionReference = api.myModule.myFunction;
  * ```
  */
-export declare const api: FilterApi<typeof fullApi, FunctionReference<any, 'public'>>;
+export declare const api: FilterApi<
+  typeof fullApi,
+  FunctionReference<any, "public">
+>;
 
 /**
  * A utility for referencing Convex functions in your app's internal API.
@@ -84,9 +91,12 @@ export declare const api: FilterApi<typeof fullApi, FunctionReference<any, 'publ
  * const myFunctionReference = internal.myModule.myFunction;
  * ```
  */
-export declare const internal: FilterApi<typeof fullApi, FunctionReference<any, 'internal'>>;
+export declare const internal: FilterApi<
+  typeof fullApi,
+  FunctionReference<any, "internal">
+>;
 
 export declare const components: {
-	rateLimiter: import('@convex-dev/rate-limiter/_generated/component.js').ComponentApi<'rateLimiter'>;
-	workOSAuthKit: import('@convex-dev/workos-authkit/_generated/component.js').ComponentApi<'workOSAuthKit'>;
+  rateLimiter: import("@convex-dev/rate-limiter/_generated/component.js").ComponentApi<"rateLimiter">;
+  workOSAuthKit: import("@convex-dev/workos-authkit/_generated/component.js").ComponentApi<"workOSAuthKit">;
 };

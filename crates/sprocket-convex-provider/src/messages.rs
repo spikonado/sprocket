@@ -154,7 +154,7 @@ pub(crate) fn normalize_convex_json_numbers(value: &mut serde_json::Value) {
     }
 }
 
-pub(crate) fn system_text(request: &CompletionRequest) -> Option<String> {
+pub(crate) fn instructions_text(request: &CompletionRequest) -> Option<String> {
     request
         .chat_history
         .iter()
@@ -170,10 +170,10 @@ mod tests {
     use rig::completion::{CompletionRequest, Message};
     use rig::message::{AssistantContent, UserContent};
 
-    use super::{build_model_messages, normalize_convex_json_numbers, system_text};
+    use super::{build_model_messages, instructions_text, normalize_convex_json_numbers};
 
     #[test]
-    fn builds_structured_messages_and_extracts_system_prompt() {
+    fn builds_structured_messages_and_extracts_instructions() {
         let messages: OneOrMany<Message> = OneOrMany::many(vec![
             Message::System {
                 content: "You are precise.".to_string(),
@@ -207,7 +207,7 @@ mod tests {
             "I found the relevant module."
         );
         assert_eq!(
-            system_text(&CompletionRequest {
+            instructions_text(&CompletionRequest {
                 model: None,
                 preamble: None,
                 chat_history: messages,
