@@ -1,7 +1,7 @@
 <script lang="ts">
 	import '../app.css';
 	import { browser } from '$app/environment';
-	import { setupConvex, useConvexClient } from 'convex-svelte';
+	import { setupAuth, setupConvex } from 'convex-svelte';
 	import { authState, getAccessToken, initializeAuth } from '$lib/auth';
 	import type { RuntimeConfig } from './+layout';
 
@@ -9,25 +9,16 @@
 
 	const convexUrl = () => data.env.PUBLIC_CONVEX_URL;
 
-	setupConvex(convexUrl() || 'https://invalid.invalid', {
+	const convexClient = setupConvex(convexUrl() || 'https://invalid.invalid', {
 		disabled: !browser || !convexUrl(),
 		unsavedChangesWarning: false
 	});
 
-	const convexClient = useConvexClient();
-
-	$effect(() => {
-		if (!$authState.isReady) {
-			return;
-		}
-
-		if ($authState.user) {
-			void convexClient.setAuth(async () => (await getAccessToken()) ?? null);
-			return;
-		}
-
-		void convexClient.setAuth(async () => null);
-	});
+	setupAuth(() => ({
+		isLoading: !$authState.isReady || $authState.isLoading,
+		isAuthenticated: Boolean($authState.user),
+		fetchAccessToken: getAccessToken
+	}));
 
 	$effect(() => {
 		if (!browser || !convexUrl()) {
