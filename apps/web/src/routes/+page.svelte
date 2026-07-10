@@ -636,19 +636,20 @@
 		const workspaceSessionIds = workspaceSessionIdsKey
 			? (workspaceSessionIdsKey.split('\0') as Id<'workspaceSessions'>[])
 			: [];
-		if (!clientId || !desktopApi || workspaceSessionIds.length === 0) {
+		const viewerArgs = getViewerQueryArgs();
+		if (!clientId || !desktopApi || workspaceSessionIds.length === 0 || viewerArgs === 'skip') {
 			return;
 		}
 
 		void heartbeatAttached({
-			...getViewerArgs(),
+			...viewerArgs,
 			clientId,
 			workspaceSessionIds
 		});
 
 		const intervalId = window.setInterval(() => {
 			void heartbeatAttached({
-				...getViewerArgs(),
+				...viewerArgs,
 				clientId,
 				workspaceSessionIds
 			});
