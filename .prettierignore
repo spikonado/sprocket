@@ -1,5 +1,8 @@
-# Nix
-flake*
+# Convex
+_generated/
 
 # Package Managers
 bun.lock
+
+# Nix
+flake*

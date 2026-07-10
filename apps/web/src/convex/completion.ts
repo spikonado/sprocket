@@ -6,7 +6,7 @@ import { action, type ActionCtx } from '@convex/_generated/server';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import type { JsonValue } from '@convex/lib/json';
-import { resolveLanguageModel, resolveProviderOptions } from '@convex/lib/modelRegistry';
+import { resolveLanguageModel } from '@convex/lib/modelRegistry';
 import { assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
 import {
 	enforceGuestModelCompletionLimit,
@@ -18,7 +18,9 @@ import { type SupportedModelId, type SupportedReasoningEffort } from '@convex/li
 type JsonSchema = Parameters<typeof jsonSchema>[0];
 type ToolChoice = NonNullable<Parameters<typeof generateText>[0]['toolChoice']>;
 type GenerateTextResult = Awaited<ReturnType<typeof generateText>>;
-type CompletionActionResult = Pick<GenerateTextResult, 'text' | 'usage' | 'response' | 'toolCalls'>;
+type CompletionActionResult = Pick<GenerateTextResult, 'text' | 'usage' | 'toolCalls'> & {
+	response: GenerateTextResult['finalStep']['response'];
+};
 type CompletionRequest = Parameters<typeof generateText>[0];
 type SharedCompletionRequest = Omit<CompletionRequest, 'prompt' | 'messages'>;
 
@@ -26,7 +28,7 @@ export const complete = action({
 	args: {
 		modelId: vModelId,
 		reasoningEffort: v.optional(vReasoningEffort),
-		system: v.optional(v.string()),
+		instructions: v.optional(v.string()),
 		prompt: v.optional(v.string()),
 		messagesJson: v.optional(v.string()),
 		guestId: v.optional(v.string()),
@@ -97,18 +99,18 @@ export const complete = action({
 async function collectStreamingCompletion(
 	result: ReturnType<typeof streamText>
 ): Promise<CompletionActionResult> {
-	const [text, usage, response, toolCalls] = await Promise.all([
+	const [text, usage, finalStep, toolCalls] = await Promise.all([
 		result.text,
 		result.usage,
-		result.response,
+		result.finalStep,
 		result.toolCalls
 	]);
 	return {
 		text,
 		usage,
-		response,
+		response: finalStep.response,
 		toolCalls
-	} as CompletionActionResult;
+	};
 }
 
 async function enforceCompletionLimit(
@@ -132,7 +134,7 @@ function buildSharedCompletionRequest(
 	args: {
 		modelId: SupportedModelId;
 		reasoningEffort?: SupportedReasoningEffort;
-		system?: string;
+		instructions?: string;
 		tools?: Array<{ name: string }>;
 	},
 	tools: Record<string, ReturnType<typeof tool>>,
@@ -140,14 +142,10 @@ function buildSharedCompletionRequest(
 ): SharedCompletionRequest {
 	return {
 		model: resolveLanguageModel(args.modelId),
-		...(args.system !== undefined ? { system: args.system } : {}),
+		...(args.instructions !== undefined ? { instructions: args.instructions } : {}),
 		...(args.tools?.length ? { tools } : {}),
 		...(toolChoice !== undefined ? { toolChoice } : {}),
-		...(args.reasoningEffort !== undefined
-			? {
-					providerOptions: resolveProviderOptions(args.modelId, args.reasoningEffort)
-				}
-			: {})
+		...(args.reasoningEffort !== undefined ? { reasoning: args.reasoningEffort } : {})
 	};
 }
 

@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 
-use crate::messages::{build_model_messages, normalize_convex_json_numbers, system_text};
+use crate::messages::{build_model_messages, instructions_text, normalize_convex_json_numbers};
 
 const CONVEX_RPC_TIMEOUT: Duration = Duration::from_secs(20 * 60);
 
@@ -140,6 +140,8 @@ pub struct Usage {
     pub total_tokens: u64,
     #[serde(default)]
     pub input_token_details: InputTokenDetails,
+    #[serde(default)]
+    pub output_token_details: OutputTokenDetails,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -147,6 +149,13 @@ pub struct Usage {
 pub struct InputTokenDetails {
     #[serde(default, deserialize_with = "deserialize_convex_u64")]
     pub cache_read_tokens: u64,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutputTokenDetails {
+    #[serde(default, deserialize_with = "deserialize_convex_u64")]
+    pub reasoning_tokens: u64,
 }
 
 impl GetTokenUsage for CompletionOutput {
@@ -158,7 +167,7 @@ impl GetTokenUsage for CompletionOutput {
             cached_input_tokens: self.usage.input_token_details.cache_read_tokens,
             cache_creation_input_tokens: 0,
             tool_use_prompt_tokens: 0,
-            reasoning_tokens: 0,
+            reasoning_tokens: self.usage.output_token_details.reasoning_tokens,
         }
     }
 }
@@ -167,7 +176,7 @@ impl GetTokenUsage for CompletionOutput {
 struct ConvexActionArgs {
     model_id: String,
     reasoning_effort: Option<String>,
-    system: Option<String>,
+    instructions: Option<String>,
     prompt: Option<String>,
     messages_json: String,
     guest_id: Option<String>,
@@ -208,7 +217,7 @@ impl RigCompletionModel for CompletionModel {
         &self,
         request: CompletionRequest,
     ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
-        let system = system_text(&request);
+        let instructions = instructions_text(&request);
         let messages = build_model_messages(&request)?;
         let args = ConvexActionArgs {
             model_id: self.model.clone(),
@@ -217,7 +226,7 @@ impl RigCompletionModel for CompletionModel {
                 .default_reasoning_effort
                 .as_deref()
                 .map(str::to_owned),
-            system,
+            instructions,
             prompt: None,
             messages_json: messages.to_string(),
             guest_id: self.client.guest_id.as_deref().map(str::to_owned),
@@ -316,8 +325,8 @@ fn action_args(args: &ConvexActionArgs, stream_run_id: &str) -> BTreeMap<String,
         payload.insert("guestId".to_string(), guest_id.clone().into());
     }
     payload.insert("streamRunId".to_string(), stream_run_id.to_string().into());
-    if let Some(system) = &args.system {
-        payload.insert("system".to_string(), system.clone().into());
+    if let Some(instructions) = &args.instructions {
+        payload.insert("instructions".to_string(), instructions.clone().into());
     }
     if let Some(reasoning_effort) = &args.reasoning_effort {
         payload.insert(
