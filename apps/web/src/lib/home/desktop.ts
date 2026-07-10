@@ -1,6 +1,6 @@
 import { api } from '$convex/_generated/api';
 import type { Id } from '$convex/_generated/dataModel';
-import type { ConvexClient } from 'convex/browser';
+import type { FunctionArgs, FunctionReference, FunctionReturnType } from 'convex/server';
 import type {
 	AgentRunRequest,
 	DesktopApi,
@@ -10,14 +10,14 @@ import type {
 	WorkspaceSessionLocation
 } from '$lib/types/sprocket';
 
-type MutationClient = Pick<ConvexClient, 'mutation'>;
+type MutationFunction<Mutation extends FunctionReference<'mutation'>> = (
+	args: FunctionArgs<Mutation>
+) => Promise<FunctionReturnType<Mutation>>;
+
+type HeartbeatAttachedMutation = MutationFunction<typeof api.workspaceSessions.heartbeatAttached>;
 
 export type ViewerArgs = {
 	guestId?: string;
-};
-
-export type WorkspaceSelectionResult = {
-	_id: Id<'workspaceSessions'>;
 };
 
 export type WorkspaceSessionState = WorkspaceSession & {
@@ -29,6 +29,23 @@ export function getViewerArgs(
 	guestSessionId: string | null
 ): ViewerArgs {
 	return !authenticatedUser && guestSessionId ? { guestId: guestSessionId } : {};
+}
+
+export function getViewerQueryArgs(args: {
+	authenticatedUser: unknown;
+	convexIsAuthenticated: boolean;
+	convexIsLoading: boolean;
+	guestSessionId: string | null;
+}): ViewerArgs | 'skip' {
+	if (args.authenticatedUser) {
+		return args.convexIsAuthenticated ? {} : 'skip';
+	}
+
+	if (args.convexIsLoading || args.convexIsAuthenticated) {
+		return 'skip';
+	}
+
+	return args.guestSessionId ? { guestId: args.guestSessionId } : 'skip';
 }
 
 export function launchAgentRun(args: {
@@ -90,9 +107,9 @@ export async function attachLocalWorkspaceSession(args: {
 
 export async function syncAttachedWorkspaceSessions(args: {
 	attachedWorkspaceSessionIds: Id<'workspaceSessions'>[];
-	convexClient: MutationClient;
 	executorClientId: string | null;
 	getViewerArgs: () => ViewerArgs;
+	heartbeatAttached: HeartbeatAttachedMutation;
 	workspaceSessionIds: Id<'workspaceSessions'>[];
 }) {
 	if (!args.executorClientId) {
@@ -103,7 +120,7 @@ export async function syncAttachedWorkspaceSessions(args: {
 		...new Set([...args.attachedWorkspaceSessionIds, ...args.workspaceSessionIds])
 	];
 
-	await args.convexClient.mutation(api.workspaceSessions.heartbeatAttached, {
+	await args.heartbeatAttached({
 		...args.getViewerArgs(),
 		clientId: args.executorClientId,
 		workspaceSessionIds: attachedSessionIds
@@ -112,10 +129,10 @@ export async function syncAttachedWorkspaceSessions(args: {
 
 export async function attachWorkspaceSession(args: {
 	attachedWorkspaceSessionIds: Id<'workspaceSessions'>[];
-	convexClient: MutationClient;
 	desktopApi: DesktopApi | null;
 	executorClientId: string | null;
 	getViewerArgs: () => ViewerArgs;
+	heartbeatAttached: HeartbeatAttachedMutation;
 	refreshDesktopWorkspaceSessions: () => Promise<void>;
 	workspaceSessionId: Id<'workspaceSessions'>;
 }) {
@@ -128,9 +145,9 @@ export async function attachWorkspaceSession(args: {
 		await args.refreshDesktopWorkspaceSessions();
 		await syncAttachedWorkspaceSessions({
 			attachedWorkspaceSessionIds: args.attachedWorkspaceSessionIds,
-			convexClient: args.convexClient,
 			executorClientId: args.executorClientId,
 			getViewerArgs: args.getViewerArgs,
+			heartbeatAttached: args.heartbeatAttached,
 			workspaceSessionIds: [args.workspaceSessionId]
 		});
 	} catch (error) {

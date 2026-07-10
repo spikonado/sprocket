@@ -187,14 +187,16 @@ export async function signOut() {
 	}
 }
 
-export async function getAccessToken() {
+export async function getAccessToken({
+	forceRefreshToken = false
+}: { forceRefreshToken?: boolean } = {}) {
 	const client = await getAuthClient();
 	if (!client) {
 		return null;
 	}
 
 	try {
-		return await client.getAccessToken();
+		return await client.getAccessToken({ forceRefresh: forceRefreshToken });
 	} catch (error) {
 		const maybeLoginRequired = error as LoginRequiredError | Error;
 		if (maybeLoginRequired.name === 'LoginRequiredError') {

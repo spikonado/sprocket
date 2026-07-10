@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { launchAgentRun } from '$lib/home/desktop';
+import {
+	getViewerQueryArgs,
+	launchAgentRun,
+	syncAttachedWorkspaceSessions
+} from '$lib/home/desktop';
 import type { DesktopApi } from '$lib/types/sprocket';
 
 function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
@@ -61,5 +65,67 @@ describe('launchAgentRun', () => {
 		await Promise.resolve();
 
 		expect(onError).toHaveBeenCalledWith(launchError);
+	});
+});
+
+describe('getViewerQueryArgs', () => {
+	it('waits for Convex to confirm an authenticated user', () => {
+		expect(
+			getViewerQueryArgs({
+				authenticatedUser: { id: 'user-1' },
+				convexIsAuthenticated: false,
+				convexIsLoading: true,
+				guestSessionId: 'guest-1'
+			})
+		).toBe('skip');
+
+		expect(
+			getViewerQueryArgs({
+				authenticatedUser: { id: 'user-1' },
+				convexIsAuthenticated: true,
+				convexIsLoading: false,
+				guestSessionId: 'guest-1'
+			})
+		).toEqual({});
+	});
+
+	it('only uses guest identity after authenticated state has cleared', () => {
+		expect(
+			getViewerQueryArgs({
+				authenticatedUser: null,
+				convexIsAuthenticated: true,
+				convexIsLoading: false,
+				guestSessionId: 'guest-1'
+			})
+		).toBe('skip');
+
+		expect(
+			getViewerQueryArgs({
+				authenticatedUser: null,
+				convexIsAuthenticated: false,
+				convexIsLoading: false,
+				guestSessionId: 'guest-1'
+			})
+		).toEqual({ guestId: 'guest-1' });
+	});
+});
+
+describe('syncAttachedWorkspaceSessions', () => {
+	it('combines existing and newly attached sessions through the injected mutation', async () => {
+		const heartbeatAttached = vi.fn().mockResolvedValue(undefined);
+
+		await syncAttachedWorkspaceSessions({
+			attachedWorkspaceSessionIds: ['workspace-1' as never],
+			executorClientId: 'client-1',
+			getViewerArgs: () => ({ guestId: 'guest-1' }),
+			heartbeatAttached,
+			workspaceSessionIds: ['workspace-1' as never, 'workspace-2' as never]
+		});
+
+		expect(heartbeatAttached).toHaveBeenCalledWith({
+			guestId: 'guest-1',
+			clientId: 'client-1',
+			workspaceSessionIds: ['workspace-1', 'workspace-2']
+		});
 	});
 });

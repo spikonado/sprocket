@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
-	import { useConvexClient, useQuery } from 'convex-svelte';
+	import { useAuth, useMutation, useQuery } from 'convex-svelte';
 	import type { Id } from '$convex/_generated/dataModel';
 	import { api } from '$convex/_generated/api';
 	import { EXECUTOR_HEARTBEAT_WRITE_THROTTLE_MS } from '$convex/lib/workspaceConnection';
@@ -14,10 +14,10 @@
 		attachLocalWorkspaceSession as attachLocalWorkspaceSessionForPath,
 		attachWorkspaceSession as attachWorkspaceSessionForExecution,
 		getViewerArgs as getViewerArgsForUser,
+		getViewerQueryArgs as getViewerQueryArgsForUser,
 		launchAgentRun,
 		refreshDesktopWorkspaceSessions as refreshDesktopWorkspaceSessionsFromDesktop,
 		syncAttachedWorkspaceSessions as syncAttachedWorkspaceSessionsForClient,
-		type WorkspaceSelectionResult,
 		type WorkspaceSessionState
 	} from '$lib/home/desktop';
 	import { formatElapsedDuration } from '$lib/format';
@@ -46,7 +46,13 @@
 		WorkspaceThreadGroup
 	} from '$lib/types/sprocket';
 
-	const convexClient = useConvexClient();
+	const convexAuth = useAuth();
+	const upsertWorkspaceSession = useMutation(api.workspaceSessions.upsertSelected);
+	const createThreadMutation = useMutation(api.threads.create);
+	const removeThread = useMutation(api.threads.remove);
+	const finishRun = useMutation(api.agentRuntime.finishRun);
+	const setLastThread = useMutation(api.uiPreferences.setLastThread);
+	const heartbeatAttached = useMutation(api.workspaceSessions.heartbeatAttached);
 	const localServerRequiredMessage = 'Connect to a running Sprocket server to use this workspace.';
 
 	let desktopApi = $state<DesktopApi | null>(null);
@@ -76,42 +82,56 @@
 		return getViewerArgsForUser($authState.user, guestSessionId);
 	}
 
-	const workspaceSessionsQuery = useQuery(api.workspaceSessions.listMine, () =>
-		$authState.user ? {} : guestSessionId ? { guestId: guestSessionId } : 'skip'
-	);
-	const threadsQuery = useQuery(api.threads.listMine, () =>
-		$authState.user ? {} : guestSessionId ? { guestId: guestSessionId } : 'skip'
-	);
-	const uiPreferencesQuery = useQuery(api.uiPreferences.getMine, () =>
-		$authState.user ? {} : guestSessionId ? { guestId: guestSessionId } : 'skip'
-	);
-	const activeThreadQuery = useQuery(api.threads.getByThreadId, () =>
-		currentThreadId
-			? $authState.user
-				? { threadId: currentThreadId }
-				: guestSessionId
-					? { guestId: guestSessionId, threadId: currentThreadId }
-					: 'skip'
-			: 'skip'
-	);
-	const messagesQuery = useQuery(api.messages.listForThread, () =>
-		currentThreadId
+	function getViewerQueryArgs() {
+		return getViewerQueryArgsForUser({
+			authenticatedUser: $authState.user,
+			convexIsAuthenticated: convexAuth.isAuthenticated,
+			convexIsLoading: convexAuth.isLoading,
+			guestSessionId
+		});
+	}
+
+	const workspaceSessionsQuery = useQuery(api.workspaceSessions.listMine, getViewerQueryArgs);
+	const threadsQuery = useQuery(api.threads.listMine, getViewerQueryArgs);
+	const uiPreferencesQuery = useQuery(api.uiPreferences.getMine, getViewerQueryArgs);
+	const activeThreadQuery = useQuery(api.threads.getByThreadId, () => {
+		const viewerArgs = getViewerQueryArgs();
+		return currentThreadId && viewerArgs !== 'skip'
+			? { ...viewerArgs, threadId: currentThreadId }
+			: 'skip';
+	});
+	const messagesQuery = useQuery(api.messages.listForThread, () => {
+		const viewerArgs = getViewerQueryArgs();
+		return currentThreadId && viewerArgs !== 'skip'
 			? {
-					...(!$authState.user && guestSessionId ? { guestId: guestSessionId } : {}),
+					...viewerArgs,
 					threadId: currentThreadId,
 					paginationOpts: { cursor: null, numItems: 40 }
 				}
-			: 'skip'
-	);
-	const latestRunQuery = useQuery(api.chat.latestRunForThread, () =>
-		currentThreadId
-			? $authState.user
-				? { threadId: currentThreadId }
-				: guestSessionId
-					? { guestId: guestSessionId, threadId: currentThreadId }
-					: 'skip'
-			: 'skip'
-	);
+			: 'skip';
+	});
+	const latestRunQuery = useQuery(api.chat.latestRunForThread, () => {
+		const viewerArgs = getViewerQueryArgs();
+		return currentThreadId && viewerArgs !== 'skip'
+			? { ...viewerArgs, threadId: currentThreadId }
+			: 'skip';
+	});
+	const queryError = $derived.by(() => {
+		for (const query of [
+			workspaceSessionsQuery,
+			threadsQuery,
+			uiPreferencesQuery,
+			activeThreadQuery,
+			messagesQuery,
+			latestRunQuery
+		]) {
+			if (query.error) {
+				return query.error;
+			}
+		}
+
+		return null;
+	});
 	const workspaceSessions = $derived.by<WorkspaceSessionState[]>(() =>
 		((workspaceSessionsQuery.data ?? []) as WorkspaceSession[]).map((session) => {
 			const desktopWorkspace = desktopWorkspaceSessionsById[session._id];
@@ -231,9 +251,9 @@
 	async function syncAttachedWorkspaceSessions(workspaceSessionIds: Id<'workspaceSessions'>[]) {
 		await syncAttachedWorkspaceSessionsForClient({
 			attachedWorkspaceSessionIds,
-			convexClient,
 			executorClientId,
 			getViewerArgs,
+			heartbeatAttached,
 			workspaceSessionIds
 		});
 	}
@@ -295,11 +315,15 @@
 				return;
 			}
 
-			const session = (await convexClient.mutation(api.workspaceSessions.upsertSelected, {
+			const session = await upsertWorkspaceSession({
 				...getViewerArgs(),
 				workspaceName: overview.name,
 				connectedClientId: executorClientId
-			})) as WorkspaceSelectionResult;
+			});
+			if (!session) {
+				throw new Error('Failed to create or update the workspace session.');
+			}
+
 			await attachLocalWorkspaceSession(session._id, overview.rootPath);
 			await syncAttachedWorkspaceSessions([session._id]);
 			setWorkspaceSelection(overview.name, null, true);
@@ -313,10 +337,10 @@
 	async function attachWorkspaceSession(workspaceSessionId: Id<'workspaceSessions'>) {
 		await attachWorkspaceSessionForExecution({
 			attachedWorkspaceSessionIds,
-			convexClient,
 			desktopApi,
 			executorClientId,
 			getViewerArgs,
+			heartbeatAttached,
 			refreshDesktopWorkspaceSessions,
 			workspaceSessionId
 		});
@@ -333,7 +357,7 @@
 			return null;
 		}
 
-		const result = await convexClient.mutation(api.threads.create, {
+		const result = await createThreadMutation({
 			...getViewerArgs(),
 			workspaceSessionId,
 			selectedModel,
@@ -376,7 +400,7 @@
 		}
 
 		try {
-			await convexClient.mutation(api.threads.remove, {
+			await removeThread({
 				...getViewerArgs(),
 				threadId: thread.threadId
 			});
@@ -464,7 +488,7 @@
 		}
 
 		try {
-			await convexClient.mutation(api.agentRuntime.finishRun, {
+			await finishRun({
 				...getViewerArgs(),
 				runId: runState._id,
 				status: 'cancelled'
@@ -577,7 +601,7 @@
 		}
 
 		lastSavedThreadId = currentThreadId;
-		void convexClient.mutation(api.uiPreferences.setLastThread, {
+		void setLastThread({
 			...getViewerArgs(),
 			threadId: currentThreadId
 		});
@@ -616,14 +640,14 @@
 			return;
 		}
 
-		void convexClient.mutation(api.workspaceSessions.heartbeatAttached, {
+		void heartbeatAttached({
 			...getViewerArgs(),
 			clientId,
 			workspaceSessionIds
 		});
 
 		const intervalId = window.setInterval(() => {
-			void convexClient.mutation(api.workspaceSessions.heartbeatAttached, {
+			void heartbeatAttached({
 				...getViewerArgs(),
 				clientId,
 				workspaceSessionIds
@@ -754,7 +778,7 @@
 				</header>
 
 				<ThreadTranscript
-					currentError={currentError ?? $authState.error}
+					currentError={currentError ?? $authState.error ?? queryError?.message ?? null}
 					runError={runState?.lastError ?? null}
 					messages={visibleMessages}
 					actions={visibleActions}
