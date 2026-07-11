@@ -8,6 +8,11 @@
 			"inputs": ["$TURBO_DEFAULT$", "turbo-cache-key.json"],
 			"outputs": [".svelte-kit/**", ".vercel/**", "dist/**", "target/**"]
 		},
+		"build:release": {
+			"dependsOn": ["^build:release"],
+			"inputs": ["$TURBO_DEFAULT$", "turbo-cache-key.json"],
+			"outputs": [".svelte-kit/**", ".vercel/**", "dist/**", "target/**"]
+		},
 		"check": {
 			"dependsOn": ["^check"]
 		},

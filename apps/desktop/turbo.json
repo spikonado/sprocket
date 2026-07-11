@@ -1,0 +1,13 @@
+{
+	"$schema": "https://turborepo.dev/schema.json",
+	"extends": ["//"],
+	"tasks": {
+		"build": {
+			"cache": false
+		},
+		"build:release": {
+			"cache": false,
+			"dependsOn": ["@sprocket/web#build:release"]
+		}
+	}
+}
