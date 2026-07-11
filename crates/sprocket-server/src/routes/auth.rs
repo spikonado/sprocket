@@ -1,5 +1,7 @@
+use std::net::SocketAddr;
+
 use axum::Json;
-use axum::extract::{Query, State};
+use axum::extract::{ConnectInfo, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
@@ -10,7 +12,7 @@ use crate::AppState;
 use crate::auth::{
     AuthSessionResponse, AuthState, BootstrapRequest, BootstrapResponse,
     DesktopLoginResultResponse, DesktopLoginStartResponse, LocalIdentityResponse,
-    extract_session_token, require_session,
+    extract_session_token, peer_may_complete_desktop_login_callback, require_session,
 };
 
 const DESKTOP_BOOTSTRAP_TOKEN_HEADER: &str = "x-sprocket-desktop-bootstrap-token";
@@ -151,8 +153,17 @@ async fn desktop_login_start(
 
 async fn desktop_login_callback(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Query(query): Query<DesktopLoginCallbackQuery>,
 ) -> Response {
+    if !peer_may_complete_desktop_login_callback(peer) {
+        return desktop_login_html_response(
+            StatusCode::FORBIDDEN,
+            "Sign-in failed",
+            "Desktop login callback is only available from this machine.",
+        );
+    }
+
     let callback_state = query
         .state
         .as_deref()
@@ -360,7 +371,10 @@ impl IntoResponse for ApiError {
 
 #[cfg(test)]
 mod tests {
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
     use axum::body::Body;
+    use axum::extract::ConnectInfo;
     use axum::http::{Request, header};
     use tower::ServiceExt;
     use uuid::Uuid;
@@ -412,6 +426,19 @@ mod tests {
         format!("{}={session_token}", crate::SESSION_COOKIE_NAME)
     }
 
+    fn loopback_peer() -> SocketAddr {
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 54321)
+    }
+
+    fn lan_peer() -> SocketAddr {
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50)), 54321)
+    }
+
+    fn with_peer(mut request: Request<Body>, peer: SocketAddr) -> Request<Body> {
+        request.extensions_mut().insert(ConnectInfo(peer));
+        request
+    }
+
     #[tokio::test]
     async fn provider_error_terminates_pending_attempt() {
         let (state, session_token, _) = test_state(true).await;
@@ -434,12 +461,13 @@ mod tests {
 
         let callback = app
             .clone()
-            .oneshot(
+            .oneshot(with_peer(
                 Request::builder()
                     .uri("/api/auth/desktop-login/callback?error=access_denied&error_description=User%20cancelled&state=%7B%22nonce%22%3A%22nonce-1%22%7D")
                     .body(Body::empty())
                     .unwrap(),
-            )
+                loopback_peer(),
+            ))
             .await
             .unwrap();
         assert_eq!(callback.status(), StatusCode::BAD_REQUEST);
@@ -496,12 +524,13 @@ mod tests {
 
         let callback = app
             .clone()
-            .oneshot(
+            .oneshot(with_peer(
                 Request::builder()
                     .uri("/api/auth/desktop-login/callback?code=code-a&state=%7B%22nonce%22%3A%22nonce-a%22%7D")
                     .body(Body::empty())
                     .unwrap(),
-            )
+                loopback_peer(),
+            ))
             .await
             .unwrap();
         assert_eq!(callback.status(), StatusCode::OK);
@@ -571,12 +600,13 @@ mod tests {
         assert_eq!(cancel.status(), StatusCode::OK);
 
         let callback = app
-            .oneshot(
+            .oneshot(with_peer(
                 Request::builder()
                     .uri("/api/auth/desktop-login/callback?code=auth-code&state=%7B%22nonce%22%3A%22nonce-1%22%7D")
                     .body(Body::empty())
                     .unwrap(),
-            )
+                loopback_peer(),
+            ))
             .await
             .unwrap();
         assert_eq!(callback.status(), StatusCode::BAD_REQUEST);
@@ -623,12 +653,13 @@ mod tests {
 
         let callback = app
             .clone()
-            .oneshot(
+            .oneshot(with_peer(
                 Request::builder()
                     .uri("/api/auth/desktop-login/callback?code=auth-code&state=%7B%22nonce%22%3A%22nonce-new%22%7D")
                     .body(Body::empty())
                     .unwrap(),
-            )
+                loopback_peer(),
+            ))
             .await
             .unwrap();
         assert_eq!(callback.status(), StatusCode::OK);
@@ -700,12 +731,13 @@ mod tests {
 
         let callback = app
             .clone()
-            .oneshot(
+            .oneshot(with_peer(
                 Request::builder()
                     .uri("/api/auth/desktop-login/callback?code=auth-code&state=%7B%22nonce%22%3A%22nonce-1%22%7D")
                     .body(Body::empty())
                     .unwrap(),
-            )
+                loopback_peer(),
+            ))
             .await
             .unwrap();
         assert_eq!(callback.status(), StatusCode::BAD_REQUEST);
@@ -722,5 +754,151 @@ mod tests {
             .unwrap();
         let payload = read_json(result).await;
         assert_eq!(payload["status"], "pending");
+    }
+
+    #[tokio::test]
+    async fn loopback_peer_can_complete_callback() {
+        let (state, session_token, _) = test_state(true).await;
+        let app = router(state);
+
+        let start = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/auth/desktop-login/start")
+                    .header(header::COOKIE, session_cookie(&session_token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"state":"nonce-1"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(start.status(), StatusCode::OK);
+
+        let callback = app
+            .clone()
+            .oneshot(with_peer(
+                Request::builder()
+                    .uri("/api/auth/desktop-login/callback?code=auth-code&state=%7B%22nonce%22%3A%22nonce-1%22%7D")
+                    .body(Body::empty())
+                    .unwrap(),
+                loopback_peer(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(callback.status(), StatusCode::OK);
+
+        let result = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/auth/desktop-login/result")
+                    .header(header::COOKIE, session_cookie(&session_token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let payload = read_json(result).await;
+        assert_eq!(payload["status"], "complete");
+        assert_eq!(payload["code"], "auth-code");
+    }
+
+    #[tokio::test]
+    async fn non_loopback_peer_cannot_complete_callback() {
+        let (state, session_token, _) = test_state(true).await;
+        let app = router(state);
+
+        let start = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/auth/desktop-login/start")
+                    .header(header::COOKIE, session_cookie(&session_token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"state":"nonce-1"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(start.status(), StatusCode::OK);
+
+        let callback = app
+            .clone()
+            .oneshot(with_peer(
+                Request::builder()
+                    .uri("/api/auth/desktop-login/callback?code=attacker-code&state=%7B%22nonce%22%3A%22nonce-1%22%7D")
+                    .header("x-forwarded-for", "127.0.0.1")
+                    .header(header::HOST, "127.0.0.1:7731")
+                    .body(Body::empty())
+                    .unwrap(),
+                lan_peer(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(callback.status(), StatusCode::FORBIDDEN);
+        let html = read_text(callback).await;
+        assert!(html.contains("only available from this machine"));
+
+        let result = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/auth/desktop-login/result")
+                    .header(header::COOKIE, session_cookie(&session_token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let payload = read_json(result).await;
+        assert_eq!(payload["status"], "pending");
+    }
+
+    #[tokio::test]
+    async fn start_rejects_nonce_collision_across_sessions() {
+        let (state, session_a, credential) = test_state(true).await;
+        let (_, session_b) = state
+            .auth
+            .bootstrap(&credential)
+            .await
+            .expect("second session");
+        let app = router(state);
+
+        let first = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/auth/desktop-login/start")
+                    .header(header::COOKIE, session_cookie(&session_a))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"state":"shared-nonce"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+
+        let collision = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/auth/desktop-login/start")
+                    .header(header::COOKIE, session_cookie(&session_b))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"state":"shared-nonce"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(collision.status(), StatusCode::BAD_REQUEST);
+        let payload = read_json(collision).await;
+        assert!(
+            payload["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("already in use")
+        );
     }
 }

@@ -83,23 +83,31 @@ enum DesktopLoginOutcome {
 
 #[derive(Debug)]
 struct DesktopLoginAttempt {
-    nonce: String,
+    session_token: String,
     created_at: Instant,
     outcome: Option<DesktopLoginOutcome>,
 }
 
+#[derive(Debug, Default)]
+struct DesktopLoginAttempts {
+    /// Primary index: nonce uniquely identifies one pending/completed attempt.
+    by_nonce: HashMap<String, DesktopLoginAttempt>,
+    /// Secondary index for authenticated polling/cancel by local session token.
+    by_session: HashMap<String, String>,
+}
+
 /// One-shot in-memory store for the RFC 8252 loopback desktop login handshake.
 ///
-/// Attempts are keyed by local session token so concurrent desktop windows cannot
-/// overwrite or steal each other's authorization codes.
+/// Attempts are keyed by nonce so the unauthenticated callback binds deterministically
+/// to exactly one attempt. Polling and cancel remain authenticated by session token.
 pub struct DesktopLoginStore {
-    attempts: Mutex<HashMap<String, DesktopLoginAttempt>>,
+    attempts: Mutex<DesktopLoginAttempts>,
 }
 
 impl DesktopLoginStore {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
-            attempts: Mutex::new(HashMap::new()),
+            attempts: Mutex::new(DesktopLoginAttempts::default()),
         })
     }
 
@@ -115,14 +123,28 @@ impl DesktopLoginStore {
 
         let mut attempts = self.attempts.lock().await;
         purge_expired(&mut attempts);
-        attempts.insert(
-            session_token.to_string(),
+
+        if let Some(existing) = attempts.by_nonce.get(nonce)
+            && existing.session_token != session_token
+        {
+            anyhow::bail!("desktop login state is already in use");
+        }
+
+        if let Some(previous_nonce) = attempts.by_session.remove(session_token) {
+            attempts.by_nonce.remove(&previous_nonce);
+        }
+
+        attempts.by_nonce.insert(
+            nonce.to_string(),
             DesktopLoginAttempt {
-                nonce: nonce.to_string(),
+                session_token: session_token.to_string(),
                 created_at: Instant::now(),
                 outcome: None,
             },
         );
+        attempts
+            .by_session
+            .insert(session_token.to_string(), nonce.to_string());
         Ok(())
     }
 
@@ -136,7 +158,7 @@ impl DesktopLoginStore {
         let mut attempts = self.attempts.lock().await;
         purge_expired(&mut attempts);
 
-        let Some(attempt) = find_attempt_by_nonce_mut(&mut attempts, &nonce) else {
+        let Some(attempt) = attempts.by_nonce.get_mut(&nonce) else {
             anyhow::bail!("no pending desktop login attempt");
         };
         if attempt.outcome.is_some() {
@@ -160,7 +182,7 @@ impl DesktopLoginStore {
         let mut attempts = self.attempts.lock().await;
         purge_expired(&mut attempts);
 
-        let Some(attempt) = find_attempt_by_nonce_mut(&mut attempts, &nonce) else {
+        let Some(attempt) = attempts.by_nonce.get_mut(&nonce) else {
             anyhow::bail!("no pending desktop login attempt");
         };
         if attempt.outcome.is_some() {
@@ -177,7 +199,11 @@ impl DesktopLoginStore {
         let mut attempts = self.attempts.lock().await;
         purge_expired(&mut attempts);
 
-        let Some(attempt) = attempts.get(session_token) else {
+        let Some(nonce) = attempts.by_session.get(session_token).cloned() else {
+            return DesktopLoginResultResponse::Pending;
+        };
+        let Some(attempt) = attempts.by_nonce.get(&nonce) else {
+            attempts.by_session.remove(session_token);
             return DesktopLoginResultResponse::Pending;
         };
 
@@ -185,7 +211,7 @@ impl DesktopLoginStore {
             return DesktopLoginResultResponse::Pending;
         };
 
-        attempts.remove(session_token);
+        remove_attempt(&mut attempts, session_token, &nonce);
         match outcome {
             DesktopLoginOutcome::Complete { code, state } => {
                 DesktopLoginResultResponse::Complete { code, state }
@@ -200,10 +226,11 @@ impl DesktopLoginStore {
         purge_expired(&mut attempts);
 
         if attempts
+            .by_session
             .get(session_token)
-            .is_some_and(|attempt| attempt.nonce == nonce)
+            .is_some_and(|mapped| mapped == nonce)
         {
-            attempts.remove(session_token);
+            remove_attempt(&mut attempts, session_token, nonce);
             true
         } else {
             false
@@ -213,7 +240,10 @@ impl DesktopLoginStore {
     #[cfg(test)]
     pub async fn expire_for_test(&self, session_token: &str) {
         let mut attempts = self.attempts.lock().await;
-        if let Some(attempt) = attempts.get_mut(session_token) {
+        let Some(nonce) = attempts.by_session.get(session_token).cloned() else {
+            return;
+        };
+        if let Some(attempt) = attempts.by_nonce.get_mut(&nonce) {
             attempt.created_at = Instant::now() - DESKTOP_LOGIN_TTL - Duration::from_secs(1);
         }
     }
@@ -227,6 +257,13 @@ pub fn desktop_login_callback_url(port: u16) -> String {
 /// Hosts that can accept connections to the dedicated 127.0.0.1 callback URL.
 pub fn host_supports_loopback_desktop_login(host: &str) -> bool {
     matches!(host.trim(), "127.0.0.1" | "0.0.0.0")
+}
+
+/// Whether the TCP peer may complete the unauthenticated desktop login callback.
+///
+/// Uses the real socket peer address from Axum `ConnectInfo`, never request headers.
+pub fn peer_may_complete_desktop_login_callback(peer: std::net::SocketAddr) -> bool {
+    peer.ip().is_loopback()
 }
 
 fn extract_nonce_from_state(state: &str) -> anyhow::Result<String> {
@@ -251,15 +288,30 @@ fn extract_nonce_from_state(state: &str) -> anyhow::Result<String> {
     Ok(trimmed.to_string())
 }
 
-fn find_attempt_by_nonce_mut<'a>(
-    attempts: &'a mut HashMap<String, DesktopLoginAttempt>,
-    nonce: &str,
-) -> Option<&'a mut DesktopLoginAttempt> {
-    attempts.values_mut().find(|attempt| attempt.nonce == nonce)
+fn remove_attempt(attempts: &mut DesktopLoginAttempts, session_token: &str, nonce: &str) {
+    attempts.by_nonce.remove(nonce);
+    attempts.by_session.remove(session_token);
 }
 
-fn purge_expired(attempts: &mut HashMap<String, DesktopLoginAttempt>) {
-    attempts.retain(|_, attempt| attempt.created_at.elapsed() <= DESKTOP_LOGIN_TTL);
+fn purge_expired(attempts: &mut DesktopLoginAttempts) {
+    let expired_nonces: Vec<String> = attempts
+        .by_nonce
+        .iter()
+        .filter(|(_, attempt)| attempt.created_at.elapsed() > DESKTOP_LOGIN_TTL)
+        .map(|(nonce, _)| nonce.clone())
+        .collect();
+
+    for nonce in expired_nonces {
+        if let Some(attempt) = attempts.by_nonce.remove(&nonce) {
+            if attempts
+                .by_session
+                .get(&attempt.session_token)
+                .is_some_and(|mapped| mapped == &nonce)
+            {
+                attempts.by_session.remove(&attempt.session_token);
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -739,6 +791,80 @@ mod tests {
             store.take_result("session-a").await,
             DesktopLoginResultResponse::Pending
         ));
+    }
+
+    #[tokio::test]
+    async fn desktop_login_rejects_nonce_collision_across_sessions() {
+        let store = DesktopLoginStore::new();
+        store
+            .start("session-a", "shared-nonce")
+            .await
+            .expect("start a");
+
+        let error = store
+            .start("session-b", "shared-nonce")
+            .await
+            .expect_err("colliding nonce should be rejected");
+        assert!(error.to_string().contains("already in use"));
+
+        store
+            .complete_callback("code-a", r#"{"nonce":"shared-nonce"}"#)
+            .await
+            .expect("original session still owns nonce");
+
+        match store.take_result("session-a").await {
+            DesktopLoginResultResponse::Complete { code, .. } => assert_eq!(code, "code-a"),
+            other => panic!("expected complete for session-a, got {other:?}"),
+        }
+        assert!(matches!(
+            store.take_result("session-b").await,
+            DesktopLoginResultResponse::Pending
+        ));
+    }
+
+    #[tokio::test]
+    async fn desktop_login_same_session_may_reuse_nonce_after_replace() {
+        let store = DesktopLoginStore::new();
+        store.start("session-a", "nonce-1").await.expect("start");
+        store
+            .start("session-a", "nonce-1")
+            .await
+            .expect("same session may restart with same nonce");
+
+        store
+            .complete_callback("auth-code", r#"{"nonce":"nonce-1"}"#)
+            .await
+            .expect("callback");
+        assert!(matches!(
+            store.take_result("session-a").await,
+            DesktopLoginResultResponse::Complete { .. }
+        ));
+    }
+
+    #[test]
+    fn peer_loopback_gate_uses_socket_address() {
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+
+        assert!(peer_may_complete_desktop_login_callback(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            54321
+        )));
+        assert!(peer_may_complete_desktop_login_callback(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 42)),
+            1
+        )));
+        assert!(peer_may_complete_desktop_login_callback(SocketAddr::new(
+            IpAddr::V6(Ipv6Addr::LOCALHOST),
+            1
+        )));
+        assert!(!peer_may_complete_desktop_login_callback(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)),
+            54321
+        )));
+        assert!(!peer_may_complete_desktop_login_callback(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            54321
+        )));
     }
 
     #[test]
