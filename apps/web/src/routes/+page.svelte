@@ -5,7 +5,8 @@
 	import type { Id } from '$convex/_generated/dataModel';
 	import { api } from '$convex/_generated/api';
 	import { EXECUTOR_HEARTBEAT_WRITE_THROTTLE_MS } from '$convex/lib/workspaceConnection';
-	import { authState, getAccessToken, signIn, signOut } from '$lib/auth';
+	import { authState, cancelDesktopSignIn, getAccessToken, signIn, signOut } from '$lib/auth';
+	import BrowserSignInOverlay from '$lib/components/home/browser-signin-overlay.svelte';
 	import PromptComposer from '$lib/components/home/prompt-composer.svelte';
 	import ThreadTranscript from '$lib/components/home/thread-transcript.svelte';
 	import WorkspacePicker from '$lib/components/home/workspace-picker.svelte';
@@ -707,6 +708,7 @@
 		>
 			<WorkspaceSidebar
 				isAuthenticated={Boolean($authState.user)}
+				isWaitingForBrowserSignIn={$authState.isWaitingForBrowserSignIn}
 				{currentWorkspaceName}
 				{currentThreadId}
 				groups={groupedWorkspaceThreads}
@@ -825,5 +827,14 @@
 				}}
 			/>
 		{/if}
+
+		<BrowserSignInOverlay
+			open={$authState.isWaitingForBrowserSignIn}
+			signInUrl={$authState.browserSignInUrl}
+			error={$authState.error}
+			onCancel={() => {
+				cancelDesktopSignIn();
+			}}
+		/>
 	</div>
 {/if}

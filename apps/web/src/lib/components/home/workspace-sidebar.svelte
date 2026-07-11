@@ -3,6 +3,7 @@
 		ChevronRight,
 		Folder,
 		FolderOpen,
+		LoaderCircle,
 		LogIn,
 		LogOut,
 		SquarePen,
@@ -14,6 +15,7 @@
 
 	type Props = {
 		isAuthenticated: boolean;
+		isWaitingForBrowserSignIn?: boolean;
 		currentWorkspaceName: string | null;
 		currentThreadId: Id<'threadRecords'> | null;
 		groups: WorkspaceThreadGroup[];
@@ -27,6 +29,7 @@
 
 	let {
 		isAuthenticated,
+		isWaitingForBrowserSignIn = false,
 		currentWorkspaceName,
 		currentThreadId,
 		groups,
@@ -85,18 +88,28 @@
 			<div class="min-w-0">
 				<p class="truncate text-[1.05rem] font-semibold tracking-tighter text-white">Sprocket</p>
 			</div>
-			<button
-				type="button"
-				class="flex h-8 w-8 items-center justify-center rounded-full border border-white/8 bg-white/2 text-slate-300 transition hover:border-white/12 hover:bg-white/5 hover:text-white"
-				onclick={onAccountAction}
-				aria-label={isAuthenticated ? 'Sign out' : 'Sign in'}
-			>
-				{#if isAuthenticated}
-					<LogOut class="size-3.5" />
-				{:else}
-					<LogIn class="size-3.5" />
-				{/if}
-			</button>
+			{#if isWaitingForBrowserSignIn}
+				<span
+					class="flex h-8 w-8 items-center justify-center rounded-full border border-sky-400/20 bg-sky-400/10 text-sky-200"
+					title="Complete sign-in in your browser"
+					aria-label="Waiting for browser sign-in"
+				>
+					<LoaderCircle class="size-3.5 animate-spin" />
+				</span>
+			{:else}
+				<button
+					type="button"
+					class="flex h-8 w-8 items-center justify-center rounded-full border border-white/8 bg-white/2 text-slate-300 transition hover:border-white/12 hover:bg-white/5 hover:text-white"
+					onclick={onAccountAction}
+					aria-label={isAuthenticated ? 'Sign out' : 'Sign in'}
+				>
+					{#if isAuthenticated}
+						<LogOut class="size-3.5" />
+					{:else}
+						<LogIn class="size-3.5" />
+					{/if}
+				</button>
+			{/if}
 		</header>
 
 		<div class="border-b border-white/6 px-3.5 pb-3">

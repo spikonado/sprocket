@@ -2,7 +2,10 @@
 	"authKit": {
 		"dev": {
 			"configure": {
-				"redirectUris": ["http://localhost:5173/callback", "sprocket://app/callback"],
+				"redirectUris": [
+					"http://localhost:5173/callback",
+					"http://127.0.0.1:*/api/auth/desktop-login/callback"
+				],
 				"appHomepageUrl": "http://localhost:5173",
 				"corsOrigins": ["http://localhost:5173"]
 			}
@@ -11,7 +14,7 @@
 			"configure": {
 				"redirectUris": [
 					"https://${buildEnv.VERCEL_BRANCH_URL}/callback",
-					"sprocket://app/callback"
+					"http://127.0.0.1:*/api/auth/desktop-login/callback"
 				],
 				"appHomepageUrl": "https://${buildEnv.VERCEL_PROJECT_PRODUCTION_URL}",
 				"corsOrigins": ["https://${buildEnv.VERCEL_BRANCH_URL}"]
@@ -21,7 +24,7 @@
 			"configure": {
 				"redirectUris": [
 					"https://${buildEnv.VERCEL_PROJECT_PRODUCTION_URL}/callback",
-					"sprocket://app/callback"
+					"http://127.0.0.1:*/api/auth/desktop-login/callback"
 				],
 				"appHomepageUrl": "https://${buildEnv.VERCEL_PROJECT_PRODUCTION_URL}",
 				"corsOrigins": ["https://${buildEnv.VERCEL_PROJECT_PRODUCTION_URL}"]

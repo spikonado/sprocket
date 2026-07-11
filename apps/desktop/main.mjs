@@ -1,23 +1,28 @@
 import electron from 'electron';
+import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { API_HOST, API_PORT, DEV_HOST, DEV_WEB_URL } from '../../scripts/dev-config.mjs';
+import { API_PORT, DEV_WEB_URL } from '../../scripts/dev-config.mjs';
 
-const { app, BrowserWindow, Menu, ipcMain } = electron;
+const { app, BrowserWindow, Menu, ipcMain, shell } = electron;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const isDevelopment = !app.isPackaged;
 const serverPort = Number(process.env.SPROCKET_PORT ?? API_PORT);
-const serverHost = process.env.SPROCKET_HOST ?? API_HOST;
+// WorkOS AuthKit only allows 127.0.0.1 loopback redirect URIs for native desktop login.
+const serverHost = '127.0.0.1';
+const desktopLoginCallbackUrl = `http://${serverHost}:${serverPort}/api/auth/desktop-login/callback`;
 const devRendererUrl = process.env.SPROCKET_ELECTRON_RENDERER_URL ?? DEV_WEB_URL;
 const preloadEntry = path.join(__dirname, 'preload.cjs');
 
 let serverProcess = null;
 let serverBaseUrl = null;
 let serverPairingCredential = null;
+let serverDesktopLoginCallbackUrl = null;
+let mainWindowRef = null;
 
 function getServerBinaryPath() {
 	return isDevelopment
@@ -140,6 +145,11 @@ async function startLocalServer() {
 	const bootstrap = await bootstrapResponse.json();
 	serverPairingCredential = bootstrap.pairingCredential;
 	serverBaseUrl = bootstrap.httpBaseUrl ?? serverBaseUrl;
+	serverDesktopLoginCallbackUrl =
+		typeof bootstrap.desktopLoginCallbackUrl === 'string' &&
+		bootstrap.desktopLoginCallbackUrl.trim().length > 0
+			? bootstrap.desktopLoginCallbackUrl.trim()
+			: desktopLoginCallbackUrl;
 
 	return serverBaseUrl;
 }
@@ -186,6 +196,18 @@ function createMainWindow() {
 			preload: preloadEntry
 		}
 	});
+	mainWindowRef = mainWindow;
+	mainWindow.on('closed', () => {
+		if (mainWindowRef === mainWindow) {
+			mainWindowRef = null;
+		}
+	});
+	mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+		void openExternalHttpsUrl(url).catch((error) => {
+			console.error('Failed to open external URL', error);
+		});
+		return { action: 'deny' };
+	});
 	mainWindow.webContents.on(
 		'did-fail-load',
 		(_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
@@ -221,8 +243,97 @@ ipcMain.handle('sprocket:get-local-bootstrap', () => {
 
 	return {
 		httpBaseUrl: serverBaseUrl,
+		desktopLoginCallbackUrl: serverDesktopLoginCallbackUrl ?? desktopLoginCallbackUrl,
 		pairingCredential: serverPairingCredential
 	};
+});
+
+function openWithXdgOpen(url) {
+	return new Promise((resolve, reject) => {
+		const systemOpeners = [
+			'/run/current-system/sw/bin/xdg-open',
+			'/usr/bin/xdg-open',
+			'/usr/local/bin/xdg-open'
+		];
+		const openerCommand = systemOpeners.find((candidate) => fs.existsSync(candidate)) ?? 'xdg-open';
+		const openerEnv = { ...process.env };
+		for (const key of [
+			'GIO_EXTRA_MODULES',
+			'GI_TYPELIB_PATH',
+			'GSETTINGS_SCHEMA_DIR',
+			'GTK_PATH',
+			'LD_LIBRARY_PATH'
+		]) {
+			delete openerEnv[key];
+		}
+		const opener = spawn(openerCommand, [url], {
+			env: openerEnv,
+			stdio: ['ignore', 'ignore', 'pipe']
+		});
+		let stderr = '';
+
+		opener.once('error', reject);
+		opener.stderr.on('data', (chunk) => {
+			stderr += chunk.toString();
+		});
+		opener.once('close', (code, signal) => {
+			if (code === 0) {
+				resolve();
+				return;
+			}
+
+			const reason = signal ? `signal ${signal}` : `exit code ${code}`;
+			const details = stderr.trim();
+			reject(new Error(`xdg-open failed with ${reason}${details ? `: ${details}` : ''}`));
+		});
+	});
+}
+
+function parseExternalHttpsUrl(url) {
+	if (typeof url !== 'string' || url.trim().length === 0) {
+		throw new Error('A URL is required.');
+	}
+
+	let parsed;
+	try {
+		parsed = new URL(url);
+	} catch {
+		throw new Error('Invalid URL.');
+	}
+
+	if (parsed.protocol !== 'https:') {
+		throw new Error('Only https URLs can be opened externally.');
+	}
+
+	return parsed.toString();
+}
+
+async function openExternalHttpsUrl(url) {
+	const parsedUrl = parseExternalHttpsUrl(url);
+	if (process.platform === 'linux') {
+		await openWithXdgOpen(parsedUrl);
+		return;
+	}
+
+	await shell.openExternal(parsedUrl);
+}
+
+ipcMain.handle('sprocket:open-external', async (_event, url) => {
+	await openExternalHttpsUrl(url);
+});
+
+ipcMain.handle('sprocket:focus-window', () => {
+	const mainWindow = mainWindowRef;
+	if (!mainWindow || mainWindow.isDestroyed()) {
+		return false;
+	}
+
+	if (mainWindow.isMinimized()) {
+		mainWindow.restore();
+	}
+	mainWindow.show();
+	mainWindow.focus();
+	return true;
 });
 
 app.whenReady().then(async () => {
