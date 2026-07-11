@@ -55,8 +55,11 @@ impl StartupInfo {
 #[derive(Clone)]
 pub struct AppState {
     pub auth: Arc<auth::AuthState>,
+    pub desktop_login: Arc<auth::DesktopLoginStore>,
     pub workspace_sessions: Arc<workspace_sessions::WorkspaceSessionStore>,
     pub http_base_url: String,
+    pub desktop_login_callback_url: String,
+    pub loopback_desktop_login_supported: bool,
     pub convex_deployment_url: String,
     pub desktop_bootstrap_token: Option<Arc<Mutex<Option<String>>>>,
 }
@@ -97,8 +100,11 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
 
     let state = AppState {
         auth,
+        desktop_login: auth::DesktopLoginStore::new(),
         workspace_sessions,
         http_base_url: http_base_url.clone(),
+        desktop_login_callback_url: auth::desktop_login_callback_url(config.port),
+        loopback_desktop_login_supported: auth::host_supports_loopback_desktop_login(&config.host),
         convex_deployment_url,
         desktop_bootstrap_token,
     };

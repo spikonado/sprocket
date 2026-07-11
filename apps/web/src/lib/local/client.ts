@@ -7,6 +7,7 @@ import type {
 
 export type LocalBootstrap = {
 	httpBaseUrl: string;
+	desktopLoginCallbackUrl?: string;
 	pairingCredential: string;
 };
 
