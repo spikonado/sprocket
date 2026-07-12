@@ -15,6 +15,7 @@
 5. `prek run -a` -> Always run this for ALL formatting and linting
 
 Run only the tests relevant to your changes unless instructed otherwise.
+If you are a subagent, don't run any of the above.
 
 ### Nix Environment
 
@@ -34,6 +35,10 @@ All of these are core priorities; try your best to achieve all of them without h
 - Make sure that changes are made in all the layers of the app when needed.
 - Deleting code, often fixes more problems than writing code does. Sometimes writing too much code introduces problems.
 - Don't maintain backwards compatibility in any of the code unless explicitly asked. It's recommended to add temporary migration functions for the backend data instead.
+
+## Writing Code
+
+Specifically for gpt-5.6-sol: You often end up writing more code than needed, especially tests. Please don't do this.
 
 ## Dependency Documentation
 
