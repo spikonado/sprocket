@@ -1,13 +1,13 @@
 use std::path::PathBuf;
 
 use convex::Value;
-use rig::completion::ToolDefinition;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sprocket_workspace::{create_workspace_file, exec_workspace_command, replace_workspace_file};
 
 use crate::convex::RuntimeClient;
+use crate::hooks::ToolCallTracker;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum AgentToolError {
@@ -20,14 +20,21 @@ struct WorkspaceToolContext {
     runtime: RuntimeClient,
     run_id: String,
     workspace_root: PathBuf,
+    tool_call_tracker: ToolCallTracker,
 }
 
 impl WorkspaceToolContext {
-    fn new(runtime: RuntimeClient, run_id: String, workspace_root: PathBuf) -> Self {
+    fn new(
+        runtime: RuntimeClient,
+        run_id: String,
+        workspace_root: PathBuf,
+        tool_call_tracker: ToolCallTracker,
+    ) -> Self {
         Self {
             runtime,
             run_id,
             workspace_root,
+            tool_call_tracker,
         }
     }
 }
@@ -51,8 +58,9 @@ pub(crate) fn workspace_tools(
     runtime: RuntimeClient,
     run_id: String,
     workspace_root: PathBuf,
+    tool_call_tracker: ToolCallTracker,
 ) -> WorkspaceToolSet {
-    let context = WorkspaceToolContext::new(runtime, run_id, workspace_root);
+    let context = WorkspaceToolContext::new(runtime, run_id, workspace_root, tool_call_tracker);
     WorkspaceToolSet {
         exec_command: ExecCommandTool(context.clone()),
         create_file: CreateFileTool(context.clone()),
@@ -110,13 +118,12 @@ impl rig::tool::Tool for ExecCommandTool {
     type Args = ExecCommandArgs;
     type Output = serde_json::Value;
 
-    async fn definition(&self, _prompt: String) -> ToolDefinition {
-        ToolDefinition {
-            name: Self::NAME.to_string(),
-            description: "Runs a shell command inside the workspace and returns its output."
-                .to_string(),
-            parameters: json!(schemars::schema_for!(ExecCommandArgs)),
-        }
+    fn description(&self) -> String {
+        "Runs a shell command inside the workspace and returns its output.".to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(ExecCommandArgs))
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
@@ -124,6 +131,7 @@ impl rig::tool::Tool for ExecCommandTool {
             &self.0.runtime,
             &self.0.run_id,
             Self::NAME,
+            &self.0.tool_call_tracker,
             serde_json::to_value(&args).map_err(tool_error)?,
             async {
                 let output = exec_workspace_command(
@@ -150,13 +158,12 @@ impl rig::tool::Tool for CreateFileTool {
     type Args = CreateFileArgs;
     type Output = serde_json::Value;
 
-    async fn definition(&self, _prompt: String) -> ToolDefinition {
-        ToolDefinition {
-            name: Self::NAME.to_string(),
-            description: "Create a new UTF-8 text file. Fails if the file already exists."
-                .to_string(),
-            parameters: json!(schemars::schema_for!(CreateFileArgs)),
-        }
+    fn description(&self) -> String {
+        "Create a new UTF-8 text file. Fails if the file already exists.".to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(CreateFileArgs))
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
@@ -164,6 +171,7 @@ impl rig::tool::Tool for CreateFileTool {
             &self.0.runtime,
             &self.0.run_id,
             Self::NAME,
+            &self.0.tool_call_tracker,
             serde_json::to_value(&args).map_err(tool_error)?,
             async {
                 let output =
@@ -186,13 +194,12 @@ impl rig::tool::Tool for ReplaceInFileTool {
     type Args = ReplaceInFileArgs;
     type Output = serde_json::Value;
 
-    async fn definition(&self, _prompt: String) -> ToolDefinition {
-        ToolDefinition {
-            name: Self::NAME.to_string(),
-            description: "Apply an exact text replacement inside an existing UTF-8 file."
-                .to_string(),
-            parameters: json!(schemars::schema_for!(ReplaceInFileArgs)),
-        }
+    fn description(&self) -> String {
+        "Apply an exact text replacement inside an existing UTF-8 file.".to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(ReplaceInFileArgs))
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
@@ -200,6 +207,7 @@ impl rig::tool::Tool for ReplaceInFileTool {
             &self.0.runtime,
             &self.0.run_id,
             Self::NAME,
+            &self.0.tool_call_tracker,
             serde_json::to_value(&args).map_err(tool_error)?,
             async {
                 let output = replace_workspace_file(
@@ -226,6 +234,7 @@ async fn execute_tool_job<F>(
     runtime: &RuntimeClient,
     run_id: &str,
     kind: &str,
+    tool_call_tracker: &ToolCallTracker,
     payload: serde_json::Value,
     future: F,
 ) -> Result<serde_json::Value, AgentToolError>
@@ -236,6 +245,9 @@ where
     let mut begin_args = runtime.args_with_actor();
     begin_args.insert("runId".to_string(), run_id.to_string().into());
     begin_args.insert("kind".to_string(), kind.to_string().into());
+    if let Some(call_id) = tool_call_tracker.claim(kind, &payload) {
+        begin_args.insert("callId".to_string(), call_id.into());
+    }
     begin_args.insert(
         "payload".to_string(),
         Value::try_from(payload.clone()).map_err(tool_error)?,

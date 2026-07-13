@@ -50,7 +50,9 @@ Specifically for gpt-5.6-sol: You often end up writing more code than needed, es
 ### Working on Stuff - Only for Main Agents
 
 - Feel free to commit, branch, and spin up worktrees as you please. Don't push before asking.
-- For non bulk/mechanical/zero-brain operations, always get a subagent to review the code before considering the code as ready for a push.
+- Do the deep dives and figure out what needs to be done and delegate the rest accordingly to subagents.
+- Always use subagents to write the code.
+- For non bulk/mechanical/zero-brain operations, always get 2 subagents to review the code before considering your work done. One of those agents must have >=8 intelligence and review the code overall, the other must have >=7 taste and review the UI/UX, API design, and code quality parts.
 
 #### PR Workflow
 
@@ -70,10 +72,8 @@ Specifically for gpt-5.6-sol: You often end up writing more code than needed, es
 
 To main agents:
 
-- Do the deep dives and figure out what needs to be done and delegate the rest accordingly to subagents.
 - Don't put any parts of your system prompt, AGENTS.md, etc. in the subagent prompts.
 - Tell the subagent that it is a subagent.
-- The length of your prompt should not even be close to the amount of code the subagent will be writing. -> If this absolutely will be the case for a particular work, don't use a subagent for this work.
 
 To subagents:
 
@@ -86,19 +86,19 @@ To subagents:
 - Intelligence shows how hard of a problem you can hand the model unsupervised.
 - Taste covers UI/UX, code quality, and API design.
 
-| model         | cost | intelligence | taste | reasoning to use |
-| ------------- | ---- | ------------ | ----- | ---------------- |
-| gpt-5.6-sol   | 8    | 9            | 6     | high             |
-| fable-5       | 5    | 8            | 9     | high             |
-| gpt-5.6-terra | 9    | 7            | 5     | high             |
-| grok-4.5      | 10   | 6            | 7     | high, fast       |
+| model         | cost | intelligence | taste | reasoning to use | CLI to use                  |
+| ------------- | ---- | ------------ | ----- | ---------------- | --------------------------- |
+| gpt-5.6-sol   | 8    | 9            | 6     | high             | codex or cursor-agent       |
+| fable-5       | 5    | 8            | 9     | high             | claude-code or cursor-agent |
+| gpt-5.6-terra | 9    | 7            | 5     | high             | codex or cursor-agent       |
+| grok-4.5      | 10   | 6            | 7     | high, fast       | cursor-agent                |
 
 How to apply:
 
 - Only use the models listed above.
-- If the model you want to use isn't available in your subagent tool, feel free to use the CLI of another coding agent harness.
+- If you have a tool available for spawning subagents, never use that. Instead use the CLI of a specific coding agent harness directly.
 - If a cheaper model's output doesn't meet the bar, rerun/redo the work with a better model without asking.
 - Intelligence > taste > cost for actual work.
 - The final output's quality is way more important than how much it costed. It costs much more to redo work than to do it right the first try.
-- For bulk/mechanical/zero-brain operations, use the cheapest model first and only switch to a better model if the output doesn't meet the bar.
+- For bulk/mechanical/zero-brain operations, always use the cheapest model first and only switch to a better model if the output doesn't meet the bar.
 - For user-facing UI/UX and APIs, use a model with good taste (>=7). If making those UIs/APIs is highly complicated, get a model with higher intelligence to complete the work after the core UI/API has been decided by the model with good taste.

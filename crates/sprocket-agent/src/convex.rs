@@ -110,17 +110,6 @@ impl RuntimeClient {
             .await
     }
 
-    pub(crate) async fn update_assistant_message(
-        &self,
-        run_id: &str,
-        text: &str,
-    ) -> anyhow::Result<()> {
-        let mut args = self.run_args(run_id);
-        args.insert("text".to_string(), text.to_string().into());
-        self.mutation_unit("agentRuntime:updateAssistantMessage", args)
-            .await
-    }
-
     pub(crate) async fn run_finished(&self, run_id: &str) -> anyhow::Result<bool> {
         self.query_json("agentRuntime:isFinished", self.run_args(run_id))
             .await

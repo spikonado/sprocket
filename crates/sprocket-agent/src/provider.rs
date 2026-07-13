@@ -1,15 +1,14 @@
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 
 use anyhow::anyhow;
 use futures::StreamExt;
 use rig::client::CompletionClient;
 use rig::completion::{CompletionModel, Message};
-use rig::streaming::StreamingPrompt;
+use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
 use sprocket_convex_provider::Client as ConvexProviderClient;
 
 use crate::convex::RuntimeClient;
-use crate::hooks::AgentPromptHook;
+use crate::hooks::{AgentPromptHook, ToolCallTracker};
 use crate::tools::workspace_tools;
 use crate::types::{RunAgentRequest, RunContextResponse};
 
@@ -30,20 +29,14 @@ impl ProviderKind {
     pub(crate) const DEFAULT: Self = Self::ConvexCompletion;
 
     pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::ConvexCompletion => "convex-completion",
-        }
+        "convex-completion"
     }
 }
 
 pub(crate) struct AgentProvider {
     kind: ProviderKind,
-    completion: ProviderCompletion,
+    completion: ConvexProviderClient,
     model: String,
-}
-
-enum ProviderCompletion {
-    Convex(ConvexProviderClient),
 }
 
 pub(crate) struct AgentProviderRequest {
@@ -69,13 +62,11 @@ impl AgentProvider {
     ) -> Self {
         Self {
             kind: ProviderKind::DEFAULT,
-            completion: ProviderCompletion::Convex(
-                runtime
-                    .completion_client()
-                    .clone()
-                    .with_reasoning_effort(context.run.reasoning_effort.clone())
-                    .with_stream_target(Some(run_id.to_string()), request.guest_id.clone()),
-            ),
+            completion: runtime
+                .completion_client()
+                .clone()
+                .with_reasoning_effort(context.run.reasoning_effort.clone())
+                .with_stream_target(Some(run_id.to_string()), request.guest_id.clone()),
             model: context.run.selected_model.clone(),
         }
     }
@@ -89,11 +80,7 @@ impl AgentProvider {
         runtime: RuntimeClient,
         request: AgentProviderRequest,
     ) -> AgentProviderResult {
-        match self.completion {
-            ProviderCompletion::Convex(client) => {
-                run_with_completion_client(client, self.model, runtime, request).await
-            }
-        }
+        run_with_completion_client(self.completion, self.model, runtime, request).await
     }
 }
 
@@ -108,10 +95,12 @@ where
     C::CompletionModel: CompletionModel<Client = C> + 'static,
     <C::CompletionModel as CompletionModel>::StreamingResponse: 'static,
 {
+    let tool_call_tracker = ToolCallTracker::default();
     let tools = workspace_tools(
         runtime.clone(),
         request.run_id.clone(),
         request.workspace_root.clone(),
+        tool_call_tracker.clone(),
     );
     let agent = completion_client
         .agent(model)
@@ -124,34 +113,45 @@ where
     eprintln!("sprocket-agent: built agent {}", request.run_id);
     eprintln!("sprocket-agent: prompting model {}", request.run_id);
 
-    let aggregated_text = Arc::new(Mutex::new(String::new()));
-    let hook = AgentPromptHook::new(
-        runtime,
-        request.run_id.clone(),
-        Arc::clone(&aggregated_text),
-    );
+    let hook = AgentPromptHook::new(tool_call_tracker);
 
     let mut stream = agent
         .stream_prompt(request.prompt)
-        .with_history(request.prior_history)
-        .multi_turn(AGENT_MAX_TURNS)
-        .with_hook(hook)
+        .history(request.prior_history)
+        .max_turns(AGENT_MAX_TURNS)
+        .add_hook(hook)
         .max_invalid_tool_call_retries(MAX_INVALID_TOOL_CALL_RETRIES)
         .await;
     let mut final_text = String::new();
+    let mut streamed_text = String::new();
 
     while let Some(item) = stream.next().await {
         match item {
             Ok(rig::agent::MultiTurnStreamItem::FinalResponse(response)) => {
-                final_text = response.response().to_string();
+                final_text = response.output().to_string();
             }
+            Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
+                StreamedAssistantContent::Text(text),
+            )) => {
+                streamed_text.push_str(&text.text);
+            }
+            // Model tool calls are persisted by the Convex completion action. Tool execution
+            // and results are persisted by executor jobs and correlated during finalization.
+            Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
+                StreamedAssistantContent::ToolCall { .. }
+                | StreamedAssistantContent::ToolCallDelta { .. }
+                | StreamedAssistantContent::Reasoning(_)
+                | StreamedAssistantContent::ReasoningDelta { .. }
+                | StreamedAssistantContent::Final(_)
+                | StreamedAssistantContent::Unknown(_),
+            ))
+            | Ok(rig::agent::MultiTurnStreamItem::ToolExecutionStart { .. })
+            | Ok(rig::agent::MultiTurnStreamItem::StreamUserItem(_))
+            | Ok(rig::agent::MultiTurnStreamItem::CompletionCall(_)) => {}
             Ok(_) => {}
             Err(error) => {
                 let text = if final_text.is_empty() {
-                    aggregated_text
-                        .lock()
-                        .map(|guard| guard.clone())
-                        .unwrap_or_default()
+                    streamed_text
                 } else {
                     final_text
                 };
@@ -170,10 +170,7 @@ where
     }
 
     if final_text.is_empty() {
-        final_text = aggregated_text
-            .lock()
-            .map(|guard| guard.clone())
-            .unwrap_or_default();
+        final_text = streamed_text;
     }
 
     AgentProviderResult::Completed { text: final_text }

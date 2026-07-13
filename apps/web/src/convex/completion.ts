@@ -14,12 +14,19 @@ import {
 } from '@convex/lib/rateLimits';
 import { vModelId, vReasoningEffort } from '@convex/lib/validators';
 import { type SupportedModelId, type SupportedReasoningEffort } from '@convex/lib/models';
+import {
+	appendCompletionStreamEvent,
+	type CompletionStreamEvent,
+	upsertCompletionReasoningEvent,
+	upsertCompletionTextEvent
+} from '@convex/lib/completionStream';
 
 type JsonSchema = Parameters<typeof jsonSchema>[0];
 type ToolChoice = NonNullable<Parameters<typeof generateText>[0]['toolChoice']>;
 type GenerateTextResult = Awaited<ReturnType<typeof generateText>>;
 type CompletionActionResult = Pick<GenerateTextResult, 'text' | 'usage' | 'toolCalls'> & {
 	response: GenerateTextResult['finalStep']['response'];
+	streamEvents: CompletionStreamEvent[];
 };
 type CompletionRequest = Parameters<typeof generateText>[0];
 type SharedCompletionRequest = Omit<CompletionRequest, 'prompt' | 'messages'>;
@@ -51,7 +58,13 @@ export const complete = action({
 		text: string;
 		usage: CompletionActionResult['usage'];
 		message_id: string | undefined;
-		tool_calls: Array<{ id: string; name: string; arguments: JsonValue }>;
+		tool_calls: Array<{
+			id: string;
+			name: string;
+			arguments: JsonValue;
+			provider_metadata?: JsonValue;
+		}>;
+		stream_events: CompletionStreamEvent[];
 	}> => {
 		const tools: Record<string, ReturnType<typeof tool>> = Object.fromEntries(
 			(args.tools ?? []).map((toolDefinition) => [
@@ -80,8 +93,16 @@ export const complete = action({
 			throw new Error('Either prompt or messagesJson is required.');
 		}
 
-		await enforceCompletionLimit(ctx, args.guestId, args.streamRunId);
-		const result = await collectStreamingCompletion(streamText(request));
+		const streamSequence = await enforceCompletionLimit(ctx, args.guestId, args.streamRunId);
+		const streamId = crypto.randomUUID();
+		const result = await collectStreamingCompletion(
+			ctx,
+			streamText(request),
+			args.streamRunId,
+			args.guestId,
+			streamId,
+			streamSequence
+		);
 
 		return {
 			text: result.text,
@@ -90,15 +111,274 @@ export const complete = action({
 			tool_calls: (result.toolCalls ?? []).map((toolCall: (typeof result.toolCalls)[number]) => ({
 				id: toolCall.toolCallId,
 				name: toolCall.toolName,
-				arguments: toolCall.input as JsonValue
-			}))
+				arguments: toolCall.input as JsonValue,
+				...(toolCall.providerMetadata
+					? { provider_metadata: toolCall.providerMetadata as JsonValue }
+					: {})
+			})),
+			stream_events: result.streamEvents
 		};
 	}
 });
 
 async function collectStreamingCompletion(
-	result: ReturnType<typeof streamText>
+	ctx: ActionCtx,
+	result: ReturnType<typeof streamText>,
+	runId: Id<'runs'>,
+	guestId: string | undefined,
+	streamId: string,
+	streamSequence: number
 ): Promise<CompletionActionResult> {
+	const streamEvents: CompletionStreamEvent[] = [];
+	const pendingEvents: CompletionStreamEvent[] = [];
+	const reasoning = new Map<
+		string,
+		{ partId: string; providerMetadata?: JsonValue; finalized: boolean }
+	>();
+	let nextBatchSequence = streamSequence + 1;
+
+	const flush = async (): Promise<void> => {
+		if (pendingEvents.length === 0) {
+			return;
+		}
+		const events = pendingEvents.slice();
+		const sequence = nextBatchSequence;
+		let lastError: unknown;
+		for (let attempt = 0; attempt < 2; attempt += 1) {
+			try {
+				await ctx.runMutation(api.agentRuntime.mergeAssistantStreamEvents, {
+					...(guestId ? { guestId } : {}),
+					runId,
+					streamId,
+					sequence,
+					events
+				});
+				pendingEvents.splice(0, events.length);
+				nextBatchSequence += 1;
+				return;
+			} catch (error) {
+				lastError = error;
+				if (attempt === 0) await delay(100);
+			}
+		}
+		throw lastError;
+	};
+
+	const queuePersisted = (event: CompletionStreamEvent): void => {
+		if (event.type === 'text') {
+			upsertCompletionTextEvent(pendingEvents, event);
+		} else {
+			appendCompletionStreamEvent(pendingEvents, event);
+		}
+	};
+	const updateText = (id: string, text: string, providerMetadata?: JsonValue): void => {
+		const event: Extract<CompletionStreamEvent, { type: 'text' }> = {
+			type: 'text',
+			id: `${streamId}:text:${id}`,
+			text,
+			turnId: streamId,
+			...(providerMetadata !== undefined ? { providerMetadata } : {})
+		};
+		queuePersisted(event);
+		upsertCompletionTextEvent(streamEvents, event);
+	};
+	const finalizeReasoning = (id: string, providerMetadata?: JsonValue): void => {
+		const state = reasoning.get(id);
+		if (!state || state.finalized) return;
+		state.providerMetadata = providerMetadata ?? state.providerMetadata;
+		state.finalized = true;
+		const reasoningId = providerReasoningId(state.providerMetadata);
+		upsertCompletionReasoningEvent(streamEvents, {
+			type: 'reasoning',
+			id: state.partId,
+			text: '',
+			turnId: streamId,
+			...(reasoningId ? { providerReasoningId: reasoningId } : {}),
+			...(state.providerMetadata ? { providerMetadata: state.providerMetadata } : {})
+		});
+	};
+
+	try {
+		const iterator = result.stream[Symbol.asyncIterator]();
+		let nextPart = iterator.next();
+		while (true) {
+			let next: { type: 'part'; value: Awaited<typeof nextPart> } | { type: 'flush' };
+			if (pendingEvents.length === 0) {
+				next = { type: 'part', value: await nextPart };
+			} else {
+				let flushTimer: ReturnType<typeof setTimeout> | undefined;
+				const flushDeadline = new Promise<{ type: 'flush' }>((resolve) => {
+					flushTimer = setTimeout(() => resolve({ type: 'flush' }), 80);
+				});
+				try {
+					next = await Promise.race([
+						nextPart.then((value) => ({ type: 'part' as const, value })),
+						flushDeadline
+					]);
+				} finally {
+					if (flushTimer !== undefined) clearTimeout(flushTimer);
+				}
+			}
+			if (next.type === 'flush') {
+				await flush();
+				continue;
+			}
+			if (next.value.done) break;
+			const part = next.value.value;
+			nextPart = iterator.next();
+			switch (part.type) {
+				case 'text-start':
+					updateText(part.id, '', part.providerMetadata as JsonValue | undefined);
+					break;
+				case 'text-delta':
+					updateText(part.id, part.text, part.providerMetadata as JsonValue | undefined);
+					break;
+				case 'reasoning-start': {
+					const providerMetadata = part.providerMetadata as JsonValue | undefined;
+					reasoning.set(part.id, {
+						partId: `${streamId}:reasoning:${part.id}`,
+						providerMetadata,
+						finalized: false
+					});
+					upsertCompletionReasoningEvent(streamEvents, {
+						type: 'reasoning',
+						id: `${streamId}:reasoning:${part.id}`,
+						text: '',
+						turnId: streamId,
+						...(providerMetadata ? { providerMetadata } : {})
+					});
+					queuePersisted({
+						type: 'reasoning',
+						id: `${streamId}:reasoning:${part.id}`,
+						text: '',
+						turnId: streamId,
+						...(providerMetadata ? { providerMetadata } : {})
+					});
+					break;
+				}
+				case 'reasoning-delta':
+					if (!reasoning.has(part.id)) {
+						reasoning.set(part.id, {
+							partId: `${streamId}:reasoning:${part.id}`,
+							finalized: false
+						});
+						upsertCompletionReasoningEvent(streamEvents, {
+							type: 'reasoning',
+							id: `${streamId}:reasoning:${part.id}`,
+							text: '',
+							turnId: streamId
+						});
+					}
+					upsertCompletionReasoningEvent(streamEvents, {
+						type: 'reasoning',
+						id: `${streamId}:reasoning:${part.id}`,
+						text: part.text,
+						turnId: streamId
+					});
+					queuePersisted({
+						type: 'reasoning',
+						id: `${streamId}:reasoning:${part.id}`,
+						text: part.text,
+						turnId: streamId
+					});
+					break;
+				case 'reasoning-end': {
+					const providerMetadata = part.providerMetadata as JsonValue | undefined;
+					if (!reasoning.has(part.id)) {
+						reasoning.set(part.id, {
+							partId: `${streamId}:reasoning:${part.id}`,
+							providerMetadata,
+							finalized: false
+						});
+						upsertCompletionReasoningEvent(streamEvents, {
+							type: 'reasoning',
+							id: `${streamId}:reasoning:${part.id}`,
+							text: '',
+							turnId: streamId
+						});
+					}
+					queuePersisted({
+						type: 'reasoning',
+						id: `${streamId}:reasoning:${part.id}`,
+						text: '',
+						turnId: streamId,
+						...(providerMetadata ? { providerMetadata } : {})
+					});
+					finalizeReasoning(part.id, providerMetadata);
+					await flush();
+					break;
+				}
+				case 'tool-input-start':
+					queuePersisted({
+						type: 'toolCall',
+						partId: toolPartId(streamId, part.id),
+						callId: part.id,
+						name: part.toolName,
+						input: {},
+						turnId: streamId,
+						...(part.providerMetadata
+							? { providerMetadata: part.providerMetadata as JsonValue }
+							: {})
+					});
+					await flush();
+					break;
+				case 'tool-call':
+					queuePersisted({
+						type: 'toolCall',
+						partId: toolPartId(streamId, part.toolCallId),
+						callId: part.toolCallId,
+						name: part.toolName,
+						input: part.input as JsonValue,
+						turnId: streamId,
+						...(part.providerMetadata
+							? { providerMetadata: part.providerMetadata as JsonValue }
+							: {})
+					});
+					appendCompletionStreamEvent(streamEvents, {
+						type: 'toolCall',
+						partId: toolPartId(streamId, part.toolCallId),
+						callId: part.toolCallId,
+						name: part.toolName,
+						input: part.input as JsonValue,
+						turnId: streamId,
+						...(part.providerMetadata
+							? { providerMetadata: part.providerMetadata as JsonValue }
+							: {})
+					});
+					await flush();
+					break;
+				case 'text-end':
+					updateText(part.id, '', part.providerMetadata as JsonValue | undefined);
+					await flush();
+					break;
+				case 'tool-input-end':
+					await flush();
+					break;
+				case 'finish-step':
+				case 'finish':
+					for (const id of reasoning.keys()) finalizeReasoning(id);
+					await flush();
+					break;
+				case 'abort':
+					throw new Error(part.reason ?? 'Model completion was aborted.');
+				case 'error':
+					throw part.error;
+			}
+
+			if (pendingEvents.length >= 24) {
+				await flush();
+			}
+		}
+	} catch (error) {
+		try {
+			await flush();
+		} catch {
+			// Preserve the stream failure; the flush error is only secondary.
+		}
+		throw error;
+	}
+	await flush();
+
 	const [text, usage, finalStep, toolCalls] = await Promise.all([
 		result.text,
 		result.usage,
@@ -109,15 +389,31 @@ async function collectStreamingCompletion(
 		text,
 		usage,
 		response: finalStep.response,
-		toolCalls
+		toolCalls,
+		streamEvents
 	};
+}
+
+function toolPartId(streamId: string, toolCallId: string): string {
+	return `${streamId}:tool:${toolCallId}`;
+}
+
+function providerReasoningId(metadata: JsonValue | undefined): string | undefined {
+	if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return undefined;
+	const openai = metadata.openai;
+	if (!openai || typeof openai !== 'object' || Array.isArray(openai)) return undefined;
+	return typeof openai.itemId === 'string' ? openai.itemId : undefined;
+}
+
+function delay(milliseconds: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 async function enforceCompletionLimit(
 	ctx: ActionCtx,
 	guestId: string | undefined,
 	runId: Id<'runs'>
-): Promise<void> {
+): Promise<number> {
 	const actor = await ctx.runQuery(api.agentRuntime.completionActor, {
 		...(guestId ? { guestId } : {}),
 		runId
@@ -125,9 +421,10 @@ async function enforceCompletionLimit(
 	assertRunAcceptsModelCompletion(actor.status);
 	if (actor.userId.startsWith('guest:')) {
 		await enforceGuestModelCompletionLimit(ctx, actor.userId);
-		return;
+		return actor.streamSequence;
 	}
 	await enforceSignedInModelCompletionLimit(ctx, actor.userId);
+	return actor.streamSequence;
 }
 
 function buildSharedCompletionRequest(

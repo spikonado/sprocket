@@ -101,10 +101,10 @@ async fn finalize_run(
     error_message: Option<&str>,
 ) -> anyhow::Result<()> {
     let status_text = status.as_str();
+    let finish_error = runtime.finish_run(run_id, status_text, error_message).await;
     let assistant_error = runtime
         .finish_assistant_message(run_id, assistant_text)
         .await;
-    let finish_error = runtime.finish_run(run_id, status_text, error_message).await;
 
     match (assistant_error, finish_error) {
         (Ok(()), Ok(())) => Ok(()),

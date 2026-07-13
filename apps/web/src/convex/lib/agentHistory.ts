@@ -2,101 +2,186 @@ import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { ThreadTranscriptMessage } from '@convex/lib/threadTranscript';
 import type { AgentHistoryMessage } from '@convex/lib/validators';
 import { isRunFinalStatus } from '@convex/lib/validators';
-import { ensureAssistantToolPartsFromJobs, type AssistantPart } from '@convex/lib/assistantParts';
+import {
+	ensureAssistantToolPartsFromJobs,
+	type AssistantPart,
+	type PersistableExecutorToolJob
+} from '@convex/lib/assistantParts';
 
-function buildAgentHistoryFromAssistantMessage(args: {
-	message: ThreadTranscriptMessage;
-	jobs: Doc<'executorJobs'>[];
+export function buildAgentHistoryFromAssistantParts(args: {
+	parts: AssistantPart[];
+	jobs: PersistableExecutorToolJob[];
+	fallbackText: string;
 }): AgentHistoryMessage[] {
-	const persistedParts = (args.message.parts ?? []) as AssistantPart[];
-	const parts = ensureAssistantToolPartsFromJobs(
-		args.message.runStatus === 'completed'
-			? persistedParts
-			: persistedParts.filter((part) => part.type === 'text' || part.type === 'reasoning'),
-		args.jobs
-			.filter((job) => !job.hidden)
-			.sort((left, right) => left.sequence - right.sequence)
-			.map((job) => ({
-				id: job._id,
-				kind: job.kind,
-				payload: job.payload,
-				status: job.status,
-				result: job.result,
-				error: job.error
-			}))
-	);
+	const parts = ensureAssistantToolPartsFromJobs(args.parts, args.jobs);
 	const history: AgentHistoryMessage[] = [];
-	let assistantContents: AgentHistoryMessage['contents'] = [];
+	let turn:
+		| {
+				id?: string;
+				assistant: AgentHistoryMessage['contents'];
+				results: AgentHistoryMessage['contents'];
+		  }
+		| undefined;
 	let sawAssistantText = false;
 
-	const flushAssistantContents = () => {
-		if (assistantContents.length === 0) {
-			return;
+	const flushTurn = () => {
+		if (!turn) return;
+		if (turn.assistant.length > 0) {
+			history.push({
+				role: 'assistant',
+				contents: turn.assistant
+			});
 		}
-		history.push({
-			role: 'assistant',
-			contents: assistantContents
-		});
-		assistantContents = [];
+		if (turn.results.length > 0) {
+			history.push({
+				role: 'user',
+				contents: turn.results
+			});
+		}
+		turn = undefined;
 	};
 
 	for (const part of parts) {
+		if (part.type === 'tool-result') {
+			turn ??= { assistant: [], results: [] };
+			turn.results.push({
+				type: 'toolResult',
+				id: part.callId,
+				callId: part.callId,
+				items: [
+					{
+						type: 'text',
+						text: JSON.stringify(part.output)
+					}
+				]
+			});
+			continue;
+		}
+
+		const partTurnId = part.turnId;
+		const startsInferredTurn =
+			turn !== undefined &&
+			partTurnId === undefined &&
+			turn.id === undefined &&
+			turn.results.length > 0 &&
+			(part.type === 'text' || part.type === 'reasoning' || part.type === 'tool-call');
+		if (
+			turn &&
+			((partTurnId !== undefined && turn.id !== partTurnId) ||
+				(partTurnId === undefined && turn.id !== undefined) ||
+				startsInferredTurn)
+		) {
+			flushTurn();
+		}
+		turn ??= {
+			...(partTurnId !== undefined ? { id: partTurnId } : {}),
+			assistant: [],
+			results: []
+		};
+
 		if (part.type === 'text') {
 			const text = part.text.trim();
 			if (!text) {
 				continue;
 			}
 			sawAssistantText = true;
-			assistantContents.push({
+			turn.assistant.push({
 				type: 'text',
-				text: part.text
+				text: part.text,
+				...(part.providerMetadata !== undefined
+					? { additionalParamsJson: JSON.stringify(part.providerMetadata) }
+					: {})
 			});
 			continue;
 		}
 
 		if (part.type === 'reasoning') {
+			const openai = openAiMetadata(part.providerMetadata);
+			const blocks: unknown[] = [];
+			if (part.text.length > 0) {
+				blocks.push({ type: 'text', content: { text: part.text } });
+			}
+			if (typeof openai?.reasoningEncryptedContent === 'string') {
+				blocks.push({ type: 'encrypted', content: openai.reasoningEncryptedContent });
+			}
+			if (blocks.length > 0) {
+				turn.assistant.push({
+					type: 'reasoning',
+					...(typeof openai?.itemId === 'string' ? { id: openai.itemId } : {}),
+					blocksJson: JSON.stringify(blocks)
+				});
+			}
 			continue;
 		}
 
 		if (part.type === 'tool-call') {
-			assistantContents.push({
+			turn.assistant.push({
 				type: 'toolCall',
 				id: part.callId,
 				callId: part.callId,
 				name: part.name,
-				argumentsJson: JSON.stringify(part.input)
+				argumentsJson: JSON.stringify(part.input),
+				...(part.providerMetadata !== undefined
+					? { additionalParamsJson: JSON.stringify(part.providerMetadata) }
+					: {})
 			});
 			continue;
 		}
-
-		flushAssistantContents();
-		history.push({
-			role: 'user',
-			contents: [
-				{
-					type: 'toolResult',
-					id: part.callId,
-					callId: part.callId,
-					items: [
-						{
-							type: 'text',
-							text: JSON.stringify(part.output)
-						}
-					]
-				}
-			]
-		});
 	}
 
-	if (!sawAssistantText && args.message.text.trim().length > 0) {
-		assistantContents.push({
-			type: 'text',
-			text: args.message.text
-		});
+	flushTurn();
+	if (!sawAssistantText && args.fallbackText.trim().length > 0) {
+		const lastMessage = history.at(-1);
+		if (lastMessage?.role === 'assistant') {
+			lastMessage.contents.push({
+				type: 'text',
+				text: args.fallbackText
+			});
+		} else {
+			history.push({
+				role: 'assistant',
+				contents: [
+					{
+						type: 'text',
+						text: args.fallbackText
+					}
+				]
+			});
+		}
 	}
 
-	flushAssistantContents();
 	return history;
+}
+
+function buildAgentHistoryFromAssistantMessage(args: {
+	message: ThreadTranscriptMessage;
+	jobs: Doc<'executorJobs'>[];
+}): AgentHistoryMessage[] {
+	const persistedParts = (args.message.parts ?? []) as AssistantPart[];
+	return buildAgentHistoryFromAssistantParts({
+		parts: persistedParts,
+		jobs: args.jobs
+			.filter((job) => !job.hidden)
+			.sort((left, right) => left.sequence - right.sequence)
+			.map((job) => ({
+				id: job._id,
+				kind: job.kind,
+				...(job.callId ? { callId: job.callId } : {}),
+				payload: job.payload,
+				status: job.status,
+				result: job.result,
+				error: job.error
+			})),
+		fallbackText: args.message.text
+	});
+}
+
+function openAiMetadata(value: unknown): Record<string, unknown> | undefined {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+	const openai = (value as Record<string, unknown>).openai;
+	return openai && typeof openai === 'object' && !Array.isArray(openai)
+		? (openai as Record<string, unknown>)
+		: undefined;
 }
 
 export function buildCanonicalAgentHistory(args: {

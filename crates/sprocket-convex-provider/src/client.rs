@@ -11,7 +11,7 @@ use rig::completion::{
     AssistantContent, CompletionError, CompletionModel as RigCompletionModel, CompletionRequest,
     CompletionResponse, GetTokenUsage, ToolDefinition, Usage as RigUsage,
 };
-use rig::message::{ToolCall as RigToolCall, ToolChoice, ToolFunction};
+use rig::message::{ReasoningContent, ToolCall as RigToolCall, ToolChoice, ToolFunction};
 use rig::streaming::{RawStreamingChoice, RawStreamingToolCall, StreamingCompletionResponse};
 use rustls::crypto::ring::default_provider;
 use serde::{Deserialize, Serialize};
@@ -127,6 +127,41 @@ pub struct CompletionOutput {
     pub message_id: Option<String>,
     #[serde(default)]
     pub tool_calls: Vec<ToolCall>,
+    #[serde(default)]
+    pub stream_events: Vec<CompletionStreamEvent>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum CompletionStreamEvent {
+    Text {
+        id: String,
+        text: String,
+        #[serde(default)]
+        turn_id: Option<String>,
+        #[serde(default)]
+        provider_metadata: Option<serde_json::Value>,
+    },
+    Reasoning {
+        id: String,
+        text: String,
+        #[serde(default)]
+        provider_reasoning_id: Option<String>,
+        #[serde(default)]
+        provider_metadata: Option<serde_json::Value>,
+    },
+    ToolCall {
+        part_id: String,
+        call_id: String,
+        name: String,
+        input: serde_json::Value,
+        #[serde(default)]
+        provider_metadata: Option<serde_json::Value>,
+    },
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -190,6 +225,8 @@ pub struct ToolCall {
     pub id: String,
     pub name: String,
     pub arguments: serde_json::Value,
+    #[serde(default)]
+    pub provider_metadata: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -255,17 +292,83 @@ impl RigCompletionModel for CompletionModel {
         let completion = self.completion(request).await?;
         let mut chunks: Vec<Result<RawStreamingChoice<CompletionOutput>, CompletionError>> =
             Vec::new();
-        if !completion.raw_response.text.is_empty() {
-            chunks.push(Ok(RawStreamingChoice::Message(
-                completion.raw_response.text.clone(),
-            )));
-        }
-        for tool_call in &completion.raw_response.tool_calls {
-            chunks.push(Ok(RawStreamingChoice::ToolCall(RawStreamingToolCall::new(
-                tool_call.id.clone(),
-                tool_call.name.clone(),
-                tool_call.arguments.clone(),
-            ))));
+        if completion.raw_response.stream_events.is_empty() {
+            if !completion.raw_response.text.is_empty() {
+                chunks.push(Ok(RawStreamingChoice::Message(
+                    completion.raw_response.text.clone(),
+                )));
+            }
+            for tool_call in &completion.raw_response.tool_calls {
+                chunks.push(Ok(RawStreamingChoice::ToolCall(
+                    RawStreamingToolCall::new(
+                        tool_call.id.clone(),
+                        tool_call.name.clone(),
+                        tool_call.arguments.clone(),
+                    )
+                    .with_call_id(tool_call.id.clone())
+                    .with_additional_params(tool_call.provider_metadata.clone()),
+                )));
+            }
+        } else {
+            for event in &completion.raw_response.stream_events {
+                match event {
+                    CompletionStreamEvent::Text {
+                        text,
+                        provider_metadata,
+                        ..
+                    } => chunks.extend(
+                        text_stream_choices(text, provider_metadata)
+                            .into_iter()
+                            .map(Ok),
+                    ),
+                    CompletionStreamEvent::Reasoning {
+                        text,
+                        provider_reasoning_id,
+                        provider_metadata,
+                        ..
+                    } => {
+                        let id = provider_reasoning_id.clone().or_else(|| {
+                            provider_metadata
+                                .as_ref()
+                                .and_then(|metadata| metadata.pointer("/openai/itemId"))
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::to_owned)
+                        });
+                        if !text.is_empty() {
+                            chunks.push(Ok(RawStreamingChoice::Reasoning {
+                                id: id.clone(),
+                                content: ReasoningContent::Text {
+                                    text: text.clone(),
+                                    signature: None,
+                                },
+                            }));
+                        }
+                        if let Some(encrypted) = provider_metadata
+                            .as_ref()
+                            .and_then(|metadata| {
+                                metadata.pointer("/openai/reasoningEncryptedContent")
+                            })
+                            .and_then(serde_json::Value::as_str)
+                        {
+                            chunks.push(Ok(RawStreamingChoice::Reasoning {
+                                id,
+                                content: ReasoningContent::Encrypted(encrypted.to_owned()),
+                            }));
+                        }
+                    }
+                    CompletionStreamEvent::ToolCall {
+                        call_id,
+                        name,
+                        input,
+                        provider_metadata,
+                        ..
+                    } => chunks.push(Ok(RawStreamingChoice::ToolCall(
+                        RawStreamingToolCall::new(call_id.clone(), name.clone(), input.clone())
+                            .with_call_id(call_id.clone())
+                            .with_additional_params(provider_metadata.clone()),
+                    ))),
+                }
+            }
         }
         chunks.push(Ok(RawStreamingChoice::FinalResponse(
             completion.raw_response.clone(),
@@ -273,6 +376,18 @@ impl RigCompletionModel for CompletionModel {
         let stream = stream::iter(chunks);
         Ok(StreamingCompletionResponse::stream(Box::pin(stream)))
     }
+}
+
+fn text_stream_choices(
+    text: &str,
+    provider_metadata: &Option<serde_json::Value>,
+) -> [RawStreamingChoice<CompletionOutput>; 2] {
+    [
+        RawStreamingChoice::TextStart {
+            additional_params: provider_metadata.clone(),
+        },
+        RawStreamingChoice::Message(text.to_owned()),
+    ]
 }
 
 async fn call_completion_action(
@@ -372,6 +487,11 @@ fn parse_completion_output(value: Value) -> Result<CompletionOutput, CompletionE
     for tool_call in &mut output.tool_calls {
         normalize_convex_json_numbers(&mut tool_call.arguments);
     }
+    for event in &mut output.stream_events {
+        if let CompletionStreamEvent::ToolCall { input, .. } = event {
+            normalize_convex_json_numbers(input);
+        }
+    }
 
     eprintln!(
         "sprocket-convex-provider: completion output text_len={} tool_calls={}",
@@ -396,10 +516,13 @@ fn completion_choice(output: &CompletionOutput) -> OneOrMany<AssistantContent> {
         parts.push(AssistantContent::text(output.text.clone()));
     }
     parts.extend(output.tool_calls.iter().map(|tool_call| {
-        AssistantContent::ToolCall(RigToolCall::new(
-            tool_call.id.clone(),
-            ToolFunction::new(tool_call.name.clone(), tool_call.arguments.clone()),
-        ))
+        AssistantContent::ToolCall(RigToolCall {
+            id: tool_call.id.clone(),
+            call_id: Some(tool_call.id.clone()),
+            function: ToolFunction::new(tool_call.name.clone(), tool_call.arguments.clone()),
+            signature: None,
+            additional_params: tool_call.provider_metadata.clone(),
+        })
     }));
 
     OneOrMany::many(parts).unwrap_or_else(|_| OneOrMany::one(AssistantContent::text(String::new())))
@@ -436,4 +559,98 @@ where
     }
 
     Ok(value as u64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        CompletionOutput, CompletionStreamEvent, ToolCall, Usage, completion_choice,
+        text_stream_choices,
+    };
+    use rig::message::AssistantContent;
+    use rig::streaming::RawStreamingChoice;
+
+    #[test]
+    fn deserializes_and_streams_typescript_text_metadata() {
+        let event: CompletionStreamEvent = serde_json::from_value(serde_json::json!({
+            "type": "text",
+            "id": "turn-1:text:output-1",
+            "text": "hello",
+            "turnId": "turn-1",
+            "providerMetadata": { "openai": { "itemId": "msg_123" } }
+        }))
+        .expect("TypeScript text stream event should deserialize");
+
+        let CompletionStreamEvent::Text {
+            text,
+            turn_id,
+            provider_metadata,
+            ..
+        } = event
+        else {
+            panic!("expected text event");
+        };
+        assert_eq!(turn_id.as_deref(), Some("turn-1"));
+
+        let choices = text_stream_choices(&text, &provider_metadata);
+        let RawStreamingChoice::TextStart { additional_params } = &choices[0] else {
+            panic!("expected text-start event before text");
+        };
+        assert_eq!(
+            additional_params.as_ref().unwrap()["openai"]["itemId"],
+            "msg_123"
+        );
+        assert!(matches!(&choices[1], RawStreamingChoice::Message(value) if value == "hello"));
+    }
+
+    #[test]
+    fn deserializes_typescript_tool_call_stream_event() {
+        let event: CompletionStreamEvent = serde_json::from_value(serde_json::json!({
+            "type": "toolCall",
+            "partId": "turn-1:tool:call_123",
+            "callId": "call_123",
+            "name": "exec_command",
+            "input": { "cmd": "pwd" },
+            "turnId": "turn-1",
+            "providerMetadata": { "openai": { "itemId": "fc_123" } }
+        }))
+        .expect("TypeScript stream event should deserialize");
+
+        match event {
+            CompletionStreamEvent::ToolCall {
+                part_id,
+                call_id,
+                provider_metadata,
+                ..
+            } => {
+                assert_eq!(part_id, "turn-1:tool:call_123");
+                assert_eq!(call_id, "call_123");
+                assert_eq!(provider_metadata.unwrap()["openai"]["itemId"], "fc_123");
+            }
+            other => panic!("expected tool-call event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn completion_choice_preserves_provider_call_id() {
+        let output = CompletionOutput {
+            text: String::new(),
+            usage: Usage::default(),
+            message_id: None,
+            tool_calls: vec![ToolCall {
+                id: "call_123".to_string(),
+                name: "exec_command".to_string(),
+                arguments: serde_json::json!({ "cmd": "pwd" }),
+                provider_metadata: None,
+            }],
+            stream_events: Vec::new(),
+        };
+
+        let choice = completion_choice(&output);
+        let AssistantContent::ToolCall(tool_call) = choice.first() else {
+            panic!("expected tool call");
+        };
+        assert_eq!(tool_call.id, "call_123");
+        assert_eq!(tool_call.call_id.as_deref(), Some("call_123"));
+    }
 }

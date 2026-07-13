@@ -126,20 +126,27 @@ export type ThreadMessageType = Infer<typeof vThreadMessageType>;
 export const vAssistantTextPart = v.object({
 	type: v.literal('text'),
 	id: v.string(),
-	text: v.string()
+	text: v.string(),
+	turnId: v.optional(v.string()),
+	providerMetadata: v.optional(v.any())
 });
 
 export const vAssistantReasoningPart = v.object({
 	type: v.literal('reasoning'),
 	id: v.string(),
-	text: v.string()
+	text: v.string(),
+	turnId: v.optional(v.string()),
+	providerMetadata: v.optional(v.any())
 });
 
 export const vAssistantToolCallPart = v.object({
 	type: v.literal('tool-call'),
+	partId: v.optional(v.string()),
 	callId: v.string(),
 	name: v.string(),
-	input: v.any()
+	input: v.any(),
+	turnId: v.optional(v.string()),
+	providerMetadata: v.optional(v.any())
 });
 
 export const vAssistantToolResultPart = v.object({
@@ -176,7 +183,8 @@ export const vAgentHistoryToolResultItem = v.union(
 export const vAgentHistoryContent = v.union(
 	v.object({
 		type: v.literal('text'),
-		text: v.string()
+		text: v.string(),
+		additionalParamsJson: v.optional(v.string())
 	}),
 	v.object({
 		type: v.literal('reasoning'),
