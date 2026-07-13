@@ -29,22 +29,32 @@ export const vCompletionStreamEvent = v.union(
 
 export type CompletionStreamEvent = Infer<typeof vCompletionStreamEvent>;
 
+export const COMPLETION_STREAM_SUPERSEDED = 'SPROCKET_COMPLETION_STREAM_SUPERSEDED';
+
+export type CompletionStreamBatchClassification = 'append' | 'duplicate' | 'superseded';
+
+export function isCompletionStreamSuperseded(error: unknown): boolean {
+	return String(error).includes(COMPLETION_STREAM_SUPERSEDED);
+}
+
+export function isCompletionStreamAttemptSuperseded(args: {
+	initialSequence: number;
+	observedSequence: number;
+	observedStreamId?: string;
+	streamId: string;
+}): boolean {
+	return args.observedSequence > args.initialSequence && args.observedStreamId !== args.streamId;
+}
+
 export function classifyCompletionStreamBatch(args: {
 	lastSequence: number;
 	lastStreamId?: string;
 	sequence: number;
 	streamId: string;
-}): 'append' | 'duplicate' {
-	if (args.sequence === args.lastSequence) {
+}): CompletionStreamBatchClassification {
+	if (args.sequence <= args.lastSequence) {
 		if (args.streamId === args.lastStreamId) return 'duplicate';
-		throw new Error(
-			`Assistant stream ${args.streamId} cannot reuse batch ${args.sequence} from stream ${args.lastStreamId ?? 'unknown'}.`
-		);
-	}
-	if (args.sequence < args.lastSequence) {
-		throw new Error(
-			`Assistant stream batch ${args.sequence} is stale; latest batch is ${args.lastSequence}.`
-		);
+		return 'superseded';
 	}
 	if (args.sequence !== args.lastSequence + 1) {
 		throw new Error(

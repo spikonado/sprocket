@@ -2968,10 +2968,12 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "gix",
+ "libc",
  "serde",
  "serde_json",
  "thiserror",
  "tokio",
+ "tokio-util",
  "walkdir",
 ]
 

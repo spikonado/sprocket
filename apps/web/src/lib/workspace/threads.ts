@@ -112,20 +112,69 @@ export function findThreadById(
 	return threads.find((thread) => thread.threadId === threadId) ?? null;
 }
 
+export function dataForThread<
+	T extends { threadId?: Id<'threadRecords'>; _id?: Id<'threadRecords'> }
+>(data: T | null | undefined, threadId: Id<'threadRecords'> | null): T | null {
+	return threadId && (data?.threadId ?? data?._id) === threadId ? data! : null;
+}
+
+export function isSelectionGenerationCurrent(
+	startedGeneration: number,
+	currentGeneration: number
+): boolean {
+	return startedGeneration === currentGeneration;
+}
+
+export function resolvePendingCreatedThreadId(args: {
+	pendingCreatedThreadId: Id<'threadRecords'> | null;
+	threads: ThreadSummary[];
+	threadListChangedSinceCreate: boolean;
+}): Id<'threadRecords'> | null {
+	const { pendingCreatedThreadId, threads, threadListChangedSinceCreate } = args;
+	if (!pendingCreatedThreadId) {
+		return null;
+	}
+
+	if (threads.some((thread) => thread.threadId === pendingCreatedThreadId)) {
+		return null;
+	}
+
+	// Create/list catch-up window ended without the thread appearing — stop pinning.
+	if (threadListChangedSinceCreate) {
+		return null;
+	}
+
+	return pendingCreatedThreadId;
+}
+
 export function resolveWorkspaceThreadSelection(args: {
 	threads: ThreadSummary[];
 	currentThreadId: Id<'threadRecords'> | null;
 	currentWorkspaceName: string | null;
 	draftWorkspaceName: string | null;
+	pendingCreatedThreadId?: Id<'threadRecords'> | null;
 }) {
-	const { threads, currentThreadId, currentWorkspaceName, draftWorkspaceName } = args;
+	const {
+		threads,
+		currentThreadId,
+		currentWorkspaceName,
+		draftWorkspaceName,
+		pendingCreatedThreadId = null
+	} = args;
 
 	if (currentWorkspaceName && draftWorkspaceName === currentWorkspaceName) {
 		return null;
 	}
 
-	if (currentThreadId && threads.some((thread) => thread.threadId === currentThreadId)) {
-		return currentThreadId;
+	if (currentThreadId) {
+		if (threads.some((thread) => thread.threadId === currentThreadId)) {
+			return currentThreadId;
+		}
+
+		// Preserve an unknown ID only during the create → list catch-up window.
+		if (pendingCreatedThreadId && currentThreadId === pendingCreatedThreadId) {
+			return currentThreadId;
+		}
 	}
 
 	return threads[0]?.threadId ?? null;

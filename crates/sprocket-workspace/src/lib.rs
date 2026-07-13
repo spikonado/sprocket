@@ -11,8 +11,9 @@ pub use browse::{
     resolve_or_create_workspace_root,
 };
 pub use tools::{
-    CommandExecOutput, FileEditOutput, FileWriteOutput, create_workspace_file,
-    exec_workspace_command, replace_workspace_file,
+    CommandExecOutput, FileEditOutput, FileWriteOutput, WorkspaceCancellation,
+    WorkspaceOperationCancelled, create_workspace_file, exec_workspace_command,
+    replace_workspace_file,
 };
 pub use workspace::{WorkspaceEntry, WorkspaceOverview};
 pub use workspace::{build_workspace_overview, resolve_workspace_root};

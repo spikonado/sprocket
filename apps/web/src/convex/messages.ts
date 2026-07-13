@@ -22,6 +22,7 @@ export const listForThread = query({
 		const start: number = Math.max(0, endExclusive - requested);
 		const page: ThreadTranscriptMessage[] = allMessages.slice(start, endExclusive);
 		return {
+			threadId: args.threadId,
 			page,
 			isDone: start === 0,
 			continueCursor: start === 0 ? null : String(start),

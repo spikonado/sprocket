@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
 	appendCompletionStreamEvent,
 	classifyCompletionStreamBatch,
+	COMPLETION_STREAM_SUPERSEDED,
 	type CompletionStreamEvent,
+	isCompletionStreamAttemptSuperseded,
+	isCompletionStreamSuperseded,
 	upsertCompletionReasoningEvent,
 	upsertCompletionTextEvent
 } from '$convex/lib/completionStream';
@@ -17,14 +20,22 @@ describe('completion stream reducer', () => {
 				streamId: 'attempt-a'
 			})
 		).toBe('duplicate');
-		expect(() =>
+		expect(
+			classifyCompletionStreamBatch({
+				lastSequence: 4,
+				lastStreamId: 'attempt-a',
+				sequence: 3,
+				streamId: 'attempt-a'
+			})
+		).toBe('duplicate');
+		expect(
 			classifyCompletionStreamBatch({
 				lastSequence: 4,
 				lastStreamId: 'attempt-a',
 				sequence: 4,
 				streamId: 'attempt-b'
 			})
-		).toThrow(/cannot reuse batch/);
+		).toBe('superseded');
 		expect(
 			classifyCompletionStreamBatch({
 				lastSequence: 4,
@@ -33,6 +44,64 @@ describe('completion stream reducer', () => {
 				streamId: 'attempt-b'
 			})
 		).toBe('append');
+	});
+
+	it('supersedes a different attempt behind the claimed sequence but keeps true gaps as errors', () => {
+		expect(
+			classifyCompletionStreamBatch({
+				lastSequence: 6,
+				lastStreamId: 'attempt-a',
+				sequence: 4,
+				streamId: 'attempt-b'
+			})
+		).toBe('superseded');
+		expect(() =>
+			classifyCompletionStreamBatch({
+				lastSequence: 6,
+				lastStreamId: 'attempt-a',
+				sequence: 8,
+				streamId: 'attempt-a'
+			})
+		).toThrow(/expected 7/);
+		expect(
+			isCompletionStreamSuperseded(
+				new Error(`Convex action failed: ${COMPLETION_STREAM_SUPERSEDED}`)
+			)
+		).toBe(true);
+	});
+
+	it('only supersedes a stream after another attempt advances its starting sequence', () => {
+		expect(
+			isCompletionStreamAttemptSuperseded({
+				initialSequence: 4,
+				observedSequence: 4,
+				observedStreamId: 'previous-attempt',
+				streamId: 'current-attempt'
+			})
+		).toBe(false);
+		expect(
+			isCompletionStreamAttemptSuperseded({
+				initialSequence: 4,
+				observedSequence: 5,
+				observedStreamId: 'current-attempt',
+				streamId: 'current-attempt'
+			})
+		).toBe(false);
+		expect(
+			isCompletionStreamAttemptSuperseded({
+				initialSequence: 4,
+				observedSequence: 5,
+				observedStreamId: 'replacement-attempt',
+				streamId: 'current-attempt'
+			})
+		).toBe(true);
+		expect(
+			isCompletionStreamAttemptSuperseded({
+				initialSequence: 4,
+				observedSequence: 5,
+				streamId: 'current-attempt'
+			})
+		).toBe(true);
 	});
 
 	it('coalesces text while retaining the newest metadata', () => {

@@ -83,9 +83,11 @@ async fn fail_run_early(
     run_id: &str,
     error: &anyhow::Error,
 ) -> anyhow::Result<()> {
+    let message = format!("Run failed before the model started: {error}");
     runtime
-        .finish_run(
+        .finalize_run(
             run_id,
+            &message,
             RunFinalStatus::Failed.as_str(),
             Some(&error.to_string()),
         )
@@ -101,23 +103,10 @@ async fn finalize_run(
     error_message: Option<&str>,
 ) -> anyhow::Result<()> {
     let status_text = status.as_str();
-    let finish_error = runtime.finish_run(run_id, status_text, error_message).await;
-    let assistant_error = runtime
-        .finish_assistant_message(run_id, assistant_text)
-        .await;
-
-    match (assistant_error, finish_error) {
-        (Ok(()), Ok(())) => Ok(()),
-        (Err(assistant_error), Ok(())) => Err(anyhow!(
-            "failed to finish assistant message for {status_text} run: {assistant_error}"
-        )),
-        (Ok(()), Err(finish_error)) => Err(anyhow!(
-            "failed to mark run as {status_text}: {finish_error}"
-        )),
-        (Err(assistant_error), Err(finish_error)) => Err(anyhow!(
-            "failed to finalize {status_text} run: assistant message update failed: {assistant_error}; run status update failed: {finish_error}"
-        )),
-    }
+    runtime
+        .finalize_run(run_id, assistant_text, status_text, error_message)
+        .await
+        .map_err(|error| anyhow!("failed to finalize {status_text} run: {error}"))
 }
 
 async fn fail_run_setup(
@@ -150,6 +139,10 @@ async fn finalize_provider_result(
         AgentProviderResult::Cancelled { text } => {
             eprintln!("sprocket-agent: run cancelled {}", run_id);
             finalize_run(runtime, run_id, &text, RunFinalStatus::Cancelled, None).await
+        }
+        AgentProviderResult::Superseded => {
+            eprintln!("sprocket-agent: provider attempt superseded {}", run_id);
+            Ok(())
         }
         AgentProviderResult::Failed { text, error } => {
             let error_text = error.to_string();

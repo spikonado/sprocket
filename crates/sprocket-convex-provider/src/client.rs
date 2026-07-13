@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use convex::{ConvexClient, FunctionResult, Value};
+use convex::{ConvexClient, FunctionResult, QuerySubscription, Value};
 use futures::stream;
 use rig::OneOrMany;
 use rig::client::{CompletionClient, ProviderClient};
@@ -21,6 +21,12 @@ use tokio::time::timeout;
 use crate::messages::{build_model_messages, instructions_text, normalize_convex_json_numbers};
 
 const CONVEX_RPC_TIMEOUT: Duration = Duration::from_secs(20 * 60);
+
+pub const COMPLETION_STREAM_SUPERSEDED: &str = "SPROCKET_COMPLETION_STREAM_SUPERSEDED";
+
+pub fn is_completion_stream_superseded(error: &(impl std::fmt::Display + ?Sized)) -> bool {
+    error.to_string().contains(COMPLETION_STREAM_SUPERSEDED)
+}
 
 #[derive(Clone)]
 pub struct Client {
@@ -62,6 +68,18 @@ impl Client {
         timeout(CONVEX_RPC_TIMEOUT, convex.query(function, args))
             .await
             .with_context(|| format!("query timed out for {function}"))?
+            .map_err(Into::into)
+    }
+
+    pub async fn subscribe(
+        &self,
+        function: &str,
+        args: BTreeMap<String, Value>,
+    ) -> anyhow::Result<QuerySubscription> {
+        let mut convex = self.inner.lock().await;
+        timeout(CONVEX_RPC_TIMEOUT, convex.subscribe(function, args))
+            .await
+            .with_context(|| format!("subscription timed out for {function}"))?
             .map_err(Into::into)
     }
 
@@ -564,9 +582,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        CompletionOutput, CompletionStreamEvent, ToolCall, Usage, completion_choice,
-        text_stream_choices,
+        COMPLETION_STREAM_SUPERSEDED, CompletionOutput, CompletionStreamEvent, ToolCall, Usage,
+        completion_choice, is_completion_stream_superseded, text_stream_choices,
     };
+    use rig::completion::CompletionError;
     use rig::message::AssistantContent;
     use rig::streaming::RawStreamingChoice;
 
@@ -652,5 +671,14 @@ mod tests {
         };
         assert_eq!(tool_call.id, "call_123");
         assert_eq!(tool_call.call_id.as_deref(), Some("call_123"));
+    }
+
+    #[test]
+    fn recognizes_superseded_stream_signal_inside_provider_errors() {
+        let error = CompletionError::ProviderError(format!(
+            "completion:complete failed: {COMPLETION_STREAM_SUPERSEDED}"
+        ));
+
+        assert!(is_completion_stream_superseded(&error));
     }
 }

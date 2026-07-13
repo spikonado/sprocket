@@ -2,6 +2,7 @@ import { mutation } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getOwnedExecutorJob } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
+import { executorFailureRunPatch } from '@convex/lib/runs';
 import { isRunFinalStatus, vExecutorJobResult } from '@convex/lib/validators';
 
 export const complete = mutation({
@@ -59,13 +60,15 @@ export const fail = mutation({
 			completedAt
 		});
 		const run = await ctx.db.get(job.runId);
-		if (run && run.activeJobId === args.jobId) {
-			await ctx.db.patch(job.runId, {
-				status: 'failed',
-				lastError: args.error,
-				activeJobId: undefined,
-				completedAt
+		if (run) {
+			const runPatch = executorFailureRunPatch({
+				runStatus: run.status,
+				activeJobId: run.activeJobId,
+				failedJobId: args.jobId
 			});
+			if (runPatch) {
+				await ctx.db.patch(job.runId, runPatch);
+			}
 		}
 		return true;
 	}

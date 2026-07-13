@@ -7,14 +7,16 @@ import { buildCanonicalAgentHistory, findLatestPrompt } from '@convex/lib/agentH
 import { appendThreadMessage, getThreadMessage } from '@convex/lib/threadMessages';
 import { buildThreadTranscript, type ThreadTranscriptMessage } from '@convex/lib/threadTranscript';
 import { assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
-import { assertThreadCanStartRun } from '@convex/lib/runs';
+import { assertThreadCanStartRun, cancelExecutorJobsForTerminalRun } from '@convex/lib/runs';
 import {
 	ensureAssistantToolPartsFromJobs,
 	joinAssistantTextParts,
+	resolveAssistantMessageText,
 	type AssistantPart
 } from '@convex/lib/assistantParts';
 import {
 	classifyCompletionStreamBatch,
+	type CompletionStreamBatchClassification,
 	vCompletionStreamEvent
 } from '@convex/lib/completionStream';
 import {
@@ -190,6 +192,7 @@ export const completionActor = query({
 		userId: string;
 		status: Infer<typeof vRunStatus>;
 		streamSequence: number;
+		streamAttemptId?: string;
 	}> => {
 		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
@@ -199,7 +202,8 @@ export const completionActor = query({
 		return {
 			userId,
 			status: run.status,
-			streamSequence: message?.streamSequence ?? 0
+			streamSequence: message?.streamSequence ?? 0,
+			...(message?.streamAttemptId ? { streamAttemptId: message.streamAttemptId } : {})
 		};
 	}
 });
@@ -243,25 +247,27 @@ export const mergeAssistantStreamEvents = mutation({
 		sequence: v.number(),
 		events: v.array(vCompletionStreamEvent)
 	},
-	handler: async (ctx, args): Promise<void> => {
+	handler: async (
+		ctx,
+		args
+	): Promise<Exclude<CompletionStreamBatchClassification, 'append'> | 'merged'> => {
 		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		assertRunAcceptsModelCompletion(run.status);
 		if (!run.responseMessageId || args.events.length === 0) {
-			return;
+			return 'merged';
 		}
 
 		const message: Doc<'threadMessages'> = await getThreadMessage(ctx, run.responseMessageId);
 		const lastSequence = message.streamSequence ?? 0;
-		if (
-			classifyCompletionStreamBatch({
-				lastSequence,
-				lastStreamId: message.streamAttemptId,
-				sequence: args.sequence,
-				streamId: args.streamId
-			}) === 'duplicate'
-		) {
-			return;
+		const classification = classifyCompletionStreamBatch({
+			lastSequence,
+			lastStreamId: message.streamAttemptId,
+			sequence: args.sequence,
+			streamId: args.streamId
+		});
+		if (classification !== 'append') {
+			return classification;
 		}
 		const parts: AssistantPart[] = [...((message.parts ?? []) as AssistantPart[])];
 		const textIndexById = new Map<string, number>();
@@ -338,30 +344,67 @@ export const mergeAssistantStreamEvents = mutation({
 			streamSequence: args.sequence,
 			streamAttemptId: args.streamId
 		});
+		return 'merged';
 	}
 });
 
-export const finishAssistantMessage = mutation({
+export const finalizeRun = mutation({
 	args: {
 		guestId: v.optional(v.string()),
 		runId: v.id('runs'),
-		text: v.string()
+		text: v.string(),
+		status: vRunFinalStatus,
+		lastError: v.optional(v.string())
 	},
 	handler: async (ctx, args): Promise<void> => {
 		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
-		if (!run.responseMessageId) {
-			return;
-		}
-		const message: Doc<'threadMessages'> = await getThreadMessage(ctx, run.responseMessageId);
+		const alreadyFinal = isRunFinalStatus(run.status);
+		const finalStatus = alreadyFinal ? run.status : args.status;
+		const completedAt = run.completedAt ?? Date.now();
 		const jobs: Doc<'executorJobs'>[] = await ctx.db
 			.query('executorJobs')
-			.withIndex('by_runId_sequence', (query) => query.eq('runId', message.runId))
+			.withIndex('by_runId_sequence', (query) => query.eq('runId', run._id))
 			.collect();
-		const persistedParts = (message.parts ?? []) as AssistantPart[];
+		const finalizedJobs = cancelExecutorJobsForTerminalRun({
+			jobs,
+			runStatus: finalStatus,
+			lastError: alreadyFinal ? run.lastError : args.lastError,
+			completedAt
+		});
+		for (const [index, job] of jobs.entries()) {
+			const finalizedJob = finalizedJobs[index];
+			if (finalizedJob === job) continue;
+			await ctx.db.patch(job._id, {
+				status: finalizedJob.status,
+				error: finalizedJob.error,
+				completedAt: finalizedJob.completedAt
+			});
+		}
+		if (alreadyFinal) {
+			if (run.activeJobId) {
+				await ctx.db.patch(run._id, { activeJobId: undefined });
+			}
+			return;
+		}
+
+		const responseMessageId =
+			run.responseMessageId ??
+			(await appendThreadMessage(ctx, {
+				threadId: run.threadId,
+				runId: run._id,
+				userId,
+				type: 'response',
+				text: ''
+			}));
+		const message = run.responseMessageId
+			? await getThreadMessage(ctx, run.responseMessageId)
+			: undefined;
+
+		const persistedParts = (message?.parts ?? []) as AssistantPart[];
 		const nextParts: AssistantPart[] = ensureAssistantToolPartsFromJobs(
 			persistedParts,
-			jobs
+			finalizedJobs
 				.filter((job) => !job.hidden)
 				.sort((left, right) => left.sequence - right.sequence)
 				.map((job) => ({
@@ -375,49 +418,17 @@ export const finishAssistantMessage = mutation({
 				}))
 		);
 		const streamedText: string = joinAssistantTextParts(nextParts);
-		const retainedToolCallIds = new Set(
-			nextParts
-				.filter((part): part is Extract<AssistantPart, { type: 'tool-call' }> => {
-					return part.type === 'tool-call';
-				})
-				.map((part) => part.callId)
-		);
-		const removedProvisionalCall = persistedParts.some(
-			(part) => part.type === 'tool-call' && !retainedToolCallIds.has(part.callId)
-		);
-		await ctx.db.patch(run.responseMessageId, {
-			text: streamedText || (removedProvisionalCall ? '' : args.text),
+		await ctx.db.patch(responseMessageId, {
+			text: resolveAssistantMessageText(streamedText, args.text),
 			parts: nextParts
 		});
-	}
-});
-
-export const finishRun = mutation({
-	args: {
-		guestId: v.optional(v.string()),
-		runId: v.id('runs'),
-		status: vRunFinalStatus,
-		lastError: v.optional(v.string())
-	},
-	handler: async (ctx, args): Promise<void> => {
-		const userId: string = await getUserId(ctx, args.guestId);
-		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
-		if (!isRunFinalStatus(run.status)) {
-			const completedAt = Date.now();
-			await ctx.db.patch(args.runId, {
-				status: args.status,
-				lastError: args.lastError,
-				activeJobId: undefined,
-				completedAt
-			});
-			if (run.activeJobId) {
-				await ctx.db.patch(run.activeJobId, {
-					status: args.status,
-					error: args.lastError,
-					completedAt
-				});
-			}
-		}
+		await ctx.db.patch(run._id, {
+			status: finalStatus,
+			lastError: args.lastError,
+			activeJobId: undefined,
+			completedAt,
+			responseMessageId
+		});
 	}
 });
 

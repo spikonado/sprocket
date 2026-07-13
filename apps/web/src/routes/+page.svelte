@@ -29,10 +29,13 @@
 		type SupportedReasoningEffort
 	} from '$convex/lib/models';
 	import {
+		dataForThread,
 		getAttachedWorkspaceSessionIds,
 		getWorkspaceThreadGroups,
 		findThreadById,
 		findWorkspaceSessionByName,
+		isSelectionGenerationCurrent,
+		resolvePendingCreatedThreadId,
 		resolveWorkspaceThreadSelection
 	} from '$lib/workspace/threads';
 	import { resolveDesktopApi } from '$lib/local/client';
@@ -51,7 +54,7 @@
 	const upsertWorkspaceSession = useMutation(api.workspaceSessions.upsertSelected);
 	const createThreadMutation = useMutation(api.threads.create);
 	const removeThread = useMutation(api.threads.remove);
-	const finishRun = useMutation(api.agentRuntime.finishRun);
+	const finalizeRun = useMutation(api.agentRuntime.finalizeRun);
 	const setLastThread = useMutation(api.uiPreferences.setLastThread);
 	const heartbeatAttached = useMutation(api.workspaceSessions.heartbeatAttached);
 	const localServerRequiredMessage = 'Connect to a running Sprocket server to use this workspace.';
@@ -74,6 +77,9 @@
 	let hasResolvedInitialSelection = $state(false);
 	let restoredWorkspaceSessionIdToAttach = $state<Id<'workspaceSessions'> | null>(null);
 	let lastSavedThreadId = $state<Id<'threadRecords'> | null>(null);
+	let workspaceSelectionGeneration = $state(0);
+	let pendingCreatedThreadId = $state<Id<'threadRecords'> | null>(null);
+	let threadsDataAtPendingCreate = $state<unknown>(undefined);
 	let desktopWorkspaceSessionsById = $state<Record<string, WorkspaceSessionLocation>>({});
 	let workspacePickerOpen = $state(false);
 	let workspacePickerMode = $state<'add' | 'reconnect'>('add');
@@ -147,6 +153,9 @@
 		})
 	);
 	const threads = $derived((threadsQuery.data ?? []) as ThreadSummary[]);
+	const currentActiveThread = $derived(dataForThread(activeThreadQuery.data, currentThreadId));
+	const currentLatestRunData = $derived(dataForThread(latestRunQuery.data, currentThreadId));
+	const currentMessagesData = $derived(dataForThread(messagesQuery.data, currentThreadId));
 
 	const currentWorkspaceSession = $derived.by<WorkspaceSessionState | null>(() => {
 		if (!currentWorkspaceName) {
@@ -172,8 +181,8 @@
 		getWorkspaceThreadGroups(workspaceSessions, threads)
 	);
 
-	const runState = $derived(latestRunQuery.data?.run);
-	const visibleActions = $derived((latestRunQuery.data?.jobs ?? []).slice(-60));
+	const runState = $derived(currentLatestRunData?.run ?? null);
+	const visibleActions = $derived((currentLatestRunData?.jobs ?? []).slice(-60));
 	const isRunning = $derived(
 		runState?.status === 'queued' ||
 			runState?.status === 'running' ||
@@ -219,7 +228,7 @@
 		desktopWorkspaceSessionsById = await refreshDesktopWorkspaceSessionsFromDesktop(desktopApi);
 	}
 
-	function setWorkspaceSelection(
+	function applyWorkspaceSelection(
 		workspaceName: string,
 		threadId: Id<'threadRecords'> | null = null,
 		draft: boolean = false
@@ -227,6 +236,19 @@
 		currentWorkspaceName = workspaceName;
 		currentThreadId = threadId;
 		draftWorkspaceName = draft ? workspaceName : null;
+		if (threadId !== pendingCreatedThreadId) {
+			pendingCreatedThreadId = null;
+			threadsDataAtPendingCreate = undefined;
+		}
+	}
+
+	function setWorkspaceSelection(
+		workspaceName: string,
+		threadId: Id<'threadRecords'> | null = null,
+		draft: boolean = false
+	) {
+		workspaceSelectionGeneration += 1;
+		applyWorkspaceSelection(workspaceName, threadId, draft);
 	}
 
 	async function attachLocalWorkspaceSession(
@@ -263,14 +285,29 @@
 		workspaceName: string,
 		selection: { threadId?: Id<'threadRecords'> | null; draft?: boolean } = {}
 	) {
+		const selectionGeneration = ++workspaceSelectionGeneration;
 		const workspaceSession = findWorkspaceSessionByName(workspaceSessions, workspaceName);
 		if (!workspaceSession) {
-			currentError = 'Choose a workspace first.';
+			if (isSelectionGenerationCurrent(selectionGeneration, workspaceSelectionGeneration)) {
+				currentError = 'Choose a workspace first.';
+			}
 			return;
 		}
 
-		await attachWorkspaceSession(workspaceSession._id);
-		setWorkspaceSelection(workspaceName, selection.threadId, selection.draft);
+		try {
+			await attachWorkspaceSession(workspaceSession._id);
+		} catch (error) {
+			if (isSelectionGenerationCurrent(selectionGeneration, workspaceSelectionGeneration)) {
+				currentError = error instanceof Error ? error.message : 'Failed to attach workspace.';
+			}
+			return;
+		}
+
+		if (!isSelectionGenerationCurrent(selectionGeneration, workspaceSelectionGeneration)) {
+			return;
+		}
+
+		applyWorkspaceSelection(workspaceName, selection.threadId, selection.draft);
 		currentError = null;
 	}
 
@@ -364,6 +401,9 @@
 			selectedModel,
 			reasoningEffort: selectedReasoningEffort
 		});
+		pendingCreatedThreadId = result.threadId;
+		threadsDataAtPendingCreate = threadsQuery.data;
+		workspaceSelectionGeneration += 1;
 		currentThreadId = result.threadId;
 		draftWorkspaceName = null;
 		return result.threadId;
@@ -407,6 +447,9 @@
 			});
 			if (currentThreadId === thread.threadId) {
 				currentThreadId = null;
+				pendingCreatedThreadId = null;
+				threadsDataAtPendingCreate = undefined;
+				workspaceSelectionGeneration += 1;
 			}
 			if (lastSavedThreadId === thread.threadId) {
 				lastSavedThreadId = null;
@@ -489,9 +532,10 @@
 		}
 
 		try {
-			await finishRun({
+			await finalizeRun({
 				...getViewerArgs(),
 				runId: runState._id,
+				text: '',
 				status: 'cancelled'
 			});
 		} catch (error) {
@@ -500,13 +544,31 @@
 	}
 
 	$effect(() => {
-		const data = messagesQuery.data;
+		const data = currentMessagesData;
 		if (!data) {
 			visibleMessages = [];
 			return;
 		}
 
 		visibleMessages = [...(data.page ?? [])];
+	});
+
+	$effect(() => {
+		if (!pendingCreatedThreadId) {
+			return;
+		}
+
+		const nextPendingCreatedThreadId = resolvePendingCreatedThreadId({
+			pendingCreatedThreadId,
+			threads,
+			threadListChangedSinceCreate: threadsQuery.data !== threadsDataAtPendingCreate
+		});
+		if (nextPendingCreatedThreadId !== pendingCreatedThreadId) {
+			pendingCreatedThreadId = nextPendingCreatedThreadId;
+			if (!nextPendingCreatedThreadId) {
+				threadsDataAtPendingCreate = undefined;
+			}
+		}
 	});
 
 	$effect(() => {
@@ -583,13 +645,15 @@
 			threads,
 			currentThreadId,
 			currentWorkspaceName,
-			draftWorkspaceName
+			draftWorkspaceName,
+			pendingCreatedThreadId
 		});
 		if (nextThreadId === currentThreadId) {
 			return;
 		}
 
 		currentThreadId = nextThreadId;
+		workspaceSelectionGeneration += 1;
 	});
 
 	$effect(() => {
@@ -740,7 +804,7 @@
 				<header class="flex h-12 items-center justify-between border-b border-white/6 px-5">
 					<div class="flex min-w-0 items-center gap-3">
 						<h1 class="truncate text-[1rem] font-medium tracking-[-0.03em] text-white">
-							{activeThreadQuery.data?.title ?? 'New thread'}
+							{currentActiveThread?.title ?? 'New thread'}
 						</h1>
 						{#if currentWorkspaceSession}
 							<span

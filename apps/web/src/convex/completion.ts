@@ -16,7 +16,10 @@ import { vModelId, vReasoningEffort } from '@convex/lib/validators';
 import { type SupportedModelId, type SupportedReasoningEffort } from '@convex/lib/models';
 import {
 	appendCompletionStreamEvent,
+	COMPLETION_STREAM_SUPERSEDED,
 	type CompletionStreamEvent,
+	isCompletionStreamAttemptSuperseded,
+	isCompletionStreamSuperseded,
 	upsertCompletionReasoningEvent,
 	upsertCompletionTextEvent
 } from '@convex/lib/completionStream';
@@ -30,6 +33,8 @@ type CompletionActionResult = Pick<GenerateTextResult, 'text' | 'usage' | 'toolC
 };
 type CompletionRequest = Parameters<typeof generateText>[0];
 type SharedCompletionRequest = Omit<CompletionRequest, 'prompt' | 'messages'>;
+
+const COMPLETION_ACCEPTANCE_CHECK_INTERVAL_MS = 1_000;
 
 export const complete = action({
 	args: {
@@ -95,14 +100,22 @@ export const complete = action({
 
 		const streamSequence = await enforceCompletionLimit(ctx, args.guestId, args.streamRunId);
 		const streamId = crypto.randomUUID();
-		const result = await collectStreamingCompletion(
-			ctx,
-			streamText(request),
-			args.streamRunId,
-			args.guestId,
-			streamId,
-			streamSequence
-		);
+		const abortController = new AbortController();
+		let result: CompletionActionResult;
+		try {
+			result = await collectStreamingCompletion(
+				ctx,
+				streamText({ ...request, abortSignal: abortController.signal }),
+				args.streamRunId,
+				args.guestId,
+				streamId,
+				streamSequence,
+				abortController
+			);
+		} catch (error) {
+			abortController.abort(error);
+			throw error;
+		}
 
 		return {
 			text: result.text,
@@ -127,7 +140,8 @@ async function collectStreamingCompletion(
 	runId: Id<'runs'>,
 	guestId: string | undefined,
 	streamId: string,
-	streamSequence: number
+	streamSequence: number,
+	abortController: AbortController
 ): Promise<CompletionActionResult> {
 	const streamEvents: CompletionStreamEvent[] = [];
 	const pendingEvents: CompletionStreamEvent[] = [];
@@ -146,17 +160,21 @@ async function collectStreamingCompletion(
 		let lastError: unknown;
 		for (let attempt = 0; attempt < 2; attempt += 1) {
 			try {
-				await ctx.runMutation(api.agentRuntime.mergeAssistantStreamEvents, {
+				const outcome = await ctx.runMutation(api.agentRuntime.mergeAssistantStreamEvents, {
 					...(guestId ? { guestId } : {}),
 					runId,
 					streamId,
 					sequence,
 					events
 				});
+				if (outcome === 'superseded') {
+					throw new Error(COMPLETION_STREAM_SUPERSEDED);
+				}
 				pendingEvents.splice(0, events.length);
 				nextBatchSequence += 1;
 				return;
 			} catch (error) {
+				if (isCompletionStreamSuperseded(error)) throw error;
 				lastError = error;
 				if (attempt === 0) await delay(100);
 			}
@@ -198,26 +216,47 @@ async function collectStreamingCompletion(
 		});
 	};
 
+	const iterator = result.stream[Symbol.asyncIterator]();
 	try {
-		const iterator = result.stream[Symbol.asyncIterator]();
 		let nextPart = iterator.next();
+		let nextAcceptanceCheckAt = Date.now() + COMPLETION_ACCEPTANCE_CHECK_INTERVAL_MS;
 		while (true) {
-			let next: { type: 'part'; value: Awaited<typeof nextPart> } | { type: 'flush' };
-			if (pendingEvents.length === 0) {
-				next = { type: 'part', value: await nextPart };
-			} else {
-				let flushTimer: ReturnType<typeof setTimeout> | undefined;
+			let next:
+				| { type: 'part'; value: Awaited<typeof nextPart> }
+				| { type: 'flush' }
+				| { type: 'acceptance-check' };
+			let flushTimer: ReturnType<typeof setTimeout> | undefined;
+			let acceptanceTimer: ReturnType<typeof setTimeout> | undefined;
+			const waits: Array<Promise<typeof next>> = [
+				nextPart.then((value) => ({ type: 'part' as const, value })),
+				new Promise<{ type: 'acceptance-check' }>((resolve) => {
+					acceptanceTimer = setTimeout(
+						() => resolve({ type: 'acceptance-check' }),
+						Math.max(0, nextAcceptanceCheckAt - Date.now())
+					);
+				})
+			];
+			if (pendingEvents.length > 0) {
 				const flushDeadline = new Promise<{ type: 'flush' }>((resolve) => {
 					flushTimer = setTimeout(() => resolve({ type: 'flush' }), 80);
 				});
-				try {
-					next = await Promise.race([
-						nextPart.then((value) => ({ type: 'part' as const, value })),
-						flushDeadline
-					]);
-				} finally {
-					if (flushTimer !== undefined) clearTimeout(flushTimer);
-				}
+				waits.push(flushDeadline);
+			}
+			try {
+				next = await Promise.race(waits);
+			} finally {
+				if (flushTimer !== undefined) clearTimeout(flushTimer);
+				if (acceptanceTimer !== undefined) clearTimeout(acceptanceTimer);
+			}
+			if (next.type === 'acceptance-check') {
+				await assertCompletionStillAccepted(ctx, {
+					runId,
+					guestId,
+					streamId,
+					initialSequence: streamSequence
+				});
+				nextAcceptanceCheckAt = Date.now() + COMPLETION_ACCEPTANCE_CHECK_INTERVAL_MS;
+				continue;
 			}
 			if (next.type === 'flush') {
 				await flush();
@@ -369,7 +408,29 @@ async function collectStreamingCompletion(
 				await flush();
 			}
 		}
+		await flush();
+
+		const [text, usage, finalStep, toolCalls] = await Promise.all([
+			result.text,
+			result.usage,
+			result.finalStep,
+			result.toolCalls
+		]);
+		return {
+			text,
+			usage,
+			response: finalStep.response,
+			toolCalls,
+			streamEvents
+		};
 	} catch (error) {
+		abortController.abort(error);
+		try {
+			await iterator.return?.();
+		} catch {
+			// Preserve the terminal stream error if iterator cleanup also fails.
+		}
+		if (isCompletionStreamSuperseded(error)) throw error;
 		try {
 			await flush();
 		} catch {
@@ -377,21 +438,32 @@ async function collectStreamingCompletion(
 		}
 		throw error;
 	}
-	await flush();
+}
 
-	const [text, usage, finalStep, toolCalls] = await Promise.all([
-		result.text,
-		result.usage,
-		result.finalStep,
-		result.toolCalls
-	]);
-	return {
-		text,
-		usage,
-		response: finalStep.response,
-		toolCalls,
-		streamEvents
-	};
+async function assertCompletionStillAccepted(
+	ctx: ActionCtx,
+	args: {
+		runId: Id<'runs'>;
+		guestId: string | undefined;
+		streamId: string;
+		initialSequence: number;
+	}
+): Promise<void> {
+	const actor = await ctx.runQuery(api.agentRuntime.completionActor, {
+		...(args.guestId ? { guestId: args.guestId } : {}),
+		runId: args.runId
+	});
+	assertRunAcceptsModelCompletion(actor.status);
+	if (
+		isCompletionStreamAttemptSuperseded({
+			initialSequence: args.initialSequence,
+			observedSequence: actor.streamSequence,
+			observedStreamId: actor.streamAttemptId,
+			streamId: args.streamId
+		})
+	) {
+		throw new Error(COMPLETION_STREAM_SUPERSEDED);
+	}
 }
 
 function toolPartId(streamId: string, toolCallId: string): string {

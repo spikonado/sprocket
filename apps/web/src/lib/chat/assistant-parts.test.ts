@@ -3,6 +3,7 @@ import {
 	buildPersistedToolLogs,
 	ensureAssistantToolPartsFromJobs,
 	joinAssistantTextParts,
+	resolveAssistantMessageText,
 	upsertAssistantToolCallPart,
 	upsertAssistantToolResultPart,
 	type AssistantPart
@@ -17,6 +18,26 @@ describe('assistant tool parts', () => {
 				{ type: 'text', id: 'text-3', text: 'Second turn.', turnId: 'turn-2' }
 			])
 		).toBe('First turn. Continued.\n\nSecond turn.');
+	});
+
+	it('preserves final text when reconciliation removes the only provisional tool call', () => {
+		const reconciledParts = ensureAssistantToolPartsFromJobs(
+			[
+				{
+					type: 'tool-call',
+					callId: 'provisional-call',
+					name: 'exec_command',
+					input: {},
+					turnId: 'provisional-turn'
+				}
+			],
+			[]
+		);
+
+		expect(reconciledParts).toEqual([]);
+		expect(
+			resolveAssistantMessageText(joinAssistantTextParts(reconciledParts), 'Final answer')
+		).toBe('Final answer');
 	});
 
 	it('keeps parallel tool calls distinct when stream ids collide', () => {
@@ -180,7 +201,33 @@ describe('assistant tool parts', () => {
 				type: 'tool-result',
 				callId: 'executed',
 				name: 'exec_command',
-				output: { error: 'failed' }
+				output: { error: 'failed', status: 'failed' }
+			}
+		]);
+	});
+
+	it('persists a cancelled discriminant on tool-result error output', () => {
+		const hydrated = ensureAssistantToolPartsFromJobs(
+			[{ type: 'tool-call', callId: 'call-1', name: 'exec_command', input: { cmd: 'sleep' } }],
+			[
+				{
+					id: 'job-1',
+					callId: 'call-1',
+					kind: 'exec_command',
+					payload: { cmd: 'sleep' },
+					status: 'cancelled',
+					error: 'stopped by user'
+				}
+			]
+		);
+
+		expect(hydrated).toEqual([
+			{ type: 'tool-call', callId: 'call-1', name: 'exec_command', input: { cmd: 'sleep' } },
+			{
+				type: 'tool-result',
+				callId: 'call-1',
+				name: 'exec_command',
+				output: { error: 'stopped by user', status: 'cancelled' }
 			}
 		]);
 	});

@@ -149,6 +149,18 @@ export const vAssistantToolCallPart = v.object({
 	providerMetadata: v.optional(v.any())
 });
 
+export const assistantToolResultErrorStatuses = ['cancelled', 'failed'] as const;
+
+export const vAssistantToolResultErrorStatus = v.union(
+	...literals(assistantToolResultErrorStatuses)
+);
+
+/** Persisted tool-result error output. Older rows may omit `status`; readers default those to `failed`. */
+export const vAssistantToolResultErrorOutput = v.object({
+	error: v.string(),
+	status: vAssistantToolResultErrorStatus
+});
+
 export const vAssistantToolResultPart = v.object({
 	type: v.literal('tool-result'),
 	callId: v.string(),
@@ -240,4 +252,6 @@ export type CommandExecResult = Infer<typeof vCommandExecResult>;
 export type FileWriteResult = Infer<typeof vFileWriteResult>;
 export type FileEditResult = Infer<typeof vFileEditResult>;
 export type ExecutorJobResult = Infer<typeof vExecutorJobResult>;
+export type AssistantToolResultErrorStatus = Infer<typeof vAssistantToolResultErrorStatus>;
+export type AssistantToolResultErrorOutput = Infer<typeof vAssistantToolResultErrorOutput>;
 export type WorkspaceInstruction = Infer<typeof vWorkspaceInstruction>;

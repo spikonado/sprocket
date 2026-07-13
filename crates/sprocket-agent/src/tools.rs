@@ -1,16 +1,21 @@
 use std::path::PathBuf;
 
 use convex::Value;
+use futures::StreamExt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sprocket_workspace::{create_workspace_file, exec_workspace_command, replace_workspace_file};
+use sprocket_workspace::{
+    WorkspaceCancellation, create_workspace_file, exec_workspace_command, replace_workspace_file,
+};
 
 use crate::convex::RuntimeClient;
 use crate::hooks::ToolCallTracker;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum AgentToolError {
+    #[error("Run is no longer active.")]
+    Cancelled,
     #[error("{0}")]
     Message(String),
 }
@@ -133,9 +138,10 @@ impl rig::tool::Tool for ExecCommandTool {
             Self::NAME,
             &self.0.tool_call_tracker,
             serde_json::to_value(&args).map_err(tool_error)?,
-            async {
+            |cancellation| async {
                 let output = exec_workspace_command(
                     self.0.workspace_root.clone(),
+                    cancellation,
                     &args.cmd,
                     args.workdir.as_deref(),
                     args.shell.as_deref(),
@@ -173,11 +179,15 @@ impl rig::tool::Tool for CreateFileTool {
             Self::NAME,
             &self.0.tool_call_tracker,
             serde_json::to_value(&args).map_err(tool_error)?,
-            async {
-                let output =
-                    create_workspace_file(self.0.workspace_root.clone(), &args.path, &args.content)
-                        .await
-                        .map_err(tool_error)?;
+            |cancellation| async {
+                let output = create_workspace_file(
+                    self.0.workspace_root.clone(),
+                    cancellation,
+                    &args.path,
+                    &args.content,
+                )
+                .await
+                .map_err(tool_error)?;
                 Ok(serde_json::json!({
                     "path": output.path,
                     "bytesWritten": output.bytes_written,
@@ -209,9 +219,10 @@ impl rig::tool::Tool for ReplaceInFileTool {
             Self::NAME,
             &self.0.tool_call_tracker,
             serde_json::to_value(&args).map_err(tool_error)?,
-            async {
+            |cancellation| async {
                 let output = replace_workspace_file(
                     self.0.workspace_root.clone(),
+                    cancellation,
                     &args.path,
                     &args.old_text,
                     &args.new_text,
@@ -230,18 +241,33 @@ impl rig::tool::Tool for ReplaceInFileTool {
     }
 }
 
-async fn execute_tool_job<F>(
+async fn execute_tool_job<F, Fut>(
     runtime: &RuntimeClient,
     run_id: &str,
     kind: &str,
     tool_call_tracker: &ToolCallTracker,
     payload: serde_json::Value,
-    future: F,
+    operation: F,
 ) -> Result<serde_json::Value, AgentToolError>
 where
-    F: std::future::Future<Output = Result<serde_json::Value, AgentToolError>>,
+    F: FnOnce(WorkspaceCancellation) -> Fut,
+    Fut: std::future::Future<Output = Result<serde_json::Value, AgentToolError>>,
 {
     eprintln!("sprocket-agent: starting tool {} for run {}", kind, run_id);
+    let mut run_updates = runtime
+        .run_finished_subscription(run_id)
+        .await
+        .map_err(tool_error)?;
+    let initial_update = run_updates
+        .next()
+        .await
+        .ok_or_else(|| AgentToolError::Message("run status subscription closed".to_string()))?;
+    let initial_run_finished =
+        RuntimeClient::decode_run_finished_update(initial_update).map_err(tool_error)?;
+    if initial_run_finished {
+        return Err(AgentToolError::Cancelled);
+    }
+
     let mut begin_args = runtime.args_with_actor();
     begin_args.insert("runId".to_string(), run_id.to_string().into());
     begin_args.insert("kind".to_string(), kind.to_string().into());
@@ -262,7 +288,38 @@ where
         .ok_or_else(|| AgentToolError::Message("beginToolJob did not return a jobId".to_string()))?
         .to_string();
 
-    match future.await {
+    let cancellation = WorkspaceCancellation::new();
+    let operation = operation(cancellation.clone());
+    tokio::pin!(operation);
+    let operation_result = loop {
+        tokio::select! {
+            biased;
+            update = run_updates.next() => {
+                let Some(update) = update else {
+                    cancellation.cancel();
+                    let _ = operation.await;
+                    break Err(AgentToolError::Message("run status subscription closed".to_string()));
+                };
+                match RuntimeClient::decode_run_finished_update(update) {
+                    Ok(false) => {}
+                    Ok(true) => {
+                        cancellation.cancel();
+                        let _ = operation.await;
+                        eprintln!("sprocket-agent: cancelled tool {} for run {}", kind, run_id);
+                        return Err(AgentToolError::Cancelled);
+                    }
+                    Err(error) => {
+                        cancellation.cancel();
+                        let _ = operation.await;
+                        break Err(tool_error(format!("run status subscription failed: {error}")));
+                    }
+                }
+            },
+            result = &mut operation => break result,
+        }
+    };
+
+    match operation_result {
         Ok(output) => {
             eprintln!("sprocket-agent: completed tool {} for run {}", kind, run_id);
             let mut complete_args = runtime.args_with_actor();
@@ -271,11 +328,15 @@ where
                 "result".to_string(),
                 Value::try_from(output.clone()).map_err(tool_error)?,
             );
-            runtime
-                .mutation_unit("executor:complete", complete_args)
+            let accepted: bool = runtime
+                .mutation_json("executor:complete", complete_args)
                 .await
                 .map_err(tool_error)?;
-            Ok(output)
+            if accepted {
+                Ok(output)
+            } else {
+                Err(AgentToolError::Cancelled)
+            }
         }
         Err(error) => {
             eprintln!(
@@ -285,11 +346,15 @@ where
             let mut fail_args = runtime.args_with_actor();
             fail_args.insert("jobId".to_string(), job_id.into());
             fail_args.insert("error".to_string(), error.to_string().into());
-            runtime
-                .mutation_unit("executor:fail", fail_args)
+            let accepted: bool = runtime
+                .mutation_json("executor:fail", fail_args)
                 .await
                 .map_err(tool_error)?;
-            Err(error)
+            if accepted {
+                Err(error)
+            } else {
+                Err(AgentToolError::Cancelled)
+            }
         }
     }
 }

@@ -5,7 +5,7 @@ use futures::StreamExt;
 use rig::client::CompletionClient;
 use rig::completion::{CompletionModel, Message};
 use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
-use sprocket_convex_provider::Client as ConvexProviderClient;
+use sprocket_convex_provider::{Client as ConvexProviderClient, is_completion_stream_superseded};
 
 use crate::convex::RuntimeClient;
 use crate::hooks::{AgentPromptHook, ToolCallTracker};
@@ -19,6 +19,24 @@ const MAX_INVALID_TOOL_CALL_RETRIES: usize = 3;
 const RUN_CANCELLED_BY_USER: &str = "Run is cancelled.";
 /// Must match `RUN_NO_LONGER_ACTIVE` in `apps/web/src/convex/lib/agentErrors.ts`.
 const RUN_NO_LONGER_ACTIVE: &str = "Run is no longer active.";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProviderErrorDisposition {
+    Cancelled,
+    Superseded,
+    Failed,
+}
+
+fn classify_provider_error(error: &(impl std::fmt::Display + ?Sized)) -> ProviderErrorDisposition {
+    if is_completion_stream_superseded(error) {
+        return ProviderErrorDisposition::Superseded;
+    }
+    let error_text = error.to_string();
+    if error_text.contains(RUN_CANCELLED_BY_USER) || error_text.contains(RUN_NO_LONGER_ACTIVE) {
+        return ProviderErrorDisposition::Cancelled;
+    }
+    ProviderErrorDisposition::Failed
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProviderKind {
@@ -50,6 +68,7 @@ pub(crate) struct AgentProviderRequest {
 pub(crate) enum AgentProviderResult {
     Completed { text: String },
     Cancelled { text: String },
+    Superseded,
     Failed { text: String, error: anyhow::Error },
 }
 
@@ -155,11 +174,14 @@ where
                 } else {
                     final_text
                 };
-                let error_text = error.to_string();
-                if error_text.contains(RUN_CANCELLED_BY_USER)
-                    || error_text.contains(RUN_NO_LONGER_ACTIVE)
-                {
-                    return AgentProviderResult::Cancelled { text };
+                match classify_provider_error(&error) {
+                    ProviderErrorDisposition::Superseded => {
+                        return AgentProviderResult::Superseded;
+                    }
+                    ProviderErrorDisposition::Cancelled => {
+                        return AgentProviderResult::Cancelled { text };
+                    }
+                    ProviderErrorDisposition::Failed => {}
                 }
                 return AgentProviderResult::Failed {
                     text,
@@ -174,4 +196,30 @@ where
     }
 
     AgentProviderResult::Completed { text: final_text }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ProviderErrorDisposition, RUN_NO_LONGER_ACTIVE, classify_provider_error};
+    use sprocket_convex_provider::COMPLETION_STREAM_SUPERSEDED;
+
+    #[test]
+    fn classifies_superseded_completion_without_treating_it_as_failure() {
+        let error = anyhow::anyhow!("completion provider failed: {COMPLETION_STREAM_SUPERSEDED}");
+
+        assert_eq!(
+            classify_provider_error(&error),
+            ProviderErrorDisposition::Superseded
+        );
+    }
+
+    #[test]
+    fn classifies_stopped_workspace_tool_as_cancellation() {
+        let error = anyhow::anyhow!("tool execution failed: {RUN_NO_LONGER_ACTIVE}");
+
+        assert_eq!(
+            classify_provider_error(&error),
+            ProviderErrorDisposition::Cancelled
+        );
+    }
 }

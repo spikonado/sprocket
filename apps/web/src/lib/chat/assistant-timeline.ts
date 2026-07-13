@@ -1,5 +1,10 @@
-import type { AssistantPart } from '$convex/lib/assistantParts';
-import { isJsonObject, type JsonValue } from '$convex/lib/json';
+import {
+	matchAssistantToolCallsToJobs,
+	parseAssistantToolResultError,
+	type AssistantPart,
+	type AssistantToolCallPart
+} from '$convex/lib/assistantParts';
+import type { JsonValue } from '$convex/lib/json';
 import type { ExecutorJob } from '$lib/types/sprocket';
 
 export type AssistantTimelineItem =
@@ -13,13 +18,25 @@ export type AssistantTimelineItem =
 			job?: ExecutorJob;
 	  };
 
+export type AssistantTimelineToolFailureKind = 'cancelled' | 'failed';
+
+export function assistantTimelineToolFailureKind(
+	item: Extract<AssistantTimelineItem, { type: 'tool' }>
+): AssistantTimelineToolFailureKind | undefined {
+	if (item.job?.status === 'cancelled') {
+		return 'cancelled';
+	}
+	if (item.job?.status === 'failed') {
+		return 'failed';
+	}
+
+	return parseAssistantToolResultError(item.output)?.status;
+}
+
 export function assistantTimelineToolError(
 	item: Extract<AssistantTimelineItem, { type: 'tool' }>
 ): string | undefined {
-	const outputError =
-		isJsonObject(item.output) && typeof item.output.error === 'string'
-			? item.output.error
-			: undefined;
+	const outputError = parseAssistantToolResultError(item.output)?.error;
 
 	if (item.job) {
 		if (item.job.status === 'cancelled') {
@@ -44,9 +61,22 @@ export function buildAssistantTimeline(
 			})
 			.map((part) => [part.callId, part] as const)
 	);
+	const toolCalls = parts.filter(
+		(part): part is AssistantToolCallPart => part.type === 'tool-call'
+	);
+	const matchedCallIds = matchAssistantToolCallsToJobs(
+		toolCalls,
+		jobs.map((job) => ({
+			id: job._id,
+			kind: job.kind,
+			...(job.callId ? { callId: job.callId } : {}),
+			payload: job.payload
+		}))
+	);
 	const jobsByCallId = new Map<string, ExecutorJob>();
 	for (const job of jobs) {
-		if (job.callId) jobsByCallId.set(job.callId, job);
+		const callId = matchedCallIds.get(job._id);
+		if (callId) jobsByCallId.set(callId, job);
 	}
 	const timeline: AssistantTimelineItem[] = [];
 	const usedJobIds = new Set<ExecutorJob['_id']>();
@@ -59,13 +89,7 @@ export function buildAssistantTimeline(
 		}
 
 		const result = resultsByCallId.get(part.callId);
-		const exactJob = jobsByCallId.get(part.callId);
-		const job =
-			exactJob ??
-			jobs.find(
-				(candidate) =>
-					!candidate.callId && !usedJobIds.has(candidate._id) && candidate.kind === part.name
-			);
+		const job = jobsByCallId.get(part.callId);
 		if (job) usedJobIds.add(job._id);
 		timeline.push({
 			type: 'tool',

@@ -33,11 +33,34 @@ impl ToolCallTracker {
 
     pub(crate) fn claim(&self, name: &str, args: &serde_json::Value) -> Option<String> {
         let mut calls = self.0.lock().ok()?;
-        let index = calls
+        let mut compatible = calls
             .iter()
-            .position(|call| call.name == name && call.args == *args)
-            .or_else(|| calls.iter().position(|call| call.name == name))?;
+            .enumerate()
+            .filter(|(_, call)| call.name == name && tool_payload_compatible(&call.args, args));
+        let (index, _) = compatible.next()?;
+        if compatible.next().is_some() {
+            return None;
+        }
         calls.remove(index)?.call_id
+    }
+}
+
+fn tool_payload_compatible(raw: &serde_json::Value, normalized: &serde_json::Value) -> bool {
+    match (raw, normalized) {
+        (serde_json::Value::Object(raw), serde_json::Value::Object(normalized)) => {
+            normalized.iter().all(|(key, value)| {
+                raw.get(key)
+                    .is_some_and(|raw| tool_payload_compatible(raw, value))
+            })
+        }
+        (serde_json::Value::Array(raw), serde_json::Value::Array(normalized)) => {
+            raw.len() == normalized.len()
+                && raw
+                    .iter()
+                    .zip(normalized)
+                    .all(|(raw, normalized)| tool_payload_compatible(raw, normalized))
+        }
+        _ => raw == normalized,
     }
 }
 
@@ -236,7 +259,7 @@ mod tests {
     }
 
     #[test]
-    fn tracker_falls_back_to_same_name_call_order_when_typed_args_drop_fields() {
+    fn tracker_uniquely_matches_normalized_args_when_typed_args_drop_fields() {
         let tracker = ToolCallTracker::default();
         tracker.record(
             Some("call-1"),
@@ -252,6 +275,26 @@ mod tests {
         assert_eq!(
             tracker.claim("exec_command", &serde_json::json!({ "cmd": "ls" })),
             Some("call-2".to_string())
+        );
+    }
+
+    #[test]
+    fn tracker_does_not_claim_ambiguous_normalized_parallel_calls() {
+        let tracker = ToolCallTracker::default();
+        tracker.record(
+            Some("call-1"),
+            "exec_command",
+            r#"{"cmd":"pwd","workdir":null}"#,
+        );
+        tracker.record(
+            Some("call-2"),
+            "exec_command",
+            r#"{"cmd":"pwd","unknown":"first"}"#,
+        );
+
+        assert_eq!(
+            tracker.claim("exec_command", &serde_json::json!({ "cmd": "pwd" })),
+            None
         );
     }
 }

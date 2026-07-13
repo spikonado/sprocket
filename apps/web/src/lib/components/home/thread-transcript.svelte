@@ -4,6 +4,7 @@
 	import { isJsonObject, type JsonValue } from '$convex/lib/json';
 	import {
 		assistantTimelineToolError,
+		assistantTimelineToolFailureKind,
 		buildAssistantTimeline,
 		type AssistantTimelineItem
 	} from '$lib/chat/assistant-timeline';
@@ -223,18 +224,49 @@
 											</div>
 										{:else}
 											{@const toolError = assistantTimelineToolError(part)}
+											{@const toolFailureKind = assistantTimelineToolFailureKind(part)}
+											{@const toolSummary = part.job
+												? actionSummary(part.job)
+												: toolLogSummary(part)}
+											{@const isToolRunning =
+												part.job?.status === 'pending' || part.job?.status === 'claimed'}
 											<div
 												class="text-muted-foreground flex max-w-4xl items-start gap-3 rounded-xl border border-white/6 bg-black/15 px-3 py-2 text-sm"
 											>
 												<TerminalSquare class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-												<p class="min-w-0 truncate" title={fullToolSummary(part)}>
-													{part.job ? actionSummary(part.job) : toolLogSummary(part)}
-													{#if part.job?.status === 'pending' || part.job?.status === 'claimed'}
-														<span> (running)</span>
-													{:else if toolError}
-														<span class="text-rose-200"> ({toolError})</span>
-													{/if}
-												</p>
+												{#if toolError && toolFailureKind}
+													<details class="min-w-0 flex-1">
+														<summary
+															class="min-w-0 cursor-pointer text-left"
+															title={fullToolSummary(part)}
+														>
+															<span class="truncate">{toolSummary}</span>
+															<span
+																class={toolFailureKind === 'cancelled'
+																	? 'text-amber-200'
+																	: 'text-rose-200'}
+															>
+																({toolFailureKind})
+															</span>
+														</summary>
+														<p
+															class="mt-1.5 whitespace-pre-wrap break-words text-xs leading-5 {toolFailureKind ===
+															'cancelled'
+																? 'text-amber-200'
+																: 'text-rose-200'}"
+															role="status"
+														>
+															{toolError}
+														</p>
+													</details>
+												{:else}
+													<p class="min-w-0 truncate" title={fullToolSummary(part)}>
+														{toolSummary}
+														{#if isToolRunning}
+															<span> (running)</span>
+														{/if}
+													</p>
+												{/if}
 											</div>
 										{/if}
 									{/each}

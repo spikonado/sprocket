@@ -3,6 +3,7 @@ import {
 	buildAgentHistoryFromAssistantParts,
 	buildCanonicalAgentHistory
 } from '$convex/lib/agentHistory';
+import { cancelExecutorJobsForTerminalRun } from '$convex/lib/runs';
 
 describe('canonical agent history', () => {
 	it('groups parallel calls from one model turn before their grouped results', () => {
@@ -70,6 +71,112 @@ describe('canonical agent history', () => {
 		]);
 		expect(history[0]?.contents).toMatchObject([{ type: 'toolCall', callId: 'call-1' }]);
 		expect(history[2]?.contents).toMatchObject([{ type: 'toolCall', callId: 'call-2' }]);
+	});
+
+	it('keeps ambiguous same-name jobs before text from the following model turn', () => {
+		const history = buildAgentHistoryFromAssistantParts({
+			parts: [
+				{
+					type: 'tool-call',
+					callId: 'provider-call-1',
+					name: 'exec_command',
+					input: { cmd: 'same' },
+					turnId: 'tool-turn'
+				},
+				{
+					type: 'tool-call',
+					callId: 'provider-call-2',
+					name: 'exec_command',
+					input: { cmd: 'same' },
+					turnId: 'tool-turn'
+				},
+				{ type: 'text', id: 'answer', text: 'After tools', turnId: 'answer-turn' }
+			],
+			jobs: [
+				{
+					id: 'job-1',
+					kind: 'exec_command',
+					payload: { cmd: 'same' },
+					status: 'completed',
+					result: 'first'
+				},
+				{
+					id: 'job-2',
+					kind: 'exec_command',
+					payload: { cmd: 'same' },
+					status: 'completed',
+					result: 'second'
+				}
+			],
+			fallbackText: ''
+		});
+
+		expect(history.map((message) => message.role)).toEqual(['assistant', 'user', 'assistant']);
+		expect(history[0]?.contents).toMatchObject([
+			{ type: 'toolCall', callId: 'executor-job:job-1' },
+			{ type: 'toolCall', callId: 'executor-job:job-2' }
+		]);
+		expect(history[1]?.contents).toMatchObject([
+			{ type: 'toolResult', callId: 'executor-job:job-1' },
+			{ type: 'toolResult', callId: 'executor-job:job-2' }
+		]);
+		expect(history[2]?.contents).toEqual([{ type: 'text', text: 'After tools' }]);
+	});
+
+	it('replays cancelled sibling jobs as tool results after terminal reconciliation', () => {
+		const jobs = cancelExecutorJobsForTerminalRun({
+			jobs: [
+				{
+					id: 'job-1',
+					kind: 'exec_command' as const,
+					payload: { cmd: 'one' },
+					status: 'claimed' as const
+				},
+				{
+					id: 'job-2',
+					kind: 'exec_command' as const,
+					payload: { cmd: 'two' },
+					status: 'pending' as const
+				}
+			],
+			runStatus: 'failed',
+			lastError: 'model failed',
+			completedAt: 42
+		});
+		const history = buildAgentHistoryFromAssistantParts({
+			parts: [
+				{
+					type: 'tool-call',
+					callId: 'call-1',
+					name: 'exec_command',
+					input: { cmd: 'one' },
+					turnId: 'tool-turn'
+				},
+				{
+					type: 'tool-call',
+					callId: 'call-2',
+					name: 'exec_command',
+					input: { cmd: 'two' },
+					turnId: 'tool-turn'
+				}
+			],
+			jobs,
+			fallbackText: ''
+		});
+
+		expect(history.map((message) => message.role)).toEqual(['assistant', 'user']);
+		expect(history[1]?.contents).toMatchObject([
+			{
+				type: 'toolResult',
+				callId: 'call-1',
+				items: [{ text: JSON.stringify({ error: 'model failed', status: 'cancelled' }) }]
+			},
+			{
+				type: 'toolResult',
+				callId: 'call-2',
+				items: [{ text: JSON.stringify({ error: 'model failed', status: 'cancelled' }) }]
+			}
+		]);
 	});
 
 	it('preserves assistant text provider metadata in the canonical wire format', () => {
