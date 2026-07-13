@@ -20,6 +20,7 @@ import type * as lib_agentErrors from "../lib/agentErrors.js";
 import type * as lib_agentHistory from "../lib/agentHistory.js";
 import type * as lib_assistantParts from "../lib/assistantParts.js";
 import type * as lib_auth from "../lib/auth.js";
+import type * as lib_completionStream from "../lib/completionStream.js";
 import type * as lib_guestIdentity from "../lib/guestIdentity.js";
 import type * as lib_json from "../lib/json.js";
 import type * as lib_modelRegistry from "../lib/modelRegistry.js";
@@ -54,6 +55,7 @@ declare const fullApi: ApiFromModules<{
   "lib/agentHistory": typeof lib_agentHistory;
   "lib/assistantParts": typeof lib_assistantParts;
   "lib/auth": typeof lib_auth;
+  "lib/completionStream": typeof lib_completionStream;
   "lib/guestIdentity": typeof lib_guestIdentity;
   "lib/json": typeof lib_json;
   "lib/modelRegistry": typeof lib_modelRegistry;

@@ -1,4 +1,5 @@
 import type { Id } from '$convex/_generated/dataModel';
+import type { AssistantPart } from '$convex/lib/assistantParts';
 import type { Infer } from 'convex/values';
 import {
 	vExecutorJobKind,
@@ -92,6 +93,7 @@ export type ExecutorJob = {
 	threadId: Id<'threadRecords'>;
 	runId: Id<'runs'>;
 	kind: WorkspaceToolName;
+	callId?: string;
 	payload: ExecutorJobPayload;
 	hidden?: boolean;
 	status: Infer<typeof vExecutorJobStatus>;
@@ -127,12 +129,7 @@ export type ThreadMessage = {
 	userId: string;
 	type: Infer<typeof vThreadMessageType>;
 	text: string;
-	parts?: Array<
-		| { type: 'text'; id: string; text: string }
-		| { type: 'reasoning'; id: string; text: string }
-		| { type: 'tool-call'; callId: string; name: string; input: unknown }
-		| { type: 'tool-result'; callId: string; name?: string; output: unknown }
-	>;
+	parts?: AssistantPart[];
 	runStatus: Infer<typeof vRunStatus>;
 	runStartedAt: number;
 	runCompletedAt?: number;

@@ -61,13 +61,16 @@ export default defineSchema({
 		userId: v.string(),
 		type: vThreadMessageType,
 		text: v.string(),
-		parts: v.optional(v.array(vAssistantMessagePart))
+		parts: v.optional(v.array(vAssistantMessagePart)),
+		streamSequence: v.optional(v.number()),
+		streamAttemptId: v.optional(v.string())
 	}),
 	executorJobs: defineTable({
 		workspaceSessionId: v.id('workspaceSessions'),
 		threadId: v.id('threadRecords'),
 		runId: v.id('runs'),
 		kind: vExecutorJobKind,
+		callId: v.optional(v.string()),
 		payload: vExecutorJobPayload,
 		hidden: v.optional(v.boolean()),
 		status: vExecutorJobStatus,

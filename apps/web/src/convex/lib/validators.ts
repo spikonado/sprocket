@@ -126,20 +126,39 @@ export type ThreadMessageType = Infer<typeof vThreadMessageType>;
 export const vAssistantTextPart = v.object({
 	type: v.literal('text'),
 	id: v.string(),
-	text: v.string()
+	text: v.string(),
+	turnId: v.optional(v.string()),
+	providerMetadata: v.optional(v.any())
 });
 
 export const vAssistantReasoningPart = v.object({
 	type: v.literal('reasoning'),
 	id: v.string(),
-	text: v.string()
+	text: v.string(),
+	turnId: v.optional(v.string()),
+	providerMetadata: v.optional(v.any())
 });
 
 export const vAssistantToolCallPart = v.object({
 	type: v.literal('tool-call'),
+	partId: v.optional(v.string()),
 	callId: v.string(),
 	name: v.string(),
-	input: v.any()
+	input: v.any(),
+	turnId: v.optional(v.string()),
+	providerMetadata: v.optional(v.any())
+});
+
+export const assistantToolResultErrorStatuses = ['cancelled', 'failed'] as const;
+
+export const vAssistantToolResultErrorStatus = v.union(
+	...literals(assistantToolResultErrorStatuses)
+);
+
+/** Persisted tool-result error output. Older rows may omit `status`; readers default those to `failed`. */
+export const vAssistantToolResultErrorOutput = v.object({
+	error: v.string(),
+	status: vAssistantToolResultErrorStatus
 });
 
 export const vAssistantToolResultPart = v.object({
@@ -176,7 +195,8 @@ export const vAgentHistoryToolResultItem = v.union(
 export const vAgentHistoryContent = v.union(
 	v.object({
 		type: v.literal('text'),
-		text: v.string()
+		text: v.string(),
+		additionalParamsJson: v.optional(v.string())
 	}),
 	v.object({
 		type: v.literal('reasoning'),
@@ -232,4 +252,6 @@ export type CommandExecResult = Infer<typeof vCommandExecResult>;
 export type FileWriteResult = Infer<typeof vFileWriteResult>;
 export type FileEditResult = Infer<typeof vFileEditResult>;
 export type ExecutorJobResult = Infer<typeof vExecutorJobResult>;
+export type AssistantToolResultErrorStatus = Infer<typeof vAssistantToolResultErrorStatus>;
+export type AssistantToolResultErrorOutput = Infer<typeof vAssistantToolResultErrorOutput>;
 export type WorkspaceInstruction = Infer<typeof vWorkspaceInstruction>;

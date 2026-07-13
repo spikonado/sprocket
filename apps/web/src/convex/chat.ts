@@ -9,7 +9,14 @@ export const latestRunForThread = query({
 		guestId: v.optional(v.string()),
 		threadId: v.id('threadRecords')
 	},
-	handler: async (ctx, args): Promise<{ run: Doc<'runs'>; jobs: Doc<'executorJobs'>[] } | null> => {
+	handler: async (
+		ctx,
+		args
+	): Promise<{
+		threadId: typeof args.threadId;
+		run: Doc<'runs'> | null;
+		jobs: Doc<'executorJobs'>[];
+	}> => {
 		const userId: string = await getUserId(ctx, args.guestId);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 
@@ -19,7 +26,11 @@ export const latestRunForThread = query({
 			.order('desc')
 			.first();
 		if (!latestRun) {
-			return null;
+			return {
+				threadId: args.threadId,
+				run: null,
+				jobs: []
+			};
 		}
 
 		const jobs: Doc<'executorJobs'>[] = await ctx.db
@@ -28,6 +39,7 @@ export const latestRunForThread = query({
 			.collect();
 
 		return {
+			threadId: args.threadId,
 			run: latestRun,
 			jobs: jobs.filter((job) => !job.hidden).sort((left, right) => left.sequence - right.sequence)
 		};

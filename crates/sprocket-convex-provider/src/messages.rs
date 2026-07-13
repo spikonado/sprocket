@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use rig::completion::{CompletionError, CompletionRequest, Message};
-use rig::message::{AssistantContent, ToolResultContent, UserContent};
+use rig::message::{AssistantContent, ReasoningContent, ToolResultContent, UserContent};
 
 pub(crate) fn build_model_messages(
     request: &CompletionRequest,
@@ -68,30 +68,60 @@ pub(crate) fn build_model_messages(
                 for item in content.iter() {
                     match item {
                         AssistantContent::Text(text) => {
-                            parts.push(serde_json::json!({
+                            let mut part = serde_json::json!({
                                 "type": "text",
                                 "text": text.text.clone()
-                            }));
+                            });
+                            if let Some(provider_options) = &text.additional_params {
+                                part["providerOptions"] = provider_options.clone();
+                            }
+                            parts.push(part);
                         }
                         AssistantContent::Reasoning(reasoning) => {
-                            let text: String = reasoning.display_text();
-                            if !text.is_empty() {
-                                parts.push(serde_json::json!({
-                                    "type": "text",
+                            let encrypted = reasoning.content.iter().find_map(|content| {
+                                if let ReasoningContent::Encrypted(value) = content {
+                                    Some(value.clone())
+                                } else {
+                                    None
+                                }
+                            });
+                            let mut openai = serde_json::Map::new();
+                            if let Some(id) = &reasoning.id {
+                                openai.insert("itemId".to_string(), id.clone().into());
+                            }
+                            if let Some(encrypted) = encrypted {
+                                openai.insert(
+                                    "reasoningEncryptedContent".to_string(),
+                                    encrypted.into(),
+                                );
+                            }
+                            let text = reasoning.display_text();
+                            if !text.is_empty() || !openai.is_empty() {
+                                let mut part = serde_json::json!({
+                                    "type": "reasoning",
                                     "text": text
-                                }));
+                                });
+                                if !openai.is_empty() {
+                                    part["providerOptions"] =
+                                        serde_json::json!({ "openai": openai });
+                                }
+                                parts.push(part);
                             }
                         }
                         AssistantContent::ToolCall(tool_call) => {
                             let tool_call_id: String = tool_call.id.clone();
                             tool_names_by_call_id
                                 .insert(tool_call_id.clone(), tool_call.function.name.clone());
-                            parts.push(serde_json::json!({
+                            let mut part = serde_json::json!({
                                 "type": "tool-call",
                                 "toolCallId": tool_call_id,
                                 "toolName": tool_call.function.name.clone(),
                                 "input": tool_call.function.arguments.clone()
-                            }));
+                            });
+                            if let Some(provider_options) = &tool_call.additional_params {
+                                part["providerOptions"] = provider_options.clone();
+                            }
+                            parts.push(part);
                         }
                         _ => {
                             return Err(CompletionError::ProviderError(
@@ -168,7 +198,7 @@ pub(crate) fn instructions_text(request: &CompletionRequest) -> Option<String> {
 mod tests {
     use rig::OneOrMany;
     use rig::completion::{CompletionRequest, Message};
-    use rig::message::{AssistantContent, UserContent};
+    use rig::message::{AssistantContent, Text, UserContent};
 
     use super::{build_model_messages, instructions_text, normalize_convex_json_numbers};
 
@@ -279,6 +309,38 @@ mod tests {
         assert_eq!(
             array[2]["content"][0]["output"]["value"]["contents"],
             "fn main() {}"
+        );
+    }
+
+    #[test]
+    fn preserves_assistant_text_provider_options() {
+        let messages = OneOrMany::one(Message::Assistant {
+            id: None,
+            content: OneOrMany::one(AssistantContent::Text(Text {
+                text: "Grounded answer".to_string(),
+                additional_params: Some(serde_json::json!({
+                    "openai": { "itemId": "msg_123" }
+                })),
+            })),
+        });
+
+        let structured = build_model_messages(&CompletionRequest {
+            model: None,
+            preamble: None,
+            chat_history: messages,
+            documents: vec![],
+            tools: vec![],
+            temperature: None,
+            max_tokens: None,
+            tool_choice: None,
+            additional_params: None,
+            output_schema: None,
+        })
+        .expect("structured");
+
+        assert_eq!(
+            structured[0]["content"][0]["providerOptions"],
+            serde_json::json!({ "openai": { "itemId": "msg_123" } })
         );
     }
 

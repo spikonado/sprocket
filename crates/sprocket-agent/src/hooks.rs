@@ -1,92 +1,129 @@
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
-use rig::agent::{
-    HookAction, InvalidToolCallContext, InvalidToolCallHookAction, PromptHook, ToolCallHookAction,
-};
+use rig::agent::{AgentHook, Flow, InvalidToolCallContext, StepEvent, StepEventKind};
 use rig::completion::CompletionModel;
-
-use crate::convex::RuntimeClient;
 
 pub(crate) const WORKSPACE_TOOL_NAMES: &[&str] =
     &["exec_command", "create_file", "replace_in_file"];
 
+#[derive(Clone, Debug)]
+struct TrackedToolCall {
+    call_id: Option<String>,
+    name: String,
+    args: serde_json::Value,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ToolCallTracker(Arc<Mutex<VecDeque<TrackedToolCall>>>);
+
+impl ToolCallTracker {
+    fn record(&self, call_id: Option<&str>, name: &str, args: &str) {
+        let Ok(args) = serde_json::from_str(args) else {
+            return;
+        };
+        if let Ok(mut calls) = self.0.lock() {
+            calls.push_back(TrackedToolCall {
+                call_id: call_id.map(str::to_owned),
+                name: name.to_owned(),
+                args,
+            });
+        }
+    }
+
+    pub(crate) fn claim(&self, name: &str, args: &serde_json::Value) -> Option<String> {
+        let mut calls = self.0.lock().ok()?;
+        let mut compatible = calls
+            .iter()
+            .enumerate()
+            .filter(|(_, call)| call.name == name && tool_payload_compatible(&call.args, args));
+        let (index, _) = compatible.next()?;
+        if compatible.next().is_some() {
+            return None;
+        }
+        calls.remove(index)?.call_id
+    }
+}
+
+fn tool_payload_compatible(raw: &serde_json::Value, normalized: &serde_json::Value) -> bool {
+    match (raw, normalized) {
+        (serde_json::Value::Object(raw), serde_json::Value::Object(normalized)) => {
+            normalized.iter().all(|(key, value)| {
+                raw.get(key)
+                    .is_some_and(|raw| tool_payload_compatible(raw, value))
+            })
+        }
+        (serde_json::Value::Array(raw), serde_json::Value::Array(normalized)) => {
+            raw.len() == normalized.len()
+                && raw
+                    .iter()
+                    .zip(normalized)
+                    .all(|(raw, normalized)| tool_payload_compatible(raw, normalized))
+        }
+        _ => raw == normalized,
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct AgentPromptHook {
-    runtime: RuntimeClient,
-    run_id: String,
-    aggregated_text: Arc<Mutex<String>>,
+    tracker: ToolCallTracker,
 }
 
 impl AgentPromptHook {
-    pub(crate) fn new(
-        runtime: RuntimeClient,
-        run_id: String,
-        aggregated_text: Arc<Mutex<String>>,
-    ) -> Self {
-        Self {
-            runtime,
-            run_id,
-            aggregated_text,
-        }
+    pub(crate) fn new(tracker: ToolCallTracker) -> Self {
+        Self { tracker }
     }
 }
 
-impl<M> PromptHook<M> for AgentPromptHook
+impl<M> AgentHook<M> for AgentPromptHook
 where
     M: CompletionModel,
 {
-    async fn on_text_delta(&self, _text_delta: &str, aggregated_text: &str) -> HookAction {
-        if let Ok(mut guard) = self.aggregated_text.lock() {
-            *guard = aggregated_text.to_string();
-        }
-
-        match self
-            .runtime
-            .update_assistant_message(&self.run_id, aggregated_text)
-            .await
-        {
-            Ok(()) => HookAction::cont(),
-            Err(error) => HookAction::terminate(error.to_string()),
+    async fn on_event(&self, _context: &rig::agent::HookContext, event: StepEvent<'_, M>) -> Flow {
+        match event {
+            StepEvent::InvalidToolCall(context) => resolve_invalid_tool_call(context),
+            StepEvent::ToolCall {
+                tool_name,
+                tool_call_id,
+                args,
+                ..
+            } => {
+                self.tracker.record(tool_call_id, tool_name, args);
+                Flow::cont()
+            }
+            _ => Flow::cont(),
         }
     }
 
-    async fn on_invalid_tool_call(
-        &self,
-        context: &InvalidToolCallContext,
-    ) -> InvalidToolCallHookAction {
-        resolve_invalid_tool_call(context)
-    }
-
-    async fn on_tool_call(
-        &self,
-        _tool_name: &str,
-        _tool_call_id: Option<String>,
-        _internal_call_id: &str,
-        _args: &str,
-    ) -> ToolCallHookAction {
-        ToolCallHookAction::cont()
+    fn observes(&self, kind: StepEventKind) -> bool {
+        matches!(
+            kind,
+            StepEventKind::InvalidToolCall | StepEventKind::ToolCall
+        )
     }
 }
 
-pub(crate) fn resolve_invalid_tool_call(
-    context: &InvalidToolCallContext,
-) -> InvalidToolCallHookAction {
-    let candidates = if context.available_tools.is_empty() {
+pub(crate) fn resolve_invalid_tool_call(context: &InvalidToolCallContext) -> Flow {
+    resolve_invalid_tool_name(&context.tool_name, &context.available_tools)
+}
+
+fn resolve_invalid_tool_name(tool_name: &str, available_tools: &[String]) -> Flow {
+    let candidates = if available_tools.is_empty() {
         WORKSPACE_TOOL_NAMES
             .iter()
             .map(|name| (*name).to_string())
             .collect()
     } else {
-        context.available_tools.clone()
+        available_tools.to_vec()
     };
 
-    if let Some(repaired) = repair_tool_name(&context.tool_name, &candidates) {
-        return InvalidToolCallHookAction::repair(repaired);
+    if let Some(repaired) = repair_tool_name(tool_name, &candidates) {
+        return Flow::repair(repaired);
     }
 
-    InvalidToolCallHookAction::retry(format!(
+    Flow::retry(format!(
         "Unknown or disallowed tool `{}`. Use one of: {}.",
-        context.tool_name,
+        tool_name,
         candidates.join(", ")
     ))
 }
@@ -168,39 +205,25 @@ fn levenshtein(left: &str, right: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rig::agent::InvalidToolCallContext;
 
-    fn context(tool_name: &str) -> InvalidToolCallContext {
-        InvalidToolCallContext {
-            tool_name: tool_name.to_string(),
-            tool_call_id: None,
-            internal_call_id: None,
-            args: None,
-            available_tools: WORKSPACE_TOOL_NAMES
-                .iter()
-                .map(|name| (*name).to_string())
-                .collect(),
-            allowed_tools: WORKSPACE_TOOL_NAMES
-                .iter()
-                .map(|name| (*name).to_string())
-                .collect(),
-            tool_choice: None,
-            chat_history: Vec::new(),
-            is_streaming: true,
-        }
+    fn tools() -> Vec<String> {
+        WORKSPACE_TOOL_NAMES
+            .iter()
+            .map(|name| (*name).to_string())
+            .collect()
     }
 
     #[test]
     fn repairs_near_miss_tool_names() {
-        match resolve_invalid_tool_call(&context("exec-command")) {
-            InvalidToolCallHookAction::Repair { tool_name } => {
+        match resolve_invalid_tool_name("exec-command", &tools()) {
+            Flow::Repair { tool_name } => {
                 assert_eq!(tool_name, "exec_command");
             }
             other => panic!("expected repair, got {other:?}"),
         }
 
-        match resolve_invalid_tool_call(&context("createfile")) {
-            InvalidToolCallHookAction::Repair { tool_name } => {
+        match resolve_invalid_tool_name("createfile", &tools()) {
+            Flow::Repair { tool_name } => {
                 assert_eq!(tool_name, "create_file");
             }
             other => panic!("expected repair, got {other:?}"),
@@ -209,13 +232,69 @@ mod tests {
 
     #[test]
     fn retries_unknown_tool_names() {
-        match resolve_invalid_tool_call(&context("launch_missiles")) {
-            InvalidToolCallHookAction::Retry { feedback } => {
+        match resolve_invalid_tool_name("launch_missiles", &tools()) {
+            Flow::Retry { feedback } => {
                 assert!(feedback.contains("exec_command"));
                 assert!(feedback.contains("create_file"));
                 assert!(feedback.contains("replace_in_file"));
             }
             other => panic!("expected retry, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn tracker_claims_only_the_matching_executed_call() {
+        let tracker = ToolCallTracker::default();
+        tracker.record(Some("call-1"), "exec_command", r#"{"cmd":"pwd"}"#);
+        tracker.record(Some("call-2"), "exec_command", r#"{"cmd":"ls"}"#);
+
+        assert_eq!(
+            tracker.claim("exec_command", &serde_json::json!({ "cmd": "ls" })),
+            Some("call-2".to_string())
+        );
+        assert_eq!(
+            tracker.claim("exec_command", &serde_json::json!({ "cmd": "pwd" })),
+            Some("call-1".to_string())
+        );
+    }
+
+    #[test]
+    fn tracker_uniquely_matches_normalized_args_when_typed_args_drop_fields() {
+        let tracker = ToolCallTracker::default();
+        tracker.record(
+            Some("call-1"),
+            "exec_command",
+            r#"{"cmd":"pwd","workdir":null,"unknown":"ignored"}"#,
+        );
+        tracker.record(Some("call-2"), "exec_command", r#"{"cmd":"ls"}"#);
+
+        assert_eq!(
+            tracker.claim("exec_command", &serde_json::json!({ "cmd": "pwd" })),
+            Some("call-1".to_string())
+        );
+        assert_eq!(
+            tracker.claim("exec_command", &serde_json::json!({ "cmd": "ls" })),
+            Some("call-2".to_string())
+        );
+    }
+
+    #[test]
+    fn tracker_does_not_claim_ambiguous_normalized_parallel_calls() {
+        let tracker = ToolCallTracker::default();
+        tracker.record(
+            Some("call-1"),
+            "exec_command",
+            r#"{"cmd":"pwd","workdir":null}"#,
+        );
+        tracker.record(
+            Some("call-2"),
+            "exec_command",
+            r#"{"cmd":"pwd","unknown":"first"}"#,
+        );
+
+        assert_eq!(
+            tracker.claim("exec_command", &serde_json::json!({ "cmd": "pwd" })),
+            None
+        );
     }
 }

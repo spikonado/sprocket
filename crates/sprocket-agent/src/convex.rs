@@ -1,5 +1,5 @@
 use anyhow::{Context, anyhow};
-use convex::{FunctionResult, Value};
+use convex::{FunctionResult, QuerySubscription, Value};
 use serde::Deserialize;
 use sprocket_convex_provider::Client as ConvexProviderClient;
 use std::collections::BTreeMap;
@@ -99,45 +99,38 @@ impl RuntimeClient {
             .await
     }
 
-    pub(crate) async fn finish_assistant_message(
-        &self,
-        run_id: &str,
-        text: &str,
-    ) -> anyhow::Result<()> {
-        let mut args = self.run_args(run_id);
-        args.insert("text".to_string(), text.to_string().into());
-        self.mutation_unit("agentRuntime:finishAssistantMessage", args)
-            .await
-    }
-
-    pub(crate) async fn update_assistant_message(
-        &self,
-        run_id: &str,
-        text: &str,
-    ) -> anyhow::Result<()> {
-        let mut args = self.run_args(run_id);
-        args.insert("text".to_string(), text.to_string().into());
-        self.mutation_unit("agentRuntime:updateAssistantMessage", args)
-            .await
-    }
-
     pub(crate) async fn run_finished(&self, run_id: &str) -> anyhow::Result<bool> {
         self.query_json("agentRuntime:isFinished", self.run_args(run_id))
             .await
     }
 
-    pub(crate) async fn finish_run(
+    pub(crate) async fn run_finished_subscription(
         &self,
         run_id: &str,
+    ) -> anyhow::Result<QuerySubscription> {
+        self.client
+            .subscribe("agentRuntime:isFinished", self.run_args(run_id))
+            .await
+    }
+
+    pub(crate) fn decode_run_finished_update(result: FunctionResult) -> anyhow::Result<bool> {
+        decode_function_result(result, "agentRuntime:isFinished")
+    }
+
+    pub(crate) async fn finalize_run(
+        &self,
+        run_id: &str,
+        text: &str,
         status: &str,
         last_error: Option<&str>,
     ) -> anyhow::Result<()> {
         let mut args = self.run_args(run_id);
+        args.insert("text".to_string(), text.to_string().into());
         args.insert("status".to_string(), status.to_string().into());
         if let Some(last_error) = last_error {
             args.insert("lastError".to_string(), last_error.to_string().into());
         }
-        self.mutation_unit("agentRuntime:finishRun", args).await
+        self.mutation_unit("agentRuntime:finalizeRun", args).await
     }
 
     pub(crate) fn args_with_actor(&self) -> BTreeMap<String, Value> {

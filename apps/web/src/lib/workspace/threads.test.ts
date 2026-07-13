@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+	dataForThread,
 	findWorkspaceSessionByName,
 	getAttachedWorkspaceSessionIds,
 	getWorkspaceThreadGroups,
+	isSelectionGenerationCurrent,
+	resolvePendingCreatedThreadId,
 	resolveWorkspaceThreadSelection
 } from '$lib/workspace/threads';
 import { defaultModelId, defaultReasoningEffort } from '$convex/lib/models';
@@ -129,5 +132,114 @@ describe('workspace thread helpers', () => {
 				draftWorkspaceName: 'Workspace'
 			})
 		).toBeNull();
+	});
+
+	it('preserves a newly created thread id before the reactive list includes it', () => {
+		const existing = makeThreadSummary({
+			_id: 'thread-record-old' as ThreadSummary['_id'],
+			threadId: 'thread-record-old' as ThreadSummary['threadId'],
+			lastMessageAt: 20
+		});
+		const pendingThreadId = 'thread-record-new' as ThreadSummary['threadId'];
+
+		expect(
+			resolveWorkspaceThreadSelection({
+				threads: [existing],
+				currentThreadId: pendingThreadId,
+				currentWorkspaceName: 'Workspace',
+				draftWorkspaceName: null,
+				pendingCreatedThreadId: pendingThreadId
+			})
+		).toBe(pendingThreadId);
+	});
+
+	it('falls back when an established thread disappears from the list', () => {
+		const newest = makeThreadSummary({
+			_id: 'thread-record-newest' as ThreadSummary['_id'],
+			threadId: 'thread-record-newest' as ThreadSummary['threadId'],
+			lastMessageAt: 30
+		});
+		const vanished = 'thread-record-vanished' as ThreadSummary['threadId'];
+
+		expect(
+			resolveWorkspaceThreadSelection({
+				threads: [newest],
+				currentThreadId: vanished,
+				currentWorkspaceName: 'Workspace',
+				draftWorkspaceName: null,
+				pendingCreatedThreadId: null
+			})
+		).toBe(newest.threadId);
+	});
+
+	it('falls back to the newest thread only after the current id is cleared', () => {
+		const newest = makeThreadSummary({
+			_id: 'thread-record-newest' as ThreadSummary['_id'],
+			threadId: 'thread-record-newest' as ThreadSummary['threadId'],
+			lastMessageAt: 30
+		});
+
+		expect(
+			resolveWorkspaceThreadSelection({
+				threads: [newest],
+				currentThreadId: null,
+				currentWorkspaceName: 'Workspace',
+				draftWorkspaceName: null
+			})
+		).toBe(newest.threadId);
+	});
+
+	it('clears pending created ids once the list catches up or create visibility fails', () => {
+		const existing = makeThreadSummary({
+			_id: 'thread-record-old' as ThreadSummary['_id'],
+			threadId: 'thread-record-old' as ThreadSummary['threadId']
+		});
+		const pendingThreadId = 'thread-record-new' as ThreadSummary['threadId'];
+		const created = makeThreadSummary({
+			_id: pendingThreadId,
+			threadId: pendingThreadId
+		});
+
+		expect(
+			resolvePendingCreatedThreadId({
+				pendingCreatedThreadId: pendingThreadId,
+				threads: [existing],
+				threadListChangedSinceCreate: false
+			})
+		).toBe(pendingThreadId);
+
+		expect(
+			resolvePendingCreatedThreadId({
+				pendingCreatedThreadId: pendingThreadId,
+				threads: [created, existing],
+				threadListChangedSinceCreate: true
+			})
+		).toBeNull();
+
+		expect(
+			resolvePendingCreatedThreadId({
+				pendingCreatedThreadId: pendingThreadId,
+				threads: [existing],
+				threadListChangedSinceCreate: true
+			})
+		).toBeNull();
+	});
+
+	it('rejects stale thread-scoped query data', () => {
+		const thread = makeThreadSummary();
+		const activeThreadRecord = {
+			_id: thread.threadId,
+			title: thread.title
+		};
+
+		expect(dataForThread(thread, thread.threadId)).toBe(thread);
+		expect(dataForThread(activeThreadRecord, thread.threadId)).toBe(activeThreadRecord);
+		expect(dataForThread(thread, 'thread-record-2' as ThreadSummary['threadId'])).toBeNull();
+		expect(dataForThread(undefined, thread.threadId)).toBeNull();
+	});
+
+	it('treats selection generations as current only when they match', () => {
+		expect(isSelectionGenerationCurrent(3, 3)).toBe(true);
+		expect(isSelectionGenerationCurrent(2, 3)).toBe(false);
 	});
 });
