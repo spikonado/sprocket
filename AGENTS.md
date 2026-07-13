@@ -53,10 +53,12 @@ Specifically for gpt-5.6-sol: You often end up writing more code than needed, es
 - Do the deep dives and figure out what needs to be done and delegate the rest accordingly to subagents.
 - Always use subagents to write the code.
 - For non bulk/mechanical/zero-brain operations, always get 2 subagents to review the code before considering your work done. One of those agents must have >=8 intelligence and review the code overall, the other must have >=7 taste and review the UI/UX, API design, and code quality parts.
+- When getting code reviewed by subagents in a loop, use gpt-5.6-sol for a max of 3 reviews. After this, rely on some other model.
 
 #### PR Workflow
 
 - Unless very specifically requested, PRs should be made only against the default branch.
+- After a PR is made, don't perform any code review using subagents, let Greptile review the code.
 
 1. When requested, push code and make a PR
 2. Wait for the Greptile AI code review CI to complete and give its review on your changes.
