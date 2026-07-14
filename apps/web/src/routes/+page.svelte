@@ -714,6 +714,7 @@
 		);
 		const recoveredSubmission = recoveredSubmissionIds.get(originatingRecoveryKey);
 		const submissionRequestId = resolveSubmissionId({
+			latestRun: selectedThreadId ? runState : null,
 			newSubmissionId: crypto.randomUUID(),
 			prompt: submittedPrompt,
 			reasoningEffort: submittedReasoningEffort,

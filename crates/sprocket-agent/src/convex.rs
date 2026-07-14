@@ -142,6 +142,23 @@ impl RuntimeClient {
         self.mutation_unit("agentRuntime:finalizeRun", args).await
     }
 
+    pub(crate) async fn finalize_queued_run(
+        &self,
+        run_id: &str,
+        text: &str,
+        status: &str,
+        last_error: Option<&str>,
+    ) -> anyhow::Result<bool> {
+        let mut args = self.run_args(run_id);
+        args.insert("expectedStatus".to_string(), "queued".to_string().into());
+        args.insert("text".to_string(), text.to_string().into());
+        args.insert("status".to_string(), status.to_string().into());
+        if let Some(last_error) = last_error {
+            args.insert("lastError".to_string(), last_error.to_string().into());
+        }
+        self.mutation_json("agentRuntime:finalizeRun", args).await
+    }
+
     pub(crate) fn args_with_actor(&self) -> BTreeMap<String, Value> {
         let mut args = BTreeMap::new();
         if let Some(guest_id) = &self.guest_id {

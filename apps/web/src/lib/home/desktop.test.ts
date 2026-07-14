@@ -93,6 +93,7 @@ describe('resolveSubmissionId', () => {
 
 		expect(
 			resolveSubmissionId({
+				latestRun: null,
 				newSubmissionId: 'new-id',
 				prompt: 'Inspect the robot',
 				reasoningEffort: 'medium',
@@ -102,6 +103,7 @@ describe('resolveSubmissionId', () => {
 		).toBe('recovered-id');
 		expect(
 			resolveSubmissionId({
+				latestRun: null,
 				newSubmissionId: 'new-id',
 				prompt: 'Inspect and fix the robot',
 				reasoningEffort: 'medium',
@@ -111,6 +113,7 @@ describe('resolveSubmissionId', () => {
 		).toBe('new-id');
 		expect(
 			resolveSubmissionId({
+				latestRun: null,
 				newSubmissionId: 'new-id',
 				prompt: 'Inspect the robot',
 				reasoningEffort: 'high',
@@ -118,6 +121,46 @@ describe('resolveSubmissionId', () => {
 				selectedModel: 'gpt-5.4'
 			})
 		).toBe('new-id');
+	});
+
+	it('only uses a fresh id when the recovered submission itself is observed as final', () => {
+		const recoveredSubmission = {
+			prompt: 'Inspect the robot',
+			reasoningEffort: 'medium' as const,
+			selectedModel: 'gpt-5.4' as const,
+			submissionId: 'recovered-id'
+		};
+
+		expect(
+			resolveSubmissionId({
+				latestRun: { status: 'failed', submissionId: 'recovered-id' },
+				newSubmissionId: 'new-id',
+				prompt: 'Inspect the robot',
+				reasoningEffort: 'medium',
+				recoveredSubmission,
+				selectedModel: 'gpt-5.4'
+			})
+		).toBe('new-id');
+		expect(
+			resolveSubmissionId({
+				latestRun: { status: 'queued', submissionId: 'recovered-id' },
+				newSubmissionId: 'new-id',
+				prompt: 'Inspect the robot',
+				reasoningEffort: 'medium',
+				recoveredSubmission,
+				selectedModel: 'gpt-5.4'
+			})
+		).toBe('recovered-id');
+		expect(
+			resolveSubmissionId({
+				latestRun: { status: 'completed', submissionId: 'older-id' },
+				newSubmissionId: 'new-id',
+				prompt: 'Inspect the robot',
+				reasoningEffort: 'medium',
+				recoveredSubmission,
+				selectedModel: 'gpt-5.4'
+			})
+		).toBe('recovered-id');
 	});
 });
 

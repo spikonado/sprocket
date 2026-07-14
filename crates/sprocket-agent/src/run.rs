@@ -79,21 +79,20 @@ fn build_workspace_preamble(
     .join("\n")
 }
 
-async fn fail_run_early(
+async fn fail_run_before_start(
     runtime: &RuntimeClient,
     run_id: &str,
     error: &anyhow::Error,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let message = format!("Run failed before the model started: {error}");
     runtime
-        .finalize_run(
+        .finalize_queued_run(
             run_id,
             &message,
             RunFinalStatus::Failed.as_str(),
             Some(&error.to_string()),
         )
-        .await?;
-    Ok(())
+        .await
 }
 
 async fn finalize_run(
@@ -108,23 +107,6 @@ async fn finalize_run(
         .finalize_run(run_id, assistant_text, status_text, error_message)
         .await
         .map_err(|error| anyhow!("failed to finalize {status_text} run: {error}"))
-}
-
-async fn fail_run_setup(
-    runtime: &RuntimeClient,
-    run_id: &str,
-    error: &anyhow::Error,
-) -> anyhow::Result<()> {
-    let _ = runtime.begin_assistant_message(run_id).await;
-    let message = format!("Run failed before the model started: {error}");
-    finalize_run(
-        runtime,
-        run_id,
-        &message,
-        RunFinalStatus::Failed,
-        Some(&error.to_string()),
-    )
-    .await
 }
 
 async fn finalize_provider_result(
@@ -214,19 +196,10 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
     let context: RunContextResponse = match runtime.run_context(&run_id).await {
         Ok(context) => context,
         Err(error) => {
-            return match claim_run(&runtime, &run_id, &claim_id).await {
-                Ok(true) => {
-                    fail_run_early(&runtime, &run_id, &error).await?;
-                    Err(error)
-                }
-                Ok(false) => Ok(()),
-                Err(start_error) => {
-                    eprintln!(
-                        "sprocket-agent: failed to load context for run {}; claim outcome is uncertain: {}",
-                        run_id, start_error
-                    );
-                    Err(start_error)
-                }
+            return if fail_run_before_start(&runtime, &run_id, &error).await? {
+                Err(error)
+            } else {
+                Ok(())
             };
         }
     };
@@ -259,22 +232,22 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
     let (_, _, prompt, provider, prior_history, preamble) = match prepared {
         Ok(values) => values,
         Err(error) => {
-            return match claim_run(&runtime, &run_id, &claim_id).await {
-                Ok(true) => {
-                    fail_run_setup(&runtime, &run_id, &error).await?;
-                    Err(error)
-                }
-                Ok(false) => Ok(()),
-                Err(start_error) => {
-                    eprintln!(
-                        "sprocket-agent: failed to prepare run {}; claim outcome is uncertain: {}",
-                        run_id, start_error
-                    );
-                    Err(start_error)
-                }
+            return if fail_run_before_start(&runtime, &run_id, &error).await? {
+                Err(error)
+            } else {
+                Ok(())
             };
         }
     };
+
+    if let Err(error) = runtime.begin_assistant_message(&run_id).await {
+        return if fail_run_before_start(&runtime, &run_id, &error).await? {
+            Err(error)
+        } else {
+            Ok(())
+        };
+    }
+    eprintln!("sprocket-agent: prepared assistant response {}", run_id);
 
     if !claim_run(&runtime, &run_id, &claim_id).await? {
         return Ok(());
@@ -289,12 +262,6 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
     if runtime.run_finished(&run_id).await? {
         return Ok(());
     }
-
-    if let Err(error) = runtime.begin_assistant_message(&run_id).await {
-        fail_run_setup(&runtime, &run_id, &error).await?;
-        return Err(error);
-    }
-    eprintln!("sprocket-agent: prepared assistant response {}", run_id);
 
     let provider_result = provider
         .run(

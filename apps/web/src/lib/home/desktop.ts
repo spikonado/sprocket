@@ -3,6 +3,7 @@ import type {
 	AgentRunRequest,
 	DesktopApi,
 	LocalWorkspaceAvailability,
+	RunState,
 	WorkspaceSession,
 	WorkspaceSessionAttachment,
 	WorkspaceSessionLocation
@@ -44,12 +45,25 @@ export function resolveSubmissionId(args: {
 		selectedModel: AgentRunRequest['selectedModel'];
 		submissionId: string;
 	};
+	latestRun: {
+		status: RunState['status'];
+		submissionId?: string;
+	} | null;
 	selectedModel: AgentRunRequest['selectedModel'];
 }) {
-	return args.recoveredSubmission?.prompt === args.prompt &&
-		args.recoveredSubmission.selectedModel === args.selectedModel &&
-		args.recoveredSubmission.reasoningEffort === args.reasoningEffort
-		? args.recoveredSubmission.submissionId
+	const recoveredSubmission = args.recoveredSubmission;
+	const latestRun = args.latestRun;
+	const recoveredSubmissionIsFinal =
+		recoveredSubmission !== undefined &&
+		latestRun?.submissionId === recoveredSubmission.submissionId &&
+		(latestRun.status === 'completed' ||
+			latestRun.status === 'failed' ||
+			latestRun.status === 'cancelled');
+	return !recoveredSubmissionIsFinal &&
+		recoveredSubmission?.prompt === args.prompt &&
+		recoveredSubmission.selectedModel === args.selectedModel &&
+		recoveredSubmission.reasoningEffort === args.reasoningEffort
+		? recoveredSubmission.submissionId
 		: args.newSubmissionId;
 }
 

@@ -381,15 +381,19 @@ export const mergeAssistantStreamEvents = mutation({
 
 export const finalizeRun = mutation({
 	args: {
+		expectedStatus: v.optional(vRunStatus),
 		guestId: v.optional(v.string()),
 		runId: v.id('runs'),
 		text: v.string(),
 		status: vRunFinalStatus,
 		lastError: v.optional(v.string())
 	},
-	handler: async (ctx, args): Promise<void> => {
+	handler: async (ctx, args): Promise<boolean> => {
 		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
+		if (args.expectedStatus && run.status !== args.expectedStatus) {
+			return false;
+		}
 		const alreadyFinal = isRunFinalStatus(run.status);
 		const finalStatus = alreadyFinal ? run.status : args.status;
 		const completedAt = run.completedAt ?? Date.now();
@@ -416,7 +420,7 @@ export const finalizeRun = mutation({
 			if (run.activeJobId) {
 				await ctx.db.patch(run._id, { activeJobId: undefined });
 			}
-			return;
+			return true;
 		}
 
 		const responseMessageId =
@@ -460,6 +464,7 @@ export const finalizeRun = mutation({
 			completedAt,
 			responseMessageId
 		});
+		return true;
 	}
 });
 
