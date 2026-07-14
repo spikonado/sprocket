@@ -14,7 +14,6 @@ import { isRunFinalStatus } from '$convex/lib/validators';
 
 const AGENT_AUTH_INITIAL_RETRY_DELAY_MS = 250;
 const AGENT_AUTH_MAX_RETRY_DELAY_MS = 4_000;
-const AGENT_AUTH_NOT_FOUND_GRACE_MS = 10_000;
 
 export type WorkspaceSessionState = WorkspaceSession & {
 	localWorkspaceAvailability: LocalWorkspaceAvailability;
@@ -69,14 +68,6 @@ export function isRunBlockingAgentLaunch(
 	return isRunClaimLeaseActive(run, now);
 }
 
-export function shouldSkipAuthenticatedQueries(args: {
-	authenticatedUser: unknown;
-	convexIsAuthenticated: boolean;
-	convexIsLoading: boolean;
-}): boolean {
-	return !(args.authenticatedUser && args.convexIsAuthenticated && !args.convexIsLoading);
-}
-
 export function launchAgentRun(args: {
 	authToken: string;
 	desktopApi: DesktopApi;
@@ -96,7 +87,6 @@ export function launchAgentRun(args: {
 	let settleLaunch!: () => void;
 	const launchState = {
 		status: 'pending' as 'pending' | 'acknowledged' | 'failed',
-		notFoundGraceElapsed: false,
 		settled: new Promise<void>((resolve) => {
 			settleLaunch = resolve;
 		})
@@ -141,7 +131,7 @@ export function launchAgentRun(args: {
 		.catch((error) => {
 			launchState.status = 'failed';
 			settleLaunch();
-			if (!launchState.notFoundGraceElapsed) reportError(error);
+			reportError(error);
 		});
 }
 
@@ -153,43 +143,29 @@ async function monitorAgentAuthSession(args: {
 	getCurrentUserId: () => string | null;
 	launchState: {
 		status: 'pending' | 'acknowledged' | 'failed';
-		notFoundGraceElapsed: boolean;
 		settled: Promise<void>;
 	};
 }) {
-	const readLaunchStatus = () => args.launchState.status;
 	let pendingToken: string | null = null;
 	let retryDelayMs = AGENT_AUTH_INITIAL_RETRY_DELAY_MS;
-	let notFoundSince: number | null = null;
 
 	while (true) {
 		let status: AgentAuthStatus;
 		try {
 			status = await args.desktopApi.waitForAgentAuthRefresh(args.authSessionId);
 		} catch {
-			await delay(retryDelayMs);
-			retryDelayMs = Math.min(retryDelayMs * 2, AGENT_AUTH_MAX_RETRY_DELAY_MS);
+			retryDelayMs = await backoff(retryDelayMs);
 			continue;
 		}
 
 		if (status === 'complete') return;
 		if (status === 'notFound') {
-			if (args.launchState.status === 'acknowledged') return;
-			notFoundSince ??= Date.now();
-			if (Date.now() - notFoundSince >= AGENT_AUTH_NOT_FOUND_GRACE_MS) {
-				args.launchState.notFoundGraceElapsed = true;
-				if (args.launchState.status === 'pending') await args.launchState.settled;
-				if (readLaunchStatus() === 'acknowledged') return;
-				throw new Error(
-					'The local agent authentication session was not found. Start the run again.'
-				);
-			}
-			await delay(retryDelayMs);
-			retryDelayMs = Math.min(retryDelayMs * 2, AGENT_AUTH_MAX_RETRY_DELAY_MS);
+			// Pending: session may not be created yet. Otherwise the run already settled.
+			if (args.launchState.status !== 'pending') return;
+			retryDelayMs = await backoff(retryDelayMs);
 			continue;
 		}
 
-		notFoundSince = null;
 		if (!pendingToken) {
 			assertAgentRunUser(args.expectedUserId, args.getCurrentUserId());
 			pendingToken = await args.getAccessToken({ forceRefreshToken: true });
@@ -204,8 +180,7 @@ async function monitorAgentAuthSession(args: {
 			pendingToken = null;
 			retryDelayMs = AGENT_AUTH_INITIAL_RETRY_DELAY_MS;
 		} catch {
-			await delay(retryDelayMs);
-			retryDelayMs = Math.min(retryDelayMs * 2, AGENT_AUTH_MAX_RETRY_DELAY_MS);
+			retryDelayMs = await backoff(retryDelayMs);
 		}
 	}
 }
@@ -221,8 +196,9 @@ function assertAgentRunUser(expectedUserId: string, currentUserId: string | null
 	}
 }
 
-function delay(milliseconds: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, milliseconds));
+async function backoff(retryDelayMs: number): Promise<number> {
+	await new Promise<void>((resolve) => setTimeout(resolve, retryDelayMs));
+	return Math.min(retryDelayMs * 2, AGENT_AUTH_MAX_RETRY_DELAY_MS);
 }
 
 export function buildDesktopWorkspaceSessionsById(

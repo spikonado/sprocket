@@ -5,8 +5,7 @@ import {
 	isRunBlockingAgentLaunch,
 	launchAgentRun,
 	resolveDraftRunSubmissionId,
-	resolveSubmissionId,
-	shouldSkipAuthenticatedQueries
+	resolveSubmissionId
 } from '$lib/home/desktop';
 import type {
 	AgentAuthStatus,
@@ -130,17 +129,6 @@ describe('launchAgentRun', () => {
 		expect(getAccessToken).toHaveBeenCalledWith({ forceRefreshToken: true });
 	});
 
-	it('starts monitoring before the run is acknowledged', () => {
-		const desktopApi = createDesktopApi(
-			vi.fn().mockImplementation(() => new Promise(() => undefined))
-		);
-
-		launchAgentRun(launchArgs({ desktopApi }));
-
-		expect(desktopApi.waitForAgentAuthRefresh).toHaveBeenCalledOnce();
-		expect(desktopApi.runAgent).toHaveBeenCalledOnce();
-	});
-
 	it('treats a missing auth session as complete after launch acknowledgement', async () => {
 		const authStatus = deferred<AgentAuthStatus>();
 		const desktopApi = createDesktopApi(vi.fn().mockResolvedValue({ runId: 'run-1' }));
@@ -158,25 +146,7 @@ describe('launchAgentRun', () => {
 		expect(onError).not.toHaveBeenCalled();
 	});
 
-	it('ignores terminal authentication errors after launch acknowledgement', async () => {
-		const authStatus = deferred<AgentAuthStatus>();
-		const desktopApi = createDesktopApi(vi.fn().mockResolvedValue({ runId: 'run-1' }));
-		vi.mocked(desktopApi.waitForAgentAuthRefresh).mockReturnValue(authStatus.promise);
-		const getCurrentUserId = vi.fn().mockReturnValue('user-2');
-		const onError = vi.fn();
-		const onStarted = vi.fn();
-
-		launchAgentRun(launchArgs({ desktopApi, getCurrentUserId, onError, onStarted }));
-
-		await vi.waitFor(() => expect(onStarted).toHaveBeenCalledWith('run-1'));
-		authStatus.resolve('refreshRequired');
-		await vi.waitFor(() => expect(getCurrentUserId).toHaveBeenCalledOnce());
-
-		expect(onStarted).toHaveBeenCalledOnce();
-		expect(onError).not.toHaveBeenCalled();
-	});
-
-	it('waits for a slow launch before treating a missing auth session as terminal', async () => {
+	it('keeps polling while launch is pending and the auth session is not ready yet', async () => {
 		vi.useFakeTimers();
 		try {
 			const launch = deferred<{ runId: never }>();
@@ -186,91 +156,37 @@ describe('launchAgentRun', () => {
 			const onStarted = vi.fn();
 
 			launchAgentRun(launchArgs({ desktopApi, onError, onStarted }));
-			await vi.advanceTimersByTimeAsync(12_000);
-
+			await vi.advanceTimersByTimeAsync(1_000);
 			expect(onError).not.toHaveBeenCalled();
-			launch.resolve({ runId: 'run-1' as never });
-			await launch.promise;
-			await Promise.resolve();
+			expect(vi.mocked(desktopApi.waitForAgentAuthRefresh).mock.calls.length).toBeGreaterThan(1);
 
-			expect(onStarted).toHaveBeenCalledWith('run-1');
+			launch.resolve({ runId: 'run-1' as never });
+			await vi.waitFor(() => expect(onStarted).toHaveBeenCalledWith('run-1'));
 			expect(onError).not.toHaveBeenCalled();
 		} finally {
 			vi.useRealTimers();
 		}
 	});
 
-	it('reports a missing auth session before launch acknowledgement', async () => {
+	it('surfaces the launch error when the auth session never appears', async () => {
 		vi.useFakeTimers();
 		try {
 			const launch = deferred<{ runId: never }>();
 			const desktopApi = createDesktopApi(vi.fn().mockReturnValue(launch.promise));
 			vi.mocked(desktopApi.waitForAgentAuthRefresh).mockResolvedValue('notFound');
 			const onError = vi.fn();
+			const launchError = new Error('desktop launch failed');
 
 			launchAgentRun(launchArgs({ desktopApi, onError }));
-			await vi.advanceTimersByTimeAsync(12_000);
-			expect(onError).not.toHaveBeenCalled();
-
-			launch.reject(new Error('desktop launch failed'));
+			await vi.advanceTimersByTimeAsync(500);
+			launch.reject(launchError);
 			await vi.waitFor(() => {
-				expect(onError).toHaveBeenCalledWith(
-					expect.objectContaining({ message: expect.stringContaining('was not found') })
-				);
+				expect(onError).toHaveBeenCalledWith(launchError);
 			});
 			expect(onError).toHaveBeenCalledOnce();
 		} finally {
 			vi.useRealTimers();
 		}
-	});
-
-	it('waits for delayed launch acknowledgement after the signed-in account changes', async () => {
-		const launch = deferred<{ runId: never }>();
-		const desktopApi = createDesktopApi(vi.fn().mockReturnValue(launch.promise));
-		vi.mocked(desktopApi.waitForAgentAuthRefresh).mockResolvedValue('refreshRequired');
-		const onError = vi.fn();
-		const onStarted = vi.fn();
-
-		launchAgentRun(
-			launchArgs({ desktopApi, getCurrentUserId: () => 'user-2', onError, onStarted })
-		);
-
-		await vi.waitFor(() => expect(desktopApi.waitForAgentAuthRefresh).toHaveBeenCalledOnce());
-		expect(desktopApi.refreshAgentAuth).not.toHaveBeenCalled();
-		expect(onError).not.toHaveBeenCalled();
-
-		launch.resolve({ runId: 'run-1' as never });
-		await launch.promise;
-		await vi.waitFor(() => expect(onStarted).toHaveBeenCalledWith('run-1'));
-
-		expect(onStarted).toHaveBeenCalledOnce();
-		expect(onError).not.toHaveBeenCalled();
-	});
-});
-
-describe('shouldSkipAuthenticatedQueries', () => {
-	it('only enables queries for a backend-authenticated signed-in user', () => {
-		expect(
-			shouldSkipAuthenticatedQueries({
-				authenticatedUser: { id: 'user-1' },
-				convexIsAuthenticated: false,
-				convexIsLoading: true
-			})
-		).toBe(true);
-		expect(
-			shouldSkipAuthenticatedQueries({
-				authenticatedUser: { id: 'user-1' },
-				convexIsAuthenticated: true,
-				convexIsLoading: false
-			})
-		).toBe(false);
-		expect(
-			shouldSkipAuthenticatedQueries({
-				authenticatedUser: null,
-				convexIsAuthenticated: false,
-				convexIsLoading: false
-			})
-		).toBe(true);
 	});
 });
 
@@ -329,7 +245,7 @@ describe('resolveDraftRunSubmissionId', () => {
 });
 
 describe('isRunBlockingAgentLaunch', () => {
-	it('blocks queued and actively leased runs but permits stale claimed runs', () => {
+	it('blocks queued and actively leased runs, including claimed runs without an expiry', () => {
 		const run = (
 			status: RunState['status'],
 			claimExpiresAt?: number
@@ -341,7 +257,7 @@ describe('isRunBlockingAgentLaunch', () => {
 		expect(isRunBlockingAgentLaunch(run('queued'), 100)).toBe(true);
 		expect(isRunBlockingAgentLaunch(run('running', 101), 100)).toBe(true);
 		expect(isRunBlockingAgentLaunch(run('awaiting_executor', 100), 100)).toBe(false);
-		expect(isRunBlockingAgentLaunch(run('running'), 100)).toBe(false);
+		expect(isRunBlockingAgentLaunch(run('running'), 100)).toBe(true);
 	});
 });
 

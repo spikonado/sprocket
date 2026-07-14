@@ -115,6 +115,7 @@ impl RuntimeClient {
         );
 
         let mut retry_delay = CREATE_RUN_INITIAL_RETRY_DELAY;
+        let mut last_error = None;
         for attempt in 1..=CREATE_RUN_MAX_ATTEMPTS {
             match self
                 .client
@@ -130,17 +131,13 @@ impl RuntimeClient {
                     sleep(retry_delay).await;
                     retry_delay = retry_delay.saturating_mul(2);
                 }
-                Err(error) => {
-                    return Err(error).with_context(|| {
-                        format!(
-                            "agentRuntime:createRun failed after {CREATE_RUN_MAX_ATTEMPTS} attempts"
-                        )
-                    });
-                }
+                Err(error) => last_error = Some(error),
             }
         }
 
-        unreachable!("createRun retry loop always returns")
+        Err(last_error.expect("createRun retry loop records a final error")).with_context(|| {
+            format!("agentRuntime:createRun failed after {CREATE_RUN_MAX_ATTEMPTS} attempts")
+        })
     }
 
     pub(crate) async fn start_run(

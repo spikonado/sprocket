@@ -111,6 +111,32 @@ fn build_workspace_preamble(
     .join("\n")
 }
 
+async fn cleanup_twice<T, F, Fut>(
+    what: &str,
+    attempt_timeout: Duration,
+    mut attempt: F,
+) -> anyhow::Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = anyhow::Result<T>>,
+{
+    let timed = |fut: Fut| async move {
+        timeout(attempt_timeout, fut)
+            .await
+            .map_err(|_| anyhow!("{what} timed out"))?
+    };
+    match timed(attempt()).await {
+        Ok(value) => Ok(value),
+        Err(first_error) => {
+            eprintln!("sprocket-agent: {what} failed; retrying: {first_error}");
+            sleep(FAILURE_CLEANUP_RETRY_DELAY).await;
+            timed(attempt()).await.map_err(|retry_error| {
+                anyhow!("{what} failed after retry: {retry_error}; initial cleanup failed: {first_error}")
+            })
+        }
+    }
+}
+
 async fn fail_run_before_start(
     runtime: &RuntimeClient,
     run_id: &str,
@@ -118,35 +144,19 @@ async fn fail_run_before_start(
 ) -> anyhow::Result<bool> {
     let message = format!("Run failed before the model started: {error}");
     let last_error = error.to_string();
-    let cleanup = || async {
-        timeout(
-            FAILURE_CLEANUP_ATTEMPT_TIMEOUT,
+    cleanup_twice(
+        &format!("queued run cleanup for run {run_id}"),
+        FAILURE_CLEANUP_ATTEMPT_TIMEOUT,
+        || {
             runtime.finalize_queued_run(
                 run_id,
                 &message,
                 RunFinalStatus::Failed.as_str(),
                 Some(&last_error),
-            ),
-        )
-        .await
-        .map_err(|_| anyhow!("queued run cleanup timed out"))?
-    };
-
-    match cleanup().await {
-        Ok(accepted) => Ok(accepted),
-        Err(first_error) => {
-            eprintln!(
-                "sprocket-agent: queued run cleanup failed for run {}; retrying: {}",
-                run_id, first_error
-            );
-            sleep(FAILURE_CLEANUP_RETRY_DELAY).await;
-            cleanup().await.map_err(|retry_error| {
-                anyhow!(
-                    "failed to terminalize queued run {run_id}: {retry_error}; initial cleanup failed: {first_error}"
-                )
-            })
-        }
-    }
+            )
+        },
+    )
+    .await
 }
 
 async fn abort_before_start(
@@ -169,30 +179,13 @@ async fn finalize_claim_failure(
 ) -> anyhow::Result<()> {
     let last_error = error.to_string();
     let text = format!("Run failed before the model started: {last_error}");
-    let cleanup = || async {
-        timeout(
-            FAILURE_CLEANUP_ATTEMPT_TIMEOUT,
-            runtime.finalize_claim_failure(run_id, claim_id, &text, &last_error),
-        )
-        .await
-        .map_err(|_| anyhow!("claim failure cleanup timed out"))?
-    };
-
-    match cleanup().await {
-        Ok(_) => Ok(()),
-        Err(first_error) => {
-            eprintln!(
-                "sprocket-agent: claim failure cleanup failed for run {}; retrying: {}",
-                run_id, first_error
-            );
-            sleep(FAILURE_CLEANUP_RETRY_DELAY).await;
-            cleanup().await.map(|_| ()).map_err(|retry_error| {
-                anyhow!(
-                    "failed to terminalize run {run_id} after claim uncertainty: {retry_error}; initial cleanup failed: {first_error}"
-                )
-            })
-        }
-    }
+    cleanup_twice(
+        &format!("claim failure cleanup for run {run_id}"),
+        FAILURE_CLEANUP_ATTEMPT_TIMEOUT,
+        || runtime.finalize_claim_failure(run_id, claim_id, &text, &last_error),
+    )
+    .await
+    .map(|_| ())
 }
 
 async fn abort_after_claim(
@@ -459,31 +452,16 @@ pub async fn finalize_failed_start(
 ) -> anyhow::Result<()> {
     let runtime = RuntimeClient::from_request(&request).await?;
     let text = format!("Run failed before the model started: {startup_error}");
-    let cleanup = || async {
-        timeout(
-            START_FAILURE_CLEANUP_ATTEMPT_TIMEOUT,
-            runtime.finalize_failed_start(&request, &text, &startup_error),
-        )
-        .await
-        .map_err(|_| anyhow!("startup failure cleanup timed out"))?
-    };
-
-    match cleanup().await {
-        Ok(_) => Ok(()),
-        Err(first_error) => {
-            eprintln!(
-                "sprocket-agent: startup failure cleanup failed for submission {}; retrying: {}",
-                request.submission_id, first_error
-            );
-            sleep(FAILURE_CLEANUP_RETRY_DELAY).await;
-            cleanup().await.map(|_| ()).map_err(|retry_error| {
-                anyhow!(
-                    "failed to reconcile submission {} after startup failure: {retry_error}; initial cleanup failed: {first_error}",
-                    request.submission_id
-                )
-            })
-        }
-    }
+    cleanup_twice(
+        &format!(
+            "startup failure cleanup for submission {}",
+            request.submission_id
+        ),
+        START_FAILURE_CLEANUP_ATTEMPT_TIMEOUT,
+        || runtime.finalize_failed_start(&request, &text, &startup_error),
+    )
+    .await
+    .map(|_| ())
 }
 
 pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {

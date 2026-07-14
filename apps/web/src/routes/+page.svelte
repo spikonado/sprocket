@@ -6,9 +6,9 @@
 	import { api } from '$convex/_generated/api';
 	import { EXECUTOR_HEARTBEAT_WRITE_THROTTLE_MS } from '$convex/lib/workspaceConnection';
 	import {
+		advanceConvexAuthRetryPending,
 		authState,
 		cancelDesktopSignIn,
-		clearConvexAuthRetryPending,
 		clearDesktopSignInOpenError,
 		convexAuthRetryPending,
 		getAccessToken,
@@ -17,7 +17,6 @@
 		signOut,
 		signUp
 	} from '$lib/auth';
-	import { advanceConvexAuthRetryPending } from '$lib/authRetry';
 	import AuthGate from '$lib/components/home/auth-gate.svelte';
 	import BrowserSignInOverlay from '$lib/components/home/browser-signin-overlay.svelte';
 	import PromptComposer from '$lib/components/home/prompt-composer.svelte';
@@ -33,7 +32,6 @@
 		refreshDesktopWorkspaceSessions as refreshDesktopWorkspaceSessionsFromDesktop,
 		resolveDraftRunSubmissionId,
 		resolveSubmissionId,
-		shouldSkipAuthenticatedQueries,
 		verifyWorkspaceSession as verifyWorkspaceSessionForExecution,
 		type WorkspaceSessionState
 	} from '$lib/home/desktop';
@@ -106,7 +104,7 @@
 			sawAuthLoadingDuringRetry = next.sawLoadingDuringRetry;
 		}
 		if (next.clearPending) {
-			clearConvexAuthRetryPending();
+			convexAuthRetryPending.set(false);
 		}
 	});
 	const upsertWorkspaceSession = useMutation(api.workspaceSessions.upsertSelected);
@@ -205,14 +203,8 @@
 		return `${userId}\0${scope}`;
 	}
 
-	function storeComposerRecovery(args: ComposerRecovery & { scope: string; userId: string }) {
-		composerRecoveries.set(getComposerRecoveryKey(args.userId, args.scope), {
-			message: args.message,
-			prompt: args.prompt,
-			...(args.reasoningEffort ? { reasoningEffort: args.reasoningEffort } : {}),
-			...(args.selectedModel ? { selectedModel: args.selectedModel } : {}),
-			...(args.submissionId ? { submissionId: args.submissionId } : {})
-		});
+	function storeComposerRecovery(userId: string, scope: string, recovery: ComposerRecovery) {
+		composerRecoveries.set(getComposerRecoveryKey(userId, scope), recovery);
 	}
 
 	function clearComposerRecovery(userId: string, scope: string) {
@@ -222,13 +214,7 @@
 	}
 
 	function getAuthenticatedQueryArgs() {
-		return shouldSkipAuthenticatedQueries({
-			authenticatedUser: $authState.user,
-			convexIsAuthenticated: convexAuth.isAuthenticated,
-			convexIsLoading: convexAuth.isLoading
-		})
-			? 'skip'
-			: {};
+		return $authState.user && convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip';
 	}
 
 	const workspaceSessionsQuery = useQuery(
@@ -580,14 +566,12 @@
 			setWorkspaceSelection(args.workspaceName, null, true);
 			const recoveryScope = getComposerScope(null, args.workspaceSessionId);
 			if (recoveryScope) {
-				storeComposerRecovery({
+				storeComposerRecovery(args.userId, recoveryScope, {
 					message: 'The new thread did not appear. Review your prompt and try sending it again.',
 					prompt: args.prompt,
 					reasoningEffort: args.reasoningEffort,
 					selectedModel: args.selectedModel,
-					scope: recoveryScope,
-					submissionId: args.submissionId,
-					userId: args.userId
+					submissionId: args.submissionId
 				});
 			}
 		}, agentLaunchTimeoutMs);
@@ -773,17 +757,15 @@
 		const submissionDelayMessage =
 			'This request is still preparing. Wait for it to finish before trying again.';
 		const recoverSubmission = (message: string) => {
-			storeComposerRecovery({
+			storeComposerRecovery(submittedUserId, recoveryScope, {
 				message,
 				prompt: submittedPrompt,
 				reasoningEffort: submittedReasoningEffort,
 				selectedModel: submittedModel,
-				scope: recoveryScope,
 				submissionId:
 					!selectedThreadId && recoveryScope === originatingRecoveryScope
 						? threadSubmissionId
-						: runSubmissionId,
-				userId: submittedUserId
+						: runSubmissionId
 			});
 		};
 		const clearSubmissionDelay = () => {
@@ -799,11 +781,9 @@
 				return;
 			}
 
-			storeComposerRecovery({
+			storeComposerRecovery(submittedUserId, recoveryScope, {
 				message: submissionDelayMessage,
-				prompt: '',
-				scope: recoveryScope,
-				userId: submittedUserId
+				prompt: ''
 			});
 		}, agentLaunchTimeoutMs);
 		prompt = '';
@@ -1032,19 +1012,17 @@
 			return;
 		}
 
-		const staleClaimKey = `${userId}\0${staleRun._id}\0${staleRun.claimExpiresAt ?? 'legacy'}`;
+		const staleClaimKey = `${userId}\0${staleRun._id}\0${staleRun.claimExpiresAt ?? 'none'}`;
 		if (recoveredStaleClaims.has(staleClaimKey)) {
 			return;
 		}
 		recoveredStaleClaims.add(staleClaimKey);
-		storeComposerRecovery({
+		storeComposerRecovery(userId, recoveryScope, {
 			message: 'The previous agent stopped responding. Retry to continue this submission.',
 			prompt: currentLatestRunData.prompt,
 			reasoningEffort: staleRun.reasoningEffort,
 			selectedModel: staleRun.selectedModel,
-			scope: recoveryScope,
-			submissionId: staleRun.submissionId,
-			userId
+			submissionId: staleRun.submissionId
 		});
 	});
 

@@ -16,13 +16,13 @@ use sprocket_agent::{
     start_agent_run,
 };
 use tokio::sync::{Mutex, watch};
-use tokio::time::{sleep, timeout};
+use tokio::time::timeout;
 use uuid::Uuid;
 
 use crate::AppState;
 use crate::auth::require_session;
 
-const AGENT_TOKEN_TOMBSTONE_TTL: Duration = Duration::from_secs(2 * 60);
+const AGENT_TOKEN_REFRESH_TIMEOUT: Duration = Duration::from_secs(60);
 const AGENT_START_TIMEOUT: Duration = Duration::from_secs(20);
 const AGENT_START_CLEANUP_TIMEOUT: Duration = Duration::from_secs(6);
 const AGENT_TOKEN_VERIFY_TIMEOUT: Duration = Duration::from_secs(6);
@@ -110,20 +110,10 @@ impl AgentTokenStore {
             state.closed = true;
         });
 
-        let store = self.clone();
-        let id = id.to_string();
-        let entry = entry.clone();
-        tokio::spawn(async move {
-            sleep(AGENT_TOKEN_TOMBSTONE_TTL).await;
-            store.remove_closed(&id, &entry).await;
-        });
-    }
-
-    async fn remove_closed(&self, id: &str, entry: &Arc<AgentTokenEntry>) {
         let mut entries = self.entries.lock().await;
         if entries
             .get(id)
-            .is_some_and(|stored| Arc::ptr_eq(stored, entry) && stored.state.borrow().closed)
+            .is_some_and(|stored| Arc::ptr_eq(stored, entry))
         {
             entries.remove(id);
         }
@@ -196,7 +186,7 @@ impl AgentTokenEntry {
             state.refresh_requested = true;
         });
 
-        timeout(Duration::from_secs(60), async {
+        timeout(AGENT_TOKEN_REFRESH_TIMEOUT, async {
             loop {
                 state_updates
                     .changed()
@@ -235,7 +225,7 @@ impl AgentTokenEntry {
         }
     }
 
-    async fn update(&self, token: String) -> anyhow::Result<()> {
+    fn update(&self, token: String) -> anyhow::Result<()> {
         if token.trim().is_empty() {
             return Err(anyhow!("agent auth token is empty"));
         }
@@ -422,7 +412,6 @@ async fn refresh_agent_token_handler(
         .map_err(ApiError::forbidden)?;
     entry
         .update(payload.auth_token)
-        .await
         .map_err(ApiError::bad_request)?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -434,38 +423,33 @@ struct ApiError {
 }
 
 impl ApiError {
-    fn unauthorized(error: anyhow::Error) -> Self {
+    fn with_status(status: StatusCode, error: anyhow::Error) -> Self {
         Self {
-            status: StatusCode::UNAUTHORIZED,
+            status,
             message: error.to_string(),
         }
     }
 
+    fn unauthorized(error: anyhow::Error) -> Self {
+        Self::with_status(StatusCode::UNAUTHORIZED, error)
+    }
+
     fn bad_request(error: anyhow::Error) -> Self {
-        Self {
-            status: StatusCode::BAD_REQUEST,
-            message: error.to_string(),
-        }
+        Self::with_status(StatusCode::BAD_REQUEST, error)
+    }
+
+    fn forbidden(error: anyhow::Error) -> Self {
+        Self::with_status(StatusCode::FORBIDDEN, error)
+    }
+
+    fn not_found(error: anyhow::Error) -> Self {
+        Self::with_status(StatusCode::NOT_FOUND, error)
     }
 
     fn internal(error: anyhow::Error) -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message: format!("failed to start agent run: {error:#}"),
-        }
-    }
-
-    fn forbidden(error: anyhow::Error) -> Self {
-        Self {
-            status: StatusCode::FORBIDDEN,
-            message: error.to_string(),
-        }
-    }
-
-    fn not_found(error: anyhow::Error) -> Self {
-        Self {
-            status: StatusCode::NOT_FOUND,
-            message: error.to_string(),
         }
     }
 }
@@ -510,10 +494,7 @@ mod tests {
             entry.wait_for_refresh().await,
             AgentTokenStatus::RefreshRequired
         ));
-        entry
-            .update("token-2".to_string())
-            .await
-            .expect("update token");
+        entry.update("token-2".to_string()).expect("update token");
 
         assert_eq!(
             refresh
@@ -564,7 +545,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn closed_sessions_remain_as_complete_tombstones() {
+    async fn closed_sessions_are_removed_and_wake_waiters() {
         let store = AgentTokenStore::default();
         let entry = store
             .create("auth-session", "token-1".to_string())
@@ -573,9 +554,9 @@ mod tests {
 
         store.close("auth-session", &entry).await;
 
-        let tombstone = store.get("auth-session").await.expect("stored tombstone");
+        assert!(store.get("auth-session").await.is_none());
         assert!(matches!(
-            tombstone.wait_for_refresh().await,
+            entry.wait_for_refresh().await,
             AgentTokenStatus::Complete
         ));
     }

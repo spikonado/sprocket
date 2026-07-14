@@ -51,16 +51,17 @@ export function assistantToolResultErrorOutput(
 	return { error, status };
 }
 
-/** Reads a tool-result error output. Legacy `{ error }` rows without `status` default to `failed`. */
+/** Reads a tool-result error output. */
 export function parseAssistantToolResultError(
 	output: JsonValue | undefined
 ): AssistantToolResultErrorOutput | undefined {
 	if (!isJsonObject(output) || typeof output.error !== 'string') {
 		return undefined;
 	}
-	const status =
-		output.status === 'cancelled' || output.status === 'failed' ? output.status : 'failed';
-	return { error: output.error, status };
+	if (output.status !== 'cancelled' && output.status !== 'failed') {
+		return undefined;
+	}
+	return { error: output.error, status: output.status };
 }
 
 export type AssistantPart =
