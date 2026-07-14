@@ -75,7 +75,7 @@ impl Client {
         function: &str,
         args: BTreeMap<String, Value>,
     ) -> anyhow::Result<FunctionResult> {
-        let mut convex = self.inner.lock().await;
+        let mut convex = clone_locked(&self.inner).await;
         timeout(CONVEX_RPC_TIMEOUT, convex.query(function, args))
             .await
             .with_context(|| format!("query timed out for {function}"))?
@@ -87,7 +87,7 @@ impl Client {
         function: &str,
         args: BTreeMap<String, Value>,
     ) -> anyhow::Result<QuerySubscription> {
-        let mut convex = self.inner.lock().await;
+        let mut convex = clone_locked(&self.inner).await;
         timeout(CONVEX_RPC_TIMEOUT, convex.subscribe(function, args))
             .await
             .with_context(|| format!("subscription timed out for {function}"))?
@@ -99,7 +99,7 @@ impl Client {
         function: &str,
         args: BTreeMap<String, Value>,
     ) -> anyhow::Result<FunctionResult> {
-        let mut convex = self.inner.lock().await;
+        let mut convex = clone_locked(&self.inner).await;
         timeout(CONVEX_RPC_TIMEOUT, convex.mutation(function, args))
             .await
             .with_context(|| format!("mutation timed out for {function}"))?
@@ -412,11 +412,17 @@ fn text_stream_choices(
     ]
 }
 
+/// Clone `T` under a brief mutex hold so callers can await work on the clone
+/// without serializing concurrent RPCs on the shared lock.
+async fn clone_locked<T: Clone>(inner: &Mutex<T>) -> T {
+    inner.lock().await.clone()
+}
+
 async fn call_completion_action(
     client: &Client,
     args: &ConvexActionArgs,
 ) -> Result<Value, CompletionError> {
-    let mut convex = client.inner.lock().await;
+    let mut convex = clone_locked(&client.inner).await;
     eprintln!(
         "sprocket-convex-provider: action start {}",
         client.completion_action
@@ -584,11 +590,44 @@ where
 mod tests {
     use super::{
         COMPLETION_STREAM_SUPERSEDED, CompletionOutput, CompletionStreamEvent, ToolCall, Usage,
-        completion_choice, is_completion_stream_superseded, text_stream_choices,
+        clone_locked, completion_choice, is_completion_stream_superseded, text_stream_choices,
     };
     use rig::completion::CompletionError;
     use rig::message::AssistantContent;
     use rig::streaming::RawStreamingChoice;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::sync::Mutex;
+    use tokio::time::timeout;
+
+    #[tokio::test]
+    async fn clone_locked_releases_mutex_before_await() {
+        let inner = Arc::new(Mutex::new(0u64));
+        let cloned = clone_locked(&inner).await;
+        assert_eq!(cloned, 0);
+
+        let inner_for_slow = Arc::clone(&inner);
+        let slow = async move {
+            let _value = cloned;
+            // Simulate a long RPC holding only the clone, not the mutex.
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        };
+
+        let concurrent = async {
+            timeout(Duration::from_millis(100), inner_for_slow.lock())
+                .await
+                .expect("mutex should be free while clone is used across an await")
+        };
+
+        tokio::select! {
+            _ = slow => panic!("slow clone consumer should not finish first"),
+            mut guard = concurrent => {
+                *guard += 1;
+            }
+        }
+
+        assert_eq!(*inner.lock().await, 1);
+    }
 
     #[test]
     fn deserializes_and_streams_typescript_text_metadata() {

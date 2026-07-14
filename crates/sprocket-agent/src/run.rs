@@ -176,13 +176,13 @@ async fn finalize_claim_failure(
     run_id: &str,
     claim_id: &str,
     error: &anyhow::Error,
+    text: &str,
 ) -> anyhow::Result<()> {
     let last_error = error.to_string();
-    let text = format!("Run failed before the model started: {last_error}");
     cleanup_twice(
         &format!("claim failure cleanup for run {run_id}"),
         FAILURE_CLEANUP_ATTEMPT_TIMEOUT,
-        || runtime.finalize_claim_failure(run_id, claim_id, &text, &last_error),
+        || runtime.finalize_claim_failure(run_id, claim_id, text, &last_error),
     )
     .await
     .map(|_| ())
@@ -194,7 +194,9 @@ async fn abort_after_claim(
     claim_id: &str,
     error: anyhow::Error,
 ) -> anyhow::Result<()> {
-    match finalize_claim_failure(runtime, run_id, claim_id, &error).await {
+    // After claim (including mid-run lease loss); not the pre-start phrasing.
+    let text = format!("Run aborted: {error}");
+    match finalize_claim_failure(runtime, run_id, claim_id, &error, &text).await {
         Ok(()) => Err(error),
         Err(cleanup_error) => Err(anyhow!(
             "{error}; additionally failed to durably terminalize the run: {cleanup_error}"
@@ -314,8 +316,9 @@ async fn claim_run(
                     let claim_error = anyhow!(
                         "failed to claim run {run_id} after retry: {retry_error}; initial attempt failed: {first_error}"
                     );
+                    let text = format!("Run failed before the model started: {claim_error}");
                     if let Err(cleanup_error) =
-                        finalize_claim_failure(runtime, run_id, claim_id, &claim_error).await
+                        finalize_claim_failure(runtime, run_id, claim_id, &claim_error, &text).await
                     {
                         return Err(anyhow!(
                             "{claim_error}; additionally failed to durably terminalize the run: {cleanup_error}"
@@ -373,6 +376,10 @@ async fn renew_claim(
     }
 }
 
+/// Runs `operation` while renewing the claim lease.
+///
+/// Only claim/lease failures are returned as `Err`; the operation's value
+/// (including its own errors) is wrapped in `Ok`.
 async fn run_with_claim_lease<F, T>(
     runtime: &RuntimeClient,
     run_id: &str,
@@ -381,7 +388,7 @@ async fn run_with_claim_lease<F, T>(
     operation: F,
 ) -> anyhow::Result<T>
 where
-    F: Future<Output = anyhow::Result<T>>,
+    F: Future<Output = T>,
 {
     let mut lease_deadline = lease_started_at + RUN_CLAIM_LEASE_DURATION;
     let mut renewals = tokio::time::interval_at(
@@ -413,7 +420,7 @@ where
                     Err(error) => return Err(error),
                 }
             }
-            result = &mut operation => return result,
+            result = &mut operation => return Ok(result),
         }
     }
 }
@@ -539,7 +546,7 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
         }
     }
 
-    run_with_claim_lease(&runtime, &run_id, &claim_id, lease_started_at, async {
+    match run_with_claim_lease(&runtime, &run_id, &claim_id, lease_started_at, async {
         let provider_result = provider
             .run(
                 runtime.clone(),
@@ -557,4 +564,8 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
         finalize_provider_result(&runtime, &run_id, &claim_id, provider_result).await
     })
     .await
+    {
+        Ok(result) => result,
+        Err(error) => abort_after_claim(&runtime, &run_id, &claim_id, error).await,
+    }
 }
