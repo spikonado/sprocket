@@ -27,6 +27,7 @@ pub struct AgentRun {
     request: RunAgentRequest,
     runtime: RuntimeClient,
     run_id: String,
+    user_id: String,
     claim_id: String,
     workspace_root: std::path::PathBuf,
 }
@@ -34,6 +35,10 @@ pub struct AgentRun {
 impl AgentRun {
     pub fn run_id(&self) -> &str {
         &self.run_id
+    }
+
+    pub fn user_id(&self) -> &str {
+        &self.user_id
     }
 }
 
@@ -436,11 +441,13 @@ pub async fn start_agent_run(request: RunAgentRequest) -> anyhow::Result<AgentRu
         );
     }
     let run_id = created_run.run_id;
+    let user_id = created_run.user_id;
 
     Ok(AgentRun {
         request,
         runtime,
         run_id,
+        user_id,
         claim_id,
         workspace_root,
     })
@@ -484,6 +491,7 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
         request,
         runtime,
         run_id,
+        user_id: _,
         claim_id,
         workspace_root,
     } = run;

@@ -3,6 +3,7 @@ use convex::{FunctionResult, QuerySubscription, Value};
 use serde::Deserialize;
 use sprocket_convex_provider::Client as ConvexProviderClient;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -12,6 +13,23 @@ use crate::types::{
 
 const CREATE_RUN_MAX_ATTEMPTS: usize = 3;
 const CREATE_RUN_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
+
+pub async fn authenticated_user_id(
+    deployment_url: &str,
+    auth_token: String,
+) -> anyhow::Result<String> {
+    let client = ConvexProviderClient::new(deployment_url, "completion:complete").await?;
+    client
+        .set_auth_token_fetcher(Arc::new(move |_| {
+            let auth_token = auth_token.clone();
+            Box::pin(async move { Ok(auth_token) })
+        }))
+        .await;
+    let result = client
+        .query("agentRuntime:authenticatedUserId", BTreeMap::new())
+        .await?;
+    decode_function_result(result, "agentRuntime:authenticatedUserId")
+}
 
 #[derive(Clone)]
 pub(crate) struct RuntimeClient {

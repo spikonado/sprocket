@@ -43,6 +43,11 @@ type FinalizeRunArgs = {
 	lastError?: string;
 };
 
+export const authenticatedUserId = query({
+	args: {},
+	handler: async (ctx): Promise<string> => await getUserId(ctx)
+});
+
 async function finalizeRunRecord(
 	ctx: MutationCtx,
 	userId: string,
@@ -138,6 +143,7 @@ export const createRun = mutation({
 		created: boolean;
 		runId: Id<'runs'>;
 		promptMessageId: Id<'threadMessages'>;
+		userId: string;
 	}> => {
 		const userId: string = await getUserId(ctx);
 		const threadRecord: Doc<'threadRecords'> = await getOwnedThreadRecord(
@@ -173,7 +179,8 @@ export const createRun = mutation({
 			return {
 				created: false,
 				runId: existingRun._id,
-				promptMessageId: existingRun.promptMessageId
+				promptMessageId: existingRun.promptMessageId,
+				userId
 			};
 		}
 		const latestRun: Doc<'runs'> | null = await ctx.db
@@ -212,7 +219,8 @@ export const createRun = mutation({
 		return {
 			created: true,
 			runId,
-			promptMessageId
+			promptMessageId,
+			userId
 		};
 	}
 });

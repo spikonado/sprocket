@@ -26,6 +26,7 @@ pub struct CreateRunResponse {
     pub created: bool,
     pub run_id: String,
     pub prompt_message_id: String,
+    pub user_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

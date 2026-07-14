@@ -39,8 +39,8 @@ describe('run claim leases', () => {
 		expect(isRunClaimLeaseActive({ status: 'completed', claimExpiresAt: 200 }, 100)).toBe(false);
 	});
 
-	it('only terminalizes queued or same-claim state after claim uncertainty', () => {
-		expect(canFinalizeAfterClaimFailure({ status: 'queued' }, 'claim-a')).toBe(true);
+	it('only terminalizes state owned by the same claim after claim uncertainty', () => {
+		expect(canFinalizeAfterClaimFailure({ status: 'queued' }, 'claim-a')).toBe(false);
 		expect(
 			canFinalizeAfterClaimFailure(
 				{ status: 'running', claimId: 'claim-a', claimExpiresAt: 200 },
