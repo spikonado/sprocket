@@ -9,6 +9,12 @@ import { buildThreadTranscript, type ThreadTranscriptMessage } from '@convex/lib
 import { assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
 import { assertThreadCanStartRun, cancelExecutorJobsForTerminalRun } from '@convex/lib/runs';
 import {
+	canStartRunWithClaim,
+	claimExpiresAt,
+	isClaimedRunStatus,
+	isRunClaimLeaseActive
+} from '@convex/lib/runLease';
+import {
 	ensureAssistantToolPartsFromJobs,
 	joinAssistantTextParts,
 	resolveAssistantMessageText,
@@ -131,23 +137,57 @@ export const start = mutation({
 		claimId: v.string(),
 		runId: v.id('runs')
 	},
-	handler: async (ctx, args): Promise<{ claimed: boolean }> => {
+	handler: async (ctx, args): Promise<{ claimed: boolean; claimExpiresAt?: number }> => {
 		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
-		if (run.status === 'running') {
-			return { claimed: run.claimId === args.claimId };
-		}
-		if (run.status !== 'queued') {
+		const now = Date.now();
+		if (!canStartRunWithClaim(run, args.claimId, now)) {
 			return { claimed: false };
 		}
 
+		const isTakeover = isClaimedRunStatus(run.status) && run.claimId !== args.claimId;
+		const isSameClaimRenewal = isClaimedRunStatus(run.status) && run.claimId === args.claimId;
+		if (isTakeover && run.activeJobId) {
+			const activeJob = await ctx.db.get(run.activeJobId);
+			if (activeJob && (activeJob.status === 'pending' || activeJob.status === 'claimed')) {
+				await ctx.db.patch(activeJob._id, {
+					status: 'cancelled',
+					error: 'The agent worker claim expired.',
+					completedAt: now
+				});
+			}
+		}
+
+		const nextClaimExpiresAt = claimExpiresAt(now);
+
 		await ctx.db.patch(args.runId, {
 			claimId: args.claimId,
-			status: 'running',
-			lastError: undefined
+			claimExpiresAt: nextClaimExpiresAt,
+			status: isSameClaimRenewal ? run.status : 'running',
+			lastError: undefined,
+			...(isTakeover ? { activeJobId: undefined } : {})
 		});
 
-		return { claimed: true };
+		return { claimed: true, claimExpiresAt: nextClaimExpiresAt };
+	}
+});
+
+export const renewClaim = mutation({
+	args: {
+		guestId: v.optional(v.string()),
+		claimId: v.string(),
+		runId: v.id('runs')
+	},
+	handler: async (ctx, args): Promise<{ renewed: boolean; claimExpiresAt?: number }> => {
+		const userId: string = await getUserId(ctx, args.guestId);
+		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
+		if (!isClaimedRunStatus(run.status) || run.claimId !== args.claimId) {
+			return { renewed: false };
+		}
+
+		const nextClaimExpiresAt = claimExpiresAt(Date.now());
+		await ctx.db.patch(run._id, { claimExpiresAt: nextClaimExpiresAt });
+		return { renewed: true, claimExpiresAt: nextClaimExpiresAt };
 	}
 });
 
@@ -382,6 +422,7 @@ export const mergeAssistantStreamEvents = mutation({
 export const finalizeRun = mutation({
 	args: {
 		expectedStatus: v.optional(vRunStatus),
+		expectedClaimId: v.optional(v.string()),
 		guestId: v.optional(v.string()),
 		runId: v.id('runs'),
 		text: v.string(),
@@ -392,6 +433,12 @@ export const finalizeRun = mutation({
 		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		if (args.expectedStatus && run.status !== args.expectedStatus) {
+			return false;
+		}
+		if (
+			args.expectedClaimId &&
+			(run.claimId !== args.expectedClaimId || !isRunClaimLeaseActive(run, Date.now()))
+		) {
 			return false;
 		}
 		const alreadyFinal = isRunFinalStatus(run.status);
@@ -459,6 +506,7 @@ export const finalizeRun = mutation({
 		});
 		await ctx.db.patch(run._id, {
 			status: finalStatus,
+			claimExpiresAt: undefined,
 			lastError: args.lastError,
 			activeJobId: undefined,
 			completedAt,
@@ -471,6 +519,7 @@ export const finalizeRun = mutation({
 export const beginToolJob = mutation({
 	args: {
 		guestId: v.optional(v.string()),
+		claimId: v.string(),
 		runId: v.id('runs'),
 		kind: vExecutorJobKind,
 		callId: v.optional(v.string()),
@@ -487,6 +536,9 @@ export const beginToolJob = mutation({
 		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		assertRunAcceptsModelCompletion(run.status);
+		if (run.claimId !== args.claimId || !isRunClaimLeaseActive(run, Date.now())) {
+			throw new Error('Run is no longer active.');
+		}
 		const workspaceSession: Doc<'workspaceSessions'> = await getOwnedWorkspaceSession(
 			ctx.db,
 			userId,

@@ -4,7 +4,9 @@ use serde::Deserialize;
 use sprocket_convex_provider::Client as ConvexProviderClient;
 use std::collections::BTreeMap;
 
-use crate::types::{CreateRunResponse, RunAgentRequest, RunContextResponse, StartRunResponse};
+use crate::types::{
+    CreateRunResponse, RenewClaimResponse, RunAgentRequest, RunContextResponse, StartRunResponse,
+};
 
 #[derive(Clone)]
 pub(crate) struct RuntimeClient {
@@ -103,6 +105,16 @@ impl RuntimeClient {
         self.mutation_json("agentRuntime:start", args).await
     }
 
+    pub(crate) async fn renew_claim(
+        &self,
+        run_id: &str,
+        claim_id: &str,
+    ) -> anyhow::Result<RenewClaimResponse> {
+        let mut args = self.run_args(run_id);
+        args.insert("claimId".to_string(), claim_id.to_string().into());
+        self.mutation_json("agentRuntime:renewClaim", args).await
+    }
+
     pub(crate) async fn begin_assistant_message(&self, run_id: &str) -> anyhow::Result<()> {
         self.mutation_unit("agentRuntime:beginAssistantMessage", self.run_args(run_id))
             .await
@@ -129,17 +141,19 @@ impl RuntimeClient {
     pub(crate) async fn finalize_run(
         &self,
         run_id: &str,
+        claim_id: &str,
         text: &str,
         status: &str,
         last_error: Option<&str>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         let mut args = self.run_args(run_id);
+        args.insert("expectedClaimId".to_string(), claim_id.to_string().into());
         args.insert("text".to_string(), text.to_string().into());
         args.insert("status".to_string(), status.to_string().into());
         if let Some(last_error) = last_error {
             args.insert("lastError".to_string(), last_error.to_string().into());
         }
-        self.mutation_unit("agentRuntime:finalizeRun", args).await
+        self.mutation_json("agentRuntime:finalizeRun", args).await
     }
 
     pub(crate) async fn finalize_queued_run(

@@ -4,6 +4,7 @@ import {
 	getDesiredAttachedWorkspaceSessionIds,
 	getViewerIdentity,
 	getViewerQueryArgs,
+	isRunBlockingAgentLaunch,
 	launchAgentRun,
 	resolveSubmissionId
 } from '$lib/home/desktop';
@@ -161,6 +162,19 @@ describe('resolveSubmissionId', () => {
 				selectedModel: 'gpt-5.4'
 			})
 		).toBe('recovered-id');
+	});
+});
+
+describe('isRunBlockingAgentLaunch', () => {
+	it('blocks queued and actively leased runs but permits stale claimed runs', () => {
+		expect(isRunBlockingAgentLaunch({ status: 'queued' } as never, 100)).toBe(true);
+		expect(isRunBlockingAgentLaunch({ status: 'running', claimExpiresAt: 101 } as never, 100)).toBe(
+			true
+		);
+		expect(
+			isRunBlockingAgentLaunch({ status: 'awaiting_executor', claimExpiresAt: 100 } as never, 100)
+		).toBe(false);
+		expect(isRunBlockingAgentLaunch({ status: 'running' } as never, 100)).toBe(false);
 	});
 });
 

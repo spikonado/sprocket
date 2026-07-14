@@ -47,6 +47,7 @@ export default defineSchema({
 		workspaceSessionId: v.id('workspaceSessions'),
 		status: vRunStatus,
 		claimId: v.optional(v.string()),
+		claimExpiresAt: v.optional(v.number()),
 		selectedModel: vModelId,
 		reasoningEffort: vReasoningEffort,
 		startedAt: v.number(),

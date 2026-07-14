@@ -152,6 +152,7 @@ export function isLatestRunReadyForThread(args: {
 export type PendingAgentLaunch = {
 	expiresAt: number;
 	launchId: number;
+	previousClaimExpiresAt?: number;
 	previousRunId: Id<'runs'> | null;
 };
 
@@ -190,10 +191,17 @@ export function clearPendingAgentLaunch(
 export function resolvePendingAgentLaunch(
 	pendingLaunches: PendingAgentLaunches,
 	threadId: Id<'threadRecords'>,
-	observedRunId: Id<'runs'> | null
+	observedRunId: Id<'runs'> | null,
+	observedClaimExpiresAt?: number
 ): PendingAgentLaunches {
 	const pendingLaunch = pendingLaunches[threadId];
-	if (!pendingLaunch || !observedRunId || observedRunId === pendingLaunch.previousRunId) {
+	if (!pendingLaunch || !observedRunId) {
+		return pendingLaunches;
+	}
+	if (
+		observedRunId === pendingLaunch.previousRunId &&
+		observedClaimExpiresAt === pendingLaunch.previousClaimExpiresAt
+	) {
 		return pendingLaunches;
 	}
 
@@ -211,7 +219,8 @@ export function resolvePendingAgentLaunchesFromThreads(
 		if (
 			!pendingLaunch ||
 			!thread.latestRunId ||
-			thread.latestRunId === pendingLaunch.previousRunId
+			(thread.latestRunId === pendingLaunch.previousRunId &&
+				thread.latestRunClaimExpiresAt === pendingLaunch.previousClaimExpiresAt)
 		) {
 			continue;
 		}
@@ -231,7 +240,8 @@ export function resolveExpiredAgentLaunch(
 	threadId: Id<'threadRecords'>,
 	launchId: number,
 	now: number,
-	latestRunId: Id<'runs'> | null
+	latestRunId: Id<'runs'> | null,
+	latestClaimExpiresAt?: number
 ): { pendingLaunches: PendingAgentLaunches; shouldRecover: boolean } {
 	const pendingLaunch = pendingLaunches[threadId];
 	if (!pendingLaunch || pendingLaunch.launchId !== launchId || pendingLaunch.expiresAt > now) {
@@ -240,7 +250,10 @@ export function resolveExpiredAgentLaunch(
 
 	return {
 		pendingLaunches: clearPendingAgentLaunch(pendingLaunches, threadId, launchId),
-		shouldRecover: !latestRunId || latestRunId === pendingLaunch.previousRunId
+		shouldRecover:
+			!latestRunId ||
+			(latestRunId === pendingLaunch.previousRunId &&
+				latestClaimExpiresAt === pendingLaunch.previousClaimExpiresAt)
 	};
 }
 

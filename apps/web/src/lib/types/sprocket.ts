@@ -71,6 +71,7 @@ export type ThreadSummary = {
 	latestRunStatus: RunState['status'] | null;
 	latestRunId: Id<'runs'> | null;
 	latestRunStartedAt?: number;
+	latestRunClaimExpiresAt?: number;
 	hasActiveRun: boolean;
 };
 
@@ -112,6 +113,8 @@ export type RunState = {
 	userId: string;
 	workspaceSessionId: Id<'workspaceSessions'>;
 	status: Infer<typeof vRunStatus>;
+	submissionId?: string;
+	claimExpiresAt?: number;
 	selectedModel: Infer<typeof vModelId>;
 	reasoningEffort: Infer<typeof vReasoningEffort>;
 	startedAt: number;

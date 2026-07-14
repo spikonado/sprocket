@@ -18,6 +18,7 @@
 		getViewerArgs as getViewerArgsForUser,
 		getViewerIdentity,
 		getViewerQueryArgs as getViewerQueryArgsForUser,
+		isRunBlockingAgentLaunch,
 		launchAgentRun,
 		refreshDesktopWorkspaceSessions as refreshDesktopWorkspaceSessionsFromDesktop,
 		resolveSubmissionId,
@@ -115,7 +116,14 @@
 		}
 	>();
 	const latestSubmissionSequencesByRecoveryScope = new SvelteMap<string, number>();
+	const recoveredStaleClaims = new SvelteSet<string>();
 	let pendingAgentLaunches = $state<PendingAgentLaunches>({});
+	let leaseClockNow = $state(0);
+	let latestRunServerClock = $state<{
+		localObservedAt: number;
+		runId: Id<'runs'> | null;
+		serverNow: number;
+	} | null>(null);
 	let nextAgentLaunchId = 0;
 	let nextSubmissionSequence = 0;
 	let hasResolvedInitialSelection = $state(false);
@@ -271,10 +279,27 @@
 
 	const runState = $derived(currentLatestRunData?.run ?? null);
 	const visibleActions = $derived((currentLatestRunData?.jobs ?? []).slice(-60));
+	const currentComposerScope = $derived(
+		getComposerScope(currentThreadId, currentWorkspaceSessionId)
+	);
+	const estimatedServerNow = $derived(
+		latestRunServerClock && latestRunServerClock.runId === (runState?._id ?? null)
+			? latestRunServerClock.serverNow +
+					Math.max(0, leaseClockNow - latestRunServerClock.localObservedAt)
+			: (currentLatestRunData?.serverNow ?? Date.now())
+	);
+	const currentRecoveredSubmission = $derived.by(() => {
+		const viewerIdentity = getCurrentViewerIdentity();
+		if (!viewerIdentity || !currentComposerScope) return undefined;
+		return recoveredSubmissionIds.get(getComposerRecoveryKey(viewerIdentity, currentComposerScope));
+	});
+	const isRetryableQueuedRun = $derived(
+		runState?.status === 'queued' &&
+			runState.submissionId !== undefined &&
+			currentRecoveredSubmission?.submissionId === runState.submissionId
+	);
 	const isRunning = $derived(
-		runState?.status === 'queued' ||
-			runState?.status === 'running' ||
-			runState?.status === 'awaiting_executor'
+		isRunBlockingAgentLaunch(runState, estimatedServerNow) && !isRetryableQueuedRun
 	);
 	const hasPendingAgentLaunch = $derived(
 		isAgentLaunchPending(pendingAgentLaunches, currentThreadId)
@@ -288,9 +313,6 @@
 			pendingCreatedThreadId,
 			hasLatestRunData: Boolean(currentLatestRunData)
 		})
-	);
-	const currentComposerScope = $derived(
-		getComposerScope(currentThreadId, currentWorkspaceSessionId)
 	);
 	const isSubmittingPrompt = $derived(
 		Boolean(currentComposerScope && submittingPromptScopes.has(currentComposerScope))
@@ -824,6 +846,7 @@
 			pendingAgentLaunches = beginPendingAgentLaunch(pendingAgentLaunches, threadId, {
 				expiresAt: Date.now() + agentLaunchTimeoutMs,
 				launchId,
+				...(runState?.claimExpiresAt ? { previousClaimExpiresAt: runState.claimExpiresAt } : {}),
 				previousRunId
 			});
 			window.setTimeout(() => {
@@ -834,12 +857,17 @@
 					[threadLatestRunId, selectedRunId].find((runId) => runId && runId !== previousRunId) ??
 					threadLatestRunId ??
 					selectedRunId;
+				const latestClaimExpiresAt =
+					currentThreadId === threadId && runState?._id === latestRunId
+						? runState.claimExpiresAt
+						: threads.find((thread) => thread.threadId === threadId)?.latestRunClaimExpiresAt;
 				const recovery = resolveExpiredAgentLaunch(
 					pendingAgentLaunches,
 					threadId,
 					launchId,
 					Date.now(),
-					latestRunId
+					latestRunId,
+					latestClaimExpiresAt
 				);
 				if (recovery.pendingLaunches === pendingAgentLaunches) {
 					return;
@@ -854,16 +882,17 @@
 				authToken,
 				desktopApi,
 				onError: (error) => {
+					if (!isSubmissionCurrent() || !isSubmittedViewerCurrent()) {
+						return;
+					}
 					const nextPendingAgentLaunches = clearPendingAgentLaunch(
 						pendingAgentLaunches,
 						threadId,
 						launchId
 					);
-					if (nextPendingAgentLaunches === pendingAgentLaunches) {
-						return;
+					if (nextPendingAgentLaunches !== pendingAgentLaunches) {
+						pendingAgentLaunches = nextPendingAgentLaunches;
 					}
-
-					pendingAgentLaunches = nextPendingAgentLaunches;
 					recoverSubmission(
 						error instanceof Error ? error.message : 'Failed to start the local agent run.'
 					);
@@ -897,6 +926,7 @@
 			window.clearTimeout(submissionTimeoutId);
 			clearSubmittingPrompt(submissionScope, submissionSequence);
 			if (
+				agentLaunchId === null &&
 				latestSubmissionSequencesByRecoveryScope.get(submissionTrackingKey) === submissionSequence
 			) {
 				latestSubmissionSequencesByRecoveryScope.delete(submissionTrackingKey);
@@ -920,6 +950,72 @@
 			currentError = error instanceof Error ? error.message : 'Failed to cancel run.';
 		}
 	}
+
+	$effect(() => {
+		const data = currentLatestRunData;
+		if (!data) {
+			latestRunServerClock = null;
+			return;
+		}
+		if (
+			latestRunServerClock?.serverNow === data.serverNow &&
+			latestRunServerClock.runId === (data.run?._id ?? null)
+		) {
+			return;
+		}
+		latestRunServerClock = {
+			localObservedAt: window.performance.now(),
+			runId: data.run?._id ?? null,
+			serverNow: data.serverNow
+		};
+	});
+
+	$effect(() => {
+		if (runState?.status !== 'running' && runState?.status !== 'awaiting_executor') {
+			return;
+		}
+		const updateClock = () => {
+			leaseClockNow = window.performance.now();
+		};
+		updateClock();
+		const intervalId = window.setInterval(updateClock, 1_000);
+		return () => window.clearInterval(intervalId);
+	});
+
+	$effect(() => {
+		const viewerIdentity = getCurrentViewerIdentity();
+		const recoveryScope = getComposerScope(currentThreadId, currentWorkspaceSessionId);
+		const staleRun = runState;
+		if (
+			!viewerIdentity ||
+			!recoveryScope ||
+			!staleRun ||
+			(staleRun.status !== 'running' && staleRun.status !== 'awaiting_executor') ||
+			isRunning ||
+			isSubmittingPrompt ||
+			hasPendingAgentLaunch ||
+			prompt !== '' ||
+			!staleRun.submissionId ||
+			!currentLatestRunData?.prompt
+		) {
+			return;
+		}
+
+		const staleClaimKey = `${viewerIdentity}\0${staleRun._id}\0${staleRun.claimExpiresAt ?? 'legacy'}`;
+		if (recoveredStaleClaims.has(staleClaimKey)) {
+			return;
+		}
+		recoveredStaleClaims.add(staleClaimKey);
+		storeComposerRecovery({
+			message: 'The previous agent stopped responding. Retry to continue this submission.',
+			prompt: currentLatestRunData.prompt,
+			reasoningEffort: staleRun.reasoningEffort,
+			selectedModel: staleRun.selectedModel,
+			scope: recoveryScope,
+			submissionId: staleRun.submissionId,
+			viewerIdentity
+		});
+	});
 
 	$effect(() => {
 		const viewerIdentity = getCurrentViewerIdentity();
@@ -1126,7 +1222,8 @@
 			const nextPendingAgentLaunches = resolvePendingAgentLaunch(
 				pendingAgentLaunches,
 				currentThreadId,
-				runState._id
+				runState._id,
+				runState.claimExpiresAt
 			);
 			if (nextPendingAgentLaunches !== pendingAgentLaunches) {
 				pendingAgentLaunches = nextPendingAgentLaunches;

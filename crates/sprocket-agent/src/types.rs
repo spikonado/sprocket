@@ -36,6 +36,12 @@ pub struct StartRunResponse {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RenewClaimResponse {
+    pub renewed: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RunContextResponse {
     pub run: RunSnapshot,
     pub thread_record: ThreadRecordSnapshot,

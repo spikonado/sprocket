@@ -59,6 +59,7 @@ pub(crate) struct AgentProvider {
 
 pub(crate) struct AgentProviderRequest {
     pub(crate) run_id: String,
+    pub(crate) claim_id: String,
     pub(crate) prompt: String,
     pub(crate) preamble: String,
     pub(crate) prior_history: Vec<Message>,
@@ -118,6 +119,7 @@ where
     let tools = workspace_tools(
         runtime.clone(),
         request.run_id.clone(),
+        request.claim_id.clone(),
         request.workspace_root.clone(),
         tool_call_tracker.clone(),
     );

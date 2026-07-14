@@ -48,6 +48,7 @@ function makeThreadSummary(overrides: Partial<ThreadSummary> = {}): ThreadSummar
 		latestRunStatus: null,
 		latestRunId: null,
 		latestRunStartedAt: undefined,
+		latestRunClaimExpiresAt: undefined,
 		hasActiveRun: false,
 		...overrides
 	};
@@ -305,6 +306,25 @@ describe('workspace thread helpers', () => {
 
 		expect(isAgentLaunchPending(result.pendingLaunches, threadId)).toBe(false);
 		expect(result.shouldRecover).toBe(false);
+	});
+
+	it('reconciles a retry when the existing run receives a new claim lease', () => {
+		const threadId = 'thread-record-a' as ThreadSummary['threadId'];
+		const runId = 'run-a-1' as never;
+		const pendingLaunches = beginPendingAgentLaunch({}, threadId, {
+			expiresAt: 100,
+			launchId: 1,
+			previousClaimExpiresAt: 50,
+			previousRunId: runId
+		});
+
+		expect(resolvePendingAgentLaunch(pendingLaunches, threadId, runId, 50)).toBe(pendingLaunches);
+		expect(
+			isAgentLaunchPending(
+				resolvePendingAgentLaunch(pendingLaunches, threadId, runId, 150),
+				threadId
+			)
+		).toBe(false);
 	});
 
 	it('reconciles background launches by run id even when timestamps collide', () => {

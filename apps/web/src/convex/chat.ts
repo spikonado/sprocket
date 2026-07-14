@@ -16,6 +16,8 @@ export const latestRunForThread = query({
 		threadId: typeof args.threadId;
 		run: Doc<'runs'> | null;
 		jobs: Doc<'executorJobs'>[];
+		prompt?: string;
+		serverNow: number;
 	}> => {
 		const userId: string = await getUserId(ctx, args.guestId);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
@@ -29,7 +31,8 @@ export const latestRunForThread = query({
 			return {
 				threadId: args.threadId,
 				run: null,
-				jobs: []
+				jobs: [],
+				serverNow: Date.now()
 			};
 		}
 
@@ -37,11 +40,16 @@ export const latestRunForThread = query({
 			.query('executorJobs')
 			.withIndex('by_runId_sequence', (query) => query.eq('runId', latestRun._id))
 			.collect();
+		const promptMessage = latestRun.promptMessageId
+			? await ctx.db.get(latestRun.promptMessageId)
+			: null;
 
 		return {
 			threadId: args.threadId,
 			run: latestRun,
-			jobs: jobs.filter((job) => !job.hidden).sort((left, right) => left.sequence - right.sequence)
+			jobs: jobs.filter((job) => !job.hidden).sort((left, right) => left.sequence - right.sequence),
+			...(promptMessage?.type === 'prompt' ? { prompt: promptMessage.text } : {}),
+			serverNow: Date.now()
 		};
 	}
 });

@@ -24,6 +24,7 @@ pub(crate) enum AgentToolError {
 struct WorkspaceToolContext {
     runtime: RuntimeClient,
     run_id: String,
+    claim_id: String,
     workspace_root: PathBuf,
     tool_call_tracker: ToolCallTracker,
 }
@@ -32,12 +33,14 @@ impl WorkspaceToolContext {
     fn new(
         runtime: RuntimeClient,
         run_id: String,
+        claim_id: String,
         workspace_root: PathBuf,
         tool_call_tracker: ToolCallTracker,
     ) -> Self {
         Self {
             runtime,
             run_id,
+            claim_id,
             workspace_root,
             tool_call_tracker,
         }
@@ -62,10 +65,12 @@ pub(crate) struct WorkspaceToolSet {
 pub(crate) fn workspace_tools(
     runtime: RuntimeClient,
     run_id: String,
+    claim_id: String,
     workspace_root: PathBuf,
     tool_call_tracker: ToolCallTracker,
 ) -> WorkspaceToolSet {
-    let context = WorkspaceToolContext::new(runtime, run_id, workspace_root, tool_call_tracker);
+    let context =
+        WorkspaceToolContext::new(runtime, run_id, claim_id, workspace_root, tool_call_tracker);
     WorkspaceToolSet {
         exec_command: ExecCommandTool(context.clone()),
         create_file: CreateFileTool(context.clone()),
@@ -135,6 +140,7 @@ impl rig::tool::Tool for ExecCommandTool {
         execute_tool_job(
             &self.0.runtime,
             &self.0.run_id,
+            &self.0.claim_id,
             Self::NAME,
             &self.0.tool_call_tracker,
             serde_json::to_value(&args).map_err(tool_error)?,
@@ -176,6 +182,7 @@ impl rig::tool::Tool for CreateFileTool {
         execute_tool_job(
             &self.0.runtime,
             &self.0.run_id,
+            &self.0.claim_id,
             Self::NAME,
             &self.0.tool_call_tracker,
             serde_json::to_value(&args).map_err(tool_error)?,
@@ -216,6 +223,7 @@ impl rig::tool::Tool for ReplaceInFileTool {
         execute_tool_job(
             &self.0.runtime,
             &self.0.run_id,
+            &self.0.claim_id,
             Self::NAME,
             &self.0.tool_call_tracker,
             serde_json::to_value(&args).map_err(tool_error)?,
@@ -244,6 +252,7 @@ impl rig::tool::Tool for ReplaceInFileTool {
 async fn execute_tool_job<F, Fut>(
     runtime: &RuntimeClient,
     run_id: &str,
+    claim_id: &str,
     kind: &str,
     tool_call_tracker: &ToolCallTracker,
     payload: serde_json::Value,
@@ -270,6 +279,7 @@ where
 
     let mut begin_args = runtime.args_with_actor();
     begin_args.insert("runId".to_string(), run_id.to_string().into());
+    begin_args.insert("claimId".to_string(), claim_id.to_string().into());
     begin_args.insert("kind".to_string(), kind.to_string().into());
     if let Some(call_id) = tool_call_tracker.claim(kind, &payload) {
         begin_args.insert("callId".to_string(), call_id.into());

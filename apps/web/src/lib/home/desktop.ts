@@ -8,6 +8,7 @@ import type {
 	WorkspaceSessionAttachment,
 	WorkspaceSessionLocation
 } from '$lib/types/sprocket';
+import { isRunClaimLeaseActive } from '$convex/lib/runLease';
 
 export type ViewerArgs = {
 	guestId?: string;
@@ -65,6 +66,15 @@ export function resolveSubmissionId(args: {
 		recoveredSubmission.reasoningEffort === args.reasoningEffort
 		? recoveredSubmission.submissionId
 		: args.newSubmissionId;
+}
+
+export function isRunBlockingAgentLaunch(
+	run: Pick<RunState, 'status' | 'claimExpiresAt'> | null,
+	now: number
+): boolean {
+	if (!run) return false;
+	if (run.status === 'queued') return true;
+	return isRunClaimLeaseActive(run, now);
 }
 
 export function getViewerQueryArgs(args: {

@@ -26,6 +26,7 @@ import type * as lib_json from "../lib/json.js";
 import type * as lib_modelRegistry from "../lib/modelRegistry.js";
 import type * as lib_models from "../lib/models.js";
 import type * as lib_rateLimits from "../lib/rateLimits.js";
+import type * as lib_runLease from "../lib/runLease.js";
 import type * as lib_runs from "../lib/runs.js";
 import type * as lib_threadMessages from "../lib/threadMessages.js";
 import type * as lib_threadTranscript from "../lib/threadTranscript.js";
@@ -61,6 +62,7 @@ declare const fullApi: ApiFromModules<{
   "lib/modelRegistry": typeof lib_modelRegistry;
   "lib/models": typeof lib_models;
   "lib/rateLimits": typeof lib_rateLimits;
+  "lib/runLease": typeof lib_runLease;
   "lib/runs": typeof lib_runs;
   "lib/threadMessages": typeof lib_threadMessages;
   "lib/threadTranscript": typeof lib_threadTranscript;

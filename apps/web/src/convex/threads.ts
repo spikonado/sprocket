@@ -85,6 +85,7 @@ export const listMine = query({
 					latestRunStatus: latestRun?.status ?? null,
 					latestRunId: latestRun?._id ?? null,
 					latestRunStartedAt: latestRun?.startedAt,
+					latestRunClaimExpiresAt: latestRun?.claimExpiresAt,
 					hasActiveRun: latestRun ? !isRunFinalStatus(latestRun.status) : false
 				};
 			})
