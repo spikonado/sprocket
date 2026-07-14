@@ -6,12 +6,12 @@ use rig::message::{
     ToolResultContent, UserContent,
 };
 use serde::{Deserialize, Serialize};
+use sprocket_convex_provider::AuthTokenFetcher;
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone)]
 pub struct RunAgentRequest {
     pub deployment_url: String,
-    pub auth_token: Option<String>,
-    pub guest_id: Option<String>,
+    pub auth_token_fetcher: AuthTokenFetcher,
     pub submission_id: String,
     pub thread_id: String,
     pub prompt: String,
@@ -26,6 +26,7 @@ pub struct CreateRunResponse {
     pub created: bool,
     pub run_id: String,
     pub prompt_message_id: String,
+    pub user_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

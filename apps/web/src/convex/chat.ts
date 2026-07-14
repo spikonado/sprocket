@@ -6,7 +6,6 @@ import { getUserId } from '@convex/lib/auth';
 
 export const latestRunForThread = query({
 	args: {
-		guestId: v.optional(v.string()),
 		threadId: v.id('threadRecords')
 	},
 	handler: async (
@@ -19,7 +18,7 @@ export const latestRunForThread = query({
 		prompt?: string;
 		serverNow: number;
 	}> => {
-		const userId: string = await getUserId(ctx, args.guestId);
+		const userId: string = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 
 		const latestRun: Doc<'runs'> | null = await ctx.db

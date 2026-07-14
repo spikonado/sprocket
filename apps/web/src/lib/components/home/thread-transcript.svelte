@@ -30,8 +30,8 @@
 		actions,
 		workspaceSession,
 		emptyStateMessage = workspaceSession
-			? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands in this workspace.'
-			: 'Attach a workspace to begin.',
+			? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
+			: 'Add a project to begin.',
 		emptyStateHint = null
 	}: Props = $props();
 	let scrollViewport = $state<HTMLDivElement | null>(null);

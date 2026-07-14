@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use convex::Value;
@@ -277,7 +278,7 @@ where
         return Err(AgentToolError::Cancelled);
     }
 
-    let mut begin_args = runtime.args_with_actor();
+    let mut begin_args = BTreeMap::new();
     begin_args.insert("runId".to_string(), run_id.to_string().into());
     begin_args.insert("claimId".to_string(), claim_id.to_string().into());
     begin_args.insert("kind".to_string(), kind.to_string().into());
@@ -332,7 +333,7 @@ where
     match operation_result {
         Ok(output) => {
             eprintln!("sprocket-agent: completed tool {} for run {}", kind, run_id);
-            let mut complete_args = runtime.args_with_actor();
+            let mut complete_args = BTreeMap::new();
             complete_args.insert("jobId".to_string(), job_id.into());
             complete_args.insert(
                 "result".to_string(),
@@ -353,7 +354,7 @@ where
                 "sprocket-agent: failed tool {} for run {}: {}",
                 kind, run_id, error
             );
-            let mut fail_args = runtime.args_with_actor();
+            let mut fail_args = BTreeMap::new();
             fail_args.insert("jobId".to_string(), job_id.into());
             fail_args.insert("error".to_string(), error.to_string().into());
             let accepted: bool = runtime

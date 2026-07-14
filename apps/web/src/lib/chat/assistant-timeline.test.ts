@@ -103,11 +103,15 @@ describe('assistant timeline', () => {
 		]);
 	});
 
-	it('exposes errors from older persisted tool results when no live job exists', () => {
+	it('exposes errors from persisted tool results when no live job exists', () => {
 		const [tool] = buildAssistantTimeline(
 			[
 				{ type: 'tool-call', callId: 'call-1', name: 'exec_command', input: { cmd: 'false' } },
-				{ type: 'tool-result', callId: 'call-1', output: { error: 'command failed' } }
+				{
+					type: 'tool-result',
+					callId: 'call-1',
+					output: { error: 'command failed', status: 'failed' }
+				}
 			],
 			[]
 		);
@@ -150,7 +154,11 @@ describe('assistant timeline', () => {
 		const [tool] = buildAssistantTimeline(
 			[
 				{ type: 'tool-call', callId: 'call-1', name: 'exec_command', input: { cmd: 'false' } },
-				{ type: 'tool-result', callId: 'call-1', output: { error: 'command failed' } }
+				{
+					type: 'tool-result',
+					callId: 'call-1',
+					output: { error: 'command failed', status: 'failed' }
+				}
 			],
 			[]
 		);

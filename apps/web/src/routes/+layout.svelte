@@ -2,7 +2,7 @@
 	import '../app.css';
 	import { browser } from '$app/environment';
 	import { setupAuth, setupConvex } from 'convex-svelte';
-	import { authState, getAccessToken, initializeAuth } from '$lib/auth';
+	import { authState, convexAuthRetryVersion, getAccessToken, initializeAuth } from '$lib/auth';
 	import type { RuntimeConfig } from './+layout';
 
 	const { children, data }: { children: import('svelte').Snippet; data: RuntimeConfig } = $props();
@@ -14,11 +14,16 @@
 		unsavedChangesWarning: false
 	});
 
-	setupAuth(() => ({
-		isLoading: !$authState.isReady || $authState.isLoading,
-		isAuthenticated: Boolean($authState.user),
-		fetchAccessToken: getAccessToken
-	}));
+	setupAuth(() => {
+		// A successful manual refresh increments this value so setupAuth installs
+		// a fresh Convex auth configuration and waits for backend confirmation.
+		void $convexAuthRetryVersion;
+		return {
+			isLoading: !$authState.isReady || $authState.isLoading,
+			isAuthenticated: Boolean($authState.user),
+			fetchAccessToken: getAccessToken
+		};
+	});
 
 	$effect(() => {
 		if (!browser || !convexUrl()) {

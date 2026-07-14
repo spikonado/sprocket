@@ -12,9 +12,10 @@ export function isClaimedRunStatus(status: string): boolean {
 }
 
 export function isRunClaimLeaseActive(run: ClaimableRun, now: number): boolean {
-	return (
-		isClaimedRunStatus(run.status) && run.claimExpiresAt !== undefined && run.claimExpiresAt > now
-	);
+	if (!isClaimedRunStatus(run.status)) return false;
+	// Claimed runs always write claimExpiresAt; treat a missing expiry as still held.
+	if (run.claimExpiresAt === undefined) return true;
+	return run.claimExpiresAt > now;
 }
 
 export function canStartRunWithClaim(run: ClaimableRun, claimId: string, now: number): boolean {
@@ -22,6 +23,10 @@ export function canStartRunWithClaim(run: ClaimableRun, claimId: string, now: nu
 	if (!isClaimedRunStatus(run.status)) return false;
 	if (run.claimId === claimId) return true;
 	return !isRunClaimLeaseActive(run, now);
+}
+
+export function canFinalizeAfterClaimFailure(run: ClaimableRun, claimId: string): boolean {
+	return isClaimedRunStatus(run.status) && run.claimId === claimId;
 }
 
 export function claimExpiresAt(now: number): number {

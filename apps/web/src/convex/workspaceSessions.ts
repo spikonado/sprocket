@@ -10,12 +10,11 @@ import type { Doc } from '@convex/_generated/dataModel';
 
 export const upsertSelected = mutation({
 	args: {
-		guestId: v.optional(v.string()),
 		workspaceName: v.string(),
 		connectedClientId: v.string()
 	},
 	handler: async (ctx, args) => {
-		const userId: string = await getUserId(ctx, args.guestId);
+		const userId: string = await getUserId(ctx);
 		const workspaceSession: Doc<'workspaceSessions'> | null = await ctx.db
 			.query('workspaceSessions')
 			.withIndex('by_user_workspaceName', (query) =>
@@ -45,11 +44,9 @@ export const upsertSelected = mutation({
 });
 
 export const listMine = query({
-	args: {
-		guestId: v.optional(v.string())
-	},
-	handler: async (ctx, args) => {
-		const userId: string = await getUserId(ctx, args.guestId);
+	args: {},
+	handler: async (ctx) => {
+		const userId: string = await getUserId(ctx);
 		const sessions = await ctx.db
 			.query('workspaceSessions')
 			.withIndex('by_userId_lastSeenAt', (query) => query.eq('userId', userId))
@@ -62,12 +59,11 @@ export const listMine = query({
 
 export const heartbeatAttached = mutation({
 	args: {
-		guestId: v.optional(v.string()),
 		clientId: v.string(),
 		workspaceSessionIds: v.array(v.id('workspaceSessions'))
 	},
 	handler: async (ctx, args) => {
-		const userId: string = await getUserId(ctx, args.guestId);
+		const userId: string = await getUserId(ctx);
 		const now = Date.now();
 		const requestedIds = new Set(args.workspaceSessionIds);
 

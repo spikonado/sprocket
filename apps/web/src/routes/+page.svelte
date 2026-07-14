@@ -5,7 +5,19 @@
 	import type { Id } from '$convex/_generated/dataModel';
 	import { api } from '$convex/_generated/api';
 	import { EXECUTOR_HEARTBEAT_WRITE_THROTTLE_MS } from '$convex/lib/workspaceConnection';
-	import { authState, cancelDesktopSignIn, getAccessToken, signIn, signOut } from '$lib/auth';
+	import {
+		advanceConvexAuthRetryPending,
+		authState,
+		cancelDesktopSignIn,
+		clearDesktopSignInOpenError,
+		convexAuthRetryPending,
+		getAccessToken,
+		retryConvexAuthentication,
+		signIn,
+		signOut,
+		signUp
+	} from '$lib/auth';
+	import AuthGate from '$lib/components/home/auth-gate.svelte';
 	import BrowserSignInOverlay from '$lib/components/home/browser-signin-overlay.svelte';
 	import PromptComposer from '$lib/components/home/prompt-composer.svelte';
 	import ThreadTranscript from '$lib/components/home/thread-transcript.svelte';
@@ -15,9 +27,6 @@
 		attachLocalWorkspaceSession as attachLocalWorkspaceSessionForPath,
 		createLatestTaskQueue,
 		getDesiredAttachedWorkspaceSessionIds,
-		getViewerArgs as getViewerArgsForUser,
-		getViewerIdentity,
-		getViewerQueryArgs as getViewerQueryArgsForUser,
 		isRunBlockingAgentLaunch,
 		launchAgentRun,
 		refreshDesktopWorkspaceSessions as refreshDesktopWorkspaceSessionsFromDesktop,
@@ -65,6 +74,39 @@
 	} from '$lib/types/sprocket';
 
 	const convexAuth = useAuth();
+	let sawAuthLoadingDuringRetry = $state(false);
+	const isSignedIn = $derived(Boolean($authState.user));
+	const retryPending = $derived($convexAuthRetryPending);
+	const authReady = $derived(
+		$authState.isReady &&
+			!$authState.isLoading &&
+			isSignedIn &&
+			!convexAuth.isLoading &&
+			convexAuth.isAuthenticated
+	);
+	const authConnectionFailed = $derived(
+		isSignedIn &&
+			$authState.isReady &&
+			!$authState.isLoading &&
+			!retryPending &&
+			!convexAuth.isLoading &&
+			!convexAuth.isAuthenticated
+	);
+
+	$effect(() => {
+		const next = advanceConvexAuthRetryPending({
+			retryPending,
+			isAuthenticated: convexAuth.isAuthenticated,
+			isLoading: convexAuth.isLoading,
+			sawLoadingDuringRetry: sawAuthLoadingDuringRetry
+		});
+		if (sawAuthLoadingDuringRetry !== next.sawLoadingDuringRetry) {
+			sawAuthLoadingDuringRetry = next.sawLoadingDuringRetry;
+		}
+		if (next.clearPending) {
+			convexAuthRetryPending.set(false);
+		}
+	});
 	const upsertWorkspaceSession = useMutation(api.workspaceSessions.upsertSelected);
 	const createThreadMutation = useMutation(api.threads.create);
 	const removeThread = useMutation(api.threads.remove);
@@ -79,16 +121,10 @@
 		reasoningEffort?: SupportedReasoningEffort;
 		selectedModel?: SupportedModelId;
 		submissionId?: string;
-		viewerIdentity: string;
 	};
 	const workspaceAttachmentHeartbeatQueue = createLatestTaskQueue(
-		async (request: {
-			clientId: string;
-			viewerArgs: ReturnType<typeof getViewerArgsForUser>;
-			workspaceSessionIds: Id<'workspaceSessions'>[];
-		}) => {
+		async (request: { clientId: string; workspaceSessionIds: Id<'workspaceSessions'>[] }) => {
 			await heartbeatAttached({
-				...request.viewerArgs,
 				clientId: request.clientId,
 				workspaceSessionIds: request.workspaceSessionIds
 			});
@@ -96,6 +132,7 @@
 	);
 
 	let desktopApi = $state<DesktopApi | null>(null);
+	let desktopApiResolved = $state(false);
 	let currentWorkspaceName = $state<string | null>(null);
 	let currentThreadId = $state<Id<'threadRecords'> | null>(null);
 	let draftWorkspaceName = $state<string | null>(null);
@@ -106,7 +143,6 @@
 	let executorClientId = $state<string | null>(null);
 	let visibleMessages = $state<ThreadMessage[]>([]);
 	let elapsedSeconds = $state(0);
-	let guestSessionId = $state<string | null>(null);
 	const submittingPromptScopes = new SvelteMap<string, number>();
 	const composerRecoveries = new SvelteMap<string, ComposerRecovery>();
 	const recoveredSubmissionIds = new SvelteMap<
@@ -137,17 +173,13 @@
 	let desktopWorkspaceSessionsById = $state<Record<string, WorkspaceSessionLocation>>({});
 	let hasLoadedDesktopWorkspaceSessions = $state(false);
 	let desktopWorkspaceSessionsGeneration = 0;
-	let selectionViewerIdentity = $state<string | null>(null);
+	let selectionUserId = $state<string | null>(null);
 	let workspacePickerOpen = $state(false);
 	let workspacePickerMode = $state<'add' | 'reconnect'>('add');
 	let workspacePickerExpectedName = $state<string | undefined>(undefined);
 	let workspacePickerReconnectSessionId = $state<Id<'workspaceSessions'> | null>(null);
-	function getViewerArgs() {
-		return getViewerArgsForUser($authState.user, guestSessionId);
-	}
-
-	function getCurrentViewerIdentity() {
-		return getViewerIdentity($authState.user, guestSessionId);
+	function getCurrentUserId() {
+		return $authState.user?.id ?? null;
 	}
 
 	function getComposerScope(
@@ -167,59 +199,46 @@
 		}
 	}
 
-	function getComposerRecoveryKey(viewerIdentity: string, scope: string) {
-		return `${viewerIdentity}\0${scope}`;
+	function getComposerRecoveryKey(userId: string, scope: string) {
+		return `${userId}\0${scope}`;
 	}
 
-	function storeComposerRecovery(args: ComposerRecovery & { scope: string }) {
-		composerRecoveries.set(getComposerRecoveryKey(args.viewerIdentity, args.scope), {
-			message: args.message,
-			prompt: args.prompt,
-			...(args.reasoningEffort ? { reasoningEffort: args.reasoningEffort } : {}),
-			...(args.selectedModel ? { selectedModel: args.selectedModel } : {}),
-			...(args.submissionId ? { submissionId: args.submissionId } : {}),
-			viewerIdentity: args.viewerIdentity
-		});
+	function storeComposerRecovery(userId: string, scope: string, recovery: ComposerRecovery) {
+		composerRecoveries.set(getComposerRecoveryKey(userId, scope), recovery);
 	}
 
-	function clearComposerRecovery(viewerIdentity: string, scope: string) {
-		const recoveryKey = getComposerRecoveryKey(viewerIdentity, scope);
+	function clearComposerRecovery(userId: string, scope: string) {
+		const recoveryKey = getComposerRecoveryKey(userId, scope);
 		composerRecoveries.delete(recoveryKey);
 		recoveredSubmissionIds.delete(recoveryKey);
 	}
 
-	function getViewerQueryArgs() {
-		return getViewerQueryArgsForUser({
-			authenticatedUser: $authState.user,
-			convexIsAuthenticated: convexAuth.isAuthenticated,
-			convexIsLoading: convexAuth.isLoading,
-			guestSessionId
-		});
+	function getAuthenticatedQueryArgs() {
+		return $authState.user && convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip';
 	}
 
-	const workspaceSessionsQuery = useQuery(api.workspaceSessions.listMine, getViewerQueryArgs);
-	const threadsQuery = useQuery(api.threads.listMine, getViewerQueryArgs);
-	const uiPreferencesQuery = useQuery(api.uiPreferences.getMine, getViewerQueryArgs);
+	const workspaceSessionsQuery = useQuery(
+		api.workspaceSessions.listMine,
+		getAuthenticatedQueryArgs
+	);
+	const threadsQuery = useQuery(api.threads.listMine, getAuthenticatedQueryArgs);
+	const uiPreferencesQuery = useQuery(api.uiPreferences.getMine, getAuthenticatedQueryArgs);
 	const activeThreadQuery = useQuery(api.threads.getByThreadId, () => {
-		const viewerArgs = getViewerQueryArgs();
-		return currentThreadId && viewerArgs !== 'skip'
-			? { ...viewerArgs, threadId: currentThreadId }
+		return currentThreadId && getAuthenticatedQueryArgs() !== 'skip'
+			? { threadId: currentThreadId }
 			: 'skip';
 	});
 	const messagesQuery = useQuery(api.messages.listForThread, () => {
-		const viewerArgs = getViewerQueryArgs();
-		return currentThreadId && viewerArgs !== 'skip'
+		return currentThreadId && getAuthenticatedQueryArgs() !== 'skip'
 			? {
-					...viewerArgs,
 					threadId: currentThreadId,
 					paginationOpts: { cursor: null, numItems: 40 }
 				}
 			: 'skip';
 	});
 	const latestRunQuery = useQuery(api.chat.latestRunForThread, () => {
-		const viewerArgs = getViewerQueryArgs();
-		return currentThreadId && viewerArgs !== 'skip'
-			? { ...viewerArgs, threadId: currentThreadId }
+		return currentThreadId && getAuthenticatedQueryArgs() !== 'skip'
+			? { threadId: currentThreadId }
 			: 'skip';
 	});
 	const queryError = $derived.by(() => {
@@ -292,9 +311,9 @@
 			: (currentLatestRunData?.serverNow ?? Date.now())
 	);
 	const currentRecoveredSubmission = $derived.by(() => {
-		const viewerIdentity = getCurrentViewerIdentity();
-		if (!viewerIdentity || !currentComposerScope) return undefined;
-		return recoveredSubmissionIds.get(getComposerRecoveryKey(viewerIdentity, currentComposerScope));
+		const userId = getCurrentUserId();
+		if (!userId || !currentComposerScope) return undefined;
+		return recoveredSubmissionIds.get(getComposerRecoveryKey(userId, currentComposerScope));
 	});
 	const isRetryableQueuedRun = $derived(
 		runState?.status === 'queued' &&
@@ -459,9 +478,9 @@
 			currentError = localServerRequiredMessage;
 			return;
 		}
-		const pickerViewerIdentity = getCurrentViewerIdentity();
-		if (!pickerViewerIdentity) {
-			currentError = 'Viewer session is not ready.';
+		const pickerUserId = getCurrentUserId();
+		if (!pickerUserId) {
+			currentError = 'User session is not ready.';
 			return;
 		}
 
@@ -476,7 +495,7 @@
 				}
 
 				await attachLocalWorkspaceSession(workspacePickerReconnectSessionId, overview.rootPath);
-				if (getCurrentViewerIdentity() !== pickerViewerIdentity) {
+				if (getCurrentUserId() !== pickerUserId) {
 					return;
 				}
 				setWorkspaceSelection(reconnectSession.workspaceName, currentThreadId);
@@ -485,25 +504,24 @@
 			}
 
 			const session = await upsertWorkspaceSession({
-				...getViewerArgs(),
 				workspaceName: overview.name,
 				connectedClientId: executorClientId
 			});
 			if (!session) {
 				throw new Error('Failed to create or update the workspace session.');
 			}
-			if (getCurrentViewerIdentity() !== pickerViewerIdentity) {
+			if (getCurrentUserId() !== pickerUserId) {
 				return;
 			}
 
 			await attachLocalWorkspaceSession(session._id, overview.rootPath);
-			if (getCurrentViewerIdentity() !== pickerViewerIdentity) {
+			if (getCurrentUserId() !== pickerUserId) {
 				return;
 			}
 			setWorkspaceSelection(overview.name, null, true);
 			currentError = null;
 		} catch (error) {
-			if (getCurrentViewerIdentity() !== pickerViewerIdentity) {
+			if (getCurrentUserId() !== pickerUserId) {
 				return;
 			}
 			currentError = error instanceof Error ? error.message : 'Failed to attach workspace.';
@@ -529,13 +547,13 @@
 		selectedModel: SupportedModelId;
 		submissionId: string;
 		threadId: Id<'threadRecords'>;
-		viewerIdentity: string;
+		userId: string;
 		workspaceName: string;
 		workspaceSessionId: Id<'workspaceSessions'>;
 	}) {
 		window.setTimeout(() => {
 			if (
-				getCurrentViewerIdentity() !== args.viewerIdentity ||
+				getCurrentUserId() !== args.userId ||
 				pendingCreatedThreadId !== args.threadId ||
 				currentThreadId !== args.threadId ||
 				currentWorkspaceName !== args.workspaceName ||
@@ -548,14 +566,12 @@
 			setWorkspaceSelection(args.workspaceName, null, true);
 			const recoveryScope = getComposerScope(null, args.workspaceSessionId);
 			if (recoveryScope) {
-				storeComposerRecovery({
+				storeComposerRecovery(args.userId, recoveryScope, {
 					message: 'The new thread did not appear. Review your prompt and try sending it again.',
 					prompt: args.prompt,
 					reasoningEffort: args.reasoningEffort,
 					selectedModel: args.selectedModel,
-					scope: recoveryScope,
-					submissionId: args.submissionId,
-					viewerIdentity: args.viewerIdentity
+					submissionId: args.submissionId
 				});
 			}
 		}, agentLaunchTimeoutMs);
@@ -568,13 +584,11 @@
 		selectedModel: SupportedModelId;
 		selectedReasoningEffort: SupportedReasoningEffort;
 		submissionId: string;
-		viewerArgs: ReturnType<typeof getViewerArgs>;
-		viewerIdentity: string;
+		userId: string;
 		workspaceName: string;
 		workspaceSessionId: Id<'workspaceSessions'>;
 	}) {
 		const result = await createThreadMutation({
-			...args.viewerArgs,
 			submissionId: args.submissionId,
 			workspaceSessionId: args.workspaceSessionId,
 			selectedModel: args.selectedModel,
@@ -585,7 +599,7 @@
 		}
 
 		if (
-			args.viewerIdentity === getCurrentViewerIdentity() &&
+			args.userId === getCurrentUserId() &&
 			isSelectionGenerationCurrent(args.selectionGeneration, workspaceSelectionGeneration)
 		) {
 			pendingCreatedThreadId = result.threadId;
@@ -598,7 +612,7 @@
 				selectedModel: args.selectedModel,
 				submissionId: args.submissionId,
 				threadId: result.threadId,
-				viewerIdentity: args.viewerIdentity,
+				userId: args.userId,
 				workspaceName: args.workspaceName,
 				workspaceSessionId: args.workspaceSessionId
 			});
@@ -632,17 +646,14 @@
 			currentError = currentBlockMessage;
 			return;
 		}
-		const deletionViewerIdentity = getCurrentViewerIdentity();
+		const deletionUserId = getCurrentUserId();
 
 		try {
-			await removeThread({
-				...getViewerArgs(),
-				threadId: thread.threadId
-			});
-			if (deletionViewerIdentity) {
-				clearComposerRecovery(deletionViewerIdentity, `thread:${thread.threadId}`);
+			await removeThread({ threadId: thread.threadId });
+			if (deletionUserId) {
+				clearComposerRecovery(deletionUserId, `thread:${thread.threadId}`);
 			}
-			if (getCurrentViewerIdentity() === deletionViewerIdentity) {
+			if (getCurrentUserId() === deletionUserId) {
 				if (currentThreadId === thread.threadId) {
 					currentThreadId = null;
 					pendingCreatedThreadId = null;
@@ -654,7 +665,7 @@
 				currentError = null;
 			}
 		} catch (error) {
-			if (getCurrentViewerIdentity() !== deletionViewerIdentity) {
+			if (getCurrentUserId() !== deletionUserId) {
 				return;
 			}
 			currentError = error instanceof Error ? error.message : 'Failed to delete thread.';
@@ -703,14 +714,12 @@
 			currentError = 'Choose a workspace first.';
 			return;
 		}
-		const submittedViewerIdentity = getCurrentViewerIdentity();
-		if (!submittedViewerIdentity) {
-			currentError = 'Viewer session is not ready.';
+		const submittedUserId = getCurrentUserId();
+		if (!submittedUserId) {
+			currentError = 'User session is not ready.';
 			return;
 		}
-		const submittedViewerArgs = getViewerArgs();
-		const submittedAuthenticatedUserId = $authState.user?.id ?? null;
-		const isSubmittedViewerCurrent = () => getCurrentViewerIdentity() === submittedViewerIdentity;
+		const isSubmittedUserCurrent = () => getCurrentUserId() === submittedUserId;
 		const submittedPrompt = prompt.trim();
 		const submittedModel = selectedModel;
 		const submittedReasoningEffort = selectedReasoningEffort;
@@ -721,7 +730,7 @@
 		const originatingRecoveryScope = submissionScope;
 		let recoveryScope = originatingRecoveryScope;
 		const originatingRecoveryKey = getComposerRecoveryKey(
-			submittedViewerIdentity,
+			submittedUserId,
 			originatingRecoveryScope
 		);
 		const recoveredSubmission = recoveredSubmissionIds.get(originatingRecoveryKey);
@@ -735,14 +744,11 @@
 			selectedModel: submittedModel
 		});
 		let runSubmissionId = threadSubmissionId;
-		clearComposerRecovery(submittedViewerIdentity, originatingRecoveryScope);
+		clearComposerRecovery(submittedUserId, originatingRecoveryScope);
 		let launchedThreadId: Id<'threadRecords'> | null = null;
 		let agentLaunchId: number | null = null;
 		const submissionSequence = ++nextSubmissionSequence;
-		let submissionTrackingKey = getComposerRecoveryKey(
-			submittedViewerIdentity,
-			originatingRecoveryScope
-		);
+		let submissionTrackingKey = getComposerRecoveryKey(submittedUserId, originatingRecoveryScope);
 		latestSubmissionSequencesByRecoveryScope.set(submissionTrackingKey, submissionSequence);
 		const isSubmissionCurrent = () =>
 			latestSubmissionSequencesByRecoveryScope.get(submissionTrackingKey) === submissionSequence;
@@ -751,22 +757,20 @@
 		const submissionDelayMessage =
 			'This request is still preparing. Wait for it to finish before trying again.';
 		const recoverSubmission = (message: string) => {
-			storeComposerRecovery({
+			storeComposerRecovery(submittedUserId, recoveryScope, {
 				message,
 				prompt: submittedPrompt,
 				reasoningEffort: submittedReasoningEffort,
 				selectedModel: submittedModel,
-				scope: recoveryScope,
 				submissionId:
 					!selectedThreadId && recoveryScope === originatingRecoveryScope
 						? threadSubmissionId
-						: runSubmissionId,
-				viewerIdentity: submittedViewerIdentity
+						: runSubmissionId
 			});
 		};
 		const clearSubmissionDelay = () => {
-			clearComposerRecovery(submittedViewerIdentity, recoveryScope);
-			if (isSubmittedViewerCurrent() && currentError === submissionDelayMessage) {
+			clearComposerRecovery(submittedUserId, recoveryScope);
+			if (isSubmittedUserCurrent() && currentError === submissionDelayMessage) {
 				currentError = null;
 			}
 		};
@@ -777,11 +781,9 @@
 				return;
 			}
 
-			storeComposerRecovery({
+			storeComposerRecovery(submittedUserId, recoveryScope, {
 				message: submissionDelayMessage,
-				prompt: '',
-				scope: recoveryScope,
-				viewerIdentity: submittedViewerIdentity
+				prompt: ''
 			});
 		}, agentLaunchTimeoutMs);
 		prompt = '';
@@ -798,8 +800,7 @@
 						selectedModel: submittedModel,
 						selectedReasoningEffort: submittedReasoningEffort,
 						submissionId: threadSubmissionId,
-						viewerArgs: submittedViewerArgs,
-						viewerIdentity: submittedViewerIdentity,
+						userId: submittedUserId,
 						workspaceName: submittedWorkspaceName,
 						workspaceSessionId
 					});
@@ -814,7 +815,7 @@
 					threadSubmissionId
 				});
 			}
-			if (!isSubmittedViewerCurrent()) {
+			if (!isSubmittedUserCurrent()) {
 				recoverSubmission(sessionChangedMessage);
 				return;
 			}
@@ -830,16 +831,18 @@
 					latestSubmissionSequencesByRecoveryScope.delete(submissionTrackingKey);
 				}
 				recoveryScope = `thread:${threadId}`;
-				submissionTrackingKey = getComposerRecoveryKey(submittedViewerIdentity, recoveryScope);
+				submissionTrackingKey = getComposerRecoveryKey(submittedUserId, recoveryScope);
 				latestSubmissionSequencesByRecoveryScope.set(submissionTrackingKey, submissionSequence);
 			}
-			const authToken = submittedAuthenticatedUserId
-				? ((await getAccessToken()) ?? undefined)
-				: undefined;
+			const authToken = await getAccessToken();
+			if (!authToken) {
+				recoverSubmission('Your session ended before the agent started. Sign in again.');
+				return;
+			}
 			if (!isSubmissionCurrent()) {
 				return;
 			}
-			if (!isSubmittedViewerCurrent()) {
+			if (!isSubmittedUserCurrent()) {
 				recoverSubmission(sessionChangedMessage);
 				return;
 			}
@@ -884,8 +887,11 @@
 			launchAgentRun({
 				authToken,
 				desktopApi,
+				expectedUserId: submittedUserId,
+				getAccessToken,
+				getCurrentUserId: () => $authState.user?.id ?? null,
 				onError: (error) => {
-					if (!isSubmissionCurrent() || !isSubmittedViewerCurrent()) {
+					if (!isSubmissionCurrent() || !isSubmittedUserCurrent()) {
 						return;
 					}
 					const nextPendingAgentLaunches = clearPendingAgentLaunch(
@@ -900,12 +906,15 @@
 						error instanceof Error ? error.message : 'Failed to start the local agent run.'
 					);
 				},
+				onStarted: (runId) => {
+					if (!isSubmissionCurrent() || !isSubmittedUserCurrent()) return;
+					pendingAgentLaunches = resolvePendingAgentLaunch(pendingAgentLaunches, threadId, runId);
+				},
 				threadId,
 				prompt: submittedPrompt,
 				selectedModel: submittedModel,
 				submissionId: runSubmissionId,
 				reasoningEffort: submittedReasoningEffort,
-				viewerArgs: submittedViewerArgs,
 				workspaceSessionId
 			});
 		} catch (error) {
@@ -919,7 +928,7 @@
 			if (!isSubmissionCurrent()) {
 				return;
 			}
-			if (!isSubmittedViewerCurrent()) {
+			if (!isSubmittedUserCurrent()) {
 				recoverSubmission(sessionChangedMessage);
 				return;
 			}
@@ -944,7 +953,6 @@
 
 		try {
 			await finalizeRun({
-				...getViewerArgs(),
 				runId: runState._id,
 				text: '',
 				status: 'cancelled'
@@ -986,11 +994,11 @@
 	});
 
 	$effect(() => {
-		const viewerIdentity = getCurrentViewerIdentity();
+		const userId = getCurrentUserId();
 		const recoveryScope = getComposerScope(currentThreadId, currentWorkspaceSessionId);
 		const staleRun = runState;
 		if (
-			!viewerIdentity ||
+			!userId ||
 			!recoveryScope ||
 			!staleRun ||
 			!isClaimedRunStatus(staleRun.status) ||
@@ -1004,29 +1012,27 @@
 			return;
 		}
 
-		const staleClaimKey = `${viewerIdentity}\0${staleRun._id}\0${staleRun.claimExpiresAt ?? 'legacy'}`;
+		const staleClaimKey = `${userId}\0${staleRun._id}\0${staleRun.claimExpiresAt ?? 'none'}`;
 		if (recoveredStaleClaims.has(staleClaimKey)) {
 			return;
 		}
 		recoveredStaleClaims.add(staleClaimKey);
-		storeComposerRecovery({
+		storeComposerRecovery(userId, recoveryScope, {
 			message: 'The previous agent stopped responding. Retry to continue this submission.',
 			prompt: currentLatestRunData.prompt,
 			reasoningEffort: staleRun.reasoningEffort,
 			selectedModel: staleRun.selectedModel,
-			scope: recoveryScope,
-			submissionId: staleRun.submissionId,
-			viewerIdentity
+			submissionId: staleRun.submissionId
 		});
 	});
 
 	$effect(() => {
-		const viewerIdentity = getCurrentViewerIdentity();
-		if (selectionViewerIdentity === viewerIdentity) {
+		const userId = getCurrentUserId();
+		if (selectionUserId === userId) {
 			return;
 		}
 
-		selectionViewerIdentity = viewerIdentity;
+		selectionUserId = userId;
 		hasResolvedInitialSelection = false;
 		currentWorkspaceName = null;
 		currentThreadId = null;
@@ -1058,15 +1064,15 @@
 	});
 
 	$effect(() => {
-		const viewerIdentity = getCurrentViewerIdentity();
+		const userId = getCurrentUserId();
 		const recoveryScope = getComposerScope(currentThreadId, currentWorkspaceSessionId);
-		if (!viewerIdentity || !recoveryScope) {
+		if (!userId || !recoveryScope) {
 			return;
 		}
 
-		const recoveryKey = getComposerRecoveryKey(viewerIdentity, recoveryScope);
+		const recoveryKey = getComposerRecoveryKey(userId, recoveryScope);
 		const recovery = composerRecoveries.get(recoveryKey);
-		if (!recovery || recovery.viewerIdentity !== viewerIdentity) {
+		if (!recovery) {
 			return;
 		}
 
@@ -1204,10 +1210,7 @@
 		}
 
 		lastSavedThreadId = currentThreadId;
-		void setLastThread({
-			...getViewerArgs(),
-			threadId: currentThreadId
-		});
+		void setLastThread({ threadId: currentThreadId });
 	});
 
 	$effect(() => {
@@ -1250,19 +1253,17 @@
 	$effect(() => {
 		const clientId = executorClientId;
 		const workspaceSessionIdsKey = desiredAttachedWorkspaceSessionIdsKey;
-		const viewerArgs = getViewerQueryArgs();
 		if (
 			!clientId ||
 			!desktopApi ||
 			!hasLoadedDesktopWorkspaceSessions ||
 			workspaceSessionsQuery.data === undefined ||
-			viewerArgs === 'skip'
+			getAuthenticatedQueryArgs() === 'skip'
 		) {
 			return;
 		}
 		const request = {
 			clientId,
-			viewerArgs,
 			workspaceSessionIds: workspaceSessionIdsKey
 				? (workspaceSessionIdsKey.split('\0') as Id<'workspaceSessions'>[])
 				: []
@@ -1285,14 +1286,15 @@
 
 		void resolveDesktopApi()
 			.then(async (client) => {
-				const localIdentity = await client.getLocalIdentity();
-				guestSessionId = localIdentity.guestId;
 				desktopApi = client;
 				await refreshDesktopWorkspaceSessions();
 			})
 			.catch((error) => {
 				currentError =
 					error instanceof Error ? error.message : 'Failed to connect to the Sprocket server.';
+			})
+			.finally(() => {
+				desktopApiResolved = true;
 			});
 	});
 </script>
@@ -1301,14 +1303,22 @@
 	<title>Sprocket</title>
 </svelte:head>
 
-{#if !desktopApi}
+{#if !desktopApiResolved}
+	<div
+		class="flex h-screen items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_26%),linear-gradient(180deg,rgba(22,22,24,0.98),rgba(15,15,17,1))] px-6"
+	>
+		<p class="text-sm text-slate-300" aria-live="polite" aria-busy="true">
+			Connecting to Sprocket…
+		</p>
+	</div>
+{:else if !desktopApi}
 	<div
 		class="flex h-screen items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_26%),linear-gradient(180deg,rgba(22,22,24,0.98),rgba(15,15,17,1))] px-6"
 	>
 		<div
 			class="w-full max-w-lg rounded-4xl border border-white/8 bg-[linear-gradient(180deg,rgba(33,33,36,0.96),rgba(24,24,27,0.98))] p-8 shadow-[0_28px_80px_rgba(0,0,0,0.34)]"
 		>
-			<h1 class="mt-3 text-2xl font-medium tracking-tight text-white">Connect to Sprocket</h1>
+			<h1 class="text-2xl font-medium tracking-tight text-white">Connect to Sprocket</h1>
 			<p class="mt-3 text-sm leading-6 text-slate-300">
 				{currentError ?? 'Connect to your Sprocket server to continue.'}
 			</p>
@@ -1320,14 +1330,42 @@
 			</a>
 		</div>
 	</div>
+{:else if !authReady}
+	<div
+		class="h-screen overflow-hidden bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_26%),linear-gradient(180deg,rgba(22,22,24,0.98),rgba(15,15,17,1))]"
+	>
+		<AuthGate
+			authState={{
+				isLoading:
+					!$authState.isReady ||
+					$authState.isLoading ||
+					retryPending ||
+					(isSignedIn && convexAuth.isLoading),
+				isConfigured: $authState.isConfigured,
+				isAuthenticated: isSignedIn,
+				connectionFailed: authConnectionFailed,
+				error: $authState.error
+			}}
+			overlayOpen={$authState.isWaitingForBrowserSignIn}
+			onSignIn={() => void signIn()}
+			onSignOut={() => void signOut()}
+			onRetry={() => void retryConvexAuthentication()}
+			onSignUp={() => void signUp()}
+		/>
+		<BrowserSignInOverlay
+			open={$authState.isWaitingForBrowserSignIn}
+			signInUrl={$authState.browserSignInUrl}
+			error={$authState.error}
+			onCancel={cancelDesktopSignIn}
+			onClearOpenError={clearDesktopSignInOpenError}
+		/>
+	</div>
 {:else}
 	<div class="h-screen overflow-hidden">
 		<div
 			class="grid h-screen grid-cols-[292px_minmax(0,1fr)] overflow-hidden bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_26%),linear-gradient(180deg,rgba(22,22,24,0.98),rgba(15,15,17,1))]"
 		>
 			<WorkspaceSidebar
-				isAuthenticated={Boolean($authState.user)}
-				isWaitingForBrowserSignIn={$authState.isWaitingForBrowserSignIn}
 				{currentWorkspaceName}
 				{currentThreadId}
 				groups={groupedWorkspaceThreads}
@@ -1338,13 +1376,7 @@
 				onReconnectWorkspace={(workspaceSessionId) => {
 					void reconnectWorkspaceSession(workspaceSessionId);
 				}}
-				onAccountAction={() => {
-					if ($authState.user) {
-						void signOut();
-						return;
-					}
-					void signIn();
-				}}
+				onSignOut={() => void signOut()}
 				onStartThreadDraft={(workspaceName) => {
 					void startThreadDraftForWorkspace(workspaceName);
 				}}
@@ -1367,13 +1399,6 @@
 								class="truncate rounded-full border border-white/8 bg-white/3 px-2.5 py-0.5 text-[11px] text-slate-300"
 							>
 								{currentWorkspaceSession.workspaceName}
-							</span>
-						{/if}
-						{#if !$authState.user}
-							<span
-								class="truncate rounded-full border border-amber-500/20 bg-amber-500/10 px-2.5 py-0.5 text-[11px] text-amber-100"
-							>
-								Guest session
 							</span>
 						{/if}
 					</div>
@@ -1448,14 +1473,5 @@
 				}}
 			/>
 		{/if}
-
-		<BrowserSignInOverlay
-			open={$authState.isWaitingForBrowserSignIn}
-			signInUrl={$authState.browserSignInUrl}
-			error={$authState.error}
-			onCancel={() => {
-				cancelDesktopSignIn();
-			}}
-		/>
 	</div>
 {/if}

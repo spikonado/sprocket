@@ -203,7 +203,7 @@
 				expectedWorkspaceName &&
 				overview.name !== expectedWorkspaceName
 			) {
-				errorMessage = `Selected workspace must be named "${expectedWorkspaceName}" to reconnect this project.`;
+				errorMessage = `Selected project must be named "${expectedWorkspaceName}" to reconnect.`;
 				return;
 			}
 
@@ -211,7 +211,7 @@
 			onClose();
 		} catch (error) {
 			errorMessage =
-				error instanceof Error ? error.message : 'Failed to open the selected workspace.';
+				error instanceof Error ? error.message : 'Failed to open the selected project.';
 		} finally {
 			isSubmitting = false;
 		}

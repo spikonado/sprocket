@@ -7,25 +7,13 @@ import {
 import { components } from '@convex/_generated/api';
 import type { ActionCtx } from '@convex/_generated/server';
 
-const signedInHourlyModelCompletionLimit = 300;
-const guestHourlyModelCompletionLimit = 80;
-const globalGuestHourlyModelCompletionLimit = 80;
+const hourlyModelCompletionLimit = 300;
 
 const rateLimitConfigs = {
-	signedInModelCompletion: {
+	modelCompletion: {
 		kind: 'fixed window',
 		period: HOUR,
-		rate: signedInHourlyModelCompletionLimit
-	},
-	guestModelCompletion: {
-		kind: 'fixed window',
-		period: HOUR,
-		rate: guestHourlyModelCompletionLimit
-	},
-	globalGuestModelCompletion: {
-		kind: 'fixed window',
-		period: HOUR,
-		rate: globalGuestHourlyModelCompletionLimit
+		rate: hourlyModelCompletionLimit
 	}
 } satisfies Record<string, RateLimitConfig>;
 
@@ -73,22 +61,6 @@ async function enforceLimit(
 	}
 }
 
-export async function enforceSignedInModelCompletionLimit(
-	ctx: ActionCtx,
-	userId: string
-): Promise<void> {
-	await enforceLimit(ctx, 'signedInModelCompletion', userId, 'Signed-in model completion limit');
-}
-
-export async function enforceGuestModelCompletionLimit(
-	ctx: ActionCtx,
-	userId: string
-): Promise<void> {
-	await enforceLimit(ctx, 'guestModelCompletion', userId, 'Guest model completion limit');
-	await enforceLimit(
-		ctx,
-		'globalGuestModelCompletion',
-		'all-guests',
-		'Global guest model completion limit'
-	);
+export async function enforceModelCompletionLimit(ctx: ActionCtx, userId: string): Promise<void> {
+	await enforceLimit(ctx, 'modelCompletion', userId, 'Model completion limit');
 }

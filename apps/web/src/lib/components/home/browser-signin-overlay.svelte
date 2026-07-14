@@ -7,9 +7,10 @@
 		signInUrl: string | null;
 		error?: string | null;
 		onCancel: () => void;
+		onClearOpenError?: () => void;
 	};
 
-	let { open, signInUrl, error = null, onCancel }: Props = $props();
+	let { open, signInUrl, error = null, onCancel, onClearOpenError }: Props = $props();
 
 	let copied = $state(false);
 	let copyError = $state<string | null>(null);
@@ -115,8 +116,36 @@
 			return;
 		}
 
-		window.open(signInUrl, '_blank', 'noopener,noreferrer');
+		// Don't pass noopener in features — browsers then return null even on success.
+		const opened = window.open(signInUrl, '_blank');
+		if (!opened) {
+			return;
+		}
+		try {
+			opened.opener = null;
+		} catch {
+			// Best-effort isolation if the browser rejects opener writes.
+		}
+		onClearOpenError?.();
 	}
+
+	const overlayCopy = $derived(
+		!signInUrl
+			? {
+					title: 'Preparing sign-in',
+					description: 'Preparing a secure sign-in link. This usually takes a moment.'
+				}
+			: error
+				? {
+						title: 'Open the sign-in link',
+						description: 'Your browser didn’t open automatically. Continue with the options below.'
+					}
+				: {
+						title: 'Finish signing in',
+						description:
+							'We opened your browser to complete sign-in. Waiting for you to finish there.'
+					}
+	);
 </script>
 
 {#if open}
@@ -135,20 +164,25 @@
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby="browser-signin-title"
+			aria-describedby="browser-signin-desc"
 			tabindex="-1"
 		>
 			<div class="flex flex-col items-center gap-4 px-10 pt-10 pb-7 text-center">
 				<span
 					class="flex size-16 items-center justify-center rounded-full border border-sky-400/25 bg-sky-400/10 text-sky-200"
 				>
-					<LoaderCircle class="size-7 animate-spin" />
+					{#if error && signInUrl}
+						<ExternalLink class="size-7" aria-hidden="true" />
+					{:else}
+						<LoaderCircle class="size-7 animate-spin" aria-hidden="true" />
+					{/if}
 				</span>
 				<div>
 					<h2 id="browser-signin-title" class="text-xl font-semibold text-white">
-						Finish signing in
+						{overlayCopy.title}
 					</h2>
-					<p class="mt-2 text-sm leading-6 text-slate-400">
-						We opened your browser to complete sign-in. Waiting for you to finish there.
+					<p id="browser-signin-desc" class="mt-2 text-sm leading-6 text-slate-400">
+						{overlayCopy.description}
 					</p>
 				</div>
 			</div>
@@ -161,13 +195,16 @@
 				>
 					{signInUrl ?? 'Preparing secure sign-in link…'}
 				</p>
-				<p class="mt-3 text-[13px] leading-5 text-slate-500">
-					If your browser did not open automatically, use the buttons below.
-				</p>
+				{#if signInUrl && !error}
+					<p class="mt-3 text-[13px] leading-5 text-slate-500">
+						If your browser did not open automatically, use the buttons below.
+					</p>
+				{/if}
 
 				{#if error}
 					<p
 						class="mt-4 rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-[13px] text-rose-200"
+						role="alert"
 					>
 						{error}
 					</p>
@@ -175,6 +212,7 @@
 				{#if copyError}
 					<p
 						class="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-[13px] text-amber-100"
+						role="alert"
 					>
 						{copyError}
 					</p>
@@ -188,14 +226,14 @@
 						class="flex h-11 flex-1 items-center justify-center gap-2 rounded-full bg-sky-500/90 px-4 text-sm font-medium text-white transition hover:bg-sky-500"
 						onclick={openSignInUrl}
 					>
-						<ExternalLink class="size-4" />
+						<ExternalLink class="size-4" aria-hidden="true" />
 						Open browser
 					</button>
 				{:else}
 					<span
 						class="flex h-11 flex-1 items-center justify-center gap-2 rounded-full bg-sky-500/40 px-4 text-sm font-medium text-white/50"
 					>
-						<LoaderCircle class="size-4 animate-spin" />
+						<LoaderCircle class="size-4 animate-spin" aria-hidden="true" />
 						Preparing link
 					</span>
 				{/if}
@@ -206,10 +244,10 @@
 					onclick={() => void copySignInUrl()}
 				>
 					{#if copied}
-						<Check class="size-4" />
+						<Check class="size-4" aria-hidden="true" />
 						Copied
 					{:else}
-						<Copy class="size-4" />
+						<Copy class="size-4" aria-hidden="true" />
 						Copy link
 					{/if}
 				</button>

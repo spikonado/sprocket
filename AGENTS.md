@@ -52,6 +52,7 @@ Specifically for gpt-5.6-sol: You often end up writing more code than needed, es
 - Feel free to commit, branch, and spin up worktrees as you please. Don't push before asking.
 - Do the deep dives and figure out what needs to be done and delegate the rest accordingly to subagents.
 - Always use subagents to write the code.
+- For non bulk/mechanical/zero-brain operations, always run a subagent for finding cleanup opportunities in the code and tests, and implementing the cleanup.
 - For non bulk/mechanical/zero-brain operations, always get 2 subagents to review the code before considering your work done. One of those agents must have >=8 intelligence and review the code overall, the other must have >=7 taste and review the UI/UX, API design, and code quality parts.
 - When getting code reviewed by subagents in a loop, use gpt-5.6-sol as the review subagent for a max of 3 reviews. After this, rely on some other model for the review subagent.
 
@@ -60,7 +61,7 @@ Specifically for gpt-5.6-sol: You often end up writing more code than needed, es
 - Unless very specifically requested, PRs should be made only against the default branch.
 - After a PR is made, don't perform any code review using subagents, let Greptile review the code.
 
-1. When requested, push code and make a PR
+1. When requested, push code and make a PR. The PR title should have the same format as past PR titles. Ensure that your branch is updated with the latest main.
 2. Wait for the Greptile AI code review CI to complete and give its review on your changes.
 3. Fix any relevant issues found by it:
    - These can be inline comments on the PR or somewhere above "Important Files Changed" in the PR description.
@@ -86,14 +87,14 @@ To subagents:
 - Higher rankings = better. (higher ranking on the costs indicates lower cost of the model)
 - Cost reflects what the model costs me from subscriptions, credits, tokens it uses, etc. not its actual list price.
 - Intelligence shows how hard of a problem you can hand the model unsupervised.
-- Taste covers UI/UX, code quality, and API design.
+- Taste covers UI/UX, code quality, code cleanup ability, and API design.
 
-| model         | cost | intelligence | taste | reasoning to use | CLI to use                  |
-| ------------- | ---- | ------------ | ----- | ---------------- | --------------------------- |
-| gpt-5.6-sol   | 8    | 9            | 6     | high             | codex                       |
-| fable-5       | 5    | 8            | 9     | high             | claude-code or cursor-agent |
-| gpt-5.6-terra | 9    | 7            | 5     | high             | codex                       |
-| grok-4.5      | 10   | 6            | 7     | high, fast       | cursor-agent                |
+| model         | cost | intelligence | taste | reasoning to use | CLI to use             |
+| ------------- | ---- | ------------ | ----- | ---------------- | ---------------------- |
+| gpt-5.6-sol   | 8    | 9            | 6     | low, medium      | codex                  |
+| fable-5       | 5    | 8            | 9     | low, medium      | claude or cursor-agent |
+| gpt-5.6-terra | 9    | 7            | 5     | high             | codex                  |
+| grok-4.5      | 10   | 6            | 7     | high, fast       | cursor-agent           |
 
 How to apply:
 
@@ -101,6 +102,6 @@ How to apply:
 - If you have a tool available for spawning subagents, never use that. Instead use the CLI of a specific coding agent harness directly.
 - If a cheaper model's output doesn't meet the bar, rerun/redo the work with a better model without asking.
 - Intelligence > taste > cost for actual work.
-- The final output's quality is way more important than how much it costed. It costs much more to redo work than to do it right the first try.
+- The final output's quality is way more important than how much it costed. It costs much more to redo work than to do it right the first try. That doesn't mean the model with the highest metrics needs to be used for every task, the best models should be used for really hard long-running tasks.
 - For bulk/mechanical/zero-brain operations, always use the cheapest model first and only switch to a better model if the output doesn't meet the bar.
 - For user-facing UI/UX and APIs, use a model with good taste (>=7). If making those UIs/APIs is highly complicated, get a model with higher intelligence to complete the work after the core UI/API has been decided by the model with good taste.
