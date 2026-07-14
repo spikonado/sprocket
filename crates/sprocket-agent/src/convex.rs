@@ -4,7 +4,7 @@ use serde::Deserialize;
 use sprocket_convex_provider::Client as ConvexProviderClient;
 use std::collections::BTreeMap;
 
-use crate::types::{CreateRunResponse, RunAgentRequest, RunContextResponse};
+use crate::types::{CreateRunResponse, RunAgentRequest, RunContextResponse, StartRunResponse};
 
 #[derive(Clone)]
 pub(crate) struct RuntimeClient {
@@ -76,6 +76,10 @@ impl RuntimeClient {
         request: &RunAgentRequest,
     ) -> anyhow::Result<CreateRunResponse> {
         let mut args = self.args_with_actor();
+        args.insert(
+            "submissionId".to_string(),
+            request.submission_id.clone().into(),
+        );
         args.insert("threadId".to_string(), request.thread_id.clone().into());
         args.insert("prompt".to_string(), request.prompt.clone().into());
         args.insert(
@@ -89,9 +93,14 @@ impl RuntimeClient {
         self.mutation_json("agentRuntime:createRun", args).await
     }
 
-    pub(crate) async fn start_run(&self, run_id: &str) -> anyhow::Result<()> {
-        self.mutation_unit("agentRuntime:start", self.run_args(run_id))
-            .await
+    pub(crate) async fn start_run(
+        &self,
+        run_id: &str,
+        claim_id: &str,
+    ) -> anyhow::Result<StartRunResponse> {
+        let mut args = self.run_args(run_id);
+        args.insert("claimId".to_string(), claim_id.to_string().into());
+        self.mutation_json("agentRuntime:start", args).await
     }
 
     pub(crate) async fn begin_assistant_message(&self, run_id: &str) -> anyhow::Result<()> {

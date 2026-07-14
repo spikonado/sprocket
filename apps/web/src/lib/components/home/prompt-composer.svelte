@@ -13,6 +13,7 @@
 		selectedReasoningEffort?: SupportedReasoningEffort;
 		canSend: boolean;
 		isSubmitting: boolean;
+		isStarting: boolean;
 		isRunning: boolean;
 		elapsedLabel: string | null;
 		onSubmit: () => void;
@@ -25,6 +26,7 @@
 		selectedReasoningEffort = $bindable(defaultReasoningEffort),
 		canSend,
 		isSubmitting,
+		isStarting,
 		isRunning,
 		elapsedLabel,
 		onSubmit,
@@ -93,6 +95,15 @@
 					></span>
 				</span>
 				<span>Working for {elapsedLabel}</span>
+			</div>
+		{:else if isSubmitting}
+			<div
+				class="mb-3 flex items-center gap-2 px-4 text-[11px] text-slate-400"
+				role="status"
+				aria-live="polite"
+			>
+				<span class="size-1.5 animate-pulse rounded-full bg-white/28"></span>
+				<span>{isStarting ? 'Starting agent…' : 'Sending request…'}</span>
 			</div>
 		{/if}
 

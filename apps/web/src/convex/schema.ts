@@ -30,6 +30,7 @@ export default defineSchema({
 		.index('by_user_workspaceName', ['userId', 'workspaceName']),
 	threadRecords: defineTable({
 		userId: v.string(),
+		submissionId: v.optional(v.string()),
 		workspaceSessionId: v.id('workspaceSessions'),
 		title: v.optional(v.string()),
 		selectedModel: vModelId,
@@ -37,12 +38,15 @@ export default defineSchema({
 		lastMessageAt: v.number()
 	})
 		.index('by_userId_lastMessageAt', ['userId', 'lastMessageAt'])
+		.index('by_userId_submissionId', ['userId', 'submissionId'])
 		.index('by_workspaceSessionId', ['workspaceSessionId']),
 	runs: defineTable({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
+		submissionId: v.optional(v.string()),
 		workspaceSessionId: v.id('workspaceSessions'),
 		status: vRunStatus,
+		claimId: v.optional(v.string()),
 		selectedModel: vModelId,
 		reasoningEffort: vReasoningEffort,
 		startedAt: v.number(),
@@ -53,6 +57,7 @@ export default defineSchema({
 		responseMessageId: v.optional(v.id('threadMessages'))
 	})
 		.index('by_threadId_startedAt', ['threadId', 'startedAt'])
+		.index('by_userId_submissionId', ['userId', 'submissionId'])
 		.index('by_workspaceSessionId', ['workspaceSessionId'])
 		.index('by_userId_startedAt', ['userId', 'startedAt']),
 	threadMessages: defineTable({

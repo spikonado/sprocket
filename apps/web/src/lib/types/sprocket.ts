@@ -69,6 +69,7 @@ export type ThreadSummary = {
 	lastMessageAt: number;
 	threadStatus: 'active' | 'archived';
 	latestRunStatus: RunState['status'] | null;
+	latestRunId: Id<'runs'> | null;
 	latestRunStartedAt?: number;
 	hasActiveRun: boolean;
 };
@@ -138,6 +139,7 @@ export type ThreadMessage = {
 export type AgentRunRequest = {
 	authToken?: string;
 	guestId?: string;
+	submissionId: string;
 	threadId: Id<'threadRecords'>;
 	prompt: string;
 	selectedModel: Infer<typeof vModelId>;

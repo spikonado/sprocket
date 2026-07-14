@@ -7,6 +7,7 @@ import { isRunFinalStatus, vModelId, vReasoningEffort } from '@convex/lib/valida
 export const create = mutation({
 	args: {
 		guestId: v.optional(v.string()),
+		submissionId: v.string(),
 		workspaceSessionId: v.id('workspaceSessions'),
 		selectedModel: vModelId,
 		reasoningEffort: vReasoningEffort
@@ -14,10 +15,28 @@ export const create = mutation({
 	handler: async (ctx, args) => {
 		const userId: string = await getUserId(ctx, args.guestId);
 		await getOwnedWorkspaceSession(ctx.db, userId, args.workspaceSessionId);
+		const existingRecord = await ctx.db
+			.query('threadRecords')
+			.withIndex('by_userId_submissionId', (query) =>
+				query.eq('userId', userId).eq('submissionId', args.submissionId)
+			)
+			.unique();
+		if (existingRecord) {
+			if (
+				existingRecord.workspaceSessionId !== args.workspaceSessionId ||
+				existingRecord.selectedModel !== args.selectedModel ||
+				existingRecord.reasoningEffort !== args.reasoningEffort
+			) {
+				throw new Error('Submission settings do not match the existing thread.');
+			}
+
+			return { threadId: existingRecord._id };
+		}
 
 		const now = Date.now();
 		const recordId = await ctx.db.insert('threadRecords', {
 			userId: userId,
+			submissionId: args.submissionId,
 			workspaceSessionId: args.workspaceSessionId,
 			selectedModel: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
@@ -64,6 +83,7 @@ export const listMine = query({
 					threadStatus: 'active',
 					workspaceName: workspaceSession?.workspaceName ?? 'Unknown workspace',
 					latestRunStatus: latestRun?.status ?? null,
+					latestRunId: latestRun?._id ?? null,
 					latestRunStartedAt: latestRun?.startedAt,
 					hasActiveRun: latestRun ? !isRunFinalStatus(latestRun.status) : false
 				};

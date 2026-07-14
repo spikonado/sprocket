@@ -33,6 +33,7 @@ import {
 export const createRun = mutation({
 	args: {
 		guestId: v.optional(v.string()),
+		submissionId: v.string(),
 		threadId: v.id('threadRecords'),
 		prompt: v.string(),
 		selectedModel: vModelId,
@@ -42,6 +43,7 @@ export const createRun = mutation({
 		ctx,
 		args
 	): Promise<{
+		created: boolean;
 		runId: Id<'runs'>;
 		promptMessageId: Id<'threadMessages'>;
 	}> => {
@@ -51,6 +53,37 @@ export const createRun = mutation({
 			userId,
 			args.threadId
 		);
+		const prompt: string = args.prompt.trim();
+		if (!prompt) {
+			throw new Error('Prompt cannot be empty.');
+		}
+
+		const existingRun: Doc<'runs'> | null = await ctx.db
+			.query('runs')
+			.withIndex('by_userId_submissionId', (query) =>
+				query.eq('userId', userId).eq('submissionId', args.submissionId)
+			)
+			.unique();
+		if (existingRun) {
+			if (
+				existingRun.threadId !== args.threadId ||
+				existingRun.selectedModel !== args.selectedModel ||
+				existingRun.reasoningEffort !== args.reasoningEffort ||
+				!existingRun.promptMessageId
+			) {
+				throw new Error('Submission belongs to a different or incomplete run.');
+			}
+			const existingPrompt = await ctx.db.get(existingRun.promptMessageId);
+			if (!existingPrompt || existingPrompt.text !== prompt) {
+				throw new Error('Submission prompt does not match the existing run.');
+			}
+
+			return {
+				created: false,
+				runId: existingRun._id,
+				promptMessageId: existingRun.promptMessageId
+			};
+		}
 		const latestRun: Doc<'runs'> | null = await ctx.db
 			.query('runs')
 			.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', args.threadId))
@@ -58,14 +91,10 @@ export const createRun = mutation({
 			.first();
 		assertThreadCanStartRun(latestRun?.status);
 
-		const prompt: string = args.prompt.trim();
-		if (!prompt) {
-			throw new Error('Prompt cannot be empty.');
-		}
-
 		const runId: Id<'runs'> = await ctx.db.insert('runs', {
 			threadId: args.threadId,
 			userId,
+			submissionId: args.submissionId,
 			workspaceSessionId: threadRecord.workspaceSessionId,
 			status: 'queued',
 			selectedModel: args.selectedModel,
@@ -89,6 +118,7 @@ export const createRun = mutation({
 		});
 
 		return {
+			created: true,
 			runId,
 			promptMessageId
 		};
@@ -98,25 +128,26 @@ export const createRun = mutation({
 export const start = mutation({
 	args: {
 		guestId: v.optional(v.string()),
+		claimId: v.string(),
 		runId: v.id('runs')
 	},
-	handler: async (ctx, args): Promise<Doc<'runs'>> => {
+	handler: async (ctx, args): Promise<{ claimed: boolean }> => {
 		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
-		if (isRunFinalStatus(run.status) || run.status !== 'queued') {
-			return run;
+		if (run.status === 'running') {
+			return { claimed: run.claimId === args.claimId };
+		}
+		if (run.status !== 'queued') {
+			return { claimed: false };
 		}
 
 		await ctx.db.patch(args.runId, {
+			claimId: args.claimId,
 			status: 'running',
 			lastError: undefined
 		});
 
-		return {
-			...run,
-			status: 'running',
-			lastError: undefined
-		};
+		return { claimed: true };
 	}
 });
 

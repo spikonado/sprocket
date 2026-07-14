@@ -3,6 +3,7 @@ use sprocket_workspace::{
     WorkspaceInstruction, WorkspaceOverview, build_workspace_overview, load_workspace_instructions,
     resolve_workspace_root,
 };
+use uuid::Uuid;
 
 use crate::RunContextResponse;
 use crate::convex::RuntimeClient;
@@ -166,29 +167,70 @@ async fn finalize_provider_result(
     }
 }
 
+async fn claim_run(runtime: &RuntimeClient, run_id: &str, claim_id: &str) -> anyhow::Result<bool> {
+    let start = match runtime.start_run(run_id, claim_id).await {
+        Ok(start) => start,
+        Err(first_error) => {
+            eprintln!(
+                "sprocket-agent: claim attempt failed for run {}; retrying with the same claim: {}",
+                run_id, first_error
+            );
+            runtime
+                .start_run(run_id, claim_id)
+                .await
+                .map_err(|retry_error| {
+                    anyhow!(
+                        "failed to claim run {run_id} after retry: {retry_error}; initial attempt failed: {first_error}"
+                    )
+                })?
+        }
+    };
+    if !start.claimed {
+        eprintln!("sprocket-agent: run {} already claimed or finished", run_id);
+        return Ok(false);
+    }
+
+    eprintln!("sprocket-agent: marked run running {}", run_id);
+    Ok(true)
+}
+
 pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
     eprintln!("sprocket-agent: starting thread {}", request.thread_id);
+    let claim_id = Uuid::new_v4().to_string();
     let runtime: RuntimeClient = RuntimeClient::from_request(&request).await?;
     let workspace_root = resolve_workspace_root(&request.workspace_path)?;
 
     let created_run = runtime.create_run(&request).await?;
+    if created_run.created {
+        eprintln!("sprocket-agent: created run {}", created_run.run_id);
+    } else {
+        eprintln!(
+            "sprocket-agent: resuming submission {} as run {}",
+            request.submission_id, created_run.run_id
+        );
+    }
     let run_id = created_run.run_id;
-    eprintln!("sprocket-agent: created run {}", run_id);
 
     let context: RunContextResponse = match runtime.run_context(&run_id).await {
         Ok(context) => context,
         Err(error) => {
-            fail_run_early(&runtime, &run_id, &error).await?;
-            return Err(error);
+            return match claim_run(&runtime, &run_id, &claim_id).await {
+                Ok(true) => {
+                    fail_run_early(&runtime, &run_id, &error).await?;
+                    Err(error)
+                }
+                Ok(false) => Ok(()),
+                Err(start_error) => {
+                    eprintln!(
+                        "sprocket-agent: failed to load context for run {}; claim outcome is uncertain: {}",
+                        run_id, start_error
+                    );
+                    Err(start_error)
+                }
+            };
         }
     };
     eprintln!("sprocket-agent: loaded run context {}", run_id);
-
-    if let Err(error) = runtime.start_run(&run_id).await {
-        fail_run_early(&runtime, &run_id, &error).await?;
-        return Err(error);
-    }
-    eprintln!("sprocket-agent: marked run running {}", run_id);
 
     let prepared = (|| {
         let workspace_overview = build_workspace_overview(&workspace_root)?;
@@ -217,10 +259,26 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
     let (_, _, prompt, provider, prior_history, preamble) = match prepared {
         Ok(values) => values,
         Err(error) => {
-            fail_run_setup(&runtime, &run_id, &error).await?;
-            return Err(error);
+            return match claim_run(&runtime, &run_id, &claim_id).await {
+                Ok(true) => {
+                    fail_run_setup(&runtime, &run_id, &error).await?;
+                    Err(error)
+                }
+                Ok(false) => Ok(()),
+                Err(start_error) => {
+                    eprintln!(
+                        "sprocket-agent: failed to prepare run {}; claim outcome is uncertain: {}",
+                        run_id, start_error
+                    );
+                    Err(start_error)
+                }
+            };
         }
     };
+
+    if !claim_run(&runtime, &run_id, &claim_id).await? {
+        return Ok(());
+    }
 
     eprintln!(
         "sprocket-agent: selected provider {} for run {}",

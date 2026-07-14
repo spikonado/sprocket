@@ -1,6 +1,4 @@
-import { api } from '$convex/_generated/api';
 import type { Id } from '$convex/_generated/dataModel';
-import type { FunctionArgs, FunctionReference, FunctionReturnType } from 'convex/server';
 import type {
 	AgentRunRequest,
 	DesktopApi,
@@ -9,12 +7,6 @@ import type {
 	WorkspaceSessionAttachment,
 	WorkspaceSessionLocation
 } from '$lib/types/sprocket';
-
-type MutationFunction<Mutation extends FunctionReference<'mutation'>> = (
-	args: FunctionArgs<Mutation>
-) => Promise<FunctionReturnType<Mutation>>;
-
-type HeartbeatAttachedMutation = MutationFunction<typeof api.workspaceSessions.heartbeatAttached>;
 
 export type ViewerArgs = {
 	guestId?: string;
@@ -29,6 +21,36 @@ export function getViewerArgs(
 	guestSessionId: string | null
 ): ViewerArgs {
 	return !authenticatedUser && guestSessionId ? { guestId: guestSessionId } : {};
+}
+
+export function getViewerIdentity(
+	authenticatedUser: { id: string } | null | undefined,
+	guestSessionId: string | null
+): string | null {
+	if (authenticatedUser) {
+		return `user:${authenticatedUser.id}`;
+	}
+
+	return guestSessionId ? `guest:${guestSessionId}` : null;
+}
+
+export function resolveSubmissionId(args: {
+	newSubmissionId: string;
+	prompt: string;
+	reasoningEffort: AgentRunRequest['reasoningEffort'];
+	recoveredSubmission?: {
+		prompt: string;
+		reasoningEffort: AgentRunRequest['reasoningEffort'];
+		selectedModel: AgentRunRequest['selectedModel'];
+		submissionId: string;
+	};
+	selectedModel: AgentRunRequest['selectedModel'];
+}) {
+	return args.recoveredSubmission?.prompt === args.prompt &&
+		args.recoveredSubmission.selectedModel === args.selectedModel &&
+		args.recoveredSubmission.reasoningEffort === args.reasoningEffort
+		? args.recoveredSubmission.submissionId
+		: args.newSubmissionId;
 }
 
 export function getViewerQueryArgs(args: {
@@ -51,22 +73,24 @@ export function getViewerQueryArgs(args: {
 export function launchAgentRun(args: {
 	authToken?: string;
 	desktopApi: DesktopApi;
-	getViewerArgs: () => ViewerArgs;
 	onError: (error: unknown) => void;
 	threadId: Id<'threadRecords'>;
 	prompt: string;
 	selectedModel: AgentRunRequest['selectedModel'];
 	reasoningEffort: AgentRunRequest['reasoningEffort'];
+	submissionId: string;
+	viewerArgs: ViewerArgs;
 	workspaceSessionId: Id<'workspaceSessions'>;
 }) {
 	void args.desktopApi
 		.runAgent({
 			...(args.authToken ? { authToken: args.authToken } : {}),
-			...args.getViewerArgs(),
+			...args.viewerArgs,
 			threadId: args.threadId,
 			prompt: args.prompt,
 			selectedModel: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
+			submissionId: args.submissionId,
 			workspaceSessionId: args.workspaceSessionId
 		})
 		.catch((error) => {
@@ -105,51 +129,104 @@ export async function attachLocalWorkspaceSession(args: {
 	} satisfies WorkspaceSessionAttachment);
 }
 
-export async function syncAttachedWorkspaceSessions(args: {
-	attachedWorkspaceSessionIds: Id<'workspaceSessions'>[];
-	executorClientId: string | null;
-	getViewerArgs: () => ViewerArgs;
-	heartbeatAttached: HeartbeatAttachedMutation;
-	workspaceSessionIds: Id<'workspaceSessions'>[];
-}) {
-	if (!args.executorClientId) {
-		return;
-	}
-
-	const attachedSessionIds = [
-		...new Set([...args.attachedWorkspaceSessionIds, ...args.workspaceSessionIds])
-	];
-
-	await args.heartbeatAttached({
-		...args.getViewerArgs(),
-		clientId: args.executorClientId,
-		workspaceSessionIds: attachedSessionIds
-	});
+export function getDesiredAttachedWorkspaceSessionIds(
+	desktopWorkspaceSessions: WorkspaceSessionLocation[],
+	backendWorkspaceSessionIds: Id<'workspaceSessions'>[]
+): Id<'workspaceSessions'>[] {
+	const backendWorkspaceSessionIdSet = new Set(backendWorkspaceSessionIds);
+	return desktopWorkspaceSessions
+		.filter(
+			(workspaceSession) =>
+				workspaceSession.availability === 'available' &&
+				backendWorkspaceSessionIdSet.has(workspaceSession.workspaceSessionId)
+		)
+		.map((workspaceSession) => workspaceSession.workspaceSessionId);
 }
 
-export async function attachWorkspaceSession(args: {
-	attachedWorkspaceSessionIds: Id<'workspaceSessions'>[];
+type PendingLatestTask<T> = {
+	value: T;
+	promise: Promise<void>;
+	resolve: () => void;
+	reject: (error: unknown) => void;
+};
+
+export class LatestTaskQueueCancelledError extends Error {
+	constructor() {
+		super('Pending task was canceled.');
+		this.name = 'LatestTaskQueueCancelledError';
+	}
+}
+
+export function createLatestTaskQueue<T>(run: (value: T) => Promise<void>) {
+	let pending: PendingLatestTask<T> | null = null;
+	let isRunning = false;
+
+	async function drain() {
+		if (isRunning) {
+			return;
+		}
+
+		isRunning = true;
+		try {
+			while (pending) {
+				const task = pending;
+				pending = null;
+				try {
+					await run(task.value);
+					task.resolve();
+				} catch (error) {
+					task.reject(error);
+				}
+			}
+		} finally {
+			isRunning = false;
+			if (pending) {
+				void drain();
+			}
+		}
+	}
+
+	return {
+		enqueue(value: T): Promise<void> {
+			if (pending) {
+				pending.value = value;
+				return pending.promise;
+			}
+
+			let resolveTask!: () => void;
+			let rejectTask!: (error: unknown) => void;
+			const promise = new Promise<void>((resolve, reject) => {
+				resolveTask = resolve;
+				rejectTask = reject;
+			});
+			pending = { value, promise, resolve: resolveTask, reject: rejectTask };
+			void drain();
+			return promise;
+		},
+		cancelPending() {
+			if (!pending) {
+				return;
+			}
+
+			const task = pending;
+			pending = null;
+			task.reject(new LatestTaskQueueCancelledError());
+		}
+	};
+}
+
+export async function verifyWorkspaceSession(args: {
 	desktopApi: DesktopApi | null;
-	executorClientId: string | null;
-	getViewerArgs: () => ViewerArgs;
-	heartbeatAttached: HeartbeatAttachedMutation;
 	refreshDesktopWorkspaceSessions: () => Promise<void>;
 	workspaceSessionId: Id<'workspaceSessions'>;
 }) {
-	if (!args.desktopApi || !args.executorClientId) {
+	if (!args.desktopApi) {
 		return;
 	}
 
 	try {
 		await args.desktopApi.getWorkspaceSessionOverview(args.workspaceSessionId);
 		await args.refreshDesktopWorkspaceSessions();
-		await syncAttachedWorkspaceSessions({
-			attachedWorkspaceSessionIds: args.attachedWorkspaceSessionIds,
-			executorClientId: args.executorClientId,
-			getViewerArgs: args.getViewerArgs,
-			heartbeatAttached: args.heartbeatAttached,
-			workspaceSessionIds: [args.workspaceSessionId]
-		});
 	} catch (error) {
 		await args.refreshDesktopWorkspaceSessions();
 		throw error;

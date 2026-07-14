@@ -53,7 +53,7 @@ Specifically for gpt-5.6-sol: You often end up writing more code than needed, es
 - Do the deep dives and figure out what needs to be done and delegate the rest accordingly to subagents.
 - Always use subagents to write the code.
 - For non bulk/mechanical/zero-brain operations, always get 2 subagents to review the code before considering your work done. One of those agents must have >=8 intelligence and review the code overall, the other must have >=7 taste and review the UI/UX, API design, and code quality parts.
-- When getting code reviewed by subagents in a loop, use gpt-5.6-sol for a max of 3 reviews. After this, rely on some other model.
+- When getting code reviewed by subagents in a loop, use gpt-5.6-sol as the review subagent for a max of 3 reviews. After this, rely on some other model for the review subagent.
 
 #### PR Workflow
 
@@ -90,9 +90,9 @@ To subagents:
 
 | model         | cost | intelligence | taste | reasoning to use | CLI to use                  |
 | ------------- | ---- | ------------ | ----- | ---------------- | --------------------------- |
-| gpt-5.6-sol   | 8    | 9            | 6     | high             | codex or cursor-agent       |
+| gpt-5.6-sol   | 8    | 9            | 6     | high             | codex                       |
 | fable-5       | 5    | 8            | 9     | high             | claude-code or cursor-agent |
-| gpt-5.6-terra | 9    | 7            | 5     | high             | codex or cursor-agent       |
+| gpt-5.6-terra | 9    | 7            | 5     | high             | codex                       |
 | grok-4.5      | 10   | 6            | 7     | high, fast       | cursor-agent                |
 
 How to apply:

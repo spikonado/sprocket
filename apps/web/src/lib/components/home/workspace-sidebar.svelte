@@ -19,6 +19,7 @@
 		currentWorkspaceName: string | null;
 		currentThreadId: Id<'threadRecords'> | null;
 		groups: WorkspaceThreadGroup[];
+		pendingAgentLaunchThreadIds?: Id<'threadRecords'>[];
 		onChooseWorkspace: () => void;
 		onReconnectWorkspace: (workspaceSessionId: Id<'workspaceSessions'>) => void;
 		onAccountAction: () => void;
@@ -33,6 +34,7 @@
 		currentWorkspaceName,
 		currentThreadId,
 		groups,
+		pendingAgentLaunchThreadIds = [],
 		onChooseWorkspace,
 		onReconnectWorkspace,
 		onAccountAction,
@@ -79,6 +81,10 @@
 		}
 
 		return null;
+	}
+
+	function hasPendingAgentLaunch(threadId: Id<'threadRecords'>) {
+		return pendingAgentLaunchThreadIds.includes(threadId);
 	}
 </script>
 
@@ -233,6 +239,7 @@
 										{@const hasHiddenThreads = group.threads.length > DEFAULT_VISIBLE_THREAD_COUNT}
 										<div class="space-y-1">
 											{#each visibleThreads as thread (thread.threadId)}
+												{@const isStartingAgent = hasPendingAgentLaunch(thread.threadId)}
 												<div class="group flex items-start gap-1">
 													<button
 														type="button"
@@ -247,7 +254,12 @@
 													>
 														<div class="min-w-0 flex-1">
 															<div class="flex items-center gap-1.5">
-																{#if thread.hasActiveRun}
+																{#if isStartingAgent}
+																	<span
+																		class="shrink-0 rounded-full border border-amber-400/20 bg-amber-400/10 px-1.5 py-0.5 text-[9px] text-amber-200"
+																		aria-label="Starting agent">Starting</span
+																	>
+																{:else if thread.hasActiveRun}
 																	<span
 																		class="mt-px size-2 shrink-0 animate-pulse rounded-full bg-emerald-400"
 																		aria-label="Thread has an active run"
@@ -268,13 +280,19 @@
 																: 'opacity-0 group-hover:opacity-100 hover:border-rose-400/40 hover:bg-rose-400/10 hover:text-rose-200 focus-visible:opacity-100'
 														} disabled:cursor-not-allowed disabled:border-white/8 disabled:bg-white/3 disabled:text-slate-600 disabled:opacity-40`}
 														onclick={() => {
+															if (thread.hasActiveRun || isStartingAgent) {
+																return;
+															}
+
 															onDeleteThread(thread);
 														}}
-														disabled={thread.hasActiveRun}
+														disabled={thread.hasActiveRun || isStartingAgent}
 														aria-label={`Delete ${thread.title}`}
-														title={thread.hasActiveRun
-															? 'Finish or cancel the active run before deleting.'
-															: `Delete ${thread.title}`}
+														title={isStartingAgent
+															? 'Wait for the local agent to start before deleting.'
+															: thread.hasActiveRun
+																? 'Finish or cancel the active run before deleting.'
+																: `Delete ${thread.title}`}
 													>
 														<Trash2 class="size-3" />
 													</button>

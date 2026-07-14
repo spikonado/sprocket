@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+	createLatestTaskQueue,
+	getDesiredAttachedWorkspaceSessionIds,
+	getViewerIdentity,
 	getViewerQueryArgs,
 	launchAgentRun,
-	syncAttachedWorkspaceSessions
+	resolveSubmissionId
 } from '$lib/home/desktop';
-import type { DesktopApi } from '$lib/types/sprocket';
+import type { DesktopApi, WorkspaceSessionLocation } from '$lib/types/sprocket';
 
 function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 	return {
@@ -25,12 +28,13 @@ describe('launchAgentRun', () => {
 		launchAgentRun({
 			authToken: 'token-1',
 			desktopApi,
-			getViewerArgs: () => ({ guestId: 'guest-1' }),
 			onError: vi.fn(),
 			threadId: 'thread-1' as never,
 			prompt: 'Inspect src/lib.rs',
 			selectedModel: 'gpt-5.4',
 			reasoningEffort: 'medium',
+			submissionId: 'submission-1',
+			viewerArgs: { guestId: 'guest-1' },
 			workspaceSessionId: 'workspace-1' as never
 		});
 
@@ -40,6 +44,7 @@ describe('launchAgentRun', () => {
 			threadId: 'thread-1',
 			prompt: 'Inspect src/lib.rs',
 			selectedModel: 'gpt-5.4',
+			submissionId: 'submission-1',
 			reasoningEffort: 'medium',
 			workspaceSessionId: 'workspace-1'
 		});
@@ -52,12 +57,13 @@ describe('launchAgentRun', () => {
 
 		launchAgentRun({
 			desktopApi,
-			getViewerArgs: () => ({}),
 			onError,
 			threadId: 'thread-1' as never,
 			prompt: 'Inspect src/lib.rs',
 			selectedModel: 'gpt-5.4',
 			reasoningEffort: 'medium',
+			submissionId: 'submission-1',
+			viewerArgs: {},
 			workspaceSessionId: 'workspace-1' as never
 		});
 
@@ -65,6 +71,53 @@ describe('launchAgentRun', () => {
 		await Promise.resolve();
 
 		expect(onError).toHaveBeenCalledWith(launchError);
+	});
+});
+
+describe('getViewerIdentity', () => {
+	it('derives a stable identity from the authenticated user or guest', () => {
+		expect(getViewerIdentity({ id: 'user-1' }, 'guest-1')).toBe('user:user-1');
+		expect(getViewerIdentity(null, 'guest-1')).toBe('guest:guest-1');
+		expect(getViewerIdentity(null, null)).toBeNull();
+	});
+});
+
+describe('resolveSubmissionId', () => {
+	it('reuses an uncertain submission only when its restored prompt is unchanged', () => {
+		const recoveredSubmission = {
+			prompt: 'Inspect the robot',
+			reasoningEffort: 'medium' as const,
+			selectedModel: 'gpt-5.4' as const,
+			submissionId: 'recovered-id'
+		};
+
+		expect(
+			resolveSubmissionId({
+				newSubmissionId: 'new-id',
+				prompt: 'Inspect the robot',
+				reasoningEffort: 'medium',
+				recoveredSubmission,
+				selectedModel: 'gpt-5.4'
+			})
+		).toBe('recovered-id');
+		expect(
+			resolveSubmissionId({
+				newSubmissionId: 'new-id',
+				prompt: 'Inspect and fix the robot',
+				reasoningEffort: 'medium',
+				recoveredSubmission,
+				selectedModel: 'gpt-5.4'
+			})
+		).toBe('new-id');
+		expect(
+			resolveSubmissionId({
+				newSubmissionId: 'new-id',
+				prompt: 'Inspect the robot',
+				reasoningEffort: 'high',
+				recoveredSubmission,
+				selectedModel: 'gpt-5.4'
+			})
+		).toBe('new-id');
 	});
 });
 
@@ -110,22 +163,106 @@ describe('getViewerQueryArgs', () => {
 	});
 });
 
-describe('syncAttachedWorkspaceSessions', () => {
-	it('combines existing and newly attached sessions through the injected mutation', async () => {
-		const heartbeatAttached = vi.fn().mockResolvedValue(undefined);
-
-		await syncAttachedWorkspaceSessions({
-			attachedWorkspaceSessionIds: ['workspace-1' as never],
-			executorClientId: 'client-1',
-			getViewerArgs: () => ({ guestId: 'guest-1' }),
-			heartbeatAttached,
-			workspaceSessionIds: ['workspace-1' as never, 'workspace-2' as never]
+describe('createLatestTaskQueue', () => {
+	it('settles coalesced requests with the retained latest write', async () => {
+		const releases: Array<() => void> = [];
+		const values: string[] = [];
+		const queue = createLatestTaskQueue(async (value: string) => {
+			values.push(value);
+			await new Promise<void>((resolve) => releases.push(resolve));
 		});
 
-		expect(heartbeatAttached).toHaveBeenCalledWith({
-			guestId: 'guest-1',
-			clientId: 'client-1',
-			workspaceSessionIds: ['workspace-1', 'workspace-2']
+		const first = queue.enqueue('old-viewer');
+		const superseded = queue.enqueue('superseded');
+		const latest = queue.enqueue('new-viewer');
+		expect(superseded).toBe(latest);
+		let coalescedSettled = false;
+		void superseded.then(() => {
+			coalescedSettled = true;
 		});
+
+		expect(values).toEqual(['old-viewer']);
+		releases.shift()?.();
+		await first;
+		expect(values).toEqual(['old-viewer', 'new-viewer']);
+		expect(coalescedSettled).toBe(false);
+		releases.shift()?.();
+		await Promise.all([superseded, latest]);
+		expect(coalescedSettled).toBe(true);
+	});
+
+	it('rejects every coalesced request when the retained latest write fails', async () => {
+		let releaseFirst: (() => void) | undefined;
+		const writeError = new Error('offline');
+		const values: string[] = [];
+		const queue = createLatestTaskQueue(async (value: string) => {
+			values.push(value);
+			if (value === 'first') {
+				await new Promise<void>((resolve) => {
+					releaseFirst = resolve;
+				});
+				return;
+			}
+
+			throw writeError;
+		});
+		const first = queue.enqueue('first');
+		const superseded = queue.enqueue('superseded');
+		const latest = queue.enqueue('latest');
+		const supersededFailure = expect(superseded).rejects.toBe(writeError);
+		const latestFailure = expect(latest).rejects.toBe(writeError);
+
+		releaseFirst?.();
+		await first;
+		await Promise.all([supersededFailure, latestFailure]);
+		expect(values).toEqual(['first', 'latest']);
+	});
+
+	it('cancels pending requests without affecting an in-flight write', async () => {
+		let releaseFirst: (() => void) | undefined;
+		const values: string[] = [];
+		const queue = createLatestTaskQueue(async (value: string) => {
+			values.push(value);
+			if (value === 'first') {
+				await new Promise<void>((resolve) => {
+					releaseFirst = resolve;
+				});
+			}
+		});
+		const first = queue.enqueue('first');
+		const superseded = queue.enqueue('superseded');
+		const latest = queue.enqueue('latest');
+		const supersededCancellation = expect(superseded).rejects.toThrow('Pending task was canceled.');
+		const latestCancellation = expect(latest).rejects.toThrow('Pending task was canceled.');
+
+		queue.cancelPending();
+		await Promise.all([supersededCancellation, latestCancellation]);
+		expect(values).toEqual(['first']);
+		const replacement = queue.enqueue('replacement');
+		releaseFirst?.();
+		await Promise.all([first, replacement]);
+		expect(values).toEqual(['first', 'replacement']);
+	});
+});
+
+describe('getDesiredAttachedWorkspaceSessionIds', () => {
+	it('includes only locally available sessions belonging to the current viewer', () => {
+		const location = (
+			workspaceSessionId: string,
+			availability: WorkspaceSessionLocation['availability'] = 'available'
+		): WorkspaceSessionLocation => ({
+			workspaceSessionId: workspaceSessionId as never,
+			workspacePath: `/workspaces/${workspaceSessionId}`,
+			availability,
+			lastValidatedAt: 1,
+			lastUsedAt: 1
+		});
+
+		expect(
+			getDesiredAttachedWorkspaceSessionIds(
+				[location('local'), location('old-viewer'), location('confirmed', 'unavailable')],
+				['local' as never, 'confirmed' as never]
+			)
+		).toEqual(['local']);
 	});
 });

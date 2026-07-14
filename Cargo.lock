@@ -2911,6 +2911,7 @@ dependencies = [
  "sprocket-workspace",
  "thiserror",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
