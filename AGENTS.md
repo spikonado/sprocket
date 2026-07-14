@@ -89,12 +89,12 @@ To subagents:
 - Intelligence shows how hard of a problem you can hand the model unsupervised.
 - Taste covers UI/UX, code quality, code cleanup ability, and API design.
 
-| model         | cost | intelligence | taste | reasoning to use | CLI to use                  |
-| ------------- | ---- | ------------ | ----- | ---------------- | --------------------------- |
-| gpt-5.6-sol   | 8    | 9            | 6     | low, medium      | codex                       |
-| fable-5       | 5    | 8            | 9     | low, medium      | claude-code or cursor-agent |
-| gpt-5.6-terra | 9    | 7            | 5     | high             | codex                       |
-| grok-4.5      | 10   | 6            | 7     | high, fast       | cursor-agent                |
+| model         | cost | intelligence | taste | reasoning to use | CLI to use             |
+| ------------- | ---- | ------------ | ----- | ---------------- | ---------------------- |
+| gpt-5.6-sol   | 8    | 9            | 6     | low, medium      | codex                  |
+| fable-5       | 5    | 8            | 9     | low, medium      | claude or cursor-agent |
+| gpt-5.6-terra | 9    | 7            | 5     | high             | codex                  |
+| grok-4.5      | 10   | 6            | 7     | high, fast       | cursor-agent           |
 
 How to apply:
 
@@ -102,6 +102,6 @@ How to apply:
 - If you have a tool available for spawning subagents, never use that. Instead use the CLI of a specific coding agent harness directly.
 - If a cheaper model's output doesn't meet the bar, rerun/redo the work with a better model without asking.
 - Intelligence > taste > cost for actual work.
-- The final output's quality is way more important than how much it costed. It costs much more to redo work than to do it right the first try.
+- The final output's quality is way more important than how much it costed. It costs much more to redo work than to do it right the first try. That doesn't mean the model with the highest metrics needs to be used for every task, the best models should be used for really hard long-running tasks.
 - For bulk/mechanical/zero-brain operations, always use the cheapest model first and only switch to a better model if the output doesn't meet the bar.
 - For user-facing UI/UX and APIs, use a model with good taste (>=7). If making those UIs/APIs is highly complicated, get a model with higher intelligence to complete the work after the core UI/API has been decided by the model with good taste.
