@@ -9,6 +9,12 @@ import { buildThreadTranscript, type ThreadTranscriptMessage } from '@convex/lib
 import { assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
 import { assertThreadCanStartRun, cancelExecutorJobsForTerminalRun } from '@convex/lib/runs';
 import {
+	canStartRunWithClaim,
+	claimExpiresAt,
+	isClaimedRunStatus,
+	isRunClaimLeaseActive
+} from '@convex/lib/runLease';
+import {
 	ensureAssistantToolPartsFromJobs,
 	joinAssistantTextParts,
 	resolveAssistantMessageText,
@@ -33,6 +39,7 @@ import {
 export const createRun = mutation({
 	args: {
 		guestId: v.optional(v.string()),
+		submissionId: v.string(),
 		threadId: v.id('threadRecords'),
 		prompt: v.string(),
 		selectedModel: vModelId,
@@ -42,6 +49,7 @@ export const createRun = mutation({
 		ctx,
 		args
 	): Promise<{
+		created: boolean;
 		runId: Id<'runs'>;
 		promptMessageId: Id<'threadMessages'>;
 	}> => {
@@ -51,6 +59,37 @@ export const createRun = mutation({
 			userId,
 			args.threadId
 		);
+		const prompt: string = args.prompt.trim();
+		if (!prompt) {
+			throw new Error('Prompt cannot be empty.');
+		}
+
+		const existingRun: Doc<'runs'> | null = await ctx.db
+			.query('runs')
+			.withIndex('by_userId_submissionId', (query) =>
+				query.eq('userId', userId).eq('submissionId', args.submissionId)
+			)
+			.unique();
+		if (existingRun) {
+			if (
+				existingRun.threadId !== args.threadId ||
+				existingRun.selectedModel !== args.selectedModel ||
+				existingRun.reasoningEffort !== args.reasoningEffort ||
+				!existingRun.promptMessageId
+			) {
+				throw new Error('Submission belongs to a different or incomplete run.');
+			}
+			const existingPrompt = await ctx.db.get(existingRun.promptMessageId);
+			if (!existingPrompt || existingPrompt.text !== prompt) {
+				throw new Error('Submission prompt does not match the existing run.');
+			}
+
+			return {
+				created: false,
+				runId: existingRun._id,
+				promptMessageId: existingRun.promptMessageId
+			};
+		}
 		const latestRun: Doc<'runs'> | null = await ctx.db
 			.query('runs')
 			.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', args.threadId))
@@ -58,14 +97,10 @@ export const createRun = mutation({
 			.first();
 		assertThreadCanStartRun(latestRun?.status);
 
-		const prompt: string = args.prompt.trim();
-		if (!prompt) {
-			throw new Error('Prompt cannot be empty.');
-		}
-
 		const runId: Id<'runs'> = await ctx.db.insert('runs', {
 			threadId: args.threadId,
 			userId,
+			submissionId: args.submissionId,
 			workspaceSessionId: threadRecord.workspaceSessionId,
 			status: 'queued',
 			selectedModel: args.selectedModel,
@@ -89,6 +124,7 @@ export const createRun = mutation({
 		});
 
 		return {
+			created: true,
 			runId,
 			promptMessageId
 		};
@@ -98,25 +134,60 @@ export const createRun = mutation({
 export const start = mutation({
 	args: {
 		guestId: v.optional(v.string()),
+		claimId: v.string(),
 		runId: v.id('runs')
 	},
-	handler: async (ctx, args): Promise<Doc<'runs'>> => {
+	handler: async (ctx, args): Promise<{ claimed: boolean; claimExpiresAt?: number }> => {
 		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
-		if (isRunFinalStatus(run.status) || run.status !== 'queued') {
-			return run;
+		const now = Date.now();
+		if (!canStartRunWithClaim(run, args.claimId, now)) {
+			return { claimed: false };
 		}
 
+		const isTakeover = isClaimedRunStatus(run.status) && run.claimId !== args.claimId;
+		const isSameClaimRenewal = isClaimedRunStatus(run.status) && run.claimId === args.claimId;
+		if (isTakeover && run.activeJobId) {
+			const activeJob = await ctx.db.get(run.activeJobId);
+			if (activeJob && (activeJob.status === 'pending' || activeJob.status === 'claimed')) {
+				await ctx.db.patch(activeJob._id, {
+					status: 'cancelled',
+					error: 'The agent worker claim expired.',
+					completedAt: now
+				});
+			}
+		}
+
+		const nextClaimExpiresAt = claimExpiresAt(now);
+
 		await ctx.db.patch(args.runId, {
-			status: 'running',
-			lastError: undefined
+			claimId: args.claimId,
+			claimExpiresAt: nextClaimExpiresAt,
+			status: isSameClaimRenewal ? run.status : 'running',
+			lastError: undefined,
+			...(isTakeover ? { activeJobId: undefined } : {})
 		});
 
-		return {
-			...run,
-			status: 'running',
-			lastError: undefined
-		};
+		return { claimed: true, claimExpiresAt: nextClaimExpiresAt };
+	}
+});
+
+export const renewClaim = mutation({
+	args: {
+		guestId: v.optional(v.string()),
+		claimId: v.string(),
+		runId: v.id('runs')
+	},
+	handler: async (ctx, args): Promise<{ renewed: boolean; claimExpiresAt?: number }> => {
+		const userId: string = await getUserId(ctx, args.guestId);
+		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
+		if (!isClaimedRunStatus(run.status) || run.claimId !== args.claimId) {
+			return { renewed: false };
+		}
+
+		const nextClaimExpiresAt = claimExpiresAt(Date.now());
+		await ctx.db.patch(run._id, { claimExpiresAt: nextClaimExpiresAt });
+		return { renewed: true, claimExpiresAt: nextClaimExpiresAt };
 	}
 });
 
@@ -350,15 +421,26 @@ export const mergeAssistantStreamEvents = mutation({
 
 export const finalizeRun = mutation({
 	args: {
+		expectedStatus: v.optional(vRunStatus),
+		expectedClaimId: v.optional(v.string()),
 		guestId: v.optional(v.string()),
 		runId: v.id('runs'),
 		text: v.string(),
 		status: vRunFinalStatus,
 		lastError: v.optional(v.string())
 	},
-	handler: async (ctx, args): Promise<void> => {
+	handler: async (ctx, args): Promise<boolean> => {
 		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
+		if (args.expectedStatus && run.status !== args.expectedStatus) {
+			return false;
+		}
+		if (
+			args.expectedClaimId &&
+			(run.claimId !== args.expectedClaimId || !isRunClaimLeaseActive(run, Date.now()))
+		) {
+			return false;
+		}
 		const alreadyFinal = isRunFinalStatus(run.status);
 		const finalStatus = alreadyFinal ? run.status : args.status;
 		const completedAt = run.completedAt ?? Date.now();
@@ -385,7 +467,7 @@ export const finalizeRun = mutation({
 			if (run.activeJobId) {
 				await ctx.db.patch(run._id, { activeJobId: undefined });
 			}
-			return;
+			return true;
 		}
 
 		const responseMessageId =
@@ -424,17 +506,20 @@ export const finalizeRun = mutation({
 		});
 		await ctx.db.patch(run._id, {
 			status: finalStatus,
+			claimExpiresAt: undefined,
 			lastError: args.lastError,
 			activeJobId: undefined,
 			completedAt,
 			responseMessageId
 		});
+		return true;
 	}
 });
 
 export const beginToolJob = mutation({
 	args: {
 		guestId: v.optional(v.string()),
+		claimId: v.string(),
 		runId: v.id('runs'),
 		kind: vExecutorJobKind,
 		callId: v.optional(v.string()),
@@ -451,6 +536,9 @@ export const beginToolJob = mutation({
 		const userId: string = await getUserId(ctx, args.guestId);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		assertRunAcceptsModelCompletion(run.status);
+		if (run.claimId !== args.claimId || !isRunClaimLeaseActive(run, Date.now())) {
+			throw new Error('Run is no longer active.');
+		}
 		const workspaceSession: Doc<'workspaceSessions'> = await getOwnedWorkspaceSession(
 			ctx.db,
 			userId,

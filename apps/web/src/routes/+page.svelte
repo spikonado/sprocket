@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { SvelteSet } from 'svelte/reactivity';
+	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import { useAuth, useMutation, useQuery } from 'convex-svelte';
 	import type { Id } from '$convex/_generated/dataModel';
 	import { api } from '$convex/_generated/api';
@@ -13,12 +13,17 @@
 	import WorkspaceSidebar from '$lib/components/home/workspace-sidebar.svelte';
 	import {
 		attachLocalWorkspaceSession as attachLocalWorkspaceSessionForPath,
-		attachWorkspaceSession as attachWorkspaceSessionForExecution,
+		createLatestTaskQueue,
+		getDesiredAttachedWorkspaceSessionIds,
 		getViewerArgs as getViewerArgsForUser,
+		getViewerIdentity,
 		getViewerQueryArgs as getViewerQueryArgsForUser,
+		isRunBlockingAgentLaunch,
 		launchAgentRun,
 		refreshDesktopWorkspaceSessions as refreshDesktopWorkspaceSessionsFromDesktop,
-		syncAttachedWorkspaceSessions as syncAttachedWorkspaceSessionsForClient,
+		resolveDraftRunSubmissionId,
+		resolveSubmissionId,
+		verifyWorkspaceSession as verifyWorkspaceSessionForExecution,
 		type WorkspaceSessionState
 	} from '$lib/home/desktop';
 	import { formatElapsedDuration } from '$lib/format';
@@ -28,15 +33,24 @@
 		type SupportedModelId,
 		type SupportedReasoningEffort
 	} from '$convex/lib/models';
+	import { isClaimedRunStatus } from '$convex/lib/runLease';
 	import {
+		beginPendingAgentLaunch,
+		clearPendingAgentLaunch,
 		dataForThread,
-		getAttachedWorkspaceSessionIds,
-		getWorkspaceThreadGroups,
 		findThreadById,
 		findWorkspaceSessionByName,
+		getThreadDeletionBlockMessage,
+		getWorkspaceThreadGroups,
+		isAgentLaunchPending,
+		isLatestRunReadyForThread,
 		isSelectionGenerationCurrent,
+		resolveExpiredAgentLaunch,
+		resolvePendingAgentLaunch,
+		resolvePendingAgentLaunchesFromThreads,
 		resolvePendingCreatedThreadId,
-		resolveWorkspaceThreadSelection
+		resolveWorkspaceThreadSelection,
+		type PendingAgentLaunches
 	} from '$lib/workspace/threads';
 	import { resolveDesktopApi } from '$lib/local/client';
 	import { resolve } from '$app/paths';
@@ -58,6 +72,28 @@
 	const setLastThread = useMutation(api.uiPreferences.setLastThread);
 	const heartbeatAttached = useMutation(api.workspaceSessions.heartbeatAttached);
 	const localServerRequiredMessage = 'Connect to a running Sprocket server to use this workspace.';
+	const agentLaunchTimeoutMs = 30_000;
+	type ComposerRecovery = {
+		message: string;
+		prompt: string;
+		reasoningEffort?: SupportedReasoningEffort;
+		selectedModel?: SupportedModelId;
+		submissionId?: string;
+		viewerIdentity: string;
+	};
+	const workspaceAttachmentHeartbeatQueue = createLatestTaskQueue(
+		async (request: {
+			clientId: string;
+			viewerArgs: ReturnType<typeof getViewerArgsForUser>;
+			workspaceSessionIds: Id<'workspaceSessions'>[];
+		}) => {
+			await heartbeatAttached({
+				...request.viewerArgs,
+				clientId: request.clientId,
+				workspaceSessionIds: request.workspaceSessionIds
+			});
+		}
+	);
 
 	let desktopApi = $state<DesktopApi | null>(null);
 	let currentWorkspaceName = $state<string | null>(null);
@@ -71,22 +107,85 @@
 	let visibleMessages = $state<ThreadMessage[]>([]);
 	let elapsedSeconds = $state(0);
 	let guestSessionId = $state<string | null>(null);
-	let isSubmittingPrompt = $state(false);
-	let hasPendingAgentLaunch = $state(false);
-	let pendingLaunchPreviousRunId = $state<Id<'runs'> | null>(null);
+	const submittingPromptScopes = new SvelteMap<string, number>();
+	const composerRecoveries = new SvelteMap<string, ComposerRecovery>();
+	const recoveredSubmissionIds = new SvelteMap<
+		string,
+		{
+			prompt: string;
+			reasoningEffort: SupportedReasoningEffort;
+			selectedModel: SupportedModelId;
+			submissionId: string;
+		}
+	>();
+	const latestSubmissionSequencesByRecoveryScope = new SvelteMap<string, number>();
+	const recoveredStaleClaims = new SvelteSet<string>();
+	let pendingAgentLaunches = $state<PendingAgentLaunches>({});
+	let leaseClockNow = $state(0);
+	let latestRunServerClock = $state<{
+		localObservedAt: number;
+		runId: Id<'runs'> | null;
+		serverNow: number;
+	} | null>(null);
+	let nextAgentLaunchId = 0;
+	let nextSubmissionSequence = 0;
 	let hasResolvedInitialSelection = $state(false);
 	let restoredWorkspaceSessionIdToAttach = $state<Id<'workspaceSessions'> | null>(null);
 	let lastSavedThreadId = $state<Id<'threadRecords'> | null>(null);
 	let workspaceSelectionGeneration = $state(0);
 	let pendingCreatedThreadId = $state<Id<'threadRecords'> | null>(null);
-	let threadsDataAtPendingCreate = $state<unknown>(undefined);
 	let desktopWorkspaceSessionsById = $state<Record<string, WorkspaceSessionLocation>>({});
+	let hasLoadedDesktopWorkspaceSessions = $state(false);
+	let desktopWorkspaceSessionsGeneration = 0;
+	let selectionViewerIdentity = $state<string | null>(null);
 	let workspacePickerOpen = $state(false);
 	let workspacePickerMode = $state<'add' | 'reconnect'>('add');
 	let workspacePickerExpectedName = $state<string | undefined>(undefined);
 	let workspacePickerReconnectSessionId = $state<Id<'workspaceSessions'> | null>(null);
 	function getViewerArgs() {
 		return getViewerArgsForUser($authState.user, guestSessionId);
+	}
+
+	function getCurrentViewerIdentity() {
+		return getViewerIdentity($authState.user, guestSessionId);
+	}
+
+	function getComposerScope(
+		threadId: Id<'threadRecords'> | null,
+		workspaceSessionId: Id<'workspaceSessions'> | null
+	) {
+		return threadId
+			? `thread:${threadId}`
+			: workspaceSessionId
+				? `draft:${workspaceSessionId}`
+				: null;
+	}
+
+	function clearSubmittingPrompt(scope: string, submissionSequence: number) {
+		if (submittingPromptScopes.get(scope) === submissionSequence) {
+			submittingPromptScopes.delete(scope);
+		}
+	}
+
+	function getComposerRecoveryKey(viewerIdentity: string, scope: string) {
+		return `${viewerIdentity}\0${scope}`;
+	}
+
+	function storeComposerRecovery(args: ComposerRecovery & { scope: string }) {
+		composerRecoveries.set(getComposerRecoveryKey(args.viewerIdentity, args.scope), {
+			message: args.message,
+			prompt: args.prompt,
+			...(args.reasoningEffort ? { reasoningEffort: args.reasoningEffort } : {}),
+			...(args.selectedModel ? { selectedModel: args.selectedModel } : {}),
+			...(args.submissionId ? { submissionId: args.submissionId } : {}),
+			viewerIdentity: args.viewerIdentity
+		});
+	}
+
+	function clearComposerRecovery(viewerIdentity: string, scope: string) {
+		const recoveryKey = getComposerRecoveryKey(viewerIdentity, scope);
+		composerRecoveries.delete(recoveryKey);
+		recoveredSubmissionIds.delete(recoveryKey);
 	}
 
 	function getViewerQueryArgs() {
@@ -183,10 +282,40 @@
 
 	const runState = $derived(currentLatestRunData?.run ?? null);
 	const visibleActions = $derived((currentLatestRunData?.jobs ?? []).slice(-60));
+	const currentComposerScope = $derived(
+		getComposerScope(currentThreadId, currentWorkspaceSessionId)
+	);
+	const estimatedServerNow = $derived(
+		latestRunServerClock && latestRunServerClock.runId === (runState?._id ?? null)
+			? latestRunServerClock.serverNow +
+					Math.max(0, leaseClockNow - latestRunServerClock.localObservedAt)
+			: (currentLatestRunData?.serverNow ?? Date.now())
+	);
+	const currentRecoveredSubmission = $derived.by(() => {
+		const viewerIdentity = getCurrentViewerIdentity();
+		if (!viewerIdentity || !currentComposerScope) return undefined;
+		return recoveredSubmissionIds.get(getComposerRecoveryKey(viewerIdentity, currentComposerScope));
+	});
+	const isRetryableQueuedRun = $derived(
+		runState?.status === 'queued' &&
+			runState.submissionId !== undefined &&
+			currentRecoveredSubmission?.submissionId === runState.submissionId
+	);
 	const isRunning = $derived(
-		runState?.status === 'queued' ||
-			runState?.status === 'running' ||
-			runState?.status === 'awaiting_executor'
+		isRunBlockingAgentLaunch(runState, estimatedServerNow) && !isRetryableQueuedRun
+	);
+	const hasPendingAgentLaunch = $derived(
+		isAgentLaunchPending(pendingAgentLaunches, currentThreadId)
+	);
+	const isLatestRunReady = $derived(
+		isLatestRunReadyForThread({
+			threadId: currentThreadId,
+			pendingCreatedThreadId,
+			hasLatestRunData: Boolean(currentLatestRunData)
+		})
+	);
+	const isSubmittingPrompt = $derived(
+		Boolean(currentComposerScope && submittingPromptScopes.has(currentComposerScope))
 	);
 	const canSend = $derived(
 		Boolean(
@@ -194,14 +323,18 @@
 			currentWorkspaceSession?.localWorkspaceAvailability === 'available' &&
 			!isRunning &&
 			!isSubmittingPrompt &&
-			!hasPendingAgentLaunch
+			!hasPendingAgentLaunch &&
+			isLatestRunReady
 		)
 	);
-	const attachedWorkspaceSessionIds = $derived.by<Id<'workspaceSessions'>[]>(() =>
-		getAttachedWorkspaceSessionIds(workspaceSessions, executorClientId)
+	const desiredAttachedWorkspaceSessionIds = $derived.by<Id<'workspaceSessions'>[]>(() =>
+		getDesiredAttachedWorkspaceSessionIds(
+			Object.values(desktopWorkspaceSessionsById),
+			workspaceSessions.map((workspaceSession) => workspaceSession._id)
+		)
 	);
-	const attachedWorkspaceSessionIdsKey = $derived.by(() =>
-		[...attachedWorkspaceSessionIds].sort().join('\0')
+	const desiredAttachedWorkspaceSessionIdsKey = $derived.by(() =>
+		[...desiredAttachedWorkspaceSessionIds].sort().join('\0')
 	);
 	const recentWorkspaceDirectories = $derived.by(() => {
 		const seen = new SvelteSet<string>();
@@ -225,7 +358,14 @@
 	});
 
 	async function refreshDesktopWorkspaceSessions() {
-		desktopWorkspaceSessionsById = await refreshDesktopWorkspaceSessionsFromDesktop(desktopApi);
+		const refreshGeneration = ++desktopWorkspaceSessionsGeneration;
+		const nextWorkspaceSessions = await refreshDesktopWorkspaceSessionsFromDesktop(desktopApi);
+		if (refreshGeneration !== desktopWorkspaceSessionsGeneration) {
+			return;
+		}
+
+		desktopWorkspaceSessionsById = nextWorkspaceSessions;
+		hasLoadedDesktopWorkspaceSessions = true;
 	}
 
 	function applyWorkspaceSelection(
@@ -238,16 +378,19 @@
 		draftWorkspaceName = draft ? workspaceName : null;
 		if (threadId !== pendingCreatedThreadId) {
 			pendingCreatedThreadId = null;
-			threadsDataAtPendingCreate = undefined;
 		}
 	}
 
 	function setWorkspaceSelection(
 		workspaceName: string,
 		threadId: Id<'threadRecords'> | null = null,
-		draft: boolean = false
+		draft: boolean = false,
+		preserveError: boolean = false
 	) {
 		workspaceSelectionGeneration += 1;
+		if (!preserveError) {
+			currentError = null;
+		}
 		applyWorkspaceSelection(workspaceName, threadId, draft);
 	}
 
@@ -264,51 +407,32 @@
 			workspaceSessionId,
 			workspacePath
 		});
+		desktopWorkspaceSessionsGeneration += 1;
 		desktopWorkspaceSessionsById = {
 			...desktopWorkspaceSessionsById,
 			[session.workspaceSessionId]: session
 		};
+		hasLoadedDesktopWorkspaceSessions = true;
 		return session;
 	}
 
-	async function syncAttachedWorkspaceSessions(workspaceSessionIds: Id<'workspaceSessions'>[]) {
-		await syncAttachedWorkspaceSessionsForClient({
-			attachedWorkspaceSessionIds,
-			executorClientId,
-			getViewerArgs,
-			heartbeatAttached,
-			workspaceSessionIds
-		});
-	}
-
-	async function openWorkspaceSession(
+	function openWorkspaceSession(
 		workspaceName: string,
 		selection: { threadId?: Id<'threadRecords'> | null; draft?: boolean } = {}
 	) {
-		const selectionGeneration = ++workspaceSelectionGeneration;
 		const workspaceSession = findWorkspaceSessionByName(workspaceSessions, workspaceName);
 		if (!workspaceSession) {
-			if (isSelectionGenerationCurrent(selectionGeneration, workspaceSelectionGeneration)) {
-				currentError = 'Choose a workspace first.';
-			}
+			currentError = 'Choose a workspace first.';
 			return;
 		}
 
-		try {
-			await attachWorkspaceSession(workspaceSession._id);
-		} catch (error) {
+		setWorkspaceSelection(workspaceName, selection.threadId, selection.draft);
+		const selectionGeneration = workspaceSelectionGeneration;
+		void verifyWorkspaceSession(workspaceSession._id).catch((error) => {
 			if (isSelectionGenerationCurrent(selectionGeneration, workspaceSelectionGeneration)) {
 				currentError = error instanceof Error ? error.message : 'Failed to attach workspace.';
 			}
-			return;
-		}
-
-		if (!isSelectionGenerationCurrent(selectionGeneration, workspaceSelectionGeneration)) {
-			return;
-		}
-
-		applyWorkspaceSelection(workspaceName, selection.threadId, selection.draft);
-		currentError = null;
+		});
 	}
 
 	function openWorkspacePicker(
@@ -335,6 +459,11 @@
 			currentError = localServerRequiredMessage;
 			return;
 		}
+		const pickerViewerIdentity = getCurrentViewerIdentity();
+		if (!pickerViewerIdentity) {
+			currentError = 'Viewer session is not ready.';
+			return;
+		}
 
 		try {
 			if (workspacePickerMode === 'reconnect' && workspacePickerReconnectSessionId) {
@@ -347,7 +476,9 @@
 				}
 
 				await attachLocalWorkspaceSession(workspacePickerReconnectSessionId, overview.rootPath);
-				await attachWorkspaceSession(workspacePickerReconnectSessionId);
+				if (getCurrentViewerIdentity() !== pickerViewerIdentity) {
+					return;
+				}
 				setWorkspaceSelection(reconnectSession.workspaceName, currentThreadId);
 				currentError = null;
 				return;
@@ -361,24 +492,28 @@
 			if (!session) {
 				throw new Error('Failed to create or update the workspace session.');
 			}
+			if (getCurrentViewerIdentity() !== pickerViewerIdentity) {
+				return;
+			}
 
 			await attachLocalWorkspaceSession(session._id, overview.rootPath);
-			await syncAttachedWorkspaceSessions([session._id]);
+			if (getCurrentViewerIdentity() !== pickerViewerIdentity) {
+				return;
+			}
 			setWorkspaceSelection(overview.name, null, true);
 			currentError = null;
 		} catch (error) {
+			if (getCurrentViewerIdentity() !== pickerViewerIdentity) {
+				return;
+			}
 			currentError = error instanceof Error ? error.message : 'Failed to attach workspace.';
 			throw error;
 		}
 	}
 
-	async function attachWorkspaceSession(workspaceSessionId: Id<'workspaceSessions'>) {
-		await attachWorkspaceSessionForExecution({
-			attachedWorkspaceSessionIds,
+	async function verifyWorkspaceSession(workspaceSessionId: Id<'workspaceSessions'>) {
+		await verifyWorkspaceSessionForExecution({
 			desktopApi,
-			executorClientId,
-			getViewerArgs,
-			heartbeatAttached,
 			refreshDesktopWorkspaceSessions,
 			workspaceSessionId
 		});
@@ -388,74 +523,140 @@
 		openWorkspacePicker('reconnect', workspaceSessionId);
 	}
 
-	async function createThread() {
-		const workspaceSessionId = currentWorkspaceSessionId;
-		if (!workspaceSessionId) {
-			currentError = 'Choose a workspace first.';
-			return null;
-		}
+	function schedulePendingCreatedThreadExpiration(args: {
+		prompt: string;
+		reasoningEffort: SupportedReasoningEffort;
+		selectedModel: SupportedModelId;
+		submissionId: string;
+		threadId: Id<'threadRecords'>;
+		viewerIdentity: string;
+		workspaceName: string;
+		workspaceSessionId: Id<'workspaceSessions'>;
+	}) {
+		window.setTimeout(() => {
+			if (
+				getCurrentViewerIdentity() !== args.viewerIdentity ||
+				pendingCreatedThreadId !== args.threadId ||
+				currentThreadId !== args.threadId ||
+				currentWorkspaceName !== args.workspaceName ||
+				threads.some((thread) => thread.threadId === args.threadId)
+			) {
+				return;
+			}
 
+			pendingCreatedThreadId = null;
+			setWorkspaceSelection(args.workspaceName, null, true);
+			const recoveryScope = getComposerScope(null, args.workspaceSessionId);
+			if (recoveryScope) {
+				storeComposerRecovery({
+					message: 'The new thread did not appear. Review your prompt and try sending it again.',
+					prompt: args.prompt,
+					reasoningEffort: args.reasoningEffort,
+					selectedModel: args.selectedModel,
+					scope: recoveryScope,
+					submissionId: args.submissionId,
+					viewerIdentity: args.viewerIdentity
+				});
+			}
+		}, agentLaunchTimeoutMs);
+	}
+
+	async function createThread(args: {
+		isSubmissionCurrent: () => boolean;
+		prompt: string;
+		selectionGeneration: number;
+		selectedModel: SupportedModelId;
+		selectedReasoningEffort: SupportedReasoningEffort;
+		submissionId: string;
+		viewerArgs: ReturnType<typeof getViewerArgs>;
+		viewerIdentity: string;
+		workspaceName: string;
+		workspaceSessionId: Id<'workspaceSessions'>;
+	}) {
 		const result = await createThreadMutation({
-			...getViewerArgs(),
-			workspaceSessionId,
-			selectedModel,
-			reasoningEffort: selectedReasoningEffort
+			...args.viewerArgs,
+			submissionId: args.submissionId,
+			workspaceSessionId: args.workspaceSessionId,
+			selectedModel: args.selectedModel,
+			reasoningEffort: args.selectedReasoningEffort
 		});
-		pendingCreatedThreadId = result.threadId;
-		threadsDataAtPendingCreate = threadsQuery.data;
-		workspaceSelectionGeneration += 1;
-		currentThreadId = result.threadId;
-		draftWorkspaceName = null;
-		return result.threadId;
-	}
-
-	async function startThreadDraftForWorkspace(workspaceName: string) {
-		try {
-			await openWorkspaceSession(workspaceName, { draft: true });
-			return null;
-		} catch (error) {
-			currentError = error instanceof Error ? error.message : 'Failed to open thread draft.';
+		if (!args.isSubmissionCurrent()) {
 			return null;
 		}
+
+		if (
+			args.viewerIdentity === getCurrentViewerIdentity() &&
+			isSelectionGenerationCurrent(args.selectionGeneration, workspaceSelectionGeneration)
+		) {
+			pendingCreatedThreadId = result.threadId;
+			workspaceSelectionGeneration += 1;
+			currentThreadId = result.threadId;
+			draftWorkspaceName = null;
+			schedulePendingCreatedThreadExpiration({
+				prompt: args.prompt,
+				reasoningEffort: args.selectedReasoningEffort,
+				selectedModel: args.selectedModel,
+				submissionId: args.submissionId,
+				threadId: result.threadId,
+				viewerIdentity: args.viewerIdentity,
+				workspaceName: args.workspaceName,
+				workspaceSessionId: args.workspaceSessionId
+			});
+		}
+
+		return result;
 	}
 
-	async function selectThread(thread: ThreadSummary) {
-		try {
-			await openWorkspaceSession(thread.workspaceName, { threadId: thread.threadId });
-		} catch (error) {
-			currentError = error instanceof Error ? error.message : 'Failed to attach workspace.';
-		}
+	function startThreadDraftForWorkspace(workspaceName: string) {
+		openWorkspaceSession(workspaceName, { draft: true });
+	}
+
+	function selectThread(thread: ThreadSummary) {
+		openWorkspaceSession(thread.workspaceName, { threadId: thread.threadId });
 	}
 
 	async function deleteThread(thread: ThreadSummary) {
-		if (thread.hasActiveRun) {
-			currentError = 'Finish or cancel the active run before deleting this thread.';
+		const initialBlockMessage = getThreadDeletionBlockMessage(pendingAgentLaunches, thread);
+		if (initialBlockMessage) {
+			currentError = initialBlockMessage;
 			return;
 		}
-
 		const confirmed = window.confirm(
 			`Delete "${thread.title}"? This permanently removes the thread, messages, and run history.`
 		);
 		if (!confirmed) {
 			return;
 		}
+		const currentBlockMessage = getThreadDeletionBlockMessage(pendingAgentLaunches, thread);
+		if (currentBlockMessage) {
+			currentError = currentBlockMessage;
+			return;
+		}
+		const deletionViewerIdentity = getCurrentViewerIdentity();
 
 		try {
 			await removeThread({
 				...getViewerArgs(),
 				threadId: thread.threadId
 			});
-			if (currentThreadId === thread.threadId) {
-				currentThreadId = null;
-				pendingCreatedThreadId = null;
-				threadsDataAtPendingCreate = undefined;
-				workspaceSelectionGeneration += 1;
+			if (deletionViewerIdentity) {
+				clearComposerRecovery(deletionViewerIdentity, `thread:${thread.threadId}`);
 			}
-			if (lastSavedThreadId === thread.threadId) {
-				lastSavedThreadId = null;
+			if (getCurrentViewerIdentity() === deletionViewerIdentity) {
+				if (currentThreadId === thread.threadId) {
+					currentThreadId = null;
+					pendingCreatedThreadId = null;
+					workspaceSelectionGeneration += 1;
+				}
+				if (lastSavedThreadId === thread.threadId) {
+					lastSavedThreadId = null;
+				}
+				currentError = null;
 			}
-			currentError = null;
 		} catch (error) {
+			if (getCurrentViewerIdentity() !== deletionViewerIdentity) {
+				return;
+			}
 			currentError = error instanceof Error ? error.message : 'Failed to delete thread.';
 		}
 	}
@@ -469,7 +670,8 @@
 			return;
 		}
 
-		if (!currentWorkspaceSessionId) {
+		const workspaceSessionId = currentWorkspaceSessionId;
+		if (!workspaceSessionId) {
 			currentError = 'Choose a workspace first.';
 			return;
 		}
@@ -479,50 +681,259 @@
 			return;
 		}
 
-		if (!canSend) {
-			currentError =
-				currentWorkspaceSession?.localWorkspaceAvailability === 'available'
-					? 'You need an active workspace session before sending.'
-					: 'This workspace needs to be attached before sending.';
+		if (currentThreadId && !isLatestRunReady) {
+			currentError = 'Loading thread state before sending.';
 			return;
 		}
 
-		isSubmittingPrompt = true;
+		if (!canSend) {
+			currentError =
+				isRunning || hasPendingAgentLaunch || isSubmittingPrompt
+					? 'Wait for the current agent launch or run to finish.'
+					: currentWorkspaceSession?.localWorkspaceAvailability === 'available'
+						? 'You need an active workspace session before sending.'
+						: 'This workspace needs to be attached before sending.';
+			return;
+		}
 
-		try {
-			await attachWorkspaceSession(currentWorkspaceSessionId);
-			const threadId = currentThreadId ?? (await createThread());
-			if (!threadId) {
+		const selectionGeneration = workspaceSelectionGeneration;
+		const selectedThreadId = currentThreadId;
+		const submittedWorkspaceName = currentWorkspaceName;
+		if (!submittedWorkspaceName) {
+			currentError = 'Choose a workspace first.';
+			return;
+		}
+		const submittedViewerIdentity = getCurrentViewerIdentity();
+		if (!submittedViewerIdentity) {
+			currentError = 'Viewer session is not ready.';
+			return;
+		}
+		const submittedViewerArgs = getViewerArgs();
+		const submittedAuthenticatedUserId = $authState.user?.id ?? null;
+		const isSubmittedViewerCurrent = () => getCurrentViewerIdentity() === submittedViewerIdentity;
+		const submittedPrompt = prompt.trim();
+		const submittedModel = selectedModel;
+		const submittedReasoningEffort = selectedReasoningEffort;
+		const previousRunId = selectedThreadId ? (runState?._id ?? null) : null;
+		let submissionScope = selectedThreadId
+			? `thread:${selectedThreadId}`
+			: `draft:${workspaceSessionId}`;
+		const originatingRecoveryScope = submissionScope;
+		let recoveryScope = originatingRecoveryScope;
+		const originatingRecoveryKey = getComposerRecoveryKey(
+			submittedViewerIdentity,
+			originatingRecoveryScope
+		);
+		const recoveredSubmission = recoveredSubmissionIds.get(originatingRecoveryKey);
+		const freshSubmissionId = crypto.randomUUID();
+		const threadSubmissionId = resolveSubmissionId({
+			latestRun: selectedThreadId ? runState : null,
+			newSubmissionId: freshSubmissionId,
+			prompt: submittedPrompt,
+			reasoningEffort: submittedReasoningEffort,
+			recoveredSubmission,
+			selectedModel: submittedModel
+		});
+		let runSubmissionId = threadSubmissionId;
+		clearComposerRecovery(submittedViewerIdentity, originatingRecoveryScope);
+		let launchedThreadId: Id<'threadRecords'> | null = null;
+		let agentLaunchId: number | null = null;
+		const submissionSequence = ++nextSubmissionSequence;
+		let submissionTrackingKey = getComposerRecoveryKey(
+			submittedViewerIdentity,
+			originatingRecoveryScope
+		);
+		latestSubmissionSequencesByRecoveryScope.set(submissionTrackingKey, submissionSequence);
+		const isSubmissionCurrent = () =>
+			latestSubmissionSequencesByRecoveryScope.get(submissionTrackingKey) === submissionSequence;
+		const sessionChangedMessage =
+			'Your session changed before the agent started. Return to this account and send the prompt again.';
+		const submissionDelayMessage =
+			'This request is still preparing. Wait for it to finish before trying again.';
+		const recoverSubmission = (message: string) => {
+			storeComposerRecovery({
+				message,
+				prompt: submittedPrompt,
+				reasoningEffort: submittedReasoningEffort,
+				selectedModel: submittedModel,
+				scope: recoveryScope,
+				submissionId:
+					!selectedThreadId && recoveryScope === originatingRecoveryScope
+						? threadSubmissionId
+						: runSubmissionId,
+				viewerIdentity: submittedViewerIdentity
+			});
+		};
+		const clearSubmissionDelay = () => {
+			clearComposerRecovery(submittedViewerIdentity, recoveryScope);
+			if (isSubmittedViewerCurrent() && currentError === submissionDelayMessage) {
+				currentError = null;
+			}
+		};
+		const submissionTimeoutId = window.setTimeout(() => {
+			if (
+				latestSubmissionSequencesByRecoveryScope.get(submissionTrackingKey) !== submissionSequence
+			) {
 				return;
 			}
 
-			const nextPrompt = prompt.trim();
-			prompt = '';
-			currentError = null;
-			const authToken = $authState.user ? ((await getAccessToken()) ?? undefined) : undefined;
-			hasPendingAgentLaunch = true;
-			pendingLaunchPreviousRunId = runState?._id ?? null;
+			storeComposerRecovery({
+				message: submissionDelayMessage,
+				prompt: '',
+				scope: recoveryScope,
+				viewerIdentity: submittedViewerIdentity
+			});
+		}, agentLaunchTimeoutMs);
+		prompt = '';
+		currentError = null;
+		submittingPromptScopes.set(submissionScope, submissionSequence);
+
+		try {
+			const threadCreation = selectedThreadId
+				? null
+				: await createThread({
+						isSubmissionCurrent,
+						prompt: submittedPrompt,
+						selectionGeneration,
+						selectedModel: submittedModel,
+						selectedReasoningEffort: submittedReasoningEffort,
+						submissionId: threadSubmissionId,
+						viewerArgs: submittedViewerArgs,
+						viewerIdentity: submittedViewerIdentity,
+						workspaceName: submittedWorkspaceName,
+						workspaceSessionId
+					});
+			const threadId = selectedThreadId ?? threadCreation?.threadId ?? null;
+			if (!threadId || !isSubmissionCurrent()) {
+				return;
+			}
+			if (threadCreation) {
+				runSubmissionId = resolveDraftRunSubmissionId({
+					freshSubmissionId,
+					submissionRunStatus: threadCreation.submissionRunStatus,
+					threadSubmissionId
+				});
+			}
+			if (!isSubmittedViewerCurrent()) {
+				recoverSubmission(sessionChangedMessage);
+				return;
+			}
+			launchedThreadId = threadId;
+			if (!selectedThreadId) {
+				clearSubmittingPrompt(submissionScope, submissionSequence);
+				submissionScope = `thread:${threadId}`;
+				submittingPromptScopes.set(submissionScope, submissionSequence);
+				clearSubmissionDelay();
+				if (
+					latestSubmissionSequencesByRecoveryScope.get(submissionTrackingKey) === submissionSequence
+				) {
+					latestSubmissionSequencesByRecoveryScope.delete(submissionTrackingKey);
+				}
+				recoveryScope = `thread:${threadId}`;
+				submissionTrackingKey = getComposerRecoveryKey(submittedViewerIdentity, recoveryScope);
+				latestSubmissionSequencesByRecoveryScope.set(submissionTrackingKey, submissionSequence);
+			}
+			const authToken = submittedAuthenticatedUserId
+				? ((await getAccessToken()) ?? undefined)
+				: undefined;
+			if (!isSubmissionCurrent()) {
+				return;
+			}
+			if (!isSubmittedViewerCurrent()) {
+				recoverSubmission(sessionChangedMessage);
+				return;
+			}
+			clearSubmissionDelay();
+			const launchId = ++nextAgentLaunchId;
+			agentLaunchId = launchId;
+			pendingAgentLaunches = beginPendingAgentLaunch(pendingAgentLaunches, threadId, {
+				expiresAt: Date.now() + agentLaunchTimeoutMs,
+				launchId,
+				...(runState?.claimExpiresAt ? { previousClaimExpiresAt: runState.claimExpiresAt } : {}),
+				previousRunId
+			});
+			window.setTimeout(() => {
+				const threadLatestRunId =
+					threads.find((thread) => thread.threadId === threadId)?.latestRunId ?? null;
+				const selectedRunId = currentThreadId === threadId ? (runState?._id ?? null) : null;
+				const latestRunId =
+					[threadLatestRunId, selectedRunId].find((runId) => runId && runId !== previousRunId) ??
+					threadLatestRunId ??
+					selectedRunId;
+				const latestClaimExpiresAt =
+					currentThreadId === threadId && runState?._id === latestRunId
+						? runState.claimExpiresAt
+						: threads.find((thread) => thread.threadId === threadId)?.latestRunClaimExpiresAt;
+				const recovery = resolveExpiredAgentLaunch(
+					pendingAgentLaunches,
+					threadId,
+					launchId,
+					Date.now(),
+					latestRunId,
+					latestClaimExpiresAt
+				);
+				if (recovery.pendingLaunches === pendingAgentLaunches) {
+					return;
+				}
+
+				pendingAgentLaunches = recovery.pendingLaunches;
+				if (recovery.shouldRecover) {
+					recoverSubmission('The local agent did not start. Please try again.');
+				}
+			}, agentLaunchTimeoutMs);
 			launchAgentRun({
 				authToken,
 				desktopApi,
-				getViewerArgs,
 				onError: (error) => {
-					hasPendingAgentLaunch = false;
-					pendingLaunchPreviousRunId = null;
-					currentError =
-						error instanceof Error ? error.message : 'Failed to start the local agent run.';
+					if (!isSubmissionCurrent() || !isSubmittedViewerCurrent()) {
+						return;
+					}
+					const nextPendingAgentLaunches = clearPendingAgentLaunch(
+						pendingAgentLaunches,
+						threadId,
+						launchId
+					);
+					if (nextPendingAgentLaunches !== pendingAgentLaunches) {
+						pendingAgentLaunches = nextPendingAgentLaunches;
+					}
+					recoverSubmission(
+						error instanceof Error ? error.message : 'Failed to start the local agent run.'
+					);
 				},
 				threadId,
-				prompt: nextPrompt,
-				selectedModel,
-				reasoningEffort: selectedReasoningEffort,
-				workspaceSessionId: currentWorkspaceSessionId
+				prompt: submittedPrompt,
+				selectedModel: submittedModel,
+				submissionId: runSubmissionId,
+				reasoningEffort: submittedReasoningEffort,
+				viewerArgs: submittedViewerArgs,
+				workspaceSessionId
 			});
 		} catch (error) {
-			await refreshDesktopWorkspaceSessions();
-			currentError = error instanceof Error ? error.message : 'Failed to send prompt.';
+			if (launchedThreadId && agentLaunchId !== null) {
+				pendingAgentLaunches = clearPendingAgentLaunch(
+					pendingAgentLaunches,
+					launchedThreadId,
+					agentLaunchId
+				);
+			}
+			if (!isSubmissionCurrent()) {
+				return;
+			}
+			if (!isSubmittedViewerCurrent()) {
+				recoverSubmission(sessionChangedMessage);
+				return;
+			}
+			recoverSubmission(error instanceof Error ? error.message : 'Failed to send prompt.');
+			void refreshDesktopWorkspaceSessions().catch(() => {});
 		} finally {
-			isSubmittingPrompt = false;
+			window.clearTimeout(submissionTimeoutId);
+			clearSubmittingPrompt(submissionScope, submissionSequence);
+			if (
+				agentLaunchId === null &&
+				latestSubmissionSequencesByRecoveryScope.get(submissionTrackingKey) === submissionSequence
+			) {
+				latestSubmissionSequencesByRecoveryScope.delete(submissionTrackingKey);
+			}
 		}
 	}
 
@@ -544,6 +955,99 @@
 	}
 
 	$effect(() => {
+		const data = currentLatestRunData;
+		if (!data) {
+			latestRunServerClock = null;
+			return;
+		}
+		if (
+			latestRunServerClock?.serverNow === data.serverNow &&
+			latestRunServerClock.runId === (data.run?._id ?? null)
+		) {
+			return;
+		}
+		latestRunServerClock = {
+			localObservedAt: window.performance.now(),
+			runId: data.run?._id ?? null,
+			serverNow: data.serverNow
+		};
+	});
+
+	$effect(() => {
+		if (!runState || !isClaimedRunStatus(runState.status)) {
+			return;
+		}
+		const updateClock = () => {
+			leaseClockNow = window.performance.now();
+		};
+		updateClock();
+		const intervalId = window.setInterval(updateClock, 1_000);
+		return () => window.clearInterval(intervalId);
+	});
+
+	$effect(() => {
+		const viewerIdentity = getCurrentViewerIdentity();
+		const recoveryScope = getComposerScope(currentThreadId, currentWorkspaceSessionId);
+		const staleRun = runState;
+		if (
+			!viewerIdentity ||
+			!recoveryScope ||
+			!staleRun ||
+			!isClaimedRunStatus(staleRun.status) ||
+			isRunning ||
+			isSubmittingPrompt ||
+			hasPendingAgentLaunch ||
+			prompt !== '' ||
+			!staleRun.submissionId ||
+			!currentLatestRunData?.prompt
+		) {
+			return;
+		}
+
+		const staleClaimKey = `${viewerIdentity}\0${staleRun._id}\0${staleRun.claimExpiresAt ?? 'legacy'}`;
+		if (recoveredStaleClaims.has(staleClaimKey)) {
+			return;
+		}
+		recoveredStaleClaims.add(staleClaimKey);
+		storeComposerRecovery({
+			message: 'The previous agent stopped responding. Retry to continue this submission.',
+			prompt: currentLatestRunData.prompt,
+			reasoningEffort: staleRun.reasoningEffort,
+			selectedModel: staleRun.selectedModel,
+			scope: recoveryScope,
+			submissionId: staleRun.submissionId,
+			viewerIdentity
+		});
+	});
+
+	$effect(() => {
+		const viewerIdentity = getCurrentViewerIdentity();
+		if (selectionViewerIdentity === viewerIdentity) {
+			return;
+		}
+
+		selectionViewerIdentity = viewerIdentity;
+		hasResolvedInitialSelection = false;
+		currentWorkspaceName = null;
+		currentThreadId = null;
+		draftWorkspaceName = null;
+		pendingCreatedThreadId = null;
+		pendingAgentLaunches = {};
+		restoredWorkspaceSessionIdToAttach = null;
+		lastSavedThreadId = null;
+		workspaceSelectionGeneration += 1;
+		prompt = '';
+		currentError = null;
+		visibleMessages = [];
+		elapsedSeconds = 0;
+		selectedModel = defaultModelId;
+		selectedReasoningEffort = defaultReasoningEffort;
+		workspacePickerOpen = false;
+		workspacePickerReconnectSessionId = null;
+		workspacePickerExpectedName = undefined;
+	});
+
+	$effect(() => {
 		const data = currentMessagesData;
 		if (!data) {
 			visibleMessages = [];
@@ -554,20 +1058,50 @@
 	});
 
 	$effect(() => {
+		const viewerIdentity = getCurrentViewerIdentity();
+		const recoveryScope = getComposerScope(currentThreadId, currentWorkspaceSessionId);
+		if (!viewerIdentity || !recoveryScope) {
+			return;
+		}
+
+		const recoveryKey = getComposerRecoveryKey(viewerIdentity, recoveryScope);
+		const recovery = composerRecoveries.get(recoveryKey);
+		if (!recovery || recovery.viewerIdentity !== viewerIdentity) {
+			return;
+		}
+
+		composerRecoveries.delete(recoveryKey);
+		if (prompt === '') {
+			prompt = recovery.prompt;
+			if (
+				recovery.submissionId &&
+				recovery.prompt &&
+				recovery.reasoningEffort &&
+				recovery.selectedModel
+			) {
+				recoveredSubmissionIds.set(recoveryKey, {
+					prompt: recovery.prompt,
+					reasoningEffort: recovery.reasoningEffort,
+					selectedModel: recovery.selectedModel,
+					submissionId: recovery.submissionId
+				});
+			}
+		}
+
+		currentError = recovery.message;
+	});
+
+	$effect(() => {
 		if (!pendingCreatedThreadId) {
 			return;
 		}
 
 		const nextPendingCreatedThreadId = resolvePendingCreatedThreadId({
 			pendingCreatedThreadId,
-			threads,
-			threadListChangedSinceCreate: threadsQuery.data !== threadsDataAtPendingCreate
+			threads
 		});
 		if (nextPendingCreatedThreadId !== pendingCreatedThreadId) {
 			pendingCreatedThreadId = nextPendingCreatedThreadId;
-			if (!nextPendingCreatedThreadId) {
-				threadsDataAtPendingCreate = undefined;
-			}
 		}
 	});
 
@@ -594,30 +1128,30 @@
 
 		if (workspaceSessions[0]) {
 			setWorkspaceSelection(workspaceSessions[0].workspaceName, null, false);
+			restoredWorkspaceSessionIdToAttach = workspaceSessions[0]._id;
 		}
 	});
 
 	$effect(() => {
 		const workspaceSessionId = restoredWorkspaceSessionIdToAttach;
-		if (!workspaceSessionId || !desktopApi || !executorClientId) {
+		if (!workspaceSessionId || !desktopApi || !hasLoadedDesktopWorkspaceSessions) {
 			return;
 		}
 
 		const workspaceSession = workspaceSessions.find(
 			(session) => session._id === workspaceSessionId
 		);
-		if (!workspaceSession || workspaceSession.localWorkspaceAvailability !== 'available') {
+		if (!workspaceSession) {
 			restoredWorkspaceSessionIdToAttach = null;
-			if (workspaceSession?.localWorkspaceError) {
-				currentError = workspaceSession.localWorkspaceError;
-			}
 			return;
 		}
 
 		restoredWorkspaceSessionIdToAttach = null;
-		void attachWorkspaceSession(workspaceSessionId).catch((error) => {
-			void refreshDesktopWorkspaceSessions();
-			currentError = error instanceof Error ? error.message : 'Failed to attach workspace.';
+		const selectionGeneration = workspaceSelectionGeneration;
+		void verifyWorkspaceSession(workspaceSessionId).catch((error) => {
+			if (isSelectionGenerationCurrent(selectionGeneration, workspaceSelectionGeneration)) {
+				currentError = error instanceof Error ? error.message : 'Failed to attach workspace.';
+			}
 		});
 	});
 
@@ -652,8 +1186,12 @@
 			return;
 		}
 
-		currentThreadId = nextThreadId;
-		workspaceSelectionGeneration += 1;
+		setWorkspaceSelection(
+			currentWorkspaceName,
+			nextThreadId,
+			draftWorkspaceName === currentWorkspaceName,
+			true
+		);
 	});
 
 	$effect(() => {
@@ -673,11 +1211,25 @@
 	});
 
 	$effect(() => {
-		const startedAt = runState?.startedAt;
-		if (hasPendingAgentLaunch && runState?._id && runState._id !== pendingLaunchPreviousRunId) {
-			hasPendingAgentLaunch = false;
-			pendingLaunchPreviousRunId = null;
+		let nextPendingAgentLaunches = resolvePendingAgentLaunchesFromThreads(
+			pendingAgentLaunches,
+			threads
+		);
+		if (currentThreadId && runState?._id) {
+			nextPendingAgentLaunches = resolvePendingAgentLaunch(
+				nextPendingAgentLaunches,
+				currentThreadId,
+				runState._id,
+				runState.claimExpiresAt
+			);
 		}
+		if (nextPendingAgentLaunches !== pendingAgentLaunches) {
+			pendingAgentLaunches = nextPendingAgentLaunches;
+		}
+	});
+
+	$effect(() => {
+		const startedAt = runState?.startedAt;
 		if (!isRunning || !startedAt) {
 			elapsedSeconds = 0;
 			return;
@@ -697,31 +1249,34 @@
 
 	$effect(() => {
 		const clientId = executorClientId;
-		const workspaceSessionIdsKey = attachedWorkspaceSessionIdsKey;
-		const workspaceSessionIds = workspaceSessionIdsKey
-			? (workspaceSessionIdsKey.split('\0') as Id<'workspaceSessions'>[])
-			: [];
+		const workspaceSessionIdsKey = desiredAttachedWorkspaceSessionIdsKey;
 		const viewerArgs = getViewerQueryArgs();
-		if (!clientId || !desktopApi || workspaceSessionIds.length === 0 || viewerArgs === 'skip') {
+		if (
+			!clientId ||
+			!desktopApi ||
+			!hasLoadedDesktopWorkspaceSessions ||
+			workspaceSessionsQuery.data === undefined ||
+			viewerArgs === 'skip'
+		) {
 			return;
 		}
-
-		void heartbeatAttached({
-			...viewerArgs,
+		const request = {
 			clientId,
-			workspaceSessionIds
-		});
+			viewerArgs,
+			workspaceSessionIds: workspaceSessionIdsKey
+				? (workspaceSessionIdsKey.split('\0') as Id<'workspaceSessions'>[])
+				: []
+		};
+
+		void workspaceAttachmentHeartbeatQueue.enqueue(request).catch(() => {});
 
 		const intervalId = window.setInterval(() => {
-			void heartbeatAttached({
-				...viewerArgs,
-				clientId,
-				workspaceSessionIds
-			});
+			void workspaceAttachmentHeartbeatQueue.enqueue(request).catch(() => {});
 		}, EXECUTOR_HEARTBEAT_WRITE_THROTTLE_MS);
 
 		return () => {
 			window.clearInterval(intervalId);
+			workspaceAttachmentHeartbeatQueue.cancelPending();
 		};
 	});
 
@@ -776,6 +1331,7 @@
 				{currentWorkspaceName}
 				{currentThreadId}
 				groups={groupedWorkspaceThreads}
+				{pendingAgentLaunches}
 				onChooseWorkspace={() => {
 					openWorkspacePicker('add');
 				}}
@@ -857,7 +1413,8 @@
 					bind:selectedModel
 					bind:selectedReasoningEffort
 					{canSend}
-					isSubmitting={isSubmittingPrompt}
+					isSubmitting={isSubmittingPrompt || hasPendingAgentLaunch}
+					isStarting={hasPendingAgentLaunch}
 					{isRunning}
 					elapsedLabel={isRunning ? formatElapsedDuration(elapsedSeconds) : null}
 					onSubmit={() => {

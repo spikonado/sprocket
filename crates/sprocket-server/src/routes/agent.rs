@@ -15,6 +15,7 @@ use crate::auth::require_session;
 struct RunAgentApiRequest {
     auth_token: Option<String>,
     guest_id: Option<String>,
+    submission_id: String,
     thread_id: String,
     prompt: String,
     selected_model: String,
@@ -52,6 +53,7 @@ async fn run_agent_handler(
         deployment_url: state.convex_deployment_url.clone(),
         auth_token: payload.auth_token,
         guest_id: payload.guest_id,
+        submission_id: payload.submission_id,
         thread_id: payload.thread_id,
         prompt: payload.prompt,
         selected_model: payload.selected_model,

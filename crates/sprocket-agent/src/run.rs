@@ -3,11 +3,21 @@ use sprocket_workspace::{
     WorkspaceInstruction, WorkspaceOverview, build_workspace_overview, load_workspace_instructions,
     resolve_workspace_root,
 };
+use std::future::Future;
+use std::time::Duration;
+use tokio::time::{Instant, MissedTickBehavior};
+use uuid::Uuid;
 
 use crate::RunContextResponse;
 use crate::convex::RuntimeClient;
 use crate::provider::{AgentProvider, AgentProviderRequest, AgentProviderResult};
 use crate::types::{RunAgentRequest, deserialize_agent_history};
+
+// Keep these synchronized with apps/web/src/convex/lib/runLease.ts.
+const RUN_CLAIM_LEASE_DURATION: Duration = Duration::from_secs(60);
+const RUN_CLAIM_RENEW_INTERVAL: Duration = Duration::from_secs(20);
+const RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(8);
+const RUN_CLAIM_EXPIRY_SAFETY_MARGIN: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy)]
 enum RunFinalStatus {
@@ -78,67 +88,85 @@ fn build_workspace_preamble(
     .join("\n")
 }
 
-async fn fail_run_early(
+async fn fail_run_before_start(
     runtime: &RuntimeClient,
     run_id: &str,
     error: &anyhow::Error,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let message = format!("Run failed before the model started: {error}");
     runtime
-        .finalize_run(
+        .finalize_queued_run(
             run_id,
             &message,
             RunFinalStatus::Failed.as_str(),
             Some(&error.to_string()),
         )
-        .await?;
-    Ok(())
+        .await
+}
+
+async fn abort_before_start(
+    runtime: &RuntimeClient,
+    run_id: &str,
+    error: anyhow::Error,
+) -> anyhow::Result<()> {
+    if fail_run_before_start(runtime, run_id, &error).await? {
+        Err(error)
+    } else {
+        Ok(())
+    }
 }
 
 async fn finalize_run(
     runtime: &RuntimeClient,
     run_id: &str,
+    claim_id: &str,
     assistant_text: &str,
     status: RunFinalStatus,
     error_message: Option<&str>,
 ) -> anyhow::Result<()> {
     let status_text = status.as_str();
-    runtime
-        .finalize_run(run_id, assistant_text, status_text, error_message)
+    let accepted = runtime
+        .finalize_run(run_id, claim_id, assistant_text, status_text, error_message)
         .await
-        .map_err(|error| anyhow!("failed to finalize {status_text} run: {error}"))
-}
-
-async fn fail_run_setup(
-    runtime: &RuntimeClient,
-    run_id: &str,
-    error: &anyhow::Error,
-) -> anyhow::Result<()> {
-    let _ = runtime.begin_assistant_message(run_id).await;
-    let message = format!("Run failed before the model started: {error}");
-    finalize_run(
-        runtime,
-        run_id,
-        &message,
-        RunFinalStatus::Failed,
-        Some(&error.to_string()),
-    )
-    .await
+        .map_err(|error| anyhow!("failed to finalize {status_text} run: {error}"))?;
+    if !accepted {
+        return Err(anyhow!(
+            "failed to finalize {status_text} run because claim ownership was lost"
+        ));
+    }
+    Ok(())
 }
 
 async fn finalize_provider_result(
     runtime: &RuntimeClient,
     run_id: &str,
+    claim_id: &str,
     provider_result: AgentProviderResult,
 ) -> anyhow::Result<()> {
     match provider_result {
         AgentProviderResult::Completed { text } => {
             eprintln!("sprocket-agent: model completed {}", run_id);
-            finalize_run(runtime, run_id, &text, RunFinalStatus::Completed, None).await
+            finalize_run(
+                runtime,
+                run_id,
+                claim_id,
+                &text,
+                RunFinalStatus::Completed,
+                None,
+            )
+            .await
         }
         AgentProviderResult::Cancelled { text } => {
             eprintln!("sprocket-agent: run cancelled {}", run_id);
-            finalize_run(runtime, run_id, &text, RunFinalStatus::Cancelled, None).await
+            finalize_run(
+                runtime,
+                run_id,
+                claim_id,
+                &text,
+                RunFinalStatus::Cancelled,
+                None,
+            )
+            .await
         }
         AgentProviderResult::Superseded => {
             eprintln!("sprocket-agent: provider attempt superseded {}", run_id);
@@ -151,6 +179,7 @@ async fn finalize_provider_result(
             match finalize_run(
                 runtime,
                 run_id,
+                claim_id,
                 &text,
                 RunFinalStatus::Failed,
                 Some(&error_text),
@@ -166,29 +195,144 @@ async fn finalize_provider_result(
     }
 }
 
+async fn claim_run(
+    runtime: &RuntimeClient,
+    run_id: &str,
+    claim_id: &str,
+) -> anyhow::Result<Option<Instant>> {
+    let mut request_started_at = Instant::now();
+    let start = match runtime.start_run(run_id, claim_id).await {
+        Ok(start) => start,
+        Err(first_error) => {
+            eprintln!(
+                "sprocket-agent: claim attempt failed for run {}; retrying with the same claim: {}",
+                run_id, first_error
+            );
+            request_started_at = Instant::now();
+            runtime
+                .start_run(run_id, claim_id)
+                .await
+                .map_err(|retry_error| {
+                    anyhow!(
+                        "failed to claim run {run_id} after retry: {retry_error}; initial attempt failed: {first_error}"
+                    )
+                })?
+        }
+    };
+    if !start.claimed {
+        eprintln!("sprocket-agent: run {} already claimed or finished", run_id);
+        return Ok(None);
+    }
+
+    eprintln!("sprocket-agent: marked run running {}", run_id);
+    Ok(Some(request_started_at))
+}
+
+async fn renew_claim_once(
+    runtime: &RuntimeClient,
+    run_id: &str,
+    claim_id: &str,
+) -> anyhow::Result<(bool, Instant)> {
+    let request_started_at = Instant::now();
+    tokio::time::timeout(
+        RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT,
+        runtime.renew_claim(run_id, claim_id),
+    )
+    .await
+    .map_err(|_| anyhow!("claim renewal timed out"))?
+    .map(|response| (response.renewed, request_started_at))
+}
+
+async fn renew_claim(
+    runtime: &RuntimeClient,
+    run_id: &str,
+    claim_id: &str,
+) -> anyhow::Result<(bool, Instant)> {
+    match renew_claim_once(runtime, run_id, claim_id).await {
+        Ok(outcome) => Ok(outcome),
+        Err(first_error) => {
+            eprintln!(
+                "sprocket-agent: claim renewal failed for run {}; retrying: {}",
+                run_id, first_error
+            );
+            renew_claim_once(runtime, run_id, claim_id)
+                .await
+                .map_err(|retry_error| {
+                    anyhow!(
+                        "failed to renew claim for run {run_id} after retry: {retry_error}; initial attempt failed: {first_error}"
+                    )
+                })
+        }
+    }
+}
+
+async fn run_with_claim_lease<F, T>(
+    runtime: &RuntimeClient,
+    run_id: &str,
+    claim_id: &str,
+    lease_started_at: Instant,
+    operation: F,
+) -> anyhow::Result<T>
+where
+    F: Future<Output = anyhow::Result<T>>,
+{
+    let mut lease_deadline = lease_started_at + RUN_CLAIM_LEASE_DURATION;
+    let mut renewals = tokio::time::interval_at(
+        Instant::now() + RUN_CLAIM_RENEW_INTERVAL,
+        RUN_CLAIM_RENEW_INTERVAL,
+    );
+    renewals.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    tokio::pin!(operation);
+
+    loop {
+        tokio::select! {
+            biased;
+            _ = renewals.tick() => {
+                let renewal_budget = RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT * 2
+                    + RUN_CLAIM_EXPIRY_SAFETY_MARGIN;
+                if Instant::now() + renewal_budget >= lease_deadline {
+                    return Err(anyhow!("claim lease for run {run_id} cannot be renewed safely before expiry"));
+                }
+                match renew_claim(runtime, run_id, claim_id).await {
+                    Ok((true, renewal_started_at)) => {
+                        if Instant::now() + RUN_CLAIM_EXPIRY_SAFETY_MARGIN >= lease_deadline {
+                            return Err(anyhow!("claim renewal for run {run_id} was not confirmed safely before expiry"));
+                        }
+                        lease_deadline = renewal_started_at + RUN_CLAIM_LEASE_DURATION;
+                    }
+                    Ok((false, _)) => {
+                        return Err(anyhow!("claim lease for run {run_id} was lost"));
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            result = &mut operation => return result,
+        }
+    }
+}
+
 pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
     eprintln!("sprocket-agent: starting thread {}", request.thread_id);
+    let claim_id = Uuid::new_v4().to_string();
     let runtime: RuntimeClient = RuntimeClient::from_request(&request).await?;
     let workspace_root = resolve_workspace_root(&request.workspace_path)?;
 
     let created_run = runtime.create_run(&request).await?;
+    if created_run.created {
+        eprintln!("sprocket-agent: created run {}", created_run.run_id);
+    } else {
+        eprintln!(
+            "sprocket-agent: resuming submission {} as run {}",
+            request.submission_id, created_run.run_id
+        );
+    }
     let run_id = created_run.run_id;
-    eprintln!("sprocket-agent: created run {}", run_id);
 
     let context: RunContextResponse = match runtime.run_context(&run_id).await {
         Ok(context) => context,
-        Err(error) => {
-            fail_run_early(&runtime, &run_id, &error).await?;
-            return Err(error);
-        }
+        Err(error) => return abort_before_start(&runtime, &run_id, error).await,
     };
     eprintln!("sprocket-agent: loaded run context {}", run_id);
-
-    if let Err(error) = runtime.start_run(&run_id).await {
-        fail_run_early(&runtime, &run_id, &error).await?;
-        return Err(error);
-    }
-    eprintln!("sprocket-agent: marked run running {}", run_id);
 
     let prepared = (|| {
         let workspace_overview = build_workspace_overview(&workspace_root)?;
@@ -216,10 +360,16 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
 
     let (_, _, prompt, provider, prior_history, preamble) = match prepared {
         Ok(values) => values,
-        Err(error) => {
-            fail_run_setup(&runtime, &run_id, &error).await?;
-            return Err(error);
-        }
+        Err(error) => return abort_before_start(&runtime, &run_id, error).await,
+    };
+
+    if let Err(error) = runtime.begin_assistant_message(&run_id).await {
+        return abort_before_start(&runtime, &run_id, error).await;
+    }
+    eprintln!("sprocket-agent: prepared assistant response {}", run_id);
+
+    let Some(lease_started_at) = claim_run(&runtime, &run_id, &claim_id).await? else {
+        return Ok(());
     };
 
     eprintln!(
@@ -228,28 +378,26 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
         run_id
     );
 
-    if runtime.run_finished(&run_id).await? {
-        return Ok(());
-    }
+    run_with_claim_lease(&runtime, &run_id, &claim_id, lease_started_at, async {
+        if runtime.run_finished(&run_id).await? {
+            return Ok(());
+        }
 
-    if let Err(error) = runtime.begin_assistant_message(&run_id).await {
-        fail_run_setup(&runtime, &run_id, &error).await?;
-        return Err(error);
-    }
-    eprintln!("sprocket-agent: prepared assistant response {}", run_id);
+        let provider_result = provider
+            .run(
+                runtime.clone(),
+                AgentProviderRequest {
+                    run_id: run_id.clone(),
+                    claim_id: claim_id.clone(),
+                    prompt,
+                    preamble,
+                    prior_history,
+                    workspace_root,
+                },
+            )
+            .await;
 
-    let provider_result = provider
-        .run(
-            runtime.clone(),
-            AgentProviderRequest {
-                run_id: run_id.clone(),
-                prompt,
-                preamble,
-                prior_history,
-                workspace_root,
-            },
-        )
-        .await;
-
-    finalize_provider_result(&runtime, &run_id, provider_result).await
+        finalize_provider_result(&runtime, &run_id, &claim_id, provider_result).await
+    })
+    .await
 }

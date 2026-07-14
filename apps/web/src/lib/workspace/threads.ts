@@ -1,23 +1,6 @@
 import type { Id } from '$convex/_generated/dataModel';
 import type { ThreadSummary, WorkspaceSession, WorkspaceThreadGroup } from '$lib/types/sprocket';
 
-export function getAttachedWorkspaceSessionIds(
-	workspaceSessions: WorkspaceSession[],
-	clientId: string | null
-) {
-	if (!clientId) {
-		return [];
-	}
-
-	return workspaceSessions
-		.filter(
-			(workspaceSession) =>
-				workspaceSession.connectedClientId === clientId &&
-				workspaceSession.executorStatus === 'connected'
-		)
-		.map((workspaceSession) => workspaceSession._id);
-}
-
 export function findWorkspaceSessionByName<T extends Pick<WorkspaceSession, 'workspaceName'>>(
 	workspaceSessions: T[],
 	workspaceName: string
@@ -128,9 +111,8 @@ export function isSelectionGenerationCurrent(
 export function resolvePendingCreatedThreadId(args: {
 	pendingCreatedThreadId: Id<'threadRecords'> | null;
 	threads: ThreadSummary[];
-	threadListChangedSinceCreate: boolean;
 }): Id<'threadRecords'> | null {
-	const { pendingCreatedThreadId, threads, threadListChangedSinceCreate } = args;
+	const { pendingCreatedThreadId, threads } = args;
 	if (!pendingCreatedThreadId) {
 		return null;
 	}
@@ -139,12 +121,133 @@ export function resolvePendingCreatedThreadId(args: {
 		return null;
 	}
 
-	// Create/list catch-up window ended without the thread appearing — stop pinning.
-	if (threadListChangedSinceCreate) {
-		return null;
+	return pendingCreatedThreadId;
+}
+
+export function isLatestRunReadyForThread(args: {
+	threadId: Id<'threadRecords'> | null;
+	pendingCreatedThreadId: Id<'threadRecords'> | null;
+	hasLatestRunData: boolean;
+}): boolean {
+	return !args.threadId || args.threadId === args.pendingCreatedThreadId || args.hasLatestRunData;
+}
+
+export type PendingAgentLaunch = {
+	expiresAt: number;
+	launchId: number;
+	previousClaimExpiresAt?: number;
+	previousRunId: Id<'runs'> | null;
+};
+
+export type PendingAgentLaunches = Readonly<Partial<Record<string, PendingAgentLaunch>>>;
+
+export function isAgentLaunchPending(
+	pendingLaunches: PendingAgentLaunches,
+	threadId: Id<'threadRecords'> | null
+): boolean {
+	return Boolean(threadId && pendingLaunches[threadId]);
+}
+
+export function beginPendingAgentLaunch(
+	pendingLaunches: PendingAgentLaunches,
+	threadId: Id<'threadRecords'>,
+	launch: PendingAgentLaunch
+): PendingAgentLaunches {
+	return { ...pendingLaunches, [threadId]: launch };
+}
+
+export function clearPendingAgentLaunch(
+	pendingLaunches: PendingAgentLaunches,
+	threadId: Id<'threadRecords'>,
+	launchId?: number
+): PendingAgentLaunches {
+	const pendingLaunch = pendingLaunches[threadId];
+	if (!pendingLaunch || (launchId !== undefined && pendingLaunch.launchId !== launchId)) {
+		return pendingLaunches;
 	}
 
-	return pendingCreatedThreadId;
+	const nextPendingLaunches = { ...pendingLaunches };
+	delete nextPendingLaunches[threadId];
+	return nextPendingLaunches;
+}
+
+function hasAgentLaunchProgressed(
+	pendingLaunch: PendingAgentLaunch,
+	observedRunId: Id<'runs'> | null,
+	observedClaimExpiresAt?: number
+): boolean {
+	return Boolean(
+		observedRunId &&
+		(observedRunId !== pendingLaunch.previousRunId ||
+			observedClaimExpiresAt !== pendingLaunch.previousClaimExpiresAt)
+	);
+}
+
+export function resolvePendingAgentLaunch(
+	pendingLaunches: PendingAgentLaunches,
+	threadId: Id<'threadRecords'>,
+	observedRunId: Id<'runs'> | null,
+	observedClaimExpiresAt?: number
+): PendingAgentLaunches {
+	const pendingLaunch = pendingLaunches[threadId];
+	if (
+		!pendingLaunch ||
+		!hasAgentLaunchProgressed(pendingLaunch, observedRunId, observedClaimExpiresAt)
+	) {
+		return pendingLaunches;
+	}
+
+	return clearPendingAgentLaunch(pendingLaunches, threadId, pendingLaunch.launchId);
+}
+
+export function resolvePendingAgentLaunchesFromThreads(
+	pendingLaunches: PendingAgentLaunches,
+	threads: ThreadSummary[]
+): PendingAgentLaunches {
+	let nextPendingLaunches = pendingLaunches;
+
+	for (const thread of threads) {
+		nextPendingLaunches = resolvePendingAgentLaunch(
+			nextPendingLaunches,
+			thread.threadId,
+			thread.latestRunId,
+			thread.latestRunClaimExpiresAt
+		);
+	}
+
+	return nextPendingLaunches;
+}
+
+export function resolveExpiredAgentLaunch(
+	pendingLaunches: PendingAgentLaunches,
+	threadId: Id<'threadRecords'>,
+	launchId: number,
+	now: number,
+	latestRunId: Id<'runs'> | null,
+	latestClaimExpiresAt?: number
+): { pendingLaunches: PendingAgentLaunches; shouldRecover: boolean } {
+	const pendingLaunch = pendingLaunches[threadId];
+	if (!pendingLaunch || pendingLaunch.launchId !== launchId || pendingLaunch.expiresAt > now) {
+		return { pendingLaunches, shouldRecover: false };
+	}
+
+	return {
+		pendingLaunches: clearPendingAgentLaunch(pendingLaunches, threadId, launchId),
+		shouldRecover: !hasAgentLaunchProgressed(pendingLaunch, latestRunId, latestClaimExpiresAt)
+	};
+}
+
+export function getThreadDeletionBlockMessage(
+	pendingLaunches: PendingAgentLaunches,
+	thread: Pick<ThreadSummary, 'threadId' | 'hasActiveRun'>
+): string | null {
+	if (isAgentLaunchPending(pendingLaunches, thread.threadId)) {
+		return 'Wait for the local agent to start before deleting this thread.';
+	}
+
+	return thread.hasActiveRun
+		? 'Finish or cancel the active run before deleting this thread.'
+		: null;
 }
 
 export function resolveWorkspaceThreadSelection(args: {
