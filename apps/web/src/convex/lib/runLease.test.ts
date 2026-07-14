@@ -25,14 +25,12 @@ describe('run claim leases', () => {
 		expect(canStartRunWithClaim(run, 'claim-b', 200)).toBe(true);
 	});
 
-	it('recovers legacy active rows without lease metadata', () => {
-		expect(canStartRunWithClaim({ status: 'running', claimId: 'old-claim' }, 'claim-b', 100)).toBe(
-			true
-		);
-		expect(
-			canStartRunWithClaim({ status: 'awaiting_executor', claimId: 'old-claim' }, 'claim-b', 100)
-		).toBe(true);
-	});
+	it.each(['running', 'awaiting_executor'] as const)(
+		'recovers legacy %s rows without lease metadata',
+		(status) => {
+			expect(canStartRunWithClaim({ status, claimId: 'old-claim' }, 'claim-b', 100)).toBe(true);
+		}
+	);
 
 	it('only reports an unexpired active-state lease as active', () => {
 		expect(isRunClaimLeaseActive({ status: 'running', claimExpiresAt: 101 }, 100)).toBe(true);

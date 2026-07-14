@@ -33,12 +33,14 @@
 		type SupportedModelId,
 		type SupportedReasoningEffort
 	} from '$convex/lib/models';
+	import { isClaimedRunStatus } from '$convex/lib/runLease';
 	import {
 		beginPendingAgentLaunch,
 		clearPendingAgentLaunch,
 		dataForThread,
 		findThreadById,
 		findWorkspaceSessionByName,
+		getThreadDeletionBlockMessage,
 		getWorkspaceThreadGroups,
 		isAgentLaunchPending,
 		isLatestRunReadyForThread,
@@ -304,9 +306,6 @@
 	);
 	const hasPendingAgentLaunch = $derived(
 		isAgentLaunchPending(pendingAgentLaunches, currentThreadId)
-	);
-	const pendingAgentLaunchThreadIds = $derived(
-		Object.keys(pendingAgentLaunches) as Id<'threadRecords'>[]
 	);
 	const isLatestRunReady = $derived(
 		isLatestRunReadyForThread({
@@ -616,18 +615,8 @@
 		openWorkspaceSession(thread.workspaceName, { threadId: thread.threadId });
 	}
 
-	function getThreadDeletionBlockMessage(thread: ThreadSummary) {
-		if (isAgentLaunchPending(pendingAgentLaunches, thread.threadId)) {
-			return 'Wait for the local agent to start before deleting this thread.';
-		}
-
-		return thread.hasActiveRun
-			? 'Finish or cancel the active run before deleting this thread.'
-			: null;
-	}
-
 	async function deleteThread(thread: ThreadSummary) {
-		const initialBlockMessage = getThreadDeletionBlockMessage(thread);
+		const initialBlockMessage = getThreadDeletionBlockMessage(pendingAgentLaunches, thread);
 		if (initialBlockMessage) {
 			currentError = initialBlockMessage;
 			return;
@@ -638,7 +627,7 @@
 		if (!confirmed) {
 			return;
 		}
-		const currentBlockMessage = getThreadDeletionBlockMessage(thread);
+		const currentBlockMessage = getThreadDeletionBlockMessage(pendingAgentLaunches, thread);
 		if (currentBlockMessage) {
 			currentError = currentBlockMessage;
 			return;
@@ -985,7 +974,7 @@
 	});
 
 	$effect(() => {
-		if (runState?.status !== 'running' && runState?.status !== 'awaiting_executor') {
+		if (!runState || !isClaimedRunStatus(runState.status)) {
 			return;
 		}
 		const updateClock = () => {
@@ -1004,7 +993,7 @@
 			!viewerIdentity ||
 			!recoveryScope ||
 			!staleRun ||
-			(staleRun.status !== 'running' && staleRun.status !== 'awaiting_executor') ||
+			!isClaimedRunStatus(staleRun.status) ||
 			isRunning ||
 			isSubmittingPrompt ||
 			hasPendingAgentLaunch ||
@@ -1222,26 +1211,20 @@
 	});
 
 	$effect(() => {
-		const nextPendingAgentLaunches = resolvePendingAgentLaunchesFromThreads(
+		let nextPendingAgentLaunches = resolvePendingAgentLaunchesFromThreads(
 			pendingAgentLaunches,
 			threads
 		);
-		if (nextPendingAgentLaunches !== pendingAgentLaunches) {
-			pendingAgentLaunches = nextPendingAgentLaunches;
-		}
-	});
-
-	$effect(() => {
 		if (currentThreadId && runState?._id) {
-			const nextPendingAgentLaunches = resolvePendingAgentLaunch(
-				pendingAgentLaunches,
+			nextPendingAgentLaunches = resolvePendingAgentLaunch(
+				nextPendingAgentLaunches,
 				currentThreadId,
 				runState._id,
 				runState.claimExpiresAt
 			);
-			if (nextPendingAgentLaunches !== pendingAgentLaunches) {
-				pendingAgentLaunches = nextPendingAgentLaunches;
-			}
+		}
+		if (nextPendingAgentLaunches !== pendingAgentLaunches) {
+			pendingAgentLaunches = nextPendingAgentLaunches;
 		}
 	});
 
@@ -1348,7 +1331,7 @@
 				{currentWorkspaceName}
 				{currentThreadId}
 				groups={groupedWorkspaceThreads}
-				{pendingAgentLaunchThreadIds}
+				{pendingAgentLaunches}
 				onChooseWorkspace={() => {
 					openWorkspacePicker('add');
 				}}

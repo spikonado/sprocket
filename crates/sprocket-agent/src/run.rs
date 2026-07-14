@@ -104,6 +104,18 @@ async fn fail_run_before_start(
         .await
 }
 
+async fn abort_before_start(
+    runtime: &RuntimeClient,
+    run_id: &str,
+    error: anyhow::Error,
+) -> anyhow::Result<()> {
+    if fail_run_before_start(runtime, run_id, &error).await? {
+        Err(error)
+    } else {
+        Ok(())
+    }
+}
+
 async fn finalize_run(
     runtime: &RuntimeClient,
     run_id: &str,
@@ -318,13 +330,7 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
 
     let context: RunContextResponse = match runtime.run_context(&run_id).await {
         Ok(context) => context,
-        Err(error) => {
-            return if fail_run_before_start(&runtime, &run_id, &error).await? {
-                Err(error)
-            } else {
-                Ok(())
-            };
-        }
+        Err(error) => return abort_before_start(&runtime, &run_id, error).await,
     };
     eprintln!("sprocket-agent: loaded run context {}", run_id);
 
@@ -354,21 +360,11 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
 
     let (_, _, prompt, provider, prior_history, preamble) = match prepared {
         Ok(values) => values,
-        Err(error) => {
-            return if fail_run_before_start(&runtime, &run_id, &error).await? {
-                Err(error)
-            } else {
-                Ok(())
-            };
-        }
+        Err(error) => return abort_before_start(&runtime, &run_id, error).await,
     };
 
     if let Err(error) = runtime.begin_assistant_message(&run_id).await {
-        return if fail_run_before_start(&runtime, &run_id, &error).await? {
-            Err(error)
-        } else {
-            Ok(())
-        };
+        return abort_before_start(&runtime, &run_id, error).await;
     }
     eprintln!("sprocket-agent: prepared assistant response {}", run_id);
 

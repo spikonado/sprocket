@@ -183,7 +183,7 @@ type PendingLatestTask<T> = {
 	reject: (error: unknown) => void;
 };
 
-export class LatestTaskQueueCancelledError extends Error {
+class LatestTaskQueueCancelledError extends Error {
 	constructor() {
 		super('Pending task was canceled.');
 		this.name = 'LatestTaskQueueCancelledError';

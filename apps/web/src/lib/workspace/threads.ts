@@ -1,23 +1,6 @@
 import type { Id } from '$convex/_generated/dataModel';
 import type { ThreadSummary, WorkspaceSession, WorkspaceThreadGroup } from '$lib/types/sprocket';
 
-export function getAttachedWorkspaceSessionIds(
-	workspaceSessions: WorkspaceSession[],
-	clientId: string | null
-) {
-	if (!clientId) {
-		return [];
-	}
-
-	return workspaceSessions
-		.filter(
-			(workspaceSession) =>
-				workspaceSession.connectedClientId === clientId &&
-				workspaceSession.executorStatus === 'connected'
-		)
-		.map((workspaceSession) => workspaceSession._id);
-}
-
 export function findWorkspaceSessionByName<T extends Pick<WorkspaceSession, 'workspaceName'>>(
 	workspaceSessions: T[],
 	workspaceName: string
@@ -188,6 +171,18 @@ export function clearPendingAgentLaunch(
 	return nextPendingLaunches;
 }
 
+function hasAgentLaunchProgressed(
+	pendingLaunch: PendingAgentLaunch,
+	observedRunId: Id<'runs'> | null,
+	observedClaimExpiresAt?: number
+): boolean {
+	return Boolean(
+		observedRunId &&
+		(observedRunId !== pendingLaunch.previousRunId ||
+			observedClaimExpiresAt !== pendingLaunch.previousClaimExpiresAt)
+	);
+}
+
 export function resolvePendingAgentLaunch(
 	pendingLaunches: PendingAgentLaunches,
 	threadId: Id<'threadRecords'>,
@@ -195,12 +190,9 @@ export function resolvePendingAgentLaunch(
 	observedClaimExpiresAt?: number
 ): PendingAgentLaunches {
 	const pendingLaunch = pendingLaunches[threadId];
-	if (!pendingLaunch || !observedRunId) {
-		return pendingLaunches;
-	}
 	if (
-		observedRunId === pendingLaunch.previousRunId &&
-		observedClaimExpiresAt === pendingLaunch.previousClaimExpiresAt
+		!pendingLaunch ||
+		!hasAgentLaunchProgressed(pendingLaunch, observedRunId, observedClaimExpiresAt)
 	) {
 		return pendingLaunches;
 	}
@@ -215,20 +207,11 @@ export function resolvePendingAgentLaunchesFromThreads(
 	let nextPendingLaunches = pendingLaunches;
 
 	for (const thread of threads) {
-		const pendingLaunch = nextPendingLaunches[thread.threadId];
-		if (
-			!pendingLaunch ||
-			!thread.latestRunId ||
-			(thread.latestRunId === pendingLaunch.previousRunId &&
-				thread.latestRunClaimExpiresAt === pendingLaunch.previousClaimExpiresAt)
-		) {
-			continue;
-		}
-
-		nextPendingLaunches = clearPendingAgentLaunch(
+		nextPendingLaunches = resolvePendingAgentLaunch(
 			nextPendingLaunches,
 			thread.threadId,
-			pendingLaunch.launchId
+			thread.latestRunId,
+			thread.latestRunClaimExpiresAt
 		);
 	}
 
@@ -250,11 +233,21 @@ export function resolveExpiredAgentLaunch(
 
 	return {
 		pendingLaunches: clearPendingAgentLaunch(pendingLaunches, threadId, launchId),
-		shouldRecover:
-			!latestRunId ||
-			(latestRunId === pendingLaunch.previousRunId &&
-				latestClaimExpiresAt === pendingLaunch.previousClaimExpiresAt)
+		shouldRecover: !hasAgentLaunchProgressed(pendingLaunch, latestRunId, latestClaimExpiresAt)
 	};
+}
+
+export function getThreadDeletionBlockMessage(
+	pendingLaunches: PendingAgentLaunches,
+	thread: Pick<ThreadSummary, 'threadId' | 'hasActiveRun'>
+): string | null {
+	if (isAgentLaunchPending(pendingLaunches, thread.threadId)) {
+		return 'Wait for the local agent to start before deleting this thread.';
+	}
+
+	return thread.hasActiveRun
+		? 'Finish or cancel the active run before deleting this thread.'
+		: null;
 }
 
 export function resolveWorkspaceThreadSelection(args: {

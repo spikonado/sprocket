@@ -9,7 +9,14 @@ import {
 	resolveDraftRunSubmissionId,
 	resolveSubmissionId
 } from '$lib/home/desktop';
-import type { DesktopApi, WorkspaceSessionLocation } from '$lib/types/sprocket';
+import type { DesktopApi, RunState, WorkspaceSessionLocation } from '$lib/types/sprocket';
+
+const recoveredSubmission = {
+	prompt: 'Inspect the robot',
+	reasoningEffort: 'medium' as const,
+	selectedModel: 'gpt-5.4' as const,
+	submissionId: 'recovered-id'
+};
 
 function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 	return {
@@ -22,23 +29,57 @@ function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 	} as unknown as DesktopApi;
 }
 
+function launchArgs(
+	overrides: Partial<Parameters<typeof launchAgentRun>[0]> &
+		Pick<Parameters<typeof launchAgentRun>[0], 'desktopApi' | 'onError'>
+): Parameters<typeof launchAgentRun>[0] {
+	return {
+		threadId: 'thread-1' as never,
+		prompt: 'Inspect src/lib.rs',
+		selectedModel: 'gpt-5.4',
+		reasoningEffort: 'medium',
+		submissionId: 'submission-1',
+		viewerArgs: {},
+		workspaceSessionId: 'workspace-1' as never,
+		...overrides
+	};
+}
+
+function resolveRecoveredSubmission(
+	overrides: Partial<Parameters<typeof resolveSubmissionId>[0]> = {}
+) {
+	return resolveSubmissionId({
+		latestRun: null,
+		newSubmissionId: 'new-id',
+		prompt: recoveredSubmission.prompt,
+		reasoningEffort: recoveredSubmission.reasoningEffort,
+		recoveredSubmission,
+		selectedModel: recoveredSubmission.selectedModel,
+		...overrides
+	});
+}
+
+function deferred() {
+	let resolve!: () => void;
+	const promise = new Promise<void>((settle) => {
+		resolve = settle;
+	});
+	return { promise, resolve: () => resolve() };
+}
+
 describe('launchAgentRun', () => {
 	it('starts a desktop run with viewer args and auth token', () => {
 		const runAgent = vi.fn().mockResolvedValue(undefined);
 		const desktopApi = createDesktopApi(runAgent);
 
-		launchAgentRun({
-			authToken: 'token-1',
-			desktopApi,
-			onError: vi.fn(),
-			threadId: 'thread-1' as never,
-			prompt: 'Inspect src/lib.rs',
-			selectedModel: 'gpt-5.4',
-			reasoningEffort: 'medium',
-			submissionId: 'submission-1',
-			viewerArgs: { guestId: 'guest-1' },
-			workspaceSessionId: 'workspace-1' as never
-		});
+		launchAgentRun(
+			launchArgs({
+				authToken: 'token-1',
+				desktopApi,
+				onError: vi.fn(),
+				viewerArgs: { guestId: 'guest-1' }
+			})
+		);
 
 		expect(runAgent).toHaveBeenCalledWith({
 			authToken: 'token-1',
@@ -57,22 +98,11 @@ describe('launchAgentRun', () => {
 		const onError = vi.fn();
 		const desktopApi = createDesktopApi(vi.fn().mockRejectedValue(launchError));
 
-		launchAgentRun({
-			desktopApi,
-			onError,
-			threadId: 'thread-1' as never,
-			prompt: 'Inspect src/lib.rs',
-			selectedModel: 'gpt-5.4',
-			reasoningEffort: 'medium',
-			submissionId: 'submission-1',
-			viewerArgs: {},
-			workspaceSessionId: 'workspace-1' as never
+		launchAgentRun(launchArgs({ desktopApi, onError }));
+
+		await vi.waitFor(() => {
+			expect(onError).toHaveBeenCalledWith(launchError);
 		});
-
-		await Promise.resolve();
-		await Promise.resolve();
-
-		expect(onError).toHaveBeenCalledWith(launchError);
 	});
 });
 
@@ -86,81 +116,25 @@ describe('getViewerIdentity', () => {
 
 describe('resolveSubmissionId', () => {
 	it('reuses an uncertain submission only when its restored prompt is unchanged', () => {
-		const recoveredSubmission = {
-			prompt: 'Inspect the robot',
-			reasoningEffort: 'medium' as const,
-			selectedModel: 'gpt-5.4' as const,
-			submissionId: 'recovered-id'
-		};
-
-		expect(
-			resolveSubmissionId({
-				latestRun: null,
-				newSubmissionId: 'new-id',
-				prompt: 'Inspect the robot',
-				reasoningEffort: 'medium',
-				recoveredSubmission,
-				selectedModel: 'gpt-5.4'
-			})
-		).toBe('recovered-id');
-		expect(
-			resolveSubmissionId({
-				latestRun: null,
-				newSubmissionId: 'new-id',
-				prompt: 'Inspect and fix the robot',
-				reasoningEffort: 'medium',
-				recoveredSubmission,
-				selectedModel: 'gpt-5.4'
-			})
-		).toBe('new-id');
-		expect(
-			resolveSubmissionId({
-				latestRun: null,
-				newSubmissionId: 'new-id',
-				prompt: 'Inspect the robot',
-				reasoningEffort: 'high',
-				recoveredSubmission,
-				selectedModel: 'gpt-5.4'
-			})
-		).toBe('new-id');
+		expect(resolveRecoveredSubmission()).toBe('recovered-id');
+		expect(resolveRecoveredSubmission({ prompt: 'Inspect and fix the robot' })).toBe('new-id');
+		expect(resolveRecoveredSubmission({ reasoningEffort: 'high' })).toBe('new-id');
 	});
 
 	it('uses a fresh id when the visible latest submission has finished or supersedes recovery', () => {
-		const recoveredSubmission = {
-			prompt: 'Inspect the robot',
-			reasoningEffort: 'medium' as const,
-			selectedModel: 'gpt-5.4' as const,
-			submissionId: 'recovered-id'
-		};
-
 		expect(
-			resolveSubmissionId({
-				latestRun: { status: 'failed', submissionId: 'recovered-id' },
-				newSubmissionId: 'new-id',
-				prompt: 'Inspect the robot',
-				reasoningEffort: 'medium',
-				recoveredSubmission,
-				selectedModel: 'gpt-5.4'
+			resolveRecoveredSubmission({
+				latestRun: { status: 'failed', submissionId: 'recovered-id' }
 			})
 		).toBe('new-id');
 		expect(
-			resolveSubmissionId({
-				latestRun: { status: 'queued', submissionId: 'recovered-id' },
-				newSubmissionId: 'new-id',
-				prompt: 'Inspect the robot',
-				reasoningEffort: 'medium',
-				recoveredSubmission,
-				selectedModel: 'gpt-5.4'
+			resolveRecoveredSubmission({
+				latestRun: { status: 'queued', submissionId: 'recovered-id' }
 			})
 		).toBe('recovered-id');
 		expect(
-			resolveSubmissionId({
-				latestRun: { status: 'queued', submissionId: 'newer-id' },
-				newSubmissionId: 'new-id',
-				prompt: 'Inspect the robot',
-				reasoningEffort: 'medium',
-				recoveredSubmission,
-				selectedModel: 'gpt-5.4'
+			resolveRecoveredSubmission({
+				latestRun: { status: 'queued', submissionId: 'newer-id' }
 			})
 		).toBe('new-id');
 	});
@@ -196,14 +170,18 @@ describe('resolveDraftRunSubmissionId', () => {
 
 describe('isRunBlockingAgentLaunch', () => {
 	it('blocks queued and actively leased runs but permits stale claimed runs', () => {
-		expect(isRunBlockingAgentLaunch({ status: 'queued' } as never, 100)).toBe(true);
-		expect(isRunBlockingAgentLaunch({ status: 'running', claimExpiresAt: 101 } as never, 100)).toBe(
-			true
-		);
-		expect(
-			isRunBlockingAgentLaunch({ status: 'awaiting_executor', claimExpiresAt: 100 } as never, 100)
-		).toBe(false);
-		expect(isRunBlockingAgentLaunch({ status: 'running' } as never, 100)).toBe(false);
+		const run = (
+			status: RunState['status'],
+			claimExpiresAt?: number
+		): Pick<RunState, 'status' | 'claimExpiresAt'> => ({
+			status,
+			...(claimExpiresAt === undefined ? {} : { claimExpiresAt })
+		});
+
+		expect(isRunBlockingAgentLaunch(run('queued'), 100)).toBe(true);
+		expect(isRunBlockingAgentLaunch(run('running', 101), 100)).toBe(true);
+		expect(isRunBlockingAgentLaunch(run('awaiting_executor', 100), 100)).toBe(false);
+		expect(isRunBlockingAgentLaunch(run('running'), 100)).toBe(false);
 	});
 });
 
@@ -278,15 +256,13 @@ describe('createLatestTaskQueue', () => {
 	});
 
 	it('rejects every coalesced request when the retained latest write fails', async () => {
-		let releaseFirst: (() => void) | undefined;
+		const firstGate = deferred();
 		const writeError = new Error('offline');
 		const values: string[] = [];
 		const queue = createLatestTaskQueue(async (value: string) => {
 			values.push(value);
 			if (value === 'first') {
-				await new Promise<void>((resolve) => {
-					releaseFirst = resolve;
-				});
+				await firstGate.promise;
 				return;
 			}
 
@@ -298,21 +274,19 @@ describe('createLatestTaskQueue', () => {
 		const supersededFailure = expect(superseded).rejects.toBe(writeError);
 		const latestFailure = expect(latest).rejects.toBe(writeError);
 
-		releaseFirst?.();
+		firstGate.resolve();
 		await first;
 		await Promise.all([supersededFailure, latestFailure]);
 		expect(values).toEqual(['first', 'latest']);
 	});
 
 	it('cancels pending requests without affecting an in-flight write', async () => {
-		let releaseFirst: (() => void) | undefined;
+		const firstGate = deferred();
 		const values: string[] = [];
 		const queue = createLatestTaskQueue(async (value: string) => {
 			values.push(value);
 			if (value === 'first') {
-				await new Promise<void>((resolve) => {
-					releaseFirst = resolve;
-				});
+				await firstGate.promise;
 			}
 		});
 		const first = queue.enqueue('first');
@@ -325,7 +299,7 @@ describe('createLatestTaskQueue', () => {
 		await Promise.all([supersededCancellation, latestCancellation]);
 		expect(values).toEqual(['first']);
 		const replacement = queue.enqueue('replacement');
-		releaseFirst?.();
+		firstGate.resolve();
 		await Promise.all([first, replacement]);
 		expect(values).toEqual(['first', 'replacement']);
 	});

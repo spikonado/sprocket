@@ -4,7 +4,7 @@ import {
 	clearPendingAgentLaunch,
 	dataForThread,
 	findWorkspaceSessionByName,
-	getAttachedWorkspaceSessionIds,
+	getThreadDeletionBlockMessage,
 	getWorkspaceThreadGroups,
 	isAgentLaunchPending,
 	isLatestRunReadyForThread,
@@ -13,10 +13,21 @@ import {
 	resolvePendingAgentLaunch,
 	resolvePendingAgentLaunchesFromThreads,
 	resolvePendingCreatedThreadId,
-	resolveWorkspaceThreadSelection
+	resolveWorkspaceThreadSelection,
+	type PendingAgentLaunch,
+	type PendingAgentLaunches
 } from '$lib/workspace/threads';
 import { defaultModelId, defaultReasoningEffort } from '$convex/lib/models';
 import type { ThreadSummary, WorkspaceSession } from '$lib/types/sprocket';
+
+type RunId = NonNullable<ThreadSummary['latestRunId']>;
+
+const threadA = 'thread-record-a' as ThreadSummary['threadId'];
+const threadB = 'thread-record-b' as ThreadSummary['threadId'];
+const runA1 = 'run-a-1' as RunId;
+const runA2 = 'run-a-2' as RunId;
+const runB1 = 'run-b-1' as RunId;
+const runB2 = 'run-b-2' as RunId;
 
 function makeWorkspaceSession(overrides: Partial<WorkspaceSession> = {}): WorkspaceSession {
 	return {
@@ -54,32 +65,22 @@ function makeThreadSummary(overrides: Partial<ThreadSummary> = {}): ThreadSummar
 	};
 }
 
-describe('workspace thread helpers', () => {
-	it('returns attached workspaces for the current executor client only', () => {
-		const attached = getAttachedWorkspaceSessionIds(
-			[
-				makeWorkspaceSession({
-					_id: 'ws-1' as WorkspaceSession['_id'],
-					connectedClientId: 'client-1',
-					executorStatus: 'connected'
-				}),
-				makeWorkspaceSession({
-					_id: 'ws-2' as WorkspaceSession['_id'],
-					connectedClientId: 'client-1',
-					executorStatus: 'disconnected'
-				}),
-				makeWorkspaceSession({
-					_id: 'ws-3' as WorkspaceSession['_id'],
-					connectedClientId: 'client-2',
-					executorStatus: 'connected'
-				})
-			],
-			'client-1'
-		);
-
-		expect(attached).toEqual(['ws-1']);
+function beginLaunch(
+	pendingLaunches: PendingAgentLaunches,
+	threadId: ThreadSummary['threadId'],
+	launchId: number,
+	previousRunId: RunId | null = null,
+	extras: Partial<PendingAgentLaunch> = {}
+): PendingAgentLaunches {
+	return beginPendingAgentLaunch(pendingLaunches, threadId, {
+		expiresAt: 100,
+		launchId,
+		previousRunId,
+		...extras
 	});
+}
 
+describe('workspace thread helpers', () => {
 	it('groups threads by exact workspace name', () => {
 		const groups = getWorkspaceThreadGroups(
 			[
@@ -131,11 +132,9 @@ describe('workspace thread helpers', () => {
 	});
 
 	it('preserves a blank draft selection for the current workspace', () => {
-		const threads = [makeThreadSummary()];
-
 		expect(
 			resolveWorkspaceThreadSelection({
-				threads,
+				threads: [makeThreadSummary()],
 				currentThreadId: null,
 				currentWorkspaceName: 'Workspace',
 				draftWorkspaceName: 'Workspace'
@@ -168,12 +167,11 @@ describe('workspace thread helpers', () => {
 			threadId: 'thread-record-newest' as ThreadSummary['threadId'],
 			lastMessageAt: 30
 		});
-		const vanished = 'thread-record-vanished' as ThreadSummary['threadId'];
 
 		expect(
 			resolveWorkspaceThreadSelection({
 				threads: [newest],
-				currentThreadId: vanished,
+				currentThreadId: 'thread-record-vanished' as ThreadSummary['threadId'],
 				currentWorkspaceName: 'Workspace',
 				draftWorkspaceName: null,
 				pendingCreatedThreadId: null
@@ -220,14 +218,12 @@ describe('workspace thread helpers', () => {
 				threads: [existing]
 			})
 		).toBe(pendingThreadId);
-
 		expect(
 			resolvePendingCreatedThreadId({
 				pendingCreatedThreadId: pendingThreadId,
 				threads: [unrelated, existing]
 			})
 		).toBe(pendingThreadId);
-
 		expect(
 			resolvePendingCreatedThreadId({
 				pendingCreatedThreadId: pendingThreadId,
@@ -236,46 +232,30 @@ describe('workspace thread helpers', () => {
 		).toBeNull();
 	});
 
-	it('tracks pending launches independently by thread', () => {
-		const threadA = 'thread-record-a' as ThreadSummary['threadId'];
-		const threadB = 'thread-record-b' as ThreadSummary['threadId'];
-		const previousRunA = 'run-a-1' as never;
-		const previousRunB = 'run-b-1' as never;
-		let pendingLaunches = beginPendingAgentLaunch({}, threadA, {
-			expiresAt: 100,
-			launchId: 1,
-			previousRunId: previousRunA
-		});
-		pendingLaunches = beginPendingAgentLaunch(pendingLaunches, threadB, {
-			expiresAt: 100,
-			launchId: 2,
-			previousRunId: previousRunB
-		});
+	it('tracks pending launches independently by thread and clears only progressed ones', () => {
+		let pendingLaunches = beginLaunch({}, threadA, 1, runA1);
+		pendingLaunches = beginLaunch(pendingLaunches, threadB, 2, runB1);
 
 		expect(isAgentLaunchPending(pendingLaunches, threadA)).toBe(true);
 		expect(isAgentLaunchPending(pendingLaunches, threadB)).toBe(true);
+		expect(
+			isAgentLaunchPending(resolvePendingAgentLaunch(pendingLaunches, threadA, runA1), threadA)
+		).toBe(true);
 
-		pendingLaunches = resolvePendingAgentLaunch(pendingLaunches, threadA, previousRunA);
+		pendingLaunches = resolvePendingAgentLaunchesFromThreads(pendingLaunches, [
+			makeThreadSummary({ threadId: threadA, latestRunId: runA1, latestRunStartedAt: 10 }),
+			makeThreadSummary({ threadId: threadB, latestRunId: runB2, latestRunStartedAt: 10 })
+		]);
 		expect(isAgentLaunchPending(pendingLaunches, threadA)).toBe(true);
+		expect(isAgentLaunchPending(pendingLaunches, threadB)).toBe(false);
 
-		pendingLaunches = resolvePendingAgentLaunch(pendingLaunches, threadA, 'run-a-2' as never);
+		pendingLaunches = resolvePendingAgentLaunch(pendingLaunches, threadA, runA2);
 		expect(isAgentLaunchPending(pendingLaunches, threadA)).toBe(false);
-		expect(isAgentLaunchPending(pendingLaunches, threadB)).toBe(true);
 	});
 
-	it('expires only the matching pending launch after its deadline', () => {
-		const threadA = 'thread-record-a' as ThreadSummary['threadId'];
-		const threadB = 'thread-record-b' as ThreadSummary['threadId'];
-		let pendingLaunches = beginPendingAgentLaunch({}, threadA, {
-			expiresAt: 100,
-			launchId: 1,
-			previousRunId: null
-		});
-		pendingLaunches = beginPendingAgentLaunch(pendingLaunches, threadB, {
-			expiresAt: 100,
-			launchId: 2,
-			previousRunId: null
-		});
+	it('expires only the matching pending launch and recovers only when the run is unchanged', () => {
+		let pendingLaunches = beginLaunch({}, threadA, 1);
+		pendingLaunches = beginLaunch(pendingLaunches, threadB, 2);
 
 		expect(resolveExpiredAgentLaunch(pendingLaunches, threadA, 1, 99, null)).toEqual({
 			pendingLaunches,
@@ -287,99 +267,50 @@ describe('workspace thread helpers', () => {
 		});
 
 		const expired = resolveExpiredAgentLaunch(pendingLaunches, threadA, 1, 100, null);
-		pendingLaunches = expired.pendingLaunches;
 		expect(expired.shouldRecover).toBe(true);
-		expect(isAgentLaunchPending(pendingLaunches, threadA)).toBe(false);
-		expect(isAgentLaunchPending(pendingLaunches, threadB)).toBe(true);
-	});
+		expect(isAgentLaunchPending(expired.pendingLaunches, threadA)).toBe(false);
+		expect(isAgentLaunchPending(expired.pendingLaunches, threadB)).toBe(true);
 
-	it('does not recover an expired launch after its run becomes visible', () => {
-		const threadId = 'thread-record-a' as ThreadSummary['threadId'];
-		const previousRunId = 'run-a-1' as never;
-		const pendingLaunches = beginPendingAgentLaunch({}, threadId, {
-			expiresAt: 100,
-			launchId: 1,
-			previousRunId
-		});
-
-		const result = resolveExpiredAgentLaunch(pendingLaunches, threadId, 1, 100, 'run-a-2' as never);
-
-		expect(isAgentLaunchPending(result.pendingLaunches, threadId)).toBe(false);
-		expect(result.shouldRecover).toBe(false);
+		const visibleRun = resolveExpiredAgentLaunch(
+			beginLaunch({}, threadA, 1, runA1),
+			threadA,
+			1,
+			100,
+			runA2
+		);
+		expect(isAgentLaunchPending(visibleRun.pendingLaunches, threadA)).toBe(false);
+		expect(visibleRun.shouldRecover).toBe(false);
 	});
 
 	it('reconciles a retry when the existing run receives a new claim lease', () => {
-		const threadId = 'thread-record-a' as ThreadSummary['threadId'];
-		const runId = 'run-a-1' as never;
-		const pendingLaunches = beginPendingAgentLaunch({}, threadId, {
-			expiresAt: 100,
-			launchId: 1,
-			previousClaimExpiresAt: 50,
-			previousRunId: runId
+		const pendingLaunches = beginLaunch({}, threadA, 1, runA1, {
+			previousClaimExpiresAt: 50
 		});
 
-		expect(resolvePendingAgentLaunch(pendingLaunches, threadId, runId, 50)).toBe(pendingLaunches);
+		expect(resolvePendingAgentLaunch(pendingLaunches, threadA, runA1, 50)).toBe(pendingLaunches);
 		expect(
-			isAgentLaunchPending(
-				resolvePendingAgentLaunch(pendingLaunches, threadId, runId, 150),
-				threadId
-			)
+			isAgentLaunchPending(resolvePendingAgentLaunch(pendingLaunches, threadA, runA1, 150), threadA)
 		).toBe(false);
 	});
 
-	it('reconciles background launches by run id even when timestamps collide', () => {
-		const threadA = 'thread-record-a' as ThreadSummary['threadId'];
-		const threadB = 'thread-record-b' as ThreadSummary['threadId'];
-		const previousRunA = 'run-a-1' as never;
-		const previousRunB = 'run-b-1' as never;
-		let pendingLaunches = beginPendingAgentLaunch({}, threadA, {
-			expiresAt: 100,
-			launchId: 1,
-			previousRunId: previousRunA
-		});
-		pendingLaunches = beginPendingAgentLaunch(pendingLaunches, threadB, {
-			expiresAt: 100,
-			launchId: 2,
-			previousRunId: previousRunB
-		});
-
-		pendingLaunches = resolvePendingAgentLaunchesFromThreads(pendingLaunches, [
-			makeThreadSummary({
-				threadId: threadA,
-				latestRunId: previousRunA,
-				latestRunStartedAt: 10
-			}),
-			makeThreadSummary({
-				threadId: threadB,
-				latestRunId: 'run-b-2' as never,
-				latestRunStartedAt: 10
-			})
-		]);
-
-		expect(isAgentLaunchPending(pendingLaunches, threadA)).toBe(true);
-		expect(isAgentLaunchPending(pendingLaunches, threadB)).toBe(false);
-	});
-
 	it('waits for an established thread latest-run query but permits a newly created thread', () => {
-		const threadId = 'thread-record-a' as ThreadSummary['threadId'];
-
 		expect(
 			isLatestRunReadyForThread({
-				threadId,
+				threadId: threadA,
 				pendingCreatedThreadId: null,
 				hasLatestRunData: false
 			})
 		).toBe(false);
 		expect(
 			isLatestRunReadyForThread({
-				threadId,
-				pendingCreatedThreadId: threadId,
+				threadId: threadA,
+				pendingCreatedThreadId: threadA,
 				hasLatestRunData: false
 			})
 		).toBe(true);
 		expect(
 			isLatestRunReadyForThread({
-				threadId,
+				threadId: threadA,
 				pendingCreatedThreadId: null,
 				hasLatestRunData: true
 			})
@@ -387,28 +318,13 @@ describe('workspace thread helpers', () => {
 	});
 
 	it('scopes error cleanup to the matching thread and launch', () => {
-		const threadA = 'thread-record-a' as ThreadSummary['threadId'];
-		const threadB = 'thread-record-b' as ThreadSummary['threadId'];
-		let pendingLaunches = beginPendingAgentLaunch({}, threadA, {
-			expiresAt: 100,
-			launchId: 1,
-			previousRunId: null
-		});
-		pendingLaunches = beginPendingAgentLaunch(pendingLaunches, threadA, {
-			expiresAt: 100,
-			launchId: 2,
-			previousRunId: 'run-a-1' as never
-		});
-		pendingLaunches = beginPendingAgentLaunch(pendingLaunches, threadB, {
-			expiresAt: 100,
-			launchId: 3,
-			previousRunId: null
-		});
+		let pendingLaunches = beginLaunch({}, threadA, 1);
+		pendingLaunches = beginLaunch(pendingLaunches, threadA, 2, runA1);
+		pendingLaunches = beginLaunch(pendingLaunches, threadB, 3);
 
-		const unchanged = clearPendingAgentLaunch(pendingLaunches, threadA, 1);
-		expect(unchanged).toBe(pendingLaunches);
+		expect(clearPendingAgentLaunch(pendingLaunches, threadA, 1)).toBe(pendingLaunches);
 
-		const afterThreadAError = clearPendingAgentLaunch(unchanged, threadA, 2);
+		const afterThreadAError = clearPendingAgentLaunch(pendingLaunches, threadA, 2);
 		expect(isAgentLaunchPending(afterThreadAError, threadA)).toBe(false);
 		expect(isAgentLaunchPending(afterThreadAError, threadB)).toBe(true);
 	});
@@ -429,5 +345,32 @@ describe('workspace thread helpers', () => {
 	it('treats selection generations as current only when they match', () => {
 		expect(isSelectionGenerationCurrent(3, 3)).toBe(true);
 		expect(isSelectionGenerationCurrent(2, 3)).toBe(false);
+	});
+
+	it('blocks thread deletion while a launch is pending or a run is active', () => {
+		expect(
+			getThreadDeletionBlockMessage(beginLaunch({}, threadA, 1), {
+				threadId: threadA,
+				hasActiveRun: false
+			})
+		).toBe('Wait for the local agent to start before deleting this thread.');
+		expect(
+			getThreadDeletionBlockMessage(
+				{},
+				{
+					threadId: threadA,
+					hasActiveRun: true
+				}
+			)
+		).toBe('Finish or cancel the active run before deleting this thread.');
+		expect(
+			getThreadDeletionBlockMessage(
+				{},
+				{
+					threadId: threadA,
+					hasActiveRun: false
+				}
+			)
+		).toBeNull();
 	});
 });

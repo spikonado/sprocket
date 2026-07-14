@@ -100,9 +100,11 @@ impl RuntimeClient {
         run_id: &str,
         claim_id: &str,
     ) -> anyhow::Result<StartRunResponse> {
-        let mut args = self.run_args(run_id);
-        args.insert("claimId".to_string(), claim_id.to_string().into());
-        self.mutation_json("agentRuntime:start", args).await
+        self.mutation_json(
+            "agentRuntime:start",
+            self.run_args_with_claim(run_id, claim_id),
+        )
+        .await
     }
 
     pub(crate) async fn renew_claim(
@@ -110,9 +112,11 @@ impl RuntimeClient {
         run_id: &str,
         claim_id: &str,
     ) -> anyhow::Result<RenewClaimResponse> {
-        let mut args = self.run_args(run_id);
-        args.insert("claimId".to_string(), claim_id.to_string().into());
-        self.mutation_json("agentRuntime:renewClaim", args).await
+        self.mutation_json(
+            "agentRuntime:renewClaim",
+            self.run_args_with_claim(run_id, claim_id),
+        )
+        .await
     }
 
     pub(crate) async fn begin_assistant_message(&self, run_id: &str) -> anyhow::Result<()> {
@@ -146,14 +150,8 @@ impl RuntimeClient {
         status: &str,
         last_error: Option<&str>,
     ) -> anyhow::Result<bool> {
-        let mut args = self.run_args(run_id);
-        args.insert("expectedClaimId".to_string(), claim_id.to_string().into());
-        args.insert("text".to_string(), text.to_string().into());
-        args.insert("status".to_string(), status.to_string().into());
-        if let Some(last_error) = last_error {
-            args.insert("lastError".to_string(), last_error.to_string().into());
-        }
-        self.mutation_json("agentRuntime:finalizeRun", args).await
+        self.finalize_run_with_expectations(run_id, text, status, last_error, Some(claim_id), None)
+            .await
     }
 
     pub(crate) async fn finalize_queued_run(
@@ -163,8 +161,32 @@ impl RuntimeClient {
         status: &str,
         last_error: Option<&str>,
     ) -> anyhow::Result<bool> {
+        self.finalize_run_with_expectations(run_id, text, status, last_error, None, Some("queued"))
+            .await
+    }
+
+    async fn finalize_run_with_expectations(
+        &self,
+        run_id: &str,
+        text: &str,
+        status: &str,
+        last_error: Option<&str>,
+        expected_claim_id: Option<&str>,
+        expected_status: Option<&str>,
+    ) -> anyhow::Result<bool> {
         let mut args = self.run_args(run_id);
-        args.insert("expectedStatus".to_string(), "queued".to_string().into());
+        if let Some(expected_claim_id) = expected_claim_id {
+            args.insert(
+                "expectedClaimId".to_string(),
+                expected_claim_id.to_string().into(),
+            );
+        }
+        if let Some(expected_status) = expected_status {
+            args.insert(
+                "expectedStatus".to_string(),
+                expected_status.to_string().into(),
+            );
+        }
         args.insert("text".to_string(), text.to_string().into());
         args.insert("status".to_string(), status.to_string().into());
         if let Some(last_error) = last_error {
@@ -184,6 +206,12 @@ impl RuntimeClient {
     fn run_args(&self, run_id: &str) -> BTreeMap<String, Value> {
         let mut args = self.args_with_actor();
         args.insert("runId".to_string(), run_id.to_string().into());
+        args
+    }
+
+    fn run_args_with_claim(&self, run_id: &str, claim_id: &str) -> BTreeMap<String, Value> {
+        let mut args = self.run_args(run_id);
+        args.insert("claimId".to_string(), claim_id.to_string().into());
         args
     }
 }

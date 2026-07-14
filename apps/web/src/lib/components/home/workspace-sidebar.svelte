@@ -12,6 +12,11 @@
 	import { formatRelativeTime } from '$lib/format';
 	import type { Id } from '$convex/_generated/dataModel';
 	import type { ThreadSummary, WorkspaceThreadGroup } from '$lib/types/sprocket';
+	import {
+		getThreadDeletionBlockMessage,
+		isAgentLaunchPending,
+		type PendingAgentLaunches
+	} from '$lib/workspace/threads';
 
 	type Props = {
 		isAuthenticated: boolean;
@@ -19,7 +24,7 @@
 		currentWorkspaceName: string | null;
 		currentThreadId: Id<'threadRecords'> | null;
 		groups: WorkspaceThreadGroup[];
-		pendingAgentLaunchThreadIds?: Id<'threadRecords'>[];
+		pendingAgentLaunches?: PendingAgentLaunches;
 		onChooseWorkspace: () => void;
 		onReconnectWorkspace: (workspaceSessionId: Id<'workspaceSessions'>) => void;
 		onAccountAction: () => void;
@@ -34,7 +39,7 @@
 		currentWorkspaceName,
 		currentThreadId,
 		groups,
-		pendingAgentLaunchThreadIds = [],
+		pendingAgentLaunches = {},
 		onChooseWorkspace,
 		onReconnectWorkspace,
 		onAccountAction,
@@ -81,10 +86,6 @@
 		}
 
 		return null;
-	}
-
-	function hasPendingAgentLaunch(threadId: Id<'threadRecords'>) {
-		return pendingAgentLaunchThreadIds.includes(threadId);
 	}
 </script>
 
@@ -239,7 +240,14 @@
 										{@const hasHiddenThreads = group.threads.length > DEFAULT_VISIBLE_THREAD_COUNT}
 										<div class="space-y-1">
 											{#each visibleThreads as thread (thread.threadId)}
-												{@const isStartingAgent = hasPendingAgentLaunch(thread.threadId)}
+												{@const isStartingAgent = isAgentLaunchPending(
+													pendingAgentLaunches,
+													thread.threadId
+												)}
+												{@const deletionBlockMessage = getThreadDeletionBlockMessage(
+													pendingAgentLaunches,
+													thread
+												)}
 												<div class="group flex items-start gap-1">
 													<button
 														type="button"
@@ -280,19 +288,15 @@
 																: 'opacity-0 group-hover:opacity-100 hover:border-rose-400/40 hover:bg-rose-400/10 hover:text-rose-200 focus-visible:opacity-100'
 														} disabled:cursor-not-allowed disabled:border-white/8 disabled:bg-white/3 disabled:text-slate-600 disabled:opacity-40`}
 														onclick={() => {
-															if (thread.hasActiveRun || isStartingAgent) {
+															if (deletionBlockMessage) {
 																return;
 															}
 
 															onDeleteThread(thread);
 														}}
-														disabled={thread.hasActiveRun || isStartingAgent}
+														disabled={Boolean(deletionBlockMessage)}
 														aria-label={`Delete ${thread.title}`}
-														title={isStartingAgent
-															? 'Wait for the local agent to start before deleting.'
-															: thread.hasActiveRun
-																? 'Finish or cancel the active run before deleting.'
-																: `Delete ${thread.title}`}
+														title={deletionBlockMessage ?? `Delete ${thread.title}`}
 													>
 														<Trash2 class="size-3" />
 													</button>
