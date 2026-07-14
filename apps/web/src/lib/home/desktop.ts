@@ -55,11 +55,11 @@ export function resolveSubmissionId(args: {
 }) {
 	const recoveredSubmission = args.recoveredSubmission;
 	const latestRun = args.latestRun;
-	const recoveredSubmissionIsFinal =
-		recoveredSubmission !== undefined &&
-		latestRun?.submissionId === recoveredSubmission.submissionId &&
-		isRunFinalStatus(latestRun.status);
-	return !recoveredSubmissionIsFinal &&
+	const canReuseRecoveredSubmission =
+		latestRun === null ||
+		(latestRun.submissionId === recoveredSubmission?.submissionId &&
+			!isRunFinalStatus(latestRun.status));
+	return canReuseRecoveredSubmission &&
 		recoveredSubmission?.prompt === args.prompt &&
 		recoveredSubmission.selectedModel === args.selectedModel &&
 		recoveredSubmission.reasoningEffort === args.reasoningEffort

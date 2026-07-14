@@ -125,7 +125,7 @@ describe('resolveSubmissionId', () => {
 		).toBe('new-id');
 	});
 
-	it('only uses a fresh id when the recovered submission itself is observed as final', () => {
+	it('uses a fresh id when the visible latest submission has finished or supersedes recovery', () => {
 		const recoveredSubmission = {
 			prompt: 'Inspect the robot',
 			reasoningEffort: 'medium' as const,
@@ -155,14 +155,14 @@ describe('resolveSubmissionId', () => {
 		).toBe('recovered-id');
 		expect(
 			resolveSubmissionId({
-				latestRun: { status: 'completed', submissionId: 'older-id' },
+				latestRun: { status: 'queued', submissionId: 'newer-id' },
 				newSubmissionId: 'new-id',
 				prompt: 'Inspect the robot',
 				reasoningEffort: 'medium',
 				recoveredSubmission,
 				selectedModel: 'gpt-5.4'
 			})
-		).toBe('recovered-id');
+		).toBe('new-id');
 	});
 });
 
