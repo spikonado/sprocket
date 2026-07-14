@@ -9,6 +9,7 @@ import type {
 	WorkspaceSessionLocation
 } from '$lib/types/sprocket';
 import { isRunClaimLeaseActive } from '$convex/lib/runLease';
+import { isRunFinalStatus } from '$convex/lib/validators';
 
 export type ViewerArgs = {
 	guestId?: string;
@@ -57,15 +58,23 @@ export function resolveSubmissionId(args: {
 	const recoveredSubmissionIsFinal =
 		recoveredSubmission !== undefined &&
 		latestRun?.submissionId === recoveredSubmission.submissionId &&
-		(latestRun.status === 'completed' ||
-			latestRun.status === 'failed' ||
-			latestRun.status === 'cancelled');
+		isRunFinalStatus(latestRun.status);
 	return !recoveredSubmissionIsFinal &&
 		recoveredSubmission?.prompt === args.prompt &&
 		recoveredSubmission.selectedModel === args.selectedModel &&
 		recoveredSubmission.reasoningEffort === args.reasoningEffort
 		? recoveredSubmission.submissionId
 		: args.newSubmissionId;
+}
+
+export function resolveDraftRunSubmissionId(args: {
+	freshSubmissionId: string;
+	submissionRunStatus: RunState['status'] | null;
+	threadSubmissionId: string;
+}) {
+	return args.submissionRunStatus && isRunFinalStatus(args.submissionRunStatus)
+		? args.freshSubmissionId
+		: args.threadSubmissionId;
 }
 
 export function isRunBlockingAgentLaunch(

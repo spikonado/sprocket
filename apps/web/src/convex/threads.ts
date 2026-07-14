@@ -1,3 +1,4 @@
+import type { Doc, Id } from '@convex/_generated/dataModel';
 import { mutation, query } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getOwnedThreadRecord, getOwnedWorkspaceSession } from '@convex/lib/access';
@@ -12,7 +13,13 @@ export const create = mutation({
 		selectedModel: vModelId,
 		reasoningEffort: vReasoningEffort
 	},
-	handler: async (ctx, args) => {
+	handler: async (
+		ctx,
+		args
+	): Promise<{
+		threadId: Id<'threadRecords'>;
+		submissionRunStatus: Doc<'runs'>['status'] | null;
+	}> => {
 		const userId: string = await getUserId(ctx, args.guestId);
 		await getOwnedWorkspaceSession(ctx.db, userId, args.workspaceSessionId);
 		const existingRecord = await ctx.db
@@ -30,7 +37,17 @@ export const create = mutation({
 				throw new Error('Submission settings do not match the existing thread.');
 			}
 
-			return { threadId: existingRecord._id };
+			const submissionRun = await ctx.db
+				.query('runs')
+				.withIndex('by_userId_submissionId', (query) =>
+					query.eq('userId', userId).eq('submissionId', args.submissionId)
+				)
+				.unique();
+
+			return {
+				threadId: existingRecord._id,
+				submissionRunStatus: submissionRun?.status ?? null
+			};
 		}
 
 		const now = Date.now();
@@ -44,7 +61,8 @@ export const create = mutation({
 		});
 
 		return {
-			threadId: recordId
+			threadId: recordId,
+			submissionRunStatus: null
 		};
 	}
 });

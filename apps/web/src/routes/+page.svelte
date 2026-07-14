@@ -21,6 +21,7 @@
 		isRunBlockingAgentLaunch,
 		launchAgentRun,
 		refreshDesktopWorkspaceSessions as refreshDesktopWorkspaceSessionsFromDesktop,
+		resolveDraftRunSubmissionId,
 		resolveSubmissionId,
 		verifyWorkspaceSession as verifyWorkspaceSessionForExecution,
 		type WorkspaceSessionState
@@ -604,7 +605,7 @@
 			});
 		}
 
-		return result.threadId;
+		return result;
 	}
 
 	function startThreadDraftForWorkspace(workspaceName: string) {
@@ -735,14 +736,16 @@
 			originatingRecoveryScope
 		);
 		const recoveredSubmission = recoveredSubmissionIds.get(originatingRecoveryKey);
-		const submissionRequestId = resolveSubmissionId({
+		const freshSubmissionId = crypto.randomUUID();
+		const threadSubmissionId = resolveSubmissionId({
 			latestRun: selectedThreadId ? runState : null,
-			newSubmissionId: crypto.randomUUID(),
+			newSubmissionId: freshSubmissionId,
 			prompt: submittedPrompt,
 			reasoningEffort: submittedReasoningEffort,
 			recoveredSubmission,
 			selectedModel: submittedModel
 		});
+		let runSubmissionId = threadSubmissionId;
 		clearComposerRecovery(submittedViewerIdentity, originatingRecoveryScope);
 		let launchedThreadId: Id<'threadRecords'> | null = null;
 		let agentLaunchId: number | null = null;
@@ -765,7 +768,10 @@
 				reasoningEffort: submittedReasoningEffort,
 				selectedModel: submittedModel,
 				scope: recoveryScope,
-				submissionId: submissionRequestId,
+				submissionId:
+					!selectedThreadId && recoveryScope === originatingRecoveryScope
+						? threadSubmissionId
+						: runSubmissionId,
 				viewerIdentity: submittedViewerIdentity
 			});
 		};
@@ -794,22 +800,30 @@
 		submittingPromptScopes.set(submissionScope, submissionSequence);
 
 		try {
-			const threadId =
-				selectedThreadId ??
-				(await createThread({
-					isSubmissionCurrent,
-					prompt: submittedPrompt,
-					selectionGeneration,
-					selectedModel: submittedModel,
-					selectedReasoningEffort: submittedReasoningEffort,
-					submissionId: submissionRequestId,
-					viewerArgs: submittedViewerArgs,
-					viewerIdentity: submittedViewerIdentity,
-					workspaceName: submittedWorkspaceName,
-					workspaceSessionId
-				}));
+			const threadCreation = selectedThreadId
+				? null
+				: await createThread({
+						isSubmissionCurrent,
+						prompt: submittedPrompt,
+						selectionGeneration,
+						selectedModel: submittedModel,
+						selectedReasoningEffort: submittedReasoningEffort,
+						submissionId: threadSubmissionId,
+						viewerArgs: submittedViewerArgs,
+						viewerIdentity: submittedViewerIdentity,
+						workspaceName: submittedWorkspaceName,
+						workspaceSessionId
+					});
+			const threadId = selectedThreadId ?? threadCreation?.threadId ?? null;
 			if (!threadId || !isSubmissionCurrent()) {
 				return;
+			}
+			if (threadCreation) {
+				runSubmissionId = resolveDraftRunSubmissionId({
+					freshSubmissionId,
+					submissionRunStatus: threadCreation.submissionRunStatus,
+					threadSubmissionId
+				});
 			}
 			if (!isSubmittedViewerCurrent()) {
 				recoverSubmission(sessionChangedMessage);
@@ -900,7 +914,7 @@
 				threadId,
 				prompt: submittedPrompt,
 				selectedModel: submittedModel,
-				submissionId: submissionRequestId,
+				submissionId: runSubmissionId,
 				reasoningEffort: submittedReasoningEffort,
 				viewerArgs: submittedViewerArgs,
 				workspaceSessionId

@@ -6,6 +6,7 @@ import {
 	getViewerQueryArgs,
 	isRunBlockingAgentLaunch,
 	launchAgentRun,
+	resolveDraftRunSubmissionId,
 	resolveSubmissionId
 } from '$lib/home/desktop';
 import type { DesktopApi, WorkspaceSessionLocation } from '$lib/types/sprocket';
@@ -163,6 +164,34 @@ describe('resolveSubmissionId', () => {
 			})
 		).toBe('recovered-id');
 	});
+});
+
+describe('resolveDraftRunSubmissionId', () => {
+	it.each(['completed', 'failed', 'cancelled'] as const)(
+		'uses a fresh run submission after draft creation reveals a %s run',
+		(submissionRunStatus) => {
+			expect(
+				resolveDraftRunSubmissionId({
+					freshSubmissionId: 'fresh-id',
+					submissionRunStatus,
+					threadSubmissionId: 'recovered-id'
+				})
+			).toBe('fresh-id');
+		}
+	);
+
+	it.each([null, 'queued', 'running', 'awaiting_executor'] as const)(
+		'reuses the draft submission when its run is %s',
+		(submissionRunStatus) => {
+			expect(
+				resolveDraftRunSubmissionId({
+					freshSubmissionId: 'fresh-id',
+					submissionRunStatus,
+					threadSubmissionId: 'recovered-id'
+				})
+			).toBe('recovered-id');
+		}
+	);
 });
 
 describe('isRunBlockingAgentLaunch', () => {
