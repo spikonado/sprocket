@@ -1,14 +1,5 @@
 <script lang="ts">
-	import {
-		ChevronRight,
-		Folder,
-		FolderOpen,
-		LoaderCircle,
-		LogIn,
-		LogOut,
-		SquarePen,
-		Trash2
-	} from '@lucide/svelte';
+	import { ChevronRight, Folder, FolderOpen, LogOut, SquarePen, Trash2 } from '@lucide/svelte';
 	import { formatRelativeTime } from '$lib/format';
 	import type { Id } from '$convex/_generated/dataModel';
 	import type { ThreadSummary, WorkspaceThreadGroup } from '$lib/types/sprocket';
@@ -19,30 +10,26 @@
 	} from '$lib/workspace/threads';
 
 	type Props = {
-		isAuthenticated: boolean;
-		isWaitingForBrowserSignIn?: boolean;
 		currentWorkspaceName: string | null;
 		currentThreadId: Id<'threadRecords'> | null;
 		groups: WorkspaceThreadGroup[];
 		pendingAgentLaunches?: PendingAgentLaunches;
 		onChooseWorkspace: () => void;
 		onReconnectWorkspace: (workspaceSessionId: Id<'workspaceSessions'>) => void;
-		onAccountAction: () => void;
+		onSignOut: () => void;
 		onStartThreadDraft: (workspaceName: string) => void;
 		onSelectThread: (thread: ThreadSummary) => void;
 		onDeleteThread: (thread: ThreadSummary) => void;
 	};
 
 	let {
-		isAuthenticated,
-		isWaitingForBrowserSignIn = false,
 		currentWorkspaceName,
 		currentThreadId,
 		groups,
 		pendingAgentLaunches = {},
 		onChooseWorkspace,
 		onReconnectWorkspace,
-		onAccountAction,
+		onSignOut,
 		onStartThreadDraft,
 		onSelectThread,
 		onDeleteThread
@@ -95,28 +82,14 @@
 			<div class="min-w-0">
 				<p class="truncate text-[1.05rem] font-semibold tracking-tighter text-white">Sprocket</p>
 			</div>
-			{#if isWaitingForBrowserSignIn}
-				<span
-					class="flex h-8 w-8 items-center justify-center rounded-full border border-sky-400/20 bg-sky-400/10 text-sky-200"
-					title="Complete sign-in in your browser"
-					aria-label="Waiting for browser sign-in"
-				>
-					<LoaderCircle class="size-3.5 animate-spin" />
-				</span>
-			{:else}
-				<button
-					type="button"
-					class="flex h-8 w-8 items-center justify-center rounded-full border border-white/8 bg-white/2 text-slate-300 transition hover:border-white/12 hover:bg-white/5 hover:text-white"
-					onclick={onAccountAction}
-					aria-label={isAuthenticated ? 'Sign out' : 'Sign in'}
-				>
-					{#if isAuthenticated}
-						<LogOut class="size-3.5" />
-					{:else}
-						<LogIn class="size-3.5" />
-					{/if}
-				</button>
-			{/if}
+			<button
+				type="button"
+				class="flex h-8 w-8 items-center justify-center rounded-full border border-white/8 bg-white/2 text-slate-300 transition hover:border-white/12 hover:bg-white/5 hover:text-white"
+				onclick={onSignOut}
+				aria-label="Sign out"
+			>
+				<LogOut class="size-3.5" />
+			</button>
 		</header>
 
 		<div class="border-b border-white/6 px-3.5 pb-3">
@@ -139,7 +112,7 @@
 				<div
 					class="rounded-3xl border border-dashed border-white/8 bg-white/2 px-4 py-4 text-sm leading-6 text-slate-400"
 				>
-					Choose a workspace to start organizing threads by project.
+					Choose a project to start organizing threads.
 				</div>
 			{:else}
 				<div class="space-y-4">
@@ -226,8 +199,8 @@
 										<p class="pb-2 text-[12px] leading-5 text-slate-500">
 											{group.localWorkspaceError ??
 												(group.localWorkspaceAvailability === 'unlinked'
-													? 'This workspace needs a local directory attached before you can use it.'
-													: 'This workspace needs to be reconnected.')}
+													? 'This project needs a local directory attached before you can use it.'
+													: 'This project needs to be reconnected.')}
 										</p>
 									{/if}
 									{#if group.threads.length === 0}

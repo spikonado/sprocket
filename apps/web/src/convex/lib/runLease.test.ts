@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	RUN_CLAIM_LEASE_DURATION_MS,
+	canFinalizeAfterClaimFailure,
 	canStartRunWithClaim,
 	claimExpiresAt,
 	isRunClaimLeaseActive
@@ -36,5 +37,24 @@ describe('run claim leases', () => {
 		expect(isRunClaimLeaseActive({ status: 'running', claimExpiresAt: 101 }, 100)).toBe(true);
 		expect(isRunClaimLeaseActive({ status: 'running', claimExpiresAt: 100 }, 100)).toBe(false);
 		expect(isRunClaimLeaseActive({ status: 'completed', claimExpiresAt: 200 }, 100)).toBe(false);
+	});
+
+	it('only terminalizes queued or same-claim state after claim uncertainty', () => {
+		expect(canFinalizeAfterClaimFailure({ status: 'queued' }, 'claim-a')).toBe(true);
+		expect(
+			canFinalizeAfterClaimFailure(
+				{ status: 'running', claimId: 'claim-a', claimExpiresAt: 200 },
+				'claim-a'
+			)
+		).toBe(true);
+		expect(
+			canFinalizeAfterClaimFailure(
+				{ status: 'awaiting_executor', claimId: 'claim-b', claimExpiresAt: 200 },
+				'claim-a'
+			)
+		).toBe(false);
+		expect(canFinalizeAfterClaimFailure({ status: 'failed', claimId: 'claim-a' }, 'claim-a')).toBe(
+			false
+		);
 	});
 });

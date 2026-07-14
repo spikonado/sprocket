@@ -3,15 +3,19 @@ use convex::{FunctionResult, QuerySubscription, Value};
 use serde::Deserialize;
 use sprocket_convex_provider::Client as ConvexProviderClient;
 use std::collections::BTreeMap;
+use std::time::Duration;
+use tokio::time::sleep;
 
 use crate::types::{
     CreateRunResponse, RenewClaimResponse, RunAgentRequest, RunContextResponse, StartRunResponse,
 };
 
+const CREATE_RUN_MAX_ATTEMPTS: usize = 3;
+const CREATE_RUN_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
+
 #[derive(Clone)]
 pub(crate) struct RuntimeClient {
     pub(crate) client: ConvexProviderClient,
-    guest_id: Option<String>,
 }
 
 impl RuntimeClient {
@@ -22,15 +26,14 @@ impl RuntimeClient {
         );
         let client =
             ConvexProviderClient::new(&request.deployment_url, "completion:complete").await?;
-        client.set_auth_token(request.auth_token.clone()).await;
+        client
+            .set_auth_token_fetcher(request.auth_token_fetcher.clone())
+            .await;
         eprintln!(
             "sprocket-agent: Convex client ready for thread {}",
             request.thread_id
         );
-        Ok(Self {
-            client,
-            guest_id: request.guest_id.clone(),
-        })
+        Ok(Self { client })
     }
 
     pub(crate) fn completion_client(&self) -> &ConvexProviderClient {
@@ -77,7 +80,7 @@ impl RuntimeClient {
         &self,
         request: &RunAgentRequest,
     ) -> anyhow::Result<CreateRunResponse> {
-        let mut args = self.args_with_actor();
+        let mut args = BTreeMap::new();
         args.insert(
             "submissionId".to_string(),
             request.submission_id.clone().into(),
@@ -92,7 +95,34 @@ impl RuntimeClient {
             "reasoningEffort".to_string(),
             request.reasoning_effort.clone().into(),
         );
-        self.mutation_json("agentRuntime:createRun", args).await
+
+        let mut retry_delay = CREATE_RUN_INITIAL_RETRY_DELAY;
+        for attempt in 1..=CREATE_RUN_MAX_ATTEMPTS {
+            match self
+                .client
+                .mutation("agentRuntime:createRun", args.clone())
+                .await
+            {
+                Ok(result) => return decode_function_result(result, "agentRuntime:createRun"),
+                Err(error) if attempt < CREATE_RUN_MAX_ATTEMPTS => {
+                    eprintln!(
+                        "sprocket-agent: createRun transport attempt {attempt} failed; reconciling with request {}: {error:#}",
+                        request.submission_id
+                    );
+                    sleep(retry_delay).await;
+                    retry_delay = retry_delay.saturating_mul(2);
+                }
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "agentRuntime:createRun failed after {CREATE_RUN_MAX_ATTEMPTS} attempts"
+                        )
+                    });
+                }
+            }
+        }
+
+        unreachable!("createRun retry loop always returns")
     }
 
     pub(crate) async fn start_run(
@@ -105,6 +135,47 @@ impl RuntimeClient {
             self.run_args_with_claim(run_id, claim_id),
         )
         .await
+    }
+
+    pub(crate) async fn finalize_failed_start(
+        &self,
+        request: &RunAgentRequest,
+        text: &str,
+        last_error: &str,
+    ) -> anyhow::Result<bool> {
+        let mut args = BTreeMap::new();
+        args.insert(
+            "submissionId".to_string(),
+            request.submission_id.clone().into(),
+        );
+        args.insert("threadId".to_string(), request.thread_id.clone().into());
+        args.insert("prompt".to_string(), request.prompt.clone().into());
+        args.insert(
+            "selectedModel".to_string(),
+            request.selected_model.clone().into(),
+        );
+        args.insert(
+            "reasoningEffort".to_string(),
+            request.reasoning_effort.clone().into(),
+        );
+        args.insert("text".to_string(), text.to_string().into());
+        args.insert("lastError".to_string(), last_error.to_string().into());
+        self.mutation_json("agentRuntime:finalizeFailedStart", args)
+            .await
+    }
+
+    pub(crate) async fn finalize_claim_failure(
+        &self,
+        run_id: &str,
+        claim_id: &str,
+        text: &str,
+        last_error: &str,
+    ) -> anyhow::Result<bool> {
+        let mut args = self.run_args_with_claim(run_id, claim_id);
+        args.insert("text".to_string(), text.to_string().into());
+        args.insert("lastError".to_string(), last_error.to_string().into());
+        self.mutation_json("agentRuntime:finalizeClaimFailure", args)
+            .await
     }
 
     pub(crate) async fn renew_claim(
@@ -195,16 +266,8 @@ impl RuntimeClient {
         self.mutation_json("agentRuntime:finalizeRun", args).await
     }
 
-    pub(crate) fn args_with_actor(&self) -> BTreeMap<String, Value> {
-        let mut args = BTreeMap::new();
-        if let Some(guest_id) = &self.guest_id {
-            args.insert("guestId".to_string(), guest_id.clone().into());
-        }
-        args
-    }
-
     fn run_args(&self, run_id: &str) -> BTreeMap<String, Value> {
-        let mut args = self.args_with_actor();
+        let mut args = BTreeMap::new();
         args.insert("runId".to_string(), run_id.to_string().into());
         args
     }

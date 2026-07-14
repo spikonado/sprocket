@@ -1,7 +1,8 @@
 import type {
+	AgentAuthStatus,
+	AgentRunStart,
 	DesktopApi,
 	FilesystemBrowseResult,
-	LocalIdentity,
 	WorkspaceOverview
 } from '$lib/types/sprocket';
 
@@ -189,7 +190,6 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 	}
 
 	return {
-		getLocalIdentity: () => request<LocalIdentity>('/api/auth/local-identity'),
 		browseFilesystem: (input) =>
 			request<FilesystemBrowseResult>('/api/workspace/browse', {
 				method: 'POST',
@@ -214,10 +214,17 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 			}),
 		getWorkspaceSessionOverview: (workspaceSessionId) =>
 			request(`/api/workspace/sessions/${workspaceSessionId}`),
-		runAgent: async (requestBody) => {
-			await request('/api/agent/run', {
+		runAgent: (requestBody) =>
+			request<AgentRunStart>('/api/agent/run', {
 				method: 'POST',
 				body: JSON.stringify(requestBody)
+			}),
+		waitForAgentAuthRefresh: (authSessionId) =>
+			request<AgentAuthStatus>(`/api/agent/auth/${encodeURIComponent(authSessionId)}`),
+		refreshAgentAuth: async (authSessionId, authToken) => {
+			await request(`/api/agent/auth/${encodeURIComponent(authSessionId)}`, {
+				method: 'PUT',
+				body: JSON.stringify({ authToken })
 			});
 		}
 	};

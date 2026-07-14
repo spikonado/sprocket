@@ -7,7 +7,6 @@ import { isRunFinalStatus, vModelId, vReasoningEffort } from '@convex/lib/valida
 
 export const create = mutation({
 	args: {
-		guestId: v.optional(v.string()),
 		submissionId: v.string(),
 		workspaceSessionId: v.id('workspaceSessions'),
 		selectedModel: vModelId,
@@ -20,7 +19,7 @@ export const create = mutation({
 		threadId: Id<'threadRecords'>;
 		submissionRunStatus: Doc<'runs'>['status'] | null;
 	}> => {
-		const userId: string = await getUserId(ctx, args.guestId);
+		const userId: string = await getUserId(ctx);
 		await getOwnedWorkspaceSession(ctx.db, userId, args.workspaceSessionId);
 		const existingRecord = await ctx.db
 			.query('threadRecords')
@@ -68,11 +67,9 @@ export const create = mutation({
 });
 
 export const listMine = query({
-	args: {
-		guestId: v.optional(v.string())
-	},
-	handler: async (ctx, args) => {
-		const userId: string = await getUserId(ctx, args.guestId);
+	args: {},
+	handler: async (ctx) => {
+		const userId: string = await getUserId(ctx);
 		const [records, workspaceSessions] = await Promise.all([
 			ctx.db
 				.query('threadRecords')
@@ -113,22 +110,20 @@ export const listMine = query({
 
 export const getByThreadId = query({
 	args: {
-		guestId: v.optional(v.string()),
 		threadId: v.id('threadRecords')
 	},
 	handler: async (ctx, args) => {
-		const userId: string = await getUserId(ctx, args.guestId);
+		const userId: string = await getUserId(ctx);
 		return await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 	}
 });
 
 export const remove = mutation({
 	args: {
-		guestId: v.optional(v.string()),
 		threadId: v.id('threadRecords')
 	},
 	handler: async (ctx, args) => {
-		const userId: string = await getUserId(ctx, args.guestId);
+		const userId: string = await getUserId(ctx);
 		const threadRecord = await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 
 		const runs = await ctx.db

@@ -2,14 +2,18 @@ import { describe, expect, it, vi } from 'vitest';
 import {
 	createLatestTaskQueue,
 	getDesiredAttachedWorkspaceSessionIds,
-	getViewerIdentity,
-	getViewerQueryArgs,
 	isRunBlockingAgentLaunch,
 	launchAgentRun,
 	resolveDraftRunSubmissionId,
-	resolveSubmissionId
+	resolveSubmissionId,
+	shouldSkipAuthenticatedQueries
 } from '$lib/home/desktop';
-import type { DesktopApi, RunState, WorkspaceSessionLocation } from '$lib/types/sprocket';
+import type {
+	AgentAuthStatus,
+	DesktopApi,
+	RunState,
+	WorkspaceSessionLocation
+} from '$lib/types/sprocket';
 
 const recoveredSubmission = {
 	prompt: 'Inspect the robot',
@@ -25,21 +29,28 @@ function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 		listWorkspaceSessions: vi.fn(),
 		attachWorkspaceSession: vi.fn(),
 		getWorkspaceSessionOverview: vi.fn(),
-		runAgent
+		runAgent,
+		waitForAgentAuthRefresh: vi.fn().mockResolvedValue('complete'),
+		refreshAgentAuth: vi.fn()
 	} as unknown as DesktopApi;
 }
 
 function launchArgs(
 	overrides: Partial<Parameters<typeof launchAgentRun>[0]> &
-		Pick<Parameters<typeof launchAgentRun>[0], 'desktopApi' | 'onError'>
+		Pick<Parameters<typeof launchAgentRun>[0], 'desktopApi'>
 ): Parameters<typeof launchAgentRun>[0] {
 	return {
+		authToken: 'token-1',
+		expectedUserId: 'user-1',
+		getAccessToken: vi.fn(),
+		getCurrentUserId: () => 'user-1',
+		onError: vi.fn(),
+		onStarted: vi.fn(),
 		threadId: 'thread-1' as never,
 		prompt: 'Inspect src/lib.rs',
 		selectedModel: 'gpt-5.4',
 		reasoningEffort: 'medium',
 		submissionId: 'submission-1',
-		viewerArgs: {},
 		workspaceSessionId: 'workspace-1' as never,
 		...overrides
 	};
@@ -59,37 +70,36 @@ function resolveRecoveredSubmission(
 	});
 }
 
-function deferred() {
-	let resolve!: () => void;
-	const promise = new Promise<void>((settle) => {
+function deferred<T = void>() {
+	let resolve!: (value: T) => void;
+	let reject!: (reason?: unknown) => void;
+	const promise = new Promise<T>((settle, fail) => {
 		resolve = settle;
+		reject = fail;
 	});
-	return { promise, resolve: () => resolve() };
+	return { promise, reject, resolve };
 }
 
 describe('launchAgentRun', () => {
-	it('starts a desktop run with viewer args and auth token', () => {
-		const runAgent = vi.fn().mockResolvedValue(undefined);
+	it('acknowledges a durably created desktop run', async () => {
+		const runAgent = vi.fn().mockResolvedValue({ runId: 'run-1' });
 		const desktopApi = createDesktopApi(runAgent);
+		const onStarted = vi.fn();
 
-		launchAgentRun(
-			launchArgs({
-				authToken: 'token-1',
-				desktopApi,
-				onError: vi.fn(),
-				viewerArgs: { guestId: 'guest-1' }
-			})
-		);
+		launchAgentRun(launchArgs({ desktopApi, onStarted }));
 
 		expect(runAgent).toHaveBeenCalledWith({
+			authSessionId: expect.any(String),
 			authToken: 'token-1',
-			guestId: 'guest-1',
 			threadId: 'thread-1',
 			prompt: 'Inspect src/lib.rs',
 			selectedModel: 'gpt-5.4',
 			submissionId: 'submission-1',
 			reasoningEffort: 'medium',
 			workspaceSessionId: 'workspace-1'
+		});
+		await vi.waitFor(() => {
+			expect(onStarted).toHaveBeenCalledWith('run-1');
 		});
 	});
 
@@ -104,13 +114,163 @@ describe('launchAgentRun', () => {
 			expect(onError).toHaveBeenCalledWith(launchError);
 		});
 	});
+
+	it('force-refreshes the access token when the running agent requests one', async () => {
+		const desktopApi = createDesktopApi(vi.fn().mockResolvedValue({ runId: 'run-1' }));
+		vi.mocked(desktopApi.waitForAgentAuthRefresh)
+			.mockResolvedValueOnce('refreshRequired')
+			.mockResolvedValueOnce('complete');
+		const getAccessToken = vi.fn().mockResolvedValue('token-2');
+
+		launchAgentRun(launchArgs({ desktopApi, getAccessToken }));
+
+		await vi.waitFor(() => {
+			expect(desktopApi.refreshAgentAuth).toHaveBeenCalledWith(expect.any(String), 'token-2');
+		});
+		expect(getAccessToken).toHaveBeenCalledWith({ forceRefreshToken: true });
+	});
+
+	it('starts monitoring before the run is acknowledged', () => {
+		const desktopApi = createDesktopApi(
+			vi.fn().mockImplementation(() => new Promise(() => undefined))
+		);
+
+		launchAgentRun(launchArgs({ desktopApi }));
+
+		expect(desktopApi.waitForAgentAuthRefresh).toHaveBeenCalledOnce();
+		expect(desktopApi.runAgent).toHaveBeenCalledOnce();
+	});
+
+	it('treats a missing auth session as complete after launch acknowledgement', async () => {
+		const authStatus = deferred<AgentAuthStatus>();
+		const desktopApi = createDesktopApi(vi.fn().mockResolvedValue({ runId: 'run-1' }));
+		vi.mocked(desktopApi.waitForAgentAuthRefresh).mockReturnValue(authStatus.promise);
+		const onError = vi.fn();
+		const onStarted = vi.fn();
+
+		launchAgentRun(launchArgs({ desktopApi, onError, onStarted }));
+
+		await vi.waitFor(() => expect(onStarted).toHaveBeenCalledWith('run-1'));
+		authStatus.resolve('notFound');
+		await authStatus.promise;
+		await Promise.resolve();
+
+		expect(onError).not.toHaveBeenCalled();
+	});
+
+	it('ignores terminal authentication errors after launch acknowledgement', async () => {
+		const authStatus = deferred<AgentAuthStatus>();
+		const desktopApi = createDesktopApi(vi.fn().mockResolvedValue({ runId: 'run-1' }));
+		vi.mocked(desktopApi.waitForAgentAuthRefresh).mockReturnValue(authStatus.promise);
+		const getCurrentUserId = vi.fn().mockReturnValue('user-2');
+		const onError = vi.fn();
+		const onStarted = vi.fn();
+
+		launchAgentRun(launchArgs({ desktopApi, getCurrentUserId, onError, onStarted }));
+
+		await vi.waitFor(() => expect(onStarted).toHaveBeenCalledWith('run-1'));
+		authStatus.resolve('refreshRequired');
+		await vi.waitFor(() => expect(getCurrentUserId).toHaveBeenCalledOnce());
+
+		expect(onStarted).toHaveBeenCalledOnce();
+		expect(onError).not.toHaveBeenCalled();
+	});
+
+	it('waits for a slow launch before treating a missing auth session as terminal', async () => {
+		vi.useFakeTimers();
+		try {
+			const launch = deferred<{ runId: never }>();
+			const desktopApi = createDesktopApi(vi.fn().mockReturnValue(launch.promise));
+			vi.mocked(desktopApi.waitForAgentAuthRefresh).mockResolvedValue('notFound');
+			const onError = vi.fn();
+			const onStarted = vi.fn();
+
+			launchAgentRun(launchArgs({ desktopApi, onError, onStarted }));
+			await vi.advanceTimersByTimeAsync(12_000);
+
+			expect(onError).not.toHaveBeenCalled();
+			launch.resolve({ runId: 'run-1' as never });
+			await launch.promise;
+			await Promise.resolve();
+
+			expect(onStarted).toHaveBeenCalledWith('run-1');
+			expect(onError).not.toHaveBeenCalled();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('reports a missing auth session before launch acknowledgement', async () => {
+		vi.useFakeTimers();
+		try {
+			const launch = deferred<{ runId: never }>();
+			const desktopApi = createDesktopApi(vi.fn().mockReturnValue(launch.promise));
+			vi.mocked(desktopApi.waitForAgentAuthRefresh).mockResolvedValue('notFound');
+			const onError = vi.fn();
+
+			launchAgentRun(launchArgs({ desktopApi, onError }));
+			await vi.advanceTimersByTimeAsync(12_000);
+			expect(onError).not.toHaveBeenCalled();
+
+			launch.reject(new Error('desktop launch failed'));
+			await vi.waitFor(() => {
+				expect(onError).toHaveBeenCalledWith(
+					expect.objectContaining({ message: expect.stringContaining('was not found') })
+				);
+			});
+			expect(onError).toHaveBeenCalledOnce();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('waits for delayed launch acknowledgement after the signed-in account changes', async () => {
+		const launch = deferred<{ runId: never }>();
+		const desktopApi = createDesktopApi(vi.fn().mockReturnValue(launch.promise));
+		vi.mocked(desktopApi.waitForAgentAuthRefresh).mockResolvedValue('refreshRequired');
+		const onError = vi.fn();
+		const onStarted = vi.fn();
+
+		launchAgentRun(
+			launchArgs({ desktopApi, getCurrentUserId: () => 'user-2', onError, onStarted })
+		);
+
+		await vi.waitFor(() => expect(desktopApi.waitForAgentAuthRefresh).toHaveBeenCalledOnce());
+		expect(desktopApi.refreshAgentAuth).not.toHaveBeenCalled();
+		expect(onError).not.toHaveBeenCalled();
+
+		launch.resolve({ runId: 'run-1' as never });
+		await launch.promise;
+		await vi.waitFor(() => expect(onStarted).toHaveBeenCalledWith('run-1'));
+
+		expect(onStarted).toHaveBeenCalledOnce();
+		expect(onError).not.toHaveBeenCalled();
+	});
 });
 
-describe('getViewerIdentity', () => {
-	it('derives a stable identity from the authenticated user or guest', () => {
-		expect(getViewerIdentity({ id: 'user-1' }, 'guest-1')).toBe('user:user-1');
-		expect(getViewerIdentity(null, 'guest-1')).toBe('guest:guest-1');
-		expect(getViewerIdentity(null, null)).toBeNull();
+describe('shouldSkipAuthenticatedQueries', () => {
+	it('only enables queries for a backend-authenticated signed-in user', () => {
+		expect(
+			shouldSkipAuthenticatedQueries({
+				authenticatedUser: { id: 'user-1' },
+				convexIsAuthenticated: false,
+				convexIsLoading: true
+			})
+		).toBe(true);
+		expect(
+			shouldSkipAuthenticatedQueries({
+				authenticatedUser: { id: 'user-1' },
+				convexIsAuthenticated: true,
+				convexIsLoading: false
+			})
+		).toBe(false);
+		expect(
+			shouldSkipAuthenticatedQueries({
+				authenticatedUser: null,
+				convexIsAuthenticated: false,
+				convexIsLoading: false
+			})
+		).toBe(true);
 	});
 });
 
@@ -182,48 +342,6 @@ describe('isRunBlockingAgentLaunch', () => {
 		expect(isRunBlockingAgentLaunch(run('running', 101), 100)).toBe(true);
 		expect(isRunBlockingAgentLaunch(run('awaiting_executor', 100), 100)).toBe(false);
 		expect(isRunBlockingAgentLaunch(run('running'), 100)).toBe(false);
-	});
-});
-
-describe('getViewerQueryArgs', () => {
-	it('waits for Convex to confirm an authenticated user', () => {
-		expect(
-			getViewerQueryArgs({
-				authenticatedUser: { id: 'user-1' },
-				convexIsAuthenticated: false,
-				convexIsLoading: true,
-				guestSessionId: 'guest-1'
-			})
-		).toBe('skip');
-
-		expect(
-			getViewerQueryArgs({
-				authenticatedUser: { id: 'user-1' },
-				convexIsAuthenticated: true,
-				convexIsLoading: false,
-				guestSessionId: 'guest-1'
-			})
-		).toEqual({});
-	});
-
-	it('only uses guest identity after authenticated state has cleared', () => {
-		expect(
-			getViewerQueryArgs({
-				authenticatedUser: null,
-				convexIsAuthenticated: true,
-				convexIsLoading: false,
-				guestSessionId: 'guest-1'
-			})
-		).toBe('skip');
-
-		expect(
-			getViewerQueryArgs({
-				authenticatedUser: null,
-				convexIsAuthenticated: false,
-				convexIsLoading: false,
-				guestSessionId: 'guest-1'
-			})
-		).toEqual({ guestId: 'guest-1' });
 	});
 });
 

@@ -10,7 +10,7 @@ use sprocket_convex_provider::{Client as ConvexProviderClient, is_completion_str
 use crate::convex::RuntimeClient;
 use crate::hooks::{AgentPromptHook, ToolCallTracker};
 use crate::tools::workspace_tools;
-use crate::types::{RunAgentRequest, RunContextResponse};
+use crate::types::RunContextResponse;
 
 const AGENT_MAX_TURNS: usize = 75;
 const MAX_INVALID_TOOL_CALL_RETRIES: usize = 3;
@@ -76,7 +76,6 @@ pub(crate) enum AgentProviderResult {
 impl AgentProvider {
     pub(crate) fn default_for_run(
         runtime: &RuntimeClient,
-        request: &RunAgentRequest,
         context: &RunContextResponse,
         run_id: &str,
     ) -> Self {
@@ -86,7 +85,7 @@ impl AgentProvider {
                 .completion_client()
                 .clone()
                 .with_reasoning_effort(context.run.reasoning_effort.clone())
-                .with_stream_target(Some(run_id.to_string()), request.guest_id.clone()),
+                .with_stream_target(run_id.to_string()),
             model: context.run.selected_model.clone(),
         }
     }

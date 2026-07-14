@@ -7,12 +7,11 @@ import { isRunFinalStatus, vExecutorJobResult } from '@convex/lib/validators';
 
 export const complete = mutation({
 	args: {
-		guestId: v.optional(v.string()),
 		jobId: v.id('executorJobs'),
 		result: vExecutorJobResult
 	},
 	handler: async (ctx, args) => {
-		const userId: string = await getUserId(ctx, args.guestId);
+		const userId: string = await getUserId(ctx);
 		const job = await getOwnedExecutorJob(ctx.db, userId, args.jobId);
 		const run = await ctx.db.get(job.runId);
 		if (job.status === 'cancelled' || job.status === 'failed') {
@@ -42,12 +41,11 @@ export const complete = mutation({
 
 export const fail = mutation({
 	args: {
-		guestId: v.optional(v.string()),
 		jobId: v.id('executorJobs'),
 		error: v.string()
 	},
 	handler: async (ctx, args) => {
-		const userId: string = await getUserId(ctx, args.guestId);
+		const userId: string = await getUserId(ctx);
 		const job = await getOwnedExecutorJob(ctx.db, userId, args.jobId);
 		if (job.status === 'cancelled' || job.status === 'completed' || job.status === 'failed') {
 			return false;

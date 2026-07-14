@@ -11,8 +11,8 @@ use serde::Deserialize;
 use crate::AppState;
 use crate::auth::{
     AuthSessionResponse, AuthState, BootstrapRequest, BootstrapResponse,
-    DesktopLoginResultResponse, DesktopLoginStartResponse, LocalIdentityResponse,
-    extract_session_token, peer_may_complete_desktop_login_callback, require_session,
+    DesktopLoginResultResponse, DesktopLoginStartResponse, extract_session_token,
+    peer_may_complete_desktop_login_callback, require_session,
 };
 
 const DESKTOP_BOOTSTRAP_TOKEN_HEADER: &str = "x-sprocket-desktop-bootstrap-token";
@@ -50,7 +50,6 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/auth/session", get(session))
         .route("/auth/bootstrap", post(bootstrap))
         .route("/auth/desktop-bootstrap", get(desktop_bootstrap))
-        .route("/auth/local-identity", get(local_identity))
         .route("/auth/desktop-login/start", post(desktop_login_start))
         .route("/auth/desktop-login/callback", get(desktop_login_callback))
         .route("/auth/desktop-login/result", get(desktop_login_result))
@@ -82,23 +81,6 @@ async fn bootstrap(
     jar = jar.add(cookie);
 
     Ok((StatusCode::OK, jar, Json(response)))
-}
-
-async fn local_identity(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-) -> Result<Json<LocalIdentityResponse>, ApiError> {
-    require_session(&state.auth, &headers, &jar)
-        .await
-        .map_err(|_| ApiError::unauthorized())?;
-
-    let identity = state
-        .auth
-        .local_identity()
-        .await
-        .map_err(ApiError::internal)?;
-    Ok(Json(identity))
 }
 
 async fn desktop_bootstrap(
@@ -350,13 +332,6 @@ impl ApiError {
             message: "authentication required".to_string(),
         }
     }
-
-    fn internal(error: anyhow::Error) -> Self {
-        Self {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: error.to_string(),
-        }
-    }
 }
 
 impl IntoResponse for ApiError {
@@ -392,6 +367,7 @@ mod tests {
 
         let state = AppState {
             auth,
+            agent_tokens: crate::routes::agent::AgentTokenStore::default(),
             desktop_login: DesktopLoginStore::new(),
             workspace_sessions: WorkspaceSessionStore::new(temp_dir),
             http_base_url: "http://127.0.0.1:7731".to_string(),

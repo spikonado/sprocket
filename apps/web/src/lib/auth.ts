@@ -6,6 +6,7 @@ import { get, writable } from 'svelte/store';
 type AuthStatus = {
 	isLoading: boolean;
 	isReady: boolean;
+	isConfigured: boolean;
 	isWaitingForBrowserSignIn: boolean;
 	browserSignInUrl: string | null;
 	user: User | null;
@@ -15,6 +16,7 @@ type AuthStatus = {
 const initialState: AuthStatus = {
 	isLoading: true,
 	isReady: false,
+	isConfigured: true,
 	isWaitingForBrowserSignIn: false,
 	browserSignInUrl: null,
 	user: null,
@@ -22,6 +24,9 @@ const initialState: AuthStatus = {
 };
 
 export const authState = writable<AuthStatus>(initialState);
+export const convexAuthRetryVersion = writable(0);
+/** UI-only: stays true until Convex confirms or rejects the post-retry token. */
+export const convexAuthRetryPending = writable(false);
 
 type AuthClient = Awaited<ReturnType<typeof createClient>>;
 type AuthBootstrapClient = {
@@ -42,6 +47,7 @@ type DesktopSignInAttempt = {
 	nonce: string;
 	abort: AbortController;
 };
+type AuthFlow = 'signIn' | 'signUp';
 let desktopSignInAttempt: DesktopSignInAttempt | null = null;
 let desktopLoginStartQueue: Promise<void> = Promise.resolve();
 
@@ -101,10 +107,11 @@ async function getAuthClient() {
 			authState.set({
 				isLoading: false,
 				isReady: true,
+				isConfigured: false,
 				isWaitingForBrowserSignIn: false,
 				browserSignInUrl: null,
 				user: null,
-				error: 'Missing WORKOS_CLIENT_ID.'
+				error: null
 			});
 			return null;
 		}
@@ -136,6 +143,7 @@ async function getAuthClient() {
 			authState.set({
 				isLoading: false,
 				isReady: true,
+				isConfigured: true,
 				isWaitingForBrowserSignIn: false,
 				browserSignInUrl: null,
 				user: client.getUser(),
@@ -160,23 +168,35 @@ export async function initializeAuth(convexClient: AuthBootstrapClient) {
 
 	try {
 		const client = await getAuthClient();
-		authState.set({
-			isLoading: false,
-			isReady: true,
-			isWaitingForBrowserSignIn: false,
-			browserSignInUrl: null,
-			user: client?.getUser() ?? null,
-			error: null
+		authState.update((current) => {
+			if (!current.isConfigured) {
+				return {
+					...current,
+					isLoading: false,
+					isReady: true
+				};
+			}
+
+			return {
+				isLoading: false,
+				isReady: true,
+				isConfigured: true,
+				isWaitingForBrowserSignIn: false,
+				browserSignInUrl: null,
+				user: client?.getUser() ?? null,
+				error: null
+			};
 		});
 	} catch (error) {
-		authState.set({
+		authState.update((current) => ({
+			...current,
 			isLoading: false,
 			isReady: true,
 			isWaitingForBrowserSignIn: false,
 			browserSignInUrl: null,
 			user: null,
 			error: error instanceof Error ? error.message : 'Failed to initialize authentication.'
-		});
+		}));
 	}
 }
 
@@ -314,7 +334,7 @@ async function pollDesktopLoginResult(
 	throw new DOMException('Aborted', 'AbortError');
 }
 
-async function signInWithSystemBrowser(clientId: string) {
+async function authenticateWithSystemBrowser(clientId: string, flow: AuthFlow) {
 	const bridge = getDesktopBridge();
 	if (!bridge) {
 		throw new Error('Desktop bridge is unavailable.');
@@ -351,7 +371,11 @@ async function signInWithSystemBrowser(clientId: string) {
 			redirectUri
 		});
 		requireCurrentDesktopSignIn(attempt);
-		const authorizeUrl = await authorizeClient.getSignInUrl({ state: { nonce: attempt.nonce } });
+		const authorizeOptions = { state: { nonce: attempt.nonce } };
+		const authorizeUrl =
+			flow === 'signUp'
+				? await authorizeClient.getSignUpUrl(authorizeOptions)
+				: await authorizeClient.getSignInUrl(authorizeOptions);
 		requireCurrentDesktopSignIn(attempt);
 
 		authState.update((current) => ({
@@ -363,12 +387,10 @@ async function signInWithSystemBrowser(clientId: string) {
 			if (!isCurrentDesktopSignIn(attempt)) {
 				return;
 			}
+			const detail = error instanceof Error ? error.message.trim() : '';
 			authState.update((current) => ({
 				...current,
-				error:
-					error instanceof Error
-						? `Could not open your browser automatically: ${error.message}`
-						: 'Could not open your browser automatically. Use the link shown to continue.'
+				error: detail || 'Automatic browser open failed.'
 			}));
 		});
 		const result = await pollDesktopLoginResult(attempt.nonce, attempt.abort.signal);
@@ -427,7 +449,8 @@ export function cancelDesktopSignIn() {
 	authState.update((current) => ({
 		...current,
 		isWaitingForBrowserSignIn: false,
-		browserSignInUrl: null
+		browserSignInUrl: null,
+		error: null
 	}));
 	if (!cancelledAttempt) {
 		return;
@@ -448,7 +471,20 @@ export function cancelDesktopSignIn() {
 		});
 }
 
-export async function signIn() {
+/** Clears open-browser failure chrome while desktop sign-in polling continues. */
+export function clearDesktopSignInOpenError() {
+	authState.update((current) => {
+		if (!current.isWaitingForBrowserSignIn || current.error === null) {
+			return current;
+		}
+		return {
+			...current,
+			error: null
+		};
+	});
+}
+
+async function authenticate(flow: AuthFlow) {
 	const client = await getAuthClient();
 	if (!client) {
 		return;
@@ -460,11 +496,24 @@ export async function signIn() {
 	}
 
 	if (getDesktopBridge()) {
-		await signInWithSystemBrowser(clientId);
+		await authenticateWithSystemBrowser(clientId, flow);
+		return;
+	}
+
+	if (flow === 'signUp') {
+		await client.signUp();
 		return;
 	}
 
 	await client.signIn();
+}
+
+export async function signIn() {
+	await authenticate('signIn');
+}
+
+export async function signUp() {
+	await authenticate('signUp');
 }
 
 export async function signOut() {
@@ -482,23 +531,22 @@ export async function signOut() {
 			navigate: false,
 			returnTo: window.location.origin
 		});
+		convexAuthRetryPending.set(false);
 		authState.set({
 			isLoading: false,
 			isReady: true,
+			isConfigured: true,
 			isWaitingForBrowserSignIn: false,
 			browserSignInUrl: null,
 			user: null,
 			error: null
 		});
 	} catch (error) {
-		authState.set({
+		authState.update((current) => ({
+			...current,
 			isLoading: false,
-			isReady: true,
-			isWaitingForBrowserSignIn: false,
-			browserSignInUrl: null,
-			user: null,
 			error: error instanceof Error ? error.message : 'Failed to sign out.'
-		});
+		}));
 	} finally {
 		isSigningOut = false;
 	}
@@ -522,5 +570,32 @@ export async function getAccessToken({
 		}
 
 		throw error;
+	}
+}
+
+export function clearConvexAuthRetryPending() {
+	convexAuthRetryPending.set(false);
+}
+
+export async function retryConvexAuthentication() {
+	authState.update((current) => ({ ...current, isLoading: true, error: null }));
+	convexAuthRetryPending.set(true);
+
+	try {
+		const token = await getAccessToken({ forceRefreshToken: true });
+		if (!token) {
+			throw new Error('Your session has expired. Sign in again.');
+		}
+		// Bump version so setupAuth reinstalls auth; clear isLoading so provider
+		// loading/auth can transition and Convex can confirm the fresh token.
+		convexAuthRetryVersion.update((version) => version + 1);
+		authState.update((current) => ({ ...current, isLoading: false, error: null }));
+	} catch (error) {
+		convexAuthRetryPending.set(false);
+		authState.update((current) => ({
+			...current,
+			isLoading: false,
+			error: error instanceof Error ? error.message : 'Failed to refresh authentication.'
+		}));
 	}
 }

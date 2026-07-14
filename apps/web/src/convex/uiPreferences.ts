@@ -3,11 +3,9 @@ import { v } from 'convex/values';
 import { getUserId } from '@convex/lib/auth';
 
 export const getMine = query({
-	args: {
-		guestId: v.optional(v.string())
-	},
-	handler: async (ctx, args) => {
-		const userId: string = await getUserId(ctx, args.guestId);
+	args: {},
+	handler: async (ctx) => {
+		const userId: string = await getUserId(ctx);
 		return await ctx.db
 			.query('uiPreferences')
 			.withIndex('by_userId', (query) => query.eq('userId', userId))
@@ -17,11 +15,10 @@ export const getMine = query({
 
 export const setLastThread = mutation({
 	args: {
-		guestId: v.optional(v.string()),
 		threadId: v.id('threadRecords')
 	},
 	handler: async (ctx, args) => {
-		const userId: string = await getUserId(ctx, args.guestId);
+		const userId: string = await getUserId(ctx);
 		const existing = await ctx.db
 			.query('uiPreferences')
 			.withIndex('by_userId', (query) => query.eq('userId', userId))

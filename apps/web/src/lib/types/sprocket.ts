@@ -140,8 +140,8 @@ export type ThreadMessage = {
 };
 
 export type AgentRunRequest = {
-	authToken?: string;
-	guestId?: string;
+	authSessionId: string;
+	authToken: string;
 	submissionId: string;
 	threadId: Id<'threadRecords'>;
 	prompt: string;
@@ -150,9 +150,11 @@ export type AgentRunRequest = {
 	workspaceSessionId: Id<'workspaceSessions'>;
 };
 
-export type LocalIdentity = {
-	guestId: string;
+export type AgentRunStart = {
+	runId: Id<'runs'>;
 };
+
+export type AgentAuthStatus = 'refreshRequired' | 'complete' | 'notFound';
 
 export type FilesystemBrowseEntry = {
 	name: string;
@@ -165,7 +167,6 @@ export type FilesystemBrowseResult = {
 };
 
 export type DesktopApi = {
-	getLocalIdentity: () => Promise<LocalIdentity>;
 	browseFilesystem: (input: {
 		partialPath: string;
 		cwd?: string;
@@ -181,7 +182,9 @@ export type DesktopApi = {
 	getWorkspaceSessionOverview: (
 		workspaceSessionId: Id<'workspaceSessions'>
 	) => Promise<WorkspaceOverview>;
-	runAgent: (request: AgentRunRequest) => Promise<void>;
+	runAgent: (request: AgentRunRequest) => Promise<AgentRunStart>;
+	waitForAgentAuthRefresh: (authSessionId: string) => Promise<AgentAuthStatus>;
+	refreshAgentAuth: (authSessionId: string, authToken: string) => Promise<void>;
 };
 
 export type WorkspaceSessionAttachment = {

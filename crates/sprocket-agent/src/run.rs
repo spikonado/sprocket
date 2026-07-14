@@ -5,7 +5,7 @@ use sprocket_workspace::{
 };
 use std::future::Future;
 use std::time::Duration;
-use tokio::time::{Instant, MissedTickBehavior};
+use tokio::time::{Instant, MissedTickBehavior, sleep, timeout};
 use uuid::Uuid;
 
 use crate::RunContextResponse;
@@ -18,6 +18,24 @@ const RUN_CLAIM_LEASE_DURATION: Duration = Duration::from_secs(60);
 const RUN_CLAIM_RENEW_INTERVAL: Duration = Duration::from_secs(20);
 const RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(8);
 const RUN_CLAIM_EXPIRY_SAFETY_MARGIN: Duration = Duration::from_secs(5);
+const RUN_CLAIM_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(8);
+const FAILURE_CLEANUP_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(5);
+const START_FAILURE_CLEANUP_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(2_500);
+const FAILURE_CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(250);
+
+pub struct AgentRun {
+    request: RunAgentRequest,
+    runtime: RuntimeClient,
+    run_id: String,
+    claim_id: String,
+    workspace_root: std::path::PathBuf,
+}
+
+impl AgentRun {
+    pub fn run_id(&self) -> &str {
+        &self.run_id
+    }
+}
 
 #[derive(Clone, Copy)]
 enum RunFinalStatus {
@@ -94,14 +112,36 @@ async fn fail_run_before_start(
     error: &anyhow::Error,
 ) -> anyhow::Result<bool> {
     let message = format!("Run failed before the model started: {error}");
-    runtime
-        .finalize_queued_run(
-            run_id,
-            &message,
-            RunFinalStatus::Failed.as_str(),
-            Some(&error.to_string()),
+    let last_error = error.to_string();
+    let cleanup = || async {
+        timeout(
+            FAILURE_CLEANUP_ATTEMPT_TIMEOUT,
+            runtime.finalize_queued_run(
+                run_id,
+                &message,
+                RunFinalStatus::Failed.as_str(),
+                Some(&last_error),
+            ),
         )
         .await
+        .map_err(|_| anyhow!("queued run cleanup timed out"))?
+    };
+
+    match cleanup().await {
+        Ok(accepted) => Ok(accepted),
+        Err(first_error) => {
+            eprintln!(
+                "sprocket-agent: queued run cleanup failed for run {}; retrying: {}",
+                run_id, first_error
+            );
+            sleep(FAILURE_CLEANUP_RETRY_DELAY).await;
+            cleanup().await.map_err(|retry_error| {
+                anyhow!(
+                    "failed to terminalize queued run {run_id}: {retry_error}; initial cleanup failed: {first_error}"
+                )
+            })
+        }
+    }
 }
 
 async fn abort_before_start(
@@ -114,6 +154,67 @@ async fn abort_before_start(
     } else {
         Ok(())
     }
+}
+
+async fn finalize_claim_failure(
+    runtime: &RuntimeClient,
+    run_id: &str,
+    claim_id: &str,
+    error: &anyhow::Error,
+) -> anyhow::Result<()> {
+    let last_error = error.to_string();
+    let text = format!("Run failed before the model started: {last_error}");
+    let cleanup = || async {
+        timeout(
+            FAILURE_CLEANUP_ATTEMPT_TIMEOUT,
+            runtime.finalize_claim_failure(run_id, claim_id, &text, &last_error),
+        )
+        .await
+        .map_err(|_| anyhow!("claim failure cleanup timed out"))?
+    };
+
+    match cleanup().await {
+        Ok(_) => Ok(()),
+        Err(first_error) => {
+            eprintln!(
+                "sprocket-agent: claim failure cleanup failed for run {}; retrying: {}",
+                run_id, first_error
+            );
+            sleep(FAILURE_CLEANUP_RETRY_DELAY).await;
+            cleanup().await.map(|_| ()).map_err(|retry_error| {
+                anyhow!(
+                    "failed to terminalize run {run_id} after claim uncertainty: {retry_error}; initial cleanup failed: {first_error}"
+                )
+            })
+        }
+    }
+}
+
+async fn abort_after_claim(
+    runtime: &RuntimeClient,
+    run_id: &str,
+    claim_id: &str,
+    error: anyhow::Error,
+) -> anyhow::Result<()> {
+    match finalize_claim_failure(runtime, run_id, claim_id, &error).await {
+        Ok(()) => Err(error),
+        Err(cleanup_error) => Err(anyhow!(
+            "{error}; additionally failed to durably terminalize the run: {cleanup_error}"
+        )),
+    }
+}
+
+async fn start_run_once(
+    runtime: &RuntimeClient,
+    run_id: &str,
+    claim_id: &str,
+) -> anyhow::Result<crate::types::StartRunResponse> {
+    timeout(
+        RUN_CLAIM_ATTEMPT_TIMEOUT,
+        runtime.start_run(run_id, claim_id),
+    )
+    .await
+    .map_err(|_| anyhow!("claim attempt timed out"))?
 }
 
 async fn finalize_run(
@@ -201,7 +302,7 @@ async fn claim_run(
     claim_id: &str,
 ) -> anyhow::Result<Option<Instant>> {
     let mut request_started_at = Instant::now();
-    let start = match runtime.start_run(run_id, claim_id).await {
+    let start = match start_run_once(runtime, run_id, claim_id).await {
         Ok(start) => start,
         Err(first_error) => {
             eprintln!(
@@ -209,14 +310,22 @@ async fn claim_run(
                 run_id, first_error
             );
             request_started_at = Instant::now();
-            runtime
-                .start_run(run_id, claim_id)
-                .await
-                .map_err(|retry_error| {
-                    anyhow!(
+            match start_run_once(runtime, run_id, claim_id).await {
+                Ok(start) => start,
+                Err(retry_error) => {
+                    let claim_error = anyhow!(
                         "failed to claim run {run_id} after retry: {retry_error}; initial attempt failed: {first_error}"
-                    )
-                })?
+                    );
+                    if let Err(cleanup_error) =
+                        finalize_claim_failure(runtime, run_id, claim_id, &claim_error).await
+                    {
+                        return Err(anyhow!(
+                            "{claim_error}; additionally failed to durably terminalize the run: {cleanup_error}"
+                        ));
+                    }
+                    return Err(claim_error);
+                }
+            }
         }
     };
     if !start.claimed {
@@ -311,7 +420,7 @@ where
     }
 }
 
-pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
+pub async fn start_agent_run(request: RunAgentRequest) -> anyhow::Result<AgentRun> {
     eprintln!("sprocket-agent: starting thread {}", request.thread_id);
     let claim_id = Uuid::new_v4().to_string();
     let runtime: RuntimeClient = RuntimeClient::from_request(&request).await?;
@@ -328,6 +437,57 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
     }
     let run_id = created_run.run_id;
 
+    Ok(AgentRun {
+        request,
+        runtime,
+        run_id,
+        claim_id,
+        workspace_root,
+    })
+}
+
+pub async fn finalize_failed_start(
+    request: RunAgentRequest,
+    startup_error: String,
+) -> anyhow::Result<()> {
+    let runtime = RuntimeClient::from_request(&request).await?;
+    let text = format!("Run failed before the model started: {startup_error}");
+    let cleanup = || async {
+        timeout(
+            START_FAILURE_CLEANUP_ATTEMPT_TIMEOUT,
+            runtime.finalize_failed_start(&request, &text, &startup_error),
+        )
+        .await
+        .map_err(|_| anyhow!("startup failure cleanup timed out"))?
+    };
+
+    match cleanup().await {
+        Ok(_) => Ok(()),
+        Err(first_error) => {
+            eprintln!(
+                "sprocket-agent: startup failure cleanup failed for submission {}; retrying: {}",
+                request.submission_id, first_error
+            );
+            sleep(FAILURE_CLEANUP_RETRY_DELAY).await;
+            cleanup().await.map(|_| ()).map_err(|retry_error| {
+                anyhow!(
+                    "failed to reconcile submission {} after startup failure: {retry_error}; initial cleanup failed: {first_error}",
+                    request.submission_id
+                )
+            })
+        }
+    }
+}
+
+pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
+    let AgentRun {
+        request,
+        runtime,
+        run_id,
+        claim_id,
+        workspace_root,
+    } = run;
+
     let context: RunContextResponse = match runtime.run_context(&run_id).await {
         Ok(context) => context,
         Err(error) => return abort_before_start(&runtime, &run_id, error).await,
@@ -341,7 +501,7 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
         if prompt.is_empty() {
             return Err(anyhow!("run does not contain a user prompt"));
         }
-        let provider = AgentProvider::default_for_run(&runtime, &request, &context, &run_id);
+        let provider = AgentProvider::default_for_run(&runtime, &context, &run_id);
         let prior_history = deserialize_agent_history(context.agent_history)?;
         let preamble = build_workspace_preamble(
             &request.workspace_path,
@@ -378,11 +538,22 @@ pub async fn run_agent(request: RunAgentRequest) -> anyhow::Result<()> {
         run_id
     );
 
-    run_with_claim_lease(&runtime, &run_id, &claim_id, lease_started_at, async {
-        if runtime.run_finished(&run_id).await? {
-            return Ok(());
+    match timeout(RUN_CLAIM_ATTEMPT_TIMEOUT, runtime.run_finished(&run_id)).await {
+        Ok(Ok(false)) => {}
+        Ok(Ok(true)) => return Ok(()),
+        Ok(Err(error)) => return abort_after_claim(&runtime, &run_id, &claim_id, error).await,
+        Err(_) => {
+            return abort_after_claim(
+                &runtime,
+                &run_id,
+                &claim_id,
+                anyhow!("timed out checking whether run {run_id} was already finished"),
+            )
+            .await;
         }
+    }
 
+    run_with_claim_lease(&runtime, &run_id, &claim_id, lease_started_at, async {
         let provider_result = provider
             .run(
                 runtime.clone(),

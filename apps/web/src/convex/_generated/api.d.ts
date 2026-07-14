@@ -9,19 +9,16 @@
  */
 
 import type * as agentRuntime from "../agentRuntime.js";
-import type * as auth from "../auth.js";
 import type * as authBootstrap from "../authBootstrap.js";
 import type * as chat from "../chat.js";
 import type * as completion from "../completion.js";
 import type * as executor from "../executor.js";
-import type * as http from "../http.js";
 import type * as lib_access from "../lib/access.js";
 import type * as lib_agentErrors from "../lib/agentErrors.js";
 import type * as lib_agentHistory from "../lib/agentHistory.js";
 import type * as lib_assistantParts from "../lib/assistantParts.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_completionStream from "../lib/completionStream.js";
-import type * as lib_guestIdentity from "../lib/guestIdentity.js";
 import type * as lib_json from "../lib/json.js";
 import type * as lib_modelRegistry from "../lib/modelRegistry.js";
 import type * as lib_models from "../lib/models.js";
@@ -45,19 +42,16 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   agentRuntime: typeof agentRuntime;
-  auth: typeof auth;
   authBootstrap: typeof authBootstrap;
   chat: typeof chat;
   completion: typeof completion;
   executor: typeof executor;
-  http: typeof http;
   "lib/access": typeof lib_access;
   "lib/agentErrors": typeof lib_agentErrors;
   "lib/agentHistory": typeof lib_agentHistory;
   "lib/assistantParts": typeof lib_assistantParts;
   "lib/auth": typeof lib_auth;
   "lib/completionStream": typeof lib_completionStream;
-  "lib/guestIdentity": typeof lib_guestIdentity;
   "lib/json": typeof lib_json;
   "lib/modelRegistry": typeof lib_modelRegistry;
   "lib/models": typeof lib_models;
@@ -102,5 +96,4 @@ export declare const internal: FilterApi<
 
 export declare const components: {
   rateLimiter: import("@convex-dev/rate-limiter/_generated/component.js").ComponentApi<"rateLimiter">;
-  workOSAuthKit: import("@convex-dev/workos-authkit/_generated/component.js").ComponentApi<"workOSAuthKit">;
 };

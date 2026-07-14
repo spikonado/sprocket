@@ -1,5 +1,6 @@
 import type { Id } from '$convex/_generated/dataModel';
 import type {
+	AgentAuthStatus,
 	AgentRunRequest,
 	DesktopApi,
 	LocalWorkspaceAvailability,
@@ -11,31 +12,13 @@ import type {
 import { isRunClaimLeaseActive } from '$convex/lib/runLease';
 import { isRunFinalStatus } from '$convex/lib/validators';
 
-export type ViewerArgs = {
-	guestId?: string;
-};
+const AGENT_AUTH_INITIAL_RETRY_DELAY_MS = 250;
+const AGENT_AUTH_MAX_RETRY_DELAY_MS = 4_000;
+const AGENT_AUTH_NOT_FOUND_GRACE_MS = 10_000;
 
 export type WorkspaceSessionState = WorkspaceSession & {
 	localWorkspaceAvailability: LocalWorkspaceAvailability;
 };
-
-export function getViewerArgs(
-	authenticatedUser: unknown,
-	guestSessionId: string | null
-): ViewerArgs {
-	return !authenticatedUser && guestSessionId ? { guestId: guestSessionId } : {};
-}
-
-export function getViewerIdentity(
-	authenticatedUser: { id: string } | null | undefined,
-	guestSessionId: string | null
-): string | null {
-	if (authenticatedUser) {
-		return `user:${authenticatedUser.id}`;
-	}
-
-	return guestSessionId ? `guest:${guestSessionId}` : null;
-}
 
 export function resolveSubmissionId(args: {
 	newSubmissionId: string;
@@ -86,39 +69,63 @@ export function isRunBlockingAgentLaunch(
 	return isRunClaimLeaseActive(run, now);
 }
 
-export function getViewerQueryArgs(args: {
+export function shouldSkipAuthenticatedQueries(args: {
 	authenticatedUser: unknown;
 	convexIsAuthenticated: boolean;
 	convexIsLoading: boolean;
-	guestSessionId: string | null;
-}): ViewerArgs | 'skip' {
-	if (args.authenticatedUser) {
-		return args.convexIsAuthenticated ? {} : 'skip';
-	}
-
-	if (args.convexIsLoading || args.convexIsAuthenticated) {
-		return 'skip';
-	}
-
-	return args.guestSessionId ? { guestId: args.guestSessionId } : 'skip';
+}): boolean {
+	return !(args.authenticatedUser && args.convexIsAuthenticated && !args.convexIsLoading);
 }
 
 export function launchAgentRun(args: {
-	authToken?: string;
+	authToken: string;
 	desktopApi: DesktopApi;
+	expectedUserId: string;
+	getAccessToken: (options: { forceRefreshToken: boolean }) => Promise<string | null>;
+	getCurrentUserId: () => string | null;
 	onError: (error: unknown) => void;
+	onStarted: (runId: Id<'runs'>) => void;
 	threadId: Id<'threadRecords'>;
 	prompt: string;
 	selectedModel: AgentRunRequest['selectedModel'];
 	reasoningEffort: AgentRunRequest['reasoningEffort'];
 	submissionId: string;
-	viewerArgs: ViewerArgs;
 	workspaceSessionId: Id<'workspaceSessions'>;
 }) {
+	const authSessionId = crypto.randomUUID();
+	let settleLaunch!: () => void;
+	const launchState = {
+		status: 'pending' as 'pending' | 'acknowledged' | 'failed',
+		notFoundGraceElapsed: false,
+		settled: new Promise<void>((resolve) => {
+			settleLaunch = resolve;
+		})
+	};
+	let errorReported = false;
+	const reportError = (error: unknown) => {
+		if (errorReported) return;
+		errorReported = true;
+		console.error('Failed to run agent', error);
+		args.onError(error);
+	};
+	const handleMonitorError = async (error: unknown) => {
+		if (launchState.status === 'pending') await launchState.settled;
+		if (launchState.status === 'failed') reportError(error);
+	};
+
+	void monitorAgentAuthSession({
+		authSessionId,
+		desktopApi: args.desktopApi,
+		expectedUserId: args.expectedUserId,
+		getAccessToken: args.getAccessToken,
+		getCurrentUserId: args.getCurrentUserId,
+		launchState
+	}).catch(handleMonitorError);
+
 	void args.desktopApi
 		.runAgent({
-			...(args.authToken ? { authToken: args.authToken } : {}),
-			...args.viewerArgs,
+			authSessionId,
+			authToken: args.authToken,
 			threadId: args.threadId,
 			prompt: args.prompt,
 			selectedModel: args.selectedModel,
@@ -126,10 +133,96 @@ export function launchAgentRun(args: {
 			submissionId: args.submissionId,
 			workspaceSessionId: args.workspaceSessionId
 		})
+		.then(({ runId }) => {
+			launchState.status = 'acknowledged';
+			settleLaunch();
+			args.onStarted(runId);
+		})
 		.catch((error) => {
-			console.error('Failed to run agent', error);
-			args.onError(error);
+			launchState.status = 'failed';
+			settleLaunch();
+			if (!launchState.notFoundGraceElapsed) reportError(error);
 		});
+}
+
+async function monitorAgentAuthSession(args: {
+	authSessionId: string;
+	desktopApi: DesktopApi;
+	expectedUserId: string;
+	getAccessToken: (options: { forceRefreshToken: boolean }) => Promise<string | null>;
+	getCurrentUserId: () => string | null;
+	launchState: {
+		status: 'pending' | 'acknowledged' | 'failed';
+		notFoundGraceElapsed: boolean;
+		settled: Promise<void>;
+	};
+}) {
+	const readLaunchStatus = () => args.launchState.status;
+	let pendingToken: string | null = null;
+	let retryDelayMs = AGENT_AUTH_INITIAL_RETRY_DELAY_MS;
+	let notFoundSince: number | null = null;
+
+	while (true) {
+		let status: AgentAuthStatus;
+		try {
+			status = await args.desktopApi.waitForAgentAuthRefresh(args.authSessionId);
+		} catch {
+			await delay(retryDelayMs);
+			retryDelayMs = Math.min(retryDelayMs * 2, AGENT_AUTH_MAX_RETRY_DELAY_MS);
+			continue;
+		}
+
+		if (status === 'complete') return;
+		if (status === 'notFound') {
+			if (args.launchState.status === 'acknowledged') return;
+			notFoundSince ??= Date.now();
+			if (Date.now() - notFoundSince >= AGENT_AUTH_NOT_FOUND_GRACE_MS) {
+				args.launchState.notFoundGraceElapsed = true;
+				if (args.launchState.status === 'pending') await args.launchState.settled;
+				if (readLaunchStatus() === 'acknowledged') return;
+				throw new Error(
+					'The local agent authentication session was not found. Start the run again.'
+				);
+			}
+			await delay(retryDelayMs);
+			retryDelayMs = Math.min(retryDelayMs * 2, AGENT_AUTH_MAX_RETRY_DELAY_MS);
+			continue;
+		}
+
+		notFoundSince = null;
+		if (!pendingToken) {
+			assertAgentRunUser(args.expectedUserId, args.getCurrentUserId());
+			pendingToken = await args.getAccessToken({ forceRefreshToken: true });
+			if (!pendingToken) {
+				throw new Error('Your session ended while the agent was running. Sign in again.');
+			}
+		}
+
+		assertAgentRunUser(args.expectedUserId, args.getCurrentUserId());
+		try {
+			await args.desktopApi.refreshAgentAuth(args.authSessionId, pendingToken);
+			pendingToken = null;
+			retryDelayMs = AGENT_AUTH_INITIAL_RETRY_DELAY_MS;
+		} catch {
+			await delay(retryDelayMs);
+			retryDelayMs = Math.min(retryDelayMs * 2, AGENT_AUTH_MAX_RETRY_DELAY_MS);
+		}
+	}
+}
+
+function assertAgentRunUser(expectedUserId: string, currentUserId: string | null) {
+	if (!currentUserId) {
+		throw new Error('Your session ended while the agent was running. Sign in again.');
+	}
+	if (currentUserId !== expectedUserId) {
+		throw new Error(
+			'Your account changed while the agent was running. Switch back and start again.'
+		);
+	}
+}
+
+function delay(milliseconds: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 export function buildDesktopWorkspaceSessionsById(

@@ -24,6 +24,10 @@ export function canStartRunWithClaim(run: ClaimableRun, claimId: string, now: nu
 	return !isRunClaimLeaseActive(run, now);
 }
 
+export function canFinalizeAfterClaimFailure(run: ClaimableRun, claimId: string): boolean {
+	return run.status === 'queued' || (isClaimedRunStatus(run.status) && run.claimId === claimId);
+}
+
 export function claimExpiresAt(now: number): number {
 	return now + RUN_CLAIM_LEASE_DURATION_MS;
 }

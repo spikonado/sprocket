@@ -1,5 +1,5 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
-import { mutation, query } from '@convex/_generated/server';
+import { mutation, query, type MutationCtx } from '@convex/_generated/server';
 import { v, type Infer } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord, getOwnedWorkspaceSession } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
@@ -9,6 +9,7 @@ import { buildThreadTranscript, type ThreadTranscriptMessage } from '@convex/lib
 import { assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
 import { assertThreadCanStartRun, cancelExecutorJobsForTerminalRun } from '@convex/lib/runs';
 import {
+	canFinalizeAfterClaimFailure,
 	canStartRunWithClaim,
 	claimExpiresAt,
 	isClaimedRunStatus,
@@ -36,9 +37,94 @@ import {
 	vRunStatus
 } from '@convex/lib/validators';
 
+type FinalizeRunArgs = {
+	text: string;
+	status: Infer<typeof vRunFinalStatus>;
+	lastError?: string;
+};
+
+async function finalizeRunRecord(
+	ctx: MutationCtx,
+	userId: string,
+	run: Doc<'runs'>,
+	args: FinalizeRunArgs
+): Promise<boolean> {
+	const alreadyFinal = isRunFinalStatus(run.status);
+	const finalStatus = alreadyFinal ? run.status : args.status;
+	const completedAt = run.completedAt ?? Date.now();
+	const jobs: Doc<'executorJobs'>[] = await ctx.db
+		.query('executorJobs')
+		.withIndex('by_runId_sequence', (query) => query.eq('runId', run._id))
+		.collect();
+	const finalizedJobs = cancelExecutorJobsForTerminalRun({
+		jobs,
+		runStatus: finalStatus,
+		lastError: alreadyFinal ? run.lastError : args.lastError,
+		completedAt
+	});
+	for (const [index, job] of jobs.entries()) {
+		const finalizedJob = finalizedJobs[index];
+		if (finalizedJob === job) continue;
+		await ctx.db.patch(job._id, {
+			status: finalizedJob.status,
+			error: finalizedJob.error,
+			completedAt: finalizedJob.completedAt
+		});
+	}
+	if (alreadyFinal) {
+		if (run.activeJobId) {
+			await ctx.db.patch(run._id, { activeJobId: undefined });
+		}
+		return true;
+	}
+
+	const responseMessageId =
+		run.responseMessageId ??
+		(await appendThreadMessage(ctx, {
+			threadId: run.threadId,
+			runId: run._id,
+			userId,
+			type: 'response',
+			text: ''
+		}));
+	const message = run.responseMessageId
+		? await getThreadMessage(ctx, run.responseMessageId)
+		: undefined;
+
+	const persistedParts = (message?.parts ?? []) as AssistantPart[];
+	const nextParts: AssistantPart[] = ensureAssistantToolPartsFromJobs(
+		persistedParts,
+		finalizedJobs
+			.filter((job) => !job.hidden)
+			.sort((left, right) => left.sequence - right.sequence)
+			.map((job) => ({
+				id: job._id,
+				kind: job.kind,
+				...(job.callId ? { callId: job.callId } : {}),
+				payload: job.payload,
+				status: job.status,
+				result: job.result,
+				error: job.error
+			}))
+	);
+	const streamedText: string = joinAssistantTextParts(nextParts);
+	await ctx.db.patch(responseMessageId, {
+		text: resolveAssistantMessageText(streamedText, args.text),
+		parts: nextParts
+	});
+	await ctx.db.patch(run._id, {
+		status: finalStatus,
+		claimExpiresAt: undefined,
+		lastError: args.lastError,
+		activeJobId: undefined,
+		completedAt,
+		responseMessageId
+	});
+	return true;
+}
+
 export const createRun = mutation({
 	args: {
-		guestId: v.optional(v.string()),
 		submissionId: v.string(),
 		threadId: v.id('threadRecords'),
 		prompt: v.string(),
@@ -53,7 +139,7 @@ export const createRun = mutation({
 		runId: Id<'runs'>;
 		promptMessageId: Id<'threadMessages'>;
 	}> => {
-		const userId: string = await getUserId(ctx, args.guestId);
+		const userId: string = await getUserId(ctx);
 		const threadRecord: Doc<'threadRecords'> = await getOwnedThreadRecord(
 			ctx.db,
 			userId,
@@ -133,12 +219,11 @@ export const createRun = mutation({
 
 export const start = mutation({
 	args: {
-		guestId: v.optional(v.string()),
 		claimId: v.string(),
 		runId: v.id('runs')
 	},
 	handler: async (ctx, args): Promise<{ claimed: boolean; claimExpiresAt?: number }> => {
-		const userId: string = await getUserId(ctx, args.guestId);
+		const userId: string = await getUserId(ctx);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		const now = Date.now();
 		if (!canStartRunWithClaim(run, args.claimId, now)) {
@@ -174,12 +259,11 @@ export const start = mutation({
 
 export const renewClaim = mutation({
 	args: {
-		guestId: v.optional(v.string()),
 		claimId: v.string(),
 		runId: v.id('runs')
 	},
 	handler: async (ctx, args): Promise<{ renewed: boolean; claimExpiresAt?: number }> => {
-		const userId: string = await getUserId(ctx, args.guestId);
+		const userId: string = await getUserId(ctx);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		if (!isClaimedRunStatus(run.status) || run.claimId !== args.claimId) {
 			return { renewed: false };
@@ -193,7 +277,6 @@ export const renewClaim = mutation({
 
 export const getContext = query({
 	args: {
-		guestId: v.optional(v.string()),
 		runId: v.id('runs')
 	},
 	handler: async (
@@ -206,7 +289,7 @@ export const getContext = query({
 		prompt: string;
 		agentHistory: AgentHistoryMessage[];
 	}> => {
-		const userId: string = await getUserId(ctx, args.guestId);
+		const userId: string = await getUserId(ctx);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		const threadRecord: Doc<'threadRecords'> = await getOwnedThreadRecord(
 			ctx.db,
@@ -241,11 +324,10 @@ export const getContext = query({
 
 export const isFinished = query({
 	args: {
-		guestId: v.optional(v.string()),
 		runId: v.id('runs')
 	},
 	handler: async (ctx, args): Promise<boolean> => {
-		const userId: string = await getUserId(ctx, args.guestId);
+		const userId: string = await getUserId(ctx);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		return isRunFinalStatus(run.status);
 	}
@@ -253,7 +335,6 @@ export const isFinished = query({
 
 export const completionActor = query({
 	args: {
-		guestId: v.optional(v.string()),
 		runId: v.id('runs')
 	},
 	handler: async (
@@ -265,7 +346,7 @@ export const completionActor = query({
 		streamSequence: number;
 		streamAttemptId?: string;
 	}> => {
-		const userId: string = await getUserId(ctx, args.guestId);
+		const userId: string = await getUserId(ctx);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		const message = run.responseMessageId
 			? await getThreadMessage(ctx, run.responseMessageId)
@@ -281,11 +362,10 @@ export const completionActor = query({
 
 export const beginAssistantMessage = mutation({
 	args: {
-		guestId: v.optional(v.string()),
 		runId: v.id('runs')
 	},
 	handler: async (ctx, args): Promise<void> => {
-		const userId: string = await getUserId(ctx, args.guestId);
+		const userId: string = await getUserId(ctx);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		if (isRunFinalStatus(run.status)) {
 			return;
@@ -312,7 +392,6 @@ export const beginAssistantMessage = mutation({
 
 export const mergeAssistantStreamEvents = mutation({
 	args: {
-		guestId: v.optional(v.string()),
 		runId: v.id('runs'),
 		streamId: v.string(),
 		sequence: v.number(),
@@ -322,7 +401,7 @@ export const mergeAssistantStreamEvents = mutation({
 		ctx,
 		args
 	): Promise<Exclude<CompletionStreamBatchClassification, 'append'> | 'merged'> => {
-		const userId: string = await getUserId(ctx, args.guestId);
+		const userId: string = await getUserId(ctx);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		assertRunAcceptsModelCompletion(run.status);
 		if (!run.responseMessageId || args.events.length === 0) {
@@ -423,14 +502,13 @@ export const finalizeRun = mutation({
 	args: {
 		expectedStatus: v.optional(vRunStatus),
 		expectedClaimId: v.optional(v.string()),
-		guestId: v.optional(v.string()),
 		runId: v.id('runs'),
 		text: v.string(),
 		status: vRunFinalStatus,
 		lastError: v.optional(v.string())
 	},
 	handler: async (ctx, args): Promise<boolean> => {
-		const userId: string = await getUserId(ctx, args.guestId);
+		const userId: string = await getUserId(ctx);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		if (args.expectedStatus && run.status !== args.expectedStatus) {
 			return false;
@@ -441,84 +519,73 @@ export const finalizeRun = mutation({
 		) {
 			return false;
 		}
-		const alreadyFinal = isRunFinalStatus(run.status);
-		const finalStatus = alreadyFinal ? run.status : args.status;
-		const completedAt = run.completedAt ?? Date.now();
-		const jobs: Doc<'executorJobs'>[] = await ctx.db
-			.query('executorJobs')
-			.withIndex('by_runId_sequence', (query) => query.eq('runId', run._id))
-			.collect();
-		const finalizedJobs = cancelExecutorJobsForTerminalRun({
-			jobs,
-			runStatus: finalStatus,
-			lastError: alreadyFinal ? run.lastError : args.lastError,
-			completedAt
-		});
-		for (const [index, job] of jobs.entries()) {
-			const finalizedJob = finalizedJobs[index];
-			if (finalizedJob === job) continue;
-			await ctx.db.patch(job._id, {
-				status: finalizedJob.status,
-				error: finalizedJob.error,
-				completedAt: finalizedJob.completedAt
-			});
-		}
-		if (alreadyFinal) {
-			if (run.activeJobId) {
-				await ctx.db.patch(run._id, { activeJobId: undefined });
-			}
-			return true;
-		}
+		return finalizeRunRecord(ctx, userId, run, args);
+	}
+});
 
-		const responseMessageId =
-			run.responseMessageId ??
-			(await appendThreadMessage(ctx, {
-				threadId: run.threadId,
-				runId: run._id,
-				userId,
-				type: 'response',
-				text: ''
-			}));
-		const message = run.responseMessageId
-			? await getThreadMessage(ctx, run.responseMessageId)
-			: undefined;
+export const finalizeFailedStart = mutation({
+	args: {
+		submissionId: v.string(),
+		threadId: v.id('threadRecords'),
+		prompt: v.string(),
+		selectedModel: vModelId,
+		reasoningEffort: vReasoningEffort,
+		text: v.string(),
+		lastError: v.string()
+	},
+	handler: async (ctx, args): Promise<boolean> => {
+		const userId: string = await getUserId(ctx);
+		const run: Doc<'runs'> | null = await ctx.db
+			.query('runs')
+			.withIndex('by_userId_submissionId', (query) =>
+				query.eq('userId', userId).eq('submissionId', args.submissionId)
+			)
+			.unique();
+		if (
+			!run ||
+			run.status !== 'queued' ||
+			run.threadId !== args.threadId ||
+			run.selectedModel !== args.selectedModel ||
+			run.reasoningEffort !== args.reasoningEffort ||
+			!run.promptMessageId
+		) {
+			return false;
+		}
+		const promptMessage = await ctx.db.get(run.promptMessageId);
+		if (!promptMessage || promptMessage.text !== args.prompt.trim()) {
+			return false;
+		}
+		return finalizeRunRecord(ctx, userId, run, {
+			text: args.text,
+			status: 'failed',
+			lastError: args.lastError
+		});
+	}
+});
 
-		const persistedParts = (message?.parts ?? []) as AssistantPart[];
-		const nextParts: AssistantPart[] = ensureAssistantToolPartsFromJobs(
-			persistedParts,
-			finalizedJobs
-				.filter((job) => !job.hidden)
-				.sort((left, right) => left.sequence - right.sequence)
-				.map((job) => ({
-					id: job._id,
-					kind: job.kind,
-					...(job.callId ? { callId: job.callId } : {}),
-					payload: job.payload,
-					status: job.status,
-					result: job.result,
-					error: job.error
-				}))
-		);
-		const streamedText: string = joinAssistantTextParts(nextParts);
-		await ctx.db.patch(responseMessageId, {
-			text: resolveAssistantMessageText(streamedText, args.text),
-			parts: nextParts
+export const finalizeClaimFailure = mutation({
+	args: {
+		claimId: v.string(),
+		runId: v.id('runs'),
+		text: v.string(),
+		lastError: v.string()
+	},
+	handler: async (ctx, args): Promise<boolean> => {
+		const userId: string = await getUserId(ctx);
+		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
+		if (!canFinalizeAfterClaimFailure(run, args.claimId)) {
+			return false;
+		}
+		return finalizeRunRecord(ctx, userId, run, {
+			text: args.text,
+			status: 'failed',
+			lastError: args.lastError
 		});
-		await ctx.db.patch(run._id, {
-			status: finalStatus,
-			claimExpiresAt: undefined,
-			lastError: args.lastError,
-			activeJobId: undefined,
-			completedAt,
-			responseMessageId
-		});
-		return true;
 	}
 });
 
 export const beginToolJob = mutation({
 	args: {
-		guestId: v.optional(v.string()),
 		claimId: v.string(),
 		runId: v.id('runs'),
 		kind: vExecutorJobKind,
@@ -533,7 +600,7 @@ export const beginToolJob = mutation({
 		jobId: Id<'executorJobs'>;
 		sequence: number;
 	}> => {
-		const userId: string = await getUserId(ctx, args.guestId);
+		const userId: string = await getUserId(ctx);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		assertRunAcceptsModelCompletion(run.status);
 		if (run.claimId !== args.claimId || !isRunClaimLeaseActive(run, Date.now())) {

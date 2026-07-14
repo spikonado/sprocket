@@ -7,12 +7,11 @@ import { buildThreadTranscript, type ThreadTranscriptMessage } from '@convex/lib
 
 export const listForThread = query({
 	args: {
-		guestId: v.optional(v.string()),
 		threadId: v.id('threadRecords'),
 		paginationOpts: paginationOptsValidator
 	},
 	handler: async (ctx, args) => {
-		const userId: string = await getUserId(ctx, args.guestId);
+		const userId: string = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 		const allMessages: ThreadTranscriptMessage[] = await buildThreadTranscript(ctx, args.threadId);
 		const total: number = allMessages.length;

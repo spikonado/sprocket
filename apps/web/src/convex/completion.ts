@@ -8,10 +8,8 @@ import type { Id } from '@convex/_generated/dataModel';
 import type { JsonValue } from '@convex/lib/json';
 import { resolveLanguageModel } from '@convex/lib/modelRegistry';
 import { assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
-import {
-	enforceGuestModelCompletionLimit,
-	enforceSignedInModelCompletionLimit
-} from '@convex/lib/rateLimits';
+import { enforceModelCompletionLimit } from '@convex/lib/rateLimits';
+import { getUserId } from '@convex/lib/auth';
 import { vModelId, vReasoningEffort } from '@convex/lib/validators';
 import { type SupportedModelId, type SupportedReasoningEffort } from '@convex/lib/models';
 import {
@@ -43,7 +41,6 @@ export const complete = action({
 		instructions: v.optional(v.string()),
 		prompt: v.optional(v.string()),
 		messagesJson: v.optional(v.string()),
-		guestId: v.optional(v.string()),
 		streamRunId: v.id('runs'),
 		toolChoiceJson: v.optional(v.string()),
 		tools: v.optional(
@@ -71,6 +68,7 @@ export const complete = action({
 		}>;
 		stream_events: CompletionStreamEvent[];
 	}> => {
+		await getUserId(ctx);
 		const tools: Record<string, ReturnType<typeof tool>> = Object.fromEntries(
 			(args.tools ?? []).map((toolDefinition) => [
 				toolDefinition.name,
@@ -98,7 +96,7 @@ export const complete = action({
 			throw new Error('Either prompt or messagesJson is required.');
 		}
 
-		const streamSequence = await enforceCompletionLimit(ctx, args.guestId, args.streamRunId);
+		const streamSequence = await enforceCompletionLimit(ctx, args.streamRunId);
 		const streamId = crypto.randomUUID();
 		const abortController = new AbortController();
 		let result: CompletionActionResult;
@@ -107,7 +105,6 @@ export const complete = action({
 				ctx,
 				streamText({ ...request, abortSignal: abortController.signal }),
 				args.streamRunId,
-				args.guestId,
 				streamId,
 				streamSequence,
 				abortController
@@ -138,7 +135,6 @@ async function collectStreamingCompletion(
 	ctx: ActionCtx,
 	result: ReturnType<typeof streamText>,
 	runId: Id<'runs'>,
-	guestId: string | undefined,
 	streamId: string,
 	streamSequence: number,
 	abortController: AbortController
@@ -161,7 +157,6 @@ async function collectStreamingCompletion(
 		for (let attempt = 0; attempt < 2; attempt += 1) {
 			try {
 				const outcome = await ctx.runMutation(api.agentRuntime.mergeAssistantStreamEvents, {
-					...(guestId ? { guestId } : {}),
 					runId,
 					streamId,
 					sequence,
@@ -251,7 +246,6 @@ async function collectStreamingCompletion(
 			if (next.type === 'acceptance-check') {
 				await assertCompletionStillAccepted(ctx, {
 					runId,
-					guestId,
 					streamId,
 					initialSequence: streamSequence
 				});
@@ -444,13 +438,11 @@ async function assertCompletionStillAccepted(
 	ctx: ActionCtx,
 	args: {
 		runId: Id<'runs'>;
-		guestId: string | undefined;
 		streamId: string;
 		initialSequence: number;
 	}
 ): Promise<void> {
 	const actor = await ctx.runQuery(api.agentRuntime.completionActor, {
-		...(args.guestId ? { guestId: args.guestId } : {}),
 		runId: args.runId
 	});
 	assertRunAcceptsModelCompletion(actor.status);
@@ -481,21 +473,12 @@ function delay(milliseconds: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function enforceCompletionLimit(
-	ctx: ActionCtx,
-	guestId: string | undefined,
-	runId: Id<'runs'>
-): Promise<number> {
+async function enforceCompletionLimit(ctx: ActionCtx, runId: Id<'runs'>): Promise<number> {
 	const actor = await ctx.runQuery(api.agentRuntime.completionActor, {
-		...(guestId ? { guestId } : {}),
 		runId
 	});
 	assertRunAcceptsModelCompletion(actor.status);
-	if (actor.userId.startsWith('guest:')) {
-		await enforceGuestModelCompletionLimit(ctx, actor.userId);
-		return actor.streamSequence;
-	}
-	await enforceSignedInModelCompletionLimit(ctx, actor.userId);
+	await enforceModelCompletionLimit(ctx, actor.userId);
 	return actor.streamSequence;
 }
 

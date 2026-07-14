@@ -1,16 +1,17 @@
-import type { GenericMutationCtx, GenericQueryCtx } from 'convex/server';
+import type {
+	GenericActionCtx,
+	GenericMutationCtx,
+	GenericQueryCtx,
+	UserIdentity
+} from 'convex/server';
 import type { DataModel } from '@convex/_generated/dataModel';
-import { authKit } from '@convex/auth';
-import { normalizeGuestUserId } from '@convex/lib/guestIdentity';
 
 export async function getUserId(
-	ctx: GenericMutationCtx<DataModel> | GenericQueryCtx<DataModel>,
-	guestId?: string
+	ctx: GenericActionCtx<DataModel> | GenericMutationCtx<DataModel> | GenericQueryCtx<DataModel>
 ): Promise<string> {
-	const authUser = await authKit.getAuthUser(ctx);
-	if (authUser?.id) {
-		return authUser.id;
+	const identity: UserIdentity | null = await ctx.auth.getUserIdentity();
+	if (!identity) {
+		throw new Error('Authentication required.');
 	}
-
-	return normalizeGuestUserId(guestId);
+	return identity.subject;
 }
