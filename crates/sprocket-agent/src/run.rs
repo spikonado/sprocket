@@ -81,6 +81,7 @@ fn build_workspace_preamble(
     [
         "You are a coding agent operating in the user’s real local workspace.",
         "Persist until the task is handled end-to-end. Do not stop at analysis if the user is asking for implementation.",
+        "A response without a tool call ends the run. Before sending one, reread the user request and continue with the next tool call if any work remains, including work requested after an explanation or update.",
         "Behave like a careful senior software engineer.",
         "Do not guess about repo state or file contents. Always inspect before editing.",
         "Fix the root-cause of problems.",
