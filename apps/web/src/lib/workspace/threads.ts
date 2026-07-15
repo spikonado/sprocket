@@ -80,7 +80,7 @@ export function getWorkspaceThreadGroups(
 		});
 }
 
-export function countActiveThreads(threads: ThreadSummary[]) {
+function countActiveThreads(threads: ThreadSummary[]) {
 	return threads.filter((thread) => thread.hasActiveRun).length;
 }
 
@@ -99,13 +99,6 @@ export function dataForThread<
 	T extends { threadId?: Id<'threadRecords'>; _id?: Id<'threadRecords'> }
 >(data: T | null | undefined, threadId: Id<'threadRecords'> | null): T | null {
 	return threadId && (data?.threadId ?? data?._id) === threadId ? data! : null;
-}
-
-export function isSelectionGenerationCurrent(
-	startedGeneration: number,
-	currentGeneration: number
-): boolean {
-	return startedGeneration === currentGeneration;
 }
 
 export function resolvePendingCreatedThreadId(args: {

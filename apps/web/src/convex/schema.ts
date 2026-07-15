@@ -22,7 +22,7 @@ export default defineSchema({
 		workspaceName: v.string(),
 		lastHeartbeatAt: v.optional(v.number()),
 		connectedClientId: v.optional(v.string()),
-		nextExecutorSequence: v.optional(v.number()),
+		nextExecutorSequence: v.number(),
 		lastSeenAt: v.number()
 	})
 		.index('by_userId', ['userId'])
@@ -30,7 +30,7 @@ export default defineSchema({
 		.index('by_user_workspaceName', ['userId', 'workspaceName']),
 	threadRecords: defineTable({
 		userId: v.string(),
-		submissionId: v.optional(v.string()),
+		submissionId: v.string(),
 		workspaceSessionId: v.id('workspaceSessions'),
 		title: v.optional(v.string()),
 		selectedModel: vModelId,
@@ -43,7 +43,7 @@ export default defineSchema({
 	runs: defineTable({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
-		submissionId: v.optional(v.string()),
+		submissionId: v.string(),
 		workspaceSessionId: v.id('workspaceSessions'),
 		status: vRunStatus,
 		claimId: v.optional(v.string()),
@@ -78,7 +78,7 @@ export default defineSchema({
 		kind: vExecutorJobKind,
 		callId: v.optional(v.string()),
 		payload: vExecutorJobPayload,
-		hidden: v.optional(v.boolean()),
+		hidden: v.boolean(),
 		status: vExecutorJobStatus,
 		enqueuedAt: v.number(),
 		claimedAt: v.optional(v.number()),

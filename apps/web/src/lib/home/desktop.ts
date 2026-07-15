@@ -31,7 +31,7 @@ export function resolveSubmissionId(args: {
 	};
 	latestRun: {
 		status: RunState['status'];
-		submissionId?: string;
+		submissionId: string;
 	} | null;
 	selectedModel: AgentRunRequest['selectedModel'];
 }) {
@@ -201,7 +201,7 @@ async function backoff(retryDelayMs: number): Promise<number> {
 	return Math.min(retryDelayMs * 2, AGENT_AUTH_MAX_RETRY_DELAY_MS);
 }
 
-export function buildDesktopWorkspaceSessionsById(
+function buildDesktopWorkspaceSessionsById(
 	desktopWorkspaceSessions: WorkspaceSessionLocation[]
 ): Record<string, WorkspaceSessionLocation> {
 	return Object.fromEntries(

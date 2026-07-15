@@ -6,17 +6,14 @@ type SelectorOption<T extends string> = {
 	triggerLabel?: string;
 };
 
-export type ModelOption = SelectorOption<SupportedModelId>;
-export type ReasoningEffortOption = SelectorOption<SupportedReasoningEffort>;
-
-export const modelOptions: ModelOption[] = [
+export const modelOptions: SelectorOption<SupportedModelId>[] = [
 	{ id: 'gpt-5.5', label: 'GPT-5.5' },
 	{ id: 'gpt-5.4', label: 'GPT-5.4 (default)', triggerLabel: 'GPT-5.4' },
 	{ id: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
 	{ id: 'gpt-5.3-codex', label: 'GPT-5.3 Codex' }
 ];
 
-export const reasoningEffortOptions: ReasoningEffortOption[] = [
+export const reasoningEffortOptions: SelectorOption<SupportedReasoningEffort>[] = [
 	{ id: 'low', label: 'Low' },
 	{ id: 'medium', label: 'Medium (default)', triggerLabel: 'Medium' },
 	{ id: 'high', label: 'High' },

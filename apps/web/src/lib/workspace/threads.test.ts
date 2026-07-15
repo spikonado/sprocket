@@ -8,7 +8,6 @@ import {
 	getWorkspaceThreadGroups,
 	isAgentLaunchPending,
 	isLatestRunReadyForThread,
-	isSelectionGenerationCurrent,
 	resolveExpiredAgentLaunch,
 	resolvePendingAgentLaunch,
 	resolvePendingAgentLaunchesFromThreads,
@@ -340,11 +339,6 @@ describe('workspace thread helpers', () => {
 		expect(dataForThread(activeThreadRecord, thread.threadId)).toBe(activeThreadRecord);
 		expect(dataForThread(thread, 'thread-record-2' as ThreadSummary['threadId'])).toBeNull();
 		expect(dataForThread(undefined, thread.threadId)).toBeNull();
-	});
-
-	it('treats selection generations as current only when they match', () => {
-		expect(isSelectionGenerationCurrent(3, 3)).toBe(true);
-		expect(isSelectionGenerationCurrent(2, 3)).toBe(false);
 	});
 
 	it('blocks thread deletion while a launch is pending or a run is active', () => {

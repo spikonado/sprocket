@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { ArrowUp, ChevronDown, Cpu, LockOpen, Square } from '@lucide/svelte';
-	import ModelSelector from '$lib/components/model-selector.svelte';
-	import ReasoningSelector from '$lib/components/reasoning-selector.svelte';
+	import OpenAiBlossom from '$lib/components/openai-blossom.svelte';
+	import OptionSelector from '$lib/components/option-selector.svelte';
 	import { shouldSubmitComposerFromKeydown } from '$lib/chat/composer';
 	import { defaultModelId, defaultReasoningEffort } from '$convex/lib/models';
 	import type { SupportedModelId, SupportedReasoningEffort } from '$convex/lib/models';
-	import { modelOptions } from '$lib/chat/model-options';
+	import { modelOptions, reasoningEffortOptions } from '$lib/chat/model-options';
 
 	type Props = {
 		prompt?: string;
@@ -125,18 +125,27 @@
 						class="flex min-w-0 flex-nowrap items-center justify-between gap-3 overflow-visible px-0 pt-2.5 pb-0"
 					>
 						<div class="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-visible p-1">
-							<ModelSelector
+							<OptionSelector
 								bind:value={selectedModel}
 								options={modelOptions}
+								ariaLabel="Select model"
+								menuTitle="Model"
 								disabled={isRunning}
 								className="z-20 shrink-0"
 								triggerClassName="h-9 border-0 bg-transparent px-2 text-[15px] text-slate-200 shadow-none hover:bg-transparent focus-visible:ring-0"
-							/>
+							>
+								{#snippet icon()}
+									<OpenAiBlossom className="size-4 shrink-0 text-slate-400" />
+								{/snippet}
+							</OptionSelector>
 
 							<div class="mx-1 hidden h-4 w-px shrink-0 bg-white/8 sm:block"></div>
 
-							<ReasoningSelector
+							<OptionSelector
 								bind:value={selectedReasoningEffort}
+								options={reasoningEffortOptions}
+								ariaLabel="Select reasoning effort"
+								menuTitle="Reasoning"
 								disabled={isRunning}
 								className="z-20 shrink-0"
 								triggerClassName="h-9 border-0 bg-transparent px-2 text-[15px] text-slate-300 shadow-none hover:bg-transparent focus-visible:ring-0"

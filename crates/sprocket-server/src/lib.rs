@@ -7,7 +7,8 @@ mod static_files;
 mod workspace_sessions;
 
 pub use config::{DEFAULT_DEV_WEB_URL, DEFAULT_PORT, SESSION_COOKIE_NAME, ServerConfig};
-pub use static_dir::{INSTALLED_WEB_DIR, is_valid_static_dir, resolve_static_dir};
+use static_dir::is_valid_static_dir;
+pub use static_dir::{INSTALLED_WEB_DIR, resolve_static_dir};
 
 use std::net::SocketAddr;
 use std::path::PathBuf;

@@ -18,7 +18,6 @@ import {
 import {
 	ensureAssistantToolPartsFromJobs,
 	joinAssistantTextParts,
-	resolveAssistantMessageText,
 	type AssistantPart
 } from '@convex/lib/assistantParts';
 import {
@@ -114,7 +113,7 @@ async function finalizeRunRecord(
 	);
 	const streamedText: string = joinAssistantTextParts(nextParts);
 	await ctx.db.patch(responseMessageId, {
-		text: resolveAssistantMessageText(streamedText, args.text),
+		text: streamedText || args.text,
 		parts: nextParts
 	});
 	await ctx.db.patch(run._id, {
@@ -620,7 +619,7 @@ export const beginToolJob = mutation({
 			run.workspaceSessionId
 		);
 
-		const nextSequence: number = workspaceSession.nextExecutorSequence ?? 0;
+		const nextSequence: number = workspaceSession.nextExecutorSequence;
 		await ctx.db.patch(workspaceSession._id, {
 			nextExecutorSequence: nextSequence + 1
 		});

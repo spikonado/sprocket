@@ -1,19 +1,3 @@
-export function truncatePreview(value: string, limit = 180) {
-	if (value.length <= limit) {
-		return value;
-	}
-
-	return `${value.slice(0, limit)}...`;
-}
-
-export function formatCompactCount(value: number) {
-	if (value >= 10_000) {
-		return `${(value / 1000).toFixed(1)}k`;
-	}
-
-	return `${value}`;
-}
-
 export function formatRelativeTime(timestamp: number, now = Date.now()) {
 	const deltaMs = Math.max(0, now - timestamp);
 	const minute = 60_000;

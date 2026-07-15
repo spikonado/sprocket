@@ -18,6 +18,7 @@ function executorJob(
 		runId: 'run' as ExecutorJob['runId'],
 		kind: 'exec_command',
 		payload: { cmd: id },
+		hidden: false,
 		status: 'pending',
 		enqueuedAt: sequence,
 		sequence,

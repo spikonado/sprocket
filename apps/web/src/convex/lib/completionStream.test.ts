@@ -8,7 +8,7 @@ import {
 	isCompletionStreamSuperseded,
 	upsertCompletionReasoningEvent,
 	upsertCompletionTextEvent
-} from '$convex/lib/completionStream';
+} from '@convex/lib/completionStream';
 
 describe('completion stream reducer', () => {
 	it('only accepts a retry when both its stream attempt and batch sequence match', () => {
