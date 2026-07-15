@@ -245,7 +245,7 @@ describe('resolveDraftRunSubmissionId', () => {
 });
 
 describe('isRunBlockingAgentLaunch', () => {
-	it('blocks queued and actively leased runs, including claimed runs without an expiry', () => {
+	it('blocks queued and actively leased runs', () => {
 		const run = (
 			status: RunState['status'],
 			claimExpiresAt?: number
@@ -257,7 +257,6 @@ describe('isRunBlockingAgentLaunch', () => {
 		expect(isRunBlockingAgentLaunch(run('queued'), 100)).toBe(true);
 		expect(isRunBlockingAgentLaunch(run('running', 101), 100)).toBe(true);
 		expect(isRunBlockingAgentLaunch(run('awaiting_executor', 100), 100)).toBe(false);
-		expect(isRunBlockingAgentLaunch(run('running'), 100)).toBe(true);
 	});
 });
 

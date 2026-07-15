@@ -95,28 +95,21 @@ export function upsertCompletionTextEvent(
 	events: CompletionStreamEvent[],
 	event: Extract<CompletionStreamEvent, { type: 'text' }>
 ): void {
-	const existing = events.find(
-		(candidate): candidate is Extract<CompletionStreamEvent, { type: 'text' }> =>
-			candidate.type === 'text' && candidate.id === event.id
-	);
-	if (!existing) {
-		events.push({ ...event });
-		return;
-	}
-	existing.text += event.text;
-	if (event.turnId !== undefined) existing.turnId = event.turnId;
-	if (event.providerMetadata !== undefined) {
-		existing.providerMetadata = event.providerMetadata;
-	}
+	upsertCompletionStreamPart(events, event);
 }
 
 export function upsertCompletionReasoningEvent(
 	events: CompletionStreamEvent[],
 	event: Extract<CompletionStreamEvent, { type: 'reasoning' }>
 ): void {
+	upsertCompletionStreamPart(events, event);
+}
+
+function upsertCompletionStreamPart<
+	T extends Extract<CompletionStreamEvent, { type: 'text' | 'reasoning' }>
+>(events: CompletionStreamEvent[], event: T): void {
 	const existing = events.find(
-		(candidate): candidate is Extract<CompletionStreamEvent, { type: 'reasoning' }> =>
-			candidate.type === 'reasoning' && candidate.id === event.id
+		(candidate): candidate is T => candidate.type === event.type && candidate.id === event.id
 	);
 	if (!existing) {
 		events.push({ ...event });
@@ -124,10 +117,12 @@ export function upsertCompletionReasoningEvent(
 	}
 	existing.text += event.text;
 	if (event.turnId !== undefined) existing.turnId = event.turnId;
-	if (event.providerReasoningId !== undefined) {
-		existing.providerReasoningId = event.providerReasoningId;
-	}
 	if (event.providerMetadata !== undefined) {
 		existing.providerMetadata = event.providerMetadata;
+	}
+	if (existing.type === 'reasoning' && event.type === 'reasoning') {
+		if (event.providerReasoningId !== undefined) {
+			existing.providerReasoningId = event.providerReasoningId;
+		}
 	}
 }

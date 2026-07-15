@@ -2,9 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
 	ensureAssistantToolPartsFromJobs,
 	joinAssistantTextParts,
-	resolveAssistantMessageText,
 	type AssistantPart
-} from '$convex/lib/assistantParts';
+} from '@convex/lib/assistantParts';
 
 describe('assistant tool parts', () => {
 	it('joins text from distinct model turns with a blank line', () => {
@@ -32,9 +31,7 @@ describe('assistant tool parts', () => {
 		);
 
 		expect(reconciledParts).toEqual([]);
-		expect(
-			resolveAssistantMessageText(joinAssistantTextParts(reconciledParts), 'Final answer')
-		).toBe('Final answer');
+		expect(joinAssistantTextParts(reconciledParts) || 'Final answer').toBe('Final answer');
 	});
 
 	it('backfills assistant timeline parts from executor jobs when no streamed tool parts were persisted', () => {

@@ -53,7 +53,6 @@
 		getWorkspaceThreadGroups,
 		isAgentLaunchPending,
 		isLatestRunReadyForThread,
-		isSelectionGenerationCurrent,
 		resolveExpiredAgentLaunch,
 		resolvePendingAgentLaunch,
 		resolvePendingAgentLaunchesFromThreads,
@@ -317,7 +316,6 @@
 	});
 	const isRetryableQueuedRun = $derived(
 		runState?.status === 'queued' &&
-			runState.submissionId !== undefined &&
 			currentRecoveredSubmission?.submissionId === runState.submissionId
 	);
 	const isRunning = $derived(
@@ -448,7 +446,7 @@
 		setWorkspaceSelection(workspaceName, selection.threadId, selection.draft);
 		const selectionGeneration = workspaceSelectionGeneration;
 		void verifyWorkspaceSession(workspaceSession._id).catch((error) => {
-			if (isSelectionGenerationCurrent(selectionGeneration, workspaceSelectionGeneration)) {
+			if (selectionGeneration === workspaceSelectionGeneration) {
 				currentError = error instanceof Error ? error.message : 'Failed to attach workspace.';
 			}
 		});
@@ -600,7 +598,7 @@
 
 		if (
 			args.userId === getCurrentUserId() &&
-			isSelectionGenerationCurrent(args.selectionGeneration, workspaceSelectionGeneration)
+			args.selectionGeneration === workspaceSelectionGeneration
 		) {
 			pendingCreatedThreadId = result.threadId;
 			workspaceSelectionGeneration += 1;
@@ -1006,7 +1004,6 @@
 			isSubmittingPrompt ||
 			hasPendingAgentLaunch ||
 			prompt !== '' ||
-			!staleRun.submissionId ||
 			!currentLatestRunData?.prompt
 		) {
 			return;
@@ -1155,7 +1152,7 @@
 		restoredWorkspaceSessionIdToAttach = null;
 		const selectionGeneration = workspaceSelectionGeneration;
 		void verifyWorkspaceSession(workspaceSessionId).catch((error) => {
-			if (isSelectionGenerationCurrent(selectionGeneration, workspaceSelectionGeneration)) {
+			if (selectionGeneration === workspaceSelectionGeneration) {
 				currentError = error instanceof Error ? error.message : 'Failed to attach workspace.';
 			}
 		});

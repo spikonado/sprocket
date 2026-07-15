@@ -11,11 +11,6 @@ export const vReasoningEffort = v.union(...literals(reasoningEffortIds));
 
 export const vModelId = v.union(...literals(modelIds));
 
-export const vWorkspaceEntry = v.object({
-	name: v.string(),
-	kind: v.string()
-});
-
 export const vWorkspaceInstruction = v.object({
 	path: v.string(),
 	directory: v.string(),
@@ -155,7 +150,7 @@ export const vAssistantToolResultErrorStatus = v.union(
 	...literals(assistantToolResultErrorStatuses)
 );
 
-/** Persisted tool-result error output. Older rows may omit `status`; readers default those to `failed`. */
+/** Persisted tool-result error output. */
 export const vAssistantToolResultErrorOutput = v.object({
 	error: v.string(),
 	status: vAssistantToolResultErrorStatus
@@ -244,13 +239,7 @@ export const vAgentHistoryMessage = v.object({
 
 export type AgentHistoryMessage = Infer<typeof vAgentHistoryMessage>;
 
-export type ExecCommandPayload = Infer<typeof vExecCommandPayload>;
-export type CreateFilePayload = Infer<typeof vCreateFilePayload>;
-export type ReplaceInFilePayload = Infer<typeof vReplaceInFilePayload>;
 export type ExecutorJobPayload = Infer<typeof vExecutorJobPayload>;
-export type CommandExecResult = Infer<typeof vCommandExecResult>;
-export type FileWriteResult = Infer<typeof vFileWriteResult>;
-export type FileEditResult = Infer<typeof vFileEditResult>;
 export type ExecutorJobResult = Infer<typeof vExecutorJobResult>;
 export type AssistantToolResultErrorStatus = Infer<typeof vAssistantToolResultErrorStatus>;
 export type AssistantToolResultErrorOutput = Infer<typeof vAssistantToolResultErrorOutput>;

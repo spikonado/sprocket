@@ -3,14 +3,15 @@ import type { AssistantPart } from '$convex/lib/assistantParts';
 import type { Infer } from 'convex/values';
 import {
 	vExecutorJobKind,
-	vExecutorJobPayload,
-	vExecutorJobResult,
 	vExecutorJobStatus,
 	vExecutorStatus,
 	vModelId,
 	vReasoningEffort,
 	vRunStatus,
-	vThreadMessageType
+	vThreadMessageType,
+	type ExecutorJobPayload,
+	type ExecutorJobResult,
+	type WorkspaceInstruction
 } from '$convex/lib/validators';
 
 export type WorkspaceEntry = {
@@ -31,18 +32,9 @@ export type WorkspaceOverview = {
 	recentFiles: string[];
 };
 
-export type WorkspaceInstruction = {
-	path: string;
-	directory: string;
-	contents: string;
-	truncated: boolean;
-};
+export type { WorkspaceInstruction, ExecutorJobPayload, ExecutorJobResult };
 
 export type WorkspaceToolName = Infer<typeof vExecutorJobKind>;
-
-export type ExecutorJobPayload = Infer<typeof vExecutorJobPayload>;
-
-export type ExecutorJobResult = Infer<typeof vExecutorJobResult>;
 
 export type WorkspaceSession = {
 	_id: Id<'workspaceSessions'>;
@@ -97,7 +89,7 @@ export type ExecutorJob = {
 	kind: WorkspaceToolName;
 	callId?: string;
 	payload: ExecutorJobPayload;
-	hidden?: boolean;
+	hidden: boolean;
 	status: Infer<typeof vExecutorJobStatus>;
 	enqueuedAt: number;
 	claimedAt?: number;
@@ -113,7 +105,7 @@ export type RunState = {
 	userId: string;
 	workspaceSessionId: Id<'workspaceSessions'>;
 	status: Infer<typeof vRunStatus>;
-	submissionId?: string;
+	submissionId: string;
 	claimExpiresAt?: number;
 	selectedModel: Infer<typeof vModelId>;
 	reasoningEffort: Infer<typeof vReasoningEffort>;

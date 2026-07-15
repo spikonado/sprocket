@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
 	buildAgentHistoryFromAssistantParts,
 	buildCanonicalAgentHistory
-} from '$convex/lib/agentHistory';
-import { cancelExecutorJobsForTerminalRun } from '$convex/lib/runs';
+} from '@convex/lib/agentHistory';
+import { cancelExecutorJobsForTerminalRun } from '@convex/lib/runs';
 
 describe('canonical agent history', () => {
 	it('groups parallel calls from one model turn before their grouped results', () => {

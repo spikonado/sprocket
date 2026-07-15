@@ -13,7 +13,8 @@ use crate::convex::RuntimeClient;
 use crate::provider::{AgentProvider, AgentProviderRequest, AgentProviderResult};
 use crate::types::{RunAgentRequest, deserialize_agent_history};
 
-// Keep these synchronized with apps/web/src/convex/lib/runLease.ts.
+// Keep RUN_CLAIM_LEASE_DURATION synchronized with
+// apps/web/src/convex/lib/runLease.ts (RUN_CLAIM_LEASE_DURATION_MS).
 const RUN_CLAIM_LEASE_DURATION: Duration = Duration::from_secs(60);
 const RUN_CLAIM_RENEW_INTERVAL: Duration = Duration::from_secs(20);
 const RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(8);

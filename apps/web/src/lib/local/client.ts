@@ -126,13 +126,9 @@ export async function readDesktopBootstrap(baseUrl: string): Promise<LocalBootst
 	return await fetchLocalBootstrap(baseUrl);
 }
 
-async function readResponseBody(response: Response): Promise<string> {
-	return await response.text();
-}
-
 async function parseJsonResponse<T>(response: Response): Promise<T> {
 	const contentType = response.headers.get('content-type') ?? '';
-	const body = await readResponseBody(response);
+	const body = await response.text();
 
 	if (!contentType.includes('application/json')) {
 		const preview = body.trim().slice(0, 120);

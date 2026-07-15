@@ -8,7 +8,6 @@
 		buildAssistantTimeline,
 		type AssistantTimelineItem
 	} from '$lib/chat/assistant-timeline';
-	import ScrollArea from '$lib/components/ui/scroll-area/scroll-area.svelte';
 	import ChatMarkdown from '$lib/components/chat-markdown.svelte';
 	import type { ExecutorJob, ThreadMessage, WorkspaceSession } from '$lib/types/sprocket';
 	type AssistantTimelineTool = Extract<AssistantTimelineItem, { type: 'tool' }>;
@@ -81,45 +80,32 @@
 		return details.length > 0 ? ` (${details.join(', ')})` : '';
 	}
 
-	function actionTitle(job: ExecutorJob) {
-		return toolDisplayName(job.kind);
-	}
+	function summarizeTool(name: string, input: JsonValue | undefined) {
+		const title = toolDisplayName(name);
+		const fields = isJsonObject(input) ? input : undefined;
 
-	function actionSummary(job: ExecutorJob) {
-		const pathPayload = 'path' in job.payload ? job.payload : undefined;
-		const commandPayload = 'cmd' in job.payload ? job.payload : undefined;
-		switch (job.kind) {
+		switch (name) {
 			case 'exec_command':
-				return commandPayload?.cmd
-					? `${actionTitle(job)} - ${commandPayload.cmd}${describeExecCommandOptions(job.payload)}`
-					: actionTitle(job);
-			case 'create_file':
-			case 'replace_in_file':
-				return pathPayload?.path ? `${actionTitle(job)} - ${pathPayload.path}` : actionTitle(job);
-			default:
-				return actionTitle(job);
-		}
-	}
-
-	function toolLogSummary(toolLog: AssistantTimelineTool) {
-		const input = isJsonObject(toolLog.input) ? toolLog.input : undefined;
-		const title = toolDisplayName(toolLog.name);
-
-		switch (toolLog.name) {
-			case 'exec_command':
-				return typeof input?.cmd === 'string'
-					? `${title} - ${input.cmd}${describeExecCommandOptions(input)}`
+				return typeof fields?.cmd === 'string'
+					? `${title} - ${fields.cmd}${describeExecCommandOptions(input)}`
 					: title;
 			case 'create_file':
 			case 'replace_in_file':
-				return typeof input?.path === 'string' ? `${title} - ${input.path}` : title;
+				return typeof fields?.path === 'string' ? `${title} - ${fields.path}` : title;
 			default:
 				return title;
 		}
 	}
 
+	function toolItemSummary(toolLog: AssistantTimelineTool) {
+		if (toolLog.job) {
+			return summarizeTool(toolLog.job.kind, toolLog.job.payload);
+		}
+		return summarizeTool(toolLog.name, toolLog.input);
+	}
+
 	function fullToolSummary(toolLog: AssistantTimelineTool) {
-		const summary = toolLog.job ? actionSummary(toolLog.job) : toolLogSummary(toolLog);
+		const summary = toolItemSummary(toolLog);
 		if (toolLog.job?.status === 'pending' || toolLog.job?.status === 'claimed') {
 			return `${summary} (running)`;
 		}
@@ -148,10 +134,10 @@
 </script>
 
 <div class="relative min-h-0 flex-1">
-	<ScrollArea
-		className="h-full [overflow-anchor:none]"
-		bind:viewport={scrollViewport}
-		onViewportScroll={updateStickToBottom}
+	<div
+		class="h-full overflow-auto [overflow-anchor:none]"
+		bind:this={scrollViewport}
+		onscroll={updateStickToBottom}
 	>
 		<div class="mx-auto flex min-h-full w-full max-w-336 flex-col px-8 py-8">
 			{#if currentError}
@@ -225,9 +211,7 @@
 										{:else}
 											{@const toolError = assistantTimelineToolError(part)}
 											{@const toolFailureKind = assistantTimelineToolFailureKind(part)}
-											{@const toolSummary = part.job
-												? actionSummary(part.job)
-												: toolLogSummary(part)}
+											{@const toolSummary = toolItemSummary(part)}
 											{@const isToolRunning =
 												part.job?.status === 'pending' || part.job?.status === 'claimed'}
 											<div
@@ -277,7 +261,7 @@
 				</div>
 			{/if}
 		</div>
-	</ScrollArea>
+	</div>
 
 	<div
 		class="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-[linear-gradient(180deg,rgba(15,15,17,0),rgba(15,15,17,0.68)_48%,rgba(15,15,17,0.92))]"

@@ -5,14 +5,11 @@ export const EXECUTOR_HEARTBEAT_WRITE_THROTTLE_MS = 20_000;
 
 type WorkspaceSessionDoc = Doc<'workspaceSessions'>;
 
-export function isExecutorHeartbeatFresh(
-	lastHeartbeatAt: number | undefined,
-	now: number = Date.now()
-) {
+function isExecutorHeartbeatFresh(lastHeartbeatAt: number | undefined, now: number = Date.now()) {
 	return lastHeartbeatAt !== undefined && now - lastHeartbeatAt <= EXECUTOR_HEARTBEAT_TTL_MS;
 }
 
-export function isWorkspaceSessionEffectivelyConnected(
+function isWorkspaceSessionEffectivelyConnected(
 	workspaceSession: Pick<WorkspaceSessionDoc, 'connectedClientId' | 'lastHeartbeatAt'>,
 	now: number = Date.now()
 ) {

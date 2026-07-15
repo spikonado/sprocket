@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
 	appendBrowsePathSegment,
 	getBrowseLeafPathSegment,
-	inferWorkspaceNameFromPath,
 	isFilesystemBrowseQuery,
 	resolveWorkspacePathFromBrowse,
 	workspacePathRequiresCreation
@@ -22,10 +21,6 @@ describe('workspace paths', () => {
 
 	it('appends browse segments with separators', () => {
 		expect(appendBrowsePathSegment('~/projects/', 'demo')).toBe('~/projects/demo/');
-	});
-
-	it('infers workspace names from paths', () => {
-		expect(inferWorkspaceNameFromPath('~/projects/sprocket/')).toBe('sprocket');
 	});
 
 	it('resolves a typed directory path when browse is inside that directory', () => {

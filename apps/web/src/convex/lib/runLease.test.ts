@@ -26,19 +26,16 @@ describe('run claim leases', () => {
 		expect(canStartRunWithClaim(run, 'claim-b', 200)).toBe(true);
 	});
 
-	it('keeps claimed runs without an expiry held', () => {
-		expect(canStartRunWithClaim({ status: 'running', claimId: 'old-claim' }, 'claim-b', 100)).toBe(
-			false
-		);
-		expect(isRunClaimLeaseActive({ status: 'awaiting_executor', claimId: 'old-claim' }, 100)).toBe(
-			true
-		);
-	});
-
 	it('only reports an unexpired active-state lease as active', () => {
 		expect(isRunClaimLeaseActive({ status: 'running', claimExpiresAt: 101 }, 100)).toBe(true);
 		expect(isRunClaimLeaseActive({ status: 'running', claimExpiresAt: 100 }, 100)).toBe(false);
 		expect(isRunClaimLeaseActive({ status: 'completed', claimExpiresAt: 200 }, 100)).toBe(false);
+	});
+
+	it('treats a claimed run without claimExpiresAt as inactive and startable', () => {
+		const run = { status: 'running', claimId: 'claim-a' };
+		expect(isRunClaimLeaseActive(run, 100)).toBe(false);
+		expect(canStartRunWithClaim(run, 'claim-b', 100)).toBe(true);
 	});
 
 	it('only terminalizes state owned by the same claim after claim uncertainty', () => {

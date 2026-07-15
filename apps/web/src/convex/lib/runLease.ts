@@ -1,5 +1,4 @@
 export const RUN_CLAIM_LEASE_DURATION_MS = 60_000;
-export const RUN_CLAIM_RENEW_INTERVAL_MS = 20_000;
 
 type ClaimableRun = {
 	status: string;
@@ -13,9 +12,7 @@ export function isClaimedRunStatus(status: string): boolean {
 
 export function isRunClaimLeaseActive(run: ClaimableRun, now: number): boolean {
 	if (!isClaimedRunStatus(run.status)) return false;
-	// Claimed runs always write claimExpiresAt; treat a missing expiry as still held.
-	if (run.claimExpiresAt === undefined) return true;
-	return run.claimExpiresAt > now;
+	return run.claimExpiresAt !== undefined && run.claimExpiresAt > now;
 }
 
 export function canStartRunWithClaim(run: ClaimableRun, claimId: string, now: number): boolean {

@@ -44,14 +44,6 @@ export type AssistantToolResultPart = {
 
 export type { AssistantToolResultErrorOutput, AssistantToolResultErrorStatus };
 
-export function assistantToolResultErrorOutput(
-	status: AssistantToolResultErrorStatus,
-	error: string
-): AssistantToolResultErrorOutput {
-	return { error, status };
-}
-
-/** Reads a tool-result error output. */
 export function parseAssistantToolResultError(
 	output: JsonValue | undefined
 ): AssistantToolResultErrorOutput | undefined {
@@ -62,6 +54,13 @@ export function parseAssistantToolResultError(
 		return undefined;
 	}
 	return { error: output.error, status: output.status };
+}
+
+function assistantToolResultErrorOutput(
+	status: AssistantToolResultErrorStatus,
+	error: string
+): AssistantToolResultErrorOutput {
+	return { error, status };
 }
 
 export type AssistantPart =
@@ -82,7 +81,7 @@ export type MatchableExecutorToolJob = Pick<
 	'id' | 'kind' | 'callId' | 'payload'
 >;
 
-export function cloneAssistantToolPayload<T>(value: T): T {
+function cloneAssistantToolPayload<T>(value: T): T {
 	return value === undefined ? value : structuredClone(value);
 }
 
@@ -107,10 +106,6 @@ export function joinAssistantTextParts(parts: AssistantPart[]): string {
 	}
 
 	return text;
-}
-
-export function resolveAssistantMessageText(streamedText: string, fallbackText: string): string {
-	return streamedText || fallbackText;
 }
 
 export function matchAssistantToolCallsToJobs(

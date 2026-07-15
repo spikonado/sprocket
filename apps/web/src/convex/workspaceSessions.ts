@@ -22,12 +22,12 @@ export const upsertSelected = mutation({
 			)
 			.unique();
 
+		const now = Date.now();
 		const patch = {
 			workspaceName: args.workspaceName,
-			lastHeartbeatAt: Date.now(),
+			lastHeartbeatAt: now,
 			connectedClientId: args.connectedClientId,
-			nextExecutorSequence: workspaceSession?.nextExecutorSequence ?? 0,
-			lastSeenAt: Date.now()
+			lastSeenAt: now
 		};
 
 		if (workspaceSession) {
@@ -37,6 +37,7 @@ export const upsertSelected = mutation({
 
 		const id = await ctx.db.insert('workspaceSessions', {
 			userId,
+			nextExecutorSequence: 0,
 			...patch
 		});
 		return await ctx.db.get(id);

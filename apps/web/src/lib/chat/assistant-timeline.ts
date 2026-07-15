@@ -23,11 +23,8 @@ export type AssistantTimelineToolFailureKind = 'cancelled' | 'failed';
 export function assistantTimelineToolFailureKind(
 	item: Extract<AssistantTimelineItem, { type: 'tool' }>
 ): AssistantTimelineToolFailureKind | undefined {
-	if (item.job?.status === 'cancelled') {
-		return 'cancelled';
-	}
-	if (item.job?.status === 'failed') {
-		return 'failed';
+	if (item.job?.status === 'cancelled' || item.job?.status === 'failed') {
+		return item.job.status;
 	}
 
 	return parseAssistantToolResultError(item.output)?.status;
