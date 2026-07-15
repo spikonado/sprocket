@@ -348,36 +348,15 @@ impl RigCompletionModel for CompletionModel {
                         provider_reasoning_id,
                         provider_metadata,
                         ..
-                    } => {
-                        let id = provider_reasoning_id.clone().or_else(|| {
-                            provider_metadata
-                                .as_ref()
-                                .and_then(|metadata| metadata.pointer("/openai/itemId"))
-                                .and_then(serde_json::Value::as_str)
-                                .map(str::to_owned)
-                        });
-                        if !text.is_empty() {
-                            chunks.push(Ok(RawStreamingChoice::Reasoning {
-                                id: id.clone(),
-                                content: ReasoningContent::Text {
-                                    text: text.clone(),
-                                    signature: None,
-                                },
-                            }));
-                        }
-                        if let Some(encrypted) = provider_metadata
-                            .as_ref()
-                            .and_then(|metadata| {
-                                metadata.pointer("/openai/reasoningEncryptedContent")
-                            })
-                            .and_then(serde_json::Value::as_str)
-                        {
-                            chunks.push(Ok(RawStreamingChoice::Reasoning {
-                                id,
-                                content: ReasoningContent::Encrypted(encrypted.to_owned()),
-                            }));
-                        }
-                    }
+                    } => chunks.extend(
+                        reasoning_stream_choices(
+                            text,
+                            provider_reasoning_id.as_deref(),
+                            provider_metadata,
+                        )
+                        .into_iter()
+                        .map(Ok),
+                    ),
                     CompletionStreamEvent::ToolCall {
                         call_id,
                         name,
@@ -410,6 +389,44 @@ fn text_stream_choices(
         },
         RawStreamingChoice::Message(text.to_owned()),
     ]
+}
+
+fn reasoning_stream_choices(
+    text: &str,
+    provider_reasoning_id: Option<&str>,
+    provider_metadata: &Option<serde_json::Value>,
+) -> Vec<RawStreamingChoice<CompletionOutput>> {
+    let id = provider_reasoning_id.map(str::to_owned).or_else(|| {
+        provider_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.pointer("/openai/itemId"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+    });
+    let encrypted = provider_metadata
+        .as_ref()
+        .and_then(|metadata| metadata.pointer("/openai/reasoningEncryptedContent"))
+        .and_then(serde_json::Value::as_str);
+    let mut choices = Vec::new();
+
+    // ID-only stored reasoning still needs a chunk so Rig retains its replay reference.
+    if !text.is_empty() || (id.is_some() && encrypted.is_none()) {
+        choices.push(RawStreamingChoice::Reasoning {
+            id: id.clone(),
+            content: ReasoningContent::Text {
+                text: text.to_owned(),
+                signature: None,
+            },
+        });
+    }
+    if let Some(encrypted) = encrypted {
+        choices.push(RawStreamingChoice::Reasoning {
+            id,
+            content: ReasoningContent::Encrypted(encrypted.to_owned()),
+        });
+    }
+
+    choices
 }
 
 /// Clone `T` under a brief mutex hold so callers can await work on the clone
@@ -590,7 +607,8 @@ where
 mod tests {
     use super::{
         COMPLETION_STREAM_SUPERSEDED, CompletionOutput, CompletionStreamEvent, ToolCall, Usage,
-        clone_locked, completion_choice, is_completion_stream_superseded, text_stream_choices,
+        clone_locked, completion_choice, is_completion_stream_superseded, reasoning_stream_choices,
+        text_stream_choices,
     };
     use rig::completion::CompletionError;
     use rig::message::AssistantContent;
@@ -660,6 +678,28 @@ mod tests {
             "msg_123"
         );
         assert!(matches!(&choices[1], RawStreamingChoice::Message(value) if value == "hello"));
+    }
+
+    #[test]
+    fn streams_id_only_reasoning_for_openai_replay() {
+        let choices = reasoning_stream_choices(
+            "",
+            None,
+            &Some(serde_json::json!({
+                "openai": {
+                    "itemId": "rs_123",
+                    "reasoningEncryptedContent": null
+                }
+            })),
+        );
+
+        assert!(matches!(
+            choices.as_slice(),
+            [RawStreamingChoice::Reasoning {
+                id: Some(id),
+                content: rig::message::ReasoningContent::Text { text, .. }
+            }] if id == "rs_123" && text.is_empty()
+        ));
     }
 
     #[test]
