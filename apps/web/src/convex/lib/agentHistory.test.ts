@@ -207,6 +207,45 @@ describe('canonical agent history', () => {
 		]);
 	});
 
+	it('preserves id-only reasoning before its OpenAI message', () => {
+		const history = buildAgentHistoryFromAssistantParts({
+			parts: [
+				{
+					type: 'reasoning',
+					id: 'reasoning-1',
+					text: '',
+					turnId: 'turn-1',
+					providerMetadata: {
+						openai: { itemId: 'rs_123', reasoningEncryptedContent: null }
+					}
+				},
+				{
+					type: 'text',
+					id: 'text-1',
+					text: 'Continuing',
+					turnId: 'turn-1',
+					providerMetadata: { openai: { itemId: 'msg_123' } }
+				}
+			],
+			jobs: [],
+			fallbackText: ''
+		});
+
+		expect(history).toEqual([
+			{
+				role: 'assistant',
+				contents: [
+					{ type: 'reasoning', id: 'rs_123', blocksJson: '[]' },
+					{
+						type: 'text',
+						text: 'Continuing',
+						additionalParamsJson: JSON.stringify({ openai: { itemId: 'msg_123' } })
+					}
+				]
+			}
+		]);
+	});
+
 	it.each(['failed', 'cancelled'] as const)(
 		'reconciles persisted tool parts for a %s run without losing metadata or order',
 		(runStatus) => {

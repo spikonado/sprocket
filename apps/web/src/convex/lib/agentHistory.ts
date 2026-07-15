@@ -97,6 +97,7 @@ export function buildAgentHistoryFromAssistantParts(args: {
 
 		if (part.type === 'reasoning') {
 			const openai = openAiMetadata(part.providerMetadata);
+			const itemId = typeof openai?.itemId === 'string' ? openai.itemId : undefined;
 			const blocks: unknown[] = [];
 			if (part.text.length > 0) {
 				blocks.push({ type: 'text', content: { text: part.text } });
@@ -104,10 +105,10 @@ export function buildAgentHistoryFromAssistantParts(args: {
 			if (typeof openai?.reasoningEncryptedContent === 'string') {
 				blocks.push({ type: 'encrypted', content: openai.reasoningEncryptedContent });
 			}
-			if (blocks.length > 0) {
+			if (blocks.length > 0 || itemId !== undefined) {
 				turn.assistant.push({
 					type: 'reasoning',
-					...(typeof openai?.itemId === 'string' ? { id: openai.itemId } : {}),
+					...(itemId !== undefined ? { id: itemId } : {}),
 					blocksJson: JSON.stringify(blocks)
 				});
 			}
