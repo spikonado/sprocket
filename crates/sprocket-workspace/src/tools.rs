@@ -170,9 +170,9 @@ impl CommandSessionManager {
                 .write(chars.as_bytes().to_vec(), &cancellation)
                 .await
             {
-                let _ = session.terminate();
-                self.sessions.lock().await.remove(session_id);
-                return Err(error);
+                return self
+                    .observe_after_write_error(session, cancellation, yield_time_ms, error)
+                    .await;
             }
         }
         if session.completion.borrow().is_none() && terminate {
@@ -231,6 +231,38 @@ impl CommandSessionManager {
             self.sessions.lock().await.remove(&session.id);
         }
         Ok(output)
+    }
+
+    async fn observe_after_write_error(
+        &self,
+        session: Arc<CommandSession>,
+        cancellation: WorkspaceCancellation,
+        yield_time_ms: u64,
+        write_error: anyhow::Error,
+    ) -> Result<CommandExecOutput> {
+        match wait_for_completion(
+            &session,
+            &cancellation,
+            yield_time_ms.min(MAX_COMMAND_YIELD_MS),
+        )
+        .await
+        {
+            Ok(Some(completion)) => {
+                let output = session.output(Some(completion)).await;
+                self.sessions.lock().await.remove(&session.id);
+                Ok(output)
+            }
+            Ok(None) => {
+                let _ = session.terminate();
+                self.sessions.lock().await.remove(&session.id);
+                Err(write_error)
+            }
+            Err(error) => {
+                let _ = session.terminate();
+                self.sessions.lock().await.remove(&session.id);
+                Err(error)
+            }
+        }
     }
 }
 
