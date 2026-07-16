@@ -8,12 +8,12 @@ use axum::routing::{get, post};
 use axum_extra::extract::CookieJar;
 use serde::Deserialize;
 
-use crate::AppState;
 use crate::auth::{
     AuthSessionResponse, AuthState, BootstrapRequest, BootstrapResponse,
     DesktopLoginResultResponse, DesktopLoginStartResponse, extract_session_token,
     peer_may_complete_desktop_login_callback, require_session,
 };
+use crate::{AppState, PairingProofRequest, PairingProofResponse};
 
 const DESKTOP_BOOTSTRAP_TOKEN_HEADER: &str = "x-sprocket-desktop-bootstrap-token";
 
@@ -23,19 +23,6 @@ struct DesktopBootstrapResponse {
     http_base_url: String,
     desktop_login_callback_url: String,
     pairing_credential: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct PairingProofRequest {
-    challenge: String,
-}
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PairingProofResponse {
-    http_base_url: String,
-    web_ui_enabled: bool,
-    proof: Vec<u8>,
 }
 
 #[derive(Debug, Deserialize)]

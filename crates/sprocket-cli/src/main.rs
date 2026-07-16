@@ -1,16 +1,15 @@
 use std::io::ErrorKind;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use hmac::{Hmac, KeyInit, Mac};
-use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use sprocket_server::{
-    INSTALLED_WEB_DIR, RunOptions, ServerConfig, browser_launch_url, load_repo_env,
-    pairing_proof_message, read_pairing_credential, run,
+    INSTALLED_WEB_DIR, PairingProofRequest, PairingProofResponse, RunOptions, ServerConfig,
+    browser_launch_url, load_repo_env, pairing_proof_message, read_pairing_credential, run,
 };
 use sprocket_workspace::resolve_workspace_root;
 use tracing_subscriber::EnvFilter;
@@ -102,7 +101,7 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
-fn resolve_launch_workspace(path: &std::path::Path) -> anyhow::Result<String> {
+fn resolve_launch_workspace(path: &Path) -> anyhow::Result<String> {
     let path = path
         .to_str()
         .context("workspace paths must contain valid UTF-8")?;
@@ -147,19 +146,6 @@ fn serve_local(
         })
 }
 
-#[derive(Serialize)]
-struct PairingProofRequest<'a> {
-    challenge: &'a str,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PairingProofResponse {
-    http_base_url: String,
-    web_ui_enabled: bool,
-    proof: Vec<u8>,
-}
-
 async fn open_running_web_app(
     server: &ServerConfig,
     workspace_path: Option<&str>,
@@ -173,7 +159,7 @@ async fn open_running_web_app(
     let response = match client
         .post(format!("{expected_base_url}/api/auth/pairing-proof"))
         .json(&PairingProofRequest {
-            challenge: &challenge,
+            challenge: challenge.clone(),
         })
         .send()
         .await

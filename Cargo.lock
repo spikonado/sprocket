@@ -2043,7 +2043,6 @@ dependencies = [
  "hmac",
  "open",
  "reqwest",
- "serde",
  "sha2",
  "sprocket-server",
  "sprocket-workspace",

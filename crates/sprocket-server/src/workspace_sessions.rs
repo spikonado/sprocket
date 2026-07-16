@@ -86,34 +86,33 @@ impl WorkspaceSessionStore {
         })
         .await?;
 
-        if validated.session.availability == WorkspaceAvailability::Unavailable {
-            if let Some(reason) = &validated.session.unavailable_reason {
+        if validated.availability == WorkspaceAvailability::Unavailable {
+            if let Some(reason) = &validated.unavailable_reason {
                 anyhow::bail!("{reason}");
             }
             anyhow::bail!("workspace path is unavailable");
         }
 
-        self.sessions.write().await.insert(
-            validated.session.workspace_session_id.clone(),
-            validated.session.clone(),
-        );
+        self.sessions
+            .write()
+            .await
+            .insert(validated.workspace_session_id.clone(), validated.clone());
         self.save_to_disk().await?;
-        Ok(validated.session)
+        Ok(validated)
     }
 
     pub async fn workspace_path(&self, workspace_session_id: &str) -> Result<String> {
         self.ensure_loaded().await?;
         let session = self.get_or_error(workspace_session_id).await?;
         let validated = validate_session_async(session).await?;
-        if validated.session.availability != WorkspaceAvailability::Available {
+        if validated.availability != WorkspaceAvailability::Available {
             anyhow::bail!(
                 validated
-                    .session
                     .unavailable_reason
                     .unwrap_or_else(|| "workspace path is unavailable".to_string())
             );
         }
-        Ok(validated.session.workspace_path)
+        Ok(validated.workspace_path)
     }
 
     async fn get_or_error(&self, workspace_session_id: &str) -> Result<WorkspaceSessionRecord> {
@@ -225,10 +224,6 @@ impl WorkspaceSessionStore {
     }
 }
 
-struct ValidatedWorkspaceSession {
-    session: WorkspaceSessionRecord,
-}
-
 fn mark_available(
     session: WorkspaceSessionRecord,
     workspace_path: String,
@@ -270,21 +265,8 @@ fn session_availability_changed(
         || previous.unavailable_reason != current.unavailable_reason
 }
 
-fn validate_session(session: WorkspaceSessionRecord) -> ValidatedWorkspaceSession {
-    match resolve_workspace_path(&session.workspace_path, false) {
-        Ok(resolution) => ValidatedWorkspaceSession {
-            session: mark_available(session, resolution.workspace_path),
-        },
-        Err(error) => ValidatedWorkspaceSession {
-            session: mark_unavailable(session, &error),
-        },
-    }
-}
-
-async fn validate_session_async(
-    session: WorkspaceSessionRecord,
-) -> Result<ValidatedWorkspaceSession> {
-    tokio::task::spawn_blocking(move || validate_session(session))
+async fn validate_session_async(session: WorkspaceSessionRecord) -> Result<WorkspaceSessionRecord> {
+    tokio::task::spawn_blocking(move || validate_session_path(session))
         .await
         .context("workspace validation task failed")
 }

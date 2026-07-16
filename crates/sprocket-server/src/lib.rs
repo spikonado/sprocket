@@ -229,6 +229,20 @@ pub fn pairing_proof_message(challenge: &str, http_base_url: &str, web_ui_enable
     format!("{challenge}\n{http_base_url}\nweb-ui={web_ui_enabled}")
 }
 
+/// Wire types for `/api/auth/pairing-proof`, shared with clients such as the CLI.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct PairingProofRequest {
+    pub challenge: String,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PairingProofResponse {
+    pub http_base_url: String,
+    pub web_ui_enabled: bool,
+    pub proof: Vec<u8>,
+}
+
 pub fn read_pairing_credential(config: &ServerConfig) -> anyhow::Result<Option<String>> {
     auth::read_pairing_credential(&config.resolve_data_dir())
 }
