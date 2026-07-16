@@ -9,12 +9,12 @@
 	"scripts": {
 		"dev": "cargo build -q -p sprocket-cli && node ./launch.cjs",
 		"build": "cargo build -p sprocket-cli",
-		"build:release": "cargo build --release -p sprocket-cli && electron-builder"
+		"build:release": "cargo build --release -p sprocket-cli && electron-builder && node ./copy-release-cli.cjs"
 	},
 	"build": {
 		"appId": "com.spikonado.sprocket",
 		"productName": "Sprocket",
-		"executableName": "sprocket",
+		"executableName": "sprocket-desktop",
 		"icon": "../web/static/favicon.png",
 		"directories": {
 			"output": "dist"
@@ -29,10 +29,16 @@
 				"filter": [
 					"**/*"
 				]
-			},
+			}
+		],
+		"extraFiles": [
 			{
-				"from": "../../target/release/sprocket",
-				"to": "server/sprocket"
+				"from": "../../target/release/",
+				"to": ".",
+				"filter": [
+					"sprocket",
+					"sprocket.exe"
+				]
 			}
 		],
 		"linux": {

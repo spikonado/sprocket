@@ -1326,15 +1326,17 @@
 		executorClientId = crypto.randomUUID();
 
 		void resolveDesktopApi()
-			.then(async (client) => {
+			.then((client) => {
 				desktopApi = client;
-				await refreshDesktopWorkspaceSessions();
+				desktopApiResolved = true;
+				void refreshDesktopWorkspaceSessions().catch((error) => {
+					currentError =
+						error instanceof Error ? error.message : 'Failed to load local workspace sessions.';
+				});
 			})
 			.catch((error) => {
 				currentError =
 					error instanceof Error ? error.message : 'Failed to connect to the Sprocket server.';
-			})
-			.finally(() => {
 				desktopApiResolved = true;
 			});
 	});

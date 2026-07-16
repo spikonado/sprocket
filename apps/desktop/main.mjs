@@ -6,11 +6,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { API_PORT, DEV_WEB_URL } from '../../scripts/dev-config.mjs';
 
-const { app, BrowserWindow, Menu, ipcMain, shell } = electron;
+const { app, BrowserWindow, dialog, Menu, ipcMain, shell } = electron;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const isDevelopment = !app.isPackaged;
+const webOnly = process.argv.includes('--web');
 const serverPort = Number(process.env.SPROCKET_PORT ?? API_PORT);
 // WorkOS AuthKit only allows 127.0.0.1 loopback redirect URIs for native desktop login.
 const serverHost = '127.0.0.1';
@@ -23,11 +24,31 @@ let serverBaseUrl = null;
 let serverPairingCredential = null;
 let serverDesktopLoginCallbackUrl = null;
 let mainWindowRef = null;
+let serverReadyPromise = null;
+let isQuitting = false;
+
+const hasSingleInstanceLock = app.requestSingleInstanceLock({ openWeb: webOnly });
+if (!hasSingleInstanceLock) {
+	app.quit();
+}
+
+function reportFatalError(title, error) {
+	const message = error instanceof Error ? error.message : String(error);
+	console.error(title, error);
+	if (app.isReady()) {
+		dialog.showErrorBox(title, message);
+	}
+}
 
 function getServerBinaryPath() {
-	return isDevelopment
-		? path.resolve(__dirname, '../../target/debug/sprocket')
-		: path.join(__dirname, 'server/sprocket');
+	if (isDevelopment) {
+		return path.resolve(__dirname, '../../target/debug/sprocket');
+	}
+
+	const executableName = process.platform === 'win32' ? 'sprocket.exe' : 'sprocket';
+	const executableDir = path.dirname(process.execPath);
+	const appDir = process.platform === 'darwin' ? path.dirname(executableDir) : executableDir;
+	return path.join(appDir, executableName);
 }
 
 function getDefaultDataDir() {
@@ -108,6 +129,12 @@ async function startLocalServer() {
 		},
 		stdio: ['ignore', 'pipe', 'inherit']
 	});
+	serverProcess.once('error', (error) => {
+		if (!isQuitting) {
+			reportFatalError('Failed to start Sprocket server', error);
+			app.quit();
+		}
+	});
 
 	serverProcess.stdout?.on('data', (chunk) => {
 		const text = chunk.toString();
@@ -121,11 +148,20 @@ async function startLocalServer() {
 	serverProcess.on('exit', (code, signal) => {
 		if (signal) {
 			console.warn(`Sprocket local server exited via signal ${signal}`);
-			return;
+		} else if (code && code !== 0) {
+			console.error(`Sprocket local server exited with code ${code}`);
 		}
 
-		if (code && code !== 0) {
-			console.error(`Sprocket local server exited with code ${code}`);
+		if (!isQuitting) {
+			reportFatalError(
+				'Sprocket server stopped',
+				new Error(
+					signal
+						? `The local server exited via signal ${signal}.`
+						: `The local server exited with code ${code ?? 0}.`
+				)
+			);
+			app.quit();
 		}
 	});
 
@@ -161,6 +197,48 @@ function stopLocalServer() {
 
 	serverProcess.kill();
 	serverProcess = null;
+}
+
+function getBrowserAppUrl() {
+	if (!serverBaseUrl || !serverPairingCredential) {
+		throw new Error('Local server bootstrap is unavailable.');
+	}
+
+	const url = new URL('/pair', serverBaseUrl);
+	url.hash = new URLSearchParams({ token: serverPairingCredential }).toString();
+	return url.toString();
+}
+
+async function openBrowserApp() {
+	if (!serverReadyPromise) {
+		throw new Error('Local server startup is unavailable.');
+	}
+	await serverReadyPromise;
+
+	const url = getBrowserAppUrl();
+	try {
+		await openInSystemBrowser(url);
+	} catch (error) {
+		console.error(`Failed to open the browser app automatically. Open ${url} manually.`, error);
+	}
+}
+
+async function showDesktopApp() {
+	if (!serverReadyPromise) {
+		throw new Error('Local server startup is unavailable.');
+	}
+	await serverReadyPromise;
+
+	const mainWindow = mainWindowRef;
+	if (!mainWindow || mainWindow.isDestroyed()) {
+		createMainWindow();
+		return;
+	}
+	if (mainWindow.isMinimized()) {
+		mainWindow.restore();
+	}
+	mainWindow.show();
+	mainWindow.focus();
 }
 
 async function loadRendererWhenReady(mainWindow, targetUrl, timeoutMs = 60_000) {
@@ -230,7 +308,10 @@ function createMainWindow() {
 
 	const targetUrl = isDevelopment ? devRendererUrl : `http://${serverHost}:${serverPort}`;
 
-	void loadRendererWhenReady(mainWindow, targetUrl);
+	void loadRendererWhenReady(mainWindow, targetUrl).catch((error) => {
+		reportFatalError('Failed to load Sprocket', error);
+		app.quit();
+	});
 	if (isDevelopment) {
 		mainWindow.webContents.openDevTools({ mode: 'detach' });
 	}
@@ -310,12 +391,16 @@ function parseExternalHttpsUrl(url) {
 
 async function openExternalHttpsUrl(url) {
 	const parsedUrl = parseExternalHttpsUrl(url);
+	await openInSystemBrowser(parsedUrl);
+}
+
+async function openInSystemBrowser(url) {
 	if (process.platform === 'linux') {
-		await openWithXdgOpen(parsedUrl);
+		await openWithXdgOpen(url);
 		return;
 	}
 
-	await shell.openExternal(parsedUrl);
+	await shell.openExternal(url);
 }
 
 ipcMain.handle('sprocket:open-external', async (_event, url) => {
@@ -336,32 +421,40 @@ ipcMain.handle('sprocket:focus-window', () => {
 	return true;
 });
 
-app.whenReady().then(async () => {
-	Menu.setApplicationMenu(null);
+if (hasSingleInstanceLock) {
+	app.on('second-instance', (_event, _commandLine, _workingDirectory, additionalData) => {
+		const action = additionalData?.openWeb === true ? openBrowserApp() : showDesktopApp();
+		void action.catch((error) => {
+			console.error('Failed to handle Sprocket launch request', error);
+		});
+	});
 
-	try {
+	serverReadyPromise = app.whenReady().then(async () => {
+		Menu.setApplicationMenu(null);
 		await startLocalServer();
-	} catch (error) {
-		console.error('Failed to start Sprocket local server', error);
-		app.quit();
-		return;
-	}
+	});
 
-	createMainWindow();
+	void serverReadyPromise
+		.then(() => (webOnly ? openBrowserApp() : showDesktopApp()))
+		.catch((error) => {
+			reportFatalError('Failed to start Sprocket', error);
+			app.quit();
+		});
 
 	app.on('activate', () => {
-		if (BrowserWindow.getAllWindows().length === 0) {
-			createMainWindow();
-		}
+		void showDesktopApp().catch((error) => {
+			console.error('Failed to show Sprocket desktop app', error);
+		});
 	});
-});
+}
 
 app.on('window-all-closed', () => {
-	if (process.platform !== 'darwin') {
+	if (process.platform !== 'darwin' && !webOnly) {
 		app.quit();
 	}
 });
 
 app.on('before-quit', () => {
+	isQuitting = true;
 	stopLocalServer();
 });

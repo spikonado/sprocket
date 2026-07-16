@@ -35,7 +35,7 @@ pub struct StartupInfo {
 
 impl StartupInfo {
     pub fn pairing_url(&self) -> String {
-        format!("{}/pair#token={}", self.listen_url, self.pairing_credential)
+        pairing_url(&self.listen_url, &self.pairing_credential)
     }
 
     pub fn print_startup(&self, dev_web_url: Option<&str>) {
@@ -44,7 +44,7 @@ impl StartupInfo {
             eprintln!("Open the web app (Vite dev server):");
             eprintln!("{dev_web_url}");
             eprintln!("Pair in the browser if needed:");
-            eprintln!("{}/pair#token={}", dev_web_url, self.pairing_credential);
+            eprintln!("{}", pairing_url(dev_web_url, &self.pairing_credential));
             return;
         }
 
@@ -119,6 +119,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
     };
 
     let dev_web_url = config.api_only.then(default_dev_web_url).flatten();
+    let listener = tokio::net::TcpListener::bind(config.bind_address()).await?;
 
     if options.quiet {
         println!("SPROCKET_LISTENING={}", startup.listen_url);
@@ -132,16 +133,18 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
     }
 
     if options.open_browser {
-        let open_target = dev_web_url.as_deref().unwrap_or(&startup.listen_url);
+        let open_target = pairing_url(
+            dev_web_url.as_deref().unwrap_or(&startup.listen_url),
+            &startup.pairing_credential,
+        );
         if dev_web_url.is_some() || web_ui_enabled {
-            if let Err(error) = open::that(open_target) {
+            if let Err(error) = open::that(&open_target) {
                 tracing::warn!("failed to open browser: {error}");
             }
         }
     }
 
     let router = build_router(state, static_dir);
-    let listener = tokio::net::TcpListener::bind(config.bind_address()).await?;
 
     axum::serve(
         listener,
@@ -166,4 +169,24 @@ fn default_dev_web_url() -> Option<String> {
         .or_else(|| Some(config::DEFAULT_DEV_WEB_URL.to_string()))
 }
 
+fn pairing_url(base_url: &str, pairing_credential: &str) -> String {
+    format!(
+        "{}/pair#token={pairing_credential}",
+        base_url.trim_end_matches('/')
+    )
+}
+
 pub use repo_env::load_repo_env;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pairing_url_normalizes_trailing_slash() {
+        assert_eq!(
+            pairing_url("http://localhost:5173/", "secret"),
+            "http://localhost:5173/pair#token=secret"
+        );
+    }
+}
