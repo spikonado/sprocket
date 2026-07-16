@@ -1,16 +1,25 @@
 <script lang="ts">
+	import { Check, Copy } from '@lucide/svelte';
 	import { tick } from 'svelte';
-	import { TerminalSquare } from '@lucide/svelte';
 	import { isJsonObject, type JsonValue } from '$convex/lib/json';
 	import {
 		assistantTimelineToolError,
 		assistantTimelineToolFailureKind,
 		buildAssistantTimeline,
-		type AssistantTimelineItem
+		groupAssistantTimeline,
+		groupAssistantTimelineSections,
+		isAssistantTimelineToolRunning,
+		partitionWorkSectionTools,
+		workSectionTimingAnchor,
+		workSectionTimingIndexes,
+		type AssistantTimelineTool
 	} from '$lib/chat/assistant-timeline';
 	import ChatMarkdown from '$lib/components/chat-markdown.svelte';
+	import ReasoningDisclosure from '$lib/components/home/reasoning-disclosure.svelte';
+	import ToolCallsDisclosure from '$lib/components/home/tool-calls-disclosure.svelte';
+	import WorkDisclosure from '$lib/components/home/work-disclosure.svelte';
+	import { formatElapsedDuration } from '$lib/format';
 	import type { ExecutorJob, ThreadMessage, WorkspaceSession } from '$lib/types/sprocket';
-	type AssistantTimelineTool = Extract<AssistantTimelineItem, { type: 'tool' }>;
 
 	type Props = {
 		currentError: string | null;
@@ -47,18 +56,30 @@
 		stickToBottom = distanceToBottom <= SCROLL_EPSILON_PX;
 	}
 
-	function toolDisplayName(kind: string) {
-		if (kind === 'check_docs') {
-			return 'Check Docs';
-		}
-		if (kind === 'exec_command') {
-			return 'Run Command';
-		}
-
-		return kind
+	function titleizeSnakeCase(value: string) {
+		return value
 			.split('_')
 			.map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
 			.join(' ');
+	}
+
+	function toolGroupLabel(toolKey: string) {
+		switch (toolKey) {
+			case 'exec_command':
+				return 'Ran Commands';
+			case 'create_file':
+				return 'Created Files';
+			case 'replace_in_file':
+				return 'Edited Files';
+			case 'get_workspace_overview':
+				return 'Checked Workspace';
+			case 'get_workspace_instructions':
+				return 'Read Instructions';
+			case 'check_docs':
+				return 'Checked Docs';
+			default:
+				return titleizeSnakeCase(toolKey);
+		}
 	}
 
 	function describeExecCommandOptions(input: JsonValue | undefined) {
@@ -80,20 +101,30 @@
 		return details.length > 0 ? ` (${details.join(', ')})` : '';
 	}
 
+	/** Detail line for a tool row — no type prefix (that lives on the dropdown label). */
 	function summarizeTool(name: string, input: JsonValue | undefined) {
-		const title = toolDisplayName(name);
 		const fields = isJsonObject(input) ? input : undefined;
 
 		switch (name) {
 			case 'exec_command':
 				return typeof fields?.cmd === 'string'
-					? `${title} - ${fields.cmd}${describeExecCommandOptions(input)}`
-					: title;
+					? `${fields.cmd}${describeExecCommandOptions(input)}`
+					: 'Command';
 			case 'create_file':
 			case 'replace_in_file':
-				return typeof fields?.path === 'string' ? `${title} - ${fields.path}` : title;
+				return typeof fields?.path === 'string' ? fields.path : 'File';
+			case 'get_workspace_overview':
+				return 'Workspace overview';
+			case 'get_workspace_instructions':
+				return 'Workspace instructions';
+			case 'check_docs':
+				return typeof fields?.query === 'string'
+					? fields.query
+					: typeof fields?.path === 'string'
+						? fields.path
+						: 'Docs';
 			default:
-				return title;
+				return titleizeSnakeCase(name);
 		}
 	}
 
@@ -104,9 +135,9 @@
 		return summarizeTool(toolLog.name, toolLog.input);
 	}
 
-	function fullToolSummary(toolLog: AssistantTimelineTool) {
+	function fullToolSummary(toolLog: AssistantTimelineTool, isStreaming: boolean) {
 		const summary = toolItemSummary(toolLog);
-		if (toolLog.job?.status === 'pending' || toolLog.job?.status === 'claimed') {
+		if (isAssistantTimelineToolRunning(toolLog, isStreaming)) {
 			return `${summary} (running)`;
 		}
 		const error = assistantTimelineToolError(toolLog);
@@ -114,7 +145,44 @@
 	}
 
 	const userMessageClass =
-		'w-full max-w-[56rem] rounded-[28px] border border-white/7 bg-[linear-gradient(180deg,rgba(39,39,42,0.96),rgba(28,28,30,0.96))] px-5 py-4 text-[15px] leading-8 text-slate-100 shadow-[0_16px_40px_rgba(0,0,0,0.22)]';
+		'w-fit max-w-[33rem] rounded-xl border border-white/7 bg-[linear-gradient(180deg,rgba(39,39,42,0.96),rgba(28,28,30,0.96))] px-5 py-3.5 text-[15.5px] leading-7 text-slate-100';
+
+	let copiedMessageId = $state<string | null>(null);
+	let copiedTimeout: ReturnType<typeof setTimeout> | null = null;
+
+	async function copyUserMessage(messageId: string, text: string) {
+		try {
+			await navigator.clipboard.writeText(text);
+			copiedMessageId = messageId;
+			if (copiedTimeout !== null) {
+				clearTimeout(copiedTimeout);
+			}
+			copiedTimeout = setTimeout(() => {
+				if (copiedMessageId === messageId) {
+					copiedMessageId = null;
+				}
+				copiedTimeout = null;
+			}, 1_500);
+		} catch {
+			copiedMessageId = null;
+		}
+	}
+
+	$effect(() => {
+		return () => {
+			if (copiedTimeout !== null) {
+				clearTimeout(copiedTimeout);
+			}
+		};
+	});
+
+	function scrollToBottom() {
+		const viewport = scrollViewport;
+		if (!viewport || !stickToBottom) {
+			return;
+		}
+		viewport.scrollTop = viewport.scrollHeight;
+	}
 
 	$effect(() => {
 		void messages;
@@ -123,23 +191,32 @@
 			return;
 		}
 
-		void tick().then(() => {
-			const viewport = scrollViewport;
-			if (!viewport) {
-				return;
-			}
-			viewport.scrollTop = viewport.scrollHeight;
+		void tick().then(scrollToBottom);
+	});
+
+	$effect(() => {
+		const viewport = scrollViewport;
+		if (!viewport || typeof ResizeObserver === 'undefined') {
+			return;
+		}
+
+		const observer = new ResizeObserver(() => {
+			scrollToBottom();
 		});
+		observer.observe(viewport);
+		return () => {
+			observer.disconnect();
+		};
 	});
 </script>
 
 <div class="relative min-h-0 flex-1">
 	<div
-		class="h-full overflow-auto [overflow-anchor:none]"
+		class="hide-scrollbar h-full overflow-auto [overflow-anchor:none]"
 		bind:this={scrollViewport}
 		onscroll={updateStickToBottom}
 	>
-		<div class="mx-auto flex min-h-full w-full max-w-336 flex-col px-8 py-8">
+		<div class="mx-auto flex min-h-full w-full max-w-5xl flex-col px-4 py-8">
 			{#if currentError}
 				<div
 					role="alert"
@@ -173,14 +250,32 @@
 				<div class="space-y-8 pb-14">
 					{#each messages as message (message._id)}
 						{#if message.type === 'prompt'}
-							<div class="flex justify-end">
+							<div class="flex flex-col items-end gap-1.5">
 								<div class={userMessageClass}>
 									<ChatMarkdown content={message.text || ' '} className="text-slate-100" />
 								</div>
+								<button
+									type="button"
+									class="inline-flex size-6 items-center justify-center rounded-md text-slate-600 transition hover:text-slate-400"
+									aria-label={copiedMessageId === message._id ? 'Copied' : 'Copy message'}
+									onclick={() => {
+										void copyUserMessage(message._id, message.text);
+									}}
+								>
+									{#if copiedMessageId === message._id}
+										<Check class="size-3.5" aria-hidden="true" />
+									{:else}
+										<Copy class="size-3.5" aria-hidden="true" />
+									{/if}
+								</button>
 							</div>
 						{:else}
 							{@const messageActions = actions.filter((job) => job.runId === message.runId)}
 							{@const timeline = buildAssistantTimeline(message.parts ?? [], messageActions)}
+							{@const blocks = groupAssistantTimeline(timeline)}
+							{@const sections = groupAssistantTimelineSections(blocks)}
+							{@const { workIndexBySectionIndex, priorCompletedAtByWorkIndex } =
+								workSectionTimingIndexes(sections)}
 							{@const isStreaming =
 								message.runStatus !== 'completed' &&
 								message.runStatus !== 'failed' &&
@@ -189,7 +284,7 @@
 								(part) => part.type === 'text' || part.type === 'reasoning'
 							)}
 							<div
-								class="max-w-4xl px-1"
+								class="w-full min-w-0"
 								role={isStreaming ? 'log' : undefined}
 								aria-live={isStreaming ? 'polite' : undefined}
 								aria-atomic="false"
@@ -199,61 +294,113 @@
 									{#if !hasPersistedAssistantContent && (message.text || (isStreaming && timeline.length === 0))}
 										<ChatMarkdown content={message.text || '...'} className="text-slate-200" />
 									{/if}
-									{#each timeline as part, index (`${part.type}-${part.type === 'tool' ? part.callId : part.id}-${index}`)}
-										{#if part.type === 'text'}
-											<ChatMarkdown content={part.text || ' '} className="text-slate-200" />
-										{:else if part.type === 'reasoning'}
-											<div
-												class="rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-xs text-slate-400"
-											>
-												<span class="mr-2 tracking-[0.12em] uppercase">Reasoning</span>{part.text}
-											</div>
+									{#each sections as section, sectionIndex (`${section.type}-${section.type === 'work' ? section.key : section.id}-${sectionIndex}`)}
+										{#if section.type === 'text'}
+											<ChatMarkdown content={section.text || ' '} className="text-slate-200" />
 										{:else}
-											{@const toolError = assistantTimelineToolError(part)}
-											{@const toolFailureKind = assistantTimelineToolFailureKind(part)}
-											{@const toolSummary = toolItemSummary(part)}
-											{@const isToolRunning =
-												part.job?.status === 'pending' || part.job?.status === 'claimed'}
-											<div
-												class="text-muted-foreground flex max-w-4xl items-start gap-3 rounded-xl border border-white/6 bg-black/15 px-3 py-2 text-sm"
-											>
-												<TerminalSquare class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-												{#if toolError && toolFailureKind}
-													<details class="min-w-0 flex-1">
-														<summary
-															class="min-w-0 cursor-pointer text-left"
-															title={fullToolSummary(part)}
-														>
-															<span class="truncate">{toolSummary}</span>
-															<span
-																class={toolFailureKind === 'cancelled'
-																	? 'text-amber-200'
-																	: 'text-rose-200'}
+											{@const workInProgress = isStreaming && sectionIndex === sections.length - 1}
+											{@const { settledBlocks, runningTools } = partitionWorkSectionTools(
+												section.blocks,
+												isStreaming
+											)}
+											{@const workSectionOrder = workIndexBySectionIndex[sectionIndex] ?? 0}
+											{@const timing = workSectionTimingAnchor(section, {
+												inProgress: workInProgress,
+												workSectionIndex: workSectionOrder,
+												runStartedAt: message.runStartedAt,
+												runCompletedAt: message.runCompletedAt,
+												priorWorkCompletedAtMs: priorCompletedAtByWorkIndex[workSectionOrder]
+											})}
+											{#if settledBlocks.length > 0 || workInProgress}
+												<WorkDisclosure
+													inProgress={workInProgress}
+													startedAtMs={timing.startedAtMs}
+													completedAtMs={timing.completedAtMs}
+												>
+													{#each settledBlocks as block, blockIndex (`${block.type}-${block.type === 'tool-group' ? block.tools.map((tool) => tool.callId).join(',') : block.id}-${blockIndex}`)}
+														{#if block.type === 'reasoning'}
+															{@const reasoningInProgress =
+																workInProgress &&
+																runningTools.length === 0 &&
+																blockIndex === settledBlocks.length - 1}
+															<ReasoningDisclosure
+																text={block.text}
+																inProgress={reasoningInProgress}
+															/>
+														{:else}
+															<ToolCallsDisclosure
+																label={toolGroupLabel(block.toolKey)}
+																tools={block.tools}
 															>
-																({toolFailureKind})
-															</span>
-														</summary>
-														<p
-															class="mt-1.5 whitespace-pre-wrap break-words text-xs leading-5 {toolFailureKind ===
-															'cancelled'
-																? 'text-amber-200'
-																: 'text-rose-200'}"
-															role="status"
-														>
-															{toolError}
-														</p>
-													</details>
-												{:else}
-													<p class="min-w-0 truncate" title={fullToolSummary(part)}>
-														{toolSummary}
-														{#if isToolRunning}
-															<span> (running)</span>
+																{#snippet toolRow(tool)}
+																	{@const toolError = assistantTimelineToolError(tool)}
+																	{@const toolFailureKind = assistantTimelineToolFailureKind(tool)}
+																	{@const toolSummary = toolItemSummary(tool)}
+																	{#if toolError && toolFailureKind}
+																		<details class="min-w-0">
+																			<summary
+																				class="min-w-0 cursor-pointer text-left"
+																				title={fullToolSummary(tool, isStreaming)}
+																			>
+																				<span class="truncate">{toolSummary}</span>
+																				<span
+																					class={toolFailureKind === 'cancelled'
+																						? 'text-amber-200'
+																						: 'text-rose-200'}
+																				>
+																					({toolFailureKind})
+																				</span>
+																			</summary>
+																			<p
+																				class="mt-1.5 whitespace-pre-wrap break-words text-xs leading-5 {toolFailureKind ===
+																				'cancelled'
+																					? 'text-amber-200'
+																					: 'text-rose-200'}"
+																				role="status"
+																			>
+																				{toolError}
+																			</p>
+																		</details>
+																	{:else}
+																		<p
+																			class="min-w-0 truncate"
+																			title={fullToolSummary(tool, isStreaming)}
+																		>
+																			{toolSummary}
+																		</p>
+																	{/if}
+																{/snippet}
+															</ToolCallsDisclosure>
 														{/if}
-													</p>
-												{/if}
-											</div>
+													{/each}
+												</WorkDisclosure>
+											{/if}
+											{#if runningTools.length > 0}
+												<ToolCallsDisclosure
+													label="Running"
+													tools={runningTools}
+													defaultExpanded={true}
+												>
+													{#snippet toolRow(tool)}
+														{@const toolSummary = toolItemSummary(tool)}
+														<p class="min-w-0 truncate" title={fullToolSummary(tool, isStreaming)}>
+															{toolSummary}
+														</p>
+													{/snippet}
+												</ToolCallsDisclosure>
+											{/if}
 										{/if}
 									{/each}
+									{#if !isStreaming && message.runCompletedAt !== undefined}
+										<p class="text-sm text-slate-500">
+											Worked for {formatElapsedDuration(
+												Math.max(
+													0,
+													Math.floor((message.runCompletedAt - message.runStartedAt) / 1000)
+												)
+											)}
+										</p>
+									{/if}
 								</div>
 							</div>
 						{/if}

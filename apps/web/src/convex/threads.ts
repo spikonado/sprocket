@@ -1,9 +1,19 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
-import { mutation, query } from '@convex/_generated/server';
+import { mutation, query, type MutationCtx } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getOwnedThreadRecord, getOwnedWorkspaceSession } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
 import { isRunFinalStatus, vModelId, vReasoningEffort } from '@convex/lib/validators';
+
+async function patchOwnedThread(
+	ctx: MutationCtx,
+	threadId: Id<'threadRecords'>,
+	patch: Partial<Doc<'threadRecords'>>
+) {
+	const userId = await getUserId(ctx);
+	await getOwnedThreadRecord(ctx.db, userId, threadId);
+	await ctx.db.patch(threadId, patch);
+}
 
 export const create = mutation({
 	args: {
@@ -95,7 +105,9 @@ export const listMine = query({
 				return {
 					...record,
 					threadId: record._id,
-					threadStatus: 'active',
+					title: record.title?.trim() || 'New thread',
+					threadStatus:
+						record.archivedAt !== undefined ? ('archived' as const) : ('active' as const),
 					workspaceName: workspaceSession?.workspaceName ?? 'Unknown workspace',
 					latestRunStatus: latestRun?.status ?? null,
 					latestRunId: latestRun?._id ?? null,
@@ -118,49 +130,34 @@ export const getByThreadId = query({
 	}
 });
 
-export const remove = mutation({
+export const rename = mutation({
+	args: {
+		threadId: v.id('threadRecords'),
+		title: v.string()
+	},
+	handler: async (ctx, args) => {
+		const title = args.title.trim();
+		if (title.length === 0) {
+			throw new Error('Thread title cannot be empty.');
+		}
+		await patchOwnedThread(ctx, args.threadId, { title });
+	}
+});
+
+export const archive = mutation({
 	args: {
 		threadId: v.id('threadRecords')
 	},
 	handler: async (ctx, args) => {
-		const userId: string = await getUserId(ctx);
-		const threadRecord = await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+		await patchOwnedThread(ctx, args.threadId, { archivedAt: Date.now() });
+	}
+});
 
-		const runs = await ctx.db
-			.query('runs')
-			.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', args.threadId))
-			.collect();
-		if (runs.some((run) => !isRunFinalStatus(run.status))) {
-			throw new Error('Cannot delete a thread while a run is active.');
-		}
-		for (const run of runs) {
-			for (const messageId of [run.promptMessageId, run.responseMessageId]) {
-				if (messageId) {
-					await ctx.db.delete(messageId);
-				}
-			}
-			const jobs = await ctx.db
-				.query('executorJobs')
-				.withIndex('by_runId_sequence', (query) => query.eq('runId', run._id))
-				.collect();
-			for (const job of jobs) {
-				await ctx.db.delete(job._id);
-			}
-			await ctx.db.delete(run._id);
-		}
-
-		await ctx.db.delete(threadRecord._id);
-
-		const preferences = await ctx.db
-			.query('uiPreferences')
-			.withIndex('by_userId', (query) => query.eq('userId', userId))
-			.unique();
-		if (preferences?.lastThreadId === args.threadId) {
-			await ctx.db.patch(preferences._id, {
-				lastThreadId: undefined
-			});
-		}
-
-		return { deleted: true };
+export const restore = mutation({
+	args: {
+		threadId: v.id('threadRecords')
+	},
+	handler: async (ctx, args) => {
+		await patchOwnedThread(ctx, args.threadId, { archivedAt: undefined });
 	}
 });

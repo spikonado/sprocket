@@ -1,13 +1,9 @@
 <script lang="ts">
-	import { ChevronRight, Folder, FolderOpen, LogOut, SquarePen, Trash2 } from '@lucide/svelte';
-	import { formatRelativeTime } from '$lib/format';
+	import { Archive, ChevronRight, Folder, FolderOpen, Settings, SquarePen } from '@lucide/svelte';
+	import BrandMark from '$lib/components/brand-mark.svelte';
 	import type { Id } from '$convex/_generated/dataModel';
 	import type { ThreadSummary, WorkspaceThreadGroup } from '$lib/types/sprocket';
-	import {
-		getThreadDeletionBlockMessage,
-		isAgentLaunchPending,
-		type PendingAgentLaunches
-	} from '$lib/workspace/threads';
+	import { isAgentLaunchPending, type PendingAgentLaunches } from '$lib/workspace/threads';
 
 	type Props = {
 		currentWorkspaceName: string | null;
@@ -16,10 +12,11 @@
 		pendingAgentLaunches?: PendingAgentLaunches;
 		onChooseWorkspace: () => void;
 		onReconnectWorkspace: (workspaceSessionId: Id<'workspaceSessions'>) => void;
-		onSignOut: () => void;
+		onOpenSettings: () => void;
 		onStartThreadDraft: (workspaceName: string) => void;
 		onSelectThread: (thread: ThreadSummary) => void;
-		onDeleteThread: (thread: ThreadSummary) => void;
+		onRenameThread: (threadId: Id<'threadRecords'>, title: string) => void;
+		onArchiveThread: (threadId: Id<'threadRecords'>) => void;
 	};
 
 	let {
@@ -29,17 +26,87 @@
 		pendingAgentLaunches = {},
 		onChooseWorkspace,
 		onReconnectWorkspace,
-		onSignOut,
+		onOpenSettings,
 		onStartThreadDraft,
 		onSelectThread,
-		onDeleteThread
+		onRenameThread,
+		onArchiveThread
 	}: Props = $props();
 
-	const DEFAULT_VISIBLE_THREAD_COUNT = 6;
-	const sidebarPanelClass =
-		'min-h-0 overflow-hidden border-r border-white/6 bg-[linear-gradient(180deg,rgba(24,28,38,0.96),rgba(18,21,29,0.98))]';
+	const DEFAULT_VISIBLE_THREAD_COUNT = 3;
+	const sidebarActionButtonClass =
+		'flex h-9 w-full min-w-0 items-center gap-2.5 rounded-lg px-2 text-[13px] font-medium tracking-[-0.02em] text-slate-200 transition hover:bg-white/5 hover:text-white';
+	const sidebarActionIconClass = 'size-4 shrink-0 text-slate-400';
 	let expandedProjects = $state<Record<string, boolean>>({});
 	let collapsedProjects = $state<Record<string, boolean>>({});
+	let hoveredThreadTitle = $state<string | null>(null);
+	let hoveredThreadTooltip = $state<{ top: number; left: number } | null>(null);
+	let renamingThreadId = $state<Id<'threadRecords'> | null>(null);
+	let renameDraft = $state('');
+	let renameOriginalTitle = $state('');
+	let renameInput = $state<HTMLInputElement | null>(null);
+	let contextMenu = $state<{
+		threadId: Id<'threadRecords'>;
+		title: string;
+		x: number;
+		y: number;
+	} | null>(null);
+
+	$effect(() => {
+		if (!renamingThreadId || !renameInput) {
+			return;
+		}
+		renameInput.focus();
+		renameInput.select();
+	});
+
+	$effect(() => {
+		if (!contextMenu) {
+			return;
+		}
+
+		function closeOnPointerDown(event: PointerEvent) {
+			const target = event.target;
+			if (target instanceof Element && target.closest('[data-thread-context-menu]')) {
+				return;
+			}
+			contextMenu = null;
+		}
+
+		function closeOnEscape(event: KeyboardEvent) {
+			if (event.key === 'Escape') {
+				contextMenu = null;
+			}
+		}
+
+		window.addEventListener('pointerdown', closeOnPointerDown, true);
+		window.addEventListener('keydown', closeOnEscape, true);
+		return () => {
+			window.removeEventListener('pointerdown', closeOnPointerDown, true);
+			window.removeEventListener('keydown', closeOnEscape, true);
+		};
+	});
+
+	function showThreadTooltip(event: MouseEvent | FocusEvent, title: string) {
+		if (renamingThreadId) {
+			return;
+		}
+		const target = event.currentTarget;
+		if (!(target instanceof HTMLElement)) {
+			return;
+		}
+		const rect = target.getBoundingClientRect();
+		hoveredThreadTitle = title;
+		hoveredThreadTooltip = {
+			top: rect.top + rect.height / 2,
+			left: rect.right + 8
+		};
+	}
+
+	function hideThreadTooltip() {
+		hoveredThreadTitle = null;
+		hoveredThreadTooltip = null;
+	}
 
 	function isProjectExpanded(groupKey: string) {
 		return expandedProjects[groupKey] ?? false;
@@ -74,36 +141,63 @@
 
 		return null;
 	}
+
+	function beginRename(threadId: Id<'threadRecords'>, title: string) {
+		contextMenu = null;
+		hideThreadTooltip();
+		renamingThreadId = threadId;
+		renameDraft = title;
+		renameOriginalTitle = title;
+	}
+
+	function cancelRename() {
+		renamingThreadId = null;
+		renameDraft = '';
+		renameOriginalTitle = '';
+	}
+
+	function commitRename() {
+		const threadId = renamingThreadId;
+		if (!threadId) {
+			return;
+		}
+		const nextTitle = renameDraft.trim();
+		renamingThreadId = null;
+		renameDraft = '';
+		const previousTitle = renameOriginalTitle;
+		renameOriginalTitle = '';
+		if (nextTitle.length === 0 || nextTitle === previousTitle) {
+			return;
+		}
+		onRenameThread(threadId, nextTitle);
+	}
+
+	function openContextMenu(event: MouseEvent, thread: ThreadSummary) {
+		event.preventDefault();
+		hideThreadTooltip();
+		contextMenu = {
+			threadId: thread.threadId,
+			title: thread.title,
+			x: event.clientX,
+			y: event.clientY
+		};
+	}
 </script>
 
-<aside class={sidebarPanelClass}>
+<aside class="app-sidebar-panel">
 	<div class="flex h-full min-h-0 flex-col overflow-hidden">
-		<header class="flex items-center justify-between px-3.5 pt-3 pb-2.5">
-			<div class="min-w-0">
-				<p class="truncate text-[1.05rem] font-semibold tracking-tighter text-white">Sprocket</p>
-			</div>
-			<button
-				type="button"
-				class="flex h-8 w-8 items-center justify-center rounded-full border border-white/8 bg-white/2 text-slate-300 transition hover:border-white/12 hover:bg-white/5 hover:text-white"
-				onclick={onSignOut}
-				aria-label="Sign out"
-			>
-				<LogOut class="size-3.5" />
-			</button>
+		<header class="flex items-center px-3.5 pt-3 pb-4">
+			<BrandMark size="sm" class="min-w-0" />
 		</header>
 
-		<div class="border-b border-white/6 px-3.5 pb-3">
-			<button
-				type="button"
-				class="flex h-8 w-full min-w-0 items-center gap-2 rounded-full border border-white/8 bg-white/3 px-3 text-[12px] text-slate-200 transition hover:border-white/12 hover:bg-white/6 disabled:cursor-not-allowed disabled:opacity-50"
-				onclick={onChooseWorkspace}
-			>
-				<FolderOpen class="size-3.5 shrink-0 text-slate-400" />
+		<div class="px-3.5 pb-1">
+			<button type="button" class={sidebarActionButtonClass} onclick={onChooseWorkspace}>
+				<FolderOpen class={sidebarActionIconClass} aria-hidden="true" />
 				<span class="truncate">Add project</span>
 			</button>
 		</div>
 
-		<div class="sidebar-scroll-area min-h-0 flex-1 overflow-y-auto px-2.5 py-3">
+		<div class="hide-scrollbar min-h-0 flex-1 overflow-y-auto px-2.5 py-3">
 			<div class="mb-3 px-2">
 				<p class="text-[10px] tracking-[0.24em] text-slate-500 uppercase">Projects</p>
 			</div>
@@ -117,6 +211,7 @@
 			{:else}
 				<div class="space-y-4">
 					{#each groups as group (group.key)}
+						{@const statusLabel = workspaceStatusLabel(group)}
 						<section class="space-y-1.5">
 							<div class="group relative flex items-center px-2">
 								<button
@@ -132,9 +227,6 @@
 									aria-label={isProjectCollapsed(group.key)
 										? `Expand ${group.workspaceName} threads`
 										: `Collapse ${group.workspaceName} threads`}
-									title={isProjectCollapsed(group.key)
-										? `Expand ${group.workspaceName} threads`
-										: `Collapse ${group.workspaceName} threads`}
 								>
 									<ChevronRight
 										class={`size-3 shrink-0 text-slate-500 transition-transform ${
@@ -145,7 +237,7 @@
 									<p class="truncate text-[0.88rem] font-medium tracking-[-0.02em]">
 										{group.workspaceName}
 									</p>
-									{#if workspaceStatusLabel(group)}
+									{#if statusLabel}
 										<span
 											class={`rounded-full px-1.5 py-0.5 text-[10px] ${
 												group.localWorkspaceAvailability === 'unavailable'
@@ -153,7 +245,7 @@
 													: 'border border-sky-500/20 bg-sky-500/10 text-sky-100'
 											}`}
 										>
-											{workspaceStatusLabel(group)}
+											{statusLabel}
 										</span>
 									{/if}
 									{#if group.activeThreadCount > 0}
@@ -181,9 +273,6 @@
 									aria-label={group.localWorkspaceAvailability === 'available'
 										? `Create thread in ${group.workspaceName}`
 										: `Reconnect ${group.workspaceName}`}
-									title={group.localWorkspaceAvailability === 'available'
-										? `Create thread in ${group.workspaceName}`
-										: (group.localWorkspaceError ?? `Reconnect ${group.workspaceName}`)}
 								>
 									{#if group.localWorkspaceAvailability === 'available'}
 										<SquarePen class="size-4" />
@@ -211,69 +300,92 @@
 											? group.threads
 											: group.threads.slice(0, DEFAULT_VISIBLE_THREAD_COUNT)}
 										{@const hasHiddenThreads = group.threads.length > DEFAULT_VISIBLE_THREAD_COUNT}
-										<div class="space-y-1">
+										<div class="space-y-0.5">
 											{#each visibleThreads as thread (thread.threadId)}
 												{@const isStartingAgent = isAgentLaunchPending(
 													pendingAgentLaunches,
 													thread.threadId
 												)}
-												{@const deletionBlockMessage = getThreadDeletionBlockMessage(
-													pendingAgentLaunches,
-													thread
-												)}
-												<div class="group flex items-start gap-1">
-													<button
-														type="button"
-														class={`flex min-w-0 flex-1 items-start justify-between gap-2 rounded-xl px-2 py-1.5 text-left transition ${
-															thread.threadId === currentThreadId
-																? 'bg-white/6 text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]'
-																: 'text-slate-400 hover:bg-white/3 hover:text-slate-200'
-														}`}
-														onclick={() => {
-															onSelectThread(thread);
+												{@const isSelected = thread.threadId === currentThreadId}
+												{@const isRenaming = renamingThreadId === thread.threadId}
+												{#if isRenaming}
+													<form
+														class="px-1"
+														onsubmit={(event) => {
+															event.preventDefault();
+															commitRename();
 														}}
 													>
-														<div class="min-w-0 flex-1">
-															<div class="flex items-center gap-1.5">
-																{#if isStartingAgent}
-																	<span
-																		class="shrink-0 rounded-full border border-amber-400/20 bg-amber-400/10 px-1.5 py-0.5 text-[9px] text-amber-200"
-																		aria-label="Starting agent">Starting</span
-																	>
-																{:else if thread.hasActiveRun}
-																	<span
-																		class="mt-px size-2 shrink-0 animate-pulse rounded-full bg-emerald-400"
-																		aria-label="Thread has an active run"
-																	></span>
-																{/if}
-																<p class="truncate text-[13px] leading-5">{thread.title}</p>
-															</div>
-														</div>
-														<span class="shrink-0 pt-0.5 text-[11px] text-slate-500">
-															{formatRelativeTime(thread.lastMessageAt)}
-														</span>
-													</button>
-													<button
-														type="button"
-														class={`mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-white/8 bg-white/3 text-slate-500 transition ${
-															thread.threadId === currentThreadId
-																? 'opacity-100 hover:border-rose-400/40 hover:bg-rose-400/10 hover:text-rose-200'
-																: 'opacity-0 group-hover:opacity-100 hover:border-rose-400/40 hover:bg-rose-400/10 hover:text-rose-200 focus-visible:opacity-100'
-														} disabled:cursor-not-allowed disabled:border-white/8 disabled:bg-white/3 disabled:text-slate-600 disabled:opacity-40`}
-														onclick={() => {
-															if (deletionBlockMessage) {
-																return;
-															}
-
-															onDeleteThread(thread);
-														}}
-														disabled={Boolean(deletionBlockMessage)}
-														aria-label={`Delete ${thread.title}`}
-														title={deletionBlockMessage ?? `Delete ${thread.title}`}
-													>
-														<Trash2 class="size-3" />
-													</button>
-												</div>
+														<input
+															bind:this={renameInput}
+															bind:value={renameDraft}
+															class="h-9 w-full rounded-lg border border-white/10 bg-white/5 px-2 text-[13px] text-white outline-none focus:border-white/20"
+															aria-label="Rename thread"
+															onkeydown={(event) => {
+																if (event.key === 'Escape') {
+																	event.preventDefault();
+																	cancelRename();
+																}
+															}}
+															onblur={() => {
+																commitRename();
+															}}
+														/>
+													</form>
+												{:else}
+													<div class="group/thread relative">
+														<button
+															type="button"
+															class={`${sidebarActionButtonClass} pr-8 ${
+																isSelected ? 'bg-white/5 text-white' : 'text-slate-400'
+															}`}
+															aria-current={isSelected ? 'page' : undefined}
+															onmouseenter={(event) => {
+																showThreadTooltip(event, thread.title);
+															}}
+															onmouseleave={hideThreadTooltip}
+															onfocus={(event) => {
+																showThreadTooltip(event, thread.title);
+															}}
+															onblur={hideThreadTooltip}
+															oncontextmenu={(event) => {
+																openContextMenu(event, thread);
+															}}
+															onclick={() => {
+																onSelectThread(thread);
+															}}
+														>
+															{#if isStartingAgent}
+																<span
+																	class="size-1.5 shrink-0 animate-pulse rounded-full bg-amber-300"
+																	aria-label="Starting agent"
+																></span>
+															{:else if thread.hasActiveRun}
+																<span
+																	class="size-1.5 shrink-0 animate-pulse rounded-full bg-emerald-400"
+																	aria-label="Thread has an active run"
+																></span>
+															{/if}
+															<span class="truncate">{thread.title}</span>
+														</button>
+														<button
+															type="button"
+															class={`absolute top-1.5 right-1 inline-flex h-6 w-6 items-center justify-center rounded-md text-slate-500 transition hover:bg-white/6 hover:text-white focus-visible:opacity-100 ${
+																isSelected
+																	? 'opacity-100'
+																	: 'opacity-0 group-hover/thread:opacity-100 group-focus-within/thread:opacity-100'
+															}`}
+															aria-label={`Archive ${thread.title}`}
+															onclick={(event) => {
+																event.stopPropagation();
+																hideThreadTooltip();
+																onArchiveThread(thread.threadId);
+															}}
+														>
+															<Archive class="size-3.5" aria-hidden="true" />
+														</button>
+													</div>
+												{/if}
 											{/each}
 
 											{#if hasHiddenThreads}
@@ -296,14 +408,42 @@
 				</div>
 			{/if}
 		</div>
+
+		<div class="px-3.5 pt-2 pb-4">
+			<button type="button" class={sidebarActionButtonClass} onclick={onOpenSettings}>
+				<Settings class={sidebarActionIconClass} aria-hidden="true" />
+				Settings
+			</button>
+		</div>
 	</div>
 </aside>
 
-<style>
-	.sidebar-scroll-area {
-		scrollbar-width: none;
-	}
-	.sidebar-scroll-area::-webkit-scrollbar {
-		display: none;
-	}
-</style>
+{#if hoveredThreadTitle && hoveredThreadTooltip && !contextMenu && !renamingThreadId}
+	<div
+		class="pointer-events-none fixed z-100 max-w-64 -translate-y-1/2 rounded-md bg-[#1a1d27] px-2.5 py-1.5 text-[12px] leading-4 text-slate-100 shadow-lg ring-1 ring-white/10"
+		style={`top: ${hoveredThreadTooltip.top}px; left: ${hoveredThreadTooltip.left}px;`}
+		role="tooltip"
+	>
+		{hoveredThreadTitle}
+	</div>
+{/if}
+
+{#if contextMenu}
+	<div
+		data-thread-context-menu
+		class="fixed z-110 min-w-36 rounded-lg border border-white/8 bg-[#1a1d27] py-1 shadow-xl"
+		style={`top: ${contextMenu.y}px; left: ${contextMenu.x}px;`}
+		role="menu"
+	>
+		<button
+			type="button"
+			class="flex w-full px-3 py-1.5 text-left text-[13px] text-slate-200 transition hover:bg-white/6 hover:text-white"
+			role="menuitem"
+			onclick={() => {
+				beginRename(contextMenu!.threadId, contextMenu!.title);
+			}}
+		>
+			Rename
+		</button>
+	</div>
+{/if}

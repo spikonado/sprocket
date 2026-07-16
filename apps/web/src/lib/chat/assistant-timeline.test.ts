@@ -2,7 +2,16 @@ import { describe, expect, it } from 'vitest';
 import {
 	assistantTimelineToolError,
 	assistantTimelineToolFailureKind,
-	buildAssistantTimeline
+	assistantTimelineToolKey,
+	buildAssistantTimeline,
+	groupAssistantTimeline,
+	groupAssistantTimelineSections,
+	isAssistantTimelineToolRunning,
+	partitionWorkSectionTools,
+	workSectionTimingAnchor,
+	workSectionTimingIndexes,
+	type AssistantTimelineTool,
+	type AssistantTimelineWorkBlock
 } from '$lib/chat/assistant-timeline';
 import type { ExecutorJob } from '$lib/types/sprocket';
 
@@ -24,6 +33,14 @@ function executorJob(
 		sequence,
 		...overrides
 	};
+}
+
+function tool(
+	callId: string,
+	name: string,
+	overrides: Partial<AssistantTimelineTool> = {}
+): AssistantTimelineTool {
+	return { type: 'tool', callId, name, input: {}, ...overrides };
 }
 
 describe('assistant timeline', () => {
@@ -197,5 +214,273 @@ describe('assistant timeline', () => {
 		expect(assistantTimelineToolError(cancelled)).toBe('stopped by user');
 		expect(assistantTimelineToolFailureKind(failed)).toBe('failed');
 		expect(assistantTimelineToolError(failed)).toBe('command failed');
+	});
+});
+
+describe('groupAssistantTimeline', () => {
+	it('groups consecutive same-type tools and breaks on text or reasoning', () => {
+		const blocks = groupAssistantTimeline([
+			{ type: 'reasoning', id: 'r1', text: 'plan' },
+			tool('c1', 'exec_command'),
+			tool('c2', 'exec_command'),
+			{ type: 'text', id: 't1', text: 'mid' },
+			tool('c3', 'exec_command'),
+			tool('c4', 'create_file'),
+			tool('c5', 'create_file')
+		]);
+
+		expect(blocks.map((block) => block.type)).toEqual([
+			'reasoning',
+			'tool-group',
+			'text',
+			'tool-group',
+			'tool-group'
+		]);
+		expect(blocks[1]).toMatchObject({
+			type: 'tool-group',
+			toolKey: 'exec_command',
+			tools: [{ callId: 'c1' }, { callId: 'c2' }]
+		});
+		expect(blocks[3]).toMatchObject({
+			type: 'tool-group',
+			toolKey: 'exec_command',
+			tools: [{ callId: 'c3' }]
+		});
+		expect(blocks[4]).toMatchObject({
+			type: 'tool-group',
+			toolKey: 'create_file',
+			tools: [{ callId: 'c4' }, { callId: 'c5' }]
+		});
+	});
+
+	it('starts a new group when tool type changes even if contiguous', () => {
+		const blocks = groupAssistantTimeline([
+			tool('c1', 'exec_command'),
+			tool('c2', 'create_file'),
+			tool('c3', 'exec_command')
+		]);
+
+		expect(blocks).toEqual([
+			expect.objectContaining({
+				type: 'tool-group',
+				toolKey: 'exec_command',
+				tools: [expect.objectContaining({ callId: 'c1' })]
+			}),
+			expect.objectContaining({
+				type: 'tool-group',
+				toolKey: 'create_file',
+				tools: [expect.objectContaining({ callId: 'c2' })]
+			}),
+			expect.objectContaining({
+				type: 'tool-group',
+				toolKey: 'exec_command',
+				tools: [expect.objectContaining({ callId: 'c3' })]
+			})
+		]);
+	});
+
+	it('prefers job.kind over name for the grouping key', () => {
+		const withJob = tool('c1', 'streamed_name', {
+			job: executorJob('job-1', 1, { kind: 'exec_command' })
+		});
+		expect(assistantTimelineToolKey(withJob)).toBe('exec_command');
+
+		const blocks = groupAssistantTimeline([
+			withJob,
+			tool('c2', 'exec_command'),
+			tool('c3', 'streamed_name')
+		]);
+
+		expect(blocks).toHaveLength(2);
+		expect(blocks[0]).toMatchObject({
+			type: 'tool-group',
+			toolKey: 'exec_command',
+			tools: [{ callId: 'c1' }, { callId: 'c2' }]
+		});
+		expect(blocks[1]).toMatchObject({
+			type: 'tool-group',
+			toolKey: 'streamed_name',
+			tools: [{ callId: 'c3' }]
+		});
+	});
+});
+
+describe('groupAssistantTimelineSections', () => {
+	it('wraps contiguous reasoning and tool groups into work sections broken by text', () => {
+		const sections = groupAssistantTimelineSections(
+			groupAssistantTimeline([
+				{ type: 'reasoning', id: 'r1', text: 'plan' },
+				tool('c1', 'exec_command'),
+				tool('c2', 'exec_command'),
+				{ type: 'text', id: 't1', text: 'mid' },
+				{ type: 'reasoning', id: 'r2', text: 'more' },
+				tool('c3', 'create_file'),
+				{ type: 'text', id: 't2', text: 'done' }
+			])
+		);
+
+		expect(sections.map((section) => section.type)).toEqual(['work', 'text', 'work', 'text']);
+		expect(sections[0]).toMatchObject({
+			type: 'work',
+			key: 'r1',
+			blocks: [
+				{ type: 'reasoning', id: 'r1' },
+				{ type: 'tool-group', toolKey: 'exec_command' }
+			]
+		});
+		expect(sections[1]).toMatchObject({ type: 'text', id: 't1' });
+		expect(sections[2]).toMatchObject({
+			type: 'work',
+			key: 'r2',
+			blocks: [
+				{ type: 'reasoning', id: 'r2' },
+				{ type: 'tool-group', toolKey: 'create_file' }
+			]
+		});
+		expect(sections[3]).toMatchObject({ type: 'text', id: 't2' });
+	});
+
+	it('keys a tools-only work section from the first tool callId', () => {
+		const sections = groupAssistantTimelineSections(
+			groupAssistantTimeline([tool('c1', 'exec_command'), tool('c2', 'create_file')])
+		);
+
+		expect(sections).toEqual([
+			expect.objectContaining({
+				type: 'work',
+				key: 'c1',
+				blocks: [
+					expect.objectContaining({ type: 'tool-group', toolKey: 'exec_command' }),
+					expect.objectContaining({ type: 'tool-group', toolKey: 'create_file' })
+				]
+			})
+		]);
+	});
+});
+
+describe('partitionWorkSectionTools', () => {
+	it('pulls running tools out and leaves settled reasoning/tools behind', () => {
+		const blocks: AssistantTimelineWorkBlock[] = [
+			{ type: 'reasoning', id: 'r1', text: 'plan' },
+			{
+				type: 'tool-group',
+				toolKey: 'exec_command',
+				tools: [
+					tool('done', 'exec_command', {
+						input: { cmd: 'done' },
+						job: executorJob('job-done', 1, { status: 'completed', kind: 'exec_command' })
+					}),
+					tool('live', 'exec_command', {
+						input: { cmd: 'live' },
+						job: executorJob('job-live', 2, { status: 'claimed', kind: 'exec_command' })
+					})
+				]
+			}
+		];
+
+		const { settledBlocks, runningTools } = partitionWorkSectionTools(blocks, true);
+
+		expect(runningTools.map((item) => item.callId)).toEqual(['live']);
+		expect(settledBlocks).toEqual([
+			expect.objectContaining({ type: 'reasoning', id: 'r1' }),
+			expect.objectContaining({
+				type: 'tool-group',
+				toolKey: 'exec_command',
+				tools: [expect.objectContaining({ callId: 'done' })]
+			})
+		]);
+		expect(isAssistantTimelineToolRunning(runningTools[0], true)).toBe(true);
+	});
+});
+
+describe('workSectionTimingIndexes', () => {
+	it('maps section indexes to work indexes and prior completion anchors', () => {
+		const sections = groupAssistantTimelineSections(
+			groupAssistantTimeline([
+				{ type: 'reasoning', id: 'r1', text: 'plan' },
+				tool('c1', 'exec_command', {
+					job: executorJob('job-1', 1, {
+						status: 'completed',
+						completedAt: 5_000,
+						kind: 'exec_command'
+					})
+				}),
+				{ type: 'text', id: 't1', text: 'mid' },
+				{ type: 'reasoning', id: 'r2', text: 'more' }
+			])
+		);
+
+		expect(workSectionTimingIndexes(sections)).toEqual({
+			workIndexBySectionIndex: [0, undefined, 1],
+			priorCompletedAtByWorkIndex: [undefined, 5_000]
+		});
+	});
+});
+
+describe('workSectionTimingAnchor', () => {
+	it('starts the first section at run start and ends at job completion', () => {
+		const section = {
+			type: 'work' as const,
+			key: 'c1',
+			blocks: [
+				{
+					type: 'tool-group' as const,
+					toolKey: 'exec_command',
+					tools: [
+						tool('c1', 'exec_command', {
+							job: executorJob('job-1', 1, {
+								kind: 'exec_command',
+								status: 'completed',
+								enqueuedAt: 1_000,
+								claimedAt: 1_200,
+								completedAt: 5_000
+							})
+						})
+					]
+				}
+			]
+		};
+
+		expect(
+			workSectionTimingAnchor(section, {
+				inProgress: false,
+				workSectionIndex: 0,
+				runStartedAt: 500,
+				runCompletedAt: 9_000
+			})
+		).toEqual({ startedAtMs: 500, completedAtMs: 5_000 });
+	});
+
+	it('falls back to run start while the first section is in progress without jobs', () => {
+		const section = {
+			type: 'work' as const,
+			key: 'r1',
+			blocks: [{ type: 'reasoning' as const, id: 'r1', text: 'thinking' }]
+		};
+
+		expect(
+			workSectionTimingAnchor(section, {
+				inProgress: true,
+				workSectionIndex: 0,
+				runStartedAt: 4_000
+			})
+		).toEqual({ startedAtMs: 4_000 });
+	});
+
+	it('uses prior work completion for later sections without jobs', () => {
+		const section = {
+			type: 'work' as const,
+			key: 'r2',
+			blocks: [{ type: 'reasoning' as const, id: 'r2', text: 'more' }]
+		};
+
+		expect(
+			workSectionTimingAnchor(section, {
+				inProgress: true,
+				workSectionIndex: 1,
+				runStartedAt: 1_000,
+				priorWorkCompletedAtMs: 8_000
+			})
+		).toEqual({ startedAtMs: 8_000 });
 	});
 });

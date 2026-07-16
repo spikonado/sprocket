@@ -150,7 +150,7 @@
 
 {#if open}
 	<div
-		class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 backdrop-blur-[2px]"
+		class="fixed inset-0 z-50 flex items-center justify-center bg-[#0f1218]/92 px-6"
 		role="presentation"
 		onclick={(event) => {
 			if (event.target === event.currentTarget) {
@@ -160,108 +160,86 @@
 	>
 		<div
 			bind:this={dialogEl}
-			class="flex w-full max-w-xl flex-col overflow-hidden rounded-3xl border border-white/10 bg-[#1c1c1f] text-white shadow-2xl outline-none"
+			class="w-full max-w-md text-center outline-none"
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby="browser-signin-title"
 			aria-describedby="browser-signin-desc"
 			tabindex="-1"
 		>
-			<div class="flex flex-col items-center gap-4 px-10 pt-10 pb-7 text-center">
-				<span
-					class="flex size-16 items-center justify-center rounded-full border border-sky-400/25 bg-sky-400/10 text-sky-200"
-				>
-					{#if error && signInUrl}
-						<ExternalLink class="size-7" aria-hidden="true" />
-					{:else}
-						<LoaderCircle class="size-7 animate-spin" aria-hidden="true" />
-					{/if}
-				</span>
-				<div>
-					<h2 id="browser-signin-title" class="text-xl font-semibold text-white">
-						{overlayCopy.title}
-					</h2>
-					<p id="browser-signin-desc" class="mt-2 text-sm leading-6 text-slate-400">
-						{overlayCopy.description}
-					</p>
+			{#if !signInUrl}
+				<div class="mb-4 flex justify-center text-slate-400" aria-hidden="true">
+					<LoaderCircle class="size-5 animate-spin" />
 				</div>
-			</div>
+			{/if}
 
-			<div class="px-10 pb-6">
-				<p class="text-[11px] tracking-[0.16em] text-slate-500 uppercase">Sign-in link</p>
+			<h2
+				id="browser-signin-title"
+				class="text-[1.35rem] font-medium tracking-tight text-slate-200"
+			>
+				{overlayCopy.title}
+			</h2>
+			<p id="browser-signin-desc" class="mt-3 text-sm leading-[1.55] text-slate-400">
+				{overlayCopy.description}
+			</p>
+
+			{#if signInUrl}
 				<p
-					class="mt-2 max-h-24 overflow-y-auto rounded-xl border border-white/8 bg-black/25 px-4 py-3 font-mono text-[11px] leading-5 break-all text-slate-400 select-all"
-					title={signInUrl ?? undefined}
+					class="mt-6 max-h-24 overflow-y-auto font-mono text-[11px] leading-5 break-all text-slate-500 select-all"
+					title={signInUrl}
 				>
-					{signInUrl ?? 'Preparing secure sign-in link…'}
+					{signInUrl}
 				</p>
-				{#if signInUrl && !error}
-					<p class="mt-3 text-[13px] leading-5 text-slate-500">
-						If your browser did not open automatically, use the buttons below.
-					</p>
-				{/if}
+			{/if}
 
-				{#if error}
-					<p
-						class="mt-4 rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-[13px] text-rose-200"
-						role="alert"
-					>
-						{error}
-					</p>
-				{/if}
-				{#if copyError}
-					<p
-						class="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-[13px] text-amber-100"
-						role="alert"
-					>
-						{copyError}
-					</p>
-				{/if}
-			</div>
+			{#if error}
+				<p class="mt-4 text-sm text-rose-300" role="alert">{error}</p>
+			{/if}
+			{#if copyError}
+				<p class="mt-4 text-sm text-amber-200" role="alert">{copyError}</p>
+			{/if}
 
-			<div class="flex gap-3 px-10 pb-6">
+			<div class="mt-6 flex flex-wrap items-center justify-center gap-3">
 				{#if signInUrl}
 					<button
 						type="button"
-						class="flex h-11 flex-1 items-center justify-center gap-2 rounded-full bg-sky-500/90 px-4 text-sm font-medium text-white transition hover:bg-sky-500"
+						class="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-white px-4 text-sm font-medium text-black transition hover:bg-slate-100"
 						onclick={openSignInUrl}
 					>
 						<ExternalLink class="size-4" aria-hidden="true" />
 						Open browser
 					</button>
+					<button
+						type="button"
+						class="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-white/12 px-4 text-sm text-slate-200 transition hover:bg-white/5"
+						onclick={() => void copySignInUrl()}
+					>
+						{#if copied}
+							<Check class="size-4" aria-hidden="true" />
+							Copied
+						{:else}
+							<Copy class="size-4" aria-hidden="true" />
+							Copy link
+						{/if}
+					</button>
 				{:else}
 					<span
-						class="flex h-11 flex-1 items-center justify-center gap-2 rounded-full bg-sky-500/40 px-4 text-sm font-medium text-white/50"
+						class="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-white/8 px-4 text-sm text-slate-500"
 					>
-						<LoaderCircle class="size-4 animate-spin" aria-hidden="true" />
-						Preparing link
+						Preparing link…
 					</span>
 				{/if}
-				<button
-					type="button"
-					class="flex h-11 flex-1 items-center justify-center gap-2 rounded-full border border-white/10 px-4 text-sm text-slate-200 transition hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40"
-					disabled={!signInUrl}
-					onclick={() => void copySignInUrl()}
-				>
-					{#if copied}
-						<Check class="size-4" aria-hidden="true" />
-						Copied
-					{:else}
-						<Copy class="size-4" aria-hidden="true" />
-						Copy link
-					{/if}
-				</button>
 			</div>
 
-			<footer class="flex justify-center border-t border-white/8 px-10 py-4">
+			<div class="mt-6">
 				<button
 					type="button"
-					class="text-[13px] text-slate-400 transition hover:text-slate-200"
+					class="text-[13px] text-slate-500 transition hover:text-slate-300"
 					onclick={onCancel}
 				>
 					Cancel
 				</button>
-			</footer>
+			</div>
 		</div>
 	</div>
 {/if}

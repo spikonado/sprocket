@@ -19,7 +19,11 @@
 	} from '$lib/auth';
 	import AuthGate from '$lib/components/home/auth-gate.svelte';
 	import BrowserSignInOverlay from '$lib/components/home/browser-signin-overlay.svelte';
+	import CalmCentered from '$lib/components/home/calm-centered.svelte';
 	import PromptComposer from '$lib/components/home/prompt-composer.svelte';
+	import SettingsAccount from '$lib/components/home/settings-account.svelte';
+	import SettingsArchived from '$lib/components/home/settings-archived.svelte';
+	import SettingsSidebar, { type SettingsPage } from '$lib/components/home/settings-sidebar.svelte';
 	import ThreadTranscript from '$lib/components/home/thread-transcript.svelte';
 	import WorkspacePicker from '$lib/components/home/workspace-picker.svelte';
 	import WorkspaceSidebar from '$lib/components/home/workspace-sidebar.svelte';
@@ -49,8 +53,8 @@
 		dataForThread,
 		findThreadById,
 		findWorkspaceSessionByName,
-		getThreadDeletionBlockMessage,
 		getWorkspaceThreadGroups,
+		isActiveThread,
 		isAgentLaunchPending,
 		isLatestRunReadyForThread,
 		resolveExpiredAgentLaunch,
@@ -108,7 +112,9 @@
 	});
 	const upsertWorkspaceSession = useMutation(api.workspaceSessions.upsertSelected);
 	const createThreadMutation = useMutation(api.threads.create);
-	const removeThread = useMutation(api.threads.remove);
+	const renameThreadMutation = useMutation(api.threads.rename);
+	const archiveThreadMutation = useMutation(api.threads.archive);
+	const restoreThreadMutation = useMutation(api.threads.restore);
 	const finalizeRun = useMutation(api.agentRuntime.finalizeRun);
 	const setLastThread = useMutation(api.uiPreferences.setLastThread);
 	const heartbeatAttached = useMutation(api.workspaceSessions.heartbeatAttached);
@@ -177,6 +183,8 @@
 	let workspacePickerMode = $state<'add' | 'reconnect'>('add');
 	let workspacePickerExpectedName = $state<string | undefined>(undefined);
 	let workspacePickerReconnectSessionId = $state<Id<'workspaceSessions'> | null>(null);
+	let settingsOpen = $state(false);
+	let settingsPage = $state<SettingsPage>('account');
 	function getCurrentUserId() {
 		return $authState.user?.id ?? null;
 	}
@@ -290,7 +298,7 @@
 		}
 
 		return threads
-			.filter((thread) => thread.workspaceName === currentWorkspaceName)
+			.filter((thread) => thread.workspaceName === currentWorkspaceName && isActiveThread(thread))
 			.sort((left, right) => right.lastMessageAt - left.lastMessageAt);
 	});
 
@@ -627,46 +635,45 @@
 		openWorkspaceSession(thread.workspaceName, { threadId: thread.threadId });
 	}
 
-	async function deleteThread(thread: ThreadSummary) {
-		const initialBlockMessage = getThreadDeletionBlockMessage(pendingAgentLaunches, thread);
-		if (initialBlockMessage) {
-			currentError = initialBlockMessage;
-			return;
-		}
-		const confirmed = window.confirm(
-			`Delete "${thread.title}"? This permanently removes the thread, messages, and run history.`
-		);
-		if (!confirmed) {
-			return;
-		}
-		const currentBlockMessage = getThreadDeletionBlockMessage(pendingAgentLaunches, thread);
-		if (currentBlockMessage) {
-			currentError = currentBlockMessage;
-			return;
-		}
-		const deletionUserId = getCurrentUserId();
-
+	async function renameThread(threadId: Id<'threadRecords'>, title: string) {
 		try {
-			await removeThread({ threadId: thread.threadId });
-			if (deletionUserId) {
-				clearComposerRecovery(deletionUserId, `thread:${thread.threadId}`);
+			await renameThreadMutation({ threadId, title });
+		} catch (error) {
+			currentError = error instanceof Error ? error.message : 'Failed to rename thread.';
+		}
+	}
+
+	async function archiveThread(threadId: Id<'threadRecords'>) {
+		const archiveUserId = getCurrentUserId();
+		try {
+			await archiveThreadMutation({ threadId });
+			if (archiveUserId) {
+				clearComposerRecovery(archiveUserId, `thread:${threadId}`);
 			}
-			if (getCurrentUserId() === deletionUserId) {
-				if (currentThreadId === thread.threadId) {
+			if (getCurrentUserId() === archiveUserId) {
+				if (currentThreadId === threadId) {
 					currentThreadId = null;
 					pendingCreatedThreadId = null;
 					workspaceSelectionGeneration += 1;
 				}
-				if (lastSavedThreadId === thread.threadId) {
+				if (lastSavedThreadId === threadId) {
 					lastSavedThreadId = null;
 				}
 				currentError = null;
 			}
 		} catch (error) {
-			if (getCurrentUserId() !== deletionUserId) {
+			if (getCurrentUserId() !== archiveUserId) {
 				return;
 			}
-			currentError = error instanceof Error ? error.message : 'Failed to delete thread.';
+			currentError = error instanceof Error ? error.message : 'Failed to archive thread.';
+		}
+	}
+
+	async function restoreThread(threadId: Id<'threadRecords'>) {
+		try {
+			await restoreThreadMutation({ threadId });
+		} catch (error) {
+			currentError = error instanceof Error ? error.message : 'Failed to restore thread.';
 		}
 	}
 
@@ -704,6 +711,8 @@
 						: 'This workspace needs to be attached before sending.';
 			return;
 		}
+
+		elapsedSeconds = 0;
 
 		const selectionGeneration = workspaceSelectionGeneration;
 		const selectedThreadId = currentThreadId;
@@ -1120,7 +1129,7 @@
 
 		hasResolvedInitialSelection = true;
 		const restoredThread = findThreadById(threads, uiPreferences?.lastThreadId ?? null);
-		if (restoredThread) {
+		if (restoredThread && isActiveThread(restoredThread)) {
 			setWorkspaceSelection(restoredThread.workspaceName, restoredThread.threadId);
 			restoredWorkspaceSessionIdToAttach =
 				findWorkspaceSessionByName(workspaceSessions, restoredThread.workspaceName)?._id ??
@@ -1301,36 +1310,27 @@
 </svelte:head>
 
 {#if !desktopApiResolved}
-	<div
-		class="flex h-screen items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_26%),linear-gradient(180deg,rgba(22,22,24,0.98),rgba(15,15,17,1))] px-6"
-	>
-		<p class="text-sm text-slate-300" aria-live="polite" aria-busy="true">
-			Connecting to Sprocket…
-		</p>
-	</div>
+	<CalmCentered
+		title="Connecting to Sprocket…"
+		description="Looking for a running Sprocket server on this machine."
+		busy={true}
+	/>
 {:else if !desktopApi}
-	<div
-		class="flex h-screen items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_26%),linear-gradient(180deg,rgba(22,22,24,0.98),rgba(15,15,17,1))] px-6"
+	<CalmCentered
+		title="Connect to Sprocket"
+		description={currentError ?? 'Connect to your Sprocket server to continue.'}
 	>
-		<div
-			class="w-full max-w-lg rounded-4xl border border-white/8 bg-[linear-gradient(180deg,rgba(33,33,36,0.96),rgba(24,24,27,0.98))] p-8 shadow-[0_28px_80px_rgba(0,0,0,0.34)]"
-		>
-			<h1 class="text-2xl font-medium tracking-tight text-white">Connect to Sprocket</h1>
-			<p class="mt-3 text-sm leading-6 text-slate-300">
-				{currentError ?? 'Connect to your Sprocket server to continue.'}
-			</p>
+		{#snippet actions()}
 			<a
-				class="mt-6 inline-flex rounded-2xl bg-white px-4 py-3 text-sm font-medium text-black transition hover:bg-slate-100"
+				class="inline-flex h-10 items-center justify-center rounded-xl bg-white px-4 text-sm font-medium text-black transition hover:bg-slate-100"
 				href={resolve('/pair')}
 			>
 				Open pairing
 			</a>
-		</div>
-	</div>
+		{/snippet}
+	</CalmCentered>
 {:else if !authReady}
-	<div
-		class="h-screen overflow-hidden bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_26%),linear-gradient(180deg,rgba(22,22,24,0.98),rgba(15,15,17,1))]"
-	>
+	<div class="h-screen overflow-hidden bg-[#0f1218]">
 		<AuthGate
 			authState={{
 				isLoading:
@@ -1362,90 +1362,88 @@
 		<div
 			class="grid h-screen grid-cols-[292px_minmax(0,1fr)] overflow-hidden bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_26%),linear-gradient(180deg,rgba(22,22,24,0.98),rgba(15,15,17,1))]"
 		>
-			<WorkspaceSidebar
-				{currentWorkspaceName}
-				{currentThreadId}
-				groups={groupedWorkspaceThreads}
-				{pendingAgentLaunches}
-				onChooseWorkspace={() => {
-					openWorkspacePicker('add');
-				}}
-				onReconnectWorkspace={(workspaceSessionId) => {
-					void reconnectWorkspaceSession(workspaceSessionId);
-				}}
-				onSignOut={() => void signOut()}
-				onStartThreadDraft={(workspaceName) => {
-					void startThreadDraftForWorkspace(workspaceName);
-				}}
-				onSelectThread={(thread) => {
-					void selectThread(thread);
-				}}
-				onDeleteThread={(thread) => {
-					void deleteThread(thread);
-				}}
-			/>
+			{#if settingsOpen}
+				<SettingsSidebar
+					activePage={settingsPage}
+					onBack={() => {
+						settingsOpen = false;
+						settingsPage = 'account';
+					}}
+					onNavigate={(page) => {
+						settingsPage = page;
+					}}
+				/>
+			{:else}
+				<WorkspaceSidebar
+					{currentWorkspaceName}
+					{currentThreadId}
+					groups={groupedWorkspaceThreads}
+					{pendingAgentLaunches}
+					onChooseWorkspace={() => {
+						openWorkspacePicker('add');
+					}}
+					onReconnectWorkspace={(workspaceSessionId) => {
+						void reconnectWorkspaceSession(workspaceSessionId);
+					}}
+					onOpenSettings={() => {
+						settingsPage = 'account';
+						settingsOpen = true;
+					}}
+					onStartThreadDraft={startThreadDraftForWorkspace}
+					onSelectThread={selectThread}
+					onRenameThread={(threadId, title) => {
+						void renameThread(threadId, title);
+					}}
+					onArchiveThread={(threadId) => {
+						void archiveThread(threadId);
+					}}
+				/>
+			{/if}
 
 			<main class="flex h-screen min-h-0 min-w-0 flex-col overflow-hidden">
-				<header class="flex h-12 items-center justify-between border-b border-white/6 px-5">
-					<div class="flex min-w-0 items-center gap-3">
+				{#if settingsOpen}
+					{#if settingsPage === 'archived'}
+						<SettingsArchived
+							{threads}
+							onRestore={(threadId) => {
+								void restoreThread(threadId);
+							}}
+						/>
+					{:else}
+						<SettingsAccount user={$authState.user} onSignOut={() => void signOut()} />
+					{/if}
+				{:else}
+					<header class="flex h-12 items-center border-b border-white/6 px-5">
 						<h1 class="truncate text-[1rem] font-medium tracking-[-0.03em] text-white">
 							{currentActiveThread?.title ?? 'New thread'}
 						</h1>
-						{#if currentWorkspaceSession}
-							<span
-								class="truncate rounded-full border border-white/8 bg-white/3 px-2.5 py-0.5 text-[11px] text-slate-300"
-							>
-								{currentWorkspaceSession.workspaceName}
-							</span>
-						{/if}
-					</div>
+					</header>
 
-					<div class="flex items-center gap-2">
-						{#if currentWorkspaceSession}
-							<button
-								type="button"
-								class="rounded-full border border-white/8 bg-white/3 px-3.5 py-1.5 text-[13px] text-slate-200 transition hover:border-white/12 hover:bg-white/6 hover:text-white"
-								onclick={() => {
-									if (currentWorkspaceSession.localWorkspaceAvailability === 'available') {
-										openWorkspacePicker('add');
-										return;
-									}
+					<ThreadTranscript
+						currentError={currentError ?? $authState.error ?? queryError?.message ?? null}
+						runError={runState?.lastError ?? null}
+						messages={visibleMessages}
+						actions={visibleActions}
+						workspaceSession={currentWorkspaceSession}
+					/>
 
-									reconnectWorkspaceSession(currentWorkspaceSession._id);
-								}}
-							>
-								{currentWorkspaceSession.localWorkspaceAvailability === 'available'
-									? 'Open'
-									: 'Reconnect'}
-							</button>
-						{/if}
-					</div>
-				</header>
-
-				<ThreadTranscript
-					currentError={currentError ?? $authState.error ?? queryError?.message ?? null}
-					runError={runState?.lastError ?? null}
-					messages={visibleMessages}
-					actions={visibleActions}
-					workspaceSession={currentWorkspaceSession}
-				/>
-
-				<PromptComposer
-					bind:prompt
-					bind:selectedModel
-					bind:selectedReasoningEffort
-					{canSend}
-					isSubmitting={isSubmittingPrompt || hasPendingAgentLaunch}
-					isStarting={hasPendingAgentLaunch}
-					{isRunning}
-					elapsedLabel={isRunning ? formatElapsedDuration(elapsedSeconds) : null}
-					onSubmit={() => {
-						void submitPrompt();
-					}}
-					onCancel={() => {
-						void cancelRun();
-					}}
-				/>
+					<PromptComposer
+						bind:prompt
+						bind:selectedModel
+						bind:selectedReasoningEffort
+						{canSend}
+						isSubmitting={isSubmittingPrompt || hasPendingAgentLaunch}
+						isStarting={hasPendingAgentLaunch}
+						{isRunning}
+						elapsedLabel={isRunning ? formatElapsedDuration(elapsedSeconds) : null}
+						onSubmit={() => {
+							void submitPrompt();
+						}}
+						onCancel={() => {
+							void cancelRun();
+						}}
+					/>
+				{/if}
 			</main>
 		</div>
 

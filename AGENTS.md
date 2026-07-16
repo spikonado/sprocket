@@ -50,15 +50,15 @@ Specifically for gpt-5.6-sol: You often end up writing more code than needed, es
 ### Working on Stuff - Only for Main Agents
 
 - Feel free to commit, branch, and spin up worktrees as you please. Don't push before asking.
-- Do the deep dives and figure out what needs to be done and delegate the rest accordingly to subagents.
-- Always use subagents to write the code.
+- Do the deep dives and figure out what needs to be done and delegate the rest accordingly and as needed to subagents.
+- Use subagents for LARGE tasks that will benefit from your context being less polluted and multiple subagents working in parallel.
 - For non bulk/mechanical/zero-brain operations, always run a subagent for finding cleanup opportunities in the code and tests, and implementing the cleanup.
 - For non bulk/mechanical/zero-brain operations, always get 2 subagents to review the code before considering your work done. One of those agents must have >=8 intelligence and review the code overall, the other must have >=7 taste and review the UI/UX, API design, and code quality parts.
 - When getting code reviewed by subagents in a loop, use gpt-5.6-sol as the review subagent for a max of 3 reviews. After this, rely on some other model for the review subagent.
 
 #### PR Workflow
 
-- Unless very specifically requested, PRs should be made only against the default branch.
+- Unless very specifically requested, PRs should be made only against the default branch and should not be a draft.
 - After a PR is made, don't perform any code review using subagents, let Greptile review the code.
 
 1. When requested, push code and make a PR. The PR title should have the same format as past PR titles. Ensure that your branch is updated with the latest main.
@@ -91,9 +91,9 @@ To subagents:
 
 | model         | cost | intelligence | taste | reasoning to use | CLI to use             |
 | ------------- | ---- | ------------ | ----- | ---------------- | ---------------------- |
-| gpt-5.6-sol   | 8    | 9            | 6     | low, medium      | codex                  |
-| fable-5       | 5    | 8            | 9     | low, medium      | claude or cursor-agent |
-| gpt-5.6-terra | 9    | 7            | 5     | high             | codex                  |
+| gpt-5.6-sol   | 8    | 9            | 6     | low              | codex                  |
+| fable-5       | 5    | 8            | 9     | low              | claude or cursor-agent |
+| gpt-5.6-terra | 9    | 7            | 5     | medium           | codex                  |
 | grok-4.5      | 10   | 6            | 7     | high, fast       | cursor-agent           |
 
 How to apply:
