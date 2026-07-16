@@ -4,7 +4,12 @@
 	import ProviderLogo from '$lib/components/provider-logo.svelte';
 	import ReasoningServiceSelector from '$lib/components/reasoning-service-selector.svelte';
 	import { shouldSubmitComposerFromKeydown } from '$lib/chat/composer';
-	import { defaultModelId, defaultReasoningEffort, defaultServiceTier } from '$convex/lib/models';
+	import {
+		defaultModelId,
+		defaultReasoningEffort,
+		defaultServiceTier,
+		getModelDefinition
+	} from '$convex/lib/models';
 	import type {
 		SupportedModelId,
 		SupportedReasoningEffort,
@@ -75,6 +80,10 @@
 		onSubmit();
 	}
 
+	function handleModelChange(modelId: SupportedModelId) {
+		selectedReasoningEffort = getModelDefinition(modelId).defaultReasoningEffort;
+	}
+
 	$effect(() => {
 		void prompt;
 		if (!composerTextarea) {
@@ -139,6 +148,7 @@
 								menuTitle="Model"
 								disabled={isRunning}
 								searchable
+								onValueChange={handleModelChange}
 								className="z-20 shrink-0"
 								triggerClassName="h-9 border-0 bg-transparent px-2 text-[15px] text-slate-200 shadow-none hover:bg-transparent focus-visible:ring-0"
 							>

@@ -46,9 +46,7 @@
 	$effect(() => {
 		const supportedReasoning = model.reasoningEfforts as readonly SupportedReasoningEffort[];
 		if (!supportedReasoning.includes(reasoningEffort)) {
-			reasoningEffort = supportedReasoning.includes(defaultReasoningEffort)
-				? defaultReasoningEffort
-				: supportedReasoning[0];
+			reasoningEffort = model.defaultReasoningEffort;
 		}
 		if (!model.serviceTiers.includes(serviceTier)) serviceTier = defaultServiceTier;
 	});
@@ -120,7 +118,7 @@
 							)}
 						/>
 						<span>{reasoningEffortLabels[effort]}</span>
-						{#if effort === defaultReasoningEffort}
+						{#if effort === model.defaultReasoningEffort}
 							<span class="ml-auto text-xs text-slate-500">Default</span>
 						{/if}
 					</button>

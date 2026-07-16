@@ -17,6 +17,7 @@ export const modelOptions: ModelSelectorOption[] = modelDefinitions.map(
 );
 
 export const reasoningEffortLabels: Record<SupportedReasoningEffort, string> = {
+	none: 'None',
 	low: 'Low',
 	medium: 'Medium',
 	high: 'High',

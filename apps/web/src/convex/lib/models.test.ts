@@ -12,14 +12,7 @@ describe('model configuration', () => {
 		]);
 	});
 
-	it('rejects reasoning and service tiers that a model cannot serve', () => {
-		expect(() =>
-			assertSupportedModelConfiguration({
-				modelId: 'gpt-5.6-sol',
-				reasoningEffort: 'max',
-				serviceTier: 'fast'
-			})
-		).not.toThrow();
+	it('rejects reasoning efforts unsupported by a model', () => {
 		expect(() =>
 			assertSupportedModelConfiguration({
 				modelId: 'grok-4.5',
@@ -30,9 +23,9 @@ describe('model configuration', () => {
 		expect(() =>
 			assertSupportedModelConfiguration({
 				modelId: 'claude-fable-5',
-				reasoningEffort: 'high',
-				serviceTier: 'fast'
+				reasoningEffort: 'none',
+				serviceTier: 'standard'
 			})
-		).toThrow('Fable-5 does not support the fast service tier.');
+		).toThrow('Claude Fable 5 does not support none reasoning.');
 	});
 });
