@@ -557,7 +557,10 @@ async fn write_new_file(
     let mut file = tokio::fs::File::from_std(file.into_std());
     file.write_all(contents)
         .await
-        .with_context(|| format!("failed to write {}", path.display()))
+        .with_context(|| format!("failed to write {}", path.display()))?;
+    file.flush()
+        .await
+        .with_context(|| format!("failed to flush {}", path.display()))
 }
 
 async fn replace_file(
