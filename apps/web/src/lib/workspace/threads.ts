@@ -8,13 +8,18 @@ export function findWorkspaceSessionByName<T extends Pick<WorkspaceSession, 'wor
 	return workspaceSessions.find((session) => session.workspaceName === workspaceName) ?? null;
 }
 
+export function isActiveThread(thread: Pick<ThreadSummary, 'threadStatus'>) {
+	return thread.threadStatus !== 'archived';
+}
+
 export function getWorkspaceThreadGroups(
 	workspaceSessions: WorkspaceSession[],
 	threads: ThreadSummary[]
 ) {
 	const groups = new Map<string, WorkspaceThreadGroup>();
+	const activeThreads = threads.filter(isActiveThread);
 
-	for (const thread of threads) {
+	for (const thread of activeThreads) {
 		const existingGroup = groups.get(thread.workspaceName);
 
 		if (existingGroup) {
@@ -228,19 +233,6 @@ export function resolveExpiredAgentLaunch(
 		pendingLaunches: clearPendingAgentLaunch(pendingLaunches, threadId, launchId),
 		shouldRecover: !hasAgentLaunchProgressed(pendingLaunch, latestRunId, latestClaimExpiresAt)
 	};
-}
-
-export function getThreadDeletionBlockMessage(
-	pendingLaunches: PendingAgentLaunches,
-	thread: Pick<ThreadSummary, 'threadId' | 'hasActiveRun'>
-): string | null {
-	if (isAgentLaunchPending(pendingLaunches, thread.threadId)) {
-		return 'Wait for the local agent to start before deleting this thread.';
-	}
-
-	return thread.hasActiveRun
-		? 'Finish or cancel the active run before deleting this thread.'
-		: null;
 }
 
 export function resolveWorkspaceThreadSelection(args: {

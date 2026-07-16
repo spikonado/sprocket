@@ -1,6 +1,7 @@
 <script lang="ts">
-	import { LoaderCircle, Sparkles, UserRound } from '@lucide/svelte';
+	import { LoaderCircle } from '@lucide/svelte';
 	import Button from '$lib/components/ui/button/button.svelte';
+	import CalmCentered from '$lib/components/home/calm-centered.svelte';
 
 	type AuthGateState = {
 		isLoading: boolean;
@@ -28,14 +29,14 @@
 
 	const headline = $derived(
 		!authState.isConfigured
-			? 'Sign-in unavailable.'
+			? 'Sign-in unavailable'
 			: showConfirming
 				? 'Confirming your session'
 				: authState.connectionFailed
-					? 'Couldn’t connect your account.'
+					? 'Couldn’t connect your account'
 					: showPreparing
 						? 'Preparing sign-in'
-						: 'Sign in to access your threads.'
+						: 'Sign in to continue'
 	);
 
 	const description = $derived(
@@ -51,43 +52,18 @@
 	);
 
 	const loadingLabel = $derived(authState.isAuthenticated ? 'Almost there' : 'One moment');
+	const showError = $derived(Boolean(authState.isConfigured && authState.error && !overlayOpen));
 </script>
 
-<div
-	class="flex min-h-screen items-center justify-center px-6"
-	inert={overlayOpen}
-	aria-hidden={overlayOpen ? true : undefined}
->
-	<div
-		class="bg-card/90 w-full max-w-xl rounded-[30px] border border-white/8 p-8 shadow-[0_28px_80px_rgba(0,0,0,0.34)]"
-	>
-		<div class="mb-6 flex items-center gap-3">
-			<div
-				class="flex size-10 items-center justify-center rounded-2xl border border-white/8 bg-white/4"
-			>
-				<Sparkles class="size-4 text-slate-100" aria-hidden="true" />
-			</div>
-			<div>
-				<p class="text-sm font-medium text-white">Sprocket</p>
-				<p class="text-muted-foreground text-[11px] tracking-[0.2em] uppercase">Account</p>
-			</div>
-		</div>
-
-		<h1 class="text-2xl font-medium tracking-tight text-white">{headline}</h1>
-		<p class="text-muted-foreground mt-3 text-sm leading-6">{description}</p>
-
-		{#if authState.isConfigured && authState.error && !overlayOpen}
-			<div
-				class="mt-5 rounded-2xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-100"
-				role="alert"
-			>
-				{authState.error}
-			</div>
+<div inert={overlayOpen} aria-hidden={overlayOpen ? true : undefined}>
+	<CalmCentered title={headline} {description}>
+		{#if showError}
+			<p class="text-center text-sm text-rose-300" role="alert">{authState.error}</p>
 		{/if}
 
 		{#if authState.isLoading}
 			<div
-				class="text-muted-foreground mt-5 flex items-center gap-2 text-sm"
+				class="flex items-center justify-center gap-2 text-sm text-slate-400"
 				aria-live="polite"
 				aria-busy="true"
 			>
@@ -96,23 +72,18 @@
 			</div>
 		{/if}
 
-		{#if authState.isAuthenticated}
-			<div class="mt-6 flex gap-3">
+		{#snippet actions()}
+			{#if authState.isAuthenticated}
 				{#if authState.connectionFailed}
-					<Button onclick={onRetry} disabled={authState.isLoading}>Retry Connection</Button>
+					<Button onclick={onRetry} disabled={authState.isLoading}>Retry</Button>
 				{/if}
 				<Button variant="outline" onclick={onSignOut}>Sign Out</Button>
-			</div>
-		{:else if authState.isConfigured}
-			<div class="mt-6 flex gap-3">
-				<Button onclick={onSignIn} disabled={authState.isLoading}>
-					<UserRound class="mr-2 size-4" aria-hidden="true" />
-					Sign In
-				</Button>
+			{:else if authState.isConfigured}
+				<Button onclick={onSignIn} disabled={authState.isLoading}>Sign In</Button>
 				<Button variant="outline" onclick={onSignUp} disabled={authState.isLoading}>
 					Create Account
 				</Button>
-			</div>
-		{/if}
-	</div>
+			{/if}
+		{/snippet}
+	</CalmCentered>
 </div>

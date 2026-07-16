@@ -35,7 +35,8 @@ export default defineSchema({
 		title: v.optional(v.string()),
 		selectedModel: vModelId,
 		reasoningEffort: vReasoningEffort,
-		lastMessageAt: v.number()
+		lastMessageAt: v.number(),
+		archivedAt: v.optional(v.number())
 	})
 		.index('by_userId_lastMessageAt', ['userId', 'lastMessageAt'])
 		.index('by_userId_submissionId', ['userId', 'submissionId'])

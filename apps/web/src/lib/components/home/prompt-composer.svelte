@@ -35,20 +35,24 @@
 
 	let composerTextarea = $state<HTMLTextAreaElement | null>(null);
 
+	const COMPOSER_MIN_HEIGHT_PX = 68;
+	const COMPOSER_MAX_HEIGHT_PX = 160;
+
 	function syncComposerHeight() {
 		if (!composerTextarea) {
 			return;
 		}
 
-		composerTextarea.style.height = '0px';
-
-		const minHeight = 68;
-		const maxHeight = 160;
-		const nextHeight = Math.min(Math.max(composerTextarea.scrollHeight, minHeight), maxHeight);
-
-		composerTextarea.style.height = `${nextHeight}px`;
-		composerTextarea.style.overflowY =
-			composerTextarea.scrollHeight > nextHeight ? 'auto' : 'hidden';
+		const el = composerTextarea;
+		// Use auto (not 0px) and apply the result in the same turn so the transcript
+		// flex pane does not visibly collapse/expand on each keystroke.
+		el.style.height = 'auto';
+		const nextHeight = Math.min(
+			Math.max(el.scrollHeight, COMPOSER_MIN_HEIGHT_PX),
+			COMPOSER_MAX_HEIGHT_PX
+		);
+		el.style.height = `${nextHeight}px`;
+		el.style.overflowY = el.scrollHeight > nextHeight ? 'auto' : 'hidden';
 	}
 
 	function handleComposerKeydown(event: KeyboardEvent) {
@@ -65,16 +69,11 @@
 	}
 
 	$effect(() => {
-		const textarea = composerTextarea;
-		const promptValue = prompt;
-
-		queueMicrotask(() => {
-			if (!textarea && promptValue.length === 0) {
-				return;
-			}
-
-			syncComposerHeight();
-		});
+		void prompt;
+		if (!composerTextarea) {
+			return;
+		}
+		syncComposerHeight();
 	});
 
 	const composerShellClass =
@@ -118,7 +117,8 @@
 							class="min-h-0 w-full resize-none border-0 bg-transparent px-0 py-0 text-[14px] leading-6 text-slate-100 outline-none placeholder:text-slate-500"
 							placeholder="Ask anything, @tag files/directories, or use / to show available commands"
 							disabled={isRunning || isSubmitting}
-							onkeydown={handleComposerKeydown}></textarea>
+							onkeydown={handleComposerKeydown}
+							oninput={syncComposerHeight}></textarea>
 					</div>
 
 					<div

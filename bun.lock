@@ -26,6 +26,7 @@
       "dependencies": {
         "@ai-sdk/openai": "^4.0.11",
         "@convex-dev/rate-limiter": "^0.3.2",
+        "@fontsource-variable/ibm-plex-sans": "^5.2.8",
         "@fontsource/dm-sans": "^5.2.8",
         "@lucide/svelte": "^1.18.0",
         "@workos-inc/authkit-js": "^0.20.0",
@@ -217,6 +218,8 @@
     "@eslint/plugin-kit": ["@eslint/plugin-kit@0.7.2", "", { "dependencies": { "@eslint/core": "^1.2.1", "levn": "^0.4.1" } }, "sha512-+CNAzxglkrpNf/kKywqQfk74QjtceuOE7Qm+AF8miRvPF/wmmK5+OJOgVh3AVTT3RP2mH3+FOaxlE5v72owk0A=="],
 
     "@exodus/bytes": ["@exodus/bytes@1.15.1", "", { "peerDependencies": { "@noble/hashes": "^1.8.0 || ^2.0.0" }, "optionalPeers": ["@noble/hashes"] }, "sha512-S6mL0yNB/Abt9Ei4tq8gDhcczc4S3+vQ4ra7vxnAf+YHC02srtqxKKZghx2Dq6p0e66THKwR6r8N6P95wEty7Q=="],
+
+    "@fontsource-variable/ibm-plex-sans": ["@fontsource-variable/ibm-plex-sans@5.2.8", "", {}, "sha512-n5PF2iFa0CZT0QYTPzxvZ39opC9LnU0zdoRccoADbs+Dtsd+lbXOZF7RNuIPHcQX1dKjF63sxnRImQIB5eD0Ag=="],
 
     "@fontsource/dm-sans": ["@fontsource/dm-sans@5.2.8", "", {}, "sha512-tlovG42m9ESG28WiHpLq3F5umAlm64rv0RkqTbYowRn70e9OlRr5a3yTJhrhrY+k5lftR/OFJjPzOLQzk8EfCA=="],
 

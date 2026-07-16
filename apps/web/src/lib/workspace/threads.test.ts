@@ -4,8 +4,8 @@ import {
 	clearPendingAgentLaunch,
 	dataForThread,
 	findWorkspaceSessionByName,
-	getThreadDeletionBlockMessage,
 	getWorkspaceThreadGroups,
+	isActiveThread,
 	isAgentLaunchPending,
 	isLatestRunReadyForThread,
 	resolveExpiredAgentLaunch,
@@ -114,6 +114,39 @@ describe('workspace thread helpers', () => {
 		expect(groups).toHaveLength(2);
 		expect(groups.find((group) => group.workspaceName === 'sprocket')?.threads).toHaveLength(2);
 		expect(groups.find((group) => group.workspaceName === 'Sprocket')?.threads).toHaveLength(1);
+	});
+
+	it('excludes archived threads from project groups', () => {
+		const active = makeThreadSummary({
+			workspaceSessionId: 'ws-current' as ThreadSummary['workspaceSessionId'],
+			workspaceName: 'sprocket',
+			lastMessageAt: 10
+		});
+		const archived = makeThreadSummary({
+			_id: 'thread-record-2' as ThreadSummary['_id'],
+			threadId: 'thread-record-2' as ThreadSummary['threadId'],
+			workspaceSessionId: 'ws-current' as ThreadSummary['workspaceSessionId'],
+			workspaceName: 'sprocket',
+			lastMessageAt: 20,
+			threadStatus: 'archived'
+		});
+
+		expect(isActiveThread(active)).toBe(true);
+		expect(isActiveThread(archived)).toBe(false);
+
+		const groups = getWorkspaceThreadGroups(
+			[
+				makeWorkspaceSession({
+					_id: 'ws-current' as WorkspaceSession['_id'],
+					workspaceName: 'sprocket'
+				})
+			],
+			[active, archived]
+		);
+
+		expect(groups).toHaveLength(1);
+		expect(groups[0]?.threads).toHaveLength(1);
+		expect(groups[0]?.threads[0]?.threadId).toBe('thread-record-1');
 	});
 
 	it('finds a workspace session by exact name', () => {
@@ -339,32 +372,5 @@ describe('workspace thread helpers', () => {
 		expect(dataForThread(activeThreadRecord, thread.threadId)).toBe(activeThreadRecord);
 		expect(dataForThread(thread, 'thread-record-2' as ThreadSummary['threadId'])).toBeNull();
 		expect(dataForThread(undefined, thread.threadId)).toBeNull();
-	});
-
-	it('blocks thread deletion while a launch is pending or a run is active', () => {
-		expect(
-			getThreadDeletionBlockMessage(beginLaunch({}, threadA, 1), {
-				threadId: threadA,
-				hasActiveRun: false
-			})
-		).toBe('Wait for the local agent to start before deleting this thread.');
-		expect(
-			getThreadDeletionBlockMessage(
-				{},
-				{
-					threadId: threadA,
-					hasActiveRun: true
-				}
-			)
-		).toBe('Finish or cancel the active run before deleting this thread.');
-		expect(
-			getThreadDeletionBlockMessage(
-				{},
-				{
-					threadId: threadA,
-					hasActiveRun: false
-				}
-			)
-		).toBeNull();
 	});
 });

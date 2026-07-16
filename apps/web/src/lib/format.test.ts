@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatRelativeTime } from '$lib/format';
+import { formatElapsedDuration } from '$lib/format';
 
 describe('format helpers', () => {
-	it('formats relative times compactly', () => {
-		expect(formatRelativeTime(60_000, 120_000)).toBe('1m ago');
-		expect(formatRelativeTime(7_200_000, 10_800_000)).toBe('1h ago');
+	it('formats elapsed durations', () => {
+		expect(formatElapsedDuration(0)).toBe('0s');
+		expect(formatElapsedDuration(45)).toBe('45s');
+		expect(formatElapsedDuration(60)).toBe('1m 0s');
+		expect(formatElapsedDuration(125)).toBe('2m 5s');
 	});
 });
