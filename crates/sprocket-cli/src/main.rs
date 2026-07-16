@@ -1,14 +1,22 @@
 use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
-use sprocket_server::{INSTALLED_WEB_DIR, RunOptions, ServerConfig, load_repo_env, run};
+use hmac::{Hmac, KeyInit, Mac};
+use serde::{Deserialize, Serialize};
+use sha2::Sha256;
+use sprocket_server::{
+    INSTALLED_WEB_DIR, RunOptions, ServerConfig, load_repo_env, pairing_proof_message, pairing_url,
+    read_pairing_credential, run,
+};
 use tracing_subscriber::EnvFilter;
+use uuid::Uuid;
 
 const DESKTOP_EXECUTABLE_ENV: &str = "SPROCKET_DESKTOP_EXECUTABLE";
-const DESKTOP_WEB_ENV: &str = "SPROCKET_WEB_ONLY";
+type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -37,10 +45,6 @@ struct ServeArgs {
     #[command(flatten)]
     server: ServerConfig,
 
-    /// Open the web app in your default browser after startup
-    #[arg(long)]
-    open: bool,
-
     /// Only print machine-readable startup output
     #[arg(long, env = "SPROCKET_QUIET")]
     quiet: bool,
@@ -62,21 +66,17 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Some(Commands::Serve(serve)) => {
             if cli.web {
-                anyhow::bail!("`--web` cannot be combined with `serve`; use `serve --open`");
+                anyhow::bail!("`--web` cannot be combined with `serve`; run `sprocket --web`");
             }
-            serve_local(serve.server, serve.quiet, serve.open)
+            serve_local(serve.server, serve.quiet, false)
+        }
+        None if cli.web => {
+            let server = ServerConfig::try_parse_from(["sprocket"])?;
+            serve_local(server, false, true)
         }
         None => {
-            if cli.web {
-                eprintln!("Opening Sprocket in your browser…");
-            }
-            if launch_desktop(cli.web)? {
+            if launch_desktop()? {
                 return Ok(());
-            }
-
-            if cli.web {
-                let server = ServerConfig::try_parse_from(["sprocket"])?;
-                return serve_local(server, false, true);
             }
 
             anyhow::bail!(
@@ -89,26 +89,117 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn serve_local(server: ServerConfig, quiet: bool, open_browser: bool) -> anyhow::Result<()> {
-    if !server.api_only && server.resolve_static_dir().is_none() {
-        anyhow::bail!(
-            "Web app files not found. Build them with `bun run --cwd apps/web build`, \
-             or install them to `<prefix>/{INSTALLED_WEB_DIR}`, or pass `--api-only` with the Vite dev server."
-        );
-    }
-
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
-        .block_on(run(
-            server,
-            RunOptions {
-                quiet,
-                open_browser,
-            },
-        ))
+        .block_on(async move {
+            if open_browser && open_running_web_app(&server).await? {
+                return Ok(());
+            }
+
+            if !server.api_only && server.resolve_static_dir().is_none() {
+                anyhow::bail!(
+                    "Web app files not found. Build them with `bun run --cwd apps/web build`, \
+                     or install them to `<prefix>/{INSTALLED_WEB_DIR}`, or pass `--api-only` with the Vite dev server."
+                );
+            }
+
+            run(
+                server,
+                RunOptions {
+                    quiet,
+                    open_browser,
+                },
+            )
+            .await
+        })
 }
 
-fn launch_desktop(web_only: bool) -> anyhow::Result<bool> {
+#[derive(Serialize)]
+struct PairingProofRequest<'a> {
+    challenge: &'a str,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PairingProofResponse {
+    http_base_url: String,
+    web_ui_enabled: bool,
+    proof: Vec<u8>,
+}
+
+async fn open_running_web_app(server: &ServerConfig) -> anyhow::Result<bool> {
+    let expected_base_url = server.listen_url();
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_millis(750))
+        .build()?;
+    let challenge = Uuid::new_v4().to_string();
+    let response = match client
+        .post(format!("{expected_base_url}/api/auth/pairing-proof"))
+        .json(&PairingProofRequest {
+            challenge: &challenge,
+        })
+        .send()
+        .await
+    {
+        Ok(response) if response.status().is_success() => response,
+        Ok(_) => anyhow::bail!(
+            "Port {} is already used by another service; set SPROCKET_PORT to a free port",
+            server.port
+        ),
+        Err(error) if error.is_connect() => return Ok(false),
+        Err(error) => return Err(error).context("failed to check for a running Sprocket server"),
+    };
+    let pairing_proof = response
+        .json::<PairingProofResponse>()
+        .await
+        .with_context(|| {
+        format!(
+            "port {} is already used by a service that is not Sprocket; set SPROCKET_PORT to a free port",
+            server.port
+        )
+    })?;
+    if pairing_proof.http_base_url.trim_end_matches('/') != expected_base_url {
+        anyhow::bail!(
+            "Port {} is already used by a different Sprocket configuration; set SPROCKET_PORT to a free port",
+            server.port
+        );
+    }
+
+    let data_dir = server.resolve_data_dir();
+    let Some(credential) = read_pairing_credential(server)? else {
+        anyhow::bail!(
+            "Sprocket is already running at {expected_base_url}, but its pairing credential was not found in {}. Set SPROCKET_DATA_DIR to the running server's data directory",
+            data_dir.display()
+        );
+    };
+    let message = pairing_proof_message(
+        &challenge,
+        &pairing_proof.http_base_url,
+        pairing_proof.web_ui_enabled,
+    );
+    let mut mac = HmacSha256::new_from_slice(credential.as_bytes())?;
+    mac.update(message.as_bytes());
+    mac.verify_slice(&pairing_proof.proof).map_err(|_| {
+        anyhow::anyhow!(
+            "Sprocket is already running at {expected_base_url}, but it uses a different data directory. Set SPROCKET_DATA_DIR to the running server's data directory"
+        )
+    })?;
+    if !pairing_proof.web_ui_enabled {
+        anyhow::bail!(
+            "Sprocket is already running at {expected_base_url} in API-only mode; stop it or set SPROCKET_PORT to launch the web app on a different port"
+        );
+    }
+
+    let target = pairing_url(&expected_base_url, &credential);
+    eprintln!("Sprocket is already running. Opening it in your browser…");
+    open::that(&target)
+        .with_context(|| format!("failed to open the browser; open {target} manually"))?;
+    Ok(true)
+}
+
+fn launch_desktop() -> anyhow::Result<bool> {
     let desktop_executable = std::env::var_os(DESKTOP_EXECUTABLE_ENV)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
@@ -119,12 +210,12 @@ fn launch_desktop(web_only: bool) -> anyhow::Result<bool> {
         });
 
     if let Some(target) = desktop_executable {
-        spawn_desktop(Command::new(&target), web_only)
+        spawn_desktop(Command::new(&target))
             .with_context(|| format!("failed to launch {}", target.display()))?;
         return Ok(true);
     }
 
-    match spawn_desktop(Command::new(DESKTOP_EXECUTABLE_NAME), web_only) {
+    match spawn_desktop(Command::new(DESKTOP_EXECUTABLE_NAME)) {
         Ok(()) => return Ok(true),
         Err(error) if error.kind() == ErrorKind::NotFound => {}
         Err(error) => return Err(error).context("failed to launch Sprocket desktop app"),
@@ -133,7 +224,7 @@ fn launch_desktop(web_only: bool) -> anyhow::Result<bool> {
     if let Some(launcher) = find_dev_desktop_launcher() {
         let mut command = Command::new("node");
         command.arg(launcher);
-        match spawn_desktop(command, web_only) {
+        match spawn_desktop(command) {
             Ok(()) => return Ok(true),
             Err(error) if error.kind() == ErrorKind::NotFound => {}
             Err(error) => {
@@ -145,26 +236,9 @@ fn launch_desktop(web_only: bool) -> anyhow::Result<bool> {
     Ok(false)
 }
 
-fn spawn_desktop(mut command: Command, web_only: bool) -> std::io::Result<()> {
+fn spawn_desktop(mut command: Command) -> std::io::Result<()> {
     // Electron treats this development override as a request to run its binary as Node.js.
     command.env_remove("ELECTRON_RUN_AS_NODE");
-    // Only an explicit `--web` launch may put the desktop app into web-only mode.
-    command.env_remove(DESKTOP_WEB_ENV);
-
-    if web_only {
-        command.env(DESKTOP_WEB_ENV, "1");
-        let status = command
-            .stdin(Stdio::null())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status()?;
-        if !status.success() {
-            return Err(std::io::Error::other(format!(
-                "Sprocket desktop app exited with {status}"
-            )));
-        }
-        return Ok(());
-    }
 
     command
         .stdin(Stdio::null())
@@ -263,5 +337,7 @@ mod tests {
         let server = Cli::try_parse_from(["sprocket", "serve", "--quiet"]).unwrap();
         assert!(!server.web);
         assert!(matches!(server.command, Some(Commands::Serve(_))));
+
+        assert!(Cli::try_parse_from(["sprocket", "serve", "--open"]).is_err());
     }
 }

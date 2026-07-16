@@ -26,6 +26,19 @@ struct DesktopBootstrapResponse {
 }
 
 #[derive(Debug, Deserialize)]
+struct PairingProofRequest {
+    challenge: String,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PairingProofResponse {
+    http_base_url: String,
+    web_ui_enabled: bool,
+    proof: Vec<u8>,
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DesktopLoginStartRequest {
     state: String,
@@ -49,6 +62,7 @@ pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/auth/session", get(session))
         .route("/auth/bootstrap", post(bootstrap))
+        .route("/auth/pairing-proof", post(pairing_proof))
         .route("/auth/desktop-bootstrap", get(desktop_bootstrap))
         .route("/auth/desktop-login/start", post(desktop_login_start))
         .route("/auth/desktop-login/callback", get(desktop_login_callback))
@@ -81,6 +95,31 @@ async fn bootstrap(
     jar = jar.add(cookie);
 
     Ok((StatusCode::OK, jar, Json(response)))
+}
+
+async fn pairing_proof(
+    State(state): State<AppState>,
+    Json(payload): Json<PairingProofRequest>,
+) -> Result<Json<PairingProofResponse>, ApiError> {
+    if payload.challenge.trim().is_empty() {
+        return Err(ApiError::bad_request(anyhow::anyhow!(
+            "pairing challenge must not be empty"
+        )));
+    }
+    let message = crate::pairing_proof_message(
+        &payload.challenge,
+        &state.http_base_url,
+        state.web_ui_enabled,
+    );
+    let proof = state
+        .auth
+        .pairing_proof(&message)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(PairingProofResponse {
+        http_base_url: state.http_base_url.clone(),
+        web_ui_enabled: state.web_ui_enabled,
+        proof,
+    }))
 }
 
 async fn desktop_bootstrap(
@@ -351,6 +390,7 @@ mod tests {
     use axum::body::Body;
     use axum::extract::ConnectInfo;
     use axum::http::{Request, header};
+    use hmac::{KeyInit, Mac};
     use tower::ServiceExt;
     use uuid::Uuid;
 
@@ -374,6 +414,7 @@ mod tests {
             desktop_login_callback_url: auth::desktop_login_callback_url(7731),
             loopback_desktop_login_supported: loopback_supported,
             convex_deployment_url: "https://example.convex.cloud".to_string(),
+            web_ui_enabled: true,
             desktop_bootstrap_token: None,
         };
 
@@ -413,6 +454,35 @@ mod tests {
     fn with_peer(mut request: Request<Body>, peer: SocketAddr) -> Request<Body> {
         request.extensions_mut().insert(ConnectInfo(peer));
         request
+    }
+
+    #[tokio::test]
+    async fn pairing_proof_authenticates_the_running_server() {
+        let (state, _, credential) = test_state(true).await;
+        let app = router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/auth/pairing-proof")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"challenge":"challenge"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let payload = read_json(response).await;
+        let proof: Vec<u8> = serde_json::from_value(payload["proof"].clone()).unwrap();
+        let message = crate::pairing_proof_message(
+            "challenge",
+            payload["httpBaseUrl"].as_str().unwrap(),
+            payload["webUiEnabled"].as_bool().unwrap(),
+        );
+        let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(credential.as_bytes()).unwrap();
+        mac.update(message.as_bytes());
+        mac.verify_slice(&proof).unwrap();
     }
 
     #[tokio::test]

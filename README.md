@@ -9,23 +9,27 @@ command execution on your machine.
 Prebuilt releases are not published yet. To create installable artifacts from
 source, follow [Development](#development) and run `bun run build:release`.
 
-After installing the Sprocket desktop application and its `sprocket` CLI,
+After installing the Sprocket desktop application and the `sprocket` CLI,
 launch it from a terminal:
 
 ```sh
 sprocket
 ```
 
-This starts the local Sprocket server and opens the desktop application. To use
-the same application entirely in your default browser, run:
+This starts the local Sprocket server and opens the separately installed desktop
+application. If it cannot find the desktop executable, the CLI suggests the
+browser-only command instead. To use Sprocket entirely in your default browser,
+run:
 
 ```sh
 sprocket --web
 ```
 
-Keep that command running while using the browser app. In either mode, the app
-is served locally at `http://127.0.0.1:17731`; it is not exposed to the network
-by default.
+`--web` runs the server and bundled static web app directly; it does not start
+or require Electron. If the desktop server is already running, the command opens
+that same server instead of starting another one. Keep the server command
+running while using the browser app. In either mode, the app is served locally
+at `http://127.0.0.1:17731`; it is not exposed to the network by default.
 
 After Sprocket opens:
 
@@ -48,7 +52,6 @@ with `SPROCKET_DATA_DIR`.
 | `sprocket`                  | Start the server and desktop app.                                              |
 | `sprocket --web`            | Start the server and open only the browser app.                                |
 | `sprocket serve`            | Run the local server in the foreground without launching a client.             |
-| `sprocket serve --open`     | Run the server and open its browser app.                                       |
 | `sprocket serve --api-only` | Serve only `/api`; intended for development (see [Development](#development)). |
 
 Run `sprocket --help` or `sprocket serve --help` for all options. Common server
@@ -111,15 +114,16 @@ bun run build
 prek run -a
 ```
 
-The final command runs all configured formatting and linting checks.
-
-Create the optimized desktop package and standalone CLI artifact with:
+Create the optimized desktop package and standalone CLI bundle with:
 
 ```sh
 bun run build:release
 ```
 
-Release artifacts are written to `apps/desktop/dist/`.
+Release artifacts are written to `apps/desktop/dist/`. The Electron desktop
+package and standalone CLI bundle are separate artifacts. The CLI bundle
+contains only the native `sprocket` executable and the static web files needed
+by `sprocket --web`; it does not contain Electron.
 
 ## Troubleshooting
 
@@ -130,5 +134,5 @@ Release artifacts are written to `apps/desktop/dist/`.
   wildcard WorkOS redirect above allows the native callback to follow the new
   port.
 - If the CLI cannot locate the desktop executable, set
-  `SPROCKET_DESKTOP_EXECUTABLE` to its full path. `sprocket --web` can also fall
-  back to the bundled browser application when available.
+  `SPROCKET_DESKTOP_EXECUTABLE` to its full path, or use `sprocket --web` without
+  the desktop application.

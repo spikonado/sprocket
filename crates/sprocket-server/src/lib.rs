@@ -63,6 +63,7 @@ pub struct AppState {
     pub desktop_login_callback_url: String,
     pub loopback_desktop_login_supported: bool,
     pub convex_deployment_url: String,
+    pub web_ui_enabled: bool,
     pub desktop_bootstrap_token: Option<Arc<Mutex<Option<String>>>>,
 }
 
@@ -109,6 +110,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         desktop_login_callback_url: auth::desktop_login_callback_url(config.port),
         loopback_desktop_login_supported: auth::host_supports_loopback_desktop_login(&config.host),
         convex_deployment_url,
+        web_ui_enabled,
         desktop_bootstrap_token,
     };
 
@@ -169,11 +171,19 @@ fn default_dev_web_url() -> Option<String> {
         .or_else(|| Some(config::DEFAULT_DEV_WEB_URL.to_string()))
 }
 
-fn pairing_url(base_url: &str, pairing_credential: &str) -> String {
+pub fn pairing_url(base_url: &str, pairing_credential: &str) -> String {
     format!(
         "{}/pair#token={pairing_credential}",
         base_url.trim_end_matches('/')
     )
+}
+
+pub fn pairing_proof_message(challenge: &str, http_base_url: &str, web_ui_enabled: bool) -> String {
+    format!("{challenge}\n{http_base_url}\nweb-ui={web_ui_enabled}")
+}
+
+pub fn read_pairing_credential(config: &ServerConfig) -> anyhow::Result<Option<String>> {
+    auth::read_pairing_credential(&config.resolve_data_dir())
 }
 
 pub use repo_env::load_repo_env;

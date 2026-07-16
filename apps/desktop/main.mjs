@@ -2,7 +2,7 @@ import electron from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { DEV_API_PORT, DEV_WEB_URL, INSTALLED_APP_PORT } from './local-config.mjs';
 
@@ -11,7 +11,6 @@ const { app, BrowserWindow, dialog, Menu, ipcMain, shell } = electron;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const isDevelopment = !app.isPackaged;
-const webOnly = process.env.SPROCKET_WEB_ONLY === '1';
 const defaultServerPort = isDevelopment ? DEV_API_PORT : INSTALLED_APP_PORT;
 const serverPort = Number(process.env.SPROCKET_PORT ?? defaultServerPort);
 // Native AuthKit callbacks use the loopback IP; localhost is the canonical web-dev origin.
@@ -28,7 +27,7 @@ let mainWindowRef = null;
 let serverReadyPromise = null;
 let isQuitting = false;
 
-const hasSingleInstanceLock = app.requestSingleInstanceLock({ openWeb: webOnly });
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
 	app.quit();
 }
@@ -93,6 +92,70 @@ function waitForServerReady(baseUrl, timeoutMs = 30_000) {
 	});
 }
 
+async function attachToRunningServer(baseUrl, dataDir) {
+	const challenge = randomUUID();
+	let response;
+	try {
+		response = await fetch(`${baseUrl}/api/auth/pairing-proof`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ challenge }),
+			signal: AbortSignal.timeout(750)
+		});
+	} catch (error) {
+		if (error?.cause?.code === 'ECONNREFUSED') {
+			return false;
+		}
+		throw new Error(`Failed to check the service at ${baseUrl}.`, { cause: error });
+	}
+
+	if (!response.ok) {
+		throw new Error(`Port ${serverPort} is already used by another service.`);
+	}
+
+	const pairingProof = await response.json();
+	if (
+		pairingProof?.httpBaseUrl !== baseUrl ||
+		typeof pairingProof.webUiEnabled !== 'boolean' ||
+		!Array.isArray(pairingProof.proof)
+	) {
+		throw new Error(`The service at ${baseUrl} is not a compatible Sprocket server.`);
+	}
+	if (!isDevelopment && !pairingProof.webUiEnabled) {
+		throw new Error(`The Sprocket server at ${baseUrl} is running in API-only mode.`);
+	}
+
+	let pairingCredential;
+	try {
+		pairingCredential = fs.readFileSync(path.join(dataDir, 'pairing-credential'), 'utf8').trim();
+	} catch (error) {
+		throw new Error(
+			`The Sprocket server at ${baseUrl} uses a different data directory. Set SPROCKET_DATA_DIR to match it.`,
+			{ cause: error }
+		);
+	}
+	if (!pairingCredential) {
+		throw new Error(`The pairing credential in ${dataDir} is empty.`);
+	}
+
+	const message = `${challenge}\n${pairingProof.httpBaseUrl}\nweb-ui=${pairingProof.webUiEnabled}`;
+	const expectedProof = createHmac('sha256', pairingCredential).update(message).digest();
+	const receivedProof = Buffer.from(pairingProof.proof);
+	if (
+		receivedProof.length !== expectedProof.length ||
+		!timingSafeEqual(receivedProof, expectedProof)
+	) {
+		throw new Error(
+			`The Sprocket server at ${baseUrl} uses a different data directory. Set SPROCKET_DATA_DIR to match it.`
+		);
+	}
+
+	serverBaseUrl = pairingProof.httpBaseUrl;
+	serverPairingCredential = pairingCredential;
+	serverDesktopLoginCallbackUrl = desktopLoginCallbackUrl;
+	return true;
+}
+
 async function startLocalServer() {
 	if (serverBaseUrl) {
 		return serverBaseUrl;
@@ -103,6 +166,11 @@ async function startLocalServer() {
 	const dataDir = getLocalDataDir();
 	const serverBinary = getServerBinaryPath();
 	const staticDir = isDevelopment ? undefined : path.join(__dirname, 'web/dist');
+	const fallbackBaseUrl = `http://${host}:${port}`;
+	if (await attachToRunningServer(fallbackBaseUrl, dataDir)) {
+		return serverBaseUrl;
+	}
+
 	const desktopBootstrapToken = randomUUID();
 	const args = [
 		'serve',
@@ -164,7 +232,6 @@ async function startLocalServer() {
 		}
 	});
 
-	const fallbackBaseUrl = `http://${host}:${port}`;
 	await waitForServerReady(fallbackBaseUrl);
 	serverBaseUrl ??= fallbackBaseUrl;
 
@@ -196,33 +263,6 @@ function stopLocalServer() {
 
 	serverProcess.kill();
 	serverProcess = null;
-}
-
-function getBrowserAppUrl() {
-	if (!serverBaseUrl || !serverPairingCredential) {
-		throw new Error('Local server bootstrap is unavailable.');
-	}
-
-	const url = new URL('/pair', serverBaseUrl);
-	url.hash = new URLSearchParams({ token: serverPairingCredential }).toString();
-	return url.toString();
-}
-
-async function openBrowserApp() {
-	if (!serverReadyPromise) {
-		throw new Error('Local server startup is unavailable.');
-	}
-	await serverReadyPromise;
-
-	const url = getBrowserAppUrl();
-	try {
-		await openInSystemBrowser(url);
-	} catch (error) {
-		reportFatalError(
-			'Failed to open Sprocket in your browser',
-			new Error(`Open ${url} manually.`, { cause: error })
-		);
-	}
 }
 
 async function showDesktopApp() {
@@ -424,9 +464,8 @@ ipcMain.handle('sprocket:focus-window', () => {
 });
 
 if (hasSingleInstanceLock) {
-	app.on('second-instance', (_event, _commandLine, _workingDirectory, additionalData) => {
-		const action = additionalData?.openWeb === true ? openBrowserApp() : showDesktopApp();
-		void action.catch((error) => {
+	app.on('second-instance', () => {
+		void showDesktopApp().catch((error) => {
 			console.error('Failed to handle Sprocket launch request', error);
 		});
 	});
@@ -437,16 +476,13 @@ if (hasSingleInstanceLock) {
 	});
 
 	void serverReadyPromise
-		.then(() => (webOnly ? openBrowserApp() : showDesktopApp()))
+		.then(() => showDesktopApp())
 		.catch((error) => {
 			reportFatalError('Failed to start Sprocket', error);
 			app.quit();
 		});
 
 	app.on('activate', () => {
-		if (webOnly) {
-			return;
-		}
 		void showDesktopApp().catch((error) => {
 			console.error('Failed to show Sprocket desktop app', error);
 		});
@@ -454,7 +490,7 @@ if (hasSingleInstanceLock) {
 }
 
 app.on('window-all-closed', () => {
-	if (process.platform !== 'darwin' && !webOnly) {
+	if (process.platform !== 'darwin') {
 		app.quit();
 	}
 });
