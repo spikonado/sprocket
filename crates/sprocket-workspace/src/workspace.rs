@@ -1,45 +1,6 @@
-use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
-use serde::Serialize;
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkspaceOverview {
-    pub root_path: String,
-    pub name: String,
-    pub git_branch: Option<String>,
-    pub git_dirty: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct WorkspaceEntry {
-    pub name: String,
-    pub kind: String,
-}
-
-pub fn build_workspace_overview(root: &Path) -> Result<WorkspaceOverview> {
-    let canonical_root: PathBuf = root
-        .canonicalize()
-        .with_context(|| format!("failed to resolve {}", root.display()))?;
-    let root_name: String = canonical_root
-        .file_name()
-        .unwrap_or_else(|| OsStr::new("workspace"))
-        .to_string_lossy()
-        .to_string();
-
-    let (git_branch, git_dirty): (Option<String>, bool) =
-        git_state(&canonical_root).unwrap_or((None, false));
-
-    Ok(WorkspaceOverview {
-        root_path: canonical_root.to_string_lossy().to_string(),
-        name: root_name,
-        git_branch,
-        git_dirty,
-    })
-}
-
 pub fn resolve_workspace_root(path: &str) -> Result<PathBuf> {
     let expanded = crate::paths::expand_home(path.trim());
     let root: PathBuf = PathBuf::from(&expanded);
@@ -155,30 +116,6 @@ pub fn relative_to_root(root: &Path, path: &Path) -> String {
     } else {
         relative
     }
-}
-
-fn git_state(root: &Path) -> Result<(Option<String>, bool)> {
-    let Ok(repo) = gix::discover(root) else {
-        return Ok((None, false));
-    };
-
-    let branch: Option<String> = repo
-        .head_name()
-        .context("failed to read git head")?
-        .map(|name| name.shorten().to_string())
-        .or_else(|| Some("HEAD".to_string()));
-    let dirty: bool = repo
-        .status(gix::progress::Discard)
-        .context("failed to build git status")?
-        .untracked_files(gix::status::UntrackedFiles::Collapsed)
-        .into_iter(std::iter::empty())
-        .context("failed to iterate git status")?
-        .next()
-        .transpose()
-        .context("failed to read git status item")?
-        .is_some();
-
-    Ok((branch, dirty))
 }
 
 #[cfg(test)]

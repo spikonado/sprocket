@@ -332,7 +332,12 @@ export async function verifyWorkspaceSession(args: {
 	}
 
 	try {
-		await args.desktopApi.getWorkspaceSessionOverview(args.workspaceSessionId);
+		const session = (await args.desktopApi.listWorkspaceSessions()).find(
+			(session) => session.workspaceSessionId === args.workspaceSessionId
+		);
+		if (!session || session.availability !== 'available') {
+			throw new Error(session?.unavailableReason ?? 'Workspace path is unavailable.');
+		}
 		await args.refreshDesktopWorkspaceSessions();
 	} catch (error) {
 		await args.refreshDesktopWorkspaceSessions();

@@ -1,14 +1,12 @@
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use sprocket_workspace::{
-    WorkspaceOverview, build_workspace_overview, resolve_or_create_workspace_root,
-    resolve_workspace_root,
-};
+use sprocket_workspace::{resolve_or_create_workspace_root, resolve_workspace_root};
 use tokio::sync::RwLock;
 
 const WORKSPACE_SESSIONS_FILE: &str = "workspace-sessions.json";
@@ -41,6 +39,13 @@ pub struct AttachWorkspaceSessionRequest {
     pub workspace_path: String,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspacePathResolution {
+    pub workspace_path: String,
+    pub workspace_name: String,
+}
+
 pub struct WorkspaceSessionStore {
     data_dir: PathBuf,
     sessions: RwLock<HashMap<String, WorkspaceSessionRecord>>,
@@ -69,9 +74,10 @@ impl WorkspaceSessionStore {
     ) -> Result<WorkspaceSessionRecord> {
         self.ensure_loaded().await?;
         let now = now_ms();
+        let workspace_path = resolve_workspace_path(&request.workspace_path, false)?.workspace_path;
         let validated = validate_session(WorkspaceSessionRecord {
             workspace_session_id: request.workspace_session_id,
-            workspace_path: request.workspace_path,
+            workspace_path,
             availability: WorkspaceAvailability::Available,
             last_validated_at: now,
             last_used_at: now,
@@ -91,28 +97,6 @@ impl WorkspaceSessionStore {
         );
         self.save_to_disk().await?;
         Ok(validated.session)
-    }
-
-    pub async fn overview(&self, workspace_session_id: &str) -> Result<WorkspaceOverview> {
-        self.ensure_loaded().await?;
-        let session = self.get_or_error(workspace_session_id).await?;
-        let validated = validate_session(session)?;
-        self.sessions.write().await.insert(
-            workspace_session_id.to_string(),
-            WorkspaceSessionRecord {
-                last_used_at: now_ms(),
-                ..validated.session.clone()
-            },
-        );
-        self.save_to_disk().await?;
-        validated.overview.ok_or_else(|| {
-            anyhow::anyhow!(
-                validated
-                    .session
-                    .unavailable_reason
-                    .unwrap_or_else(|| "workspace path is unavailable".to_string())
-            )
-        })
     }
 
     pub async fn workspace_path(&self, workspace_session_id: &str) -> Result<String> {
@@ -229,20 +213,18 @@ impl WorkspaceSessionStore {
 
 struct ValidatedWorkspaceSession {
     session: WorkspaceSessionRecord,
-    overview: Option<WorkspaceOverview>,
 }
 
 fn validate_session(session: WorkspaceSessionRecord) -> Result<ValidatedWorkspaceSession> {
-    match workspace_overview_for_path(&session.workspace_path, false) {
-        Ok(overview) => Ok(ValidatedWorkspaceSession {
+    match resolve_workspace_path(&session.workspace_path, false) {
+        Ok(resolution) => Ok(ValidatedWorkspaceSession {
             session: WorkspaceSessionRecord {
-                workspace_path: overview.root_path.clone(),
+                workspace_path: resolution.workspace_path,
                 availability: WorkspaceAvailability::Available,
                 last_validated_at: now_ms(),
                 unavailable_reason: None,
                 ..session
             },
-            overview: Some(overview),
         }),
         Err(error) => Ok(ValidatedWorkspaceSession {
             session: WorkspaceSessionRecord {
@@ -251,25 +233,33 @@ fn validate_session(session: WorkspaceSessionRecord) -> Result<ValidatedWorkspac
                 unavailable_reason: Some(error.to_string()),
                 ..session
             },
-            overview: None,
         }),
     }
 }
 
-pub fn workspace_overview_for_path(
+pub fn resolve_workspace_path(
     workspace_path: &str,
     create_if_missing: bool,
-) -> Result<WorkspaceOverview> {
+) -> Result<WorkspacePathResolution> {
     let root = if create_if_missing {
         resolve_or_create_workspace_root(workspace_path)?
     } else {
         resolve_workspace_root(workspace_path)?
     };
-    let overview = build_workspace_overview(&root)?;
-    if overview.root_path.is_empty() {
+    let workspace_path = root.to_string_lossy().to_string();
+    if workspace_path.is_empty() {
         anyhow::bail!("failed to resolve workspace path");
     }
-    Ok(overview)
+    let workspace_name = root
+        .file_name()
+        .unwrap_or_else(|| OsStr::new("workspace"))
+        .to_string_lossy()
+        .to_string();
+
+    Ok(WorkspacePathResolution {
+        workspace_path,
+        workspace_name,
+    })
 }
 
 fn now_ms() -> u64 {
@@ -290,12 +280,10 @@ mod tests {
         fs::create_dir_all(&temp_root).expect("temp dir");
         let store = WorkspaceSessionStore::new(temp_root.clone());
 
-        let overview =
-            workspace_overview_for_path(env!("CARGO_MANIFEST_DIR"), false).expect("overview");
         let session = store
             .attach(AttachWorkspaceSessionRequest {
                 workspace_session_id: "session-1".to_string(),
-                workspace_path: overview.root_path,
+                workspace_path: env!("CARGO_MANIFEST_DIR").to_string(),
             })
             .await
             .expect("attach");
@@ -303,6 +291,27 @@ mod tests {
         assert_eq!(session.availability, WorkspaceAvailability::Available);
         let listed = store.list().await.expect("list");
         assert_eq!(listed.len(), 1);
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_path_resolution_uses_canonical_name_and_root_fallback() {
+        use std::os::unix::fs::symlink;
+
+        let temp_root = std::env::temp_dir().join(format!("sprocket-workspace-path-{}", now_ms()));
+        let target = temp_root.join("real-project");
+        let link = temp_root.join("project-link");
+        fs::create_dir_all(&target).expect("target dir");
+        symlink(&target, &link).expect("symlink");
+
+        let linked = resolve_workspace_path(&link.to_string_lossy(), false).expect("linked path");
+        assert_eq!(linked.workspace_path, target.to_string_lossy());
+        assert_eq!(linked.workspace_name, "real-project");
+
+        let root = resolve_workspace_path("/", false).expect("filesystem root");
+        assert_eq!(root.workspace_name, "workspace");
 
         let _ = fs::remove_dir_all(temp_root);
     }

@@ -25,7 +25,9 @@
 	import SettingsArchived from '$lib/components/home/settings-archived.svelte';
 	import SettingsSidebar, { type SettingsPage } from '$lib/components/home/settings-sidebar.svelte';
 	import ThreadTranscript from '$lib/components/home/thread-transcript.svelte';
-	import WorkspacePicker from '$lib/components/home/workspace-picker.svelte';
+	import WorkspacePicker, {
+		type WorkspaceSelection
+	} from '$lib/components/home/workspace-picker.svelte';
 	import WorkspaceSidebar from '$lib/components/home/workspace-sidebar.svelte';
 	import {
 		attachLocalWorkspaceSession as attachLocalWorkspaceSessionForPath,
@@ -72,7 +74,6 @@
 		DesktopApi,
 		ThreadMessage,
 		ThreadSummary,
-		WorkspaceOverview,
 		WorkspaceSession,
 		WorkspaceSessionLocation,
 		WorkspaceThreadGroup
@@ -485,7 +486,7 @@
 		currentError = null;
 	}
 
-	async function handleWorkspaceSelected(overview: WorkspaceOverview) {
+	async function handleWorkspaceSelected(selection: WorkspaceSelection) {
 		if (!desktopApi || !executorClientId) {
 			currentError = localServerRequiredMessage;
 			return;
@@ -506,7 +507,10 @@
 					return;
 				}
 
-				await attachLocalWorkspaceSession(workspacePickerReconnectSessionId, overview.rootPath);
+				await attachLocalWorkspaceSession(
+					workspacePickerReconnectSessionId,
+					selection.workspacePath
+				);
 				if (getCurrentUserId() !== pickerUserId) {
 					return;
 				}
@@ -516,7 +520,7 @@
 			}
 
 			const session = await upsertWorkspaceSession({
-				workspaceName: overview.name,
+				workspaceName: selection.workspaceName,
 				connectedClientId: executorClientId
 			});
 			if (!session) {
@@ -526,11 +530,11 @@
 				return;
 			}
 
-			await attachLocalWorkspaceSession(session._id, overview.rootPath);
+			await attachLocalWorkspaceSession(session._id, selection.workspacePath);
 			if (getCurrentUserId() !== pickerUserId) {
 				return;
 			}
-			setWorkspaceSelection(overview.name, null, true);
+			setWorkspaceSelection(selection.workspaceName, null, true);
 			currentError = null;
 		} catch (error) {
 			if (getCurrentUserId() !== pickerUserId) {
@@ -1491,9 +1495,9 @@
 					workspacePickerReconnectSessionId = null;
 					workspacePickerExpectedName = undefined;
 				}}
-				onSelect={async (overview) => {
+				onSelect={async (selection) => {
 					try {
-						await handleWorkspaceSelected(overview);
+						await handleWorkspaceSelected(selection);
 					} catch {
 						await refreshDesktopWorkspaceSessions();
 					}

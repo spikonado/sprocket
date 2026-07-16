@@ -15,23 +15,7 @@ import {
 	type WorkspaceInstruction
 } from '$convex/lib/validators';
 
-export type WorkspaceEntry = {
-	name: string;
-	kind: string;
-};
-
 export type LocalWorkspaceAvailability = 'available' | 'unavailable' | 'unlinked';
-
-export type WorkspaceOverview = {
-	rootPath: string;
-	name: string;
-	gitBranch: string | null;
-	gitDirty: boolean;
-	fileCount: number;
-	directoryCount: number;
-	topLevelEntries: WorkspaceEntry[];
-	recentFiles: string[];
-};
 
 export type { WorkspaceInstruction, ExecutorJobPayload, ExecutorJobResult };
 
@@ -167,20 +151,22 @@ export type DesktopApi = {
 		partialPath: string;
 		cwd?: string;
 	}) => Promise<FilesystemBrowseResult>;
-	workspaceOverviewForPath: (input: {
+	resolveWorkspacePath: (input: {
 		workspacePath: string;
 		createIfMissing?: boolean;
-	}) => Promise<WorkspaceOverview>;
+	}) => Promise<WorkspacePathResolution>;
 	listWorkspaceSessions: () => Promise<WorkspaceSessionLocation[]>;
 	attachWorkspaceSession: (
 		session: WorkspaceSessionAttachment
 	) => Promise<WorkspaceSessionLocation>;
-	getWorkspaceSessionOverview: (
-		workspaceSessionId: Id<'workspaceSessions'>
-	) => Promise<WorkspaceOverview>;
 	runAgent: (request: AgentRunRequest) => Promise<AgentRunStart>;
 	waitForAgentAuthRefresh: (authSessionId: string) => Promise<AgentAuthStatus>;
 	refreshAgentAuth: (authSessionId: string, authToken: string) => Promise<void>;
+};
+
+export type WorkspacePathResolution = {
+	workspacePath: string;
+	workspaceName: string;
 };
 
 export type WorkspaceSessionAttachment = {

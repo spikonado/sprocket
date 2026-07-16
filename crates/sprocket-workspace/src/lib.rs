@@ -15,5 +15,4 @@ pub use tools::{
     WorkspaceOperationCancelled, create_workspace_file, exec_workspace_command,
     replace_workspace_file,
 };
-pub use workspace::{WorkspaceEntry, WorkspaceOverview};
-pub use workspace::{build_workspace_overview, resolve_workspace_root};
+pub use workspace::resolve_workspace_root;

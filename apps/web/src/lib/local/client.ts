@@ -3,7 +3,7 @@ import type {
 	AgentRunStart,
 	DesktopApi,
 	FilesystemBrowseResult,
-	WorkspaceOverview
+	WorkspacePathResolution
 } from '$lib/types/sprocket';
 
 export type LocalBootstrap = {
@@ -194,8 +194,8 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 					...(input.cwd ? { cwd: input.cwd } : {})
 				})
 			}),
-		workspaceOverviewForPath: (input) =>
-			request<WorkspaceOverview>('/api/workspace/overview', {
+		resolveWorkspacePath: (input) =>
+			request<WorkspacePathResolution>('/api/workspace/resolve', {
 				method: 'POST',
 				body: JSON.stringify({
 					workspacePath: input.workspacePath,
@@ -208,8 +208,6 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				method: 'POST',
 				body: JSON.stringify(session)
 			}),
-		getWorkspaceSessionOverview: (workspaceSessionId) =>
-			request(`/api/workspace/sessions/${workspaceSessionId}`),
 		runAgent: (requestBody) =>
 			request<AgentRunStart>('/api/agent/run', {
 				method: 'POST',

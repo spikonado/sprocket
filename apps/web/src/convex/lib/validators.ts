@@ -109,7 +109,6 @@ export function isRunFinalStatus(
 }
 
 export const vExecutorJobKind = v.union(
-	v.literal('get_workspace_overview'),
 	v.literal('get_workspace_instructions'),
 	v.literal('exec_command'),
 	v.literal('create_file'),
