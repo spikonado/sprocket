@@ -38,6 +38,7 @@ pub struct Client {
     pub(crate) inner: Arc<Mutex<ConvexClient>>,
     completion_action: Arc<str>,
     default_reasoning_effort: Option<Arc<str>>,
+    default_service_tier: Option<Arc<str>>,
     stream_run_id: Option<Arc<str>>,
 }
 
@@ -54,6 +55,7 @@ impl Client {
             inner: Arc::new(Mutex::new(client)),
             completion_action: completion_action.into().into(),
             default_reasoning_effort: None,
+            default_service_tier: None,
             stream_run_id: None,
         })
     }
@@ -108,6 +110,11 @@ impl Client {
 
     pub fn with_reasoning_effort(mut self, reasoning_effort: impl Into<String>) -> Self {
         self.default_reasoning_effort = Some(reasoning_effort.into().into());
+        self
+    }
+
+    pub fn with_service_tier(mut self, service_tier: impl Into<String>) -> Self {
+        self.default_service_tier = Some(service_tier.into().into());
         self
     }
 
@@ -235,6 +242,7 @@ impl GetTokenUsage for CompletionOutput {
 struct ConvexActionArgs {
     model_id: String,
     reasoning_effort: Option<String>,
+    service_tier: Option<String>,
     instructions: Option<String>,
     prompt: Option<String>,
     messages_json: String,
@@ -284,6 +292,11 @@ impl RigCompletionModel for CompletionModel {
             reasoning_effort: self
                 .client
                 .default_reasoning_effort
+                .as_deref()
+                .map(str::to_owned),
+            service_tier: self
+                .client
+                .default_service_tier
                 .as_deref()
                 .map(str::to_owned),
             instructions,
@@ -490,6 +503,9 @@ fn action_args(args: &ConvexActionArgs, stream_run_id: &str) -> BTreeMap<String,
             "reasoningEffort".to_string(),
             reasoning_effort.clone().into(),
         );
+    }
+    if let Some(service_tier) = &args.service_tier {
+        payload.insert("serviceTier".to_string(), service_tier.clone().into());
     }
     if !args.tools.is_empty() {
         payload.insert(

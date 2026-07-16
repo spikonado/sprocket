@@ -23,9 +23,11 @@ export function resolveSubmissionId(args: {
 	newSubmissionId: string;
 	prompt: string;
 	reasoningEffort: AgentRunRequest['reasoningEffort'];
+	serviceTier: AgentRunRequest['serviceTier'];
 	recoveredSubmission?: {
 		prompt: string;
 		reasoningEffort: AgentRunRequest['reasoningEffort'];
+		serviceTier: AgentRunRequest['serviceTier'];
 		selectedModel: AgentRunRequest['selectedModel'];
 		submissionId: string;
 	};
@@ -44,7 +46,8 @@ export function resolveSubmissionId(args: {
 	return canReuseRecoveredSubmission &&
 		recoveredSubmission?.prompt === args.prompt &&
 		recoveredSubmission.selectedModel === args.selectedModel &&
-		recoveredSubmission.reasoningEffort === args.reasoningEffort
+		recoveredSubmission.reasoningEffort === args.reasoningEffort &&
+		recoveredSubmission.serviceTier === args.serviceTier
 		? recoveredSubmission.submissionId
 		: args.newSubmissionId;
 }
@@ -80,6 +83,7 @@ export function launchAgentRun(args: {
 	prompt: string;
 	selectedModel: AgentRunRequest['selectedModel'];
 	reasoningEffort: AgentRunRequest['reasoningEffort'];
+	serviceTier: AgentRunRequest['serviceTier'];
 	submissionId: string;
 	workspaceSessionId: Id<'workspaceSessions'>;
 }) {
@@ -120,6 +124,7 @@ export function launchAgentRun(args: {
 			prompt: args.prompt,
 			selectedModel: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
+			serviceTier: args.serviceTier,
 			submissionId: args.submissionId,
 			workspaceSessionId: args.workspaceSessionId
 		})

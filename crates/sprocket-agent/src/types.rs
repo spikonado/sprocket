@@ -17,6 +17,7 @@ pub struct RunAgentRequest {
     pub prompt: String,
     pub selected_model: String,
     pub reasoning_effort: String,
+    pub service_tier: String,
     pub workspace_path: String,
 }
 
@@ -136,6 +137,7 @@ pub struct RunSnapshot {
     pub workspace_session_id: String,
     pub selected_model: String,
     pub reasoning_effort: String,
+    pub service_tier: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

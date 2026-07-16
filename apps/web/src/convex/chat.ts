@@ -3,6 +3,17 @@ import { query } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
+import {
+	normalizeModelId,
+	normalizeServiceTier,
+	type SupportedModelId,
+	type SupportedServiceTier
+} from '@convex/lib/models';
+
+type NormalizedRun = Omit<Doc<'runs'>, 'selectedModel' | 'serviceTier'> & {
+	selectedModel: SupportedModelId;
+	serviceTier: SupportedServiceTier;
+};
 
 export const latestRunForThread = query({
 	args: {
@@ -13,7 +24,7 @@ export const latestRunForThread = query({
 		args
 	): Promise<{
 		threadId: typeof args.threadId;
-		run: Doc<'runs'> | null;
+		run: NormalizedRun | null;
 		jobs: Doc<'executorJobs'>[];
 		prompt?: string;
 		serverNow: number;
@@ -45,7 +56,11 @@ export const latestRunForThread = query({
 
 		return {
 			threadId: args.threadId,
-			run: latestRun,
+			run: {
+				...latestRun,
+				selectedModel: normalizeModelId(latestRun.selectedModel),
+				serviceTier: normalizeServiceTier(latestRun.serviceTier)
+			},
 			jobs: jobs.filter((job) => !job.hidden).sort((left, right) => left.sequence - right.sequence),
 			...(promptMessage?.type === 'prompt' ? { prompt: promptMessage.text } : {}),
 			serverNow: Date.now()

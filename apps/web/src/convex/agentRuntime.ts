@@ -3,6 +3,13 @@ import { mutation, query, type MutationCtx } from '@convex/_generated/server';
 import { v, type Infer } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord, getOwnedWorkspaceSession } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
+import {
+	assertSupportedModelConfiguration,
+	normalizeModelId,
+	normalizeServiceTier,
+	type SupportedModelId,
+	type SupportedServiceTier
+} from '@convex/lib/models';
 import { buildCanonicalAgentHistory, findLatestPrompt } from '@convex/lib/agentHistory';
 import { appendThreadMessage, getThreadMessage } from '@convex/lib/threadMessages';
 import { buildThreadTranscript, type ThreadTranscriptMessage } from '@convex/lib/threadTranscript';
@@ -32,6 +39,7 @@ import {
 	vExecutorJobPayload,
 	vModelId,
 	vReasoningEffort,
+	vServiceTier,
 	vRunFinalStatus,
 	vRunStatus
 } from '@convex/lib/validators';
@@ -133,7 +141,8 @@ export const createRun = mutation({
 		threadId: v.id('threadRecords'),
 		prompt: v.string(),
 		selectedModel: vModelId,
-		reasoningEffort: vReasoningEffort
+		reasoningEffort: vReasoningEffort,
+		serviceTier: vServiceTier
 	},
 	handler: async (
 		ctx,
@@ -144,6 +153,11 @@ export const createRun = mutation({
 		promptMessageId: Id<'threadMessages'>;
 		userId: string;
 	}> => {
+		assertSupportedModelConfiguration({
+			modelId: args.selectedModel,
+			reasoningEffort: args.reasoningEffort,
+			serviceTier: args.serviceTier
+		});
 		const userId: string = await getUserId(ctx);
 		const threadRecord: Doc<'threadRecords'> = await getOwnedThreadRecord(
 			ctx.db,
@@ -164,8 +178,9 @@ export const createRun = mutation({
 		if (existingRun) {
 			if (
 				existingRun.threadId !== args.threadId ||
-				existingRun.selectedModel !== args.selectedModel ||
+				normalizeModelId(existingRun.selectedModel) !== args.selectedModel ||
 				existingRun.reasoningEffort !== args.reasoningEffort ||
+				normalizeServiceTier(existingRun.serviceTier) !== args.serviceTier ||
 				!existingRun.promptMessageId
 			) {
 				throw new Error('Submission belongs to a different or incomplete run.');
@@ -197,6 +212,7 @@ export const createRun = mutation({
 			status: 'queued',
 			selectedModel: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
+			serviceTier: args.serviceTier,
 			startedAt: Date.now()
 		});
 		const promptMessageId: Id<'threadMessages'> = await appendThreadMessage(ctx, {
@@ -212,7 +228,8 @@ export const createRun = mutation({
 		await ctx.db.patch(threadRecord._id, {
 			title: threadRecord.title ?? prompt.slice(0, 72),
 			selectedModel: args.selectedModel,
-			reasoningEffort: args.reasoningEffort
+			reasoningEffort: args.reasoningEffort,
+			serviceTier: args.serviceTier
 		});
 
 		return {
@@ -290,7 +307,10 @@ export const getContext = query({
 		ctx,
 		args
 	): Promise<{
-		run: Doc<'runs'>;
+		run: Omit<Doc<'runs'>, 'selectedModel' | 'serviceTier'> & {
+			selectedModel: SupportedModelId;
+			serviceTier: SupportedServiceTier;
+		};
 		threadRecord: Doc<'threadRecords'>;
 		workspaceSession: Doc<'workspaceSessions'>;
 		prompt: string;
@@ -320,7 +340,11 @@ export const getContext = query({
 		const prompt: string = findLatestPrompt(messages);
 
 		return {
-			run,
+			run: {
+				...run,
+				selectedModel: normalizeModelId(run.selectedModel),
+				serviceTier: normalizeServiceTier(run.serviceTier)
+			},
 			threadRecord,
 			prompt,
 			agentHistory,
@@ -537,6 +561,7 @@ export const finalizeFailedStart = mutation({
 		prompt: v.string(),
 		selectedModel: vModelId,
 		reasoningEffort: vReasoningEffort,
+		serviceTier: vServiceTier,
 		text: v.string(),
 		lastError: v.string()
 	},
@@ -552,8 +577,9 @@ export const finalizeFailedStart = mutation({
 			!run ||
 			run.status !== 'queued' ||
 			run.threadId !== args.threadId ||
-			run.selectedModel !== args.selectedModel ||
+			normalizeModelId(run.selectedModel) !== args.selectedModel ||
 			run.reasoningEffort !== args.reasoningEffort ||
+			normalizeServiceTier(run.serviceTier) !== args.serviceTier ||
 			!run.promptMessageId
 		) {
 			return false;

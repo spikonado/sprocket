@@ -113,6 +113,10 @@ impl RuntimeClient {
             "reasoningEffort".to_string(),
             request.reasoning_effort.clone().into(),
         );
+        args.insert(
+            "serviceTier".to_string(),
+            request.service_tier.clone().into(),
+        );
 
         let mut retry_delay = CREATE_RUN_INITIAL_RETRY_DELAY;
         let mut last_error = None;
@@ -172,6 +176,10 @@ impl RuntimeClient {
         args.insert(
             "reasoningEffort".to_string(),
             request.reasoning_effort.clone().into(),
+        );
+        args.insert(
+            "serviceTier".to_string(),
+            request.service_tier.clone().into(),
         );
         args.insert("text".to_string(), text.to_string().into());
         args.insert("lastError".to_string(), last_error.to_string().into());

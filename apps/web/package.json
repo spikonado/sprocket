@@ -13,7 +13,9 @@
 		"lint": "eslint . && convex typecheck"
 	},
 	"dependencies": {
+		"@ai-sdk/anthropic": "^4.0.15",
 		"@ai-sdk/openai": "^4.0.11",
+		"@ai-sdk/xai": "^4.0.14",
 		"@convex-dev/rate-limiter": "^0.3.2",
 		"@fontsource-variable/ibm-plex-sans": "^5.2.8",
 		"@fontsource/dm-sans": "^5.2.8",

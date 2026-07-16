@@ -37,6 +37,7 @@ struct RunAgentApiRequest {
     prompt: String,
     selected_model: String,
     reasoning_effort: String,
+    service_tier: String,
     workspace_session_id: String,
 }
 
@@ -284,6 +285,7 @@ async fn run_agent_handler(
         prompt: payload.prompt,
         selected_model: payload.selected_model,
         reasoning_effort: payload.reasoning_effort,
+        service_tier: payload.service_tier,
         workspace_path,
     };
 

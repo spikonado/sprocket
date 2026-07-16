@@ -5,8 +5,9 @@ import {
 	vExecutorJobPayload,
 	vExecutorJobResult,
 	vExecutorJobStatus,
-	vModelId,
+	vPersistedModelId,
 	vReasoningEffort,
+	vServiceTier,
 	vRunStatus,
 	vAssistantMessagePart,
 	vThreadMessageType
@@ -33,8 +34,9 @@ export default defineSchema({
 		submissionId: v.string(),
 		workspaceSessionId: v.id('workspaceSessions'),
 		title: v.optional(v.string()),
-		selectedModel: vModelId,
+		selectedModel: vPersistedModelId,
 		reasoningEffort: vReasoningEffort,
+		serviceTier: v.optional(vServiceTier),
 		lastMessageAt: v.number(),
 		archivedAt: v.optional(v.number())
 	})
@@ -49,8 +51,9 @@ export default defineSchema({
 		status: vRunStatus,
 		claimId: v.optional(v.string()),
 		claimExpiresAt: v.optional(v.number()),
-		selectedModel: vModelId,
+		selectedModel: vPersistedModelId,
 		reasoningEffort: vReasoningEffort,
+		serviceTier: v.optional(vServiceTier),
 		startedAt: v.number(),
 		completedAt: v.optional(v.number()),
 		lastError: v.optional(v.string()),

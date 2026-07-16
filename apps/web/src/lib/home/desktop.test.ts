@@ -17,7 +17,8 @@ import type {
 const recoveredSubmission = {
 	prompt: 'Inspect the robot',
 	reasoningEffort: 'medium' as const,
-	selectedModel: 'gpt-5.4' as const,
+	serviceTier: 'standard' as const,
+	selectedModel: 'gpt-5.6-sol' as const,
 	submissionId: 'recovered-id'
 };
 
@@ -47,8 +48,9 @@ function launchArgs(
 		onStarted: vi.fn(),
 		threadId: 'thread-1' as never,
 		prompt: 'Inspect src/lib.rs',
-		selectedModel: 'gpt-5.4',
+		selectedModel: 'gpt-5.6-sol',
 		reasoningEffort: 'medium',
+		serviceTier: 'standard',
 		submissionId: 'submission-1',
 		workspaceSessionId: 'workspace-1' as never,
 		...overrides
@@ -63,6 +65,7 @@ function resolveRecoveredSubmission(
 		newSubmissionId: 'new-id',
 		prompt: recoveredSubmission.prompt,
 		reasoningEffort: recoveredSubmission.reasoningEffort,
+		serviceTier: recoveredSubmission.serviceTier,
 		recoveredSubmission,
 		selectedModel: recoveredSubmission.selectedModel,
 		...overrides
@@ -92,9 +95,10 @@ describe('launchAgentRun', () => {
 			authToken: 'token-1',
 			threadId: 'thread-1',
 			prompt: 'Inspect src/lib.rs',
-			selectedModel: 'gpt-5.4',
+			selectedModel: 'gpt-5.6-sol',
 			submissionId: 'submission-1',
 			reasoningEffort: 'medium',
+			serviceTier: 'standard',
 			workspaceSessionId: 'workspace-1'
 		});
 		await vi.waitFor(() => {
@@ -195,6 +199,7 @@ describe('resolveSubmissionId', () => {
 		expect(resolveRecoveredSubmission()).toBe('recovered-id');
 		expect(resolveRecoveredSubmission({ prompt: 'Inspect and fix the robot' })).toBe('new-id');
 		expect(resolveRecoveredSubmission({ reasoningEffort: 'high' })).toBe('new-id');
+		expect(resolveRecoveredSubmission({ serviceTier: 'fast' })).toBe('new-id');
 	});
 
 	it('uses a fresh id when the visible latest submission has finished or supersedes recovery', () => {
