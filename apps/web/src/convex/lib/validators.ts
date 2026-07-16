@@ -1,10 +1,5 @@
 import { v, type Infer } from 'convex/values';
-import {
-	modelIds,
-	persistedModelIds,
-	reasoningEffortIds,
-	serviceTierIds
-} from '@convex/lib/models';
+import { modelIds, reasoningEffortIds, serviceTierIds } from '@convex/lib/models';
 
 function literals<const TValues extends readonly string[]>(values: TValues) {
 	return values.map((value) => v.literal(value)) as {
@@ -17,9 +12,6 @@ export const vReasoningEffort = v.union(...literals(reasoningEffortIds));
 export const vServiceTier = v.union(...literals(serviceTierIds));
 
 export const vModelId = v.union(...literals(modelIds));
-
-/** Temporary persisted-data validator; remove legacy IDs after the model migration runs. */
-export const vPersistedModelId = v.union(...literals(persistedModelIds));
 
 export const vWorkspaceInstruction = v.object({
 	path: v.string(),

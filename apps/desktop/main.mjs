@@ -17,6 +17,8 @@ const serverPort = Number(process.env.SPROCKET_PORT ?? defaultServerPort);
 const serverHost = '127.0.0.1';
 const desktopLoginCallbackUrl = `http://${serverHost}:${serverPort}/api/auth/desktop-login/callback`;
 const devRendererUrl = process.env.SPROCKET_ELECTRON_RENDERER_URL ?? DEV_WEB_URL;
+const rendererUrl = isDevelopment ? devRendererUrl : `http://${serverHost}:${serverPort}`;
+const rendererOrigin = new URL(rendererUrl).origin;
 const preloadEntry = path.join(__dirname, 'preload.cjs');
 
 let serverProcess = null;
@@ -26,8 +28,12 @@ let serverDesktopLoginCallbackUrl = null;
 let mainWindowRef = null;
 let serverReadyPromise = null;
 let isQuitting = false;
+const initialWorkspaceLaunch = app.commandLine.getSwitchValue('sprocket-workspace').trim() || null;
+const pendingWorkspaceLaunches = initialWorkspaceLaunch ? [initialWorkspaceLaunch] : [];
 
-const hasSingleInstanceLock = app.requestSingleInstanceLock();
+const hasSingleInstanceLock = app.requestSingleInstanceLock({
+	workspacePath: initialWorkspaceLaunch
+});
 if (!hasSingleInstanceLock) {
 	app.quit();
 }
@@ -37,6 +43,18 @@ function reportFatalError(title, error) {
 	console.error(title, error);
 	if (app.isReady()) {
 		dialog.showErrorBox(title, message);
+	}
+}
+
+function requireTrustedRenderer(event) {
+	let senderOrigin;
+	try {
+		senderOrigin = new URL(event.senderFrame.url).origin;
+	} catch {
+		throw new Error('Untrusted renderer request.');
+	}
+	if (senderOrigin !== rendererOrigin) {
+		throw new Error('Untrusted renderer request.');
 	}
 }
 
@@ -265,6 +283,26 @@ function stopLocalServer() {
 	serverProcess = null;
 }
 
+function queueWorkspaceLaunch(workspacePath) {
+	if (typeof workspacePath !== 'string' || !workspacePath.trim()) {
+		return;
+	}
+
+	pendingWorkspaceLaunches.push(workspacePath.trim());
+	notifyWorkspaceLaunch();
+}
+
+function notifyWorkspaceLaunch() {
+	if (pendingWorkspaceLaunches.length === 0) {
+		return;
+	}
+
+	const mainWindow = mainWindowRef;
+	if (mainWindow && !mainWindow.isDestroyed()) {
+		mainWindow.webContents.send('sprocket:workspace-launch');
+	}
+}
+
 async function showDesktopApp() {
 	if (!serverReadyPromise) {
 		throw new Error('Local server startup is unavailable.');
@@ -328,6 +366,13 @@ function createMainWindow() {
 		});
 		return { action: 'deny' };
 	});
+	const preventUntrustedNavigation = (event, url) => {
+		if (new URL(url).origin !== rendererOrigin) {
+			event.preventDefault();
+		}
+	};
+	mainWindow.webContents.on('will-navigate', preventUntrustedNavigation);
+	mainWindow.webContents.on('will-redirect', preventUntrustedNavigation);
 	mainWindow.webContents.on(
 		'did-fail-load',
 		(_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
@@ -342,15 +387,14 @@ function createMainWindow() {
 	mainWindow.webContents.on('render-process-gone', (_event, details) => {
 		console.error('Renderer process gone', details);
 	});
+	mainWindow.webContents.on('did-finish-load', notifyWorkspaceLaunch);
 	mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
 		const levels = ['debug', 'info', 'warn', 'error'];
 		const label = levels[level] ?? 'log';
 		console.log(`[renderer:${label}] ${sourceId}:${line} ${message}`);
 	});
 
-	const targetUrl = isDevelopment ? devRendererUrl : `http://${serverHost}:${serverPort}`;
-
-	void loadRendererWhenReady(mainWindow, targetUrl).catch((error) => {
+	void loadRendererWhenReady(mainWindow, rendererUrl).catch((error) => {
 		reportFatalError('Failed to load Sprocket', error);
 		app.quit();
 	});
@@ -359,7 +403,8 @@ function createMainWindow() {
 	}
 }
 
-ipcMain.handle('sprocket:get-local-bootstrap', () => {
+ipcMain.handle('sprocket:get-local-bootstrap', (event) => {
+	requireTrustedRenderer(event);
 	if (!serverBaseUrl || !serverPairingCredential) {
 		throw new Error('Local server bootstrap is unavailable.');
 	}
@@ -369,6 +414,11 @@ ipcMain.handle('sprocket:get-local-bootstrap', () => {
 		desktopLoginCallbackUrl: serverDesktopLoginCallbackUrl ?? desktopLoginCallbackUrl,
 		pairingCredential: serverPairingCredential
 	};
+});
+
+ipcMain.handle('sprocket:take-workspace-launch', (event) => {
+	requireTrustedRenderer(event);
+	return pendingWorkspaceLaunches.shift() ?? null;
 });
 
 function openWithXdgOpen(url) {
@@ -445,11 +495,13 @@ async function openInSystemBrowser(url) {
 	await shell.openExternal(url);
 }
 
-ipcMain.handle('sprocket:open-external', async (_event, url) => {
+ipcMain.handle('sprocket:open-external', async (event, url) => {
+	requireTrustedRenderer(event);
 	await openExternalHttpsUrl(url);
 });
 
-ipcMain.handle('sprocket:focus-window', () => {
+ipcMain.handle('sprocket:focus-window', (event) => {
+	requireTrustedRenderer(event);
 	const mainWindow = mainWindowRef;
 	if (!mainWindow || mainWindow.isDestroyed()) {
 		return false;
@@ -464,7 +516,8 @@ ipcMain.handle('sprocket:focus-window', () => {
 });
 
 if (hasSingleInstanceLock) {
-	app.on('second-instance', () => {
+	app.on('second-instance', (_event, _commandLine, _workingDirectory, additionalData) => {
+		queueWorkspaceLaunch(additionalData?.workspacePath);
 		void showDesktopApp().catch((error) => {
 			console.error('Failed to handle Sprocket launch request', error);
 		});

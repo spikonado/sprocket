@@ -9,13 +9,15 @@ use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use sprocket_server::{
-    INSTALLED_WEB_DIR, RunOptions, ServerConfig, load_repo_env, pairing_proof_message, pairing_url,
-    read_pairing_credential, run,
+    INSTALLED_WEB_DIR, RunOptions, ServerConfig, browser_launch_url, load_repo_env,
+    pairing_proof_message, read_pairing_credential, run,
 };
+use sprocket_workspace::resolve_workspace_root;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 const DESKTOP_EXECUTABLE_ENV: &str = "SPROCKET_DESKTOP_EXECUTABLE";
+const DESKTOP_WORKSPACE_ARG: &str = "--sprocket-workspace";
 type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Debug, Parser)]
@@ -29,6 +31,10 @@ struct Cli {
     /// Launch only the web app in the default browser
     #[arg(long)]
     web: bool,
+
+    /// Open this directory as a workspace in a new thread
+    #[arg(value_name = "DIRECTORY")]
+    directory: Option<PathBuf>,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -63,19 +69,27 @@ fn main() -> anyhow::Result<()> {
         .init();
 
     let cli = Cli::parse();
+    let workspace_path = cli
+        .directory
+        .as_deref()
+        .map(resolve_launch_workspace)
+        .transpose()?;
     match cli.command {
         Some(Commands::Serve(serve)) => {
             if cli.web {
                 anyhow::bail!("`--web` cannot be combined with `serve`; run `sprocket --web`");
             }
-            serve_local(serve.server, serve.quiet, false)
+            if workspace_path.is_some() {
+                anyhow::bail!("a workspace directory cannot be combined with `serve`");
+            }
+            serve_local(serve.server, serve.quiet, false, None)
         }
         None if cli.web => {
             let server = ServerConfig::try_parse_from(["sprocket"])?;
-            serve_local(server, false, true)
+            serve_local(server, false, true, workspace_path)
         }
         None => {
-            if launch_desktop()? {
+            if launch_desktop(workspace_path.as_deref())? {
                 return Ok(());
             }
 
@@ -88,12 +102,29 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
-fn serve_local(server: ServerConfig, quiet: bool, open_browser: bool) -> anyhow::Result<()> {
+fn resolve_launch_workspace(path: &std::path::Path) -> anyhow::Result<String> {
+    let path = path
+        .to_str()
+        .context("workspace paths must contain valid UTF-8")?;
+    resolve_workspace_root(path)?
+        .to_str()
+        .map(str::to_string)
+        .context("workspace paths must contain valid UTF-8")
+}
+
+fn serve_local(
+    server: ServerConfig,
+    quiet: bool,
+    open_browser: bool,
+    workspace_path: Option<String>,
+) -> anyhow::Result<()> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
         .block_on(async move {
-            if open_browser && open_running_web_app(&server).await? {
+            if open_browser
+                && open_running_web_app(&server, workspace_path.as_deref()).await?
+            {
                 return Ok(());
             }
 
@@ -109,6 +140,7 @@ fn serve_local(server: ServerConfig, quiet: bool, open_browser: bool) -> anyhow:
                 RunOptions {
                     quiet,
                     open_browser,
+                    workspace_path,
                 },
             )
             .await
@@ -128,7 +160,10 @@ struct PairingProofResponse {
     proof: Vec<u8>,
 }
 
-async fn open_running_web_app(server: &ServerConfig) -> anyhow::Result<bool> {
+async fn open_running_web_app(
+    server: &ServerConfig,
+    workspace_path: Option<&str>,
+) -> anyhow::Result<bool> {
     let expected_base_url = server.listen_url();
     let client = reqwest::Client::builder()
         .no_proxy()
@@ -192,14 +227,14 @@ async fn open_running_web_app(server: &ServerConfig) -> anyhow::Result<bool> {
         );
     }
 
-    let target = pairing_url(&expected_base_url, &credential);
+    let target = browser_launch_url(&expected_base_url, &credential, workspace_path);
     eprintln!("Sprocket is already running. Opening it in your browser…");
     open::that(&target)
         .with_context(|| format!("failed to open the browser; open {target} manually"))?;
     Ok(true)
 }
 
-fn launch_desktop() -> anyhow::Result<bool> {
+fn launch_desktop(workspace_path: Option<&str>) -> anyhow::Result<bool> {
     let desktop_executable = std::env::var_os(DESKTOP_EXECUTABLE_ENV)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
@@ -210,12 +245,12 @@ fn launch_desktop() -> anyhow::Result<bool> {
         });
 
     if let Some(target) = desktop_executable {
-        spawn_desktop(Command::new(&target))
+        spawn_desktop(Command::new(&target), workspace_path)
             .with_context(|| format!("failed to launch {}", target.display()))?;
         return Ok(true);
     }
 
-    match spawn_desktop(Command::new(DESKTOP_EXECUTABLE_NAME)) {
+    match spawn_desktop(Command::new(DESKTOP_EXECUTABLE_NAME), workspace_path) {
         Ok(()) => return Ok(true),
         Err(error) if error.kind() == ErrorKind::NotFound => {}
         Err(error) => return Err(error).context("failed to launch Sprocket desktop app"),
@@ -224,7 +259,7 @@ fn launch_desktop() -> anyhow::Result<bool> {
     if let Some(launcher) = find_dev_desktop_launcher() {
         let mut command = Command::new("node");
         command.arg(launcher);
-        match spawn_desktop(command) {
+        match spawn_desktop(command, workspace_path) {
             Ok(()) => return Ok(true),
             Err(error) if error.kind() == ErrorKind::NotFound => {}
             Err(error) => {
@@ -236,9 +271,12 @@ fn launch_desktop() -> anyhow::Result<bool> {
     Ok(false)
 }
 
-fn spawn_desktop(mut command: Command) -> std::io::Result<()> {
+fn spawn_desktop(mut command: Command, workspace_path: Option<&str>) -> std::io::Result<()> {
     // Electron treats this development override as a request to run its binary as Node.js.
     command.env_remove("ELECTRON_RUN_AS_NODE");
+    if let Some(workspace_path) = workspace_path {
+        command.arg(format!("{DESKTOP_WORKSPACE_ARG}={workspace_path}"));
+    }
 
     command
         .stdin(Stdio::null())
@@ -328,16 +366,21 @@ mod tests {
     fn parses_desktop_web_and_server_modes() {
         let desktop = Cli::try_parse_from(["sprocket"]).unwrap();
         assert!(!desktop.web);
+        assert!(desktop.directory.is_none());
         assert!(desktop.command.is_none());
 
-        let web = Cli::try_parse_from(["sprocket", "--web"]).unwrap();
+        let web = Cli::try_parse_from(["sprocket", "--web", "./robot"]).unwrap();
         assert!(web.web);
+        assert_eq!(web.directory, Some(PathBuf::from("./robot")));
         assert!(web.command.is_none());
+
+        let workspace = Cli::try_parse_from(["sprocket", "/tmp/robot"]).unwrap();
+        assert_eq!(workspace.directory, Some(PathBuf::from("/tmp/robot")));
+        assert!(workspace.command.is_none());
 
         let server = Cli::try_parse_from(["sprocket", "serve", "--quiet"]).unwrap();
         assert!(!server.web);
+        assert!(server.directory.is_none());
         assert!(matches!(server.command, Some(Commands::Serve(_))));
-
-        assert!(Cli::try_parse_from(["sprocket", "serve", "--open"]).is_err());
     }
 }

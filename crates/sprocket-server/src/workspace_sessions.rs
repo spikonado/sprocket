@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sprocket_workspace::{resolve_or_create_workspace_root, resolve_workspace_root};
 use tokio::sync::{Mutex, RwLock};
 
@@ -302,11 +303,16 @@ pub fn resolve_workspace_path(
     if workspace_path.is_empty() {
         anyhow::bail!("failed to resolve workspace path");
     }
-    let workspace_name = root
+    let display_name = root
         .file_name()
         .unwrap_or_else(|| OsStr::new("workspace"))
         .to_string_lossy()
         .to_string();
+    let workspace_key: String = Sha256::digest(workspace_path.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let workspace_name = format!("{display_name} ({})", &workspace_key[..32]);
 
     Ok(WorkspacePathResolution {
         workspace_path,
@@ -347,6 +353,24 @@ mod tests {
         let _ = fs::remove_dir_all(temp_root);
     }
 
+    #[test]
+    fn workspace_keys_distinguish_directories_with_the_same_name() {
+        let temp_root =
+            std::env::temp_dir().join(format!("sprocket-workspace-identity-{}", now_ms()));
+        let first = temp_root.join("first").join("robot");
+        let second = temp_root.join("second").join("robot");
+        fs::create_dir_all(&first).expect("first workspace");
+        fs::create_dir_all(&second).expect("second workspace");
+
+        let first = resolve_workspace_path(&first.to_string_lossy(), false).expect("first path");
+        let second = resolve_workspace_path(&second.to_string_lossy(), false).expect("second path");
+        assert_ne!(first.workspace_name, second.workspace_name);
+        assert!(first.workspace_name.starts_with("robot ("));
+        assert!(second.workspace_name.starts_with("robot ("));
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
     #[cfg(unix)]
     #[test]
     fn workspace_path_resolution_uses_canonical_name_and_root_fallback() {
@@ -359,11 +383,14 @@ mod tests {
         symlink(&target, &link).expect("symlink");
 
         let linked = resolve_workspace_path(&link.to_string_lossy(), false).expect("linked path");
+        let target_resolution =
+            resolve_workspace_path(&target.to_string_lossy(), false).expect("target path");
         assert_eq!(linked.workspace_path, target.to_string_lossy());
-        assert_eq!(linked.workspace_name, "real-project");
+        assert_eq!(linked.workspace_name, target_resolution.workspace_name);
+        assert!(linked.workspace_name.starts_with("real-project ("));
 
         let root = resolve_workspace_path("/", false).expect("filesystem root");
-        assert_eq!(root.workspace_name, "workspace");
+        assert!(root.workspace_name.starts_with("workspace ("));
 
         let _ = fs::remove_dir_all(temp_root);
     }

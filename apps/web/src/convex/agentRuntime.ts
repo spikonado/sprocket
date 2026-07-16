@@ -5,8 +5,6 @@ import { getOwnedRun, getOwnedThreadRecord, getOwnedWorkspaceSession } from '@co
 import { getUserId } from '@convex/lib/auth';
 import {
 	assertSupportedModelConfiguration,
-	normalizeModelId,
-	normalizeServiceTier,
 	type SupportedModelId,
 	type SupportedServiceTier
 } from '@convex/lib/models';
@@ -178,9 +176,9 @@ export const createRun = mutation({
 		if (existingRun) {
 			if (
 				existingRun.threadId !== args.threadId ||
-				normalizeModelId(existingRun.selectedModel) !== args.selectedModel ||
+				existingRun.selectedModel !== args.selectedModel ||
 				existingRun.reasoningEffort !== args.reasoningEffort ||
-				normalizeServiceTier(existingRun.serviceTier) !== args.serviceTier ||
+				existingRun.serviceTier !== args.serviceTier ||
 				!existingRun.promptMessageId
 			) {
 				throw new Error('Submission belongs to a different or incomplete run.');
@@ -340,11 +338,7 @@ export const getContext = query({
 		const prompt: string = findLatestPrompt(messages);
 
 		return {
-			run: {
-				...run,
-				selectedModel: normalizeModelId(run.selectedModel),
-				serviceTier: normalizeServiceTier(run.serviceTier)
-			},
+			run,
 			threadRecord,
 			prompt,
 			agentHistory,
@@ -577,9 +571,9 @@ export const finalizeFailedStart = mutation({
 			!run ||
 			run.status !== 'queued' ||
 			run.threadId !== args.threadId ||
-			normalizeModelId(run.selectedModel) !== args.selectedModel ||
+			run.selectedModel !== args.selectedModel ||
 			run.reasoningEffort !== args.reasoningEffort ||
-			normalizeServiceTier(run.serviceTier) !== args.serviceTier ||
+			run.serviceTier !== args.serviceTier ||
 			!run.promptMessageId
 		) {
 			return false;

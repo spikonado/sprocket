@@ -19,11 +19,13 @@ use axum::Router;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use tokio::sync::Mutex;
+use tokio::time::{Duration, sleep};
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct RunOptions {
     pub quiet: bool,
     pub open_browser: bool,
+    pub workspace_path: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -31,11 +33,16 @@ pub struct StartupInfo {
     pub listen_url: String,
     pub pairing_credential: String,
     pub web_ui_enabled: bool,
+    pub workspace_path: Option<String>,
 }
 
 impl StartupInfo {
-    pub fn pairing_url(&self) -> String {
-        pairing_url(&self.listen_url, &self.pairing_credential)
+    pub fn browser_url(&self, base_url: &str) -> String {
+        browser_launch_url(
+            base_url,
+            &self.pairing_credential,
+            self.workspace_path.as_deref(),
+        )
     }
 
     pub fn print_startup(&self, dev_web_url: Option<&str>) {
@@ -44,12 +51,12 @@ impl StartupInfo {
             eprintln!("Open the web app (Vite dev server):");
             eprintln!("{dev_web_url}");
             eprintln!("Pair in the browser if needed:");
-            eprintln!("{}", pairing_url(dev_web_url, &self.pairing_credential));
+            eprintln!("{}", self.browser_url(dev_web_url));
             return;
         }
 
         eprintln!("Sprocket is running. Open in your browser:");
-        eprintln!("{}", self.pairing_url());
+        eprintln!("{}", self.browser_url(&self.listen_url));
     }
 }
 
@@ -118,6 +125,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         listen_url: config.listen_url(),
         pairing_credential,
         web_ui_enabled,
+        workspace_path: options.workspace_path.clone(),
     };
 
     let dev_web_url = config.api_only.then(default_dev_web_url).flatten();
@@ -135,14 +143,13 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
     }
 
     if options.open_browser {
-        let open_target = pairing_url(
-            dev_web_url.as_deref().unwrap_or(&startup.listen_url),
-            &startup.pairing_credential,
-        );
+        let open_target =
+            startup.browser_url(dev_web_url.as_deref().unwrap_or(&startup.listen_url));
         if dev_web_url.is_some() || web_ui_enabled {
-            if let Err(error) = open::that(&open_target) {
-                tracing::warn!("failed to open browser: {error}");
-            }
+            tokio::spawn(open_browser_when_ready(
+                startup.listen_url.clone(),
+                open_target,
+            ));
         }
     }
 
@@ -154,6 +161,36 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
     )
     .await?;
     Ok(())
+}
+
+async fn open_browser_when_ready(health_base_url: String, open_target: String) {
+    let health_url = format!("{}/api/health", health_base_url.trim_end_matches('/'));
+    let client = match reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_millis(250))
+        .build()
+    {
+        Ok(client) => client,
+        Err(error) => {
+            tracing::warn!("failed to prepare the browser readiness check: {error}");
+            return;
+        }
+    };
+    for _ in 0..100 {
+        if client
+            .get(&health_url)
+            .send()
+            .await
+            .is_ok_and(|response| response.status().is_success())
+        {
+            if let Err(error) = open::that(&open_target) {
+                tracing::warn!("failed to open browser: {error}");
+            }
+            return;
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+    tracing::warn!("timed out waiting to open the browser at {open_target}");
 }
 
 async fn api_not_found() -> impl IntoResponse {
@@ -171,10 +208,20 @@ fn default_dev_web_url() -> Option<String> {
         .or_else(|| Some(config::DEFAULT_DEV_WEB_URL.to_string()))
 }
 
-pub fn pairing_url(base_url: &str, pairing_credential: &str) -> String {
+pub fn browser_launch_url(
+    base_url: &str,
+    pairing_credential: &str,
+    workspace_path: Option<&str>,
+) -> String {
+    let mut fragment = url::form_urlencoded::Serializer::new(String::new());
+    fragment.append_pair("token", pairing_credential);
+    if let Some(workspace_path) = workspace_path {
+        fragment.append_pair("workspace", workspace_path);
+    }
     format!(
-        "{}/pair#token={pairing_credential}",
-        base_url.trim_end_matches('/')
+        "{}/pair#{}",
+        base_url.trim_end_matches('/'),
+        fragment.finish()
     )
 }
 
@@ -193,10 +240,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pairing_url_normalizes_trailing_slash() {
+    fn browser_launch_url_encodes_the_workspace() {
         assert_eq!(
-            pairing_url("http://localhost:5173/", "secret"),
-            "http://localhost:5173/pair#token=secret"
+            browser_launch_url("http://localhost:5173/", "secret", Some("/robot & tools")),
+            "http://localhost:5173/pair#token=secret&workspace=%2Frobot+%26+tools"
         );
     }
 }

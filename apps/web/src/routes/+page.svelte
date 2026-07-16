@@ -68,7 +68,11 @@
 		resolveWorkspaceThreadSelection,
 		type PendingAgentLaunches
 	} from '$lib/workspace/threads';
-	import { resolveDesktopApi } from '$lib/local/client';
+	import {
+		clearLaunchHash,
+		readWorkspaceLaunchFromHash,
+		resolveDesktopApi
+	} from '$lib/local/client';
 	import { resolve } from '$app/paths';
 	import type {
 		DesktopApi,
@@ -192,6 +196,9 @@
 	let workspacePickerReconnectSessionId = $state<Id<'workspaceSessions'> | null>(null);
 	let settingsOpen = $state(false);
 	let settingsPage = $state<SettingsPage>('account');
+	let pendingWorkspaceLaunches = $state<string[]>([]);
+	let workspaceLaunchInFlight = $state(false);
+	let initialWorkspaceLaunchResolved = $state(false);
 	function getCurrentUserId() {
 		return $authState.user?.id ?? null;
 	}
@@ -492,6 +499,7 @@
 			return;
 		}
 		const pickerUserId = getCurrentUserId();
+		const pickerClientId = executorClientId;
 		if (!pickerUserId) {
 			currentError = 'User session is not ready.';
 			return;
@@ -519,23 +527,7 @@
 				return;
 			}
 
-			const session = await upsertWorkspaceSession({
-				workspaceName: selection.workspaceName,
-				connectedClientId: executorClientId
-			});
-			if (!session) {
-				throw new Error('Failed to create or update the workspace session.');
-			}
-			if (getCurrentUserId() !== pickerUserId) {
-				return;
-			}
-
-			await attachLocalWorkspaceSession(session._id, selection.workspacePath);
-			if (getCurrentUserId() !== pickerUserId) {
-				return;
-			}
-			setWorkspaceSelection(selection.workspaceName, null, true);
-			currentError = null;
+			await addWorkspaceSelection(selection, pickerUserId, pickerClientId);
 		} catch (error) {
 			if (getCurrentUserId() !== pickerUserId) {
 				return;
@@ -543,6 +535,67 @@
 			currentError = error instanceof Error ? error.message : 'Failed to attach workspace.';
 			throw error;
 		}
+	}
+
+	async function addWorkspaceSelection(
+		selection: WorkspaceSelection,
+		expectedUserId: string,
+		connectedClientId: string
+	) {
+		const session = await upsertWorkspaceSession({
+			workspaceName: selection.workspaceName,
+			connectedClientId
+		});
+		if (!session) {
+			throw new Error('Failed to create or update the workspace session.');
+		}
+		if (getCurrentUserId() !== expectedUserId) {
+			return;
+		}
+
+		await attachLocalWorkspaceSession(session._id, selection.workspacePath);
+		if (getCurrentUserId() !== expectedUserId) {
+			return;
+		}
+		setWorkspaceSelection(session.workspaceName, null, true);
+		currentError = null;
+	}
+
+	function queueWorkspaceLaunch(workspacePath: string | null | undefined) {
+		const normalizedPath = workspacePath?.trim();
+		if (!normalizedPath) {
+			return;
+		}
+
+		pendingWorkspaceLaunches = [...pendingWorkspaceLaunches, normalizedPath];
+	}
+
+	async function takeDesktopWorkspaceLaunches() {
+		const bridge = window.sprocketDesktopBridge;
+		if (!bridge?.takeWorkspaceLaunch) {
+			return;
+		}
+
+		while (true) {
+			const workspacePath = await bridge.takeWorkspaceLaunch();
+			if (!workspacePath) {
+				return;
+			}
+			queueWorkspaceLaunch(workspacePath);
+		}
+	}
+
+	async function openLaunchedWorkspace(
+		workspacePath: string,
+		client: DesktopApi,
+		userId: string,
+		clientId: string
+	) {
+		const selection = await client.resolveWorkspacePath({ workspacePath });
+		if (getCurrentUserId() !== userId) {
+			return;
+		}
+		await addWorkspaceSelection(selection, userId, clientId);
 	}
 
 	async function verifyWorkspaceSession(workspaceSessionId: Id<'workspaceSessions'>) {
@@ -1083,6 +1136,43 @@
 	});
 
 	$effect(() => {
+		const workspacePath = pendingWorkspaceLaunches[0];
+		const client = desktopApi;
+		const userId = getCurrentUserId();
+		const clientId = executorClientId;
+		if (
+			!workspacePath ||
+			workspaceLaunchInFlight ||
+			!authReady ||
+			!client ||
+			!userId ||
+			!clientId ||
+			workspaceSessionsQuery.data === undefined
+		) {
+			return;
+		}
+
+		pendingWorkspaceLaunches = pendingWorkspaceLaunches.slice(1);
+		workspaceLaunchInFlight = true;
+		hasResolvedInitialSelection = true;
+		restoredWorkspaceSessionIdToAttach = null;
+		workspacePickerOpen = false;
+		settingsOpen = false;
+		currentError = null;
+		void openLaunchedWorkspace(workspacePath, client, userId, clientId)
+			.catch((error) => {
+				if (getCurrentUserId() === userId) {
+					hasResolvedInitialSelection = false;
+					currentError =
+						error instanceof Error ? error.message : 'Failed to open the requested workspace.';
+				}
+			})
+			.finally(() => {
+				workspaceLaunchInFlight = false;
+			});
+	});
+
+	$effect(() => {
 		const thread = currentActiveThread;
 		const threadId = thread?._id ?? null;
 		if (threadId === lastSyncedComposerThreadId) return;
@@ -1154,7 +1244,12 @@
 
 	$effect(() => {
 		const uiPreferences = uiPreferencesQuery.data;
-		if (hasResolvedInitialSelection) {
+		if (
+			hasResolvedInitialSelection ||
+			!initialWorkspaceLaunchResolved ||
+			pendingWorkspaceLaunches.length > 0 ||
+			workspaceLaunchInFlight
+		) {
 			return;
 		}
 
@@ -1165,7 +1260,7 @@
 		hasResolvedInitialSelection = true;
 		const restoredThread = findThreadById(threads, uiPreferences?.lastThreadId ?? null);
 		if (restoredThread && isActiveThread(restoredThread)) {
-			setWorkspaceSelection(restoredThread.workspaceName, restoredThread.threadId);
+			setWorkspaceSelection(restoredThread.workspaceName, restoredThread.threadId, false, true);
 			restoredWorkspaceSessionIdToAttach =
 				findWorkspaceSessionByName(workspaceSessions, restoredThread.workspaceName)?._id ??
 				restoredThread.workspaceSessionId;
@@ -1174,7 +1269,7 @@
 		}
 
 		if (workspaceSessions[0]) {
-			setWorkspaceSelection(workspaceSessions[0].workspaceName, null, false);
+			setWorkspaceSelection(workspaceSessions[0].workspaceName, null, false, true);
 			restoredWorkspaceSessionIdToAttach = workspaceSessions[0]._id;
 		}
 	});
@@ -1324,6 +1419,24 @@
 
 	onMount(() => {
 		executorClientId = crypto.randomUUID();
+		const bridge = window.sprocketDesktopBridge;
+		const unsubscribeWorkspaceLaunch = bridge?.onWorkspaceLaunch
+			? bridge.onWorkspaceLaunch(() => {
+					void takeDesktopWorkspaceLaunches();
+				})
+			: undefined;
+		const workspacePath = readWorkspaceLaunchFromHash();
+		if (workspacePath) {
+			queueWorkspaceLaunch(workspacePath);
+			clearLaunchHash();
+		}
+		if (bridge?.takeWorkspaceLaunch) {
+			void takeDesktopWorkspaceLaunches().finally(() => {
+				initialWorkspaceLaunchResolved = true;
+			});
+		} else {
+			initialWorkspaceLaunchResolved = true;
+		}
 
 		void resolveDesktopApi()
 			.then((client) => {
@@ -1339,6 +1452,8 @@
 					error instanceof Error ? error.message : 'Failed to connect to the Sprocket server.';
 				desktopApiResolved = true;
 			});
+
+		return () => unsubscribeWorkspaceLaunch?.();
 	});
 </script>
 

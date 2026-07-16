@@ -25,6 +25,17 @@ run:
 sprocket --web
 ```
 
+Pass a directory to either command to add or reconnect that workspace and open
+a new thread for it:
+
+```sh
+sprocket .
+sprocket --web ../my-robot
+```
+
+The directory must already exist. Relative paths are resolved from the current
+working directory.
+
 `--web` runs the server and bundled static web app directly; it does not start
 or require Electron. If the desktop server is already running, the command opens
 that same server instead of starting another one. Keep the server command
@@ -47,12 +58,12 @@ with `SPROCKET_DATA_DIR`.
 
 ## CLI reference
 
-| Command                     | Behavior                                                                       |
-| --------------------------- | ------------------------------------------------------------------------------ |
-| `sprocket`                  | Start the server and desktop app.                                              |
-| `sprocket --web`            | Start the server and open only the browser app.                                |
-| `sprocket serve`            | Run the local server in the foreground without launching a client.             |
-| `sprocket serve --api-only` | Serve only `/api`; intended for development (see [Development](#development)). |
+| Command                      | Behavior                                                                       |
+| ---------------------------- | ------------------------------------------------------------------------------ |
+| `sprocket [DIRECTORY]`       | Start the server and desktop app, optionally opening a workspace.              |
+| `sprocket --web [DIRECTORY]` | Start the server and browser app, optionally opening a workspace.              |
+| `sprocket serve`             | Run the local server in the foreground without launching a client.             |
+| `sprocket serve --api-only`  | Serve only `/api`; intended for development (see [Development](#development)). |
 
 Run `sprocket --help` or `sprocket serve --help` for all options. Common server
 overrides are also available as environment variables:

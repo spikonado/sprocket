@@ -2046,6 +2046,7 @@ dependencies = [
  "serde",
  "sha2",
  "sprocket-server",
+ "sprocket-workspace",
  "tokio",
  "tracing-subscriber",
  "uuid",
@@ -2077,6 +2078,7 @@ dependencies = [
  "dotenvy",
  "hmac",
  "open",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2",
@@ -2088,6 +2090,7 @@ dependencies = [
  "tower-http 0.7.0",
  "tracing",
  "tracing-subscriber",
+ "url",
  "uuid",
 ]
 

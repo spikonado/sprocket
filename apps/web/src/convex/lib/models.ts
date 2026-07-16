@@ -7,11 +7,8 @@ export const modelIds = [
 	'claude-fable-5',
 	'grok-4.5'
 ] as const;
-export const legacyModelIds = ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex'] as const;
-export const persistedModelIds = [...modelIds, ...legacyModelIds] as const;
 
 export type SupportedModelId = (typeof modelIds)[number];
-export type PersistedModelId = (typeof persistedModelIds)[number];
 export type SupportedReasoningEffort = (typeof reasoningEffortIds)[number];
 export type SupportedServiceTier = (typeof serviceTierIds)[number];
 export type ModelProvider = 'openai' | 'anthropic' | 'xai';
@@ -77,18 +74,6 @@ export function getModelDefinition(modelId: SupportedModelId): ModelDefinition {
 	const definition = modelDefinitions.find((model) => model.id === modelId);
 	if (!definition) throw new Error(`Unsupported model: ${modelId}`);
 	return definition;
-}
-
-export function normalizeModelId(modelId: PersistedModelId): SupportedModelId {
-	return (modelIds as readonly string[]).includes(modelId)
-		? (modelId as SupportedModelId)
-		: defaultModelId;
-}
-
-export function normalizeServiceTier(
-	serviceTier: SupportedServiceTier | undefined
-): SupportedServiceTier {
-	return serviceTier ?? defaultServiceTier;
 }
 
 export function assertSupportedModelConfiguration(args: {
