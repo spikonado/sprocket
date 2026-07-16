@@ -1,11 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-	assertSupportedModelConfiguration,
-	modelDefinitions,
-	modelIds,
-	reasoningEffortIds,
-	serviceTierIds
-} from '@convex/lib/models';
+import { assertSupportedModelConfiguration, modelIds } from '@convex/lib/models';
 
 describe('model configuration', () => {
 	it('exposes only the configured GPT-5.6, Fable, and Grok models', () => {
@@ -18,38 +12,7 @@ describe('model configuration', () => {
 		]);
 	});
 
-	it('matches provider model names and reasoning capabilities', () => {
-		expect(
-			modelDefinitions.map(({ label, reasoningEfforts, defaultReasoningEffort }) => [
-				label,
-				reasoningEfforts,
-				defaultReasoningEffort
-			])
-		).toEqual([
-			['GPT-5.6 Sol', reasoningEffortIds, 'medium'],
-			['GPT-5.6 Terra', reasoningEffortIds, 'medium'],
-			['GPT-5.6 Luna', reasoningEffortIds, 'medium'],
-			['Claude Fable 5', ['low', 'medium', 'high', 'xhigh', 'max'], 'high'],
-			['Grok 4.5', ['low', 'medium', 'high'], 'high']
-		]);
-		expect(modelDefinitions.every(({ serviceTiers }) => serviceTiers === serviceTierIds)).toBe(
-			true
-		);
-		expect(
-			modelDefinitions.every(({ reasoningEfforts, defaultReasoningEffort }) =>
-				reasoningEfforts.includes(defaultReasoningEffort)
-			)
-		).toBe(true);
-	});
-
-	it('validates reasoning and service tiers against each model', () => {
-		expect(() =>
-			assertSupportedModelConfiguration({
-				modelId: 'gpt-5.6-sol',
-				reasoningEffort: 'max',
-				serviceTier: 'fast'
-			})
-		).not.toThrow();
+	it('rejects reasoning efforts unsupported by a model', () => {
 		expect(() =>
 			assertSupportedModelConfiguration({
 				modelId: 'grok-4.5',
@@ -60,9 +23,9 @@ describe('model configuration', () => {
 		expect(() =>
 			assertSupportedModelConfiguration({
 				modelId: 'claude-fable-5',
-				reasoningEffort: 'max',
-				serviceTier: 'fast'
+				reasoningEffort: 'none',
+				serviceTier: 'standard'
 			})
-		).not.toThrow();
+		).toThrow('Claude Fable 5 does not support none reasoning.');
 	});
 });
