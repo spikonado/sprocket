@@ -11,6 +11,7 @@
 		className?: string;
 		triggerClassName?: string;
 		searchable?: boolean;
+		onValueChange?: (value: TOption['id']) => void;
 		optionIcon?: import('svelte').Snippet<[TOption]>;
 	};
 
@@ -23,6 +24,7 @@
 		className = '',
 		triggerClassName = '',
 		searchable = false,
+		onValueChange,
 		optionIcon
 	}: Props = $props();
 
@@ -52,8 +54,11 @@
 		else searchQuery = '';
 	}
 
-	function selectOption(optionId: string) {
-		value = optionId;
+	function selectOption(optionId: TOption['id']) {
+		if (optionId !== value) {
+			value = optionId;
+			onValueChange?.(optionId);
+		}
 		isOpen = false;
 		searchQuery = '';
 		triggerElement?.focus();

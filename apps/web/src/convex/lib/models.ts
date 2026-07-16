@@ -1,4 +1,4 @@
-export const reasoningEffortIds = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+export const reasoningEffortIds = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 export const serviceTierIds = ['standard', 'fast'] as const;
 export const modelIds = [
 	'gpt-5.6-sol',
@@ -21,53 +21,56 @@ type ModelDefinition = {
 	label: string;
 	provider: ModelProvider;
 	reasoningEfforts: readonly SupportedReasoningEffort[];
+	defaultReasoningEffort: SupportedReasoningEffort;
 	serviceTiers: readonly SupportedServiceTier[];
 };
-
-const standardReasoning = ['low', 'medium', 'high', 'xhigh'] as const;
-const grokReasoning = ['low', 'medium', 'high'] as const;
-const standardServiceTier = ['standard'] as const;
 
 export const modelDefinitions = [
 	{
 		id: 'gpt-5.6-sol',
-		label: 'GPT-5.6-Sol',
+		label: 'GPT-5.6 Sol',
 		provider: 'openai',
 		reasoningEfforts: reasoningEffortIds,
+		defaultReasoningEffort: 'medium',
 		serviceTiers: serviceTierIds
 	},
 	{
 		id: 'gpt-5.6-terra',
-		label: 'GPT-5.6-Terra',
+		label: 'GPT-5.6 Terra',
 		provider: 'openai',
 		reasoningEfforts: reasoningEffortIds,
+		defaultReasoningEffort: 'medium',
 		serviceTiers: serviceTierIds
 	},
 	{
 		id: 'gpt-5.6-luna',
-		label: 'GPT-5.6-Luna',
+		label: 'GPT-5.6 Luna',
 		provider: 'openai',
 		reasoningEfforts: reasoningEffortIds,
+		defaultReasoningEffort: 'medium',
 		serviceTiers: serviceTierIds
 	},
 	{
 		id: 'claude-fable-5',
-		label: 'Fable-5',
+		label: 'Claude Fable 5',
 		provider: 'anthropic',
-		reasoningEfforts: standardReasoning,
-		serviceTiers: standardServiceTier
+		reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+		defaultReasoningEffort: 'high',
+		serviceTiers: serviceTierIds
 	},
 	{
 		id: 'grok-4.5',
 		label: 'Grok 4.5',
 		provider: 'xai',
-		reasoningEfforts: grokReasoning,
-		serviceTiers: standardServiceTier
+		reasoningEfforts: ['low', 'medium', 'high'],
+		defaultReasoningEffort: 'high',
+		serviceTiers: serviceTierIds
 	}
 ] as const satisfies readonly ModelDefinition[];
 
 export const defaultModelId = 'gpt-5.6-sol' as const;
-export const defaultReasoningEffort = 'low' as const;
+export const defaultReasoningEffort: SupportedReasoningEffort =
+	getModelDefinition(defaultModelId).defaultReasoningEffort;
 export const defaultServiceTier = 'standard' as const;
 
 export function getModelDefinition(modelId: SupportedModelId): ModelDefinition {

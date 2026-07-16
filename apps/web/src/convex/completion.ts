@@ -509,18 +509,15 @@ function buildSharedCompletionRequest(
 	tools: Record<string, ReturnType<typeof tool>>,
 	toolChoice: ToolChoice | undefined
 ): SharedCompletionRequest {
+	const serviceTier = args.serviceTier ?? defaultServiceTier;
 	return {
-		model: resolveLanguageModel(args.modelId),
+		model: resolveLanguageModel(args.modelId, serviceTier),
 		...(args.instructions !== undefined ? { instructions: args.instructions } : {}),
 		...(args.tools?.length ? { tools } : {}),
 		...(toolChoice !== undefined ? { toolChoice } : {}),
 		...(args.reasoningEffort !== undefined || args.serviceTier !== undefined
 			? {
-					providerOptions: resolveProviderOptions(
-						args.modelId,
-						args.reasoningEffort,
-						args.serviceTier ?? defaultServiceTier
-					)
+					providerOptions: resolveProviderOptions(args.modelId, args.reasoningEffort, serviceTier)
 				}
 			: {})
 	};
