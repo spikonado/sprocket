@@ -4,8 +4,7 @@ use std::sync::{Arc, Mutex};
 use rig::agent::{AgentHook, Flow, InvalidToolCallContext, StepEvent, StepEventKind};
 use rig::completion::CompletionModel;
 
-pub(crate) const WORKSPACE_TOOL_NAMES: &[&str] =
-    &["exec_command", "create_file", "replace_in_file"];
+pub(crate) const WORKSPACE_TOOL_NAMES: &[&str] = &["exec_command", "write_stdin", "apply_patch"];
 
 #[derive(Clone, Debug)]
 struct TrackedToolCall {
@@ -222,9 +221,16 @@ mod tests {
             other => panic!("expected repair, got {other:?}"),
         }
 
-        match resolve_invalid_tool_name("createfile", &tools()) {
+        match resolve_invalid_tool_name("apply-patch", &tools()) {
             Flow::Repair { tool_name } => {
-                assert_eq!(tool_name, "create_file");
+                assert_eq!(tool_name, "apply_patch");
+            }
+            other => panic!("expected repair, got {other:?}"),
+        }
+
+        match resolve_invalid_tool_name("writestdin", &tools()) {
+            Flow::Repair { tool_name } => {
+                assert_eq!(tool_name, "write_stdin");
             }
             other => panic!("expected repair, got {other:?}"),
         }
@@ -235,8 +241,8 @@ mod tests {
         match resolve_invalid_tool_name("launch_missiles", &tools()) {
             Flow::Retry { feedback } => {
                 assert!(feedback.contains("exec_command"));
-                assert!(feedback.contains("create_file"));
-                assert!(feedback.contains("replace_in_file"));
+                assert!(feedback.contains("write_stdin"));
+                assert!(feedback.contains("apply_patch"));
             }
             other => panic!("expected retry, got {other:?}"),
         }

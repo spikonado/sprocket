@@ -121,20 +121,9 @@ pub fn relative_to_root(root: &Path, path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::resolve_workspace_path;
-
-    fn temp_workspace() -> PathBuf {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock should be after unix epoch")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("sprocket-workspace-tests-{unique}"));
-        fs::create_dir_all(&path).expect("temp dir should be created");
-        path.canonicalize().expect("temp dir should resolve")
-    }
+    use crate::test_support::temp_workspace;
 
     #[test]
     fn allows_missing_nested_paths_inside_workspace() {
