@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { CornerLeftUp, Folder, FolderPlus, LoaderCircle } from '@lucide/svelte';
-	import type { DesktopApi, FilesystemBrowseEntry, WorkspaceOverview } from '$lib/types/sprocket';
+	import type { DesktopApi, FilesystemBrowseEntry } from '$lib/types/sprocket';
 	import {
 		appendBrowsePathSegment,
 		getBrowseLeafPathSegment,
@@ -21,7 +21,13 @@
 		expectedWorkspaceName?: string;
 		recentWorkspaces?: RecentWorkspace[];
 		onClose: () => void;
-		onSelect: (overview: WorkspaceOverview) => void | Promise<void>;
+		onSelect: (selection: WorkspaceSelection) => void | Promise<void>;
+	};
+
+	export type WorkspaceSelection = {
+		workspacePath: string;
+		workspaceName: string;
+		createIfMissing: boolean;
 	};
 
 	let {
@@ -193,21 +199,22 @@
 		errorMessage = null;
 
 		try {
-			const overview = await desktopApi.workspaceOverviewForPath({
-				workspacePath,
-				createIfMissing: willCreateDirectory
-			});
+			const workspaceName = workspacePath.split(/[/\\]/).filter(Boolean).at(-1);
+			if (!workspaceName) {
+				errorMessage = 'Enter a project directory path.';
+				return;
+			}
 
 			if (
 				mode === 'reconnect' &&
 				expectedWorkspaceName &&
-				overview.name !== expectedWorkspaceName
+				workspaceName !== expectedWorkspaceName
 			) {
 				errorMessage = `Selected project must be named "${expectedWorkspaceName}" to reconnect.`;
 				return;
 			}
 
-			await onSelect(overview);
+			await onSelect({ workspacePath, workspaceName, createIfMissing: willCreateDirectory });
 			onClose();
 		} catch (error) {
 			errorMessage =
@@ -264,12 +271,12 @@
 					/>
 					{#if isLoadingBrowse}
 						<LoaderCircle
-							class="pointer-events-none absolute end-24 top-1/2 size-4 -translate-y-1/2 animate-spin text-slate-500"
+							class="pointer-events-none absolute inset-e-24 top-1/2 size-4 -translate-y-1/2 animate-spin text-slate-500"
 						/>
 					{/if}
 					<button
 						type="button"
-						class="absolute end-2 top-1/2 -translate-y-1/2 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[12px] text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+						class="absolute inset-e-2 top-1/2 -translate-y-1/2 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[12px] text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
 						disabled={!canSubmit || isSubmitting}
 						onclick={() => {
 							void confirmSelection();

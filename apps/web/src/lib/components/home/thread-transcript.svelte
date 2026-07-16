@@ -71,8 +71,6 @@
 				return 'Created Files';
 			case 'replace_in_file':
 				return 'Edited Files';
-			case 'get_workspace_overview':
-				return 'Checked Workspace';
 			case 'get_workspace_instructions':
 				return 'Read Instructions';
 			case 'check_docs':
@@ -113,8 +111,6 @@
 			case 'create_file':
 			case 'replace_in_file':
 				return typeof fields?.path === 'string' ? fields.path : 'File';
-			case 'get_workspace_overview':
-				return 'Workspace overview';
 			case 'get_workspace_instructions':
 				return 'Workspace instructions';
 			case 'check_docs':
@@ -354,7 +350,7 @@
 																				</span>
 																			</summary>
 																			<p
-																				class="mt-1.5 whitespace-pre-wrap break-words text-xs leading-5 {toolFailureKind ===
+																				class="mt-1.5 whitespace-pre-wrap wrap-break-word text-xs leading-5 {toolFailureKind ===
 																				'cancelled'
 																					? 'text-amber-200'
 																					: 'text-rose-200'}"

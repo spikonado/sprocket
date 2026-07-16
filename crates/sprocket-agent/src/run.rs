@@ -1,7 +1,6 @@
 use anyhow::anyhow;
 use sprocket_workspace::{
-    WorkspaceInstruction, WorkspaceOverview, build_workspace_overview, load_workspace_instructions,
-    resolve_workspace_root,
+    WorkspaceInstruction, load_workspace_instructions, resolve_workspace_root,
 };
 use std::future::Future;
 use std::time::Duration;
@@ -62,7 +61,6 @@ impl RunFinalStatus {
 
 fn build_workspace_preamble(
     workspace_path: &str,
-    workspace_overview: &WorkspaceOverview,
     workspace_instructions: &[WorkspaceInstruction],
 ) -> String {
     let instruction_block = if workspace_instructions.is_empty() {
@@ -86,8 +84,7 @@ fn build_workspace_preamble(
         "Do not guess about repo state or file contents. Always inspect before editing.",
         "Fix the root-cause of problems.",
         "Keep changes minimal, consistent with the existing codebase, and completely focused on the requested task.",
-        "If the workspace is already dirty, protect user changes and work around them rather than reverting them.",
-        "Use commands for inspection, builds, tests, and formatting, but do not mutate files through shell redirection or destructive git commands.",
+        "If the workspace is already dirty, do not revert the changes. Try and work around them. If they conflict with the changes you need to make, ask the user what to do with them.",
         "Validate your work when the repo has relevant tests or build checks. Start with the most targeted checks for the code you changed.",
         "When you finish, respond with a concise summary of what changed and which checks you ran.",
         "AGENTS.md spec:",
@@ -97,16 +94,6 @@ fn build_workspace_preamble(
         "- System and user instructions override AGENTS.md instructions.",
         "- The AGENTS.md instructions for the current workspace path are already included below and do not need to be re-read.",
         "- If you move into a deeper subdirectory before editing, check for additional nested AGENTS.md files there.",
-        "",
-        "Workspace root:",
-        workspace_path,
-        "Workspace summary:",
-        &format!("- Name: {}", workspace_overview.name),
-        &format!(
-            "- Git branch: {}",
-            workspace_overview.git_branch.as_deref().unwrap_or("unknown")
-        ),
-        &format!("- Git dirty: {}", workspace_overview.git_dirty),
         "",
         &instruction_block,
     ]
@@ -490,7 +477,6 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
     eprintln!("sprocket-agent: loaded run context {}", run_id);
 
     let prepared = (|| {
-        let workspace_overview = build_workspace_overview(&workspace_root)?;
         let workspace_instructions = load_workspace_instructions(&workspace_root)?;
         let prompt = context.prompt.trim().to_string();
         if prompt.is_empty() {
@@ -498,13 +484,8 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
         }
         let provider = AgentProvider::default_for_run(&runtime, &context, &run_id);
         let prior_history = deserialize_agent_history(context.agent_history)?;
-        let preamble = build_workspace_preamble(
-            &request.workspace_path,
-            &workspace_overview,
-            &workspace_instructions,
-        );
+        let preamble = build_workspace_preamble(&request.workspace_path, &workspace_instructions);
         Ok((
-            workspace_overview,
             workspace_instructions,
             prompt,
             provider,
@@ -513,7 +494,7 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
         ))
     })();
 
-    let (_, _, prompt, provider, prior_history, preamble) = match prepared {
+    let (_, prompt, provider, prior_history, preamble) = match prepared {
         Ok(values) => values,
         Err(error) => return abort_before_start(&runtime, &run_id, error).await,
     };

@@ -5,10 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use sprocket_workspace::{
-    WorkspaceOverview, build_workspace_overview, resolve_or_create_workspace_root,
-    resolve_workspace_root,
-};
+use sprocket_workspace::{resolve_or_create_workspace_root, resolve_workspace_root};
 use tokio::sync::RwLock;
 
 const WORKSPACE_SESSIONS_FILE: &str = "workspace-sessions.json";
@@ -39,6 +36,8 @@ pub enum WorkspaceAvailability {
 pub struct AttachWorkspaceSessionRequest {
     pub workspace_session_id: String,
     pub workspace_path: String,
+    #[serde(default)]
+    pub create_if_missing: bool,
 }
 
 pub struct WorkspaceSessionStore {
@@ -69,9 +68,11 @@ impl WorkspaceSessionStore {
     ) -> Result<WorkspaceSessionRecord> {
         self.ensure_loaded().await?;
         let now = now_ms();
+        let workspace_path =
+            resolve_workspace_path(&request.workspace_path, request.create_if_missing)?;
         let validated = validate_session(WorkspaceSessionRecord {
             workspace_session_id: request.workspace_session_id,
-            workspace_path: request.workspace_path,
+            workspace_path,
             availability: WorkspaceAvailability::Available,
             last_validated_at: now,
             last_used_at: now,
@@ -91,28 +92,6 @@ impl WorkspaceSessionStore {
         );
         self.save_to_disk().await?;
         Ok(validated.session)
-    }
-
-    pub async fn overview(&self, workspace_session_id: &str) -> Result<WorkspaceOverview> {
-        self.ensure_loaded().await?;
-        let session = self.get_or_error(workspace_session_id).await?;
-        let validated = validate_session(session)?;
-        self.sessions.write().await.insert(
-            workspace_session_id.to_string(),
-            WorkspaceSessionRecord {
-                last_used_at: now_ms(),
-                ..validated.session.clone()
-            },
-        );
-        self.save_to_disk().await?;
-        validated.overview.ok_or_else(|| {
-            anyhow::anyhow!(
-                validated
-                    .session
-                    .unavailable_reason
-                    .unwrap_or_else(|| "workspace path is unavailable".to_string())
-            )
-        })
     }
 
     pub async fn workspace_path(&self, workspace_session_id: &str) -> Result<String> {
@@ -229,20 +208,18 @@ impl WorkspaceSessionStore {
 
 struct ValidatedWorkspaceSession {
     session: WorkspaceSessionRecord,
-    overview: Option<WorkspaceOverview>,
 }
 
 fn validate_session(session: WorkspaceSessionRecord) -> Result<ValidatedWorkspaceSession> {
-    match workspace_overview_for_path(&session.workspace_path, false) {
-        Ok(overview) => Ok(ValidatedWorkspaceSession {
+    match resolve_workspace_path(&session.workspace_path, false) {
+        Ok(workspace_path) => Ok(ValidatedWorkspaceSession {
             session: WorkspaceSessionRecord {
-                workspace_path: overview.root_path.clone(),
+                workspace_path,
                 availability: WorkspaceAvailability::Available,
                 last_validated_at: now_ms(),
                 unavailable_reason: None,
                 ..session
             },
-            overview: Some(overview),
         }),
         Err(error) => Ok(ValidatedWorkspaceSession {
             session: WorkspaceSessionRecord {
@@ -251,25 +228,21 @@ fn validate_session(session: WorkspaceSessionRecord) -> Result<ValidatedWorkspac
                 unavailable_reason: Some(error.to_string()),
                 ..session
             },
-            overview: None,
         }),
     }
 }
 
-pub fn workspace_overview_for_path(
-    workspace_path: &str,
-    create_if_missing: bool,
-) -> Result<WorkspaceOverview> {
+fn resolve_workspace_path(workspace_path: &str, create_if_missing: bool) -> Result<String> {
     let root = if create_if_missing {
         resolve_or_create_workspace_root(workspace_path)?
     } else {
         resolve_workspace_root(workspace_path)?
     };
-    let overview = build_workspace_overview(&root)?;
-    if overview.root_path.is_empty() {
+    let workspace_path = root.to_string_lossy().to_string();
+    if workspace_path.is_empty() {
         anyhow::bail!("failed to resolve workspace path");
     }
-    Ok(overview)
+    Ok(workspace_path)
 }
 
 fn now_ms() -> u64 {
@@ -290,12 +263,11 @@ mod tests {
         fs::create_dir_all(&temp_root).expect("temp dir");
         let store = WorkspaceSessionStore::new(temp_root.clone());
 
-        let overview =
-            workspace_overview_for_path(env!("CARGO_MANIFEST_DIR"), false).expect("overview");
         let session = store
             .attach(AttachWorkspaceSessionRequest {
                 workspace_session_id: "session-1".to_string(),
-                workspace_path: overview.root_path,
+                workspace_path: env!("CARGO_MANIFEST_DIR").to_string(),
+                create_if_missing: false,
             })
             .await
             .expect("attach");

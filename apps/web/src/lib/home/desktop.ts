@@ -224,10 +224,12 @@ export async function attachLocalWorkspaceSession(args: {
 	desktopApi: DesktopApi;
 	workspaceSessionId: Id<'workspaceSessions'>;
 	workspacePath: string;
+	createIfMissing?: boolean;
 }) {
 	return await args.desktopApi.attachWorkspaceSession({
 		workspaceSessionId: args.workspaceSessionId,
-		workspacePath: args.workspacePath
+		workspacePath: args.workspacePath,
+		...(args.createIfMissing ? { createIfMissing: true } : {})
 	} satisfies WorkspaceSessionAttachment);
 }
 
@@ -327,7 +329,12 @@ export async function verifyWorkspaceSession(args: {
 	}
 
 	try {
-		await args.desktopApi.getWorkspaceSessionOverview(args.workspaceSessionId);
+		const session = (await args.desktopApi.listWorkspaceSessions()).find(
+			(session) => session.workspaceSessionId === args.workspaceSessionId
+		);
+		if (!session || session.availability !== 'available') {
+			throw new Error(session?.unavailableReason ?? 'Workspace path is unavailable.');
+		}
 		await args.refreshDesktopWorkspaceSessions();
 	} catch (error) {
 		await args.refreshDesktopWorkspaceSessions();

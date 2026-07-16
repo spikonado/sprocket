@@ -6,7 +6,6 @@ license = "Apache-2.0"
 
 [dependencies]
 anyhow = "1.0.102"
-gix = { version = "0.85.0", default-features = false, features = ["sha1", "status"] }
 libc = "0.2.186"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
