@@ -6,12 +6,19 @@ import { action, type ActionCtx } from '@convex/_generated/server';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import type { JsonValue } from '@convex/lib/json';
-import { resolveLanguageModel } from '@convex/lib/modelRegistry';
+import { resolveLanguageModel, resolveProviderOptions } from '@convex/lib/modelRegistry';
 import { assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
 import { enforceModelCompletionLimit } from '@convex/lib/rateLimits';
 import { getUserId } from '@convex/lib/auth';
-import { vModelId, vReasoningEffort } from '@convex/lib/validators';
-import { type SupportedModelId, type SupportedReasoningEffort } from '@convex/lib/models';
+import { vPersistedModelId, vReasoningEffort, vServiceTier } from '@convex/lib/validators';
+import {
+	assertSupportedModelConfiguration,
+	defaultServiceTier,
+	normalizeModelId,
+	type SupportedModelId,
+	type SupportedReasoningEffort,
+	type SupportedServiceTier
+} from '@convex/lib/models';
 import {
 	appendCompletionStreamEvent,
 	COMPLETION_STREAM_SUPERSEDED,
@@ -36,8 +43,9 @@ const COMPLETION_ACCEPTANCE_CHECK_INTERVAL_MS = 1_000;
 
 export const complete = action({
 	args: {
-		modelId: vModelId,
+		modelId: vPersistedModelId,
 		reasoningEffort: v.optional(vReasoningEffort),
+		serviceTier: v.optional(vServiceTier),
 		instructions: v.optional(v.string()),
 		prompt: v.optional(v.string()),
 		messagesJson: v.optional(v.string()),
@@ -69,6 +77,14 @@ export const complete = action({
 		stream_events: CompletionStreamEvent[];
 	}> => {
 		await getUserId(ctx);
+		const modelId = normalizeModelId(args.modelId);
+		if (args.reasoningEffort !== undefined || args.serviceTier !== undefined) {
+			assertSupportedModelConfiguration({
+				modelId,
+				reasoningEffort: args.reasoningEffort,
+				serviceTier: args.serviceTier ?? defaultServiceTier
+			});
+		}
 		const tools: Record<string, ReturnType<typeof tool>> = Object.fromEntries(
 			(args.tools ?? []).map((toolDefinition) => [
 				toolDefinition.name,
@@ -86,7 +102,7 @@ export const complete = action({
 		const toolChoice: ToolChoice | undefined = args.toolChoiceJson
 			? parseJson<ToolChoice>(args.toolChoiceJson, 'toolChoiceJson')
 			: undefined;
-		const sharedArgs = buildSharedCompletionRequest(args, tools, toolChoice);
+		const sharedArgs = buildSharedCompletionRequest({ ...args, modelId }, tools, toolChoice);
 		let request: CompletionRequest;
 		if (args.prompt !== undefined) {
 			request = buildCompletionRequest(sharedArgs, args.prompt, undefined);
@@ -486,6 +502,7 @@ function buildSharedCompletionRequest(
 	args: {
 		modelId: SupportedModelId;
 		reasoningEffort?: SupportedReasoningEffort;
+		serviceTier?: SupportedServiceTier;
 		instructions?: string;
 		tools?: Array<{ name: string }>;
 	},
@@ -497,7 +514,15 @@ function buildSharedCompletionRequest(
 		...(args.instructions !== undefined ? { instructions: args.instructions } : {}),
 		...(args.tools?.length ? { tools } : {}),
 		...(toolChoice !== undefined ? { toolChoice } : {}),
-		...(args.reasoningEffort !== undefined ? { reasoning: args.reasoningEffort } : {})
+		...(args.reasoningEffort !== undefined || args.serviceTier !== undefined
+			? {
+					providerOptions: resolveProviderOptions(
+						args.modelId,
+						args.reasoningEffort,
+						args.serviceTier ?? defaultServiceTier
+					)
+				}
+			: {})
 	};
 }
 

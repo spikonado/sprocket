@@ -1,16 +1,22 @@
 <script lang="ts">
 	import { ArrowUp, ChevronDown, Cpu, LockOpen, Square } from '@lucide/svelte';
-	import OpenAiBlossom from '$lib/components/openai-blossom.svelte';
 	import OptionSelector from '$lib/components/option-selector.svelte';
+	import ProviderLogo from '$lib/components/provider-logo.svelte';
+	import ReasoningServiceSelector from '$lib/components/reasoning-service-selector.svelte';
 	import { shouldSubmitComposerFromKeydown } from '$lib/chat/composer';
-	import { defaultModelId, defaultReasoningEffort } from '$convex/lib/models';
-	import type { SupportedModelId, SupportedReasoningEffort } from '$convex/lib/models';
-	import { modelOptions, reasoningEffortOptions } from '$lib/chat/model-options';
+	import { defaultModelId, defaultReasoningEffort, defaultServiceTier } from '$convex/lib/models';
+	import type {
+		SupportedModelId,
+		SupportedReasoningEffort,
+		SupportedServiceTier
+	} from '$convex/lib/models';
+	import { modelOptions } from '$lib/chat/model-options';
 
 	type Props = {
 		prompt?: string;
 		selectedModel?: SupportedModelId;
 		selectedReasoningEffort?: SupportedReasoningEffort;
+		selectedServiceTier?: SupportedServiceTier;
 		canSend: boolean;
 		isSubmitting: boolean;
 		isStarting: boolean;
@@ -24,6 +30,7 @@
 		prompt = $bindable(''),
 		selectedModel = $bindable(defaultModelId),
 		selectedReasoningEffort = $bindable(defaultReasoningEffort),
+		selectedServiceTier = $bindable(defaultServiceTier),
 		canSend,
 		isSubmitting,
 		isStarting,
@@ -131,24 +138,23 @@
 								ariaLabel="Select model"
 								menuTitle="Model"
 								disabled={isRunning}
+								searchable
 								className="z-20 shrink-0"
 								triggerClassName="h-9 border-0 bg-transparent px-2 text-[15px] text-slate-200 shadow-none hover:bg-transparent focus-visible:ring-0"
 							>
-								{#snippet icon()}
-									<OpenAiBlossom className="size-4 shrink-0 text-slate-400" />
+								{#snippet optionIcon(option)}
+									<ProviderLogo provider={option.provider} className="size-4 shrink-0" />
 								{/snippet}
 							</OptionSelector>
 
 							<div class="mx-1 hidden h-4 w-px shrink-0 bg-white/8 sm:block"></div>
 
-							<OptionSelector
-								bind:value={selectedReasoningEffort}
-								options={reasoningEffortOptions}
-								ariaLabel="Select reasoning effort"
-								menuTitle="Reasoning"
+							<ReasoningServiceSelector
+								modelId={selectedModel}
+								bind:reasoningEffort={selectedReasoningEffort}
+								bind:serviceTier={selectedServiceTier}
 								disabled={isRunning}
 								className="z-20 shrink-0"
-								triggerClassName="h-9 border-0 bg-transparent px-2 text-[15px] text-slate-300 shadow-none hover:bg-transparent focus-visible:ring-0"
 							/>
 
 							<div class="mx-1 hidden h-4 w-px shrink-0 bg-white/8 sm:block"></div>

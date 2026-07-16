@@ -7,6 +7,7 @@ import {
 	vExecutorStatus,
 	vModelId,
 	vReasoningEffort,
+	vServiceTier,
 	vRunStatus,
 	vThreadMessageType,
 	type ExecutorJobPayload,
@@ -58,6 +59,7 @@ export type ThreadSummary = {
 	title: string;
 	selectedModel: Infer<typeof vModelId>;
 	reasoningEffort: Infer<typeof vReasoningEffort>;
+	serviceTier: Infer<typeof vServiceTier>;
 	lastMessageAt: number;
 	threadStatus: 'active' | 'archived';
 	latestRunStatus: RunState['status'] | null;
@@ -109,6 +111,7 @@ export type RunState = {
 	claimExpiresAt?: number;
 	selectedModel: Infer<typeof vModelId>;
 	reasoningEffort: Infer<typeof vReasoningEffort>;
+	serviceTier: Infer<typeof vServiceTier>;
 	startedAt: number;
 	completedAt?: number;
 	lastError?: string;
@@ -139,6 +142,7 @@ export type AgentRunRequest = {
 	prompt: string;
 	selectedModel: Infer<typeof vModelId>;
 	reasoningEffort: Infer<typeof vReasoningEffort>;
+	serviceTier: Infer<typeof vServiceTier>;
 	workspaceSessionId: Id<'workspaceSessions'>;
 };
 

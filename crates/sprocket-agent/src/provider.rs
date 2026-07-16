@@ -85,6 +85,7 @@ impl AgentProvider {
                 .completion_client()
                 .clone()
                 .with_reasoning_effort(context.run.reasoning_effort.clone())
+                .with_service_tier(context.run.service_tier.clone())
                 .with_stream_target(run_id.to_string()),
             model: context.run.selected_model.clone(),
         }

@@ -43,8 +43,10 @@
 	import {
 		defaultModelId,
 		defaultReasoningEffort,
+		defaultServiceTier,
 		type SupportedModelId,
-		type SupportedReasoningEffort
+		type SupportedReasoningEffort,
+		type SupportedServiceTier
 	} from '$convex/lib/models';
 	import { isClaimedRunStatus } from '$convex/lib/runLease';
 	import {
@@ -124,6 +126,7 @@
 		message: string;
 		prompt: string;
 		reasoningEffort?: SupportedReasoningEffort;
+		serviceTier?: SupportedServiceTier;
 		selectedModel?: SupportedModelId;
 		submissionId?: string;
 	};
@@ -143,6 +146,7 @@
 	let draftWorkspaceName = $state<string | null>(null);
 	let selectedModel = $state<SupportedModelId>(defaultModelId);
 	let selectedReasoningEffort = $state<SupportedReasoningEffort>(defaultReasoningEffort);
+	let selectedServiceTier = $state<SupportedServiceTier>(defaultServiceTier);
 	let prompt = $state('');
 	let currentError = $state<string | null>(null);
 	let executorClientId = $state<string | null>(null);
@@ -155,6 +159,7 @@
 		{
 			prompt: string;
 			reasoningEffort: SupportedReasoningEffort;
+			serviceTier: SupportedServiceTier;
 			selectedModel: SupportedModelId;
 			submissionId: string;
 		}
@@ -173,6 +178,7 @@
 	let hasResolvedInitialSelection = $state(false);
 	let restoredWorkspaceSessionIdToAttach = $state<Id<'workspaceSessions'> | null>(null);
 	let lastSavedThreadId = $state<Id<'threadRecords'> | null>(null);
+	let lastSyncedComposerThreadId: Id<'threadRecords'> | null = null;
 	let workspaceSelectionGeneration = $state(0);
 	let pendingCreatedThreadId = $state<Id<'threadRecords'> | null>(null);
 	let desktopWorkspaceSessionsById = $state<Record<string, WorkspaceSessionLocation>>({});
@@ -550,6 +556,7 @@
 	function schedulePendingCreatedThreadExpiration(args: {
 		prompt: string;
 		reasoningEffort: SupportedReasoningEffort;
+		serviceTier: SupportedServiceTier;
 		selectedModel: SupportedModelId;
 		submissionId: string;
 		threadId: Id<'threadRecords'>;
@@ -576,6 +583,7 @@
 					message: 'The new thread did not appear. Review your prompt and try sending it again.',
 					prompt: args.prompt,
 					reasoningEffort: args.reasoningEffort,
+					serviceTier: args.serviceTier,
 					selectedModel: args.selectedModel,
 					submissionId: args.submissionId
 				});
@@ -589,6 +597,7 @@
 		selectionGeneration: number;
 		selectedModel: SupportedModelId;
 		selectedReasoningEffort: SupportedReasoningEffort;
+		selectedServiceTier: SupportedServiceTier;
 		submissionId: string;
 		userId: string;
 		workspaceName: string;
@@ -598,7 +607,8 @@
 			submissionId: args.submissionId,
 			workspaceSessionId: args.workspaceSessionId,
 			selectedModel: args.selectedModel,
-			reasoningEffort: args.selectedReasoningEffort
+			reasoningEffort: args.selectedReasoningEffort,
+			serviceTier: args.selectedServiceTier
 		});
 		if (!args.isSubmissionCurrent()) {
 			return null;
@@ -615,6 +625,7 @@
 			schedulePendingCreatedThreadExpiration({
 				prompt: args.prompt,
 				reasoningEffort: args.selectedReasoningEffort,
+				serviceTier: args.selectedServiceTier,
 				selectedModel: args.selectedModel,
 				submissionId: args.submissionId,
 				threadId: result.threadId,
@@ -730,6 +741,7 @@
 		const submittedPrompt = prompt.trim();
 		const submittedModel = selectedModel;
 		const submittedReasoningEffort = selectedReasoningEffort;
+		const submittedServiceTier = selectedServiceTier;
 		const previousRunId = selectedThreadId ? (runState?._id ?? null) : null;
 		let submissionScope = selectedThreadId
 			? `thread:${selectedThreadId}`
@@ -747,6 +759,7 @@
 			newSubmissionId: freshSubmissionId,
 			prompt: submittedPrompt,
 			reasoningEffort: submittedReasoningEffort,
+			serviceTier: submittedServiceTier,
 			recoveredSubmission,
 			selectedModel: submittedModel
 		});
@@ -768,6 +781,7 @@
 				message,
 				prompt: submittedPrompt,
 				reasoningEffort: submittedReasoningEffort,
+				serviceTier: submittedServiceTier,
 				selectedModel: submittedModel,
 				submissionId:
 					!selectedThreadId && recoveryScope === originatingRecoveryScope
@@ -806,6 +820,7 @@
 						selectionGeneration,
 						selectedModel: submittedModel,
 						selectedReasoningEffort: submittedReasoningEffort,
+						selectedServiceTier: submittedServiceTier,
 						submissionId: threadSubmissionId,
 						userId: submittedUserId,
 						workspaceName: submittedWorkspaceName,
@@ -922,6 +937,7 @@
 				selectedModel: submittedModel,
 				submissionId: runSubmissionId,
 				reasoningEffort: submittedReasoningEffort,
+				serviceTier: submittedServiceTier,
 				workspaceSessionId
 			});
 		} catch (error) {
@@ -1027,6 +1043,7 @@
 			message: 'The previous agent stopped responding. Retry to continue this submission.',
 			prompt: currentLatestRunData.prompt,
 			reasoningEffort: staleRun.reasoningEffort,
+			serviceTier: staleRun.serviceTier,
 			selectedModel: staleRun.selectedModel,
 			submissionId: staleRun.submissionId
 		});
@@ -1047,6 +1064,7 @@
 		pendingAgentLaunches = {};
 		restoredWorkspaceSessionIdToAttach = null;
 		lastSavedThreadId = null;
+		lastSyncedComposerThreadId = null;
 		workspaceSelectionGeneration += 1;
 		prompt = '';
 		currentError = null;
@@ -1054,9 +1072,21 @@
 		elapsedSeconds = 0;
 		selectedModel = defaultModelId;
 		selectedReasoningEffort = defaultReasoningEffort;
+		selectedServiceTier = defaultServiceTier;
 		workspacePickerOpen = false;
 		workspacePickerReconnectSessionId = null;
 		workspacePickerExpectedName = undefined;
+	});
+
+	$effect(() => {
+		const thread = currentActiveThread;
+		const threadId = thread?._id ?? null;
+		if (threadId === lastSyncedComposerThreadId) return;
+		lastSyncedComposerThreadId = threadId;
+		if (!thread) return;
+		selectedModel = thread.selectedModel;
+		selectedReasoningEffort = thread.reasoningEffort;
+		selectedServiceTier = thread.serviceTier;
 	});
 
 	$effect(() => {
@@ -1094,6 +1124,7 @@
 				recoveredSubmissionIds.set(recoveryKey, {
 					prompt: recovery.prompt,
 					reasoningEffort: recovery.reasoningEffort,
+					serviceTier: recovery.serviceTier ?? defaultServiceTier,
 					selectedModel: recovery.selectedModel,
 					submissionId: recovery.submissionId
 				});
@@ -1431,6 +1462,7 @@
 						bind:prompt
 						bind:selectedModel
 						bind:selectedReasoningEffort
+						bind:selectedServiceTier
 						{canSend}
 						isSubmitting={isSubmittingPrompt || hasPendingAgentLaunch}
 						isStarting={hasPendingAgentLaunch}

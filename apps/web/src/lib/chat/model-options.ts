@@ -1,21 +1,30 @@
-import type { SupportedModelId, SupportedReasoningEffort } from '$convex/lib/models';
+import {
+	modelDefinitions,
+	type ModelProvider,
+	type SupportedModelId,
+	type SupportedReasoningEffort,
+	type SupportedServiceTier
+} from '$convex/lib/models';
 
-type SelectorOption<T extends string> = {
-	id: T;
+export type ModelSelectorOption = {
+	id: SupportedModelId;
 	label: string;
-	triggerLabel?: string;
+	provider: ModelProvider;
 };
 
-export const modelOptions: SelectorOption<SupportedModelId>[] = [
-	{ id: 'gpt-5.5', label: 'GPT-5.5' },
-	{ id: 'gpt-5.4', label: 'GPT-5.4 (default)', triggerLabel: 'GPT-5.4' },
-	{ id: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
-	{ id: 'gpt-5.3-codex', label: 'GPT-5.3 Codex' }
-];
+export const modelOptions: ModelSelectorOption[] = modelDefinitions.map(
+	({ id, label, provider }) => ({ id, label, provider })
+);
 
-export const reasoningEffortOptions: SelectorOption<SupportedReasoningEffort>[] = [
-	{ id: 'low', label: 'Low' },
-	{ id: 'medium', label: 'Medium (default)', triggerLabel: 'Medium' },
-	{ id: 'high', label: 'High' },
-	{ id: 'xhigh', label: 'Extra High' }
-];
+export const reasoningEffortLabels: Record<SupportedReasoningEffort, string> = {
+	low: 'Low',
+	medium: 'Medium',
+	high: 'High',
+	xhigh: 'Extra High',
+	max: 'Max'
+};
+
+export const serviceTierLabels: Record<SupportedServiceTier, string> = {
+	standard: 'Standard',
+	fast: 'Fast'
+};

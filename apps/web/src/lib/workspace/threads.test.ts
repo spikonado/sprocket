@@ -16,7 +16,7 @@ import {
 	type PendingAgentLaunch,
 	type PendingAgentLaunches
 } from '$lib/workspace/threads';
-import { defaultModelId, defaultReasoningEffort } from '$convex/lib/models';
+import { defaultModelId, defaultReasoningEffort, defaultServiceTier } from '$convex/lib/models';
 import type { ThreadSummary, WorkspaceSession } from '$lib/types/sprocket';
 
 type RunId = NonNullable<ThreadSummary['latestRunId']>;
@@ -53,6 +53,7 @@ function makeThreadSummary(overrides: Partial<ThreadSummary> = {}): ThreadSummar
 		title: 'Thread',
 		selectedModel: overrides.selectedModel ?? defaultModelId,
 		reasoningEffort: overrides.reasoningEffort ?? defaultReasoningEffort,
+		serviceTier: overrides.serviceTier ?? defaultServiceTier,
 		lastMessageAt: 0,
 		threadStatus: 'active',
 		latestRunStatus: null,

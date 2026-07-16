@@ -3,7 +3,12 @@ import { mutation, query, type MutationCtx } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getOwnedThreadRecord, getOwnedWorkspaceSession } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
-import { isRunFinalStatus, vModelId, vReasoningEffort } from '@convex/lib/validators';
+import {
+	assertSupportedModelConfiguration,
+	normalizeModelId,
+	normalizeServiceTier
+} from '@convex/lib/models';
+import { isRunFinalStatus, vModelId, vReasoningEffort, vServiceTier } from '@convex/lib/validators';
 
 async function patchOwnedThread(
 	ctx: MutationCtx,
@@ -20,7 +25,8 @@ export const create = mutation({
 		submissionId: v.string(),
 		workspaceSessionId: v.id('workspaceSessions'),
 		selectedModel: vModelId,
-		reasoningEffort: vReasoningEffort
+		reasoningEffort: vReasoningEffort,
+		serviceTier: vServiceTier
 	},
 	handler: async (
 		ctx,
@@ -29,6 +35,11 @@ export const create = mutation({
 		threadId: Id<'threadRecords'>;
 		submissionRunStatus: Doc<'runs'>['status'] | null;
 	}> => {
+		assertSupportedModelConfiguration({
+			modelId: args.selectedModel,
+			reasoningEffort: args.reasoningEffort,
+			serviceTier: args.serviceTier
+		});
 		const userId: string = await getUserId(ctx);
 		await getOwnedWorkspaceSession(ctx.db, userId, args.workspaceSessionId);
 		const existingRecord = await ctx.db
@@ -40,8 +51,9 @@ export const create = mutation({
 		if (existingRecord) {
 			if (
 				existingRecord.workspaceSessionId !== args.workspaceSessionId ||
-				existingRecord.selectedModel !== args.selectedModel ||
-				existingRecord.reasoningEffort !== args.reasoningEffort
+				normalizeModelId(existingRecord.selectedModel) !== args.selectedModel ||
+				existingRecord.reasoningEffort !== args.reasoningEffort ||
+				normalizeServiceTier(existingRecord.serviceTier) !== args.serviceTier
 			) {
 				throw new Error('Submission settings do not match the existing thread.');
 			}
@@ -70,6 +82,7 @@ export const create = mutation({
 			workspaceSessionId: args.workspaceSessionId,
 			selectedModel: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
+			serviceTier: args.serviceTier,
 			lastMessageAt: now
 		});
 
@@ -108,6 +121,8 @@ export const listMine = query({
 					.first();
 				return {
 					...record,
+					selectedModel: normalizeModelId(record.selectedModel),
+					serviceTier: normalizeServiceTier(record.serviceTier),
 					threadId: record._id,
 					title: record.title?.trim() || 'New thread',
 					threadStatus:
@@ -130,7 +145,12 @@ export const getByThreadId = query({
 	},
 	handler: async (ctx, args) => {
 		const userId: string = await getUserId(ctx);
-		return await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+		const record = await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+		return {
+			...record,
+			selectedModel: normalizeModelId(record.selectedModel),
+			serviceTier: normalizeServiceTier(record.serviceTier)
+		};
 	}
 });
 
