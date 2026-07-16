@@ -67,10 +67,10 @@
 		switch (toolKey) {
 			case 'exec_command':
 				return 'Ran Commands';
-			case 'create_file':
-				return 'Created Files';
-			case 'replace_in_file':
-				return 'Edited Files';
+			case 'write_stdin':
+				return 'Monitored Commands';
+			case 'apply_patch':
+				return 'Changed Files';
 			case 'get_workspace_instructions':
 				return 'Read Instructions';
 			case 'check_docs':
@@ -86,14 +86,12 @@
 		}
 
 		const details: string[] = [];
-		if (typeof input.workdir === 'string' && input.workdir.trim().length > 0) {
+		if (
+			typeof input.workdir === 'string' &&
+			input.workdir.trim().length > 0 &&
+			input.workdir !== '.'
+		) {
 			details.push(`cwd ${input.workdir}`);
-		}
-		if (input.login === true) {
-			details.push('login shell');
-		}
-		if (typeof input.shell === 'string' && input.shell.trim().length > 0) {
-			details.push(input.shell);
 		}
 
 		return details.length > 0 ? ` (${details.join(', ')})` : '';
@@ -108,9 +106,12 @@
 				return typeof fields?.cmd === 'string'
 					? `${fields.cmd}${describeExecCommandOptions(input)}`
 					: 'Command';
-			case 'create_file':
-			case 'replace_in_file':
-				return typeof fields?.path === 'string' ? fields.path : 'File';
+			case 'write_stdin':
+				return typeof fields?.sessionId === 'string'
+					? `Session ${fields.sessionId}`
+					: 'Command session';
+			case 'apply_patch':
+				return summarizePatchInput(input) ?? 'Patch';
 			case 'get_workspace_instructions':
 				return 'Workspace instructions';
 			case 'check_docs':
@@ -124,8 +125,54 @@
 		}
 	}
 
+	function summarizePaths(paths: string[]) {
+		return paths.length === 1 ? paths[0] : `${paths[0]} +${paths.length - 1} more`;
+	}
+
+	function summarizePatchInput(input: JsonValue | undefined) {
+		if (!isJsonObject(input) || typeof input.patch !== 'string') {
+			return null;
+		}
+
+		const paths = input.patch.split('\n').flatMap((line) => {
+			if (!line.startsWith('diff --git ')) {
+				return [];
+			}
+			const quotedMarker = ' "b/';
+			const plainMarker = ' b/';
+			const marker = line.lastIndexOf(quotedMarker);
+			if (marker >= 0) {
+				return [line.slice(marker + quotedMarker.length).replace(/"$/, '')];
+			}
+			const plainMarkerIndex = line.lastIndexOf(plainMarker);
+			return plainMarkerIndex >= 0 ? [line.slice(plainMarkerIndex + plainMarker.length)] : [];
+		});
+		const uniquePaths = [...new Set(paths)];
+		return uniquePaths.length > 0 ? summarizePaths(uniquePaths) : null;
+	}
+
+	function summarizePatchResult(result: JsonValue | undefined) {
+		if (!isJsonObject(result) || !Array.isArray(result.changes)) {
+			return null;
+		}
+
+		const paths = result.changes.flatMap((change) =>
+			isJsonObject(change) && typeof change.path === 'string' ? [change.path] : []
+		);
+		if (paths.length === 0) {
+			return null;
+		}
+		return summarizePaths(paths);
+	}
+
 	function toolItemSummary(toolLog: AssistantTimelineTool) {
 		if (toolLog.job) {
+			if (toolLog.job.kind === 'apply_patch') {
+				const patchSummary = summarizePatchResult(toolLog.job.result);
+				if (patchSummary) {
+					return patchSummary;
+				}
+			}
 			return summarizeTool(toolLog.job.kind, toolLog.job.payload);
 		}
 		return summarizeTool(toolLog.name, toolLog.input);

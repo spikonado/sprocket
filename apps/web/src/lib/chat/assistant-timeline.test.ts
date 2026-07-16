@@ -72,8 +72,8 @@ describe('assistant timeline', () => {
 		const first = executorJob('job-1', 1, { payload: { cmd: 'one' } });
 		const second = executorJob('job-2', 2, { payload: { cmd: 'two' } });
 		const remaining = executorJob('job-3', 3, {
-			kind: 'create_file',
-			payload: { path: 'new.txt', content: 'content' }
+			kind: 'apply_patch',
+			payload: { patch: 'diff --git a/new.txt b/new.txt' }
 		});
 		const timeline = buildAssistantTimeline(
 			[
@@ -225,8 +225,8 @@ describe('groupAssistantTimeline', () => {
 			tool('c2', 'exec_command'),
 			{ type: 'text', id: 't1', text: 'mid' },
 			tool('c3', 'exec_command'),
-			tool('c4', 'create_file'),
-			tool('c5', 'create_file')
+			tool('c4', 'apply_patch'),
+			tool('c5', 'apply_patch')
 		]);
 
 		expect(blocks.map((block) => block.type)).toEqual([
@@ -248,7 +248,7 @@ describe('groupAssistantTimeline', () => {
 		});
 		expect(blocks[4]).toMatchObject({
 			type: 'tool-group',
-			toolKey: 'create_file',
+			toolKey: 'apply_patch',
 			tools: [{ callId: 'c4' }, { callId: 'c5' }]
 		});
 	});
@@ -256,7 +256,7 @@ describe('groupAssistantTimeline', () => {
 	it('starts a new group when tool type changes even if contiguous', () => {
 		const blocks = groupAssistantTimeline([
 			tool('c1', 'exec_command'),
-			tool('c2', 'create_file'),
+			tool('c2', 'apply_patch'),
 			tool('c3', 'exec_command')
 		]);
 
@@ -268,7 +268,7 @@ describe('groupAssistantTimeline', () => {
 			}),
 			expect.objectContaining({
 				type: 'tool-group',
-				toolKey: 'create_file',
+				toolKey: 'apply_patch',
 				tools: [expect.objectContaining({ callId: 'c2' })]
 			}),
 			expect.objectContaining({
@@ -318,7 +318,7 @@ describe('groupAssistantTimelineSections', () => {
 				tool('c2', 'exec_command'),
 				{ type: 'text', id: 't1', text: 'mid' },
 				{ type: 'reasoning', id: 'r2', text: 'more' },
-				tool('c3', 'create_file'),
+				tool('c3', 'apply_patch'),
 				{ type: 'text', id: 't2', text: 'done' }
 			])
 		);
@@ -338,7 +338,7 @@ describe('groupAssistantTimelineSections', () => {
 			key: 'r2',
 			blocks: [
 				{ type: 'reasoning', id: 'r2' },
-				{ type: 'tool-group', toolKey: 'create_file' }
+				{ type: 'tool-group', toolKey: 'apply_patch' }
 			]
 		});
 		expect(sections[3]).toMatchObject({ type: 'text', id: 't2' });
@@ -346,7 +346,7 @@ describe('groupAssistantTimelineSections', () => {
 
 	it('keys a tools-only work section from the first tool callId', () => {
 		const sections = groupAssistantTimelineSections(
-			groupAssistantTimeline([tool('c1', 'exec_command'), tool('c2', 'create_file')])
+			groupAssistantTimeline([tool('c1', 'exec_command'), tool('c2', 'apply_patch')])
 		);
 
 		expect(sections).toEqual([
@@ -355,7 +355,7 @@ describe('groupAssistantTimelineSections', () => {
 				key: 'c1',
 				blocks: [
 					expect.objectContaining({ type: 'tool-group', toolKey: 'exec_command' }),
-					expect.objectContaining({ type: 'tool-group', toolKey: 'create_file' })
+					expect.objectContaining({ type: 'tool-group', toolKey: 'apply_patch' })
 				]
 			})
 		]);

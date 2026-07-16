@@ -32,59 +32,64 @@ export const vExecCommandPayload = v.object({
 	cmd: v.string(),
 	workdir: v.optional(v.string()),
 	shell: v.optional(v.string()),
-	login: v.optional(v.boolean()),
 	timeoutMs: v.optional(v.number()),
+	yieldTimeMs: v.optional(v.number()),
 	maxOutputChars: v.optional(v.number())
 });
 
-export const vCreateFilePayload = v.object({
-	path: v.string(),
-	content: v.string()
+export const vWriteStdinPayload = v.object({
+	sessionId: v.string(),
+	chars: v.optional(v.string()),
+	terminate: v.optional(v.boolean()),
+	yieldTimeMs: v.optional(v.number())
 });
 
-export const vReplaceInFilePayload = v.object({
-	path: v.string(),
-	oldText: v.string(),
-	newText: v.string(),
-	replaceAll: v.optional(v.boolean())
+export const vApplyPatchPayload = v.object({
+	patch: v.string()
 });
 
 export const vExecutorJobPayload = v.union(
 	v.object({}),
 	vExecCommandPayload,
-	vCreateFilePayload,
-	vReplaceInFilePayload
+	vWriteStdinPayload,
+	vApplyPatchPayload
 );
 
 export const vCommandExecResult = v.object({
 	command: v.string(),
-	cwd: v.optional(v.string()),
+	cwd: v.string(),
+	sessionId: v.optional(v.string()),
 	exitCode: v.optional(v.number()),
 	success: v.boolean(),
+	running: v.boolean(),
 	timedOut: v.boolean(),
 	stdout: v.string(),
 	stderr: v.string(),
 	output: v.string(),
-	truncated: v.boolean()
+	truncated: v.boolean(),
+	error: v.optional(v.string())
 });
 
-export const vFileWriteResult = v.object({
-	path: v.string(),
-	bytesWritten: v.number()
-});
-
-export const vFileEditResult = v.object({
-	path: v.string(),
-	replacements: v.number(),
-	bytesWritten: v.number()
+export const vApplyPatchResult = v.object({
+	changes: v.array(
+		v.object({
+			path: v.string(),
+			operation: v.union(
+				v.literal('created'),
+				v.literal('updated'),
+				v.literal('deleted'),
+				v.literal('renamed'),
+				v.literal('copied')
+			)
+		})
+	)
 });
 
 export const vExecutorJobResult = v.union(
 	v.string(),
 	v.array(vWorkspaceInstruction),
 	vCommandExecResult,
-	vFileWriteResult,
-	vFileEditResult
+	vApplyPatchResult
 );
 
 export const vExecutorStatus = v.union(v.literal('disconnected'), v.literal('connected'));
@@ -111,8 +116,8 @@ export function isRunFinalStatus(
 export const vExecutorJobKind = v.union(
 	v.literal('get_workspace_instructions'),
 	v.literal('exec_command'),
-	v.literal('create_file'),
-	v.literal('replace_in_file')
+	v.literal('write_stdin'),
+	v.literal('apply_patch')
 );
 
 export const vExecutorJobStatus = v.union(

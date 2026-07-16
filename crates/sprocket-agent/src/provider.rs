@@ -123,12 +123,13 @@ where
         request.workspace_root.clone(),
         tool_call_tracker.clone(),
     );
+    let command_sessions = tools.command_sessions.clone();
     let agent = completion_client
         .agent(model)
         .preamble(&request.preamble)
         .tool(tools.exec_command)
-        .tool(tools.create_file)
-        .tool(tools.replace_in_file)
+        .tool(tools.write_stdin)
+        .tool(tools.apply_patch)
         .build();
 
     eprintln!("sprocket-agent: built agent {}", request.run_id);
@@ -146,58 +147,61 @@ where
     let mut final_text = String::new();
     let mut streamed_text = String::new();
 
-    while let Some(item) = stream.next().await {
-        match item {
-            Ok(rig::agent::MultiTurnStreamItem::FinalResponse(response)) => {
-                final_text = response.output().to_string();
-            }
-            Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
-                StreamedAssistantContent::Text(text),
-            )) => {
-                streamed_text.push_str(&text.text);
-            }
-            // Model tool calls are persisted by the Convex completion action. Tool execution
-            // and results are persisted by executor jobs and correlated during finalization.
-            Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
-                StreamedAssistantContent::ToolCall { .. }
-                | StreamedAssistantContent::ToolCallDelta { .. }
-                | StreamedAssistantContent::Reasoning(_)
-                | StreamedAssistantContent::ReasoningDelta { .. }
-                | StreamedAssistantContent::Final(_)
-                | StreamedAssistantContent::Unknown(_),
-            ))
-            | Ok(rig::agent::MultiTurnStreamItem::ToolExecutionStart { .. })
-            | Ok(rig::agent::MultiTurnStreamItem::StreamUserItem(_))
-            | Ok(rig::agent::MultiTurnStreamItem::CompletionCall(_)) => {}
-            Ok(_) => {}
-            Err(error) => {
-                let text = if final_text.is_empty() {
-                    streamed_text
-                } else {
-                    final_text
-                };
-                match classify_provider_error(&error) {
-                    ProviderErrorDisposition::Superseded => {
-                        return AgentProviderResult::Superseded;
-                    }
-                    ProviderErrorDisposition::Cancelled => {
-                        return AgentProviderResult::Cancelled { text };
-                    }
-                    ProviderErrorDisposition::Failed => {}
+    let result = 'agent_run: {
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(rig::agent::MultiTurnStreamItem::FinalResponse(response)) => {
+                    final_text = response.output().to_string();
                 }
-                return AgentProviderResult::Failed {
-                    text,
-                    error: anyhow!(error),
-                };
+                Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
+                    StreamedAssistantContent::Text(text),
+                )) => {
+                    streamed_text.push_str(&text.text);
+                }
+                // Model tool calls are persisted by the Convex completion action. Tool execution
+                // and results are persisted by executor jobs and correlated during finalization.
+                Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
+                    StreamedAssistantContent::ToolCall { .. }
+                    | StreamedAssistantContent::ToolCallDelta { .. }
+                    | StreamedAssistantContent::Reasoning(_)
+                    | StreamedAssistantContent::ReasoningDelta { .. }
+                    | StreamedAssistantContent::Final(_)
+                    | StreamedAssistantContent::Unknown(_),
+                ))
+                | Ok(rig::agent::MultiTurnStreamItem::ToolExecutionStart { .. })
+                | Ok(rig::agent::MultiTurnStreamItem::StreamUserItem(_))
+                | Ok(rig::agent::MultiTurnStreamItem::CompletionCall(_)) => {}
+                Ok(_) => {}
+                Err(error) => {
+                    let text = if final_text.is_empty() {
+                        streamed_text
+                    } else {
+                        final_text
+                    };
+                    let result = match classify_provider_error(&error) {
+                        ProviderErrorDisposition::Superseded => AgentProviderResult::Superseded,
+                        ProviderErrorDisposition::Cancelled => {
+                            AgentProviderResult::Cancelled { text }
+                        }
+                        ProviderErrorDisposition::Failed => AgentProviderResult::Failed {
+                            text,
+                            error: anyhow!(error),
+                        },
+                    };
+                    break 'agent_run result;
+                }
             }
         }
-    }
 
-    if final_text.is_empty() {
-        final_text = streamed_text;
-    }
+        if final_text.is_empty() {
+            final_text = streamed_text;
+        }
 
-    AgentProviderResult::Completed { text: final_text }
+        AgentProviderResult::Completed { text: final_text }
+    };
+
+    command_sessions.stop_all().await;
+    result
 }
 
 #[cfg(test)]

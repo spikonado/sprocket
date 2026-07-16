@@ -7,8 +7,13 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sprocket_workspace::{
-    WorkspaceCancellation, create_workspace_file, exec_workspace_command, replace_workspace_file,
+    CommandSessionManager, WorkspaceCancellation, apply_workspace_patch, default_command_shell,
 };
+
+const DEFAULT_COMMAND_TIMEOUT_MS: u64 = 60_000;
+const DEFAULT_COMMAND_YIELD_MS: u64 = 10_000;
+const DEFAULT_COMMAND_MAX_OUTPUT_CHARS: usize = 20_000;
+const DEFAULT_STDIN_YIELD_MS: u64 = 5_000;
 
 use crate::convex::RuntimeClient;
 use crate::hooks::ToolCallTracker;
@@ -28,6 +33,7 @@ struct WorkspaceToolContext {
     claim_id: String,
     workspace_root: PathBuf,
     tool_call_tracker: ToolCallTracker,
+    command_sessions: CommandSessionManager,
 }
 
 impl WorkspaceToolContext {
@@ -37,6 +43,7 @@ impl WorkspaceToolContext {
         claim_id: String,
         workspace_root: PathBuf,
         tool_call_tracker: ToolCallTracker,
+        command_sessions: CommandSessionManager,
     ) -> Self {
         Self {
             runtime,
@@ -44,6 +51,7 @@ impl WorkspaceToolContext {
             claim_id,
             workspace_root,
             tool_call_tracker,
+            command_sessions,
         }
     }
 }
@@ -52,15 +60,16 @@ impl WorkspaceToolContext {
 pub(crate) struct ExecCommandTool(WorkspaceToolContext);
 
 #[derive(Clone)]
-pub(crate) struct CreateFileTool(WorkspaceToolContext);
+pub(crate) struct WriteStdinTool(WorkspaceToolContext);
 
 #[derive(Clone)]
-pub(crate) struct ReplaceInFileTool(WorkspaceToolContext);
+pub(crate) struct ApplyPatchTool(WorkspaceToolContext);
 
 pub(crate) struct WorkspaceToolSet {
     pub(crate) exec_command: ExecCommandTool,
-    pub(crate) create_file: CreateFileTool,
-    pub(crate) replace_in_file: ReplaceInFileTool,
+    pub(crate) write_stdin: WriteStdinTool,
+    pub(crate) apply_patch: ApplyPatchTool,
+    pub(crate) command_sessions: CommandSessionManager,
 }
 
 pub(crate) fn workspace_tools(
@@ -70,57 +79,158 @@ pub(crate) fn workspace_tools(
     workspace_root: PathBuf,
     tool_call_tracker: ToolCallTracker,
 ) -> WorkspaceToolSet {
-    let context =
-        WorkspaceToolContext::new(runtime, run_id, claim_id, workspace_root, tool_call_tracker);
+    let command_sessions = CommandSessionManager::new(workspace_root.clone());
+    let context = WorkspaceToolContext::new(
+        runtime,
+        run_id,
+        claim_id,
+        workspace_root,
+        tool_call_tracker,
+        command_sessions.clone(),
+    );
     WorkspaceToolSet {
         exec_command: ExecCommandTool(context.clone()),
-        create_file: CreateFileTool(context.clone()),
-        replace_in_file: ReplaceInFileTool(context),
+        write_stdin: WriteStdinTool(context.clone()),
+        apply_patch: ApplyPatchTool(context),
+        command_sessions,
     }
+}
+
+fn default_workdir() -> String {
+    ".".to_string()
+}
+
+fn default_timeout_ms() -> u64 {
+    DEFAULT_COMMAND_TIMEOUT_MS
+}
+
+fn default_command_yield_ms() -> u64 {
+    DEFAULT_COMMAND_YIELD_MS
+}
+
+fn default_max_output_chars() -> usize {
+    DEFAULT_COMMAND_MAX_OUTPUT_CHARS
+}
+
+fn default_stdin_yield_ms() -> u64 {
+    DEFAULT_STDIN_YIELD_MS
+}
+
+fn is_default_workdir(workdir: &String) -> bool {
+    workdir == "."
+}
+
+fn is_default_shell(shell: &String) -> bool {
+    shell == &default_command_shell()
+}
+
+fn is_default_timeout_ms(timeout_ms: &u64) -> bool {
+    *timeout_ms == DEFAULT_COMMAND_TIMEOUT_MS
+}
+
+fn is_default_command_yield_ms(yield_time_ms: &u64) -> bool {
+    *yield_time_ms == DEFAULT_COMMAND_YIELD_MS
+}
+
+fn is_default_max_output_chars(max_output_chars: &usize) -> bool {
+    *max_output_chars == DEFAULT_COMMAND_MAX_OUTPUT_CHARS
+}
+
+fn is_default_stdin_yield_ms(yield_time_ms: &u64) -> bool {
+    *yield_time_ms == DEFAULT_STDIN_YIELD_MS
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+fn exec_command_parameters() -> serde_json::Value {
+    let mut schema = json!(schemars::schema_for!(ExecCommandArgs));
+    schema["properties"]["workdir"]["default"] = json!(default_workdir());
+    schema["properties"]["shell"]["default"] = json!(default_command_shell());
+    schema["properties"]["timeoutMs"]["default"] = json!(DEFAULT_COMMAND_TIMEOUT_MS);
+    schema["properties"]["yieldTimeMs"]["default"] = json!(DEFAULT_COMMAND_YIELD_MS);
+    schema["properties"]["maxOutputChars"]["default"] = json!(DEFAULT_COMMAND_MAX_OUTPUT_CHARS);
+    schema
+}
+
+fn write_stdin_parameters() -> serde_json::Value {
+    let mut schema = json!(schemars::schema_for!(WriteStdinArgs));
+    schema["properties"]["chars"]["default"] = json!("");
+    schema["properties"]["terminate"]["default"] = json!(false);
+    schema["properties"]["yieldTimeMs"]["default"] = json!(DEFAULT_STDIN_YIELD_MS);
+    schema
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct ExecCommandArgs {
     /// Shell command to execute.
     cmd: String,
-    /// Relative/absolute path to the directory in which the command should be executed.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    workdir: Option<String>,
-    /// Shell binary to launch.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    shell: Option<String>,
-    /// Whether to run the shell with login semantics. Defaults to false.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    login: Option<bool>,
-    /// Command timeout in milliseconds.
-    #[serde(rename = "timeoutMs", skip_serializing_if = "Option::is_none")]
-    timeout_ms: Option<u64>,
+    /// Working directory. Relative paths resolve from the project root. Defaults to `.`.
+    #[serde(
+        default = "default_workdir",
+        skip_serializing_if = "is_default_workdir"
+    )]
+    #[schemars(default = "default_workdir")]
+    workdir: String,
+    /// Shell binary to launch. Defaults to the user's shell.
+    #[serde(
+        default = "default_command_shell",
+        skip_serializing_if = "is_default_shell"
+    )]
+    #[schemars(default = "default_command_shell")]
+    shell: String,
+    /// Command timeout in milliseconds. Defaults to 60000.
+    #[serde(
+        rename = "timeoutMs",
+        default = "default_timeout_ms",
+        skip_serializing_if = "is_default_timeout_ms"
+    )]
+    #[schemars(default = "default_timeout_ms")]
+    timeout_ms: u64,
+    /// Wait before yielding a running session, in milliseconds. Defaults to 10000.
+    #[serde(
+        rename = "yieldTimeMs",
+        default = "default_command_yield_ms",
+        skip_serializing_if = "is_default_command_yield_ms"
+    )]
+    #[schemars(default = "default_command_yield_ms")]
+    yield_time_ms: u64,
     /// Maximum combined output characters returned to the model.
-    #[serde(rename = "maxOutputChars", skip_serializing_if = "Option::is_none")]
-    max_output_chars: Option<usize>,
+    #[serde(
+        rename = "maxOutputChars",
+        default = "default_max_output_chars",
+        skip_serializing_if = "is_default_max_output_chars"
+    )]
+    #[schemars(default = "default_max_output_chars")]
+    max_output_chars: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct CreateFileArgs {
-    /// Relative file path inside the workspace.
-    path: String,
-    /// Entire file contents.
-    content: String,
+pub(crate) struct WriteStdinArgs {
+    /// Running command session identifier returned by exec_command.
+    #[serde(rename = "sessionId")]
+    session_id: String,
+    /// Characters to write to the command's standard input.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    chars: String,
+    /// Terminate the command and its descendants.
+    #[serde(default, skip_serializing_if = "is_false")]
+    terminate: bool,
+    /// Wait for more output or completion, in milliseconds. Defaults to 5000.
+    #[serde(
+        rename = "yieldTimeMs",
+        default = "default_stdin_yield_ms",
+        skip_serializing_if = "is_default_stdin_yield_ms"
+    )]
+    #[schemars(default = "default_stdin_yield_ms")]
+    yield_time_ms: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct ReplaceInFileArgs {
-    /// Relative file path inside the workspace.
-    path: String,
-    /// Exact existing text to replace.
-    #[serde(rename = "oldText")]
-    old_text: String,
-    /// Replacement text.
-    #[serde(rename = "newText")]
-    new_text: String,
-    /// When true, replace every occurrence of oldText; otherwise replace the first match only.
-    #[serde(rename = "replaceAll", skip_serializing_if = "Option::is_none")]
-    replace_all: Option<bool>,
+pub(crate) struct ApplyPatchArgs {
+    /// Git-style unified diff to apply inside the workspace.
+    patch: String,
 }
 
 impl rig::tool::Tool for ExecCommandTool {
@@ -130,11 +240,12 @@ impl rig::tool::Tool for ExecCommandTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Runs a shell command inside the workspace and returns its output.".to_string()
+        "Run a shell command with full machine access. Relative workdirs resolve from the project root. Long-running commands yield a sessionId for write_stdin polling and input."
+            .to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
-        json!(schemars::schema_for!(ExecCommandArgs))
+        exec_command_parameters()
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
@@ -146,18 +257,20 @@ impl rig::tool::Tool for ExecCommandTool {
             &self.0.tool_call_tracker,
             serde_json::to_value(&args).map_err(tool_error)?,
             |cancellation| async {
-                let output = exec_workspace_command(
-                    self.0.workspace_root.clone(),
-                    cancellation,
-                    &args.cmd,
-                    args.workdir.as_deref(),
-                    args.shell.as_deref(),
-                    args.login,
-                    args.timeout_ms,
-                    args.max_output_chars,
-                )
-                .await
-                .map_err(tool_error)?;
+                let output = self
+                    .0
+                    .command_sessions
+                    .exec_command(
+                        cancellation,
+                        &args.cmd,
+                        &args.workdir,
+                        &args.shell,
+                        args.timeout_ms,
+                        args.yield_time_ms,
+                        args.max_output_chars,
+                    )
+                    .await
+                    .map_err(tool_error)?;
                 serde_json::to_value(output).map_err(tool_error)
             },
         )
@@ -165,18 +278,19 @@ impl rig::tool::Tool for ExecCommandTool {
     }
 }
 
-impl rig::tool::Tool for CreateFileTool {
-    const NAME: &'static str = "create_file";
+impl rig::tool::Tool for WriteStdinTool {
+    const NAME: &'static str = "write_stdin";
     type Error = AgentToolError;
-    type Args = CreateFileArgs;
+    type Args = WriteStdinArgs;
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Create a new UTF-8 text file. Fails if the file already exists.".to_string()
+        "Write input to a running exec_command session, poll incremental output, wait for completion, or terminate the process tree."
+            .to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
-        json!(schemars::schema_for!(CreateFileArgs))
+        write_stdin_parameters()
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
@@ -188,36 +302,38 @@ impl rig::tool::Tool for CreateFileTool {
             &self.0.tool_call_tracker,
             serde_json::to_value(&args).map_err(tool_error)?,
             |cancellation| async {
-                let output = create_workspace_file(
-                    self.0.workspace_root.clone(),
-                    cancellation,
-                    &args.path,
-                    &args.content,
-                )
-                .await
-                .map_err(tool_error)?;
-                Ok(serde_json::json!({
-                    "path": output.path,
-                    "bytesWritten": output.bytes_written,
-                }))
+                let output = self
+                    .0
+                    .command_sessions
+                    .write_stdin(
+                        cancellation,
+                        &args.session_id,
+                        &args.chars,
+                        args.terminate,
+                        args.yield_time_ms,
+                    )
+                    .await
+                    .map_err(tool_error)?;
+                serde_json::to_value(output).map_err(tool_error)
             },
         )
         .await
     }
 }
 
-impl rig::tool::Tool for ReplaceInFileTool {
-    const NAME: &'static str = "replace_in_file";
+impl rig::tool::Tool for ApplyPatchTool {
+    const NAME: &'static str = "apply_patch";
     type Error = AgentToolError;
-    type Args = ReplaceInFileArgs;
+    type Args = ApplyPatchArgs;
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Apply an exact text replacement inside an existing UTF-8 file.".to_string()
+        "Apply a git-style unified diff to files in the workspace. Supports creating, updating, deleting, renaming, and copying text files in one call. Every path must remain inside the workspace."
+            .to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
-        json!(schemars::schema_for!(ReplaceInFileArgs))
+        json!(schemars::schema_for!(ApplyPatchArgs))
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
@@ -229,21 +345,11 @@ impl rig::tool::Tool for ReplaceInFileTool {
             &self.0.tool_call_tracker,
             serde_json::to_value(&args).map_err(tool_error)?,
             |cancellation| async {
-                let output = replace_workspace_file(
-                    self.0.workspace_root.clone(),
-                    cancellation,
-                    &args.path,
-                    &args.old_text,
-                    &args.new_text,
-                    args.replace_all.unwrap_or(false),
-                )
-                .await
-                .map_err(tool_error)?;
-                Ok(serde_json::json!({
-                    "path": output.path,
-                    "replacements": output.replacements,
-                    "bytesWritten": output.bytes_written,
-                }))
+                let output =
+                    apply_workspace_patch(self.0.workspace_root.clone(), cancellation, &args.patch)
+                        .await
+                        .map_err(tool_error)?;
+                serde_json::to_value(output).map_err(tool_error)
             },
         )
         .await
@@ -372,4 +478,47 @@ where
 
 fn tool_error(error: impl std::fmt::Display) -> AgentToolError {
     AgentToolError::Message(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exec_command_defaults_are_explicit_but_omitted_from_payload() {
+        let args: ExecCommandArgs = serde_json::from_value(serde_json::json!({ "cmd": "pwd" }))
+            .expect("minimal command args should deserialize");
+
+        assert_eq!(args.workdir, ".");
+        assert_eq!(args.shell, default_command_shell());
+        assert_eq!(args.timeout_ms, DEFAULT_COMMAND_TIMEOUT_MS);
+        assert_eq!(args.yield_time_ms, DEFAULT_COMMAND_YIELD_MS);
+        assert_eq!(args.max_output_chars, DEFAULT_COMMAND_MAX_OUTPUT_CHARS);
+        assert_eq!(
+            serde_json::to_value(&args).unwrap(),
+            serde_json::json!({ "cmd": "pwd" })
+        );
+
+        let schema = exec_command_parameters();
+        assert_eq!(schema["properties"]["workdir"]["default"], ".");
+        assert_eq!(
+            schema["properties"]["shell"]["default"],
+            default_command_shell()
+        );
+        assert!(schema["properties"].get("login").is_none());
+    }
+
+    #[test]
+    fn write_stdin_defaults_are_omitted_from_payload() {
+        let args: WriteStdinArgs = serde_json::from_value(serde_json::json!({ "sessionId": "1" }))
+            .expect("minimal stdin args should deserialize");
+
+        assert!(args.chars.is_empty());
+        assert!(!args.terminate);
+        assert_eq!(args.yield_time_ms, DEFAULT_STDIN_YIELD_MS);
+        assert_eq!(
+            serde_json::to_value(&args).unwrap(),
+            serde_json::json!({ "sessionId": "1" })
+        );
+    }
 }
