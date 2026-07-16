@@ -8,6 +8,7 @@ use sprocket_server::{INSTALLED_WEB_DIR, RunOptions, ServerConfig, load_repo_env
 use tracing_subscriber::EnvFilter;
 
 const DESKTOP_EXECUTABLE_ENV: &str = "SPROCKET_DESKTOP_EXECUTABLE";
+const DESKTOP_WEB_ENV: &str = "SPROCKET_WEB_ONLY";
 
 #[derive(Debug, Parser)]
 #[command(
@@ -145,8 +146,13 @@ fn launch_desktop(web_only: bool) -> anyhow::Result<bool> {
 }
 
 fn spawn_desktop(mut command: Command, web_only: bool) -> std::io::Result<()> {
+    // Electron treats this development override as a request to run its binary as Node.js.
+    command.env_remove("ELECTRON_RUN_AS_NODE");
+    // Only an explicit `--web` launch may put the desktop app into web-only mode.
+    command.env_remove(DESKTOP_WEB_ENV);
+
     if web_only {
-        command.arg("--web");
+        command.env(DESKTOP_WEB_ENV, "1");
         let status = command
             .stdin(Stdio::null())
             .stdout(Stdio::inherit())

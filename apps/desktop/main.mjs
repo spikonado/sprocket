@@ -4,16 +4,17 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { API_PORT, DEV_WEB_URL } from '../../scripts/dev-config.mjs';
+import { DEV_API_PORT, DEV_WEB_URL, INSTALLED_APP_PORT } from './local-config.mjs';
 
 const { app, BrowserWindow, dialog, Menu, ipcMain, shell } = electron;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const isDevelopment = !app.isPackaged;
-const webOnly = process.argv.includes('--web');
-const serverPort = Number(process.env.SPROCKET_PORT ?? API_PORT);
-// WorkOS AuthKit only allows 127.0.0.1 loopback redirect URIs for native desktop login.
+const webOnly = process.env.SPROCKET_WEB_ONLY === '1';
+const defaultServerPort = isDevelopment ? DEV_API_PORT : INSTALLED_APP_PORT;
+const serverPort = Number(process.env.SPROCKET_PORT ?? defaultServerPort);
+// Native AuthKit callbacks use the loopback IP; localhost is the canonical web-dev origin.
 const serverHost = '127.0.0.1';
 const desktopLoginCallbackUrl = `http://${serverHost}:${serverPort}/api/auth/desktop-login/callback`;
 const devRendererUrl = process.env.SPROCKET_ELECTRON_RENDERER_URL ?? DEV_WEB_URL;
@@ -46,9 +47,7 @@ function getServerBinaryPath() {
 	}
 
 	const executableName = process.platform === 'win32' ? 'sprocket.exe' : 'sprocket';
-	const executableDir = path.dirname(process.execPath);
-	const appDir = process.platform === 'darwin' ? path.dirname(executableDir) : executableDir;
-	return path.join(appDir, executableName);
+	return path.join(process.resourcesPath, 'server', executableName);
 }
 
 function getDefaultDataDir() {
@@ -219,7 +218,10 @@ async function openBrowserApp() {
 	try {
 		await openInSystemBrowser(url);
 	} catch (error) {
-		console.error(`Failed to open the browser app automatically. Open ${url} manually.`, error);
+		reportFatalError(
+			'Failed to open Sprocket in your browser',
+			new Error(`Open ${url} manually.`, { cause: error })
+		);
 	}
 }
 
@@ -442,6 +444,9 @@ if (hasSingleInstanceLock) {
 		});
 
 	app.on('activate', () => {
+		if (webOnly) {
+			return;
+		}
 		void showDesktopApp().catch((error) => {
 			console.error('Failed to show Sprocket desktop app', error);
 		});

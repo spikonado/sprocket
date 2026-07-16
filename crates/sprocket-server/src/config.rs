@@ -5,7 +5,7 @@ use clap::Parser;
 use crate::repo_env::compile_time_env_var;
 use crate::static_dir::resolve_static_dir;
 
-pub const DEFAULT_PORT: u16 = 7731;
+pub const DEFAULT_PORT: u16 = 17731;
 pub const DEFAULT_DEV_WEB_URL: &str = "http://localhost:5173";
 pub const SESSION_COOKIE_NAME: &str = "sprocket_session";
 

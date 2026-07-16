@@ -22,6 +22,7 @@
 		"files": [
 			"main.mjs",
 			"preload.cjs",
+			"local-config.mjs",
 			"package.json",
 			{
 				"from": "../web/dist/",
@@ -31,10 +32,10 @@
 				]
 			}
 		],
-		"extraFiles": [
+		"extraResources": [
 			{
 				"from": "../../target/release/",
-				"to": ".",
+				"to": "server/",
 				"filter": [
 					"sprocket",
 					"sprocket.exe"
