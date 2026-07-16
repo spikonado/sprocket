@@ -2,7 +2,8 @@ import type {
 	AgentAuthStatus,
 	AgentRunStart,
 	DesktopApi,
-	FilesystemBrowseResult
+	FilesystemBrowseResult,
+	WorkspacePathResolution
 } from '$lib/types/sprocket';
 
 export type LocalBootstrap = {
@@ -191,6 +192,14 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				body: JSON.stringify({
 					partialPath: input.partialPath,
 					...(input.cwd ? { cwd: input.cwd } : {})
+				})
+			}),
+		resolveWorkspacePath: (input) =>
+			request<WorkspacePathResolution>('/api/workspace/resolve', {
+				method: 'POST',
+				body: JSON.stringify({
+					workspacePath: input.workspacePath,
+					...(input.createIfMissing ? { createIfMissing: true } : {})
 				})
 			}),
 		listWorkspaceSessions: () => request('/api/workspace/sessions'),

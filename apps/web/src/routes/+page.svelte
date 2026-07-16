@@ -422,8 +422,7 @@
 
 	async function attachLocalWorkspaceSession(
 		workspaceSessionId: Id<'workspaceSessions'>,
-		workspacePath: string,
-		createIfMissing = false
+		workspacePath: string
 	) {
 		if (!desktopApi) {
 			throw new Error(localServerRequiredMessage);
@@ -432,8 +431,7 @@
 		const session = await attachLocalWorkspaceSessionForPath({
 			desktopApi,
 			workspaceSessionId,
-			workspacePath,
-			createIfMissing
+			workspacePath
 		});
 		desktopWorkspaceSessionsGeneration += 1;
 		desktopWorkspaceSessionsById = {
@@ -505,8 +503,7 @@
 
 				await attachLocalWorkspaceSession(
 					workspacePickerReconnectSessionId,
-					selection.workspacePath,
-					selection.createIfMissing
+					selection.workspacePath
 				);
 				if (getCurrentUserId() !== pickerUserId) {
 					return;
@@ -527,11 +524,7 @@
 				return;
 			}
 
-			await attachLocalWorkspaceSession(
-				session._id,
-				selection.workspacePath,
-				selection.createIfMissing
-			);
+			await attachLocalWorkspaceSession(session._id, selection.workspacePath);
 			if (getCurrentUserId() !== pickerUserId) {
 				return;
 			}

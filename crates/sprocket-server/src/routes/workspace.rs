@@ -8,8 +8,19 @@ use serde::Deserialize;
 
 use crate::AppState;
 use crate::auth::require_session;
-use crate::workspace_sessions::{AttachWorkspaceSessionRequest, WorkspaceSessionRecord};
+use crate::workspace_sessions::{
+    AttachWorkspaceSessionRequest, WorkspacePathResolution, WorkspaceSessionRecord,
+    resolve_workspace_path,
+};
 use sprocket_workspace::{FilesystemBrowseResult, browse_filesystem};
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspacePathResolutionRequest {
+    workspace_path: String,
+    #[serde(default)]
+    create_if_missing: bool,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,6 +35,7 @@ pub fn routes() -> axum::Router<AppState> {
             "/workspace/sessions",
             get(list_sessions).post(attach_session),
         )
+        .route("/workspace/resolve", post(resolve_path))
         .route("/workspace/browse", post(browse_path))
 }
 
@@ -58,6 +70,20 @@ async fn attach_session(
         .await
         .map_err(ApiError::bad_request)?;
     Ok(Json(session))
+}
+
+async fn resolve_path(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(payload): Json<WorkspacePathResolutionRequest>,
+) -> Result<Json<WorkspacePathResolution>, ApiError> {
+    require_session(&state.auth, &headers, &jar)
+        .await
+        .map_err(ApiError::unauthorized)?;
+    let resolution = resolve_workspace_path(&payload.workspace_path, payload.create_if_missing)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(resolution))
 }
 
 async fn browse_path(

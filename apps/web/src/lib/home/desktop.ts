@@ -224,12 +224,10 @@ export async function attachLocalWorkspaceSession(args: {
 	desktopApi: DesktopApi;
 	workspaceSessionId: Id<'workspaceSessions'>;
 	workspacePath: string;
-	createIfMissing?: boolean;
 }) {
 	return await args.desktopApi.attachWorkspaceSession({
 		workspaceSessionId: args.workspaceSessionId,
-		workspacePath: args.workspacePath,
-		...(args.createIfMissing ? { createIfMissing: true } : {})
+		workspacePath: args.workspacePath
 	} satisfies WorkspaceSessionAttachment);
 }
 

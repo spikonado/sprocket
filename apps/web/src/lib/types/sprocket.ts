@@ -147,6 +147,10 @@ export type DesktopApi = {
 		partialPath: string;
 		cwd?: string;
 	}) => Promise<FilesystemBrowseResult>;
+	resolveWorkspacePath: (input: {
+		workspacePath: string;
+		createIfMissing?: boolean;
+	}) => Promise<WorkspacePathResolution>;
 	listWorkspaceSessions: () => Promise<WorkspaceSessionLocation[]>;
 	attachWorkspaceSession: (
 		session: WorkspaceSessionAttachment
@@ -156,10 +160,14 @@ export type DesktopApi = {
 	refreshAgentAuth: (authSessionId: string, authToken: string) => Promise<void>;
 };
 
+export type WorkspacePathResolution = {
+	workspacePath: string;
+	workspaceName: string;
+};
+
 export type WorkspaceSessionAttachment = {
 	workspaceSessionId: Id<'workspaceSessions'>;
 	workspacePath: string;
-	createIfMissing?: boolean;
 };
 
 export type WorkspaceSessionLocation = {

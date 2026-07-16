@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -36,8 +37,13 @@ pub enum WorkspaceAvailability {
 pub struct AttachWorkspaceSessionRequest {
     pub workspace_session_id: String,
     pub workspace_path: String,
-    #[serde(default)]
-    pub create_if_missing: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspacePathResolution {
+    pub workspace_path: String,
+    pub workspace_name: String,
 }
 
 pub struct WorkspaceSessionStore {
@@ -68,8 +74,7 @@ impl WorkspaceSessionStore {
     ) -> Result<WorkspaceSessionRecord> {
         self.ensure_loaded().await?;
         let now = now_ms();
-        let workspace_path =
-            resolve_workspace_path(&request.workspace_path, request.create_if_missing)?;
+        let workspace_path = resolve_workspace_path(&request.workspace_path, false)?.workspace_path;
         let validated = validate_session(WorkspaceSessionRecord {
             workspace_session_id: request.workspace_session_id,
             workspace_path,
@@ -212,9 +217,9 @@ struct ValidatedWorkspaceSession {
 
 fn validate_session(session: WorkspaceSessionRecord) -> Result<ValidatedWorkspaceSession> {
     match resolve_workspace_path(&session.workspace_path, false) {
-        Ok(workspace_path) => Ok(ValidatedWorkspaceSession {
+        Ok(resolution) => Ok(ValidatedWorkspaceSession {
             session: WorkspaceSessionRecord {
-                workspace_path,
+                workspace_path: resolution.workspace_path,
                 availability: WorkspaceAvailability::Available,
                 last_validated_at: now_ms(),
                 unavailable_reason: None,
@@ -232,7 +237,10 @@ fn validate_session(session: WorkspaceSessionRecord) -> Result<ValidatedWorkspac
     }
 }
 
-fn resolve_workspace_path(workspace_path: &str, create_if_missing: bool) -> Result<String> {
+pub fn resolve_workspace_path(
+    workspace_path: &str,
+    create_if_missing: bool,
+) -> Result<WorkspacePathResolution> {
     let root = if create_if_missing {
         resolve_or_create_workspace_root(workspace_path)?
     } else {
@@ -242,7 +250,16 @@ fn resolve_workspace_path(workspace_path: &str, create_if_missing: bool) -> Resu
     if workspace_path.is_empty() {
         anyhow::bail!("failed to resolve workspace path");
     }
-    Ok(workspace_path)
+    let workspace_name = root
+        .file_name()
+        .unwrap_or_else(|| OsStr::new("workspace"))
+        .to_string_lossy()
+        .to_string();
+
+    Ok(WorkspacePathResolution {
+        workspace_path,
+        workspace_name,
+    })
 }
 
 fn now_ms() -> u64 {
@@ -267,7 +284,6 @@ mod tests {
             .attach(AttachWorkspaceSessionRequest {
                 workspace_session_id: "session-1".to_string(),
                 workspace_path: env!("CARGO_MANIFEST_DIR").to_string(),
-                create_if_missing: false,
             })
             .await
             .expect("attach");
@@ -275,6 +291,27 @@ mod tests {
         assert_eq!(session.availability, WorkspaceAvailability::Available);
         let listed = store.list().await.expect("list");
         assert_eq!(listed.len(), 1);
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_path_resolution_uses_canonical_name_and_root_fallback() {
+        use std::os::unix::fs::symlink;
+
+        let temp_root = std::env::temp_dir().join(format!("sprocket-workspace-path-{}", now_ms()));
+        let target = temp_root.join("real-project");
+        let link = temp_root.join("project-link");
+        fs::create_dir_all(&target).expect("target dir");
+        symlink(&target, &link).expect("symlink");
+
+        let linked = resolve_workspace_path(&link.to_string_lossy(), false).expect("linked path");
+        assert_eq!(linked.workspace_path, target.to_string_lossy());
+        assert_eq!(linked.workspace_name, "real-project");
+
+        let root = resolve_workspace_path("/", false).expect("filesystem root");
+        assert_eq!(root.workspace_name, "workspace");
 
         let _ = fs::remove_dir_all(temp_root);
     }

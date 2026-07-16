@@ -27,7 +27,6 @@
 	export type WorkspaceSelection = {
 		workspacePath: string;
 		workspaceName: string;
-		createIfMissing: boolean;
 	};
 
 	let {
@@ -199,22 +198,24 @@
 		errorMessage = null;
 
 		try {
-			const workspaceName = workspacePath.split(/[/\\]/).filter(Boolean).at(-1);
-			if (!workspaceName) {
-				errorMessage = 'Enter a project directory path.';
-				return;
-			}
+			const resolution = await desktopApi.resolveWorkspacePath({
+				workspacePath,
+				createIfMissing: willCreateDirectory
+			});
 
 			if (
 				mode === 'reconnect' &&
 				expectedWorkspaceName &&
-				workspaceName !== expectedWorkspaceName
+				resolution.workspaceName !== expectedWorkspaceName
 			) {
 				errorMessage = `Selected project must be named "${expectedWorkspaceName}" to reconnect.`;
 				return;
 			}
 
-			await onSelect({ workspacePath, workspaceName, createIfMissing: willCreateDirectory });
+			await onSelect({
+				workspacePath: resolution.workspacePath,
+				workspaceName: resolution.workspaceName
+			});
 			onClose();
 		} catch (error) {
 			errorMessage =

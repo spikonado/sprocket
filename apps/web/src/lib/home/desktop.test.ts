@@ -24,6 +24,7 @@ const recoveredSubmission = {
 function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 	return {
 		browseFilesystem: vi.fn(),
+		resolveWorkspacePath: vi.fn(),
 		listWorkspaceSessions: vi.fn(),
 		attachWorkspaceSession: vi.fn(),
 		runAgent,
