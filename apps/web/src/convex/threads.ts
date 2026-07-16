@@ -46,6 +46,10 @@ export const create = mutation({
 				throw new Error('Submission settings do not match the existing thread.');
 			}
 
+			if (existingRecord.archivedAt !== undefined) {
+				await ctx.db.patch(existingRecord._id, { archivedAt: undefined });
+			}
+
 			const submissionRun = await ctx.db
 				.query('runs')
 				.withIndex('by_userId_submissionId', (query) =>
@@ -149,7 +153,18 @@ export const archive = mutation({
 		threadId: v.id('threadRecords')
 	},
 	handler: async (ctx, args) => {
-		await patchOwnedThread(ctx, args.threadId, { archivedAt: Date.now() });
+		const userId = await getUserId(ctx);
+		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+
+		const runs = await ctx.db
+			.query('runs')
+			.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', args.threadId))
+			.collect();
+		if (runs.some((run) => !isRunFinalStatus(run.status))) {
+			throw new Error('Cannot archive a thread while a run is active.');
+		}
+
+		await ctx.db.patch(args.threadId, { archivedAt: Date.now() });
 	}
 });
 

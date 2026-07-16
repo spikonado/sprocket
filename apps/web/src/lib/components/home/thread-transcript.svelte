@@ -298,11 +298,13 @@
 										{#if section.type === 'text'}
 											<ChatMarkdown content={section.text || ' '} className="text-slate-200" />
 										{:else}
-											{@const workInProgress = isStreaming && sectionIndex === sections.length - 1}
 											{@const { settledBlocks, runningTools } = partitionWorkSectionTools(
 												section.blocks,
 												isStreaming
 											)}
+											{@const workInProgress =
+												isStreaming &&
+												(sectionIndex === sections.length - 1 || runningTools.length > 0)}
 											{@const workSectionOrder = workIndexBySectionIndex[sectionIndex] ?? 0}
 											{@const timing = workSectionTimingAnchor(section, {
 												inProgress: workInProgress,
@@ -311,7 +313,7 @@
 												runCompletedAt: message.runCompletedAt,
 												priorWorkCompletedAtMs: priorCompletedAtByWorkIndex[workSectionOrder]
 											})}
-											{#if settledBlocks.length > 0 || workInProgress}
+											{#if settledBlocks.length > 0 || workInProgress || runningTools.length > 0}
 												<WorkDisclosure
 													inProgress={workInProgress}
 													startedAtMs={timing.startedAtMs}

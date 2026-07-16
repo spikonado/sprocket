@@ -39,9 +39,9 @@ export type AssistantTimelineSection =
 
 export type AssistantTimelineToolFailureKind = 'cancelled' | 'failed';
 
-/** Tool type used for grouping: prefer live job kind, else streamed call name. */
+/** Tool type used for grouping: prefer streamed call name so groups stay stable as jobs attach. */
 export function assistantTimelineToolKey(tool: AssistantTimelineTool): string {
-	return tool.job?.kind ?? tool.name;
+	return tool.name || tool.job?.kind || 'tool';
 }
 
 /**

@@ -279,29 +279,33 @@ describe('groupAssistantTimeline', () => {
 		]);
 	});
 
-	it('prefers job.kind over name for the grouping key', () => {
+	it('groups by streamed name even when a matched job kind differs', () => {
 		const withJob = tool('c1', 'streamed_name', {
 			job: executorJob('job-1', 1, { kind: 'exec_command' })
 		});
-		expect(assistantTimelineToolKey(withJob)).toBe('exec_command');
+		expect(assistantTimelineToolKey(withJob)).toBe('streamed_name');
 
 		const blocks = groupAssistantTimeline([
 			withJob,
-			tool('c2', 'exec_command'),
-			tool('c3', 'streamed_name')
+			tool('c3', 'streamed_name'),
+			tool('c2', 'exec_command')
 		]);
 
-		expect(blocks).toHaveLength(2);
-		expect(blocks[0]).toMatchObject({
-			type: 'tool-group',
-			toolKey: 'exec_command',
-			tools: [{ callId: 'c1' }, { callId: 'c2' }]
-		});
-		expect(blocks[1]).toMatchObject({
-			type: 'tool-group',
-			toolKey: 'streamed_name',
-			tools: [{ callId: 'c3' }]
-		});
+		expect(blocks).toEqual([
+			expect.objectContaining({
+				type: 'tool-group',
+				toolKey: 'streamed_name',
+				tools: [
+					expect.objectContaining({ callId: 'c1' }),
+					expect.objectContaining({ callId: 'c3' })
+				]
+			}),
+			expect.objectContaining({
+				type: 'tool-group',
+				toolKey: 'exec_command',
+				tools: [expect.objectContaining({ callId: 'c2' })]
+			})
+		]);
 	});
 });
 
