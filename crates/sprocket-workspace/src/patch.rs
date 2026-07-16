@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock, Weak};
 
 use anyhow::{Context, Result, anyhow, bail};
+use cap_std::ambient_authority;
+use cap_std::fs::{Dir, Metadata, OpenOptions, Permissions};
 use diffy::patch_set::{FileOperation, ParseOptions, PatchKind, PatchSet};
 use serde::Serialize;
 use tokio::io::AsyncWriteExt;
@@ -15,6 +17,92 @@ type WorkspacePatchLock = AsyncMutex<()>;
 
 static WORKSPACE_PATCH_LOCKS: OnceLock<StdMutex<HashMap<PathBuf, Weak<WorkspacePatchLock>>>> =
     OnceLock::new();
+
+#[derive(Clone)]
+struct PatchFilesystem {
+    root: PathBuf,
+    dir: Arc<Dir>,
+}
+
+impl PatchFilesystem {
+    fn open(root: PathBuf) -> Result<Self> {
+        let dir = Dir::open_ambient_dir(&root, ambient_authority())
+            .with_context(|| format!("failed to open workspace {}", root.display()))?;
+        Ok(Self {
+            root,
+            dir: Arc::new(dir),
+        })
+    }
+
+    fn relative_path(&self, path: &Path) -> Result<PathBuf> {
+        path.strip_prefix(&self.root)
+            .map(Path::to_owned)
+            .with_context(|| format!("path escapes the workspace: {}", path.display()))
+    }
+
+    async fn run<T, F>(&self, operation: F) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Dir) -> std::io::Result<T> + Send + 'static,
+    {
+        let dir = self.dir.clone();
+        tokio::task::spawn_blocking(move || operation(&dir))
+            .await
+            .context("workspace filesystem task failed")?
+            .map_err(Into::into)
+    }
+
+    async fn read(&self, path: &Path) -> Result<Vec<u8>> {
+        let path = self.relative_path(path)?;
+        self.run(move |dir| dir.read(path)).await
+    }
+
+    async fn metadata(&self, path: &Path) -> Result<Metadata> {
+        let path = self.relative_path(path)?;
+        self.run(move |dir| dir.metadata(path)).await
+    }
+
+    async fn symlink_metadata(&self, path: &Path) -> Result<Metadata> {
+        let path = self.relative_path(path)?;
+        self.run(move |dir| dir.symlink_metadata(path)).await
+    }
+
+    async fn try_exists(&self, path: &Path) -> Result<bool> {
+        let path = self.relative_path(path)?;
+        self.run(move |dir| dir.try_exists(path)).await
+    }
+
+    async fn create_file(
+        &self,
+        path: &Path,
+        permissions: Option<Permissions>,
+    ) -> Result<cap_std::fs::File> {
+        let path = self.relative_path(path)?;
+        self.run(move |dir| {
+            if let Some(parent) = path.parent() {
+                dir.create_dir_all(parent)?;
+            }
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            let file = dir.open_with(&path, &options)?;
+            if let Some(permissions) = permissions {
+                file.set_permissions(permissions)?;
+            }
+            Ok(file)
+        })
+        .await
+    }
+
+    async fn remove_file(&self, path: &Path) -> Result<()> {
+        let path = self.relative_path(path)?;
+        self.run(move |dir| dir.remove_file(path)).await
+    }
+
+    async fn remove_dir(&self, path: &Path) -> Result<()> {
+        let path = self.relative_path(path)?;
+        self.run(move |dir| dir.remove_dir(path)).await
+    }
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -51,24 +139,24 @@ enum PreparedChange {
         source: PathBuf,
         destination: PathBuf,
         contents: Vec<u8>,
-        permissions: std::fs::Permissions,
+        permissions: Permissions,
     },
     Rename {
         source: PathBuf,
         destination: PathBuf,
         contents: Vec<u8>,
-        permissions: std::fs::Permissions,
+        permissions: Permissions,
     },
     Copy {
         destination: PathBuf,
         contents: Vec<u8>,
-        permissions: std::fs::Permissions,
+        permissions: Permissions,
     },
 }
 
 struct FileSnapshot {
     contents: Vec<u8>,
-    permissions: std::fs::Permissions,
+    permissions: Permissions,
 }
 
 struct PatchSnapshot {
@@ -89,24 +177,24 @@ pub async fn apply_workspace_patch(
     let workspace_root = tokio::fs::canonicalize(&workspace_root)
         .await
         .with_context(|| format!("failed to resolve workspace {}", workspace_root.display()))?;
+    let filesystem = PatchFilesystem::open(workspace_root.clone())?;
     let patch_lock = workspace_patch_lock(&workspace_root);
     let patch_guard = tokio::select! {
         guard = patch_lock.lock() => guard,
         _ = cancellation.cancelled() => return Err(crate::tools::WorkspaceOperationCancelled.into()),
     };
-
     let result = async {
         cancellation.ensure_active()?;
-        let changes = prepare_changes(&workspace_root, patch).await?;
+        let changes = prepare_changes(&filesystem, &workspace_root, patch).await?;
         if changes.is_empty() {
             bail!("patch does not contain any file changes");
         }
 
-        let snapshots = snapshot_paths(&changes).await?;
+        let snapshots = snapshot_paths(&filesystem, &changes).await?;
         let output = change_outputs(&workspace_root, &changes);
 
-        if let Err(error) = apply_changes(&cancellation, &changes).await {
-            if let Err(rollback_error) = restore_snapshot(&snapshots).await {
+        if let Err(error) = apply_changes(&filesystem, &cancellation, &changes).await {
+            if let Err(rollback_error) = restore_snapshot(&filesystem, &snapshots).await {
                 return Err(error).context(format!(
                     "patch failed and rollback also failed: {rollback_error:#}"
                 ));
@@ -153,7 +241,11 @@ fn release_workspace_patch_lock(root: &Path, lock: &Arc<WorkspacePatchLock>) {
     }
 }
 
-async fn prepare_changes(root: &Path, patch: &str) -> Result<Vec<PreparedChange>> {
+async fn prepare_changes(
+    filesystem: &PatchFilesystem,
+    root: &Path,
+    patch: &str,
+) -> Result<Vec<PreparedChange>> {
     let mut changes = Vec::new();
     let mut touched_paths = BTreeSet::new();
 
@@ -168,21 +260,24 @@ async fn prepare_changes(root: &Path, patch: &str) -> Result<Vec<PreparedChange>
         match operation.strip_prefix(strip) {
             FileOperation::Create(path) => {
                 let path = resolve_workspace_path(root, &path, true)?;
-                ensure_missing(&path).await?;
+                ensure_missing(filesystem, &path).await?;
                 reserve_path(&mut touched_paths, &path)?;
                 let contents = apply_text_patch(&path, &[], parsed.patch())?;
                 changes.push(PreparedChange::Create { path, contents });
             }
             FileOperation::Delete(path) => {
-                let path = resolve_existing_file(root, &path)?;
+                let path = resolve_existing_file(filesystem, root, &path).await?;
                 reserve_path(&mut touched_paths, &path)?;
                 let header_only = parsed
                     .patch()
                     .as_text()
                     .is_some_and(|patch| patch.hunks().is_empty());
                 if !header_only {
-                    let remaining =
-                        apply_text_patch(&path, &read_file(&path).await?, parsed.patch())?;
+                    let remaining = apply_text_patch(
+                        &path,
+                        &read_file(filesystem, &path).await?,
+                        parsed.patch(),
+                    )?;
                     if !remaining.is_empty() {
                         bail!(
                             "delete patch does not remove all contents from {}",
@@ -193,16 +288,19 @@ async fn prepare_changes(root: &Path, patch: &str) -> Result<Vec<PreparedChange>
                 changes.push(PreparedChange::Delete { path });
             }
             FileOperation::Modify { original, modified } => {
-                let source = resolve_existing_file(root, &original)?;
+                let source = resolve_existing_file(filesystem, root, &original).await?;
                 let destination = resolve_workspace_path(root, &modified, true)?;
                 reserve_path(&mut touched_paths, &source)?;
                 if source != destination {
-                    ensure_missing(&destination).await?;
+                    ensure_missing(filesystem, &destination).await?;
                     reserve_path(&mut touched_paths, &destination)?;
                 }
-                let contents =
-                    apply_text_patch(&source, &read_file(&source).await?, parsed.patch())?;
-                let permissions = file_permissions(&source).await?;
+                let contents = apply_text_patch(
+                    &source,
+                    &read_file(filesystem, &source).await?,
+                    parsed.patch(),
+                )?;
+                let permissions = file_permissions(filesystem, &source).await?;
                 changes.push(PreparedChange::Modify {
                     source,
                     destination,
@@ -211,14 +309,17 @@ async fn prepare_changes(root: &Path, patch: &str) -> Result<Vec<PreparedChange>
                 });
             }
             FileOperation::Rename { from, to } => {
-                let source = resolve_existing_file(root, &from)?;
+                let source = resolve_existing_file(filesystem, root, &from).await?;
                 let destination = resolve_workspace_path(root, &to, true)?;
-                ensure_missing(&destination).await?;
+                ensure_missing(filesystem, &destination).await?;
                 reserve_path(&mut touched_paths, &source)?;
                 reserve_path(&mut touched_paths, &destination)?;
-                let contents =
-                    apply_text_patch(&source, &read_file(&source).await?, parsed.patch())?;
-                let permissions = file_permissions(&source).await?;
+                let contents = apply_text_patch(
+                    &source,
+                    &read_file(filesystem, &source).await?,
+                    parsed.patch(),
+                )?;
+                let permissions = file_permissions(filesystem, &source).await?;
                 changes.push(PreparedChange::Rename {
                     source,
                     destination,
@@ -227,13 +328,16 @@ async fn prepare_changes(root: &Path, patch: &str) -> Result<Vec<PreparedChange>
                 });
             }
             FileOperation::Copy { from, to } => {
-                let source = resolve_existing_file(root, &from)?;
+                let source = resolve_existing_file(filesystem, root, &from).await?;
                 let destination = resolve_workspace_path(root, &to, true)?;
-                ensure_missing(&destination).await?;
+                ensure_missing(filesystem, &destination).await?;
                 reserve_path(&mut touched_paths, &destination)?;
-                let contents =
-                    apply_text_patch(&source, &read_file(&source).await?, parsed.patch())?;
-                let permissions = file_permissions(&source).await?;
+                let contents = apply_text_patch(
+                    &source,
+                    &read_file(filesystem, &source).await?,
+                    parsed.patch(),
+                )?;
+                let permissions = file_permissions(filesystem, &source).await?;
                 changes.push(PreparedChange::Copy {
                     destination,
                     contents,
@@ -259,24 +363,40 @@ fn apply_text_patch(path: &Path, base: &[u8], patch: &PatchKind<'_, str>) -> Res
     .with_context(|| format!("failed to apply patch to {}", path.display()))
 }
 
-async fn read_file(path: &Path) -> Result<Vec<u8>> {
-    tokio::fs::read(path)
+async fn read_file(filesystem: &PatchFilesystem, path: &Path) -> Result<Vec<u8>> {
+    filesystem
+        .read(path)
         .await
         .with_context(|| format!("failed to read {}", path.display()))
 }
 
-fn resolve_existing_file(root: &Path, path: &str) -> Result<PathBuf> {
+async fn resolve_existing_file(
+    filesystem: &PatchFilesystem,
+    root: &Path,
+    path: &str,
+) -> Result<PathBuf> {
     let path = resolve_workspace_path(root, path, false)?;
-    if !path.is_file() {
+    if !filesystem
+        .metadata(&path)
+        .await
+        .with_context(|| format!("failed to inspect {}", path.display()))?
+        .is_file()
+    {
         bail!("patch path is not a file: {}", path.display());
     }
     Ok(path)
 }
 
-async fn ensure_missing(path: &Path) -> Result<()> {
-    match tokio::fs::symlink_metadata(path).await {
+async fn ensure_missing(filesystem: &PatchFilesystem, path: &Path) -> Result<()> {
+    match filesystem.symlink_metadata(path).await {
         Ok(_) => bail!("patch destination already exists: {}", path.display()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            Ok(())
+        }
         Err(error) => Err(error).with_context(|| format!("failed to inspect {}", path.display())),
     }
 }
@@ -291,7 +411,10 @@ fn reserve_path(paths: &mut BTreeSet<PathBuf>, path: &Path) -> Result<()> {
     Ok(())
 }
 
-async fn snapshot_paths(changes: &[PreparedChange]) -> Result<PatchSnapshot> {
+async fn snapshot_paths(
+    filesystem: &PatchFilesystem,
+    changes: &[PreparedChange],
+) -> Result<PatchSnapshot> {
     let mut paths = BTreeSet::new();
     for change in changes {
         match change {
@@ -317,17 +440,24 @@ async fn snapshot_paths(changes: &[PreparedChange]) -> Result<PatchSnapshot> {
         }
     }
 
-    let missing_directories = missing_parent_directories(&paths);
+    let missing_directories = missing_parent_directories(filesystem, &paths).await?;
     let mut files = BTreeMap::new();
     for path in paths {
-        let snapshot = match tokio::fs::metadata(&path).await {
+        let snapshot = match filesystem.metadata(&path).await {
             Ok(metadata) => Some(FileSnapshot {
-                contents: tokio::fs::read(&path)
+                contents: filesystem
+                    .read(&path)
                     .await
                     .with_context(|| format!("failed to read {}", path.display()))?,
                 permissions: metadata.permissions(),
             }),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+            {
+                None
+            }
             Err(error) => {
                 return Err(error).with_context(|| format!("failed to inspect {}", path.display()));
             }
@@ -341,12 +471,15 @@ async fn snapshot_paths(changes: &[PreparedChange]) -> Result<PatchSnapshot> {
     })
 }
 
-fn missing_parent_directories(paths: &BTreeSet<PathBuf>) -> Vec<PathBuf> {
+async fn missing_parent_directories(
+    filesystem: &PatchFilesystem,
+    paths: &BTreeSet<PathBuf>,
+) -> Result<Vec<PathBuf>> {
     let mut directories = BTreeSet::new();
     for path in paths {
         let mut parent = path.parent();
         while let Some(directory) = parent {
-            if directory.exists() {
+            if directory == filesystem.root || filesystem.try_exists(directory).await? {
                 break;
             }
             directories.insert(directory.to_owned());
@@ -356,20 +489,23 @@ fn missing_parent_directories(paths: &BTreeSet<PathBuf>) -> Vec<PathBuf> {
 
     let mut directories = directories.into_iter().collect::<Vec<_>>();
     directories.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
-    directories
+    Ok(directories)
 }
 
 async fn apply_changes(
+    filesystem: &PatchFilesystem,
     cancellation: &WorkspaceCancellation,
     changes: &[PreparedChange],
 ) -> Result<()> {
     for change in changes {
         cancellation.ensure_active()?;
         match change {
-            PreparedChange::Create { path, contents } => write_new_file(path, contents).await?,
-            PreparedChange::Delete { path } => tokio::fs::remove_file(path)
-                .await
-                .with_context(|| format!("failed to delete {}", path.display()))?,
+            PreparedChange::Create { path, contents } => {
+                write_new_file(filesystem, path, contents, None).await?
+            }
+            PreparedChange::Delete { path } => {
+                remove_file(filesystem, path, "deleted file").await?
+            }
             PreparedChange::Modify {
                 source,
                 destination,
@@ -377,13 +513,11 @@ async fn apply_changes(
                 permissions,
             } => {
                 if source == destination {
-                    tokio::fs::write(destination, contents)
-                        .await
-                        .with_context(|| format!("failed to write {}", destination.display()))?;
+                    replace_file(filesystem, destination, contents, permissions.clone()).await?;
                 } else {
-                    write_new_file(destination, contents).await?;
-                    set_permissions(destination, permissions.clone()).await?;
-                    remove_file(source, "modified source").await?;
+                    write_new_file(filesystem, destination, contents, Some(permissions.clone()))
+                        .await?;
+                    remove_file(filesystem, source, "modified source").await?;
                 }
             }
             PreparedChange::Rename {
@@ -392,9 +526,9 @@ async fn apply_changes(
                 contents,
                 permissions,
             } => {
-                write_new_file(destination, contents).await?;
-                set_permissions(destination, permissions.clone()).await?;
-                remove_file(source, "renamed source").await?;
+                write_new_file(filesystem, destination, contents, Some(permissions.clone()))
+                    .await?;
+                remove_file(filesystem, source, "renamed source").await?;
             }
             PreparedChange::Copy {
                 destination,
@@ -402,72 +536,92 @@ async fn apply_changes(
                 permissions,
                 ..
             } => {
-                write_new_file(destination, contents).await?;
-                set_permissions(destination, permissions.clone()).await?;
+                write_new_file(filesystem, destination, contents, Some(permissions.clone()))
+                    .await?;
             }
         }
     }
     cancellation.ensure_active()
 }
 
-async fn write_new_file(path: &Path, contents: &[u8]) -> Result<()> {
-    create_parent(path).await?;
-    let mut file = tokio::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
+async fn write_new_file(
+    filesystem: &PatchFilesystem,
+    path: &Path,
+    contents: &[u8],
+    permissions: Option<Permissions>,
+) -> Result<()> {
+    let file = filesystem
+        .create_file(path, permissions)
         .await
         .with_context(|| format!("failed to create {}", path.display()))?;
+    let mut file = tokio::fs::File::from_std(file.into_std());
     file.write_all(contents)
         .await
         .with_context(|| format!("failed to write {}", path.display()))
 }
 
-async fn file_permissions(path: &Path) -> Result<std::fs::Permissions> {
-    tokio::fs::metadata(path)
+async fn replace_file(
+    filesystem: &PatchFilesystem,
+    path: &Path,
+    contents: &[u8],
+    permissions: Permissions,
+) -> Result<()> {
+    filesystem
+        .remove_file(path)
+        .await
+        .with_context(|| format!("failed to replace {}", path.display()))?;
+    write_new_file(filesystem, path, contents, Some(permissions)).await
+}
+
+async fn file_permissions(filesystem: &PatchFilesystem, path: &Path) -> Result<Permissions> {
+    filesystem
+        .metadata(path)
         .await
         .map(|metadata| metadata.permissions())
         .with_context(|| format!("failed to inspect {}", path.display()))
 }
 
-async fn set_permissions(path: &Path, permissions: std::fs::Permissions) -> Result<()> {
-    tokio::fs::set_permissions(path, permissions)
-        .await
-        .with_context(|| format!("failed to set permissions on {}", path.display()))
-}
-
-async fn remove_file(path: &Path, description: &str) -> Result<()> {
-    tokio::fs::remove_file(path)
+async fn remove_file(filesystem: &PatchFilesystem, path: &Path, description: &str) -> Result<()> {
+    filesystem
+        .remove_file(path)
         .await
         .with_context(|| format!("failed to remove {description} {}", path.display()))
 }
 
-async fn create_parent(path: &Path) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .with_context(|| format!("failed to create {}", parent.display()))?;
-    }
-    Ok(())
-}
-
-async fn restore_snapshot(snapshot: &PatchSnapshot) -> Result<()> {
+async fn restore_snapshot(filesystem: &PatchFilesystem, snapshot: &PatchSnapshot) -> Result<()> {
     let mut errors = Vec::new();
     for (path, file_snapshot) in &snapshot.files {
         let result = match file_snapshot {
             Some(snapshot) => {
                 async {
-                    create_parent(path).await?;
-                    tokio::fs::write(path, &snapshot.contents).await?;
-                    tokio::fs::set_permissions(path, snapshot.permissions.clone()).await?;
-                    Result::<()>::Ok(())
+                    match filesystem.remove_file(path).await {
+                        Ok(()) => {}
+                        Err(error)
+                            if error.downcast_ref::<std::io::Error>().is_some_and(|error| {
+                                error.kind() == std::io::ErrorKind::NotFound
+                            }) => {}
+                        Err(error) => return Err(error),
+                    }
+                    write_new_file(
+                        filesystem,
+                        path,
+                        &snapshot.contents,
+                        Some(snapshot.permissions.clone()),
+                    )
+                    .await
                 }
                 .await
             }
-            None => match tokio::fs::remove_file(path).await {
+            None => match filesystem.remove_file(path).await {
                 Ok(()) => Ok(()),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(error) => Err(error.into()),
+                Err(error)
+                    if error
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+                {
+                    Ok(())
+                }
+                Err(error) => Err(error),
             },
         };
         if let Err(error) = result {
@@ -476,13 +630,15 @@ async fn restore_snapshot(snapshot: &PatchSnapshot) -> Result<()> {
     }
 
     for directory in &snapshot.missing_directories {
-        match tokio::fs::remove_dir(directory).await {
+        match filesystem.remove_dir(directory).await {
             Ok(()) => {}
             Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
-                ) => {}
+                if error.downcast_ref::<std::io::Error>().is_some_and(|error| {
+                    matches!(
+                        error.kind(),
+                        std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+                    )
+                }) => {}
             Err(error) => errors.push(format!("{}: {error}", directory.display())),
         }
     }
@@ -521,7 +677,7 @@ fn change_outputs(root: &Path, changes: &[PreparedChange]) -> Vec<PatchChangeOut
 mod tests {
     use std::fs;
 
-    use super::apply_workspace_patch;
+    use super::{PatchFilesystem, apply_workspace_patch, write_new_file};
     use crate::test_support::temp_workspace;
     use crate::tools::{WorkspaceCancellation, WorkspaceOperationCancelled};
 
@@ -687,6 +843,32 @@ mod tests {
         assert!(error.to_string().contains("destination already exists"));
         assert!(!root.parent().unwrap().join("outside.txt").exists());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn rejects_parent_replaced_with_escaping_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_workspace();
+        let outside = temp_workspace();
+        fs::create_dir(root.join("nested")).unwrap();
+        let filesystem = PatchFilesystem::open(root.clone()).unwrap();
+        fs::rename(root.join("nested"), root.join("moved")).unwrap();
+        symlink(&outside, root.join("nested")).unwrap();
+
+        write_new_file(
+            &filesystem,
+            &root.join("nested/escaped.txt"),
+            b"escaped\n",
+            None,
+        )
+        .await
+        .expect_err("capability path must reject the escaping symlink");
+
+        assert!(!outside.join("escaped.txt").exists());
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
     }
 
     #[tokio::test]

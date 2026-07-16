@@ -248,7 +248,13 @@ impl CommandSessionManager {
         .await
         {
             Ok(Some(completion)) => {
-                let output = session.output(Some(completion)).await;
+                let mut output = session.output(Some(completion)).await;
+                output.success = false;
+                let write_error = format!("failed to write command stdin: {write_error:#}");
+                output.error = Some(match output.error {
+                    Some(completion_error) => format!("{completion_error}; {write_error}"),
+                    None => write_error,
+                });
                 self.sessions.lock().await.remove(&session.id);
                 Ok(output)
             }
@@ -283,23 +289,14 @@ impl CommandSession {
     async fn write(&self, chars: Vec<u8>, cancellation: &WorkspaceCancellation) -> Result<()> {
         let (response, result) = oneshot::channel();
         let request = StdinRequest { chars, response };
-        let mut completion = self.completion.clone();
         tokio::select! {
             _ = cancellation.cancelled() => Err(WorkspaceOperationCancelled.into()),
-            changed = completion.changed() => match changed {
-                Ok(()) => Ok(()),
-                Err(_) => bail!("command session {} closed unexpectedly", self.id),
-            },
             sent = self.stdin.send(request) => sent
                 .map_err(|_| anyhow!("command session {} is no longer accepting input", self.id)),
         }?;
 
         tokio::select! {
             _ = cancellation.cancelled() => Err(WorkspaceOperationCancelled.into()),
-            changed = completion.changed() => match changed {
-                Ok(()) => Ok(()),
-                Err(_) => bail!("command session {} closed unexpectedly", self.id),
-            },
             response = result => response
                 .map_err(|_| anyhow!("command session {} closed while writing input", self.id))?
                 .map_err(|error| anyhow!(error)),
@@ -802,7 +799,55 @@ mod tests {
         .expect("timed out command should return a result");
 
         assert!(finished.timed_out);
+        assert!(!finished.success);
         assert!(!finished.running);
+        assert!(
+            finished
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("failed to write command stdin"))
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn reports_input_dropped_during_normal_command_completion() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone());
+        let started = sessions
+            .exec_command(
+                WorkspaceCancellation::new(),
+                "while [ ! -f release ]; do sleep 0.01; done",
+                ".",
+                &default_command_shell(),
+                5_000,
+                10,
+                20_000,
+            )
+            .await
+            .expect("command should start");
+        fs::write(root.join("release"), "").unwrap();
+
+        let finished = sessions
+            .write_stdin(
+                WorkspaceCancellation::new(),
+                started.session_id.as_deref().unwrap(),
+                &"input".repeat(500_000),
+                false,
+                5_000,
+            )
+            .await
+            .expect("completed command should return its result");
+
+        assert_eq!(finished.exit_code, Some(0));
+        assert!(!finished.success);
+        assert!(!finished.running);
+        assert!(
+            finished
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("failed to write command stdin"))
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
