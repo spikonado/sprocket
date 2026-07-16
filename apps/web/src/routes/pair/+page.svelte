@@ -5,10 +5,12 @@
 	import CalmCentered from '$lib/components/home/calm-centered.svelte';
 	import {
 		bootstrapLocalSession,
-		clearPairingTokenFromHash,
+		clearLaunchHash,
 		fetchLocalBootstrap,
 		readPairingTokenFromHash,
-		resolveLocalApiBaseUrl
+		readWorkspaceLaunchFromHash,
+		resolveLocalApiBaseUrl,
+		workspaceLaunchHash
 	} from '$lib/local/client';
 
 	let pairingToken = $state('');
@@ -55,9 +57,15 @@
 		error = null;
 
 		try {
+			const workspacePath = readWorkspaceLaunchFromHash();
+			const destination: '/' | `/#${string}` = workspacePath
+				? `/${workspaceLaunchHash(workspacePath)}`
+				: '/';
 			await bootstrapLocalSession(baseUrl, pairingToken.trim());
-			clearPairingTokenFromHash();
-			await goto(resolve('/'), { replaceState: true });
+			clearLaunchHash();
+			await goto(resolve(destination), {
+				replaceState: true
+			});
 		} catch (submitError) {
 			error =
 				submitError instanceof Error

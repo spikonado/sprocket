@@ -10,11 +10,10 @@ import { resolveLanguageModel, resolveProviderOptions } from '@convex/lib/modelR
 import { assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
 import { enforceModelCompletionLimit } from '@convex/lib/rateLimits';
 import { getUserId } from '@convex/lib/auth';
-import { vPersistedModelId, vReasoningEffort, vServiceTier } from '@convex/lib/validators';
+import { vModelId, vReasoningEffort, vServiceTier } from '@convex/lib/validators';
 import {
 	assertSupportedModelConfiguration,
 	defaultServiceTier,
-	normalizeModelId,
 	type SupportedModelId,
 	type SupportedReasoningEffort,
 	type SupportedServiceTier
@@ -43,7 +42,7 @@ const COMPLETION_ACCEPTANCE_CHECK_INTERVAL_MS = 1_000;
 
 export const complete = action({
 	args: {
-		modelId: vPersistedModelId,
+		modelId: vModelId,
 		reasoningEffort: v.optional(vReasoningEffort),
 		serviceTier: v.optional(vServiceTier),
 		instructions: v.optional(v.string()),
@@ -77,7 +76,7 @@ export const complete = action({
 		stream_events: CompletionStreamEvent[];
 	}> => {
 		await getUserId(ctx);
-		const modelId = normalizeModelId(args.modelId);
+		const modelId = args.modelId;
 		if (args.reasoningEffort !== undefined || args.serviceTier !== undefined) {
 			assertSupportedModelConfiguration({
 				modelId,

@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sprocket_workspace::{resolve_or_create_workspace_root, resolve_workspace_root};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 const WORKSPACE_SESSIONS_FILE: &str = "workspace-sessions.json";
 const STALE_UNAVAILABLE_WORKSPACE_MS: u64 = 1000 * 60 * 60 * 24 * 30;
@@ -50,6 +50,7 @@ pub struct WorkspaceSessionStore {
     data_dir: PathBuf,
     sessions: RwLock<HashMap<String, WorkspaceSessionRecord>>,
     loaded: RwLock<bool>,
+    refresh_lock: Mutex<()>,
 }
 
 impl WorkspaceSessionStore {
@@ -58,6 +59,7 @@ impl WorkspaceSessionStore {
             data_dir,
             sessions: RwLock::new(HashMap::new()),
             loaded: RwLock::new(false),
+            refresh_lock: Mutex::new(()),
         })
     }
 
@@ -74,44 +76,43 @@ impl WorkspaceSessionStore {
     ) -> Result<WorkspaceSessionRecord> {
         self.ensure_loaded().await?;
         let now = now_ms();
-        let workspace_path = resolve_workspace_path(&request.workspace_path, false)?.workspace_path;
-        let validated = validate_session(WorkspaceSessionRecord {
+        let validated = validate_session_async(WorkspaceSessionRecord {
             workspace_session_id: request.workspace_session_id,
-            workspace_path,
+            workspace_path: request.workspace_path,
             availability: WorkspaceAvailability::Available,
             last_validated_at: now,
             last_used_at: now,
             unavailable_reason: None,
-        })?;
+        })
+        .await?;
 
-        if validated.session.availability == WorkspaceAvailability::Unavailable {
-            if let Some(reason) = &validated.session.unavailable_reason {
+        if validated.availability == WorkspaceAvailability::Unavailable {
+            if let Some(reason) = &validated.unavailable_reason {
                 anyhow::bail!("{reason}");
             }
             anyhow::bail!("workspace path is unavailable");
         }
 
-        self.sessions.write().await.insert(
-            validated.session.workspace_session_id.clone(),
-            validated.session.clone(),
-        );
+        self.sessions
+            .write()
+            .await
+            .insert(validated.workspace_session_id.clone(), validated.clone());
         self.save_to_disk().await?;
-        Ok(validated.session)
+        Ok(validated)
     }
 
     pub async fn workspace_path(&self, workspace_session_id: &str) -> Result<String> {
         self.ensure_loaded().await?;
         let session = self.get_or_error(workspace_session_id).await?;
-        let validated = validate_session(session)?;
-        if validated.session.availability != WorkspaceAvailability::Available {
+        let validated = validate_session_async(session).await?;
+        if validated.availability != WorkspaceAvailability::Available {
             anyhow::bail!(
                 validated
-                    .session
                     .unavailable_reason
                     .unwrap_or_else(|| "workspace path is unavailable".to_string())
             );
         }
-        Ok(validated.session.workspace_path)
+        Ok(validated.workspace_path)
     }
 
     async fn get_or_error(&self, workspace_session_id: &str) -> Result<WorkspaceSessionRecord> {
@@ -148,27 +149,39 @@ impl WorkspaceSessionStore {
     }
 
     async fn refresh_all(&self) -> Result<()> {
-        let ids: Vec<String> = self.sessions.read().await.keys().cloned().collect();
+        let _refresh_guard = self.refresh_lock.lock().await;
+        let snapshot: Vec<(String, WorkspaceSessionRecord)> = self
+            .sessions
+            .read()
+            .await
+            .iter()
+            .map(|(id, session)| (id.clone(), session.clone()))
+            .collect();
+        let validated = tokio::task::spawn_blocking(move || {
+            snapshot
+                .into_iter()
+                .map(|(id, original)| {
+                    let refreshed = validate_session_path(original.clone());
+                    (id, original, refreshed)
+                })
+                .collect::<Vec<_>>()
+        })
+        .await
+        .context("workspace session validation task failed")?;
+
         let mut changed = false;
-
-        for workspace_session_id in ids {
-            let existing = self
-                .sessions
-                .read()
-                .await
-                .get(&workspace_session_id)
-                .cloned();
-            let Some(existing) = existing else {
+        let mut sessions = self.sessions.write().await;
+        for (workspace_session_id, original, refreshed) in validated {
+            if sessions.get(&workspace_session_id) != Some(&original) {
                 continue;
-            };
+            }
 
-            let validated = validate_session(existing)?;
-            let mut sessions = self.sessions.write().await;
-            if sessions.get(&workspace_session_id) != Some(&validated.session) {
-                sessions.insert(workspace_session_id, validated.session);
+            if session_availability_changed(&original, &refreshed) {
                 changed = true;
             }
+            sessions.insert(workspace_session_id, refreshed);
         }
+        drop(sessions);
 
         if changed {
             self.save_to_disk().await?;
@@ -211,30 +224,51 @@ impl WorkspaceSessionStore {
     }
 }
 
-struct ValidatedWorkspaceSession {
+fn mark_available(
     session: WorkspaceSessionRecord,
+    workspace_path: String,
+) -> WorkspaceSessionRecord {
+    WorkspaceSessionRecord {
+        workspace_path,
+        availability: WorkspaceAvailability::Available,
+        last_validated_at: now_ms(),
+        unavailable_reason: None,
+        ..session
+    }
 }
 
-fn validate_session(session: WorkspaceSessionRecord) -> Result<ValidatedWorkspaceSession> {
-    match resolve_workspace_path(&session.workspace_path, false) {
-        Ok(resolution) => Ok(ValidatedWorkspaceSession {
-            session: WorkspaceSessionRecord {
-                workspace_path: resolution.workspace_path,
-                availability: WorkspaceAvailability::Available,
-                last_validated_at: now_ms(),
-                unavailable_reason: None,
-                ..session
-            },
-        }),
-        Err(error) => Ok(ValidatedWorkspaceSession {
-            session: WorkspaceSessionRecord {
-                availability: WorkspaceAvailability::Unavailable,
-                last_validated_at: now_ms(),
-                unavailable_reason: Some(error.to_string()),
-                ..session
-            },
-        }),
+fn mark_unavailable(
+    session: WorkspaceSessionRecord,
+    error: &anyhow::Error,
+) -> WorkspaceSessionRecord {
+    WorkspaceSessionRecord {
+        availability: WorkspaceAvailability::Unavailable,
+        last_validated_at: now_ms(),
+        unavailable_reason: Some(error.to_string()),
+        ..session
     }
+}
+
+fn validate_session_path(session: WorkspaceSessionRecord) -> WorkspaceSessionRecord {
+    match resolve_workspace_path(&session.workspace_path, false) {
+        Ok(resolution) => mark_available(session, resolution.workspace_path),
+        Err(error) => mark_unavailable(session, &error),
+    }
+}
+
+fn session_availability_changed(
+    previous: &WorkspaceSessionRecord,
+    current: &WorkspaceSessionRecord,
+) -> bool {
+    previous.workspace_path != current.workspace_path
+        || previous.availability != current.availability
+        || previous.unavailable_reason != current.unavailable_reason
+}
+
+async fn validate_session_async(session: WorkspaceSessionRecord) -> Result<WorkspaceSessionRecord> {
+    tokio::task::spawn_blocking(move || validate_session_path(session))
+        .await
+        .context("workspace validation task failed")
 }
 
 pub fn resolve_workspace_path(

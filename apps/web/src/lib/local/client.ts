@@ -25,7 +25,7 @@ export function resolveLocalApiBaseUrl(): string | null {
 	return null;
 }
 
-export function readPairingTokenFromHash(): string | null {
+function readLaunchHashParameter(name: string): string | null {
 	if (typeof window === 'undefined') {
 		return null;
 	}
@@ -34,10 +34,22 @@ export function readPairingTokenFromHash(): string | null {
 		? window.location.hash.slice(1)
 		: window.location.hash;
 
-	return new URLSearchParams(hash).get('token');
+	return new URLSearchParams(hash).get(name);
 }
 
-export function clearPairingTokenFromHash() {
+export function readPairingTokenFromHash(): string | null {
+	return readLaunchHashParameter('token');
+}
+
+export function readWorkspaceLaunchFromHash(): string | null {
+	return readLaunchHashParameter('workspace');
+}
+
+export function workspaceLaunchHash(workspacePath: string): `#${string}` {
+	return `#${new URLSearchParams({ workspace: workspacePath }).toString()}`;
+}
+
+export function clearLaunchHash() {
 	if (typeof window === 'undefined') {
 		return;
 	}
@@ -87,7 +99,7 @@ export async function ensureLocalSession(baseUrl: string, bootstrap?: LocalBoots
 	const hashToken = readPairingTokenFromHash();
 	if (hashToken) {
 		await bootstrapLocalSession(baseUrl, hashToken);
-		clearPairingTokenFromHash();
+		clearLaunchHash();
 		return;
 	}
 

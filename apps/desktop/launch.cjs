@@ -44,7 +44,7 @@ async function main() {
 		'.bin',
 		process.platform === 'win32' ? 'electron.cmd' : 'electron'
 	);
-	const child = spawn(electronBinary, ['.'], {
+	const child = spawn(electronBinary, ['.', ...process.argv.slice(2)], {
 		cwd: __dirname,
 		env,
 		stdio: 'inherit'

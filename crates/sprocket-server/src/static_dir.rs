@@ -55,7 +55,6 @@ fn installed_static_candidates(exe_dir: &Path) -> Vec<PathBuf> {
         candidates.push(prefix.join(INSTALLED_WEB_DIR));
     }
 
-    candidates.push(exe_dir.join("../web/dist"));
     candidates.push(exe_dir.join("web/dist"));
     candidates
 }
@@ -125,11 +124,11 @@ mod tests {
     }
 
     #[test]
-    fn installed_candidates_include_fhs_and_electron_layouts() {
+    fn installed_candidates_include_fhs_and_cli_bundle_layouts() {
         let exe_dir = PathBuf::from("/usr/bin");
         let candidates = installed_static_candidates(&exe_dir);
 
         assert!(candidates.contains(&PathBuf::from("/usr/share/sprocket/web")));
-        assert!(candidates.contains(&PathBuf::from("/usr/bin/../web/dist")));
+        assert!(candidates.contains(&PathBuf::from("/usr/bin/web/dist")));
     }
 }

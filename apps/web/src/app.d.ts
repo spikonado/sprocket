@@ -6,6 +6,8 @@ declare global {
 				desktopLoginCallbackUrl: string;
 				pairingCredential: string;
 			}>;
+			takeWorkspaceLaunch: () => Promise<string | null>;
+			onWorkspaceLaunch: (callback: () => void) => () => void;
 			openExternal: (url: string) => Promise<void>;
 			focusWindow: () => Promise<boolean>;
 		};

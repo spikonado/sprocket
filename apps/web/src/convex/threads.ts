@@ -3,11 +3,7 @@ import { mutation, query, type MutationCtx } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getOwnedThreadRecord, getOwnedWorkspaceSession } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
-import {
-	assertSupportedModelConfiguration,
-	normalizeModelId,
-	normalizeServiceTier
-} from '@convex/lib/models';
+import { assertSupportedModelConfiguration } from '@convex/lib/models';
 import { isRunFinalStatus, vModelId, vReasoningEffort, vServiceTier } from '@convex/lib/validators';
 
 async function patchOwnedThread(
@@ -51,9 +47,9 @@ export const create = mutation({
 		if (existingRecord) {
 			if (
 				existingRecord.workspaceSessionId !== args.workspaceSessionId ||
-				normalizeModelId(existingRecord.selectedModel) !== args.selectedModel ||
+				existingRecord.selectedModel !== args.selectedModel ||
 				existingRecord.reasoningEffort !== args.reasoningEffort ||
-				normalizeServiceTier(existingRecord.serviceTier) !== args.serviceTier
+				existingRecord.serviceTier !== args.serviceTier
 			) {
 				throw new Error('Submission settings do not match the existing thread.');
 			}
@@ -121,8 +117,6 @@ export const listMine = query({
 					.first();
 				return {
 					...record,
-					selectedModel: normalizeModelId(record.selectedModel),
-					serviceTier: normalizeServiceTier(record.serviceTier),
 					threadId: record._id,
 					title: record.title?.trim() || 'New thread',
 					threadStatus:
@@ -145,12 +139,7 @@ export const getByThreadId = query({
 	},
 	handler: async (ctx, args) => {
 		const userId: string = await getUserId(ctx);
-		const record = await getOwnedThreadRecord(ctx.db, userId, args.threadId);
-		return {
-			...record,
-			selectedModel: normalizeModelId(record.selectedModel),
-			serviceTier: normalizeServiceTier(record.serviceTier)
-		};
+		return await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 	}
 });
 

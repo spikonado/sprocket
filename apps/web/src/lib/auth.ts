@@ -1,6 +1,7 @@
-import { browser } from '$app/environment';
+import { browser, dev } from '$app/environment';
 import { createClient, type LoginRequiredError, type User } from '@workos-inc/authkit-js';
 import { api } from '$convex/_generated/api';
+import { usesLoopbackBrowserAuth } from '../../../desktop/local-config.mjs';
 import { get, writable } from 'svelte/store';
 
 type AuthStatus = {
@@ -90,6 +91,10 @@ function getDesktopBridge() {
 	}
 
 	return bridge;
+}
+
+function isInstalledBrowserApp() {
+	return browser && usesLoopbackBrowserAuth(window.location.hostname, false, dev);
 }
 
 async function getAuthClient() {
@@ -334,10 +339,10 @@ async function pollDesktopLoginResult(
 	throw new DOMException('Aborted', 'AbortError');
 }
 
-async function authenticateWithSystemBrowser(clientId: string, flow: AuthFlow) {
+async function authenticateWithLoopbackBrowser(clientId: string, flow: AuthFlow) {
 	const bridge = getDesktopBridge();
-	if (!bridge) {
-		throw new Error('Desktop bridge is unavailable.');
+	if (!bridge && !isInstalledBrowserApp()) {
+		throw new Error('Loopback browser sign-in is unavailable.');
 	}
 
 	stopDesktopSignInPolling();
@@ -356,7 +361,9 @@ async function authenticateWithSystemBrowser(clientId: string, flow: AuthFlow) {
 	}));
 
 	try {
-		const bootstrap = await bridge.getLocalBootstrap();
+		const bootstrap = bridge
+			? await bridge.getLocalBootstrap()
+			: { httpBaseUrl: window.location.origin };
 		requireCurrentDesktopSignIn(attempt);
 		const redirectUri = resolveDesktopLoginCallbackUrl(bootstrap);
 
@@ -383,23 +390,41 @@ async function authenticateWithSystemBrowser(clientId: string, flow: AuthFlow) {
 			browserSignInUrl: authorizeUrl
 		}));
 		requireCurrentDesktopSignIn(attempt);
-		void bridge.openExternal(authorizeUrl).catch((error) => {
-			if (!isCurrentDesktopSignIn(attempt)) {
-				return;
+		if (bridge) {
+			void bridge.openExternal(authorizeUrl).catch((error) => {
+				if (!isCurrentDesktopSignIn(attempt)) {
+					return;
+				}
+				const detail = error instanceof Error ? error.message.trim() : '';
+				authState.update((current) => ({
+					...current,
+					error: detail || 'Automatic browser open failed.'
+				}));
+			});
+		} else {
+			const opened = window.open(authorizeUrl, '_blank');
+			if (opened) {
+				try {
+					opened.opener = null;
+				} catch {
+					// Best-effort isolation if the browser rejects opener writes.
+				}
+			} else {
+				authState.update((current) => ({
+					...current,
+					error: 'Your browser blocked the sign-in window.'
+				}));
 			}
-			const detail = error instanceof Error ? error.message.trim() : '';
-			authState.update((current) => ({
-				...current,
-				error: detail || 'Automatic browser open failed.'
-			}));
-		});
+		}
 		const result = await pollDesktopLoginResult(attempt.nonce, attempt.abort.signal);
 		requireCurrentDesktopSignIn(attempt);
-		try {
-			await bridge.focusWindow();
-		} catch (error) {
-			if (isCurrentDesktopSignIn(attempt)) {
-				console.warn('Failed to focus desktop window after sign-in', error);
+		if (bridge) {
+			try {
+				await bridge.focusWindow();
+			} catch (error) {
+				if (isCurrentDesktopSignIn(attempt)) {
+					console.warn('Failed to focus desktop window after sign-in', error);
+				}
 			}
 		}
 		requireCurrentDesktopSignIn(attempt);
@@ -428,7 +453,7 @@ async function authenticateWithSystemBrowser(clientId: string, flow: AuthFlow) {
 			...current,
 			isWaitingForBrowserSignIn: false,
 			browserSignInUrl: null,
-			error: error instanceof Error ? error.message : 'Failed to sign in with the system browser.'
+			error: error instanceof Error ? error.message : 'Failed to sign in with the browser.'
 		}));
 	} finally {
 		if (desktopSignInAttempt === attempt) {
@@ -495,8 +520,8 @@ async function authenticate(flow: AuthFlow) {
 		return;
 	}
 
-	if (getDesktopBridge()) {
-		await authenticateWithSystemBrowser(clientId, flow);
+	if (getDesktopBridge() || isInstalledBrowserApp()) {
+		await authenticateWithLoopbackBrowser(clientId, flow);
 		return;
 	}
 

@@ -2,20 +2,23 @@ import electron from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { API_PORT, DEV_WEB_URL } from '../../scripts/dev-config.mjs';
+import { DEV_API_PORT, DEV_WEB_URL, INSTALLED_APP_PORT } from './local-config.mjs';
 
-const { app, BrowserWindow, Menu, ipcMain, shell } = electron;
+const { app, BrowserWindow, dialog, Menu, ipcMain, shell } = electron;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const isDevelopment = !app.isPackaged;
-const serverPort = Number(process.env.SPROCKET_PORT ?? API_PORT);
-// WorkOS AuthKit only allows 127.0.0.1 loopback redirect URIs for native desktop login.
+const defaultServerPort = isDevelopment ? DEV_API_PORT : INSTALLED_APP_PORT;
+const serverPort = Number(process.env.SPROCKET_PORT ?? defaultServerPort);
+// Native AuthKit callbacks use the loopback IP; localhost is the canonical web-dev origin.
 const serverHost = '127.0.0.1';
 const desktopLoginCallbackUrl = `http://${serverHost}:${serverPort}/api/auth/desktop-login/callback`;
 const devRendererUrl = process.env.SPROCKET_ELECTRON_RENDERER_URL ?? DEV_WEB_URL;
+const rendererUrl = isDevelopment ? devRendererUrl : `http://${serverHost}:${serverPort}`;
+const rendererOrigin = new URL(rendererUrl).origin;
 const preloadEntry = path.join(__dirname, 'preload.cjs');
 
 let serverProcess = null;
@@ -23,11 +26,45 @@ let serverBaseUrl = null;
 let serverPairingCredential = null;
 let serverDesktopLoginCallbackUrl = null;
 let mainWindowRef = null;
+let serverReadyPromise = null;
+let isQuitting = false;
+const initialWorkspaceLaunch = app.commandLine.getSwitchValue('sprocket-workspace').trim() || null;
+const pendingWorkspaceLaunches = initialWorkspaceLaunch ? [initialWorkspaceLaunch] : [];
+
+const hasSingleInstanceLock = app.requestSingleInstanceLock({
+	workspacePath: initialWorkspaceLaunch
+});
+if (!hasSingleInstanceLock) {
+	app.quit();
+}
+
+function reportFatalError(title, error) {
+	const message = error instanceof Error ? error.message : String(error);
+	console.error(title, error);
+	if (app.isReady()) {
+		dialog.showErrorBox(title, message);
+	}
+}
+
+function requireTrustedRenderer(event) {
+	let senderOrigin;
+	try {
+		senderOrigin = new URL(event.senderFrame.url).origin;
+	} catch {
+		throw new Error('Untrusted renderer request.');
+	}
+	if (senderOrigin !== rendererOrigin) {
+		throw new Error('Untrusted renderer request.');
+	}
+}
 
 function getServerBinaryPath() {
-	return isDevelopment
-		? path.resolve(__dirname, '../../target/debug/sprocket')
-		: path.join(__dirname, 'server/sprocket');
+	if (isDevelopment) {
+		return path.resolve(__dirname, '../../target/debug/sprocket');
+	}
+
+	const executableName = process.platform === 'win32' ? 'sprocket.exe' : 'sprocket';
+	return path.join(process.resourcesPath, 'server', executableName);
 }
 
 function getDefaultDataDir() {
@@ -73,6 +110,70 @@ function waitForServerReady(baseUrl, timeoutMs = 30_000) {
 	});
 }
 
+async function attachToRunningServer(baseUrl, dataDir) {
+	const challenge = randomUUID();
+	let response;
+	try {
+		response = await fetch(`${baseUrl}/api/auth/pairing-proof`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ challenge }),
+			signal: AbortSignal.timeout(750)
+		});
+	} catch (error) {
+		if (error?.cause?.code === 'ECONNREFUSED') {
+			return false;
+		}
+		throw new Error(`Failed to check the service at ${baseUrl}.`, { cause: error });
+	}
+
+	if (!response.ok) {
+		throw new Error(`Port ${serverPort} is already used by another service.`);
+	}
+
+	const pairingProof = await response.json();
+	if (
+		pairingProof?.httpBaseUrl !== baseUrl ||
+		typeof pairingProof.webUiEnabled !== 'boolean' ||
+		!Array.isArray(pairingProof.proof)
+	) {
+		throw new Error(`The service at ${baseUrl} is not a compatible Sprocket server.`);
+	}
+	if (!isDevelopment && !pairingProof.webUiEnabled) {
+		throw new Error(`The Sprocket server at ${baseUrl} is running in API-only mode.`);
+	}
+
+	let pairingCredential;
+	try {
+		pairingCredential = fs.readFileSync(path.join(dataDir, 'pairing-credential'), 'utf8').trim();
+	} catch (error) {
+		throw new Error(
+			`The Sprocket server at ${baseUrl} uses a different data directory. Set SPROCKET_DATA_DIR to match it.`,
+			{ cause: error }
+		);
+	}
+	if (!pairingCredential) {
+		throw new Error(`The pairing credential in ${dataDir} is empty.`);
+	}
+
+	const message = `${challenge}\n${pairingProof.httpBaseUrl}\nweb-ui=${pairingProof.webUiEnabled}`;
+	const expectedProof = createHmac('sha256', pairingCredential).update(message).digest();
+	const receivedProof = Buffer.from(pairingProof.proof);
+	if (
+		receivedProof.length !== expectedProof.length ||
+		!timingSafeEqual(receivedProof, expectedProof)
+	) {
+		throw new Error(
+			`The Sprocket server at ${baseUrl} uses a different data directory. Set SPROCKET_DATA_DIR to match it.`
+		);
+	}
+
+	serverBaseUrl = pairingProof.httpBaseUrl;
+	serverPairingCredential = pairingCredential;
+	serverDesktopLoginCallbackUrl = desktopLoginCallbackUrl;
+	return true;
+}
+
 async function startLocalServer() {
 	if (serverBaseUrl) {
 		return serverBaseUrl;
@@ -83,6 +184,11 @@ async function startLocalServer() {
 	const dataDir = getLocalDataDir();
 	const serverBinary = getServerBinaryPath();
 	const staticDir = isDevelopment ? undefined : path.join(__dirname, 'web/dist');
+	const fallbackBaseUrl = `http://${host}:${port}`;
+	if (await attachToRunningServer(fallbackBaseUrl, dataDir)) {
+		return serverBaseUrl;
+	}
+
 	const desktopBootstrapToken = randomUUID();
 	const args = [
 		'serve',
@@ -108,6 +214,12 @@ async function startLocalServer() {
 		},
 		stdio: ['ignore', 'pipe', 'inherit']
 	});
+	serverProcess.once('error', (error) => {
+		if (!isQuitting) {
+			reportFatalError('Failed to start Sprocket server', error);
+			app.quit();
+		}
+	});
 
 	serverProcess.stdout?.on('data', (chunk) => {
 		const text = chunk.toString();
@@ -121,15 +233,23 @@ async function startLocalServer() {
 	serverProcess.on('exit', (code, signal) => {
 		if (signal) {
 			console.warn(`Sprocket local server exited via signal ${signal}`);
-			return;
+		} else if (code && code !== 0) {
+			console.error(`Sprocket local server exited with code ${code}`);
 		}
 
-		if (code && code !== 0) {
-			console.error(`Sprocket local server exited with code ${code}`);
+		if (!isQuitting) {
+			reportFatalError(
+				'Sprocket server stopped',
+				new Error(
+					signal
+						? `The local server exited via signal ${signal}.`
+						: `The local server exited with code ${code ?? 0}.`
+				)
+			);
+			app.quit();
 		}
 	});
 
-	const fallbackBaseUrl = `http://${host}:${port}`;
 	await waitForServerReady(fallbackBaseUrl);
 	serverBaseUrl ??= fallbackBaseUrl;
 
@@ -161,6 +281,44 @@ function stopLocalServer() {
 
 	serverProcess.kill();
 	serverProcess = null;
+}
+
+function queueWorkspaceLaunch(workspacePath) {
+	if (typeof workspacePath !== 'string' || !workspacePath.trim()) {
+		return;
+	}
+
+	pendingWorkspaceLaunches.push(workspacePath.trim());
+	notifyWorkspaceLaunch();
+}
+
+function notifyWorkspaceLaunch() {
+	if (pendingWorkspaceLaunches.length === 0) {
+		return;
+	}
+
+	const mainWindow = mainWindowRef;
+	if (mainWindow && !mainWindow.isDestroyed()) {
+		mainWindow.webContents.send('sprocket:workspace-launch');
+	}
+}
+
+async function showDesktopApp() {
+	if (!serverReadyPromise) {
+		throw new Error('Local server startup is unavailable.');
+	}
+	await serverReadyPromise;
+
+	const mainWindow = mainWindowRef;
+	if (!mainWindow || mainWindow.isDestroyed()) {
+		createMainWindow();
+		return;
+	}
+	if (mainWindow.isMinimized()) {
+		mainWindow.restore();
+	}
+	mainWindow.show();
+	mainWindow.focus();
 }
 
 async function loadRendererWhenReady(mainWindow, targetUrl, timeoutMs = 60_000) {
@@ -208,6 +366,13 @@ function createMainWindow() {
 		});
 		return { action: 'deny' };
 	});
+	const preventUntrustedNavigation = (event, url) => {
+		if (new URL(url).origin !== rendererOrigin) {
+			event.preventDefault();
+		}
+	};
+	mainWindow.webContents.on('will-navigate', preventUntrustedNavigation);
+	mainWindow.webContents.on('will-redirect', preventUntrustedNavigation);
 	mainWindow.webContents.on(
 		'did-fail-load',
 		(_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
@@ -222,21 +387,24 @@ function createMainWindow() {
 	mainWindow.webContents.on('render-process-gone', (_event, details) => {
 		console.error('Renderer process gone', details);
 	});
+	mainWindow.webContents.on('did-finish-load', notifyWorkspaceLaunch);
 	mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
 		const levels = ['debug', 'info', 'warn', 'error'];
 		const label = levels[level] ?? 'log';
 		console.log(`[renderer:${label}] ${sourceId}:${line} ${message}`);
 	});
 
-	const targetUrl = isDevelopment ? devRendererUrl : `http://${serverHost}:${serverPort}`;
-
-	void loadRendererWhenReady(mainWindow, targetUrl);
+	void loadRendererWhenReady(mainWindow, rendererUrl).catch((error) => {
+		reportFatalError('Failed to load Sprocket', error);
+		app.quit();
+	});
 	if (isDevelopment) {
 		mainWindow.webContents.openDevTools({ mode: 'detach' });
 	}
 }
 
-ipcMain.handle('sprocket:get-local-bootstrap', () => {
+ipcMain.handle('sprocket:get-local-bootstrap', (event) => {
+	requireTrustedRenderer(event);
 	if (!serverBaseUrl || !serverPairingCredential) {
 		throw new Error('Local server bootstrap is unavailable.');
 	}
@@ -246,6 +414,11 @@ ipcMain.handle('sprocket:get-local-bootstrap', () => {
 		desktopLoginCallbackUrl: serverDesktopLoginCallbackUrl ?? desktopLoginCallbackUrl,
 		pairingCredential: serverPairingCredential
 	};
+});
+
+ipcMain.handle('sprocket:take-workspace-launch', (event) => {
+	requireTrustedRenderer(event);
+	return pendingWorkspaceLaunches.shift() ?? null;
 });
 
 function openWithXdgOpen(url) {
@@ -310,19 +483,25 @@ function parseExternalHttpsUrl(url) {
 
 async function openExternalHttpsUrl(url) {
 	const parsedUrl = parseExternalHttpsUrl(url);
+	await openInSystemBrowser(parsedUrl);
+}
+
+async function openInSystemBrowser(url) {
 	if (process.platform === 'linux') {
-		await openWithXdgOpen(parsedUrl);
+		await openWithXdgOpen(url);
 		return;
 	}
 
-	await shell.openExternal(parsedUrl);
+	await shell.openExternal(url);
 }
 
-ipcMain.handle('sprocket:open-external', async (_event, url) => {
+ipcMain.handle('sprocket:open-external', async (event, url) => {
+	requireTrustedRenderer(event);
 	await openExternalHttpsUrl(url);
 });
 
-ipcMain.handle('sprocket:focus-window', () => {
+ipcMain.handle('sprocket:focus-window', (event) => {
+	requireTrustedRenderer(event);
 	const mainWindow = mainWindowRef;
 	if (!mainWindow || mainWindow.isDestroyed()) {
 		return false;
@@ -336,25 +515,32 @@ ipcMain.handle('sprocket:focus-window', () => {
 	return true;
 });
 
-app.whenReady().then(async () => {
-	Menu.setApplicationMenu(null);
+if (hasSingleInstanceLock) {
+	app.on('second-instance', (_event, _commandLine, _workingDirectory, additionalData) => {
+		queueWorkspaceLaunch(additionalData?.workspacePath);
+		void showDesktopApp().catch((error) => {
+			console.error('Failed to handle Sprocket launch request', error);
+		});
+	});
 
-	try {
+	serverReadyPromise = app.whenReady().then(async () => {
+		Menu.setApplicationMenu(null);
 		await startLocalServer();
-	} catch (error) {
-		console.error('Failed to start Sprocket local server', error);
-		app.quit();
-		return;
-	}
+	});
 
-	createMainWindow();
+	void serverReadyPromise
+		.then(() => showDesktopApp())
+		.catch((error) => {
+			reportFatalError('Failed to start Sprocket', error);
+			app.quit();
+		});
 
 	app.on('activate', () => {
-		if (BrowserWindow.getAllWindows().length === 0) {
-			createMainWindow();
-		}
+		void showDesktopApp().catch((error) => {
+			console.error('Failed to show Sprocket desktop app', error);
+		});
 	});
-});
+}
 
 app.on('window-all-closed', () => {
 	if (process.platform !== 'darwin') {
@@ -363,5 +549,6 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+	isQuitting = true;
 	stopLocalServer();
 });

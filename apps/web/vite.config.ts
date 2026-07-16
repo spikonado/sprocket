@@ -2,7 +2,7 @@ import path from 'node:path';
 import { sveltekit } from '@sveltejs/kit/vite';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
-import { API_URL, WEB_DEV_PORT } from '../../scripts/dev-config.mjs';
+import { DEV_API_URL, WEB_DEV_PORT } from '../desktop/local-config.mjs';
 
 export default defineConfig({
 	resolve: {
@@ -16,7 +16,7 @@ export default defineConfig({
 		strictPort: true,
 		proxy: {
 			'/api': {
-				target: API_URL,
+				target: DEV_API_URL,
 				changeOrigin: true
 			}
 		}

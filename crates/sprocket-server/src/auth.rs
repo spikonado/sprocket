@@ -8,7 +8,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use axum::http::HeaderMap;
 use axum_extra::extract::CookieJar;
 use cookie::{Cookie, SameSite};
+use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
@@ -19,6 +21,7 @@ const SESSIONS_FILE: &str = "sessions.json";
 const SESSION_MAX_AGE_SECS: i64 = 60 * 60 * 24 * 30;
 const SESSION_MAX_AGE_MS: u64 = SESSION_MAX_AGE_SECS as u64 * 1000;
 const DESKTOP_LOGIN_TTL: Duration = Duration::from_secs(5 * 60);
+type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -318,17 +321,13 @@ impl AuthState {
         fs::create_dir_all(data_dir)?;
 
         let credential_path = data_dir.join(PAIRING_CREDENTIAL_FILE);
-        let pairing_credential = if let Ok(existing) = fs::read_to_string(&credential_path) {
-            existing.trim().to_string()
+        let pairing_credential = if let Some(existing) = read_pairing_credential(data_dir)? {
+            existing
         } else {
             let credential = Uuid::new_v4().to_string();
             fs::write(&credential_path, format!("{credential}\n"))?;
             credential
         };
-
-        if pairing_credential.is_empty() {
-            anyhow::bail!("pairing credential must not be empty");
-        }
 
         let sessions = load_sessions(&data_dir)?;
 
@@ -341,6 +340,21 @@ impl AuthState {
 
     pub fn pairing_credential(&self) -> &str {
         &self.pairing_credential
+    }
+
+    pub fn verify_pairing_credential(&self, credential: &str) -> anyhow::Result<()> {
+        if credential.trim() != self.pairing_credential {
+            anyhow::bail!(
+                "invalid pairing credential; use the token printed by your running Sprocket server"
+            );
+        }
+        Ok(())
+    }
+
+    pub fn pairing_proof(&self, message: &str) -> anyhow::Result<Vec<u8>> {
+        let mut mac = HmacSha256::new_from_slice(self.pairing_credential.as_bytes())?;
+        mac.update(message.as_bytes());
+        Ok(mac.finalize().into_bytes().to_vec())
     }
 
     pub async fn session_state(&self, session_token: Option<&str>) -> AuthSessionResponse {
@@ -384,11 +398,7 @@ impl AuthState {
     }
 
     pub async fn bootstrap(&self, credential: &str) -> anyhow::Result<(BootstrapResponse, String)> {
-        if credential.trim() != self.pairing_credential {
-            anyhow::bail!(
-                "invalid pairing credential; use the token printed by your running Sprocket server"
-            );
-        }
+        self.verify_pairing_credential(credential)?;
 
         let session_token = Uuid::new_v4().to_string();
         self.sessions.write().await.insert(
@@ -432,6 +442,19 @@ impl AuthState {
         tokio::fs::write(sessions_path, payload).await?;
         Ok(())
     }
+}
+
+pub fn read_pairing_credential(data_dir: &Path) -> anyhow::Result<Option<String>> {
+    let credential = match fs::read_to_string(data_dir.join(PAIRING_CREDENTIAL_FILE)) {
+        Ok(credential) => credential,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let credential = credential.trim().to_string();
+    if credential.is_empty() {
+        anyhow::bail!("pairing credential must not be empty");
+    }
+    Ok(Some(credential))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -517,6 +540,14 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reading_a_missing_pairing_credential_has_no_side_effects() {
+        let temp_dir = std::env::temp_dir().join(format!("sprocket-auth-test-{}", Uuid::new_v4()));
+
+        assert_eq!(read_pairing_credential(&temp_dir).unwrap(), None);
+        assert!(!temp_dir.exists());
+    }
 
     #[tokio::test]
     async fn bootstrap_creates_authenticated_session() {
