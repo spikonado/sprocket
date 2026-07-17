@@ -35,17 +35,20 @@ export function claimExpiresAt(now: number): number {
 	return now + RUN_CLAIM_LEASE_DURATION_MS;
 }
 
-/**
- * A completion attempt may only take over the run's model stream when it is
- * newer than every attempt seen so far under the current claim. Attempt
- * sequences are keyed on the action's immutable arguments, so a stale
- * execution replayed by a reconnecting client can never win this check,
- * regardless of arrival order.
- */
-export function canClaimCompletionAttempt(
+// Registering a completion attempt requires a strictly newer sequence than the
+// current one; ownership checks afterwards require exactly the current one.
+export function canRegisterCompletionAttempt(
 	run: CompletionAttemptRun,
 	claimId: string,
 	attemptSeq: number
 ): boolean {
 	return run.claimId === claimId && attemptSeq > (run.completionAttemptSeq ?? 0);
+}
+
+export function isCurrentCompletionAttempt(
+	run: CompletionAttemptRun,
+	claimId: string,
+	attemptSeq: number
+): boolean {
+	return run.claimId === claimId && (run.completionAttemptSeq ?? 0) === attemptSeq;
 }

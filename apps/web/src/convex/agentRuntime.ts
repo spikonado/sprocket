@@ -23,11 +23,12 @@ import {
 import { assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
 import { assertThreadCanStartRun, cancelExecutorJobsForTerminalRun } from '@convex/lib/runs';
 import {
-	canClaimCompletionAttempt,
+	canRegisterCompletionAttempt,
 	canFinalizeAfterClaimFailure,
 	canStartRunWithClaim,
 	claimExpiresAt,
 	isClaimedRunStatus,
+	isCurrentCompletionAttempt,
 	isRunClaimLeaseActive
 } from '@convex/lib/runLease';
 import {
@@ -275,10 +276,8 @@ export const start = mutation({
 
 		const isTakeover = isClaimedRunStatus(run.status) && run.claimId !== args.claimId;
 		const isSameClaimRenewal = isClaimedRunStatus(run.status) && run.claimId === args.claimId;
-		// A takeover restarts the run from its prompt, so the previous claim's
-		// partial work must not resurface: cancel and hide its executor jobs
-		// (hidden jobs are excluded from finalization and agent history) and
-		// clear its partial response so the new stream does not duplicate it.
+		// Takeover restarts from the prompt; hide the previous claim's jobs and
+		// clear its partial response so neither resurfaces in the new stream.
 		if (isTakeover) {
 			const staleJobs = await ctx.db
 				.query('executorJobs')
@@ -447,7 +446,7 @@ export const completionActor = query({
 	}
 });
 
-export const claimCompletionAttempt = mutation({
+export const registerCompletionAttempt = mutation({
 	args: {
 		runId: v.id('runs'),
 		claimId: v.string(),
@@ -458,17 +457,18 @@ export const claimCompletionAttempt = mutation({
 		const userId: string = await getUserId(ctx);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		assertRunAcceptsModelCompletion(run.status);
-		if (!canClaimCompletionAttempt(run, args.claimId, args.attemptSeq)) {
+		if (!canRegisterCompletionAttempt(run, args.claimId, args.attemptSeq)) {
 			throw new Error(COMPLETION_STREAM_SUPERSEDED);
 		}
 		await ctx.db.patch(args.runId, { completionAttemptSeq: args.attemptSeq });
-		// A retry redoes its whole turn, so drop whatever partial output the
-		// attempts it replaces already persisted.
-		const supersededStreamIds = new Set(args.supersededStreamIds ?? []);
-		if (supersededStreamIds.size > 0 && run.responseMessageId) {
+		// Completion turns stamp parts with turnId = streamId, so a retry can
+		// drop the partial parts its prior attempts persisted.
+		const supersededStreamIds = args.supersededStreamIds ?? [];
+		if (supersededStreamIds.length > 0 && run.responseMessageId) {
+			const superseded = new Set(supersededStreamIds);
 			const message = await getThreadMessage(ctx, run.responseMessageId);
 			const parts = ((message.parts ?? []) as AssistantPart[]).filter(
-				(part) => !('turnId' in part) || !part.turnId || !supersededStreamIds.has(part.turnId)
+				(part) => !('turnId' in part && part.turnId && superseded.has(part.turnId))
 			);
 			if (parts.length !== (message.parts?.length ?? 0)) {
 				await ctx.db.patch(run.responseMessageId, {
@@ -526,10 +526,9 @@ export const mergeAssistantStreamEvents = mutation({
 		const userId: string = await getUserId(ctx);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		assertRunAcceptsModelCompletion(run.status);
-		// Validate the attempt fence on every write: once a newer attempt has
-		// registered, a superseded attempt must not be able to append another
-		// batch (its periodic acceptance check alone leaves a window).
-		if (run.claimId !== args.claimId || (run.completionAttemptSeq ?? 0) !== args.attemptSeq) {
+		// Fence every write: periodic acceptance checks alone leave a window
+		// where a superseded attempt could still append after a newer one registers.
+		if (!isCurrentCompletionAttempt(run, args.claimId, args.attemptSeq)) {
 			return 'superseded';
 		}
 		if (!run.responseMessageId || args.events.length === 0) {

@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
 	RUN_CLAIM_LEASE_DURATION_MS,
-	canClaimCompletionAttempt,
+	canRegisterCompletionAttempt,
 	canFinalizeAfterClaimFailure,
 	canStartRunWithClaim,
 	claimExpiresAt,
+	isCurrentCompletionAttempt,
 	isRunClaimLeaseActive
 } from '@convex/lib/runLease';
 
@@ -60,9 +61,12 @@ describe('run claim leases', () => {
 
 	it('only lets strictly newer completion attempts of the current claim take the stream', () => {
 		const run = { claimId: 'claim-a', completionAttemptSeq: 2 };
-		expect(canClaimCompletionAttempt(run, 'claim-a', 3)).toBe(true);
-		expect(canClaimCompletionAttempt(run, 'claim-a', 2)).toBe(false);
-		expect(canClaimCompletionAttempt(run, 'claim-b', 3)).toBe(false);
-		expect(canClaimCompletionAttempt({ claimId: 'claim-a' }, 'claim-a', 1)).toBe(true);
+		expect(canRegisterCompletionAttempt(run, 'claim-a', 3)).toBe(true);
+		expect(canRegisterCompletionAttempt(run, 'claim-a', 2)).toBe(false);
+		expect(canRegisterCompletionAttempt(run, 'claim-b', 3)).toBe(false);
+		expect(canRegisterCompletionAttempt({ claimId: 'claim-a' }, 'claim-a', 1)).toBe(true);
+		expect(isCurrentCompletionAttempt(run, 'claim-a', 2)).toBe(true);
+		expect(isCurrentCompletionAttempt(run, 'claim-a', 3)).toBe(false);
+		expect(isCurrentCompletionAttempt(run, 'claim-b', 2)).toBe(false);
 	});
 });

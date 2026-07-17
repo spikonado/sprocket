@@ -137,10 +137,7 @@ impl Client {
         self
     }
 
-    /// Scope this client to a single run claim: stream events target
-    /// `stream_run_id`, and every completion attempt is fenced by `claim_id`
-    /// plus a per-scope monotonic attempt sequence.
-    pub fn with_stream_target(mut self, stream_run_id: String, claim_id: String) -> Self {
+    pub fn with_completion_scope(mut self, stream_run_id: String, claim_id: String) -> Self {
         self.stream_run_id = Some(stream_run_id.into());
         self.claim_id = Some(claim_id.into());
         self.attempt_counter = Arc::new(AtomicU32::new(0));
@@ -489,11 +486,11 @@ async fn call_completion_action(
 
     let mut retry_delay = COMPLETION_TRANSPORT_RETRY_DELAY;
     let mut superseded_stream_ids: Vec<String> = Vec::new();
-    for attempt in 1..=COMPLETION_TRANSPORT_ATTEMPTS {
-        // Each try registers a fresh attempt sequence server-side, which
-        // fences out any orphaned execution of a previous try that the
-        // Convex client replays after a reconnect. Naming the prior tries'
-        // streams lets the backend drop their partial output.
+    let mut attempt = 0u32;
+    loop {
+        attempt += 1;
+        // Fresh attempt_seq fences orphaned reconnect replays; prior stream
+        // ids let the backend drop their partial output on the next try.
         let attempt_seq = client.attempt_counter.fetch_add(1, Ordering::Relaxed) + 1;
         let stream_id = uuid::Uuid::new_v4().to_string();
         let mut convex = clone_locked(&client.inner).await;
@@ -523,7 +520,7 @@ async fn call_completion_action(
             ))
         })?;
 
-        let transport_error = match result {
+        match result {
             Ok(FunctionResult::Value(value)) => {
                 eprintln!(
                     "sprocket-convex-provider: action done {}",
@@ -537,20 +534,20 @@ async fn call_completion_action(
             Ok(FunctionResult::ConvexError(error)) => {
                 return Err(CompletionError::ProviderError(error.message));
             }
-            Err(error) => error,
-        };
-        if attempt == COMPLETION_TRANSPORT_ATTEMPTS {
-            return Err(to_completion_error(transport_error));
+            Err(error) => {
+                if attempt >= COMPLETION_TRANSPORT_ATTEMPTS {
+                    return Err(to_completion_error(error));
+                }
+                eprintln!(
+                    "sprocket-convex-provider: transport failure calling {}; retrying: {error:#}",
+                    client.completion_action
+                );
+                superseded_stream_ids.push(stream_id);
+                sleep(retry_delay).await;
+                retry_delay = retry_delay.saturating_mul(2);
+            }
         }
-        eprintln!(
-            "sprocket-convex-provider: transport failure calling {}; retrying: {transport_error:#}",
-            client.completion_action
-        );
-        superseded_stream_ids.push(stream_id);
-        sleep(retry_delay).await;
-        retry_delay = retry_delay.saturating_mul(2);
     }
-    unreachable!("completion retry loop returns from its final attempt")
 }
 
 fn action_args(

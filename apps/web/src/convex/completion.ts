@@ -8,6 +8,7 @@ import type { Id } from '@convex/_generated/dataModel';
 import type { JsonValue } from '@convex/lib/json';
 import { resolveLanguageModel, resolveProviderOptions } from '@convex/lib/modelRegistry';
 import { assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
+import { isCurrentCompletionAttempt } from '@convex/lib/runLease';
 import { enforceModelCompletionLimit } from '@convex/lib/rateLimits';
 import { getUserId } from '@convex/lib/auth';
 import { vModelId, vReasoningEffort, vServiceTier } from '@convex/lib/validators';
@@ -80,12 +81,9 @@ export const complete = action({
 		stream_events: CompletionStreamEvent[];
 	}> => {
 		await getUserId(ctx);
-		// Register this attempt before doing anything else. A reconnecting
-		// Convex client can replay a completion action whose caller already
-		// gave up on it; registration is monotonic on (claimId, attemptSeq),
-		// so such an orphaned execution dies here instead of racing the live
-		// attempt for the run's model stream.
-		await ctx.runMutation(api.agentRuntime.claimCompletionAttempt, {
+		// Register before any model work so a reconnect-replayed orphan dies
+		// on the monotonic (claimId, attemptSeq) fence instead of racing the live attempt.
+		await ctx.runMutation(api.agentRuntime.registerCompletionAttempt, {
 			runId: args.streamRunId,
 			claimId: args.claimId,
 			attemptSeq: args.attemptSeq,
@@ -180,14 +178,14 @@ async function collectStreamingCompletion(
 	attempt: CompletionAttempt,
 	abortController: AbortController
 ): Promise<CompletionActionResult> {
-	const { runId, streamId } = attempt;
+	const { runId, claimId, attemptSeq, streamId, initialSequence } = attempt;
 	const streamEvents: CompletionStreamEvent[] = [];
 	const pendingEvents: CompletionStreamEvent[] = [];
 	const reasoning = new Map<
 		string,
 		{ partId: string; providerMetadata?: JsonValue; finalized: boolean }
 	>();
-	let nextBatchSequence = attempt.initialSequence + 1;
+	let nextBatchSequence = initialSequence + 1;
 
 	const flush = async (): Promise<void> => {
 		if (pendingEvents.length === 0) {
@@ -200,8 +198,8 @@ async function collectStreamingCompletion(
 			try {
 				const outcome = await ctx.runMutation(api.agentRuntime.mergeAssistantStreamEvents, {
 					runId,
-					claimId: attempt.claimId,
-					attemptSeq: attempt.attemptSeq,
+					claimId,
+					attemptSeq,
 					streamId,
 					sequence,
 					events
@@ -482,7 +480,7 @@ async function assertCompletionStillAccepted(
 		runId: attempt.runId
 	});
 	assertRunAcceptsModelCompletion(actor.status);
-	if (actor.claimId !== attempt.claimId || actor.completionAttemptSeq !== attempt.attemptSeq) {
+	if (!isCurrentCompletionAttempt(actor, attempt.claimId, attempt.attemptSeq)) {
 		throw new Error(COMPLETION_STREAM_SUPERSEDED);
 	}
 	if (
