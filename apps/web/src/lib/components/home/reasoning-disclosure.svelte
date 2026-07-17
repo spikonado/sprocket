@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ChevronRight } from '@lucide/svelte';
+	import { Brain, ChevronRight } from '@lucide/svelte';
 
 	type Props = {
 		text: string;
@@ -34,10 +34,11 @@
 <div class="text-sm text-slate-500">
 	<button
 		type="button"
-		class="inline-flex items-center gap-1 text-slate-500 transition hover:text-slate-300"
+		class="inline-flex items-center gap-1.5 text-slate-500 transition hover:text-slate-300"
 		onclick={toggle}
 		aria-expanded={expanded}
 	>
+		<Brain class="size-3.5 shrink-0" aria-hidden="true" />
 		<span>{label}</span>
 		<ChevronRight
 			class={`size-3.5 shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}

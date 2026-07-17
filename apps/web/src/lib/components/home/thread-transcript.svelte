@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Check, Copy } from '@lucide/svelte';
+	import { Check, Copy, LoaderCircle } from '@lucide/svelte';
 	import { tick } from 'svelte';
 	import { isJsonObject, type JsonValue } from '$convex/lib/json';
 	import {
@@ -17,6 +17,7 @@
 		workSectionTimingIndexes,
 		type AssistantTimelineTool
 	} from '$lib/chat/assistant-timeline';
+	import { toolKindIcon, toolLogIcon } from '$lib/chat/tool-icons';
 	import ChatMarkdown from '$lib/components/chat-markdown.svelte';
 	import ImageViewer, { type ViewerImage } from '$lib/components/image-viewer.svelte';
 	import ReasoningDisclosure from '$lib/components/home/reasoning-disclosure.svelte';
@@ -462,6 +463,7 @@
 														{:else}
 															<ToolCallsDisclosure
 																label={toolGroupLabel(block.toolKey)}
+																icon={toolKindIcon(block.toolKey)}
 																tools={block.tools}
 															>
 																{#snippet toolRow(tool)}
@@ -510,16 +512,20 @@
 											{#if runningTools.length > 0}
 												<ToolCallsDisclosure
 													label="Running"
+													icon={LoaderCircle}
+													iconClass="animate-spin"
 													tools={runningTools}
 													defaultExpanded={true}
 												>
 													{#snippet toolRow(tool)}
+														{@const ToolIcon = toolLogIcon(tool)}
 														{@const toolSummary = toolItemSummary(tool, sessionCommands)}
 														<p
-															class="min-w-0 truncate"
+															class="flex min-w-0 items-center gap-1.5"
 															title={fullToolSummary(tool, isStreaming, sessionCommands)}
 														>
-															{toolSummary}
+															<ToolIcon class="size-3 shrink-0 text-slate-500" aria-hidden="true" />
+															<span class="truncate">{toolSummary}</span>
 														</p>
 													{/snippet}
 												</ToolCallsDisclosure>
