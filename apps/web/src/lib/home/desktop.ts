@@ -11,6 +11,7 @@ import type {
 } from '$lib/types/sprocket';
 import { isRunClaimLeaseActive } from '$convex/lib/runLease';
 import { isRunFinalStatus } from '$convex/lib/validators';
+import { areImageUploadIdsEqual } from '$lib/chat/attachments';
 
 const AGENT_AUTH_INITIAL_RETRY_DELAY_MS = 250;
 const AGENT_AUTH_MAX_RETRY_DELAY_MS = 4_000;
@@ -22,10 +23,12 @@ export type WorkspaceSessionState = WorkspaceSession & {
 export function resolveSubmissionId(args: {
 	newSubmissionId: string;
 	prompt: string;
+	imageUploadIds: Id<'imageUploads'>[];
 	reasoningEffort: AgentRunRequest['reasoningEffort'];
 	serviceTier: AgentRunRequest['serviceTier'];
 	recoveredSubmission?: {
 		prompt: string;
+		imageUploadIds?: Id<'imageUploads'>[];
 		reasoningEffort: AgentRunRequest['reasoningEffort'];
 		serviceTier: AgentRunRequest['serviceTier'];
 		selectedModel: AgentRunRequest['selectedModel'];
@@ -47,7 +50,8 @@ export function resolveSubmissionId(args: {
 		recoveredSubmission?.prompt === args.prompt &&
 		recoveredSubmission.selectedModel === args.selectedModel &&
 		recoveredSubmission.reasoningEffort === args.reasoningEffort &&
-		recoveredSubmission.serviceTier === args.serviceTier
+		recoveredSubmission.serviceTier === args.serviceTier &&
+		areImageUploadIdsEqual(recoveredSubmission.imageUploadIds, args.imageUploadIds)
 		? recoveredSubmission.submissionId
 		: args.newSubmissionId;
 }
@@ -81,6 +85,7 @@ export function launchAgentRun(args: {
 	onStarted: (runId: Id<'runs'>) => void;
 	threadId: Id<'threadRecords'>;
 	prompt: string;
+	imageUploadIds: Id<'imageUploads'>[];
 	selectedModel: AgentRunRequest['selectedModel'];
 	reasoningEffort: AgentRunRequest['reasoningEffort'];
 	serviceTier: AgentRunRequest['serviceTier'];
@@ -122,6 +127,7 @@ export function launchAgentRun(args: {
 			authToken: args.authToken,
 			threadId: args.threadId,
 			prompt: args.prompt,
+			imageUploadIds: args.imageUploadIds,
 			selectedModel: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
 			serviceTier: args.serviceTier,

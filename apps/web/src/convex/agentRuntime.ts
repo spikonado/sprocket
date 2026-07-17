@@ -8,9 +8,18 @@ import {
 	type SupportedModelId,
 	type SupportedServiceTier
 } from '@convex/lib/models';
-import { buildCanonicalAgentHistory, findLatestPrompt } from '@convex/lib/agentHistory';
+import { buildCanonicalAgentHistory } from '@convex/lib/agentHistory';
 import { appendThreadMessage, getThreadMessage } from '@convex/lib/threadMessages';
-import { buildThreadTranscript, type ThreadTranscriptMessage } from '@convex/lib/threadTranscript';
+import {
+	areImageUploadIdsEqual,
+	attachImageUploads,
+	getOwnedImageUploads
+} from '@convex/lib/imageUploads';
+import {
+	buildThreadTranscript,
+	type ThreadTranscriptAttachment,
+	type ThreadTranscriptMessage
+} from '@convex/lib/threadTranscript';
 import { assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
 import { assertThreadCanStartRun, cancelExecutorJobsForTerminalRun } from '@convex/lib/runs';
 import {
@@ -47,6 +56,8 @@ type FinalizeRunArgs = {
 	status: Infer<typeof vRunFinalStatus>;
 	lastError?: string;
 };
+
+type RuntimePromptAttachment = Pick<ThreadTranscriptAttachment, 'mediaType' | 'url'>;
 
 export const authenticatedUserId = query({
 	args: {},
@@ -138,6 +149,7 @@ export const createRun = mutation({
 		submissionId: v.string(),
 		threadId: v.id('threadRecords'),
 		prompt: v.string(),
+		imageUploadIds: v.array(v.id('imageUploads')),
 		selectedModel: vModelId,
 		reasoningEffort: vReasoningEffort,
 		serviceTier: vServiceTier
@@ -163,9 +175,10 @@ export const createRun = mutation({
 			args.threadId
 		);
 		const prompt: string = args.prompt.trim();
-		if (!prompt) {
-			throw new Error('Prompt cannot be empty.');
+		if (!prompt && args.imageUploadIds.length === 0) {
+			throw new Error('Message cannot be empty.');
 		}
+		const imageUploads = await getOwnedImageUploads(ctx, userId, args.imageUploadIds);
 
 		const existingRun: Doc<'runs'> | null = await ctx.db
 			.query('runs')
@@ -184,7 +197,11 @@ export const createRun = mutation({
 				throw new Error('Submission belongs to a different or incomplete run.');
 			}
 			const existingPrompt = await ctx.db.get(existingRun.promptMessageId);
-			if (!existingPrompt || existingPrompt.text !== prompt) {
+			if (
+				!existingPrompt ||
+				existingPrompt.text !== prompt ||
+				!areImageUploadIdsEqual(existingPrompt.imageUploadIds, args.imageUploadIds)
+			) {
 				throw new Error('Submission prompt does not match the existing run.');
 			}
 
@@ -218,13 +235,15 @@ export const createRun = mutation({
 			runId,
 			userId,
 			type: 'prompt',
-			text: prompt
+			text: prompt,
+			imageUploadIds: args.imageUploadIds
 		});
+		await attachImageUploads(ctx, imageUploads, promptMessageId);
 		await ctx.db.patch(runId, {
 			promptMessageId
 		});
 		await ctx.db.patch(threadRecord._id, {
-			title: threadRecord.title ?? prompt.slice(0, 72),
+			title: threadRecord.title ?? (prompt || imageUploads[0]?.name || 'New thread').slice(0, 72),
 			selectedModel: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
 			serviceTier: args.serviceTier
@@ -312,6 +331,7 @@ export const getContext = query({
 		threadRecord: Doc<'threadRecords'>;
 		workspaceSession: Doc<'workspaceSessions'>;
 		prompt: string;
+		promptAttachments: RuntimePromptAttachment[];
 		agentHistory: AgentHistoryMessage[];
 	}> => {
 		const userId: string = await getUserId(ctx);
@@ -335,12 +355,25 @@ export const getContext = query({
 			messages: messages.filter((message) => message.runId !== run._id),
 			jobs: jobs.filter((job) => job.runId !== run._id)
 		});
-		const prompt: string = findLatestPrompt(messages);
+		const promptMessage = messages.find(
+			(message) => message.runId === run._id && message.type === 'prompt'
+		);
+		if (!promptMessage) {
+			throw new Error('Run does not contain a user prompt.');
+		}
+		if ((promptMessage.imageUploadIds?.length ?? 0) !== promptMessage.attachments.length) {
+			throw new Error('One or more image attachments are unavailable.');
+		}
+		const prompt = promptMessage.text;
+		const promptAttachments: RuntimePromptAttachment[] = promptMessage.attachments.map(
+			({ mediaType, url }) => ({ mediaType, url })
+		);
 
 		return {
 			run,
 			threadRecord,
 			prompt,
+			promptAttachments,
 			agentHistory,
 			workspaceSession
 		};
@@ -553,6 +586,7 @@ export const finalizeFailedStart = mutation({
 		submissionId: v.string(),
 		threadId: v.id('threadRecords'),
 		prompt: v.string(),
+		imageUploadIds: v.array(v.id('imageUploads')),
 		selectedModel: vModelId,
 		reasoningEffort: vReasoningEffort,
 		serviceTier: vServiceTier,
@@ -579,7 +613,11 @@ export const finalizeFailedStart = mutation({
 			return false;
 		}
 		const promptMessage = await ctx.db.get(run.promptMessageId);
-		if (!promptMessage || promptMessage.text !== args.prompt.trim()) {
+		if (
+			!promptMessage ||
+			promptMessage.text !== args.prompt.trim() ||
+			!areImageUploadIdsEqual(promptMessage.imageUploadIds, args.imageUploadIds)
+		) {
 			return false;
 		}
 		return finalizeRunRecord(ctx, userId, run, {

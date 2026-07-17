@@ -71,10 +71,23 @@ export default defineSchema({
 		userId: v.string(),
 		type: vThreadMessageType,
 		text: v.string(),
+		imageUploadIds: v.optional(v.array(v.id('imageUploads'))),
 		parts: v.optional(v.array(vAssistantMessagePart)),
 		streamSequence: v.optional(v.number()),
 		streamAttemptId: v.optional(v.string())
 	}),
+	imageUploads: defineTable({
+		userId: v.string(),
+		storageId: v.id('_storage'),
+		name: v.string(),
+		mediaType: v.string(),
+		size: v.number(),
+		messageIds: v.array(v.id('threadMessages')),
+		attached: v.boolean()
+	})
+		.index('by_userId', ['userId'])
+		.index('by_storageId', ['storageId'])
+		.index('by_attached', ['attached']),
 	executorJobs: defineTable({
 		workspaceSessionId: v.id('workspaceSessions'),
 		threadId: v.id('threadRecords'),

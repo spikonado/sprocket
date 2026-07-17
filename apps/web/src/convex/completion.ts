@@ -96,7 +96,7 @@ export const complete = action({
 			])
 		);
 		const messages: ModelMessage[] | undefined = args.messagesJson
-			? parseJson<ModelMessage[]>(args.messagesJson, 'messagesJson')
+			? reviveImageUrls(parseJson<SerializedModelMessage[]>(args.messagesJson, 'messagesJson'))
 			: undefined;
 		const toolChoice: ToolChoice | undefined = args.toolChoiceJson
 			? parseJson<ToolChoice>(args.toolChoiceJson, 'toolChoiceJson')
@@ -553,4 +553,30 @@ function parseJson<T>(json: string, fieldName: string): T {
 		const message = error instanceof Error ? error.message : String(error);
 		throw new Error(`Invalid ${fieldName}: ${message}`, { cause: error });
 	}
+}
+
+type SerializedModelMessage = Omit<ModelMessage, 'content'> & {
+	content:
+		| ModelMessage['content']
+		| Array<{
+				type: string;
+				image?: unknown;
+				[key: string]: unknown;
+		  }>;
+};
+
+function reviveImageUrls(messages: SerializedModelMessage[]): ModelMessage[] {
+	return messages.map((message) => {
+		if (message.role !== 'user' || !Array.isArray(message.content)) {
+			return message as ModelMessage;
+		}
+		return {
+			...message,
+			content: message.content.map((part) =>
+				part.type === 'image' && typeof part.image === 'string'
+					? { ...part, image: new URL(part.image) }
+					: part
+			)
+		} as ModelMessage;
+	});
 }

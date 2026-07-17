@@ -106,6 +106,17 @@ impl RuntimeClient {
         args.insert("threadId".to_string(), request.thread_id.clone().into());
         args.insert("prompt".to_string(), request.prompt.clone().into());
         args.insert(
+            "imageUploadIds".to_string(),
+            Value::Array(
+                request
+                    .image_upload_ids
+                    .iter()
+                    .cloned()
+                    .map(Value::from)
+                    .collect(),
+            ),
+        );
+        args.insert(
             "selectedModel".to_string(),
             request.selected_model.clone().into(),
         );
@@ -169,6 +180,17 @@ impl RuntimeClient {
         );
         args.insert("threadId".to_string(), request.thread_id.clone().into());
         args.insert("prompt".to_string(), request.prompt.clone().into());
+        args.insert(
+            "imageUploadIds".to_string(),
+            Value::Array(
+                request
+                    .image_upload_ids
+                    .iter()
+                    .cloned()
+                    .map(Value::from)
+                    .collect(),
+            ),
+        );
         args.insert(
             "selectedModel".to_string(),
             request.selected_model.clone().into(),

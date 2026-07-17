@@ -15,6 +15,7 @@ pub struct RunAgentRequest {
     pub submission_id: String,
     pub thread_id: String,
     pub prompt: String,
+    pub image_upload_ids: Vec<String>,
     pub selected_model: String,
     pub reasoning_effort: String,
     pub service_tier: String,
@@ -48,8 +49,16 @@ pub struct RunContextResponse {
     pub run: RunSnapshot,
     pub thread_record: ThreadRecordSnapshot,
     pub prompt: String,
+    pub prompt_attachments: Vec<ResolvedImageAttachment>,
     pub agent_history: Vec<AgentHistoryMessage>,
     pub workspace_session: WorkspaceSessionSnapshot,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedImageAttachment {
+    pub media_type: String,
+    pub url: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -320,12 +329,27 @@ pub(crate) fn deserialize_agent_history(
 #[cfg(test)]
 mod tests {
     use rig::completion::Message;
-    use rig::message::{AssistantContent, UserContent};
+    use rig::message::{AssistantContent, DocumentSourceKind, ImageMediaType, UserContent};
 
     use super::{
         AgentHistoryContent, AgentHistoryMessage, AgentHistoryRole, AgentHistoryToolResultItem,
-        deserialize_agent_history,
+        ResolvedImageAttachment, deserialize_agent_history,
     };
+
+    #[test]
+    fn deserializes_runtime_attachment_with_convex_number_metadata() {
+        let attachment: ResolvedImageAttachment = serde_json::from_value(serde_json::json!({
+            "imageUploadId": "image_123",
+            "mediaType": "image/png",
+            "name": "robot.png",
+            "size": 96404.0,
+            "url": "https://example.com/robot.png"
+        }))
+        .expect("runtime attachment");
+
+        assert_eq!(attachment.media_type, "image/png");
+        assert_eq!(attachment.url, "https://example.com/robot.png");
+    }
 
     #[test]
     fn deserializes_tool_history_into_rig_messages_with_matching_ids() {
@@ -423,5 +447,32 @@ mod tests {
             },
             other => panic!("expected assistant message, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn deserializes_url_images_from_convex_history() {
+        let image_json = serde_json::json!({
+            "data": { "type": "url", "value": "https://example.com/robot.png" },
+            "media_type": "png"
+        })
+        .to_string();
+        let history = vec![AgentHistoryMessage {
+            role: AgentHistoryRole::User,
+            assistant_id: None,
+            contents: vec![AgentHistoryContent::Image { image_json }],
+        }];
+
+        let messages = deserialize_agent_history(history).expect("messages");
+        let Message::User { content } = &messages[0] else {
+            panic!("expected user message");
+        };
+        let Some(UserContent::Image(image)) = content.iter().next() else {
+            panic!("expected user image");
+        };
+        assert_eq!(
+            image.data,
+            DocumentSourceKind::Url("https://example.com/robot.png".to_string())
+        );
+        assert_eq!(image.media_type, Some(ImageMediaType::PNG));
     }
 }
