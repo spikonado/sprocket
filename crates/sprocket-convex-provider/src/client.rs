@@ -498,7 +498,7 @@ async fn call_completion_action(
             "sprocket-convex-provider: action start {} attempt {attempt_seq}",
             client.completion_action
         );
-        let result = timeout(
+        let result = match timeout(
             CONVEX_RPC_TIMEOUT,
             convex.action(
                 &client.completion_action,
@@ -513,12 +513,27 @@ async fn call_completion_action(
             ),
         )
         .await
-        .map_err(|error| {
-            CompletionError::ProviderError(format!(
-                "timed out calling {}: {error}",
-                client.completion_action
-            ))
-        })?;
+        {
+            Ok(result) => result,
+            Err(error) => {
+                // Timeouts are retryable: a reconnect can stall the action
+                // future until the RPC deadline instead of returning Err.
+                if attempt >= COMPLETION_TRANSPORT_ATTEMPTS {
+                    return Err(CompletionError::ProviderError(format!(
+                        "timed out calling {}: {error}",
+                        client.completion_action
+                    )));
+                }
+                eprintln!(
+                    "sprocket-convex-provider: timed out calling {}; retrying: {error}",
+                    client.completion_action
+                );
+                superseded_stream_ids.push(stream_id);
+                sleep(retry_delay).await;
+                retry_delay = retry_delay.saturating_mul(2);
+                continue;
+            }
+        };
 
         match result {
             Ok(FunctionResult::Value(value)) => {

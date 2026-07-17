@@ -276,8 +276,9 @@ export const start = mutation({
 
 		const isTakeover = isClaimedRunStatus(run.status) && run.claimId !== args.claimId;
 		const isSameClaimRenewal = isClaimedRunStatus(run.status) && run.claimId === args.claimId;
-		// Takeover restarts from the prompt; hide the previous claim's jobs and
-		// clear its partial response so neither resurfaces in the new stream.
+		// Takeover restarts from the prompt. Cancel/hide only in-flight jobs so
+		// completed side effects stay visible; clear the previous claim's
+		// partial response so it does not duplicate into the new stream.
 		if (isTakeover) {
 			const staleJobs = await ctx.db
 				.query('executorJobs')
@@ -286,15 +287,14 @@ export const start = mutation({
 			for (const job of staleJobs) {
 				const isFinal =
 					job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled';
+				if (isFinal) {
+					continue;
+				}
 				await ctx.db.patch(job._id, {
 					hidden: true,
-					...(isFinal
-						? {}
-						: {
-								status: 'cancelled' as const,
-								error: 'The agent worker claim expired.',
-								completedAt: now
-							})
+					status: 'cancelled',
+					error: 'The agent worker claim expired.',
+					completedAt: now
 				});
 			}
 			if (run.responseMessageId) {
