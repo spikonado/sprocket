@@ -16,6 +16,7 @@ import type {
 
 const recoveredSubmission = {
 	prompt: 'Inspect the robot',
+	imageUploadIds: ['image-1' as never],
 	reasoningEffort: 'medium' as const,
 	serviceTier: 'standard' as const,
 	selectedModel: 'gpt-5.6-sol' as const,
@@ -47,6 +48,7 @@ function launchArgs(
 		onStarted: vi.fn(),
 		threadId: 'thread-1' as never,
 		prompt: 'Inspect src/lib.rs',
+		imageUploadIds: ['image-1' as never],
 		selectedModel: 'gpt-5.6-sol',
 		reasoningEffort: 'medium',
 		serviceTier: 'standard',
@@ -63,6 +65,7 @@ function resolveRecoveredSubmission(
 		latestRun: null,
 		newSubmissionId: 'new-id',
 		prompt: recoveredSubmission.prompt,
+		imageUploadIds: recoveredSubmission.imageUploadIds,
 		reasoningEffort: recoveredSubmission.reasoningEffort,
 		serviceTier: recoveredSubmission.serviceTier,
 		recoveredSubmission,
@@ -94,6 +97,7 @@ describe('launchAgentRun', () => {
 			authToken: 'token-1',
 			threadId: 'thread-1',
 			prompt: 'Inspect src/lib.rs',
+			imageUploadIds: ['image-1'],
 			selectedModel: 'gpt-5.6-sol',
 			submissionId: 'submission-1',
 			reasoningEffort: 'medium',
@@ -199,6 +203,16 @@ describe('resolveSubmissionId', () => {
 		expect(resolveRecoveredSubmission({ prompt: 'Inspect and fix the robot' })).toBe('new-id');
 		expect(resolveRecoveredSubmission({ reasoningEffort: 'high' })).toBe('new-id');
 		expect(resolveRecoveredSubmission({ serviceTier: 'fast' })).toBe('new-id');
+	});
+
+	it('reuses a submission only when its image attachments are unchanged', () => {
+		expect(resolveRecoveredSubmission({ imageUploadIds: [] })).toBe('new-id');
+		expect(resolveRecoveredSubmission({ imageUploadIds: ['image-2' as never] })).toBe('new-id');
+		expect(
+			resolveRecoveredSubmission({
+				imageUploadIds: ['image-1' as never, 'image-2' as never]
+			})
+		).toBe('new-id');
 	});
 
 	it('uses a fresh id when the visible latest submission has finished or supersedes recovery', () => {

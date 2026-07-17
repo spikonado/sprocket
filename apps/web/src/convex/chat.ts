@@ -1,4 +1,4 @@
-import type { Doc } from '@convex/_generated/dataModel';
+import type { Doc, Id } from '@convex/_generated/dataModel';
 import { query } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
@@ -16,6 +16,7 @@ export const latestRunForThread = query({
 		run: Doc<'runs'> | null;
 		jobs: Doc<'executorJobs'>[];
 		prompt?: string;
+		imageUploadIds?: Id<'imageUploads'>[];
 		serverNow: number;
 	}> => {
 		const userId: string = await getUserId(ctx);
@@ -47,7 +48,12 @@ export const latestRunForThread = query({
 			threadId: args.threadId,
 			run: latestRun,
 			jobs: jobs.filter((job) => !job.hidden).sort((left, right) => left.sequence - right.sequence),
-			...(promptMessage?.type === 'prompt' ? { prompt: promptMessage.text } : {}),
+			...(promptMessage?.type === 'prompt'
+				? {
+						prompt: promptMessage.text,
+						imageUploadIds: promptMessage.imageUploadIds ?? []
+					}
+				: {}),
 			serverNow: Date.now()
 		};
 	}

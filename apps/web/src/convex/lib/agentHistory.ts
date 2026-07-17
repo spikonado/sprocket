@@ -200,12 +200,22 @@ export function buildCanonicalAgentHistory(args: {
 	for (const message of args.messages) {
 		if (message.type === 'prompt') {
 			const text = message.text.trim();
-			if (!text) {
+			const contents: AgentHistoryMessage['contents'] = [
+				...(text ? [{ type: 'text' as const, text }] : []),
+				...message.attachments.map((attachment) => ({
+					type: 'image' as const,
+					imageJson: JSON.stringify({
+						data: { type: 'url', value: attachment.url },
+						media_type: attachment.mediaType.slice('image/'.length)
+					})
+				}))
+			];
+			if (contents.length === 0) {
 				continue;
 			}
 			history.push({
 				role: 'user',
-				contents: [{ type: 'text', text }]
+				contents
 			});
 			continue;
 		}

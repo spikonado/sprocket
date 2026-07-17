@@ -13,12 +13,21 @@ pub(crate) fn build_model_messages(
         match message {
             Message::System { .. } => {}
             Message::User { content } => {
-                let mut text_parts: Vec<String> = Vec::new();
+                let mut user_parts: Vec<serde_json::Value> = Vec::new();
                 let mut tool_results: Vec<serde_json::Value> = Vec::new();
                 for item in content.iter() {
                     match item {
                         UserContent::Text(text) => {
-                            text_parts.push(text.text.clone());
+                            user_parts.push(serde_json::json!({
+                                "type": "text",
+                                "text": text.text.clone()
+                            }));
+                        }
+                        UserContent::Image(image) => {
+                            user_parts.push(serde_json::json!({
+                                "type": "image",
+                                "image": image.clone().try_into_url()?
+                            }));
                         }
                         UserContent::ToolResult(result) => {
                             let tool_call_id: &str = &result.id;
@@ -43,17 +52,17 @@ pub(crate) fn build_model_messages(
                         }
                         _ => {
                             return Err(CompletionError::ProviderError(
-                                "Convex-backed Rig provider only supports text and tool results in user messages."
+                                "Convex-backed Rig provider only supports text, images, and tool results in user messages."
                                     .to_string(),
                             ));
                         }
                     }
                 }
 
-                if !text_parts.is_empty() {
+                if !user_parts.is_empty() {
                     messages.push(serde_json::json!({
                         "role": "user",
-                        "content": text_parts.join("\n")
+                        "content": user_parts
                     }));
                 }
                 if !tool_results.is_empty() {
@@ -198,7 +207,7 @@ pub(crate) fn instructions_text(request: &CompletionRequest) -> Option<String> {
 mod tests {
     use rig::OneOrMany;
     use rig::completion::{CompletionRequest, Message};
-    use rig::message::{AssistantContent, Text, UserContent};
+    use rig::message::{AssistantContent, ImageMediaType, Text, UserContent};
 
     use super::{build_model_messages, instructions_text, normalize_convex_json_numbers};
 
@@ -229,7 +238,8 @@ mod tests {
         let array = structured.as_array().expect("array");
         assert_eq!(array.len(), 2);
         assert_eq!(array[0]["role"], "user");
-        assert_eq!(array[0]["content"], "Inspect src/lib.rs");
+        assert_eq!(array[0]["content"][0]["type"], "text");
+        assert_eq!(array[0]["content"][0]["text"], "Inspect src/lib.rs");
         assert_eq!(array[1]["role"], "assistant");
         assert_eq!(array[1]["content"][0]["type"], "text");
         assert_eq!(
@@ -250,6 +260,42 @@ mod tests {
                 output_schema: None,
             }),
             Some("You are precise.".to_string())
+        );
+    }
+
+    #[test]
+    fn preserves_images_in_user_messages() {
+        let messages = OneOrMany::one(Message::User {
+            content: OneOrMany::many(vec![
+                UserContent::text("Describe this image"),
+                UserContent::image_url(
+                    "https://example.com/robot.png",
+                    Some(ImageMediaType::PNG),
+                    None,
+                ),
+            ])
+            .expect("user content"),
+        });
+
+        let structured = build_model_messages(&CompletionRequest {
+            model: None,
+            preamble: None,
+            chat_history: messages,
+            documents: vec![],
+            tools: vec![],
+            temperature: None,
+            max_tokens: None,
+            tool_choice: None,
+            additional_params: None,
+            output_schema: None,
+        })
+        .expect("structured");
+
+        assert_eq!(structured[0]["content"][0]["type"], "text");
+        assert_eq!(structured[0]["content"][1]["type"], "image");
+        assert_eq!(
+            structured[0]["content"][1]["image"],
+            "https://example.com/robot.png"
         );
     }
 

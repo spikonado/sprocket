@@ -104,6 +104,14 @@ export type RunState = {
 	jobs: ExecutorJob[];
 };
 
+export type MessageAttachment = {
+	imageUploadId: Id<'imageUploads'>;
+	name: string;
+	mediaType: string;
+	size: number;
+	url: string | null;
+};
+
 export type ThreadMessage = {
 	_id: Id<'threadMessages'>;
 	_creationTime?: number;
@@ -112,6 +120,7 @@ export type ThreadMessage = {
 	userId: string;
 	type: Infer<typeof vThreadMessageType>;
 	text: string;
+	attachments: MessageAttachment[];
 	parts?: AssistantPart[];
 	runStatus: Infer<typeof vRunStatus>;
 	runStartedAt: number;
@@ -124,6 +133,7 @@ export type AgentRunRequest = {
 	submissionId: string;
 	threadId: Id<'threadRecords'>;
 	prompt: string;
+	imageUploadIds: Id<'imageUploads'>[];
 	selectedModel: Infer<typeof vModelId>;
 	reasoningEffort: Infer<typeof vReasoningEffort>;
 	serviceTier: Infer<typeof vServiceTier>;

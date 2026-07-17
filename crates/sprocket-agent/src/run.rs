@@ -1,4 +1,7 @@
 use anyhow::anyhow;
+use rig::OneOrMany;
+use rig::completion::Message;
+use rig::message::{ImageMediaType, UserContent};
 use sprocket_workspace::{
     WorkspaceInstruction, load_workspace_instructions, resolve_workspace_root,
 };
@@ -478,10 +481,25 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
 
     let prepared = (|| {
         let workspace_instructions = load_workspace_instructions(&workspace_root)?;
-        let prompt = context.prompt.trim().to_string();
-        if prompt.is_empty() {
+        let prompt_text = context.prompt.trim();
+        if prompt_text.is_empty() && context.prompt_attachments.is_empty() {
             return Err(anyhow!("run does not contain a user prompt"));
         }
+        let mut prompt_contents = Vec::new();
+        if !prompt_text.is_empty() {
+            prompt_contents.push(UserContent::text(prompt_text));
+        }
+        for attachment in &context.prompt_attachments {
+            prompt_contents.push(UserContent::image_url(
+                attachment.url.clone(),
+                Some(image_media_type(&attachment.media_type)?),
+                None,
+            ));
+        }
+        let prompt = Message::User {
+            content: OneOrMany::many(prompt_contents)
+                .map_err(|_| anyhow!("run prompt content cannot be empty"))?,
+        };
         let provider = AgentProvider::default_for_run(&runtime, &context, &run_id);
         let prior_history = deserialize_agent_history(context.agent_history)?;
         let preamble = build_workspace_preamble(&request.workspace_path, &workspace_instructions);
@@ -550,5 +568,15 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
     {
         Ok(result) => result,
         Err(error) => abort_after_claim(&runtime, &run_id, &claim_id, error).await,
+    }
+}
+
+fn image_media_type(media_type: &str) -> anyhow::Result<ImageMediaType> {
+    match media_type {
+        "image/jpeg" => Ok(ImageMediaType::JPEG),
+        "image/png" => Ok(ImageMediaType::PNG),
+        "image/gif" => Ok(ImageMediaType::GIF),
+        "image/webp" => Ok(ImageMediaType::WEBP),
+        _ => Err(anyhow!("unsupported image media type: {media_type}")),
     }
 }

@@ -307,4 +307,37 @@ describe('canonical agent history', () => {
 			expect(history[2]?.contents).toEqual([{ type: 'text', text: 'after result' }]);
 		}
 	);
+
+	it('includes prompt images in canonical history', () => {
+		const history = buildCanonicalAgentHistory({
+			messages: [
+				{
+					type: 'prompt',
+					text: '',
+					attachments: [
+						{
+							mediaType: 'image/png',
+							url: 'https://example.com/robot.png'
+						}
+					]
+				}
+			] as unknown as Parameters<typeof buildCanonicalAgentHistory>[0]['messages'],
+			jobs: []
+		});
+
+		expect(history).toEqual([
+			{
+				role: 'user',
+				contents: [
+					{
+						type: 'image',
+						imageJson: JSON.stringify({
+							data: { type: 'url', value: 'https://example.com/robot.png' },
+							media_type: 'png'
+						})
+					}
+				]
+			}
+		]);
+	});
 });

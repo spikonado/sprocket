@@ -124,6 +124,19 @@ export const vThreadMessageType = v.union(v.literal('prompt'), v.literal('respon
 
 export type ThreadMessageType = Infer<typeof vThreadMessageType>;
 
+export const supportedImageMediaTypes = [
+	'image/jpeg',
+	'image/png',
+	'image/gif',
+	'image/webp'
+] as const;
+
+export const vImageMediaType = v.union(...literals(supportedImageMediaTypes));
+
+export const MAX_IMAGE_ATTACHMENTS = 4;
+export const MAX_IMAGE_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+export const MAX_IMAGE_ATTACHMENT_LABEL = '10 MiB';
+
 export const vAssistantTextPart = v.object({
 	type: v.literal('text'),
 	id: v.string(),

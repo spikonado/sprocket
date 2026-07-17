@@ -42,6 +42,7 @@
 		type WorkspaceSessionState
 	} from '$lib/home/desktop';
 	import { formatElapsedDuration } from '$lib/format';
+	import { validateImageAttachmentAddition, type ComposerAttachment } from '$lib/chat/attachments';
 	import {
 		defaultModelId,
 		defaultReasoningEffort,
@@ -124,12 +125,17 @@
 	const restoreThreadMutation = useMutation(api.threads.restore);
 	const finalizeRun = useMutation(api.agentRuntime.finalizeRun);
 	const setLastThread = useMutation(api.uiPreferences.setLastThread);
+	const generateImageUploadUrl = useMutation(api.imageUploads.generateUploadUrl);
+	const registerImageUpload = useMutation(api.imageUploads.register);
+	const discardImageUpload = useMutation(api.imageUploads.discard);
 	const heartbeatAttached = useMutation(api.workspaceSessions.heartbeatAttached);
 	const localServerRequiredMessage = 'Connect to a running Sprocket server to use this workspace.';
 	const agentLaunchTimeoutMs = 30_000;
 	type ComposerRecovery = {
 		message: string;
 		prompt: string;
+		attachments?: ComposerAttachment[];
+		imageUploadIds?: Id<'imageUploads'>[];
 		reasoningEffort?: SupportedReasoningEffort;
 		serviceTier?: SupportedServiceTier;
 		selectedModel?: SupportedModelId;
@@ -153,6 +159,7 @@
 	let selectedReasoningEffort = $state<SupportedReasoningEffort>(defaultReasoningEffort);
 	let selectedServiceTier = $state<SupportedServiceTier>(defaultServiceTier);
 	let prompt = $state('');
+	let composerAttachments = $state<ComposerAttachment[]>([]);
 	let currentError = $state<string | null>(null);
 	let executorClientId = $state<string | null>(null);
 	let visibleMessages = $state<ThreadMessage[]>([]);
@@ -163,6 +170,7 @@
 		string,
 		{
 			prompt: string;
+			imageUploadIds: Id<'imageUploads'>[];
 			reasoningEffort: SupportedReasoningEffort;
 			serviceTier: SupportedServiceTier;
 			selectedModel: SupportedModelId;
@@ -201,6 +209,101 @@
 	let initialWorkspaceLaunchResolved = $state(false);
 	function getCurrentUserId() {
 		return $authState.user?.id ?? null;
+	}
+
+	function updateComposerAttachment(localId: string, patch: Partial<ComposerAttachment>) {
+		const attachment = composerAttachments.find((entry) => entry.localId === localId);
+		if (!attachment) {
+			return false;
+		}
+		composerAttachments = composerAttachments.map((entry) =>
+			entry.localId === localId ? { ...entry, ...patch } : entry
+		);
+		return true;
+	}
+
+	async function uploadComposerAttachment(localId: string, file: File, name: string) {
+		try {
+			const uploadUrl = await generateImageUploadUrl({});
+			const response = await fetch(uploadUrl, {
+				method: 'POST',
+				headers: { 'Content-Type': file.type },
+				body: file
+			});
+			if (!response.ok) {
+				throw new Error(`Upload failed (${response.status}).`);
+			}
+			const { storageId } = await response.json();
+			const registered = await registerImageUpload({ storageId, name });
+			if ('error' in registered) {
+				throw new Error(registered.error);
+			}
+			const attachment = composerAttachments.find((entry) => entry.localId === localId);
+			if (attachment) {
+				URL.revokeObjectURL(attachment.previewUrl);
+			}
+			const stillAttached = updateComposerAttachment(localId, {
+				status: 'ready',
+				imageUploadId: registered.imageUploadId,
+				previewUrl: registered.url
+			});
+			if (!stillAttached) {
+				void discardImageUpload({ imageUploadId: registered.imageUploadId }).catch(() => {});
+			}
+		} catch (error) {
+			const message = error instanceof Error ? error.message : 'Upload failed.';
+			updateComposerAttachment(localId, {
+				status: 'error',
+				error: message
+			});
+			currentError = message;
+		}
+	}
+
+	function addComposerAttachments(files: File[]) {
+		for (const file of files) {
+			const validationError = validateImageAttachmentAddition(composerAttachments.length, file);
+			if (validationError) {
+				currentError = validationError;
+				continue;
+			}
+			const localId = crypto.randomUUID();
+			const name = file.name || 'Pasted image';
+			composerAttachments = [
+				...composerAttachments,
+				{
+					localId,
+					name,
+					mediaType: file.type,
+					size: file.size,
+					previewUrl: URL.createObjectURL(file),
+					status: 'uploading'
+				}
+			];
+			void uploadComposerAttachment(localId, file, name);
+		}
+	}
+
+	function removeComposerAttachment(localId: string) {
+		const attachment = composerAttachments.find((entry) => entry.localId === localId);
+		if (!attachment) {
+			return;
+		}
+		URL.revokeObjectURL(attachment.previewUrl);
+		composerAttachments = composerAttachments.filter((entry) => entry.localId !== localId);
+		if (attachment.imageUploadId) {
+			void discardImageUpload({ imageUploadId: attachment.imageUploadId }).catch(() => {});
+		}
+	}
+
+	function clearComposerAttachments(options: { discard: boolean }) {
+		for (const attachment of composerAttachments) {
+			URL.revokeObjectURL(attachment.previewUrl);
+			if (options.discard && attachment.imageUploadId) {
+				void discardImageUpload({ imageUploadId: attachment.imageUploadId }).catch(() => {});
+			}
+		}
+		composerAttachments = [];
 	}
 
 	function getComposerScope(
@@ -612,6 +715,8 @@
 
 	function schedulePendingCreatedThreadExpiration(args: {
 		prompt: string;
+		attachments: ComposerAttachment[];
+		imageUploadIds: Id<'imageUploads'>[];
 		reasoningEffort: SupportedReasoningEffort;
 		serviceTier: SupportedServiceTier;
 		selectedModel: SupportedModelId;
@@ -639,6 +744,8 @@
 				storeComposerRecovery(args.userId, recoveryScope, {
 					message: 'The new thread did not appear. Review your prompt and try sending it again.',
 					prompt: args.prompt,
+					attachments: args.attachments,
+					imageUploadIds: args.imageUploadIds,
 					reasoningEffort: args.reasoningEffort,
 					serviceTier: args.serviceTier,
 					selectedModel: args.selectedModel,
@@ -651,6 +758,8 @@
 	async function createThread(args: {
 		isSubmissionCurrent: () => boolean;
 		prompt: string;
+		attachments: ComposerAttachment[];
+		imageUploadIds: Id<'imageUploads'>[];
 		selectionGeneration: number;
 		selectedModel: SupportedModelId;
 		selectedReasoningEffort: SupportedReasoningEffort;
@@ -681,6 +790,8 @@
 			draftWorkspaceName = null;
 			schedulePendingCreatedThreadExpiration({
 				prompt: args.prompt,
+				attachments: args.attachments,
+				imageUploadIds: args.imageUploadIds,
 				reasoningEffort: args.selectedReasoningEffort,
 				serviceTier: args.selectedServiceTier,
 				selectedModel: args.selectedModel,
@@ -750,7 +861,12 @@
 			return;
 		}
 
-		if (!prompt.trim()) {
+		if (!prompt.trim() && composerAttachments.length === 0) {
+			return;
+		}
+
+		if (composerAttachments.some((attachment) => attachment.status !== 'ready')) {
+			currentError = 'Wait for image uploads to finish, or remove failed images before sending.';
 			return;
 		}
 
@@ -796,6 +912,10 @@
 		}
 		const isSubmittedUserCurrent = () => getCurrentUserId() === submittedUserId;
 		const submittedPrompt = prompt.trim();
+		const submittedAttachments = composerAttachments.map((attachment) => ({ ...attachment }));
+		const submittedImageUploadIds = submittedAttachments.flatMap((attachment) =>
+			attachment.imageUploadId ? [attachment.imageUploadId] : []
+		);
 		const submittedModel = selectedModel;
 		const submittedReasoningEffort = selectedReasoningEffort;
 		const submittedServiceTier = selectedServiceTier;
@@ -815,6 +935,7 @@
 			latestRun: selectedThreadId ? runState : null,
 			newSubmissionId: freshSubmissionId,
 			prompt: submittedPrompt,
+			imageUploadIds: submittedImageUploadIds,
 			reasoningEffort: submittedReasoningEffort,
 			serviceTier: submittedServiceTier,
 			recoveredSubmission,
@@ -837,6 +958,8 @@
 			storeComposerRecovery(submittedUserId, recoveryScope, {
 				message,
 				prompt: submittedPrompt,
+				attachments: submittedAttachments,
+				imageUploadIds: submittedImageUploadIds,
 				reasoningEffort: submittedReasoningEffort,
 				serviceTier: submittedServiceTier,
 				selectedModel: submittedModel,
@@ -874,6 +997,8 @@
 				: await createThread({
 						isSubmissionCurrent,
 						prompt: submittedPrompt,
+						attachments: submittedAttachments,
+						imageUploadIds: submittedImageUploadIds,
 						selectionGeneration,
 						selectedModel: submittedModel,
 						selectedReasoningEffort: submittedReasoningEffort,
@@ -988,9 +1113,11 @@
 				onStarted: (runId) => {
 					if (!isSubmissionCurrent() || !isSubmittedUserCurrent()) return;
 					pendingAgentLaunches = resolvePendingAgentLaunch(pendingAgentLaunches, threadId, runId);
+					clearComposerAttachments({ discard: false });
 				},
 				threadId,
 				prompt: submittedPrompt,
+				imageUploadIds: submittedImageUploadIds,
 				selectedModel: submittedModel,
 				submissionId: runSubmissionId,
 				reasoningEffort: submittedReasoningEffort,
@@ -1086,19 +1213,47 @@
 			isSubmittingPrompt ||
 			hasPendingAgentLaunch ||
 			prompt !== '' ||
-			!currentLatestRunData?.prompt
+			composerAttachments.length > 0 ||
+			!currentLatestRunData ||
+			(!currentLatestRunData.prompt && !currentLatestRunData.imageUploadIds?.length)
 		) {
 			return;
 		}
+		const staleImageUploadIds = currentLatestRunData.imageUploadIds ?? [];
+		const stalePrompt = currentLatestRunData.prompt ?? '';
+		const stalePromptMessage = visibleMessages.find(
+			(message) => message.runId === staleRun._id && message.type === 'prompt'
+		);
+		const staleAttachments = staleImageUploadIds.flatMap((imageUploadId) => {
+			const attachment = stalePromptMessage?.attachments.find(
+				(candidate) => candidate.imageUploadId === imageUploadId
+			);
+			return attachment?.url ? [attachment] : [];
+		});
+		const missingAttachmentCount = staleImageUploadIds.length - staleAttachments.length;
 
 		const staleClaimKey = `${userId}\0${staleRun._id}\0${staleRun.claimExpiresAt ?? 'none'}`;
 		if (recoveredStaleClaims.has(staleClaimKey)) {
 			return;
 		}
 		recoveredStaleClaims.add(staleClaimKey);
+		const recoveredAttachments: ComposerAttachment[] = staleAttachments.map((attachment) => ({
+			localId: attachment.imageUploadId,
+			name: attachment.name,
+			mediaType: attachment.mediaType,
+			size: attachment.size,
+			previewUrl: attachment.url!,
+			status: 'ready',
+			imageUploadId: attachment.imageUploadId
+		}));
 		storeComposerRecovery(userId, recoveryScope, {
-			message: 'The previous agent stopped responding. Retry to continue this submission.',
-			prompt: currentLatestRunData.prompt,
+			message:
+				missingAttachmentCount > 0
+					? `The previous agent stopped responding. ${missingAttachmentCount} image attachment${missingAttachmentCount === 1 ? ' is' : 's are'} unavailable; review and retry this submission.`
+					: 'The previous agent stopped responding. Retry to continue this submission.',
+			prompt: stalePrompt,
+			attachments: recoveredAttachments,
+			imageUploadIds: staleImageUploadIds,
 			reasoningEffort: staleRun.reasoningEffort,
 			serviceTier: staleRun.serviceTier,
 			selectedModel: staleRun.selectedModel,
@@ -1124,6 +1279,7 @@
 		lastSyncedComposerThreadId = null;
 		workspaceSelectionGeneration += 1;
 		prompt = '';
+		clearComposerAttachments({ discard: true });
 		currentError = null;
 		visibleMessages = [];
 		elapsedSeconds = 0;
@@ -1207,16 +1363,27 @@
 		}
 
 		composerRecoveries.delete(recoveryKey);
-		if (prompt === '') {
+		const canRestorePrompt = prompt === '';
+		if (canRestorePrompt) {
 			prompt = recovery.prompt;
+		}
+		if (
+			composerAttachments.length === 0 &&
+			recovery.attachments?.length &&
+			(canRestorePrompt || prompt === recovery.prompt)
+		) {
+			composerAttachments = recovery.attachments.map((attachment) => ({ ...attachment }));
+		}
+		if (prompt === recovery.prompt) {
 			if (
 				recovery.submissionId &&
-				recovery.prompt &&
+				(recovery.prompt || recovery.imageUploadIds?.length) &&
 				recovery.reasoningEffort &&
 				recovery.selectedModel
 			) {
 				recoveredSubmissionIds.set(recoveryKey, {
 					prompt: recovery.prompt,
+					imageUploadIds: recovery.imageUploadIds ?? [],
 					reasoningEffort: recovery.reasoningEffort,
 					serviceTier: recovery.serviceTier ?? defaultServiceTier,
 					selectedModel: recovery.selectedModel,
@@ -1581,6 +1748,9 @@
 
 					<PromptComposer
 						bind:prompt
+						attachments={composerAttachments}
+						onAttachFiles={addComposerAttachments}
+						onRemoveAttachment={removeComposerAttachment}
 						bind:selectedModel
 						bind:selectedReasoningEffort
 						bind:selectedServiceTier

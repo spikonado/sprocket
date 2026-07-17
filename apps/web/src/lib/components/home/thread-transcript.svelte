@@ -15,6 +15,7 @@
 		type AssistantTimelineTool
 	} from '$lib/chat/assistant-timeline';
 	import ChatMarkdown from '$lib/components/chat-markdown.svelte';
+	import ImageViewer, { type ViewerImage } from '$lib/components/image-viewer.svelte';
 	import ReasoningDisclosure from '$lib/components/home/reasoning-disclosure.svelte';
 	import ToolCallsDisclosure from '$lib/components/home/tool-calls-disclosure.svelte';
 	import WorkDisclosure from '$lib/components/home/work-disclosure.svelte';
@@ -190,6 +191,8 @@
 	const userMessageClass =
 		'w-fit max-w-[33rem] rounded-xl border border-white/7 bg-[linear-gradient(180deg,rgba(39,39,42,0.96),rgba(28,28,30,0.96))] px-5 py-3.5 text-[15.5px] leading-7 text-slate-100';
 
+	let viewerImage = $state<ViewerImage | null>(null);
+
 	let copiedMessageId = $state<string | null>(null);
 	let copiedTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -294,23 +297,62 @@
 					{#each messages as message (message._id)}
 						{#if message.type === 'prompt'}
 							<div class="flex flex-col items-end gap-1.5">
-								<div class={userMessageClass}>
-									<ChatMarkdown content={message.text || ' '} className="text-slate-100" />
-								</div>
-								<button
-									type="button"
-									class="inline-flex size-6 items-center justify-center rounded-md text-slate-600 transition hover:text-slate-400"
-									aria-label={copiedMessageId === message._id ? 'Copied' : 'Copy message'}
-									onclick={() => {
-										void copyUserMessage(message._id, message.text);
-									}}
-								>
-									{#if copiedMessageId === message._id}
-										<Check class="size-3.5" aria-hidden="true" />
-									{:else}
-										<Copy class="size-3.5" aria-hidden="true" />
-									{/if}
-								</button>
+								{#if message.attachments.length}
+									<ul
+										class="flex max-w-[33rem] flex-wrap justify-end gap-2"
+										aria-label="Attached images"
+									>
+										{#each message.attachments as attachment (attachment.imageUploadId)}
+											<li>
+												{#if attachment.url}
+													{@const url = attachment.url}
+													<button
+														type="button"
+														class="block size-14 cursor-zoom-in overflow-hidden rounded-xl border border-white/10 transition hover:border-white/25 focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:outline-none"
+														aria-label="View {attachment.name}"
+														title={attachment.name}
+														onclick={() => {
+															viewerImage = {
+																url,
+																name: attachment.name,
+																mediaType: attachment.mediaType
+															};
+														}}
+													>
+														<img src={url} alt="" loading="lazy" class="size-full object-cover" />
+													</button>
+												{:else}
+													<span
+														class="inline-flex items-center rounded-xl border border-white/7 bg-white/4 px-3 py-2 text-xs text-slate-400"
+													>
+														{attachment.name} (unavailable)
+													</span>
+												{/if}
+											</li>
+										{/each}
+									</ul>
+								{/if}
+								{#if message.text || !message.attachments.length}
+									<div class={userMessageClass}>
+										<ChatMarkdown content={message.text || ' '} className="text-slate-100" />
+									</div>
+								{/if}
+								{#if message.text}
+									<button
+										type="button"
+										class="inline-flex size-6 items-center justify-center rounded-md text-slate-600 transition hover:text-slate-400"
+										aria-label={copiedMessageId === message._id ? 'Copied' : 'Copy message'}
+										onclick={() => {
+											void copyUserMessage(message._id, message.text);
+										}}
+									>
+										{#if copiedMessageId === message._id}
+											<Check class="size-3.5" aria-hidden="true" />
+										{:else}
+											<Copy class="size-3.5" aria-hidden="true" />
+										{/if}
+									</button>
+								{/if}
 							</div>
 						{:else}
 							{@const messageActions = actions.filter((job) => job.runId === message.runId)}
@@ -459,3 +501,10 @@
 		class="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-[linear-gradient(180deg,rgba(15,15,17,0),rgba(15,15,17,0.68)_48%,rgba(15,15,17,0.92))]"
 	></div>
 </div>
+
+<ImageViewer
+	image={viewerImage}
+	onClose={() => {
+		viewerImage = null;
+	}}
+/>
