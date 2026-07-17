@@ -1,19 +1,23 @@
 <script lang="ts">
-	import { Check, Copy } from '@lucide/svelte';
+	import { Check, Copy, LoaderCircle } from '@lucide/svelte';
 	import { tick } from 'svelte';
 	import { isJsonObject, type JsonValue } from '$convex/lib/json';
 	import {
 		assistantTimelineToolError,
 		assistantTimelineToolFailureKind,
 		buildAssistantTimeline,
+		buildCommandSessionCommandMap,
+		buildOpenExecCommandSessions,
 		groupAssistantTimeline,
 		groupAssistantTimelineSections,
 		isAssistantTimelineToolRunning,
 		partitionWorkSectionTools,
+		resolveCommandSessionLabel,
 		workSectionTimingAnchor,
 		workSectionTimingIndexes,
 		type AssistantTimelineTool
 	} from '$lib/chat/assistant-timeline';
+	import { toolKindIcon, toolLogIcon } from '$lib/chat/tool-icons';
 	import ChatMarkdown from '$lib/components/chat-markdown.svelte';
 	import ImageViewer, { type ViewerImage } from '$lib/components/image-viewer.svelte';
 	import ReasoningDisclosure from '$lib/components/home/reasoning-disclosure.svelte';
@@ -185,7 +189,17 @@
 		return '';
 	}
 
-	function toolItemSummary(toolLog: AssistantTimelineTool) {
+	function toolItemSummary(
+		toolLog: AssistantTimelineTool,
+		sessionCommands: ReadonlyMap<string, string>
+	) {
+		const kind = toolLog.job?.kind ?? toolLog.name;
+		if (kind === 'write_stdin') {
+			return (
+				resolveCommandSessionLabel(toolLog, sessionCommands) ??
+				summarizeTool('write_stdin', toolLog.job?.payload ?? toolLog.input)
+			);
+		}
 		if (toolLog.job) {
 			if (toolLog.job.kind === 'apply_patch') {
 				const patchSummary = summarizePatchResult(toolLog.job.result);
@@ -201,8 +215,12 @@
 		return summarizeTool(toolLog.name, toolLog.input);
 	}
 
-	function fullToolSummary(toolLog: AssistantTimelineTool, isStreaming: boolean) {
-		const summary = toolItemSummary(toolLog);
+	function fullToolSummary(
+		toolLog: AssistantTimelineTool,
+		isStreaming: boolean,
+		sessionCommands: ReadonlyMap<string, string>
+	) {
+		const summary = toolItemSummary(toolLog, sessionCommands);
 		if (isAssistantTimelineToolRunning(toolLog, isStreaming)) {
 			return `${summary} (running)`;
 		}
@@ -379,6 +397,11 @@
 						{:else}
 							{@const messageActions = actions.filter((job) => job.runId === message.runId)}
 							{@const timeline = buildAssistantTimeline(message.parts ?? [], messageActions)}
+							{@const timelineTools = timeline.filter(
+								(item): item is AssistantTimelineTool => item.type === 'tool'
+							)}
+							{@const sessionCommands = buildCommandSessionCommandMap(timelineTools)}
+							{@const openSessions = buildOpenExecCommandSessions(timelineTools)}
 							{@const blocks = groupAssistantTimeline(timeline)}
 							{@const sections = groupAssistantTimelineSections(blocks)}
 							{@const { workIndexBySectionIndex, priorCompletedAtByWorkIndex } =
@@ -407,7 +430,8 @@
 										{:else}
 											{@const { settledBlocks, runningTools } = partitionWorkSectionTools(
 												section.blocks,
-												isStreaming
+												isStreaming,
+												openSessions
 											)}
 											{@const workInProgress =
 												isStreaming &&
@@ -439,17 +463,18 @@
 														{:else}
 															<ToolCallsDisclosure
 																label={toolGroupLabel(block.toolKey)}
+																icon={toolKindIcon(block.toolKey)}
 																tools={block.tools}
 															>
 																{#snippet toolRow(tool)}
 																	{@const toolError = assistantTimelineToolError(tool)}
 																	{@const toolFailureKind = assistantTimelineToolFailureKind(tool)}
-																	{@const toolSummary = toolItemSummary(tool)}
+																	{@const toolSummary = toolItemSummary(tool, sessionCommands)}
 																	{#if toolError && toolFailureKind}
 																		<details class="min-w-0">
 																			<summary
 																				class="min-w-0 cursor-pointer text-left"
-																				title={fullToolSummary(tool, isStreaming)}
+																				title={fullToolSummary(tool, isStreaming, sessionCommands)}
 																			>
 																				<span class="truncate">{toolSummary}</span>
 																				<span
@@ -473,7 +498,7 @@
 																	{:else}
 																		<p
 																			class="min-w-0 truncate"
-																			title={fullToolSummary(tool, isStreaming)}
+																			title={fullToolSummary(tool, isStreaming, sessionCommands)}
 																		>
 																			{toolSummary}
 																		</p>
@@ -487,13 +512,20 @@
 											{#if runningTools.length > 0}
 												<ToolCallsDisclosure
 													label="Running"
+													icon={LoaderCircle}
+													iconClass="animate-spin"
 													tools={runningTools}
 													defaultExpanded={true}
 												>
 													{#snippet toolRow(tool)}
-														{@const toolSummary = toolItemSummary(tool)}
-														<p class="min-w-0 truncate" title={fullToolSummary(tool, isStreaming)}>
-															{toolSummary}
+														{@const ToolIcon = toolLogIcon(tool)}
+														{@const toolSummary = toolItemSummary(tool, sessionCommands)}
+														<p
+															class="flex min-w-0 items-center gap-1.5"
+															title={fullToolSummary(tool, isStreaming, sessionCommands)}
+														>
+															<ToolIcon class="size-3 shrink-0 text-slate-500" aria-hidden="true" />
+															<span class="truncate">{toolSummary}</span>
 														</p>
 													{/snippet}
 												</ToolCallsDisclosure>

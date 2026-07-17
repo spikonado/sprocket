@@ -4,7 +4,7 @@ import {
 	type AssistantPart,
 	type AssistantToolCallPart
 } from '$convex/lib/assistantParts';
-import type { JsonValue } from '$convex/lib/json';
+import { isJsonObject, type JsonValue } from '$convex/lib/json';
 import type { ExecutorJob } from '$lib/types/sprocket';
 
 export type AssistantTimelineTool = {
@@ -224,13 +224,97 @@ export function isAssistantTimelineToolRunning(
 	return isStreaming && tool.output === undefined;
 }
 
+function jsonStringProp(value: JsonValue | undefined, key: string): string | undefined {
+	return isJsonObject(value) && typeof value[key] === 'string' ? value[key] : undefined;
+}
+
+/** Session id from command tool output, else input/payload (write_stdin completion omits it). */
+function commandSessionIdFromTool(tool: AssistantTimelineTool): string | undefined {
+	return (
+		jsonStringProp(tool.output, 'sessionId') ??
+		jsonStringProp(tool.input, 'sessionId') ??
+		jsonStringProp(tool.job?.payload, 'sessionId')
+	);
+}
+
+/** Map session id → shell command from exec_command / write_stdin results. */
+export function buildCommandSessionCommandMap(
+	tools: readonly AssistantTimelineTool[]
+): Map<string, string> {
+	const sessionCommands = new Map<string, string>();
+
+	for (const tool of tools) {
+		const sessionId = commandSessionIdFromTool(tool);
+		if (!sessionId) {
+			continue;
+		}
+
+		const cmd =
+			jsonStringProp(tool.output, 'command') ??
+			(assistantTimelineToolKey(tool) === 'exec_command'
+				? (jsonStringProp(tool.input, 'cmd') ?? jsonStringProp(tool.job?.payload, 'cmd'))
+				: undefined);
+		if (cmd) {
+			sessionCommands.set(sessionId, cmd);
+		}
+	}
+
+	return sessionCommands;
+}
+
+/** User-facing command label for write_stdin / open sessions. */
+export function resolveCommandSessionLabel(
+	tool: AssistantTimelineTool,
+	sessionCommands: ReadonlyMap<string, string>
+): string | undefined {
+	const sessionId = commandSessionIdFromTool(tool);
+	return (
+		jsonStringProp(tool.output, 'command') ??
+		(sessionId ? sessionCommands.get(sessionId) : undefined)
+	);
+}
+
+/**
+ * Sessions still running that also have an exec_command row.
+ * Later tool outputs win on the running flag (write_stdin completion clears the session).
+ * Pass the full message tool list so monitors after text section breaks still close sessions.
+ */
+export function buildOpenExecCommandSessions(tools: readonly AssistantTimelineTool[]): Set<string> {
+	const sessionRunning = new Map<string, boolean>();
+	const execSessions = new Set<string>();
+
+	for (const tool of tools) {
+		const sessionId = commandSessionIdFromTool(tool);
+		if (!sessionId) {
+			continue;
+		}
+		if (assistantTimelineToolKey(tool) === 'exec_command') {
+			execSessions.add(sessionId);
+		}
+		if (isJsonObject(tool.output) && typeof tool.output.running === 'boolean') {
+			sessionRunning.set(sessionId, tool.output.running);
+		}
+	}
+
+	return new Set([...execSessions].filter((sessionId) => sessionRunning.get(sessionId) === true));
+}
+
+function collectWorkSectionTools(blocks: AssistantTimelineWorkBlock[]): AssistantTimelineTool[] {
+	return blocks.flatMap((block) => (block.type === 'tool-group' ? block.tools : []));
+}
+
 /**
  * Split a work section's blocks into settled content (reasoning + finished tools) and
  * currently running tools pulled out for a separate Running dropdown.
+ *
+ * Open command sessions stay in Running across write_stdin monitor polls until a later
+ * monitor reports running:false. Prefer message-wide `openSessions` so text-separated
+ * sections share the same session lifecycle.
  */
 export function partitionWorkSectionTools(
 	blocks: AssistantTimelineWorkBlock[],
-	isStreaming: boolean
+	isStreaming: boolean,
+	openSessions: ReadonlySet<string> = buildOpenExecCommandSessions(collectWorkSectionTools(blocks))
 ): {
 	settledBlocks: AssistantTimelineWorkBlock[];
 	runningTools: AssistantTimelineTool[];
@@ -246,7 +330,29 @@ export function partitionWorkSectionTools(
 
 		const settledTools: AssistantTimelineTool[] = [];
 		for (const tool of block.tools) {
-			if (isAssistantTimelineToolRunning(tool, isStreaming)) {
+			const kind = assistantTimelineToolKey(tool);
+			const sessionId = commandSessionIdFromTool(tool);
+			const sessionOpen = sessionId !== undefined && openSessions.has(sessionId);
+			const traditionallyRunning = isAssistantTimelineToolRunning(tool, isStreaming);
+
+			if (kind === 'exec_command' && sessionOpen) {
+				runningTools.push(tool);
+				continue;
+			}
+
+			if (kind === 'write_stdin') {
+				if (traditionallyRunning) {
+					// Prefer the open exec_command row over in-flight monitor polls.
+					if (!sessionOpen) {
+						runningTools.push(tool);
+					}
+					continue;
+				}
+				settledTools.push(tool);
+				continue;
+			}
+
+			if (traditionallyRunning) {
 				runningTools.push(tool);
 			} else {
 				settledTools.push(tool);

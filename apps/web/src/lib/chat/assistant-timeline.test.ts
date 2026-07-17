@@ -4,10 +4,13 @@ import {
 	assistantTimelineToolFailureKind,
 	assistantTimelineToolKey,
 	buildAssistantTimeline,
+	buildCommandSessionCommandMap,
+	buildOpenExecCommandSessions,
 	groupAssistantTimeline,
 	groupAssistantTimelineSections,
 	isAssistantTimelineToolRunning,
 	partitionWorkSectionTools,
+	resolveCommandSessionLabel,
 	workSectionTimingAnchor,
 	workSectionTimingIndexes,
 	type AssistantTimelineTool,
@@ -394,6 +397,140 @@ describe('partitionWorkSectionTools', () => {
 			})
 		]);
 		expect(isAssistantTimelineToolRunning(runningTools[0], true)).toBe(true);
+	});
+
+	it('keeps yielded command sessions in Running across write_stdin monitor polls', () => {
+		const blocks: AssistantTimelineWorkBlock[] = [
+			{
+				type: 'tool-group',
+				toolKey: 'exec_command',
+				tools: [
+					tool('exec-1', 'exec_command', {
+						input: { cmd: 'npm run dev' },
+						output: { sessionId: '7', running: true },
+						job: executorJob('job-exec', 1, { status: 'completed', kind: 'exec_command' })
+					})
+				]
+			},
+			{
+				type: 'tool-group',
+				toolKey: 'write_stdin',
+				tools: [
+					tool('monitor-1', 'write_stdin', {
+						input: { sessionId: '7' },
+						job: executorJob('job-monitor', 2, {
+							status: 'claimed',
+							kind: 'write_stdin',
+							payload: { sessionId: '7' }
+						})
+					})
+				]
+			}
+		];
+
+		const { settledBlocks, runningTools } = partitionWorkSectionTools(blocks, true);
+
+		expect(runningTools.map((item) => item.callId)).toEqual(['exec-1']);
+		expect(settledBlocks).toEqual([]);
+	});
+
+	it('moves finished command sessions out of Running after the final monitor', () => {
+		const blocks: AssistantTimelineWorkBlock[] = [
+			{
+				type: 'tool-group',
+				toolKey: 'exec_command',
+				tools: [
+					tool('exec-1', 'exec_command', {
+						input: { cmd: 'sleep 1' },
+						output: { sessionId: '3', running: true },
+						job: executorJob('job-exec', 1, { status: 'completed', kind: 'exec_command' })
+					})
+				]
+			},
+			{
+				type: 'tool-group',
+				toolKey: 'write_stdin',
+				tools: [
+					tool('monitor-1', 'write_stdin', {
+						input: { sessionId: '3' },
+						output: { running: false },
+						job: executorJob('job-monitor', 2, {
+							status: 'completed',
+							kind: 'write_stdin',
+							payload: { sessionId: '3' }
+						})
+					})
+				]
+			}
+		];
+
+		const { settledBlocks, runningTools } = partitionWorkSectionTools(blocks, true);
+
+		expect(runningTools).toEqual([]);
+		expect(settledBlocks).toEqual([
+			expect.objectContaining({
+				type: 'tool-group',
+				toolKey: 'exec_command',
+				tools: [expect.objectContaining({ callId: 'exec-1' })]
+			}),
+			expect.objectContaining({
+				type: 'tool-group',
+				toolKey: 'write_stdin',
+				tools: [expect.objectContaining({ callId: 'monitor-1' })]
+			})
+		]);
+	});
+
+	it('closes sessions using message-wide open state across text section breaks', () => {
+		const exec = tool('exec-1', 'exec_command', {
+			input: { cmd: 'npm run dev' },
+			output: { sessionId: '7', running: true },
+			job: executorJob('job-exec', 1, { status: 'completed', kind: 'exec_command' })
+		});
+		const monitor = tool('monitor-1', 'write_stdin', {
+			input: { sessionId: '7' },
+			output: { running: false },
+			job: executorJob('job-monitor', 2, {
+				status: 'completed',
+				kind: 'write_stdin',
+				payload: { sessionId: '7' }
+			})
+		});
+		const openSessions = buildOpenExecCommandSessions([exec, monitor]);
+		const earlierSection: AssistantTimelineWorkBlock[] = [
+			{ type: 'tool-group', toolKey: 'exec_command', tools: [exec] }
+		];
+
+		const { settledBlocks, runningTools } = partitionWorkSectionTools(
+			earlierSection,
+			true,
+			openSessions
+		);
+
+		expect(openSessions.size).toBe(0);
+		expect(runningTools).toEqual([]);
+		expect(settledBlocks).toEqual([
+			expect.objectContaining({
+				type: 'tool-group',
+				tools: [expect.objectContaining({ callId: 'exec-1' })]
+			})
+		]);
+	});
+});
+
+describe('command session labels', () => {
+	it('resolves write_stdin labels from the originating exec_command', () => {
+		const tools = [
+			tool('exec-1', 'exec_command', {
+				input: { cmd: 'cargo test' },
+				output: { command: 'cargo test', sessionId: '9' }
+			}),
+			tool('monitor-1', 'write_stdin', { input: { sessionId: '9' } })
+		];
+
+		expect(resolveCommandSessionLabel(tools[1], buildCommandSessionCommandMap(tools))).toBe(
+			'cargo test'
+		);
 	});
 });
 
