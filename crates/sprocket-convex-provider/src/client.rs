@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use anyhow::Context;
@@ -18,11 +19,13 @@ use rig::streaming::{RawStreamingChoice, RawStreamingToolCall, StreamingCompleti
 use rustls::crypto::ring::default_provider;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
-use tokio::time::timeout;
+use tokio::time::{sleep, timeout};
 
 use crate::messages::{build_model_messages, instructions_text, normalize_convex_json_numbers};
 
 const CONVEX_RPC_TIMEOUT: Duration = Duration::from_secs(20 * 60);
+const COMPLETION_TRANSPORT_ATTEMPTS: u32 = 3;
+const COMPLETION_TRANSPORT_RETRY_DELAY: Duration = Duration::from_millis(400);
 
 pub const COMPLETION_STREAM_SUPERSEDED: &str = "SPROCKET_COMPLETION_STREAM_SUPERSEDED";
 
@@ -40,6 +43,8 @@ pub struct Client {
     default_reasoning_effort: Option<Arc<str>>,
     default_service_tier: Option<Arc<str>>,
     stream_run_id: Option<Arc<str>>,
+    claim_id: Option<Arc<str>>,
+    attempt_counter: Arc<AtomicU32>,
 }
 
 impl Client {
@@ -57,6 +62,8 @@ impl Client {
             default_reasoning_effort: None,
             default_service_tier: None,
             stream_run_id: None,
+            claim_id: None,
+            attempt_counter: Arc::new(AtomicU32::new(0)),
         })
     }
 
@@ -130,8 +137,10 @@ impl Client {
         self
     }
 
-    pub fn with_stream_target(mut self, stream_run_id: String) -> Self {
+    pub fn with_completion_scope(mut self, stream_run_id: String, claim_id: String) -> Self {
         self.stream_run_id = Some(stream_run_id.into());
+        self.claim_id = Some(claim_id.into());
+        self.attempt_counter = Arc::new(AtomicU32::new(0));
         self
     }
 }
@@ -259,6 +268,7 @@ struct ConvexActionArgs {
     prompt: Option<String>,
     messages_json: String,
     stream_run_id: Option<String>,
+    claim_id: Option<String>,
     tools: Vec<ToolDefinition>,
     tool_choice: Option<ConvexToolChoice>,
 }
@@ -315,6 +325,7 @@ impl RigCompletionModel for CompletionModel {
             prompt: None,
             messages_json: messages.to_string(),
             stream_run_id: self.client.stream_run_id.as_deref().map(str::to_owned),
+            claim_id: self.client.claim_id.as_deref().map(str::to_owned),
             tools: request.tools.clone(),
             tool_choice: request.tool_choice.as_ref().map(convert_tool_choice),
         };
@@ -464,41 +475,124 @@ async fn call_completion_action(
     client: &Client,
     args: &ConvexActionArgs,
 ) -> Result<Value, CompletionError> {
-    let mut convex = clone_locked(&client.inner).await;
-    eprintln!(
-        "sprocket-convex-provider: action start {}",
-        client.completion_action
-    );
     let stream_run_id = args.stream_run_id.as_ref().ok_or_else(|| {
         CompletionError::ProviderError(
             "streamRunId is required for completion:complete".to_string(),
         )
     })?;
-    let result = convex.action(&client.completion_action, action_args(args, stream_run_id));
-    let result = timeout(CONVEX_RPC_TIMEOUT, result)
-        .await
-        .map_err(|error| {
-            CompletionError::ProviderError(format!(
-                "timed out calling {}: {error}",
-                client.completion_action
-            ))
-        })?
-        .map_err(to_completion_error)?;
-    eprintln!(
-        "sprocket-convex-provider: action done {}",
-        client.completion_action
-    );
+    let claim_id = args.claim_id.as_ref().ok_or_else(|| {
+        CompletionError::ProviderError("claimId is required for completion:complete".to_string())
+    })?;
 
-    match result {
-        FunctionResult::Value(value) => Ok(value),
-        FunctionResult::ErrorMessage(message) => Err(CompletionError::ProviderError(message)),
-        FunctionResult::ConvexError(error) => Err(CompletionError::ProviderError(error.message)),
+    let mut retry_delay = COMPLETION_TRANSPORT_RETRY_DELAY;
+    let mut superseded_stream_ids: Vec<String> = Vec::new();
+    let mut attempt = 0u32;
+    loop {
+        attempt += 1;
+        // Fresh attempt_seq fences orphaned reconnect replays; prior stream
+        // ids let the backend drop their partial output on the next try.
+        let attempt_seq = client.attempt_counter.fetch_add(1, Ordering::Relaxed) + 1;
+        let stream_id = uuid::Uuid::new_v4().to_string();
+        let mut convex = clone_locked(&client.inner).await;
+        eprintln!(
+            "sprocket-convex-provider: action start {} attempt {attempt_seq}",
+            client.completion_action
+        );
+        let result = match timeout(
+            CONVEX_RPC_TIMEOUT,
+            convex.action(
+                &client.completion_action,
+                action_args(
+                    args,
+                    stream_run_id,
+                    claim_id,
+                    attempt_seq,
+                    &stream_id,
+                    &superseded_stream_ids,
+                ),
+            ),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                // Timeouts are retryable: a reconnect can stall the action
+                // future until the RPC deadline instead of returning Err.
+                if attempt >= COMPLETION_TRANSPORT_ATTEMPTS {
+                    return Err(CompletionError::ProviderError(format!(
+                        "timed out calling {}: {error}",
+                        client.completion_action
+                    )));
+                }
+                eprintln!(
+                    "sprocket-convex-provider: timed out calling {}; retrying: {error}",
+                    client.completion_action
+                );
+                superseded_stream_ids.push(stream_id);
+                sleep(retry_delay).await;
+                retry_delay = retry_delay.saturating_mul(2);
+                continue;
+            }
+        };
+
+        match result {
+            Ok(FunctionResult::Value(value)) => {
+                eprintln!(
+                    "sprocket-convex-provider: action done {}",
+                    client.completion_action
+                );
+                return Ok(value);
+            }
+            Ok(FunctionResult::ErrorMessage(message)) => {
+                return Err(CompletionError::ProviderError(message));
+            }
+            Ok(FunctionResult::ConvexError(error)) => {
+                return Err(CompletionError::ProviderError(error.message));
+            }
+            Err(error) => {
+                if attempt >= COMPLETION_TRANSPORT_ATTEMPTS {
+                    return Err(to_completion_error(error));
+                }
+                eprintln!(
+                    "sprocket-convex-provider: transport failure calling {}; retrying: {error:#}",
+                    client.completion_action
+                );
+                superseded_stream_ids.push(stream_id);
+                sleep(retry_delay).await;
+                retry_delay = retry_delay.saturating_mul(2);
+            }
+        }
     }
 }
 
-fn action_args(args: &ConvexActionArgs, stream_run_id: &str) -> BTreeMap<String, Value> {
+fn action_args(
+    args: &ConvexActionArgs,
+    stream_run_id: &str,
+    claim_id: &str,
+    attempt_seq: u32,
+    stream_id: &str,
+    superseded_stream_ids: &[String],
+) -> BTreeMap<String, Value> {
     let mut payload = BTreeMap::new();
     payload.insert("modelId".to_string(), args.model_id.clone().into());
+    payload.insert("claimId".to_string(), claim_id.to_string().into());
+    payload.insert(
+        "attemptSeq".to_string(),
+        Value::Float64(f64::from(attempt_seq)),
+    );
+    payload.insert("streamId".to_string(), stream_id.to_string().into());
+    if !superseded_stream_ids.is_empty() {
+        payload.insert(
+            "supersededStreamIds".to_string(),
+            Value::Array(
+                superseded_stream_ids
+                    .iter()
+                    .cloned()
+                    .map(Value::from)
+                    .collect(),
+            ),
+        );
+    }
     if let Some(prompt) = &args.prompt {
         payload.insert("prompt".to_string(), prompt.clone().into());
     }

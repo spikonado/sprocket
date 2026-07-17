@@ -6,6 +6,11 @@ type ClaimableRun = {
 	claimExpiresAt?: number;
 };
 
+type CompletionAttemptRun = {
+	claimId?: string;
+	completionAttemptSeq?: number;
+};
+
 export function isClaimedRunStatus(status: string): boolean {
 	return status === 'running' || status === 'awaiting_executor';
 }
@@ -28,4 +33,22 @@ export function canFinalizeAfterClaimFailure(run: ClaimableRun, claimId: string)
 
 export function claimExpiresAt(now: number): number {
 	return now + RUN_CLAIM_LEASE_DURATION_MS;
+}
+
+// Registering a completion attempt requires a strictly newer sequence than the
+// current one; ownership checks afterwards require exactly the current one.
+export function canRegisterCompletionAttempt(
+	run: CompletionAttemptRun,
+	claimId: string,
+	attemptSeq: number
+): boolean {
+	return run.claimId === claimId && attemptSeq > (run.completionAttemptSeq ?? 0);
+}
+
+export function isCurrentCompletionAttempt(
+	run: CompletionAttemptRun,
+	claimId: string,
+	attemptSeq: number
+): boolean {
+	return run.claimId === claimId && (run.completionAttemptSeq ?? 0) === attemptSeq;
 }

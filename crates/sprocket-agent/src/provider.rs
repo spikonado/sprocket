@@ -78,6 +78,7 @@ impl AgentProvider {
         runtime: &RuntimeClient,
         context: &RunContextResponse,
         run_id: &str,
+        claim_id: &str,
     ) -> Self {
         Self {
             kind: ProviderKind::DEFAULT,
@@ -86,7 +87,7 @@ impl AgentProvider {
                 .clone()
                 .with_reasoning_effort(context.run.reasoning_effort.clone())
                 .with_service_tier(context.run.service_tier.clone())
-                .with_stream_target(run_id.to_string()),
+                .with_completion_scope(run_id.to_string(), claim_id.to_string()),
             model: context.run.selected_model.clone(),
         }
     }

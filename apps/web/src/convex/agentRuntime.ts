@@ -23,10 +23,12 @@ import {
 import { assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
 import { assertThreadCanStartRun, cancelExecutorJobsForTerminalRun } from '@convex/lib/runs';
 import {
+	canRegisterCompletionAttempt,
 	canFinalizeAfterClaimFailure,
 	canStartRunWithClaim,
 	claimExpiresAt,
 	isClaimedRunStatus,
+	isCurrentCompletionAttempt,
 	isRunClaimLeaseActive
 } from '@convex/lib/runLease';
 import {
@@ -35,6 +37,7 @@ import {
 	type AssistantPart
 } from '@convex/lib/assistantParts';
 import {
+	COMPLETION_STREAM_SUPERSEDED,
 	classifyCompletionStreamBatch,
 	type CompletionStreamBatchClassification,
 	vCompletionStreamEvent
@@ -273,13 +276,33 @@ export const start = mutation({
 
 		const isTakeover = isClaimedRunStatus(run.status) && run.claimId !== args.claimId;
 		const isSameClaimRenewal = isClaimedRunStatus(run.status) && run.claimId === args.claimId;
-		if (isTakeover && run.activeJobId) {
-			const activeJob = await ctx.db.get(run.activeJobId);
-			if (activeJob && (activeJob.status === 'pending' || activeJob.status === 'claimed')) {
-				await ctx.db.patch(activeJob._id, {
+		// Takeover restarts from the prompt. Cancel/hide only in-flight jobs so
+		// completed side effects stay visible; clear the previous claim's
+		// partial response so it does not duplicate into the new stream.
+		if (isTakeover) {
+			const staleJobs = await ctx.db
+				.query('executorJobs')
+				.withIndex('by_runId_sequence', (query) => query.eq('runId', args.runId))
+				.collect();
+			for (const job of staleJobs) {
+				const isFinal =
+					job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled';
+				if (isFinal) {
+					continue;
+				}
+				await ctx.db.patch(job._id, {
+					hidden: true,
 					status: 'cancelled',
 					error: 'The agent worker claim expired.',
 					completedAt: now
+				});
+			}
+			if (run.responseMessageId) {
+				await ctx.db.patch(run.responseMessageId, {
+					text: '',
+					parts: [],
+					streamSequence: 0,
+					streamAttemptId: undefined
 				});
 			}
 		}
@@ -291,6 +314,7 @@ export const start = mutation({
 			claimExpiresAt: nextClaimExpiresAt,
 			status: isSameClaimRenewal ? run.status : 'running',
 			lastError: undefined,
+			...(isSameClaimRenewal ? {} : { completionAttemptSeq: 0 }),
 			...(isTakeover ? { activeJobId: undefined } : {})
 		});
 
@@ -401,6 +425,8 @@ export const completionActor = query({
 	): Promise<{
 		userId: string;
 		status: Infer<typeof vRunStatus>;
+		claimId?: string;
+		completionAttemptSeq: number;
 		streamSequence: number;
 		streamAttemptId?: string;
 	}> => {
@@ -412,9 +438,45 @@ export const completionActor = query({
 		return {
 			userId,
 			status: run.status,
+			...(run.claimId ? { claimId: run.claimId } : {}),
+			completionAttemptSeq: run.completionAttemptSeq ?? 0,
 			streamSequence: message?.streamSequence ?? 0,
 			...(message?.streamAttemptId ? { streamAttemptId: message.streamAttemptId } : {})
 		};
+	}
+});
+
+export const registerCompletionAttempt = mutation({
+	args: {
+		runId: v.id('runs'),
+		claimId: v.string(),
+		attemptSeq: v.number(),
+		supersededStreamIds: v.optional(v.array(v.string()))
+	},
+	handler: async (ctx, args): Promise<void> => {
+		const userId: string = await getUserId(ctx);
+		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
+		assertRunAcceptsModelCompletion(run.status);
+		if (!canRegisterCompletionAttempt(run, args.claimId, args.attemptSeq)) {
+			throw new Error(COMPLETION_STREAM_SUPERSEDED);
+		}
+		await ctx.db.patch(args.runId, { completionAttemptSeq: args.attemptSeq });
+		// Completion turns stamp parts with turnId = streamId, so a retry can
+		// drop the partial parts its prior attempts persisted.
+		const supersededStreamIds = args.supersededStreamIds ?? [];
+		if (supersededStreamIds.length > 0 && run.responseMessageId) {
+			const superseded = new Set(supersededStreamIds);
+			const message = await getThreadMessage(ctx, run.responseMessageId);
+			const parts = ((message.parts ?? []) as AssistantPart[]).filter(
+				(part) => !('turnId' in part && part.turnId && superseded.has(part.turnId))
+			);
+			if (parts.length !== (message.parts?.length ?? 0)) {
+				await ctx.db.patch(run.responseMessageId, {
+					text: joinAssistantTextParts(parts),
+					parts
+				});
+			}
+		}
 	}
 });
 
@@ -451,6 +513,8 @@ export const beginAssistantMessage = mutation({
 export const mergeAssistantStreamEvents = mutation({
 	args: {
 		runId: v.id('runs'),
+		claimId: v.string(),
+		attemptSeq: v.number(),
 		streamId: v.string(),
 		sequence: v.number(),
 		events: v.array(vCompletionStreamEvent)
@@ -462,6 +526,11 @@ export const mergeAssistantStreamEvents = mutation({
 		const userId: string = await getUserId(ctx);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		assertRunAcceptsModelCompletion(run.status);
+		// Fence every write: periodic acceptance checks alone leave a window
+		// where a superseded attempt could still append after a newer one registers.
+		if (!isCurrentCompletionAttempt(run, args.claimId, args.attemptSeq)) {
+			return 'superseded';
+		}
 		if (!run.responseMessageId || args.events.length === 0) {
 			return 'merged';
 		}
