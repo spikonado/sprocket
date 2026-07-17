@@ -5,6 +5,7 @@ import {
 	assistantTimelineToolKey,
 	buildAssistantTimeline,
 	buildCommandSessionCommandMap,
+	buildOpenExecCommandSessions,
 	groupAssistantTimeline,
 	groupAssistantTimelineSections,
 	isAssistantTimelineToolRunning,
@@ -476,6 +477,42 @@ describe('partitionWorkSectionTools', () => {
 				type: 'tool-group',
 				toolKey: 'write_stdin',
 				tools: [expect.objectContaining({ callId: 'monitor-1' })]
+			})
+		]);
+	});
+
+	it('closes sessions using message-wide open state across text section breaks', () => {
+		const exec = tool('exec-1', 'exec_command', {
+			input: { cmd: 'npm run dev' },
+			output: { sessionId: '7', running: true },
+			job: executorJob('job-exec', 1, { status: 'completed', kind: 'exec_command' })
+		});
+		const monitor = tool('monitor-1', 'write_stdin', {
+			input: { sessionId: '7' },
+			output: { running: false },
+			job: executorJob('job-monitor', 2, {
+				status: 'completed',
+				kind: 'write_stdin',
+				payload: { sessionId: '7' }
+			})
+		});
+		const openSessions = buildOpenExecCommandSessions([exec, monitor]);
+		const earlierSection: AssistantTimelineWorkBlock[] = [
+			{ type: 'tool-group', toolKey: 'exec_command', tools: [exec] }
+		];
+
+		const { settledBlocks, runningTools } = partitionWorkSectionTools(
+			earlierSection,
+			true,
+			openSessions
+		);
+
+		expect(openSessions.size).toBe(0);
+		expect(runningTools).toEqual([]);
+		expect(settledBlocks).toEqual([
+			expect.objectContaining({
+				type: 'tool-group',
+				tools: [expect.objectContaining({ callId: 'exec-1' })]
 			})
 		]);
 	});

@@ -7,6 +7,7 @@
 		assistantTimelineToolFailureKind,
 		buildAssistantTimeline,
 		buildCommandSessionCommandMap,
+		buildOpenExecCommandSessions,
 		groupAssistantTimeline,
 		groupAssistantTimelineSections,
 		isAssistantTimelineToolRunning,
@@ -395,9 +396,11 @@
 						{:else}
 							{@const messageActions = actions.filter((job) => job.runId === message.runId)}
 							{@const timeline = buildAssistantTimeline(message.parts ?? [], messageActions)}
-							{@const sessionCommands = buildCommandSessionCommandMap(
-								timeline.filter((item): item is AssistantTimelineTool => item.type === 'tool')
+							{@const timelineTools = timeline.filter(
+								(item): item is AssistantTimelineTool => item.type === 'tool'
 							)}
+							{@const sessionCommands = buildCommandSessionCommandMap(timelineTools)}
+							{@const openSessions = buildOpenExecCommandSessions(timelineTools)}
 							{@const blocks = groupAssistantTimeline(timeline)}
 							{@const sections = groupAssistantTimelineSections(blocks)}
 							{@const { workIndexBySectionIndex, priorCompletedAtByWorkIndex } =
@@ -426,7 +429,8 @@
 										{:else}
 											{@const { settledBlocks, runningTools } = partitionWorkSectionTools(
 												section.blocks,
-												isStreaming
+												isStreaming,
+												openSessions
 											)}
 											{@const workInProgress =
 												isStreaming &&

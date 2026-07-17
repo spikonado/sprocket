@@ -56,6 +56,7 @@
 		onCancel
 	}: Props = $props();
 
+	let composerTextarea = $state<HTMLTextAreaElement | null>(null);
 	let attachmentInput = $state<HTMLInputElement | null>(null);
 	let attachTooltip = $state<{ top: number; left: number } | null>(null);
 
@@ -67,6 +68,10 @@
 		attachments.length < MAX_IMAGE_ATTACHMENTS && !isRunning && !isSubmitting
 	);
 	const attachTooltipLabel = `Attach images (up to ${MAX_IMAGE_ATTACHMENTS})`;
+	const supportsFieldSizing = typeof CSS !== 'undefined' && CSS.supports('field-sizing', 'content');
+
+	const COMPOSER_MIN_HEIGHT_PX = 68;
+	const COMPOSER_MAX_HEIGHT_PX = 160;
 
 	function handleAttachmentInputChange(event: Event) {
 		const input = event.currentTarget as HTMLInputElement;
@@ -104,6 +109,21 @@
 		attachTooltip = null;
 	}
 
+	/** Fallback only when field-sizing is unavailable; CSS handles modern browsers. */
+	function syncComposerHeight() {
+		if (!composerTextarea || supportsFieldSizing) {
+			return;
+		}
+		const el = composerTextarea;
+		el.style.height = `${COMPOSER_MIN_HEIGHT_PX}px`;
+		const nextHeight = Math.min(
+			Math.max(el.scrollHeight, COMPOSER_MIN_HEIGHT_PX),
+			COMPOSER_MAX_HEIGHT_PX
+		);
+		el.style.height = `${nextHeight}px`;
+		el.style.overflowY = el.scrollHeight > nextHeight ? 'auto' : 'hidden';
+	}
+
 	function handleComposerKeydown(event: KeyboardEvent) {
 		if (!canSend || isSubmitting || isRunning || !hasMessageContent || attachmentsPending) {
 			return;
@@ -120,6 +140,11 @@
 	function handleModelChange(modelId: SupportedModelId) {
 		selectedReasoningEffort = getModelDefinition(modelId).defaultReasoningEffort;
 	}
+
+	$effect(() => {
+		void prompt;
+		syncComposerHeight();
+	});
 
 	const composerShellClass =
 		'mx-auto w-full max-w-[48rem] rounded-[28px] bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))] p-px transition-colors duration-200';
@@ -204,13 +229,15 @@
 					{/if}
 					<div class="min-h-0 flex-1">
 						<textarea
+							bind:this={composerTextarea}
 							bind:value={prompt}
 							rows="1"
 							class="field-sizing-content max-h-40 min-h-17 w-full resize-none overflow-y-auto border-0 bg-transparent px-0 py-0 text-[14px] leading-6 text-slate-100 outline-none placeholder:text-slate-500"
 							placeholder="Ask anything, @tag files/directories, or use / to show available commands"
 							disabled={isRunning || isSubmitting}
 							onkeydown={handleComposerKeydown}
-							onpaste={handleComposerPaste}></textarea>
+							onpaste={handleComposerPaste}
+							oninput={syncComposerHeight}></textarea>
 					</div>
 
 					<div

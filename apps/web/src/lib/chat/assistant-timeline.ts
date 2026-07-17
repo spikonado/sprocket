@@ -277,8 +277,9 @@ export function resolveCommandSessionLabel(
 /**
  * Sessions still running that also have an exec_command row.
  * Later tool outputs win on the running flag (write_stdin completion clears the session).
+ * Pass the full message tool list so monitors after text section breaks still close sessions.
  */
-function openExecCommandSessions(tools: readonly AssistantTimelineTool[]): Set<string> {
+export function buildOpenExecCommandSessions(tools: readonly AssistantTimelineTool[]): Set<string> {
 	const sessionRunning = new Map<string, boolean>();
 	const execSessions = new Set<string>();
 
@@ -307,18 +308,19 @@ function collectWorkSectionTools(blocks: AssistantTimelineWorkBlock[]): Assistan
  * currently running tools pulled out for a separate Running dropdown.
  *
  * Open command sessions stay in Running across write_stdin monitor polls until a later
- * monitor reports running:false.
+ * monitor reports running:false. Prefer message-wide `openSessions` so text-separated
+ * sections share the same session lifecycle.
  */
 export function partitionWorkSectionTools(
 	blocks: AssistantTimelineWorkBlock[],
-	isStreaming: boolean
+	isStreaming: boolean,
+	openSessions: ReadonlySet<string> = buildOpenExecCommandSessions(collectWorkSectionTools(blocks))
 ): {
 	settledBlocks: AssistantTimelineWorkBlock[];
 	runningTools: AssistantTimelineTool[];
 } {
 	const settledBlocks: AssistantTimelineWorkBlock[] = [];
 	const runningTools: AssistantTimelineTool[] = [];
-	const openSessions = openExecCommandSessions(collectWorkSectionTools(blocks));
 
 	for (const block of blocks) {
 		if (block.type === 'reasoning') {
