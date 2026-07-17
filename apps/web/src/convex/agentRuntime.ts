@@ -275,13 +275,35 @@ export const start = mutation({
 
 		const isTakeover = isClaimedRunStatus(run.status) && run.claimId !== args.claimId;
 		const isSameClaimRenewal = isClaimedRunStatus(run.status) && run.claimId === args.claimId;
-		if (isTakeover && run.activeJobId) {
-			const activeJob = await ctx.db.get(run.activeJobId);
-			if (activeJob && (activeJob.status === 'pending' || activeJob.status === 'claimed')) {
-				await ctx.db.patch(activeJob._id, {
-					status: 'cancelled',
-					error: 'The agent worker claim expired.',
-					completedAt: now
+		// A takeover restarts the run from its prompt, so the previous claim's
+		// partial work must not resurface: cancel and hide its executor jobs
+		// (hidden jobs are excluded from finalization and agent history) and
+		// clear its partial response so the new stream does not duplicate it.
+		if (isTakeover) {
+			const staleJobs = await ctx.db
+				.query('executorJobs')
+				.withIndex('by_runId_sequence', (query) => query.eq('runId', args.runId))
+				.collect();
+			for (const job of staleJobs) {
+				const isFinal =
+					job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled';
+				await ctx.db.patch(job._id, {
+					hidden: true,
+					...(isFinal
+						? {}
+						: {
+								status: 'cancelled' as const,
+								error: 'The agent worker claim expired.',
+								completedAt: now
+							})
+				});
+			}
+			if (run.responseMessageId) {
+				await ctx.db.patch(run.responseMessageId, {
+					text: '',
+					parts: [],
+					streamSequence: 0,
+					streamAttemptId: undefined
 				});
 			}
 		}
