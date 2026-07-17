@@ -56,8 +56,8 @@
 		onCancel
 	}: Props = $props();
 
-	let composerTextarea = $state<HTMLTextAreaElement | null>(null);
 	let attachmentInput = $state<HTMLInputElement | null>(null);
+	let attachTooltip = $state<{ top: number; left: number } | null>(null);
 
 	const hasMessageContent = $derived(Boolean(prompt.trim()) || attachments.length > 0);
 	const attachmentsPending = $derived(
@@ -66,6 +66,7 @@
 	const canAttachMore = $derived(
 		attachments.length < MAX_IMAGE_ATTACHMENTS && !isRunning && !isSubmitting
 	);
+	const attachTooltipLabel = `Attach images (up to ${MAX_IMAGE_ATTACHMENTS})`;
 
 	function handleAttachmentInputChange(event: Event) {
 		const input = event.currentTarget as HTMLInputElement;
@@ -87,25 +88,22 @@
 		onAttachFiles(files);
 	}
 
-	const COMPOSER_MIN_HEIGHT_PX = 68;
-	const COMPOSER_MAX_HEIGHT_PX = 160;
-
-	function syncComposerHeight() {
-		if (!composerTextarea) {
+	function showAttachTooltip(event: MouseEvent | FocusEvent) {
+		const target = event.currentTarget;
+		if (!(target instanceof HTMLButtonElement) || target.disabled) {
 			return;
 		}
-
-		const el = composerTextarea;
-		// Use auto (not 0px) and apply the result in the same turn so the transcript
-		// flex pane does not visibly collapse/expand on each keystroke.
-		el.style.height = 'auto';
-		const nextHeight = Math.min(
-			Math.max(el.scrollHeight, COMPOSER_MIN_HEIGHT_PX),
-			COMPOSER_MAX_HEIGHT_PX
-		);
-		el.style.height = `${nextHeight}px`;
-		el.style.overflowY = el.scrollHeight > nextHeight ? 'auto' : 'hidden';
+		const rect = target.getBoundingClientRect();
+		attachTooltip = {
+			top: rect.top - 8,
+			left: rect.left + rect.width / 2
+		};
 	}
+
+	function hideAttachTooltip() {
+		attachTooltip = null;
+	}
+
 	function handleComposerKeydown(event: KeyboardEvent) {
 		if (!canSend || isSubmitting || isRunning || !hasMessageContent || attachmentsPending) {
 			return;
@@ -122,14 +120,6 @@
 	function handleModelChange(modelId: SupportedModelId) {
 		selectedReasoningEffort = getModelDefinition(modelId).defaultReasoningEffort;
 	}
-
-	$effect(() => {
-		void prompt;
-		if (!composerTextarea) {
-			return;
-		}
-		syncComposerHeight();
-	});
 
 	const composerShellClass =
 		'mx-auto w-full max-w-[48rem] rounded-[28px] bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))] p-px transition-colors duration-200';
@@ -214,15 +204,13 @@
 					{/if}
 					<div class="min-h-0 flex-1">
 						<textarea
-							bind:this={composerTextarea}
 							bind:value={prompt}
 							rows="1"
-							class="min-h-0 w-full resize-none border-0 bg-transparent px-0 py-0 text-[14px] leading-6 text-slate-100 outline-none placeholder:text-slate-500"
+							class="field-sizing-content max-h-40 min-h-17 w-full resize-none overflow-y-auto border-0 bg-transparent px-0 py-0 text-[14px] leading-6 text-slate-100 outline-none placeholder:text-slate-500"
 							placeholder="Ask anything, @tag files/directories, or use / to show available commands"
 							disabled={isRunning || isSubmitting}
 							onkeydown={handleComposerKeydown}
-							onpaste={handleComposerPaste}
-							oninput={syncComposerHeight}></textarea>
+							onpaste={handleComposerPaste}></textarea>
 					</div>
 
 					<div
@@ -240,10 +228,16 @@
 							<button
 								type="button"
 								class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-400 transition enabled:cursor-pointer enabled:hover:text-slate-200 disabled:opacity-40"
-								aria-label="Attach images"
-								title="Attach images (up to {MAX_IMAGE_ATTACHMENTS})"
+								aria-label={attachTooltipLabel}
 								disabled={!canAttachMore}
-								onclick={() => attachmentInput?.click()}
+								onmouseenter={showAttachTooltip}
+								onmouseleave={hideAttachTooltip}
+								onfocus={showAttachTooltip}
+								onblur={hideAttachTooltip}
+								onclick={() => {
+									hideAttachTooltip();
+									attachmentInput?.click();
+								}}
 							>
 								<ImagePlus class="size-4" aria-hidden="true" />
 							</button>
@@ -327,3 +321,13 @@
 		</div>
 	</div>
 </footer>
+
+{#if attachTooltip}
+	<div
+		class="pointer-events-none fixed z-100 -translate-x-1/2 -translate-y-full rounded-md bg-[#1a1d27] px-2.5 py-1.5 text-[12px] leading-4 whitespace-nowrap text-slate-100 shadow-lg ring-1 ring-white/10"
+		style={`top: ${attachTooltip.top}px; left: ${attachTooltip.left}px;`}
+		role="tooltip"
+	>
+		{attachTooltipLabel}
+	</div>
+{/if}

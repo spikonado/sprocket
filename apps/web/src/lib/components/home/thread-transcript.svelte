@@ -6,10 +6,12 @@
 		assistantTimelineToolError,
 		assistantTimelineToolFailureKind,
 		buildAssistantTimeline,
+		buildCommandSessionCommandMap,
 		groupAssistantTimeline,
 		groupAssistantTimelineSections,
 		isAssistantTimelineToolRunning,
 		partitionWorkSectionTools,
+		resolveCommandSessionLabel,
 		workSectionTimingAnchor,
 		workSectionTimingIndexes,
 		type AssistantTimelineTool
@@ -185,7 +187,17 @@
 		return '';
 	}
 
-	function toolItemSummary(toolLog: AssistantTimelineTool) {
+	function toolItemSummary(
+		toolLog: AssistantTimelineTool,
+		sessionCommands: ReadonlyMap<string, string>
+	) {
+		const kind = toolLog.job?.kind ?? toolLog.name;
+		if (kind === 'write_stdin') {
+			return (
+				resolveCommandSessionLabel(toolLog, sessionCommands) ??
+				summarizeTool('write_stdin', toolLog.job?.payload ?? toolLog.input)
+			);
+		}
 		if (toolLog.job) {
 			if (toolLog.job.kind === 'apply_patch') {
 				const patchSummary = summarizePatchResult(toolLog.job.result);
@@ -201,8 +213,12 @@
 		return summarizeTool(toolLog.name, toolLog.input);
 	}
 
-	function fullToolSummary(toolLog: AssistantTimelineTool, isStreaming: boolean) {
-		const summary = toolItemSummary(toolLog);
+	function fullToolSummary(
+		toolLog: AssistantTimelineTool,
+		isStreaming: boolean,
+		sessionCommands: ReadonlyMap<string, string>
+	) {
+		const summary = toolItemSummary(toolLog, sessionCommands);
 		if (isAssistantTimelineToolRunning(toolLog, isStreaming)) {
 			return `${summary} (running)`;
 		}
@@ -379,6 +395,9 @@
 						{:else}
 							{@const messageActions = actions.filter((job) => job.runId === message.runId)}
 							{@const timeline = buildAssistantTimeline(message.parts ?? [], messageActions)}
+							{@const sessionCommands = buildCommandSessionCommandMap(
+								timeline.filter((item): item is AssistantTimelineTool => item.type === 'tool')
+							)}
 							{@const blocks = groupAssistantTimeline(timeline)}
 							{@const sections = groupAssistantTimelineSections(blocks)}
 							{@const { workIndexBySectionIndex, priorCompletedAtByWorkIndex } =
@@ -444,12 +463,12 @@
 																{#snippet toolRow(tool)}
 																	{@const toolError = assistantTimelineToolError(tool)}
 																	{@const toolFailureKind = assistantTimelineToolFailureKind(tool)}
-																	{@const toolSummary = toolItemSummary(tool)}
+																	{@const toolSummary = toolItemSummary(tool, sessionCommands)}
 																	{#if toolError && toolFailureKind}
 																		<details class="min-w-0">
 																			<summary
 																				class="min-w-0 cursor-pointer text-left"
-																				title={fullToolSummary(tool, isStreaming)}
+																				title={fullToolSummary(tool, isStreaming, sessionCommands)}
 																			>
 																				<span class="truncate">{toolSummary}</span>
 																				<span
@@ -473,7 +492,7 @@
 																	{:else}
 																		<p
 																			class="min-w-0 truncate"
-																			title={fullToolSummary(tool, isStreaming)}
+																			title={fullToolSummary(tool, isStreaming, sessionCommands)}
 																		>
 																			{toolSummary}
 																		</p>
@@ -491,8 +510,11 @@
 													defaultExpanded={true}
 												>
 													{#snippet toolRow(tool)}
-														{@const toolSummary = toolItemSummary(tool)}
-														<p class="min-w-0 truncate" title={fullToolSummary(tool, isStreaming)}>
+														{@const toolSummary = toolItemSummary(tool, sessionCommands)}
+														<p
+															class="min-w-0 truncate"
+															title={fullToolSummary(tool, isStreaming, sessionCommands)}
+														>
 															{toolSummary}
 														</p>
 													{/snippet}
