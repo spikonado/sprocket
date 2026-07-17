@@ -58,27 +58,27 @@ impl AgentToolContext {
 }
 
 #[derive(Clone)]
+pub(crate) struct ApplyPatchTool(AgentToolContext);
+
+#[derive(Clone)]
 pub(crate) struct ExecCommandTool(AgentToolContext);
 
 #[derive(Clone)]
-pub(crate) struct WriteStdinTool(AgentToolContext);
-
-#[derive(Clone)]
-pub(crate) struct ApplyPatchTool(AgentToolContext);
+pub(crate) struct ScrapeUrlTool(AgentToolContext);
 
 #[derive(Clone)]
 pub(crate) struct WebSearchTool(AgentToolContext);
 
 #[derive(Clone)]
-pub(crate) struct ScrapeUrlTool(AgentToolContext);
+pub(crate) struct WriteStdinTool(AgentToolContext);
 
 pub(crate) struct AgentToolSet {
-    pub(crate) exec_command: ExecCommandTool,
-    pub(crate) write_stdin: WriteStdinTool,
     pub(crate) apply_patch: ApplyPatchTool,
-    pub(crate) web_search: WebSearchTool,
-    pub(crate) scrape_url: ScrapeUrlTool,
     pub(crate) command_sessions: CommandSessionManager,
+    pub(crate) exec_command: ExecCommandTool,
+    pub(crate) scrape_url: ScrapeUrlTool,
+    pub(crate) web_search: WebSearchTool,
+    pub(crate) write_stdin: WriteStdinTool,
 }
 
 pub(crate) fn agent_tools(
@@ -98,12 +98,12 @@ pub(crate) fn agent_tools(
         command_sessions.clone(),
     );
     AgentToolSet {
-        exec_command: ExecCommandTool(context.clone()),
-        write_stdin: WriteStdinTool(context.clone()),
         apply_patch: ApplyPatchTool(context.clone()),
-        web_search: WebSearchTool(context.clone()),
-        scrape_url: ScrapeUrlTool(context),
         command_sessions,
+        exec_command: ExecCommandTool(context.clone()),
+        scrape_url: ScrapeUrlTool(context.clone()),
+        web_search: WebSearchTool(context.clone()),
+        write_stdin: WriteStdinTool(context),
     }
 }
 

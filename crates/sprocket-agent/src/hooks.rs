@@ -5,11 +5,11 @@ use rig::agent::{AgentHook, Flow, InvalidToolCallContext, StepEvent, StepEventKi
 use rig::completion::CompletionModel;
 
 pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
-    "exec_command",
-    "write_stdin",
     "apply_patch",
-    "web_search",
+    "exec_command",
     "scrape_url",
+    "web_search",
+    "write_stdin",
 ];
 
 #[derive(Clone, Debug)]

@@ -1,28 +1,28 @@
 'use node';
 
 import { v, type Infer } from 'convex/values';
-import { ExaClient } from '@exalabs/convex-exa';
 import { ContextDev } from '@context-dot-dev/convex';
+import { ExaClient } from '@exalabs/convex-exa';
 import { action } from '@convex/_generated/server';
 import { components } from '@convex/_generated/api';
 import { getUserId } from '@convex/lib/auth';
 import { enforceWebToolLimit } from '@convex/lib/rateLimits';
 import { vScrapeUrlResult, vWebSearchResult } from '@convex/lib/validators';
 
-const exa = new ExaClient(components.exa);
 const contextDev = new ContextDev(components.contextDev);
+const exa = new ExaClient(components.exa);
 
 const DEFAULT_SEARCH_RESULTS = 5;
 const MAX_SEARCH_RESULTS = 10;
-const SEARCH_RESULT_TEXT_MAX_CHARS = 2_000;
-const SEARCH_TIMEOUT_MS = 30_000;
+const RETRY_DELAY_MS = 1_000;
 // Bounds the persisted executor-job result; Convex documents are capped at 1 MiB.
 const SCRAPE_MARKDOWN_MAX_CHARS = 40_000;
 const SCRAPE_TIMEOUT_MS = 60_000;
-const RETRY_DELAY_MS = 1_000;
+const SEARCH_RESULT_TEXT_MAX_CHARS = 2_000;
+const SEARCH_TIMEOUT_MS = 30_000;
 
-type WebSearchResult = Infer<typeof vWebSearchResult>;
 type ScrapeUrlResult = Infer<typeof vScrapeUrlResult>;
+type WebSearchResult = Infer<typeof vWebSearchResult>;
 
 class WebToolTimeout extends Error {}
 
@@ -62,6 +62,44 @@ async function callComponent<T>(
 		return await withTimeout(label, timeoutMs, run());
 	}
 }
+
+export const scrapeUrl = action({
+	args: {
+		url: v.string()
+	},
+	handler: async (ctx, args): Promise<ScrapeUrlResult> => {
+		const userId: string = await getUserId(ctx);
+		await enforceWebToolLimit(ctx, userId);
+		let url: URL;
+		try {
+			url = new URL(args.url.trim());
+		} catch {
+			throw new Error(`Invalid URL: ${args.url}`);
+		}
+		if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+			throw new Error('Only http(s) URLs can be scraped.');
+		}
+
+		const response = await callComponent('Context.dev scrape', SCRAPE_TIMEOUT_MS, () =>
+			contextDev.scrapeMarkdown(ctx, {
+				params: {
+					url: url.toString(),
+					useMainContentOnly: true,
+					timeoutMS: SCRAPE_TIMEOUT_MS
+				}
+			})
+		);
+
+		const truncated = response.markdown.length > SCRAPE_MARKDOWN_MAX_CHARS;
+		return {
+			url: response.url,
+			markdown: truncated
+				? response.markdown.slice(0, SCRAPE_MARKDOWN_MAX_CHARS)
+				: response.markdown,
+			truncated
+		};
+	}
+});
 
 export const webSearch = action({
 	args: {
@@ -104,44 +142,6 @@ export const webSearch = action({
 					}
 				];
 			})
-		};
-	}
-});
-
-export const scrapeUrl = action({
-	args: {
-		url: v.string()
-	},
-	handler: async (ctx, args): Promise<ScrapeUrlResult> => {
-		const userId: string = await getUserId(ctx);
-		await enforceWebToolLimit(ctx, userId);
-		let url: URL;
-		try {
-			url = new URL(args.url.trim());
-		} catch {
-			throw new Error(`Invalid URL: ${args.url}`);
-		}
-		if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-			throw new Error('Only http(s) URLs can be scraped.');
-		}
-
-		const response = await callComponent('Context.dev scrape', SCRAPE_TIMEOUT_MS, () =>
-			contextDev.scrapeMarkdown(ctx, {
-				params: {
-					url: url.toString(),
-					useMainContentOnly: true,
-					timeoutMS: SCRAPE_TIMEOUT_MS
-				}
-			})
-		);
-
-		const truncated = response.markdown.length > SCRAPE_MARKDOWN_MAX_CHARS;
-		return {
-			url: response.url,
-			markdown: truncated
-				? response.markdown.slice(0, SCRAPE_MARKDOWN_MAX_CHARS)
-				: response.markdown,
-			truncated
 		};
 	}
 });

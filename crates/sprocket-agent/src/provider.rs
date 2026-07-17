@@ -127,11 +127,11 @@ where
     let agent = completion_client
         .agent(model)
         .preamble(&request.preamble)
-        .tool(tools.exec_command)
-        .tool(tools.write_stdin)
         .tool(tools.apply_patch)
-        .tool(tools.web_search)
+        .tool(tools.exec_command)
         .tool(tools.scrape_url)
+        .tool(tools.web_search)
+        .tool(tools.write_stdin)
         .build();
 
     eprintln!("sprocket-agent: built agent {}", request.run_id);

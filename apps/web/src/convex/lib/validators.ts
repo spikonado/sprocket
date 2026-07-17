@@ -20,6 +20,10 @@ export const vWorkspaceInstruction = v.object({
 	truncated: v.boolean()
 });
 
+export const vApplyPatchPayload = v.object({
+	patch: v.string()
+});
+
 export const vExecCommandPayload = v.object({
 	cmd: v.string(),
 	workdir: v.optional(v.string()),
@@ -29,15 +33,8 @@ export const vExecCommandPayload = v.object({
 	maxOutputChars: v.optional(v.number())
 });
 
-export const vWriteStdinPayload = v.object({
-	sessionId: v.string(),
-	chars: v.optional(v.string()),
-	terminate: v.optional(v.boolean()),
-	yieldTimeMs: v.optional(v.number())
-});
-
-export const vApplyPatchPayload = v.object({
-	patch: v.string()
+export const vScrapeUrlPayload = v.object({
+	url: v.string()
 });
 
 export const vWebSearchPayload = v.object({
@@ -45,33 +42,21 @@ export const vWebSearchPayload = v.object({
 	numResults: v.optional(v.number())
 });
 
-export const vScrapeUrlPayload = v.object({
-	url: v.string()
+export const vWriteStdinPayload = v.object({
+	sessionId: v.string(),
+	chars: v.optional(v.string()),
+	terminate: v.optional(v.boolean()),
+	yieldTimeMs: v.optional(v.number())
 });
 
 export const vExecutorJobPayload = v.union(
 	v.object({}),
-	vExecCommandPayload,
-	vWriteStdinPayload,
 	vApplyPatchPayload,
+	vExecCommandPayload,
+	vScrapeUrlPayload,
 	vWebSearchPayload,
-	vScrapeUrlPayload
+	vWriteStdinPayload
 );
-
-export const vCommandExecResult = v.object({
-	command: v.string(),
-	cwd: v.string(),
-	sessionId: v.optional(v.string()),
-	exitCode: v.optional(v.number()),
-	success: v.boolean(),
-	running: v.boolean(),
-	timedOut: v.boolean(),
-	stdout: v.string(),
-	stderr: v.string(),
-	output: v.string(),
-	truncated: v.boolean(),
-	error: v.optional(v.string())
-});
 
 export const vApplyPatchResult = v.object({
 	changes: v.array(
@@ -88,6 +73,27 @@ export const vApplyPatchResult = v.object({
 	)
 });
 
+export const vCommandExecResult = v.object({
+	command: v.string(),
+	cwd: v.string(),
+	sessionId: v.optional(v.string()),
+	exitCode: v.optional(v.number()),
+	success: v.boolean(),
+	running: v.boolean(),
+	timedOut: v.boolean(),
+	stdout: v.string(),
+	stderr: v.string(),
+	output: v.string(),
+	truncated: v.boolean(),
+	error: v.optional(v.string())
+});
+
+export const vScrapeUrlResult = v.object({
+	url: v.string(),
+	markdown: v.string(),
+	truncated: v.boolean()
+});
+
 export const vWebSearchResult = v.object({
 	results: v.array(
 		v.object({
@@ -100,19 +106,13 @@ export const vWebSearchResult = v.object({
 	)
 });
 
-export const vScrapeUrlResult = v.object({
-	url: v.string(),
-	markdown: v.string(),
-	truncated: v.boolean()
-});
-
 export const vExecutorJobResult = v.union(
 	v.string(),
 	v.array(vWorkspaceInstruction),
-	vCommandExecResult,
 	vApplyPatchResult,
-	vWebSearchResult,
-	vScrapeUrlResult
+	vCommandExecResult,
+	vScrapeUrlResult,
+	vWebSearchResult
 );
 
 export const vExecutorStatus = v.union(v.literal('disconnected'), v.literal('connected'));
@@ -137,12 +137,12 @@ export function isRunFinalStatus(
 }
 
 export const vExecutorJobKind = v.union(
-	v.literal('get_workspace_instructions'),
-	v.literal('exec_command'),
-	v.literal('write_stdin'),
 	v.literal('apply_patch'),
+	v.literal('exec_command'),
+	v.literal('get_workspace_instructions'),
+	v.literal('scrape_url'),
 	v.literal('web_search'),
-	v.literal('scrape_url')
+	v.literal('write_stdin')
 );
 
 export const vExecutorJobStatus = v.union(
