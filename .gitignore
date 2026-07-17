@@ -25,6 +25,7 @@ coverage
 .turbo
 turbo-cache-key.json
 
+.claude
 .codex
 dist
 ref-repos

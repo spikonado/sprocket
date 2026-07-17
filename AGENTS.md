@@ -31,10 +31,9 @@ All of these are core priorities; try your best to achieve all of them without h
 
 ## Maintaining Code
 
-- Don't be afraid to change existing code in order to improve on any of the priorities.
+- Don't be afraid to completely refactor existing code in order to improve on any of the priorities.
 - Make sure that changes are made in all the layers of the app when needed.
 - Deleting code, often fixes more problems than writing code does. Sometimes writing too much code introduces problems.
-- Don't maintain backwards compatibility in any of the code unless explicitly asked. It's recommended to add temporary migration functions for the backend data instead.
 
 ## Writing Code
 
@@ -53,12 +52,12 @@ Specifically for gpt-5.6-sol: You often end up writing more code than needed, es
 - Do the deep dives and figure out what needs to be done and delegate the rest accordingly and as needed to subagents.
 - Use subagents for LARGE tasks that will benefit from your context being less polluted and multiple subagents working in parallel.
 - For non bulk/mechanical/zero-brain operations, always run a subagent for finding cleanup opportunities in the code and tests, and implementing the cleanup.
-- For non bulk/mechanical/zero-brain operations, always get 2 subagents to review the code before considering your work done. One of those agents must have >=8 intelligence and review the code overall, the other must have >=7 taste and review the UI/UX, API design, and code quality parts.
+- For non bulk/mechanical/zero-brain operations, always get 2 subagents to review the code before considering your work done. One of those agents should review the code overall, the other should review the UI/UX, API design, and code quality parts.
 - When getting code reviewed by subagents in a loop, use gpt-5.6-sol as the review subagent for a max of 3 reviews. After this, rely on some other model for the review subagent.
 
 #### PR Workflow
 
-- Unless very specifically requested, PRs should be made only against the default branch and should not be a draft.
+- Unless requested, PRs should be made only against the default branch and should not be a draft.
 - After a PR is made, don't perform any code review using subagents, let Greptile review the code.
 
 1. When requested, push code and make a PR. The PR title should have the same format as past PR titles. Ensure that your branch is updated with the latest main.
@@ -101,7 +100,6 @@ How to apply:
 - Only use the models listed above.
 - If you have a tool available for spawning subagents, never use that. Instead use the CLI of a specific coding agent harness directly.
 - If a cheaper model's output doesn't meet the bar, rerun/redo the work with a better model without asking.
-- Intelligence > taste > cost for actual work.
-- Prefer models with the highest intelligence for really hard long-running tasks.
+- The produced code meeting the priorities in "Priorities in Order" is much more important than what it costed.
 - For bulk/mechanical/zero-brain operations, always use the cheapest model first and only switch to a better model if the output doesn't meet the bar.
 - For user-facing UI/UX and APIs, use a model with good taste (>=7). If making those UIs/APIs is highly complicated, get a model with higher intelligence to complete the work after the core UI/API has been decided by the model with good taste.

@@ -254,7 +254,7 @@ pub(crate) struct WriteStdinArgs {
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct ApplyPatchArgs {
-    /// Git-style unified diff to apply inside the workspace.
+    /// Begin Patch envelope or unified/`diff --git` patch.
     patch: String,
 }
 
@@ -373,7 +373,7 @@ impl rig::tool::Tool for ApplyPatchTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Apply a git-style unified diff to files in the workspace. Supports creating, updating, deleting, renaming, and copying text files in one call. Every path must remain inside the workspace."
+        "Create, update, delete, rename, or copy workspace files via a Begin Patch envelope or unified/`diff --git` patch."
             .to_string()
     }
 

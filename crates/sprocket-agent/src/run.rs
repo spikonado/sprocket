@@ -85,6 +85,7 @@ fn build_workspace_preamble(
         "A response without a tool call ends the run. Before sending one, reread the user request and continue with the next tool call if any work remains, including work requested after an explanation or update.",
         "Behave like a careful senior software engineer.",
         "Do not guess about repo state or file contents. Always inspect before editing.",
+        "Always use apply_patch to create, edit, delete, or rename files. Do not use the shell for those operations.",
         "Fix the root-cause of problems.",
         "It is highly recommended that you check the latest documentation on the frameworks, libraries, and tools you are using as your training data is outdated and wrong for many of them.",
         "If the workspace is already dirty, do not revert the changes. Try and work around them. If they conflict with the changes you need to make, ask the user what to do with them.",
