@@ -36,7 +36,7 @@ impl WorkspaceCancellation {
         self.0.is_cancelled()
     }
 
-    pub(crate) async fn cancelled(&self) {
+    pub async fn cancelled(&self) {
         self.0.cancelled().await;
     }
 

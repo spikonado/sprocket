@@ -8,12 +8,18 @@ import { components } from '@convex/_generated/api';
 import type { ActionCtx } from '@convex/_generated/server';
 
 const hourlyModelCompletionLimit = 300;
+const hourlyWebToolLimit = 600;
 
 const rateLimitConfigs = {
 	modelCompletion: {
 		kind: 'fixed window',
 		period: HOUR,
 		rate: hourlyModelCompletionLimit
+	},
+	webTool: {
+		kind: 'fixed window',
+		period: HOUR,
+		rate: hourlyWebToolLimit
 	}
 } satisfies Record<string, RateLimitConfig>;
 
@@ -63,4 +69,8 @@ async function enforceLimit(
 
 export async function enforceModelCompletionLimit(ctx: ActionCtx, userId: string): Promise<void> {
 	await enforceLimit(ctx, 'modelCompletion', userId, 'Model completion limit');
+}
+
+export async function enforceWebToolLimit(ctx: ActionCtx, userId: string): Promise<void> {
+	await enforceLimit(ctx, 'webTool', userId, 'Web tool limit');
 }

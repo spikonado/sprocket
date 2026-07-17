@@ -27,12 +27,15 @@ state does not remain indefinitely active.
 
 ## Tools
 
-The agent currently offers command execution, command-session input, and
-workspace patching. Every tool call is wrapped in a durable executor-job record
-and observes run cancellation while local work is active.
+The agent currently offers command execution, command-session input, workspace
+patching, web search, and web-page scraping. Every tool call is wrapped in a
+durable executor-job record and observes run cancellation while work is active.
 
 Command execution has full local process permissions. Patch operations are
-confined to the workspace by `sprocket-workspace`.
+confined to the workspace by `sprocket-workspace`. Web search and scraping run
+as Convex actions (`webTools`) built on the Exa and Context.dev Convex
+components, keyed by deployment-side environment variables (`EXA_API_KEY`,
+`CONTEXT_DEV_API_KEY`); only the results flow back through the executor job.
 
 ## Main areas
 

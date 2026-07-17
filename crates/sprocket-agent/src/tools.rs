@@ -14,6 +14,7 @@ const DEFAULT_COMMAND_TIMEOUT_MS: u64 = 60_000;
 const DEFAULT_COMMAND_YIELD_MS: u64 = 10_000;
 const DEFAULT_COMMAND_MAX_OUTPUT_CHARS: usize = 20_000;
 const DEFAULT_STDIN_YIELD_MS: u64 = 5_000;
+const DEFAULT_WEB_SEARCH_RESULTS: u32 = 5;
 
 use crate::convex::RuntimeClient;
 use crate::hooks::ToolCallTracker;
@@ -27,7 +28,7 @@ pub(crate) enum AgentToolError {
 }
 
 #[derive(Clone)]
-struct WorkspaceToolContext {
+struct AgentToolContext {
     runtime: RuntimeClient,
     run_id: String,
     claim_id: String,
@@ -36,7 +37,7 @@ struct WorkspaceToolContext {
     command_sessions: CommandSessionManager,
 }
 
-impl WorkspaceToolContext {
+impl AgentToolContext {
     fn new(
         runtime: RuntimeClient,
         run_id: String,
@@ -57,30 +58,38 @@ impl WorkspaceToolContext {
 }
 
 #[derive(Clone)]
-pub(crate) struct ExecCommandTool(WorkspaceToolContext);
+pub(crate) struct ApplyPatchTool(AgentToolContext);
 
 #[derive(Clone)]
-pub(crate) struct WriteStdinTool(WorkspaceToolContext);
+pub(crate) struct ExecCommandTool(AgentToolContext);
 
 #[derive(Clone)]
-pub(crate) struct ApplyPatchTool(WorkspaceToolContext);
+pub(crate) struct ScrapeUrlTool(AgentToolContext);
 
-pub(crate) struct WorkspaceToolSet {
-    pub(crate) exec_command: ExecCommandTool,
-    pub(crate) write_stdin: WriteStdinTool,
+#[derive(Clone)]
+pub(crate) struct WebSearchTool(AgentToolContext);
+
+#[derive(Clone)]
+pub(crate) struct WriteStdinTool(AgentToolContext);
+
+pub(crate) struct AgentToolSet {
     pub(crate) apply_patch: ApplyPatchTool,
     pub(crate) command_sessions: CommandSessionManager,
+    pub(crate) exec_command: ExecCommandTool,
+    pub(crate) scrape_url: ScrapeUrlTool,
+    pub(crate) web_search: WebSearchTool,
+    pub(crate) write_stdin: WriteStdinTool,
 }
 
-pub(crate) fn workspace_tools(
+pub(crate) fn agent_tools(
     runtime: RuntimeClient,
     run_id: String,
     claim_id: String,
     workspace_root: PathBuf,
     tool_call_tracker: ToolCallTracker,
-) -> WorkspaceToolSet {
+) -> AgentToolSet {
     let command_sessions = CommandSessionManager::new(workspace_root.clone());
-    let context = WorkspaceToolContext::new(
+    let context = AgentToolContext::new(
         runtime,
         run_id,
         claim_id,
@@ -88,11 +97,13 @@ pub(crate) fn workspace_tools(
         tool_call_tracker,
         command_sessions.clone(),
     );
-    WorkspaceToolSet {
-        exec_command: ExecCommandTool(context.clone()),
-        write_stdin: WriteStdinTool(context.clone()),
-        apply_patch: ApplyPatchTool(context),
+    AgentToolSet {
+        apply_patch: ApplyPatchTool(context.clone()),
         command_sessions,
+        exec_command: ExecCommandTool(context.clone()),
+        scrape_url: ScrapeUrlTool(context.clone()),
+        web_search: WebSearchTool(context.clone()),
+        write_stdin: WriteStdinTool(context),
     }
 }
 
@@ -159,6 +170,20 @@ fn write_stdin_parameters() -> serde_json::Value {
     schema["properties"]["chars"]["default"] = json!("");
     schema["properties"]["terminate"]["default"] = json!(false);
     schema["properties"]["yieldTimeMs"]["default"] = json!(DEFAULT_STDIN_YIELD_MS);
+    schema
+}
+
+fn default_web_search_results() -> u32 {
+    DEFAULT_WEB_SEARCH_RESULTS
+}
+
+fn is_default_web_search_results(num_results: &u32) -> bool {
+    *num_results == DEFAULT_WEB_SEARCH_RESULTS
+}
+
+fn web_search_parameters() -> serde_json::Value {
+    let mut schema = json!(schemars::schema_for!(WebSearchArgs));
+    schema["properties"]["numResults"]["default"] = json!(DEFAULT_WEB_SEARCH_RESULTS);
     schema
 }
 
@@ -231,6 +256,26 @@ pub(crate) struct WriteStdinArgs {
 pub(crate) struct ApplyPatchArgs {
     /// Git-style unified diff to apply inside the workspace.
     patch: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct WebSearchArgs {
+    /// Web search query.
+    query: String,
+    /// Number of results to return, between 1 and 10. Defaults to 5.
+    #[serde(
+        rename = "numResults",
+        default = "default_web_search_results",
+        skip_serializing_if = "is_default_web_search_results"
+    )]
+    #[schemars(default = "default_web_search_results")]
+    num_results: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct ScrapeUrlArgs {
+    /// URL of the web page to read.
+    url: String,
 }
 
 impl rig::tool::Tool for ExecCommandTool {
@@ -353,6 +398,109 @@ impl rig::tool::Tool for ApplyPatchTool {
             },
         )
         .await
+    }
+}
+
+impl rig::tool::Tool for WebSearchTool {
+    const NAME: &'static str = "web_search";
+    type Error = AgentToolError;
+    type Args = WebSearchArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Search the web. Returns relevant pages with their URL, title, and a text excerpt. Use for current events or information beyond the local workspace."
+            .to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        web_search_parameters()
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let payload = serde_json::to_value(&args).map_err(tool_error)?;
+        execute_tool_job(
+            &self.0.runtime,
+            &self.0.run_id,
+            &self.0.claim_id,
+            Self::NAME,
+            &self.0.tool_call_tracker,
+            payload,
+            |cancellation| {
+                let mut action_args = BTreeMap::new();
+                action_args.insert("query".to_string(), args.query.clone().into());
+                // Omitted at the default so the Convex action owns the default value.
+                if !is_default_web_search_results(&args.num_results) {
+                    action_args.insert(
+                        "numResults".to_string(),
+                        Value::Float64(f64::from(args.num_results)),
+                    );
+                }
+                run_convex_tool_action(
+                    &self.0.runtime,
+                    cancellation,
+                    "webTools:webSearch",
+                    action_args,
+                )
+            },
+        )
+        .await
+    }
+}
+
+impl rig::tool::Tool for ScrapeUrlTool {
+    const NAME: &'static str = "scrape_url";
+    type Error = AgentToolError;
+    type Args = ScrapeUrlArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Read a web page by URL and return its content converted to markdown. Very long pages are truncated."
+            .to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(ScrapeUrlArgs))
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let payload = serde_json::to_value(&args).map_err(tool_error)?;
+        execute_tool_job(
+            &self.0.runtime,
+            &self.0.run_id,
+            &self.0.claim_id,
+            Self::NAME,
+            &self.0.tool_call_tracker,
+            payload,
+            |cancellation| {
+                let mut action_args = BTreeMap::new();
+                action_args.insert("url".to_string(), args.url.clone().into());
+                run_convex_tool_action(
+                    &self.0.runtime,
+                    cancellation,
+                    "webTools:scrapeUrl",
+                    action_args,
+                )
+            },
+        )
+        .await
+    }
+}
+
+/// Runs a tool's work as a Convex action, aborting the wait when the run is
+/// cancelled. The action itself keeps running server-side; its job record is
+/// reconciled by the normal completion flow.
+async fn run_convex_tool_action(
+    runtime: &RuntimeClient,
+    cancellation: WorkspaceCancellation,
+    function: &str,
+    args: BTreeMap<String, Value>,
+) -> Result<serde_json::Value, AgentToolError> {
+    tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => Err(AgentToolError::Cancelled),
+        result = runtime.action_json::<serde_json::Value>(function, args) => {
+            result.map_err(tool_error)
+        }
     }
 }
 
@@ -506,6 +654,24 @@ mod tests {
             default_command_shell()
         );
         assert!(schema["properties"].get("login").is_none());
+    }
+
+    #[test]
+    fn web_search_defaults_are_omitted_from_payload() {
+        let args: WebSearchArgs = serde_json::from_value(serde_json::json!({ "query": "rust" }))
+            .expect("minimal search args should deserialize");
+
+        assert_eq!(args.num_results, DEFAULT_WEB_SEARCH_RESULTS);
+        assert_eq!(
+            serde_json::to_value(&args).unwrap(),
+            serde_json::json!({ "query": "rust" })
+        );
+
+        let schema = web_search_parameters();
+        assert_eq!(
+            schema["properties"]["numResults"]["default"],
+            DEFAULT_WEB_SEARCH_RESULTS
+        );
     }
 
     #[test]

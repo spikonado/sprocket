@@ -1,0 +1,37 @@
+diff --git a/dist/component/lib.js b/dist/component/lib.js
+index a2c5d1db9c83f3ad40eb82e412bed3becd363b7e..ec5b919893400e6c3b86d6d3fb0c4cf66a847567 100644
+--- a/dist/component/lib.js
++++ b/dist/component/lib.js
+@@ -38,9 +38,9 @@ const contentsArgsValidator = {
+     subpageTarget: v.optional(v.union(v.string(), v.array(v.string()))),
+     extras: extrasValidator,
+ };
+-const costDollarsValidator = v.optional(v.object({
+-    total: v.optional(v.number()),
+-}));
++// Patched: Exa returns undocumented cost breakdowns (e.g. costDollars.search.neural)
++// and Convex return validators reject extra fields, so pass costs through as-is.
++const costDollarsValidator = v.optional(v.any());
+ const baseSearchResultValidator = {
+     title: v.string(),
+     url: v.string(),
+@@ -50,17 +50,8 @@ const baseSearchResultValidator = {
+     image: v.optional(v.string()),
+     favicon: v.optional(v.string()),
+ };
+-const searchResultValidator = v.object({
+-    ...baseSearchResultValidator,
+-    text: v.optional(v.string()),
+-    highlights: v.optional(v.array(v.string())),
+-    highlightScores: v.optional(v.array(v.number())),
+-    summary: v.optional(v.string()),
+-    subpages: v.optional(v.array(v.object(baseSearchResultValidator))),
+-    extras: v.optional(v.object({
+-        links: v.optional(v.array(v.string())),
+-    })),
+-});
++// Patched: tolerate new per-result fields (entities, score, ...) from the Exa API.
++const searchResultValidator = v.any();
+ const synthesisOutputValidator = v.object({
+     content: v.any(),
+     grounding: v.array(v.object({

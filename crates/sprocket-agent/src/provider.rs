@@ -9,7 +9,7 @@ use sprocket_convex_provider::{Client as ConvexProviderClient, is_completion_str
 
 use crate::convex::RuntimeClient;
 use crate::hooks::{AgentPromptHook, ToolCallTracker};
-use crate::tools::workspace_tools;
+use crate::tools::agent_tools;
 use crate::types::RunContextResponse;
 
 const AGENT_MAX_TURNS: usize = 75;
@@ -116,7 +116,7 @@ where
     <C::CompletionModel as CompletionModel>::StreamingResponse: 'static,
 {
     let tool_call_tracker = ToolCallTracker::default();
-    let tools = workspace_tools(
+    let tools = agent_tools(
         runtime.clone(),
         request.run_id.clone(),
         request.claim_id.clone(),
@@ -127,9 +127,11 @@ where
     let agent = completion_client
         .agent(model)
         .preamble(&request.preamble)
-        .tool(tools.exec_command)
-        .tool(tools.write_stdin)
         .tool(tools.apply_patch)
+        .tool(tools.exec_command)
+        .tool(tools.scrape_url)
+        .tool(tools.web_search)
+        .tool(tools.write_stdin)
         .build();
 
     eprintln!("sprocket-agent: built agent {}", request.run_id);

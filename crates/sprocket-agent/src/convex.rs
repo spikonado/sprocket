@@ -80,6 +80,17 @@ impl RuntimeClient {
         decode_function_result(result, function)
     }
 
+    pub(crate) async fn action_json<T: for<'de> Deserialize<'de>>(
+        &self,
+        function: &str,
+        args: BTreeMap<String, Value>,
+    ) -> anyhow::Result<T> {
+        eprintln!("sprocket-agent: action start {function}");
+        let result = self.client.action(function, args).await?;
+        eprintln!("sprocket-agent: action done {function}");
+        decode_function_result(result, function)
+    }
+
     pub(crate) async fn mutation_unit(
         &self,
         function: &str,

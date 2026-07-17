@@ -35,6 +35,7 @@ import type * as lib_workspaceConnection from "../lib/workspaceConnection.js";
 import type * as messages from "../messages.js";
 import type * as threads from "../threads.js";
 import type * as uiPreferences from "../uiPreferences.js";
+import type * as webTools from "../webTools.js";
 import type * as workspaceSessions from "../workspaceSessions.js";
 
 import type {
@@ -71,6 +72,7 @@ declare const fullApi: ApiFromModules<{
   messages: typeof messages;
   threads: typeof threads;
   uiPreferences: typeof uiPreferences;
+  webTools: typeof webTools;
   workspaceSessions: typeof workspaceSessions;
 }>;
 
@@ -101,5 +103,7 @@ export declare const internal: FilterApi<
 >;
 
 export declare const components: {
+  contextDev: import("@context-dot-dev/convex/_generated/component.js").ComponentApi<"contextDev">;
+  exa: import("@exalabs/convex-exa/_generated/component.js").ComponentApi<"exa">;
   rateLimiter: import("@convex-dev/rate-limiter/_generated/component.js").ComponentApi<"rateLimiter">;
 };
