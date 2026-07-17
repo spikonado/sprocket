@@ -1,0 +1,53 @@
+# sprocket-server
+
+`sprocket-server` is the boundary between browser-controlled requests and the
+user's machine. It provides the local API, serves the web application when
+needed, maps cloud workspace identities to local paths, and owns local agent
+tasks.
+
+The crate is a library used by `sprocket-cli` and also provides a small
+standalone server binary. See [ARCHITECTURE.md](../../ARCHITECTURE.md) for the
+full process topology.
+
+## Responsibilities
+
+- Establish local browser or desktop authorization.
+- Resolve, attach, and revalidate local workspaces.
+- Start agent runs with the authenticated cloud user token.
+- Coordinate token refresh while a run is active.
+- Serve the local API and optional static web build.
+- Persist only machine-local state.
+
+## Boundaries
+
+The server does not store conversations or model credentials. Durable user,
+thread, run, and transcript state belongs to Convex. The server keeps local
+pairing/session data and the mapping from a cloud workspace identity to a local
+path.
+
+Local authorization and cloud authentication are separate. A local session
+permits access to machine-facing operations; a WorkOS token identifies the user
+to Convex. Refreshed run tokens are checked against the user that started the
+run.
+
+The server binds locally by default. Static serving and API-only operation are
+two configurations of the same router rather than separate applications.
+
+## Main areas
+
+- `auth.rs`: local sessions, pairing, and desktop browser sign-in.
+- `workspace_sessions.rs`: local workspace attachment state.
+- `routes/`: HTTP boundaries for configuration, workspaces, auth, and agents.
+- `static_dir.rs` and `static_files.rs`: web-build discovery and serving.
+- `config.rs`: process configuration.
+- `lib.rs`: shared state, router construction, and server lifecycle.
+
+Reusable filesystem behavior belongs in `sprocket-workspace`; run behavior
+belongs in `sprocket-agent`.
+
+## Validation
+
+```sh
+cargo test -p sprocket-server
+prek run -a
+```
