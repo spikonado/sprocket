@@ -488,11 +488,14 @@ async fn call_completion_action(
     })?;
 
     let mut retry_delay = COMPLETION_TRANSPORT_RETRY_DELAY;
+    let mut superseded_stream_ids: Vec<String> = Vec::new();
     for attempt in 1..=COMPLETION_TRANSPORT_ATTEMPTS {
         // Each try registers a fresh attempt sequence server-side, which
         // fences out any orphaned execution of a previous try that the
-        // Convex client replays after a reconnect.
+        // Convex client replays after a reconnect. Naming the prior tries'
+        // streams lets the backend drop their partial output.
         let attempt_seq = client.attempt_counter.fetch_add(1, Ordering::Relaxed) + 1;
+        let stream_id = uuid::Uuid::new_v4().to_string();
         let mut convex = clone_locked(&client.inner).await;
         eprintln!(
             "sprocket-convex-provider: action start {} attempt {attempt_seq}",
@@ -502,7 +505,14 @@ async fn call_completion_action(
             CONVEX_RPC_TIMEOUT,
             convex.action(
                 &client.completion_action,
-                action_args(args, stream_run_id, claim_id, attempt_seq),
+                action_args(
+                    args,
+                    stream_run_id,
+                    claim_id,
+                    attempt_seq,
+                    &stream_id,
+                    &superseded_stream_ids,
+                ),
             ),
         )
         .await
@@ -536,6 +546,7 @@ async fn call_completion_action(
             "sprocket-convex-provider: transport failure calling {}; retrying: {transport_error:#}",
             client.completion_action
         );
+        superseded_stream_ids.push(stream_id);
         sleep(retry_delay).await;
         retry_delay = retry_delay.saturating_mul(2);
     }
@@ -547,6 +558,8 @@ fn action_args(
     stream_run_id: &str,
     claim_id: &str,
     attempt_seq: u32,
+    stream_id: &str,
+    superseded_stream_ids: &[String],
 ) -> BTreeMap<String, Value> {
     let mut payload = BTreeMap::new();
     payload.insert("modelId".to_string(), args.model_id.clone().into());
@@ -555,6 +568,19 @@ fn action_args(
         "attemptSeq".to_string(),
         Value::Float64(f64::from(attempt_seq)),
     );
+    payload.insert("streamId".to_string(), stream_id.to_string().into());
+    if !superseded_stream_ids.is_empty() {
+        payload.insert(
+            "supersededStreamIds".to_string(),
+            Value::Array(
+                superseded_stream_ids
+                    .iter()
+                    .cloned()
+                    .map(Value::from)
+                    .collect(),
+            ),
+        );
+    }
     if let Some(prompt) = &args.prompt {
         payload.insert("prompt".to_string(), prompt.clone().into());
     }

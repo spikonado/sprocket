@@ -51,6 +51,8 @@ export const complete = action({
 		streamRunId: v.id('runs'),
 		claimId: v.string(),
 		attemptSeq: v.number(),
+		streamId: v.string(),
+		supersededStreamIds: v.optional(v.array(v.string())),
 		toolChoiceJson: v.optional(v.string()),
 		tools: v.optional(
 			v.array(
@@ -86,7 +88,10 @@ export const complete = action({
 		await ctx.runMutation(api.agentRuntime.claimCompletionAttempt, {
 			runId: args.streamRunId,
 			claimId: args.claimId,
-			attemptSeq: args.attemptSeq
+			attemptSeq: args.attemptSeq,
+			...(args.supersededStreamIds !== undefined
+				? { supersededStreamIds: args.supersededStreamIds }
+				: {})
 		});
 		const modelId = args.modelId;
 		if (args.reasoningEffort !== undefined || args.serviceTier !== undefined) {
@@ -124,7 +129,6 @@ export const complete = action({
 		}
 
 		const streamSequence = await enforceCompletionLimit(ctx, args.streamRunId);
-		const streamId = crypto.randomUUID();
 		const abortController = new AbortController();
 		let result: CompletionActionResult;
 		try {
@@ -135,7 +139,7 @@ export const complete = action({
 					runId: args.streamRunId,
 					claimId: args.claimId,
 					attemptSeq: args.attemptSeq,
-					streamId,
+					streamId: args.streamId,
 					initialSequence: streamSequence
 				},
 				abortController
@@ -192,10 +196,12 @@ async function collectStreamingCompletion(
 		const events = pendingEvents.slice();
 		const sequence = nextBatchSequence;
 		let lastError: unknown;
-		for (let attempt = 0; attempt < 2; attempt += 1) {
+		for (let flushAttempt = 0; flushAttempt < 2; flushAttempt += 1) {
 			try {
 				const outcome = await ctx.runMutation(api.agentRuntime.mergeAssistantStreamEvents, {
 					runId,
+					claimId: attempt.claimId,
+					attemptSeq: attempt.attemptSeq,
 					streamId,
 					sequence,
 					events
@@ -209,7 +215,7 @@ async function collectStreamingCompletion(
 			} catch (error) {
 				if (isCompletionStreamSuperseded(error)) throw error;
 				lastError = error;
-				if (attempt === 0) await delay(100);
+				if (flushAttempt === 0) await delay(100);
 			}
 		}
 		throw lastError;

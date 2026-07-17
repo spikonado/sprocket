@@ -429,7 +429,8 @@ export const claimCompletionAttempt = mutation({
 	args: {
 		runId: v.id('runs'),
 		claimId: v.string(),
-		attemptSeq: v.number()
+		attemptSeq: v.number(),
+		supersededStreamIds: v.optional(v.array(v.string()))
 	},
 	handler: async (ctx, args): Promise<void> => {
 		const userId: string = await getUserId(ctx);
@@ -439,6 +440,21 @@ export const claimCompletionAttempt = mutation({
 			throw new Error(COMPLETION_STREAM_SUPERSEDED);
 		}
 		await ctx.db.patch(args.runId, { completionAttemptSeq: args.attemptSeq });
+		// A retry redoes its whole turn, so drop whatever partial output the
+		// attempts it replaces already persisted.
+		const supersededStreamIds = new Set(args.supersededStreamIds ?? []);
+		if (supersededStreamIds.size > 0 && run.responseMessageId) {
+			const message = await getThreadMessage(ctx, run.responseMessageId);
+			const parts = ((message.parts ?? []) as AssistantPart[]).filter(
+				(part) => !('turnId' in part) || !part.turnId || !supersededStreamIds.has(part.turnId)
+			);
+			if (parts.length !== (message.parts?.length ?? 0)) {
+				await ctx.db.patch(run.responseMessageId, {
+					text: joinAssistantTextParts(parts),
+					parts
+				});
+			}
+		}
 	}
 });
 
@@ -475,6 +491,8 @@ export const beginAssistantMessage = mutation({
 export const mergeAssistantStreamEvents = mutation({
 	args: {
 		runId: v.id('runs'),
+		claimId: v.string(),
+		attemptSeq: v.number(),
 		streamId: v.string(),
 		sequence: v.number(),
 		events: v.array(vCompletionStreamEvent)
@@ -486,6 +504,12 @@ export const mergeAssistantStreamEvents = mutation({
 		const userId: string = await getUserId(ctx);
 		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
 		assertRunAcceptsModelCompletion(run.status);
+		// Validate the attempt fence on every write: once a newer attempt has
+		// registered, a superseded attempt must not be able to append another
+		// batch (its periodic acceptance check alone leaves a window).
+		if (run.claimId !== args.claimId || (run.completionAttemptSeq ?? 0) !== args.attemptSeq) {
+			return 'superseded';
+		}
 		if (!run.responseMessageId || args.events.length === 0) {
 			return 'merged';
 		}
