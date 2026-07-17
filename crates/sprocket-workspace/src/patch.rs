@@ -256,7 +256,7 @@ async fn prepare_changes(
     let (options, default_strip) = if patch.trim_start().starts_with("diff --git ") {
         (ParseOptions::gitdiff(), 1)
     } else {
-        (ParseOptions::unidiff(), 0)
+        (ParseOptions::unidiff(), unidiff_path_strip(patch))
     };
 
     let mut changes = Vec::new();
@@ -419,6 +419,21 @@ async fn prepare_apply_patch_changes(
     }
 
     Ok(changes)
+}
+
+fn unidiff_path_strip(patch: &str) -> usize {
+    // Header-only unified diffs often still use git's a/ and b/ path prefixes.
+    let mut saw_a = false;
+    let mut saw_b = false;
+    for line in patch.lines() {
+        let line = line.trim_start();
+        if line.starts_with("--- a/") || line.starts_with("--- \"a/") {
+            saw_a = true;
+        } else if line.starts_with("+++ b/") || line.starts_with("+++ \"b/") {
+            saw_b = true;
+        }
+    }
+    usize::from(saw_a && saw_b)
 }
 
 fn apply_text_patch(path: &Path, base: &[u8], patch: &PatchKind<'_, str>) -> Result<Vec<u8>> {
@@ -807,6 +822,29 @@ mod tests {
             fs::read_to_string(root.join("file.txt")).unwrap(),
             "after\n"
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn strips_ab_prefixes_from_header_only_unified_diff() {
+        let root = temp_workspace();
+        fs::write(root.join("file.txt"), "before\n").unwrap();
+        let patch = "--- a/file.txt\n\
+            +++ b/file.txt\n\
+            @@ -1 +1 @@\n\
+            -before\n\
+            +after\n";
+
+        apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), patch)
+            .await
+            .expect("a/b unified diff should apply");
+
+        assert_eq!(
+            fs::read_to_string(root.join("file.txt")).unwrap(),
+            "after\n"
+        );
+        assert!(!root.join("a").exists());
+        assert!(!root.join("b").exists());
         fs::remove_dir_all(root).unwrap();
     }
 

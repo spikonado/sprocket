@@ -90,9 +90,6 @@ pub(crate) fn parse_apply_patch(patch: &str) -> Result<Vec<PatchHunk>> {
                 contents.push(b'\n');
                 index += 1;
             }
-            if contents.is_empty() {
-                bail!("add-file hunk for '{path}' has no content");
-            }
             hunks.push(PatchHunk::Add { path, contents });
             continue;
         }
@@ -232,6 +229,7 @@ pub(crate) fn apply_update(
 ) -> Result<Vec<u8>> {
     let contents = std::str::from_utf8(contents)
         .with_context(|| format!("patch target is not valid UTF-8: {}", path.display()))?;
+    let had_trailing_newline = contents.ends_with('\n');
     let line_ending = if uses_crlf(contents) { "\r\n" } else { "\n" };
     let normalized = if line_ending == "\r\n" {
         contents.replace("\r\n", "\n")
@@ -291,7 +289,9 @@ pub(crate) fn apply_update(
     }
 
     let mut output = lines.join(line_ending).into_bytes();
-    output.extend_from_slice(line_ending.as_bytes());
+    if had_trailing_newline {
+        output.extend_from_slice(line_ending.as_bytes());
+    }
     Ok(output)
 }
 
@@ -412,6 +412,37 @@ mod tests {
         .expect("apply");
 
         assert_eq!(updated, b"alpha\nbeta\ngamma\n");
+    }
+
+    #[test]
+    fn preserves_missing_trailing_newline() {
+        let updated = apply_update(
+            Path::new("file.txt"),
+            b"alpha\nbeta",
+            &[UpdateChunk {
+                context: None,
+                old_lines: vec!["alpha".to_owned()],
+                new_lines: vec!["ALPHA".to_owned()],
+                end_of_file: false,
+            }],
+        )
+        .expect("apply");
+
+        assert_eq!(updated, b"ALPHA\nbeta");
+    }
+
+    #[test]
+    fn parses_empty_add_file() {
+        let hunks = parse_apply_patch("*** Begin Patch\n*** Add File: empty.txt\n*** End Patch")
+            .expect("parse");
+
+        match &hunks[..] {
+            [PatchHunk::Add { path, contents }] => {
+                assert_eq!(path, "empty.txt");
+                assert!(contents.is_empty());
+            }
+            _ => panic!("expected empty add hunk"),
+        }
     }
 
     #[test]
