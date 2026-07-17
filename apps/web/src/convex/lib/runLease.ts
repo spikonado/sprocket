@@ -6,6 +6,11 @@ type ClaimableRun = {
 	claimExpiresAt?: number;
 };
 
+type CompletionAttemptRun = {
+	claimId?: string;
+	completionAttemptSeq?: number;
+};
+
 export function isClaimedRunStatus(status: string): boolean {
 	return status === 'running' || status === 'awaiting_executor';
 }
@@ -28,4 +33,19 @@ export function canFinalizeAfterClaimFailure(run: ClaimableRun, claimId: string)
 
 export function claimExpiresAt(now: number): number {
 	return now + RUN_CLAIM_LEASE_DURATION_MS;
+}
+
+/**
+ * A completion attempt may only take over the run's model stream when it is
+ * newer than every attempt seen so far under the current claim. Attempt
+ * sequences are keyed on the action's immutable arguments, so a stale
+ * execution replayed by a reconnecting client can never win this check,
+ * regardless of arrival order.
+ */
+export function canClaimCompletionAttempt(
+	run: CompletionAttemptRun,
+	claimId: string,
+	attemptSeq: number
+): boolean {
+	return run.claimId === claimId && attemptSeq > (run.completionAttemptSeq ?? 0);
 }

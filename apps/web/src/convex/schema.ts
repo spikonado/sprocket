@@ -51,6 +51,7 @@ export default defineSchema({
 		status: vRunStatus,
 		claimId: v.optional(v.string()),
 		claimExpiresAt: v.optional(v.number()),
+		completionAttemptSeq: v.optional(v.number()),
 		selectedModel: vModelId,
 		reasoningEffort: vReasoningEffort,
 		serviceTier: vServiceTier,

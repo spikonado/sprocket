@@ -23,6 +23,7 @@ import {
 import { assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
 import { assertThreadCanStartRun, cancelExecutorJobsForTerminalRun } from '@convex/lib/runs';
 import {
+	canClaimCompletionAttempt,
 	canFinalizeAfterClaimFailure,
 	canStartRunWithClaim,
 	claimExpiresAt,
@@ -35,6 +36,7 @@ import {
 	type AssistantPart
 } from '@convex/lib/assistantParts';
 import {
+	COMPLETION_STREAM_SUPERSEDED,
 	classifyCompletionStreamBatch,
 	type CompletionStreamBatchClassification,
 	vCompletionStreamEvent
@@ -291,6 +293,7 @@ export const start = mutation({
 			claimExpiresAt: nextClaimExpiresAt,
 			status: isSameClaimRenewal ? run.status : 'running',
 			lastError: undefined,
+			...(isSameClaimRenewal ? {} : { completionAttemptSeq: 0 }),
 			...(isTakeover ? { activeJobId: undefined } : {})
 		});
 
@@ -401,6 +404,8 @@ export const completionActor = query({
 	): Promise<{
 		userId: string;
 		status: Infer<typeof vRunStatus>;
+		claimId?: string;
+		completionAttemptSeq: number;
 		streamSequence: number;
 		streamAttemptId?: string;
 	}> => {
@@ -412,9 +417,28 @@ export const completionActor = query({
 		return {
 			userId,
 			status: run.status,
+			...(run.claimId ? { claimId: run.claimId } : {}),
+			completionAttemptSeq: run.completionAttemptSeq ?? 0,
 			streamSequence: message?.streamSequence ?? 0,
 			...(message?.streamAttemptId ? { streamAttemptId: message.streamAttemptId } : {})
 		};
+	}
+});
+
+export const claimCompletionAttempt = mutation({
+	args: {
+		runId: v.id('runs'),
+		claimId: v.string(),
+		attemptSeq: v.number()
+	},
+	handler: async (ctx, args): Promise<void> => {
+		const userId: string = await getUserId(ctx);
+		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
+		assertRunAcceptsModelCompletion(run.status);
+		if (!canClaimCompletionAttempt(run, args.claimId, args.attemptSeq)) {
+			throw new Error(COMPLETION_STREAM_SUPERSEDED);
+		}
+		await ctx.db.patch(args.runId, { completionAttemptSeq: args.attemptSeq });
 	}
 });
 

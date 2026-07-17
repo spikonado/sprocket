@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	RUN_CLAIM_LEASE_DURATION_MS,
+	canClaimCompletionAttempt,
 	canFinalizeAfterClaimFailure,
 	canStartRunWithClaim,
 	claimExpiresAt,
@@ -55,5 +56,13 @@ describe('run claim leases', () => {
 		expect(canFinalizeAfterClaimFailure({ status: 'failed', claimId: 'claim-a' }, 'claim-a')).toBe(
 			false
 		);
+	});
+
+	it('only lets strictly newer completion attempts of the current claim take the stream', () => {
+		const run = { claimId: 'claim-a', completionAttemptSeq: 2 };
+		expect(canClaimCompletionAttempt(run, 'claim-a', 3)).toBe(true);
+		expect(canClaimCompletionAttempt(run, 'claim-a', 2)).toBe(false);
+		expect(canClaimCompletionAttempt(run, 'claim-b', 3)).toBe(false);
+		expect(canClaimCompletionAttempt({ claimId: 'claim-a' }, 'claim-a', 1)).toBe(true);
 	});
 });

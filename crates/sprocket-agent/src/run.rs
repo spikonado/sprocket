@@ -500,7 +500,7 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
             content: OneOrMany::many(prompt_contents)
                 .map_err(|_| anyhow!("run prompt content cannot be empty"))?,
         };
-        let provider = AgentProvider::default_for_run(&runtime, &context, &run_id);
+        let provider = AgentProvider::default_for_run(&runtime, &context, &run_id, &claim_id);
         let prior_history = deserialize_agent_history(context.agent_history)?;
         let preamble = build_workspace_preamble(&request.workspace_path, &workspace_instructions);
         Ok((

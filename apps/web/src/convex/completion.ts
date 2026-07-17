@@ -49,6 +49,8 @@ export const complete = action({
 		prompt: v.optional(v.string()),
 		messagesJson: v.optional(v.string()),
 		streamRunId: v.id('runs'),
+		claimId: v.string(),
+		attemptSeq: v.number(),
 		toolChoiceJson: v.optional(v.string()),
 		tools: v.optional(
 			v.array(
@@ -76,6 +78,16 @@ export const complete = action({
 		stream_events: CompletionStreamEvent[];
 	}> => {
 		await getUserId(ctx);
+		// Register this attempt before doing anything else. A reconnecting
+		// Convex client can replay a completion action whose caller already
+		// gave up on it; registration is monotonic on (claimId, attemptSeq),
+		// so such an orphaned execution dies here instead of racing the live
+		// attempt for the run's model stream.
+		await ctx.runMutation(api.agentRuntime.claimCompletionAttempt, {
+			runId: args.streamRunId,
+			claimId: args.claimId,
+			attemptSeq: args.attemptSeq
+		});
 		const modelId = args.modelId;
 		if (args.reasoningEffort !== undefined || args.serviceTier !== undefined) {
 			assertSupportedModelConfiguration({
@@ -119,9 +131,13 @@ export const complete = action({
 			result = await collectStreamingCompletion(
 				ctx,
 				streamText({ ...request, abortSignal: abortController.signal }),
-				args.streamRunId,
-				streamId,
-				streamSequence,
+				{
+					runId: args.streamRunId,
+					claimId: args.claimId,
+					attemptSeq: args.attemptSeq,
+					streamId,
+					initialSequence: streamSequence
+				},
 				abortController
 			);
 		} catch (error) {
@@ -146,21 +162,28 @@ export const complete = action({
 	}
 });
 
+type CompletionAttempt = {
+	runId: Id<'runs'>;
+	claimId: string;
+	attemptSeq: number;
+	streamId: string;
+	initialSequence: number;
+};
+
 async function collectStreamingCompletion(
 	ctx: ActionCtx,
 	result: ReturnType<typeof streamText>,
-	runId: Id<'runs'>,
-	streamId: string,
-	streamSequence: number,
+	attempt: CompletionAttempt,
 	abortController: AbortController
 ): Promise<CompletionActionResult> {
+	const { runId, streamId } = attempt;
 	const streamEvents: CompletionStreamEvent[] = [];
 	const pendingEvents: CompletionStreamEvent[] = [];
 	const reasoning = new Map<
 		string,
 		{ partId: string; providerMetadata?: JsonValue; finalized: boolean }
 	>();
-	let nextBatchSequence = streamSequence + 1;
+	let nextBatchSequence = attempt.initialSequence + 1;
 
 	const flush = async (): Promise<void> => {
 		if (pendingEvents.length === 0) {
@@ -259,11 +282,7 @@ async function collectStreamingCompletion(
 				if (acceptanceTimer !== undefined) clearTimeout(acceptanceTimer);
 			}
 			if (next.type === 'acceptance-check') {
-				await assertCompletionStillAccepted(ctx, {
-					runId,
-					streamId,
-					initialSequence: streamSequence
-				});
+				await assertCompletionStillAccepted(ctx, attempt);
 				nextAcceptanceCheckAt = Date.now() + COMPLETION_ACCEPTANCE_CHECK_INTERVAL_MS;
 				continue;
 			}
@@ -451,22 +470,21 @@ async function collectStreamingCompletion(
 
 async function assertCompletionStillAccepted(
 	ctx: ActionCtx,
-	args: {
-		runId: Id<'runs'>;
-		streamId: string;
-		initialSequence: number;
-	}
+	attempt: CompletionAttempt
 ): Promise<void> {
 	const actor = await ctx.runQuery(api.agentRuntime.completionActor, {
-		runId: args.runId
+		runId: attempt.runId
 	});
 	assertRunAcceptsModelCompletion(actor.status);
+	if (actor.claimId !== attempt.claimId || actor.completionAttemptSeq !== attempt.attemptSeq) {
+		throw new Error(COMPLETION_STREAM_SUPERSEDED);
+	}
 	if (
 		isCompletionStreamAttemptSuperseded({
-			initialSequence: args.initialSequence,
+			initialSequence: attempt.initialSequence,
 			observedSequence: actor.streamSequence,
 			observedStreamId: actor.streamAttemptId,
-			streamId: args.streamId
+			streamId: attempt.streamId
 		})
 	) {
 		throw new Error(COMPLETION_STREAM_SUPERSEDED);
