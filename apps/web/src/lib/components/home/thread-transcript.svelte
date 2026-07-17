@@ -76,6 +76,10 @@
 				return 'Read Instructions';
 			case 'check_docs':
 				return 'Checked Docs';
+			case 'web_search':
+				return 'Searched Web';
+			case 'scrape_url':
+				return 'Read Pages';
 			default:
 				return titleizeSnakeCase(toolKey);
 		}
@@ -121,6 +125,10 @@
 					: typeof fields?.path === 'string'
 						? fields.path
 						: 'Docs';
+			case 'web_search':
+				return typeof fields?.query === 'string' ? fields.query : 'Web search';
+			case 'scrape_url':
+				return typeof fields?.url === 'string' ? fields.url : 'Web page';
 			default:
 				return titleizeSnakeCase(name);
 		}
@@ -166,6 +174,17 @@
 		return summarizePaths(paths);
 	}
 
+	function summarizeWebToolResult(kind: string, result: JsonValue | undefined) {
+		if (kind === 'web_search' && isJsonObject(result) && Array.isArray(result.results)) {
+			const count = result.results.length;
+			return ` (${count} result${count === 1 ? '' : 's'})`;
+		}
+		if (kind === 'scrape_url' && isJsonObject(result) && result.truncated === true) {
+			return ' (truncated)';
+		}
+		return '';
+	}
+
 	function toolItemSummary(toolLog: AssistantTimelineTool) {
 		if (toolLog.job) {
 			if (toolLog.job.kind === 'apply_patch') {
@@ -174,7 +193,10 @@
 					return patchSummary;
 				}
 			}
-			return summarizeTool(toolLog.job.kind, toolLog.job.payload);
+			return (
+				summarizeTool(toolLog.job.kind, toolLog.job.payload) +
+				summarizeWebToolResult(toolLog.job.kind, toolLog.job.result)
+			);
 		}
 		return summarizeTool(toolLog.name, toolLog.input);
 	}

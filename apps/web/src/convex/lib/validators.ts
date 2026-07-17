@@ -40,11 +40,22 @@ export const vApplyPatchPayload = v.object({
 	patch: v.string()
 });
 
+export const vWebSearchPayload = v.object({
+	query: v.string(),
+	numResults: v.optional(v.number())
+});
+
+export const vScrapeUrlPayload = v.object({
+	url: v.string()
+});
+
 export const vExecutorJobPayload = v.union(
 	v.object({}),
 	vExecCommandPayload,
 	vWriteStdinPayload,
-	vApplyPatchPayload
+	vApplyPatchPayload,
+	vWebSearchPayload,
+	vScrapeUrlPayload
 );
 
 export const vCommandExecResult = v.object({
@@ -77,11 +88,31 @@ export const vApplyPatchResult = v.object({
 	)
 });
 
+export const vWebSearchResult = v.object({
+	results: v.array(
+		v.object({
+			title: v.optional(v.string()),
+			url: v.string(),
+			publishedDate: v.optional(v.string()),
+			author: v.optional(v.string()),
+			text: v.optional(v.string())
+		})
+	)
+});
+
+export const vScrapeUrlResult = v.object({
+	url: v.string(),
+	markdown: v.string(),
+	truncated: v.boolean()
+});
+
 export const vExecutorJobResult = v.union(
 	v.string(),
 	v.array(vWorkspaceInstruction),
 	vCommandExecResult,
-	vApplyPatchResult
+	vApplyPatchResult,
+	vWebSearchResult,
+	vScrapeUrlResult
 );
 
 export const vExecutorStatus = v.union(v.literal('disconnected'), v.literal('connected'));
@@ -109,7 +140,9 @@ export const vExecutorJobKind = v.union(
 	v.literal('get_workspace_instructions'),
 	v.literal('exec_command'),
 	v.literal('write_stdin'),
-	v.literal('apply_patch')
+	v.literal('apply_patch'),
+	v.literal('web_search'),
+	v.literal('scrape_url')
 );
 
 export const vExecutorJobStatus = v.union(

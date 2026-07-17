@@ -108,6 +108,18 @@ impl Client {
             .map_err(Into::into)
     }
 
+    pub async fn action(
+        &self,
+        function: &str,
+        args: BTreeMap<String, Value>,
+    ) -> anyhow::Result<FunctionResult> {
+        let mut convex = clone_locked(&self.inner).await;
+        timeout(CONVEX_RPC_TIMEOUT, convex.action(function, args))
+            .await
+            .with_context(|| format!("action timed out for {function}"))?
+            .map_err(Into::into)
+    }
+
     pub fn with_reasoning_effort(mut self, reasoning_effort: impl Into<String>) -> Self {
         self.default_reasoning_effort = Some(reasoning_effort.into().into());
         self

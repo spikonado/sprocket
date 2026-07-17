@@ -4,7 +4,13 @@ use std::sync::{Arc, Mutex};
 use rig::agent::{AgentHook, Flow, InvalidToolCallContext, StepEvent, StepEventKind};
 use rig::completion::CompletionModel;
 
-pub(crate) const WORKSPACE_TOOL_NAMES: &[&str] = &["exec_command", "write_stdin", "apply_patch"];
+pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
+    "exec_command",
+    "write_stdin",
+    "apply_patch",
+    "web_search",
+    "scrape_url",
+];
 
 #[derive(Clone, Debug)]
 struct TrackedToolCall {
@@ -108,7 +114,7 @@ pub(crate) fn resolve_invalid_tool_call(context: &InvalidToolCallContext) -> Flo
 
 fn resolve_invalid_tool_name(tool_name: &str, available_tools: &[String]) -> Flow {
     let candidates = if available_tools.is_empty() {
-        WORKSPACE_TOOL_NAMES
+        AGENT_TOOL_NAMES
             .iter()
             .map(|name| (*name).to_string())
             .collect()
@@ -206,7 +212,7 @@ mod tests {
     use super::*;
 
     fn tools() -> Vec<String> {
-        WORKSPACE_TOOL_NAMES
+        AGENT_TOOL_NAMES
             .iter()
             .map(|name| (*name).to_string())
             .collect()
