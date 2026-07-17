@@ -254,7 +254,7 @@ pub(crate) struct WriteStdinArgs {
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct ApplyPatchArgs {
-    /// `*** Begin Patch` / `*** End Patch` envelope (Add/Update/Delete; Move under Update) or a unified/`diff --git` patch.
+    /// `*** Begin Patch` envelope (Add/Update/Delete/Copy/Move) or a unified/`diff --git` patch. Any supported format is fine.
     patch: String,
 }
 
@@ -373,7 +373,7 @@ impl rig::tool::Tool for ApplyPatchTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Apply a *** Begin Patch envelope (Add File / Update File with optional Move to / Delete File) or a unified/`diff --git` patch inside the workspace. Prefer Begin Patch for add/update/delete/rename; use diff --git when you need copy. Every path must remain inside the workspace."
+        "Apply file changes inside the workspace. Accepts a *** Begin Patch envelope (Add File, Update File with optional Move to, Copy File with Copy to, Delete File) or a unified/`diff --git` patch. Create, update, delete, rename, and copy are supported in both styles—use whichever format you prefer. Every path must remain inside the workspace."
             .to_string()
     }
 

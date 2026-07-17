@@ -7,7 +7,9 @@ const END_PATCH: &str = "*** End Patch";
 const ADD_FILE: &str = "*** Add File: ";
 const DELETE_FILE: &str = "*** Delete File: ";
 const UPDATE_FILE: &str = "*** Update File: ";
+const COPY_FILE: &str = "*** Copy File: ";
 const MOVE_TO: &str = "*** Move to: ";
+const COPY_TO: &str = "*** Copy to: ";
 const END_OF_FILE: &str = "*** End of File";
 const ENVIRONMENT_ID: &str = "*** Environment ID: ";
 
@@ -22,6 +24,11 @@ pub(crate) enum PatchHunk {
     Update {
         path: String,
         move_to: Option<String>,
+        chunks: Vec<UpdateChunk>,
+    },
+    Copy {
+        path: String,
+        copy_to: String,
         chunks: Vec<UpdateChunk>,
     },
 }
@@ -106,7 +113,6 @@ pub(crate) fn parse_apply_patch(patch: &str) -> Result<Vec<PatchHunk>> {
             let path = parse_path(path, index)?;
             index += 1;
             let mut move_to = None;
-            let mut chunks: Vec<UpdateChunk> = Vec::new();
 
             if index < lines.len() - 1 {
                 let line = lines[index].trim();
@@ -116,67 +122,40 @@ pub(crate) fn parse_apply_patch(patch: &str) -> Result<Vec<PatchHunk>> {
                 }
             }
 
-            while index < lines.len() - 1 && !is_file_header(lines[index]) {
-                let line = lines[index];
-                let trimmed_end = line.trim_end();
-                let previous_ended = chunks.last().is_some_and(|chunk| chunk.end_of_file);
-
-                if previous_ended && line.is_empty() {
-                    index += 1;
-                    continue;
-                }
-
-                if trimmed_end == "@@" {
-                    ensure_previous_chunk_has_lines(&chunks, index)?;
-                    chunks.push(UpdateChunk::new(None));
-                } else if let Some(context) = trimmed_end.strip_prefix("@@ ") {
-                    ensure_previous_chunk_has_lines(&chunks, index)?;
-                    chunks.push(UpdateChunk::new(Some(context.to_owned())));
-                } else if trimmed_end == END_OF_FILE {
-                    match chunks.last_mut() {
-                        Some(chunk) if !chunk.is_empty() => chunk.end_of_file = true,
-                        _ => bail!(
-                            "invalid update line {}: '{END_OF_FILE}' must follow a change",
-                            index + 1
-                        ),
-                    }
-                } else if previous_ended {
-                    bail!(
-                        "invalid update line {}: expected '@@' after '{END_OF_FILE}'",
-                        index + 1
-                    );
-                } else {
-                    if chunks.is_empty() {
-                        chunks.push(UpdateChunk::new(None));
-                    }
-                    let chunk = chunks.last_mut().expect("chunk exists");
-                    if let Some(content) = line.strip_prefix(' ') {
-                        chunk.old_lines.push(content.to_owned());
-                        chunk.new_lines.push(content.to_owned());
-                    } else if let Some(content) = line.strip_prefix('+') {
-                        chunk.new_lines.push(content.to_owned());
-                    } else if let Some(content) = line.strip_prefix('-') {
-                        chunk.old_lines.push(content.to_owned());
-                    } else if line.is_empty() {
-                        chunk.old_lines.push(String::new());
-                        chunk.new_lines.push(String::new());
-                    } else {
-                        bail!(
-                            "invalid update line {}: lines must start with ' ', '+', or '-'",
-                            index + 1
-                        );
-                    }
-                }
-                index += 1;
-            }
-
-            ensure_previous_chunk_has_lines(&chunks, index)?;
-            if chunks.is_empty() {
+            let (chunks, next_index) = parse_update_chunks(&lines, index)?;
+            index = next_index;
+            if chunks.is_empty() && move_to.is_none() {
                 bail!("update-file hunk for '{path}' has no changes");
             }
             hunks.push(PatchHunk::Update {
                 path,
                 move_to,
+                chunks,
+            });
+            continue;
+        }
+
+        if let Some(path) = header.strip_prefix(COPY_FILE) {
+            let path = parse_path(path, index)?;
+            index += 1;
+            let copy_to = if index < lines.len() - 1 {
+                let line = lines[index].trim();
+                line.strip_prefix(COPY_TO)
+                    .map(|destination| parse_path(destination, index))
+                    .transpose()?
+            } else {
+                None
+            }
+            .ok_or_else(|| {
+                anyhow!("copy-file hunk for '{path}' must be followed by '{COPY_TO}<destination>'")
+            })?;
+            index += 1;
+
+            let (chunks, next_index) = parse_update_chunks(&lines, index)?;
+            index = next_index;
+            hunks.push(PatchHunk::Copy {
+                path,
+                copy_to,
                 chunks,
             });
             continue;
@@ -210,6 +189,68 @@ fn is_file_header(line: &str) -> bool {
         || line.starts_with(ADD_FILE)
         || line.starts_with(DELETE_FILE)
         || line.starts_with(UPDATE_FILE)
+        || line.starts_with(COPY_FILE)
+}
+
+fn parse_update_chunks(lines: &[&str], mut index: usize) -> Result<(Vec<UpdateChunk>, usize)> {
+    let mut chunks: Vec<UpdateChunk> = Vec::new();
+
+    while index < lines.len() - 1 && !is_file_header(lines[index]) {
+        let line = lines[index];
+        let trimmed_end = line.trim_end();
+        let previous_ended = chunks.last().is_some_and(|chunk| chunk.end_of_file);
+
+        if previous_ended && line.is_empty() {
+            index += 1;
+            continue;
+        }
+
+        if trimmed_end == "@@" {
+            ensure_previous_chunk_has_lines(&chunks, index)?;
+            chunks.push(UpdateChunk::new(None));
+        } else if let Some(context) = trimmed_end.strip_prefix("@@ ") {
+            ensure_previous_chunk_has_lines(&chunks, index)?;
+            chunks.push(UpdateChunk::new(Some(context.to_owned())));
+        } else if trimmed_end == END_OF_FILE {
+            match chunks.last_mut() {
+                Some(chunk) if !chunk.is_empty() => chunk.end_of_file = true,
+                _ => bail!(
+                    "invalid update line {}: '{END_OF_FILE}' must follow a change",
+                    index + 1
+                ),
+            }
+        } else if previous_ended {
+            bail!(
+                "invalid update line {}: expected '@@' after '{END_OF_FILE}'",
+                index + 1
+            );
+        } else {
+            if chunks.is_empty() {
+                chunks.push(UpdateChunk::new(None));
+            }
+            let chunk = chunks.last_mut().expect("chunk exists");
+            if let Some(content) = line.strip_prefix(' ') {
+                chunk.old_lines.push(content.to_owned());
+                chunk.new_lines.push(content.to_owned());
+            } else if let Some(content) = line.strip_prefix('+') {
+                chunk.new_lines.push(content.to_owned());
+            } else if let Some(content) = line.strip_prefix('-') {
+                chunk.old_lines.push(content.to_owned());
+            } else if line.is_empty() {
+                chunk.old_lines.push(String::new());
+                chunk.new_lines.push(String::new());
+            } else {
+                bail!(
+                    "invalid update line {}: lines must start with ' ', '+', or '-'",
+                    index + 1
+                );
+            }
+        }
+        index += 1;
+    }
+
+    ensure_previous_chunk_has_lines(&chunks, index)?;
+    Ok((chunks, index))
 }
 
 fn ensure_previous_chunk_has_lines(chunks: &[UpdateChunk], index: usize) -> Result<()> {
@@ -460,6 +501,42 @@ mod tests {
         .expect("apply");
 
         assert_eq!(updated, b"");
+    }
+
+    #[test]
+    fn parses_copy_and_rename_only() {
+        let hunks = parse_apply_patch(
+            "*** Begin Patch\n\
+             *** Copy File: src.txt\n\
+             *** Copy to: dest.txt\n\
+             *** Update File: old.txt\n\
+             *** Move to: new.txt\n\
+             *** End Patch",
+        )
+        .expect("parse");
+
+        match &hunks[..] {
+            [
+                PatchHunk::Copy {
+                    path,
+                    copy_to,
+                    chunks,
+                },
+                PatchHunk::Update {
+                    path: update_path,
+                    move_to,
+                    chunks: update_chunks,
+                },
+            ] => {
+                assert_eq!(path, "src.txt");
+                assert_eq!(copy_to, "dest.txt");
+                assert!(chunks.is_empty());
+                assert_eq!(update_path, "old.txt");
+                assert_eq!(move_to.as_deref(), Some("new.txt"));
+                assert!(update_chunks.is_empty());
+            }
+            _ => panic!("expected copy and rename-only update"),
+        }
     }
 
     #[test]

@@ -392,8 +392,12 @@ async fn prepare_apply_patch_changes(
             } => {
                 let source = resolve_existing_file(filesystem, root, &path).await?;
                 reserve_path(&mut touched_paths, &source)?;
-                let contents =
-                    apply_update(&source, &read_file(filesystem, &source).await?, &chunks)?;
+                let base = read_file(filesystem, &source).await?;
+                let contents = if chunks.is_empty() {
+                    base
+                } else {
+                    apply_update(&source, &base, &chunks)?
+                };
                 let permissions = file_permissions(filesystem, &source).await?;
 
                 if let Some(destination) = move_to {
@@ -414,6 +418,28 @@ async fn prepare_apply_patch_changes(
                         permissions,
                     });
                 }
+            }
+            PatchHunk::Copy {
+                path,
+                copy_to,
+                chunks,
+            } => {
+                let source = resolve_existing_file(filesystem, root, &path).await?;
+                let destination = resolve_workspace_path(root, &copy_to, true)?;
+                ensure_missing(filesystem, &destination).await?;
+                reserve_path(&mut touched_paths, &destination)?;
+                let base = read_file(filesystem, &source).await?;
+                let contents = if chunks.is_empty() {
+                    base
+                } else {
+                    apply_update(&source, &base, &chunks)?
+                };
+                let permissions = file_permissions(filesystem, &source).await?;
+                changes.push(PreparedChange::Copy {
+                    destination,
+                    contents,
+                    permissions,
+                });
             }
         }
     }
@@ -801,6 +827,42 @@ mod tests {
         );
         assert!(!root.join("source.txt").exists());
         assert!(!root.join("delete.txt").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn copies_and_renames_with_begin_patch() {
+        let root = temp_workspace();
+        fs::write(root.join("src.txt"), "shared\n").unwrap();
+        fs::write(root.join("old.txt"), "keep\n").unwrap();
+        let patch = "*** Begin Patch\n\
+            *** Copy File: src.txt\n\
+            *** Copy to: dest.txt\n\
+            @@\n\
+            -shared\n\
+            +copied\n\
+            *** Update File: old.txt\n\
+            *** Move to: renamed.txt\n\
+            *** End Patch";
+
+        let output = apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), patch)
+            .await
+            .expect("copy/rename envelope should apply");
+
+        assert_eq!(output.changes.len(), 2);
+        assert_eq!(
+            fs::read_to_string(root.join("src.txt")).unwrap(),
+            "shared\n"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("dest.txt")).unwrap(),
+            "copied\n"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("renamed.txt")).unwrap(),
+            "keep\n"
+        );
+        assert!(!root.join("old.txt").exists());
         fs::remove_dir_all(root).unwrap();
     }
 
