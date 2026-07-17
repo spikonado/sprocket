@@ -10,6 +10,9 @@ use serde::Serialize;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex as AsyncMutex;
 
+use crate::apply_patch_format::{
+    PatchHunk, apply_update, is_apply_patch_format, parse_apply_patch,
+};
 use crate::tools::WorkspaceCancellation;
 use crate::workspace::{relative_to_root, resolve_workspace_path};
 
@@ -246,15 +249,25 @@ async fn prepare_changes(
     root: &Path,
     patch: &str,
 ) -> Result<Vec<PreparedChange>> {
+    if is_apply_patch_format(patch) {
+        return prepare_apply_patch_changes(filesystem, root, patch).await;
+    }
+
+    let (options, default_strip) = if patch.trim_start().starts_with("diff --git ") {
+        (ParseOptions::gitdiff(), 1)
+    } else {
+        (ParseOptions::unidiff(), 0)
+    };
+
     let mut changes = Vec::new();
     let mut touched_paths = BTreeSet::new();
 
-    for parsed in PatchSet::parse(patch, ParseOptions::gitdiff()) {
-        let parsed = parsed.context("failed to parse git-style unified diff")?;
+    for parsed in PatchSet::parse(patch, options) {
+        let parsed = parsed.context("failed to parse unified diff")?;
         let operation = parsed.operation();
         let strip = match operation {
             FileOperation::Rename { .. } | FileOperation::Copy { .. } => 0,
-            _ => 1,
+            _ => default_strip,
         };
 
         match operation.strip_prefix(strip) {
@@ -343,6 +356,64 @@ async fn prepare_changes(
                     contents,
                     permissions,
                 });
+            }
+        }
+    }
+
+    Ok(changes)
+}
+
+async fn prepare_apply_patch_changes(
+    filesystem: &PatchFilesystem,
+    root: &Path,
+    patch: &str,
+) -> Result<Vec<PreparedChange>> {
+    let hunks = parse_apply_patch(patch).context("failed to parse apply_patch input")?;
+    let mut changes = Vec::with_capacity(hunks.len());
+    let mut touched_paths = BTreeSet::new();
+
+    for hunk in hunks {
+        match hunk {
+            PatchHunk::Add { path, contents } => {
+                let path = resolve_workspace_path(root, &path, true)?;
+                ensure_missing(filesystem, &path).await?;
+                reserve_path(&mut touched_paths, &path)?;
+                changes.push(PreparedChange::Create { path, contents });
+            }
+            PatchHunk::Delete { path } => {
+                let path = resolve_existing_file(filesystem, root, &path).await?;
+                reserve_path(&mut touched_paths, &path)?;
+                changes.push(PreparedChange::Delete { path });
+            }
+            PatchHunk::Update {
+                path,
+                move_to,
+                chunks,
+            } => {
+                let source = resolve_existing_file(filesystem, root, &path).await?;
+                reserve_path(&mut touched_paths, &source)?;
+                let contents =
+                    apply_update(&source, &read_file(filesystem, &source).await?, &chunks)?;
+                let permissions = file_permissions(filesystem, &source).await?;
+
+                if let Some(destination) = move_to {
+                    let destination = resolve_workspace_path(root, &destination, true)?;
+                    ensure_missing(filesystem, &destination).await?;
+                    reserve_path(&mut touched_paths, &destination)?;
+                    changes.push(PreparedChange::Rename {
+                        source,
+                        destination,
+                        contents,
+                        permissions,
+                    });
+                } else {
+                    changes.push(PreparedChange::Modify {
+                        destination: source.clone(),
+                        source,
+                        contents,
+                        permissions,
+                    });
+                }
             }
         }
     }
@@ -683,6 +754,61 @@ mod tests {
     use super::{PatchFilesystem, apply_workspace_patch, write_new_file};
     use crate::test_support::temp_workspace;
     use crate::tools::{WorkspaceCancellation, WorkspaceOperationCancelled};
+
+    #[tokio::test]
+    async fn applies_begin_patch_format() {
+        let root = temp_workspace();
+        fs::write(root.join("source.txt"), "before\n").unwrap();
+        fs::write(root.join("delete.txt"), "delete me\n").unwrap();
+        let patch = "*** Begin Patch\n\
+            *** Add File: created.txt\n\
+            +created\n\
+            *** Delete File: delete.txt\n\
+            *** Update File: source.txt\n\
+            *** Move to: moved.txt\n\
+            @@\n\
+            -before\n\
+            +after\n\
+            *** End Patch";
+
+        let output = apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), patch)
+            .await
+            .expect("apply_patch format should apply");
+
+        assert_eq!(output.changes.len(), 3);
+        assert_eq!(
+            fs::read_to_string(root.join("created.txt")).unwrap(),
+            "created\n"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("moved.txt")).unwrap(),
+            "after\n"
+        );
+        assert!(!root.join("source.txt").exists());
+        assert!(!root.join("delete.txt").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn applies_unified_diff_without_git_header() {
+        let root = temp_workspace();
+        fs::write(root.join("file.txt"), "before\n").unwrap();
+        let patch = "--- file.txt\n\
+            +++ file.txt\n\
+            @@ -1 +1 @@\n\
+            -before\n\
+            +after\n";
+
+        apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), patch)
+            .await
+            .expect("unified diff should apply");
+
+        assert_eq!(
+            fs::read_to_string(root.join("file.txt")).unwrap(),
+            "after\n"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[tokio::test]
     async fn applies_multi_file_patch() {

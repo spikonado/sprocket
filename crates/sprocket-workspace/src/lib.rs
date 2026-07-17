@@ -1,4 +1,5 @@
 mod agents;
+mod apply_patch_format;
 mod browse;
 mod patch;
 mod paths;
