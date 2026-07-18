@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ArrowUp, ChevronDown, Cpu, ImagePlus, LockOpen, Square, X } from '@lucide/svelte';
+	import { ArrowUp, ImagePlus, Square, X } from '@lucide/svelte';
 	import OptionSelector from '$lib/components/option-selector.svelte';
 	import ProviderLogo from '$lib/components/provider-logo.svelte';
 	import ReasoningServiceSelector from '$lib/components/reasoning-service-selector.svelte';
@@ -296,27 +296,6 @@
 								disabled={isRunning}
 								className="z-20 shrink-0"
 							/>
-
-							<div class="mx-1 hidden h-4 w-px shrink-0 bg-white/8 sm:block"></div>
-
-							<button
-								type="button"
-								class="flex h-9 shrink-0 items-center gap-1.5 px-2 text-[15px] whitespace-nowrap text-slate-300 transition hover:text-slate-200"
-							>
-								<Cpu class="size-4 text-slate-400" />
-								<span>Build</span>
-							</button>
-
-							<div class="mx-1 hidden h-4 w-px shrink-0 bg-white/8 sm:block"></div>
-
-							<button
-								type="button"
-								class="flex h-9 shrink-0 items-center gap-1.5 px-2 text-[15px] whitespace-nowrap text-slate-300 transition hover:text-slate-200"
-							>
-								<LockOpen class="size-4 text-slate-400" />
-								<span>Full access</span>
-								<ChevronDown class="size-3 text-slate-500" />
-							</button>
 						</div>
 
 						<div class="flex shrink-0 flex-nowrap items-center justify-end gap-2.5">
