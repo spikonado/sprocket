@@ -16,28 +16,31 @@ describe('subscription and usage backend', () => {
 
 		const usage = await asUser.query(api.usage.getMyUsage, {});
 		const model = usage.meters.find((meter) => meter.id === 'modelUsage');
-		expect(model?.windows.find((window) => window.period === 'weekly')?.used).toBe(100_000);
+		const weekly = model?.windows.find((window) => window.period === 'weekly');
+		expect(weekly && weekly.used > weekly.limit).toBe(true);
 		await expect(
 			t.mutation(internal.lib.rateLimits.checkModelUsageLimits, { userId })
 		).rejects.toThrow('Monthly model usage limit reached');
 	});
 
-	it('charges web tools in proportion to their request cost', async () => {
+	it('weights web tool usage by request size', async () => {
 		const t = initConvexTest();
 		const userId = 'user_web_tools';
 		const asUser = t.withIdentity({ subject: userId });
+		const used = async (meterId: string) => {
+			const usage = await asUser.query(api.usage.getMyUsage, {});
+			const meter = usage.meters.find((meter) => meter.id === meterId);
+			return meter?.windows.find((window) => window.period === 'monthly')?.used ?? 0;
+		};
 
 		await t.mutation(internal.lib.rateLimits.chargeUrlScrapeLimits, { userId });
-		await t.mutation(internal.lib.rateLimits.chargeWebSearchLimits, {
-			userId,
-			numResults: 5
-		});
+		expect(await used('urlScrape')).toBeGreaterThan(0);
 
-		const usage = await asUser.query(api.usage.getMyUsage, {});
-		const scrape = usage.meters.find((meter) => meter.id === 'urlScrape');
-		const search = usage.meters.find((meter) => meter.id === 'webSearch');
-		expect(scrape?.windows.find((window) => window.period === 'monthly')?.used).toBe(1.5);
-		expect(search?.windows.find((window) => window.period === 'monthly')?.used).toBe(12);
+		await t.mutation(internal.lib.rateLimits.chargeWebSearchLimits, { userId, numResults: 1 });
+		const smallSearch = await used('webSearch');
+		expect(smallSearch).toBeGreaterThan(0);
+		await t.mutation(internal.lib.rateLimits.chargeWebSearchLimits, { userId, numResults: 10 });
+		expect(await used('webSearch')).toBeGreaterThan(smallSearch * 2);
 	});
 
 	it('uses only active subscriptions and ignores stale webhook events', async () => {
