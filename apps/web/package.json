@@ -18,6 +18,7 @@
 		"@ai-sdk/xai": "^4.0.14",
 		"@context-dot-dev/convex": "^1.0.1",
 		"@convex-dev/rate-limiter": "^0.3.2",
+		"@dodopayments/convex": "^0.2.12",
 		"@exalabs/convex-exa": "^0.1.0",
 		"@fontsource-variable/ibm-plex-sans": "^5.2.8",
 		"@fontsource/dm-sans": "^5.2.8",

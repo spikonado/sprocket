@@ -5,168 +5,203 @@ import {
 	RateLimiter,
 	SECOND,
 	WEEK,
+	calculateRateLimit,
 	isRateLimitError,
 	type RateLimitConfig,
-	type RunMutationCtx
+	type RunMutationCtx,
+	type RunQueryCtx
 } from '@convex-dev/rate-limiter';
 import { components, internal } from '@convex/_generated/api';
 import { internalMutation, type ActionCtx } from '@convex/_generated/server';
 import { v } from 'convex/values';
+import { completionUsageUnits, type SupportedModelId } from '@convex/lib/models';
+import { getSubscriptionTier, tierLimits, type TierLimits } from '@convex/lib/tiers';
+import { vModelId } from '@convex/lib/validators';
 
 const MONTH = 30 * DAY;
+export const rateLimiter = new RateLimiter(components.rateLimiter, {});
 
-const hourlyModelCompletionLimit = 300;
-const weeklyUrlScrapeLimit = 100;
-const monthlyUrlScrapeLimit = 280;
-const weeklyWebSearchLimit = 25;
-const monthlyWebSearchLimit = 60;
+export const usageMeters = [
+	{ id: 'modelUsage', label: 'Model usage', noun: 'model usage' },
+	{ id: 'webSearch', label: 'Web searches', noun: 'web search' },
+	{ id: 'urlScrape', label: 'URL scrapes', noun: 'URL scrape' }
+] as const;
 
-const rateLimitConfigs = {
-	modelCompletion: {
-		kind: 'fixed window',
-		period: HOUR,
-		rate: hourlyModelCompletionLimit
-	},
-	urlScrapeWeekly: {
-		kind: 'fixed window',
-		period: WEEK,
-		rate: weeklyUrlScrapeLimit
-	},
-	urlScrapeMonthly: {
-		kind: 'fixed window',
-		period: MONTH,
-		rate: monthlyUrlScrapeLimit
-	},
-	webSearchWeekly: {
-		kind: 'fixed window',
-		period: WEEK,
-		rate: weeklyWebSearchLimit
-	},
-	webSearchMonthly: {
-		kind: 'fixed window',
-		period: MONTH,
-		rate: monthlyWebSearchLimit
-	}
-} satisfies Record<string, RateLimitConfig>;
+export type UsageMeterId = (typeof usageMeters)[number]['id'];
 
-export const rateLimiter = new RateLimiter(components.rateLimiter, rateLimitConfigs);
+export const usagePeriods = ['weekly', 'monthly'] as const;
+export type UsagePeriod = (typeof usagePeriods)[number];
 
-type RateLimitName = keyof typeof rateLimitConfigs;
-type PairedLimit = { name: RateLimitName; label: string };
+const periodDurations: Record<UsagePeriod, number> = { weekly: WEEK, monthly: MONTH };
 
-const urlScrapeLimits: ReadonlyArray<PairedLimit> = [
-	{ name: 'urlScrapeMonthly', label: 'URL scrape monthly limit' },
-	{ name: 'urlScrapeWeekly', label: 'URL scrape weekly limit' }
-];
+function meterLimitName(meterId: UsageMeterId, period: UsagePeriod): string {
+	return `${meterId}${period === 'weekly' ? 'Weekly' : 'Monthly'}`;
+}
 
-const webSearchLimits: ReadonlyArray<PairedLimit> = [
-	{ name: 'webSearchMonthly', label: 'Web search monthly limit' },
-	{ name: 'webSearchWeekly', label: 'Web search weekly limit' }
-];
+function meterLimitConfig(
+	meterId: UsageMeterId,
+	period: UsagePeriod,
+	limits: TierLimits
+): RateLimitConfig {
+	return { kind: 'fixed window', period: periodDurations[period], rate: limits[meterId][period] };
+}
+
+function meterLimitLabel(meterId: UsageMeterId, period: UsagePeriod): string {
+	const meter = usageMeters.find(({ id }) => id === meterId);
+	if (!meter) throw new Error(`Unknown usage meter: ${meterId}`);
+	return `${period === 'weekly' ? 'Weekly' : 'Monthly'} ${meter.noun} limit`;
+}
 
 function formatRetryAfter(milliseconds: number): string {
 	let remaining = Math.max(SECOND, Math.ceil(milliseconds / SECOND) * SECOND);
-	const days = Math.floor(remaining / DAY);
-	remaining %= DAY;
-	const hours = Math.floor(remaining / HOUR);
-	remaining %= HOUR;
-	const minutes = Math.floor(remaining / MINUTE);
-	remaining %= MINUTE;
-	const seconds = remaining / SECOND;
 	const parts: string[] = [];
-
-	if (days > 0) {
-		parts.push(`${days}d`);
+	for (const [suffix, size] of [
+		['d', DAY],
+		['h', HOUR],
+		['m', MINUTE]
+	] as const) {
+		const value = Math.floor(remaining / size);
+		remaining %= size;
+		if (value > 0) parts.push(`${value}${suffix}`);
 	}
-	if (hours > 0) {
-		parts.push(`${hours}h`);
-	}
-	if (minutes > 0) {
-		parts.push(`${minutes}m`);
-	}
-	if (seconds > 0 || parts.length === 0) {
-		parts.push(`${seconds}s`);
-	}
-
+	const seconds = remaining / SECOND;
+	if (seconds > 0 || parts.length === 0) parts.push(`${seconds}s`);
 	return parts.join(' ');
 }
 
 function rateLimitError(label: string, retryAfter: number, cause?: unknown): Error {
-	return new Error(`${label} reached. Try again in ${formatRetryAfter(retryAfter)}.`, {
-		cause
-	});
+	return new Error(`${label} reached. Try again in ${formatRetryAfter(retryAfter)}.`, { cause });
 }
 
-async function enforceLimit(
+async function checkMeterLimits(
 	ctx: RunMutationCtx,
-	name: RateLimitName,
+	meterId: UsageMeterId,
 	key: string,
-	label: string
-): Promise<void> {
-	try {
-		await rateLimiter.limit(ctx, name, {
-			key,
-			throws: true
-		});
-	} catch (error) {
-		if (!isRateLimitError(error)) {
-			throw error;
-		}
-
-		throw rateLimitError(label, error.data.retryAfter, error);
-	}
-}
-
-/**
- * Check and consume both windows in one mutation so a denial on either rolls
- * back the other consume.
- */
-async function enforcePairedLimits(
-	ctx: RunMutationCtx,
-	limits: ReadonlyArray<PairedLimit>,
-	key: string
+	limits: TierLimits
 ): Promise<void> {
 	const statuses = await Promise.all(
-		limits.map(async ({ name, label }) => {
-			const status = await rateLimiter.check(ctx, name, { key });
-			return { label, status };
-		})
+		usagePeriods.map(async (period) => ({
+			period,
+			status: await rateLimiter.check(ctx, meterLimitName(meterId, period), {
+				key,
+				config: meterLimitConfig(meterId, period, limits)
+			})
+		}))
 	);
+	const blocked = statuses
+		.filter(({ status }) => !status.ok)
+		.sort((a, b) => (b.status.retryAfter ?? 0) - (a.status.retryAfter ?? 0))[0];
+	if (blocked && !blocked.status.ok) {
+		throw rateLimitError(meterLimitLabel(meterId, blocked.period), blocked.status.retryAfter);
+	}
+}
 
-	let blocked: { label: string; retryAfter: number } | undefined;
-	for (const { label, status } of statuses) {
-		if (!status.ok) {
-			if (blocked === undefined || status.retryAfter > blocked.retryAfter) {
-				blocked = { label, retryAfter: status.retryAfter };
-			}
+async function consumeMeterLimits(
+	ctx: RunMutationCtx,
+	meterId: UsageMeterId,
+	key: string,
+	limits: TierLimits
+): Promise<void> {
+	await checkMeterLimits(ctx, meterId, key, limits);
+	for (const period of usagePeriods) {
+		try {
+			await rateLimiter.limit(ctx, meterLimitName(meterId, period), {
+				key,
+				config: meterLimitConfig(meterId, period, limits),
+				throws: true
+			});
+		} catch (error) {
+			if (!isRateLimitError(error)) throw error;
+			throw rateLimitError(meterLimitLabel(meterId, period), error.data.retryAfter, error);
 		}
 	}
+}
 
-	if (blocked !== undefined) {
-		throw rateLimitError(blocked.label, blocked.retryAfter);
-	}
-
-	for (const { name, label } of limits) {
-		await enforceLimit(ctx, name, key, label);
-	}
+export async function getMeterWindow(
+	ctx: RunQueryCtx,
+	meterId: UsageMeterId,
+	period: UsagePeriod,
+	userId: string,
+	limits: TierLimits
+): Promise<{ used: number; limit: number; resetsAt: number | null }> {
+	const config = meterLimitConfig(meterId, period, limits);
+	const stored = await rateLimiter.getValue(ctx, meterLimitName(meterId, period), {
+		key: userId,
+		config
+	});
+	// A fixed window starts on first use; ts === 0 means it never has.
+	if (stored.ts === 0) return { used: 0, limit: config.rate, resetsAt: null };
+	const current = calculateRateLimit({ value: stored.value, ts: stored.ts }, config, Date.now());
+	return {
+		used: Math.max(0, config.rate - current.value),
+		limit: config.rate,
+		resetsAt: current.ts + config.period
+	};
 }
 
 export const consumeUrlScrapeLimits = internalMutation({
 	args: { userId: v.string() },
-	handler: async (ctx, args) => {
-		await enforcePairedLimits(ctx, urlScrapeLimits, args.userId);
+	handler: async (ctx, { userId }) => {
+		const tier = await getSubscriptionTier(ctx, userId);
+		await consumeMeterLimits(ctx, 'urlScrape', userId, tierLimits[tier]);
 	}
 });
 
 export const consumeWebSearchLimits = internalMutation({
 	args: { userId: v.string() },
-	handler: async (ctx, args) => {
-		await enforcePairedLimits(ctx, webSearchLimits, args.userId);
+	handler: async (ctx, { userId }) => {
+		const tier = await getSubscriptionTier(ctx, userId);
+		await consumeMeterLimits(ctx, 'webSearch', userId, tierLimits[tier]);
 	}
 });
 
-export async function enforceModelCompletionLimit(ctx: ActionCtx, userId: string): Promise<void> {
-	await enforceLimit(ctx, 'modelCompletion', userId, 'Model completion limit');
+export const checkModelUsageLimits = internalMutation({
+	args: { userId: v.string() },
+	handler: async (ctx, { userId }) => {
+		const tier = await getSubscriptionTier(ctx, userId);
+		await checkMeterLimits(ctx, 'modelUsage', userId, tierLimits[tier]);
+	}
+});
+
+export const chargeModelUsageLimits = internalMutation({
+	args: {
+		userId: v.string(),
+		modelId: vModelId,
+		tokens: v.object({
+			input: v.number(),
+			cacheRead: v.number(),
+			cacheWrite: v.number(),
+			output: v.number()
+		})
+	},
+	handler: async (ctx, args) => {
+		const tier = await getSubscriptionTier(ctx, args.userId);
+		const limits = tierLimits[tier];
+		const count = completionUsageUnits(args.modelId, args.tokens);
+		for (const period of usagePeriods) {
+			await rateLimiter.limit(ctx, meterLimitName('modelUsage', period), {
+				key: args.userId,
+				config: meterLimitConfig('modelUsage', period, limits),
+				count,
+				reserve: true
+			});
+		}
+	}
+});
+
+export async function checkModelUsageLimit(ctx: ActionCtx, userId: string): Promise<void> {
+	await ctx.runMutation(internal.lib.rateLimits.checkModelUsageLimits, { userId });
+}
+
+export async function chargeModelUsage(
+	ctx: ActionCtx,
+	args: {
+		userId: string;
+		modelId: SupportedModelId;
+		tokens: { input: number; cacheRead: number; cacheWrite: number; output: number };
+	}
+): Promise<void> {
+	await ctx.runMutation(internal.lib.rateLimits.chargeModelUsageLimits, args);
 }
 
 export async function enforceUrlScrapeLimit(ctx: ActionCtx, userId: string): Promise<void> {

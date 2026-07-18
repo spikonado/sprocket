@@ -10,10 +10,26 @@ import {
 	vServiceTier,
 	vRunStatus,
 	vAssistantMessagePart,
-	vThreadMessageType
+	vThreadMessageType,
+	vSubscriptionStatus,
+	vSubscriptionTier
 } from '@convex/lib/validators';
 
 export default defineSchema({
+	billingCustomers: defineTable({
+		userId: v.string(),
+		dodoCustomerId: v.string()
+	})
+		.index('by_userId', ['userId'])
+		.index('by_dodoCustomerId', ['dodoCustomerId']),
+	subscriptions: defineTable({
+		userId: v.string(),
+		tier: vSubscriptionTier,
+		dodoSubscriptionId: v.string(),
+		dodoProductId: v.string(),
+		status: vSubscriptionStatus,
+		eventAt: v.number()
+	}).index('by_userId', ['userId']),
 	uiPreferences: defineTable({
 		userId: v.string(),
 		lastThreadId: v.optional(v.id('threadRecords'))

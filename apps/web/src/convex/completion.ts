@@ -3,18 +3,19 @@
 import { generateText, jsonSchema, streamText, tool, type ModelMessage } from 'ai';
 import { v } from 'convex/values';
 import { action, type ActionCtx } from '@convex/_generated/server';
-import { api } from '@convex/_generated/api';
+import { api, internal } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import type { JsonValue } from '@convex/lib/json';
 import { resolveLanguageModel, resolveProviderOptions } from '@convex/lib/modelRegistry';
 import { assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
 import { isCurrentCompletionAttempt } from '@convex/lib/runLease';
-import { enforceModelCompletionLimit } from '@convex/lib/rateLimits';
+import { chargeModelUsage, checkModelUsageLimit } from '@convex/lib/rateLimits';
 import { getUserId } from '@convex/lib/auth';
 import { vModelId, vReasoningEffort, vServiceTier } from '@convex/lib/validators';
 import {
 	assertSupportedModelConfiguration,
 	defaultServiceTier,
+	normalizeCompletionUsage,
 	type SupportedModelId,
 	type SupportedReasoningEffort,
 	type SupportedServiceTier
@@ -153,6 +154,22 @@ export const complete = action({
 		} catch (error) {
 			abortController.abort(error);
 			throw error;
+		}
+		// Accounting must not fail the completion: fall back to a durable
+		// scheduled charge, and as a last resort log and continue.
+		const chargeArgs = {
+			userId: completionContext.userId,
+			modelId,
+			tokens: normalizeCompletionUsage(result.usage)
+		};
+		try {
+			await chargeModelUsage(ctx, chargeArgs);
+		} catch (chargeError) {
+			try {
+				await ctx.scheduler.runAfter(0, internal.lib.rateLimits.chargeModelUsageLimits, chargeArgs);
+			} catch (scheduleError) {
+				console.error('Failed to charge model usage.', chargeError, scheduleError);
+			}
 		}
 
 		return {
@@ -521,15 +538,16 @@ function delay(milliseconds: number): Promise<void> {
 async function prepareCompletionContext(
 	ctx: ActionCtx,
 	runId: Id<'runs'>
-): Promise<{ promptCacheKey: string; streamSequence: number }> {
+): Promise<{ promptCacheKey: string; streamSequence: number; userId: string }> {
 	const actor = await ctx.runQuery(api.agentRuntime.completionActor, {
 		runId
 	});
 	assertRunAcceptsModelCompletion(actor.status);
-	await enforceModelCompletionLimit(ctx, actor.userId);
+	await checkModelUsageLimit(ctx, actor.userId);
 	return {
 		promptCacheKey: `thread:${actor.threadId}`,
-		streamSequence: actor.streamSequence
+		streamSequence: actor.streamSequence,
+		userId: actor.userId
 	};
 }
 

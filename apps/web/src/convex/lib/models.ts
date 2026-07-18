@@ -1,3 +1,5 @@
+import type { LanguageModelUsage } from 'ai';
+
 export const reasoningEffortIds = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 export const serviceTierIds = ['standard', 'fast'] as const;
 export const modelIds = [
@@ -20,6 +22,7 @@ type ModelDefinition = {
 	reasoningEfforts: readonly SupportedReasoningEffort[];
 	defaultReasoningEffort: SupportedReasoningEffort;
 	serviceTiers: readonly SupportedServiceTier[];
+	usageWeights: { input: number; cacheRead: number; cacheWrite: number; output: number };
 };
 
 export const modelDefinitions = [
@@ -29,7 +32,8 @@ export const modelDefinitions = [
 		provider: 'openai',
 		reasoningEfforts: reasoningEffortIds,
 		defaultReasoningEffort: 'medium',
-		serviceTiers: serviceTierIds
+		serviceTiers: serviceTierIds,
+		usageWeights: { input: 5, cacheRead: 0.5, cacheWrite: 6.25, output: 20 }
 	},
 	{
 		id: 'gpt-5.6-terra',
@@ -37,7 +41,8 @@ export const modelDefinitions = [
 		provider: 'openai',
 		reasoningEfforts: reasoningEffortIds,
 		defaultReasoningEffort: 'medium',
-		serviceTiers: serviceTierIds
+		serviceTiers: serviceTierIds,
+		usageWeights: { input: 1, cacheRead: 0.1, cacheWrite: 1.25, output: 4 }
 	},
 	{
 		id: 'gpt-5.6-luna',
@@ -45,7 +50,8 @@ export const modelDefinitions = [
 		provider: 'openai',
 		reasoningEfforts: reasoningEffortIds,
 		defaultReasoningEffort: 'medium',
-		serviceTiers: serviceTierIds
+		serviceTiers: serviceTierIds,
+		usageWeights: { input: 2, cacheRead: 0.2, cacheWrite: 2.5, output: 8 }
 	},
 	{
 		id: 'claude-fable-5',
@@ -53,7 +59,8 @@ export const modelDefinitions = [
 		provider: 'anthropic',
 		reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
 		defaultReasoningEffort: 'high',
-		serviceTiers: serviceTierIds
+		serviceTiers: serviceTierIds,
+		usageWeights: { input: 6, cacheRead: 0.6, cacheWrite: 7.5, output: 24 }
 	},
 	{
 		id: 'grok-4.5',
@@ -61,7 +68,8 @@ export const modelDefinitions = [
 		provider: 'xai',
 		reasoningEfforts: ['low', 'medium', 'high'],
 		defaultReasoningEffort: 'high',
-		serviceTiers: serviceTierIds
+		serviceTiers: serviceTierIds,
+		usageWeights: { input: 1.5, cacheRead: 0.15, cacheWrite: 2, output: 6 }
 	}
 ] as const satisfies readonly ModelDefinition[];
 
@@ -74,6 +82,36 @@ export function getModelDefinition(modelId: SupportedModelId): ModelDefinition {
 	const definition = modelDefinitions.find((model) => model.id === modelId);
 	if (!definition) throw new Error(`Unsupported model: ${modelId}`);
 	return definition;
+}
+
+export function normalizeCompletionUsage(usage: LanguageModelUsage): {
+	input: number;
+	cacheRead: number;
+	cacheWrite: number;
+	output: number;
+} {
+	const details = usage.inputTokenDetails;
+	const cacheRead = details.cacheReadTokens ?? 0;
+	const cacheWrite = details.cacheWriteTokens ?? 0;
+	return {
+		input: details.noCacheTokens ?? Math.max(0, (usage.inputTokens ?? 0) - cacheRead - cacheWrite),
+		cacheRead,
+		cacheWrite,
+		output: usage.outputTokens ?? 0
+	};
+}
+
+export function completionUsageUnits(
+	modelId: SupportedModelId,
+	tokens: { input: number; cacheRead: number; cacheWrite: number; output: number }
+): number {
+	const weights = getModelDefinition(modelId).usageWeights;
+	return Math.ceil(
+		tokens.input * weights.input +
+			tokens.cacheRead * weights.cacheRead +
+			tokens.cacheWrite * weights.cacheWrite +
+			tokens.output * weights.output
+	);
 }
 
 export function assertSupportedModelConfiguration(args: {
