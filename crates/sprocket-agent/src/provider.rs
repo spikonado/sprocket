@@ -69,7 +69,7 @@ pub(crate) struct AgentProviderRequest {
 pub(crate) enum AgentProviderResult {
     Completed { text: String },
     Cancelled { text: String },
-    Superseded,
+    Superseded { error: anyhow::Error },
     Failed { text: String, error: anyhow::Error },
 }
 
@@ -182,7 +182,9 @@ where
                         final_text
                     };
                     let result = match classify_provider_error(&error) {
-                        ProviderErrorDisposition::Superseded => AgentProviderResult::Superseded,
+                        ProviderErrorDisposition::Superseded => AgentProviderResult::Superseded {
+                            error: anyhow!(error),
+                        },
                         ProviderErrorDisposition::Cancelled => {
                             AgentProviderResult::Cancelled { text }
                         }

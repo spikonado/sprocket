@@ -172,13 +172,18 @@ async fn finalize_claim_failure(
     text: &str,
 ) -> anyhow::Result<()> {
     let last_error = error.to_string();
-    cleanup_twice(
+    let accepted = cleanup_twice(
         &format!("claim failure cleanup for run {run_id}"),
         FAILURE_CLEANUP_ATTEMPT_TIMEOUT,
         || runtime.finalize_claim_failure(run_id, claim_id, text, &last_error),
     )
-    .await
-    .map(|_| ())
+    .await?;
+    if !accepted {
+        eprintln!(
+            "sprocket-agent: claim failure cleanup skipped for run {run_id}; run no longer belongs to this active claim"
+        );
+    }
+    Ok(())
 }
 
 async fn abort_after_claim(
@@ -262,9 +267,18 @@ async fn finalize_provider_result(
             )
             .await
         }
-        AgentProviderResult::Superseded => {
-            eprintln!("sprocket-agent: provider attempt superseded {}", run_id);
-            Ok(())
+        AgentProviderResult::Superseded { error } => {
+            eprintln!(
+                "sprocket-agent: provider attempt superseded {}: {error}",
+                run_id
+            );
+            abort_after_claim(
+                runtime,
+                run_id,
+                claim_id,
+                anyhow!("the model connection could not be recovered"),
+            )
+            .await
         }
         AgentProviderResult::Failed { text, error } => {
             let error_text = error.to_string();

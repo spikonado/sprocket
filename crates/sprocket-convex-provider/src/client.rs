@@ -530,14 +530,13 @@ async fn call_completion_action(
                     "sprocket-convex-provider: timed out calling {}; retrying: {error}",
                     client.completion_action
                 );
-                superseded_stream_ids.push(stream_id);
-                sleep(retry_delay).await;
-                retry_delay = retry_delay.saturating_mul(2);
+                backoff_completion_retry(&mut superseded_stream_ids, stream_id, &mut retry_delay)
+                    .await;
                 continue;
             }
         };
 
-        match result {
+        let provider_error = match result {
             Ok(FunctionResult::Value(value)) => {
                 eprintln!(
                     "sprocket-convex-provider: action done {}",
@@ -545,12 +544,8 @@ async fn call_completion_action(
                 );
                 return Ok(value);
             }
-            Ok(FunctionResult::ErrorMessage(message)) => {
-                return Err(CompletionError::ProviderError(message));
-            }
-            Ok(FunctionResult::ConvexError(error)) => {
-                return Err(CompletionError::ProviderError(error.message));
-            }
+            Ok(FunctionResult::ErrorMessage(message)) => message,
+            Ok(FunctionResult::ConvexError(error)) => error.message,
             Err(error) => {
                 if attempt >= COMPLETION_TRANSPORT_ATTEMPTS {
                     return Err(to_completion_error(error));
@@ -559,12 +554,37 @@ async fn call_completion_action(
                     "sprocket-convex-provider: transport failure calling {}; retrying: {error:#}",
                     client.completion_action
                 );
-                superseded_stream_ids.push(stream_id);
-                sleep(retry_delay).await;
-                retry_delay = retry_delay.saturating_mul(2);
+                backoff_completion_retry(&mut superseded_stream_ids, stream_id, &mut retry_delay)
+                    .await;
+                continue;
             }
+        };
+        if should_retry_superseded_completion(&provider_error, attempt) {
+            // A takeover changes the claim id, so the backend rejects these retries
+            // before their attempt sequence can supersede the new owner.
+            eprintln!(
+                "sprocket-convex-provider: action {} transport attempt {attempt} was superseded; retrying with a fresh stream",
+                client.completion_action,
+            );
+            backoff_completion_retry(&mut superseded_stream_ids, stream_id, &mut retry_delay).await;
+            continue;
         }
+        return Err(CompletionError::ProviderError(provider_error));
     }
+}
+
+fn should_retry_superseded_completion(message: &str, attempt: u32) -> bool {
+    attempt < COMPLETION_TRANSPORT_ATTEMPTS && is_completion_stream_superseded(message)
+}
+
+async fn backoff_completion_retry(
+    superseded_stream_ids: &mut Vec<String>,
+    stream_id: String,
+    retry_delay: &mut Duration,
+) {
+    superseded_stream_ids.push(stream_id);
+    sleep(*retry_delay).await;
+    *retry_delay = retry_delay.saturating_mul(2);
 }
 
 fn action_args(
@@ -730,9 +750,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        COMPLETION_STREAM_SUPERSEDED, CompletionOutput, CompletionStreamEvent, InputTokenDetails,
-        ToolCall, Usage, clone_locked, completion_choice, is_completion_stream_superseded,
-        reasoning_stream_choices, text_stream_choices,
+        COMPLETION_STREAM_SUPERSEDED, COMPLETION_TRANSPORT_ATTEMPTS, CompletionOutput,
+        CompletionStreamEvent, InputTokenDetails, ToolCall, Usage, clone_locked, completion_choice,
+        is_completion_stream_superseded, reasoning_stream_choices,
+        should_retry_superseded_completion, text_stream_choices,
     };
     use rig::completion::{CompletionError, GetTokenUsage};
     use rig::message::AssistantContent;
@@ -905,5 +926,20 @@ mod tests {
         ));
 
         assert!(is_completion_stream_superseded(&error));
+    }
+
+    #[test]
+    fn retries_superseded_replays_until_the_transport_attempt_limit() {
+        let error = format!("completion:complete failed: {COMPLETION_STREAM_SUPERSEDED}");
+
+        assert!(should_retry_superseded_completion(
+            &error,
+            COMPLETION_TRANSPORT_ATTEMPTS - 1,
+        ));
+        assert!(!should_retry_superseded_completion(
+            &error,
+            COMPLETION_TRANSPORT_ATTEMPTS,
+        ));
+        assert!(!should_retry_superseded_completion("provider failed", 1));
     }
 }
