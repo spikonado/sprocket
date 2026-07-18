@@ -138,8 +138,11 @@
 		}
 	}
 
-	function summarizePaths(paths: string[]) {
-		return paths.length === 1 ? paths[0] : `${paths[0]} +${paths.length - 1} more`;
+	/** Patch summaries list one path per line; give them room to wrap instead of truncating. */
+	function toolSummaryClass(toolLog: AssistantTimelineTool) {
+		return (toolLog.job?.kind ?? toolLog.name) === 'apply_patch'
+			? 'whitespace-pre-wrap wrap-anywhere'
+			: 'truncate';
 	}
 
 	const PATCH_ENVELOPE_FILE_HEADERS = [
@@ -189,7 +192,7 @@
 			}
 		}
 		const uniquePaths = [...new Set(paths)];
-		return uniquePaths.length > 0 ? summarizePaths(uniquePaths) : null;
+		return uniquePaths.length > 0 ? uniquePaths.join('\n') : null;
 	}
 
 	function summarizePatchResult(result: JsonValue | undefined) {
@@ -203,7 +206,18 @@
 		if (paths.length === 0) {
 			return null;
 		}
-		return summarizePaths(paths);
+		return [...new Set(paths)].join('\n');
+	}
+
+	function patchSummary(toolLog: AssistantTimelineTool) {
+		if (toolLog.job?.kind === 'apply_patch') {
+			return summarizePatchResult(toolLog.job.result) ?? summarizePatchInput(toolLog.job.payload);
+		}
+		return toolLog.name === 'apply_patch' ? summarizePatchInput(toolLog.input) : null;
+	}
+
+	function changedFileCount(tools: AssistantTimelineTool[]) {
+		return new Set(tools.flatMap((tool) => patchSummary(tool)?.split('\n') ?? [])).size;
 	}
 
 	function summarizeWebToolResult(kind: string, result: JsonValue | undefined) {
@@ -229,11 +243,9 @@
 			);
 		}
 		if (toolLog.job) {
-			if (toolLog.job.kind === 'apply_patch') {
-				const patchSummary = summarizePatchResult(toolLog.job.result);
-				if (patchSummary) {
-					return patchSummary;
-				}
+			const summary = patchSummary(toolLog);
+			if (summary) {
+				return summary;
 			}
 			return (
 				summarizeTool(toolLog.job.kind, toolLog.job.payload) +
@@ -493,6 +505,9 @@
 																label={toolGroupLabel(block.toolKey)}
 																icon={toolKindIcon(block.toolKey)}
 																tools={block.tools}
+																defaultExpanded={block.toolKey === 'apply_patch'
+																	? changedFileCount(block.tools) <= 2
+																	: undefined}
 															>
 																{#snippet toolRow(tool)}
 																	{@const toolError = assistantTimelineToolError(tool)}
@@ -504,7 +519,7 @@
 																				class="min-w-0 cursor-pointer text-left"
 																				title={fullToolSummary(tool, isStreaming, sessionCommands)}
 																			>
-																				<span class="truncate">{toolSummary}</span>
+																				<span class={toolSummaryClass(tool)}>{toolSummary}</span>
 																				<span
 																					class={toolFailureKind === 'cancelled'
 																						? 'text-amber-200'
@@ -525,7 +540,7 @@
 																		</details>
 																	{:else}
 																		<p
-																			class="min-w-0 truncate"
+																			class={`min-w-0 ${toolSummaryClass(tool)}`}
 																			title={fullToolSummary(tool, isStreaming, sessionCommands)}
 																		>
 																			{toolSummary}
@@ -549,11 +564,14 @@
 														{@const ToolIcon = toolLogIcon(tool)}
 														{@const toolSummary = toolItemSummary(tool, sessionCommands)}
 														<p
-															class="flex min-w-0 items-center gap-1.5"
+															class="flex min-w-0 items-start gap-1.5"
 															title={fullToolSummary(tool, isStreaming, sessionCommands)}
 														>
-															<ToolIcon class="size-3 shrink-0 text-slate-500" aria-hidden="true" />
-															<span class="truncate">{toolSummary}</span>
+															<ToolIcon
+																class="mt-1.5 size-3 shrink-0 text-slate-500"
+																aria-hidden="true"
+															/>
+															<span class={toolSummaryClass(tool)}>{toolSummary}</span>
 														</p>
 													{/snippet}
 												</ToolCallsDisclosure>
