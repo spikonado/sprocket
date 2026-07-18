@@ -12,6 +12,7 @@ export function buildAgentHistoryFromAssistantParts(args: {
 	parts: AssistantPart[];
 	jobs: PersistableExecutorToolJob[];
 	fallbackText: string;
+	stripProviderItemReferences?: boolean;
 }): AgentHistoryMessage[] {
 	const parts = ensureAssistantToolPartsFromJobs(args.parts, args.jobs);
 	const history: AgentHistoryMessage[] = [];
@@ -85,18 +86,26 @@ export function buildAgentHistoryFromAssistantParts(args: {
 				continue;
 			}
 			sawAssistantText = true;
+			const providerMetadata = providerMetadataForReplay(
+				part.providerMetadata,
+				args.stripProviderItemReferences
+			);
 			turn.assistant.push({
 				type: 'text',
 				text: part.text,
-				...(part.providerMetadata !== undefined
-					? { additionalParamsJson: JSON.stringify(part.providerMetadata) }
+				...(providerMetadata !== undefined
+					? { additionalParamsJson: JSON.stringify(providerMetadata) }
 					: {})
 			});
 			continue;
 		}
 
 		if (part.type === 'reasoning') {
-			const openai = openAiMetadata(part.providerMetadata);
+			const providerMetadata = providerMetadataForReplay(
+				part.providerMetadata,
+				args.stripProviderItemReferences
+			);
+			const openai = openAiMetadata(providerMetadata);
 			const itemId = typeof openai?.itemId === 'string' ? openai.itemId : undefined;
 			const blocks: unknown[] = [];
 			if (part.text.length > 0) {
@@ -116,14 +125,18 @@ export function buildAgentHistoryFromAssistantParts(args: {
 		}
 
 		if (part.type === 'tool-call') {
+			const providerMetadata = providerMetadataForReplay(
+				part.providerMetadata,
+				args.stripProviderItemReferences
+			);
 			turn.assistant.push({
 				type: 'toolCall',
 				id: part.callId,
 				callId: part.callId,
 				name: part.name,
 				argumentsJson: JSON.stringify(part.input),
-				...(part.providerMetadata !== undefined
-					? { additionalParamsJson: JSON.stringify(part.providerMetadata) }
+				...(providerMetadata !== undefined
+					? { additionalParamsJson: JSON.stringify(providerMetadata) }
 					: {})
 			});
 			continue;
@@ -173,8 +186,33 @@ function buildAgentHistoryFromAssistantMessage(args: {
 				result: job.result,
 				error: job.error
 			})),
-		fallbackText: args.message.text
+		fallbackText: args.message.text,
+		stripProviderItemReferences: args.message.runStatus !== 'completed'
 	});
+}
+
+function providerMetadataForReplay(
+	value: unknown,
+	stripProviderItemReferences: boolean | undefined
+): unknown | undefined {
+	if (!stripProviderItemReferences || !value || typeof value !== 'object') {
+		return value;
+	}
+	if (Array.isArray(value)) return value;
+
+	const metadata = value as Record<string, unknown>;
+	const openai = openAiMetadata(metadata);
+	if (!openai || !Object.hasOwn(openai, 'itemId')) return value;
+
+	const replayableOpenAi = { ...openai };
+	delete replayableOpenAi.itemId;
+	const replayableMetadata = { ...metadata };
+	if (Object.keys(replayableOpenAi).length > 0) {
+		replayableMetadata.openai = replayableOpenAi;
+	} else {
+		delete replayableMetadata.openai;
+	}
+	return Object.keys(replayableMetadata).length > 0 ? replayableMetadata : undefined;
 }
 
 function openAiMetadata(value: unknown): Record<string, unknown> | undefined {
