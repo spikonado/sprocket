@@ -92,28 +92,21 @@ Install dependencies:
 bun install
 ```
 
-Add `PUBLIC_CONVEX_URL` to the repository's `.env` file. Configure the Convex
-deployment with `WORKOS_CLIENT_ID` and the API key for each enabled model
-provider (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `XAI_API_KEY`).
-
-Configure these redirect URIs in the WorkOS application:
-
-- `http://localhost:5173/callback`
-- `http://127.0.0.1:*/api/auth/desktop-login/callback`
+### Running Sprocket
 
 Start the browser development environment:
 
 ```sh
-bun run dev
+bun dev
 ```
 
-This runs Vite at `http://localhost:5173` and the Rust API at
-`http://127.0.0.1:7731`, with development state kept in `.sprocket-dev` inside
-the repository. Development uses `7731` rather than the installed app's
-`17731`. To develop against Electron instead, run:
+After creating a convex deployment and configuring authkit following the instructions, configure the Convex deployment with the API key for each enabled model provider (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `XAI_API_KEY`).
+
+This runs Vite at `http://localhost:5173` and the Rust API at `http://127.0.0.1:7731`, with development state kept in `.sprocket-dev` inside the repository.
+To develop against Electron instead, run:
 
 ```sh
-bun run dev:desktop
+bun dev:desktop
 ```
 
 ### Building and testing
@@ -131,19 +124,11 @@ Create the optimized desktop package and standalone CLI bundle with:
 bun run build:release
 ```
 
-Release artifacts are written to `apps/desktop/dist/`. The Electron desktop
-package and standalone CLI bundle are separate artifacts. The CLI bundle
-contains only the native `sprocket` executable and the static web files needed
-by `sprocket --web`; it does not contain Electron.
+Release artifacts are written to `apps/desktop/dist/`.
+The Electron desktop package and standalone CLI bundle are separate artifacts.
+The CLI bundle contains only the native `sprocket` executable and the static web files needed by `sprocket --web`; it does not contain Electron.
 
 ## Troubleshooting
 
-- Use `http://localhost:5173`, not `127.0.0.1:5173`, for browser development so
-  WorkOS PKCE state and local cookies remain on one origin. Sprocket corrects
-  the development URL automatically when possible.
-- If `17731` is already occupied, set `SPROCKET_PORT` before launching. The
-  wildcard WorkOS redirect above allows the native callback to follow the new
-  port.
-- If the CLI cannot locate the desktop executable, set
-  `SPROCKET_DESKTOP_EXECUTABLE` to its full path, or use `sprocket --web` without
-  the desktop application.
+- If `17731` is already occupied, set `SPROCKET_PORT` before launching.
+- If the CLI cannot locate the desktop executable, set `SPROCKET_DESKTOP_EXECUTABLE` to its full path, or use `sprocket --web` without the desktop application.

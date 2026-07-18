@@ -2,5 +2,17 @@
 	"aiFiles": {
 		"enabled": false
 	},
-	"functions": "src/convex/"
+	"functions": "src/convex/",
+	"authKit": {
+		"dev": {
+			"configure": {
+				"redirectUris": [
+					"http://localhost:5173/callback",
+					"http://127.0.0.1:*/api/auth/desktop-login/callback"
+				],
+				"appHomepageUrl": "http://localhost:5173",
+				"corsOrigins": ["http://localhost:5173"]
+			}
+		}
+	}
 }

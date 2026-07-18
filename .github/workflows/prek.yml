@@ -31,6 +31,10 @@ jobs:
           nix develop --profile sprocket-shell -c true
           cachix push spikonado sprocket-shell
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cmd-format: nix develop --profile sprocket-shell -c {0}
+
       - name: Install dependencies
         shell: 'nix develop --profile sprocket-shell -c bash -e {0}'
         run: bun install --frozen-lockfile

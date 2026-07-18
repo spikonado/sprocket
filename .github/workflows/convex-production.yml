@@ -1,0 +1,65 @@
+name: Convex Production
+
+on:
+  workflow_run:
+    workflows: [Build and Test]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v7.0.0
+
+      - uses: cachix/install-nix-action@v31.10.7
+        with:
+          extra_nix_config: |
+            accept-flake-config = true
+
+      - uses: cachix/cachix-action@v17
+        with:
+          name: spikonado
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+
+      - name: Build and Cache Shell Environment
+        run: |
+          nix develop --profile sprocket-shell -c true
+          cachix push spikonado sprocket-shell
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cmd-format: nix develop --profile sprocket-shell -c {0}
+
+      - name: Install dependencies
+        shell: 'nix develop --profile sprocket-shell -c bash -e {0}'
+        run: bun install --frozen-lockfile
+
+      - name: Validate production deploy key
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_PRODUCTION_DEPLOY_KEY }}
+        run: |
+          if [[ -z "$CONVEX_DEPLOY_KEY" ]]; then
+            echo "::error::Add a Convex production deployment deploy key as the CONVEX_PRODUCTION_DEPLOY_KEY repository or organization secret."
+            exit 1
+          fi
+
+      - name: Deploy Convex production
+        working-directory: apps/web
+        shell: 'nix develop --profile ../../sprocket-shell -c bash -e {0}'
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_PRODUCTION_DEPLOY_KEY }}
+          CONVEX_DEPLOY_MESSAGE: Production deploy for ${{ github.event.workflow_run.head_sha }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          git fetch origin main
+          if [[ "$TESTED_SHA" != "$(git rev-parse origin/main)" ]]; then
+            echo "Skipping stale production deploy for $TESTED_SHA."
+            exit 0
+          fi
+
+          nix develop -c bunx convex deploy --message "$CONVEX_DEPLOY_MESSAGE"
