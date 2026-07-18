@@ -424,6 +424,7 @@ export const completionActor = query({
 		args
 	): Promise<{
 		userId: string;
+		threadId: Id<'threadRecords'>;
 		status: Infer<typeof vRunStatus>;
 		claimId?: string;
 		completionAttemptSeq: number;
@@ -437,6 +438,7 @@ export const completionActor = query({
 			: null;
 		return {
 			userId,
+			threadId: run.threadId,
 			status: run.status,
 			...(run.claimId ? { claimId: run.claimId } : {}),
 			completionAttemptSeq: run.completionAttemptSeq ?? 0,

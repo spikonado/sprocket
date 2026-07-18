@@ -236,6 +236,8 @@ pub struct Usage {
 pub struct InputTokenDetails {
     #[serde(default, deserialize_with = "deserialize_convex_u64")]
     pub cache_read_tokens: u64,
+    #[serde(default, deserialize_with = "deserialize_convex_u64")]
+    pub cache_write_tokens: u64,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -252,7 +254,7 @@ impl GetTokenUsage for CompletionOutput {
             output_tokens: self.usage.output_tokens,
             total_tokens: self.usage.total_tokens,
             cached_input_tokens: self.usage.input_token_details.cache_read_tokens,
-            cache_creation_input_tokens: 0,
+            cache_creation_input_tokens: self.usage.input_token_details.cache_write_tokens,
             tool_use_prompt_tokens: 0,
             reasoning_tokens: self.usage.output_token_details.reasoning_tokens,
         }
@@ -728,11 +730,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        COMPLETION_STREAM_SUPERSEDED, CompletionOutput, CompletionStreamEvent, ToolCall, Usage,
-        clone_locked, completion_choice, is_completion_stream_superseded, reasoning_stream_choices,
-        text_stream_choices,
+        COMPLETION_STREAM_SUPERSEDED, CompletionOutput, CompletionStreamEvent, InputTokenDetails,
+        ToolCall, Usage, clone_locked, completion_choice, is_completion_stream_superseded,
+        reasoning_stream_choices, text_stream_choices,
     };
-    use rig::completion::CompletionError;
+    use rig::completion::{CompletionError, GetTokenUsage};
     use rig::message::AssistantContent;
     use rig::streaming::RawStreamingChoice;
     use std::sync::Arc;
@@ -873,6 +875,27 @@ mod tests {
         };
         assert_eq!(tool_call.id, "call_123");
         assert_eq!(tool_call.call_id.as_deref(), Some("call_123"));
+    }
+
+    #[test]
+    fn preserves_provider_cache_usage() {
+        let output = CompletionOutput {
+            text: String::new(),
+            usage: Usage {
+                input_token_details: InputTokenDetails {
+                    cache_read_tokens: 120,
+                    cache_write_tokens: 80,
+                },
+                ..Usage::default()
+            },
+            message_id: None,
+            tool_calls: Vec::new(),
+            stream_events: Vec::new(),
+        };
+
+        let usage = output.token_usage();
+        assert_eq!(usage.cached_input_tokens, 120);
+        assert_eq!(usage.cache_creation_input_tokens, 80);
     }
 
     #[test]
