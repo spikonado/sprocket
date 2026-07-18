@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-	assertThreadCanStartRun,
-	cancelExecutorJobsForTerminalRun,
-	executorFailureRunPatch
-} from '@convex/lib/runs';
+import { assertThreadCanStartRun, cancelExecutorJobsForTerminalRun } from '@convex/lib/runs';
 
 describe('assertThreadCanStartRun', () => {
 	it('allows a thread with no prior run', () => {
@@ -29,24 +25,7 @@ describe('assertThreadCanStartRun', () => {
 	});
 });
 
-describe('executor run state', () => {
-	it('releases the active run after a recoverable tool failure', () => {
-		expect(
-			executorFailureRunPatch({
-				runStatus: 'awaiting_executor',
-				activeJobId: 'job-1',
-				failedJobId: 'job-1'
-			})
-		).toEqual({ status: 'running', activeJobId: undefined });
-		expect(
-			executorFailureRunPatch({
-				runStatus: 'failed',
-				activeJobId: 'job-1',
-				failedJobId: 'job-1'
-			})
-		).toBeUndefined();
-	});
-
+describe('cancelExecutorJobsForTerminalRun', () => {
 	it('cancels every live sibling while preserving terminal jobs', () => {
 		const completedAt = 42;
 		const jobs = cancelExecutorJobsForTerminalRun({

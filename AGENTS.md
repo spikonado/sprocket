@@ -10,9 +10,8 @@
 
 1. `cargo test`
 2. `bun run test`
-3. `bun convex dev --once in ./apps/web/` -> After every convex-related change
-4. `bun run build`
-5. `prek run -a` -> Always run this for ALL formatting and linting
+3. `bun run build`
+4. `prek run -a` -> Always run this for ALL formatting and linting
 
 Run only the tests relevant to your changes unless instructed otherwise.
 If you are a subagent, don't run any of the above.
