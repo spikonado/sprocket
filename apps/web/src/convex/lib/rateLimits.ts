@@ -12,6 +12,7 @@ import {
 } from '@convex-dev/rate-limiter';
 import { components, internal } from '@convex/_generated/api';
 import { internalMutation, type ActionCtx } from '@convex/_generated/server';
+import { getFunctionName, type FunctionArgs, type FunctionReference } from 'convex/server';
 import { v } from 'convex/values';
 import {
 	completionUsageUnits,
@@ -201,6 +202,29 @@ export const chargeModelUsageLimits = internalMutation({
 	}
 });
 
+// Usage was already provided when these run, so accounting must not fail the
+// caller: fall back to a durable scheduled charge, and as a last resort log.
+async function chargeUsageDurably<Mutation extends FunctionReference<'mutation', 'internal'>>(
+	ctx: ActionCtx,
+	mutation: Mutation,
+	args: FunctionArgs<Mutation>
+): Promise<void> {
+	try {
+		await ctx.runMutation(mutation, args);
+	} catch (chargeError) {
+		try {
+			await ctx.scheduler.runAfter(0, mutation, args);
+		} catch (scheduleError) {
+			console.error(
+				`Failed to charge usage (${getFunctionName(mutation)}).`,
+				args,
+				chargeError,
+				scheduleError
+			);
+		}
+	}
+}
+
 export async function checkModelUsageLimit(ctx: ActionCtx, userId: string): Promise<void> {
 	await ctx.runMutation(internal.lib.rateLimits.checkModelUsageLimits, { userId });
 }
@@ -214,7 +238,7 @@ export async function chargeModelUsage(
 		tokens: { input: number; cacheRead: number; cacheWrite: number; output: number };
 	}
 ): Promise<void> {
-	await ctx.runMutation(internal.lib.rateLimits.chargeModelUsageLimits, args);
+	await chargeUsageDurably(ctx, internal.lib.rateLimits.chargeModelUsageLimits, args);
 }
 
 export async function checkUrlScrapeLimit(ctx: ActionCtx, userId: string): Promise<void> {
@@ -222,7 +246,7 @@ export async function checkUrlScrapeLimit(ctx: ActionCtx, userId: string): Promi
 }
 
 export async function chargeUrlScrapeUsage(ctx: ActionCtx, userId: string): Promise<void> {
-	await ctx.runMutation(internal.lib.rateLimits.chargeUrlScrapeLimits, { userId });
+	await chargeUsageDurably(ctx, internal.lib.rateLimits.chargeUrlScrapeLimits, { userId });
 }
 
 export async function checkWebSearchLimit(ctx: ActionCtx, userId: string): Promise<void> {
@@ -234,5 +258,8 @@ export async function chargeWebSearchUsage(
 	userId: string,
 	numResults: number
 ): Promise<void> {
-	await ctx.runMutation(internal.lib.rateLimits.chargeWebSearchLimits, { userId, numResults });
+	await chargeUsageDurably(ctx, internal.lib.rateLimits.chargeWebSearchLimits, {
+		userId,
+		numResults
+	});
 }

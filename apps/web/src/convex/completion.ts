@@ -3,7 +3,7 @@
 import { generateText, jsonSchema, streamText, tool, type ModelMessage } from 'ai';
 import { v } from 'convex/values';
 import { action, type ActionCtx } from '@convex/_generated/server';
-import { api, internal } from '@convex/_generated/api';
+import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import type { JsonValue } from '@convex/lib/json';
 import { resolveLanguageModel, resolveProviderOptions } from '@convex/lib/modelRegistry';
@@ -156,23 +156,12 @@ export const complete = action({
 			abortController.abort(error);
 			throw error;
 		}
-		// Accounting must not fail the completion: fall back to a durable
-		// scheduled charge, and as a last resort log and continue.
-		const chargeArgs = {
+		await chargeModelUsage(ctx, {
 			userId: completionContext.userId,
 			modelId,
 			serviceTier,
 			tokens: normalizeCompletionUsage(result.usage)
-		};
-		try {
-			await chargeModelUsage(ctx, chargeArgs);
-		} catch (chargeError) {
-			try {
-				await ctx.scheduler.runAfter(0, internal.lib.rateLimits.chargeModelUsageLimits, chargeArgs);
-			} catch (scheduleError) {
-				console.error('Failed to charge model usage.', chargeError, scheduleError);
-			}
-		}
+		});
 
 		return {
 			text: result.text,
