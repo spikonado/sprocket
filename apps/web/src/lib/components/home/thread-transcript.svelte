@@ -141,7 +141,7 @@
 	/** Patch summaries list one path per line; give them room to wrap instead of truncating. */
 	function toolSummaryClass(toolLog: AssistantTimelineTool) {
 		return (toolLog.job?.kind ?? toolLog.name) === 'apply_patch'
-			? 'whitespace-pre-wrap wrap-anywhere'
+			? 'whitespace-pre-wrap [overflow-wrap:anywhere]'
 			: 'truncate';
 	}
 
