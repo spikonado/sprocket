@@ -22,13 +22,13 @@ describe('subscription and usage backend', () => {
 		).rejects.toThrow('Monthly model usage limit reached');
 	});
 
-	it('charges web tools in proportion to their API cost', async () => {
+	it('charges web tools in proportion to their request cost', async () => {
 		const t = initConvexTest();
 		const userId = 'user_web_tools';
 		const asUser = t.withIdentity({ subject: userId });
 
-		await t.mutation(internal.lib.rateLimits.consumeUrlScrapeLimits, { userId });
-		await t.mutation(internal.lib.rateLimits.consumeWebSearchLimits, {
+		await t.mutation(internal.lib.rateLimits.chargeUrlScrapeLimits, { userId });
+		await t.mutation(internal.lib.rateLimits.chargeWebSearchLimits, {
 			userId,
 			numResults: 5
 		});
