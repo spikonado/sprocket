@@ -92,15 +92,6 @@ Install dependencies:
 bun install
 ```
 
-### Setup Convex
-
-```sh
-bun run --cwd ./apps/web convex dev
-mv ./apps/web/.env.local ./.env.dev
-```
-
-After creating a convex deployment and configuring authkit following the instructions, configure the Convex deployment with the API key for each enabled model provider (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `XAI_API_KEY`).
-
 ### Running Sprocket
 
 Start the browser development environment:
@@ -108,6 +99,8 @@ Start the browser development environment:
 ```sh
 bun dev
 ```
+
+After creating a convex deployment and configuring authkit following the instructions, configure the Convex deployment with the API key for each enabled model provider (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `XAI_API_KEY`).
 
 This runs Vite at `http://localhost:5173` and the Rust API at `http://127.0.0.1:7731`, with development state kept in `.sprocket-dev` inside the repository.
 To develop against Electron instead, run:

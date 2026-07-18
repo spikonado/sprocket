@@ -5,8 +5,8 @@
 	"scripts": {
 		"build": "node ./scripts/create-turbo-cache-key.js && bunx turbo run build",
 		"build:release": "node ./scripts/create-turbo-cache-key.js && bunx turbo run build:release",
-		"dev": "bun --env-file=.env.dev scripts/run-dev.mjs",
-		"dev:desktop": "bun --env-file=.env.dev scripts/run-dev.mjs --desktop",
+		"dev": "bun --env-file=apps/web/.env.local scripts/run-dev.mjs",
+		"dev:desktop": "bun --env-file=apps/web/.env.local scripts/run-dev.mjs --desktop",
 		"test": "turbo run test"
 	},
 	"devDependencies": {

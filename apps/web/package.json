@@ -5,7 +5,7 @@
 	"license": "Apache-2.0",
 	"type": "module",
 	"scripts": {
-		"dev": "convex dev --env-file ../../.env.dev --start 'vite dev'",
+		"dev": "convex dev --start 'vite dev'",
 		"build": "svelte-kit sync && vite build",
 		"build:release": "bun run build",
 		"test": "vitest --run",
