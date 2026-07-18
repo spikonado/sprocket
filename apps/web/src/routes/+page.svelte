@@ -1732,12 +1732,6 @@
 						<SettingsAccount user={$authState.user} onSignOut={() => void signOut()} />
 					{/if}
 				{:else}
-					<header class="flex h-12 items-center border-b border-white/6 px-5">
-						<h1 class="truncate text-[1rem] font-medium tracking-[-0.03em] text-white">
-							{currentActiveThread?.title ?? 'New thread'}
-						</h1>
-					</header>
-
 					<ThreadTranscript
 						currentError={currentError ?? $authState.error ?? queryError?.message ?? null}
 						runError={runState?.lastError ?? null}

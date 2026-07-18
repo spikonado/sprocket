@@ -142,24 +142,52 @@
 		return paths.length === 1 ? paths[0] : `${paths[0]} +${paths.length - 1} more`;
 	}
 
+	const PATCH_ENVELOPE_FILE_HEADERS = [
+		'*** Add File: ',
+		'*** Copy File: ',
+		'*** Delete File: ',
+		'*** Update File: '
+	];
+	const PATCH_ENVELOPE_DESTINATION_HEADERS = ['*** Copy to: ', '*** Move to: '];
+
+	function gitDiffPath(line: string) {
+		const quotedMarker = ' "b/';
+		const marker = line.lastIndexOf(quotedMarker);
+		if (marker >= 0) {
+			return line.slice(marker + quotedMarker.length).replace(/"$/, '');
+		}
+		const plainMarker = ' b/';
+		const plainMarkerIndex = line.lastIndexOf(plainMarker);
+		return plainMarkerIndex >= 0 ? line.slice(plainMarkerIndex + plainMarker.length) : null;
+	}
+
 	function summarizePatchInput(input: JsonValue | undefined) {
 		if (!isJsonObject(input) || typeof input.patch !== 'string') {
 			return null;
 		}
 
-		const paths = input.patch.split('\n').flatMap((line) => {
-			if (!line.startsWith('diff --git ')) {
-				return [];
+		const paths: string[] = [];
+		for (const line of input.patch.split('\n')) {
+			if (line.startsWith('diff --git ')) {
+				const path = gitDiffPath(line);
+				if (path !== null) {
+					paths.push(path);
+				}
+				continue;
 			}
-			const quotedMarker = ' "b/';
-			const plainMarker = ' b/';
-			const marker = line.lastIndexOf(quotedMarker);
-			if (marker >= 0) {
-				return [line.slice(marker + quotedMarker.length).replace(/"$/, '')];
+			const fileHeader = PATCH_ENVELOPE_FILE_HEADERS.find((header) => line.startsWith(header));
+			if (fileHeader) {
+				paths.push(line.slice(fileHeader.length).trim());
+				continue;
 			}
-			const plainMarkerIndex = line.lastIndexOf(plainMarker);
-			return plainMarkerIndex >= 0 ? [line.slice(plainMarkerIndex + plainMarker.length)] : [];
-		});
+			const destinationHeader = PATCH_ENVELOPE_DESTINATION_HEADERS.find((header) =>
+				line.startsWith(header)
+			);
+			if (destinationHeader && paths.length > 0) {
+				// A rename or copy: report the destination, matching the applied-patch result.
+				paths[paths.length - 1] = line.slice(destinationHeader.length).trim();
+			}
+		}
 		const uniquePaths = [...new Set(paths)];
 		return uniquePaths.length > 0 ? summarizePaths(uniquePaths) : null;
 	}
