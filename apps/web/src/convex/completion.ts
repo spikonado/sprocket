@@ -116,7 +116,16 @@ export const complete = action({
 		const toolChoice: ToolChoice | undefined = args.toolChoiceJson
 			? parseJson<ToolChoice>(args.toolChoiceJson, 'toolChoiceJson')
 			: undefined;
-		const sharedArgs = buildSharedCompletionRequest({ ...args, modelId }, tools, toolChoice);
+		if (args.prompt === undefined && messages === undefined) {
+			throw new Error('Either prompt or messagesJson is required.');
+		}
+		const completionContext = await prepareCompletionContext(ctx, args.streamRunId);
+		const sharedArgs = buildSharedCompletionRequest(
+			{ ...args, modelId },
+			tools,
+			toolChoice,
+			completionContext.promptCacheKey
+		);
 		let request: CompletionRequest;
 		if (args.prompt !== undefined) {
 			request = buildCompletionRequest(sharedArgs, args.prompt, undefined);
@@ -126,7 +135,6 @@ export const complete = action({
 			throw new Error('Either prompt or messagesJson is required.');
 		}
 
-		const streamSequence = await enforceCompletionLimit(ctx, args.streamRunId);
 		const abortController = new AbortController();
 		let result: CompletionActionResult;
 		try {
@@ -138,7 +146,7 @@ export const complete = action({
 					claimId: args.claimId,
 					attemptSeq: args.attemptSeq,
 					streamId: args.streamId,
-					initialSequence: streamSequence
+					initialSequence: completionContext.streamSequence
 				},
 				abortController
 			);
@@ -510,13 +518,19 @@ function delay(milliseconds: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function enforceCompletionLimit(ctx: ActionCtx, runId: Id<'runs'>): Promise<number> {
+async function prepareCompletionContext(
+	ctx: ActionCtx,
+	runId: Id<'runs'>
+): Promise<{ promptCacheKey: string; streamSequence: number }> {
 	const actor = await ctx.runQuery(api.agentRuntime.completionActor, {
 		runId
 	});
 	assertRunAcceptsModelCompletion(actor.status);
 	await enforceModelCompletionLimit(ctx, actor.userId);
-	return actor.streamSequence;
+	return {
+		promptCacheKey: `thread:${actor.threadId}`,
+		streamSequence: actor.streamSequence
+	};
 }
 
 function buildSharedCompletionRequest(
@@ -528,19 +542,21 @@ function buildSharedCompletionRequest(
 		tools?: Array<{ name: string }>;
 	},
 	tools: Record<string, ReturnType<typeof tool>>,
-	toolChoice: ToolChoice | undefined
+	toolChoice: ToolChoice | undefined,
+	promptCacheKey: string
 ): SharedCompletionRequest {
 	const serviceTier = args.serviceTier ?? defaultServiceTier;
 	return {
-		model: resolveLanguageModel(args.modelId, serviceTier),
+		model: resolveLanguageModel(args.modelId, serviceTier, promptCacheKey),
 		...(args.instructions !== undefined ? { instructions: args.instructions } : {}),
 		...(args.tools?.length ? { tools } : {}),
 		...(toolChoice !== undefined ? { toolChoice } : {}),
-		...(args.reasoningEffort !== undefined || args.serviceTier !== undefined
-			? {
-					providerOptions: resolveProviderOptions(args.modelId, args.reasoningEffort, serviceTier)
-				}
-			: {})
+		providerOptions: resolveProviderOptions(
+			args.modelId,
+			args.reasoningEffort,
+			serviceTier,
+			promptCacheKey
+		)
 	};
 }
 
