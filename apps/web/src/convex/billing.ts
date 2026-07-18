@@ -5,10 +5,10 @@ import {
 } from '@dodopayments/convex';
 import type { ComponentApi } from '@dodopayments/convex/_generated/component';
 import { v } from 'convex/values';
-import { action, internalMutation, internalQuery } from '@convex/_generated/server';
+import { action, internalMutation, internalQuery, query } from '@convex/_generated/server';
 import { components, internal } from '@convex/_generated/api';
 import { getUserId } from '@convex/lib/auth';
-import { tierProductIds } from '@convex/lib/tiers';
+import { getSubscriptionTier, tierProductIds } from '@convex/lib/tiers';
 import { vSubscriptionStatus, vSubscriptionTier } from '@convex/lib/validators';
 
 export const getBillingCustomer = internalQuery({
@@ -34,6 +34,14 @@ const payments: ReturnType<DodoPayments['api']> = dodo.api();
 function assertPaymentsConfigured(): void {
 	if (!process.env.DODO_PAYMENTS_API_KEY) throw new Error('Payments are not configured.');
 }
+
+export const getMySubscription = query({
+	args: {},
+	handler: async (ctx) => {
+		const userId = await getUserId(ctx);
+		return { tier: await getSubscriptionTier(ctx, userId) };
+	}
+});
 
 export const checkout = action({
 	args: { tier: vSubscriptionTier },

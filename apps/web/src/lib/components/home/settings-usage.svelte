@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { useAuth, useQuery } from 'convex-svelte';
 	import { api } from '$convex/_generated/api';
-	import type { SubscriptionTier } from '$convex/lib/tiers';
+	import { tierLabels } from '$convex/lib/tiers';
 
 	const convexAuth = useAuth();
 	const usageQuery = useQuery(api.usage.getMyUsage, () =>
@@ -25,7 +25,6 @@
 	});
 
 	const periodLabels = { weekly: 'Weekly', monthly: 'Monthly' } as const;
-	const tierNames: Record<SubscriptionTier, string> = { free: 'Free', pro: 'Pro' };
 
 	function formatResetsIn(resetsAt: number) {
 		const remainingMs = Math.max(0, resetsAt - now);
@@ -82,7 +81,7 @@
 				<div>
 					<p class="text-[11px] tracking-[0.18em] text-slate-500 uppercase">Plan</p>
 					<p class="mt-3 text-[15px] text-white">
-						{tierNames[usageQuery.data.tier]} plan
+						{tierLabels[usageQuery.data.tier]} plan
 					</p>
 				</div>
 

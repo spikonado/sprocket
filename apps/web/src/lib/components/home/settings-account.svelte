@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { LogOut } from '@lucide/svelte';
 	import type { User } from '@workos-inc/authkit-js';
+	import { useAuth, useQuery } from 'convex-svelte';
+	import { api } from '$convex/_generated/api';
+	import { tierLabels } from '$convex/lib/tiers';
 	import Button from '$lib/components/ui/button/button.svelte';
 
 	type Props = {
@@ -10,6 +13,11 @@
 
 	let { user, onSignOut }: Props = $props();
 	let emailRevealed = $state(false);
+
+	const convexAuth = useAuth();
+	const subscriptionQuery = useQuery(api.billing.getMySubscription, () =>
+		convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip'
+	);
 
 	const displayName = $derived(
 		[user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || null
@@ -48,6 +56,19 @@
 					</div>
 				{:else}
 					<p class="mt-3 text-sm text-slate-400">You’re signed in to Sprocket.</p>
+				{/if}
+			</div>
+
+			<div>
+				<p class="text-[11px] tracking-[0.18em] text-slate-500 uppercase">
+					Spikonado Subscription Tier
+				</p>
+				{#if subscriptionQuery.data}
+					<p class="mt-3 text-[15px] text-white">{tierLabels[subscriptionQuery.data.tier]}</p>
+				{:else if subscriptionQuery.error}
+					<p class="mt-3 text-sm text-slate-500">Couldn’t load your subscription right now.</p>
+				{:else}
+					<div class="mt-3.5 h-4 w-16 animate-pulse rounded bg-white/5" aria-hidden="true"></div>
 				{/if}
 			</div>
 

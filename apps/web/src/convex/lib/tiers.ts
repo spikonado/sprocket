@@ -4,6 +4,8 @@ import type { DataModel } from '@convex/_generated/dataModel';
 export const subscriptionTierIds = ['free', 'pro'] as const;
 export type SubscriptionTier = (typeof subscriptionTierIds)[number];
 
+export const tierLabels: Record<SubscriptionTier, string> = { free: 'Free', pro: 'Pro' };
+
 export type TierLimits = {
 	modelUsage: { weekly: number; monthly: number };
 	urlScrape: { weekly: number; monthly: number };
