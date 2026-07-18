@@ -139,7 +139,7 @@ describe('assistant timeline', () => {
 
 		expect(tool).toMatchObject({ type: 'tool' });
 		if (tool?.type !== 'tool') throw new Error('Expected a tool timeline item.');
-		expect(assistantTimelineToolError(tool)).toBe('command failed');
+		expect(assistantTimelineToolError(tool, true)).toBe('command failed');
 	});
 
 	it('exposes the error or cancelled state for live cancelled jobs', () => {
@@ -156,10 +156,12 @@ describe('assistant timeline', () => {
 		if (cancelled?.type !== 'tool' || cancelledWithError?.type !== 'tool') {
 			throw new Error('Expected tool timeline items.');
 		}
-		expect(assistantTimelineToolError(cancelled)).toBe('Executor job cancelled before completion.');
-		expect(assistantTimelineToolError(cancelledWithError)).toBe('stopped by user');
-		expect(assistantTimelineToolFailureKind(cancelled)).toBe('cancelled');
-		expect(assistantTimelineToolFailureKind(cancelledWithError)).toBe('cancelled');
+		expect(assistantTimelineToolError(cancelled, true)).toBe(
+			'Executor job cancelled before completion.'
+		);
+		expect(assistantTimelineToolError(cancelledWithError, true)).toBe('stopped by user');
+		expect(assistantTimelineToolFailureKind(cancelled, true)).toBe('cancelled');
+		expect(assistantTimelineToolFailureKind(cancelledWithError, true)).toBe('cancelled');
 	});
 
 	it('falls back to the failed state when a failed live job has no error', () => {
@@ -167,8 +169,8 @@ describe('assistant timeline', () => {
 
 		expect(failed).toMatchObject({ type: 'tool' });
 		if (failed?.type !== 'tool') throw new Error('Expected a tool timeline item.');
-		expect(assistantTimelineToolError(failed)).toBe('Executor job failed.');
-		expect(assistantTimelineToolFailureKind(failed)).toBe('failed');
+		expect(assistantTimelineToolError(failed, true)).toBe('Executor job failed.');
+		expect(assistantTimelineToolFailureKind(failed, true)).toBe('failed');
 	});
 
 	it('labels persisted tool-result errors as failed, not cancelled', () => {
@@ -186,7 +188,7 @@ describe('assistant timeline', () => {
 
 		expect(tool).toMatchObject({ type: 'tool' });
 		if (tool?.type !== 'tool') throw new Error('Expected a tool timeline item.');
-		expect(assistantTimelineToolFailureKind(tool)).toBe('failed');
+		expect(assistantTimelineToolFailureKind(tool, true)).toBe('failed');
 	});
 
 	it('preserves cancelled vs failed from persisted tool-result status after jobs leave the timeline', () => {
@@ -213,10 +215,10 @@ describe('assistant timeline', () => {
 		if (cancelled?.type !== 'tool' || failed?.type !== 'tool') {
 			throw new Error('Expected tool timeline items.');
 		}
-		expect(assistantTimelineToolFailureKind(cancelled)).toBe('cancelled');
-		expect(assistantTimelineToolError(cancelled)).toBe('stopped by user');
-		expect(assistantTimelineToolFailureKind(failed)).toBe('failed');
-		expect(assistantTimelineToolError(failed)).toBe('command failed');
+		expect(assistantTimelineToolFailureKind(cancelled, true)).toBe('cancelled');
+		expect(assistantTimelineToolError(cancelled, true)).toBe('stopped by user');
+		expect(assistantTimelineToolFailureKind(failed, true)).toBe('failed');
+		expect(assistantTimelineToolError(failed, true)).toBe('command failed');
 	});
 });
 
@@ -366,6 +368,15 @@ describe('groupAssistantTimelineSections', () => {
 });
 
 describe('partitionWorkSectionTools', () => {
+	function partition(blocks: AssistantTimelineWorkBlock[], isStreaming: boolean) {
+		const tools = blocks.flatMap((block) => (block.type === 'tool-group' ? block.tools : []));
+		return partitionWorkSectionTools(
+			blocks,
+			isStreaming,
+			buildOpenExecCommandSessions(tools, isStreaming)
+		);
+	}
+
 	it('pulls running tools out and leaves settled reasoning/tools behind', () => {
 		const blocks: AssistantTimelineWorkBlock[] = [
 			{ type: 'reasoning', id: 'r1', text: 'plan' },
@@ -385,7 +396,7 @@ describe('partitionWorkSectionTools', () => {
 			}
 		];
 
-		const { settledBlocks, runningTools } = partitionWorkSectionTools(blocks, true);
+		const { settledBlocks, runningTools } = partition(blocks, true);
 
 		expect(runningTools.map((item) => item.callId)).toEqual(['live']);
 		expect(settledBlocks).toEqual([
@@ -428,7 +439,7 @@ describe('partitionWorkSectionTools', () => {
 			}
 		];
 
-		const { settledBlocks, runningTools } = partitionWorkSectionTools(blocks, true);
+		const { settledBlocks, runningTools } = partition(blocks, true);
 
 		expect(runningTools.map((item) => item.callId)).toEqual(['exec-1']);
 		expect(settledBlocks).toEqual([]);
@@ -464,7 +475,7 @@ describe('partitionWorkSectionTools', () => {
 			}
 		];
 
-		const { settledBlocks, runningTools } = partitionWorkSectionTools(blocks, true);
+		const { settledBlocks, runningTools } = partition(blocks, true);
 
 		expect(runningTools).toEqual([]);
 		expect(settledBlocks).toEqual([
@@ -496,7 +507,7 @@ describe('partitionWorkSectionTools', () => {
 				payload: { sessionId: '7' }
 			})
 		});
-		const openSessions = buildOpenExecCommandSessions([exec, monitor]);
+		const openSessions = buildOpenExecCommandSessions([exec, monitor], true);
 		const earlierSection: AssistantTimelineWorkBlock[] = [
 			{ type: 'tool-group', toolKey: 'exec_command', tools: [exec] }
 		];
@@ -515,6 +526,31 @@ describe('partitionWorkSectionTools', () => {
 				tools: [expect.objectContaining({ callId: 'exec-1' })]
 			})
 		]);
+	});
+
+	it('settles in-flight tools and yielded commands after the run stops', () => {
+		const claimedTool = tool('patch-1', 'apply_patch', {
+			job: executorJob('job-patch', 1, { status: 'claimed', kind: 'apply_patch' })
+		});
+		const yieldedCommand = tool('exec-1', 'exec_command', {
+			input: { cmd: 'npm run dev' },
+			output: { sessionId: '7', running: true },
+			job: executorJob('job-exec', 2, { status: 'completed', kind: 'exec_command' })
+		});
+		const blocks: AssistantTimelineWorkBlock[] = [
+			{ type: 'tool-group', toolKey: 'apply_patch', tools: [claimedTool] },
+			{ type: 'tool-group', toolKey: 'exec_command', tools: [yieldedCommand] }
+		];
+
+		const { settledBlocks, runningTools } = partition(blocks, false);
+
+		expect(runningTools).toEqual([]);
+		expect(settledBlocks).toEqual(blocks);
+		expect(assistantTimelineToolFailureKind(claimedTool, false)).toBe('interrupted');
+		expect(assistantTimelineToolError(claimedTool, false)).toBe(
+			'The agent stopped before this tool call finished.'
+		);
+		expect(assistantTimelineToolFailureKind(yieldedCommand, false)).toBeUndefined();
 	});
 });
 

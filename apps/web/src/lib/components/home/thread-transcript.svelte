@@ -31,6 +31,7 @@
 		runError: string | null;
 		messages: ThreadMessage[];
 		actions: ExecutorJob[];
+		activeRunId: ThreadMessage['runId'] | null;
 		workspaceSession: WorkspaceSession | null;
 		emptyStateMessage?: string;
 		emptyStateHint?: string | null;
@@ -41,6 +42,7 @@
 		runError,
 		messages,
 		actions,
+		activeRunId,
 		workspaceSession,
 		emptyStateMessage = workspaceSession
 			? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
@@ -264,7 +266,7 @@
 		if (isAssistantTimelineToolRunning(toolLog, isStreaming)) {
 			return `${summary} (running)`;
 		}
-		const error = assistantTimelineToolError(toolLog);
+		const error = assistantTimelineToolError(toolLog, isStreaming);
 		return error ? `${summary} (${error})` : summary;
 	}
 
@@ -441,15 +443,16 @@
 								(item): item is AssistantTimelineTool => item.type === 'tool'
 							)}
 							{@const sessionCommands = buildCommandSessionCommandMap(timelineTools)}
-							{@const openSessions = buildOpenExecCommandSessions(timelineTools)}
 							{@const blocks = groupAssistantTimeline(timeline)}
 							{@const sections = groupAssistantTimelineSections(blocks)}
 							{@const { workIndexBySectionIndex, priorCompletedAtByWorkIndex } =
 								workSectionTimingIndexes(sections)}
 							{@const isStreaming =
+								message.runId === activeRunId &&
 								message.runStatus !== 'completed' &&
 								message.runStatus !== 'failed' &&
 								message.runStatus !== 'cancelled'}
+							{@const openSessions = buildOpenExecCommandSessions(timelineTools, isStreaming)}
 							{@const hasPersistedAssistantContent = timeline.some(
 								(part) => part.type === 'text' || part.type === 'reasoning'
 							)}
@@ -510,8 +513,11 @@
 																	: undefined}
 															>
 																{#snippet toolRow(tool)}
-																	{@const toolError = assistantTimelineToolError(tool)}
-																	{@const toolFailureKind = assistantTimelineToolFailureKind(tool)}
+																	{@const toolError = assistantTimelineToolError(tool, isStreaming)}
+																	{@const toolFailureKind = assistantTimelineToolFailureKind(
+																		tool,
+																		isStreaming
+																	)}
 																	{@const toolSummary = toolItemSummary(tool, sessionCommands)}
 																	{#if toolError && toolFailureKind}
 																		<details class="min-w-0">
@@ -521,18 +527,18 @@
 																			>
 																				<span class={toolSummaryClass(tool)}>{toolSummary}</span>
 																				<span
-																					class={toolFailureKind === 'cancelled'
-																						? 'text-amber-200'
-																						: 'text-rose-200'}
+																					class={toolFailureKind === 'failed'
+																						? 'text-rose-200'
+																						: 'text-amber-200'}
 																				>
 																					({toolFailureKind})
 																				</span>
 																			</summary>
 																			<p
 																				class="mt-1.5 whitespace-pre-wrap wrap-break-word text-xs leading-5 {toolFailureKind ===
-																				'cancelled'
-																					? 'text-amber-200'
-																					: 'text-rose-200'}"
+																				'failed'
+																					? 'text-rose-200'
+																					: 'text-amber-200'}"
 																				role="status"
 																			>
 																				{toolError}
@@ -565,7 +571,7 @@
 														{@const toolSummary = toolItemSummary(tool, sessionCommands)}
 														<p
 															class="flex min-w-0 items-start gap-1.5"
-															title={fullToolSummary(tool, isStreaming, sessionCommands)}
+															title={`${toolSummary} (running)`}
 														>
 															<ToolIcon
 																class="mt-1.5 size-3 shrink-0 text-slate-500"

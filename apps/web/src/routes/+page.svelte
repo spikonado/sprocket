@@ -1737,6 +1737,7 @@
 						runError={runState?.lastError ?? null}
 						messages={visibleMessages}
 						actions={visibleActions}
+						activeRunId={isRunning ? (runState?._id ?? null) : null}
 						workspaceSession={currentWorkspaceSession}
 					/>
 

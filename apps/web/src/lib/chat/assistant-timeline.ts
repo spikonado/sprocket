@@ -37,7 +37,7 @@ export type AssistantTimelineSection =
 	  }
 	| Extract<AssistantTimelineBlock, { type: 'text' }>;
 
-export type AssistantTimelineToolFailureKind = 'cancelled' | 'failed';
+export type AssistantTimelineToolFailureKind = 'cancelled' | 'failed' | 'interrupted';
 
 /** Tool type used for grouping: prefer streamed call name so groups stay stable as jobs attach. */
 export function assistantTimelineToolKey(tool: AssistantTimelineTool): string {
@@ -213,15 +213,20 @@ export function workSectionTimingAnchor(
 	return { startedAtMs, completedAtMs };
 }
 
-/** Whether a tool call is still in flight (pending/claimed, or unresolved while streaming). */
+/** Whether a tool call never reached a durable result (job still pending/claimed, or no output). */
+function isAssistantTimelineToolUnresolved(tool: AssistantTimelineTool): boolean {
+	if (tool.job) {
+		return tool.job.status === 'pending' || tool.job.status === 'claimed';
+	}
+	return tool.output === undefined;
+}
+
+/** Whether a tool call is still in flight while the run is streaming. */
 export function isAssistantTimelineToolRunning(
 	tool: AssistantTimelineTool,
 	isStreaming: boolean
 ): boolean {
-	if (tool.job) {
-		return tool.job.status === 'pending' || tool.job.status === 'claimed';
-	}
-	return isStreaming && tool.output === undefined;
+	return isStreaming && isAssistantTimelineToolUnresolved(tool);
 }
 
 function jsonStringProp(value: JsonValue | undefined, key: string): string | undefined {
@@ -276,10 +281,18 @@ export function resolveCommandSessionLabel(
 
 /**
  * Sessions still running that also have an exec_command row.
+ * Returns empty when the run is not streaming so yielded commands settle after a crash/stop.
  * Later tool outputs win on the running flag (write_stdin completion clears the session).
  * Pass the full message tool list so monitors after text section breaks still close sessions.
  */
-export function buildOpenExecCommandSessions(tools: readonly AssistantTimelineTool[]): Set<string> {
+export function buildOpenExecCommandSessions(
+	tools: readonly AssistantTimelineTool[],
+	isStreaming: boolean
+): Set<string> {
+	if (!isStreaming) {
+		return new Set();
+	}
+
 	const sessionRunning = new Map<string, boolean>();
 	const execSessions = new Set<string>();
 
@@ -299,10 +312,6 @@ export function buildOpenExecCommandSessions(tools: readonly AssistantTimelineTo
 	return new Set([...execSessions].filter((sessionId) => sessionRunning.get(sessionId) === true));
 }
 
-function collectWorkSectionTools(blocks: AssistantTimelineWorkBlock[]): AssistantTimelineTool[] {
-	return blocks.flatMap((block) => (block.type === 'tool-group' ? block.tools : []));
-}
-
 /**
  * Split a work section's blocks into settled content (reasoning + finished tools) and
  * currently running tools pulled out for a separate Running dropdown.
@@ -314,7 +323,7 @@ function collectWorkSectionTools(blocks: AssistantTimelineWorkBlock[]): Assistan
 export function partitionWorkSectionTools(
 	blocks: AssistantTimelineWorkBlock[],
 	isStreaming: boolean,
-	openSessions: ReadonlySet<string> = buildOpenExecCommandSessions(collectWorkSectionTools(blocks))
+	openSessions: ReadonlySet<string>
 ): {
 	settledBlocks: AssistantTimelineWorkBlock[];
 	runningTools: AssistantTimelineTool[];
@@ -372,8 +381,12 @@ export function partitionWorkSectionTools(
 }
 
 export function assistantTimelineToolFailureKind(
-	item: AssistantTimelineTool
+	item: AssistantTimelineTool,
+	isStreaming: boolean
 ): AssistantTimelineToolFailureKind | undefined {
+	if (!isStreaming && isAssistantTimelineToolUnresolved(item)) {
+		return 'interrupted';
+	}
 	if (item.job?.status === 'cancelled' || item.job?.status === 'failed') {
 		return item.job.status;
 	}
@@ -381,7 +394,13 @@ export function assistantTimelineToolFailureKind(
 	return parseAssistantToolResultError(item.output)?.status;
 }
 
-export function assistantTimelineToolError(item: AssistantTimelineTool): string | undefined {
+export function assistantTimelineToolError(
+	item: AssistantTimelineTool,
+	isStreaming: boolean
+): string | undefined {
+	if (!isStreaming && isAssistantTimelineToolUnresolved(item)) {
+		return 'The agent stopped before this tool call finished.';
+	}
 	const outputError = parseAssistantToolResultError(item.output)?.error;
 
 	if (item.job) {
