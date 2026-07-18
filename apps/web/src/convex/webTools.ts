@@ -6,7 +6,7 @@ import { ExaClient } from '@exalabs/convex-exa';
 import { action } from '@convex/_generated/server';
 import { components } from '@convex/_generated/api';
 import { getUserId } from '@convex/lib/auth';
-import { enforceWebToolLimit } from '@convex/lib/rateLimits';
+import { enforceUrlScrapeLimit, enforceWebSearchLimit } from '@convex/lib/rateLimits';
 import { vScrapeUrlResult, vWebSearchResult } from '@convex/lib/validators';
 
 const contextDev = new ContextDev(components.contextDev);
@@ -69,7 +69,6 @@ export const scrapeUrl = action({
 	},
 	handler: async (ctx, args): Promise<ScrapeUrlResult> => {
 		const userId: string = await getUserId(ctx);
-		await enforceWebToolLimit(ctx, userId);
 		let url: URL;
 		try {
 			url = new URL(args.url.trim());
@@ -79,6 +78,7 @@ export const scrapeUrl = action({
 		if (url.protocol !== 'http:' && url.protocol !== 'https:') {
 			throw new Error('Only http(s) URLs can be scraped.');
 		}
+		await enforceUrlScrapeLimit(ctx, userId);
 
 		const response = await callComponent('Context.dev scrape', SCRAPE_TIMEOUT_MS, () =>
 			contextDev.scrapeMarkdown(ctx, {
@@ -108,7 +108,6 @@ export const webSearch = action({
 	},
 	handler: async (ctx, args): Promise<WebSearchResult> => {
 		const userId: string = await getUserId(ctx);
-		await enforceWebToolLimit(ctx, userId);
 		const query = args.query.trim();
 		if (!query) {
 			throw new Error('Search query cannot be empty.');
@@ -117,6 +116,7 @@ export const webSearch = action({
 			? Math.floor(args.numResults as number)
 			: DEFAULT_SEARCH_RESULTS;
 		const numResults = Math.min(Math.max(requested, 1), MAX_SEARCH_RESULTS);
+		await enforceWebSearchLimit(ctx, userId);
 
 		const response = await callComponent('Exa search', SEARCH_TIMEOUT_MS, () =>
 			exa.search(ctx, {
