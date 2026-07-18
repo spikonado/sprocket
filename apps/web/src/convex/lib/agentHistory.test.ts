@@ -247,7 +247,7 @@ describe('canonical agent history', () => {
 	});
 
 	it.each(['failed', 'cancelled'] as const)(
-		'reconciles persisted tool parts for a %s run without losing metadata or order',
+		'reconciles a %s run without replaying untrusted provider item references',
 		(runStatus) => {
 			const runId = `${runStatus}-run`;
 			const callId = `${runStatus}-call`;
@@ -260,19 +260,36 @@ describe('canonical agent history', () => {
 						text: '',
 						parts: [
 							{
+								type: 'reasoning',
+								id: `${runStatus}-reasoning`,
+								text: '',
+								turnId: `${runStatus}-turn`,
+								providerMetadata: {
+									openai: {
+										itemId: `${runStatus}-reasoning-item`,
+										reasoningEncryptedContent: null
+									}
+								}
+							},
+							{
 								type: 'tool-call',
 								callId,
 								name: 'exec_command',
 								input: { cmd: runStatus },
 								turnId: `${runStatus}-turn`,
-								providerMetadata: { openai: { itemId: `${runStatus}-item` } }
+								providerMetadata: {
+									openai: { itemId: `${runStatus}-item`, namespace: 'sprocket' }
+								}
 							},
 							{ type: 'tool-result', callId, output: { persisted: runStatus } },
 							{
 								type: 'text',
 								id: `${runStatus}-text`,
 								text: 'after result',
-								turnId: `${runStatus}-next-turn`
+								turnId: `${runStatus}-next-turn`,
+								providerMetadata: {
+									openai: { itemId: `${runStatus}-text-item`, phase: 'commentary' }
+								}
 							}
 						]
 					}
@@ -299,12 +316,18 @@ describe('canonical agent history', () => {
 					name: 'exec_command',
 					argumentsJson: JSON.stringify({ cmd: runStatus }),
 					additionalParamsJson: JSON.stringify({
-						openai: { itemId: `${runStatus}-item` }
+						openai: { namespace: 'sprocket' }
 					})
 				}
 			]);
 			expect(history[1]?.contents).toMatchObject([{ type: 'toolResult', callId }]);
-			expect(history[2]?.contents).toEqual([{ type: 'text', text: 'after result' }]);
+			expect(history[2]?.contents).toEqual([
+				{
+					type: 'text',
+					text: 'after result',
+					additionalParamsJson: JSON.stringify({ openai: { phase: 'commentary' } })
+				}
+			]);
 		}
 	);
 
