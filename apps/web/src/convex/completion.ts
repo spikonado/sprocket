@@ -9,12 +9,13 @@ import type { JsonValue } from '@convex/lib/json';
 import { resolveLanguageModel, resolveProviderOptions } from '@convex/lib/modelRegistry';
 import { assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
 import { isCurrentCompletionAttempt } from '@convex/lib/runLease';
-import { enforceModelCompletionLimit } from '@convex/lib/rateLimits';
+import { chargeModelUsage, checkModelUsageLimit } from '@convex/lib/rateLimits';
 import { getUserId } from '@convex/lib/auth';
 import { vModelId, vReasoningEffort, vServiceTier } from '@convex/lib/validators';
 import {
 	assertSupportedModelConfiguration,
 	defaultServiceTier,
+	normalizeCompletionUsage,
 	type SupportedModelId,
 	type SupportedReasoningEffort,
 	type SupportedServiceTier
@@ -92,11 +93,12 @@ export const complete = action({
 				: {})
 		});
 		const modelId = args.modelId;
+		const serviceTier = args.serviceTier ?? defaultServiceTier;
 		if (args.reasoningEffort !== undefined || args.serviceTier !== undefined) {
 			assertSupportedModelConfiguration({
 				modelId,
 				reasoningEffort: args.reasoningEffort,
-				serviceTier: args.serviceTier ?? defaultServiceTier
+				serviceTier
 			});
 		}
 		const tools: Record<string, ReturnType<typeof tool>> = Object.fromEntries(
@@ -121,7 +123,7 @@ export const complete = action({
 		}
 		const completionContext = await prepareCompletionContext(ctx, args.streamRunId);
 		const sharedArgs = buildSharedCompletionRequest(
-			{ ...args, modelId },
+			{ ...args, modelId, serviceTier },
 			tools,
 			toolChoice,
 			completionContext.promptCacheKey
@@ -154,6 +156,12 @@ export const complete = action({
 			abortController.abort(error);
 			throw error;
 		}
+		await chargeModelUsage(ctx, {
+			userId: completionContext.userId,
+			modelId,
+			serviceTier,
+			tokens: normalizeCompletionUsage(result.usage)
+		});
 
 		return {
 			text: result.text,
@@ -521,15 +529,16 @@ function delay(milliseconds: number): Promise<void> {
 async function prepareCompletionContext(
 	ctx: ActionCtx,
 	runId: Id<'runs'>
-): Promise<{ promptCacheKey: string; streamSequence: number }> {
+): Promise<{ promptCacheKey: string; streamSequence: number; userId: string }> {
 	const actor = await ctx.runQuery(api.agentRuntime.completionActor, {
 		runId
 	});
 	assertRunAcceptsModelCompletion(actor.status);
-	await enforceModelCompletionLimit(ctx, actor.userId);
+	await checkModelUsageLimit(ctx, actor.userId);
 	return {
 		promptCacheKey: `thread:${actor.threadId}`,
-		streamSequence: actor.streamSequence
+		streamSequence: actor.streamSequence,
+		userId: actor.userId
 	};
 }
 

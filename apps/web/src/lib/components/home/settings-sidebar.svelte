@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { Archive, ArrowLeft, UserRound } from '@lucide/svelte';
+	import { Archive, ArrowLeft, ChartNoAxesColumn, UserRound } from '@lucide/svelte';
 
-	export type SettingsPage = 'account' | 'archived';
+	export type SettingsPage = 'account' | 'usage' | 'archived';
 
 	type Props = {
 		activePage: SettingsPage;
@@ -10,6 +10,12 @@
 	};
 
 	let { activePage, onBack, onNavigate }: Props = $props();
+
+	const navItems: ReadonlyArray<{ id: SettingsPage; label: string; icon: typeof UserRound }> = [
+		{ id: 'account', label: 'Account', icon: UserRound },
+		{ id: 'usage', label: 'Usage', icon: ChartNoAxesColumn },
+		{ id: 'archived', label: 'Archived Threads', icon: Archive }
+	];
 
 	const navItemClass =
 		'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition';
@@ -34,28 +40,19 @@
 			class="hide-scrollbar min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2.5 pb-4"
 			aria-label="Settings"
 		>
-			<button
-				type="button"
-				class={`${navItemClass} ${activePage === 'account' ? navItemActiveClass : navItemIdleClass}`}
-				aria-current={activePage === 'account' ? 'page' : undefined}
-				onclick={() => {
-					onNavigate('account');
-				}}
-			>
-				<UserRound class="size-4 shrink-0 text-slate-400" aria-hidden="true" />
-				<span class="truncate">Account</span>
-			</button>
-			<button
-				type="button"
-				class={`${navItemClass} ${activePage === 'archived' ? navItemActiveClass : navItemIdleClass}`}
-				aria-current={activePage === 'archived' ? 'page' : undefined}
-				onclick={() => {
-					onNavigate('archived');
-				}}
-			>
-				<Archive class="size-4 shrink-0 text-slate-400" aria-hidden="true" />
-				<span class="truncate">Archived Threads</span>
-			</button>
+			{#each navItems as item (item.id)}
+				<button
+					type="button"
+					class={`${navItemClass} ${activePage === item.id ? navItemActiveClass : navItemIdleClass}`}
+					aria-current={activePage === item.id ? 'page' : undefined}
+					onclick={() => {
+						onNavigate(item.id);
+					}}
+				>
+					<item.icon class="size-4 shrink-0 text-slate-400" aria-hidden="true" />
+					<span class="truncate">{item.label}</span>
+				</button>
+			{/each}
 		</nav>
 	</div>
 </aside>

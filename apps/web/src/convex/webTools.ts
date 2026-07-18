@@ -6,7 +6,12 @@ import { ExaClient } from '@exalabs/convex-exa';
 import { action } from '@convex/_generated/server';
 import { components } from '@convex/_generated/api';
 import { getUserId } from '@convex/lib/auth';
-import { enforceUrlScrapeLimit, enforceWebSearchLimit } from '@convex/lib/rateLimits';
+import {
+	chargeUrlScrapeUsage,
+	chargeWebSearchUsage,
+	checkUrlScrapeLimit,
+	checkWebSearchLimit
+} from '@convex/lib/rateLimits';
 import { vScrapeUrlResult, vWebSearchResult } from '@convex/lib/validators';
 
 const contextDev = new ContextDev(components.contextDev);
@@ -78,7 +83,7 @@ export const scrapeUrl = action({
 		if (url.protocol !== 'http:' && url.protocol !== 'https:') {
 			throw new Error('Only http(s) URLs can be scraped.');
 		}
-		await enforceUrlScrapeLimit(ctx, userId);
+		await checkUrlScrapeLimit(ctx, userId);
 
 		const response = await callComponent('Context.dev scrape', SCRAPE_TIMEOUT_MS, () =>
 			contextDev.scrapeMarkdown(ctx, {
@@ -89,6 +94,7 @@ export const scrapeUrl = action({
 				}
 			})
 		);
+		await chargeUrlScrapeUsage(ctx, userId);
 
 		const truncated = response.markdown.length > SCRAPE_MARKDOWN_MAX_CHARS;
 		return {
@@ -116,7 +122,7 @@ export const webSearch = action({
 			? Math.floor(args.numResults as number)
 			: DEFAULT_SEARCH_RESULTS;
 		const numResults = Math.min(Math.max(requested, 1), MAX_SEARCH_RESULTS);
-		await enforceWebSearchLimit(ctx, userId);
+		await checkWebSearchLimit(ctx, userId);
 
 		const response = await callComponent('Exa search', SEARCH_TIMEOUT_MS, () =>
 			exa.search(ctx, {
@@ -126,6 +132,7 @@ export const webSearch = action({
 				contents: { text: { maxCharacters: SEARCH_RESULT_TEXT_MAX_CHARS } }
 			})
 		);
+		await chargeWebSearchUsage(ctx, userId, numResults);
 
 		return {
 			results: response.results.flatMap((result) => {

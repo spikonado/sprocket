@@ -10,10 +10,12 @@
 
 import type * as agentRuntime from "../agentRuntime.js";
 import type * as authBootstrap from "../authBootstrap.js";
+import type * as billing from "../billing.js";
 import type * as chat from "../chat.js";
 import type * as completion from "../completion.js";
 import type * as crons from "../crons.js";
 import type * as executor from "../executor.js";
+import type * as http from "../http.js";
 import type * as imageUploads from "../imageUploads.js";
 import type * as lib_access from "../lib/access.js";
 import type * as lib_agentErrors from "../lib/agentErrors.js";
@@ -30,11 +32,13 @@ import type * as lib_runLease from "../lib/runLease.js";
 import type * as lib_runs from "../lib/runs.js";
 import type * as lib_threadMessages from "../lib/threadMessages.js";
 import type * as lib_threadTranscript from "../lib/threadTranscript.js";
+import type * as lib_tiers from "../lib/tiers.js";
 import type * as lib_validators from "../lib/validators.js";
 import type * as lib_workspaceConnection from "../lib/workspaceConnection.js";
 import type * as messages from "../messages.js";
 import type * as threads from "../threads.js";
 import type * as uiPreferences from "../uiPreferences.js";
+import type * as usage from "../usage.js";
 import type * as webTools from "../webTools.js";
 import type * as workspaceSessions from "../workspaceSessions.js";
 
@@ -47,10 +51,12 @@ import type {
 declare const fullApi: ApiFromModules<{
   agentRuntime: typeof agentRuntime;
   authBootstrap: typeof authBootstrap;
+  billing: typeof billing;
   chat: typeof chat;
   completion: typeof completion;
   crons: typeof crons;
   executor: typeof executor;
+  http: typeof http;
   imageUploads: typeof imageUploads;
   "lib/access": typeof lib_access;
   "lib/agentErrors": typeof lib_agentErrors;
@@ -67,11 +73,13 @@ declare const fullApi: ApiFromModules<{
   "lib/runs": typeof lib_runs;
   "lib/threadMessages": typeof lib_threadMessages;
   "lib/threadTranscript": typeof lib_threadTranscript;
+  "lib/tiers": typeof lib_tiers;
   "lib/validators": typeof lib_validators;
   "lib/workspaceConnection": typeof lib_workspaceConnection;
   messages: typeof messages;
   threads: typeof threads;
   uiPreferences: typeof uiPreferences;
+  usage: typeof usage;
   webTools: typeof webTools;
   workspaceSessions: typeof workspaceSessions;
 }>;
@@ -106,4 +114,5 @@ export declare const components: {
   contextDev: import("@context-dot-dev/convex/_generated/component.js").ComponentApi<"contextDev">;
   exa: import("@exalabs/convex-exa/_generated/component.js").ComponentApi<"exa">;
   rateLimiter: import("@convex-dev/rate-limiter/_generated/component.js").ComponentApi<"rateLimiter">;
+  dodopayments: import("@dodopayments/convex/_generated/component.js").ComponentApi<"dodopayments">;
 };
