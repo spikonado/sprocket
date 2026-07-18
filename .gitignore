@@ -27,7 +27,8 @@ turbo-cache-key.json
 
 .claude
 .codex
+.sprocket-dev
+.worktrees
 dist
 ref-repos
 target
-.sprocket-dev
