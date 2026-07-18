@@ -116,7 +116,7 @@ export const webSearch = action({
 			? Math.floor(args.numResults as number)
 			: DEFAULT_SEARCH_RESULTS;
 		const numResults = Math.min(Math.max(requested, 1), MAX_SEARCH_RESULTS);
-		await enforceWebSearchLimit(ctx, userId);
+		await enforceWebSearchLimit(ctx, userId, numResults);
 
 		const response = await callComponent('Exa search', SEARCH_TIMEOUT_MS, () =>
 			exa.search(ctx, {

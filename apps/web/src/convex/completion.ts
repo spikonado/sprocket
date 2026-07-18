@@ -93,11 +93,12 @@ export const complete = action({
 				: {})
 		});
 		const modelId = args.modelId;
+		const serviceTier = args.serviceTier ?? defaultServiceTier;
 		if (args.reasoningEffort !== undefined || args.serviceTier !== undefined) {
 			assertSupportedModelConfiguration({
 				modelId,
 				reasoningEffort: args.reasoningEffort,
-				serviceTier: args.serviceTier ?? defaultServiceTier
+				serviceTier
 			});
 		}
 		const tools: Record<string, ReturnType<typeof tool>> = Object.fromEntries(
@@ -122,7 +123,7 @@ export const complete = action({
 		}
 		const completionContext = await prepareCompletionContext(ctx, args.streamRunId);
 		const sharedArgs = buildSharedCompletionRequest(
-			{ ...args, modelId },
+			{ ...args, modelId, serviceTier },
 			tools,
 			toolChoice,
 			completionContext.promptCacheKey
@@ -160,6 +161,7 @@ export const complete = action({
 		const chargeArgs = {
 			userId: completionContext.userId,
 			modelId,
+			serviceTier,
 			tokens: normalizeCompletionUsage(result.usage)
 		};
 		try {

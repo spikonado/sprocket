@@ -13,9 +13,9 @@ export type TierLimits = {
 };
 
 const sharedLimits: TierLimits = {
-	modelUsage: { weekly: 25_000_000, monthly: 60_000_000 },
-	urlScrape: { weekly: 100, monthly: 280 },
-	webSearch: { weekly: 25, monthly: 60 }
+	modelUsage: { weekly: 2_500, monthly: 7_500 },
+	urlScrape: { weekly: 250, monthly: 750 },
+	webSearch: { weekly: 250, monthly: 750 }
 };
 
 export const tierLimits: Record<SubscriptionTier, TierLimits> = {

@@ -10,15 +10,34 @@ describe('subscription and usage backend', () => {
 		await t.mutation(internal.lib.rateLimits.chargeModelUsageLimits, {
 			userId,
 			modelId: 'gpt-5.6-sol',
+			serviceTier: 'standard',
 			tokens: { input: 1_000_000, cacheRead: 0, cacheWrite: 0, output: 2_000_000 }
 		});
 
 		const usage = await asUser.query(api.usage.getMyUsage, {});
 		const model = usage.meters.find((meter) => meter.id === 'modelUsage');
-		expect(model?.windows.find((window) => window.period === 'weekly')?.used).toBe(45_000_000);
+		expect(model?.windows.find((window) => window.period === 'weekly')?.used).toBe(100_000);
 		await expect(
 			t.mutation(internal.lib.rateLimits.checkModelUsageLimits, { userId })
-		).rejects.toThrow('Weekly model usage limit reached');
+		).rejects.toThrow('Monthly model usage limit reached');
+	});
+
+	it('charges web tools in proportion to their API cost', async () => {
+		const t = initConvexTest();
+		const userId = 'user_web_tools';
+		const asUser = t.withIdentity({ subject: userId });
+
+		await t.mutation(internal.lib.rateLimits.consumeUrlScrapeLimits, { userId });
+		await t.mutation(internal.lib.rateLimits.consumeWebSearchLimits, {
+			userId,
+			numResults: 5
+		});
+
+		const usage = await asUser.query(api.usage.getMyUsage, {});
+		const scrape = usage.meters.find((meter) => meter.id === 'urlScrape');
+		const search = usage.meters.find((meter) => meter.id === 'webSearch');
+		expect(scrape?.windows.find((window) => window.period === 'monthly')?.used).toBe(1.5);
+		expect(search?.windows.find((window) => window.period === 'monthly')?.used).toBe(12);
 	});
 
 	it('uses only active subscriptions and ignores stale webhook events', async () => {

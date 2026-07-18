@@ -22,8 +22,14 @@ type ModelDefinition = {
 	reasoningEfforts: readonly SupportedReasoningEffort[];
 	defaultReasoningEffort: SupportedReasoningEffort;
 	serviceTiers: readonly SupportedServiceTier[];
-	usageWeights: { input: number; cacheRead: number; cacheWrite: number; output: number };
+	usageWeights: {
+		short: TokenUsageWeights;
+		long?: { minimumInputTokens: number; weights: TokenUsageWeights; fastMultiplier: number };
+		fastMultiplier: number;
+	};
 };
+
+type TokenUsageWeights = { input: number; cacheRead: number; cacheWrite: number; output: number };
 
 export const modelDefinitions = [
 	{
@@ -33,7 +39,15 @@ export const modelDefinitions = [
 		reasoningEfforts: reasoningEffortIds,
 		defaultReasoningEffort: 'medium',
 		serviceTiers: serviceTierIds,
-		usageWeights: { input: 5, cacheRead: 0.5, cacheWrite: 6.25, output: 20 }
+		usageWeights: {
+			short: { input: 0.005, cacheRead: 0.0005, cacheWrite: 0.00625, output: 0.03 },
+			long: {
+				minimumInputTokens: 272_001,
+				weights: { input: 0.01, cacheRead: 0.001, cacheWrite: 0.0125, output: 0.045 },
+				fastMultiplier: 1
+			},
+			fastMultiplier: 2
+		}
 	},
 	{
 		id: 'gpt-5.6-terra',
@@ -42,7 +56,20 @@ export const modelDefinitions = [
 		reasoningEfforts: reasoningEffortIds,
 		defaultReasoningEffort: 'medium',
 		serviceTiers: serviceTierIds,
-		usageWeights: { input: 1, cacheRead: 0.1, cacheWrite: 1.25, output: 4 }
+		usageWeights: {
+			short: { input: 0.0025, cacheRead: 0.00025, cacheWrite: 0.003125, output: 0.015 },
+			long: {
+				minimumInputTokens: 272_001,
+				weights: {
+					input: 0.005,
+					cacheRead: 0.0005,
+					cacheWrite: 0.00625,
+					output: 0.0225
+				},
+				fastMultiplier: 1
+			},
+			fastMultiplier: 2
+		}
 	},
 	{
 		id: 'gpt-5.6-luna',
@@ -51,7 +78,15 @@ export const modelDefinitions = [
 		reasoningEfforts: reasoningEffortIds,
 		defaultReasoningEffort: 'medium',
 		serviceTiers: serviceTierIds,
-		usageWeights: { input: 2, cacheRead: 0.2, cacheWrite: 2.5, output: 8 }
+		usageWeights: {
+			short: { input: 0.001, cacheRead: 0.0001, cacheWrite: 0.00125, output: 0.006 },
+			long: {
+				minimumInputTokens: 272_001,
+				weights: { input: 0.002, cacheRead: 0.0002, cacheWrite: 0.0025, output: 0.009 },
+				fastMultiplier: 1
+			},
+			fastMultiplier: 2
+		}
 	},
 	{
 		id: 'claude-fable-5',
@@ -60,7 +95,10 @@ export const modelDefinitions = [
 		reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
 		defaultReasoningEffort: 'high',
 		serviceTiers: serviceTierIds,
-		usageWeights: { input: 6, cacheRead: 0.6, cacheWrite: 7.5, output: 24 }
+		usageWeights: {
+			short: { input: 0.01, cacheRead: 0.001, cacheWrite: 0.0125, output: 0.05 },
+			fastMultiplier: 1
+		}
 	},
 	{
 		id: 'grok-4.5',
@@ -69,7 +107,15 @@ export const modelDefinitions = [
 		reasoningEfforts: ['low', 'medium', 'high'],
 		defaultReasoningEffort: 'high',
 		serviceTiers: serviceTierIds,
-		usageWeights: { input: 1.5, cacheRead: 0.15, cacheWrite: 2, output: 6 }
+		usageWeights: {
+			short: { input: 0.002, cacheRead: 0.0005, cacheWrite: 0.002, output: 0.006 },
+			long: {
+				minimumInputTokens: 200_000,
+				weights: { input: 0.004, cacheRead: 0.001, cacheWrite: 0.004, output: 0.012 },
+				fastMultiplier: 2
+			},
+			fastMultiplier: 2
+		}
 	}
 ] as const satisfies readonly ModelDefinition[];
 
@@ -103,14 +149,22 @@ export function normalizeCompletionUsage(usage: LanguageModelUsage): {
 
 export function completionUsageUnits(
 	modelId: SupportedModelId,
+	serviceTier: SupportedServiceTier,
 	tokens: { input: number; cacheRead: number; cacheWrite: number; output: number }
 ): number {
-	const weights = getModelDefinition(modelId).usageWeights;
+	const pricing = getModelDefinition(modelId).usageWeights;
+	const totalInput = tokens.input + tokens.cacheRead + tokens.cacheWrite;
+	const longPricing =
+		pricing.long && totalInput >= pricing.long.minimumInputTokens ? pricing.long : undefined;
+	const weights = longPricing?.weights ?? pricing.short;
+	const multiplier =
+		serviceTier === 'fast' ? (longPricing?.fastMultiplier ?? pricing.fastMultiplier) : 1;
 	return Math.ceil(
-		tokens.input * weights.input +
-			tokens.cacheRead * weights.cacheRead +
-			tokens.cacheWrite * weights.cacheWrite +
-			tokens.output * weights.output
+		multiplier *
+			(tokens.input * weights.input +
+				tokens.cacheRead * weights.cacheRead +
+				tokens.cacheWrite * weights.cacheWrite +
+				tokens.output * weights.output)
 	);
 }
 
