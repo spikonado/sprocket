@@ -213,12 +213,15 @@ export function workSectionTimingAnchor(
 	return { startedAtMs, completedAtMs };
 }
 
-/** Whether a tool call never reached a durable result (job still pending/claimed, or no output). */
+/** Whether a tool call never reached a durable result (no output and no finished job). */
 function isAssistantTimelineToolUnresolved(tool: AssistantTimelineTool): boolean {
+	if (tool.output !== undefined) {
+		return false;
+	}
 	if (tool.job) {
 		return tool.job.status === 'pending' || tool.job.status === 'claimed';
 	}
-	return tool.output === undefined;
+	return true;
 }
 
 /** Whether a tool call is still in flight while the run is streaming. */

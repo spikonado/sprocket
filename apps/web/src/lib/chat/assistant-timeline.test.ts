@@ -532,13 +532,17 @@ describe('partitionWorkSectionTools', () => {
 		const claimedTool = tool('patch-1', 'apply_patch', {
 			job: executorJob('job-patch', 1, { status: 'claimed', kind: 'apply_patch' })
 		});
+		const claimedToolWithResult = tool('patch-2', 'apply_patch', {
+			output: { changedFiles: ['a.txt'] },
+			job: executorJob('job-patch-2', 2, { status: 'claimed', kind: 'apply_patch' })
+		});
 		const yieldedCommand = tool('exec-1', 'exec_command', {
 			input: { cmd: 'npm run dev' },
 			output: { sessionId: '7', running: true },
-			job: executorJob('job-exec', 2, { status: 'completed', kind: 'exec_command' })
+			job: executorJob('job-exec', 3, { status: 'completed', kind: 'exec_command' })
 		});
 		const blocks: AssistantTimelineWorkBlock[] = [
-			{ type: 'tool-group', toolKey: 'apply_patch', tools: [claimedTool] },
+			{ type: 'tool-group', toolKey: 'apply_patch', tools: [claimedTool, claimedToolWithResult] },
 			{ type: 'tool-group', toolKey: 'exec_command', tools: [yieldedCommand] }
 		];
 
@@ -550,6 +554,7 @@ describe('partitionWorkSectionTools', () => {
 		expect(assistantTimelineToolError(claimedTool, false)).toBe(
 			'The agent stopped before this tool call finished.'
 		);
+		expect(assistantTimelineToolFailureKind(claimedToolWithResult, false)).toBeUndefined();
 		expect(assistantTimelineToolFailureKind(yieldedCommand, false)).toBeUndefined();
 	});
 });
