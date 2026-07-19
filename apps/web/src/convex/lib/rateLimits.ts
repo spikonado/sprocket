@@ -51,7 +51,13 @@ export type UsagePeriod = (typeof usagePeriods)[number];
 
 const periodDurations: Record<UsagePeriod, number> = { weekly: WEEK, monthly: MONTH };
 
-function meterLimitName(meterId: UsageMeterId, period: UsagePeriod): string {
+// Pre-shared-quota meter names/rates. Counted until those windows expire.
+const legacyWebToolMeters = [
+	{ name: 'webSearch', rates: { weekly: 250, monthly: 750 } },
+	{ name: 'urlScrape', rates: { weekly: 250, monthly: 750 } }
+] as const;
+
+function meterLimitName(meterId: string, period: UsagePeriod): string {
 	return `${meterId}${period === 'weekly' ? 'Weekly' : 'Monthly'}`;
 }
 
@@ -130,15 +136,19 @@ async function chargeMeterLimits(
 	}
 }
 
-export async function getMeterWindow(
+async function getNamedMeterWindow(
 	ctx: RunQueryCtx,
-	meterId: UsageMeterId,
+	name: string,
 	period: UsagePeriod,
 	userId: string,
-	limits: TierLimits
+	rate: number
 ): Promise<{ used: number; limit: number; resetsAt: number | null }> {
-	const config = meterLimitConfig(meterId, period, limits);
-	const stored = await rateLimiter.getValue(ctx, meterLimitName(meterId, period), {
+	const config: RateLimitConfig = {
+		kind: 'fixed window',
+		period: periodDurations[period],
+		rate
+	};
+	const stored = await rateLimiter.getValue(ctx, meterLimitName(name, period), {
 		key: userId,
 		config
 	});
@@ -152,6 +162,57 @@ export async function getMeterWindow(
 	};
 }
 
+async function getWebToolsWindow(
+	ctx: RunQueryCtx,
+	period: UsagePeriod,
+	userId: string,
+	limits: TierLimits
+): Promise<{ used: number; limit: number; resetsAt: number | null }> {
+	const windows = await Promise.all([
+		getNamedMeterWindow(ctx, 'webTools', period, userId, limits.webTools[period]),
+		...legacyWebToolMeters.map((meter) =>
+			getNamedMeterWindow(ctx, meter.name, period, userId, meter.rates[period])
+		)
+	]);
+	const used = windows.reduce((total, window) => total + window.used, 0);
+	const resetsAt =
+		windows
+			.map((window) => window.resetsAt)
+			.filter((value): value is number => value !== null)
+			.sort((a, b) => a - b)[0] ?? null;
+	return { used, limit: limits.webTools[period], resetsAt };
+}
+
+export async function getMeterWindow(
+	ctx: RunQueryCtx,
+	meterId: UsageMeterId,
+	period: UsagePeriod,
+	userId: string,
+	limits: TierLimits
+): Promise<{ used: number; limit: number; resetsAt: number | null }> {
+	if (meterId === 'webTools') return getWebToolsWindow(ctx, period, userId, limits);
+	return getNamedMeterWindow(ctx, meterId, period, userId, limits[meterId][period]);
+}
+
+async function checkWebToolsMeterLimits(
+	ctx: MutationCtx,
+	userId: string,
+	limits: TierLimits
+): Promise<void> {
+	const windows = await Promise.all(
+		usagePeriods.map(async (period) => ({
+			period,
+			window: await getWebToolsWindow(ctx, period, userId, limits)
+		}))
+	);
+	const blocked = windows
+		.filter(({ window }) => window.used >= window.limit)
+		.sort((a, b) => (b.window.resetsAt ?? 0) - (a.window.resetsAt ?? 0))[0];
+	if (!blocked) return;
+	const retryAfter = Math.max(SECOND, (blocked.window.resetsAt ?? Date.now()) - Date.now());
+	throw rateLimitError(meterLimitLabel('webTools', blocked.period), retryAfter);
+}
+
 async function chargeWebTools(ctx: MutationCtx, userId: string, count: number): Promise<void> {
 	const tier = await getSubscriptionTier(ctx, userId);
 	await chargeMeterLimits(ctx, 'webTools', userId, tierLimits[tier], count);
@@ -161,7 +222,7 @@ export const checkWebToolsLimits = internalMutation({
 	args: { userId: v.string() },
 	handler: async (ctx, { userId }) => {
 		const tier = await getSubscriptionTier(ctx, userId);
-		await checkMeterLimits(ctx, 'webTools', userId, tierLimits[tier]);
+		await checkWebToolsMeterLimits(ctx, userId, tierLimits[tier]);
 	}
 });
 
@@ -173,7 +234,9 @@ export const chargeUrlScrapeLimits = internalMutation({
 });
 
 export const chargeWebSearchLimits = internalMutation({
-	args: { userId: v.string() },
+	// numResults kept optional so durable charges queued before the flat-cost
+	// rollout still validate after deploy.
+	args: { userId: v.string(), numResults: v.optional(v.number()) },
 	handler: async (ctx, { userId }) => {
 		await chargeWebTools(ctx, userId, WEB_SEARCH_USAGE_UNITS);
 	}
