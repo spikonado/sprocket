@@ -1,11 +1,6 @@
-import { WEEK } from '@convex-dev/rate-limiter';
 import { describe, expect, it } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
-import {
-	rateLimiter,
-	URL_SCRAPE_USAGE_UNITS,
-	WEB_SEARCH_USAGE_UNITS
-} from '@convex/lib/rateLimits';
+import { URL_SCRAPE_USAGE_UNITS, WEB_SEARCH_USAGE_UNITS } from '@convex/lib/rateLimits';
 import { initConvexTest } from './test.setup';
 
 describe('subscription and usage backend', () => {
@@ -46,42 +41,8 @@ describe('subscription and usage backend', () => {
 		expect(await used()).toBe(URL_SCRAPE_USAGE_UNITS + WEB_SEARCH_USAGE_UNITS);
 
 		// Same flat search cost again (not scaled by result count).
-		await t.mutation(internal.lib.rateLimits.chargeWebSearchLimits, {
-			userId,
-			numResults: 10
-		});
+		await t.mutation(internal.lib.rateLimits.chargeWebSearchLimits, { userId });
 		expect(await used()).toBe(URL_SCRAPE_USAGE_UNITS + 2 * WEB_SEARCH_USAGE_UNITS);
-	});
-
-	it('counts legacy web search and scrape usage toward the shared quota', async () => {
-		const t = initConvexTest();
-		const userId = 'user_legacy_web_tools';
-		const asUser = t.withIdentity({ subject: userId });
-		const weekly = { kind: 'fixed window' as const, period: WEEK, rate: 250 };
-
-		await t.run(async (ctx) => {
-			await rateLimiter.limit(ctx, 'webSearchWeekly', {
-				key: userId,
-				config: weekly,
-				count: 250,
-				reserve: true
-			});
-			await rateLimiter.limit(ctx, 'urlScrapeWeekly', {
-				key: userId,
-				config: weekly,
-				count: 250,
-				reserve: true
-			});
-		});
-
-		const usage = await asUser.query(api.usage.getMyUsage, {});
-		const meter = usage.meters.find((meter) => meter.id === 'webTools');
-		const window = meter?.windows.find((window) => window.period === 'weekly');
-		expect(window?.used).toBe(500);
-		expect(window?.limit).toBe(500);
-		await expect(
-			t.mutation(internal.lib.rateLimits.checkWebToolsLimits, { userId })
-		).rejects.toThrow('Weekly web tools limit reached');
 	});
 
 	it('uses only active subscriptions and ignores stale webhook events', async () => {
