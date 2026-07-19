@@ -6,15 +6,14 @@
 - It's goal is to give its users and AI agents the best possible experience when developing robots and robot apps. They should be able to ship across the entire robotics stack much faster than ever before.
 - Sprocket should work seamlessly across different hardware platforms, operating systems, and Sprocket's own cloud for robotics development.
 
-## Testing
+## Available Testing Commands
 
-1. `cargo test`
-2. `bun run test`
-3. `bun run build`
-4. `prek run -a` -> Always run this for ALL formatting and linting
+- `bun run build`
+- `bun run test`
+- `cargo test`
+- `prek run -a` -> This covers ALL formatting and linting
 
-Run only the tests relevant to your changes unless instructed otherwise.
-If you are a subagent, don't run any of the above.
+If you are a subagent, don't run any of these.
 
 ### Nix Environment
 
@@ -32,16 +31,11 @@ All of these are core priorities; try your best to achieve all of them without h
 
 - Don't be afraid to completely refactor existing code in order to improve on any of the priorities.
 - Make sure that changes are made in all the layers of the app when needed.
-- Deleting code, often fixes more problems than writing code does. Sometimes writing too much code introduces problems.
 
 ## Writing Code
 
-Specifically for gpt-5.6-sol: You often end up writing more code than needed, especially tests. Please don't do this.
-
-## Dependency Documentation
-
-- Most of what you know about our dependencies is outdated or wrong. Most of your training data contains obsolete APIs, deprecated patterns, and incorrect usage.
-- Always check the documentation for the latest best practices.
+- Deleting code, often fixes more problems than writing code does. Sometimes writing too much code introduces problems.
+- Specifically for gpt-5.6-sol: You often end up writing more code than needed, especially tests. Please don't do this.
 
 ## Subagents
 
@@ -49,9 +43,9 @@ Specifically for gpt-5.6-sol: You often end up writing more code than needed, es
 
 - Feel free to commit, branch, and spin up worktrees as you please. Don't push before asking.
 - Do the deep dives and figure out what needs to be done and delegate the rest accordingly and as needed to subagents.
-- Use subagents for LARGE tasks that will benefit from your context being less polluted and multiple subagents working in parallel.
+- Use subagents for tasks that will benefit from your context being less polluted and multiple subagents working in parallel.
 - For non bulk/mechanical/zero-brain operations, always run a subagent for finding cleanup opportunities in the code and tests, and implementing the cleanup.
-- For non bulk/mechanical/zero-brain operations, always get 2 subagents to review the code before considering your work done. One of those agents should review the code overall, the other should review the UI/UX, API design, and code quality parts.
+- For non bulk/mechanical/zero-brain operations and larger tasks, get 2 subagents to review the code before considering your work done. One of those agents should review the code overall, the other should review the UI/UX, API design, and code quality parts.
 - When getting code reviewed by subagents in a loop, use gpt-5.6-sol as the review subagent for a max of 3 reviews. After this, rely on some other model for the review subagent.
 
 #### PR Workflow
