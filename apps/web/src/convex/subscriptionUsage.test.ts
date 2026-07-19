@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
+import { URL_SCRAPE_USAGE_UNITS, WEB_SEARCH_USAGE_UNITS } from '@convex/lib/rateLimits';
 import { initConvexTest } from './test.setup';
 
 describe('subscription and usage backend', () => {
@@ -23,24 +24,25 @@ describe('subscription and usage backend', () => {
 		).rejects.toThrow('Monthly model usage limit reached');
 	});
 
-	it('weights web tool usage by request size', async () => {
+	it('charges scrape and search against one shared web tools quota', async () => {
 		const t = initConvexTest();
 		const userId = 'user_web_tools';
 		const asUser = t.withIdentity({ subject: userId });
-		const used = async (meterId: string) => {
+		const used = async () => {
 			const usage = await asUser.query(api.usage.getMyUsage, {});
-			const meter = usage.meters.find((meter) => meter.id === meterId);
+			const meter = usage.meters.find((meter) => meter.id === 'webTools');
 			return meter?.windows.find((window) => window.period === 'monthly')?.used ?? 0;
 		};
 
 		await t.mutation(internal.lib.rateLimits.chargeUrlScrapeLimits, { userId });
-		expect(await used('urlScrape')).toBeGreaterThan(0);
+		expect(await used()).toBe(URL_SCRAPE_USAGE_UNITS);
 
-		await t.mutation(internal.lib.rateLimits.chargeWebSearchLimits, { userId, numResults: 1 });
-		const smallSearch = await used('webSearch');
-		expect(smallSearch).toBeGreaterThan(0);
-		await t.mutation(internal.lib.rateLimits.chargeWebSearchLimits, { userId, numResults: 10 });
-		expect(await used('webSearch')).toBeGreaterThan(smallSearch * 2);
+		await t.mutation(internal.lib.rateLimits.chargeWebSearchLimits, { userId });
+		expect(await used()).toBe(URL_SCRAPE_USAGE_UNITS + WEB_SEARCH_USAGE_UNITS);
+
+		// Same flat search cost again (not scaled by result count).
+		await t.mutation(internal.lib.rateLimits.chargeWebSearchLimits, { userId });
+		expect(await used()).toBe(URL_SCRAPE_USAGE_UNITS + 2 * WEB_SEARCH_USAGE_UNITS);
 	});
 
 	it('uses only active subscriptions and ignores stale webhook events', async () => {

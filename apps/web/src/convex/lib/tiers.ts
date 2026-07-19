@@ -8,14 +8,12 @@ export const tierLabels: Record<SubscriptionTier, string> = { free: 'Free', pro:
 
 export type TierLimits = {
 	modelUsage: { weekly: number; monthly: number };
-	urlScrape: { weekly: number; monthly: number };
-	webSearch: { weekly: number; monthly: number };
+	webTools: { weekly: number; monthly: number };
 };
 
 const sharedLimits: TierLimits = {
 	modelUsage: { weekly: 2_500, monthly: 7_500 },
-	urlScrape: { weekly: 250, monthly: 750 },
-	webSearch: { weekly: 250, monthly: 750 }
+	webTools: { weekly: 500, monthly: 1_500 }
 };
 
 export const tierLimits: Record<SubscriptionTier, TierLimits> = {

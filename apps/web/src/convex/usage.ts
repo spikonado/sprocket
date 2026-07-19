@@ -15,6 +15,7 @@ export const getMyUsage = query({
 				usageMeters.map(async (meter) => ({
 					id: meter.id,
 					label: meter.label,
+					description: meter.description,
 					windows: await Promise.all(
 						usagePeriods.map(async (period) => ({
 							period,

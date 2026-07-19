@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { useAuth, useQuery } from 'convex-svelte';
 	import { api } from '$convex/_generated/api';
+	import { usageMeters, usagePeriods } from '$convex/lib/rateLimits';
 	import { tierLabels } from '$convex/lib/tiers';
 
 	const convexAuth = useAuth();
@@ -65,10 +66,10 @@
 			{:else if usageQuery.isLoading || usageQuery.data === undefined}
 				<div class="animate-pulse space-y-10" aria-hidden="true">
 					<div class="h-4 w-24 rounded bg-white/5"></div>
-					{#each ['modelUsage', 'webSearch', 'urlScrape'] as meterId (meterId)}
+					{#each usageMeters as meter (meter.id)}
 						<div class="space-y-5">
 							<div class="h-3 w-28 rounded bg-white/5"></div>
-							{#each ['weekly', 'monthly'] as period (period)}
+							{#each usagePeriods as period (period)}
 								<div class="space-y-2">
 									<div class="h-3.5 w-full rounded bg-white/5"></div>
 									<div class="h-1.5 w-full rounded-full bg-white/5"></div>
@@ -79,19 +80,17 @@
 				</div>
 			{:else}
 				<div>
-					<p class="text-[11px] tracking-[0.18em] text-slate-500 uppercase">Plan</p>
+					<p class="text-[11px] tracking-[0.18em] text-slate-500 uppercase">Subscription Tier</p>
 					<p class="mt-3 text-[15px] text-white">
-						{tierLabels[usageQuery.data.tier]} plan
+						{tierLabels[usageQuery.data.tier]}
 					</p>
 				</div>
 
 				{#each usageQuery.data.meters as meter (meter.id)}
 					<div>
 						<p class="text-[11px] tracking-[0.18em] text-slate-500 uppercase">{meter.label}</p>
-						{#if meter.id === 'modelUsage'}
-							<p class="mt-1 text-[12px] text-slate-500">
-								Weighted by model and token type — pricier models and output tokens use more.
-							</p>
+						{#if meter.description}
+							<p class="mt-1 text-[12px] text-slate-500">{meter.description}</p>
 						{/if}
 						<div class="mt-4 space-y-6">
 							{#each meter.windows as meterWindow (meterWindow.period)}
