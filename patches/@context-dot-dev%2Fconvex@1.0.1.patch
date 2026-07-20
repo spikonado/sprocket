@@ -10,7 +10,7 @@ index c7b77a8638df14dac23a5091e7452d657076d2a7..9d064995b46709c3acbda2bdd51c4ba5
 +// Patched: /web/scrape/markdown returns a stable envelope on success, so validate
 +// it precisely instead of the finite-depth apiResponse shared by other endpoints.
 +const scrapeMarkdownResponse = v.object({
-+    success: v.literal(true),
++    success: v.boolean(),
 +    markdown: v.string(),
 +    url: v.string(),
 +    metadata: v.record(v.string(), v.any()),
