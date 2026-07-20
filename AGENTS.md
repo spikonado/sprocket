@@ -96,3 +96,35 @@ How to apply:
 - The produced code meeting the priorities in "Priorities in Order" is much more important than what it costed.
 - For bulk/mechanical/zero-brain operations, always use the cheapest model first and only switch to a better model if the output doesn't meet the bar.
 - For user-facing UI/UX and APIs, use a model with good taste (>=7). If making those UIs/APIs is highly complicated, get a model with higher intelligence to complete the work after the core UI/API has been decided by the model with good taste.
+
+## Cursor Cloud specific instructions
+
+The startup update script already ran `bun install` inside the Nix dev shell, and the Nix store is prewarmed in the VM snapshot. Notes below are the non-obvious gotchas for this environment.
+
+### Nix daemon (no systemd)
+
+- This VM's init is `tini`, not systemd. The multi-user Nix daemon is auto-started from the agent's `~/.bashrc`. If a shell reports `nix` missing or `cannot connect to socket at '/nix/var/nix/daemon-socket/socket'`, start it once with:
+  `sudo sh -c 'nohup /nix/var/nix/profiles/default/bin/nix-daemon >/tmp/nix-daemon.log 2>&1 &'`
+- The Nix binary cache config in `flake.nix` (cachix) is ignored because this user isn't a trusted Nix user; everything is fetched from `cache.nixos.org`, so those warnings are harmless.
+
+### Running toolchain commands
+
+- Run every toolchain command as `nix develop --accept-flake-config -c <command>` (e.g. `nix develop --accept-flake-config -c bun run test`).
+- Do NOT wrap it in a login shell (`bash -lc`). `~/.bashrc` prepends the system `cargo 1.83` to `PATH`, which lacks `edition2024` and breaks all cargo builds. Plain `nix develop -c ...` keeps the Nix toolchain (cargo/rustc 1.96, bun 1.3.x, node 24) first.
+
+### Services and ports
+
+- `nix develop --accept-flake-config -c bun dev` starts the whole dev stack: Rust API (`:7731`), an anonymous local Convex backend (`:3210`), and Vite (`:5173`). `bun dev:desktop` swaps Vite for Electron.
+- `convex dev` (invoked by `bun dev`) provisions a fully local, no-account Convex deployment and writes `apps/web/.env.local`. The browser's `PUBLIC_CONVEX_URL` comes from the Rust server's `/api/config`, which `bun dev` points at the local backend via that `.env.local`.
+- The local Convex push fails until deployment env vars exist. Set placeholders once (they persist in the local deployment): `cd apps/web && nix develop --accept-flake-config -c node node_modules/convex/bin/main.js env set WORKOS_CLIENT_ID <val>` and likewise for `CONTEXT_DEV_API_KEY` and `EXA_API_KEY`.
+- Full sign-in and agent runs additionally require a real WorkOS AuthKit app (`WORKOS_CLIENT_ID`) and a model-provider key (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `XAI_API_KEY`) set on the Convex deployment. Without them the app renders the sign-in screen but cannot authenticate or run the agent.
+
+### Local server (works fully offline)
+
+- The Rust server can run standalone: `nix develop --accept-flake-config -c cargo run -p sprocket-cli -- serve --port 7731 --data-dir .sprocket-dev --api-only`.
+- Pair a client by POSTing the credential from `<data-dir>/pairing-credential` to `/api/auth/bootstrap` (returns a session cookie), then use `/api/workspace/{browse,resolve,sessions}` for local filesystem access and workspace attachment.
+
+### Dev-mode web UI caveat
+
+- `bun dev`'s Vite browser bundle currently throws `ReferenceError: process is not defined` (from `apps/web/src/convex/lib/rateLimits.ts` value-importing `internalMutation` from `_generated/server.js`, which pulls `process.env` into the client via `+page.svelte` -> `settings-usage.svelte`). This shows a client-side "500 Internal Error" page.
+- The production build tree-shakes that import, so `bun run build` output renders correctly. To view the UI, serve the build with the Rust server: `SPROCKET_STATIC_DIR=/workspace/apps/web/dist PUBLIC_CONVEX_URL=http://127.0.0.1:3210 nix develop --accept-flake-config -c cargo run -p sprocket-cli -- serve --port 17731 --data-dir .sprocket-web`, then open `http://127.0.0.1:17731/`.
