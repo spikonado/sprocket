@@ -7,7 +7,7 @@
 		"build:release": "node ./scripts/create-turbo-cache-key.js && bunx turbo run build:release",
 		"dev": "bun --env-file=apps/web/.env.local scripts/run-dev.mjs",
 		"dev:desktop": "bun --env-file=apps/web/.env.local scripts/run-dev.mjs --desktop",
-		"test": "turbo run test"
+		"test": "turbo run test && node --test npm/sprocket/test/*.test.js"
 	},
 	"devDependencies": {
 		"concurrently": "^10.0.0",

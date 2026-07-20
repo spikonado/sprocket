@@ -6,55 +6,36 @@ command execution on your machine.
 
 ## Using Sprocket
 
-Prebuilt releases are not published yet. To create installable artifacts from
-source, follow [Development](#development) and run `bun run build:release`.
+To directly launch Sprocket in the browser without having to install anything:
 
-After installing the Sprocket desktop application and the `sprocket` CLI,
-launch it from a terminal:
+```sh
+npx @spikonado/sprocket --web
+```
+
+After installing the Sprocket desktop application and the `sprocket` CLI, launch it from a terminal:
 
 ```sh
 sprocket
 ```
 
-This starts the local Sprocket server and opens the separately installed desktop
-application. If it cannot find the desktop executable, the CLI suggests the
-browser-only command instead. To use Sprocket entirely in your default browser,
-run:
+This starts the local Sprocket server and opens the separately installed desktop application.
+
+To use Sprocket entirely in your default browser, run:
 
 ```sh
 sprocket --web
 ```
 
-Pass a directory to either command to add or reconnect that workspace and open
-a new thread for it:
+Pass a directory to either command to add or reconnect that workspace and open a new thread for it:
 
 ```sh
 sprocket .
 sprocket --web ../my-robot
 ```
 
-The directory must already exist. Relative paths are resolved from the current
-working directory.
-
-`--web` runs the server and bundled static web app directly; it does not start
-or require Electron. If the desktop server is already running, the command opens
-that same server instead of starting another one. Keep the server command
-running while using the browser app. In either mode, the app is served locally
-at `http://127.0.0.1:17731`; it is not exposed to the network by default.
-
-After Sprocket opens:
-
-1. Sign in. Desktop sign-in opens your system browser and returns to Sprocket
-   when authentication completes.
-2. Open or enter the path to a local workspace.
-3. Describe the work you want completed in the prompt box.
-4. Review the agent's progress, tool calls, and changes in the conversation.
-5. Continue the conversation to refine or extend the result.
-
-Sprocket remembers attached workspaces and local server sessions between
-launches. Its local state is stored in `$HOME/.sprocket`, falling back to
-`%USERPROFILE%\.sprocket` on Windows when `HOME` is unavailable. Override this
-with `SPROCKET_DATA_DIR`.
+Sprocket remembers attached workspaces and local server sessions between launches.
+Its local state is stored in `$HOME/.sprocket`, falling back to `%USERPROFILE%\.sprocket` on Windows when `HOME` is unavailable.
+Override this with `SPROCKET_DATA_DIR`.
 
 ## CLI reference
 
@@ -65,8 +46,8 @@ with `SPROCKET_DATA_DIR`.
 | `sprocket serve`             | Run the local server in the foreground without launching a client.             |
 | `sprocket serve --api-only`  | Serve only `/api`; intended for development (see [Development](#development)). |
 
-Run `sprocket --help` or `sprocket serve --help` for all options. Common server
-overrides are also available as environment variables:
+Run `sprocket --help` or `sprocket serve --help` for all options.
+Common server overrides are also available as environment variables:
 
 | Variable              | Purpose                                                   |
 | --------------------- | --------------------------------------------------------- |
@@ -83,8 +64,6 @@ overrides are also available as environment variables:
 - Bun 1.x, version 1.3.9 or newer
 - Node.js 24.x, version 24.14 or newer
 - A current stable Rust toolchain
-- A Convex deployment
-- A WorkOS AuthKit application
 
 Install dependencies:
 

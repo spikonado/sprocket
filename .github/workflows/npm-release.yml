@@ -1,0 +1,257 @@
+name: npm Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_run:
+    workflows: [Build and Test]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Semver version to build
+        required: true
+        type: string
+      publish:
+        description: Publish packages to npm
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+      npm-tag: ${{ steps.version.outputs.npm-tag }}
+      source-sha: ${{ steps.version.outputs.source-sha }}
+    steps:
+      - id: version
+        name: Resolve version
+        shell: bash
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+          EVENT_NAME: ${{ github.event_name }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [[ "$EVENT_NAME" == "workflow_run" ]]; then
+            source_sha="$TESTED_SHA"
+            version="0.0.0-dev.$source_sha"
+          elif [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            source_sha="$GITHUB_SHA"
+            version="${GITHUB_REF_NAME#v}"
+          else
+            source_sha="$GITHUB_SHA"
+            version="$DISPATCH_VERSION"
+          fi
+          stable_pattern='^[0-9]+\.[0-9]+\.[0-9]+$'
+          canary_pattern='^[0-9]+\.[0-9]+\.[0-9]+-canary\.[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*$'
+          dev_pattern='^0\.0\.0-dev\.[0-9a-f]{40}$'
+          if [[ ! "$version" =~ $stable_pattern && ! "$version" =~ $canary_pattern && ! "$version" =~ $dev_pattern ]]; then
+            echo "::error::Invalid release version: $version"
+            exit 1
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+          echo "source-sha=$source_sha" >> "$GITHUB_OUTPUT"
+          if [[ "$version" == 0.0.0-dev.* ]]; then
+            echo "npm-tag=dev" >> "$GITHUB_OUTPUT"
+          elif [[ "$version" == *-canary.* ]]; then
+            echo "npm-tag=canary" >> "$GITHUB_OUTPUT"
+          else
+            echo "npm-tag=latest" >> "$GITHUB_OUTPUT"
+          fi
+
+  web:
+    needs: prepare
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          ref: ${{ needs.prepare.outputs.source-sha }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+      - run: bun install --frozen-lockfile
+      - run: bun run --cwd apps/web build
+      - uses: actions/upload-artifact@v6
+        with:
+          name: web
+          path: apps/web/dist
+          if-no-files-found: error
+
+  native:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux-x64-gnu
+            runner: blacksmith-4vcpu-ubuntu-2404
+            executable: sprocket
+            rust-target: x86_64-unknown-linux-gnu
+            glibc-version: '2.17'
+          - id: linux-arm64-gnu
+            runner: blacksmith-4vcpu-ubuntu-2404
+            executable: sprocket
+            rust-target: aarch64-unknown-linux-gnu
+            glibc-version: '2.17'
+          - id: darwin-x64
+            runner: macos-15-intel
+            executable: sprocket
+          - id: darwin-arm64
+            runner: macos-14
+            executable: sprocket
+          - id: win32-x64-msvc
+            runner: windows-2022
+            executable: sprocket.exe
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          ref: ${{ needs.prepare.outputs.source-sha }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+      - uses: Swatinem/rust-cache@v2
+      - uses: mlugg/setup-zig@v2
+        if: matrix.glibc-version
+      - uses: taiki-e/install-action@cargo-zigbuild
+        if: matrix.glibc-version
+      - name: Build native CLI for Linux
+        if: matrix.glibc-version
+        shell: bash
+        env:
+          SPROCKET_VERSION: ${{ needs.prepare.outputs.version }}
+        run: >-
+          cargo zigbuild --locked --release -p sprocket-cli
+          --target "${{ matrix.rust-target }}.${{ matrix.glibc-version }}"
+      - name: Build native CLI
+        if: ${{ !matrix.glibc-version }}
+        shell: bash
+        env:
+          SPROCKET_VERSION: ${{ needs.prepare.outputs.version }}
+        run: cargo build --locked --release -p sprocket-cli
+      - name: Stage native CLI
+        shell: bash
+        run: |
+          mkdir -p artifact
+          if [[ -n "${{ matrix.rust-target }}" ]]; then
+            cp "target/${{ matrix.rust-target }}/release/${{ matrix.executable }}" artifact/
+          else
+            cp "target/release/${{ matrix.executable }}" artifact/
+          fi
+      - uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.id }}
+          path: artifact/${{ matrix.executable }}
+          if-no-files-found: error
+
+  package:
+    needs: [prepare, web, native]
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          ref: ${{ needs.prepare.outputs.source-sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: '*'
+          path: release-artifacts
+      - name: Restore web build
+        run: |
+          mkdir -p apps/web/dist
+          cp -R release-artifacts/web/. apps/web/dist/
+      - name: Assemble npm packages
+        run: >-
+          node scripts/build-npm-packages.mjs
+          --version "${{ needs.prepare.outputs.version }}"
+          --artifacts release-artifacts
+          --web apps/web/dist
+          --output npm-dist
+      - name: Validate package contents
+        run: |
+          for package in npm-dist/*; do
+            npm pack "$package" --dry-run
+          done
+      - uses: actions/upload-artifact@v6
+        with:
+          name: npm-packages-${{ needs.prepare.outputs.version }}
+          path: npm-dist
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'push' || github.event_name == 'workflow_run' || inputs.publish
+    needs: [prepare, package]
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          ref: ${{ needs.prepare.outputs.source-sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - uses: actions/download-artifact@v7
+        with:
+          name: npm-packages-${{ needs.prepare.outputs.version }}
+          path: npm-dist
+      - id: freshness
+        name: Skip stale main-branch builds
+        if: needs.prepare.outputs.npm-tag == 'dev'
+        env:
+          TESTED_SHA: ${{ needs.prepare.outputs.source-sha }}
+        run: |
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+          git fetch origin main
+          if [[ "$TESTED_SHA" != "$(git rev-parse origin/main)" ]]; then
+            echo "Skipping stale npm dev release for $TESTED_SHA."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Publish native packages
+        if: needs.prepare.outputs.npm-tag != 'dev' || steps.freshness.outputs.publish == 'true'
+        env:
+          NPM_TAG: ${{ needs.prepare.outputs.npm-tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          for package in npm-dist/*-*; do
+            name="$(node -p "require('./$package/package.json').name")"
+            if npm view "$name@$VERSION" version >/dev/null 2>&1; then
+              echo "$name@$VERSION is already published; skipping"
+            else
+              npm publish "$package" --tag "$NPM_TAG"
+            fi
+          done
+      - name: Publish root package last
+        if: needs.prepare.outputs.npm-tag != 'dev' || steps.freshness.outputs.publish == 'true'
+        env:
+          NPM_TAG: ${{ needs.prepare.outputs.npm-tag }}
+          TESTED_SHA: ${{ needs.prepare.outputs.source-sha }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          if [[ "$NPM_TAG" == "dev" ]]; then
+            git fetch origin main
+            if [[ "$TESTED_SHA" != "$(git rev-parse origin/main)" ]]; then
+              echo "Skipping stale npm dev root release for $TESTED_SHA."
+              exit 0
+            fi
+          fi
+
+          name="$(node -p "require('./npm-dist/sprocket/package.json').name")"
+          if npm view "$name@$VERSION" version >/dev/null 2>&1; then
+            echo "$name@$VERSION is already published; skipping"
+          else
+            npm publish npm-dist/sprocket --tag "$NPM_TAG"
+          fi

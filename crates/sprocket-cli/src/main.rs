@@ -17,13 +17,17 @@ use uuid::Uuid;
 
 const DESKTOP_EXECUTABLE_ENV: &str = "SPROCKET_DESKTOP_EXECUTABLE";
 const DESKTOP_WORKSPACE_ARG: &str = "--sprocket-workspace";
+const VERSION: &str = match option_env!("SPROCKET_VERSION") {
+    Some(version) => version,
+    None => env!("CARGO_PKG_VERSION"),
+};
 type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Debug, Parser)]
 #[command(
     name = "sprocket",
     about = "Sprocket robotics development platform",
-    version,
+    version = VERSION,
     arg_required_else_help = false
 )]
 struct Cli {

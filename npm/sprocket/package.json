@@ -1,0 +1,30 @@
+{
+	"name": "@spikonado/sprocket",
+	"version": "0.0.0",
+	"description": "Sprocket: Agentic platform for streamlining robotics development",
+	"license": "Apache-2.0",
+	"type": "module",
+	"bin": {
+		"sprocket": "bin/sprocket.js"
+	},
+	"files": [
+		"bin/",
+		"lib/",
+		"web/"
+	],
+	"engines": {
+		"node": ">=24"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/spikonado/sprocket.git",
+		"directory": "npm/sprocket"
+	},
+	"homepage": "https://github.com/spikonado/sprocket#readme",
+	"bugs": {
+		"url": "https://github.com/spikonado/sprocket/issues"
+	},
+	"publishConfig": {
+		"access": "public"
+	}
+}
