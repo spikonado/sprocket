@@ -131,31 +131,19 @@
 	const discardImageUpload = useMutation(api.imageUploads.discard);
 	const heartbeatAttached = useMutation(api.workspaceSessions.heartbeatAttached);
 	const ensureMySubscription = useMutation(api.billing.ensureMySubscription);
-	let ensuredSubscriptionUserId: string | null = null;
-	let ensureSubscriptionInFlightFor: string | null = null;
+	let ensureSubscriptionAttemptedFor: string | null = null;
 
 	$effect(() => {
 		if (!authReady) return;
 		const userId = getCurrentUserId();
-		if (
-			!userId ||
-			ensuredSubscriptionUserId === userId ||
-			ensureSubscriptionInFlightFor === userId
-		) {
+		if (!userId || ensureSubscriptionAttemptedFor === userId) {
 			return;
 		}
-		ensureSubscriptionInFlightFor = userId;
-		void ensureMySubscription({})
-			.then(() => {
-				if (getCurrentUserId() === userId) {
-					ensuredSubscriptionUserId = userId;
-				}
-			})
-			.finally(() => {
-				if (ensureSubscriptionInFlightFor === userId) {
-					ensureSubscriptionInFlightFor = null;
-				}
-			});
+		// Attempt once per signed-in user. This is a best-effort bootstrap: the
+		// backend also ensures a row on first metered usage, so a failure is safe
+		// to swallow and must not re-trigger the effect into a tight retry loop.
+		ensureSubscriptionAttemptedFor = userId;
+		void ensureMySubscription({}).catch(() => {});
 	});
 	const localServerRequiredMessage = 'Connect to a running Sprocket server to use this workspace.';
 	const agentLaunchTimeoutMs = 30_000;
@@ -1304,8 +1292,7 @@
 		pendingAgentLaunches = {};
 		restoredWorkspaceSessionIdToAttach = null;
 		lastSavedThreadId = null;
-		ensuredSubscriptionUserId = null;
-		ensureSubscriptionInFlightFor = null;
+		ensureSubscriptionAttemptedFor = null;
 		lastSyncedComposerThreadId = null;
 		workspaceSelectionGeneration += 1;
 		prompt = '';

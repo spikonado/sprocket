@@ -82,6 +82,35 @@ describe('subscription and usage backend', () => {
 		expect(await currentTier()).toBe('free');
 	});
 
+	it('dedupes to the newest event so a cancellation beats an older active row', async () => {
+		const t = initConvexTest();
+		const userId = 'user_dedup';
+		const asUser = t.withIdentity({ subject: userId });
+		const shared = {
+			userId,
+			tier: 'pro',
+			dodoSubscriptionId: 'sub_dup',
+			dodoProductId: 'prod_dup'
+		} as const;
+		await t.run(async (ctx) => {
+			await ctx.db.insert('subscriptions', { ...shared, status: 'active', eventAt: 1_000 });
+			await ctx.db.insert('subscriptions', { ...shared, status: 'cancelled', eventAt: 2_000 });
+		});
+
+		expect((await asUser.query(api.usage.getMyUsage, {})).tier).toBe('free');
+
+		// Ensuring collapses the duplicates onto the newer cancellation.
+		await asUser.mutation(api.billing.ensureMySubscription, {});
+		const rows = await t.run(async (ctx) =>
+			ctx.db
+				.query('subscriptions')
+				.withIndex('by_userId', (query) => query.eq('userId', userId))
+				.collect()
+		);
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).toMatchObject({ status: 'cancelled', eventAt: 2_000 });
+	});
+
 	it('ensures a free subscription row and leaves existing grants alone', async () => {
 		const t = initConvexTest();
 		const userId = 'user_ensure_free';

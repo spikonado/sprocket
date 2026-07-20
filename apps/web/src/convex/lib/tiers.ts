@@ -38,10 +38,9 @@ export function tierForProductId(productId: string): SubscriptionTier | undefine
 	return subscriptionTierIds.find((tier) => tierProductIds[tier] === productId);
 }
 
+/** Active admin grants are manual and outrank every Dodo-driven row. */
 function subscriptionRank(subscription: Doc<'subscriptions'>): number {
-	if (subscription.status === 'active' && subscription.tier === 'admin') return 3;
-	if (subscription.status === 'active') return 2;
-	return 1;
+	return subscription.status === 'active' && subscription.tier === 'admin' ? 1 : 0;
 }
 
 function pickSubscription(rows: Doc<'subscriptions'>[]): Doc<'subscriptions'> | null {
@@ -50,7 +49,13 @@ function pickSubscription(rows: Doc<'subscriptions'>[]): Doc<'subscriptions'> | 
 		const bestRank = subscriptionRank(best);
 		const rowRank = subscriptionRank(row);
 		if (rowRank !== bestRank) return rowRank > bestRank ? row : best;
-		return row.eventAt >= best.eventAt ? row : best;
+		// Recency wins so a newer cancellation supersedes an older active row.
+		if (row.eventAt !== best.eventAt) return row.eventAt > best.eventAt ? row : best;
+		// Same event time (e.g. webhook retries): keep an active row over a lapsed one.
+		const rowActive = row.status === 'active';
+		const bestActive = best.status === 'active';
+		if (rowActive !== bestActive) return rowActive ? row : best;
+		return best;
 	});
 }
 
