@@ -25,8 +25,8 @@ export default defineSchema({
 	subscriptions: defineTable({
 		userId: v.string(),
 		tier: vSubscriptionTier,
-		dodoSubscriptionId: v.string(),
-		dodoProductId: v.string(),
+		dodoSubscriptionId: v.optional(v.string()),
+		dodoProductId: v.optional(v.string()),
 		status: vSubscriptionStatus,
 		eventAt: v.number()
 	}).index('by_userId', ['userId']),

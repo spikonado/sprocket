@@ -17,10 +17,21 @@ export const getMyUsage = query({
 					label: meter.label,
 					description: meter.description,
 					windows: await Promise.all(
-						usagePeriods.map(async (period) => ({
-							period,
-							...(await getMeterWindow(ctx, meter.id, period, userId, limits))
-						}))
+						usagePeriods.map(async (period) => {
+							// Admin skips meters; don't project free/pro remaining onto admin rates.
+							if (tier === 'admin') {
+								return {
+									period,
+									used: 0,
+									limit: limits[meter.id][period],
+									resetsAt: null
+								};
+							}
+							return {
+								period,
+								...(await getMeterWindow(ctx, meter.id, period, userId, limits))
+							};
+						})
 					)
 				}))
 			)

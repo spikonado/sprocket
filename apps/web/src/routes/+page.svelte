@@ -130,6 +130,21 @@
 	const registerImageUpload = useMutation(api.imageUploads.register);
 	const discardImageUpload = useMutation(api.imageUploads.discard);
 	const heartbeatAttached = useMutation(api.workspaceSessions.heartbeatAttached);
+	const ensureMySubscription = useMutation(api.billing.ensureMySubscription);
+	let ensureSubscriptionAttemptedFor: string | null = null;
+
+	$effect(() => {
+		if (!authReady) return;
+		const userId = getCurrentUserId();
+		if (!userId || ensureSubscriptionAttemptedFor === userId) {
+			return;
+		}
+		// Attempt once per signed-in user. This is a best-effort bootstrap: the
+		// backend also ensures a row on first metered usage, so a failure is safe
+		// to swallow and must not re-trigger the effect into a tight retry loop.
+		ensureSubscriptionAttemptedFor = userId;
+		void ensureMySubscription({}).catch(() => {});
+	});
 	const localServerRequiredMessage = 'Connect to a running Sprocket server to use this workspace.';
 	const agentLaunchTimeoutMs = 30_000;
 	type ComposerRecovery = {
@@ -1277,6 +1292,7 @@
 		pendingAgentLaunches = {};
 		restoredWorkspaceSessionIdToAttach = null;
 		lastSavedThreadId = null;
+		ensureSubscriptionAttemptedFor = null;
 		lastSyncedComposerThreadId = null;
 		workspaceSelectionGeneration += 1;
 		prompt = '';
