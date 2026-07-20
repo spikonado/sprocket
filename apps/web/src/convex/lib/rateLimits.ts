@@ -19,7 +19,7 @@ import {
 	type SupportedModelId,
 	type SupportedServiceTier
 } from '@convex/lib/models';
-import { getSubscriptionTier, tierLimits, type TierLimits } from '@convex/lib/tiers';
+import { ensureSubscription, tierLimits, type TierLimits } from '@convex/lib/tiers';
 import { vModelId, vServiceTier } from '@convex/lib/validators';
 
 const MONTH = 30 * DAY;
@@ -153,14 +153,16 @@ export async function getMeterWindow(
 }
 
 async function chargeWebTools(ctx: MutationCtx, userId: string, count: number): Promise<void> {
-	const tier = await getSubscriptionTier(ctx, userId);
+	const tier = await ensureSubscription(ctx, userId);
+	if (tier === 'admin') return;
 	await chargeMeterLimits(ctx, 'webTools', userId, tierLimits[tier], count);
 }
 
 export const checkWebToolsLimits = internalMutation({
 	args: { userId: v.string() },
 	handler: async (ctx, { userId }) => {
-		const tier = await getSubscriptionTier(ctx, userId);
+		const tier = await ensureSubscription(ctx, userId);
+		if (tier === 'admin') return;
 		await checkMeterLimits(ctx, 'webTools', userId, tierLimits[tier]);
 	}
 });
@@ -182,7 +184,8 @@ export const chargeWebSearchLimits = internalMutation({
 export const checkModelUsageLimits = internalMutation({
 	args: { userId: v.string() },
 	handler: async (ctx, { userId }) => {
-		const tier = await getSubscriptionTier(ctx, userId);
+		const tier = await ensureSubscription(ctx, userId);
+		if (tier === 'admin') return;
 		await checkMeterLimits(ctx, 'modelUsage', userId, tierLimits[tier]);
 	}
 });
@@ -200,7 +203,8 @@ export const chargeModelUsageLimits = internalMutation({
 		})
 	},
 	handler: async (ctx, args) => {
-		const tier = await getSubscriptionTier(ctx, args.userId);
+		const tier = await ensureSubscription(ctx, args.userId);
+		if (tier === 'admin') return;
 		const count = completionUsageUnits(args.modelId, args.serviceTier, args.tokens);
 		await chargeMeterLimits(ctx, 'modelUsage', args.userId, tierLimits[tier], count);
 	}

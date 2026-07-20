@@ -5,10 +5,21 @@ import {
 } from '@dodopayments/convex';
 import type { ComponentApi } from '@dodopayments/convex/_generated/component';
 import { v } from 'convex/values';
-import { action, internalMutation, internalQuery, query } from '@convex/_generated/server';
+import {
+	action,
+	internalMutation,
+	internalQuery,
+	mutation,
+	query
+} from '@convex/_generated/server';
 import { components, internal } from '@convex/_generated/api';
 import { getUserId } from '@convex/lib/auth';
-import { getSubscriptionTier, tierProductIds } from '@convex/lib/tiers';
+import {
+	ensureSubscription,
+	getSubscriptionDocExclusive,
+	getSubscriptionTier,
+	tierProductIds
+} from '@convex/lib/tiers';
 import { vSubscriptionStatus, vSubscriptionTier } from '@convex/lib/validators';
 
 export const getBillingCustomer = internalQuery({
@@ -40,6 +51,14 @@ export const getMySubscription = query({
 	handler: async (ctx) => {
 		const userId = await getUserId(ctx);
 		return { tier: await getSubscriptionTier(ctx, userId) };
+	}
+});
+
+export const ensureMySubscription = mutation({
+	args: {},
+	handler: async (ctx) => {
+		const userId = await getUserId(ctx);
+		await ensureSubscription(ctx, userId);
 	}
 });
 
@@ -79,10 +98,26 @@ export const upsertSubscription = internalMutation({
 		eventAt: v.number()
 	},
 	handler: async (ctx, args) => {
-		const existing = await ctx.db
-			.query('subscriptions')
-			.withIndex('by_userId', (q) => q.eq('userId', args.userId))
-			.unique();
+		const existing = await getSubscriptionDocExclusive(ctx, args.userId);
+
+		const syncBillingCustomer = async () => {
+			const customer = await ctx.db
+				.query('billingCustomers')
+				.withIndex('by_userId', (q) => q.eq('userId', args.userId))
+				.unique();
+			if (customer) await ctx.db.patch(customer._id, { dodoCustomerId: args.dodoCustomerId });
+			else
+				await ctx.db.insert('billingCustomers', {
+					userId: args.userId,
+					dodoCustomerId: args.dodoCustomerId
+				});
+		};
+
+		// Manual admin grants must not be clobbered by Dodo lifecycle events.
+		if (existing?.status === 'active' && existing.tier === 'admin' && args.tier !== 'admin') {
+			if (args.eventAt >= existing.eventAt) await syncBillingCustomer();
+			return;
+		}
 		// Ignore out-of-order webhook events; retries (equal eventAt) still apply.
 		if (existing && args.eventAt < existing.eventAt) return;
 		// A non-active event for a different subscription than the stored one is
@@ -105,16 +140,6 @@ export const upsertSubscription = internalMutation({
 		};
 		if (existing) await ctx.db.replace(existing._id, subscription);
 		else await ctx.db.insert('subscriptions', subscription);
-
-		const customer = await ctx.db
-			.query('billingCustomers')
-			.withIndex('by_userId', (q) => q.eq('userId', args.userId))
-			.unique();
-		if (customer) await ctx.db.patch(customer._id, { dodoCustomerId: args.dodoCustomerId });
-		else
-			await ctx.db.insert('billingCustomers', {
-				userId: args.userId,
-				dodoCustomerId: args.dodoCustomerId
-			});
+		await syncBillingCustomer();
 	}
 });

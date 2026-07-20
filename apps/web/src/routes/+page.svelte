@@ -130,6 +130,33 @@
 	const registerImageUpload = useMutation(api.imageUploads.register);
 	const discardImageUpload = useMutation(api.imageUploads.discard);
 	const heartbeatAttached = useMutation(api.workspaceSessions.heartbeatAttached);
+	const ensureMySubscription = useMutation(api.billing.ensureMySubscription);
+	let ensuredSubscriptionUserId: string | null = null;
+	let ensureSubscriptionInFlightFor: string | null = null;
+
+	$effect(() => {
+		if (!authReady) return;
+		const userId = getCurrentUserId();
+		if (
+			!userId ||
+			ensuredSubscriptionUserId === userId ||
+			ensureSubscriptionInFlightFor === userId
+		) {
+			return;
+		}
+		ensureSubscriptionInFlightFor = userId;
+		void ensureMySubscription({})
+			.then(() => {
+				if (getCurrentUserId() === userId) {
+					ensuredSubscriptionUserId = userId;
+				}
+			})
+			.finally(() => {
+				if (ensureSubscriptionInFlightFor === userId) {
+					ensureSubscriptionInFlightFor = null;
+				}
+			});
+	});
 	const localServerRequiredMessage = 'Connect to a running Sprocket server to use this workspace.';
 	const agentLaunchTimeoutMs = 30_000;
 	type ComposerRecovery = {
@@ -1277,6 +1304,8 @@
 		pendingAgentLaunches = {};
 		restoredWorkspaceSessionIdToAttach = null;
 		lastSavedThreadId = null;
+		ensuredSubscriptionUserId = null;
+		ensureSubscriptionInFlightFor = null;
 		lastSyncedComposerThreadId = null;
 		workspaceSelectionGeneration += 1;
 		prompt = '';
