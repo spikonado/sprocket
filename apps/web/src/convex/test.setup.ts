@@ -4,7 +4,6 @@ import contextDevTest from '@context-dot-dev/convex/test';
 import rateLimiterTest from '@convex-dev/rate-limiter/test';
 import exaTest from '@exalabs/convex-exa/test';
 import { convexTest, type TestConvex } from 'convex-test';
-import type { GenericSchema, SchemaDefinition } from 'convex/server';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import schema from './schema';
@@ -22,7 +21,7 @@ export const modules = import.meta.glob([
 	'!./**/test.setup.ts'
 ]);
 
-export type ConvexTestInstance = TestConvex<SchemaDefinition<GenericSchema, boolean>>;
+export type ConvexTestInstance = TestConvex<typeof schema>;
 
 type AuthenticatedTest = ReturnType<ConvexTestInstance['withIdentity']>;
 
