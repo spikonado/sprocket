@@ -8,6 +8,11 @@ members = [
 ]
 resolver = "3"
 
+[workspace.package]
+version = "0.0.0-canary.1"
+edition = "2024"
+license = "Apache-2.0"
+
 [profile.release]
 lto = true
 strip = "symbols"
