@@ -2018,7 +2018,7 @@ dependencies = [
 
 [[package]]
 name = "sprocket-agent"
-version = "0.0.0"
+version = "0.0.0-canary.1"
 dependencies = [
  "anyhow",
  "convex",
@@ -2036,7 +2036,7 @@ dependencies = [
 
 [[package]]
 name = "sprocket-cli"
-version = "0.0.0"
+version = "0.0.0-canary.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2053,7 +2053,7 @@ dependencies = [
 
 [[package]]
 name = "sprocket-convex-provider"
-version = "0.0.0"
+version = "0.0.0-canary.1"
 dependencies = [
  "anyhow",
  "convex",
@@ -2068,7 +2068,7 @@ dependencies = [
 
 [[package]]
 name = "sprocket-server"
-version = "0.0.0"
+version = "0.0.0-canary.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -2096,7 +2096,7 @@ dependencies = [
 
 [[package]]
 name = "sprocket-workspace"
-version = "0.0.0"
+version = "0.0.0-canary.1"
 dependencies = [
  "anyhow",
  "cap-std",
