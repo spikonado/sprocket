@@ -87,6 +87,7 @@
   },
   "patchedDependencies": {
     "@exalabs/convex-exa@0.1.0": "patches/@exalabs%2Fconvex-exa@0.1.0.patch",
+    "@context-dot-dev/convex@1.0.1": "patches/@context-dot-dev%2Fconvex@1.0.1.patch",
   },
   "packages": {
     "@adobe/css-tools": ["@adobe/css-tools@4.5.0", "", {}, "sha512-6OzddxPio9UiWTCemp4N8cYLV2ZN1ncRnV1cVGtve7dhPOtRkleRyx32GQCYSwDYgaHU3USMm84tNsvKzRCa1Q=="],
