@@ -1,7 +1,6 @@
 import type { ThreadMessage } from '$lib/types/sprocket';
 
 export const VISIBLE_TRANSCRIPT_MESSAGE_LIMIT = 40;
-const EMPTY_TRANSCRIPT_MESSAGES: ThreadMessage[] = [];
 
 function compareMessagesChronologically(left: ThreadMessage, right: ThreadMessage): number {
 	if (left.runStartedAt !== right.runStartedAt) {
@@ -41,31 +40,6 @@ export function truncateTranscriptToNewestRuns(
 
 	const truncated = messages.slice(start);
 	return truncated.length > limit ? truncated.slice(-limit) : truncated;
-}
-
-/**
- * Keep departing live messages until history absorbs them so independent
- * subscription updates cannot blank the finishing turn.
- *
- * Stable empty references are required: returning a fresh `[]` from an effect
- * that writes `$state` will infinite-loop under Svelte 5 equality checks.
- */
-export function holdLiveMessagesUntilHistoryAbsorbs(args: {
-	historyMessages: ThreadMessage[];
-	liveMessages: ThreadMessage[];
-	heldLiveMessages: ThreadMessage[];
-}): ThreadMessage[] {
-	if (args.liveMessages.length > 0) {
-		return args.liveMessages;
-	}
-	if (args.heldLiveMessages.length === 0) {
-		return args.heldLiveMessages;
-	}
-	const historyIds = new Set(args.historyMessages.map((message) => message._id));
-	if (args.heldLiveMessages.every((message) => historyIds.has(message._id))) {
-		return EMPTY_TRANSCRIPT_MESSAGES;
-	}
-	return args.heldLiveMessages;
 }
 
 /** Merge history + live pages; live wins on ID collisions. Keeps the newest visible window. */

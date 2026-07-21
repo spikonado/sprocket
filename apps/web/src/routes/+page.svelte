@@ -70,10 +70,7 @@
 		resolveWorkspaceThreadSelection,
 		type PendingAgentLaunches
 	} from '$lib/workspace/threads';
-	import {
-		holdLiveMessagesUntilHistoryAbsorbs,
-		mergeThreadTranscriptMessages
-	} from '$lib/workspace/transcript';
+	import { mergeThreadTranscriptMessages } from '$lib/workspace/transcript';
 	import {
 		clearLaunchHash,
 		readWorkspaceLaunchFromHash,
@@ -414,36 +411,16 @@
 		dataForThread(historyMessagesQuery.data, currentThreadId)
 	);
 	const currentLiveMessagesData = $derived(dataForThread(liveMessagesQuery.data, currentThreadId));
-	// Hold the last live page across finalization until history absorbs those IDs.
-	// Only assign when the held page identity changes — a fresh `[]` each effect
-	// tick would infinite-loop under Svelte 5 and freeze UI reactivity.
-	let heldLiveMessages = $state<ThreadMessage[]>([]);
-	$effect(() => {
-		if (!currentHistoryMessagesData || !currentLiveMessagesData) {
-			if (heldLiveMessages.length > 0) {
-				heldLiveMessages = [];
-			}
-			return;
-		}
-		const nextHeld = holdLiveMessagesUntilHistoryAbsorbs({
-			historyMessages: currentHistoryMessagesData.messages as ThreadMessage[],
-			liveMessages: currentLiveMessagesData.messages as ThreadMessage[],
-			heldLiveMessages
-		});
-		if (nextHeld !== heldLiveMessages) {
-			heldLiveMessages = nextHeld;
-		}
-	});
-	// Wait for both subscriptions so thread switches do not briefly show one side alone.
-	// Prefer live query data while present so streaming stays synchronous with Convex.
+	// Pure derived merge only — no $effect/$state hold. Convex delivers history+live in one
+	// client transition; a held-live effect previously infinite-looped and froze all UI updates
+	// (messages, run timer, working state) until hard reload.
 	const visibleMessages = $derived.by(() => {
 		if (!currentHistoryMessagesData || !currentLiveMessagesData) {
 			return [] as ThreadMessage[];
 		}
-		const liveMessages = currentLiveMessagesData.messages as ThreadMessage[];
 		return mergeThreadTranscriptMessages({
 			historyMessages: currentHistoryMessagesData.messages as ThreadMessage[],
-			liveMessages: liveMessages.length > 0 ? liveMessages : heldLiveMessages
+			liveMessages: currentLiveMessagesData.messages as ThreadMessage[]
 		});
 	});
 
