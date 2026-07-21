@@ -42,6 +42,8 @@ pub struct Client {
     pub(crate) inner: Arc<Mutex<ConvexClient>>,
     auth_refresh_generation: Arc<AtomicU32>,
     auth_refresh_notify: Arc<Notify>,
+    active_completion_actions: Arc<AtomicU32>,
+    completion_overlap_generation: Arc<AtomicU32>,
     completion_action: Arc<str>,
     default_reasoning_effort: Option<Arc<str>>,
     default_service_tier: Option<Arc<str>>,
@@ -63,6 +65,8 @@ impl Client {
             inner: Arc::new(Mutex::new(client)),
             auth_refresh_generation: Arc::new(AtomicU32::new(0)),
             auth_refresh_notify: Arc::new(Notify::new()),
+            active_completion_actions: Arc::new(AtomicU32::new(0)),
+            completion_overlap_generation: Arc::new(AtomicU32::new(0)),
             completion_action: completion_action.into().into(),
             default_reasoning_effort: None,
             default_service_tier: None,
@@ -484,6 +488,43 @@ async fn clone_locked<T: Clone>(inner: &Mutex<T>) -> T {
     inner.lock().await.clone()
 }
 
+struct CompletionConcurrencyGuard<'a> {
+    active: &'a AtomicU32,
+    overlap_generation: &'a AtomicU32,
+    generation_before_start: u32,
+    overlapped_on_start: bool,
+}
+
+impl<'a> CompletionConcurrencyGuard<'a> {
+    fn new(active: &'a AtomicU32, overlap_generation: &'a AtomicU32) -> Self {
+        // Snapshot before becoming active so a concurrently starting action
+        // either observes us or advances the generation that we later check.
+        let generation_before_start = overlap_generation.load(Ordering::Acquire);
+        let overlapped_on_start = active.fetch_add(1, Ordering::AcqRel) > 0;
+        if overlapped_on_start {
+            overlap_generation.fetch_add(1, Ordering::AcqRel);
+        }
+        Self {
+            active,
+            overlap_generation,
+            generation_before_start,
+            overlapped_on_start,
+        }
+    }
+
+    fn remained_exclusive(&self) -> bool {
+        !self.overlapped_on_start
+            && self.overlap_generation.load(Ordering::Acquire) == self.generation_before_start
+    }
+}
+
+impl Drop for CompletionConcurrencyGuard<'_> {
+    fn drop(&mut self) {
+        let previous = self.active.fetch_sub(1, Ordering::AcqRel);
+        debug_assert!(previous > 0, "completion action count underflowed");
+    }
+}
+
 async fn call_completion_action(
     client: &Client,
     args: &ConvexActionArgs,
@@ -496,6 +537,10 @@ async fn call_completion_action(
     let claim_id = args.claim_id.as_ref().ok_or_else(|| {
         CompletionError::ProviderError("claimId is required for completion:complete".to_string())
     })?;
+    let completion_concurrency = CompletionConcurrencyGuard::new(
+        &client.active_completion_actions,
+        &client.completion_overlap_generation,
+    );
 
     let mut retry_delay = COMPLETION_TRANSPORT_RETRY_DELAY;
     let mut superseded_stream_ids: Vec<String> = Vec::new();
@@ -587,6 +632,7 @@ async fn call_completion_action(
         let auth_refresh_started = if attempt < COMPLETION_TRANSPORT_ATTEMPTS
             && is_error_message
             && is_redacted_convex_server_error(&provider_error)
+            && completion_concurrency.remained_exclusive()
         {
             auth_refresh_observed(
                 &client.auth_refresh_generation,
@@ -602,6 +648,7 @@ async fn call_completion_action(
             &provider_error,
             is_error_message,
             auth_refresh_started,
+            completion_concurrency.remained_exclusive(),
             attempt,
         ) {
             // An expired identity interrupts in-flight actions with Convex's
@@ -628,11 +675,13 @@ fn should_retry_transient_server_error(
     message: &str,
     is_error_message: bool,
     auth_refresh_started: bool,
+    completion_was_exclusive: bool,
     attempt: u32,
 ) -> bool {
     attempt < COMPLETION_TRANSPORT_ATTEMPTS
         && is_error_message
         && auth_refresh_started
+        && completion_was_exclusive
         && is_redacted_convex_server_error(message)
 }
 
@@ -840,9 +889,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        COMPLETION_STREAM_SUPERSEDED, COMPLETION_TRANSPORT_ATTEMPTS, CompletionOutput,
-        CompletionStreamEvent, InputTokenDetails, ToolCall, Usage, auth_refresh_observed,
-        clone_locked, completion_choice, is_completion_stream_superseded,
+        COMPLETION_STREAM_SUPERSEDED, COMPLETION_TRANSPORT_ATTEMPTS, CompletionConcurrencyGuard,
+        CompletionOutput, CompletionStreamEvent, InputTokenDetails, ToolCall, Usage,
+        auth_refresh_observed, clone_locked, completion_choice, is_completion_stream_superseded,
         is_redacted_convex_server_error, reasoning_stream_choices,
         should_retry_superseded_completion, should_retry_transient_server_error,
         text_stream_choices,
@@ -898,6 +947,27 @@ mod tests {
         assert!(
             auth_refresh_observed(&generation, 0, refresh_started, Duration::from_millis(1),).await
         );
+    }
+
+    #[test]
+    fn concurrent_completion_overlap_remains_sticky() {
+        let active = AtomicU32::new(0);
+        let overlap_generation = AtomicU32::new(0);
+        let first = CompletionConcurrencyGuard::new(&active, &overlap_generation);
+        assert!(first.remained_exclusive());
+
+        {
+            let second = CompletionConcurrencyGuard::new(&active, &overlap_generation);
+            assert!(!first.remained_exclusive());
+            assert!(!second.remained_exclusive());
+        }
+
+        // The first action must remain ineligible even after its overlap ends.
+        assert!(!first.remained_exclusive());
+        drop(first);
+
+        let later = CompletionConcurrencyGuard::new(&active, &overlap_generation);
+        assert!(later.remained_exclusive());
     }
 
     #[test]
@@ -1083,24 +1153,31 @@ mod tests {
             message,
             true,
             true,
+            true,
             COMPLETION_TRANSPORT_ATTEMPTS - 1,
         ));
         assert!(!should_retry_transient_server_error(
             message,
             true,
             true,
+            true,
             COMPLETION_TRANSPORT_ATTEMPTS,
         ));
         // ConvexError results are application data, never retried as transient.
         assert!(!should_retry_transient_server_error(
-            message, false, true, 1
+            message, false, true, true, 1
         ));
         // The same redacted text can represent a developer error in prod.
         assert!(!should_retry_transient_server_error(
-            message, true, false, 1
+            message, true, false, true, 1
+        ));
+        // A shared connection refresh is ambiguous while actions overlap.
+        assert!(!should_retry_transient_server_error(
+            message, true, true, false, 1
         ));
         assert!(!should_retry_transient_server_error(
             "insufficient credits",
+            true,
             true,
             true,
             1,
