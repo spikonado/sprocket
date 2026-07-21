@@ -415,26 +415,35 @@
 	);
 	const currentLiveMessagesData = $derived(dataForThread(liveMessagesQuery.data, currentThreadId));
 	// Hold the last live page across finalization until history absorbs those IDs.
+	// Only assign when the held page identity changes — a fresh `[]` each effect
+	// tick would infinite-loop under Svelte 5 and freeze UI reactivity.
 	let heldLiveMessages = $state<ThreadMessage[]>([]);
 	$effect(() => {
 		if (!currentHistoryMessagesData || !currentLiveMessagesData) {
-			heldLiveMessages = [];
+			if (heldLiveMessages.length > 0) {
+				heldLiveMessages = [];
+			}
 			return;
 		}
-		heldLiveMessages = holdLiveMessagesUntilHistoryAbsorbs({
+		const nextHeld = holdLiveMessagesUntilHistoryAbsorbs({
 			historyMessages: currentHistoryMessagesData.messages as ThreadMessage[],
 			liveMessages: currentLiveMessagesData.messages as ThreadMessage[],
 			heldLiveMessages
 		});
+		if (nextHeld !== heldLiveMessages) {
+			heldLiveMessages = nextHeld;
+		}
 	});
 	// Wait for both subscriptions so thread switches do not briefly show one side alone.
+	// Prefer live query data while present so streaming stays synchronous with Convex.
 	const visibleMessages = $derived.by(() => {
 		if (!currentHistoryMessagesData || !currentLiveMessagesData) {
 			return [] as ThreadMessage[];
 		}
+		const liveMessages = currentLiveMessagesData.messages as ThreadMessage[];
 		return mergeThreadTranscriptMessages({
 			historyMessages: currentHistoryMessagesData.messages as ThreadMessage[],
-			liveMessages: heldLiveMessages
+			liveMessages: liveMessages.length > 0 ? liveMessages : heldLiveMessages
 		});
 	});
 

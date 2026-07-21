@@ -113,10 +113,11 @@ describe('holdLiveMessagesUntilHistoryAbsorbs', () => {
 				text: 'ok'
 			})
 		];
+		const emptyHeld: ThreadMessage[] = [];
 		const held = holdLiveMessagesUntilHistoryAbsorbs({
 			historyMessages: [],
 			liveMessages: live,
-			heldLiveMessages: []
+			heldLiveMessages: emptyHeld
 		});
 		expect(held).toEqual(live);
 
@@ -125,7 +126,7 @@ describe('holdLiveMessagesUntilHistoryAbsorbs', () => {
 			liveMessages: [],
 			heldLiveMessages: held
 		});
-		expect(duringHandoff).toEqual(live);
+		expect(duringHandoff).toBe(held);
 		expect(
 			mergeThreadTranscriptMessages({
 				historyMessages: [],
@@ -140,5 +141,16 @@ describe('holdLiveMessagesUntilHistoryAbsorbs', () => {
 				heldLiveMessages: duringHandoff
 			})
 		).toEqual([]);
+	});
+
+	it('returns the same empty held array so effects do not infinite-loop', () => {
+		const emptyHeld: ThreadMessage[] = [];
+		expect(
+			holdLiveMessagesUntilHistoryAbsorbs({
+				historyMessages: [],
+				liveMessages: [],
+				heldLiveMessages: emptyHeld
+			})
+		).toBe(emptyHeld);
 	});
 });

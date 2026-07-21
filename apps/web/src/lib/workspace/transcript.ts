@@ -1,6 +1,7 @@
 import type { ThreadMessage } from '$lib/types/sprocket';
 
 export const VISIBLE_TRANSCRIPT_MESSAGE_LIMIT = 40;
+const EMPTY_TRANSCRIPT_MESSAGES: ThreadMessage[] = [];
 
 function compareMessagesChronologically(left: ThreadMessage, right: ThreadMessage): number {
 	if (left.runStartedAt !== right.runStartedAt) {
@@ -45,6 +46,9 @@ export function truncateTranscriptToNewestRuns(
 /**
  * Keep departing live messages until history absorbs them so independent
  * subscription updates cannot blank the finishing turn.
+ *
+ * Stable empty references are required: returning a fresh `[]` from an effect
+ * that writes `$state` will infinite-loop under Svelte 5 equality checks.
  */
 export function holdLiveMessagesUntilHistoryAbsorbs(args: {
 	historyMessages: ThreadMessage[];
@@ -55,11 +59,11 @@ export function holdLiveMessagesUntilHistoryAbsorbs(args: {
 		return args.liveMessages;
 	}
 	if (args.heldLiveMessages.length === 0) {
-		return [];
+		return args.heldLiveMessages;
 	}
 	const historyIds = new Set(args.historyMessages.map((message) => message._id));
 	if (args.heldLiveMessages.every((message) => historyIds.has(message._id))) {
-		return [];
+		return EMPTY_TRANSCRIPT_MESSAGES;
 	}
 	return args.heldLiveMessages;
 }
