@@ -93,7 +93,7 @@ export default defineSchema({
 		parts: v.optional(v.array(vAssistantMessagePart)),
 		streamSequence: v.optional(v.number()),
 		streamAttemptId: v.optional(v.string())
-	}).index('by_threadId', ['threadId']),
+	}),
 	imageUploads: defineTable({
 		userId: v.string(),
 		storageId: v.id('_storage'),

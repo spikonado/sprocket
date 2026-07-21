@@ -54,7 +54,6 @@ describe('messages transcript queries', () => {
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_owner');
 		await createQueuedRun(asUser, threadId, 'sub-auth');
 		const stranger = t.withIdentity({ subject: 'user_stranger' });
-		const legacyArgs = { threadId, paginationOpts: { cursor: null, numItems: 40 } };
 
 		for (const client of [t, stranger]) {
 			const expected = client === t ? 'Authentication required.' : 'Thread not found.';
@@ -64,7 +63,6 @@ describe('messages transcript queries', () => {
 			await expect(client.query(api.messages.listLiveForThread, { threadId })).rejects.toThrow(
 				expected
 			);
-			await expect(client.query(api.messages.listForThread, legacyArgs)).rejects.toThrow(expected);
 		}
 	});
 
@@ -262,30 +260,5 @@ describe('messages transcript queries', () => {
 					attachment.imageUploadId === missingUploadId
 			)
 		).toBe(false);
-	});
-
-	it('returns at most 40 indexed messages from legacy listForThread', async () => {
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
-
-		for (let index = 0; index < 25; index += 1) {
-			const created = await createQueuedRun(asUser, threadId, `sub-legacy-${index}`, `LP${index}`);
-			await completeRun(t, asUser, {
-				runId: created.runId,
-				status: 'completed',
-				responseText: `LR${index}`,
-				startedAt: 2_000 + index
-			});
-		}
-
-		const page = await asUser.query(api.messages.listForThread, {
-			threadId,
-			paginationOpts: { cursor: null, numItems: 100 }
-		});
-		expect(page.page).toHaveLength(40);
-		expect(page.page[0]?.text).toBe('LP5');
-		expect(page.page.at(-1)?.text).toBe('LR24');
-		expect(page.isDone).toBe(false);
-		expect(page.continueCursor).toEqual(expect.any(String));
 	});
 });

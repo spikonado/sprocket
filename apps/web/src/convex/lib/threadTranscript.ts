@@ -100,30 +100,6 @@ export async function hydrateTranscriptMessages(
 	return transcriptMessages;
 }
 
-/** Hydrate already-loaded threadMessages, resolving their runs (legacy pagination). */
-export async function hydrateTranscriptMessagesFromDocs(
-	ctx: MutationCtx | QueryCtx,
-	messages: Doc<'threadMessages'>[]
-): Promise<ThreadTranscriptMessage[]> {
-	const runIds = [...new Set(messages.map((message) => message.runId))];
-	const runsById = new Map<Id<'runs'>, Doc<'runs'>>();
-	for (const run of await Promise.all(runIds.map((runId) => ctx.db.get(runId)))) {
-		if (run) {
-			runsById.set(run._id, run);
-		}
-	}
-
-	const transcriptMessages: ThreadTranscriptMessage[] = [];
-	for (const message of messages) {
-		const run = runsById.get(message.runId);
-		if (!run) {
-			continue;
-		}
-		transcriptMessages.push(await toTranscriptMessage(ctx, message, run));
-	}
-	return transcriptMessages;
-}
-
 export async function buildThreadTranscript(
 	ctx: MutationCtx | QueryCtx,
 	threadId: Id<'threadRecords'>

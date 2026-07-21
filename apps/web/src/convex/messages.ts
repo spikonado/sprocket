@@ -1,4 +1,3 @@
-import { paginationOptsValidator } from 'convex/server';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { query, type QueryCtx } from '@convex/_generated/server';
 import { v } from 'convex/values';
@@ -7,13 +6,11 @@ import { getUserId } from '@convex/lib/auth';
 import {
 	compareTranscriptMessages,
 	hydrateTranscriptMessages,
-	hydrateTranscriptMessagesFromDocs,
 	type ThreadTranscriptMessage
 } from '@convex/lib/threadTranscript';
 import { isRunFinalStatus, runFinalStatus } from '@convex/lib/validators';
 
 const HISTORY_RUN_LIMIT = 20;
-const LEGACY_PAGE_MESSAGE_LIMIT = 40;
 
 type ThreadTranscriptQueryResult = {
 	threadId: Id<'threadRecords'>;
@@ -90,39 +87,5 @@ export const listLiveForThread = query({
 		}
 
 		return hydrateSortedTranscript(ctx, args.threadId, [latestRun]);
-	}
-});
-
-/** @deprecated Prefer listHistoryForThread + listLiveForThread. Kept for older released clients. */
-export const listForThread = query({
-	args: {
-		threadId: v.id('threadRecords'),
-		paginationOpts: paginationOptsValidator
-	},
-	handler: async (ctx, args) => {
-		await requireOwnedThread(ctx, args.threadId);
-
-		const numItems = Math.min(LEGACY_PAGE_MESSAGE_LIMIT, Math.max(1, args.paginationOpts.numItems));
-		const pageResult = await ctx.db
-			.query('threadMessages')
-			.withIndex('by_threadId', (query) => query.eq('threadId', args.threadId))
-			.order('desc')
-			.paginate({
-				...args.paginationOpts,
-				numItems
-			});
-
-		const messages = (await hydrateTranscriptMessagesFromDocs(ctx, pageResult.page)).sort(
-			compareTranscriptMessages
-		);
-
-		return {
-			threadId: args.threadId,
-			page: messages,
-			isDone: pageResult.isDone,
-			continueCursor: pageResult.continueCursor,
-			pageStatus: pageResult.pageStatus ?? null,
-			splitCursor: pageResult.splitCursor ?? null
-		};
 	}
 });
