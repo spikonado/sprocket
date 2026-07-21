@@ -79,6 +79,7 @@ export default defineSchema({
 		responseMessageId: v.optional(v.id('threadMessages'))
 	})
 		.index('by_threadId_startedAt', ['threadId', 'startedAt'])
+		.index('by_threadId_status_startedAt', ['threadId', 'status', 'startedAt'])
 		.index('by_userId_submissionId', ['userId', 'submissionId'])
 		.index('by_workspaceSessionId', ['workspaceSessionId'])
 		.index('by_userId_startedAt', ['userId', 'startedAt']),
@@ -92,7 +93,7 @@ export default defineSchema({
 		parts: v.optional(v.array(vAssistantMessagePart)),
 		streamSequence: v.optional(v.number()),
 		streamAttemptId: v.optional(v.string())
-	}),
+	}).index('by_threadId', ['threadId']),
 	imageUploads: defineTable({
 		userId: v.string(),
 		storageId: v.id('_storage'),

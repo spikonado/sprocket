@@ -70,6 +70,7 @@
 		resolveWorkspaceThreadSelection,
 		type PendingAgentLaunches
 	} from '$lib/workspace/threads';
+	import { mergeThreadTranscriptMessages } from '$lib/workspace/transcript';
 	import {
 		clearLaunchHash,
 		readWorkspaceLaunchFromHash,
@@ -178,7 +179,6 @@
 	let composerAttachments = $state<ComposerAttachment[]>([]);
 	let currentError = $state<string | null>(null);
 	let executorClientId = $state<string | null>(null);
-	let visibleMessages = $state<ThreadMessage[]>([]);
 	let elapsedSeconds = $state(0);
 	const submittingPromptScopes = new SvelteMap<string, number>();
 	const composerRecoveries = new SvelteMap<string, ComposerRecovery>();
@@ -363,31 +363,25 @@
 	);
 	const threadsQuery = useQuery(api.threads.listMine, getAuthenticatedQueryArgs);
 	const uiPreferencesQuery = useQuery(api.uiPreferences.getMine, getAuthenticatedQueryArgs);
-	const activeThreadQuery = useQuery(api.threads.getByThreadId, () => {
-		return currentThreadId && getAuthenticatedQueryArgs() !== 'skip'
+	const authenticatedThreadQueryArgs = () =>
+		currentThreadId && getAuthenticatedQueryArgs() !== 'skip'
 			? { threadId: currentThreadId }
 			: 'skip';
-	});
-	const messagesQuery = useQuery(api.messages.listForThread, () => {
-		return currentThreadId && getAuthenticatedQueryArgs() !== 'skip'
-			? {
-					threadId: currentThreadId,
-					paginationOpts: { cursor: null, numItems: 40 }
-				}
-			: 'skip';
-	});
-	const latestRunQuery = useQuery(api.chat.latestRunForThread, () => {
-		return currentThreadId && getAuthenticatedQueryArgs() !== 'skip'
-			? { threadId: currentThreadId }
-			: 'skip';
-	});
+	const activeThreadQuery = useQuery(api.threads.getByThreadId, authenticatedThreadQueryArgs);
+	const historyMessagesQuery = useQuery(
+		api.messages.listHistoryForThread,
+		authenticatedThreadQueryArgs
+	);
+	const liveMessagesQuery = useQuery(api.messages.listLiveForThread, authenticatedThreadQueryArgs);
+	const latestRunQuery = useQuery(api.chat.latestRunForThread, authenticatedThreadQueryArgs);
 	const queryError = $derived.by(() => {
 		for (const query of [
 			workspaceSessionsQuery,
 			threadsQuery,
 			uiPreferencesQuery,
 			activeThreadQuery,
-			messagesQuery,
+			historyMessagesQuery,
+			liveMessagesQuery,
 			latestRunQuery
 		]) {
 			if (query.error) {
@@ -413,7 +407,21 @@
 	const threads = $derived((threadsQuery.data ?? []) as ThreadSummary[]);
 	const currentActiveThread = $derived(dataForThread(activeThreadQuery.data, currentThreadId));
 	const currentLatestRunData = $derived(dataForThread(latestRunQuery.data, currentThreadId));
-	const currentMessagesData = $derived(dataForThread(messagesQuery.data, currentThreadId));
+	const currentHistoryMessagesData = $derived(
+		dataForThread(historyMessagesQuery.data, currentThreadId)
+	);
+	const currentLiveMessagesData = $derived(dataForThread(liveMessagesQuery.data, currentThreadId));
+	// Wait for both subscriptions so thread switches and finalization handoff do not
+	// briefly show live-only or history-only windows.
+	const visibleMessages = $derived.by(() => {
+		if (!currentHistoryMessagesData || !currentLiveMessagesData) {
+			return [] as ThreadMessage[];
+		}
+		return mergeThreadTranscriptMessages({
+			historyMessages: currentHistoryMessagesData.messages as ThreadMessage[],
+			liveMessages: currentLiveMessagesData.messages as ThreadMessage[]
+		});
+	});
 
 	const currentWorkspaceSession = $derived.by<WorkspaceSessionState | null>(() => {
 		if (!currentWorkspaceName) {
@@ -1298,7 +1306,6 @@
 		prompt = '';
 		clearComposerAttachments({ discard: true });
 		currentError = null;
-		visibleMessages = [];
 		elapsedSeconds = 0;
 		selectedModel = defaultModelId;
 		selectedReasoningEffort = defaultReasoningEffort;
@@ -1354,16 +1361,6 @@
 		selectedModel = thread.selectedModel;
 		selectedReasoningEffort = thread.reasoningEffort;
 		selectedServiceTier = thread.serviceTier;
-	});
-
-	$effect(() => {
-		const data = currentMessagesData;
-		if (!data) {
-			visibleMessages = [];
-			return;
-		}
-
-		visibleMessages = [...(data.page ?? [])];
 	});
 
 	$effect(() => {
