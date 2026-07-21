@@ -18,7 +18,7 @@ use rig::message::{ReasoningContent, ToolCall as RigToolCall, ToolChoice, ToolFu
 use rig::streaming::{RawStreamingChoice, RawStreamingToolCall, StreamingCompletionResponse};
 use rustls::crypto::ring::default_provider;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 use tokio::time::{sleep, timeout};
 
 use crate::messages::{build_model_messages, instructions_text, normalize_convex_json_numbers};
@@ -26,6 +26,7 @@ use crate::messages::{build_model_messages, instructions_text, normalize_convex_
 const CONVEX_RPC_TIMEOUT: Duration = Duration::from_secs(20 * 60);
 const COMPLETION_TRANSPORT_ATTEMPTS: u32 = 3;
 const COMPLETION_TRANSPORT_RETRY_DELAY: Duration = Duration::from_millis(400);
+const AUTH_REFRESH_CORRELATION_GRACE: Duration = Duration::from_millis(500);
 
 pub const COMPLETION_STREAM_SUPERSEDED: &str = "SPROCKET_COMPLETION_STREAM_SUPERSEDED";
 
@@ -39,6 +40,8 @@ pub fn is_completion_stream_superseded(error: &(impl std::fmt::Display + ?Sized)
 #[derive(Clone)]
 pub struct Client {
     pub(crate) inner: Arc<Mutex<ConvexClient>>,
+    auth_refresh_generation: Arc<AtomicU32>,
+    auth_refresh_notify: Arc<Notify>,
     completion_action: Arc<str>,
     default_reasoning_effort: Option<Arc<str>>,
     default_service_tier: Option<Arc<str>>,
@@ -58,6 +61,8 @@ impl Client {
             .context("failed to initialize Convex client")?;
         Ok(Self {
             inner: Arc::new(Mutex::new(client)),
+            auth_refresh_generation: Arc::new(AtomicU32::new(0)),
+            auth_refresh_notify: Arc::new(Notify::new()),
             completion_action: completion_action.into().into(),
             default_reasoning_effort: None,
             default_service_tier: None,
@@ -68,8 +73,14 @@ impl Client {
     }
 
     pub async fn set_auth_token_fetcher(&self, fetcher: AuthTokenFetcher) {
+        let auth_refresh_generation = self.auth_refresh_generation.clone();
+        let auth_refresh_notify = self.auth_refresh_notify.clone();
         let convex_fetcher: convex::AuthTokenFetcher = Box::new(move |force_refresh| {
             let fetcher = fetcher.clone();
+            if force_refresh {
+                auth_refresh_generation.fetch_add(1, Ordering::Release);
+                auth_refresh_notify.notify_waiters();
+            }
             Box::pin(async move { fetcher(force_refresh).await.map(AuthenticationToken::User) })
         });
         self.inner
@@ -496,6 +507,10 @@ async fn call_completion_action(
         let attempt_seq = client.attempt_counter.fetch_add(1, Ordering::Relaxed) + 1;
         let stream_id = uuid::Uuid::new_v4().to_string();
         let mut convex = clone_locked(&client.inner).await;
+        // Register before taking the generation snapshot so a refresh starting
+        // while this action is in flight cannot be missed by the grace wait.
+        let auth_refresh_started = client.auth_refresh_notify.notified();
+        let auth_refresh_generation = client.auth_refresh_generation.load(Ordering::Acquire);
         eprintln!(
             "sprocket-convex-provider: action start {} attempt {attempt_seq}",
             client.completion_action
@@ -536,7 +551,7 @@ async fn call_completion_action(
             }
         };
 
-        let provider_error = match result {
+        let (provider_error, is_error_message) = match result {
             Ok(FunctionResult::Value(value)) => {
                 eprintln!(
                     "sprocket-convex-provider: action done {}",
@@ -544,8 +559,8 @@ async fn call_completion_action(
                 );
                 return Ok(value);
             }
-            Ok(FunctionResult::ErrorMessage(message)) => message,
-            Ok(FunctionResult::ConvexError(error)) => error.message,
+            Ok(FunctionResult::ErrorMessage(message)) => (message, true),
+            Ok(FunctionResult::ConvexError(error)) => (error.message, false),
             Err(error) => {
                 if attempt >= COMPLETION_TRANSPORT_ATTEMPTS {
                     return Err(to_completion_error(error));
@@ -569,12 +584,87 @@ async fn call_completion_action(
             backoff_completion_retry(&mut superseded_stream_ids, stream_id, &mut retry_delay).await;
             continue;
         }
+        let auth_refresh_started = if attempt < COMPLETION_TRANSPORT_ATTEMPTS
+            && is_error_message
+            && is_redacted_convex_server_error(&provider_error)
+        {
+            auth_refresh_observed(
+                &client.auth_refresh_generation,
+                auth_refresh_generation,
+                auth_refresh_started,
+                AUTH_REFRESH_CORRELATION_GRACE,
+            )
+            .await
+        } else {
+            false
+        };
+        if should_retry_transient_server_error(
+            &provider_error,
+            is_error_message,
+            auth_refresh_started,
+            attempt,
+        ) {
+            // An expired identity interrupts in-flight actions with Convex's
+            // redacted server error. If a forced refresh began during the
+            // attempt, replay through the same stream-fencing path as transport
+            // failures. Requiring that correlation avoids retrying developer
+            // errors, which Convex redacts to the same text in production.
+            eprintln!(
+                "sprocket-convex-provider: action {} attempt {attempt} was interrupted by auth refresh; retrying with a fresh stream: {provider_error}",
+                client.completion_action,
+            );
+            backoff_completion_retry(&mut superseded_stream_ids, stream_id, &mut retry_delay).await;
+            continue;
+        }
         return Err(CompletionError::ProviderError(provider_error));
     }
 }
 
 fn should_retry_superseded_completion(message: &str, attempt: u32) -> bool {
     attempt < COMPLETION_TRANSPORT_ATTEMPTS && is_completion_stream_superseded(message)
+}
+
+fn should_retry_transient_server_error(
+    message: &str,
+    is_error_message: bool,
+    auth_refresh_started: bool,
+    attempt: u32,
+) -> bool {
+    attempt < COMPLETION_TRANSPORT_ATTEMPTS
+        && is_error_message
+        && auth_refresh_started
+        && is_redacted_convex_server_error(message)
+}
+
+async fn auth_refresh_observed(
+    generation: &AtomicU32,
+    generation_at_start: u32,
+    refresh_started: impl Future<Output = ()>,
+    grace: Duration,
+) -> bool {
+    if generation.load(Ordering::Acquire) != generation_at_start {
+        return true;
+    }
+
+    // Convex can deliver the action error immediately before its background
+    // worker starts the reconnect auth callback. Give that callback one short
+    // reconnect window, then preserve redacted developer errors as fatal.
+    let _ = timeout(grace, refresh_started).await;
+    generation.load(Ordering::Acquire) != generation_at_start
+}
+
+/// Convex production failures are redacted to this exact shape. This alone
+/// does not distinguish infrastructure failures from developer errors; callers
+/// must also correlate the response with a forced authentication refresh.
+fn is_redacted_convex_server_error(message: &str) -> bool {
+    let Some((request_id, suffix)) = message
+        .trim()
+        .strip_prefix("[Request ID: ")
+        .and_then(|rest| rest.split_once(']'))
+    else {
+        return false;
+    };
+    !request_id.is_empty() && suffix == " Server Error"
 }
 
 async fn backoff_completion_retry(
@@ -751,14 +841,17 @@ where
 mod tests {
     use super::{
         COMPLETION_STREAM_SUPERSEDED, COMPLETION_TRANSPORT_ATTEMPTS, CompletionOutput,
-        CompletionStreamEvent, InputTokenDetails, ToolCall, Usage, clone_locked, completion_choice,
-        is_completion_stream_superseded, reasoning_stream_choices,
-        should_retry_superseded_completion, text_stream_choices,
+        CompletionStreamEvent, InputTokenDetails, ToolCall, Usage, auth_refresh_observed,
+        clone_locked, completion_choice, is_completion_stream_superseded,
+        is_redacted_convex_server_error, reasoning_stream_choices,
+        should_retry_superseded_completion, should_retry_transient_server_error,
+        text_stream_choices,
     };
     use rig::completion::{CompletionError, GetTokenUsage};
     use rig::message::AssistantContent;
     use rig::streaming::RawStreamingChoice;
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::Duration;
     use tokio::sync::Mutex;
     use tokio::time::timeout;
@@ -790,6 +883,21 @@ mod tests {
         }
 
         assert_eq!(*inner.lock().await, 1);
+    }
+
+    #[tokio::test]
+    async fn observes_auth_refresh_when_notification_is_lost() {
+        let generation = AtomicU32::new(0);
+        let refresh_started = std::future::poll_fn(|_| {
+            // Simulate a refresh starting after the first generation check but
+            // before the notification future registers its waiter.
+            generation.fetch_add(1, Ordering::Release);
+            std::task::Poll::<()>::Pending
+        });
+
+        assert!(
+            auth_refresh_observed(&generation, 0, refresh_started, Duration::from_millis(1),).await
+        );
     }
 
     #[test]
@@ -941,5 +1049,61 @@ mod tests {
             COMPLETION_TRANSPORT_ATTEMPTS,
         ));
         assert!(!should_retry_superseded_completion("provider failed", 1));
+    }
+
+    #[test]
+    fn recognizes_redacted_convex_server_errors() {
+        assert!(is_redacted_convex_server_error(
+            "[Request ID: b79af67f8bcd57b2] Server Error"
+        ));
+        assert!(is_redacted_convex_server_error(
+            " [Request ID: abc] Server Error "
+        ));
+
+        // Other error formats must stay fatal. Even the matching redacted
+        // shape is retried only when correlated with a forced auth refresh.
+        assert!(!is_redacted_convex_server_error("Server Error"));
+        assert!(!is_redacted_convex_server_error(
+            "[Request ID: ] Server Error"
+        ));
+        assert!(!is_redacted_convex_server_error(
+            "[Request ID: abc] Uncaught Error: insufficient credits"
+        ));
+        assert!(!is_redacted_convex_server_error(
+            "Server Error: something specific"
+        ));
+        assert!(!is_redacted_convex_server_error("rate limited"));
+    }
+
+    #[test]
+    fn retries_redacted_server_errors_until_the_transport_attempt_limit() {
+        let message = "[Request ID: b79af67f8bcd57b2] Server Error";
+
+        assert!(should_retry_transient_server_error(
+            message,
+            true,
+            true,
+            COMPLETION_TRANSPORT_ATTEMPTS - 1,
+        ));
+        assert!(!should_retry_transient_server_error(
+            message,
+            true,
+            true,
+            COMPLETION_TRANSPORT_ATTEMPTS,
+        ));
+        // ConvexError results are application data, never retried as transient.
+        assert!(!should_retry_transient_server_error(
+            message, false, true, 1
+        ));
+        // The same redacted text can represent a developer error in prod.
+        assert!(!should_retry_transient_server_error(
+            message, true, false, 1
+        ));
+        assert!(!should_retry_transient_server_error(
+            "insufficient credits",
+            true,
+            true,
+            1,
+        ));
     }
 }
