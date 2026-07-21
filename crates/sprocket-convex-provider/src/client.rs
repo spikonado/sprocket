@@ -40,6 +40,7 @@ pub fn is_completion_stream_superseded(error: &(impl std::fmt::Display + ?Sized)
 #[derive(Clone)]
 pub struct Client {
     pub(crate) inner: Arc<Mutex<ConvexClient>>,
+    completion_inner: Arc<Mutex<ConvexClient>>,
     auth_refresh_generation: Arc<AtomicU32>,
     auth_refresh_notify: Arc<Notify>,
     completion_action_lock: Arc<Mutex<()>>,
@@ -60,8 +61,12 @@ impl Client {
         let client = ConvexClient::new(deployment_url)
             .await
             .context("failed to initialize Convex client")?;
+        let completion_client = ConvexClient::new(deployment_url)
+            .await
+            .context("failed to initialize Convex completion client")?;
         Ok(Self {
             inner: Arc::new(Mutex::new(client)),
+            completion_inner: Arc::new(Mutex::new(completion_client)),
             auth_refresh_generation: Arc::new(AtomicU32::new(0)),
             auth_refresh_notify: Arc::new(Notify::new()),
             completion_action_lock: Arc::new(Mutex::new(())),
@@ -75,20 +80,21 @@ impl Client {
     }
 
     pub async fn set_auth_token_fetcher(&self, fetcher: AuthTokenFetcher) {
-        let auth_refresh_generation = self.auth_refresh_generation.clone();
-        let auth_refresh_notify = self.auth_refresh_notify.clone();
-        let convex_fetcher: convex::AuthTokenFetcher = Box::new(move |force_refresh| {
-            let fetcher = fetcher.clone();
-            if force_refresh {
-                auth_refresh_generation.fetch_add(1, Ordering::Release);
-                auth_refresh_notify.notify_waiters();
-            }
-            Box::pin(async move { fetcher(force_refresh).await.map(AuthenticationToken::User) })
-        });
         self.inner
             .lock()
             .await
-            .set_auth_callback(Some(convex_fetcher))
+            .set_auth_callback(Some(convex_auth_fetcher(fetcher.clone(), None)))
+            .await;
+        self.completion_inner
+            .lock()
+            .await
+            .set_auth_callback(Some(convex_auth_fetcher(
+                fetcher,
+                Some((
+                    self.auth_refresh_generation.clone(),
+                    self.auth_refresh_notify.clone(),
+                )),
+            )))
             .await;
     }
 
@@ -486,6 +492,20 @@ async fn clone_locked<T: Clone>(inner: &Mutex<T>) -> T {
     inner.lock().await.clone()
 }
 
+fn convex_auth_fetcher(
+    fetcher: AuthTokenFetcher,
+    refresh_tracking: Option<(Arc<AtomicU32>, Arc<Notify>)>,
+) -> convex::AuthTokenFetcher {
+    Box::new(move |force_refresh| {
+        let fetcher = fetcher.clone();
+        if force_refresh && let Some((generation, notify)) = &refresh_tracking {
+            generation.fetch_add(1, Ordering::Release);
+            notify.notify_waiters();
+        }
+        Box::pin(async move { fetcher(force_refresh).await.map(AuthenticationToken::User) })
+    })
+}
+
 async fn call_completion_action(
     client: &Client,
     args: &ConvexActionArgs,
@@ -498,10 +518,9 @@ async fn call_completion_action(
     let claim_id = args.claim_id.as_ref().ok_or_else(|| {
         CompletionError::ProviderError("claimId is required for completion:complete".to_string())
     })?;
-    // A forced auth refresh belongs to the shared Convex connection, not an
-    // individual action. Keep completion actions on that connection serial so
-    // a redacted error can be correlated without crossing action boundaries.
-    // Queries and mutations use only `inner` clones and remain concurrent.
+    // A forced auth refresh belongs to a Convex connection, not an individual
+    // action. Completion actions use a dedicated connection and run serially on
+    // it, so refresh correlation cannot cross action or runtime RPC boundaries.
     let _completion_action_guard = client.completion_action_lock.lock().await;
 
     let mut retry_delay = COMPLETION_TRANSPORT_RETRY_DELAY;
@@ -513,7 +532,7 @@ async fn call_completion_action(
         // ids let the backend drop their partial output on the next try.
         let attempt_seq = client.attempt_counter.fetch_add(1, Ordering::Relaxed) + 1;
         let stream_id = uuid::Uuid::new_v4().to_string();
-        let mut convex = clone_locked(&client.inner).await;
+        let mut convex = clone_locked(&client.completion_inner).await;
         // Register before taking the generation snapshot so a refresh starting
         // while this action is in flight cannot be missed by the grace wait.
         let auth_refresh_started = client.auth_refresh_notify.notified();
@@ -849,7 +868,7 @@ mod tests {
     use super::{
         COMPLETION_STREAM_SUPERSEDED, COMPLETION_TRANSPORT_ATTEMPTS, CompletionOutput,
         CompletionStreamEvent, InputTokenDetails, ToolCall, Usage, auth_refresh_observed,
-        clone_locked, completion_choice, is_completion_stream_superseded,
+        clone_locked, completion_choice, convex_auth_fetcher, is_completion_stream_superseded,
         is_redacted_convex_server_error, reasoning_stream_choices,
         should_retry_superseded_completion, should_retry_transient_server_error,
         text_stream_choices,
@@ -905,6 +924,22 @@ mod tests {
         assert!(
             auth_refresh_observed(&generation, 0, refresh_started, Duration::from_millis(1),).await
         );
+    }
+
+    #[tokio::test]
+    async fn runtime_auth_refresh_does_not_correlate_to_completion() {
+        let fetcher: super::AuthTokenFetcher =
+            Arc::new(|_| Box::pin(async { Ok("token".to_string()) }));
+        let generation = Arc::new(AtomicU32::new(0));
+        let notify = Arc::new(tokio::sync::Notify::new());
+
+        let runtime_fetcher = convex_auth_fetcher(fetcher.clone(), None);
+        runtime_fetcher(true).await.expect("runtime token");
+        assert_eq!(generation.load(Ordering::Acquire), 0);
+
+        let completion_fetcher = convex_auth_fetcher(fetcher, Some((generation.clone(), notify)));
+        completion_fetcher(true).await.expect("completion token");
+        assert_eq!(generation.load(Ordering::Acquire), 1);
     }
 
     #[test]
