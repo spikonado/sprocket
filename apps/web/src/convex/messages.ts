@@ -1,32 +1,91 @@
-import { paginationOptsValidator } from 'convex/server';
-import { query } from '@convex/_generated/server';
+import type { Doc, Id } from '@convex/_generated/dataModel';
+import { query, type QueryCtx } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
-import { buildThreadTranscript, type ThreadTranscriptMessage } from '@convex/lib/threadTranscript';
+import {
+	compareTranscriptMessages,
+	hydrateTranscriptMessages,
+	type ThreadTranscriptMessage
+} from '@convex/lib/threadTranscript';
+import { isRunFinalStatus, runFinalStatus } from '@convex/lib/validators';
 
-export const listForThread = query({
+const HISTORY_RUN_LIMIT = 20;
+
+type ThreadTranscriptQueryResult = {
+	threadId: Id<'threadRecords'>;
+	messages: ThreadTranscriptMessage[];
+};
+
+function compareRunsNewestFirst(left: Doc<'runs'>, right: Doc<'runs'>): number {
+	if (right.startedAt !== left.startedAt) {
+		return right.startedAt - left.startedAt;
+	}
+	return right._creationTime - left._creationTime;
+}
+
+async function requireOwnedThread(ctx: QueryCtx, threadId: Id<'threadRecords'>): Promise<void> {
+	const userId = await getUserId(ctx);
+	await getOwnedThreadRecord(ctx.db, userId, threadId);
+}
+
+async function loadNewestTerminalRuns(
+	ctx: QueryCtx,
+	threadId: Id<'threadRecords'>,
+	limit: number
+): Promise<Doc<'runs'>[]> {
+	const perStatus = await Promise.all(
+		runFinalStatus.map((status) =>
+			ctx.db
+				.query('runs')
+				.withIndex('by_threadId_status_startedAt', (query) =>
+					query.eq('threadId', threadId).eq('status', status)
+				)
+				.order('desc')
+				.take(limit)
+		)
+	);
+
+	return perStatus.flat().sort(compareRunsNewestFirst).slice(0, limit);
+}
+
+async function hydrateSortedTranscript(
+	ctx: QueryCtx,
+	threadId: Id<'threadRecords'>,
+	runs: Doc<'runs'>[]
+): Promise<ThreadTranscriptQueryResult> {
+	const messages = (await hydrateTranscriptMessages(ctx, runs)).sort(compareTranscriptMessages);
+	return { threadId, messages };
+}
+
+export const listHistoryForThread = query({
 	args: {
-		threadId: v.id('threadRecords'),
-		paginationOpts: paginationOptsValidator
+		threadId: v.id('threadRecords')
 	},
-	handler: async (ctx, args) => {
-		const userId: string = await getUserId(ctx);
-		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
-		const allMessages: ThreadTranscriptMessage[] = await buildThreadTranscript(ctx, args.threadId);
-		const total: number = allMessages.length;
-		const requested: number = Math.max(1, args.paginationOpts.numItems);
-		const endExclusive: number =
-			args.paginationOpts.cursor == null ? total : Math.max(0, Number(args.paginationOpts.cursor));
-		const start: number = Math.max(0, endExclusive - requested);
-		const page: ThreadTranscriptMessage[] = allMessages.slice(start, endExclusive);
-		return {
-			threadId: args.threadId,
-			page,
-			isDone: start === 0,
-			continueCursor: start === 0 ? null : String(start),
-			pageStatus: null,
-			splitCursor: null
-		};
+	handler: async (ctx, args): Promise<ThreadTranscriptQueryResult> => {
+		await requireOwnedThread(ctx, args.threadId);
+		const terminalRuns = await loadNewestTerminalRuns(ctx, args.threadId, HISTORY_RUN_LIMIT);
+		return hydrateSortedTranscript(ctx, args.threadId, terminalRuns);
+	}
+});
+
+export const listLiveForThread = query({
+	args: {
+		threadId: v.id('threadRecords')
+	},
+	handler: async (ctx, args): Promise<ThreadTranscriptQueryResult> => {
+		await requireOwnedThread(ctx, args.threadId);
+
+		const latestRun = await ctx.db
+			.query('runs')
+			.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', args.threadId))
+			.order('desc')
+			.first();
+
+		if (!latestRun || isRunFinalStatus(latestRun.status)) {
+			return { threadId: args.threadId, messages: [] };
+		}
+
+		return hydrateSortedTranscript(ctx, args.threadId, [latestRun]);
 	}
 });
