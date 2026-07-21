@@ -257,5 +257,8 @@ jobs:
           if npm view "$name@$VERSION" version >/dev/null 2>&1; then
             echo "$name@$VERSION is already published; skipping"
           else
-            npm publish npm-dist/sprocket --tag "$NPM_TAG"
+            (
+              cd npm-dist/sprocket
+              npm publish --tag "$NPM_TAG"
+            )
           fi
