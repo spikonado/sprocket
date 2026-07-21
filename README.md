@@ -1,7 +1,8 @@
 # Sprocket
 
-**Goal**: To make the world's best platform for developing hardware and software, and thus become THE platform for robotics development.<br>
-Because as they say, _"Robotics is the true jack of all trades field."_
+**Goal**: To make the world's best platform for developing hardware and software, while making it the world's best platform for robotics development.
+
+Sprocket is currently a coding agent that can operate in your local workspace, surf the web better than any other agent out there, and write high-quality code.
  
 
 ## Using Sprocket
