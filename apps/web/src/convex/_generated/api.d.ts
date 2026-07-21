@@ -33,6 +33,7 @@ import type * as lib_runs from "../lib/runs.js";
 import type * as lib_threadMessages from "../lib/threadMessages.js";
 import type * as lib_threadTranscript from "../lib/threadTranscript.js";
 import type * as lib_tiers from "../lib/tiers.js";
+import type * as lib_usageMeters from "../lib/usageMeters.js";
 import type * as lib_validators from "../lib/validators.js";
 import type * as lib_workspaceConnection from "../lib/workspaceConnection.js";
 import type * as messages from "../messages.js";
@@ -74,6 +75,7 @@ declare const fullApi: ApiFromModules<{
   "lib/threadMessages": typeof lib_threadMessages;
   "lib/threadTranscript": typeof lib_threadTranscript;
   "lib/tiers": typeof lib_tiers;
+  "lib/usageMeters": typeof lib_usageMeters;
   "lib/validators": typeof lib_validators;
   "lib/workspaceConnection": typeof lib_workspaceConnection;
   messages: typeof messages;
