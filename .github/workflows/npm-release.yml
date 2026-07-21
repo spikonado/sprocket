@@ -24,7 +24,7 @@ permissions:
 jobs:
   prepare:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.value }}
       npm-tag: ${{ steps.version.outputs.npm-tag }}
@@ -67,7 +67,7 @@ jobs:
 
   web:
     needs: prepare
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.0
         with:
@@ -88,12 +88,12 @@ jobs:
       matrix:
         include:
           - id: linux-x64-gnu
-            runner: blacksmith-4vcpu-ubuntu-2404
+            runner: ubuntu-latest
             executable: sprocket
             rust-target: x86_64-unknown-linux-gnu
             glibc-version: '2.17'
           - id: linux-arm64-gnu
-            runner: blacksmith-4vcpu-ubuntu-2404
+            runner: ubuntu-latest
             executable: sprocket
             rust-target: aarch64-unknown-linux-gnu
             glibc-version: '2.17'
@@ -150,7 +150,7 @@ jobs:
 
   package:
     needs: [prepare, web, native]
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.0
         with:
@@ -192,7 +192,7 @@ jobs:
   publish:
     if: github.event_name == 'push' || github.event_name == 'workflow_run' || inputs.publish
     needs: [prepare, package]
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
