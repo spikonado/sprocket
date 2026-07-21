@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { useAuth, useQuery } from 'convex-svelte';
 	import { api } from '$convex/_generated/api';
-	import { usageMeters, usagePeriods } from '$convex/lib/rateLimits';
+	import { usageMeters, usagePeriods } from '$convex/lib/usageMeters';
 	import { tierLabels } from '$convex/lib/tiers';
 
 	const convexAuth = useAuth();
