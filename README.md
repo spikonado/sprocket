@@ -3,7 +3,8 @@
 **Goal**: To make the world's best platform for developing hardware and software, while making it the world's best platform for robotics development.
 
 Sprocket is currently a coding agent that can operate in your local workspace, surf the web better than any other agent out there, and write high-quality code.
- 
+
+![Sprocket](./assets/sprocket.png)
 
 ## Using Sprocket
 
