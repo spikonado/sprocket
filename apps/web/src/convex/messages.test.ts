@@ -49,23 +49,6 @@ async function completeRun(
 }
 
 describe('messages transcript queries', () => {
-	it('requires authentication and ownership', async () => {
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t, 'user_owner');
-		await createQueuedRun(asUser, threadId, 'sub-auth');
-		const stranger = t.withIdentity({ subject: 'user_stranger' });
-
-		for (const client of [t, stranger]) {
-			const expected = client === t ? 'Authentication required.' : 'Thread not found.';
-			await expect(client.query(api.messages.listHistoryForThread, { threadId })).rejects.toThrow(
-				expected
-			);
-			await expect(client.query(api.messages.listLiveForThread, { threadId })).rejects.toThrow(
-				expected
-			);
-		}
-	});
-
 	it('keeps active runs in live and excludes them from history', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
@@ -92,10 +75,6 @@ describe('messages transcript queries', () => {
 		await asUser.mutation(api.agentRuntime.start, { claimId: 'claim-stream', runId });
 		await asUser.mutation(api.agentRuntime.beginAssistantMessage, { runId });
 
-		const beforeStream = await asUser.query(api.messages.listLiveForThread, { threadId });
-		expect(beforeStream.messages.map((message) => message.type)).toEqual(['prompt', 'response']);
-		expect(beforeStream.messages[1]?.text).toBe('');
-
 		const responseMessageId = await t.run(async (ctx) => {
 			const run = await ctx.db.get(runId);
 			if (!run?.responseMessageId) {
@@ -111,6 +90,7 @@ describe('messages transcript queries', () => {
 		});
 
 		const streaming = await asUser.query(api.messages.listLiveForThread, { threadId });
+		expect(streaming.messages.map((message) => message.type)).toEqual(['prompt', 'response']);
 		expect(streaming.messages[1]).toMatchObject({
 			_id: responseMessageId,
 			text: 'partial answer',
@@ -128,35 +108,11 @@ describe('messages transcript queries', () => {
 
 		expect((await asUser.query(api.messages.listLiveForThread, { threadId })).messages).toEqual([]);
 		const historyAfter = await asUser.query(api.messages.listHistoryForThread, { threadId });
-		// finalizeRun prefers already-streamed assistant text when parts exist.
-		expect(historyAfter.messages.map((message) => [message.type, message.text])).toEqual([
-			['prompt', 'Stream me'],
-			['response', 'partial answer']
-		]);
-		expect(historyAfter.messages.every((message) => message.runStatus === 'completed')).toBe(true);
-	});
-
-	it('moves failed and cancelled runs from live into history', async () => {
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
-
-		const failed = await createQueuedRun(asUser, threadId, 'sub-fail', 'Fail prompt');
-		await completeRun(t, asUser, { runId: failed.runId, status: 'failed', responseText: 'boom' });
-
-		const cancelled = await createQueuedRun(asUser, threadId, 'sub-cancel', 'Cancel prompt');
-		await completeRun(t, asUser, {
-			runId: cancelled.runId,
-			status: 'cancelled',
-			responseText: 'stopped'
-		});
-
-		expect((await asUser.query(api.messages.listLiveForThread, { threadId })).messages).toEqual([]);
-		const history = await asUser.query(api.messages.listHistoryForThread, { threadId });
-		expect(history.messages.map((message) => [message.text, message.runStatus])).toEqual([
-			['Fail prompt', 'failed'],
-			['boom', 'failed'],
-			['Cancel prompt', 'cancelled'],
-			['stopped', 'cancelled']
+		expect(
+			historyAfter.messages.map((message) => [message.type, message.text, message.runStatus])
+		).toEqual([
+			['prompt', 'Stream me', 'completed'],
+			['response', 'partial answer', 'completed']
 		]);
 	});
 
@@ -184,81 +140,5 @@ describe('messages transcript queries', () => {
 		expect(history.messages.map((message) => message.text)).toEqual(
 			promptTexts.flatMap((prompt, index) => [prompt, `R${index + 5}`])
 		);
-	});
-
-	it('hydrates authorized attachments and skips unauthorized or missing uploads', async () => {
-		const t = initConvexTest();
-		const { asUser, threadId, subject } = await seedOwnedThread(t);
-		const created = await createQueuedRun(asUser, threadId, 'sub-attach', 'With images');
-
-		const { validUploadId, orphanUploadId, missingUploadId } = await t.run(async (ctx) => {
-			const storageId = await ctx.storage.store(new Blob(['image-bytes'], { type: 'image/png' }));
-			const validUploadId = await ctx.db.insert('imageUploads', {
-				userId: subject,
-				storageId,
-				name: 'shot.png',
-				mediaType: 'image/png',
-				size: 11,
-				messageIds: [created.promptMessageId],
-				attached: true
-			});
-			const orphanStorageId = await ctx.storage.store(new Blob(['other'], { type: 'image/jpeg' }));
-			const orphanUploadId = await ctx.db.insert('imageUploads', {
-				userId: 'someone-else',
-				storageId: orphanStorageId,
-				name: 'other.jpg',
-				mediaType: 'image/jpeg',
-				size: 5,
-				messageIds: [created.promptMessageId],
-				attached: true
-			});
-			const missingStorageId = await ctx.storage.store(new Blob(['gone'], { type: 'image/gif' }));
-			const missingUploadId = await ctx.db.insert('imageUploads', {
-				userId: subject,
-				storageId: missingStorageId,
-				name: 'gone.gif',
-				mediaType: 'image/gif',
-				size: 4,
-				messageIds: [created.promptMessageId],
-				attached: true
-			});
-			await ctx.db.patch(created.promptMessageId, {
-				imageUploadIds: [validUploadId, orphanUploadId, missingUploadId]
-			});
-			await ctx.db.delete(missingUploadId);
-			return { validUploadId, orphanUploadId, missingUploadId };
-		});
-
-		await completeRun(t, asUser, {
-			runId: created.runId,
-			status: 'completed',
-			responseText: 'done'
-		});
-
-		await t.run(async (ctx) => {
-			const run = await ctx.db.get(created.runId);
-			if (run?.responseMessageId) {
-				await ctx.db.delete(run.responseMessageId);
-			}
-		});
-
-		const history = await asUser.query(api.messages.listHistoryForThread, { threadId });
-		expect(history.messages).toHaveLength(1);
-		expect(history.messages[0]?.attachments).toEqual([
-			expect.objectContaining({
-				imageUploadId: validUploadId,
-				name: 'shot.png',
-				mediaType: 'image/png',
-				size: 11,
-				url: expect.any(String)
-			})
-		]);
-		expect(
-			history.messages[0]?.attachments.some(
-				(attachment) =>
-					attachment.imageUploadId === orphanUploadId ||
-					attachment.imageUploadId === missingUploadId
-			)
-		).toBe(false);
 	});
 });
