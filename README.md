@@ -1,8 +1,8 @@
 # Sprocket
 
-Sprocket is an agentic workspace for building robots and robot applications. It
-connects an AI coding agent to a local project while keeping filesystem and
-command execution on your machine.
+**Goal**: To make the world's best platform for developing hardware and software, and thus become THE platform for robotics development.<br>
+Because as they say, _"Robotics is the true jack of all trades field."_
+ 
 
 ## Using Sprocket
 
@@ -10,6 +10,13 @@ To directly launch Sprocket in the browser without having to install anything:
 
 ```sh
 npx @spikonado/sprocket --web
+```
+
+Installing the `sprocket` CLI and using it:
+
+```sh
+npm i -g @spikonado/sprocket
+sprocket --web
 ```
 
 After installing the Sprocket desktop application and the `sprocket` CLI, launch it from a terminal:
