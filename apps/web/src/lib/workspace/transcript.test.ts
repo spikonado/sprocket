@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Id } from '$convex/_generated/dataModel';
 import type { ThreadMessage } from '$lib/types/sprocket';
-import {
-	holdLiveMessagesUntilHistoryAbsorbs,
-	mergeThreadTranscriptMessages
-} from '$lib/workspace/transcript';
+import { mergeThreadTranscriptMessages } from '$lib/workspace/transcript';
 
 function message(
 	overrides: Partial<ThreadMessage> & Pick<ThreadMessage, '_id' | 'type'>
@@ -91,54 +88,5 @@ describe('mergeThreadTranscriptMessages', () => {
 		expect(merged[0]?.type).toBe('prompt');
 		expect(merged.at(-1)?.text).toBe('new');
 		expect(merged).toHaveLength(39);
-	});
-});
-
-describe('holdLiveMessagesUntilHistoryAbsorbs', () => {
-	it('holds departing live messages until history contains them', () => {
-		const live = [
-			message({
-				_id: 'p' as Id<'threadMessages'>,
-				type: 'prompt',
-				runStartedAt: 20,
-				runStatus: 'running',
-				text: 'go'
-			}),
-			message({
-				_id: 'r' as Id<'threadMessages'>,
-				type: 'response',
-				runStartedAt: 20,
-				_creationTime: 2,
-				runStatus: 'running',
-				text: 'ok'
-			})
-		];
-		const held = holdLiveMessagesUntilHistoryAbsorbs({
-			historyMessages: [],
-			liveMessages: live,
-			heldLiveMessages: []
-		});
-		expect(held).toEqual(live);
-
-		const duringHandoff = holdLiveMessagesUntilHistoryAbsorbs({
-			historyMessages: [],
-			liveMessages: [],
-			heldLiveMessages: held
-		});
-		expect(duringHandoff).toEqual(live);
-		expect(
-			mergeThreadTranscriptMessages({
-				historyMessages: [],
-				liveMessages: duringHandoff
-			}).map((entry) => entry._id)
-		).toEqual(['p', 'r']);
-
-		expect(
-			holdLiveMessagesUntilHistoryAbsorbs({
-				historyMessages: live.map((entry) => ({ ...entry, runStatus: 'completed' })),
-				liveMessages: [],
-				heldLiveMessages: duringHandoff
-			})
-		).toEqual([]);
 	});
 });

@@ -42,28 +42,6 @@ export function truncateTranscriptToNewestRuns(
 	return truncated.length > limit ? truncated.slice(-limit) : truncated;
 }
 
-/**
- * Keep departing live messages until history absorbs them so independent
- * subscription updates cannot blank the finishing turn.
- */
-export function holdLiveMessagesUntilHistoryAbsorbs(args: {
-	historyMessages: ThreadMessage[];
-	liveMessages: ThreadMessage[];
-	heldLiveMessages: ThreadMessage[];
-}): ThreadMessage[] {
-	if (args.liveMessages.length > 0) {
-		return args.liveMessages;
-	}
-	if (args.heldLiveMessages.length === 0) {
-		return [];
-	}
-	const historyIds = new Set(args.historyMessages.map((message) => message._id));
-	if (args.heldLiveMessages.every((message) => historyIds.has(message._id))) {
-		return [];
-	}
-	return args.heldLiveMessages;
-}
-
 /** Merge history + live pages; live wins on ID collisions. Keeps the newest visible window. */
 export function mergeThreadTranscriptMessages(args: {
 	historyMessages: ThreadMessage[] | null | undefined;
