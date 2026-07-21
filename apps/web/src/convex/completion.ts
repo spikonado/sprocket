@@ -41,6 +41,9 @@ type CompletionRequest = Parameters<typeof generateText>[0];
 type SharedCompletionRequest = Omit<CompletionRequest, 'prompt' | 'messages'>;
 
 const COMPLETION_ACCEPTANCE_CHECK_INTERVAL_MS = 1_000;
+// AI SDK retries only retryable provider failures and honors Retry-After headers.
+// Allow a longer recovery window for short provider rate-limit bursts.
+const MODEL_PROVIDER_MAX_RETRIES = 5;
 
 export const complete = action({
 	args: {
@@ -557,6 +560,7 @@ function buildSharedCompletionRequest(
 	const serviceTier = args.serviceTier ?? defaultServiceTier;
 	return {
 		model: resolveLanguageModel(args.modelId, serviceTier, promptCacheKey),
+		maxRetries: MODEL_PROVIDER_MAX_RETRIES,
 		...(args.instructions !== undefined ? { instructions: args.instructions } : {}),
 		...(args.tools?.length ? { tools } : {}),
 		...(toolChoice !== undefined ? { toolChoice } : {}),
