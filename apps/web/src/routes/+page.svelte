@@ -412,6 +412,10 @@
 			workspaceNameCache.clear();
 			workspaceNameCacheUserId = userId;
 		}
+		if (workspaceSessionsQuery.data === undefined) {
+			return;
+		}
+		workspaceNameCache.clear();
 		for (const workspaceSession of workspaceSessions) {
 			workspaceNameCache.set(workspaceSession._id, workspaceSession.workspaceName);
 		}
@@ -423,11 +427,14 @@
 				workspaceSession.workspaceName
 			])
 		);
-		return (threadsQuery.data ?? []).flatMap((thread) => {
+		return (threadsQuery.data ?? []).map((thread) => {
 			const workspaceName =
 				workspaceNames.get(thread.workspaceSessionId) ??
-				workspaceNameCache.get(thread.workspaceSessionId);
-			return workspaceName === undefined ? [] : ([{ ...thread, workspaceName }] as ThreadSummary[]);
+				(workspaceSessionsQuery.data === undefined
+					? workspaceNameCache.get(thread.workspaceSessionId)
+					: undefined) ??
+				'Unknown workspace';
+			return { ...thread, workspaceName } as ThreadSummary;
 		});
 	});
 	const currentActiveThread = $derived(dataForThread(activeThreadQuery.data, currentThreadId));
