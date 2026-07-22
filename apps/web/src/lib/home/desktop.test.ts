@@ -136,21 +136,61 @@ describe('launchAgentRun', () => {
 		expect(getAccessToken).toHaveBeenCalledWith({ forceRefreshToken: true });
 	});
 
-	it('treats a missing auth session as complete after launch acknowledgement', async () => {
-		const authStatus = deferred<AgentAuthStatus>();
-		const desktopApi = createDesktopApi(vi.fn().mockResolvedValue({ runId: 'run-1' }));
-		vi.mocked(desktopApi.waitForAgentAuthRefresh).mockReturnValue(authStatus.promise);
-		const onError = vi.fn();
-		const onStarted = vi.fn();
+	it('rechecks a missing auth session delivered after launch acknowledgement', async () => {
+		vi.useFakeTimers();
+		try {
+			const staleStatus = deferred<AgentAuthStatus>();
+			const activeStatus = deferred<AgentAuthStatus>();
+			const desktopApi = createDesktopApi(vi.fn().mockResolvedValue({ runId: 'run-1' }));
+			vi.mocked(desktopApi.waitForAgentAuthRefresh)
+				.mockReturnValueOnce(staleStatus.promise)
+				.mockReturnValueOnce(activeStatus.promise);
+			const getAccessToken = vi.fn().mockResolvedValue('token-2');
+			const onError = vi.fn();
+			const onStarted = vi.fn();
 
-		launchAgentRun(launchArgs({ desktopApi, onError, onStarted }));
+			launchAgentRun(launchArgs({ desktopApi, getAccessToken, onError, onStarted }));
 
-		await vi.waitFor(() => expect(onStarted).toHaveBeenCalledWith('run-1'));
-		authStatus.resolve('notFound');
-		await authStatus.promise;
-		await Promise.resolve();
+			await vi.waitFor(() => expect(onStarted).toHaveBeenCalledWith('run-1'));
+			staleStatus.resolve('notFound');
+			await staleStatus.promise;
+			await vi.advanceTimersByTimeAsync(250);
+			expect(desktopApi.waitForAgentAuthRefresh).toHaveBeenCalledTimes(2);
 
-		expect(onError).not.toHaveBeenCalled();
+			activeStatus.resolve('refreshRequired');
+			await activeStatus.promise;
+			await vi.waitFor(() => {
+				expect(desktopApi.refreshAgentAuth).toHaveBeenCalledWith(expect.any(String), 'token-2');
+			});
+			expect(onError).not.toHaveBeenCalled();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('stops polling after a missing session is confirmed following launch', async () => {
+		vi.useFakeTimers();
+		try {
+			const staleStatus = deferred<AgentAuthStatus>();
+			const desktopApi = createDesktopApi(vi.fn().mockResolvedValue({ runId: 'run-1' }));
+			vi.mocked(desktopApi.waitForAgentAuthRefresh)
+				.mockReturnValueOnce(staleStatus.promise)
+				.mockResolvedValue('notFound');
+			const onError = vi.fn();
+			const onStarted = vi.fn();
+
+			launchAgentRun(launchArgs({ desktopApi, onError, onStarted }));
+
+			await vi.waitFor(() => expect(onStarted).toHaveBeenCalledWith('run-1'));
+			staleStatus.resolve('notFound');
+			await staleStatus.promise;
+			await vi.advanceTimersByTimeAsync(4_000);
+
+			expect(desktopApi.waitForAgentAuthRefresh).toHaveBeenCalledTimes(2);
+			expect(onError).not.toHaveBeenCalled();
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it('keeps polling while launch is pending and the auth session is not ready yet', async () => {
@@ -175,12 +215,14 @@ describe('launchAgentRun', () => {
 		}
 	});
 
-	it('surfaces the launch error when the auth session never appears', async () => {
+	it('surfaces the launch error and stops auth polling when the local API is unavailable', async () => {
 		vi.useFakeTimers();
 		try {
 			const launch = deferred<{ runId: never }>();
 			const desktopApi = createDesktopApi(vi.fn().mockReturnValue(launch.promise));
-			vi.mocked(desktopApi.waitForAgentAuthRefresh).mockResolvedValue('notFound');
+			vi.mocked(desktopApi.waitForAgentAuthRefresh).mockRejectedValue(
+				new Error('local API unavailable')
+			);
 			const onError = vi.fn();
 			const launchError = new Error('desktop launch failed');
 
@@ -191,6 +233,9 @@ describe('launchAgentRun', () => {
 				expect(onError).toHaveBeenCalledWith(launchError);
 			});
 			expect(onError).toHaveBeenCalledOnce();
+			const pollCountAfterFailure = vi.mocked(desktopApi.waitForAgentAuthRefresh).mock.calls.length;
+			await vi.advanceTimersByTimeAsync(4_000);
+			expect(desktopApi.waitForAgentAuthRefresh).toHaveBeenCalledTimes(pollCountAfterFailure);
 		} finally {
 			vi.useRealTimers();
 		}
