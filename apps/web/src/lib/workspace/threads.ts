@@ -72,7 +72,7 @@ export function getWorkspaceThreadGroups(
 		.map((group) => ({
 			...group,
 			activeThreadCount: countActiveThreads(group.threads),
-			threads: [...group.threads].sort((left, right) => right.lastMessageAt - left.lastMessageAt)
+			threads: sortThreadsRunningFirst(group.threads)
 		}))
 		.sort((left, right) => {
 			const leftSortKey = left.latestThreadAt || left.lastSeenAt;
@@ -83,6 +83,16 @@ export function getWorkspaceThreadGroups(
 
 			return left.workspaceName.localeCompare(right.workspaceName);
 		});
+}
+
+function sortThreadsRunningFirst(threads: ThreadSummary[]) {
+	return [...threads].sort((left, right) => {
+		if (left.hasActiveRun !== right.hasActiveRun) {
+			return Number(right.hasActiveRun) - Number(left.hasActiveRun);
+		}
+
+		return right.lastMessageAt - left.lastMessageAt;
+	});
 }
 
 function countActiveThreads(threads: ThreadSummary[]) {

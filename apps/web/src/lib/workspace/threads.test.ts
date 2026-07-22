@@ -150,6 +150,37 @@ describe('workspace thread helpers', () => {
 		expect(groups[0]?.threads[0]?.threadId).toBe('thread-record-1');
 	});
 
+	it('lists running threads before newer completed threads in each project', () => {
+		const groups = getWorkspaceThreadGroups(
+			[],
+			[
+				makeThreadSummary({
+					_id: 'thread-record-completed-newer' as ThreadSummary['_id'],
+					threadId: 'thread-record-completed-newer' as ThreadSummary['threadId'],
+					lastMessageAt: 30
+				}),
+				makeThreadSummary({
+					_id: 'thread-record-running-older' as ThreadSummary['_id'],
+					threadId: 'thread-record-running-older' as ThreadSummary['threadId'],
+					lastMessageAt: 10,
+					hasActiveRun: true
+				}),
+				makeThreadSummary({
+					_id: 'thread-record-running-newer' as ThreadSummary['_id'],
+					threadId: 'thread-record-running-newer' as ThreadSummary['threadId'],
+					lastMessageAt: 20,
+					hasActiveRun: true
+				})
+			]
+		);
+
+		expect(groups[0]?.threads.map((thread) => thread.threadId)).toEqual([
+			'thread-record-running-newer',
+			'thread-record-running-older',
+			'thread-record-completed-newer'
+		]);
+	});
+
 	it('finds a workspace session by exact name', () => {
 		const session = findWorkspaceSessionByName(
 			[
