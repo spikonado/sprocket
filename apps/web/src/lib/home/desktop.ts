@@ -108,8 +108,12 @@ export function launchAgentRun(args: {
 		args.onError(error);
 	};
 	const handleMonitorError = async (error: unknown) => {
-		if (launchState.status === 'pending') await launchState.settled;
-		if (launchState.status === 'failed') reportError(error);
+		await launchState.settled;
+		if (launchState.status === 'failed') {
+			reportError(error);
+			return;
+		}
+		console.error('Agent authentication monitor stopped', error);
 	};
 
 	void monitorAgentAuthSession({
@@ -159,23 +163,34 @@ async function monitorAgentAuthSession(args: {
 }) {
 	let pendingToken: string | null = null;
 	let retryDelayMs = AGENT_AUTH_INITIAL_RETRY_DELAY_MS;
+	let missingSessionObservedAfterLaunch = false;
+	const launchFailed = () => args.launchState.status === 'failed';
 
 	while (true) {
 		let status: AgentAuthStatus;
 		try {
 			status = await args.desktopApi.waitForAgentAuthRefresh(args.authSessionId);
 		} catch {
+			if (launchFailed()) return;
 			retryDelayMs = await backoff(retryDelayMs);
+			if (launchFailed()) return;
 			continue;
 		}
 
 		if (status === 'complete') return;
 		if (status === 'notFound') {
-			// Pending: session may not be created yet. Otherwise the run already settled.
-			if (args.launchState.status !== 'pending') return;
+			if (args.launchState.status === 'failed') return;
+			if (args.launchState.status === 'acknowledged') {
+				// This response may have been produced before runAgent created the session,
+				// then delivered after the launch acknowledgement. Recheck once so that
+				// race cannot silently disable token refresh for the rest of the run.
+				if (missingSessionObservedAfterLaunch) return;
+				missingSessionObservedAfterLaunch = true;
+			}
 			retryDelayMs = await backoff(retryDelayMs);
 			continue;
 		}
+		missingSessionObservedAfterLaunch = false;
 
 		if (!pendingToken) {
 			assertAgentRunUser(args.expectedUserId, args.getCurrentUserId());
