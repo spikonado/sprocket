@@ -2,6 +2,7 @@ import { mutation } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getExecutionRun } from '@convex/lib/auth';
 import { executorFailureRunPatch } from '@convex/lib/runs';
+import { ownsActiveRunClaim } from '@convex/lib/runLease';
 import { isRunFinalStatus, vExecutorJobResult } from '@convex/lib/validators';
 
 export const complete = mutation({
@@ -9,6 +10,7 @@ export const complete = mutation({
 		jobId: v.id('executorJobs'),
 		result: vExecutorJobResult,
 		runId: v.id('runs'),
+		claimId: v.string(),
 		executionSecret: v.string()
 	},
 	handler: async (ctx, args) => {
@@ -22,6 +24,9 @@ export const complete = mutation({
 			return true;
 		}
 		if (isRunFinalStatus(run.status)) {
+			return false;
+		}
+		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) {
 			return false;
 		}
 
@@ -45,6 +50,7 @@ export const fail = mutation({
 		jobId: v.id('executorJobs'),
 		error: v.string(),
 		runId: v.id('runs'),
+		claimId: v.string(),
 		executionSecret: v.string()
 	},
 	handler: async (ctx, args) => {
@@ -52,6 +58,9 @@ export const fail = mutation({
 		if (!job || job.runId !== args.runId) throw new Error('Executor job not found.');
 		const run = await getExecutionRun(ctx, job.runId, args.executionSecret);
 		if (job.status === 'cancelled' || job.status === 'completed' || job.status === 'failed') {
+			return false;
+		}
+		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) {
 			return false;
 		}
 

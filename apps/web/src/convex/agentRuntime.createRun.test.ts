@@ -97,6 +97,22 @@ describe('agentRuntime.createRun', () => {
 				executionSecret
 			})
 		).resolves.toMatchObject({ renewed: true });
+
+		const expiredAt = await t.run(async (ctx) => {
+			const claimExpiresAt = Date.now() - 1;
+			await ctx.db.patch(created.runId, { claimExpiresAt });
+			return claimExpiresAt;
+		});
+		await expect(
+			t.mutation(api.agentRuntime.renewClaim, {
+				runId: created.runId,
+				claimId: 'claim-local',
+				executionSecret
+			})
+		).resolves.toMatchObject({ renewed: false });
+		expect(await t.run(async (ctx) => (await ctx.db.get(created.runId))?.claimExpiresAt)).toBe(
+			expiredAt
+		);
 	});
 
 	it('rebinds a queued submission when its original local executor was lost', async () => {

@@ -29,7 +29,8 @@ import {
 	claimExpiresAt,
 	isClaimedRunStatus,
 	isCurrentCompletionAttempt,
-	isRunClaimLeaseActive
+	isRunClaimLeaseActive,
+	ownsActiveRunClaim
 } from '@convex/lib/runLease';
 import {
 	ensureAssistantToolPartsFromJobs,
@@ -335,7 +336,8 @@ export const renewClaim = mutation({
 	},
 	handler: async (ctx, args): Promise<{ renewed: boolean; claimExpiresAt?: number }> => {
 		const run: Doc<'runs'> = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		if (!isClaimedRunStatus(run.status) || run.claimId !== args.claimId) {
+		// Only active leases renew; expired workers must start/takeover again.
+		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) {
 			return { renewed: false };
 		}
 

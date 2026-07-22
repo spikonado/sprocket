@@ -594,6 +594,7 @@ where
             let mut complete_args = BTreeMap::new();
             complete_args.insert("jobId".to_string(), job_id.into());
             complete_args.insert("runId".to_string(), run_id.to_string().into());
+            complete_args.insert("claimId".to_string(), claim_id.to_string().into());
             complete_args.insert(
                 "result".to_string(),
                 Value::try_from(output.clone()).map_err(tool_error)?,
@@ -616,6 +617,7 @@ where
             let mut fail_args = BTreeMap::new();
             fail_args.insert("jobId".to_string(), job_id.into());
             fail_args.insert("runId".to_string(), run_id.to_string().into());
+            fail_args.insert("claimId".to_string(), claim_id.to_string().into());
             fail_args.insert("error".to_string(), error.to_string().into());
             let accepted: bool = runtime
                 .mutation_json("executor:fail", fail_args)

@@ -3,6 +3,7 @@ import {
 	RUN_CLAIM_LEASE_DURATION_MS,
 	canRegisterCompletionAttempt,
 	canFinalizeAfterClaimFailure,
+	ownsActiveRunClaim,
 	canStartRunWithClaim,
 	claimExpiresAt,
 	isCurrentCompletionAttempt,
@@ -41,28 +42,20 @@ describe('run claim leases', () => {
 	});
 
 	it('only terminalizes state owned by the same claim after claim uncertainty', () => {
-		expect(canFinalizeAfterClaimFailure({ status: 'queued' }, 'claim-a', 100)).toBe(false);
+		const active = { status: 'running', claimId: 'claim-a', claimExpiresAt: 200 };
+		expect(ownsActiveRunClaim({ status: 'queued' }, 'claim-a', 100)).toBe(false);
+		expect(ownsActiveRunClaim(active, 'claim-a', 100)).toBe(true);
+		expect(ownsActiveRunClaim(active, 'claim-b', 100)).toBe(false);
 		expect(
-			canFinalizeAfterClaimFailure(
-				{ status: 'running', claimId: 'claim-a', claimExpiresAt: 200 },
-				'claim-a',
-				100
-			)
-		).toBe(true);
-		expect(
-			canFinalizeAfterClaimFailure(
+			ownsActiveRunClaim(
 				{ status: 'running', claimId: 'claim-a', claimExpiresAt: 100 },
 				'claim-a',
 				100
 			)
 		).toBe(false);
-		expect(
-			canFinalizeAfterClaimFailure(
-				{ status: 'awaiting_executor', claimId: 'claim-b', claimExpiresAt: 200 },
-				'claim-a',
-				100
-			)
-		).toBe(false);
+		expect(canFinalizeAfterClaimFailure(active, 'claim-a', 100)).toBe(
+			ownsActiveRunClaim(active, 'claim-a', 100)
+		);
 		expect(
 			canFinalizeAfterClaimFailure({ status: 'failed', claimId: 'claim-a' }, 'claim-a', 100)
 		).toBe(false);

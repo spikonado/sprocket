@@ -27,12 +27,16 @@ export function canStartRunWithClaim(run: ClaimableRun, claimId: string, now: nu
 	return !isRunClaimLeaseActive(run, now);
 }
 
+export function ownsActiveRunClaim(run: ClaimableRun, claimId: string, now: number): boolean {
+	return run.claimId === claimId && isRunClaimLeaseActive(run, now);
+}
+
 export function canFinalizeAfterClaimFailure(
 	run: ClaimableRun,
 	claimId: string,
 	now: number
 ): boolean {
-	return run.claimId === claimId && isRunClaimLeaseActive(run, now);
+	return ownsActiveRunClaim(run, claimId, now);
 }
 
 export function claimExpiresAt(now: number): number {
