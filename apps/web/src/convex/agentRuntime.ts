@@ -565,7 +565,13 @@ export const saveContextCompaction = mutation({
 				.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', run.threadId))
 				.collect();
 			const previousRun = runs
-				.filter((candidate) => candidate._id !== run._id && isRunFinalStatus(candidate.status))
+				.filter(
+					(candidate) =>
+						isRunFinalStatus(candidate.status) &&
+						(candidate.startedAt < run.startedAt ||
+							(candidate.startedAt === run.startedAt &&
+								candidate._creationTime < run._creationTime))
+				)
 				.sort(
 					(left, right) =>
 						right.startedAt - left.startedAt || right._creationTime - left._creationTime

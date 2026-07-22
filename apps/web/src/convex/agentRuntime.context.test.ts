@@ -99,7 +99,7 @@ describe('agentRuntime context accounting', () => {
 
 	it('carries a compacted prefix into later runs without replaying covered history', async () => {
 		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
+		const { asUser, threadId, workspaceSessionId } = await seedOwnedThread(t);
 		const first = await asUser.mutation(api.agentRuntime.createRun, {
 			submissionId: 'context-first',
 			threadId,
@@ -133,6 +133,20 @@ describe('agentRuntime context accounting', () => {
 			claimId: 'claim-2',
 			attemptSeq: 1
 		});
+		await t.run(async (ctx) => {
+			await ctx.db.insert('runs', {
+				threadId,
+				userId: 'user_alice',
+				submissionId: 'context-concurrent-later',
+				workspaceSessionId,
+				status: 'completed',
+				selectedModel: 'gpt-5.6-sol',
+				reasoningEffort: 'medium',
+				serviceTier: 'standard',
+				startedAt: Date.now() + 1_000,
+				completedAt: Date.now() + 1_001
+			});
+		});
 		await asUser.mutation(api.agentRuntime.saveContextCompaction, {
 			runId: second.runId,
 			claimId: 'claim-2',
@@ -142,6 +156,9 @@ describe('agentRuntime context accounting', () => {
 			processedTokens: 100,
 			persistForFutureRuns: true
 		});
+		expect(
+			await t.run(async (ctx) => (await ctx.db.get(threadId))?.contextSummaryThroughRunId)
+		).toBe(first.runId);
 		await asUser.mutation(api.agentRuntime.finalizeRun, {
 			runId: second.runId,
 			expectedStatus: 'running',
