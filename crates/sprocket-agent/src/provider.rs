@@ -12,7 +12,7 @@ use crate::hooks::{AgentPromptHook, ToolCallTracker};
 use crate::tools::agent_tools;
 use crate::types::RunContextResponse;
 
-const AGENT_MAX_TURNS: usize = 75;
+const AGENT_MAX_TURNS: usize = 1_000;
 const MAX_INVALID_TOOL_CALL_RETRIES: usize = 3;
 
 /// Must match `RUN_CANCELLED_BY_USER` in `apps/web/src/convex/lib/agentErrors.ts`.
