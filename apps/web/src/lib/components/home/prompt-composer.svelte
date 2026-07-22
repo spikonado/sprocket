@@ -35,6 +35,12 @@
 		isStarting: boolean;
 		isRunning: boolean;
 		elapsedLabel: string | null;
+		contextUsage: {
+			inputTokens: number;
+			totalTokensProcessed: number;
+			contextWindowTokens: number;
+			autoCompactTokenLimit: number;
+		};
 		onSubmit: () => void;
 		onCancel: () => void;
 	};
@@ -52,6 +58,7 @@
 		isStarting,
 		isRunning,
 		elapsedLabel,
+		contextUsage,
 		onSubmit,
 		onCancel
 	}: Props = $props();
@@ -69,6 +76,12 @@
 	);
 	const attachTooltipLabel = `Attach images (up to ${MAX_IMAGE_ATTACHMENTS})`;
 	const supportsFieldSizing = typeof CSS !== 'undefined' && CSS.supports('field-sizing', 'content');
+	const contextPercent = $derived(
+		Math.min(100, Math.round((contextUsage.inputTokens / contextUsage.contextWindowTokens) * 100))
+	);
+	const contextCompactPercent = $derived(
+		Math.round((contextUsage.autoCompactTokenLimit / contextUsage.contextWindowTokens) * 100)
+	);
 
 	const COMPOSER_MIN_HEIGHT_PX = 68;
 	const COMPOSER_MAX_HEIGHT_PX = 160;
@@ -139,6 +152,16 @@
 
 	function handleModelChange(modelId: SupportedModelId) {
 		selectedReasoningEffort = getModelDefinition(modelId).defaultReasoningEffort;
+	}
+
+	function formatTokens(value: number): string {
+		if (value >= 1_000_000) {
+			return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1).replace(/\.0$/, '')}m`;
+		}
+		if (value >= 1_000) {
+			return `${Math.round(value / 1_000)}k`;
+		}
+		return String(value);
 	}
 
 	$effect(() => {
@@ -299,6 +322,48 @@
 						</div>
 
 						<div class="flex shrink-0 flex-nowrap items-center justify-end gap-2.5">
+							<div class="group/context relative">
+								<button
+									type="button"
+									class="relative flex size-8 cursor-help items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
+									aria-label={`Context window ${contextPercent}% full`}
+									aria-describedby="context-window-details"
+									style={`background: conic-gradient(rgb(59 130 246) ${contextPercent * 3.6}deg, rgb(255 255 255 / 0.08) 0deg);`}
+									onkeydown={(event) => {
+										if (event.key === 'Escape') event.currentTarget.blur();
+									}}
+								>
+									<span class="size-5.5 rounded-full bg-[#202023]"></span>
+								</button>
+								<div
+									id="context-window-details"
+									class="invisible absolute right-0 bottom-full z-50 mb-3 w-76 translate-y-1 rounded-xl border border-white/9 bg-[#19191b] p-4 opacity-0 shadow-[0_18px_55px_rgba(0,0,0,0.45)] transition duration-150 group-hover/context:visible group-hover/context:translate-y-0 group-hover/context:opacity-100 group-focus-within/context:visible group-focus-within/context:translate-y-0 group-focus-within/context:opacity-100"
+									role="tooltip"
+								>
+									<div class="flex items-center justify-between gap-4 text-[13px]">
+										<span class="font-medium text-slate-200">Context window</span>
+										<span class="text-slate-400"
+											>{contextPercent}% · {formatTokens(contextUsage.inputTokens)}/{formatTokens(
+												contextUsage.contextWindowTokens
+											)}</span
+										>
+									</div>
+									<div class="mt-3 h-1.5 overflow-hidden rounded-full bg-white/5">
+										<div
+											class="h-full rounded-full bg-blue-500 transition-[width] duration-300"
+											style={`width: ${contextPercent}%`}
+										></div>
+									</div>
+									<div class="mt-3 flex items-center justify-between text-[12px] text-slate-500">
+										<span>Total processed</span>
+										<span>{formatTokens(contextUsage.totalTokensProcessed)}</span>
+									</div>
+									<p class="mt-4 text-[12px] leading-5 text-slate-500">
+										Sprocket automatically compacts context at about {contextCompactPercent}% so
+										long-running work can continue.
+									</p>
+								</div>
+							</div>
 							{#if isRunning}
 								<button
 									type="button"

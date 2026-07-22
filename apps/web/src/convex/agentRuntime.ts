@@ -9,6 +9,7 @@ import {
 	type SupportedServiceTier
 } from '@convex/lib/models';
 import { buildCanonicalAgentHistory } from '@convex/lib/agentHistory';
+import { contextSummaryText } from '@convex/lib/contextCompaction';
 import { appendThreadMessage, getThreadMessage } from '@convex/lib/threadMessages';
 import {
 	areImageUploadIdsEqual,
@@ -350,7 +351,13 @@ export const start = mutation({
 			status: isSameClaimRenewal ? run.status : 'running',
 			lastError: undefined,
 			...(isSameClaimRenewal ? {} : { completionAttemptSeq: 0 }),
-			...(isTakeover ? { activeJobId: undefined } : {})
+			...(isTakeover
+				? {
+						activeJobId: undefined,
+						contextSummary: undefined,
+						contextSummaryMessageCount: undefined
+					}
+				: {})
 		});
 
 		return { claimed: true, claimExpiresAt: nextClaimExpiresAt };
@@ -412,10 +419,41 @@ export const getContext = query({
 			.query('executorJobs')
 			.withIndex('by_threadId_sequence', (query) => query.eq('threadId', run.threadId))
 			.collect();
-		const agentHistory: AgentHistoryMessage[] = buildCanonicalAgentHistory({
-			messages: messages.filter((message) => message.runId !== run._id),
-			jobs: jobs.filter((job) => job.runId !== run._id)
-		});
+		let historyRunIds: Set<Id<'runs'>> | undefined;
+		if (threadRecord.contextSummaryThroughRunId) {
+			const runs = await ctx.db
+				.query('runs')
+				.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', run.threadId))
+				.collect();
+			const ordered = runs.sort(
+				(left, right) =>
+					left.startedAt - right.startedAt || left._creationTime - right._creationTime
+			);
+			const cutoffIndex = ordered.findIndex(
+				(candidate) => candidate._id === threadRecord.contextSummaryThroughRunId
+			);
+			if (cutoffIndex >= 0) {
+				historyRunIds = new Set(ordered.slice(cutoffIndex + 1).map((candidate) => candidate._id));
+			}
+		}
+		const includeInHistory = (candidateRunId: Id<'runs'>) =>
+			candidateRunId !== run._id && (!historyRunIds || historyRunIds.has(candidateRunId));
+		const agentHistory: AgentHistoryMessage[] = [
+			...(threadRecord.contextSummary
+				? [
+						{
+							role: 'user' as const,
+							contents: [
+								{ type: 'text' as const, text: contextSummaryText(threadRecord.contextSummary) }
+							]
+						}
+					]
+				: []),
+			...buildCanonicalAgentHistory({
+				messages: messages.filter((message) => includeInHistory(message.runId)),
+				jobs: jobs.filter((job) => includeInHistory(job.runId))
+			})
+		];
 		const promptMessage = messages.find(
 			(message) => message.runId === run._id && message.type === 'prompt'
 		);
@@ -469,10 +507,15 @@ export const completionActor = query({
 		completionAttemptSeq: number;
 		streamSequence: number;
 		streamAttemptId?: string;
+		contextTokens: number;
+		totalTokensProcessed: number;
+		contextSummary?: string;
+		contextSummaryMessageCount?: number;
 	}> => {
 		const run: Doc<'runs'> = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		const userId = run.userId;
 		const streamState = await getCompletionStreamState(ctx, run);
+		const thread = await getOwnedThreadRecord(ctx.db, userId, run.threadId);
 		return {
 			userId,
 			threadId: run.threadId,
@@ -481,10 +524,100 @@ export const completionActor = query({
 			...(run.claimExpiresAt ? { claimExpiresAt: run.claimExpiresAt } : {}),
 			completionAttemptSeq: run.completionAttemptSeq ?? 0,
 			streamSequence: streamState.sequence,
-			...(streamState.streamAttemptId ? { streamAttemptId: streamState.streamAttemptId } : {})
+			...(streamState.streamAttemptId ? { streamAttemptId: streamState.streamAttemptId } : {}),
+			contextTokens: thread.contextTokens ?? 0,
+			totalTokensProcessed: thread.totalTokensProcessed ?? 0,
+			...(run.contextSummary ? { contextSummary: run.contextSummary } : {}),
+			...(run.contextSummaryMessageCount !== undefined
+				? { contextSummaryMessageCount: run.contextSummaryMessageCount }
+				: {})
 		};
 	}
 });
+
+export const saveContextCompaction = mutation({
+	args: {
+		runId: v.id('runs'),
+		claimId: v.string(),
+		attemptSeq: v.number(),
+		summary: v.string(),
+		messageCount: v.number(),
+		processedTokens: v.number(),
+		persistForFutureRuns: v.boolean()
+	},
+	handler: async (ctx, args): Promise<boolean> => {
+		const userId = await getUserId(ctx);
+		const run = await getOwnedRun(ctx.db, userId, args.runId);
+		if (!isCurrentCompletionAttempt(run, args.claimId, args.attemptSeq)) return false;
+		if (!args.summary.trim() || !Number.isSafeInteger(args.messageCount) || args.messageCount < 0) {
+			throw new Error('Invalid context compaction.');
+		}
+		assertValidTokenCount(args.processedTokens);
+		const thread = await getOwnedThreadRecord(ctx.db, userId, run.threadId);
+		await ctx.db.patch(run._id, {
+			contextSummary: args.summary,
+			contextSummaryMessageCount: args.messageCount
+		});
+		let contextSummaryThroughRunId = thread.contextSummaryThroughRunId;
+		if (args.persistForFutureRuns) {
+			const runs = await ctx.db
+				.query('runs')
+				.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', run.threadId))
+				.collect();
+			const previousRun = runs
+				.filter((candidate) => candidate._id !== run._id && isRunFinalStatus(candidate.status))
+				.sort(
+					(left, right) =>
+						right.startedAt - left.startedAt || right._creationTime - left._creationTime
+				)[0];
+			contextSummaryThroughRunId = previousRun?._id;
+		}
+		await ctx.db.patch(thread._id, {
+			...(args.persistForFutureRuns
+				? { contextSummary: args.summary, contextSummaryThroughRunId }
+				: {}),
+			totalTokensProcessed: addTokenCounts(thread.totalTokensProcessed ?? 0, args.processedTokens)
+		});
+		return true;
+	}
+});
+
+export const recordContextUsage = mutation({
+	args: {
+		runId: v.id('runs'),
+		claimId: v.string(),
+		attemptSeq: v.number(),
+		contextTokens: v.number(),
+		processedTokens: v.number()
+	},
+	handler: async (ctx, args): Promise<boolean> => {
+		const userId = await getUserId(ctx);
+		const run = await getOwnedRun(ctx.db, userId, args.runId);
+		if (!isCurrentCompletionAttempt(run, args.claimId, args.attemptSeq)) return false;
+		assertValidTokenCount(args.contextTokens);
+		assertValidTokenCount(args.processedTokens);
+		const thread = await getOwnedThreadRecord(ctx.db, userId, run.threadId);
+		await ctx.db.patch(thread._id, {
+			contextTokens: args.contextTokens,
+			totalTokensProcessed: addTokenCounts(thread.totalTokensProcessed ?? 0, args.processedTokens)
+		});
+		return true;
+	}
+});
+
+function assertValidTokenCount(value: number): void {
+	if (!Number.isSafeInteger(value) || value < 0) {
+		throw new Error('Invalid token count.');
+	}
+}
+
+function addTokenCounts(left: number, right: number): number {
+	assertValidTokenCount(left);
+	assertValidTokenCount(right);
+	const total = left + right;
+	assertValidTokenCount(total);
+	return total;
+}
 
 export const registerCompletionAttempt = mutation({
 	args: {

@@ -14,6 +14,7 @@ import { vModelId, vReasoningEffort, vServiceTier } from '@convex/lib/validators
 import {
 	assertSupportedModelConfiguration,
 	defaultServiceTier,
+	getModelDefinition,
 	normalizeCompletionUsage,
 	type SupportedModelId,
 	type SupportedReasoningEffort,
@@ -28,6 +29,12 @@ import {
 	upsertCompletionReasoningEvent,
 	upsertCompletionTextEvent
 } from '@convex/lib/completionStream';
+import {
+	applyContextCompaction,
+	CONTEXT_COMPACTION_INSTRUCTIONS,
+	estimateContextTokens,
+	shouldCompactContext
+} from '@convex/lib/contextCompaction';
 
 type JsonSchema = Parameters<typeof jsonSchema>[0];
 type ToolChoice = NonNullable<Parameters<typeof generateText>[0]['toolChoice']>;
@@ -46,6 +53,7 @@ const COMPLETION_STREAM_FLUSH_INTERVAL_MS = 250;
 // AI SDK retries only retryable provider failures and honors Retry-After headers.
 // Allow a longer recovery window for short provider rate-limit bursts.
 const MODEL_PROVIDER_MAX_RETRIES = 5;
+const COMPACTION_MAX_OUTPUT_TOKENS = 12_000;
 
 export const complete = action({
 	args: {
@@ -132,17 +140,109 @@ export const complete = action({
 			args.streamRunId,
 			args.executionSecret
 		);
+		const completionAttempt: CompletionAttempt = {
+			runId: args.streamRunId,
+			claimId: args.claimId,
+			attemptSeq: args.attemptSeq,
+			streamId: args.streamId,
+			executionSecret: args.executionSecret,
+			initialSequence: completionContext.streamSequence
+		};
 		const sharedArgs = buildSharedCompletionRequest(
 			{ ...args, modelId, serviceTier },
 			tools,
 			toolChoice,
 			completionContext.promptCacheKey
 		);
+		let effectiveMessages =
+			messages === undefined
+				? undefined
+				: applyContextCompaction(
+						messages,
+						completionContext.contextSummary !== undefined &&
+							completionContext.contextSummaryMessageCount !== undefined
+							? {
+									summary: completionContext.contextSummary,
+									messageCount: completionContext.contextSummaryMessageCount
+								}
+							: undefined
+					);
+		const autoCompactTokenLimit = getModelDefinition(modelId).autoCompactTokenLimit;
+		if (
+			effectiveMessages &&
+			shouldCompactContext({
+				inputTokens: completionContext.contextTokens,
+				autoCompactTokenLimit,
+				messages: effectiveMessages
+			})
+		) {
+			let messagesToCompact = effectiveMessages;
+			let compactedMessageCount = messages?.length ?? 0;
+			let persistForFutureRuns = false;
+			if (completionContext.contextSummary === undefined && messages) {
+				const currentRunStart = messages.findLastIndex((message) => message.role === 'user');
+				const currentRunMessages = messages.slice(currentRunStart);
+				if (
+					currentRunStart > 0 &&
+					estimateContextTokens(currentRunMessages) + COMPACTION_MAX_OUTPUT_TOKENS <
+						autoCompactTokenLimit
+				) {
+					messagesToCompact = messages.slice(0, currentRunStart);
+					compactedMessageCount = currentRunStart;
+					persistForFutureRuns = true;
+				}
+			}
+			const compactionAbortController = new AbortController();
+			const compaction = await waitForCompletionWithAcceptance(
+				ctx,
+				generateText({
+					model: resolveLanguageModel(modelId, serviceTier, completionContext.promptCacheKey),
+					instructions: CONTEXT_COMPACTION_INSTRUCTIONS,
+					messages: messagesToCompact,
+					maxOutputTokens: COMPACTION_MAX_OUTPUT_TOKENS,
+					maxRetries: MODEL_PROVIDER_MAX_RETRIES,
+					providerOptions: resolveProviderOptions(
+						modelId,
+						args.reasoningEffort,
+						serviceTier,
+						completionContext.promptCacheKey
+					),
+					abortSignal: compactionAbortController.signal
+				}),
+				completionAttempt,
+				compactionAbortController
+			);
+			const summary = compaction.text.trim();
+			if (!summary) throw new Error('The model returned an empty context summary.');
+			const compactionTokens = normalizeCompletionUsage(compaction.usage);
+			await assertCompletionStillAccepted(ctx, completionAttempt);
+			await chargeModelUsage(ctx, {
+				userId: completionContext.userId,
+				modelId,
+				serviceTier,
+				tokens: compactionTokens
+			});
+			const saved = await ctx.runMutation(api.agentRuntime.saveContextCompaction, {
+				runId: args.streamRunId,
+				claimId: args.claimId,
+				attemptSeq: args.attemptSeq,
+				summary,
+				messageCount: compactedMessageCount,
+				processedTokens: totalProcessedTokens(compactionTokens),
+				persistForFutureRuns
+			});
+			if (!saved) throw new Error(COMPLETION_STREAM_SUPERSEDED);
+			await checkModelUsageLimit(ctx, completionContext.userId);
+			effectiveMessages = applyContextCompaction(messages ?? [], {
+				summary,
+				messageCount: compactedMessageCount
+			});
+		}
 		let request: CompletionRequest;
 		if (args.prompt !== undefined) {
 			request = buildCompletionRequest(sharedArgs, args.prompt, undefined);
-		} else if (messages !== undefined) {
-			request = buildCompletionRequest(sharedArgs, undefined, messages);
+		} else if (effectiveMessages !== undefined) {
+			request = buildCompletionRequest(sharedArgs, undefined, effectiveMessages);
 		} else {
 			throw new Error('Either prompt or messagesJson is required.');
 		}
@@ -153,26 +253,28 @@ export const complete = action({
 			result = await collectStreamingCompletion(
 				ctx,
 				streamText({ ...request, abortSignal: abortController.signal }),
-				{
-					runId: args.streamRunId,
-					claimId: args.claimId,
-					attemptSeq: args.attemptSeq,
-					streamId: args.streamId,
-					executionSecret: args.executionSecret,
-					initialSequence: completionContext.streamSequence
-				},
+				completionAttempt,
 				abortController
 			);
 		} catch (error) {
 			abortController.abort(error);
 			throw error;
 		}
+		const completionTokens = normalizeCompletionUsage(result.usage);
 		await chargeModelUsage(ctx, {
 			userId: completionContext.userId,
 			modelId,
 			serviceTier,
-			tokens: normalizeCompletionUsage(result.usage)
+			tokens: completionTokens
 		});
+		const usageRecorded = await ctx.runMutation(api.agentRuntime.recordContextUsage, {
+			runId: args.streamRunId,
+			claimId: args.claimId,
+			attemptSeq: args.attemptSeq,
+			contextTokens: totalProcessedTokens(completionTokens),
+			processedTokens: totalProcessedTokens(completionTokens)
+		});
+		if (!usageRecorded) throw new Error(COMPLETION_STREAM_SUPERSEDED);
 
 		return {
 			text: result.text,
@@ -542,6 +644,27 @@ async function assertCompletionStillAccepted(
 	}
 }
 
+async function waitForCompletionWithAcceptance<T>(
+	ctx: ActionCtx,
+	completion: Promise<T>,
+	attempt: CompletionAttempt,
+	abortController: AbortController
+): Promise<T> {
+	while (true) {
+		const outcome = await Promise.race([
+			completion.then((value) => ({ type: 'completed' as const, value })),
+			delay(COMPLETION_ACCEPTANCE_CHECK_INTERVAL_MS).then(() => ({ type: 'check' as const }))
+		]);
+		if (outcome.type === 'completed') return outcome.value;
+		try {
+			await assertCompletionStillAccepted(ctx, attempt);
+		} catch (error) {
+			abortController.abort(error);
+			throw error;
+		}
+	}
+}
+
 function toolPartId(streamId: string, toolCallId: string): string {
 	return `${streamId}:tool:${toolCallId}`;
 }
@@ -561,7 +684,14 @@ async function prepareCompletionContext(
 	ctx: ActionCtx,
 	runId: Id<'runs'>,
 	executionSecret: string
-): Promise<{ promptCacheKey: string; streamSequence: number; userId: string }> {
+): Promise<{
+	promptCacheKey: string;
+	streamSequence: number;
+	userId: string;
+	contextTokens: number;
+	contextSummary?: string;
+	contextSummaryMessageCount?: number;
+}> {
 	const actor = await ctx.runQuery(api.agentRuntime.completionActor, {
 		runId,
 		executionSecret
@@ -571,8 +701,22 @@ async function prepareCompletionContext(
 	return {
 		promptCacheKey: `thread:${actor.threadId}`,
 		streamSequence: actor.streamSequence,
-		userId: actor.userId
+		userId: actor.userId,
+		contextTokens: actor.contextTokens,
+		...(actor.contextSummary ? { contextSummary: actor.contextSummary } : {}),
+		...(actor.contextSummaryMessageCount !== undefined
+			? { contextSummaryMessageCount: actor.contextSummaryMessageCount }
+			: {})
 	};
+}
+
+function totalProcessedTokens(tokens: {
+	input: number;
+	cacheRead: number;
+	cacheWrite: number;
+	output: number;
+}): number {
+	return tokens.input + tokens.cacheRead + tokens.cacheWrite + tokens.output;
 }
 
 function buildSharedCompletionRequest(

@@ -53,6 +53,10 @@ export default defineSchema({
 		selectedModel: vModelId,
 		reasoningEffort: vReasoningEffort,
 		serviceTier: vServiceTier,
+		contextTokens: v.optional(v.number()),
+		totalTokensProcessed: v.optional(v.number()),
+		contextSummary: v.optional(v.string()),
+		contextSummaryThroughRunId: v.optional(v.id('runs')),
 		lastMessageAt: v.number(),
 		archivedAt: v.optional(v.number())
 	})
@@ -70,6 +74,8 @@ export default defineSchema({
 		claimId: v.optional(v.string()),
 		claimExpiresAt: v.optional(v.number()),
 		completionAttemptSeq: v.optional(v.number()),
+		contextSummary: v.optional(v.string()),
+		contextSummaryMessageCount: v.optional(v.number()),
 		selectedModel: vModelId,
 		reasoningEffort: vReasoningEffort,
 		serviceTier: vServiceTier,
