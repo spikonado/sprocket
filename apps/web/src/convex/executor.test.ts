@@ -6,11 +6,16 @@ import { initConvexTest, seedOwnedThread, type ConvexTestInstance } from './test
 async function seedRunWithJob(
 	t: ConvexTestInstance,
 	options: {
+		executionSecret: string;
 		runStatus?: 'queued' | 'running' | 'awaiting_executor' | 'failed' | 'completed';
 		jobStatus?: 'pending' | 'claimed' | 'completed' | 'failed' | 'cancelled';
 		activeJobMatches?: boolean;
-	} = {}
+		claimId?: string;
+		claimExpiresAt?: number;
+	}
 ) {
+	const executionSecret = options.executionSecret;
+	const claimId = options.claimId ?? `claim-${Math.random()}`;
 	const { asUser, threadId, workspaceSessionId, subject } = await seedOwnedThread(t);
 	const created = await asUser.mutation(api.agentRuntime.createRun, {
 		submissionId: `sub-job-${Math.random()}`,
@@ -19,7 +24,8 @@ async function seedRunWithJob(
 		imageUploadIds: [],
 		selectedModel: 'gpt-5.6-sol',
 		reasoningEffort: 'medium',
-		serviceTier: 'standard'
+		serviceTier: 'standard',
+		executionSecret
 	});
 
 	const jobId = await t.run(async (ctx) => {
@@ -48,12 +54,14 @@ async function seedRunWithJob(
 		});
 		await ctx.db.patch(created.runId, {
 			status: options.runStatus ?? 'awaiting_executor',
+			claimId,
+			claimExpiresAt: options.claimExpiresAt ?? Date.now() + 60_000,
 			activeJobId: options.activeJobMatches === false ? otherJobId : (jobId as Id<'executorJobs'>)
 		});
 		return jobId;
 	});
 
-	return { asUser, subject, runId: created.runId, jobId };
+	return { asUser, subject, runId: created.runId, jobId, claimId, executionSecret };
 }
 
 const commandResult = {
@@ -72,10 +80,18 @@ const commandResult = {
 describe('executor', () => {
 	it('completes the active job and releases the run back to running', async () => {
 		const t = initConvexTest();
-		const { asUser, runId, jobId } = await seedRunWithJob(t);
+		const { asUser, runId, jobId, claimId, executionSecret } = await seedRunWithJob(t, {
+			executionSecret: 'executor-complete-secret'
+		});
 
 		await expect(
-			asUser.mutation(api.executor.complete, { jobId, result: commandResult })
+			asUser.mutation(api.executor.complete, {
+				jobId,
+				result: commandResult,
+				runId,
+				claimId,
+				executionSecret
+			})
 		).resolves.toBe(true);
 
 		const state = await t.run(async (ctx) => ({
@@ -93,27 +109,42 @@ describe('executor', () => {
 
 	it('is idempotent for an already completed job and ignores terminal runs', async () => {
 		const t = initConvexTest();
-		const { asUser, runId, jobId } = await seedRunWithJob(t, {
+		const { asUser, runId, jobId, claimId, executionSecret } = await seedRunWithJob(t, {
 			jobStatus: 'completed',
-			runStatus: 'running'
+			runStatus: 'running',
+			executionSecret: 'executor-idempotent-secret'
 		});
 		await t.run(async (ctx) => {
 			await ctx.db.patch(jobId, { result: commandResult, completedAt: 1 });
 		});
 
 		await expect(
-			asUser.mutation(api.executor.complete, { jobId, result: commandResult })
+			asUser.mutation(api.executor.complete, {
+				jobId,
+				result: commandResult,
+				runId,
+				claimId,
+				executionSecret
+			})
 		).resolves.toBe(true);
 
 		const {
 			asUser: asUser2,
 			runId: terminalRunId,
-			jobId: terminalJobId
-		} = await seedRunWithJob(t, { runStatus: 'completed' });
+			jobId: terminalJobId,
+			claimId: terminalClaimId,
+			executionSecret: terminalSecret
+		} = await seedRunWithJob(t, {
+			runStatus: 'completed',
+			executionSecret: 'executor-terminal-secret'
+		});
 		await expect(
 			asUser2.mutation(api.executor.complete, {
 				jobId: terminalJobId,
-				result: commandResult
+				result: commandResult,
+				runId: terminalRunId,
+				claimId: terminalClaimId,
+				executionSecret: terminalSecret
 			})
 		).resolves.toBe(false);
 		expect(await t.run(async (ctx) => (await ctx.db.get(terminalRunId))?.status)).toBe('completed');
@@ -122,11 +153,17 @@ describe('executor', () => {
 
 	it('fails a job and clears activeJobId only when it matches', async () => {
 		const t = initConvexTest();
-		const matching = await seedRunWithJob(t, { activeJobMatches: true });
+		const matching = await seedRunWithJob(t, {
+			activeJobMatches: true,
+			executionSecret: 'executor-fail-match-secret'
+		});
 		await expect(
 			matching.asUser.mutation(api.executor.fail, {
 				jobId: matching.jobId,
-				error: 'boom'
+				error: 'boom',
+				runId: matching.runId,
+				claimId: matching.claimId,
+				executionSecret: matching.executionSecret
 			})
 		).resolves.toBe(true);
 		expect(
@@ -142,12 +179,18 @@ describe('executor', () => {
 			(await t.run(async (ctx) => (await ctx.db.get(matching.runId))?.activeJobId)) ?? undefined
 		).toBeUndefined();
 
-		const mismatched = await seedRunWithJob(t, { activeJobMatches: false });
+		const mismatched = await seedRunWithJob(t, {
+			activeJobMatches: false,
+			executionSecret: 'executor-fail-mismatch-secret'
+		});
 		const before = await t.run(async (ctx) => ctx.db.get(mismatched.runId));
 		await expect(
 			mismatched.asUser.mutation(api.executor.fail, {
 				jobId: mismatched.jobId,
-				error: 'boom'
+				error: 'boom',
+				runId: mismatched.runId,
+				claimId: mismatched.claimId,
+				executionSecret: mismatched.executionSecret
 			})
 		).resolves.toBe(true);
 		const after = await t.run(async (ctx) => ctx.db.get(mismatched.runId));
@@ -156,14 +199,46 @@ describe('executor', () => {
 		expect(await t.run(async (ctx) => (await ctx.db.get(mismatched.jobId))?.status)).toBe('failed');
 	});
 
-	it('does not revive a run that is already final', async () => {
+	it('rejects tool completion and failure after the claim lease expires', async () => {
 		const t = initConvexTest();
-		const { asUser, runId, jobId } = await seedRunWithJob(t, { runStatus: 'failed' });
-
+		const completeCase = await seedRunWithJob(t, {
+			executionSecret: 'executor-expired-complete-secret',
+			claimExpiresAt: Date.now() - 1
+		});
 		await expect(
-			asUser.mutation(api.executor.fail, { jobId, error: 'late failure' })
-		).resolves.toBe(true);
-		expect(await t.run(async (ctx) => (await ctx.db.get(runId))?.status)).toBe('failed');
-		expect(await t.run(async (ctx) => (await ctx.db.get(runId))?.activeJobId)).toBeTruthy();
+			completeCase.asUser.mutation(api.executor.complete, {
+				jobId: completeCase.jobId,
+				result: commandResult,
+				runId: completeCase.runId,
+				claimId: completeCase.claimId,
+				executionSecret: completeCase.executionSecret
+			})
+		).resolves.toBe(false);
+		expect(
+			await t.run(async (ctx) => ({
+				jobStatus: (await ctx.db.get(completeCase.jobId))?.status,
+				activeJobId: (await ctx.db.get(completeCase.runId))?.activeJobId
+			}))
+		).toEqual({ jobStatus: 'claimed', activeJobId: completeCase.jobId });
+
+		const failCase = await seedRunWithJob(t, {
+			executionSecret: 'executor-expired-fail-secret',
+			claimExpiresAt: Date.now() - 1
+		});
+		await expect(
+			failCase.asUser.mutation(api.executor.fail, {
+				jobId: failCase.jobId,
+				error: 'late tool failure',
+				runId: failCase.runId,
+				claimId: failCase.claimId,
+				executionSecret: failCase.executionSecret
+			})
+		).resolves.toBe(false);
+		expect(
+			await t.run(async (ctx) => ({
+				jobStatus: (await ctx.db.get(failCase.jobId))?.status,
+				activeJobId: (await ctx.db.get(failCase.runId))?.activeJobId
+			}))
+		).toEqual({ jobStatus: 'claimed', activeJobId: failCase.jobId });
 	});
 });

@@ -18,7 +18,7 @@ use rig::message::{ReasoningContent, ToolCall as RigToolCall, ToolChoice, ToolFu
 use rig::streaming::{RawStreamingChoice, RawStreamingToolCall, StreamingCompletionResponse};
 use rustls::crypto::ring::default_provider;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::Mutex;
 use tokio::time::{sleep, timeout};
 
 use crate::messages::{build_model_messages, instructions_text, normalize_convex_json_numbers};
@@ -26,7 +26,6 @@ use crate::messages::{build_model_messages, instructions_text, normalize_convex_
 const CONVEX_RPC_TIMEOUT: Duration = Duration::from_secs(20 * 60);
 const COMPLETION_TRANSPORT_ATTEMPTS: u32 = 3;
 const COMPLETION_TRANSPORT_RETRY_DELAY: Duration = Duration::from_millis(400);
-const AUTH_REFRESH_CORRELATION_GRACE: Duration = Duration::from_millis(500);
 
 pub const COMPLETION_STREAM_SUPERSEDED: &str = "SPROCKET_COMPLETION_STREAM_SUPERSEDED";
 
@@ -41,14 +40,13 @@ pub fn is_completion_stream_superseded(error: &(impl std::fmt::Display + ?Sized)
 pub struct Client {
     pub(crate) inner: Arc<Mutex<ConvexClient>>,
     completion_inner: Arc<Mutex<ConvexClient>>,
-    auth_refresh_generation: Arc<AtomicU32>,
-    auth_refresh_notify: Arc<Notify>,
     completion_action_lock: Arc<Mutex<()>>,
     completion_action: Arc<str>,
     default_reasoning_effort: Option<Arc<str>>,
     default_service_tier: Option<Arc<str>>,
     stream_run_id: Option<Arc<str>>,
     claim_id: Option<Arc<str>>,
+    execution_secret: Option<Arc<str>>,
     attempt_counter: Arc<AtomicU32>,
 }
 
@@ -67,14 +65,13 @@ impl Client {
         Ok(Self {
             inner: Arc::new(Mutex::new(client)),
             completion_inner: Arc::new(Mutex::new(completion_client)),
-            auth_refresh_generation: Arc::new(AtomicU32::new(0)),
-            auth_refresh_notify: Arc::new(Notify::new()),
             completion_action_lock: Arc::new(Mutex::new(())),
             completion_action: completion_action.into().into(),
             default_reasoning_effort: None,
             default_service_tier: None,
             stream_run_id: None,
             claim_id: None,
+            execution_secret: None,
             attempt_counter: Arc::new(AtomicU32::new(0)),
         })
     }
@@ -83,18 +80,21 @@ impl Client {
         self.inner
             .lock()
             .await
-            .set_auth_callback(Some(convex_auth_fetcher(fetcher.clone(), None)))
+            .set_auth_callback(Some(convex_auth_fetcher(fetcher.clone())))
             .await;
         self.completion_inner
             .lock()
             .await
-            .set_auth_callback(Some(convex_auth_fetcher(
-                fetcher,
-                Some((
-                    self.auth_refresh_generation.clone(),
-                    self.auth_refresh_notify.clone(),
-                )),
-            )))
+            .set_auth_callback(Some(convex_auth_fetcher(fetcher)))
+            .await;
+    }
+
+    pub async fn clear_auth(&self) {
+        self.inner.lock().await.set_auth_callback(None).await;
+        self.completion_inner
+            .lock()
+            .await
+            .set_auth_callback(None)
             .await;
     }
 
@@ -154,6 +154,15 @@ impl Client {
     pub fn with_service_tier(mut self, service_tier: impl Into<String>) -> Self {
         self.default_service_tier = Some(service_tier.into().into());
         self
+    }
+
+    pub fn with_execution_secret(mut self, execution_secret: impl Into<String>) -> Self {
+        self.execution_secret = Some(execution_secret.into().into());
+        self
+    }
+
+    pub fn execution_secret(&self) -> Option<&str> {
+        self.execution_secret.as_deref()
     }
 
     pub fn with_completion_scope(mut self, stream_run_id: String, claim_id: String) -> Self {
@@ -290,6 +299,7 @@ struct ConvexActionArgs {
     messages_json: String,
     stream_run_id: Option<String>,
     claim_id: Option<String>,
+    execution_secret: Option<String>,
     tools: Vec<ToolDefinition>,
     tool_choice: Option<ConvexToolChoice>,
 }
@@ -347,6 +357,7 @@ impl RigCompletionModel for CompletionModel {
             messages_json: messages.to_string(),
             stream_run_id: self.client.stream_run_id.as_deref().map(str::to_owned),
             claim_id: self.client.claim_id.as_deref().map(str::to_owned),
+            execution_secret: self.client.execution_secret.as_deref().map(str::to_owned),
             tools: request.tools.clone(),
             tool_choice: request.tool_choice.as_ref().map(convert_tool_choice),
         };
@@ -492,16 +503,9 @@ async fn clone_locked<T: Clone>(inner: &Mutex<T>) -> T {
     inner.lock().await.clone()
 }
 
-fn convex_auth_fetcher(
-    fetcher: AuthTokenFetcher,
-    refresh_tracking: Option<(Arc<AtomicU32>, Arc<Notify>)>,
-) -> convex::AuthTokenFetcher {
+fn convex_auth_fetcher(fetcher: AuthTokenFetcher) -> convex::AuthTokenFetcher {
     Box::new(move |force_refresh| {
         let fetcher = fetcher.clone();
-        if force_refresh && let Some((generation, notify)) = &refresh_tracking {
-            generation.fetch_add(1, Ordering::Release);
-            notify.notify_waiters();
-        }
         Box::pin(async move { fetcher(force_refresh).await.map(AuthenticationToken::User) })
     })
 }
@@ -518,9 +522,12 @@ async fn call_completion_action(
     let claim_id = args.claim_id.as_ref().ok_or_else(|| {
         CompletionError::ProviderError("claimId is required for completion:complete".to_string())
     })?;
-    // A forced auth refresh belongs to a Convex connection, not an individual
-    // action. Completion actions use a dedicated connection and run serially on
-    // it, so refresh correlation cannot cross action or runtime RPC boundaries.
+    let execution_secret = args.execution_secret.as_ref().ok_or_else(|| {
+        CompletionError::ProviderError(
+            "executionSecret is required for completion:complete".to_string(),
+        )
+    })?;
+    // Completion actions use a dedicated connection and run serially on it.
     let _completion_action_guard = client.completion_action_lock.lock().await;
 
     let mut retry_delay = COMPLETION_TRANSPORT_RETRY_DELAY;
@@ -533,10 +540,6 @@ async fn call_completion_action(
         let attempt_seq = client.attempt_counter.fetch_add(1, Ordering::Relaxed) + 1;
         let stream_id = uuid::Uuid::new_v4().to_string();
         let mut convex = clone_locked(&client.completion_inner).await;
-        // Register before taking the generation snapshot so a refresh starting
-        // while this action is in flight cannot be missed by the grace wait.
-        let auth_refresh_started = client.auth_refresh_notify.notified();
-        let auth_refresh_generation = client.auth_refresh_generation.load(Ordering::Acquire);
         eprintln!(
             "sprocket-convex-provider: action start {} attempt {attempt_seq}",
             client.completion_action
@@ -549,6 +552,7 @@ async fn call_completion_action(
                     args,
                     stream_run_id,
                     claim_id,
+                    execution_secret,
                     attempt_seq,
                     &stream_id,
                     &superseded_stream_ids,
@@ -577,7 +581,7 @@ async fn call_completion_action(
             }
         };
 
-        let (provider_error, is_error_message) = match result {
+        let provider_error = match result {
             Ok(FunctionResult::Value(value)) => {
                 eprintln!(
                     "sprocket-convex-provider: action done {}",
@@ -585,8 +589,8 @@ async fn call_completion_action(
                 );
                 return Ok(value);
             }
-            Ok(FunctionResult::ErrorMessage(message)) => (message, true),
-            Ok(FunctionResult::ConvexError(error)) => (error.message, false),
+            Ok(FunctionResult::ErrorMessage(message)) => message,
+            Ok(FunctionResult::ConvexError(error)) => error.message,
             Err(error) => {
                 if attempt >= COMPLETION_TRANSPORT_ATTEMPTS {
                     return Err(to_completion_error(error));
@@ -610,87 +614,12 @@ async fn call_completion_action(
             backoff_completion_retry(&mut superseded_stream_ids, stream_id, &mut retry_delay).await;
             continue;
         }
-        let auth_refresh_started = if attempt < COMPLETION_TRANSPORT_ATTEMPTS
-            && is_error_message
-            && is_redacted_convex_server_error(&provider_error)
-        {
-            auth_refresh_observed(
-                &client.auth_refresh_generation,
-                auth_refresh_generation,
-                auth_refresh_started,
-                AUTH_REFRESH_CORRELATION_GRACE,
-            )
-            .await
-        } else {
-            false
-        };
-        if should_retry_transient_server_error(
-            &provider_error,
-            is_error_message,
-            auth_refresh_started,
-            attempt,
-        ) {
-            // An expired identity interrupts in-flight actions with Convex's
-            // redacted server error. If a forced refresh began during the
-            // attempt, replay through the same stream-fencing path as transport
-            // failures. Requiring that correlation avoids retrying developer
-            // errors, which Convex redacts to the same text in production.
-            eprintln!(
-                "sprocket-convex-provider: action {} attempt {attempt} was interrupted by auth refresh; retrying with a fresh stream: {provider_error}",
-                client.completion_action,
-            );
-            backoff_completion_retry(&mut superseded_stream_ids, stream_id, &mut retry_delay).await;
-            continue;
-        }
         return Err(CompletionError::ProviderError(provider_error));
     }
 }
 
 fn should_retry_superseded_completion(message: &str, attempt: u32) -> bool {
     attempt < COMPLETION_TRANSPORT_ATTEMPTS && is_completion_stream_superseded(message)
-}
-
-fn should_retry_transient_server_error(
-    message: &str,
-    is_error_message: bool,
-    auth_refresh_started: bool,
-    attempt: u32,
-) -> bool {
-    attempt < COMPLETION_TRANSPORT_ATTEMPTS
-        && is_error_message
-        && auth_refresh_started
-        && is_redacted_convex_server_error(message)
-}
-
-async fn auth_refresh_observed(
-    generation: &AtomicU32,
-    generation_at_start: u32,
-    refresh_started: impl Future<Output = ()>,
-    grace: Duration,
-) -> bool {
-    if generation.load(Ordering::Acquire) != generation_at_start {
-        return true;
-    }
-
-    // Convex can deliver the action error immediately before its background
-    // worker starts the reconnect auth callback. Give that callback one short
-    // reconnect window, then preserve redacted developer errors as fatal.
-    let _ = timeout(grace, refresh_started).await;
-    generation.load(Ordering::Acquire) != generation_at_start
-}
-
-/// Convex production failures are redacted to this exact shape. This alone
-/// does not distinguish infrastructure failures from developer errors; callers
-/// must also correlate the response with a forced authentication refresh.
-fn is_redacted_convex_server_error(message: &str) -> bool {
-    let Some((request_id, suffix)) = message
-        .trim()
-        .strip_prefix("[Request ID: ")
-        .and_then(|rest| rest.split_once(']'))
-    else {
-        return false;
-    };
-    !request_id.is_empty() && suffix == " Server Error"
 }
 
 async fn backoff_completion_retry(
@@ -707,6 +636,7 @@ fn action_args(
     args: &ConvexActionArgs,
     stream_run_id: &str,
     claim_id: &str,
+    execution_secret: &str,
     attempt_seq: u32,
     stream_id: &str,
     superseded_stream_ids: &[String],
@@ -739,6 +669,10 @@ fn action_args(
         args.messages_json.clone().into(),
     );
     payload.insert("streamRunId".to_string(), stream_run_id.to_string().into());
+    payload.insert(
+        "executionSecret".to_string(),
+        execution_secret.to_string().into(),
+    );
     if let Some(instructions) = &args.instructions {
         payload.insert("instructions".to_string(), instructions.clone().into());
     }
@@ -867,17 +801,14 @@ where
 mod tests {
     use super::{
         COMPLETION_STREAM_SUPERSEDED, COMPLETION_TRANSPORT_ATTEMPTS, CompletionOutput,
-        CompletionStreamEvent, InputTokenDetails, ToolCall, Usage, auth_refresh_observed,
-        clone_locked, completion_choice, convex_auth_fetcher, is_completion_stream_superseded,
-        is_redacted_convex_server_error, reasoning_stream_choices,
-        should_retry_superseded_completion, should_retry_transient_server_error,
-        text_stream_choices,
+        CompletionStreamEvent, InputTokenDetails, ToolCall, Usage, clone_locked, completion_choice,
+        is_completion_stream_superseded, reasoning_stream_choices,
+        should_retry_superseded_completion, text_stream_choices,
     };
     use rig::completion::{CompletionError, GetTokenUsage};
     use rig::message::AssistantContent;
     use rig::streaming::RawStreamingChoice;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::Duration;
     use tokio::sync::Mutex;
     use tokio::time::timeout;
@@ -909,37 +840,6 @@ mod tests {
         }
 
         assert_eq!(*inner.lock().await, 1);
-    }
-
-    #[tokio::test]
-    async fn observes_auth_refresh_when_notification_is_lost() {
-        let generation = AtomicU32::new(0);
-        let refresh_started = std::future::poll_fn(|_| {
-            // Simulate a refresh starting after the first generation check but
-            // before the notification future registers its waiter.
-            generation.fetch_add(1, Ordering::Release);
-            std::task::Poll::<()>::Pending
-        });
-
-        assert!(
-            auth_refresh_observed(&generation, 0, refresh_started, Duration::from_millis(1),).await
-        );
-    }
-
-    #[tokio::test]
-    async fn runtime_auth_refresh_does_not_correlate_to_completion() {
-        let fetcher: super::AuthTokenFetcher =
-            Arc::new(|_| Box::pin(async { Ok("token".to_string()) }));
-        let generation = Arc::new(AtomicU32::new(0));
-        let notify = Arc::new(tokio::sync::Notify::new());
-
-        let runtime_fetcher = convex_auth_fetcher(fetcher.clone(), None);
-        runtime_fetcher(true).await.expect("runtime token");
-        assert_eq!(generation.load(Ordering::Acquire), 0);
-
-        let completion_fetcher = convex_auth_fetcher(fetcher, Some((generation.clone(), notify)));
-        completion_fetcher(true).await.expect("completion token");
-        assert_eq!(generation.load(Ordering::Acquire), 1);
     }
 
     #[test]
@@ -1091,61 +991,5 @@ mod tests {
             COMPLETION_TRANSPORT_ATTEMPTS,
         ));
         assert!(!should_retry_superseded_completion("provider failed", 1));
-    }
-
-    #[test]
-    fn recognizes_redacted_convex_server_errors() {
-        assert!(is_redacted_convex_server_error(
-            "[Request ID: b79af67f8bcd57b2] Server Error"
-        ));
-        assert!(is_redacted_convex_server_error(
-            " [Request ID: abc] Server Error "
-        ));
-
-        // Other error formats must stay fatal. Even the matching redacted
-        // shape is retried only when correlated with a forced auth refresh.
-        assert!(!is_redacted_convex_server_error("Server Error"));
-        assert!(!is_redacted_convex_server_error(
-            "[Request ID: ] Server Error"
-        ));
-        assert!(!is_redacted_convex_server_error(
-            "[Request ID: abc] Uncaught Error: insufficient credits"
-        ));
-        assert!(!is_redacted_convex_server_error(
-            "Server Error: something specific"
-        ));
-        assert!(!is_redacted_convex_server_error("rate limited"));
-    }
-
-    #[test]
-    fn retries_redacted_server_errors_until_the_transport_attempt_limit() {
-        let message = "[Request ID: b79af67f8bcd57b2] Server Error";
-
-        assert!(should_retry_transient_server_error(
-            message,
-            true,
-            true,
-            COMPLETION_TRANSPORT_ATTEMPTS - 1,
-        ));
-        assert!(!should_retry_transient_server_error(
-            message,
-            true,
-            true,
-            COMPLETION_TRANSPORT_ATTEMPTS,
-        ));
-        // ConvexError results are application data, never retried as transient.
-        assert!(!should_retry_transient_server_error(
-            message, false, true, 1
-        ));
-        // The same redacted text can represent a developer error in prod.
-        assert!(!should_retry_transient_server_error(
-            message, true, false, 1
-        ));
-        assert!(!should_retry_transient_server_error(
-            "insufficient credits",
-            true,
-            true,
-            1,
-        ));
     }
 }

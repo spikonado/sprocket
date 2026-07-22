@@ -13,8 +13,9 @@ full process topology.
 
 - Establish local browser or desktop authorization.
 - Resolve, attach, and revalidate local workspaces.
-- Start agent runs with the authenticated cloud user token.
-- Coordinate token refresh while a run is active.
+- Start agent runs with a fresh authenticated cloud user token.
+- Detach accepted launches from browser requests and hand active work a
+  run-scoped execution capability.
 - Serve the local API and optional static web build.
 - Persist only machine-local state.
 
@@ -27,8 +28,9 @@ path.
 
 Local authorization and cloud authentication are separate. A local session
 permits access to machine-facing operations; a WorkOS token identifies the user
-to Convex. Refreshed run tokens are checked against the user that started the
-run.
+to Convex while the run is created. After creation, the agent uses a random
+capability whose hash is bound to that run, so closing the browser does not
+interrupt active work.
 
 The server binds locally by default. Static serving and API-only operation are
 two configurations of the same router rather than separate applications.

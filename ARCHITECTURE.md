@@ -102,7 +102,7 @@ Sprocket deliberately separates cloud and machine-local state.
 | Users, workspace identities, threads, messages, runs, and tool-job records | Convex               |
 | Workspace identity to local path mapping                                   | Local server         |
 | Pairing credential and local browser sessions                              | Local server         |
-| Active commands, cancellation tokens, and access-token refresh sessions    | Local process memory |
+| Active commands, cancellation tokens, and run execution capabilities       | Local process memory |
 | Source files and build artifacts                                           | User workspace       |
 | Model and authentication provider secrets                                  | Cloud deployment     |
 
@@ -123,7 +123,7 @@ sequenceDiagram
     UI->>C: Create or recover thread
     UI->>S: Start run with user token and workspace identity
     S->>A: Prepare local run
-    A->>C: Create or recover durable run
+    A->>C: Create or recover durable run and bind execution capability
     A->>C: Claim run and load context
     loop Model and tool turns
         A->>C: Request completion
@@ -158,8 +158,9 @@ Cloud and local authorization solve different problems:
   checks ownership before reading or changing user records.
 - **Local authorization:** a machine-local pairing credential bootstraps a
   local session used for filesystem and agent endpoints.
-- **Agent delegation:** the browser provides a short-lived user token to the
-  local server for a run. Refreshes must remain bound to the same cloud user.
+- **Agent delegation:** the browser provides a fresh user token only to create
+  the run. Convex then binds a random, run-scoped capability to that run, and
+  the local executor uses it without depending on the browser session.
 - **Desktop trust:** Electron isolates the renderer, validates its origin, and
   exposes only a constrained IPC surface.
 
@@ -176,6 +177,7 @@ The distributed run protocol assumes that requests can time out after either
 succeeding or failing. Its main safeguards are:
 
 - idempotent creation keyed by a client submission identifier;
+- request-independent local launch and run-scoped executor capabilities;
 - renewable claims that reject stale workers;
 - durable transcript and tool-job updates;
 - explicit terminal states and failure reconciliation;

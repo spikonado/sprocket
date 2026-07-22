@@ -3,7 +3,6 @@ use convex::{FunctionResult, QuerySubscription, Value};
 use serde::Deserialize;
 use sprocket_convex_provider::Client as ConvexProviderClient;
 use std::collections::BTreeMap;
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -13,23 +12,6 @@ use crate::types::{
 
 const CREATE_RUN_MAX_ATTEMPTS: usize = 3;
 const CREATE_RUN_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
-
-pub async fn authenticated_user_id(
-    deployment_url: &str,
-    auth_token: String,
-) -> anyhow::Result<String> {
-    let client = ConvexProviderClient::new(deployment_url, "completion:complete").await?;
-    client
-        .set_auth_token_fetcher(Arc::new(move |_| {
-            let auth_token = auth_token.clone();
-            Box::pin(async move { Ok(auth_token) })
-        }))
-        .await;
-    let result = client
-        .query("agentRuntime:authenticatedUserId", BTreeMap::new())
-        .await?;
-    decode_function_result(result, "agentRuntime:authenticatedUserId")
-}
 
 #[derive(Clone)]
 pub(crate) struct RuntimeClient {
@@ -42,8 +24,9 @@ impl RuntimeClient {
             "sprocket-agent: initializing Convex client for thread {}",
             request.thread_id
         );
-        let client =
-            ConvexProviderClient::new(&request.deployment_url, "completion:complete").await?;
+        let client = ConvexProviderClient::new(&request.deployment_url, "completion:complete")
+            .await?
+            .with_execution_secret(request.execution_secret.clone());
         client
             .set_auth_token_fetcher(request.auth_token_fetcher.clone())
             .await;
@@ -61,8 +44,9 @@ impl RuntimeClient {
     pub(crate) async fn query_json<T: for<'de> Deserialize<'de>>(
         &self,
         function: &str,
-        args: BTreeMap<String, Value>,
+        mut args: BTreeMap<String, Value>,
     ) -> anyhow::Result<T> {
+        self.add_execution_secret(&mut args);
         eprintln!("sprocket-agent: query start {function}");
         let result = self.client.query(function, args).await?;
         eprintln!("sprocket-agent: query done {function}");
@@ -72,8 +56,9 @@ impl RuntimeClient {
     pub(crate) async fn mutation_json<T: for<'de> Deserialize<'de>>(
         &self,
         function: &str,
-        args: BTreeMap<String, Value>,
+        mut args: BTreeMap<String, Value>,
     ) -> anyhow::Result<T> {
+        self.add_execution_secret(&mut args);
         eprintln!("sprocket-agent: mutation start {function}");
         let result = self.client.mutation(function, args).await?;
         eprintln!("sprocket-agent: mutation done {function}");
@@ -83,8 +68,9 @@ impl RuntimeClient {
     pub(crate) async fn action_json<T: for<'de> Deserialize<'de>>(
         &self,
         function: &str,
-        args: BTreeMap<String, Value>,
+        mut args: BTreeMap<String, Value>,
     ) -> anyhow::Result<T> {
+        self.add_execution_secret(&mut args);
         eprintln!("sprocket-agent: action start {function}");
         let result = self.client.action(function, args).await?;
         eprintln!("sprocket-agent: action done {function}");
@@ -139,6 +125,7 @@ impl RuntimeClient {
             "serviceTier".to_string(),
             request.service_tier.clone().into(),
         );
+        self.add_execution_secret(&mut args);
 
         let mut retry_delay = CREATE_RUN_INITIAL_RETRY_DELAY;
         let mut last_error = None;
@@ -260,9 +247,9 @@ impl RuntimeClient {
         &self,
         run_id: &str,
     ) -> anyhow::Result<QuerySubscription> {
-        self.client
-            .subscribe("agentRuntime:isFinished", self.run_args(run_id))
-            .await
+        let mut args = self.run_args(run_id);
+        self.add_execution_secret(&mut args);
+        self.client.subscribe("agentRuntime:isFinished", args).await
     }
 
     pub(crate) fn decode_run_finished_update(result: FunctionResult) -> anyhow::Result<bool> {
@@ -319,13 +306,25 @@ impl RuntimeClient {
         if let Some(last_error) = last_error {
             args.insert("lastError".to_string(), last_error.to_string().into());
         }
-        self.mutation_json("agentRuntime:finalizeRun", args).await
+        self.mutation_json("agentRuntime:finalizeExecutorRun", args)
+            .await
     }
 
     fn run_args(&self, run_id: &str) -> BTreeMap<String, Value> {
         let mut args = BTreeMap::new();
         args.insert("runId".to_string(), run_id.to_string().into());
         args
+    }
+
+    fn add_execution_secret(&self, args: &mut BTreeMap<String, Value>) {
+        args.insert(
+            "executionSecret".to_string(),
+            self.client
+                .execution_secret()
+                .expect("runtime client has an execution secret")
+                .to_string()
+                .into(),
+        );
     }
 
     fn run_args_with_claim(&self, run_id: &str, claim_id: &str) -> BTreeMap<String, Value> {

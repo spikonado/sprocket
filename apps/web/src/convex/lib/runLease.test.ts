@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	RUN_CLAIM_LEASE_DURATION_MS,
 	canRegisterCompletionAttempt,
-	canFinalizeAfterClaimFailure,
+	ownsActiveRunClaim,
 	canStartRunWithClaim,
 	claimExpiresAt,
 	isCurrentCompletionAttempt,
@@ -40,23 +40,25 @@ describe('run claim leases', () => {
 		expect(canStartRunWithClaim(run, 'claim-b', 100)).toBe(true);
 	});
 
-	it('only terminalizes state owned by the same claim after claim uncertainty', () => {
-		expect(canFinalizeAfterClaimFailure({ status: 'queued' }, 'claim-a')).toBe(false);
+	it('only treats a matching unexpired claim as active ownership', () => {
+		const active = { status: 'running', claimId: 'claim-a', claimExpiresAt: 200 };
+		expect(ownsActiveRunClaim({ status: 'queued' }, 'claim-a', 100)).toBe(false);
+		expect(ownsActiveRunClaim(active, 'claim-a', 100)).toBe(true);
+		expect(ownsActiveRunClaim(active, 'claim-b', 100)).toBe(false);
 		expect(
-			canFinalizeAfterClaimFailure(
-				{ status: 'running', claimId: 'claim-a', claimExpiresAt: 200 },
-				'claim-a'
-			)
-		).toBe(true);
-		expect(
-			canFinalizeAfterClaimFailure(
-				{ status: 'awaiting_executor', claimId: 'claim-b', claimExpiresAt: 200 },
-				'claim-a'
+			ownsActiveRunClaim(
+				{ status: 'running', claimId: 'claim-a', claimExpiresAt: 100 },
+				'claim-a',
+				100
 			)
 		).toBe(false);
-		expect(canFinalizeAfterClaimFailure({ status: 'failed', claimId: 'claim-a' }, 'claim-a')).toBe(
-			false
-		);
+		expect(
+			ownsActiveRunClaim(
+				{ status: 'failed', claimId: 'claim-a', claimExpiresAt: 200 },
+				'claim-a',
+				100
+			)
+		).toBe(false);
 	});
 
 	it('only lets strictly newer completion attempts of the current claim take the stream', () => {

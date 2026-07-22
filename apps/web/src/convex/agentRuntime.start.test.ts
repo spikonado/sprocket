@@ -7,7 +7,8 @@ import { initConvexTest, seedOwnedThread } from './test.setup';
 async function createQueuedRun(
 	asUser: ReturnType<ReturnType<typeof initConvexTest>['withIdentity']>,
 	threadId: Id<'threadRecords'>,
-	submissionId: string
+	submissionId: string,
+	executionSecret: string
 ) {
 	return await asUser.mutation(api.agentRuntime.createRun, {
 		submissionId,
@@ -16,7 +17,8 @@ async function createQueuedRun(
 		imageUploadIds: [],
 		selectedModel: 'gpt-5.6-sol',
 		reasoningEffort: 'medium',
-		serviceTier: 'standard'
+		serviceTier: 'standard',
+		executionSecret
 	});
 }
 
@@ -24,11 +26,13 @@ describe('agentRuntime.start', () => {
 	it('claims a queued run and renews the same claim', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		const { runId } = await createQueuedRun(asUser, threadId, 'sub-claim');
+		const executionSecret = 'start-claim-secret';
+		const { runId } = await createQueuedRun(asUser, threadId, 'sub-claim', executionSecret);
 
 		const claimed = await asUser.mutation(api.agentRuntime.start, {
 			claimId: 'claim-a',
-			runId
+			runId,
+			executionSecret
 		});
 		expect(claimed.claimed).toBe(true);
 		expect(claimed.claimExpiresAt).toBeTypeOf('number');
@@ -42,7 +46,8 @@ describe('agentRuntime.start', () => {
 
 		const renewed = await asUser.mutation(api.agentRuntime.start, {
 			claimId: 'claim-a',
-			runId
+			runId,
+			executionSecret
 		});
 		expect(renewed.claimed).toBe(true);
 		expect(renewed.claimExpiresAt).toBeGreaterThanOrEqual(claimed.claimExpiresAt ?? 0);
@@ -52,20 +57,60 @@ describe('agentRuntime.start', () => {
 	it('refuses a different claim while the lease is active', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		const { runId } = await createQueuedRun(asUser, threadId, 'sub-busy');
+		const executionSecret = 'start-busy-secret';
+		const { runId } = await createQueuedRun(asUser, threadId, 'sub-busy', executionSecret);
 
-		await asUser.mutation(api.agentRuntime.start, { claimId: 'claim-a', runId });
+		await asUser.mutation(api.agentRuntime.start, { claimId: 'claim-a', runId, executionSecret });
 		await expect(
-			asUser.mutation(api.agentRuntime.start, { claimId: 'claim-b', runId })
+			asUser.mutation(api.agentRuntime.start, { claimId: 'claim-b', runId, executionSecret })
 		).resolves.toEqual({ claimed: false });
+	});
+
+	it('rejects completion writes and terminal cleanup after a claim expires', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'start-expired-writes-secret';
+		const { runId } = await createQueuedRun(
+			asUser,
+			threadId,
+			'sub-expired-writes',
+			executionSecret
+		);
+		await asUser.mutation(api.agentRuntime.start, {
+			claimId: 'claim-expired',
+			runId,
+			executionSecret
+		});
+		await t.run(async (ctx) => {
+			await ctx.db.patch(runId, { claimExpiresAt: Date.now() - 1 });
+		});
+
+		await expect(
+			asUser.mutation(api.agentRuntime.registerCompletionAttempt, {
+				runId,
+				claimId: 'claim-expired',
+				attemptSeq: 1,
+				executionSecret
+			})
+		).rejects.toThrow('Run is no longer active.');
+		await expect(
+			asUser.mutation(api.agentRuntime.finalizeClaimFailure, {
+				runId,
+				claimId: 'claim-expired',
+				text: 'stale failure',
+				lastError: 'claim expired',
+				executionSecret
+			})
+		).resolves.toBe(false);
 	});
 
 	it('takes over an expired claim, hides in-flight jobs, and clears partial response', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId, workspaceSessionId } = await seedOwnedThread(t);
-		const { runId } = await createQueuedRun(asUser, threadId, 'sub-takeover');
+		const executionSecret = 'start-takeover-secret';
+		const { runId } = await createQueuedRun(asUser, threadId, 'sub-takeover', executionSecret);
 
-		await asUser.mutation(api.agentRuntime.start, { claimId: 'claim-a', runId });
+		await asUser.mutation(api.agentRuntime.start, { claimId: 'claim-a', runId, executionSecret });
 
 		const { responseMessageId, pendingJobId, completedJobId } = await t.run(async (ctx) => {
 			const responseMessageId = await ctx.db.insert('threadMessages', {
@@ -124,7 +169,8 @@ describe('agentRuntime.start', () => {
 
 		const takeover = await asUser.mutation(api.agentRuntime.start, {
 			claimId: 'claim-b',
-			runId
+			runId,
+			executionSecret
 		});
 		expect(takeover.claimed).toBe(true);
 		expect(takeover.claimExpiresAt).toBeGreaterThan(Date.now());

@@ -206,6 +206,18 @@ impl CommandSessionManager {
         self.sessions.lock().await.clear();
     }
 
+    /// Best-effort synchronous terminate used when async cleanup cannot run
+    /// (for example during `Drop` outside a Tokio runtime).
+    pub fn terminate_all(&self) {
+        let Ok(mut sessions) = self.sessions.try_lock() else {
+            return;
+        };
+        for session in sessions.values() {
+            let _ = session.terminate();
+        }
+        sessions.clear();
+    }
+
     async fn observe_session(
         &self,
         session: Arc<CommandSession>,
@@ -913,6 +925,31 @@ mod tests {
         assert!(!finished.success);
         tokio::time::sleep(Duration::from_millis(300)).await;
         assert!(!root.join("leaked.txt").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn terminate_all_clears_active_sessions() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone());
+        let started = sessions
+            .exec_command(
+                WorkspaceCancellation::new(),
+                "sleep 5",
+                ".",
+                &default_command_shell(),
+                5_000,
+                10,
+                20_000,
+            )
+            .await
+            .expect("command should start");
+        let session_id = started.session_id.expect("session id");
+        assert!(sessions.sessions.lock().await.contains_key(&session_id));
+
+        sessions.terminate_all();
+        assert!(sessions.sessions.lock().await.is_empty());
+        tokio::time::sleep(Duration::from_millis(300)).await;
         fs::remove_dir_all(root).unwrap();
     }
 

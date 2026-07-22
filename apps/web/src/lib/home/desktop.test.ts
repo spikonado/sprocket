@@ -7,12 +7,7 @@ import {
 	resolveDraftRunSubmissionId,
 	resolveSubmissionId
 } from '$lib/home/desktop';
-import type {
-	AgentAuthStatus,
-	DesktopApi,
-	RunState,
-	WorkspaceSessionLocation
-} from '$lib/types/sprocket';
+import type { DesktopApi, RunState, WorkspaceSessionLocation } from '$lib/types/sprocket';
 
 const recoveredSubmission = {
 	prompt: 'Inspect the robot',
@@ -29,9 +24,7 @@ function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 		resolveWorkspacePath: vi.fn(),
 		listWorkspaceSessions: vi.fn(),
 		attachWorkspaceSession: vi.fn(),
-		runAgent,
-		waitForAgentAuthRefresh: vi.fn().mockResolvedValue('complete'),
-		refreshAgentAuth: vi.fn()
+		runAgent
 	} as unknown as DesktopApi;
 }
 
@@ -41,9 +34,6 @@ function launchArgs(
 ): Parameters<typeof launchAgentRun>[0] {
 	return {
 		authToken: 'token-1',
-		expectedUserId: 'user-1',
-		getAccessToken: vi.fn(),
-		getCurrentUserId: () => 'user-1',
 		onError: vi.fn(),
 		onStarted: vi.fn(),
 		threadId: 'thread-1' as never,
@@ -93,7 +83,6 @@ describe('launchAgentRun', () => {
 		launchAgentRun(launchArgs({ desktopApi, onStarted }));
 
 		expect(runAgent).toHaveBeenCalledWith({
-			authSessionId: expect.any(String),
 			authToken: 'token-1',
 			threadId: 'thread-1',
 			prompt: 'Inspect src/lib.rs',
@@ -119,126 +108,6 @@ describe('launchAgentRun', () => {
 		await vi.waitFor(() => {
 			expect(onError).toHaveBeenCalledWith(launchError);
 		});
-	});
-
-	it('force-refreshes the access token when the running agent requests one', async () => {
-		const desktopApi = createDesktopApi(vi.fn().mockResolvedValue({ runId: 'run-1' }));
-		vi.mocked(desktopApi.waitForAgentAuthRefresh)
-			.mockResolvedValueOnce('refreshRequired')
-			.mockResolvedValueOnce('complete');
-		const getAccessToken = vi.fn().mockResolvedValue('token-2');
-
-		launchAgentRun(launchArgs({ desktopApi, getAccessToken }));
-
-		await vi.waitFor(() => {
-			expect(desktopApi.refreshAgentAuth).toHaveBeenCalledWith(expect.any(String), 'token-2');
-		});
-		expect(getAccessToken).toHaveBeenCalledWith({ forceRefreshToken: true });
-	});
-
-	it('rechecks a missing auth session delivered after launch acknowledgement', async () => {
-		vi.useFakeTimers();
-		try {
-			const staleStatus = deferred<AgentAuthStatus>();
-			const activeStatus = deferred<AgentAuthStatus>();
-			const desktopApi = createDesktopApi(vi.fn().mockResolvedValue({ runId: 'run-1' }));
-			vi.mocked(desktopApi.waitForAgentAuthRefresh)
-				.mockReturnValueOnce(staleStatus.promise)
-				.mockReturnValueOnce(activeStatus.promise);
-			const getAccessToken = vi.fn().mockResolvedValue('token-2');
-			const onError = vi.fn();
-			const onStarted = vi.fn();
-
-			launchAgentRun(launchArgs({ desktopApi, getAccessToken, onError, onStarted }));
-
-			await vi.waitFor(() => expect(onStarted).toHaveBeenCalledWith('run-1'));
-			staleStatus.resolve('notFound');
-			await staleStatus.promise;
-			await vi.advanceTimersByTimeAsync(250);
-			expect(desktopApi.waitForAgentAuthRefresh).toHaveBeenCalledTimes(2);
-
-			activeStatus.resolve('refreshRequired');
-			await activeStatus.promise;
-			await vi.waitFor(() => {
-				expect(desktopApi.refreshAgentAuth).toHaveBeenCalledWith(expect.any(String), 'token-2');
-			});
-			expect(onError).not.toHaveBeenCalled();
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	it('stops polling after a missing session is confirmed following launch', async () => {
-		vi.useFakeTimers();
-		try {
-			const staleStatus = deferred<AgentAuthStatus>();
-			const desktopApi = createDesktopApi(vi.fn().mockResolvedValue({ runId: 'run-1' }));
-			vi.mocked(desktopApi.waitForAgentAuthRefresh)
-				.mockReturnValueOnce(staleStatus.promise)
-				.mockResolvedValue('notFound');
-			const onError = vi.fn();
-			const onStarted = vi.fn();
-
-			launchAgentRun(launchArgs({ desktopApi, onError, onStarted }));
-
-			await vi.waitFor(() => expect(onStarted).toHaveBeenCalledWith('run-1'));
-			staleStatus.resolve('notFound');
-			await staleStatus.promise;
-			await vi.advanceTimersByTimeAsync(4_000);
-
-			expect(desktopApi.waitForAgentAuthRefresh).toHaveBeenCalledTimes(2);
-			expect(onError).not.toHaveBeenCalled();
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	it('keeps polling while launch is pending and the auth session is not ready yet', async () => {
-		vi.useFakeTimers();
-		try {
-			const launch = deferred<{ runId: never }>();
-			const desktopApi = createDesktopApi(vi.fn().mockReturnValue(launch.promise));
-			vi.mocked(desktopApi.waitForAgentAuthRefresh).mockResolvedValue('notFound');
-			const onError = vi.fn();
-			const onStarted = vi.fn();
-
-			launchAgentRun(launchArgs({ desktopApi, onError, onStarted }));
-			await vi.advanceTimersByTimeAsync(1_000);
-			expect(onError).not.toHaveBeenCalled();
-			expect(vi.mocked(desktopApi.waitForAgentAuthRefresh).mock.calls.length).toBeGreaterThan(1);
-
-			launch.resolve({ runId: 'run-1' as never });
-			await vi.waitFor(() => expect(onStarted).toHaveBeenCalledWith('run-1'));
-			expect(onError).not.toHaveBeenCalled();
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	it('surfaces the launch error and stops auth polling when the local API is unavailable', async () => {
-		vi.useFakeTimers();
-		try {
-			const launch = deferred<{ runId: never }>();
-			const desktopApi = createDesktopApi(vi.fn().mockReturnValue(launch.promise));
-			vi.mocked(desktopApi.waitForAgentAuthRefresh).mockRejectedValue(
-				new Error('local API unavailable')
-			);
-			const onError = vi.fn();
-			const launchError = new Error('desktop launch failed');
-
-			launchAgentRun(launchArgs({ desktopApi, onError }));
-			await vi.advanceTimersByTimeAsync(500);
-			launch.reject(launchError);
-			await vi.waitFor(() => {
-				expect(onError).toHaveBeenCalledWith(launchError);
-			});
-			expect(onError).toHaveBeenCalledOnce();
-			const pollCountAfterFailure = vi.mocked(desktopApi.waitForAgentAuthRefresh).mock.calls.length;
-			await vi.advanceTimersByTimeAsync(4_000);
-			expect(desktopApi.waitForAgentAuthRefresh).toHaveBeenCalledTimes(pollCountAfterFailure);
-		} finally {
-			vi.useRealTimers();
-		}
 	});
 });
 

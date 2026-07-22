@@ -24,13 +24,13 @@ const RUN_CLAIM_EXPIRY_SAFETY_MARGIN: Duration = Duration::from_secs(5);
 const RUN_CLAIM_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(8);
 const FAILURE_CLEANUP_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(5);
 const START_FAILURE_CLEANUP_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(2_500);
+const START_FAILURE_RECONCILE_TIMEOUT: Duration = Duration::from_secs(10);
 const FAILURE_CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(250);
 
 pub struct AgentRun {
     request: RunAgentRequest,
     runtime: RuntimeClient,
     run_id: String,
-    user_id: String,
     claim_id: String,
     workspace_root: std::path::PathBuf,
 }
@@ -38,10 +38,6 @@ pub struct AgentRun {
 impl AgentRun {
     pub fn run_id(&self) -> &str {
         &self.run_id
-    }
-
-    pub fn user_id(&self) -> &str {
-        &self.user_id
     }
 }
 
@@ -458,6 +454,10 @@ pub async fn start_agent_run(request: RunAgentRequest) -> anyhow::Result<AgentRu
     let workspace_root = resolve_workspace_root(&request.workspace_path)?;
 
     let created_run = runtime.create_run(&request).await?;
+    // The browser token is only needed to create and bind the run. Every later
+    // operation uses the run-scoped capability, so browser lifetime and token
+    // refresh can no longer interrupt an active local executor.
+    runtime.completion_client().clear_auth().await;
     if created_run.created {
         eprintln!("sprocket-agent: created run {}", created_run.run_id);
     } else {
@@ -467,13 +467,10 @@ pub async fn start_agent_run(request: RunAgentRequest) -> anyhow::Result<AgentRu
         );
     }
     let run_id = created_run.run_id;
-    let user_id = created_run.user_id;
-
     Ok(AgentRun {
         request,
         runtime,
         run_id,
-        user_id,
         claim_id,
         workspace_root,
     })
@@ -484,17 +481,44 @@ pub async fn finalize_failed_start(
     startup_error: String,
 ) -> anyhow::Result<()> {
     let runtime = RuntimeClient::from_request(&request).await?;
+    runtime.completion_client().clear_auth().await;
     let text = format!("Run failed before the model started: {startup_error}");
-    cleanup_twice(
-        &format!(
-            "startup failure cleanup for submission {}",
-            request.submission_id
-        ),
-        START_FAILURE_CLEANUP_ATTEMPT_TIMEOUT,
-        || runtime.finalize_failed_start(&request, &text, &startup_error),
-    )
-    .await
-    .map(|_| ())
+    let deadline = Instant::now() + START_FAILURE_RECONCILE_TIMEOUT;
+    loop {
+        let result = timeout(
+            START_FAILURE_CLEANUP_ATTEMPT_TIMEOUT,
+            runtime.finalize_failed_start(&request, &text, &startup_error),
+        )
+        .await;
+        match result {
+            Ok(Ok(true)) => return Ok(()),
+            Ok(Ok(false)) => {
+                eprintln!(
+                    "sprocket-agent: startup failure cleanup has not observed submission {}; retrying",
+                    request.submission_id
+                );
+            }
+            Ok(Err(error)) => {
+                eprintln!(
+                    "sprocket-agent: startup failure cleanup for submission {} failed; retrying: {error}",
+                    request.submission_id
+                );
+            }
+            Err(_) => {
+                eprintln!(
+                    "sprocket-agent: startup failure cleanup for submission {} timed out; retrying",
+                    request.submission_id
+                );
+            }
+        }
+        if Instant::now() + FAILURE_CLEANUP_RETRY_DELAY >= deadline {
+            return Err(anyhow!(
+                "startup failure cleanup did not reconcile submission {} before its deadline",
+                request.submission_id
+            ));
+        }
+        sleep(FAILURE_CLEANUP_RETRY_DELAY).await;
+    }
 }
 
 pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
@@ -502,7 +526,6 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
         request,
         runtime,
         run_id,
-        user_id: _,
         claim_id,
         workspace_root,
     } = run;
