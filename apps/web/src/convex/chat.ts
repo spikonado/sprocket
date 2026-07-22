@@ -38,8 +38,11 @@ export const latestRunForThread = query({
 
 		const jobs: Doc<'executorJobs'>[] = await ctx.db
 			.query('executorJobs')
-			.withIndex('by_runId_sequence', (query) => query.eq('runId', latestRun._id))
-			.collect();
+			.withIndex('by_runId_hidden_sequence', (query) =>
+				query.eq('runId', latestRun._id).eq('hidden', false)
+			)
+			.order('desc')
+			.take(60);
 		const promptMessage = latestRun.promptMessageId
 			? await ctx.db.get(latestRun.promptMessageId)
 			: null;
@@ -47,7 +50,7 @@ export const latestRunForThread = query({
 		return {
 			threadId: args.threadId,
 			run: latestRun,
-			jobs: jobs.filter((job) => !job.hidden).sort((left, right) => left.sequence - right.sequence),
+			jobs: jobs.reverse(),
 			...(promptMessage?.type === 'prompt'
 				? {
 						prompt: promptMessage.text,

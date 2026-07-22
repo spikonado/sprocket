@@ -112,16 +112,22 @@ describe('agentRuntime.start', () => {
 
 		await asUser.mutation(api.agentRuntime.start, { claimId: 'claim-a', runId, executionSecret });
 
-		const { responseMessageId, pendingJobId, completedJobId } = await t.run(async (ctx) => {
+		const seeded = await t.run(async (ctx) => {
+			const run = await ctx.db.get(runId);
+			if (!run?.completionStreamStateId) {
+				throw new Error('Expected completion stream state');
+			}
+			await ctx.db.patch(run.completionStreamStateId, {
+				sequence: 3,
+				streamAttemptId: 'attempt-a'
+			});
 			const responseMessageId = await ctx.db.insert('threadMessages', {
 				threadId,
 				runId,
 				userId: 'user_alice',
 				type: 'response',
 				text: 'partial',
-				parts: [{ type: 'text', id: 'text-1', text: 'partial', turnId: 'turn-1' }],
-				streamSequence: 3,
-				streamAttemptId: 'attempt-a'
+				parts: [{ type: 'text', id: 'text-1', text: 'partial', turnId: 'turn-1' }]
 			});
 			const pendingJobId = await ctx.db.insert('executorJobs', {
 				workspaceSessionId,
@@ -164,7 +170,12 @@ describe('agentRuntime.start', () => {
 				completionAttemptSeq: 4,
 				claimExpiresAt: Date.now() - 1
 			});
-			return { responseMessageId, pendingJobId, completedJobId };
+			return {
+				responseMessageId,
+				streamStateId: run.completionStreamStateId,
+				pendingJobId,
+				completedJobId
+			};
 		});
 
 		const takeover = await asUser.mutation(api.agentRuntime.start, {
@@ -177,10 +188,11 @@ describe('agentRuntime.start', () => {
 
 		const state = await t.run(async (ctx) => {
 			const run = await ctx.db.get(runId);
-			const response = await ctx.db.get(responseMessageId);
-			const pending = await ctx.db.get(pendingJobId);
-			const completed = await ctx.db.get(completedJobId);
-			return { run, response, pending, completed };
+			const response = await ctx.db.get(seeded.responseMessageId);
+			const stream = await ctx.db.get(seeded.streamStateId);
+			const pending = await ctx.db.get(seeded.pendingJobId);
+			const completed = await ctx.db.get(seeded.completedJobId);
+			return { run, response, stream, pending, completed };
 		});
 
 		expect(state.run).toMatchObject({
@@ -192,10 +204,12 @@ describe('agentRuntime.start', () => {
 		expect(state.run?.claimExpiresAt).toBe(takeover.claimExpiresAt);
 		expect(state.response).toMatchObject({
 			text: '',
-			parts: [],
-			streamSequence: 0
+			parts: []
 		});
-		expect(state.response?.streamAttemptId ?? undefined).toBeUndefined();
+		expect(state.stream).toMatchObject({
+			sequence: 0
+		});
+		expect(state.stream?.streamAttemptId ?? undefined).toBeUndefined();
 		expect(state.pending).toMatchObject({
 			hidden: true,
 			status: 'cancelled',

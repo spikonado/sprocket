@@ -78,7 +78,8 @@ export default defineSchema({
 		lastError: v.optional(v.string()),
 		activeJobId: v.optional(v.id('executorJobs')),
 		promptMessageId: v.optional(v.id('threadMessages')),
-		responseMessageId: v.optional(v.id('threadMessages'))
+		responseMessageId: v.optional(v.id('threadMessages')),
+		completionStreamStateId: v.optional(v.id('completionStreamStates'))
 	})
 		.index('by_threadId_startedAt', ['threadId', 'startedAt'])
 		.index('by_threadId_status_startedAt', ['threadId', 'status', 'startedAt'])
@@ -93,8 +94,12 @@ export default defineSchema({
 		type: vThreadMessageType,
 		text: v.string(),
 		imageUploadIds: v.optional(v.array(v.id('imageUploads'))),
-		parts: v.optional(v.array(vAssistantMessagePart)),
-		streamSequence: v.optional(v.number()),
+		parts: v.optional(v.array(vAssistantMessagePart))
+	}),
+	completionStreamStates: defineTable({
+		runId: v.id('runs'),
+		userId: v.string(),
+		sequence: v.number(),
 		streamAttemptId: v.optional(v.string())
 	}),
 	imageUploads: defineTable({
@@ -128,4 +133,5 @@ export default defineSchema({
 		.index('by_workspaceSessionId_sequence', ['workspaceSessionId', 'sequence'])
 		.index('by_threadId_sequence', ['threadId', 'sequence'])
 		.index('by_runId_sequence', ['runId', 'sequence'])
+		.index('by_runId_hidden_sequence', ['runId', 'hidden', 'sequence'])
 });

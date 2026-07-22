@@ -226,6 +226,8 @@
 	function getCurrentUserId() {
 		return $authState.user?.id ?? null;
 	}
+	const workspaceNameCache = new SvelteMap<Id<'workspaceSessions'>, string>();
+	let workspaceNameCacheUserId: string | null = null;
 
 	function updateComposerAttachment(localId: string, patch: Partial<ComposerAttachment>) {
 		const attachment = composerAttachments.find((entry) => entry.localId === localId);
@@ -404,7 +406,30 @@
 			};
 		})
 	);
-	const threads = $derived((threadsQuery.data ?? []) as ThreadSummary[]);
+	$effect(() => {
+		const userId = getCurrentUserId();
+		if (workspaceNameCacheUserId !== userId) {
+			workspaceNameCache.clear();
+			workspaceNameCacheUserId = userId;
+		}
+		for (const workspaceSession of workspaceSessions) {
+			workspaceNameCache.set(workspaceSession._id, workspaceSession.workspaceName);
+		}
+	});
+	const threads = $derived.by<ThreadSummary[]>(() => {
+		const workspaceNames = new Map(
+			workspaceSessions.map((workspaceSession) => [
+				workspaceSession._id,
+				workspaceSession.workspaceName
+			])
+		);
+		return (threadsQuery.data ?? []).flatMap((thread) => {
+			const workspaceName =
+				workspaceNames.get(thread.workspaceSessionId) ??
+				workspaceNameCache.get(thread.workspaceSessionId);
+			return workspaceName === undefined ? [] : ([{ ...thread, workspaceName }] as ThreadSummary[]);
+		});
+	});
 	const currentActiveThread = $derived(dataForThread(activeThreadQuery.data, currentThreadId));
 	const currentLatestRunData = $derived(dataForThread(latestRunQuery.data, currentThreadId));
 	const currentHistoryMessagesData = $derived(
