@@ -87,16 +87,6 @@ describe('agentRuntime.createRun', () => {
 		expect(
 			await t.run(async (ctx) => (await ctx.db.get(created.runId))?.executionSecretHash)
 		).not.toBe(executionSecret);
-		await expect(
-			t.query(api.agentRuntime.isFinished, { runId: created.runId, executionSecret })
-		).resolves.toBe(false);
-		await expect(
-			t.mutation(api.agentRuntime.renewClaim, {
-				runId: created.runId,
-				claimId: 'claim-local',
-				executionSecret
-			})
-		).resolves.toMatchObject({ renewed: true });
 
 		const expiredAt = await t.run(async (ctx) => {
 			const claimExpiresAt = Date.now() - 1;

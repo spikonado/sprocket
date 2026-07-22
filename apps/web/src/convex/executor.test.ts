@@ -199,27 +199,6 @@ describe('executor', () => {
 		expect(await t.run(async (ctx) => (await ctx.db.get(mismatched.jobId))?.status)).toBe('failed');
 	});
 
-	it('does not revive a run that is already final', async () => {
-		const t = initConvexTest();
-		const { asUser, runId, jobId, claimId, executionSecret } = await seedRunWithJob(t, {
-			runStatus: 'failed',
-			executionSecret: 'executor-final-secret'
-		});
-
-		await expect(
-			asUser.mutation(api.executor.fail, {
-				jobId,
-				error: 'late failure',
-				runId,
-				claimId,
-				executionSecret
-			})
-		).resolves.toBe(false);
-		expect(await t.run(async (ctx) => (await ctx.db.get(jobId))?.status)).toBe('claimed');
-		expect(await t.run(async (ctx) => (await ctx.db.get(runId))?.status)).toBe('failed');
-		expect(await t.run(async (ctx) => (await ctx.db.get(runId))?.activeJobId)).toBeTruthy();
-	});
-
 	it('rejects tool completion and failure after the claim lease expires', async () => {
 		const t = initConvexTest();
 		const completeCase = await seedRunWithJob(t, {

@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
 	RUN_CLAIM_LEASE_DURATION_MS,
 	canRegisterCompletionAttempt,
-	canFinalizeAfterClaimFailure,
 	ownsActiveRunClaim,
 	canStartRunWithClaim,
 	claimExpiresAt,
@@ -41,7 +40,7 @@ describe('run claim leases', () => {
 		expect(canStartRunWithClaim(run, 'claim-b', 100)).toBe(true);
 	});
 
-	it('only terminalizes state owned by the same claim after claim uncertainty', () => {
+	it('only treats a matching unexpired claim as active ownership', () => {
 		const active = { status: 'running', claimId: 'claim-a', claimExpiresAt: 200 };
 		expect(ownsActiveRunClaim({ status: 'queued' }, 'claim-a', 100)).toBe(false);
 		expect(ownsActiveRunClaim(active, 'claim-a', 100)).toBe(true);
@@ -53,11 +52,12 @@ describe('run claim leases', () => {
 				100
 			)
 		).toBe(false);
-		expect(canFinalizeAfterClaimFailure(active, 'claim-a', 100)).toBe(
-			ownsActiveRunClaim(active, 'claim-a', 100)
-		);
 		expect(
-			canFinalizeAfterClaimFailure({ status: 'failed', claimId: 'claim-a' }, 'claim-a', 100)
+			ownsActiveRunClaim(
+				{ status: 'failed', claimId: 'claim-a', claimExpiresAt: 200 },
+				'claim-a',
+				100
+			)
 		).toBe(false);
 	});
 
