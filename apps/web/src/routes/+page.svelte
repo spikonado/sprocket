@@ -1063,7 +1063,10 @@
 				submissionTrackingKey = getComposerRecoveryKey(submittedUserId, recoveryScope);
 				latestSubmissionSequencesByRecoveryScope.set(submissionTrackingKey, submissionSequence);
 			}
-			const authToken = await getAccessToken();
+			// The browser is no longer involved after Convex binds the run-scoped
+			// executor capability. Start with a fresh token so closing the tab during
+			// the detached launch cannot strand it on an expiring browser token.
+			const authToken = await getAccessToken({ forceRefreshToken: true });
 			if (!authToken) {
 				recoverSubmission('Your session ended before the agent started. Sign in again.');
 				return;
@@ -1116,9 +1119,6 @@
 			launchAgentRun({
 				authToken,
 				desktopApi,
-				expectedUserId: submittedUserId,
-				getAccessToken,
-				getCurrentUserId: () => $authState.user?.id ?? null,
 				onError: (error) => {
 					if (!isSubmissionCurrent() || !isSubmittedUserCurrent()) {
 						return;

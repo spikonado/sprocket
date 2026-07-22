@@ -7,10 +7,9 @@ import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import type { JsonValue } from '@convex/lib/json';
 import { resolveLanguageModel, resolveProviderOptions } from '@convex/lib/modelRegistry';
-import { assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
-import { isCurrentCompletionAttempt } from '@convex/lib/runLease';
+import { RUN_NO_LONGER_ACTIVE, assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
+import { isCurrentCompletionAttempt, isRunClaimLeaseActive } from '@convex/lib/runLease';
 import { chargeModelUsage, checkModelUsageLimit } from '@convex/lib/rateLimits';
-import { getUserId } from '@convex/lib/auth';
 import { vModelId, vReasoningEffort, vServiceTier } from '@convex/lib/validators';
 import {
 	assertSupportedModelConfiguration,
@@ -57,6 +56,7 @@ export const complete = action({
 		claimId: v.string(),
 		attemptSeq: v.number(),
 		streamId: v.string(),
+		executionSecret: v.string(),
 		supersededStreamIds: v.optional(v.array(v.string())),
 		toolChoiceJson: v.optional(v.string()),
 		tools: v.optional(
@@ -84,13 +84,13 @@ export const complete = action({
 		}>;
 		stream_events: CompletionStreamEvent[];
 	}> => {
-		await getUserId(ctx);
 		// Register before any model work so a reconnect-replayed orphan dies
 		// on the monotonic (claimId, attemptSeq) fence instead of racing the live attempt.
 		await ctx.runMutation(api.agentRuntime.registerCompletionAttempt, {
 			runId: args.streamRunId,
 			claimId: args.claimId,
 			attemptSeq: args.attemptSeq,
+			executionSecret: args.executionSecret,
 			...(args.supersededStreamIds !== undefined
 				? { supersededStreamIds: args.supersededStreamIds }
 				: {})
@@ -124,7 +124,11 @@ export const complete = action({
 		if (args.prompt === undefined && messages === undefined) {
 			throw new Error('Either prompt or messagesJson is required.');
 		}
-		const completionContext = await prepareCompletionContext(ctx, args.streamRunId);
+		const completionContext = await prepareCompletionContext(
+			ctx,
+			args.streamRunId,
+			args.executionSecret
+		);
 		const sharedArgs = buildSharedCompletionRequest(
 			{ ...args, modelId, serviceTier },
 			tools,
@@ -151,6 +155,7 @@ export const complete = action({
 					claimId: args.claimId,
 					attemptSeq: args.attemptSeq,
 					streamId: args.streamId,
+					executionSecret: args.executionSecret,
 					initialSequence: completionContext.streamSequence
 				},
 				abortController
@@ -188,6 +193,7 @@ type CompletionAttempt = {
 	claimId: string;
 	attemptSeq: number;
 	streamId: string;
+	executionSecret: string;
 	initialSequence: number;
 };
 
@@ -197,7 +203,7 @@ async function collectStreamingCompletion(
 	attempt: CompletionAttempt,
 	abortController: AbortController
 ): Promise<CompletionActionResult> {
-	const { runId, claimId, attemptSeq, streamId, initialSequence } = attempt;
+	const { runId, claimId, attemptSeq, streamId, executionSecret, initialSequence } = attempt;
 	const streamEvents: CompletionStreamEvent[] = [];
 	const pendingEvents: CompletionStreamEvent[] = [];
 	const reasoning = new Map<
@@ -221,6 +227,7 @@ async function collectStreamingCompletion(
 					attemptSeq,
 					streamId,
 					sequence,
+					executionSecret,
 					events
 				});
 				if (outcome === 'superseded') {
@@ -496,9 +503,13 @@ async function assertCompletionStillAccepted(
 	attempt: CompletionAttempt
 ): Promise<void> {
 	const actor = await ctx.runQuery(api.agentRuntime.completionActor, {
-		runId: attempt.runId
+		runId: attempt.runId,
+		executionSecret: attempt.executionSecret
 	});
 	assertRunAcceptsModelCompletion(actor.status);
+	if (!isRunClaimLeaseActive(actor, Date.now())) {
+		throw new Error(RUN_NO_LONGER_ACTIVE);
+	}
 	if (!isCurrentCompletionAttempt(actor, attempt.claimId, attempt.attemptSeq)) {
 		throw new Error(COMPLETION_STREAM_SUPERSEDED);
 	}
@@ -531,10 +542,12 @@ function delay(milliseconds: number): Promise<void> {
 
 async function prepareCompletionContext(
 	ctx: ActionCtx,
-	runId: Id<'runs'>
+	runId: Id<'runs'>,
+	executionSecret: string
 ): Promise<{ promptCacheKey: string; streamSequence: number; userId: string }> {
 	const actor = await ctx.runQuery(api.agentRuntime.completionActor, {
-		runId
+		runId,
+		executionSecret
 	});
 	assertRunAcceptsModelCompletion(actor.status);
 	await checkModelUsageLimit(ctx, actor.userId);

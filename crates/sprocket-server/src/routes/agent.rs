@@ -1,36 +1,31 @@
-use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, anyhow};
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::post;
 use axum_extra::extract::CookieJar;
 use serde::Deserialize;
 use sprocket_agent::{
-    AuthTokenFetcher, RunAgentRequest, authenticated_user_id, finalize_failed_start, run_agent,
-    start_agent_run,
+    AuthTokenFetcher, RunAgentRequest, finalize_failed_start, run_agent, start_agent_run,
 };
-use tokio::sync::{Mutex, watch};
+use tokio::sync::oneshot;
 use tokio::time::timeout;
 use uuid::Uuid;
 
 use crate::AppState;
 use crate::auth::require_session;
 
-const AGENT_TOKEN_REFRESH_TIMEOUT: Duration = Duration::from_secs(60);
 const AGENT_START_TIMEOUT: Duration = Duration::from_secs(20);
-const AGENT_START_CLEANUP_TIMEOUT: Duration = Duration::from_secs(6);
-const AGENT_TOKEN_VERIFY_TIMEOUT: Duration = Duration::from_secs(6);
+const AGENT_START_CLEANUP_TIMEOUT: Duration = Duration::from_secs(12);
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RunAgentApiRequest {
-    auth_session_id: String,
     auth_token: String,
     submission_id: String,
     thread_id: String,
@@ -48,209 +43,20 @@ struct RunAgentStartResponse {
     run_id: String,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RefreshAgentTokenRequest {
-    auth_token: String,
-}
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-enum AgentTokenStatus {
-    RefreshRequired,
-    Complete,
-    NotFound,
-}
-
-#[derive(Clone, Default)]
-pub(crate) struct AgentTokenStore {
-    entries: Arc<Mutex<HashMap<String, Arc<AgentTokenEntry>>>>,
-}
-
-struct AgentTokenEntry {
-    state: watch::Sender<AgentTokenState>,
-}
-
-#[derive(Clone)]
-struct AgentTokenState {
-    token: String,
-    user_id: Option<String>,
-    version: u64,
-    refresh_requested: bool,
-    closed: bool,
-}
-
-impl AgentTokenStore {
-    async fn create(&self, id: &str, token: String) -> anyhow::Result<Arc<AgentTokenEntry>> {
-        if token.trim().is_empty() {
-            return Err(anyhow!("agent auth token is empty"));
-        }
-
-        let mut entries = self.entries.lock().await;
-        if entries.contains_key(id) {
-            return Err(anyhow!("agent auth session already exists"));
-        }
-
-        let (state, _) = watch::channel(AgentTokenState {
-            token,
-            user_id: None,
-            version: 0,
-            refresh_requested: false,
-            closed: false,
-        });
-        let entry = Arc::new(AgentTokenEntry { state });
-        entries.insert(id.to_string(), entry.clone());
-        Ok(entry)
-    }
-
-    async fn get(&self, id: &str) -> Option<Arc<AgentTokenEntry>> {
-        self.entries.lock().await.get(id).cloned()
-    }
-
-    async fn close(&self, id: &str, entry: &Arc<AgentTokenEntry>) {
-        entry.state.send_modify(|state| {
-            state.closed = true;
-        });
-
-        let mut entries = self.entries.lock().await;
-        if entries
-            .get(id)
-            .is_some_and(|stored| Arc::ptr_eq(stored, entry))
-        {
-            entries.remove(id);
-        }
-    }
-}
-
-impl AgentTokenEntry {
-    fn fetcher(self: &Arc<Self>) -> AuthTokenFetcher {
-        let entry = self.clone();
-        Arc::new(move |force_refresh| {
-            let entry = entry.clone();
-            Box::pin(async move { entry.fetch(force_refresh).await })
+fn static_auth_token_fetcher(token: String) -> AuthTokenFetcher {
+    Arc::new(move |_force_refresh| {
+        let token = token.clone();
+        Box::pin(async move {
+            if token.trim().is_empty() {
+                return Err(anyhow!("agent auth token is empty"));
+            }
+            Ok(token)
         })
-    }
-
-    fn nonrefreshing_fetcher(self: &Arc<Self>) -> AuthTokenFetcher {
-        let entry = self.clone();
-        Arc::new(move |_| {
-            let entry = entry.clone();
-            Box::pin(async move { entry.current_token() })
-        })
-    }
-
-    fn current_token(&self) -> anyhow::Result<String> {
-        let state = self.state.borrow();
-        if state.closed {
-            return Err(anyhow!("agent auth session is closed"));
-        }
-        Ok(state.token.clone())
-    }
-
-    fn bind_user(&self, user_id: &str) -> anyhow::Result<()> {
-        let user_id = user_id.trim();
-        if user_id.is_empty() {
-            return Err(anyhow!("agent auth user ID is empty"));
-        }
-        let mut result = Ok(());
-        self.state
-            .send_modify(|state| match state.user_id.as_deref() {
-                Some(existing_user_id) if existing_user_id != user_id => {
-                    result = Err(anyhow!("agent auth session belongs to a different user"));
-                }
-                Some(_) => {}
-                None => state.user_id = Some(user_id.to_string()),
-            });
-        result
-    }
-
-    fn require_user(&self, user_id: &str) -> anyhow::Result<()> {
-        if self.state.borrow().user_id.as_deref() == Some(user_id) {
-            Ok(())
-        } else {
-            Err(anyhow!("agent auth session belongs to a different user"))
-        }
-    }
-
-    async fn fetch(&self, force_refresh: bool) -> anyhow::Result<String> {
-        let mut state_updates = self.state.subscribe();
-        let version = {
-            let state = state_updates.borrow();
-            if state.closed {
-                return Err(anyhow!("agent auth session is closed"));
-            }
-            if !force_refresh {
-                return Ok(state.token.clone());
-            }
-            state.version
-        };
-        self.state.send_modify(|state| {
-            state.refresh_requested = true;
-        });
-
-        timeout(AGENT_TOKEN_REFRESH_TIMEOUT, async {
-            loop {
-                state_updates
-                    .changed()
-                    .await
-                    .context("agent auth session is closed")?;
-                {
-                    let state = state_updates.borrow();
-                    if state.closed {
-                        return Err(anyhow!("agent auth session is closed"));
-                    }
-                    if state.version > version {
-                        return Ok(state.token.clone());
-                    }
-                }
-            }
-        })
-        .await
-        .context("timed out waiting for the browser to refresh agent authentication")?
-    }
-
-    async fn wait_for_refresh(&self) -> AgentTokenStatus {
-        let mut state_updates = self.state.subscribe();
-        loop {
-            {
-                let state = state_updates.borrow();
-                if state.closed {
-                    return AgentTokenStatus::Complete;
-                }
-                if state.refresh_requested {
-                    return AgentTokenStatus::RefreshRequired;
-                }
-            }
-            if state_updates.changed().await.is_err() {
-                return AgentTokenStatus::Complete;
-            }
-        }
-    }
-
-    fn update(&self, token: String) -> anyhow::Result<()> {
-        if token.trim().is_empty() {
-            return Err(anyhow!("agent auth token is empty"));
-        }
-
-        if self.state.borrow().closed {
-            return Err(anyhow!("agent auth session is closed"));
-        }
-        self.state.send_modify(|state| {
-            state.token = token;
-            state.version += 1;
-            state.refresh_requested = false;
-        });
-        Ok(())
-    }
+    })
 }
 
 pub fn routes() -> axum::Router<AppState> {
-    axum::Router::new()
-        .route("/agent/run", post(run_agent_handler))
-        .route(
-            "/agent/auth/{auth_session_id}",
-            get(wait_for_agent_token_handler).put(refresh_agent_token_handler),
-        )
+    axum::Router::new().route("/agent/run", post(run_agent_handler))
 }
 
 async fn run_agent_handler(
@@ -269,18 +75,11 @@ async fn run_agent_handler(
         .await
         .map_err(ApiError::bad_request)?;
 
-    let auth_session_id = Uuid::parse_str(payload.auth_session_id.trim())
-        .map_err(|_| ApiError::bad_request(anyhow!("invalid agent auth session ID")))?
-        .to_string();
-    let token_entry = state
-        .agent_tokens
-        .create(&auth_session_id, payload.auth_token)
-        .await
-        .map_err(ApiError::bad_request)?;
-
+    let auth_token_fetcher = static_auth_token_fetcher(payload.auth_token);
     let request = RunAgentRequest {
         deployment_url: state.convex_deployment_url.clone(),
-        auth_token_fetcher: token_entry.fetcher(),
+        auth_token_fetcher: auth_token_fetcher.clone(),
+        execution_secret: format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple()),
         submission_id: payload.submission_id,
         thread_id: payload.thread_id,
         prompt: payload.prompt,
@@ -292,44 +91,45 @@ async fn run_agent_handler(
     };
 
     let cleanup_request = request.clone();
-    let cleanup_token_entry = token_entry.clone();
-    let run = match await_agent_start(
-        start_agent_run(request),
-        AGENT_START_TIMEOUT,
-        AGENT_START_CLEANUP_TIMEOUT,
-        move |startup_error| {
-            let mut cleanup_request = cleanup_request;
-            cleanup_request.auth_token_fetcher = cleanup_token_entry.nonrefreshing_fetcher();
-            finalize_failed_start(cleanup_request, startup_error)
-        },
-        &state.agent_tokens,
-        &auth_session_id,
-        &token_entry,
-    )
-    .await
-    {
-        Ok(run) => {
-            if let Err(error) = token_entry.bind_user(run.user_id()) {
-                state
-                    .agent_tokens
-                    .close(&auth_session_id, &token_entry)
-                    .await;
-                return Err(ApiError::internal(error));
-            }
-            run
-        }
-        Err(error) => return Err(ApiError::internal(error)),
-    };
-    let run_id = run.run_id().to_string();
-    let token_store = state.agent_tokens.clone();
+    let (start_result_sender, start_result_receiver) = oneshot::channel();
 
+    // Detach the complete launch before waiting for its acknowledgement. Hyper
+    // may drop this handler when the browser closes the tab; the executor must
+    // still either run or durably reconcile the submitted run.
     tokio::spawn(async move {
-        if let Err(error) = run_agent(run).await {
-            eprintln!("sprocket-server: agent run failed: {error:#}");
+        let run = await_agent_start(
+            start_agent_run(request),
+            AGENT_START_TIMEOUT,
+            AGENT_START_CLEANUP_TIMEOUT,
+            move |startup_error| {
+                let mut cleanup_request = cleanup_request;
+                cleanup_request.auth_token_fetcher = auth_token_fetcher;
+                finalize_failed_start(cleanup_request, startup_error)
+            },
+        )
+        .await;
+
+        match run {
+            Ok(run) => {
+                let run_id = run.run_id().to_string();
+                let _ = start_result_sender.send(Ok(run_id));
+                if let Err(error) = run_agent(run).await {
+                    eprintln!("sprocket-server: agent run failed: {error:#}");
+                }
+            }
+            Err(error) => {
+                let error = format!("{error:#}");
+                if start_result_sender.send(Err(error.clone())).is_err() {
+                    eprintln!("sprocket-server: detached agent launch failed: {error}");
+                }
+            }
         }
-        token_store.close(&auth_session_id, &token_entry).await;
     });
 
+    let run_id = start_result_receiver
+        .await
+        .map_err(|_| ApiError::internal(anyhow!("agent launch task stopped unexpectedly")))?
+        .map_err(|error| ApiError::internal(anyhow!(error)))?;
     Ok((StatusCode::ACCEPTED, Json(RunAgentStartResponse { run_id })))
 }
 
@@ -338,9 +138,6 @@ async fn await_agent_start<F, T, C, CF>(
     startup_timeout: Duration,
     cleanup_timeout: Duration,
     cleanup: C,
-    token_store: &AgentTokenStore,
-    auth_session_id: &str,
-    token_entry: &Arc<AgentTokenEntry>,
 ) -> anyhow::Result<T>
 where
     F: Future<Output = anyhow::Result<T>>,
@@ -357,7 +154,6 @@ where
         Err(error) => {
             let startup_error = format!("{error:#}");
             let cleanup_result = timeout(cleanup_timeout, cleanup(startup_error.clone())).await;
-            token_store.close(auth_session_id, token_entry).await;
             match cleanup_result {
                 Ok(Ok(())) => Err(error),
                 Ok(Err(cleanup_error)) => Err(anyhow!(
@@ -369,55 +165,6 @@ where
             }
         }
     }
-}
-
-async fn wait_for_agent_token_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Path(auth_session_id): Path<String>,
-) -> Result<Json<AgentTokenStatus>, ApiError> {
-    require_session(&state.auth, &headers, &jar)
-        .await
-        .map_err(ApiError::unauthorized)?;
-
-    Ok(Json(match state.agent_tokens.get(&auth_session_id).await {
-        Some(entry) => entry.wait_for_refresh().await,
-        None => AgentTokenStatus::NotFound,
-    }))
-}
-
-async fn refresh_agent_token_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Path(auth_session_id): Path<String>,
-    Json(payload): Json<RefreshAgentTokenRequest>,
-) -> Result<StatusCode, ApiError> {
-    require_session(&state.auth, &headers, &jar)
-        .await
-        .map_err(ApiError::unauthorized)?;
-
-    let Some(entry) = state.agent_tokens.get(&auth_session_id).await else {
-        return Err(ApiError::not_found(anyhow!(
-            "agent auth session was not found"
-        )));
-    };
-    let verified_user_id = timeout(
-        AGENT_TOKEN_VERIFY_TIMEOUT,
-        authenticated_user_id(&state.convex_deployment_url, payload.auth_token.clone()),
-    )
-    .await
-    .context("timed out verifying refreshed agent authentication")
-    .and_then(|result| result)
-    .map_err(ApiError::unauthorized)?;
-    entry
-        .require_user(&verified_user_id)
-        .map_err(ApiError::forbidden)?;
-    entry
-        .update(payload.auth_token)
-        .map_err(ApiError::bad_request)?;
-    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Debug)]
@@ -440,14 +187,6 @@ impl ApiError {
 
     fn bad_request(error: anyhow::Error) -> Self {
         Self::with_status(StatusCode::BAD_REQUEST, error)
-    }
-
-    fn forbidden(error: anyhow::Error) -> Self {
-        Self::with_status(StatusCode::FORBIDDEN, error)
-    }
-
-    fn not_found(error: anyhow::Error) -> Self {
-        Self::with_status(StatusCode::NOT_FOUND, error)
     }
 
     fn internal(error: anyhow::Error) -> Self {
@@ -483,95 +222,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn forced_fetch_waits_for_a_browser_refresh() {
-        let store = AgentTokenStore::default();
-        let entry = store
-            .create("auth-session", "token-1".to_string())
-            .await
-            .expect("create token session");
-        let fetcher = entry.fetcher();
-
+    async fn static_fetcher_returns_the_launch_token_without_waiting() {
+        let fetcher = static_auth_token_fetcher("token-1".to_string());
         assert_eq!(fetcher(false).await.expect("initial token"), "token-1");
-
-        let refresh = tokio::spawn(async move { fetcher(true).await });
-        assert!(matches!(
-            entry.wait_for_refresh().await,
-            AgentTokenStatus::RefreshRequired
-        ));
-        entry.update("token-2".to_string()).expect("update token");
-
         assert_eq!(
-            refresh
+            timeout(Duration::from_millis(20), fetcher(true))
                 .await
-                .expect("refresh task")
-                .expect("refreshed token"),
-            "token-2"
+                .expect("forced refresh must be noninteractive")
+                .expect("same launch token"),
+            "token-1"
         );
     }
 
     #[tokio::test]
-    async fn refreshed_tokens_must_match_the_verified_run_user() {
-        let store = AgentTokenStore::default();
-        let entry = store
-            .create("auth-session", "token-1".to_string())
-            .await
-            .expect("create token session");
-
-        entry.bind_user("user-a").expect("bind verified user");
-
-        entry.require_user("user-a").expect("matching user");
-        assert!(entry.require_user("user-b").is_err());
-        assert_eq!(entry.current_token().expect("current token"), "token-1");
-    }
-
-    #[tokio::test]
-    async fn cleanup_fetcher_never_waits_for_an_interactive_refresh() {
-        let store = AgentTokenStore::default();
-        let entry = store
-            .create("auth-session", "token-1".to_string())
-            .await
-            .expect("create token session");
-        let interactive_fetcher = entry.fetcher();
-        let refresh = tokio::spawn(async move { interactive_fetcher(true).await });
-        assert!(matches!(
-            entry.wait_for_refresh().await,
-            AgentTokenStatus::RefreshRequired
-        ));
-
-        let cleanup_fetcher = entry.nonrefreshing_fetcher();
-        let cleanup_token = timeout(Duration::from_millis(20), cleanup_fetcher(true))
-            .await
-            .expect("cleanup token fetch must be noninteractive")
-            .expect("cleanup token");
-
-        assert_eq!(cleanup_token, "token-1");
-        refresh.abort();
-    }
-
-    #[tokio::test]
-    async fn closed_sessions_are_removed_and_wake_waiters() {
-        let store = AgentTokenStore::default();
-        let entry = store
-            .create("auth-session", "token-1".to_string())
-            .await
-            .expect("create token session");
-
-        store.close("auth-session", &entry).await;
-
-        assert!(store.get("auth-session").await.is_none());
-        assert!(matches!(
-            entry.wait_for_refresh().await,
-            AgentTokenStatus::Complete
-        ));
-    }
-
-    #[tokio::test]
-    async fn timed_out_startup_reconciles_before_closing_its_token_session() {
-        let store = AgentTokenStore::default();
-        let entry = store
-            .create("auth-session", "token-1".to_string())
-            .await
-            .expect("create token session");
+    async fn timed_out_startup_reconciles_before_returning() {
         let dropped = Arc::new(AtomicBool::new(false));
         let drop_signal = DropSignal(dropped.clone());
         let startup = async move {
@@ -580,20 +244,15 @@ mod tests {
         };
         let reconciled = Arc::new(AtomicBool::new(false));
         let cleanup_reconciled = reconciled.clone();
-        let cleanup_entry = entry.clone();
 
         let error = await_agent_start(
             startup,
             Duration::from_millis(1),
             Duration::from_secs(1),
             move |_| async move {
-                assert!(!cleanup_entry.state.borrow().closed);
                 cleanup_reconciled.store(true, Ordering::SeqCst);
                 Ok(())
             },
-            &store,
-            "auth-session",
-            &entry,
         )
         .await
         .expect_err("startup should time out");
@@ -601,9 +260,5 @@ mod tests {
         assert!(error.to_string().contains("timed out starting agent run"));
         assert!(dropped.load(Ordering::SeqCst));
         assert!(reconciled.load(Ordering::SeqCst));
-        assert!(matches!(
-            entry.wait_for_refresh().await,
-            AgentTokenStatus::Complete
-        ));
     }
 }

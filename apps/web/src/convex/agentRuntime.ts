@@ -2,7 +2,7 @@ import type { Doc, Id } from '@convex/_generated/dataModel';
 import { mutation, query, type MutationCtx } from '@convex/_generated/server';
 import { v, type Infer } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord, getOwnedWorkspaceSession } from '@convex/lib/access';
-import { getUserId } from '@convex/lib/auth';
+import { executionSecretHash, getExecutionRun, getUserId } from '@convex/lib/auth';
 import {
 	assertSupportedModelConfiguration,
 	type SupportedModelId,
@@ -20,7 +20,7 @@ import {
 	type ThreadTranscriptAttachment,
 	type ThreadTranscriptMessage
 } from '@convex/lib/threadTranscript';
-import { assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
+import { RUN_NO_LONGER_ACTIVE, assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
 import { assertThreadCanStartRun, cancelExecutorJobsForTerminalRun } from '@convex/lib/runs';
 import {
 	canRegisterCompletionAttempt,
@@ -61,11 +61,6 @@ type FinalizeRunArgs = {
 };
 
 type RuntimePromptAttachment = Pick<ThreadTranscriptAttachment, 'mediaType' | 'url'>;
-
-export const authenticatedUserId = query({
-	args: {},
-	handler: async (ctx): Promise<string> => await getUserId(ctx)
-});
 
 async function finalizeRunRecord(
 	ctx: MutationCtx,
@@ -155,7 +150,8 @@ export const createRun = mutation({
 		imageUploadIds: v.array(v.id('imageUploads')),
 		selectedModel: vModelId,
 		reasoningEffort: vReasoningEffort,
-		serviceTier: vServiceTier
+		serviceTier: vServiceTier,
+		executionSecret: v.string()
 	},
 	handler: async (
 		ctx,
@@ -164,7 +160,6 @@ export const createRun = mutation({
 		created: boolean;
 		runId: Id<'runs'>;
 		promptMessageId: Id<'threadMessages'>;
-		userId: string;
 	}> => {
 		assertSupportedModelConfiguration({
 			modelId: args.selectedModel,
@@ -172,6 +167,7 @@ export const createRun = mutation({
 			serviceTier: args.serviceTier
 		});
 		const userId: string = await getUserId(ctx);
+		const secretHash = await executionSecretHash(args.executionSecret);
 		const threadRecord: Doc<'threadRecords'> = await getOwnedThreadRecord(
 			ctx.db,
 			userId,
@@ -190,6 +186,16 @@ export const createRun = mutation({
 			)
 			.unique();
 		if (existingRun) {
+			if (existingRun.executionSecretHash !== secretHash) {
+				const canRecoverExecutor =
+					existingRun.status === 'queued' ||
+					(isClaimedRunStatus(existingRun.status) &&
+						!isRunClaimLeaseActive(existingRun, Date.now()));
+				if (!canRecoverExecutor) {
+					throw new Error('Submission belongs to a different active executor.');
+				}
+				await ctx.db.patch(existingRun._id, { executionSecretHash: secretHash });
+			}
 			if (
 				existingRun.threadId !== args.threadId ||
 				existingRun.selectedModel !== args.selectedModel ||
@@ -211,8 +217,7 @@ export const createRun = mutation({
 			return {
 				created: false,
 				runId: existingRun._id,
-				promptMessageId: existingRun.promptMessageId,
-				userId
+				promptMessageId: existingRun.promptMessageId
 			};
 		}
 		const latestRun: Doc<'runs'> | null = await ctx.db
@@ -228,6 +233,7 @@ export const createRun = mutation({
 			submissionId: args.submissionId,
 			workspaceSessionId: threadRecord.workspaceSessionId,
 			status: 'queued',
+			executionSecretHash: secretHash,
 			selectedModel: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
 			serviceTier: args.serviceTier,
@@ -255,8 +261,7 @@ export const createRun = mutation({
 		return {
 			created: true,
 			runId,
-			promptMessageId,
-			userId
+			promptMessageId
 		};
 	}
 });
@@ -264,11 +269,11 @@ export const createRun = mutation({
 export const start = mutation({
 	args: {
 		claimId: v.string(),
-		runId: v.id('runs')
+		runId: v.id('runs'),
+		executionSecret: v.string()
 	},
 	handler: async (ctx, args): Promise<{ claimed: boolean; claimExpiresAt?: number }> => {
-		const userId: string = await getUserId(ctx);
-		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
+		const run: Doc<'runs'> = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		const now = Date.now();
 		if (!canStartRunWithClaim(run, args.claimId, now)) {
 			return { claimed: false };
@@ -325,11 +330,11 @@ export const start = mutation({
 export const renewClaim = mutation({
 	args: {
 		claimId: v.string(),
-		runId: v.id('runs')
+		runId: v.id('runs'),
+		executionSecret: v.string()
 	},
 	handler: async (ctx, args): Promise<{ renewed: boolean; claimExpiresAt?: number }> => {
-		const userId: string = await getUserId(ctx);
-		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
+		const run: Doc<'runs'> = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		if (!isClaimedRunStatus(run.status) || run.claimId !== args.claimId) {
 			return { renewed: false };
 		}
@@ -342,7 +347,8 @@ export const renewClaim = mutation({
 
 export const getContext = query({
 	args: {
-		runId: v.id('runs')
+		runId: v.id('runs'),
+		executionSecret: v.string()
 	},
 	handler: async (
 		ctx,
@@ -358,8 +364,8 @@ export const getContext = query({
 		promptAttachments: RuntimePromptAttachment[];
 		agentHistory: AgentHistoryMessage[];
 	}> => {
-		const userId: string = await getUserId(ctx);
-		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
+		const run: Doc<'runs'> = await getExecutionRun(ctx, args.runId, args.executionSecret);
+		const userId = run.userId;
 		const threadRecord: Doc<'threadRecords'> = await getOwnedThreadRecord(
 			ctx.db,
 			userId,
@@ -406,18 +412,19 @@ export const getContext = query({
 
 export const isFinished = query({
 	args: {
-		runId: v.id('runs')
+		runId: v.id('runs'),
+		executionSecret: v.string()
 	},
 	handler: async (ctx, args): Promise<boolean> => {
-		const userId: string = await getUserId(ctx);
-		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
+		const run: Doc<'runs'> = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		return isRunFinalStatus(run.status);
 	}
 });
 
 export const completionActor = query({
 	args: {
-		runId: v.id('runs')
+		runId: v.id('runs'),
+		executionSecret: v.string()
 	},
 	handler: async (
 		ctx,
@@ -427,12 +434,13 @@ export const completionActor = query({
 		threadId: Id<'threadRecords'>;
 		status: Infer<typeof vRunStatus>;
 		claimId?: string;
+		claimExpiresAt?: number;
 		completionAttemptSeq: number;
 		streamSequence: number;
 		streamAttemptId?: string;
 	}> => {
-		const userId: string = await getUserId(ctx);
-		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
+		const run: Doc<'runs'> = await getExecutionRun(ctx, args.runId, args.executionSecret);
+		const userId = run.userId;
 		const message = run.responseMessageId
 			? await getThreadMessage(ctx, run.responseMessageId)
 			: null;
@@ -441,6 +449,7 @@ export const completionActor = query({
 			threadId: run.threadId,
 			status: run.status,
 			...(run.claimId ? { claimId: run.claimId } : {}),
+			...(run.claimExpiresAt ? { claimExpiresAt: run.claimExpiresAt } : {}),
 			completionAttemptSeq: run.completionAttemptSeq ?? 0,
 			streamSequence: message?.streamSequence ?? 0,
 			...(message?.streamAttemptId ? { streamAttemptId: message.streamAttemptId } : {})
@@ -453,12 +462,15 @@ export const registerCompletionAttempt = mutation({
 		runId: v.id('runs'),
 		claimId: v.string(),
 		attemptSeq: v.number(),
-		supersededStreamIds: v.optional(v.array(v.string()))
+		supersededStreamIds: v.optional(v.array(v.string())),
+		executionSecret: v.string()
 	},
 	handler: async (ctx, args): Promise<void> => {
-		const userId: string = await getUserId(ctx);
-		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
+		const run: Doc<'runs'> = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		assertRunAcceptsModelCompletion(run.status);
+		if (!isRunClaimLeaseActive(run, Date.now())) {
+			throw new Error(RUN_NO_LONGER_ACTIVE);
+		}
 		if (!canRegisterCompletionAttempt(run, args.claimId, args.attemptSeq)) {
 			throw new Error(COMPLETION_STREAM_SUPERSEDED);
 		}
@@ -484,11 +496,12 @@ export const registerCompletionAttempt = mutation({
 
 export const beginAssistantMessage = mutation({
 	args: {
-		runId: v.id('runs')
+		runId: v.id('runs'),
+		executionSecret: v.string()
 	},
 	handler: async (ctx, args): Promise<void> => {
-		const userId: string = await getUserId(ctx);
-		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
+		const run: Doc<'runs'> = await getExecutionRun(ctx, args.runId, args.executionSecret);
+		const userId = run.userId;
 		if (isRunFinalStatus(run.status)) {
 			return;
 		}
@@ -519,15 +532,18 @@ export const mergeAssistantStreamEvents = mutation({
 		attemptSeq: v.number(),
 		streamId: v.string(),
 		sequence: v.number(),
-		events: v.array(vCompletionStreamEvent)
+		events: v.array(vCompletionStreamEvent),
+		executionSecret: v.string()
 	},
 	handler: async (
 		ctx,
 		args
 	): Promise<Exclude<CompletionStreamBatchClassification, 'append'> | 'merged'> => {
-		const userId: string = await getUserId(ctx);
-		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
+		const run: Doc<'runs'> = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		assertRunAcceptsModelCompletion(run.status);
+		if (!isRunClaimLeaseActive(run, Date.now())) {
+			throw new Error(RUN_NO_LONGER_ACTIVE);
+		}
 		// Fence every write: periodic acceptance checks alone leave a window
 		// where a superseded attempt could still append after a newer one registers.
 		if (!isCurrentCompletionAttempt(run, args.claimId, args.attemptSeq)) {
@@ -637,8 +653,8 @@ export const finalizeRun = mutation({
 		lastError: v.optional(v.string())
 	},
 	handler: async (ctx, args): Promise<boolean> => {
-		const userId: string = await getUserId(ctx);
-		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
+		const userId = await getUserId(ctx);
+		const run = await getOwnedRun(ctx.db, userId, args.runId);
 		if (args.expectedStatus && run.status !== args.expectedStatus) {
 			return false;
 		}
@@ -652,6 +668,31 @@ export const finalizeRun = mutation({
 	}
 });
 
+export const finalizeExecutorRun = mutation({
+	args: {
+		expectedStatus: v.optional(vRunStatus),
+		expectedClaimId: v.optional(v.string()),
+		runId: v.id('runs'),
+		text: v.string(),
+		status: vRunFinalStatus,
+		lastError: v.optional(v.string()),
+		executionSecret: v.string()
+	},
+	handler: async (ctx, args): Promise<boolean> => {
+		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+		if (args.expectedStatus && run.status !== args.expectedStatus) {
+			return false;
+		}
+		if (
+			args.expectedClaimId &&
+			(run.claimId !== args.expectedClaimId || !isRunClaimLeaseActive(run, Date.now()))
+		) {
+			return false;
+		}
+		return finalizeRunRecord(ctx, run.userId, run, args);
+	}
+});
+
 export const finalizeFailedStart = mutation({
 	args: {
 		submissionId: v.string(),
@@ -662,15 +703,14 @@ export const finalizeFailedStart = mutation({
 		reasoningEffort: vReasoningEffort,
 		serviceTier: vServiceTier,
 		text: v.string(),
-		lastError: v.string()
+		lastError: v.string(),
+		executionSecret: v.string()
 	},
 	handler: async (ctx, args): Promise<boolean> => {
-		const userId: string = await getUserId(ctx);
-		const run: Doc<'runs'> | null = await ctx.db
+		const secretHash = await executionSecretHash(args.executionSecret);
+		const run = await ctx.db
 			.query('runs')
-			.withIndex('by_userId_submissionId', (query) =>
-				query.eq('userId', userId).eq('submissionId', args.submissionId)
-			)
+			.withIndex('by_executionSecretHash', (query) => query.eq('executionSecretHash', secretHash))
 			.unique();
 		if (
 			!run ||
@@ -691,7 +731,7 @@ export const finalizeFailedStart = mutation({
 		) {
 			return false;
 		}
-		return finalizeRunRecord(ctx, userId, run, {
+		return finalizeRunRecord(ctx, run.userId, run, {
 			text: args.text,
 			status: 'failed',
 			lastError: args.lastError
@@ -704,12 +744,13 @@ export const finalizeClaimFailure = mutation({
 		claimId: v.string(),
 		runId: v.id('runs'),
 		text: v.string(),
-		lastError: v.string()
+		lastError: v.string(),
+		executionSecret: v.string()
 	},
 	handler: async (ctx, args): Promise<boolean> => {
-		const userId: string = await getUserId(ctx);
-		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
-		if (!canFinalizeAfterClaimFailure(run, args.claimId)) {
+		const run: Doc<'runs'> = await getExecutionRun(ctx, args.runId, args.executionSecret);
+		const userId = run.userId;
+		if (!canFinalizeAfterClaimFailure(run, args.claimId, Date.now())) {
 			return false;
 		}
 		return finalizeRunRecord(ctx, userId, run, {
@@ -727,7 +768,8 @@ export const beginToolJob = mutation({
 		kind: vExecutorJobKind,
 		callId: v.optional(v.string()),
 		payload: vExecutorJobPayload,
-		hidden: v.optional(v.boolean())
+		hidden: v.optional(v.boolean()),
+		executionSecret: v.string()
 	},
 	handler: async (
 		ctx,
@@ -736,8 +778,8 @@ export const beginToolJob = mutation({
 		jobId: Id<'executorJobs'>;
 		sequence: number;
 	}> => {
-		const userId: string = await getUserId(ctx);
-		const run: Doc<'runs'> = await getOwnedRun(ctx.db, userId, args.runId);
+		const run: Doc<'runs'> = await getExecutionRun(ctx, args.runId, args.executionSecret);
+		const userId = run.userId;
 		assertRunAcceptsModelCompletion(run.status);
 		if (run.claimId !== args.claimId || !isRunClaimLeaseActive(run, Date.now())) {
 			throw new Error('Run is no longer active.');

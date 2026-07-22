@@ -128,7 +128,6 @@ export type ThreadMessage = {
 };
 
 export type AgentRunRequest = {
-	authSessionId: string;
 	authToken: string;
 	submissionId: string;
 	threadId: Id<'threadRecords'>;
@@ -143,8 +142,6 @@ export type AgentRunRequest = {
 export type AgentRunStart = {
 	runId: Id<'runs'>;
 };
-
-export type AgentAuthStatus = 'refreshRequired' | 'complete' | 'notFound';
 
 export type FilesystemBrowseEntry = {
 	name: string;
@@ -170,8 +167,6 @@ export type DesktopApi = {
 		session: WorkspaceSessionAttachment
 	) => Promise<WorkspaceSessionLocation>;
 	runAgent: (request: AgentRunRequest) => Promise<AgentRunStart>;
-	waitForAgentAuthRefresh: (authSessionId: string) => Promise<AgentAuthStatus>;
-	refreshAgentAuth: (authSessionId: string, authToken: string) => Promise<void>;
 };
 
 export type WorkspacePathResolution = {

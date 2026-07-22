@@ -65,6 +65,8 @@ export default defineSchema({
 		submissionId: v.string(),
 		workspaceSessionId: v.id('workspaceSessions'),
 		status: vRunStatus,
+		// Hash of the bearer capability held only by the local executor.
+		executionSecretHash: v.string(),
 		claimId: v.optional(v.string()),
 		claimExpiresAt: v.optional(v.number()),
 		completionAttemptSeq: v.optional(v.number()),
@@ -80,6 +82,7 @@ export default defineSchema({
 	})
 		.index('by_threadId_startedAt', ['threadId', 'startedAt'])
 		.index('by_threadId_status_startedAt', ['threadId', 'status', 'startedAt'])
+		.index('by_executionSecretHash', ['executionSecretHash'])
 		.index('by_userId_submissionId', ['userId', 'submissionId'])
 		.index('by_workspaceSessionId', ['workspaceSessionId'])
 		.index('by_userId_startedAt', ['userId', 'startedAt']),

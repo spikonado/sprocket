@@ -63,7 +63,6 @@ impl StartupInfo {
 #[derive(Clone)]
 pub struct AppState {
     pub auth: Arc<auth::AuthState>,
-    pub(crate) agent_tokens: routes::agent::AgentTokenStore,
     pub desktop_login: Arc<auth::DesktopLoginStore>,
     pub workspace_sessions: Arc<workspace_sessions::WorkspaceSessionStore>,
     pub http_base_url: String,
@@ -110,7 +109,6 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
 
     let state = AppState {
         auth,
-        agent_tokens: routes::agent::AgentTokenStore::default(),
         desktop_login: auth::DesktopLoginStore::new(),
         workspace_sessions,
         http_base_url: http_base_url.clone(),

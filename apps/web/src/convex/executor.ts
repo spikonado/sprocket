@@ -1,26 +1,27 @@
 import { mutation } from '@convex/_generated/server';
 import { v } from 'convex/values';
-import { getOwnedExecutorJob } from '@convex/lib/access';
-import { getUserId } from '@convex/lib/auth';
+import { getExecutionRun } from '@convex/lib/auth';
 import { executorFailureRunPatch } from '@convex/lib/runs';
 import { isRunFinalStatus, vExecutorJobResult } from '@convex/lib/validators';
 
 export const complete = mutation({
 	args: {
 		jobId: v.id('executorJobs'),
-		result: vExecutorJobResult
+		result: vExecutorJobResult,
+		runId: v.id('runs'),
+		executionSecret: v.string()
 	},
 	handler: async (ctx, args) => {
-		const userId: string = await getUserId(ctx);
-		const job = await getOwnedExecutorJob(ctx.db, userId, args.jobId);
-		const run = await ctx.db.get(job.runId);
+		const job = await ctx.db.get(args.jobId);
+		if (!job || job.runId !== args.runId) throw new Error('Executor job not found.');
+		const run = await getExecutionRun(ctx, job.runId, args.executionSecret);
 		if (job.status === 'cancelled' || job.status === 'failed') {
 			return false;
 		}
 		if (job.status === 'completed') {
 			return true;
 		}
-		if (!run || isRunFinalStatus(run.status)) {
+		if (isRunFinalStatus(run.status)) {
 			return false;
 		}
 
@@ -42,11 +43,14 @@ export const complete = mutation({
 export const fail = mutation({
 	args: {
 		jobId: v.id('executorJobs'),
-		error: v.string()
+		error: v.string(),
+		runId: v.id('runs'),
+		executionSecret: v.string()
 	},
 	handler: async (ctx, args) => {
-		const userId: string = await getUserId(ctx);
-		const job = await getOwnedExecutorJob(ctx.db, userId, args.jobId);
+		const job = await ctx.db.get(args.jobId);
+		if (!job || job.runId !== args.runId) throw new Error('Executor job not found.');
+		const run = await getExecutionRun(ctx, job.runId, args.executionSecret);
 		if (job.status === 'cancelled' || job.status === 'completed' || job.status === 'failed') {
 			return false;
 		}
@@ -57,16 +61,13 @@ export const fail = mutation({
 			error: args.error,
 			completedAt
 		});
-		const run = await ctx.db.get(job.runId);
-		if (run) {
-			const runPatch = executorFailureRunPatch({
-				runStatus: run.status,
-				activeJobId: run.activeJobId,
-				failedJobId: args.jobId
-			});
-			if (runPatch) {
-				await ctx.db.patch(job.runId, runPatch);
-			}
+		const runPatch = executorFailureRunPatch({
+			runStatus: run.status,
+			activeJobId: run.activeJobId,
+			failedJobId: args.jobId
+		});
+		if (runPatch) {
+			await ctx.db.patch(job.runId, runPatch);
 		}
 		return true;
 	}

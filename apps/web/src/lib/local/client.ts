@@ -1,5 +1,4 @@
 import type {
-	AgentAuthStatus,
 	AgentRunStart,
 	DesktopApi,
 	FilesystemBrowseResult,
@@ -224,15 +223,7 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 			request<AgentRunStart>('/api/agent/run', {
 				method: 'POST',
 				body: JSON.stringify(requestBody)
-			}),
-		waitForAgentAuthRefresh: (authSessionId) =>
-			request<AgentAuthStatus>(`/api/agent/auth/${encodeURIComponent(authSessionId)}`),
-		refreshAgentAuth: async (authSessionId, authToken) => {
-			await request(`/api/agent/auth/${encodeURIComponent(authSessionId)}`, {
-				method: 'PUT',
-				body: JSON.stringify({ authToken })
-			});
-		}
+			})
 	};
 }
 

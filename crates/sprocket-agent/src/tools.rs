@@ -427,6 +427,8 @@ impl rig::tool::Tool for WebSearchTool {
             payload,
             |cancellation| {
                 let mut action_args = BTreeMap::new();
+                action_args.insert("runId".to_string(), self.0.run_id.clone().into());
+                action_args.insert("claimId".to_string(), self.0.claim_id.clone().into());
                 action_args.insert("query".to_string(), args.query.clone().into());
                 // Omitted at the default so the Convex action owns the default value.
                 if !is_default_web_search_results(&args.num_results) {
@@ -473,6 +475,8 @@ impl rig::tool::Tool for ScrapeUrlTool {
             payload,
             |cancellation| {
                 let mut action_args = BTreeMap::new();
+                action_args.insert("runId".to_string(), self.0.run_id.clone().into());
+                action_args.insert("claimId".to_string(), self.0.claim_id.clone().into());
                 action_args.insert("url".to_string(), args.url.clone().into());
                 run_convex_tool_action(
                     &self.0.runtime,
@@ -589,6 +593,7 @@ where
             eprintln!("sprocket-agent: completed tool {} for run {}", kind, run_id);
             let mut complete_args = BTreeMap::new();
             complete_args.insert("jobId".to_string(), job_id.into());
+            complete_args.insert("runId".to_string(), run_id.to_string().into());
             complete_args.insert(
                 "result".to_string(),
                 Value::try_from(output.clone()).map_err(tool_error)?,
@@ -610,6 +615,7 @@ where
             );
             let mut fail_args = BTreeMap::new();
             fail_args.insert("jobId".to_string(), job_id.into());
+            fail_args.insert("runId".to_string(), run_id.to_string().into());
             fail_args.insert("error".to_string(), error.to_string().into());
             let accepted: bool = runtime
                 .mutation_json("executor:fail", fail_args)

@@ -7,6 +7,7 @@ async function createQueuedRun(
 	asUser: ReturnType<ReturnType<typeof initConvexTest>['withIdentity']>,
 	threadId: Id<'threadRecords'>,
 	submissionId: string,
+	executionSecret: string,
 	prompt = `Prompt ${submissionId}`
 ) {
 	return await asUser.mutation(api.agentRuntime.createRun, {
@@ -16,7 +17,8 @@ async function createQueuedRun(
 		imageUploadIds: [],
 		selectedModel: 'gpt-5.6-sol',
 		reasoningEffort: 'medium',
-		serviceTier: 'standard'
+		serviceTier: 'standard',
+		executionSecret
 	});
 }
 
@@ -25,6 +27,7 @@ async function completeRun(
 	asUser: ReturnType<ReturnType<typeof initConvexTest>['withIdentity']>,
 	args: {
 		runId: Id<'runs'>;
+		executionSecret: string;
 		status: 'completed' | 'failed' | 'cancelled';
 		responseText?: string;
 		startedAt?: number;
@@ -32,9 +35,13 @@ async function completeRun(
 ) {
 	await asUser.mutation(api.agentRuntime.start, {
 		claimId: `claim-${args.runId}`,
-		runId: args.runId
+		runId: args.runId,
+		executionSecret: args.executionSecret
 	});
-	await asUser.mutation(api.agentRuntime.beginAssistantMessage, { runId: args.runId });
+	await asUser.mutation(api.agentRuntime.beginAssistantMessage, {
+		runId: args.runId,
+		executionSecret: args.executionSecret
+	});
 	await asUser.mutation(api.agentRuntime.finalizeRun, {
 		runId: args.runId,
 		text: args.responseText ?? `Response for ${args.runId}`,
@@ -52,7 +59,13 @@ describe('messages transcript queries', () => {
 	it('keeps active runs in live and excludes them from history', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		const active = await createQueuedRun(asUser, threadId, 'sub-active', 'Live prompt');
+		const active = await createQueuedRun(
+			asUser,
+			threadId,
+			'sub-active',
+			'messages-live-secret',
+			'Live prompt'
+		);
 
 		const history = await asUser.query(api.messages.listHistoryForThread, { threadId });
 		const live = await asUser.query(api.messages.listLiveForThread, { threadId });
@@ -70,10 +83,21 @@ describe('messages transcript queries', () => {
 	it('streams live responses then moves terminal runs into history', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		const { runId } = await createQueuedRun(asUser, threadId, 'sub-stream', 'Stream me');
+		const executionSecret = 'messages-stream-secret';
+		const { runId } = await createQueuedRun(
+			asUser,
+			threadId,
+			'sub-stream',
+			executionSecret,
+			'Stream me'
+		);
 
-		await asUser.mutation(api.agentRuntime.start, { claimId: 'claim-stream', runId });
-		await asUser.mutation(api.agentRuntime.beginAssistantMessage, { runId });
+		await asUser.mutation(api.agentRuntime.start, {
+			claimId: 'claim-stream',
+			runId,
+			executionSecret
+		});
+		await asUser.mutation(api.agentRuntime.beginAssistantMessage, { runId, executionSecret });
 
 		const responseMessageId = await t.run(async (ctx) => {
 			const run = await ctx.db.get(runId);
@@ -122,9 +146,17 @@ describe('messages transcript queries', () => {
 		const statuses = ['completed', 'failed', 'cancelled'] as const;
 
 		for (let index = 0; index < 25; index += 1) {
-			const created = await createQueuedRun(asUser, threadId, `sub-bound-${index}`, `P${index}`);
+			const executionSecret = `messages-bound-secret-${index}`;
+			const created = await createQueuedRun(
+				asUser,
+				threadId,
+				`sub-bound-${index}`,
+				executionSecret,
+				`P${index}`
+			);
 			await completeRun(t, asUser, {
 				runId: created.runId,
+				executionSecret,
 				status: statuses[index % statuses.length]!,
 				responseText: `R${index}`,
 				startedAt: 1_000 + index

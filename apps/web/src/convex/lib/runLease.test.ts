@@ -41,22 +41,31 @@ describe('run claim leases', () => {
 	});
 
 	it('only terminalizes state owned by the same claim after claim uncertainty', () => {
-		expect(canFinalizeAfterClaimFailure({ status: 'queued' }, 'claim-a')).toBe(false);
+		expect(canFinalizeAfterClaimFailure({ status: 'queued' }, 'claim-a', 100)).toBe(false);
 		expect(
 			canFinalizeAfterClaimFailure(
 				{ status: 'running', claimId: 'claim-a', claimExpiresAt: 200 },
-				'claim-a'
+				'claim-a',
+				100
 			)
 		).toBe(true);
 		expect(
 			canFinalizeAfterClaimFailure(
-				{ status: 'awaiting_executor', claimId: 'claim-b', claimExpiresAt: 200 },
-				'claim-a'
+				{ status: 'running', claimId: 'claim-a', claimExpiresAt: 100 },
+				'claim-a',
+				100
 			)
 		).toBe(false);
-		expect(canFinalizeAfterClaimFailure({ status: 'failed', claimId: 'claim-a' }, 'claim-a')).toBe(
-			false
-		);
+		expect(
+			canFinalizeAfterClaimFailure(
+				{ status: 'awaiting_executor', claimId: 'claim-b', claimExpiresAt: 200 },
+				'claim-a',
+				100
+			)
+		).toBe(false);
+		expect(
+			canFinalizeAfterClaimFailure({ status: 'failed', claimId: 'claim-a' }, 'claim-a', 100)
+		).toBe(false);
 	});
 
 	it('only lets strictly newer completion attempts of the current claim take the stream', () => {

@@ -4,14 +4,14 @@ import { v, type Infer } from 'convex/values';
 import { ContextDev } from '@context-dot-dev/convex';
 import { ExaClient } from '@exalabs/convex-exa';
 import { action } from '@convex/_generated/server';
-import { components } from '@convex/_generated/api';
-import { getUserId } from '@convex/lib/auth';
+import { api, components } from '@convex/_generated/api';
 import {
 	chargeUrlScrapeUsage,
 	chargeWebSearchUsage,
 	checkWebToolsLimit
 } from '@convex/lib/rateLimits';
 import { vScrapeUrlResult, vWebSearchResult } from '@convex/lib/validators';
+import { isRunClaimLeaseActive } from '@convex/lib/runLease';
 
 const contextDev = new ContextDev(components.contextDev);
 const exa = new ExaClient(components.exa);
@@ -69,10 +69,20 @@ async function callComponent<T>(
 
 export const scrapeUrl = action({
 	args: {
-		url: v.string()
+		url: v.string(),
+		runId: v.id('runs'),
+		claimId: v.string(),
+		executionSecret: v.string()
 	},
 	handler: async (ctx, args): Promise<ScrapeUrlResult> => {
-		const userId: string = await getUserId(ctx);
+		const actor = await ctx.runQuery(api.agentRuntime.completionActor, {
+			runId: args.runId,
+			executionSecret: args.executionSecret
+		});
+		if (actor.claimId !== args.claimId || !isRunClaimLeaseActive(actor, Date.now())) {
+			throw new Error('Run is no longer active.');
+		}
+		const { userId } = actor;
 		let url: URL;
 		try {
 			url = new URL(args.url.trim());
@@ -109,10 +119,20 @@ export const scrapeUrl = action({
 export const webSearch = action({
 	args: {
 		query: v.string(),
-		numResults: v.optional(v.number())
+		numResults: v.optional(v.number()),
+		runId: v.id('runs'),
+		claimId: v.string(),
+		executionSecret: v.string()
 	},
 	handler: async (ctx, args): Promise<WebSearchResult> => {
-		const userId: string = await getUserId(ctx);
+		const actor = await ctx.runQuery(api.agentRuntime.completionActor, {
+			runId: args.runId,
+			executionSecret: args.executionSecret
+		});
+		if (actor.claimId !== args.claimId || !isRunClaimLeaseActive(actor, Date.now())) {
+			throw new Error('Run is no longer active.');
+		}
+		const { userId } = actor;
 		const query = args.query.trim();
 		if (!query) {
 			throw new Error('Search query cannot be empty.');
