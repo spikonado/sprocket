@@ -1,25 +1,50 @@
 import { describe, expect, it } from 'vitest';
 import { api } from '@convex/_generated/api';
+import type { Id } from '@convex/_generated/dataModel';
+import { executionSecretHash } from '@convex/lib/auth';
 import { initConvexTest, seedOwnedThread } from './test.setup';
+
+async function createQueuedRun(
+	asUser: ReturnType<ReturnType<typeof initConvexTest>['withIdentity']>,
+	threadId: Id<'threadRecords'>,
+	submissionId: string,
+	executionSecret: string,
+	prompt: string
+) {
+	return await asUser.mutation(api.agentRuntime.createRun, {
+		submissionId,
+		threadId,
+		prompt,
+		imageUploadIds: [],
+		selectedModel: 'gpt-5.6-sol',
+		reasoningEffort: 'medium',
+		serviceTier: 'standard',
+		executionSecret
+	});
+}
 
 describe('agentRuntime context accounting', () => {
 	it('fences compaction and usage writes to the current completion attempt', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		const { runId } = await asUser.mutation(api.agentRuntime.createRun, {
-			submissionId: 'context-run',
+		const executionSecret = 'context-run-secret';
+		const { runId } = await createQueuedRun(
+			asUser,
 			threadId,
-			prompt: 'Continue the long task',
-			imageUploadIds: [],
-			selectedModel: 'gpt-5.6-sol',
-			reasoningEffort: 'medium',
-			serviceTier: 'standard'
+			'context-run',
+			executionSecret,
+			'Continue the long task'
+		);
+		await asUser.mutation(api.agentRuntime.start, {
+			runId,
+			claimId: 'claim-a',
+			executionSecret
 		});
-		await asUser.mutation(api.agentRuntime.start, { runId, claimId: 'claim-a' });
 		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, {
 			runId,
 			claimId: 'claim-a',
-			attemptSeq: 1
+			attemptSeq: 1,
+			executionSecret
 		});
 
 		await expect(
@@ -52,7 +77,8 @@ describe('agentRuntime context accounting', () => {
 		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, {
 			runId,
 			claimId: 'claim-a',
-			attemptSeq: 2
+			attemptSeq: 2,
+			executionSecret
 		});
 		await expect(
 			asUser.mutation(api.agentRuntime.recordContextUsage, {
@@ -69,20 +95,24 @@ describe('agentRuntime context accounting', () => {
 	it('rejects invalid token accounting values', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		const { runId } = await asUser.mutation(api.agentRuntime.createRun, {
-			submissionId: 'invalid-context-usage',
+		const executionSecret = 'invalid-context-usage-secret';
+		const { runId } = await createQueuedRun(
+			asUser,
 			threadId,
-			prompt: 'Continue',
-			imageUploadIds: [],
-			selectedModel: 'gpt-5.6-sol',
-			reasoningEffort: 'medium',
-			serviceTier: 'standard'
+			'invalid-context-usage',
+			executionSecret,
+			'Continue'
+		);
+		await asUser.mutation(api.agentRuntime.start, {
+			runId,
+			claimId: 'claim-a',
+			executionSecret
 		});
-		await asUser.mutation(api.agentRuntime.start, { runId, claimId: 'claim-a' });
 		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, {
 			runId,
 			claimId: 'claim-a',
-			attemptSeq: 1
+			attemptSeq: 1,
+			executionSecret
 		});
 
 		await expect(
@@ -100,16 +130,19 @@ describe('agentRuntime context accounting', () => {
 	it('carries a compacted prefix into later runs without replaying covered history', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId, workspaceSessionId } = await seedOwnedThread(t);
-		const first = await asUser.mutation(api.agentRuntime.createRun, {
-			submissionId: 'context-first',
+		const firstSecret = 'context-first-secret';
+		const first = await createQueuedRun(
+			asUser,
 			threadId,
-			prompt: 'Old prompt that should be covered',
-			imageUploadIds: [],
-			selectedModel: 'gpt-5.6-sol',
-			reasoningEffort: 'medium',
-			serviceTier: 'standard'
+			'context-first',
+			firstSecret,
+			'Old prompt that should be covered'
+		);
+		await asUser.mutation(api.agentRuntime.start, {
+			runId: first.runId,
+			claimId: 'claim-1',
+			executionSecret: firstSecret
 		});
-		await asUser.mutation(api.agentRuntime.start, { runId: first.runId, claimId: 'claim-1' });
 		await asUser.mutation(api.agentRuntime.finalizeRun, {
 			runId: first.runId,
 			expectedStatus: 'running',
@@ -118,20 +151,24 @@ describe('agentRuntime context accounting', () => {
 			status: 'completed'
 		});
 
-		const second = await asUser.mutation(api.agentRuntime.createRun, {
-			submissionId: 'context-second',
+		const secondSecret = 'context-second-secret';
+		const second = await createQueuedRun(
+			asUser,
 			threadId,
-			prompt: 'New prompt',
-			imageUploadIds: [],
-			selectedModel: 'gpt-5.6-sol',
-			reasoningEffort: 'medium',
-			serviceTier: 'standard'
+			'context-second',
+			secondSecret,
+			'New prompt'
+		);
+		await asUser.mutation(api.agentRuntime.start, {
+			runId: second.runId,
+			claimId: 'claim-2',
+			executionSecret: secondSecret
 		});
-		await asUser.mutation(api.agentRuntime.start, { runId: second.runId, claimId: 'claim-2' });
 		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, {
 			runId: second.runId,
 			claimId: 'claim-2',
-			attemptSeq: 1
+			attemptSeq: 1,
+			executionSecret: secondSecret
 		});
 		await t.run(async (ctx) => {
 			await ctx.db.insert('runs', {
@@ -140,6 +177,7 @@ describe('agentRuntime context accounting', () => {
 				submissionId: 'context-concurrent-later',
 				workspaceSessionId,
 				status: 'completed',
+				executionSecretHash: await executionSecretHash('context-concurrent-later-secret'),
 				selectedModel: 'gpt-5.6-sol',
 				reasoningEffort: 'medium',
 				serviceTier: 'standard',
@@ -167,16 +205,18 @@ describe('agentRuntime context accounting', () => {
 			status: 'completed'
 		});
 
-		const third = await asUser.mutation(api.agentRuntime.createRun, {
-			submissionId: 'context-third',
+		const thirdSecret = 'context-third-secret';
+		const third = await createQueuedRun(
+			asUser,
 			threadId,
-			prompt: 'Third prompt',
-			imageUploadIds: [],
-			selectedModel: 'gpt-5.6-sol',
-			reasoningEffort: 'medium',
-			serviceTier: 'standard'
+			'context-third',
+			thirdSecret,
+			'Third prompt'
+		);
+		const context = await asUser.query(api.agentRuntime.getContext, {
+			runId: third.runId,
+			executionSecret: thirdSecret
 		});
-		const context = await asUser.query(api.agentRuntime.getContext, { runId: third.runId });
 		const serialized = JSON.stringify(context.agentHistory);
 		expect(serialized).toContain('The old work is complete.');
 		expect(serialized).not.toContain('Old prompt that should be covered');
