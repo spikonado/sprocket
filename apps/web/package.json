@@ -13,6 +13,7 @@
 		"lint": "eslint . && convex typecheck"
 	},
 	"dependencies": {
+		"@ai-sdk/amazon-bedrock": "^5.0.28",
 		"@ai-sdk/anthropic": "^4.0.15",
 		"@ai-sdk/openai": "^4.0.11",
 		"@ai-sdk/xai": "^4.0.14",
@@ -25,6 +26,7 @@
 		"@lucide/svelte": "^1.18.0",
 		"@workos-inc/authkit-js": "^0.20.0",
 		"ai": "^7.0.19",
+		"ai-fallback": "^3.0.0",
 		"clsx": "^2.1.1",
 		"convex": "^1.37.0",
 		"convex-svelte": "^0.14.0",

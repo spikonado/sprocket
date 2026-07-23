@@ -90,6 +90,8 @@ bun dev
 
 After creating a convex deployment and configuring authkit following the instructions, configure the Convex deployment with the API key for each enabled model provider (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `XAI_API_KEY`).
 
+Optional Amazon Bedrock fallback for OpenAI and Anthropic: set `AWS_BEARER_TOKEN_BEDROCK`, or `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY`. `AWS_REGION` defaults to `us-east-1` (use a US Bedrock region; Anthropic fallback uses `us.` inference profiles).
+
 This runs Vite at `http://localhost:5173` and the Rust API at `http://127.0.0.1:7731`, with development state kept in `.sprocket-dev` inside the repository.
 To develop against Electron instead, run:
 

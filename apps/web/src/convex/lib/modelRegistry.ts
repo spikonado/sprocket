@@ -1,5 +1,7 @@
 'use node';
 
+import { createBedrockAnthropic } from '@ai-sdk/amazon-bedrock/anthropic';
+import { createBedrockMantle } from '@ai-sdk/amazon-bedrock/mantle';
 import { createAnthropic, type AnthropicProvider } from '@ai-sdk/anthropic';
 import { createOpenAI, type OpenAIProvider } from '@ai-sdk/openai';
 import { createXai, type XaiProvider } from '@ai-sdk/xai';
@@ -10,6 +12,9 @@ import {
 	type SupportedServiceTier
 } from '@convex/lib/models';
 import type { JSONValue, LanguageModel } from 'ai';
+import { createFallback, defaultShouldRetryThisError } from 'ai-fallback';
+
+type FallbackModels = NonNullable<Parameters<typeof createFallback>[0]['models']>;
 
 type ProviderFetch = NonNullable<NonNullable<Parameters<typeof createAnthropic>[0]>['fetch']>;
 type ProviderFetchInput = Parameters<ProviderFetch>[0];
@@ -72,6 +77,72 @@ const anthropicFast: AnthropicProvider = createAnthropic({
 	fetch: createProviderFetch({ serviceTier: 'auto' })
 });
 
+export function hasBedrockCredentials(env: NodeJS.ProcessEnv = process.env): boolean {
+	if (env.AWS_BEARER_TOKEN_BEDROCK?.trim()) return true;
+	return Boolean(env.AWS_ACCESS_KEY_ID?.trim() && env.AWS_SECRET_ACCESS_KEY?.trim());
+}
+
+function statusCodeFromError(error: unknown): number | undefined {
+	if (!error || typeof error !== 'object') return undefined;
+	const value = error as Record<string, unknown>;
+	if (typeof value.statusCode === 'number') return value.statusCode;
+	if (typeof value.status === 'number') return value.status;
+	const response = value.response;
+	if (response && typeof response === 'object') {
+		const status = (response as Record<string, unknown>).status;
+		if (typeof status === 'number') return status;
+	}
+	return statusCodeFromError(value.cause);
+}
+
+function shouldFailoverToBedrock(error: Error): boolean {
+	const statusCode = statusCodeFromError(error);
+	// Auth/permission failures are configuration problems; do not silently bill Bedrock.
+	if (statusCode === 401 || statusCode === 403) return false;
+	const message = error.message.toLowerCase();
+	if (
+		message.includes('wrong-key') ||
+		message.includes('invalid api key') ||
+		message.includes('incorrect api key') ||
+		message.includes('unauthorized') ||
+		message.includes('authentication')
+	) {
+		return false;
+	}
+	return defaultShouldRetryThisError(error);
+}
+
+function withBedrockFallback(
+	primary: LanguageModel,
+	createFallbackModel: () => LanguageModel
+): LanguageModel {
+	if (!hasBedrockCredentials()) return primary;
+	return createFallback({
+		models: [primary, createFallbackModel()] as FallbackModels,
+		// Never splice a restarted Bedrock generation into an already-persisted stream.
+		retryAfterOutput: false,
+		shouldRetryThisError: shouldFailoverToBedrock,
+		onError: (error, failedModelId) => {
+			console.warn(`Model provider ${failedModelId} failed during completion.`, error);
+		}
+	});
+}
+
+function resolveBedrockFallbackModel(
+	provider: 'openai' | 'anthropic',
+	modelId: SupportedModelId
+): LanguageModel {
+	const region = process.env.AWS_REGION?.trim() || 'us-east-1';
+	if (provider === 'anthropic') {
+		return createBedrockAnthropic({ region })(`us.anthropic.${modelId}`);
+	}
+	// Mantle Responses expects the OpenAI-compatible path (/openai/v1), not the SDK default /v1.
+	return createBedrockMantle({
+		region,
+		baseURL: `https://bedrock-mantle.${region}.api.aws/openai/v1`
+	}).responses(`openai.${modelId}`);
+}
+
 export function resolveLanguageModel(
 	modelId: SupportedModelId,
 	serviceTier: SupportedServiceTier,
@@ -79,7 +150,8 @@ export function resolveLanguageModel(
 ): LanguageModel {
 	const provider = getModelDefinition(modelId).provider;
 	if (provider === 'anthropic') {
-		return serviceTier === 'fast' ? anthropicFast(modelId) : anthropic(modelId);
+		const primary = serviceTier === 'fast' ? anthropicFast(modelId) : anthropic(modelId);
+		return withBedrockFallback(primary, () => resolveBedrockFallbackModel('anthropic', modelId));
 	}
 	if (provider === 'xai') {
 		const xai: XaiProvider = createXai({
@@ -91,7 +163,7 @@ export function resolveLanguageModel(
 		});
 		return xai(modelId);
 	}
-	return openai(modelId);
+	return withBedrockFallback(openai(modelId), () => resolveBedrockFallbackModel('openai', modelId));
 }
 
 export function resolveProviderOptions(
