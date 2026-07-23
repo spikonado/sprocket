@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { ArrowUp, ImagePlus, Square, X } from '@lucide/svelte';
+	import { useAuth, useQuery } from 'convex-svelte';
+	import { api } from '$convex/_generated/api';
 	import OptionSelector from '$lib/components/option-selector.svelte';
 	import ProviderLogo from '$lib/components/provider-logo.svelte';
 	import ReasoningServiceSelector from '$lib/components/reasoning-service-selector.svelte';
@@ -15,7 +17,8 @@
 		SupportedReasoningEffort,
 		SupportedServiceTier
 	} from '$convex/lib/models';
-	import { modelOptions } from '$lib/chat/model-options';
+	import { resolveModelForTier } from '$convex/lib/tiers';
+	import { modelOptionsForTier } from '$lib/chat/model-options';
 	import {
 		MAX_IMAGE_ATTACHMENTS,
 		SUPPORTED_IMAGE_MEDIA_TYPES,
@@ -55,6 +58,14 @@
 		onSubmit,
 		onCancel
 	}: Props = $props();
+
+	const convexAuth = useAuth();
+	const subscriptionQuery = useQuery(api.billing.getMySubscription, () =>
+		convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip'
+	);
+	const knownSubscriptionTier = $derived(subscriptionQuery.data?.tier);
+	// Until the tier is known, render the free allowlist so locked models are never selectable.
+	const tierModelOptions = $derived(modelOptionsForTier(knownSubscriptionTier ?? 'free'));
 
 	let composerTextarea = $state<HTMLTextAreaElement | null>(null);
 	let attachmentInput = $state<HTMLInputElement | null>(null);
@@ -140,6 +151,15 @@
 	function handleModelChange(modelId: SupportedModelId) {
 		selectedReasoningEffort = getModelDefinition(modelId).defaultReasoningEffort;
 	}
+
+	$effect(() => {
+		// Only coerce after the tier is known so paid users are not snapped to free defaults.
+		if (!knownSubscriptionTier) return;
+		const allowedModel = resolveModelForTier(knownSubscriptionTier, selectedModel);
+		if (allowedModel === selectedModel) return;
+		selectedModel = allowedModel;
+		selectedReasoningEffort = getModelDefinition(allowedModel).defaultReasoningEffort;
+	});
 
 	$effect(() => {
 		void prompt;
@@ -273,7 +293,7 @@
 
 							<OptionSelector
 								bind:value={selectedModel}
-								options={modelOptions}
+								options={tierModelOptions}
 								ariaLabel="Select model"
 								menuTitle="Model"
 								disabled={isRunning}

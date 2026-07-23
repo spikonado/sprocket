@@ -4,6 +4,7 @@ import { v } from 'convex/values';
 import { getOwnedThreadRecord, getOwnedWorkspaceSession } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
 import { assertSupportedModelConfiguration } from '@convex/lib/models';
+import { assertModelAllowedForTier, getSubscriptionTier } from '@convex/lib/tiers';
 import { isRunFinalStatus, vModelId, vReasoningEffort, vServiceTier } from '@convex/lib/validators';
 
 async function patchOwnedThread(
@@ -37,6 +38,7 @@ export const create = mutation({
 			serviceTier: args.serviceTier
 		});
 		const userId: string = await getUserId(ctx);
+		assertModelAllowedForTier(await getSubscriptionTier(ctx, userId), args.selectedModel);
 		await getOwnedWorkspaceSession(ctx.db, userId, args.workspaceSessionId);
 		const existingRecord = await ctx.db
 			.query('threadRecords')

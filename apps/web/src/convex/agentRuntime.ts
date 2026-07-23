@@ -8,6 +8,7 @@ import {
 	type SupportedModelId,
 	type SupportedServiceTier
 } from '@convex/lib/models';
+import { assertModelAllowedForTier, getSubscriptionTier } from '@convex/lib/tiers';
 import { buildCanonicalAgentHistory } from '@convex/lib/agentHistory';
 import { appendThreadMessage, getThreadMessage } from '@convex/lib/threadMessages';
 import {
@@ -187,6 +188,7 @@ export const createRun = mutation({
 			serviceTier: args.serviceTier
 		});
 		const userId: string = await getUserId(ctx);
+		assertModelAllowedForTier(await getSubscriptionTier(ctx, userId), args.selectedModel);
 		const secretHash = await executionSecretHash(args.executionSecret);
 		const threadRecord: Doc<'threadRecords'> = await getOwnedThreadRecord(
 			ctx.db,
