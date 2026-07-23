@@ -66,6 +66,7 @@ async function copyRootPackage(output, web, version) {
 	for (const entry of ['bin', 'lib', 'README.md']) {
 		await cp(path.join(SOURCE_PACKAGE, entry), path.join(destination, entry), { recursive: true });
 	}
+	await chmod(path.join(destination, 'bin', 'sprocket.js'), 0o755);
 	await cp(path.join(ROOT, 'LICENSE'), path.join(destination, 'LICENSE'));
 	await cp(web, path.join(destination, 'web'), { recursive: true });
 
