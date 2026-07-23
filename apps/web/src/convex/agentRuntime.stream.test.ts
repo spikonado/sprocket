@@ -6,6 +6,7 @@ describe('agentRuntime completion stream state', () => {
 	it('tracks the stream cursor outside the growing response message', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'stream-state-secret';
 		const { runId } = await asUser.mutation(api.agentRuntime.createRun, {
 			submissionId: 'sub-stream-state',
 			threadId,
@@ -13,15 +14,21 @@ describe('agentRuntime completion stream state', () => {
 			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
-			serviceTier: 'standard'
+			serviceTier: 'standard',
+			executionSecret
 		});
 
-		await asUser.mutation(api.agentRuntime.start, { claimId: 'claim-stream', runId });
-		await asUser.mutation(api.agentRuntime.beginAssistantMessage, { runId });
+		await asUser.mutation(api.agentRuntime.start, {
+			claimId: 'claim-stream',
+			runId,
+			executionSecret
+		});
+		await asUser.mutation(api.agentRuntime.beginAssistantMessage, { runId, executionSecret });
 		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, {
 			runId,
 			claimId: 'claim-stream',
-			attemptSeq: 1
+			attemptSeq: 1,
+			executionSecret
 		});
 		await expect(
 			asUser.mutation(api.agentRuntime.mergeAssistantStreamEvents, {
@@ -30,7 +37,8 @@ describe('agentRuntime completion stream state', () => {
 				attemptSeq: 1,
 				streamId: 'stream-1',
 				sequence: 1,
-				events: [{ type: 'text', id: 'text-1', text: 'Hello' }]
+				events: [{ type: 'text', id: 'text-1', text: 'Hello' }],
+				executionSecret
 			})
 		).resolves.toBe('merged');
 
@@ -50,7 +58,9 @@ describe('agentRuntime completion stream state', () => {
 			sequence: 1,
 			streamAttemptId: 'stream-1'
 		});
-		expect(await asUser.query(api.agentRuntime.completionActor, { runId })).toMatchObject({
+		expect(
+			await asUser.query(api.agentRuntime.completionActor, { runId, executionSecret })
+		).toMatchObject({
 			streamSequence: 1,
 			streamAttemptId: 'stream-1'
 		});
