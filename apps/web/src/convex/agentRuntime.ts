@@ -1,5 +1,5 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
-import { mutation, query, type MutationCtx } from '@convex/_generated/server';
+import { mutation, query, type MutationCtx, type QueryCtx } from '@convex/_generated/server';
 import { v, type Infer } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord, getOwnedWorkspaceSession } from '@convex/lib/access';
 import { executionSecretHash, getExecutionRun, getUserId } from '@convex/lib/auth';
@@ -62,6 +62,25 @@ type FinalizeRunArgs = {
 };
 
 type RuntimePromptAttachment = Pick<ThreadTranscriptAttachment, 'mediaType' | 'url'>;
+
+async function getCompletionStreamState(
+	ctx: MutationCtx | QueryCtx,
+	run: Doc<'runs'>
+): Promise<Doc<'completionStreamStates'>> {
+	if (!run.completionStreamStateId) {
+		throw new Error('Run does not contain completion stream state.');
+	}
+	const state = await ctx.db.get(run.completionStreamStateId);
+	if (!state || state.runId !== run._id || state.userId !== run.userId) {
+		throw new Error('Completion stream state is invalid.');
+	}
+	return state;
+}
+
+export const authenticatedUserId = query({
+	args: {},
+	handler: async (ctx): Promise<string> => await getUserId(ctx)
+});
 
 async function finalizeRunRecord(
 	ctx: MutationCtx,
@@ -202,7 +221,8 @@ export const createRun = mutation({
 				existingRun.selectedModel !== args.selectedModel ||
 				existingRun.reasoningEffort !== args.reasoningEffort ||
 				existingRun.serviceTier !== args.serviceTier ||
-				!existingRun.promptMessageId
+				!existingRun.promptMessageId ||
+				!existingRun.completionStreamStateId
 			) {
 				throw new Error('Submission belongs to a different or incomplete run.');
 			}
@@ -240,6 +260,11 @@ export const createRun = mutation({
 			serviceTier: args.serviceTier,
 			startedAt: Date.now()
 		});
+		const completionStreamStateId = await ctx.db.insert('completionStreamStates', {
+			runId,
+			userId,
+			sequence: 0
+		});
 		const promptMessageId: Id<'threadMessages'> = await appendThreadMessage(ctx, {
 			threadId: args.threadId,
 			runId,
@@ -250,7 +275,8 @@ export const createRun = mutation({
 		});
 		await attachImageUploads(ctx, imageUploads, promptMessageId);
 		await ctx.db.patch(runId, {
-			promptMessageId
+			promptMessageId,
+			completionStreamStateId
 		});
 		await ctx.db.patch(threadRecord._id, {
 			title: threadRecord.title ?? (prompt || imageUploads[0]?.name || 'New thread').slice(0, 72),
@@ -306,11 +332,14 @@ export const start = mutation({
 			if (run.responseMessageId) {
 				await ctx.db.patch(run.responseMessageId, {
 					text: '',
-					parts: [],
-					streamSequence: 0,
-					streamAttemptId: undefined
+					parts: []
 				});
 			}
+			const streamState = await getCompletionStreamState(ctx, run);
+			await ctx.db.patch(streamState._id, {
+				sequence: 0,
+				streamAttemptId: undefined
+			});
 		}
 
 		const nextClaimExpiresAt = claimExpiresAt(now);
@@ -443,9 +472,7 @@ export const completionActor = query({
 	}> => {
 		const run: Doc<'runs'> = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		const userId = run.userId;
-		const message = run.responseMessageId
-			? await getThreadMessage(ctx, run.responseMessageId)
-			: null;
+		const streamState = await getCompletionStreamState(ctx, run);
 		return {
 			userId,
 			threadId: run.threadId,
@@ -453,8 +480,8 @@ export const completionActor = query({
 			...(run.claimId ? { claimId: run.claimId } : {}),
 			...(run.claimExpiresAt ? { claimExpiresAt: run.claimExpiresAt } : {}),
 			completionAttemptSeq: run.completionAttemptSeq ?? 0,
-			streamSequence: message?.streamSequence ?? 0,
-			...(message?.streamAttemptId ? { streamAttemptId: message.streamAttemptId } : {})
+			streamSequence: streamState.sequence,
+			...(streamState.streamAttemptId ? { streamAttemptId: streamState.streamAttemptId } : {})
 		};
 	}
 });
@@ -507,10 +534,8 @@ export const beginAssistantMessage = mutation({
 		if (isRunFinalStatus(run.status)) {
 			return;
 		}
-		const assistantMessage: Doc<'threadMessages'> | null = run.responseMessageId
-			? await ctx.db.get(run.responseMessageId)
-			: null;
-		if (assistantMessage) {
+		await getCompletionStreamState(ctx, run);
+		if (run.responseMessageId) {
 			return;
 		}
 
@@ -555,11 +580,11 @@ export const mergeAssistantStreamEvents = mutation({
 			return 'merged';
 		}
 
+		const streamState = await getCompletionStreamState(ctx, run);
 		const message: Doc<'threadMessages'> = await getThreadMessage(ctx, run.responseMessageId);
-		const lastSequence = message.streamSequence ?? 0;
 		const classification = classifyCompletionStreamBatch({
-			lastSequence,
-			lastStreamId: message.streamAttemptId,
+			lastSequence: streamState.sequence,
+			lastStreamId: streamState.streamAttemptId,
 			sequence: args.sequence,
 			streamId: args.streamId
 		});
@@ -637,8 +662,10 @@ export const mergeAssistantStreamEvents = mutation({
 
 		await ctx.db.patch(run.responseMessageId, {
 			text: joinAssistantTextParts(parts),
-			parts,
-			streamSequence: args.sequence,
+			parts
+		});
+		await ctx.db.patch(streamState._id, {
+			sequence: args.sequence,
 			streamAttemptId: args.streamId
 		});
 		return 'merged';

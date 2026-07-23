@@ -40,6 +40,9 @@ type CompletionRequest = Parameters<typeof generateText>[0];
 type SharedCompletionRequest = Omit<CompletionRequest, 'prompt' | 'messages'>;
 
 const COMPLETION_ACCEPTANCE_CHECK_INTERVAL_MS = 1_000;
+// Persisting a growing message rewrites and reactively rereads the whole document.
+// Keep the UI responsive without paying that cost for every token-sized provider delta.
+const COMPLETION_STREAM_FLUSH_INTERVAL_MS = 250;
 // AI SDK retries only retryable provider failures and honors Retry-After headers.
 // Allow a longer recovery window for short provider rate-limit bursts.
 const MODEL_PROVIDER_MAX_RETRIES = 5;
@@ -211,6 +214,7 @@ async function collectStreamingCompletion(
 		{ partId: string; providerMetadata?: JsonValue; finalized: boolean }
 	>();
 	let nextBatchSequence = initialSequence + 1;
+	let nextFlushAt: number | undefined;
 
 	const flush = async (): Promise<void> => {
 		if (pendingEvents.length === 0) {
@@ -234,6 +238,9 @@ async function collectStreamingCompletion(
 					throw new Error(COMPLETION_STREAM_SUPERSEDED);
 				}
 				pendingEvents.splice(0, events.length);
+				nextFlushAt = pendingEvents.length
+					? Date.now() + COMPLETION_STREAM_FLUSH_INTERVAL_MS
+					: undefined;
 				nextBatchSequence += 1;
 				return;
 			} catch (error) {
@@ -246,6 +253,9 @@ async function collectStreamingCompletion(
 	};
 
 	const queuePersisted = (event: CompletionStreamEvent): void => {
+		if (pendingEvents.length === 0) {
+			nextFlushAt = Date.now() + COMPLETION_STREAM_FLUSH_INTERVAL_MS;
+		}
 		if (event.type === 'text') {
 			upsertCompletionTextEvent(pendingEvents, event);
 		} else {
@@ -284,6 +294,10 @@ async function collectStreamingCompletion(
 		let nextPart = iterator.next();
 		let nextAcceptanceCheckAt = Date.now() + COMPLETION_ACCEPTANCE_CHECK_INTERVAL_MS;
 		while (true) {
+			if (pendingEvents.length > 0 && nextFlushAt !== undefined && Date.now() >= nextFlushAt) {
+				await flush();
+				continue;
+			}
 			let next:
 				| { type: 'part'; value: Awaited<typeof nextPart> }
 				| { type: 'flush' }
@@ -301,7 +315,10 @@ async function collectStreamingCompletion(
 			];
 			if (pendingEvents.length > 0) {
 				const flushDeadline = new Promise<{ type: 'flush' }>((resolve) => {
-					flushTimer = setTimeout(() => resolve({ type: 'flush' }), 80);
+					flushTimer = setTimeout(
+						() => resolve({ type: 'flush' }),
+						Math.max(0, (nextFlushAt ?? Date.now()) - Date.now())
+					);
 				});
 				waits.push(flushDeadline);
 			}

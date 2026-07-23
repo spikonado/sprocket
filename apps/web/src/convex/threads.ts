@@ -93,23 +93,13 @@ export const listMine = query({
 	args: {},
 	handler: async (ctx) => {
 		const userId: string = await getUserId(ctx);
-		const [records, workspaceSessions] = await Promise.all([
-			ctx.db
-				.query('threadRecords')
-				.withIndex('by_userId_lastMessageAt', (query) => query.eq('userId', userId))
-				.order('desc')
-				.collect(),
-			ctx.db
-				.query('workspaceSessions')
-				.withIndex('by_userId', (query) => query.eq('userId', userId))
-				.collect()
-		]);
-		const workspaceSessionLookup = new Map(
-			workspaceSessions.map((workspaceSession) => [workspaceSession._id, workspaceSession])
-		);
+		const records = await ctx.db
+			.query('threadRecords')
+			.withIndex('by_userId_lastMessageAt', (query) => query.eq('userId', userId))
+			.order('desc')
+			.collect();
 		return await Promise.all(
 			records.map(async (record) => {
-				const workspaceSession = workspaceSessionLookup.get(record.workspaceSessionId);
 				const latestRun = await ctx.db
 					.query('runs')
 					.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', record._id))
@@ -121,7 +111,6 @@ export const listMine = query({
 					title: record.title?.trim() || 'New thread',
 					threadStatus:
 						record.archivedAt !== undefined ? ('archived' as const) : ('active' as const),
-					workspaceName: workspaceSession?.workspaceName ?? 'Unknown workspace',
 					latestRunStatus: latestRun?.status ?? null,
 					latestRunId: latestRun?._id ?? null,
 					latestRunStartedAt: latestRun?.startedAt,

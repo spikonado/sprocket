@@ -67,18 +67,16 @@ export const heartbeatAttached = mutation({
 		const userId: string = await getUserId(ctx);
 		const now = Date.now();
 		const requestedIds = new Set(args.workspaceSessionIds);
-
-		for (const workspaceSessionId of args.workspaceSessionIds) {
-			const workspaceSession = await ctx.db.get(workspaceSessionId);
-			if (!workspaceSession || workspaceSession.userId !== userId) {
-				throw new Error('Workspace session not found.');
-			}
-		}
-
 		const sessions = await ctx.db
 			.query('workspaceSessions')
 			.withIndex('by_userId', (query) => query.eq('userId', userId))
 			.collect();
+		const ownedSessionIds = new Set(sessions.map((session) => session._id));
+		for (const workspaceSessionId of requestedIds) {
+			if (!ownedSessionIds.has(workspaceSessionId)) {
+				throw new Error('Workspace session not found.');
+			}
+		}
 		const detachedSessionIds = getDetachedWorkspaceSessionIdsForClient(
 			sessions,
 			args.clientId,

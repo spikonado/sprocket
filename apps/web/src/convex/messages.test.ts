@@ -106,9 +106,7 @@ describe('messages transcript queries', () => {
 			}
 			await ctx.db.patch(run.responseMessageId, {
 				text: 'partial answer',
-				parts: [{ type: 'text', id: 't1', text: 'partial answer', turnId: 'turn-1' }],
-				streamSequence: 1,
-				streamAttemptId: 'stream-1'
+				parts: [{ type: 'text', id: 't1', text: 'partial answer', turnId: 'turn-1' }]
 			});
 			return run.responseMessageId;
 		});
