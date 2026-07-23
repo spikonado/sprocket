@@ -17,7 +17,7 @@
 		SupportedReasoningEffort,
 		SupportedServiceTier
 	} from '$convex/lib/models';
-	import { resolveModelForTier } from '$convex/lib/tiers';
+	import { isModelAllowedForTier, resolveModelForTier } from '$convex/lib/tiers';
 	import { modelOptionsForTier } from '$lib/chat/model-options';
 	import {
 		MAX_IMAGE_ATTACHMENTS,
@@ -66,6 +66,10 @@
 	const knownSubscriptionTier = $derived(subscriptionQuery.data?.tier);
 	// Until the tier is known, render the free allowlist so locked models are never selectable.
 	const tierModelOptions = $derived(modelOptionsForTier(knownSubscriptionTier ?? 'free'));
+	const canSubmitWithModel = $derived(
+		knownSubscriptionTier !== undefined &&
+			isModelAllowedForTier(knownSubscriptionTier, selectedModel)
+	);
 
 	let composerTextarea = $state<HTMLTextAreaElement | null>(null);
 	let attachmentInput = $state<HTMLInputElement | null>(null);
@@ -136,7 +140,14 @@
 	}
 
 	function handleComposerKeydown(event: KeyboardEvent) {
-		if (!canSend || isSubmitting || isRunning || !hasMessageContent || attachmentsPending) {
+		if (
+			!canSend ||
+			!canSubmitWithModel ||
+			isSubmitting ||
+			isRunning ||
+			!hasMessageContent ||
+			attachmentsPending
+		) {
 			return;
 		}
 
@@ -334,7 +345,11 @@
 									type="button"
 									class="bg-primary/90 text-primary-foreground hover:bg-primary flex h-10 w-10 items-center justify-center rounded-full transition-all duration-150 hover:scale-105 enabled:cursor-pointer disabled:pointer-events-none disabled:opacity-30 disabled:hover:scale-100"
 									onclick={onSubmit}
-									disabled={!canSend || isSubmitting || !hasMessageContent || attachmentsPending}
+									disabled={!canSend ||
+										!canSubmitWithModel ||
+										isSubmitting ||
+										!hasMessageContent ||
+										attachmentsPending}
 									aria-label="Send message"
 								>
 									<ArrowUp class="size-4" />
