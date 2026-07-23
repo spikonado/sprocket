@@ -96,6 +96,14 @@ describe('Amazon Bedrock fallback routing', () => {
 			FallbackModel
 		);
 
+		const shouldRetry = (openaiFallback as FallbackModel).settings.shouldRetryThisError!;
+		expect(shouldRetry(Object.assign(new Error('auth'), { statusCode: 401 }))).toBe(false);
+		expect(
+			shouldRetry(Object.assign(new Error('auth'), { cause: { response: { status: 403 } } }))
+		).toBe(false);
+		expect(shouldRetry(new Error('Incorrect API key provided'))).toBe(false);
+		expect(shouldRetry(Object.assign(new Error('rate limited'), { statusCode: 429 }))).toBe(true);
+
 		vi.unstubAllEnvs();
 	});
 });

@@ -82,10 +82,33 @@ export function hasBedrockCredentials(env: NodeJS.ProcessEnv = process.env): boo
 	return Boolean(env.AWS_ACCESS_KEY_ID?.trim() && env.AWS_SECRET_ACCESS_KEY?.trim());
 }
 
+function statusCodeFromError(error: unknown): number | undefined {
+	if (!error || typeof error !== 'object') return undefined;
+	const value = error as Record<string, unknown>;
+	if (typeof value.statusCode === 'number') return value.statusCode;
+	if (typeof value.status === 'number') return value.status;
+	const response = value.response;
+	if (response && typeof response === 'object') {
+		const status = (response as Record<string, unknown>).status;
+		if (typeof status === 'number') return status;
+	}
+	return statusCodeFromError(value.cause);
+}
+
 function shouldFailoverToBedrock(error: Error): boolean {
-	const statusCode = (error as { statusCode?: unknown }).statusCode;
+	const statusCode = statusCodeFromError(error);
 	// Auth/permission failures are configuration problems; do not silently bill Bedrock.
 	if (statusCode === 401 || statusCode === 403) return false;
+	const message = error.message.toLowerCase();
+	if (
+		message.includes('wrong-key') ||
+		message.includes('invalid api key') ||
+		message.includes('incorrect api key') ||
+		message.includes('unauthorized') ||
+		message.includes('authentication')
+	) {
+		return false;
+	}
 	return defaultShouldRetryThisError(error);
 }
 
