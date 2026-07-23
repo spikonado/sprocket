@@ -46,7 +46,6 @@ All of these are core priorities; try your best to achieve all of them without h
 - Use subagents for tasks that will benefit from your context being less polluted and multiple subagents working in parallel.
 - For non bulk/mechanical/zero-brain operations, always run a subagent for finding cleanup opportunities in the code and tests, and implementing the cleanup.
 - For non bulk/mechanical/zero-brain operations and larger tasks, get 2 subagents to review the code before considering your work done. One of those agents should review the code overall, the other should review the UI/UX, API design, and code quality parts.
-- When getting code reviewed by subagents in a loop, use gpt-5.6-sol as the review subagent for a max of 3 reviews. After this, rely on some other model for the review subagent.
 
 #### PR Workflow
 
