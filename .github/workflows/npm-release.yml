@@ -183,6 +183,11 @@ jobs:
               npm pack --dry-run
             )
           done
+          binaries="$(find npm-dist -type f \( -name sprocket -o -name sprocket.js \))"
+          test -n "$binaries"
+          while IFS= read -r binary; do
+            test -x "$binary"
+          done <<< "$binaries"
       - uses: actions/upload-artifact@v6
         with:
           name: npm-packages-${{ needs.prepare.outputs.version }}
@@ -209,6 +214,10 @@ jobs:
         with:
           name: npm-packages-${{ needs.prepare.outputs.version }}
           path: npm-dist
+      - name: Restore executable bits after artifact download
+        run: >
+          find npm-dist -type f \( -name sprocket -o -name sprocket.js \)
+          -exec chmod 755 {} +
       - id: freshness
         name: Skip stale main-branch builds
         if: needs.prepare.outputs.npm-tag == 'dev'

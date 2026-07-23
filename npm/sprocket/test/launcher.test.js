@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
+import { chmodSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
-import { nativePackage, run } from '../lib/launcher.js';
+import { ensureExecutable, nativePackage, run } from '../lib/launcher.js';
 
 test('selects the native package for supported platforms', () => {
 	assert.deepEqual(nativePackage('linux', 'x64'), [
@@ -13,6 +16,23 @@ test('selects the native package for supported platforms', () => {
 		'sprocket.exe'
 	]);
 	assert.equal(nativePackage('freebsd', 'x64'), undefined);
+});
+
+test('restores execute bits on unix binaries', { skip: process.platform === 'win32' }, () => {
+	const directory = mkdtempSync(path.join(tmpdir(), 'sprocket-chmod-'));
+	const binary = path.join(directory, 'sprocket');
+	try {
+		writeFileSync(binary, '#!/bin/sh\n');
+		chmodSync(binary, 0o644);
+		ensureExecutable(binary);
+		assert.equal(statSync(binary).mode & 0o111, 0o111);
+
+		chmodSync(binary, 0o555);
+		ensureExecutable(binary);
+		assert.equal(statSync(binary).mode & 0o111, 0o111);
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
 });
 
 test('runs the native executable with unchanged arguments and environment', () => {

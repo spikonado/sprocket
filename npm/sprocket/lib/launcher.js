@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { accessSync, chmodSync, constants } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -44,6 +45,21 @@ export function resolveNativeBinary(platform = process.platform, arch = process.
 	return path.join(path.dirname(packageJson), 'bin', executable);
 }
 
+export function ensureExecutable(binary) {
+	if (process.platform === 'win32') {
+		return;
+	}
+	try {
+		accessSync(binary, constants.X_OK);
+	} catch {
+		try {
+			chmodSync(binary, 0o755);
+		} catch {
+			// Best-effort; spawn reports EACCES if still unusable.
+		}
+	}
+}
+
 export function run(binary, args, options = {}) {
 	const result = (options.spawn ?? spawnSync)(binary, args, {
 		stdio: 'inherit',
@@ -64,7 +80,9 @@ export function launch(args) {
 	try {
 		const packageRoot = path.dirname(fileURLToPath(import.meta.url));
 		const staticDir = path.resolve(packageRoot, '../web');
-		process.exitCode = run(resolveNativeBinary(), args, {
+		const binary = resolveNativeBinary();
+		ensureExecutable(binary);
+		process.exitCode = run(binary, args, {
 			env: {
 				...process.env,
 				SPROCKET_STATIC_DIR: process.env.SPROCKET_STATIC_DIR || staticDir

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { constants } from 'node:fs';
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -73,6 +74,13 @@ test('assembles version-matched root and native packages', async () => {
 			publishConfig: { access: 'public' },
 			libc: ['glibc']
 		});
+
+		const sourceManifest = JSON.parse(
+			await readFile(path.join(ROOT, 'npm/sprocket/package.json'), 'utf8')
+		);
+		assert.equal(rootManifest.engines.node, sourceManifest.engines.node);
+		await access(path.join(output, 'sprocket/bin/sprocket.js'), constants.X_OK);
+		await access(path.join(output, 'linux-x64-gnu/bin/sprocket'), constants.X_OK);
 	} finally {
 		await rm(temporary, { recursive: true, force: true });
 	}
