@@ -9,7 +9,7 @@ export function contextSummaryText(summary: string): string {
 
 export const COMPACTION_MAX_OUTPUT_TOKENS = 12_000;
 
-export const CONTEXT_COMPACTION_INSTRUCTIONS = `Summarize the supplied coding-agent conversation so another agent can continue without the original messages.
+export const CONTEXT_COMPACTION_INSTRUCTIONS = `Summarize the supplied engineering agent conversation so another agent can continue without the original messages.
 
 Preserve:
 - every user request and the current objective

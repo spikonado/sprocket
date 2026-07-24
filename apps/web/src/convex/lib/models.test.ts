@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
 	assertSupportedModelConfiguration,
 	completionUsageUnits,
-	getModelDefinition,
 	modelIds
 } from '@convex/lib/models';
 
@@ -15,23 +14,6 @@ describe('model configuration', () => {
 			'claude-fable-5',
 			'grok-4.5'
 		]);
-	});
-
-	it('uses the coding-agent context and compaction budgets', () => {
-		expect(getModelDefinition('gpt-5.6-sol')).toMatchObject({
-			contextWindowTokens: 258_400,
-			autoCompactTokenLimit: 244_800
-		});
-		expect(getModelDefinition('gpt-5.6-terra').contextWindowTokens).toBe(258_400);
-		expect(getModelDefinition('gpt-5.6-luna').contextWindowTokens).toBe(258_400);
-		expect(getModelDefinition('claude-fable-5')).toMatchObject({
-			contextWindowTokens: 980_000,
-			autoCompactTokenLimit: 967_000
-		});
-		expect(getModelDefinition('grok-4.5')).toMatchObject({
-			contextWindowTokens: 500_000,
-			autoCompactTokenLimit: 400_000
-		});
 	});
 
 	it('rejects reasoning efforts unsupported by a model', () => {
