@@ -70,12 +70,14 @@
 	const subscriptionQuery = useQuery(api.billing.getMySubscription, () =>
 		convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip'
 	);
-	const knownSubscriptionTier = $derived(subscriptionQuery.data?.tier);
+	// Fall back to free on query failure so send is not stuck disabled forever.
+	const subscriptionTier = $derived(
+		subscriptionQuery.data?.tier ?? (subscriptionQuery.error ? 'free' : undefined)
+	);
 	// Until the tier is known, render the free allowlist so locked models are never selectable.
-	const tierModelOptions = $derived(modelOptionsForTier(knownSubscriptionTier ?? 'free'));
+	const tierModelOptions = $derived(modelOptionsForTier(subscriptionTier ?? 'free'));
 	const canSubmitWithModel = $derived(
-		knownSubscriptionTier !== undefined &&
-			isModelAllowedForTier(knownSubscriptionTier, selectedModel)
+		subscriptionTier !== undefined && isModelAllowedForTier(subscriptionTier, selectedModel)
 	);
 
 	let composerTextarea = $state<HTMLTextAreaElement | null>(null);
@@ -187,9 +189,10 @@
 	}
 
 	$effect(() => {
-		// Only coerce after the tier is known so paid users are not snapped to free defaults.
-		if (!knownSubscriptionTier) return;
-		const allowedModel = resolveModelForTier(knownSubscriptionTier, selectedModel);
+		// Only coerce after the tier is known (or failed closed to free) so paid users are
+		// not snapped to free defaults during a successful load.
+		if (!subscriptionTier) return;
+		const allowedModel = resolveModelForTier(subscriptionTier, selectedModel);
 		if (allowedModel === selectedModel) return;
 		selectedModel = allowedModel;
 		selectedReasoningEffort = getModelDefinition(allowedModel).defaultReasoningEffort;
