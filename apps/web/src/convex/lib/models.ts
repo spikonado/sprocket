@@ -19,6 +19,10 @@ type ModelDefinition = {
 	id: SupportedModelId;
 	label: string;
 	provider: ModelProvider;
+	/** Context budget exposed by the provider's coding-agent harness. */
+	contextWindowTokens: number;
+	/** Input-token count at which the harness automatically compacts. */
+	autoCompactTokenLimit: number;
 	reasoningEfforts: readonly SupportedReasoningEffort[];
 	defaultReasoningEffort: SupportedReasoningEffort;
 	serviceTiers: readonly SupportedServiceTier[];
@@ -36,6 +40,8 @@ export const modelDefinitions = [
 		id: 'gpt-5.6-sol',
 		label: 'GPT-5.6 Sol',
 		provider: 'openai',
+		contextWindowTokens: 258_400,
+		autoCompactTokenLimit: 244_800,
 		reasoningEfforts: reasoningEffortIds,
 		defaultReasoningEffort: 'medium',
 		serviceTiers: serviceTierIds,
@@ -53,6 +59,8 @@ export const modelDefinitions = [
 		id: 'gpt-5.6-terra',
 		label: 'GPT-5.6 Terra',
 		provider: 'openai',
+		contextWindowTokens: 258_400,
+		autoCompactTokenLimit: 244_800,
 		reasoningEfforts: reasoningEffortIds,
 		defaultReasoningEffort: 'medium',
 		serviceTiers: serviceTierIds,
@@ -75,6 +83,8 @@ export const modelDefinitions = [
 		id: 'gpt-5.6-luna',
 		label: 'GPT-5.6 Luna',
 		provider: 'openai',
+		contextWindowTokens: 258_400,
+		autoCompactTokenLimit: 244_800,
 		reasoningEfforts: reasoningEffortIds,
 		defaultReasoningEffort: 'medium',
 		serviceTiers: serviceTierIds,
@@ -92,6 +102,8 @@ export const modelDefinitions = [
 		id: 'claude-fable-5',
 		label: 'Claude Fable 5',
 		provider: 'anthropic',
+		contextWindowTokens: 980_000,
+		autoCompactTokenLimit: 967_000,
 		reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
 		defaultReasoningEffort: 'high',
 		serviceTiers: serviceTierIds,
@@ -104,6 +116,8 @@ export const modelDefinitions = [
 		id: 'grok-4.5',
 		label: 'Grok 4.5',
 		provider: 'xai',
+		contextWindowTokens: 500_000,
+		autoCompactTokenLimit: 400_000,
 		reasoningEfforts: ['low', 'medium', 'high'],
 		defaultReasoningEffort: 'high',
 		serviceTiers: serviceTierIds,

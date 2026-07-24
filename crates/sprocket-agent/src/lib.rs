@@ -1,3 +1,4 @@
+mod compaction;
 mod convex;
 mod hooks;
 mod provider;

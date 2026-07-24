@@ -1,7 +1,7 @@
 use anyhow::{Context, anyhow};
 use convex::{FunctionResult, QuerySubscription, Value};
 use serde::Deserialize;
-use sprocket_convex_provider::Client as ConvexProviderClient;
+use sprocket_convex_provider::{Client as ConvexProviderClient, Usage as CompletionUsage};
 use std::collections::BTreeMap;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -233,6 +233,68 @@ impl RuntimeClient {
         .await
     }
 
+    pub(crate) async fn record_context_usage(
+        &self,
+        run_id: &str,
+        claim_id: &str,
+        context_tokens: u64,
+        processed_tokens: u64,
+    ) -> anyhow::Result<bool> {
+        let mut args = self.run_args_with_claim(run_id, claim_id);
+        args.insert(
+            "contextTokens".to_string(),
+            Value::Float64(context_tokens as f64),
+        );
+        args.insert(
+            "processedTokens".to_string(),
+            Value::Float64(processed_tokens as f64),
+        );
+        self.mutation_json("agentRuntime:recordContextUsage", args)
+            .await
+    }
+
+    pub(crate) async fn save_context_compaction(
+        &self,
+        run_id: &str,
+        claim_id: &str,
+        summary: &str,
+        processed_tokens: u64,
+        persist_for_future_runs: bool,
+    ) -> anyhow::Result<bool> {
+        let mut args = self.run_args_with_claim(run_id, claim_id);
+        args.insert("summary".to_string(), summary.to_string().into());
+        args.insert(
+            "processedTokens".to_string(),
+            Value::Float64(processed_tokens as f64),
+        );
+        args.insert(
+            "persistForFutureRuns".to_string(),
+            Value::Boolean(persist_for_future_runs),
+        );
+        self.mutation_json("agentRuntime:saveContextCompaction", args)
+            .await
+    }
+
+    pub(crate) async fn summarize(
+        &self,
+        run_id: &str,
+        claim_id: &str,
+        model_id: &str,
+        reasoning_effort: &str,
+        service_tier: &str,
+        messages_json: &str,
+    ) -> anyhow::Result<SummarizeResponse> {
+        let mut args = self.run_args_with_claim(run_id, claim_id);
+        args.insert("modelId".to_string(), model_id.to_string().into());
+        args.insert(
+            "reasoningEffort".to_string(),
+            reasoning_effort.to_string().into(),
+        );
+        args.insert("serviceTier".to_string(), service_tier.to_string().into());
+        args.insert("messagesJson".to_string(), messages_json.to_string().into());
+        self.action_json("completion:summarize", args).await
+    }
+
     pub(crate) async fn begin_assistant_message(&self, run_id: &str) -> anyhow::Result<()> {
         self.mutation_unit("agentRuntime:beginAssistantMessage", self.run_args(run_id))
             .await
@@ -331,6 +393,30 @@ impl RuntimeClient {
         let mut args = self.run_args(run_id);
         args.insert("claimId".to_string(), claim_id.to_string().into());
         args
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SummarizeResponse {
+    pub(crate) summary: String,
+    pub(crate) usage: CompletionUsage,
+}
+
+impl SummarizeResponse {
+    pub(crate) fn processed_tokens(&self) -> u64 {
+        // Prefer `input_tokens` when it already includes cache details; otherwise add them.
+        let cache_tokens = self
+            .usage
+            .input_token_details
+            .cache_read_tokens
+            .saturating_add(self.usage.input_token_details.cache_write_tokens);
+        let input = if self.usage.input_tokens >= cache_tokens {
+            self.usage.input_tokens
+        } else {
+            self.usage.input_tokens.saturating_add(cache_tokens)
+        };
+        input.saturating_add(self.usage.output_tokens)
     }
 }
 

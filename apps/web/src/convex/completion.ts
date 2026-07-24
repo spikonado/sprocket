@@ -8,7 +8,11 @@ import type { Id } from '@convex/_generated/dataModel';
 import type { JsonValue } from '@convex/lib/json';
 import { resolveLanguageModel, resolveProviderOptions } from '@convex/lib/modelRegistry';
 import { RUN_NO_LONGER_ACTIVE, assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
-import { isCurrentCompletionAttempt, isRunClaimLeaseActive } from '@convex/lib/runLease';
+import {
+	isCurrentCompletionAttempt,
+	isRunClaimLeaseActive,
+	ownsActiveRunClaim
+} from '@convex/lib/runLease';
 import { chargeModelUsage, checkModelUsageLimit } from '@convex/lib/rateLimits';
 import { vModelId, vReasoningEffort, vServiceTier } from '@convex/lib/validators';
 import {
@@ -19,6 +23,10 @@ import {
 	type SupportedReasoningEffort,
 	type SupportedServiceTier
 } from '@convex/lib/models';
+import {
+	COMPACTION_MAX_OUTPUT_TOKENS,
+	CONTEXT_COMPACTION_INSTRUCTIONS
+} from '@convex/lib/contextCompaction';
 import {
 	appendCompletionStreamEvent,
 	COMPLETION_STREAM_SUPERSEDED,
@@ -188,6 +196,85 @@ export const complete = action({
 			})),
 			stream_events: result.streamEvents
 		};
+	}
+});
+
+type SummarizeClaim = {
+	runId: Id<'runs'>;
+	claimId: string;
+	executionSecret: string;
+};
+
+export const summarize = action({
+	args: {
+		modelId: vModelId,
+		reasoningEffort: v.optional(vReasoningEffort),
+		serviceTier: v.optional(vServiceTier),
+		messagesJson: v.string(),
+		runId: v.id('runs'),
+		claimId: v.string(),
+		executionSecret: v.string()
+	},
+	handler: async (
+		ctx,
+		args
+	): Promise<{
+		summary: string;
+		usage: GenerateTextResult['usage'];
+	}> => {
+		const modelId = args.modelId;
+		const serviceTier = args.serviceTier ?? defaultServiceTier;
+		if (args.reasoningEffort !== undefined || args.serviceTier !== undefined) {
+			assertSupportedModelConfiguration({
+				modelId,
+				reasoningEffort: args.reasoningEffort,
+				serviceTier
+			});
+		}
+		const claim: SummarizeClaim = {
+			runId: args.runId,
+			claimId: args.claimId,
+			executionSecret: args.executionSecret
+		};
+		const completionContext = await prepareCompletionContext(ctx, args.runId, args.executionSecret);
+		await assertSummarizeStillAccepted(ctx, claim);
+		const messages = reviveImageUrls(
+			parseJson<SerializedModelMessage[]>(args.messagesJson, 'messagesJson')
+		);
+		const sharedArgs = buildSharedCompletionRequest(
+			{
+				modelId,
+				reasoningEffort: args.reasoningEffort,
+				serviceTier,
+				instructions: CONTEXT_COMPACTION_INSTRUCTIONS
+			},
+			{},
+			undefined,
+			completionContext.promptCacheKey
+		);
+		const abortController = new AbortController();
+		const result = await waitForCompletionWithAcceptance(
+			ctx,
+			generateText({
+				...sharedArgs,
+				messages,
+				maxOutputTokens: COMPACTION_MAX_OUTPUT_TOKENS,
+				abortSignal: abortController.signal
+			}),
+			claim,
+			abortController
+		);
+		const summary = result.text.trim();
+		if (!summary) throw new Error('The model returned an empty context summary.');
+		await assertSummarizeStillAccepted(ctx, claim);
+		await chargeModelUsage(ctx, {
+			userId: completionContext.userId,
+			modelId,
+			serviceTier,
+			tokens: normalizeCompletionUsage(result.usage)
+		});
+		await checkModelUsageLimit(ctx, completionContext.userId);
+		return { summary, usage: result.usage };
 	}
 });
 
@@ -539,6 +626,38 @@ async function assertCompletionStillAccepted(
 		})
 	) {
 		throw new Error(COMPLETION_STREAM_SUPERSEDED);
+	}
+}
+
+async function assertSummarizeStillAccepted(ctx: ActionCtx, claim: SummarizeClaim): Promise<void> {
+	const actor = await ctx.runQuery(api.agentRuntime.completionActor, {
+		runId: claim.runId,
+		executionSecret: claim.executionSecret
+	});
+	assertRunAcceptsModelCompletion(actor.status);
+	if (!ownsActiveRunClaim(actor, claim.claimId, Date.now())) {
+		throw new Error(RUN_NO_LONGER_ACTIVE);
+	}
+}
+
+async function waitForCompletionWithAcceptance<T>(
+	ctx: ActionCtx,
+	completion: Promise<T>,
+	claim: SummarizeClaim,
+	abortController: AbortController
+): Promise<T> {
+	while (true) {
+		const outcome = await Promise.race([
+			completion.then((value) => ({ type: 'completed' as const, value })),
+			delay(COMPLETION_ACCEPTANCE_CHECK_INTERVAL_MS).then(() => ({ type: 'check' as const }))
+		]);
+		if (outcome.type === 'completed') return outcome.value;
+		try {
+			await assertSummarizeStillAccepted(ctx, claim);
+		} catch (error) {
+			abortController.abort(error);
+			throw error;
+		}
 	}
 }
 
