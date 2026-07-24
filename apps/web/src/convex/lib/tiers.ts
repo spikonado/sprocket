@@ -49,7 +49,7 @@ export const tierAllowedModels: Record<SubscriptionTier, readonly SupportedModel
 	admin: modelIds
 };
 
-export const modelLockUpgradeMessage = 'Upgrade to a higher tier to unlock these models' as const;
+export const modelLockUpgradeMessage = 'Upgrade to a higher tier to unlock this model' as const;
 
 export function isModelAllowedForTier(tier: SubscriptionTier, modelId: SupportedModelId): boolean {
 	return tierAllowedModels[tier].includes(modelId);
