@@ -99,6 +99,7 @@ fn build_workspace_preamble(
 
         "Always use apply_patch to create, edit, delete, or rename files. Do not use the shell for those operations. `git` is an exception to this rule.",
         "Prefer using the `scrape_url` tool over `web_search` when you have an idea on what URL could lead you to the information you need. `web_search` is more expensive and should be used as a fallback.",
+        "You are suggested to use `scrape_url` on the URLs returned by `web_search` to further ground the information you received from it.",
 
         "## Writing Tests",
 
