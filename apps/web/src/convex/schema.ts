@@ -53,6 +53,10 @@ export default defineSchema({
 		selectedModel: vModelId,
 		reasoningEffort: vReasoningEffort,
 		serviceTier: vServiceTier,
+		contextTokens: v.optional(v.number()),
+		totalTokensProcessed: v.optional(v.number()),
+		contextSummary: v.optional(v.string()),
+		contextSummaryThroughRunId: v.optional(v.id('runs')),
 		lastMessageAt: v.number(),
 		archivedAt: v.optional(v.number())
 	})

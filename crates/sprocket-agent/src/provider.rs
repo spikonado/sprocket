@@ -8,10 +8,11 @@ use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
 use sprocket_convex_provider::{Client as ConvexProviderClient, is_completion_stream_superseded};
 use sprocket_workspace::CommandSessionManager;
 
+use crate::compaction::ContextCompactionHook;
 use crate::convex::RuntimeClient;
 use crate::hooks::{AgentPromptHook, ToolCallTracker};
 use crate::tools::agent_tools;
-use crate::types::RunContextResponse;
+use crate::types::{ContextBudget, RunContextResponse};
 
 const AGENT_MAX_TURNS: usize = 1_000;
 const MAX_INVALID_TOOL_CALL_RETRIES: usize = 3;
@@ -65,6 +66,10 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) preamble: String,
     pub(crate) prior_history: Vec<Message>,
     pub(crate) workspace_root: PathBuf,
+    pub(crate) model: String,
+    pub(crate) reasoning_effort: String,
+    pub(crate) service_tier: String,
+    pub(crate) context_budget: ContextBudget,
 }
 
 pub(crate) enum AgentProviderResult {
@@ -139,13 +144,25 @@ where
     eprintln!("sprocket-agent: built agent {}", request.run_id);
     eprintln!("sprocket-agent: prompting model {}", request.run_id);
 
-    let hook = AgentPromptHook::new(tool_call_tracker);
+    let prompt_hook = AgentPromptHook::new(tool_call_tracker);
+    let prior_history_len = request.prior_history.len();
+    let compaction_hook = ContextCompactionHook::new(
+        runtime,
+        request.run_id.clone(),
+        request.claim_id.clone(),
+        request.model,
+        request.reasoning_effort,
+        request.service_tier,
+        request.context_budget,
+        prior_history_len,
+    );
 
     let mut stream = agent
         .stream_prompt(request.prompt)
         .history(request.prior_history)
         .max_turns(AGENT_MAX_TURNS)
-        .add_hook(hook)
+        .add_hook(prompt_hook)
+        .add_hook(compaction_hook)
         .max_invalid_tool_call_retries(MAX_INVALID_TOOL_CALL_RETRIES)
         .await;
     let mut final_text = String::new();

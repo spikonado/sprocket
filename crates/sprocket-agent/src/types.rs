@@ -5,7 +5,7 @@ use rig::message::{
     AssistantContent, ReasoningContent, Text, ToolCall, ToolFunction, ToolResult,
     ToolResultContent, UserContent,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use sprocket_convex_provider::AuthTokenFetcher;
 
 #[derive(Clone)]
@@ -52,6 +52,29 @@ pub struct RunContextResponse {
     pub prompt_attachments: Vec<ResolvedImageAttachment>,
     pub agent_history: Vec<AgentHistoryMessage>,
     pub workspace_session: WorkspaceSessionSnapshot,
+    pub context_budget: ContextBudget,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextBudget {
+    #[serde(deserialize_with = "deserialize_convex_u64")]
+    pub context_window_tokens: u64,
+    #[serde(deserialize_with = "deserialize_convex_u64")]
+    pub auto_compact_token_limit: u64,
+}
+
+fn deserialize_convex_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = f64::deserialize(deserializer)?;
+    if !value.is_finite() || value < 0.0 || value.fract() != 0.0 {
+        return Err(serde::de::Error::custom(format!(
+            "expected a non-negative integer-compatible Convex number, got {value}"
+        )));
+    }
+    Ok(value as u64)
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

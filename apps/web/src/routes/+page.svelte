@@ -48,6 +48,7 @@
 		defaultModelId,
 		defaultReasoningEffort,
 		defaultServiceTier,
+		getModelDefinition,
 		type SupportedModelId,
 		type SupportedReasoningEffort,
 		type SupportedServiceTier
@@ -438,6 +439,15 @@
 		});
 	});
 	const currentActiveThread = $derived(dataForThread(activeThreadQuery.data, currentThreadId));
+	const contextUsage = $derived.by(() => {
+		const model = getModelDefinition(selectedModel);
+		return {
+			inputTokens: currentActiveThread?.contextTokens ?? 0,
+			totalTokensProcessed: currentActiveThread?.totalTokensProcessed ?? 0,
+			contextWindowTokens: model.contextWindowTokens,
+			autoCompactTokenLimit: model.autoCompactTokenLimit
+		};
+	});
 	const currentLatestRunData = $derived(dataForThread(latestRunQuery.data, currentThreadId));
 	const currentHistoryMessagesData = $derived(
 		dataForThread(historyMessagesQuery.data, currentThreadId)
@@ -1803,6 +1813,7 @@
 						isStarting={hasPendingAgentLaunch}
 						{isRunning}
 						elapsedLabel={isRunning ? formatElapsedDuration(elapsedSeconds) : null}
+						{contextUsage}
 						onSubmit={() => {
 							void submitPrompt();
 						}}

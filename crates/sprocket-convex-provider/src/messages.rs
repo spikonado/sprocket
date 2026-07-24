@@ -6,10 +6,18 @@ use rig::message::{AssistantContent, ReasoningContent, ToolResultContent, UserCo
 pub(crate) fn build_model_messages(
     request: &CompletionRequest,
 ) -> Result<serde_json::Value, CompletionError> {
-    let mut messages: Vec<serde_json::Value> = Vec::new();
-    let mut tool_names_by_call_id: BTreeMap<String, String> = BTreeMap::<String, String>::new();
+    completion_messages_json(request.chat_history.iter())
+}
 
-    for message in request.chat_history.iter() {
+/// Serializes Rig messages into the AI SDK model-message JSON accepted by the
+/// Convex completion actions.
+pub fn completion_messages_json<'a>(
+    history: impl IntoIterator<Item = &'a Message>,
+) -> Result<serde_json::Value, CompletionError> {
+    let mut messages: Vec<serde_json::Value> = Vec::new();
+    let mut tool_names_by_call_id: BTreeMap<String, String> = BTreeMap::new();
+
+    for message in history {
         match message {
             Message::System { .. } => {}
             Message::User { content } => {

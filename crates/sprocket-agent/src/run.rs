@@ -536,6 +536,11 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
     };
     eprintln!("sprocket-agent: loaded run context {}", run_id);
 
+    let model = context.run.selected_model.clone();
+    let reasoning_effort = context.run.reasoning_effort.clone();
+    let service_tier = context.run.service_tier.clone();
+    let context_budget = context.context_budget.clone();
+
     let prepared = (|| {
         let workspace_instructions = load_workspace_instructions(&workspace_root)?;
         let prompt_text = context.prompt.trim();
@@ -615,6 +620,10 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
                     preamble,
                     prior_history,
                     workspace_root,
+                    model,
+                    reasoning_effort,
+                    service_tier,
+                    context_budget,
                 },
             )
             .await;
