@@ -1,5 +1,6 @@
 import type { GenericMutationCtx, GenericQueryCtx } from 'convex/server';
 import type { DataModel, Doc } from '@convex/_generated/dataModel';
+import { getModelDefinition, modelIds, type SupportedModelId } from '@convex/lib/models';
 
 export const subscriptionTierIds = ['free', 'pro', 'admin'] as const;
 export type SubscriptionTier = (typeof subscriptionTierIds)[number];
@@ -15,21 +16,59 @@ export type TierLimits = {
 	webTools: { weekly: number; monthly: number };
 };
 
-const sharedLimits: TierLimits = {
-	modelUsage: { weekly: 2_500, monthly: 7_500 },
+const freeLimits: TierLimits = {
+	modelUsage: { weekly: 5_000, monthly: 15_000 },
 	webTools: { weekly: 500, monthly: 1_500 }
+};
+
+const proLimits: TierLimits = {
+	modelUsage: {
+		weekly: freeLimits.modelUsage.weekly * 5,
+		monthly: freeLimits.modelUsage.monthly * 5
+	},
+	webTools: {
+		weekly: freeLimits.webTools.weekly * 5,
+		monthly: freeLimits.webTools.monthly * 5
+	}
 };
 
 const adminQuota = 1_000_000_000;
 
 export const tierLimits: Record<SubscriptionTier, TierLimits> = {
-	free: sharedLimits,
-	pro: sharedLimits,
+	free: freeLimits,
+	pro: proLimits,
 	admin: {
 		modelUsage: { weekly: adminQuota, monthly: adminQuota },
 		webTools: { weekly: adminQuota, monthly: adminQuota }
 	}
 };
+
+export const tierAllowedModels: Record<SubscriptionTier, readonly SupportedModelId[]> = {
+	free: ['claude-fable-5'],
+	pro: modelIds,
+	admin: modelIds
+};
+
+export const modelLockUpgradeMessage = 'Upgrade to a higher tier to unlock this model' as const;
+
+export function isModelAllowedForTier(tier: SubscriptionTier, modelId: SupportedModelId): boolean {
+	return tierAllowedModels[tier].includes(modelId);
+}
+
+export function assertModelAllowedForTier(tier: SubscriptionTier, modelId: SupportedModelId): void {
+	if (isModelAllowedForTier(tier, modelId)) return;
+	throw new Error(
+		`${getModelDefinition(modelId).label} is not available on the ${tierLabels[tier]} plan. Upgrade to a higher tier to unlock this model.`
+	);
+}
+
+export function resolveModelForTier(
+	tier: SubscriptionTier,
+	modelId: SupportedModelId
+): SupportedModelId {
+	if (isModelAllowedForTier(tier, modelId)) return modelId;
+	return tierAllowedModels[tier][0];
+}
 
 /** Dodo product id per paid tier; 'free' and 'admin' never have one. */
 export const tierProductIds: Partial<Record<SubscriptionTier, string>> = {};

@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { ArrowUp, ImagePlus, Square, X } from '@lucide/svelte';
+	import { useAuth, useQuery } from 'convex-svelte';
+	import { api } from '$convex/_generated/api';
 	import OptionSelector from '$lib/components/option-selector.svelte';
 	import ProviderLogo from '$lib/components/provider-logo.svelte';
 	import ReasoningServiceSelector from '$lib/components/reasoning-service-selector.svelte';
@@ -15,7 +17,8 @@
 		SupportedReasoningEffort,
 		SupportedServiceTier
 	} from '$convex/lib/models';
-	import { modelOptions } from '$lib/chat/model-options';
+	import { isModelAllowedForTier, resolveModelForTier } from '$convex/lib/tiers';
+	import { modelOptionsForTier } from '$lib/chat/model-options';
 	import {
 		MAX_IMAGE_ATTACHMENTS,
 		SUPPORTED_IMAGE_MEDIA_TYPES,
@@ -62,6 +65,18 @@
 		onSubmit,
 		onCancel
 	}: Props = $props();
+
+	const convexAuth = useAuth();
+	const subscriptionQuery = useQuery(api.billing.getMySubscription, () =>
+		convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip'
+	);
+	const knownSubscriptionTier = $derived(subscriptionQuery.data?.tier);
+	// Until the tier is known, render the free allowlist so locked models are never selectable.
+	const tierModelOptions = $derived(modelOptionsForTier(knownSubscriptionTier ?? 'free'));
+	const canSubmitWithModel = $derived(
+		knownSubscriptionTier !== undefined &&
+			isModelAllowedForTier(knownSubscriptionTier, selectedModel)
+	);
 
 	let composerTextarea = $state<HTMLTextAreaElement | null>(null);
 	let attachmentInput = $state<HTMLInputElement | null>(null);
@@ -138,7 +153,14 @@
 	}
 
 	function handleComposerKeydown(event: KeyboardEvent) {
-		if (!canSend || isSubmitting || isRunning || !hasMessageContent || attachmentsPending) {
+		if (
+			!canSend ||
+			!canSubmitWithModel ||
+			isSubmitting ||
+			isRunning ||
+			!hasMessageContent ||
+			attachmentsPending
+		) {
 			return;
 		}
 
@@ -163,6 +185,15 @@
 		}
 		return String(value);
 	}
+
+	$effect(() => {
+		// Only coerce after the tier is known so paid users are not snapped to free defaults.
+		if (!knownSubscriptionTier) return;
+		const allowedModel = resolveModelForTier(knownSubscriptionTier, selectedModel);
+		if (allowedModel === selectedModel) return;
+		selectedModel = allowedModel;
+		selectedReasoningEffort = getModelDefinition(allowedModel).defaultReasoningEffort;
+	});
 
 	$effect(() => {
 		void prompt;
@@ -296,7 +327,7 @@
 
 							<OptionSelector
 								bind:value={selectedModel}
-								options={modelOptions}
+								options={tierModelOptions}
 								ariaLabel="Select model"
 								menuTitle="Model"
 								disabled={isRunning}
@@ -379,7 +410,11 @@
 									type="button"
 									class="bg-primary/90 text-primary-foreground hover:bg-primary flex h-10 w-10 items-center justify-center rounded-full transition-all duration-150 hover:scale-105 enabled:cursor-pointer disabled:pointer-events-none disabled:opacity-30 disabled:hover:scale-100"
 									onclick={onSubmit}
-									disabled={!canSend || isSubmitting || !hasMessageContent || attachmentsPending}
+									disabled={!canSend ||
+										!canSubmitWithModel ||
+										isSubmitting ||
+										!hasMessageContent ||
+										attachmentsPending}
 									aria-label="Send message"
 								>
 									<ArrowUp class="size-4" />

@@ -46,6 +46,15 @@ export async function seedOwnedThread(
 	threadId: Id<'threadRecords'>;
 }> {
 	const asUser = t.withIdentity({ subject });
+	// Integration fixtures exercise every model; grant admin so free-tier allowlists do not block them.
+	await t.run(async (ctx) => {
+		await ctx.db.insert('subscriptions', {
+			userId: subject,
+			tier: 'admin',
+			status: 'active',
+			eventAt: 1
+		});
+	});
 	const workspaceSession = await asUser.mutation(api.workspaceSessions.upsertSelected, {
 		workspaceName: 'alpha',
 		connectedClientId: 'client-1'
