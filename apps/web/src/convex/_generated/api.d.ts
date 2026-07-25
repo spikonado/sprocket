@@ -38,6 +38,7 @@ import type * as lib_usageMeters from "../lib/usageMeters.js";
 import type * as lib_validators from "../lib/validators.js";
 import type * as lib_workspaceConnection from "../lib/workspaceConnection.js";
 import type * as messages from "../messages.js";
+import type * as modelCatalog from "../modelCatalog.js";
 import type * as threads from "../threads.js";
 import type * as uiPreferences from "../uiPreferences.js";
 import type * as usage from "../usage.js";
@@ -81,6 +82,7 @@ declare const fullApi: ApiFromModules<{
   "lib/validators": typeof lib_validators;
   "lib/workspaceConnection": typeof lib_workspaceConnection;
   messages: typeof messages;
+  modelCatalog: typeof modelCatalog;
   threads: typeof threads;
   uiPreferences: typeof uiPreferences;
   usage: typeof usage;

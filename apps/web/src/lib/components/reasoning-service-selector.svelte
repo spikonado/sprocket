@@ -3,17 +3,18 @@
 	import {
 		defaultReasoningEffort,
 		defaultServiceTier,
-		getModelDefinition,
-		serviceTierIds,
-		type SupportedModelId,
 		type SupportedReasoningEffort,
 		type SupportedServiceTier
 	} from '$convex/lib/models';
-	import { reasoningEffortLabels, serviceTierLabels } from '$lib/chat/model-options';
+	import {
+		type CatalogModel,
+		reasoningEffortLabel,
+		serviceTierLabel
+	} from '$lib/chat/model-catalog';
 	import { cn } from '$lib/utils';
 
 	type Props = {
-		modelId: SupportedModelId;
+		model: CatalogModel;
 		reasoningEffort?: SupportedReasoningEffort;
 		serviceTier?: SupportedServiceTier;
 		disabled?: boolean;
@@ -21,9 +22,9 @@
 	};
 
 	let {
-		modelId,
-		reasoningEffort = $bindable(defaultReasoningEffort),
-		serviceTier = $bindable(defaultServiceTier),
+		model,
+		reasoningEffort = $bindable<SupportedReasoningEffort>(defaultReasoningEffort),
+		serviceTier = $bindable<SupportedServiceTier>(defaultServiceTier),
 		disabled = false,
 		className = ''
 	}: Props = $props();
@@ -31,24 +32,24 @@
 	let isOpen = $state(false);
 	let rootElement = $state<HTMLDivElement | null>(null);
 	let triggerElement = $state<HTMLButtonElement | null>(null);
-	let model = $derived(getModelDefinition(modelId));
-	let supportsFast = $derived(model.serviceTiers.includes('fast'));
 
 	function selectReasoning(next: SupportedReasoningEffort) {
 		reasoningEffort = next;
 	}
 
 	function selectServiceTier(next: SupportedServiceTier) {
-		if (next === 'fast' && !supportsFast) return;
+		if (!model.serviceTiers.includes(next)) return;
 		serviceTier = next;
 	}
 
 	$effect(() => {
-		const supportedReasoning = model.reasoningEfforts as readonly SupportedReasoningEffort[];
+		const supportedReasoning = model.reasoningEfforts;
 		if (!supportedReasoning.includes(reasoningEffort)) {
 			reasoningEffort = model.defaultReasoningEffort;
 		}
-		if (!model.serviceTiers.includes(serviceTier)) serviceTier = defaultServiceTier;
+		if (!model.serviceTiers.includes(serviceTier)) {
+			serviceTier = model.serviceTiers[0] ?? defaultServiceTier;
+		}
 	});
 
 	$effect(() => {
@@ -90,7 +91,7 @@
 			isOpen = !isOpen;
 		}}
 	>
-		<span>{reasoningEffortLabels[reasoningEffort]} · {serviceTierLabels[serviceTier]}</span>
+		<span>{reasoningEffortLabel(reasoningEffort)} · {serviceTierLabel(serviceTier)}</span>
 		<ChevronDown
 			class={cn('size-3 shrink-0 text-slate-500 transition-transform', isOpen && 'rotate-180')}
 		/>
@@ -117,7 +118,7 @@
 								effort === reasoningEffort ? 'opacity-100' : 'opacity-0'
 							)}
 						/>
-						<span>{reasoningEffortLabels[effort]}</span>
+						<span>{reasoningEffortLabel(effort)}</span>
 						{#if effort === model.defaultReasoningEffort}
 							<span class="ml-auto text-xs text-slate-500">Default</span>
 						{/if}
@@ -128,16 +129,11 @@
 			<div class="mx-2 my-2 h-px bg-white/6"></div>
 			<p class="px-3 pb-1.5 text-[11px] font-medium text-slate-500">Service tier</p>
 			<div class="space-y-0.5">
-				{#each serviceTierIds as tier (tier)}
-					{@const unavailable = tier === 'fast' && !supportsFast}
+				{#each model.serviceTiers as tier (tier)}
 					<button
 						type="button"
-						class={cn(
-							'focus-visible:ring-ring/60 flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm text-slate-100 outline-none focus-visible:ring-2',
-							unavailable ? 'cursor-not-allowed opacity-40' : 'hover:bg-white/4'
-						)}
+						class="focus-visible:ring-ring/60 flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm text-slate-100 outline-none hover:bg-white/4 focus-visible:ring-2"
 						aria-pressed={tier === serviceTier}
-						aria-disabled={unavailable}
 						onclick={() => selectServiceTier(tier)}
 					>
 						<Check
@@ -147,10 +143,8 @@
 							)}
 						/>
 						{#if tier === 'fast'}<Zap class="size-3.5 text-amber-400" />{/if}
-						<span>{serviceTierLabels[tier]}</span>
-						{#if unavailable}
-							<span class="ml-auto text-xs text-slate-500">Unavailable</span>
-						{:else if tier === defaultServiceTier}
+						<span>{serviceTierLabel(tier)}</span>
+						{#if tier === model.serviceTiers[0]}
 							<span class="ml-auto text-xs text-slate-500">Default</span>
 						{/if}
 					</button>

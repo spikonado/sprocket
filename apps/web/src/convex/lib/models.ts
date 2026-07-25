@@ -32,6 +32,9 @@ type ModelDefinition = {
 	usageWeights: TokenUsageWeights & { fastMultiplier: number };
 };
 
+/** UI-facing model entry (server pricing weights omitted). */
+export type CatalogModel = Omit<ModelDefinition, 'usageWeights'>;
+
 export const modelDefinitions = [
 	{
 		id: 'gpt-5.6-sol',
