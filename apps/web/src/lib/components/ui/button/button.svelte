@@ -30,7 +30,7 @@
 	{type}
 	{disabled}
 	class={cn(
-		'inline-flex h-10 items-center justify-center rounded-xl border border-transparent px-4 py-2 text-sm font-medium transition-colors focus-visible:ring-ring/70 focus-visible:ring-2 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50',
+		'focus-visible:ring-ring/70 inline-flex h-10 items-center justify-center rounded-xl border border-transparent px-4 py-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50',
 		variantClass,
 		className
 	)}

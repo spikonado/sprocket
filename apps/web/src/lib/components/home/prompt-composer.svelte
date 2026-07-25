@@ -394,7 +394,7 @@
 							<div class="group/context relative">
 								<button
 									type="button"
-									class="relative flex size-8 cursor-help items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
+									class="relative flex size-8 cursor-help items-center justify-center rounded-full focus-visible:ring-2 focus-visible:ring-blue-400/60 focus-visible:outline-none"
 									aria-label={`Context window ${contextPercent}% full`}
 									aria-describedby="context-window-details"
 									style={`background: conic-gradient(rgb(59 130 246) ${contextPercent * 3.6}deg, rgb(255 255 255 / 0.08) 0deg);`}
@@ -406,7 +406,7 @@
 								</button>
 								<div
 									id="context-window-details"
-									class="invisible absolute right-0 bottom-full z-50 mb-3 w-76 translate-y-1 rounded-xl border border-white/9 bg-[#19191b] p-4 opacity-0 shadow-[0_18px_55px_rgba(0,0,0,0.45)] transition duration-150 group-hover/context:visible group-hover/context:translate-y-0 group-hover/context:opacity-100 group-focus-within/context:visible group-focus-within/context:translate-y-0 group-focus-within/context:opacity-100"
+									class="invisible absolute right-0 bottom-full z-50 mb-3 w-76 translate-y-1 rounded-xl border border-white/9 bg-[#19191b] p-4 opacity-0 shadow-[0_18px_55px_rgba(0,0,0,0.45)] transition duration-150 group-focus-within/context:visible group-focus-within/context:translate-y-0 group-focus-within/context:opacity-100 group-hover/context:visible group-hover/context:translate-y-0 group-hover/context:opacity-100"
 									role="tooltip"
 								>
 									<div class="flex items-center justify-between gap-4 text-[13px]">

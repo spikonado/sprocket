@@ -48,7 +48,7 @@
 									emailRevealed = !emailRevealed;
 								}}
 							>
-								<span class={emailRevealed ? undefined : 'select-none blur-[5px]'}>
+								<span class={emailRevealed ? undefined : 'blur-[5px] select-none'}>
 									{user.email}
 								</span>
 							</button>

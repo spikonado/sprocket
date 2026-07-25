@@ -46,7 +46,7 @@
 		/>
 	</button>
 	{#if expanded}
-		<div class="mt-1.5 whitespace-pre-wrap text-[13px] leading-6 text-slate-400">
+		<div class="mt-1.5 text-[13px] leading-6 whitespace-pre-wrap text-slate-400">
 			{text}
 		</div>
 	{/if}

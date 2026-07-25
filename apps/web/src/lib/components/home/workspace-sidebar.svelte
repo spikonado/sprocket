@@ -373,7 +373,7 @@
 															class={`absolute top-1.5 right-1 inline-flex h-6 w-6 items-center justify-center rounded-md text-slate-500 transition hover:bg-white/6 hover:text-white focus-visible:opacity-100 ${
 																isSelected
 																	? 'opacity-100'
-																	: 'opacity-0 group-hover/thread:opacity-100 group-focus-within/thread:opacity-100'
+																	: 'opacity-0 group-focus-within/thread:opacity-100 group-hover/thread:opacity-100'
 															}`}
 															aria-label={`Archive ${thread.title}`}
 															onclick={(event) => {
