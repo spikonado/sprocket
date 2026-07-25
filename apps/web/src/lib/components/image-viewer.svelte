@@ -236,13 +236,13 @@
 	}
 
 	const actionButtonClass =
-		'inline-flex size-9 items-center justify-center rounded-lg border border-white/15 bg-black/65 text-slate-100 shadow-lg backdrop-blur-sm transition hover:bg-black/80 focus-visible:ring-2 focus-visible:ring-white/50 focus-visible:outline-none aria-disabled:cursor-wait aria-disabled:opacity-60';
+		'inline-flex size-9 items-center justify-center rounded-lg border border-white/15 bg-black/65 text-white shadow-lg backdrop-blur-sm transition hover:bg-black/80 focus-visible:ring-2 focus-visible:ring-white/50 focus-visible:outline-none aria-disabled:cursor-wait aria-disabled:opacity-60';
 </script>
 
 {#if image}
 	{@const current = image}
 	<div
-		class="fixed inset-0 z-50 flex items-center justify-center bg-[#0f1218]/92 px-3 py-4 sm:px-6 sm:py-12"
+		class="bg-background/92 fixed inset-0 z-50 flex items-center justify-center px-3 py-4 sm:px-6 sm:py-12"
 		role="presentation"
 		onclick={(event) => {
 			if (event.target === event.currentTarget) {
@@ -261,7 +261,7 @@
 			<img
 				src={current.url}
 				alt={current.name}
-				class="block max-h-[calc(100dvh-2rem)] max-w-full rounded-2xl border border-white/10 object-contain sm:max-h-[calc(100dvh-6rem)]"
+				class="border-border block max-h-[calc(100dvh-2rem)] max-w-full rounded-2xl border object-contain sm:max-h-[calc(100dvh-6rem)]"
 			/>
 
 			<div class="absolute right-3 bottom-3 flex items-center gap-2">
@@ -308,7 +308,7 @@
 
 			{#if copyError || downloadError}
 				<p
-					class="absolute right-3 bottom-14 max-w-[min(20rem,calc(100%-1.5rem))] rounded-lg border border-white/10 bg-black/80 px-3 py-2 text-xs text-amber-100 shadow-lg backdrop-blur-sm"
+					class="border-border absolute right-3 bottom-14 max-w-[min(20rem,calc(100%-1.5rem))] rounded-lg border bg-black/80 px-3 py-2 text-xs text-amber-100 shadow-lg backdrop-blur-sm"
 					role="alert"
 				>
 					{copyError ?? downloadError}

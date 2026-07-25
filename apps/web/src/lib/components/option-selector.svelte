@@ -167,7 +167,7 @@
 		bind:this={triggerElement}
 		type="button"
 		class={cn(
-			'focus-visible:ring-ring/60 inline-flex h-8 shrink-0 items-center gap-2 rounded-lg border border-transparent bg-transparent px-2 text-sm font-medium text-slate-300 transition outline-none hover:bg-white/[0.03] focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50',
+			'focus-visible:ring-ring/60 text-muted-foreground inline-flex h-8 shrink-0 items-center gap-2 rounded-lg border border-transparent bg-transparent px-2 text-sm font-medium transition outline-none hover:bg-[var(--hover-fill)] focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50',
 			!optionIcon && 'gap-1',
 			triggerClassName
 		)}
@@ -182,24 +182,29 @@
 		{/if}
 		<span class="truncate">{selectedOption?.triggerLabel ?? selectedOption?.label ?? value}</span>
 		<ChevronDown
-			class={cn('size-3 shrink-0 text-slate-500 transition-transform', isOpen && 'rotate-180')}
+			class={cn(
+				'text-muted-foreground size-3 shrink-0 transition-transform',
+				isOpen && 'rotate-180'
+			)}
 		/>
 	</button>
 
 	{#if isOpen}
 		<div
-			class="bg-popover/96 absolute bottom-[calc(100%+0.75rem)] left-0 z-50 min-w-[19rem] rounded-[18px] border border-white/8 p-2 shadow-[0_28px_80px_rgba(0,0,0,0.42)] backdrop-blur-xl"
+			class="bg-popover/96 absolute bottom-[calc(100%+0.75rem)] left-0 z-50 min-w-[19rem] rounded-[18px] border border-[var(--hairline)] p-2 shadow-[var(--composer-shadow)] backdrop-blur-xl"
 			role="dialog"
 			aria-label={menuTitle}
 		>
 			{#if searchable}
-				<label class="flex h-10 items-center gap-2 border-b border-white/6 px-2 text-slate-400">
+				<label
+					class="text-muted-foreground flex h-10 items-center gap-2 border-b border-[var(--hairline)] px-2"
+				>
 					<Search class="size-4 shrink-0" />
 					<span class="sr-only">Search {menuTitle.toLocaleLowerCase()}</span>
 					<input
 						bind:this={searchElement}
 						bind:value={searchQuery}
-						class="min-w-0 flex-1 bg-transparent text-sm text-slate-100 outline-none placeholder:text-slate-500"
+						class="text-foreground placeholder:text-muted-foreground min-w-0 flex-1 bg-transparent text-sm outline-none"
 						placeholder={`Search ${menuTitle.toLocaleLowerCase()}…`}
 						onkeydown={handleSearchKeydown}
 					/>
@@ -215,8 +220,8 @@
 						type="button"
 						class={cn(
 							'focus-visible:ring-ring/60 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left outline-none focus-visible:ring-2',
-							locked ? 'cursor-not-allowed opacity-45' : 'hover:bg-white/4',
-							!locked && option.id === value && 'bg-white/[0.035]'
+							locked ? 'cursor-not-allowed opacity-45' : 'hover:bg-[var(--hover-fill)]',
+							!locked && option.id === value && 'bg-[var(--hover-fill)]'
 						)}
 						aria-pressed={!locked && option.id === value}
 						aria-disabled={locked}
@@ -239,7 +244,7 @@
 							<span
 								class={cn(
 									'flex size-7 shrink-0 items-center justify-center',
-									locked ? 'text-slate-500' : 'text-slate-300'
+									locked ? 'text-muted-foreground' : 'text-muted-foreground'
 								)}
 							>
 								{@render optionIcon(option)}
@@ -248,17 +253,17 @@
 						<span
 							class={cn(
 								'min-w-0 flex-1 truncate text-sm font-medium',
-								locked ? 'text-slate-400' : 'text-slate-100'
+								locked ? 'text-muted-foreground' : 'text-foreground'
 							)}>{option.label}</span
 						>
 						{#if locked}
-							<span class="shrink-0 text-slate-500" aria-hidden="true">
+							<span class="text-muted-foreground shrink-0" aria-hidden="true">
 								<Lock class="size-3.5" />
 							</span>
 						{:else}
 							<Check
 								class={cn(
-									'size-4 shrink-0 text-blue-400 transition-opacity',
+									'text-accent-strong size-4 shrink-0 transition-opacity',
 									option.id === value ? 'opacity-100' : 'opacity-0'
 								)}
 							/>
@@ -266,7 +271,7 @@
 					</button>
 				{/each}
 				{#if filteredOptions.length === 0}
-					<p class="px-3 py-5 text-center text-sm text-slate-500">No matches found</p>
+					<p class="text-muted-foreground px-3 py-5 text-center text-sm">No matches found</p>
 				{/if}
 			</div>
 		</div>
@@ -275,7 +280,7 @@
 
 {#if lockTooltip}
 	<div
-		class="pointer-events-none fixed z-100 -translate-x-1/2 -translate-y-full rounded-md bg-[#1a1d27] px-2.5 py-1.5 text-[12px] leading-4 whitespace-nowrap text-slate-100 shadow-lg ring-1 ring-white/10"
+		class="text-tooltip-foreground bg-tooltip ring-border pointer-events-none fixed z-100 -translate-x-1/2 -translate-y-full rounded-md px-2.5 py-1.5 text-[12px] leading-4 whitespace-nowrap shadow-lg ring-1"
 		style={`top: ${lockTooltip.top}px; left: ${lockTooltip.left}px;`}
 		role="tooltip"
 	>

@@ -275,7 +275,7 @@
 	}
 
 	const userMessageClass =
-		'w-fit max-w-[33rem] rounded-xl border border-white/7 bg-[linear-gradient(180deg,rgba(39,39,42,0.96),rgba(28,28,30,0.96))] px-5 py-3.5 text-[15.5px] leading-7 text-slate-100';
+		'user-bubble w-fit max-w-[33rem] rounded-xl border border-[var(--hairline)] px-5 py-3.5 text-[15.5px] leading-7 text-foreground';
 
 	let viewerImage = $state<ViewerImage | null>(null);
 
@@ -352,7 +352,7 @@
 			{#if currentError}
 				<div
 					role="alert"
-					class="mb-6 rounded-2xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-100"
+					class="text-destructive mb-6 rounded-2xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm"
 				>
 					{currentError}
 				</div>
@@ -361,7 +361,7 @@
 			{#if runError}
 				<div
 					role="alert"
-					class="mb-6 rounded-2xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"
+					class="mb-6 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200"
 				>
 					{runError}
 				</div>
@@ -370,9 +370,9 @@
 			{#if messages.length === 0}
 				<div class="flex flex-1 items-center justify-center">
 					<div class="max-w-2xl text-center">
-						<p class="text-sm leading-7 text-slate-500">{emptyStateMessage}</p>
+						<p class="text-muted-foreground text-sm leading-7">{emptyStateMessage}</p>
 						{#if emptyStateHint}
-							<p class="mt-3 text-xs tracking-[0.16em] text-slate-600 uppercase">
+							<p class="text-muted-foreground mt-3 text-xs tracking-[0.16em] uppercase">
 								{emptyStateHint}
 							</p>
 						{/if}
@@ -394,7 +394,7 @@
 													{@const url = attachment.url}
 													<button
 														type="button"
-														class="block size-14 cursor-zoom-in overflow-hidden rounded-xl border border-white/10 transition hover:border-white/25 focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:outline-none"
+														class="border-border hover:border-border focus-visible:ring-ring/40 block size-14 cursor-zoom-in overflow-hidden rounded-xl border transition focus-visible:ring-2 focus-visible:outline-none"
 														aria-label="View {attachment.name}"
 														title={attachment.name}
 														onclick={() => {
@@ -409,7 +409,7 @@
 													</button>
 												{:else}
 													<span
-														class="inline-flex items-center rounded-xl border border-white/7 bg-white/4 px-3 py-2 text-xs text-slate-400"
+														class="text-muted-foreground inline-flex items-center rounded-xl border border-[var(--hairline)] bg-[var(--hover-fill)] px-3 py-2 text-xs"
 													>
 														{attachment.name} (unavailable)
 													</span>
@@ -420,13 +420,13 @@
 								{/if}
 								{#if message.text || !message.attachments.length}
 									<div class={userMessageClass}>
-										<ChatMarkdown content={message.text || ' '} className="text-slate-100" />
+										<ChatMarkdown content={message.text || ' '} className="text-foreground" />
 									</div>
 								{/if}
 								{#if message.text}
 									<button
 										type="button"
-										class="inline-flex size-6 items-center justify-center rounded-md text-slate-600 transition hover:text-slate-400"
+										class="text-muted-foreground hover:text-muted-foreground inline-flex size-6 items-center justify-center rounded-md transition"
 										aria-label={copiedMessageId === message._id ? 'Copied' : 'Copy message'}
 										onclick={() => {
 											void copyUserMessage(message._id, message.text);
@@ -469,11 +469,11 @@
 							>
 								<div class="space-y-3">
 									{#if !hasPersistedAssistantContent && (message.text || (isStreaming && timeline.length === 0))}
-										<ChatMarkdown content={message.text || '...'} className="text-slate-200" />
+										<ChatMarkdown content={message.text || '...'} className="text-foreground" />
 									{/if}
 									{#each sections as section, sectionIndex (`${section.type}-${section.type === 'work' ? section.key : section.id}-${sectionIndex}`)}
 										{#if section.type === 'text'}
-											<ChatMarkdown content={section.text || ' '} className="text-slate-200" />
+											<ChatMarkdown content={section.text || ' '} className="text-foreground" />
 										{:else}
 											{@const { settledBlocks, runningTools } = partitionWorkSectionTools(
 												section.blocks,
@@ -532,8 +532,8 @@
 																				<span class={toolSummaryClass(tool)}>{toolSummary}</span>
 																				<span
 																					class={toolFailureKind === 'failed'
-																						? 'text-rose-200'
-																						: 'text-amber-200'}
+																						? 'text-destructive'
+																						: 'text-amber-800 dark:text-amber-200'}
 																				>
 																					({toolFailureKind})
 																				</span>
@@ -541,8 +541,8 @@
 																			<p
 																				class="mt-1.5 text-xs leading-5 wrap-break-word whitespace-pre-wrap {toolFailureKind ===
 																				'failed'
-																					? 'text-rose-200'
-																					: 'text-amber-200'}"
+																					? 'text-destructive'
+																					: 'text-amber-800 dark:text-amber-200'}"
 																				role="status"
 																			>
 																				{toolError}
@@ -578,7 +578,7 @@
 															title={`${toolSummary} (running)`}
 														>
 															<ToolIcon
-																class="mt-1.5 size-3 shrink-0 text-slate-500"
+																class="text-muted-foreground mt-1.5 size-3 shrink-0"
 																aria-hidden="true"
 															/>
 															<span class={toolSummaryClass(tool)}>{toolSummary}</span>
@@ -589,7 +589,7 @@
 										{/if}
 									{/each}
 									{#if !isStreaming && message.runCompletedAt !== undefined}
-										<p class="text-sm text-slate-500">
+										<p class="text-muted-foreground text-sm">
 											Worked for {formatElapsedDuration(
 												Math.max(
 													0,
@@ -607,9 +607,7 @@
 		</div>
 	</div>
 
-	<div
-		class="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-[linear-gradient(180deg,rgba(15,15,17,0),rgba(15,15,17,0.68)_48%,rgba(15,15,17,0.92))]"
-	></div>
+	<div class="transcript-fade pointer-events-none absolute inset-x-0 bottom-0 h-16"></div>
 </div>
 
 <ImageViewer

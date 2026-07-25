@@ -93,9 +93,9 @@
 		}}
 	>
 		<label class="block space-y-2">
-			<span class="text-sm text-slate-400">Pairing token</span>
+			<span class="text-muted-foreground text-sm">Pairing token</span>
 			<input
-				class="w-full rounded-xl border border-white/10 bg-white/3 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-white/20"
+				class="border-border bg-surface text-foreground placeholder:text-muted-foreground focus:border-ring w-full rounded-xl border px-4 py-3 text-sm outline-none"
 				bind:value={pairingToken}
 				placeholder="Paste token"
 				autocomplete="off"
@@ -103,11 +103,11 @@
 		</label>
 
 		{#if error}
-			<p class="text-sm text-rose-300">{error}</p>
+			<p class="text-destructive text-sm">{error}</p>
 		{/if}
 
 		<button
-			class="w-full rounded-xl bg-white px-4 py-3 text-sm font-medium text-black transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+			class="bg-primary text-primary-foreground w-full rounded-full px-4 py-3 text-sm font-medium transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
 			disabled={isSubmitting}
 			type="submit"
 		>

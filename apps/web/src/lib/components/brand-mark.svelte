@@ -14,7 +14,7 @@
 
 <div class={cn('flex min-w-0 items-center gap-2', className)}>
 	<img src="/logo.png" alt="" class={cn('shrink-0', sizeClass)} />
-	<span class={cn('font-brand truncate font-normal tracking-tight text-white', textClass)}>
+	<span class={cn('font-brand text-foreground truncate font-semibold tracking-tight', textClass)}>
 		Sprocket
 	</span>
 </div>

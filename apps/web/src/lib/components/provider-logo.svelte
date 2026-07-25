@@ -12,7 +12,7 @@
 </script>
 
 {#if provider === 'openai'}
-	<OpenAiBlossom className={cn('size-4 text-white', className)} />
+	<OpenAiBlossom className={cn('size-4 text-foreground', className)} />
 {:else if provider === 'anthropic'}
 	<svg
 		viewBox="0 0 24 24"
@@ -28,7 +28,7 @@
 {:else if provider === 'xai'}
 	<svg
 		viewBox="0 0 24 24"
-		class={cn('size-4 text-white', className)}
+		class={cn('text-foreground size-4', className)}
 		role="img"
 		aria-label="xAI"
 		fill="currentColor"
@@ -40,7 +40,7 @@
 {:else}
 	<svg
 		viewBox="0 0 24 24"
-		class={cn('size-4 text-slate-400', className)}
+		class={cn('text-muted-foreground size-4', className)}
 		role="img"
 		aria-label={provider || 'Unknown provider'}
 		fill="none"

@@ -60,10 +60,10 @@
 	}
 </script>
 
-<div class="text-sm text-slate-500">
+<div class="text-muted-foreground text-sm">
 	<button
 		type="button"
-		class="inline-flex items-center gap-1 text-slate-500 transition hover:text-slate-300"
+		class="text-muted-foreground hover:text-muted-foreground inline-flex items-center gap-1 transition"
 		onclick={toggle}
 		aria-expanded={expanded}
 	>

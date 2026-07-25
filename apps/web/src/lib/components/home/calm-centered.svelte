@@ -1,5 +1,7 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import BrandMark from '$lib/components/brand-mark.svelte';
+	import { forceEntryTheme } from '$lib/theme';
 	import { cn } from '$lib/utils';
 
 	type Props = {
@@ -19,16 +21,18 @@
 		children,
 		actions
 	}: Props = $props();
+
+	onMount(() => forceEntryTheme());
 </script>
 
 <div
 	class={cn(
-		'flex min-h-screen items-center justify-center bg-[#0f1218] px-8 py-10 text-center',
+		'app-entry-shell relative flex min-h-screen items-center justify-center px-8 py-10 text-center',
 		className
 	)}
 >
 	<div
-		class="w-full max-w-md"
+		class="relative z-10 w-full max-w-md"
 		aria-busy={busy ? true : undefined}
 		aria-live={busy ? 'polite' : undefined}
 	>
@@ -36,13 +40,13 @@
 			<BrandMark />
 		</div>
 
-		<h1 class="text-[1.35rem] font-medium tracking-tight text-slate-200">{title}</h1>
+		<h1 class="font-brand text-foreground text-[1.5rem] font-semibold tracking-tight">{title}</h1>
 		{#if description}
-			<p class="mt-3 text-sm leading-[1.55] text-slate-400">{description}</p>
+			<p class="text-muted-foreground mt-3 text-sm leading-[1.55]">{description}</p>
 		{/if}
 
 		{#if children}
-			<div class="mt-5 space-y-4 [&:not(:has(*))]:mt-0 [&:not(:has(*))]:hidden">
+			<div class="mt-5 space-y-4 text-left [&:not(:has(*))]:mt-0 [&:not(:has(*))]:hidden">
 				{@render children()}
 			</div>
 		{/if}

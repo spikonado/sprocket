@@ -1,10 +1,18 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
 	<head>
 		<title>web</title>
 		<meta charset="utf-8" />
 		<link rel="icon" href="%sveltekit.assets%/favicon.png" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<script>
+			// Boot light so entry shells (auth/pair/connecting) never flash dark.
+			// Workspace theme is applied after auth from localStorage / Convex.
+			(function () {
+				document.documentElement.dataset.theme = 'light';
+				document.documentElement.style.colorScheme = 'light';
+			})();
+		</script>
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">
