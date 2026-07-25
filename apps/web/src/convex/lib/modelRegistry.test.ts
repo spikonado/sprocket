@@ -69,6 +69,9 @@ describe('Amazon Bedrock fallback routing', () => {
 		expect(resolveLanguageModel('gpt-5.6-sol', 'standard', 'thread:abc')).not.toBeInstanceOf(
 			FallbackModel
 		);
+		expect(resolveLanguageModel('claude-opus-5', 'standard', 'thread:abc')).not.toBeInstanceOf(
+			FallbackModel
+		);
 		expect(resolveLanguageModel('claude-fable-5', 'standard', 'thread:abc')).not.toBeInstanceOf(
 			FallbackModel
 		);
@@ -78,16 +81,23 @@ describe('Amazon Bedrock fallback routing', () => {
 
 		vi.stubEnv('AWS_BEARER_TOKEN_BEDROCK', 'test-bedrock-token');
 		const openaiFallback = resolveLanguageModel('gpt-5.6-sol', 'standard', 'thread:abc');
-		const anthropicFallback = resolveLanguageModel('claude-fable-5', 'standard', 'thread:abc');
+		const opusFallback = resolveLanguageModel('claude-opus-5', 'standard', 'thread:abc');
+		const fableFallback = resolveLanguageModel('claude-fable-5', 'standard', 'thread:abc');
 		expect(openaiFallback).toBeInstanceOf(FallbackModel);
-		expect(anthropicFallback).toBeInstanceOf(FallbackModel);
+		expect(opusFallback).toBeInstanceOf(FallbackModel);
+		expect(fableFallback).toBeInstanceOf(FallbackModel);
 		expect(openaiFallback).toMatchObject({
 			retryAfterOutput: false,
 			settings: {
 				models: [{ modelId: 'gpt-5.6-sol' }, { modelId: 'openai.gpt-5.6-sol' }]
 			}
 		});
-		expect(anthropicFallback).toMatchObject({
+		expect(opusFallback).toMatchObject({
+			settings: {
+				models: [{ modelId: 'claude-opus-5' }, { modelId: 'us.anthropic.claude-opus-5' }]
+			}
+		});
+		expect(fableFallback).toMatchObject({
 			settings: {
 				models: [{ modelId: 'claude-fable-5' }, { modelId: 'us.anthropic.claude-fable-5' }]
 			}

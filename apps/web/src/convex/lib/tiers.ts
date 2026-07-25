@@ -44,7 +44,7 @@ export const tierLimits: Record<SubscriptionTier, TierLimits> = {
 };
 
 export const tierAllowedModels: Record<SubscriptionTier, readonly SupportedModelId[]> = {
-	free: ['claude-fable-5'],
+	free: ['claude-opus-5'],
 	pro: modelIds,
 	admin: modelIds
 };
