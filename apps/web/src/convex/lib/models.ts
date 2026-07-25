@@ -6,6 +6,7 @@ export const modelIds = [
 	'gpt-5.6-sol',
 	'gpt-5.6-terra',
 	'gpt-5.6-luna',
+	'claude-opus-5',
 	'claude-fable-5',
 	'grok-4.5'
 ] as const;
@@ -14,6 +15,8 @@ export type SupportedModelId = (typeof modelIds)[number];
 export type SupportedReasoningEffort = (typeof reasoningEffortIds)[number];
 export type SupportedServiceTier = (typeof serviceTierIds)[number];
 export type ModelProvider = 'openai' | 'anthropic' | 'xai';
+
+type TokenUsageWeights = { input: number; cacheRead: number; cacheWrite: number; output: number };
 
 type ModelDefinition = {
 	id: SupportedModelId;
@@ -26,14 +29,8 @@ type ModelDefinition = {
 	reasoningEfforts: readonly SupportedReasoningEffort[];
 	defaultReasoningEffort: SupportedReasoningEffort;
 	serviceTiers: readonly SupportedServiceTier[];
-	usageWeights: {
-		short: TokenUsageWeights;
-		long?: { minimumInputTokens: number; weights: TokenUsageWeights; fastMultiplier: number };
-		fastMultiplier: number;
-	};
+	usageWeights: TokenUsageWeights & { fastMultiplier: number };
 };
-
-type TokenUsageWeights = { input: number; cacheRead: number; cacheWrite: number; output: number };
 
 export const modelDefinitions = [
 	{
@@ -46,12 +43,10 @@ export const modelDefinitions = [
 		defaultReasoningEffort: 'medium',
 		serviceTiers: serviceTierIds,
 		usageWeights: {
-			short: { input: 0.005, cacheRead: 0.0005, cacheWrite: 0.00625, output: 0.03 },
-			long: {
-				minimumInputTokens: 272_001,
-				weights: { input: 0.01, cacheRead: 0.001, cacheWrite: 0.0125, output: 0.045 },
-				fastMultiplier: 1
-			},
+			input: 0.005,
+			cacheRead: 0.0005,
+			cacheWrite: 0.00625,
+			output: 0.03,
 			fastMultiplier: 2
 		}
 	},
@@ -65,17 +60,10 @@ export const modelDefinitions = [
 		defaultReasoningEffort: 'medium',
 		serviceTiers: serviceTierIds,
 		usageWeights: {
-			short: { input: 0.0025, cacheRead: 0.00025, cacheWrite: 0.003125, output: 0.015 },
-			long: {
-				minimumInputTokens: 272_001,
-				weights: {
-					input: 0.005,
-					cacheRead: 0.0005,
-					cacheWrite: 0.00625,
-					output: 0.0225
-				},
-				fastMultiplier: 1
-			},
+			input: 0.0025,
+			cacheRead: 0.00025,
+			cacheWrite: 0.003125,
+			output: 0.015,
 			fastMultiplier: 2
 		}
 	},
@@ -89,12 +77,27 @@ export const modelDefinitions = [
 		defaultReasoningEffort: 'medium',
 		serviceTiers: serviceTierIds,
 		usageWeights: {
-			short: { input: 0.001, cacheRead: 0.0001, cacheWrite: 0.00125, output: 0.006 },
-			long: {
-				minimumInputTokens: 272_001,
-				weights: { input: 0.002, cacheRead: 0.0002, cacheWrite: 0.0025, output: 0.009 },
-				fastMultiplier: 1
-			},
+			input: 0.001,
+			cacheRead: 0.0001,
+			cacheWrite: 0.00125,
+			output: 0.006,
+			fastMultiplier: 2
+		}
+	},
+	{
+		id: 'claude-opus-5',
+		label: 'Claude Opus 5',
+		provider: 'anthropic',
+		contextWindowTokens: 1_000_000,
+		autoCompactTokenLimit: 967_000,
+		reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+		defaultReasoningEffort: 'high',
+		serviceTiers: serviceTierIds,
+		usageWeights: {
+			input: 0.005,
+			cacheRead: 0.0005,
+			cacheWrite: 0.00625,
+			output: 0.025,
 			fastMultiplier: 2
 		}
 	},
@@ -102,13 +105,16 @@ export const modelDefinitions = [
 		id: 'claude-fable-5',
 		label: 'Claude Fable 5',
 		provider: 'anthropic',
-		contextWindowTokens: 980_000,
+		contextWindowTokens: 1_000_000,
 		autoCompactTokenLimit: 967_000,
 		reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
 		defaultReasoningEffort: 'high',
 		serviceTiers: serviceTierIds,
 		usageWeights: {
-			short: { input: 0.01, cacheRead: 0.001, cacheWrite: 0.0125, output: 0.05 },
+			input: 0.01,
+			cacheRead: 0.001,
+			cacheWrite: 0.0125,
+			output: 0.05,
 			fastMultiplier: 1
 		}
 	},
@@ -122,12 +128,10 @@ export const modelDefinitions = [
 		defaultReasoningEffort: 'high',
 		serviceTiers: serviceTierIds,
 		usageWeights: {
-			short: { input: 0.002, cacheRead: 0.0005, cacheWrite: 0.002, output: 0.006 },
-			long: {
-				minimumInputTokens: 200_000,
-				weights: { input: 0.004, cacheRead: 0.001, cacheWrite: 0.004, output: 0.012 },
-				fastMultiplier: 2
-			},
+			input: 0.002,
+			cacheRead: 0.0005,
+			cacheWrite: 0.002,
+			output: 0.006,
 			fastMultiplier: 2
 		}
 	}
@@ -166,13 +170,8 @@ export function completionUsageUnits(
 	serviceTier: SupportedServiceTier,
 	tokens: { input: number; cacheRead: number; cacheWrite: number; output: number }
 ): number {
-	const pricing = getModelDefinition(modelId).usageWeights;
-	const totalInput = tokens.input + tokens.cacheRead + tokens.cacheWrite;
-	const longPricing =
-		pricing.long && totalInput >= pricing.long.minimumInputTokens ? pricing.long : undefined;
-	const weights = longPricing?.weights ?? pricing.short;
-	const multiplier =
-		serviceTier === 'fast' ? (longPricing?.fastMultiplier ?? pricing.fastMultiplier) : 1;
+	const { fastMultiplier, ...weights } = getModelDefinition(modelId).usageWeights;
+	const multiplier = serviceTier === 'fast' ? fastMultiplier : 1;
 	return Math.ceil(
 		multiplier *
 			(tokens.input * weights.input +
