@@ -385,6 +385,7 @@
 	const latestRunQuery = useQuery(api.chat.latestRunForThread, authenticatedThreadQueryArgs);
 	const queryError = $derived.by(() => {
 		for (const query of [
+			modelCatalogQuery,
 			workspaceSessionsQuery,
 			threadsQuery,
 			uiPreferencesQuery,
