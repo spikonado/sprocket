@@ -48,11 +48,14 @@
 		defaultModelId,
 		defaultReasoningEffort,
 		defaultServiceTier,
-		getModelDefinition,
-		type SupportedModelId,
 		type SupportedReasoningEffort,
 		type SupportedServiceTier
 	} from '$convex/lib/models';
+	import {
+		asSupportedModelId,
+		getCatalogModel,
+		type CatalogModelId
+	} from '$lib/chat/model-catalog';
 	import { isClaimedRunStatus } from '$convex/lib/runLease';
 	import {
 		beginPendingAgentLaunch,
@@ -133,6 +136,8 @@
 	const discardImageUpload = useMutation(api.imageUploads.discard);
 	const heartbeatAttached = useMutation(api.workspaceSessions.heartbeatAttached);
 	const ensureMySubscription = useMutation(api.billing.ensureMySubscription);
+	const modelCatalogQuery = useQuery(api.modelCatalog.get, () => ({}));
+	const modelCatalog = $derived(modelCatalogQuery.data);
 	let ensureSubscriptionAttemptedFor: string | null = null;
 
 	$effect(() => {
@@ -156,7 +161,7 @@
 		imageUploadIds?: Id<'imageUploads'>[];
 		reasoningEffort?: SupportedReasoningEffort;
 		serviceTier?: SupportedServiceTier;
-		selectedModel?: SupportedModelId;
+		selectedModel?: CatalogModelId;
 		submissionId?: string;
 	};
 	const workspaceAttachmentHeartbeatQueue = createLatestTaskQueue(
@@ -173,7 +178,8 @@
 	let currentWorkspaceName = $state<string | null>(null);
 	let currentThreadId = $state<Id<'threadRecords'> | null>(null);
 	let draftWorkspaceName = $state<string | null>(null);
-	let selectedModel = $state<SupportedModelId>(defaultModelId);
+	// Seed from compiled defaults; composer effects adopt live catalog defaults once loaded.
+	let selectedModel = $state<CatalogModelId>(defaultModelId);
 	let selectedReasoningEffort = $state<SupportedReasoningEffort>(defaultReasoningEffort);
 	let selectedServiceTier = $state<SupportedServiceTier>(defaultServiceTier);
 	let prompt = $state('');
@@ -190,7 +196,7 @@
 			imageUploadIds: Id<'imageUploads'>[];
 			reasoningEffort: SupportedReasoningEffort;
 			serviceTier: SupportedServiceTier;
-			selectedModel: SupportedModelId;
+			selectedModel: CatalogModelId;
 			submissionId: string;
 		}
 	>();
@@ -379,6 +385,7 @@
 	const latestRunQuery = useQuery(api.chat.latestRunForThread, authenticatedThreadQueryArgs);
 	const queryError = $derived.by(() => {
 		for (const query of [
+			modelCatalogQuery,
 			workspaceSessionsQuery,
 			threadsQuery,
 			uiPreferencesQuery,
@@ -440,12 +447,15 @@
 	});
 	const currentActiveThread = $derived(dataForThread(activeThreadQuery.data, currentThreadId));
 	const contextUsage = $derived.by(() => {
-		const model = getModelDefinition(selectedModel);
+		const model = modelCatalog
+			? (getCatalogModel(modelCatalog, selectedModel) ??
+				getCatalogModel(modelCatalog, modelCatalog.defaultModelId))
+			: undefined;
 		return {
 			inputTokens: currentActiveThread?.contextTokens ?? 0,
 			totalTokensProcessed: currentActiveThread?.totalTokensProcessed ?? 0,
-			contextWindowTokens: model.contextWindowTokens,
-			autoCompactTokenLimit: model.autoCompactTokenLimit
+			contextWindowTokens: model?.contextWindowTokens ?? 0,
+			autoCompactTokenLimit: model?.autoCompactTokenLimit ?? 0
 		};
 	});
 	const currentLatestRunData = $derived(dataForThread(latestRunQuery.data, currentThreadId));
@@ -786,7 +796,7 @@
 		imageUploadIds: Id<'imageUploads'>[];
 		reasoningEffort: SupportedReasoningEffort;
 		serviceTier: SupportedServiceTier;
-		selectedModel: SupportedModelId;
+		selectedModel: CatalogModelId;
 		submissionId: string;
 		threadId: Id<'threadRecords'>;
 		userId: string;
@@ -828,7 +838,7 @@
 		attachments: ComposerAttachment[];
 		imageUploadIds: Id<'imageUploads'>[];
 		selectionGeneration: number;
-		selectedModel: SupportedModelId;
+		selectedModel: CatalogModelId;
 		selectedReasoningEffort: SupportedReasoningEffort;
 		selectedServiceTier: SupportedServiceTier;
 		submissionId: string;
@@ -839,7 +849,7 @@
 		const result = await createThreadMutation({
 			submissionId: args.submissionId,
 			workspaceSessionId: args.workspaceSessionId,
-			selectedModel: args.selectedModel,
+			selectedModel: asSupportedModelId(args.selectedModel),
 			reasoningEffort: args.selectedReasoningEffort,
 			serviceTier: args.selectedServiceTier
 		});
@@ -1005,8 +1015,13 @@
 			imageUploadIds: submittedImageUploadIds,
 			reasoningEffort: submittedReasoningEffort,
 			serviceTier: submittedServiceTier,
-			recoveredSubmission,
-			selectedModel: submittedModel
+			recoveredSubmission: recoveredSubmission
+				? {
+						...recoveredSubmission,
+						selectedModel: asSupportedModelId(recoveredSubmission.selectedModel)
+					}
+				: undefined,
+			selectedModel: asSupportedModelId(submittedModel)
 		});
 		let runSubmissionId = threadSubmissionId;
 		clearComposerRecovery(submittedUserId, originatingRecoveryScope);
@@ -1185,7 +1200,7 @@
 				threadId,
 				prompt: submittedPrompt,
 				imageUploadIds: submittedImageUploadIds,
-				selectedModel: submittedModel,
+				selectedModel: asSupportedModelId(submittedModel),
 				submissionId: runSubmissionId,
 				reasoningEffort: submittedReasoningEffort,
 				serviceTier: submittedServiceTier,
@@ -1350,9 +1365,9 @@
 		clearComposerAttachments({ discard: true });
 		currentError = null;
 		elapsedSeconds = 0;
-		selectedModel = defaultModelId;
-		selectedReasoningEffort = defaultReasoningEffort;
-		selectedServiceTier = defaultServiceTier;
+		selectedModel = modelCatalog?.defaultModelId ?? defaultModelId;
+		selectedReasoningEffort = modelCatalog?.defaultReasoningEffort ?? defaultReasoningEffort;
+		selectedServiceTier = modelCatalog?.defaultServiceTier ?? defaultServiceTier;
 		workspacePickerOpen = false;
 		workspacePickerReconnectSessionId = null;
 		workspacePickerExpectedName = undefined;
@@ -1442,7 +1457,8 @@
 					prompt: recovery.prompt,
 					imageUploadIds: recovery.imageUploadIds ?? [],
 					reasoningEffort: recovery.reasoningEffort,
-					serviceTier: recovery.serviceTier ?? defaultServiceTier,
+					serviceTier:
+						recovery.serviceTier ?? modelCatalog?.defaultServiceTier ?? defaultServiceTier,
 					selectedModel: recovery.selectedModel,
 					submissionId: recovery.submissionId
 				});
@@ -1805,6 +1821,7 @@
 						attachments={composerAttachments}
 						onAttachFiles={addComposerAttachments}
 						onRemoveAttachment={removeComposerAttachment}
+						{modelCatalog}
 						bind:selectedModel
 						bind:selectedReasoningEffort
 						bind:selectedServiceTier

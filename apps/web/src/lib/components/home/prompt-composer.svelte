@@ -10,15 +10,17 @@
 		defaultModelId,
 		defaultReasoningEffort,
 		defaultServiceTier,
-		getModelDefinition
+		type SupportedReasoningEffort,
+		type SupportedServiceTier
 	} from '$convex/lib/models';
-	import type {
-		SupportedModelId,
-		SupportedReasoningEffort,
-		SupportedServiceTier
-	} from '$convex/lib/models';
-	import { isModelAllowedForTier, resolveModelForTier } from '$convex/lib/tiers';
-	import { modelOptionsForTier } from '$lib/chat/model-options';
+	import {
+		getCatalogModel,
+		isModelAllowedForTier,
+		modelOptionsForTier,
+		resolveModelForTier,
+		type CatalogModelId,
+		type ModelCatalog
+	} from '$lib/chat/model-catalog';
 	import {
 		MAX_IMAGE_ATTACHMENTS,
 		SUPPORTED_IMAGE_MEDIA_TYPES,
@@ -30,7 +32,8 @@
 		attachments: ComposerAttachment[];
 		onAttachFiles: (files: File[]) => void;
 		onRemoveAttachment: (localId: string) => void;
-		selectedModel?: SupportedModelId;
+		modelCatalog?: ModelCatalog;
+		selectedModel?: CatalogModelId;
 		selectedReasoningEffort?: SupportedReasoningEffort;
 		selectedServiceTier?: SupportedServiceTier;
 		canSend: boolean;
@@ -53,9 +56,10 @@
 		attachments,
 		onAttachFiles,
 		onRemoveAttachment,
+		modelCatalog,
 		selectedModel = $bindable(defaultModelId),
-		selectedReasoningEffort = $bindable(defaultReasoningEffort),
-		selectedServiceTier = $bindable(defaultServiceTier),
+		selectedReasoningEffort = $bindable<SupportedReasoningEffort>(defaultReasoningEffort),
+		selectedServiceTier = $bindable<SupportedServiceTier>(defaultServiceTier),
 		canSend,
 		isSubmitting,
 		isStarting,
@@ -73,13 +77,20 @@
 	const subscriptionTier = $derived(subscriptionQuery.data?.tier);
 	const subscriptionFailed = $derived(Boolean(subscriptionQuery.error));
 	// Until the tier is known, render the free allowlist so locked models are never selectable.
-	const tierModelOptions = $derived(modelOptionsForTier(subscriptionTier ?? 'free'));
-	// On query failure, keep send enabled and let the backend enforce entitlements so a
-	// transient error cannot permanently disable the composer or clobber a paid selection.
+	const tierModelOptions = $derived(
+		modelCatalog ? modelOptionsForTier(modelCatalog, subscriptionTier ?? 'free') : []
+	);
+	const selectedCatalogModel = $derived(
+		modelCatalog ? getCatalogModel(modelCatalog, selectedModel) : undefined
+	);
+	// Block send until a catalog model is selected. If the subscription query fails, keep send
+	// enabled for a known selection and let the backend enforce entitlements.
 	const canSubmitWithModel = $derived(
-		subscriptionFailed
-			? true
-			: subscriptionTier !== undefined && isModelAllowedForTier(subscriptionTier, selectedModel)
+		selectedCatalogModel !== undefined &&
+			(subscriptionFailed ||
+				(subscriptionTier !== undefined &&
+					modelCatalog !== undefined &&
+					isModelAllowedForTier(modelCatalog, subscriptionTier, selectedModel)))
 	);
 
 	let composerTextarea = $state<HTMLTextAreaElement | null>(null);
@@ -96,10 +107,17 @@
 	const attachTooltipLabel = `Attach images (up to ${MAX_IMAGE_ATTACHMENTS})`;
 	const supportsFieldSizing = typeof CSS !== 'undefined' && CSS.supports('field-sizing', 'content');
 	const contextPercent = $derived(
-		Math.min(100, Math.round((contextUsage.inputTokens / contextUsage.contextWindowTokens) * 100))
+		contextUsage.contextWindowTokens > 0
+			? Math.min(
+					100,
+					Math.round((contextUsage.inputTokens / contextUsage.contextWindowTokens) * 100)
+				)
+			: 0
 	);
 	const contextCompactPercent = $derived(
-		Math.round((contextUsage.autoCompactTokenLimit / contextUsage.contextWindowTokens) * 100)
+		contextUsage.contextWindowTokens > 0
+			? Math.round((contextUsage.autoCompactTokenLimit / contextUsage.contextWindowTokens) * 100)
+			: 0
 	);
 
 	const COMPOSER_MIN_HEIGHT_PX = 68;
@@ -176,8 +194,10 @@
 		onSubmit();
 	}
 
-	function handleModelChange(modelId: SupportedModelId) {
-		selectedReasoningEffort = getModelDefinition(modelId).defaultReasoningEffort;
+	function handleModelChange(modelId: CatalogModelId) {
+		if (!modelCatalog) return;
+		const model = getCatalogModel(modelCatalog, modelId);
+		if (model) selectedReasoningEffort = model.defaultReasoningEffort;
 	}
 
 	function formatTokens(value: number): string {
@@ -191,13 +211,24 @@
 	}
 
 	$effect(() => {
-		// Only coerce after a successful tier load so paid users are not snapped to free
-		// defaults during loading or transient query failures.
-		if (!subscriptionTier) return;
-		const allowedModel = resolveModelForTier(subscriptionTier, selectedModel);
+		if (!modelCatalog) return;
+		if (!selectedModel || !getCatalogModel(modelCatalog, selectedModel)) {
+			selectedModel = modelCatalog.defaultModelId;
+			selectedReasoningEffort = modelCatalog.defaultReasoningEffort;
+			selectedServiceTier = modelCatalog.defaultServiceTier;
+		}
+	});
+
+	$effect(() => {
+		// Only coerce after a successful tier + catalog load so paid users are not snapped to
+		// free defaults during loading or transient query failures.
+		if (!modelCatalog || !subscriptionTier) return;
+		const allowedModel = resolveModelForTier(modelCatalog, subscriptionTier, selectedModel);
 		if (allowedModel === selectedModel) return;
 		selectedModel = allowedModel;
-		selectedReasoningEffort = getModelDefinition(allowedModel).defaultReasoningEffort;
+		selectedReasoningEffort =
+			getCatalogModel(modelCatalog, allowedModel)?.defaultReasoningEffort ??
+			modelCatalog.defaultReasoningEffort;
 	});
 
 	$effect(() => {
@@ -335,7 +366,7 @@
 								options={tierModelOptions}
 								ariaLabel="Select model"
 								menuTitle="Model"
-								disabled={isRunning}
+								disabled={isRunning || modelCatalog === undefined}
 								searchable
 								onValueChange={handleModelChange}
 								className="z-20 shrink-0"
@@ -348,13 +379,15 @@
 
 							<div class="mx-1 hidden h-4 w-px shrink-0 bg-white/8 sm:block"></div>
 
-							<ReasoningServiceSelector
-								modelId={selectedModel}
-								bind:reasoningEffort={selectedReasoningEffort}
-								bind:serviceTier={selectedServiceTier}
-								disabled={isRunning}
-								className="z-20 shrink-0"
-							/>
+							{#if selectedCatalogModel}
+								<ReasoningServiceSelector
+									model={selectedCatalogModel}
+									bind:reasoningEffort={selectedReasoningEffort}
+									bind:serviceTier={selectedServiceTier}
+									disabled={isRunning}
+									className="z-20 shrink-0"
+								/>
+							{/if}
 						</div>
 
 						<div class="flex shrink-0 flex-nowrap items-center justify-end gap-2.5">
