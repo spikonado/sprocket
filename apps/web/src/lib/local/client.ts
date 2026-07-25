@@ -2,6 +2,7 @@ import type {
 	AgentRunStart,
 	DesktopApi,
 	FilesystemBrowseResult,
+	SkillSummary,
 	WorkspacePathResolution
 } from '$lib/types/sprocket';
 
@@ -205,6 +206,15 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 					...(input.cwd ? { cwd: input.cwd } : {})
 				})
 			}),
+		listWorkspaceSkills: async (input) => {
+			const result = await request<{ skills: SkillSummary[] }>('/api/workspace/skills', {
+				method: 'POST',
+				body: JSON.stringify({
+					workspacePath: input.workspacePath
+				})
+			});
+			return result.skills;
+		},
 		resolveWorkspacePath: (input) =>
 			request<WorkspacePathResolution>('/api/workspace/resolve', {
 				method: 'POST',

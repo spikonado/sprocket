@@ -60,10 +60,15 @@ export const vWriteStdinPayload = v.object({
 	yieldTimeMs: v.optional(v.number())
 });
 
+export const vReadSkillPayload = v.object({
+	name: v.string()
+});
+
 export const vExecutorJobPayload = v.union(
 	v.object({}),
 	vApplyPatchPayload,
 	vExecCommandPayload,
+	vReadSkillPayload,
 	vScrapeUrlPayload,
 	vWebSearchPayload,
 	vWriteStdinPayload
@@ -117,11 +122,20 @@ export const vWebSearchResult = v.object({
 	)
 });
 
+export const vReadSkillResult = v.object({
+	name: v.string(),
+	description: v.string(),
+	content: v.string(),
+	dir: v.optional(v.string()),
+	truncated: v.optional(v.boolean())
+});
+
 export const vExecutorJobResult = v.union(
 	v.string(),
 	v.array(vWorkspaceInstruction),
 	vApplyPatchResult,
 	vCommandExecResult,
+	vReadSkillResult,
 	vScrapeUrlResult,
 	vWebSearchResult
 );
@@ -151,6 +165,7 @@ export const vExecutorJobKind = v.union(
 	v.literal('apply_patch'),
 	v.literal('exec_command'),
 	v.literal('get_workspace_instructions'),
+	v.literal('read_skill'),
 	v.literal('scrape_url'),
 	v.literal('web_search'),
 	v.literal('write_stdin')

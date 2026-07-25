@@ -25,6 +25,22 @@ an old worker from executing tools or finalizing after ownership has moved.
 Failure paths attempt to reconcile partially created or claimed runs so durable
 state does not remain indefinitely active.
 
+## Built-in skills
+
+Each subdirectory is an [Agent Skill](https://agentskills.io/specification):
+
+```text
+skills/
+  my-skill/
+    SKILL.md          # required
+    scripts/          # optional
+    references/       # optional
+    assets/           # optional
+```
+
+`SKILL.md` must use YAML frontmatter whose `name` matches the directory name.
+Skills here are compiled into the Sprocket binary automatically.
+
 ## Tools
 
 The agent currently offers command execution, command-session input, workspace

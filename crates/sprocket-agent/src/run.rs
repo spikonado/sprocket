@@ -3,14 +3,17 @@ use rig::OneOrMany;
 use rig::completion::Message;
 use rig::message::{ImageMediaType, UserContent};
 use sprocket_workspace::{
-    WorkspaceInstruction, load_workspace_instructions, resolve_workspace_root,
+    WorkspaceInstruction, WorkspaceSkill, default_user_skills_dirs, load_workspace_instructions,
+    load_workspace_skills, resolve_workspace_root,
 };
 use std::future::Future;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::{Instant, MissedTickBehavior, sleep, timeout};
 use uuid::Uuid;
 
 use crate::RunContextResponse;
+use crate::builtin_skills::BUILTIN_SKILLS;
 use crate::convex::RuntimeClient;
 use crate::provider::{AgentProvider, AgentProviderRequest, AgentProviderResult};
 use crate::types::{RunAgentRequest, deserialize_agent_history};
@@ -61,6 +64,7 @@ impl RunFinalStatus {
 fn build_workspace_preamble(
     workspace_path: &str,
     workspace_instructions: &[WorkspaceInstruction],
+    skills: &[WorkspaceSkill],
 ) -> String {
     let instruction_block = if workspace_instructions.is_empty() {
         "No AGENTS.md instructions were preloaded for the current workspace.".to_string()
@@ -73,6 +77,22 @@ fn build_workspace_preamble(
                 .collect::<Vec<_>>()
                 .join("\n\n")
         )
+    };
+
+    let skills_block = if skills.is_empty() {
+        "No skills are installed.".to_string()
+    } else {
+        let entries = skills
+            .iter()
+            .map(|skill| {
+                format!(
+                    "- name: {}\n  description: {}",
+                    skill.name, skill.description
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!("<SKILLS>\n{entries}\n</SKILLS>")
     };
 
     [
@@ -114,6 +134,17 @@ fn build_workspace_preamble(
         "Follow all applicable AGENTS.md instructions, with deeper files taking precedence.",
         "The AGENTS.md instructions for the current workspace path are already included below and do not need to be re-read.",
         "If you move into a deeper subdirectory before editing, check for additional nested AGENTS.md files there.",
+
+        "## Skills",
+
+        "Skills are reusable instruction packages.",
+        "The available skills are listed below.",
+        "When a task matches a skill's description, call the read_skill tool with its name before proceeding, and follow the returned instructions as needed.",
+        "If the user writes $skill-name in their message (for example $pdf-processing), they are explicitly invoking that skill: read it with read_skill and apply it, even if you would not have selected it yourself.",
+        "Skills may reference bundled files; for on-disk skills, the read_skill result includes a dir path for reading those with exec_command when needed.",
+        "Built-in skills omit dir and are self-contained in the returned content.",
+        "",
+        &skills_block,
         "",
         &instruction_block,
     ]
@@ -544,6 +575,12 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
 
     let prepared = (|| {
         let workspace_instructions = load_workspace_instructions(&workspace_root)?;
+        let workspace_skills =
+            load_workspace_skills(&workspace_root, &default_user_skills_dirs(), BUILTIN_SKILLS);
+        for warning in &workspace_skills.warnings {
+            eprintln!("sprocket-agent: {warning}");
+        }
+        let skills: Arc<[WorkspaceSkill]> = workspace_skills.skills.into();
         let prompt_text = context.prompt.trim();
         if prompt_text.is_empty() && context.prompt_attachments.is_empty() {
             return Err(anyhow!("run does not contain a user prompt"));
@@ -565,17 +602,12 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
         };
         let provider = AgentProvider::default_for_run(&runtime, &context, &run_id, &claim_id);
         let prior_history = deserialize_agent_history(context.agent_history)?;
-        let preamble = build_workspace_preamble(&request.workspace_path, &workspace_instructions);
-        Ok((
-            workspace_instructions,
-            prompt,
-            provider,
-            prior_history,
-            preamble,
-        ))
+        let preamble =
+            build_workspace_preamble(&request.workspace_path, &workspace_instructions, &skills);
+        Ok((prompt, provider, prior_history, preamble, skills))
     })();
 
-    let (_, prompt, provider, prior_history, preamble) = match prepared {
+    let (prompt, provider, prior_history, preamble, skills) = match prepared {
         Ok(values) => values,
         Err(error) => return abort_before_start(&runtime, &run_id, error).await,
     };
@@ -621,6 +653,7 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
                     preamble,
                     prior_history,
                     workspace_root,
+                    skills,
                     model,
                     reasoning_effort,
                     service_tier,
@@ -645,5 +678,37 @@ fn image_media_type(media_type: &str) -> anyhow::Result<ImageMediaType> {
         "image/gif" => Ok(ImageMediaType::GIF),
         "image/webp" => Ok(ImageMediaType::WEBP),
         _ => Err(anyhow!("unsupported image media type: {media_type}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use sprocket_workspace::{SkillSource, WorkspaceSkill};
+
+    use super::build_workspace_preamble;
+
+    #[test]
+    fn preamble_renders_skills_block() {
+        let skills = [WorkspaceSkill {
+            name: "pdf-processing".to_string(),
+            description: "Handle PDFs".to_string(),
+            source: SkillSource::BuiltIn {
+                contents: "---\nname: pdf-processing\ndescription: Handle PDFs\n---\n",
+            },
+        }];
+        let preamble = build_workspace_preamble("/tmp/project", &[], &skills);
+        assert!(preamble.contains("## Skills"));
+        assert!(preamble.contains("<SKILLS>"));
+        assert!(preamble.contains("- name: pdf-processing"));
+        assert!(preamble.contains("description: Handle PDFs"));
+        assert!(!preamble.contains("No skills are installed."));
+    }
+
+    #[test]
+    fn preamble_renders_empty_skills_line() {
+        let preamble = build_workspace_preamble("/tmp/project", &[], &[]);
+        assert!(preamble.contains("## Skills"));
+        assert!(preamble.contains("No skills are installed."));
+        assert!(!preamble.contains("<SKILLS>"));
     }
 }

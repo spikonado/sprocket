@@ -2,9 +2,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
+use crate::project_root::find_project_root;
+
 const MAX_INSTRUCTION_BYTES: usize = 32 * 1024;
 const WORKSPACE_INSTRUCTION_FILES: [&str; 2] = ["AGENTS.override.md", "AGENTS.md"];
-const PROJECT_ROOT_MARKERS: [&str; 1] = [".git"];
 
 #[derive(Debug, Clone)]
 pub struct WorkspaceInstruction {
@@ -56,31 +57,6 @@ pub fn load_workspace_instructions(cwd: &Path) -> Result<Vec<WorkspaceInstructio
     }
 
     Ok(instructions)
-}
-
-fn find_project_root(cwd: &Path) -> PathBuf {
-    let temp_root = std::env::temp_dir().canonicalize().ok();
-
-    for ancestor in cwd.ancestors() {
-        // Shared temp roots like /tmp are process-global and can contain unrelated
-        // git metadata. Treat them as a hard boundary so ephemeral workspaces do not
-        // accidentally inherit instruction scope from ambient temp directories.
-        if temp_root
-            .as_deref()
-            .is_some_and(|temp_root| ancestor == temp_root)
-        {
-            break;
-        }
-
-        if PROJECT_ROOT_MARKERS
-            .iter()
-            .any(|marker| ancestor.join(marker).exists())
-        {
-            return ancestor.to_path_buf();
-        }
-    }
-
-    cwd.to_path_buf()
 }
 
 fn directories_from_root(root: &Path, cwd: &Path) -> Vec<PathBuf> {

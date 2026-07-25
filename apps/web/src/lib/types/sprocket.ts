@@ -153,11 +153,17 @@ export type FilesystemBrowseResult = {
 	entries: FilesystemBrowseEntry[];
 };
 
+export type SkillSummary = {
+	name: string;
+	description: string;
+};
+
 export type DesktopApi = {
 	browseFilesystem: (input: {
 		partialPath: string;
 		cwd?: string;
 	}) => Promise<FilesystemBrowseResult>;
+	listWorkspaceSkills: (input: { workspacePath: string }) => Promise<SkillSummary[]>;
 	resolveWorkspacePath: (input: {
 		workspacePath: string;
 		createIfMissing?: boolean;

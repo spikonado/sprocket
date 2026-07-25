@@ -4,7 +4,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum_extra::extract::CookieJar;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::AppState;
 use crate::auth::require_session;
@@ -12,7 +12,9 @@ use crate::workspace_sessions::{
     AttachWorkspaceSessionRequest, WorkspacePathResolution, WorkspaceSessionRecord,
     resolve_workspace_path,
 };
-use sprocket_workspace::{FilesystemBrowseResult, browse_filesystem};
+use sprocket_workspace::{
+    FilesystemBrowseResult, browse_filesystem, default_user_skills_dirs, load_workspace_skills,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,6 +31,25 @@ struct FilesystemBrowseRequest {
     cwd: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceSkillsRequest {
+    workspace_path: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillSummary {
+    name: String,
+    description: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceSkillsResponse {
+    skills: Vec<SkillSummary>,
+}
+
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
         .route(
@@ -37,6 +58,7 @@ pub fn routes() -> axum::Router<AppState> {
         )
         .route("/workspace/resolve", post(resolve_path))
         .route("/workspace/browse", post(browse_path))
+        .route("/workspace/skills", post(list_skills))
 }
 
 async fn list_sessions(
@@ -98,6 +120,33 @@ async fn browse_path(
     let result = browse_filesystem(&payload.partial_path, payload.cwd.as_deref())
         .map_err(ApiError::bad_request)?;
     Ok(Json(result))
+}
+
+async fn list_skills(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(payload): Json<WorkspaceSkillsRequest>,
+) -> Result<Json<WorkspaceSkillsResponse>, ApiError> {
+    require_session(&state.auth, &headers, &jar)
+        .await
+        .map_err(ApiError::unauthorized)?;
+    let resolution =
+        resolve_workspace_path(&payload.workspace_path, false).map_err(ApiError::bad_request)?;
+    let loaded = load_workspace_skills(
+        std::path::Path::new(&resolution.workspace_path),
+        &default_user_skills_dirs(),
+        sprocket_agent::BUILTIN_SKILLS,
+    );
+    let skills = loaded
+        .skills
+        .into_iter()
+        .map(|skill| SkillSummary {
+            name: skill.name,
+            description: skill.description,
+        })
+        .collect();
+    Ok(Json(WorkspaceSkillsResponse { skills }))
 }
 
 #[derive(Debug)]

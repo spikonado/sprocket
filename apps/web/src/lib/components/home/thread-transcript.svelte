@@ -80,6 +80,8 @@
 				return 'Ran Commands';
 			case 'get_workspace_instructions':
 				return 'Read Instructions';
+			case 'read_skill':
+				return 'Read Skills';
 			case 'scrape_url':
 				return 'Read Pages';
 			case 'web_search':
@@ -127,6 +129,8 @@
 					: 'Command';
 			case 'get_workspace_instructions':
 				return 'Workspace instructions';
+			case 'read_skill':
+				return typeof fields?.name === 'string' ? fields.name : 'Skill';
 			case 'scrape_url':
 				return typeof fields?.url === 'string' ? fields.url : 'Web page';
 			case 'web_search':
@@ -381,7 +385,7 @@
 							<div class="flex flex-col items-end gap-1.5">
 								{#if message.attachments.length}
 									<ul
-										class="flex max-w-[33rem] flex-wrap justify-end gap-2"
+										class="flex max-w-132 flex-wrap justify-end gap-2"
 										aria-label="Attached images"
 									>
 										{#each message.attachments as attachment (attachment.imageUploadId)}

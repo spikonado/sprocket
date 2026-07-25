@@ -1831,6 +1831,13 @@
 						{isRunning}
 						elapsedLabel={isRunning ? formatElapsedDuration(elapsedSeconds) : null}
 						{contextUsage}
+						loadSkills={async () => {
+							const workspacePath = currentWorkspaceSession?.workspacePath;
+							if (!desktopApi || !workspacePath) {
+								return [];
+							}
+							return await desktopApi.listWorkspaceSkills({ workspacePath });
+						}}
 						onSubmit={() => {
 							void submitPrompt();
 						}}
