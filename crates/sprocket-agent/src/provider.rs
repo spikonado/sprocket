@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::anyhow;
 use futures::StreamExt;
@@ -6,7 +7,7 @@ use rig::client::CompletionClient;
 use rig::completion::{CompletionModel, Message};
 use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
 use sprocket_convex_provider::{Client as ConvexProviderClient, is_completion_stream_superseded};
-use sprocket_workspace::CommandSessionManager;
+use sprocket_workspace::{CommandSessionManager, WorkspaceSkill};
 
 use crate::compaction::ContextCompactionHook;
 use crate::convex::RuntimeClient;
@@ -66,6 +67,7 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) preamble: String,
     pub(crate) prior_history: Vec<Message>,
     pub(crate) workspace_root: PathBuf,
+    pub(crate) skills: Arc<[WorkspaceSkill]>,
     pub(crate) model: String,
     pub(crate) reasoning_effort: String,
     pub(crate) service_tier: String,
@@ -129,6 +131,7 @@ where
         request.claim_id.clone(),
         request.workspace_root.clone(),
         tool_call_tracker.clone(),
+        request.skills.clone(),
     );
     let session_shutdown = CommandSessionShutdown::new(tools.command_sessions.clone());
     let agent = completion_client
@@ -136,6 +139,7 @@ where
         .preamble(&request.preamble)
         .tool(tools.apply_patch)
         .tool(tools.exec_command)
+        .tool(tools.read_skill)
         .tool(tools.scrape_url)
         .tool(tools.web_search)
         .tool(tools.write_stdin)

@@ -25,11 +25,18 @@ an old worker from executing tools or finalizing after ownership has moved.
 Failure paths attempt to reconcile partially created or claimed runs so durable
 state does not remain indefinitely active.
 
+## Built-in skills
+
+Built-in skills live in [`sprocket-workspace/skills`](../sprocket-workspace/skills)
+and are discovered at run time with project and user skills. See that crate for
+the on-disk layout.
+
 ## Tools
 
 The agent currently offers command execution, command-session input, workspace
-patching, web search, and web-page scraping. Every tool call is wrapped in a
-durable executor-job record and observes run cancellation while work is active.
+patching, skill loading (`read_skill`), web search, and web-page scraping. Every
+tool call is wrapped in a durable executor-job record and observes run
+cancellation while work is active.
 
 Command execution has full local process permissions. Patch operations are
 confined to the workspace by `sprocket-workspace`. Web search and scraping run

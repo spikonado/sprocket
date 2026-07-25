@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use convex::Value;
 use futures::StreamExt;
@@ -7,7 +8,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sprocket_workspace::{
-    CommandSessionManager, WorkspaceCancellation, apply_workspace_patch, default_command_shell,
+    CommandSessionManager, WorkspaceCancellation, WorkspaceSkill, apply_workspace_patch,
+    default_command_shell, read_skill_content,
 };
 
 const DEFAULT_COMMAND_TIMEOUT_MS: u64 = 60_000;
@@ -72,10 +74,17 @@ pub(crate) struct WebSearchTool(AgentToolContext);
 #[derive(Clone)]
 pub(crate) struct WriteStdinTool(AgentToolContext);
 
+#[derive(Clone)]
+pub(crate) struct ReadSkillTool {
+    context: AgentToolContext,
+    skills: Arc<[WorkspaceSkill]>,
+}
+
 pub(crate) struct AgentToolSet {
     pub(crate) apply_patch: ApplyPatchTool,
     pub(crate) command_sessions: CommandSessionManager,
     pub(crate) exec_command: ExecCommandTool,
+    pub(crate) read_skill: ReadSkillTool,
     pub(crate) scrape_url: ScrapeUrlTool,
     pub(crate) web_search: WebSearchTool,
     pub(crate) write_stdin: WriteStdinTool,
@@ -87,6 +96,7 @@ pub(crate) fn agent_tools(
     claim_id: String,
     workspace_root: PathBuf,
     tool_call_tracker: ToolCallTracker,
+    skills: Arc<[WorkspaceSkill]>,
 ) -> AgentToolSet {
     let command_sessions = CommandSessionManager::new(workspace_root.clone());
     let context = AgentToolContext::new(
@@ -101,6 +111,10 @@ pub(crate) fn agent_tools(
         apply_patch: ApplyPatchTool(context.clone()),
         command_sessions,
         exec_command: ExecCommandTool(context.clone()),
+        read_skill: ReadSkillTool {
+            context: context.clone(),
+            skills,
+        },
         scrape_url: ScrapeUrlTool(context.clone()),
         web_search: WebSearchTool(context.clone()),
         write_stdin: WriteStdinTool(context),
@@ -191,7 +205,7 @@ fn web_search_parameters() -> serde_json::Value {
 pub(crate) struct ExecCommandArgs {
     /// Shell command to execute.
     cmd: String,
-    /// Working directory. Relative paths resolve from the project root. Defaults to `.`.
+    /// Working directory. Absolute paths and `~` may be anywhere on the machine; relative paths resolve from the project root. Defaults to `.`.
     #[serde(
         default = "default_workdir",
         skip_serializing_if = "is_default_workdir"
@@ -278,6 +292,12 @@ pub(crate) struct ScrapeUrlArgs {
     url: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct ReadSkillArgs {
+    /// Skill name from the Skills section of the system instructions.
+    name: String,
+}
+
 impl rig::tool::Tool for ExecCommandTool {
     const NAME: &'static str = "exec_command";
     type Error = AgentToolError;
@@ -285,7 +305,7 @@ impl rig::tool::Tool for ExecCommandTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Run a shell command with full machine access. Relative workdirs resolve from the project root. Long-running commands yield a sessionId for write_stdin polling and input."
+        "Run a shell command with full machine access. Long-running commands yield a sessionId for write_stdin polling and input."
             .to_string()
     }
 
@@ -490,6 +510,74 @@ impl rig::tool::Tool for ScrapeUrlTool {
     }
 }
 
+impl rig::tool::Tool for ReadSkillTool {
+    const NAME: &'static str = "read_skill";
+    type Error = AgentToolError;
+    type Args = ReadSkillArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Read a skill's SKILL.md instructions by name. Use when a task matches a skill listed in the Skills section of your instructions."
+            .to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(ReadSkillArgs))
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let payload = serde_json::to_value(&args).map_err(tool_error)?;
+        let skills = self.skills.clone();
+        execute_tool_job(
+            &self.context.runtime,
+            &self.context.run_id,
+            &self.context.claim_id,
+            Self::NAME,
+            &self.context.tool_call_tracker,
+            payload,
+            |_cancellation| async move {
+                let output = resolve_read_skill(&skills, &args.name)?;
+                Ok(output)
+            },
+        )
+        .await
+    }
+}
+
+pub(crate) fn resolve_read_skill(
+    skills: &[WorkspaceSkill],
+    name: &str,
+) -> Result<serde_json::Value, AgentToolError> {
+    let Some(skill) = skills.iter().find(|skill| skill.name == name) else {
+        let available = if skills.is_empty() {
+            "(none)".to_string()
+        } else {
+            skills
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        return Err(AgentToolError::Message(format!(
+            "Unknown skill '{name}'. Available skills: {available}"
+        )));
+    };
+
+    let content = read_skill_content(skill).map_err(tool_error)?;
+    let mut value = json!({
+        "name": content.name,
+        "description": content.description,
+        "content": content.content,
+    });
+    if let Some(dir) = content.dir {
+        value["dir"] = json!(dir);
+    }
+    if content.truncated {
+        value["truncated"] = json!(true);
+    }
+    Ok(value)
+}
+
 /// Runs a tool's work as a Convex action, aborting the wait when the run is
 /// cancelled. The action itself keeps running server-side; its job record is
 /// reconciled by the normal completion flow.
@@ -638,6 +726,8 @@ fn tool_error(error: impl std::fmt::Display) -> AgentToolError {
 
 #[cfg(test)]
 mod tests {
+    use sprocket_workspace::{SkillSource, WorkspaceSkill};
+
     use super::*;
 
     #[test]
@@ -694,5 +784,44 @@ mod tests {
             serde_json::to_value(&args).unwrap(),
             serde_json::json!({ "sessionId": "1" })
         );
+    }
+
+    #[test]
+    fn read_skill_returns_builtin_content_without_dir() {
+        let skills = [WorkspaceSkill {
+            name: "demo".to_string(),
+            description: "Demo skill".to_string(),
+            source: SkillSource::BuiltIn {
+                contents: "---\nname: demo\ndescription: Demo skill\n---\n# Do it\n",
+            },
+        }];
+
+        let value = resolve_read_skill(&skills, "demo").expect("should resolve");
+        assert_eq!(value["name"], "demo");
+        assert_eq!(value["description"], "Demo skill");
+        assert_eq!(value["content"], "# Do it\n");
+        assert!(value.get("dir").is_none());
+        assert!(value.get("truncated").is_none());
+    }
+
+    #[test]
+    fn read_skill_unknown_name_lists_available() {
+        let skills = [
+            WorkspaceSkill {
+                name: "alpha".to_string(),
+                description: "A".to_string(),
+                source: SkillSource::BuiltIn { contents: "" },
+            },
+            WorkspaceSkill {
+                name: "bravo".to_string(),
+                description: "B".to_string(),
+                source: SkillSource::BuiltIn { contents: "" },
+            },
+        ];
+
+        let error = resolve_read_skill(&skills, "missing").expect_err("should fail");
+        let message = error.to_string();
+        assert!(message.contains("Unknown skill 'missing'"));
+        assert!(message.contains("alpha, bravo"));
     }
 }

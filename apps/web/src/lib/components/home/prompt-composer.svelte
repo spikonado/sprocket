@@ -6,6 +6,8 @@
 	import ProviderLogo from '$lib/components/provider-logo.svelte';
 	import ReasoningServiceSelector from '$lib/components/reasoning-service-selector.svelte';
 	import { shouldSubmitComposerFromKeydown } from '$lib/chat/composer';
+	import { applySkillSelection, filterSkills, getActiveDollarQuery } from '$lib/chat/dollar-skills';
+	import type { SkillSummary } from '$lib/types/sprocket';
 	import {
 		defaultModelId,
 		defaultReasoningEffort,
@@ -47,6 +49,11 @@
 			contextWindowTokens: number;
 			autoCompactTokenLimit: number;
 		};
+		/** Workspace-keyed skill loader; cache invalidates when `workspacePath` changes. */
+		workspaceSkills?: {
+			workspacePath: string | null;
+			load: () => Promise<SkillSummary[]>;
+		} | null;
 		onSubmit: () => void;
 		onCancel: () => void;
 	};
@@ -66,6 +73,7 @@
 		isRunning,
 		elapsedLabel,
 		contextUsage,
+		workspaceSkills = null,
 		onSubmit,
 		onCancel
 	}: Props = $props();
@@ -96,6 +104,14 @@
 	let composerTextarea = $state<HTMLTextAreaElement | null>(null);
 	let attachmentInput = $state<HTMLInputElement | null>(null);
 	let attachTooltip = $state<{ top: number; left: number } | null>(null);
+	let skills = $state<SkillSummary[]>([]);
+	let skillsLoadState = $state<'idle' | 'loading' | 'ready' | 'error'>('idle');
+	let skillsDismissed = $state(false);
+	let highlightedIndex = $state(0);
+	let caretPosition = $state(0);
+	let skillsRequestId = 0;
+	let skillsCacheKey: string | null | undefined = undefined;
+	let optionElements = $state<Array<HTMLElement | null>>([]);
 
 	const hasMessageContent = $derived(Boolean(prompt.trim()) || attachments.length > 0);
 	const attachmentsPending = $derived(
@@ -119,9 +135,79 @@
 			? Math.round((contextUsage.autoCompactTokenLimit / contextUsage.contextWindowTokens) * 100)
 			: 0
 	);
+	const dollarQuery = $derived(getActiveDollarQuery(prompt, caretPosition));
+	const skillsPopupOpen = $derived(dollarQuery !== null && !skillsDismissed);
+	const filteredSkills = $derived(dollarQuery === null ? [] : filterSkills(skills, dollarQuery));
+	const activeOptionId = $derived(
+		skillsPopupOpen && filteredSkills.length > 0
+			? `composer-skill-option-${highlightedIndex}`
+			: undefined
+	);
 
 	const COMPOSER_MIN_HEIGHT_PX = 68;
 	const COMPOSER_MAX_HEIGHT_PX = 160;
+
+	function syncCaretFromTextarea() {
+		caretPosition = composerTextarea?.selectionStart ?? prompt.length;
+	}
+
+	function invalidateSkillsCache() {
+		skills = [];
+		skillsLoadState = 'idle';
+		skillsDismissed = false;
+		highlightedIndex = 0;
+		skillsRequestId += 1;
+	}
+
+	async function ensureSkillsLoaded(force = false) {
+		if (
+			skillsLoadState === 'loading' ||
+			((skillsLoadState === 'ready' || skillsLoadState === 'error') && !force)
+		) {
+			return;
+		}
+
+		if (!workspaceSkills?.load) {
+			skills = [];
+			skillsLoadState = 'ready';
+			return;
+		}
+
+		const requestId = ++skillsRequestId;
+		skillsLoadState = 'loading';
+		try {
+			const nextSkills = await workspaceSkills.load();
+			if (requestId !== skillsRequestId) {
+				return;
+			}
+			skills = nextSkills;
+			skillsLoadState = 'ready';
+		} catch {
+			if (requestId !== skillsRequestId) {
+				return;
+			}
+			skills = [];
+			skillsLoadState = 'error';
+		}
+	}
+
+	function selectSkill(skill: SkillSummary) {
+		const selection = applySkillSelection(prompt, caretPosition, skill.name);
+		if (!selection) {
+			return;
+		}
+		prompt = selection.text;
+		caretPosition = selection.caret;
+		skillsDismissed = true;
+		queueMicrotask(() => {
+			if (!composerTextarea) {
+				return;
+			}
+			composerTextarea.focus();
+			composerTextarea.setSelectionRange(selection.caret, selection.caret);
+			syncComposerHeight();
+		});
+	}
 
 	function handleAttachmentInputChange(event: Event) {
 		const input = event.currentTarget as HTMLInputElement;
@@ -175,6 +261,32 @@
 	}
 
 	function handleComposerKeydown(event: KeyboardEvent) {
+		if (skillsPopupOpen) {
+			if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+				event.preventDefault();
+				if (filteredSkills.length === 0) {
+					return;
+				}
+				const delta = event.key === 'ArrowDown' ? 1 : -1;
+				highlightedIndex =
+					(highlightedIndex + delta + filteredSkills.length) % filteredSkills.length;
+				return;
+			}
+			if (event.key === 'Escape') {
+				event.preventDefault();
+				skillsDismissed = true;
+				return;
+			}
+			if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey) {
+				event.preventDefault();
+				const skill = filteredSkills[highlightedIndex];
+				if (skill) {
+					selectSkill(skill);
+				}
+				return;
+			}
+		}
+
 		if (
 			!canSend ||
 			!canSubmitWithModel ||
@@ -234,6 +346,35 @@
 	$effect(() => {
 		void prompt;
 		syncComposerHeight();
+	});
+
+	$effect(() => {
+		const path = workspaceSkills?.workspacePath ?? null;
+		if (skillsCacheKey !== path) {
+			skillsCacheKey = path;
+			invalidateSkillsCache();
+		}
+
+		if (dollarQuery === null) {
+			skillsDismissed = false;
+			return;
+		}
+		if (skillsDismissed) {
+			return;
+		}
+		void ensureSkillsLoaded();
+	});
+
+	$effect(() => {
+		void filteredSkills;
+		highlightedIndex = 0;
+	});
+
+	$effect(() => {
+		if (!skillsPopupOpen || filteredSkills.length === 0) {
+			return;
+		}
+		optionElements[highlightedIndex]?.scrollIntoView({ block: 'nearest' });
 	});
 
 	const composerShellClass =
@@ -317,17 +458,86 @@
 							{/each}
 						</ul>
 					{/if}
-					<div class="min-h-0 flex-1">
+					<div class="relative min-h-0 flex-1">
+						{#if skillsPopupOpen}
+							<div
+								class="absolute inset-x-0 bottom-full z-30 mb-2 max-h-56 overflow-y-auto rounded-xl border border-white/10 bg-[#1c1c1f] py-1 shadow-2xl"
+								id="composer-skills-listbox"
+								aria-label="Available skills"
+								role={skillsLoadState === 'ready' && filteredSkills.length > 0
+									? 'listbox'
+									: 'status'}
+							>
+								{#if skillsLoadState === 'loading'}
+									<p class="px-3 py-2 text-sm text-slate-500">Loading skills…</p>
+								{:else if skillsLoadState === 'error'}
+									<div class="flex items-center justify-between gap-3 px-3 py-2">
+										<p class="text-sm text-slate-500">Couldn’t load skills</p>
+										<button
+											type="button"
+											class="text-sm text-slate-300 underline-offset-2 hover:text-white hover:underline"
+											onclick={() => {
+												void ensureSkillsLoaded(true);
+											}}
+										>
+											Retry
+										</button>
+									</div>
+								{:else if filteredSkills.length === 0}
+									<p class="px-3 py-2 text-sm text-slate-500">No matching skills</p>
+								{:else}
+									{#each filteredSkills as skill, index (skill.name)}
+										<button
+											type="button"
+											bind:this={optionElements[index]}
+											id="composer-skill-option-{index}"
+											class={`flex w-full flex-col gap-0.5 px-3 py-2 text-left transition ${
+												highlightedIndex === index
+													? 'bg-white/8 text-white'
+													: 'text-slate-300 hover:bg-white/4 hover:text-white'
+											}`}
+											role="option"
+											aria-selected={highlightedIndex === index}
+											onpointerenter={() => {
+												highlightedIndex = index;
+											}}
+											onclick={() => {
+												selectSkill(skill);
+											}}
+										>
+											<span class="text-sm font-medium">${skill.name}</span>
+											<span class="line-clamp-2 text-[12px] text-slate-500"
+												>{skill.description}</span
+											>
+										</button>
+									{/each}
+								{/if}
+							</div>
+						{/if}
 						<textarea
 							bind:this={composerTextarea}
 							bind:value={prompt}
 							rows="1"
 							class="field-sizing-content max-h-40 min-h-17 w-full resize-none overflow-y-auto border-0 bg-transparent px-0 py-0 text-[14px] leading-6 text-slate-100 outline-none placeholder:text-slate-500"
-							placeholder="Ask anything, @tag files/directories, or use / to show available commands"
+							placeholder="Ask anything, @tag files/directories, or use $ to show available skills"
 							disabled={isRunning || isSubmitting}
+							role="combobox"
+							aria-autocomplete="list"
+							aria-haspopup="listbox"
+							aria-expanded={skillsPopupOpen}
+							aria-controls={skillsPopupOpen ? 'composer-skills-listbox' : undefined}
+							aria-activedescendant={activeOptionId}
+							autocomplete="off"
 							onkeydown={handleComposerKeydown}
 							onpaste={handleComposerPaste}
-							oninput={syncComposerHeight}></textarea>
+							onfocus={syncCaretFromTextarea}
+							oninput={() => {
+								syncCaretFromTextarea();
+								syncComposerHeight();
+							}}
+							onkeyup={syncCaretFromTextarea}
+							onclick={syncCaretFromTextarea}
+							onselect={syncCaretFromTextarea}></textarea>
 					</div>
 
 					<div
