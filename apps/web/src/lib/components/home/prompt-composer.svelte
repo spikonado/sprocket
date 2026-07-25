@@ -54,6 +54,8 @@
 			autoCompactTokenLimit: number;
 		};
 		loadSkills?: () => Promise<SkillSummary[]>;
+		/** Invalidates the skills cache when the active workspace changes. */
+		skillsWorkspacePath?: string | null;
 		onSubmit: () => void;
 		onCancel: () => void;
 	};
@@ -74,6 +76,7 @@
 		elapsedLabel,
 		contextUsage,
 		loadSkills,
+		skillsWorkspacePath = null,
 		onSubmit,
 		onCancel
 	}: Props = $props();
@@ -351,6 +354,12 @@
 	});
 
 	$effect(() => {
+		void skillsWorkspacePath;
+		clearSkillsPopupSession();
+	});
+
+	$effect(() => {
+		void skillsWorkspacePath;
 		if (dollarQuery === null) {
 			if (skillsLoadState !== 'idle' || skillsDismissed) {
 				clearSkillsPopupSession();

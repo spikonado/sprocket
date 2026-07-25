@@ -1831,6 +1831,7 @@
 						{isRunning}
 						elapsedLabel={isRunning ? formatElapsedDuration(elapsedSeconds) : null}
 						{contextUsage}
+						skillsWorkspacePath={currentWorkspaceSession?.workspacePath ?? null}
 						loadSkills={async () => {
 							const workspacePath = currentWorkspaceSession?.workspacePath;
 							if (!desktopApi || !workspacePath) {

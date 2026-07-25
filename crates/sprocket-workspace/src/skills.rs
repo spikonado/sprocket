@@ -116,33 +116,48 @@ pub fn parse_skill_markdown(contents: &str) -> Result<ParsedSkill, String> {
 
     let mut name: Option<String> = None;
     let mut description: Option<String> = None;
+    let lines: Vec<&str> = frontmatter.lines().collect();
+    let mut index = 0;
 
-    for line in frontmatter.lines() {
-        let trimmed = line.trim_end();
-        if trimmed.is_empty() || line.starts_with(' ') || line.starts_with('\t') {
+    while index < lines.len() {
+        let line = lines[index];
+        if line.trim().is_empty() || starts_with_yaml_indent(line) {
+            index += 1;
             continue;
         }
 
+        let trimmed = line.trim_end();
         let Some((key, value)) = trimmed.split_once(':') else {
+            index += 1;
             continue;
         };
         let key = key.trim();
-        let value = strip_yaml_quotes(value.trim());
+        let value = value.trim();
 
         match key {
             "name" => {
+                let value = strip_yaml_quotes(value);
                 if !value.is_empty() {
                     name = Some(value.to_string());
                 }
+                index += 1;
             }
             "description" => {
-                if value.is_empty() || is_yaml_block_scalar(value) {
-                    // Multi-line folds (`>` / `|`) are unsupported; treat as missing.
+                if let Some(style) = block_scalar_style(value) {
+                    let (text, consumed) = read_block_scalar(&lines[index + 1..], style);
+                    index += 1 + consumed;
+                    if !text.is_empty() {
+                        description = Some(text);
+                    }
                 } else {
-                    description = Some(value.to_string());
+                    let value = strip_yaml_quotes(value);
+                    if !value.is_empty() {
+                        description = Some(value.to_string());
+                    }
+                    index += 1;
                 }
             }
-            _ => {}
+            _ => index += 1,
         }
     }
 
@@ -183,19 +198,24 @@ pub fn validate_skill_name(name: &str) -> Result<(), String> {
 
 /// Resolve skill body for `read_skill`, capped at 64 KiB.
 pub fn read_skill_content(skill: &WorkspaceSkill) -> Result<ReadSkillContent, String> {
-    let raw = match &skill.source {
-        SkillSource::File { skill_md_path } => std::fs::read(skill_md_path)
-            .map_err(|error| format!("failed to read skill '{}': {error}", skill.name))?,
-        SkillSource::BuiltIn { contents } => contents.as_bytes().to_vec(),
+    let (raw, truncated) = match &skill.source {
+        SkillSource::File { skill_md_path } => {
+            read_file_capped(skill_md_path, MAX_SKILL_CONTENT_BYTES)
+                .map_err(|error| format!("failed to read skill '{}': {error}", skill.name))?
+        }
+        SkillSource::BuiltIn { contents } => {
+            let bytes = contents.as_bytes();
+            let truncated = bytes.len() > MAX_SKILL_CONTENT_BYTES;
+            let raw = if truncated {
+                bytes[..MAX_SKILL_CONTENT_BYTES].to_vec()
+            } else {
+                bytes.to_vec()
+            };
+            (raw, truncated)
+        }
     };
 
-    let truncated = raw.len() > MAX_SKILL_CONTENT_BYTES;
-    let data = if truncated {
-        &raw[..MAX_SKILL_CONTENT_BYTES]
-    } else {
-        &raw[..]
-    };
-    let text = String::from_utf8_lossy(data);
+    let text = String::from_utf8_lossy(&raw);
     let parsed = parse_skill_markdown(&text)?;
 
     let dir = match &skill.source {
@@ -305,19 +325,14 @@ fn scan_skills_dir(
 
 fn load_file_skill(skill_dir: &Path, dir_name: &str) -> Result<WorkspaceSkill, String> {
     let skill_md_path = skill_dir.join("SKILL.md");
-    let data = std::fs::read(&skill_md_path).map_err(|error| {
+    let (data, _) = read_file_capped(&skill_md_path, MAX_FRONTMATTER_BYTES).map_err(|error| {
         format!(
             "skipped skill '{dir_name}': failed to read {}: {error}",
             skill_md_path.display()
         )
     })?;
 
-    let frontmatter_bytes = if data.len() > MAX_FRONTMATTER_BYTES {
-        &data[..MAX_FRONTMATTER_BYTES]
-    } else {
-        &data[..]
-    };
-    let text = String::from_utf8_lossy(frontmatter_bytes);
+    let text = String::from_utf8_lossy(&data);
     let parsed = parse_skill_markdown(&text).map_err(|error| {
         format!(
             "skipped skill '{dir_name}' at {}: {error}",
@@ -344,6 +359,20 @@ fn load_file_skill(skill_dir: &Path, dir_name: &str) -> Result<WorkspaceSkill, S
         description: parsed.description,
         source: SkillSource::File { skill_md_path },
     })
+}
+
+fn read_file_capped(path: &Path, max_bytes: usize) -> std::io::Result<(Vec<u8>, bool)> {
+    use std::io::Read;
+
+    let file = std::fs::File::open(path)?;
+    let mut limited = file.take(max_bytes.saturating_add(1) as u64);
+    let mut buf = Vec::new();
+    limited.read_to_end(&mut buf)?;
+    let truncated = buf.len() > max_bytes;
+    if truncated {
+        buf.truncate(max_bytes);
+    }
+    Ok((buf, truncated))
 }
 
 fn split_frontmatter(contents: &str) -> Option<(&str, &str)> {
@@ -392,8 +421,106 @@ fn strip_yaml_quotes(value: &str) -> &str {
     value
 }
 
-fn is_yaml_block_scalar(value: &str) -> bool {
-    value.starts_with('>') || value.starts_with('|')
+#[derive(Clone, Copy)]
+enum BlockScalarStyle {
+    Folded,
+    Literal,
+}
+
+fn starts_with_yaml_indent(line: &str) -> bool {
+    line.starts_with(' ') || line.starts_with('\t')
+}
+
+fn block_scalar_style(value: &str) -> Option<BlockScalarStyle> {
+    let bytes = value.as_bytes();
+    let style = match bytes.first()? {
+        b'>' => BlockScalarStyle::Folded,
+        b'|' => BlockScalarStyle::Literal,
+        _ => return None,
+    };
+
+    // Accept optional chomping (`-` / `+`) and indentation indicators; reject other junk.
+    let mut rest = &value[1..];
+    if rest.starts_with('-') || rest.starts_with('+') {
+        rest = &rest[1..];
+    }
+    while rest.starts_with(|ch: char| ch.is_ascii_digit()) {
+        rest = &rest[1..];
+    }
+    if !rest.is_empty() {
+        return None;
+    }
+    Some(style)
+}
+
+fn read_block_scalar(lines: &[&str], style: BlockScalarStyle) -> (String, usize) {
+    let mut consumed = 0;
+    let mut content_lines = Vec::new();
+    let mut indent = None;
+
+    for line in lines {
+        if line.trim().is_empty() {
+            if indent.is_some() {
+                content_lines.push("");
+            }
+            consumed += 1;
+            continue;
+        }
+
+        let line_indent = line
+            .chars()
+            .take_while(|ch| *ch == ' ' || *ch == '\t')
+            .count();
+        if line_indent == 0 {
+            break;
+        }
+
+        let indent = *indent.get_or_insert(line_indent);
+        if line_indent < indent {
+            break;
+        }
+
+        let content = if line.len() >= indent {
+            &line[indent..]
+        } else {
+            ""
+        };
+        content_lines.push(content);
+        consumed += 1;
+    }
+
+    let mut text = match style {
+        BlockScalarStyle::Literal => content_lines.join("\n"),
+        BlockScalarStyle::Folded => fold_block_scalar_lines(&content_lines),
+    };
+    while text.ends_with('\n') || text.ends_with('\r') {
+        text.pop();
+    }
+    (text, consumed)
+}
+
+fn fold_block_scalar_lines(lines: &[&str]) -> String {
+    let mut paragraphs = Vec::new();
+    let mut current = String::new();
+
+    for line in lines {
+        if line.is_empty() {
+            if !current.is_empty() {
+                paragraphs.push(std::mem::take(&mut current));
+            } else {
+                paragraphs.push(String::new());
+            }
+            continue;
+        }
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(line);
+    }
+    if !current.is_empty() {
+        paragraphs.push(current);
+    }
+    paragraphs.join("\n")
 }
 
 #[cfg(test)]
@@ -536,10 +663,37 @@ mod tests {
     }
 
     #[test]
-    fn rejects_folded_description_block_scalars() {
-        let contents = "---\nname: folded\ndescription: >-\n  A long description\n---\nbody\n";
-        let error = parse_skill_markdown(contents).expect_err("folded description unsupported");
-        assert!(error.contains("missing or empty description"));
+    fn accepts_folded_and_literal_description_block_scalars() {
+        let folded = "---\nname: folded\ndescription: >-\n  A long description\n  that continues\n---\nbody\n";
+        let parsed = parse_skill_markdown(folded).expect("folded description");
+        assert_eq!(parsed.description, "A long description that continues");
+
+        let literal = "---\nname: literal\ndescription: |\n  line one\n  line two\n---\nbody\n";
+        let parsed = parse_skill_markdown(literal).expect("literal description");
+        assert_eq!(parsed.description, "line one\nline two");
+    }
+
+    #[test]
+    fn discovery_and_content_reads_stay_byte_capped() {
+        let root = temp_workspace();
+        let skills = root.join(".sprocket/skills");
+        let skill_dir = skills.join("huge");
+        fs::create_dir_all(root.join(".git")).unwrap();
+        fs::create_dir_all(&skill_dir).unwrap();
+
+        let mut contents = String::from("---\nname: huge\ndescription: oversized\n---\n");
+        contents.push_str(&"x".repeat(MAX_SKILL_CONTENT_BYTES + 8 * 1024));
+        fs::write(skill_dir.join("SKILL.md"), &contents).unwrap();
+
+        let loaded = load_workspace_skills(&root, &[], &[]);
+        assert_eq!(loaded.skills.len(), 1);
+        assert_eq!(loaded.skills[0].name, "huge");
+
+        let content = read_skill_content(&loaded.skills[0]).expect("read");
+        assert!(content.truncated);
+        assert!(content.content.len() <= MAX_SKILL_CONTENT_BYTES);
+
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]
