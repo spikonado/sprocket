@@ -1,6 +1,11 @@
+#[path = "src/skill_name.rs"]
+mod skill_name;
+
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use skill_name::validate_skill_name;
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
@@ -29,7 +34,7 @@ fn main() {
                 })
                 .to_string();
 
-            validate_skill_dir_name(&name).unwrap_or_else(|error| {
+            validate_skill_name(&name).unwrap_or_else(|error| {
                 panic!(
                     "invalid built-in skill directory '{}': {error}",
                     skill_dir.display()
@@ -74,23 +79,4 @@ fn write_if_changed(path: &Path, contents: &str) {
     }
     fs::write(path, contents)
         .unwrap_or_else(|error| panic!("failed to write {}: {error}", path.display()));
-}
-
-fn validate_skill_dir_name(name: &str) -> Result<(), String> {
-    if name.is_empty() || name.chars().count() > 64 {
-        return Err("name must be 1–64 characters".to_string());
-    }
-    if name.starts_with('-') || name.ends_with('-') {
-        return Err("name must not start or end with '-'".to_string());
-    }
-    if name.contains("--") {
-        return Err("name must not contain consecutive '--'".to_string());
-    }
-    if !name
-        .chars()
-        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
-    {
-        return Err("name may only contain lowercase letters, digits, and hyphens".to_string());
-    }
-    Ok(())
 }

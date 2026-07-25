@@ -13,7 +13,8 @@ use crate::workspace_sessions::{
     resolve_workspace_path,
 };
 use sprocket_workspace::{
-    FilesystemBrowseResult, browse_filesystem, default_user_skills_dirs, load_workspace_skills,
+    BUILTIN_SKILLS, FilesystemBrowseResult, browse_filesystem, default_user_skills_dirs,
+    load_workspace_skills,
 };
 
 #[derive(Debug, Deserialize)]
@@ -48,6 +49,7 @@ struct SkillSummary {
 #[serde(rename_all = "camelCase")]
 struct WorkspaceSkillsResponse {
     skills: Vec<SkillSummary>,
+    warnings: Vec<String>,
 }
 
 pub fn routes() -> axum::Router<AppState> {
@@ -136,7 +138,7 @@ async fn list_skills(
     let loaded = load_workspace_skills(
         std::path::Path::new(&resolution.workspace_path),
         &default_user_skills_dirs(),
-        sprocket_agent::BUILTIN_SKILLS,
+        BUILTIN_SKILLS,
     );
     let skills = loaded
         .skills
@@ -146,7 +148,10 @@ async fn list_skills(
             description: skill.description,
         })
         .collect();
-    Ok(Json(WorkspaceSkillsResponse { skills }))
+    Ok(Json(WorkspaceSkillsResponse {
+        skills,
+        warnings: loaded.warnings,
+    }))
 }
 
 #[derive(Debug)]

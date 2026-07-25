@@ -2,6 +2,7 @@ import {
 	BookOpen,
 	FileDiff,
 	Globe,
+	NotebookPen,
 	ScrollText,
 	Search,
 	SquareTerminal,
@@ -15,7 +16,7 @@ const TOOL_KIND_ICONS: Record<string, LucideIcon> = {
 	check_docs: BookOpen,
 	exec_command: Terminal,
 	get_workspace_instructions: ScrollText,
-	read_skill: BookOpen,
+	read_skill: NotebookPen,
 	scrape_url: Globe,
 	web_search: Search,
 	write_stdin: SquareTerminal

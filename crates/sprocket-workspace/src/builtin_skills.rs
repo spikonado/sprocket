@@ -2,7 +2,8 @@ include!(concat!(env!("OUT_DIR"), "/builtin_skills_generated.rs"));
 
 #[cfg(test)]
 mod tests {
-    use sprocket_workspace::{parse_skill_markdown, validate_skill_name};
+    use crate::skill_name::validate_skill_name;
+    use crate::skills::parse_skill_markdown;
 
     use super::BUILTIN_SKILLS;
 

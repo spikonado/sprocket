@@ -1,8 +1,6 @@
 import type { SkillSummary } from '$lib/types/sprocket';
 
-export type { SkillSummary };
-
-const ACTIVE_SKILL_TOKEN = /(^|[\s\n])\$([a-z0-9-]*)$/i;
+const ACTIVE_SKILL_TOKEN = /(^|\s)\$([a-z0-9-]*)$/i;
 
 function matchActiveSkillToken(
 	text: string,

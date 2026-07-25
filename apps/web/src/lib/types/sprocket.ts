@@ -158,12 +158,17 @@ export type SkillSummary = {
 	description: string;
 };
 
+export type WorkspaceSkillsResult = {
+	skills: SkillSummary[];
+	warnings: string[];
+};
+
 export type DesktopApi = {
 	browseFilesystem: (input: {
 		partialPath: string;
 		cwd?: string;
 	}) => Promise<FilesystemBrowseResult>;
-	listWorkspaceSkills: (input: { workspacePath: string }) => Promise<SkillSummary[]>;
+	listWorkspaceSkills: (input: { workspacePath: string }) => Promise<WorkspaceSkillsResult>;
 	resolveWorkspacePath: (input: {
 		workspacePath: string;
 		createIfMissing?: boolean;

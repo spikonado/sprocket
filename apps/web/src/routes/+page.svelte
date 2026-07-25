@@ -485,6 +485,23 @@
 	});
 
 	const currentWorkspaceSessionId = $derived(currentWorkspaceSession?._id ?? null);
+	const composerWorkspaceSkills = $derived.by(() => {
+		const workspacePath = currentWorkspaceSession?.workspacePath ?? null;
+		const api = desktopApi;
+		return {
+			workspacePath,
+			load: async () => {
+				if (!api || !workspacePath) {
+					return [];
+				}
+				const result = await api.listWorkspaceSkills({ workspacePath });
+				for (const warning of result.warnings) {
+					console.warn(`sprocket skills: ${warning}`);
+				}
+				return result.skills;
+			}
+		};
+	});
 
 	const currentWorkspaceThreads = $derived.by<ThreadSummary[]>(() => {
 		if (!currentWorkspaceName) {
@@ -1831,14 +1848,7 @@
 						{isRunning}
 						elapsedLabel={isRunning ? formatElapsedDuration(elapsedSeconds) : null}
 						{contextUsage}
-						skillsWorkspacePath={currentWorkspaceSession?.workspacePath ?? null}
-						loadSkills={async () => {
-							const workspacePath = currentWorkspaceSession?.workspacePath;
-							if (!desktopApi || !workspacePath) {
-								return [];
-							}
-							return await desktopApi.listWorkspaceSkills({ workspacePath });
-						}}
+						workspaceSkills={composerWorkspaceSkills}
 						onSubmit={() => {
 							void submitPrompt();
 						}}

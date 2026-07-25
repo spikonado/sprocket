@@ -810,16 +810,12 @@ mod tests {
             WorkspaceSkill {
                 name: "alpha".to_string(),
                 description: "A".to_string(),
-                source: SkillSource::BuiltIn {
-                    contents: "---\nname: alpha\ndescription: A\n---\n",
-                },
+                source: SkillSource::BuiltIn { contents: "" },
             },
             WorkspaceSkill {
                 name: "bravo".to_string(),
                 description: "B".to_string(),
-                source: SkillSource::BuiltIn {
-                    contents: "---\nname: bravo\ndescription: B\n---\n",
-                },
+                source: SkillSource::BuiltIn { contents: "" },
             },
         ];
 

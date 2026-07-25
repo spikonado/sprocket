@@ -2,12 +2,12 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::project_root::find_project_root;
+use crate::skill_name::validate_skill_name;
 
 const MAX_SKILLS: usize = 64;
 const MAX_FRONTMATTER_BYTES: usize = 8 * 1024;
 const MAX_DESCRIPTION_CHARS: usize = 1024;
 const MAX_SKILL_CONTENT_BYTES: usize = 64 * 1024;
-const MAX_NAME_CHARS: usize = 64;
 
 #[derive(Debug, Clone)]
 pub struct WorkspaceSkill {
@@ -29,7 +29,7 @@ pub struct WorkspaceSkills {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParsedSkill {
+pub(crate) struct ParsedSkill {
     pub name: String,
     pub description: String,
     pub body: String,
@@ -109,26 +109,21 @@ pub fn load_workspace_skills(
 }
 
 /// Parse SKILL.md frontmatter (`name`, `description`) and return the body.
-pub fn parse_skill_markdown(contents: &str) -> Result<ParsedSkill, String> {
+pub(crate) fn parse_skill_markdown(contents: &str) -> Result<ParsedSkill, String> {
     let Some((frontmatter, body)) = split_frontmatter(contents) else {
         return Err("missing YAML frontmatter".to_string());
     };
 
     let mut name: Option<String> = None;
     let mut description: Option<String> = None;
-    let lines: Vec<&str> = frontmatter.lines().collect();
-    let mut index = 0;
 
-    while index < lines.len() {
-        let line = lines[index];
+    for line in frontmatter.lines() {
         if line.trim().is_empty() || starts_with_yaml_indent(line) {
-            index += 1;
             continue;
         }
 
         let trimmed = line.trim_end();
         let Some((key, value)) = trimmed.split_once(':') else {
-            index += 1;
             continue;
         };
         let key = key.trim();
@@ -140,24 +135,17 @@ pub fn parse_skill_markdown(contents: &str) -> Result<ParsedSkill, String> {
                 if !value.is_empty() {
                     name = Some(value.to_string());
                 }
-                index += 1;
             }
             "description" => {
-                if let Some(style) = block_scalar_style(value) {
-                    let (text, consumed) = read_block_scalar(&lines[index + 1..], style);
-                    index += 1 + consumed;
-                    if !text.is_empty() {
-                        description = Some(text);
-                    }
-                } else {
-                    let value = strip_yaml_quotes(value);
-                    if !value.is_empty() {
-                        description = Some(value.to_string());
-                    }
-                    index += 1;
+                if value.starts_with('>') || value.starts_with('|') {
+                    return Err("description must be a single-line string".to_string());
+                }
+                let value = strip_yaml_quotes(value);
+                if !value.is_empty() {
+                    description = Some(value.to_string());
                 }
             }
-            _ => index += 1,
+            _ => {}
         }
     }
 
@@ -172,28 +160,6 @@ pub fn parse_skill_markdown(contents: &str) -> Result<ParsedSkill, String> {
         description,
         body: body.to_string(),
     })
-}
-
-pub fn validate_skill_name(name: &str) -> Result<(), String> {
-    if name.is_empty() || name.chars().count() > MAX_NAME_CHARS {
-        return Err(format!(
-            "name must be 1–{MAX_NAME_CHARS} characters, got {}",
-            name.chars().count()
-        ));
-    }
-    if name.starts_with('-') || name.ends_with('-') {
-        return Err("name must not start or end with '-'".to_string());
-    }
-    if name.contains("--") {
-        return Err("name must not contain consecutive '--'".to_string());
-    }
-    if !name
-        .chars()
-        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
-    {
-        return Err("name may only contain lowercase letters, digits, and hyphens".to_string());
-    }
-    Ok(())
 }
 
 /// Resolve skill body for `read_skill`, capped at 64 KiB.
@@ -216,7 +182,9 @@ pub fn read_skill_content(skill: &WorkspaceSkill) -> Result<ReadSkillContent, St
     };
 
     let text = String::from_utf8_lossy(&raw);
-    let parsed = parse_skill_markdown(&text)?;
+    let Some((_, body)) = split_frontmatter(&text) else {
+        return Err("missing YAML frontmatter".to_string());
+    };
 
     let dir = match &skill.source {
         SkillSource::File { skill_md_path } => skill_md_path
@@ -227,8 +195,8 @@ pub fn read_skill_content(skill: &WorkspaceSkill) -> Result<ReadSkillContent, St
 
     Ok(ReadSkillContent {
         name: skill.name.clone(),
-        description: parsed.description,
-        content: parsed.body,
+        description: skill.description.clone(),
+        content: body.to_string(),
         dir,
         truncated,
     })
@@ -421,106 +389,8 @@ fn strip_yaml_quotes(value: &str) -> &str {
     value
 }
 
-#[derive(Clone, Copy)]
-enum BlockScalarStyle {
-    Folded,
-    Literal,
-}
-
 fn starts_with_yaml_indent(line: &str) -> bool {
     line.starts_with(' ') || line.starts_with('\t')
-}
-
-fn block_scalar_style(value: &str) -> Option<BlockScalarStyle> {
-    let bytes = value.as_bytes();
-    let style = match bytes.first()? {
-        b'>' => BlockScalarStyle::Folded,
-        b'|' => BlockScalarStyle::Literal,
-        _ => return None,
-    };
-
-    // Accept optional chomping (`-` / `+`) and indentation indicators; reject other junk.
-    let mut rest = &value[1..];
-    if rest.starts_with('-') || rest.starts_with('+') {
-        rest = &rest[1..];
-    }
-    while rest.starts_with(|ch: char| ch.is_ascii_digit()) {
-        rest = &rest[1..];
-    }
-    if !rest.is_empty() {
-        return None;
-    }
-    Some(style)
-}
-
-fn read_block_scalar(lines: &[&str], style: BlockScalarStyle) -> (String, usize) {
-    let mut consumed = 0;
-    let mut content_lines = Vec::new();
-    let mut indent = None;
-
-    for line in lines {
-        if line.trim().is_empty() {
-            if indent.is_some() {
-                content_lines.push("");
-            }
-            consumed += 1;
-            continue;
-        }
-
-        let line_indent = line
-            .chars()
-            .take_while(|ch| *ch == ' ' || *ch == '\t')
-            .count();
-        if line_indent == 0 {
-            break;
-        }
-
-        let indent = *indent.get_or_insert(line_indent);
-        if line_indent < indent {
-            break;
-        }
-
-        let content = if line.len() >= indent {
-            &line[indent..]
-        } else {
-            ""
-        };
-        content_lines.push(content);
-        consumed += 1;
-    }
-
-    let mut text = match style {
-        BlockScalarStyle::Literal => content_lines.join("\n"),
-        BlockScalarStyle::Folded => fold_block_scalar_lines(&content_lines),
-    };
-    while text.ends_with('\n') || text.ends_with('\r') {
-        text.pop();
-    }
-    (text, consumed)
-}
-
-fn fold_block_scalar_lines(lines: &[&str]) -> String {
-    let mut paragraphs = Vec::new();
-    let mut current = String::new();
-
-    for line in lines {
-        if line.is_empty() {
-            if !current.is_empty() {
-                paragraphs.push(std::mem::take(&mut current));
-            } else {
-                paragraphs.push(String::new());
-            }
-            continue;
-        }
-        if !current.is_empty() {
-            current.push(' ');
-        }
-        current.push_str(line);
-    }
-    if !current.is_empty() {
-        paragraphs.push(current);
-    }
-    paragraphs.join("\n")
 }
 
 #[cfg(test)]
@@ -618,13 +488,6 @@ mod tests {
 
         write_skill(&skills, "BadName", "uppercase", "body");
         write_skill(&skills, "-leading", "leading hyphen", "body");
-        let consecutive = skills.join("has--dash");
-        fs::create_dir_all(&consecutive).unwrap();
-        fs::write(
-            consecutive.join("SKILL.md"),
-            "---\nname: has--dash\ndescription: consecutive\n---\nbody\n",
-        )
-        .unwrap();
 
         let no_desc = skills.join("no-desc");
         fs::create_dir_all(&no_desc).unwrap();
@@ -636,12 +499,29 @@ mod tests {
 
         let loaded = load_workspace_skills(&root, &[], &[]);
         assert!(loaded.skills.is_empty());
-        assert!(loaded.warnings.len() >= 6);
         assert!(
             loaded
                 .warnings
                 .iter()
                 .any(|warning| warning.contains("does not match directory name"))
+        );
+        assert!(
+            loaded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("lowercase letters"))
+        );
+        assert!(
+            loaded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("must not start or end with '-'"))
+        );
+        assert!(
+            loaded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("missing or empty description"))
         );
         assert!(
             loaded
@@ -663,14 +543,14 @@ mod tests {
     }
 
     #[test]
-    fn accepts_folded_and_literal_description_block_scalars() {
-        let folded = "---\nname: folded\ndescription: >-\n  A long description\n  that continues\n---\nbody\n";
-        let parsed = parse_skill_markdown(folded).expect("folded description");
-        assert_eq!(parsed.description, "A long description that continues");
+    fn rejects_block_scalar_descriptions() {
+        let folded = "---\nname: folded\ndescription: >-\n  A long description\n---\nbody\n";
+        let error = parse_skill_markdown(folded).expect_err("folded description");
+        assert!(error.contains("single-line"));
 
-        let literal = "---\nname: literal\ndescription: |\n  line one\n  line two\n---\nbody\n";
-        let parsed = parse_skill_markdown(literal).expect("literal description");
-        assert_eq!(parsed.description, "line one\nline two");
+        let literal = "---\nname: literal\ndescription: |\n  line one\n---\nbody\n";
+        let error = parse_skill_markdown(literal).expect_err("literal description");
+        assert!(error.contains("single-line"));
     }
 
     #[test]

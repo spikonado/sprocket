@@ -3,8 +3,8 @@ use rig::OneOrMany;
 use rig::completion::Message;
 use rig::message::{ImageMediaType, UserContent};
 use sprocket_workspace::{
-    WorkspaceInstruction, WorkspaceSkill, default_user_skills_dirs, load_workspace_instructions,
-    load_workspace_skills, resolve_workspace_root,
+    BUILTIN_SKILLS, WorkspaceInstruction, WorkspaceSkill, default_user_skills_dirs,
+    load_workspace_instructions, load_workspace_skills, resolve_workspace_root,
 };
 use std::future::Future;
 use std::sync::Arc;
@@ -13,7 +13,6 @@ use tokio::time::{Instant, MissedTickBehavior, sleep, timeout};
 use uuid::Uuid;
 
 use crate::RunContextResponse;
-use crate::builtin_skills::BUILTIN_SKILLS;
 use crate::convex::RuntimeClient;
 use crate::provider::{AgentProvider, AgentProviderRequest, AgentProviderResult};
 use crate::types::{RunAgentRequest, deserialize_agent_history};
@@ -85,10 +84,8 @@ fn build_workspace_preamble(
         let entries = skills
             .iter()
             .map(|skill| {
-                format!(
-                    "- name: {}\n  description: {}",
-                    skill.name, skill.description
-                )
+                let description = collapse_whitespace(&skill.description);
+                format!("- name: {}\n  description: {description}", skill.name)
             })
             .collect::<Vec<_>>()
             .join("\n");
@@ -671,6 +668,10 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
     }
 }
 
+fn collapse_whitespace(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 fn image_media_type(media_type: &str) -> anyhow::Result<ImageMediaType> {
     match media_type {
         "image/jpeg" => Ok(ImageMediaType::JPEG),
@@ -710,5 +711,19 @@ mod tests {
         assert!(preamble.contains("## Skills"));
         assert!(preamble.contains("No skills are installed."));
         assert!(!preamble.contains("<SKILLS>"));
+    }
+
+    #[test]
+    fn preamble_collapses_multiline_skill_descriptions() {
+        let skills = [WorkspaceSkill {
+            name: "demo".to_string(),
+            description: "Line one\nline two".to_string(),
+            source: SkillSource::BuiltIn {
+                contents: "---\nname: demo\ndescription: Line one\n---\n",
+            },
+        }];
+        let preamble = build_workspace_preamble("/tmp/project", &[], &skills);
+        assert!(preamble.contains("description: Line one line two"));
+        assert!(!preamble.contains("description: Line one\n"));
     }
 }

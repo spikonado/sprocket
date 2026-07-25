@@ -6,12 +6,8 @@
 	import ProviderLogo from '$lib/components/provider-logo.svelte';
 	import ReasoningServiceSelector from '$lib/components/reasoning-service-selector.svelte';
 	import { shouldSubmitComposerFromKeydown } from '$lib/chat/composer';
-	import {
-		applySkillSelection,
-		filterSkills,
-		getActiveDollarQuery,
-		type SkillSummary
-	} from '$lib/chat/dollar-skills';
+	import { applySkillSelection, filterSkills, getActiveDollarQuery } from '$lib/chat/dollar-skills';
+	import type { SkillSummary } from '$lib/types/sprocket';
 	import {
 		defaultModelId,
 		defaultReasoningEffort,
@@ -53,9 +49,11 @@
 			contextWindowTokens: number;
 			autoCompactTokenLimit: number;
 		};
-		loadSkills?: () => Promise<SkillSummary[]>;
-		/** Invalidates the skills cache when the active workspace changes. */
-		skillsWorkspacePath?: string | null;
+		/** Workspace-keyed skill loader; cache invalidates when `workspacePath` changes. */
+		workspaceSkills?: {
+			workspacePath: string | null;
+			load: () => Promise<SkillSummary[]>;
+		} | null;
 		onSubmit: () => void;
 		onCancel: () => void;
 	};
@@ -75,8 +73,7 @@
 		isRunning,
 		elapsedLabel,
 		contextUsage,
-		loadSkills,
-		skillsWorkspacePath = null,
+		workspaceSkills = null,
 		onSubmit,
 		onCancel
 	}: Props = $props();
@@ -113,6 +110,7 @@
 	let highlightedIndex = $state(0);
 	let caretPosition = $state(0);
 	let skillsRequestId = 0;
+	let skillsCacheKey: string | null | undefined = undefined;
 	let optionElements = $state<Array<HTMLElement | null>>([]);
 
 	const hasMessageContent = $derived(Boolean(prompt.trim()) || attachments.length > 0);
@@ -138,9 +136,7 @@
 			: 0
 	);
 	const dollarQuery = $derived(getActiveDollarQuery(prompt, caretPosition));
-	const skillsPopupOpen = $derived(
-		dollarQuery !== null && !skillsDismissed && skillsLoadState !== 'error'
-	);
+	const skillsPopupOpen = $derived(dollarQuery !== null && !skillsDismissed);
 	const filteredSkills = $derived(dollarQuery === null ? [] : filterSkills(skills, dollarQuery));
 	const activeOptionId = $derived(
 		skillsPopupOpen && filteredSkills.length > 0
@@ -155,16 +151,23 @@
 		caretPosition = composerTextarea?.selectionStart ?? prompt.length;
 	}
 
-	async function ensureSkillsLoaded() {
+	function invalidateSkillsCache() {
+		skills = [];
+		skillsLoadState = 'idle';
+		skillsDismissed = false;
+		highlightedIndex = 0;
+		skillsRequestId += 1;
+	}
+
+	async function ensureSkillsLoaded(force = false) {
 		if (
 			skillsLoadState === 'loading' ||
-			skillsLoadState === 'ready' ||
-			skillsLoadState === 'error'
+			((skillsLoadState === 'ready' || skillsLoadState === 'error') && !force)
 		) {
 			return;
 		}
 
-		if (!loadSkills) {
+		if (!workspaceSkills?.load) {
 			skills = [];
 			skillsLoadState = 'ready';
 			return;
@@ -173,7 +176,7 @@
 		const requestId = ++skillsRequestId;
 		skillsLoadState = 'loading';
 		try {
-			const nextSkills = await loadSkills();
+			const nextSkills = await workspaceSkills.load();
 			if (requestId !== skillsRequestId) {
 				return;
 			}
@@ -188,14 +191,6 @@
 		}
 	}
 
-	function clearSkillsPopupSession() {
-		skills = [];
-		skillsLoadState = 'idle';
-		skillsDismissed = false;
-		highlightedIndex = 0;
-		skillsRequestId += 1;
-	}
-
 	function selectSkill(skill: SkillSummary) {
 		const selection = applySkillSelection(prompt, caretPosition, skill.name);
 		if (!selection) {
@@ -203,7 +198,7 @@
 		}
 		prompt = selection.text;
 		caretPosition = selection.caret;
-		clearSkillsPopupSession();
+		skillsDismissed = true;
 		queueMicrotask(() => {
 			if (!composerTextarea) {
 				return;
@@ -283,12 +278,12 @@
 				return;
 			}
 			if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey) {
+				event.preventDefault();
 				const skill = filteredSkills[highlightedIndex];
 				if (skill) {
-					event.preventDefault();
 					selectSkill(skill);
-					return;
 				}
+				return;
 			}
 		}
 
@@ -354,16 +349,14 @@
 	});
 
 	$effect(() => {
-		void skillsWorkspacePath;
-		clearSkillsPopupSession();
-	});
+		const path = workspaceSkills?.workspacePath ?? null;
+		if (skillsCacheKey !== path) {
+			skillsCacheKey = path;
+			invalidateSkillsCache();
+		}
 
-	$effect(() => {
-		void skillsWorkspacePath;
 		if (dollarQuery === null) {
-			if (skillsLoadState !== 'idle' || skillsDismissed) {
-				clearSkillsPopupSession();
-			}
+			skillsDismissed = false;
 			return;
 		}
 		if (skillsDismissed) {
@@ -469,12 +462,27 @@
 						{#if skillsPopupOpen}
 							<div
 								class="absolute inset-x-0 bottom-full z-30 mb-2 max-h-56 overflow-y-auto rounded-xl border border-white/10 bg-[#1c1c1f] py-1 shadow-2xl"
-								role="listbox"
 								id="composer-skills-listbox"
 								aria-label="Available skills"
+								role={skillsLoadState === 'ready' && filteredSkills.length > 0
+									? 'listbox'
+									: 'status'}
 							>
 								{#if skillsLoadState === 'loading'}
 									<p class="px-3 py-2 text-sm text-slate-500">Loading skills…</p>
+								{:else if skillsLoadState === 'error'}
+									<div class="flex items-center justify-between gap-3 px-3 py-2">
+										<p class="text-sm text-slate-500">Couldn’t load skills</p>
+										<button
+											type="button"
+											class="text-sm text-slate-300 underline-offset-2 hover:text-white hover:underline"
+											onclick={() => {
+												void ensureSkillsLoaded(true);
+											}}
+										>
+											Retry
+										</button>
+									</div>
 								{:else if filteredSkills.length === 0}
 									<p class="px-3 py-2 text-sm text-slate-500">No matching skills</p>
 								{:else}

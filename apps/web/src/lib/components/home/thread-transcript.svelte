@@ -81,7 +81,7 @@
 			case 'get_workspace_instructions':
 				return 'Read Instructions';
 			case 'read_skill':
-				return 'Read Skills';
+				return 'Read Skill';
 			case 'scrape_url':
 				return 'Read Pages';
 			case 'web_search':
@@ -130,7 +130,7 @@
 			case 'get_workspace_instructions':
 				return 'Workspace instructions';
 			case 'read_skill':
-				return typeof fields?.name === 'string' ? fields.name : 'Skill';
+				return typeof fields?.name === 'string' ? `$${fields.name}` : 'Skill';
 			case 'scrape_url':
 				return typeof fields?.url === 'string' ? fields.url : 'Web page';
 			case 'web_search':
