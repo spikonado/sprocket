@@ -535,7 +535,7 @@
 																				</span>
 																			</summary>
 																			<p
-																				class="mt-1.5 whitespace-pre-wrap wrap-break-word text-xs leading-5 {toolFailureKind ===
+																				class="mt-1.5 text-xs leading-5 wrap-break-word whitespace-pre-wrap {toolFailureKind ===
 																				'failed'
 																					? 'text-rose-200'
 																					: 'text-amber-200'}"

@@ -82,7 +82,7 @@
 	<button
 		bind:this={triggerElement}
 		type="button"
-		class="focus-visible:ring-ring/60 inline-flex h-9 shrink-0 items-center gap-1 rounded-lg px-2 text-[15px] text-slate-300 outline-none transition hover:bg-white/[0.03] focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50"
+		class="focus-visible:ring-ring/60 inline-flex h-9 shrink-0 items-center gap-1 rounded-lg px-2 text-[15px] text-slate-300 transition outline-none hover:bg-white/[0.03] focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50"
 		aria-haspopup="dialog"
 		aria-expanded={isOpen}
 		aria-label="Select reasoning effort and service tier"
