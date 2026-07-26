@@ -396,6 +396,7 @@ mod tests {
             auth,
             desktop_login: DesktopLoginStore::new(),
             workspace_sessions: WorkspaceSessionStore::new(temp_dir),
+            ref_repos_root: std::env::temp_dir().join("sprocket-auth-test-ref-repos"),
             http_base_url: "http://127.0.0.1:7731".to_string(),
             desktop_login_callback_url: auth::desktop_login_callback_url(7731),
             loopback_desktop_login_supported: loopback_supported,

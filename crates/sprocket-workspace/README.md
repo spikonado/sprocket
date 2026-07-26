@@ -12,6 +12,7 @@ See [ARCHITECTURE.md](../../ARCHITECTURE.md) for its role in the complete system
 - Load scoped workspace instructions and skills.
 - Run cancellable shell commands and manage long-running sessions.
 - Apply multi-file patches inside a workspace.
+- Clone and cache remote Git repositories atomically.
 
 ## Design
 
@@ -25,6 +26,10 @@ workspace by default, but they are not sandboxed and may access the wider
 machine with the permissions of the Sprocket process. Output is bounded, and
 cancellation or timeout stops the process tree.
 
+HTTPS and SSH repository clones are populated in temporary sibling directories
+before an atomic rename. Matching, untampered snapshots are reused, while URL
+hash collisions remain in separate directories.
+
 Workspace instruction loading follows the project hierarchy so deeper
 instructions can refine root-level guidance without coupling that behavior to
 the agent implementation.
@@ -36,6 +41,7 @@ the agent implementation.
 - `skills.rs` and `skills/`: skill discovery and built-in skill embedding.
 - `tools.rs`: command sessions and cancellation.
 - `patch.rs`: confined transactional patches.
+- `ref_repo.rs`: cancellable, reusable Git clones.
 
 ## Built-in skills
 

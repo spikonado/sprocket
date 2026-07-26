@@ -34,15 +34,19 @@ the on-disk layout.
 ## Tools
 
 The agent currently offers command execution, command-session input, workspace
-patching, skill loading (`read_skill`), web search, and web-page scraping. Every
-tool call is wrapped in a durable executor-job record and observes run
-cancellation while work is active.
+patching, Git repository cloning, skill loading (`read_skill`), web search, and
+web-page scraping. Every tool call is wrapped in a durable executor-job record
+and observes run cancellation while work is active.
 
-Command execution has full local process permissions. Patch operations are
-confined to the workspace by `sprocket-workspace`. Web search and scraping run
-as Convex actions (`webTools`) built on the Exa and Context.dev Convex
-components, keyed by deployment-side environment variables (`EXA_API_KEY`,
-`CONTEXT_DEV_API_KEY`); only the results flow back through the executor job.
+Command execution normally has full local process permissions. When its working
+directory resolves inside `<SPROCKET_DATA_DIR>/ref-repos`, it is automatically
+executed by Bashkit instead, with the cache mounted read-only and without host
+process or network access. Repository clones are shallow, matching snapshots
+are reused, and patch operations remain confined to the workspace by
+`sprocket-workspace`. Web search and scraping run as Convex actions (`webTools`)
+built on the Exa and Context.dev Convex components, keyed by deployment-side
+environment variables (`EXA_API_KEY`, `CONTEXT_DEV_API_KEY`); only the results
+flow back through the executor job.
 
 ## Main areas
 

@@ -7,6 +7,7 @@ use rig::message::{
 };
 use serde::{Deserialize, Deserializer, Serialize};
 use sprocket_convex_provider::AuthTokenFetcher;
+use std::path::PathBuf;
 
 #[derive(Clone)]
 pub struct RunAgentRequest {
@@ -21,6 +22,8 @@ pub struct RunAgentRequest {
     pub reasoning_effort: String,
     pub service_tier: String,
     pub workspace_path: String,
+    /// Local cache root supplied by the Sprocket server; it is never sent to Convex.
+    pub ref_repos_root: PathBuf,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

@@ -68,6 +68,15 @@ impl CommandSessionManager {
         }
     }
 
+    pub fn resolve_workdir(&self, workdir: &str) -> Result<PathBuf> {
+        let candidate = self.requested_workdir(workdir);
+        resolve_command_workdir(candidate)
+    }
+
+    pub fn requested_workdir(&self, workdir: &str) -> PathBuf {
+        command_workdir_candidate(&self.workspace_root, workdir)
+    }
+
     pub async fn exec_command(
         &self,
         cancellation: WorkspaceCancellation,
@@ -83,7 +92,7 @@ impl CommandSessionManager {
             bail!("command cannot be empty");
         }
 
-        let cwd = resolve_command_workdir(&self.workspace_root, workdir)?;
+        let cwd = self.resolve_workdir(workdir)?;
         let mut process = build_shell_command(command, shell);
         process
             .current_dir(&cwd)
@@ -537,13 +546,16 @@ async fn join_capture_task(mut task: tokio::task::JoinHandle<Result<()>>) -> Res
     }
 }
 
-fn resolve_command_workdir(workspace_root: &Path, workdir: &str) -> Result<PathBuf> {
+fn command_workdir_candidate(workspace_root: &Path, workdir: &str) -> PathBuf {
     let expanded = PathBuf::from(expand_home(workdir.trim()));
-    let candidate = if expanded.is_absolute() {
+    if expanded.is_absolute() {
         expanded
     } else {
         workspace_root.join(expanded)
-    };
+    }
+}
+
+fn resolve_command_workdir(candidate: PathBuf) -> Result<PathBuf> {
     let resolved = candidate
         .canonicalize()
         .with_context(|| format!("failed to resolve command workdir {}", candidate.display()))?;

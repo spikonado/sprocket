@@ -35,6 +35,7 @@ pub struct AgentRun {
     run_id: String,
     claim_id: String,
     workspace_root: std::path::PathBuf,
+    ref_repos_root: std::path::PathBuf,
 }
 
 impl AgentRun {
@@ -128,6 +129,7 @@ fn build_workspace_preamble(
         "## Tool Usage",
         "",
         "Always use apply_patch to create, edit, delete, or rename files. Do not use the shell for those operations. `git` is an exception to this rule.",
+        "Use clone_ref_repo for reference repositories, then inspect the returned path with exec_command. Commands run from that cache are automatically sandboxed and cannot modify the cached repositories.",
         "Prefer using the `scrape_url` tool over `web_search` when you have an idea on what URL could lead you to the information you need. `web_search` is more expensive and should be used as a fallback.",
         "You are suggested to use `scrape_url` on the URLs returned by `web_search` to further ground the information you received from it.",
         "",
@@ -503,6 +505,7 @@ pub async fn start_agent_run(request: RunAgentRequest) -> anyhow::Result<AgentRu
     }
     let run_id = created_run.run_id;
     Ok(AgentRun {
+        ref_repos_root: request.ref_repos_root.clone(),
         request,
         runtime,
         run_id,
@@ -563,6 +566,7 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
         run_id,
         claim_id,
         workspace_root,
+        ref_repos_root,
     } = run;
 
     let context: RunContextResponse = match runtime.run_context(&run_id).await {
@@ -656,6 +660,7 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
                     preamble,
                     prior_history,
                     workspace_root,
+                    ref_repos_root,
                     skills,
                     model,
                     reasoning_effort,

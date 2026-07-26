@@ -76,6 +76,8 @@
 				return 'Changed Files';
 			case 'check_docs':
 				return 'Checked Docs';
+			case 'clone_ref_repo':
+				return 'Cloned Repositories';
 			case 'exec_command':
 				return 'Ran Commands';
 			case 'get_workspace_instructions':
@@ -123,6 +125,10 @@
 					: typeof fields?.path === 'string'
 						? fields.path
 						: 'Docs';
+			case 'clone_ref_repo':
+				return typeof fields?.url === 'string'
+					? `${fields.url}${typeof fields.reference === 'string' ? ` @ ${fields.reference}` : ''}`
+					: 'Git repository';
 			case 'exec_command':
 				return typeof fields?.cmd === 'string'
 					? `${fields.cmd}${describeExecCommandOptions(input)}`
@@ -226,7 +232,10 @@
 		return new Set(tools.flatMap((tool) => patchSummary(tool)?.split('\n') ?? [])).size;
 	}
 
-	function summarizeWebToolResult(kind: string, result: JsonValue | undefined) {
+	function summarizeToolResult(kind: string, result: JsonValue | undefined) {
+		if (kind === 'clone_ref_repo' && isJsonObject(result) && result.reused === true) {
+			return ' (cached)';
+		}
 		if (kind === 'web_search' && isJsonObject(result) && Array.isArray(result.results)) {
 			const count = result.results.length;
 			return ` (${count} result${count === 1 ? '' : 's'})`;
@@ -255,7 +264,7 @@
 			}
 			return (
 				summarizeTool(toolLog.job.kind, toolLog.job.payload) +
-				summarizeWebToolResult(toolLog.job.kind, toolLog.job.result)
+				summarizeToolResult(toolLog.job.kind, toolLog.job.result)
 			);
 		}
 		return summarizeTool(toolLog.name, toolLog.input);

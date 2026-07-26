@@ -67,6 +67,7 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) preamble: String,
     pub(crate) prior_history: Vec<Message>,
     pub(crate) workspace_root: PathBuf,
+    pub(crate) ref_repos_root: PathBuf,
     pub(crate) skills: Arc<[WorkspaceSkill]>,
     pub(crate) model: String,
     pub(crate) reasoning_effort: String,
@@ -130,6 +131,7 @@ where
         request.run_id.clone(),
         request.claim_id.clone(),
         request.workspace_root.clone(),
+        request.ref_repos_root.clone(),
         tool_call_tracker.clone(),
         request.skills.clone(),
     );
@@ -138,6 +140,7 @@ where
         .agent(model)
         .preamble(&request.preamble)
         .tool(tools.apply_patch)
+        .tool(tools.clone_ref_repo)
         .tool(tools.exec_command)
         .tool(tools.read_skill)
         .tool(tools.scrape_url)

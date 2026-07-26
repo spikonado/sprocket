@@ -5,6 +5,7 @@ mod builtin_skills;
 mod patch;
 mod paths;
 mod project_root;
+mod ref_repo;
 mod skill_name;
 mod skills;
 #[cfg(test)]
@@ -20,6 +21,7 @@ pub use browse::{
 };
 pub use builtin_skills::BUILTIN_SKILLS;
 pub use patch::{ApplyPatchOutput, PatchChangeOutput, PatchOperation, apply_workspace_patch};
+pub use ref_repo::{CloneRefRepoOutput, clone_ref_repo};
 pub use skills::{
     SkillSource, WorkspaceSkill, WorkspaceSkills, default_user_skills_dirs, load_workspace_skills,
     read_skill_content,

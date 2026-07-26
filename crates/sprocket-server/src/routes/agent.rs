@@ -88,6 +88,7 @@ async fn run_agent_handler(
         reasoning_effort: payload.reasoning_effort,
         service_tier: payload.service_tier,
         workspace_path,
+        ref_repos_root: state.ref_repos_root.clone(),
     };
 
     let cleanup_request = request.clone();
