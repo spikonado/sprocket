@@ -8,7 +8,7 @@ license.workspace = true
 anyhow = "1.0.102"
 convex = { version = "0.10.4", default-features = false, features = ["rustls-tls-native-roots"] }
 futures = "0.3.32"
-rig = { package = "rig-core", version = "0.40.0", default-features = false }
+rig = { package = "rig-core", version = "0.40.0", default-features = false, features = ["reqwest", "rustls"] }
 rustls = { version = "0.23.40", features = ["ring"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"

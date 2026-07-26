@@ -9,6 +9,7 @@ import {
 	type SupportedModelId,
 	type SupportedServiceTier
 } from '@convex/lib/models';
+import { loadUserProviderConfig, type UserProviderConfig } from '@convex/lib/providerConfig';
 import { assertModelAllowedForTier, getSubscriptionTier } from '@convex/lib/tiers';
 import { buildCanonicalAgentHistory } from '@convex/lib/agentHistory';
 import { contextSummaryText } from '@convex/lib/contextCompaction';
@@ -402,6 +403,9 @@ export const getContext = query({
 			contextWindowTokens: number;
 			autoCompactTokenLimit: number;
 		};
+		providerPreference: UserProviderConfig['providerPreference'];
+		availableProviders: UserProviderConfig['availableProviders'];
+		modelProvider: 'openai' | 'anthropic' | 'xai';
 	}> => {
 		const run: Doc<'runs'> = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		const userId = run.userId;
@@ -465,6 +469,7 @@ export const getContext = query({
 			({ mediaType, url }) => ({ mediaType, url })
 		);
 		const model = getModelDefinition(run.selectedModel);
+		const { providerPreference, availableProviders } = await loadUserProviderConfig(ctx, userId);
 
 		return {
 			run,
@@ -476,7 +481,10 @@ export const getContext = query({
 			contextBudget: {
 				contextWindowTokens: model.contextWindowTokens,
 				autoCompactTokenLimit: model.autoCompactTokenLimit
-			}
+			},
+			providerPreference,
+			availableProviders,
+			modelProvider: model.provider
 		};
 	}
 });

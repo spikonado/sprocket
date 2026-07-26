@@ -26,6 +26,7 @@
 		"@fontsource/ibm-plex-mono": "^5.3.0",
 		"@lucide/svelte": "^1.18.0",
 		"@workos-inc/authkit-js": "^0.20.0",
+		"@workos-inc/node": "^10.8.0",
 		"ai": "^7.0.37",
 		"ai-fallback": "^3.0.0",
 		"clsx": "^2.1.1",

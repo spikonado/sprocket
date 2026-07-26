@@ -44,10 +44,23 @@ as Convex actions (`webTools`) built on the Exa and Context.dev Convex
 components, keyed by deployment-side environment variables (`EXA_API_KEY`,
 `CONTEXT_DEV_API_KEY`); only the results flow back through the executor job.
 
+## Providers
+
+`provider.rs` builds an ordered candidate list from the user's Convex preference, model capability, and credential availability:
+
+- **convex** — hosted completion via `sprocket-convex-provider` / `completion:complete`
+- **chatgpt** — BYOK Rig ChatGPT client using Vault-stored Codex `auth.json`
+- **openai** — BYOK Rig OpenAI client; stream events sync side-by-side to Convex
+
+Fallback happens only before any durable stream merge for the current attempt.
+BYOK credentials are fetched per run from WorkOS Vault through Convex and held
+in process memory (plus a temp `auth.json` for ChatGPT) for that run only.
+
 ## Main areas
 
 - `run.rs`: ownership, preparation, and finalization.
-- `provider.rs`: Rig agent loop and provider outcomes.
+- `provider.rs`: Rig agent loop, provider selection, and outcomes.
+- `transcript_sync.rs`: Convex stream mirroring for local OpenAI turns.
 - `tools.rs`: model tools and durable job coordination.
 - `convex.rs`: run-control communication.
 - `types.rs`: history and context wire types.

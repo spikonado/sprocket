@@ -1,13 +1,18 @@
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use rig::agent::{AgentHook, Flow, RequestPatch, StepEvent, StepEventKind};
+use rig::client::CompletionClient;
+use rig::completion::Prompt;
 use rig::completion::{CompletionModel, Message, Usage};
 use rig::message::UserContent;
-use sprocket_convex_provider::completion_messages_json;
+use rig::providers::{chatgpt, openai};
+use sprocket_convex_provider::{Usage as CompletionUsage, completion_messages_json};
 use tokio::time::timeout;
+use uuid::Uuid;
 
-use crate::convex::RuntimeClient;
+use crate::convex::{RuntimeClient, SummarizeResponse};
 use crate::types::ContextBudget;
 
 const CONTEXT_USAGE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -21,6 +26,9 @@ const COMPACTION_MAX_OUTPUT_TOKENS: u64 = 12_000;
 // Keep the preamble and <conversation_summary> wrapper in sync with
 // `contextSummaryText` in apps/web/src/convex/lib/contextCompaction.ts.
 const COMPACTED_CONTEXT_PREAMBLE: &str = "The conversation context was automatically compacted. Treat this summary as authoritative, continue the current task from this state, and do not redo completed work.";
+
+// Keep in sync with `CONTEXT_COMPACTION_INSTRUCTIONS` in `apps/web/src/convex/lib/contextCompaction.ts`.
+const CONTEXT_COMPACTION_INSTRUCTIONS: &str = "Summarize the supplied engineering agent conversation so another agent can continue without the original messages.\n\nPreserve:\n- every user request and the current objective\n- decisions, constraints, plans, and unresolved questions\n- files inspected or changed and the important technical details\n- tool results, errors, tests, and commands that still matter\n- completed work and the exact next steps\n\nBe dense and factual. Do not address the user, continue the task, call tools, or add commentary. Output only the summary.";
 
 #[derive(Clone, Debug)]
 struct CompactedContext {
@@ -44,6 +52,8 @@ pub(crate) struct ContextCompactionHook {
     service_tier: String,
     context_budget: ContextBudget,
     prior_history_len: usize,
+    byok_openai_api_key: Option<Arc<str>>,
+    byok_chatgpt_auth_json: Option<Arc<str>>,
     state: Arc<Mutex<CompactionState>>,
 }
 
@@ -67,8 +77,22 @@ impl ContextCompactionHook {
             service_tier,
             context_budget,
             prior_history_len,
+            byok_openai_api_key: None,
+            byok_chatgpt_auth_json: None,
             state: Arc::new(Mutex::new(CompactionState::default())),
         }
+    }
+
+    pub(crate) fn with_openai_api_key(mut self, api_key: impl Into<String>) -> Self {
+        self.byok_openai_api_key = Some(api_key.into().into());
+        self.byok_chatgpt_auth_json = None;
+        self
+    }
+
+    pub(crate) fn with_chatgpt_auth_json(mut self, auth_json: impl Into<String>) -> Self {
+        self.byok_chatgpt_auth_json = Some(auth_json.into().into());
+        self.byok_openai_api_key = None;
+        self
     }
 }
 
@@ -237,12 +261,30 @@ impl ContextCompactionHook {
         Flow::patch_request(RequestPatch::new().history(compacted))
     }
 
-    async fn summarize_with_retry(
-        &self,
-        messages_json: &str,
-    ) -> anyhow::Result<crate::convex::SummarizeResponse> {
-        match self
-            .runtime
+    async fn summarize_with_retry(&self, messages_json: &str) -> anyhow::Result<SummarizeResponse> {
+        match self.summarize_once(messages_json).await {
+            Ok(response) => Ok(response),
+            Err(first_error) => {
+                tokio::time::sleep(SUMMARIZE_RETRY_DELAY).await;
+                self.summarize_once(messages_json)
+                    .await
+                    .map_err(|retry_error| {
+                        anyhow::anyhow!(
+                            "{retry_error:#}; initial summarization failed: {first_error:#}"
+                        )
+                    })
+            }
+        }
+    }
+
+    async fn summarize_once(&self, messages_json: &str) -> anyhow::Result<SummarizeResponse> {
+        if let Some(api_key) = self.byok_openai_api_key.as_deref() {
+            return summarize_with_openai(api_key, &self.model, messages_json).await;
+        }
+        if let Some(auth_json) = self.byok_chatgpt_auth_json.as_deref() {
+            return summarize_with_chatgpt(auth_json, &self.model, messages_json).await;
+        }
+        self.runtime
             .summarize(
                 &self.run_id,
                 &self.claim_id,
@@ -252,27 +294,6 @@ impl ContextCompactionHook {
                 messages_json,
             )
             .await
-        {
-            Ok(response) => Ok(response),
-            Err(first_error) => {
-                tokio::time::sleep(SUMMARIZE_RETRY_DELAY).await;
-                self.runtime
-                    .summarize(
-                        &self.run_id,
-                        &self.claim_id,
-                        &self.model,
-                        &self.reasoning_effort,
-                        &self.service_tier,
-                        messages_json,
-                    )
-                    .await
-                    .map_err(|retry_error| {
-                        anyhow::anyhow!(
-                            "{retry_error:#}; initial summarization failed: {first_error:#}"
-                        )
-                    })
-            }
-        }
     }
 
     fn compaction_failure_flow(
@@ -583,5 +604,75 @@ mod tests {
         assert!(!should_persist_for_future_runs(6, 4));
         assert!(should_persist_for_future_runs(6, 6));
         assert!(should_persist_for_future_runs(6, 8));
+    }
+}
+
+async fn summarize_with_openai(
+    api_key: &str,
+    model: &str,
+    messages_json: &str,
+) -> anyhow::Result<SummarizeResponse> {
+    let client = openai::Client::new(api_key).map_err(|error| {
+        anyhow::anyhow!("failed to build OpenAI client for compaction: {error}")
+    })?;
+    summarize_with_client(client, model, messages_json, "OpenAI").await
+}
+
+async fn summarize_with_chatgpt(
+    auth_json: &str,
+    model: &str,
+    messages_json: &str,
+) -> anyhow::Result<SummarizeResponse> {
+    let path = std::env::temp_dir().join(format!(
+        "sprocket-chatgpt-compaction-{}.json",
+        Uuid::new_v4()
+    ));
+    std::fs::write(&path, auth_json)
+        .map_err(|error| anyhow::anyhow!("failed to materialize ChatGPT auth.json: {error}"))?;
+    let _cleanup = TempPathCleanup(path.clone());
+    let client = chatgpt::Client::builder()
+        .oauth()
+        .auth_file(&path)
+        .allow_device_flow(false)
+        .build()
+        .map_err(|error| {
+            anyhow::anyhow!("failed to build ChatGPT client for compaction: {error}")
+        })?;
+    summarize_with_client(client, model, messages_json, "ChatGPT").await
+}
+
+async fn summarize_with_client<C>(
+    client: C,
+    model: &str,
+    messages_json: &str,
+    label: &str,
+) -> anyhow::Result<SummarizeResponse>
+where
+    C: CompletionClient,
+    C::CompletionModel: 'static,
+{
+    let agent = client
+        .agent(model)
+        .preamble(CONTEXT_COMPACTION_INSTRUCTIONS)
+        .max_tokens(COMPACTION_MAX_OUTPUT_TOKENS)
+        .build();
+    let prompt = format!(
+        "Conversation messages JSON to summarize:\n{messages_json}\n\nReturn only the summary."
+    );
+    let summary = agent
+        .prompt(prompt)
+        .await
+        .map_err(|error| anyhow::anyhow!("{label} compaction failed: {error}"))?;
+    Ok(SummarizeResponse {
+        summary,
+        usage: CompletionUsage::default(),
+    })
+}
+
+struct TempPathCleanup(PathBuf);
+
+impl Drop for TempPathCleanup {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
     }
 }

@@ -104,7 +104,8 @@ Sprocket deliberately separates cloud and machine-local state.
 | Pairing credential and local browser sessions                              | Local server         |
 | Active commands, cancellation tokens, and run execution capabilities       | Local process memory |
 | Source files and build artifacts                                           | User workspace       |
-| Model and authentication provider secrets                                  | Cloud deployment     |
+| Hosted model and authentication provider secrets                           | Cloud deployment     |
+| User BYOK provider secrets (OpenAI API keys, ChatGPT auth.json)            | WorkOS Vault         |
 
 A cloud workspace identity never needs to expose its machine path. The web app
 joins cloud workspace metadata with the local server's attachment state.
@@ -126,10 +127,18 @@ sequenceDiagram
     A->>C: Create or recover durable run and bind execution capability
     A->>C: Claim run and load context
     loop Model and tool turns
-        A->>C: Request completion
-        C->>M: Call selected model
-        M-->>C: Stream response
-        C-->>UI: Publish durable transcript updates
+        A->>A: Select provider from preference order
+        alt Hosted Convex provider
+            A->>C: Request completion
+            C->>M: Call selected model
+            M-->>C: Stream response
+            C-->>UI: Publish durable transcript updates
+        else BYOK OpenAI or ChatGPT provider
+            A->>C: Fetch run-scoped Vault credential
+            A->>M: Stream completion locally
+            A->>C: Mirror stream events side-by-side
+            C-->>UI: Publish durable transcript updates
+        end
         opt Model requests a tool
             A->>C: Record tool job
             A->>W: Execute locally
@@ -150,6 +159,13 @@ on the machine.
 Model output is persisted incrementally by Convex. Stream attempt and ordering
 metadata prevent a delayed completion attempt from replacing a newer one.
 
+Provider preference is per-user and ordered (default: `convex`, `chatgpt`,
+`openai`). The local agent tries each configured provider that can serve the
+selected model, and falls back only before any durable stream events have been
+merged for the current attempt. Model completions through BYOK keys or ChatGPT
+subscription auth don't count against Sprocket subscription usage limits.
+ChatGPT credentials are stored as Codex-style `auth.json` in WorkOS Vault.
+
 ## Authentication and trust boundaries
 
 Cloud and local authorization solve different problems:
@@ -161,6 +177,11 @@ Cloud and local authorization solve different problems:
 - **Agent delegation:** the browser provides a fresh user token only to create
   the run. Convex then binds a random, run-scoped capability to that run, and
   the local executor uses it without depending on the browser session.
+- **Provider secrets:** hosted model keys stay in the Convex deployment
+  environment. User BYOK OpenAI keys and ChatGPT `auth.json` live in WorkOS
+  Vault and are decrypted only for a claimed run through an
+  execution-secret-gated action; the local agent may hold them in memory (and
+  a temp auth file for ChatGPT) for the run only.
 - **Desktop trust:** Electron isolates the renderer, validates its origin, and
   exposes only a constrained IPC surface.
 
@@ -208,8 +229,9 @@ The web app is built as static assets. Installed desktop packages combine those
 assets with Electron and the native Sprocket executable. A standalone CLI
 bundle includes the native executable and the assets needed for browser mode.
 
-The local executable receives only public runtime configuration. WorkOS and
-model-provider secrets remain in the Convex deployment.
+The local executable receives only public runtime configuration. Hosted WorkOS
+and model-provider secrets remain in the Convex deployment. User BYOK keys are
+stored in WorkOS Vault and never persisted in Convex or on disk locally.
 
 ## Validation
 

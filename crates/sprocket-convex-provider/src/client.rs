@@ -47,6 +47,11 @@ pub struct Client {
     stream_run_id: Option<Arc<str>>,
     claim_id: Option<Arc<str>>,
     execution_secret: Option<Arc<str>>,
+    /// Stream ids from prior provider attempts (e.g. failed OpenAI BYOK) to
+    /// supersede when the hosted Convex completion starts.
+    initial_superseded_stream_ids: Arc<[String]>,
+    /// Stream ids allocated during the latest hosted `completion:complete` call.
+    attempted_stream_ids: Arc<Mutex<Vec<String>>>,
     attempt_counter: Arc<AtomicU32>,
 }
 
@@ -72,6 +77,8 @@ impl Client {
             stream_run_id: None,
             claim_id: None,
             execution_secret: None,
+            initial_superseded_stream_ids: Arc::from([]),
+            attempted_stream_ids: Arc::new(Mutex::new(Vec::new())),
             attempt_counter: Arc::new(AtomicU32::new(0)),
         })
     }
@@ -168,8 +175,34 @@ impl Client {
     pub fn with_completion_scope(mut self, stream_run_id: String, claim_id: String) -> Self {
         self.stream_run_id = Some(stream_run_id.into());
         self.claim_id = Some(claim_id.into());
-        self.attempt_counter = Arc::new(AtomicU32::new(0));
+        // Keep the attempt counter across provider fallbacks on the same run so
+        // OpenAI BYOK and hosted Convex attempts share one monotonic sequence.
         self
+    }
+
+    pub fn with_superseded_stream_ids(
+        mut self,
+        stream_ids: impl IntoIterator<Item = String>,
+    ) -> Self {
+        self.initial_superseded_stream_ids = stream_ids.into_iter().collect();
+        self
+    }
+
+    pub fn next_completion_attempt_seq(&self) -> u32 {
+        self.attempt_counter.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    pub async fn take_attempted_stream_ids(&self) -> Vec<String> {
+        let mut ids = self.attempted_stream_ids.lock().await;
+        std::mem::take(&mut *ids)
+    }
+
+    async fn record_attempted_stream_id(&self, stream_id: String) {
+        self.attempted_stream_ids.lock().await.push(stream_id);
+    }
+
+    async fn clear_attempted_stream_ids(&self) {
+        self.attempted_stream_ids.lock().await.clear();
     }
 }
 
@@ -230,6 +263,8 @@ pub enum CompletionStreamEvent {
         id: String,
         text: String,
         #[serde(default)]
+        turn_id: Option<String>,
+        #[serde(default)]
         provider_reasoning_id: Option<String>,
         #[serde(default)]
         provider_metadata: Option<serde_json::Value>,
@@ -239,6 +274,8 @@ pub enum CompletionStreamEvent {
         call_id: String,
         name: String,
         input: serde_json::Value,
+        #[serde(default)]
+        turn_id: Option<String>,
         #[serde(default)]
         provider_metadata: Option<serde_json::Value>,
     },
@@ -531,14 +568,17 @@ async fn call_completion_action(
     let _completion_action_guard = client.completion_action_lock.lock().await;
 
     let mut retry_delay = COMPLETION_TRANSPORT_RETRY_DELAY;
-    let mut superseded_stream_ids: Vec<String> = Vec::new();
+    let mut superseded_stream_ids: Vec<String> =
+        client.initial_superseded_stream_ids.as_ref().to_vec();
     let mut attempt = 0u32;
+    client.clear_attempted_stream_ids().await;
     loop {
         attempt += 1;
         // Fresh attempt_seq fences orphaned reconnect replays; prior stream
         // ids let the backend drop their partial output on the next try.
-        let attempt_seq = client.attempt_counter.fetch_add(1, Ordering::Relaxed) + 1;
+        let attempt_seq = client.next_completion_attempt_seq();
         let stream_id = uuid::Uuid::new_v4().to_string();
+        client.record_attempted_stream_id(stream_id.clone()).await;
         let mut convex = clone_locked(&client.completion_inner).await;
         eprintln!(
             "sprocket-convex-provider: action start {} attempt {attempt_seq}",
@@ -587,6 +627,7 @@ async fn call_completion_action(
                     "sprocket-convex-provider: action done {}",
                     client.completion_action
                 );
+                client.clear_attempted_stream_ids().await;
                 return Ok(value);
             }
             Ok(FunctionResult::ErrorMessage(message)) => message,
