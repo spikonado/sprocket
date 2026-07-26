@@ -1831,6 +1831,8 @@
 			{#if settingsOpen}
 				<SettingsSidebar
 					activePage={settingsPage}
+					theme={workspaceTheme}
+					onThemeChange={(theme) => void handleThemeChange(theme)}
 					onBack={() => {
 						settingsOpen = false;
 						settingsPage = 'account';
@@ -1845,6 +1847,8 @@
 					{currentThreadId}
 					groups={groupedWorkspaceThreads}
 					{pendingAgentLaunches}
+					theme={workspaceTheme}
+					onThemeChange={(theme) => void handleThemeChange(theme)}
 					onChooseWorkspace={() => {
 						openWorkspacePicker('add');
 					}}
@@ -1878,12 +1882,7 @@
 					{:else if settingsPage === 'usage'}
 						<SettingsUsage />
 					{:else}
-						<SettingsAccount
-							user={$authState.user}
-							theme={workspaceTheme}
-							onThemeChange={(theme) => void handleThemeChange(theme)}
-							onSignOut={() => void signOut()}
-						/>
+						<SettingsAccount user={$authState.user} onSignOut={() => void signOut()} />
 					{/if}
 				{:else}
 					<ThreadTranscript

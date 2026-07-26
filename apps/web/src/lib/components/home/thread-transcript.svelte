@@ -275,7 +275,7 @@
 	}
 
 	const userMessageClass =
-		'user-bubble w-fit max-w-[33rem] rounded-xl border border-[var(--hairline)] px-5 py-3.5 text-[15.5px] leading-7 text-foreground';
+		'user-bubble w-fit max-w-[33rem] rounded-xl border px-5 py-3.5 text-[15.5px] leading-7 text-foreground';
 
 	let viewerImage = $state<ViewerImage | null>(null);
 

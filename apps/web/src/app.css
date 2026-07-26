@@ -53,8 +53,8 @@
 	--background: oklch(0.955 0.014 130);
 	--foreground: oklch(0.18 0.02 260);
 	--surface: oklch(0.99 0.004 130);
-	--muted: oklch(0.93 0.01 130);
-	--muted-foreground: oklch(0.48 0.02 260);
+	--muted: oklch(0.93 0.018 220);
+	--muted-foreground: oklch(0.45 0.03 250);
 	--popover: oklch(0.99 0.004 130);
 	--popover-foreground: oklch(0.18 0.02 260);
 	--card: oklch(0.99 0.004 130);
@@ -79,25 +79,32 @@
 	--hover-fill: oklch(0.18 0.02 260 / 0.05);
 	--hover-fill-strong: oklch(0.18 0.02 260 / 0.08);
 	--hairline: oklch(0.18 0.02 260 / 0.08);
+	/* Composer: bright paper with a soft sky shade around it */
 	--composer-shell: linear-gradient(
 		180deg,
-		oklch(0.18 0.02 260 / 0.06),
-		oklch(0.18 0.02 260 / 0.02)
+		oklch(0.78 0.08 230 / 0.55),
+		oklch(0.82 0.06 230 / 0.28)
 	);
-	--composer-inner: linear-gradient(180deg, oklch(0.995 0.003 130), oklch(0.97 0.008 130));
-	--composer-shadow: 0 24px 64px oklch(0.2 0.02 260 / 0.12);
-	--user-bubble: linear-gradient(180deg, oklch(0.97 0.008 130), oklch(0.94 0.012 130));
+	--composer-inner: linear-gradient(180deg, oklch(1 0.002 100), oklch(0.985 0.012 145));
+	--composer-shadow: 0 0 0 1px oklch(0.72 0.1 230 / 0.18), 0 18px 48px oklch(0.55 0.08 230 / 0.16);
+	/* Transcript: soft sky paper bubbles against parchment */
+	--user-bubble: linear-gradient(180deg, oklch(0.98 0.02 230), oklch(0.95 0.028 210));
+	--user-bubble-border: oklch(0.55 0.07 230 / 0.2);
+	--user-bubble-shadow: 0 10px 28px -16px oklch(0.4 0.05 250 / 0.2);
 	--transcript-fade: linear-gradient(
 		180deg,
 		oklch(0.955 0.014 130 / 0),
 		oklch(0.955 0.014 130 / 0.68) 48%,
 		oklch(0.955 0.014 130 / 0.92)
 	);
+	/* Site-like parchment wash with restrained sky glow */
 	--workspace-bg:
-		radial-gradient(ellipse 70% 55% at 85% 0%, oklch(0.72 0.1 230 / 0.1), transparent 55%),
-		linear-gradient(180deg, oklch(0.97 0.01 130) 0%, var(--background) 42%, var(--background) 100%);
-	--sidebar-bg: linear-gradient(180deg, oklch(0.985 0.006 130), oklch(0.96 0.012 130));
-	--sidebar-border: oklch(0.18 0.02 260 / 0.08);
+		radial-gradient(ellipse 70% 50% at 90% 0%, oklch(0.72 0.1 230 / 0.16), transparent 58%),
+		radial-gradient(ellipse 45% 40% at 0% 100%, oklch(0.72 0.08 230 / 0.08), transparent 55%),
+		linear-gradient(180deg, oklch(0.97 0.015 130) 0%, var(--background) 48%, var(--background) 100%);
+	/* Cool slate-sage rail — a step darker than the page so it separates */
+	--sidebar-bg: linear-gradient(180deg, oklch(0.935 0.018 200), oklch(0.905 0.02 185));
+	--sidebar-border: oklch(0.32 0.04 250 / 0.14);
 	--tooltip-bg: oklch(0.22 0.02 260);
 	--tooltip-fg: oklch(0.96 0.01 130);
 	--radius: 0.9rem;
@@ -105,54 +112,57 @@
 	color-scheme: light;
 }
 
-/* Dark workspace — Spikonado ink */
+/* Dark workspace — cool ink, clearer chat/sidebar separation */
 [data-theme='dark'] {
-	--background: oklch(0.16 0.015 40);
-	--foreground: oklch(0.93 0.01 80);
-	--surface: oklch(0.2 0.012 40);
-	--muted: oklch(0.22 0.012 40);
-	--muted-foreground: oklch(0.68 0.015 80);
-	--popover: oklch(0.18 0.014 40);
-	--popover-foreground: oklch(0.93 0.01 80);
-	--card: oklch(0.2 0.012 40);
-	--card-foreground: oklch(0.93 0.01 80);
-	--border: oklch(0.28 0.012 40);
-	--input: oklch(0.26 0.012 40);
+	--background: oklch(0.155 0.018 250);
+	--foreground: oklch(0.94 0.012 230);
+	--surface: oklch(0.2 0.02 250);
+	--muted: oklch(0.24 0.022 250);
+	--muted-foreground: oklch(0.74 0.02 230);
+	--popover: oklch(0.19 0.022 250);
+	--popover-foreground: oklch(0.94 0.012 230);
+	--card: oklch(0.21 0.022 250);
+	--card-foreground: oklch(0.94 0.012 230);
+	--border: oklch(0.32 0.03 250);
+	--input: oklch(0.27 0.025 250);
 	--primary: oklch(0.72 0.1 230);
-	--primary-foreground: oklch(0.16 0.015 40);
-	--secondary: oklch(0.24 0.012 40);
+	--primary-foreground: oklch(0.16 0.02 250);
+	--secondary: oklch(0.25 0.02 250);
 	--secondary-foreground: oklch(0.93 0.01 80);
 	--accent: oklch(0.72 0.1 230);
-	--accent-foreground: oklch(0.93 0.01 80);
-	--accent-strong: oklch(0.78 0.12 230);
-	--accent-soft: oklch(0.28 0.04 230);
+	--accent-foreground: oklch(0.94 0.012 230);
+	--accent-strong: oklch(0.8 0.11 230);
+	--accent-soft: oklch(0.28 0.045 230);
 	--mark: oklch(0.45 0.08 95);
 	--destructive: oklch(0.62 0.2 25);
 	--destructive-foreground: oklch(0.99 0.004 130);
 	--ring: oklch(0.72 0.1 230);
-	--overlay: oklch(0.1 0.01 40 / 0.55);
-	--panel: oklch(0.2 0.012 40);
-	--panel-elevated: oklch(0.24 0.012 40);
-	--hover-fill: oklch(1 0 0 / 0.05);
-	--hover-fill-strong: oklch(1 0 0 / 0.08);
-	--hairline: oklch(1 0 0 / 0.08);
-	--composer-shell: linear-gradient(180deg, oklch(1 0 0 / 0.06), oklch(1 0 0 / 0.02));
-	--composer-inner: linear-gradient(180deg, oklch(0.24 0.01 40 / 0.98), oklch(0.2 0.012 40 / 0.98));
-	--composer-shadow: 0 24px 64px oklch(0 0 0 / 0.28);
-	--user-bubble: linear-gradient(180deg, oklch(0.26 0.012 40 / 0.96), oklch(0.2 0.012 40 / 0.96));
+	--overlay: oklch(0.1 0.02 250 / 0.55);
+	--panel: oklch(0.2 0.02 250);
+	--panel-elevated: oklch(0.26 0.028 250);
+	--hover-fill: oklch(0.75 0.06 230 / 0.1);
+	--hover-fill-strong: oklch(0.75 0.06 230 / 0.16);
+	--hairline: oklch(0.78 0.05 230 / 0.16);
+	--composer-shell: linear-gradient(180deg, oklch(0.72 0.08 230 / 0.18), oklch(1 0 0 / 0.04));
+	--composer-inner: linear-gradient(180deg, oklch(0.24 0.024 250), oklch(0.2 0.02 250));
+	--composer-shadow: 0 24px 64px oklch(0.08 0.03 250 / 0.45);
+	/* Transcript: lifted cool slate bubbles vs flat charcoal */
+	--user-bubble: linear-gradient(180deg, oklch(0.3 0.035 245), oklch(0.24 0.03 250));
+	--user-bubble-border: oklch(0.72 0.08 230 / 0.28);
+	--user-bubble-shadow: 0 12px 32px -16px oklch(0.08 0.04 250 / 0.7);
 	--transcript-fade: linear-gradient(
 		180deg,
-		oklch(0.16 0.015 40 / 0),
-		oklch(0.16 0.015 40 / 0.68) 48%,
-		oklch(0.16 0.015 40 / 0.92)
+		oklch(0.155 0.018 250 / 0),
+		oklch(0.155 0.018 250 / 0.7) 48%,
+		oklch(0.155 0.018 250 / 0.94)
 	);
 	--workspace-bg:
-		radial-gradient(circle at 50% 0%, oklch(1 0 0 / 0.05), transparent 26%),
-		linear-gradient(180deg, oklch(0.19 0.012 40) 0%, oklch(0.15 0.014 40) 100%);
+		radial-gradient(ellipse 80% 45% at 70% 0%, oklch(0.55 0.08 230 / 0.12), transparent 55%),
+		linear-gradient(180deg, oklch(0.175 0.022 250) 0%, oklch(0.145 0.018 250) 100%);
 	--sidebar-bg: linear-gradient(180deg, oklch(0.2 0.016 250 / 0.96), oklch(0.17 0.014 250 / 0.98));
 	--sidebar-border: oklch(1 0 0 / 0.06);
-	--tooltip-bg: oklch(0.2 0.014 250);
-	--tooltip-fg: oklch(0.93 0.01 80);
+	--tooltip-bg: oklch(0.22 0.03 250);
+	--tooltip-fg: oklch(0.94 0.015 230);
 	--radius: 0.9rem;
 	--selection: oklch(0.72 0.1 230 / 0.28);
 	color-scheme: dark;
@@ -222,16 +232,22 @@ body::after {
 }
 
 .composer-shell {
-	background-image: var(--composer-shell);
+	background: var(--composer-shell);
 }
 
 .composer-inner {
-	background-image: var(--composer-inner);
+	background: var(--composer-inner);
 	box-shadow: var(--composer-shadow);
+}
+
+[data-theme='light'] .composer-inner {
+	border-color: transparent;
 }
 
 .user-bubble {
 	background-image: var(--user-bubble);
+	border-color: var(--user-bubble-border);
+	box-shadow: var(--user-bubble-shadow);
 }
 
 .transcript-fade {
@@ -364,9 +380,9 @@ body::after {
 }
 
 .chat-markdown :not(pre) > code {
-	border: 1px solid var(--border);
+	border: 1px solid var(--hairline);
 	border-radius: 0.5rem;
-	background: color-mix(in oklab, var(--muted) 82%, var(--background));
+	background: var(--muted);
 	padding: 0.14rem 0.42rem;
 	font-family: var(--font-mono);
 	font-size: 0.8em;
@@ -374,14 +390,14 @@ body::after {
 
 .chat-markdown pre {
 	overflow-x: auto;
-	border: 1px solid var(--border);
+	border: 1px solid var(--hairline);
 	border-radius: 1rem;
-	background: color-mix(in oklab, var(--background) 82%, var(--foreground));
+	background: var(--panel-elevated);
 	padding: 0.95rem 1rem;
 }
 
 [data-theme='light'] .chat-markdown pre {
-	background: color-mix(in oklab, var(--muted) 70%, var(--background));
+	background: color-mix(in oklab, var(--muted) 55%, var(--surface));
 }
 
 .chat-markdown pre code {

@@ -5,17 +5,13 @@
 	import { api } from '$convex/_generated/api';
 	import { tierLabels } from '$convex/lib/tiers';
 	import Button from '$lib/components/ui/button/button.svelte';
-	import type { SprocketTheme } from '$lib/theme';
-	import { cn } from '$lib/utils';
 
 	type Props = {
 		user: User | null;
-		theme: SprocketTheme;
-		onThemeChange: (theme: SprocketTheme) => void;
 		onSignOut: () => void;
 	};
 
-	let { user, theme, onThemeChange, onSignOut }: Props = $props();
+	let { user, onSignOut }: Props = $props();
 	let emailRevealed = $state(false);
 
 	const convexAuth = useAuth();
@@ -26,11 +22,6 @@
 	const displayName = $derived(
 		[user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || null
 	);
-
-	const themeOptions: ReadonlyArray<{ id: SprocketTheme; label: string }> = [
-		{ id: 'light', label: 'Light' },
-		{ id: 'dark', label: 'Dark' }
-	];
 </script>
 
 <section class="flex h-full min-h-0 flex-col overflow-hidden">
@@ -68,36 +59,6 @@
 				{:else}
 					<p class="text-muted-foreground mt-3 text-sm">You’re signed in to Sprocket.</p>
 				{/if}
-			</div>
-
-			<div>
-				<p class="text-muted-foreground font-mono text-[11px] tracking-[0.18em] uppercase">
-					Appearance
-				</p>
-				<p class="text-muted-foreground mt-2 text-sm leading-6">
-					Choose the workspace theme. Sign-in and pairing screens always stay light.
-				</p>
-				<div
-					class="border-border bg-muted/60 mt-4 inline-flex rounded-full border p-1"
-					role="group"
-					aria-label="Workspace theme"
-				>
-					{#each themeOptions as option (option.id)}
-						<button
-							type="button"
-							class={cn(
-								'rounded-full px-4 py-1.5 text-sm font-medium transition',
-								theme === option.id
-									? 'bg-primary text-primary-foreground shadow-sm'
-									: 'text-muted-foreground hover:text-foreground'
-							)}
-							aria-pressed={theme === option.id}
-							onclick={() => onThemeChange(option.id)}
-						>
-							{option.label}
-						</button>
-					{/each}
-				</div>
 			</div>
 
 			<div>

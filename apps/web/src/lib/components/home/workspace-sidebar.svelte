@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { Archive, ChevronRight, Folder, FolderOpen, Settings, SquarePen } from '@lucide/svelte';
 	import BrandMark from '$lib/components/brand-mark.svelte';
+	import SidebarTopActions from '$lib/components/home/sidebar-top-actions.svelte';
 	import type { Id } from '$convex/_generated/dataModel';
+	import type { SprocketTheme } from '$lib/theme';
 	import type { ThreadSummary, WorkspaceThreadGroup } from '$lib/types/sprocket';
 	import { isAgentLaunchPending, type PendingAgentLaunches } from '$lib/workspace/threads';
 
@@ -10,6 +12,8 @@
 		currentThreadId: Id<'threadRecords'> | null;
 		groups: WorkspaceThreadGroup[];
 		pendingAgentLaunches?: PendingAgentLaunches;
+		theme: SprocketTheme;
+		onThemeChange: (theme: SprocketTheme) => void;
 		onChooseWorkspace: () => void;
 		onReconnectWorkspace: (workspaceSessionId: Id<'workspaceSessions'>) => void;
 		onOpenSettings: () => void;
@@ -24,6 +28,8 @@
 		currentThreadId,
 		groups,
 		pendingAgentLaunches = {},
+		theme,
+		onThemeChange,
 		onChooseWorkspace,
 		onReconnectWorkspace,
 		onOpenSettings,
@@ -186,8 +192,9 @@
 
 <aside class="app-sidebar-panel">
 	<div class="flex h-full min-h-0 flex-col overflow-hidden">
-		<header class="flex items-center px-3.5 pt-3 pb-4">
+		<header class="flex items-center justify-between gap-2 px-3.5 pt-3 pb-4">
 			<BrandMark size="sm" class="min-w-0" />
+			<SidebarTopActions {theme} {onThemeChange} />
 		</header>
 
 		<div class="px-3.5 pb-1">
