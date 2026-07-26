@@ -378,31 +378,31 @@
 	});
 
 	const composerShellClass =
-		'mx-auto w-full max-w-[48rem] rounded-[28px] bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))] p-px transition-colors duration-200';
+		'composer-shell mx-auto w-full max-w-[48rem] rounded-[28px] p-px transition-colors duration-200';
 	const composerInnerClass =
-		'rounded-[27px] border border-white/6 bg-[linear-gradient(180deg,rgba(35,35,38,0.98),rgba(28,28,30,0.98))] shadow-[0_24px_64px_rgba(0,0,0,0.28)] transition-colors duration-200';
+		'composer-inner rounded-[27px] border border-[var(--hairline)] transition-colors duration-200';
 </script>
 
 <footer class="shrink-0 px-6 py-4">
 	<div class="mx-auto max-w-336">
 		{#if elapsedLabel}
-			<div class="mb-3 flex items-center gap-2 px-4 text-[11px] text-slate-400">
+			<div class="text-muted-foreground mb-3 flex items-center gap-2 px-4 text-[11px]">
 				<span class="inline-flex items-center gap-0.75">
-					<span class="size-1 animate-pulse rounded-full bg-white/28"></span>
-					<span class="size-1 animate-pulse rounded-full bg-white/28 [animation-delay:200ms]"
+					<span class="bg-foreground/28 size-1 animate-pulse rounded-full"></span>
+					<span class="bg-foreground/28 size-1 animate-pulse rounded-full [animation-delay:200ms]"
 					></span>
-					<span class="size-1 animate-pulse rounded-full bg-white/28 [animation-delay:400ms]"
+					<span class="bg-foreground/28 size-1 animate-pulse rounded-full [animation-delay:400ms]"
 					></span>
 				</span>
 				<span>Working for {elapsedLabel}</span>
 			</div>
 		{:else if isSubmitting}
 			<div
-				class="mb-3 flex items-center gap-2 px-4 text-[11px] text-slate-400"
+				class="text-muted-foreground mb-3 flex items-center gap-2 px-4 text-[11px]"
 				role="status"
 				aria-live="polite"
 			>
-				<span class="size-1.5 animate-pulse rounded-full bg-white/28"></span>
+				<span class="bg-foreground/28 size-1.5 animate-pulse rounded-full"></span>
 				<span>{isStarting ? 'Starting agent…' : 'Sending request…'}</span>
 			</div>
 		{/if}
@@ -417,7 +417,7 @@
 									class="group relative size-14 overflow-hidden rounded-xl border {attachment.status ===
 									'error'
 										? 'border-rose-500/60'
-										: 'border-white/10'}"
+										: 'border-border'}"
 									title={attachment.error ?? attachment.name}
 								>
 									<img
@@ -434,12 +434,12 @@
 											aria-label="Uploading {attachment.name}"
 										>
 											<span
-												class="size-3.5 animate-spin rounded-full border-2 border-white/25 border-t-white/80"
+												class="border-border border-t-foreground/80 size-3.5 animate-spin rounded-full border-2"
 											></span>
 										</span>
 									{:else if attachment.status === 'error'}
 										<span
-											class="absolute inset-x-0 bottom-0 bg-rose-950/80 px-1 py-0.5 text-center text-[9px] leading-3 text-rose-200"
+											class="text-destructive absolute inset-x-0 bottom-0 bg-rose-950/80 px-1 py-0.5 text-center text-[9px] leading-3"
 											role="alert"
 										>
 											Failed
@@ -447,7 +447,7 @@
 									{/if}
 									<button
 										type="button"
-										class="absolute top-1 right-1 flex size-4.5 cursor-pointer items-center justify-center rounded-full bg-black/70 text-slate-200 transition hover:bg-black/90 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+										class="bg-foreground/70 text-background hover:bg-foreground/90 absolute top-1 right-1 flex size-4.5 cursor-pointer items-center justify-center rounded-full transition disabled:cursor-not-allowed disabled:opacity-40"
 										aria-label="Remove {attachment.name}"
 										disabled={isRunning || isSubmitting}
 										onclick={() => onRemoveAttachment(attachment.localId)}
@@ -461,7 +461,7 @@
 					<div class="relative min-h-0 flex-1">
 						{#if skillsPopupOpen}
 							<div
-								class="absolute inset-x-0 bottom-full z-30 mb-2 max-h-56 overflow-y-auto rounded-xl border border-white/10 bg-[#1c1c1f] py-1 shadow-2xl"
+								class="border-border bg-popover absolute inset-x-0 bottom-full z-30 mb-2 max-h-56 overflow-y-auto rounded-xl border py-1 shadow-2xl"
 								id="composer-skills-listbox"
 								aria-label="Available skills"
 								role={skillsLoadState === 'ready' && filteredSkills.length > 0
@@ -469,13 +469,13 @@
 									: 'status'}
 							>
 								{#if skillsLoadState === 'loading'}
-									<p class="px-3 py-2 text-sm text-slate-500">Loading skills…</p>
+									<p class="text-muted-foreground px-3 py-2 text-sm">Loading skills…</p>
 								{:else if skillsLoadState === 'error'}
 									<div class="flex items-center justify-between gap-3 px-3 py-2">
-										<p class="text-sm text-slate-500">Couldn’t load skills</p>
+										<p class="text-muted-foreground text-sm">Couldn’t load skills</p>
 										<button
 											type="button"
-											class="text-sm text-slate-300 underline-offset-2 hover:text-white hover:underline"
+											class="text-muted-foreground hover:text-foreground text-sm underline-offset-2 hover:underline"
 											onclick={() => {
 												void ensureSkillsLoaded(true);
 											}}
@@ -484,7 +484,7 @@
 										</button>
 									</div>
 								{:else if filteredSkills.length === 0}
-									<p class="px-3 py-2 text-sm text-slate-500">No matching skills</p>
+									<p class="text-muted-foreground px-3 py-2 text-sm">No matching skills</p>
 								{:else}
 									{#each filteredSkills as skill, index (skill.name)}
 										<button
@@ -493,8 +493,8 @@
 											id="composer-skill-option-{index}"
 											class={`flex w-full flex-col gap-0.5 px-3 py-2 text-left transition ${
 												highlightedIndex === index
-													? 'bg-white/8 text-white'
-													: 'text-slate-300 hover:bg-white/4 hover:text-white'
+													? 'text-foreground bg-[var(--hover-fill-strong)]'
+													: 'text-muted-foreground hover:text-foreground hover:bg-[var(--hover-fill)]'
 											}`}
 											role="option"
 											aria-selected={highlightedIndex === index}
@@ -506,7 +506,7 @@
 											}}
 										>
 											<span class="text-sm font-medium">${skill.name}</span>
-											<span class="line-clamp-2 text-[12px] text-slate-500"
+											<span class="text-muted-foreground line-clamp-2 text-[12px]"
 												>{skill.description}</span
 											>
 										</button>
@@ -518,7 +518,7 @@
 							bind:this={composerTextarea}
 							bind:value={prompt}
 							rows="1"
-							class="field-sizing-content max-h-40 min-h-17 w-full resize-none overflow-y-auto border-0 bg-transparent px-0 py-0 text-[14px] leading-6 text-slate-100 outline-none placeholder:text-slate-500"
+							class="text-foreground placeholder:text-muted-foreground field-sizing-content max-h-40 min-h-17 w-full resize-none overflow-y-auto border-0 bg-transparent px-0 py-0 text-[14px] leading-6 outline-none"
 							placeholder="Ask anything, @tag files/directories, or use $ to show available skills"
 							disabled={isRunning || isSubmitting}
 							role="combobox"
@@ -554,7 +554,7 @@
 							/>
 							<button
 								type="button"
-								class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-400 transition enabled:cursor-pointer enabled:hover:text-slate-200 disabled:opacity-40"
+								class="text-muted-foreground enabled:hover:text-foreground flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition enabled:cursor-pointer disabled:opacity-40"
 								aria-label={attachTooltipLabel}
 								disabled={!canAttachMore}
 								onmouseenter={showAttachTooltip}
@@ -569,7 +569,9 @@
 								<ImagePlus class="size-4" aria-hidden="true" />
 							</button>
 
-							<div class="mx-1 hidden h-4 w-px shrink-0 bg-white/8 sm:block"></div>
+							<div
+								class="mx-1 hidden h-4 w-px shrink-0 bg-[var(--hover-fill-strong)] sm:block"
+							></div>
 
 							<OptionSelector
 								bind:value={selectedModel}
@@ -580,14 +582,16 @@
 								searchable
 								onValueChange={handleModelChange}
 								className="z-20 shrink-0"
-								triggerClassName="h-9 border-0 bg-transparent px-2 text-[15px] text-slate-200 shadow-none hover:bg-transparent focus-visible:ring-0"
+								triggerClassName="h-9 border-0 bg-transparent px-2 text-[15px] text-foreground shadow-none hover:bg-transparent focus-visible:ring-0"
 							>
 								{#snippet optionIcon(option)}
 									<ProviderLogo provider={option.provider} className="size-4 shrink-0" />
 								{/snippet}
 							</OptionSelector>
 
-							<div class="mx-1 hidden h-4 w-px shrink-0 bg-white/8 sm:block"></div>
+							<div
+								class="mx-1 hidden h-4 w-px shrink-0 bg-[var(--hover-fill-strong)] sm:block"
+							></div>
 
 							{#if selectedCatalogModel}
 								<ReasoningServiceSelector
@@ -604,40 +608,42 @@
 							<div class="group/context relative">
 								<button
 									type="button"
-									class="relative flex size-8 cursor-help items-center justify-center rounded-full focus-visible:ring-2 focus-visible:ring-blue-400/60 focus-visible:outline-none"
+									class="focus-visible:ring-ring/60 relative flex size-8 cursor-help items-center justify-center rounded-full focus-visible:ring-2 focus-visible:outline-none"
 									aria-label={`Context window ${contextPercent}% full`}
 									aria-describedby="context-window-details"
-									style={`background: conic-gradient(rgb(59 130 246) ${contextPercent * 3.6}deg, rgb(255 255 255 / 0.08) 0deg);`}
+									style={`background: conic-gradient(var(--accent) ${contextPercent * 3.6}deg, var(--hover-fill-strong) 0deg);`}
 									onkeydown={(event) => {
 										if (event.key === 'Escape') event.currentTarget.blur();
 									}}
 								>
-									<span class="size-5.5 rounded-full bg-[#202023]"></span>
+									<span class="bg-muted size-5.5 rounded-full"></span>
 								</button>
 								<div
 									id="context-window-details"
-									class="invisible absolute right-0 bottom-full z-50 mb-3 w-76 translate-y-1 rounded-xl border border-white/9 bg-[#19191b] p-4 opacity-0 shadow-[0_18px_55px_rgba(0,0,0,0.45)] transition duration-150 group-focus-within/context:visible group-focus-within/context:translate-y-0 group-focus-within/context:opacity-100 group-hover/context:visible group-hover/context:translate-y-0 group-hover/context:opacity-100"
+									class="border-border bg-popover invisible absolute right-0 bottom-full z-50 mb-3 w-76 translate-y-1 rounded-xl border p-4 opacity-0 shadow-[var(--composer-shadow)] transition duration-150 group-focus-within/context:visible group-focus-within/context:translate-y-0 group-focus-within/context:opacity-100 group-hover/context:visible group-hover/context:translate-y-0 group-hover/context:opacity-100"
 									role="tooltip"
 								>
 									<div class="flex items-center justify-between gap-4 text-[13px]">
-										<span class="font-medium text-slate-200">Context window</span>
-										<span class="text-slate-400"
+										<span class="text-foreground font-medium">Context window</span>
+										<span class="text-muted-foreground"
 											>{contextPercent}% · {formatTokens(contextUsage.inputTokens)}/{formatTokens(
 												contextUsage.contextWindowTokens
 											)}</span
 										>
 									</div>
-									<div class="mt-3 h-1.5 overflow-hidden rounded-full bg-white/5">
+									<div class="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--hover-fill)]">
 										<div
-											class="h-full rounded-full bg-blue-500 transition-[width] duration-300"
+											class="bg-accent h-full rounded-full transition-[width] duration-300"
 											style={`width: ${contextPercent}%`}
 										></div>
 									</div>
-									<div class="mt-3 flex items-center justify-between text-[12px] text-slate-500">
+									<div
+										class="text-muted-foreground mt-3 flex items-center justify-between text-[12px]"
+									>
 										<span>Total processed</span>
 										<span>{formatTokens(contextUsage.totalTokensProcessed)}</span>
 									</div>
-									<p class="mt-4 text-[12px] leading-5 text-slate-500">
+									<p class="text-muted-foreground mt-4 text-[12px] leading-5">
 										Sprocket automatically compacts context at about {contextCompactPercent}% so
 										long-running work can continue.
 									</p>
@@ -678,7 +684,7 @@
 
 {#if attachTooltip}
 	<div
-		class="pointer-events-none fixed z-100 -translate-x-1/2 -translate-y-full rounded-md bg-[#1a1d27] px-2.5 py-1.5 text-[12px] leading-4 whitespace-nowrap text-slate-100 shadow-lg ring-1 ring-white/10"
+		class="bg-tooltip text-tooltip-foreground ring-border pointer-events-none fixed z-100 -translate-x-1/2 -translate-y-full rounded-md px-2.5 py-1.5 text-[12px] leading-4 whitespace-nowrap shadow-lg ring-1"
 		style={`top: ${attachTooltip.top}px; left: ${attachTooltip.left}px;`}
 		role="tooltip"
 	>

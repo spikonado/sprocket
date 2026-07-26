@@ -2,7 +2,7 @@
 
 **Goal**: To make the world's best platform for developing hardware and software.
 
-Sprocket is currently a lightweight coding agent that works across multiple projects and machines, retrieves best-in-class web context, and writes high-quality code.
+Sprocket is currently a lightweight coding agent that writes high-quality code, and retrieves best-in-class context from the web and open-source projects.
 
 ![Sprocket](./assets/sprocket.png)
 

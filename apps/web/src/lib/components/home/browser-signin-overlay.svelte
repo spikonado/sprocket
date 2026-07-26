@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Check, Copy, ExternalLink, LoaderCircle } from '@lucide/svelte';
 	import { tick } from 'svelte';
+	import Button from '$lib/components/ui/button/button.svelte';
 
 	type Props = {
 		open: boolean;
@@ -150,7 +151,7 @@
 
 {#if open}
 	<div
-		class="fixed inset-0 z-50 flex items-center justify-center bg-[#0f1218]/92 px-6"
+		class="app-entry-shell fixed inset-0 z-50 flex items-center justify-center px-6"
 		role="presentation"
 		onclick={(event) => {
 			if (event.target === event.currentTarget) {
@@ -160,7 +161,7 @@
 	>
 		<div
 			bind:this={dialogEl}
-			class="w-full max-w-md text-center outline-none"
+			class="border-border/70 bg-surface relative z-10 w-full max-w-md rounded-2xl border p-8 text-center shadow-[0_18px_50px_-28px_oklch(0.2_0.02_260/0.45)] outline-none"
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby="browser-signin-title"
@@ -168,24 +169,24 @@
 			tabindex="-1"
 		>
 			{#if !signInUrl}
-				<div class="mb-4 flex justify-center text-slate-400" aria-hidden="true">
+				<div class="text-muted-foreground mb-4 flex justify-center" aria-hidden="true">
 					<LoaderCircle class="size-5 animate-spin" />
 				</div>
 			{/if}
 
 			<h2
 				id="browser-signin-title"
-				class="text-[1.35rem] font-medium tracking-tight text-slate-200"
+				class="font-brand text-foreground text-[1.35rem] font-semibold tracking-tight"
 			>
 				{overlayCopy.title}
 			</h2>
-			<p id="browser-signin-desc" class="mt-3 text-sm leading-[1.55] text-slate-400">
+			<p id="browser-signin-desc" class="text-muted-foreground mt-3 text-sm leading-[1.55]">
 				{overlayCopy.description}
 			</p>
 
 			{#if signInUrl}
 				<p
-					class="mt-6 max-h-24 overflow-y-auto font-mono text-[11px] leading-5 break-all text-slate-500 select-all"
+					class="text-muted-foreground mt-6 max-h-24 overflow-y-auto font-mono text-[11px] leading-5 break-all select-all"
 					title={signInUrl}
 				>
 					{signInUrl}
@@ -193,27 +194,19 @@
 			{/if}
 
 			{#if error}
-				<p class="mt-4 text-sm text-rose-300" role="alert">{error}</p>
+				<p class="text-destructive mt-4 text-sm" role="alert">{error}</p>
 			{/if}
 			{#if copyError}
-				<p class="mt-4 text-sm text-amber-200" role="alert">{copyError}</p>
+				<p class="mt-4 text-sm text-amber-700" role="alert">{copyError}</p>
 			{/if}
 
 			<div class="mt-6 flex flex-wrap items-center justify-center gap-3">
 				{#if signInUrl}
-					<button
-						type="button"
-						class="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-white px-4 text-sm font-medium text-black transition hover:bg-slate-100"
-						onclick={openSignInUrl}
-					>
+					<Button onclick={openSignInUrl}>
 						<ExternalLink class="size-4" aria-hidden="true" />
 						Open browser
-					</button>
-					<button
-						type="button"
-						class="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-white/12 px-4 text-sm text-slate-200 transition hover:bg-white/5"
-						onclick={() => void copySignInUrl()}
-					>
+					</Button>
+					<Button variant="outline" onclick={() => void copySignInUrl()}>
 						{#if copied}
 							<Check class="size-4" aria-hidden="true" />
 							Copied
@@ -221,10 +214,10 @@
 							<Copy class="size-4" aria-hidden="true" />
 							Copy link
 						{/if}
-					</button>
+					</Button>
 				{:else}
 					<span
-						class="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-white/8 px-4 text-sm text-slate-500"
+						class="text-muted-foreground border-border inline-flex h-10 items-center justify-center gap-2 rounded-full border px-4 text-sm"
 					>
 						Preparing link…
 					</span>
@@ -234,7 +227,7 @@
 			<div class="mt-6">
 				<button
 					type="button"
-					class="text-[13px] text-slate-500 transition hover:text-slate-300"
+					class="text-muted-foreground hover:text-foreground decoration-foreground/30 hover:decoration-foreground text-[13px] underline underline-offset-4 transition-colors"
 					onclick={onCancel}
 				>
 					Cancel

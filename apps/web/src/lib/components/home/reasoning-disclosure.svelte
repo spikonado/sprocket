@@ -31,10 +31,10 @@
 	}
 </script>
 
-<div class="text-sm text-slate-500">
+<div class="text-muted-foreground text-sm">
 	<button
 		type="button"
-		class="inline-flex items-center gap-1.5 text-slate-500 transition hover:text-slate-300"
+		class="text-muted-foreground hover:text-muted-foreground inline-flex items-center gap-1.5 transition"
 		onclick={toggle}
 		aria-expanded={expanded}
 	>
@@ -46,7 +46,7 @@
 		/>
 	</button>
 	{#if expanded}
-		<div class="mt-1.5 text-[13px] leading-6 whitespace-pre-wrap text-slate-400">
+		<div class="text-muted-foreground mt-1.5 text-[13px] leading-6 whitespace-pre-wrap">
 			{text}
 		</div>
 	{/if}

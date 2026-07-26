@@ -2,8 +2,8 @@
 
 ## Project Overview
 
-- Sprocket is an agentic platform that streamlines robotics development.
-- It's goal is to give its users and AI agents the best possible experience when developing robots and robot apps. They should be able to ship across the entire robotics stack much faster than ever before.
+- Sprocket is an agentic platform that streamlines hardware and software development.
+- It's goal is to give its users and AI agents the best possible experience when creating apps, robots, devices, and the systems that glue them together.
 - Sprocket should work seamlessly across different hardware platforms, operating systems, and Sprocket's own cloud for robotics development.
 
 ## Available Testing Commands

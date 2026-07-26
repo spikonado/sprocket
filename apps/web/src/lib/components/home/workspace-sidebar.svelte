@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { Archive, ChevronRight, Folder, FolderOpen, Settings, SquarePen } from '@lucide/svelte';
 	import BrandMark from '$lib/components/brand-mark.svelte';
+	import SidebarTopActions from '$lib/components/home/sidebar-top-actions.svelte';
 	import type { Id } from '$convex/_generated/dataModel';
+	import type { SprocketTheme } from '$lib/theme';
 	import type { ThreadSummary, WorkspaceThreadGroup } from '$lib/types/sprocket';
 	import { isAgentLaunchPending, type PendingAgentLaunches } from '$lib/workspace/threads';
 
@@ -10,6 +12,8 @@
 		currentThreadId: Id<'threadRecords'> | null;
 		groups: WorkspaceThreadGroup[];
 		pendingAgentLaunches?: PendingAgentLaunches;
+		theme: SprocketTheme;
+		onThemeChange: (theme: SprocketTheme) => void;
 		onChooseWorkspace: () => void;
 		onReconnectWorkspace: (workspaceSessionId: Id<'workspaceSessions'>) => void;
 		onOpenSettings: () => void;
@@ -24,6 +28,8 @@
 		currentThreadId,
 		groups,
 		pendingAgentLaunches = {},
+		theme,
+		onThemeChange,
 		onChooseWorkspace,
 		onReconnectWorkspace,
 		onOpenSettings,
@@ -35,8 +41,8 @@
 
 	const DEFAULT_VISIBLE_THREAD_COUNT = 3;
 	const sidebarActionButtonClass =
-		'flex h-9 w-full min-w-0 items-center gap-2.5 rounded-lg px-2 text-[13px] font-medium tracking-[-0.02em] text-slate-200 transition hover:bg-white/5 hover:text-white';
-	const sidebarActionIconClass = 'size-4 shrink-0 text-slate-400';
+		'flex h-9 w-full min-w-0 items-center gap-2.5 rounded-lg px-2 text-[13px] font-medium tracking-[-0.02em] text-foreground transition hover:bg-[var(--hover-fill)] hover:text-foreground';
+	const sidebarActionIconClass = 'size-4 shrink-0 text-muted-foreground';
 	let expandedProjects = $state<Record<string, boolean>>({});
 	let collapsedProjects = $state<Record<string, boolean>>({});
 	let hoveredThreadTitle = $state<string | null>(null);
@@ -186,8 +192,9 @@
 
 <aside class="app-sidebar-panel">
 	<div class="flex h-full min-h-0 flex-col overflow-hidden">
-		<header class="flex items-center px-3.5 pt-3 pb-4">
+		<header class="flex items-center justify-between gap-2 px-3.5 pt-3 pb-4">
 			<BrandMark size="sm" class="min-w-0" />
+			<SidebarTopActions {theme} {onThemeChange} />
 		</header>
 
 		<div class="px-3.5 pb-1">
@@ -199,12 +206,12 @@
 
 		<div class="hide-scrollbar min-h-0 flex-1 overflow-y-auto px-2.5 py-3">
 			<div class="mb-3 px-2">
-				<p class="text-[10px] tracking-[0.24em] text-slate-500 uppercase">Projects</p>
+				<p class="text-muted-foreground text-[10px] tracking-[0.24em] uppercase">Projects</p>
 			</div>
 
 			{#if groups.length === 0}
 				<div
-					class="rounded-3xl border border-dashed border-white/8 bg-white/2 px-4 py-4 text-sm leading-6 text-slate-400"
+					class="text-muted-foreground rounded-3xl border border-dashed border-[var(--hairline)] bg-[var(--hover-fill)] px-4 py-4 text-sm leading-6"
 				>
 					Choose a project to start organizing threads.
 				</div>
@@ -218,8 +225,8 @@
 									type="button"
 									class={`flex min-w-0 flex-1 items-center gap-2 rounded-xl px-2 py-1 pr-8 text-left transition ${
 										group.workspaceName === currentWorkspaceName
-											? 'text-white'
-											: 'text-slate-300 hover:text-white'
+											? 'text-foreground'
+											: 'text-muted-foreground hover:text-foreground'
 									}`}
 									onclick={() => {
 										toggleProjectCollapsed(group.key);
@@ -229,11 +236,11 @@
 										: `Collapse ${group.workspaceName} threads`}
 								>
 									<ChevronRight
-										class={`size-3 shrink-0 text-slate-500 transition-transform ${
+										class={`text-muted-foreground size-3 shrink-0 transition-transform ${
 											isProjectCollapsed(group.key) ? '' : 'rotate-90'
 										}`}
 									/>
-									<Folder class="size-4 shrink-0 text-slate-500" />
+									<Folder class="text-muted-foreground size-4 shrink-0" />
 									<p class="truncate text-[0.88rem] font-medium tracking-[-0.02em]">
 										{group.workspaceName}
 									</p>
@@ -241,8 +248,8 @@
 										<span
 											class={`rounded-full px-1.5 py-0.5 text-[10px] ${
 												group.localWorkspaceAvailability === 'unavailable'
-													? 'border border-amber-500/20 bg-amber-500/10 text-amber-100'
-													: 'border border-sky-500/20 bg-sky-500/10 text-sky-100'
+													? 'border border-amber-500/25 bg-amber-500/10 text-amber-800 dark:text-amber-200'
+													: 'border border-sky-500/25 bg-sky-500/10 text-sky-800 dark:text-sky-200'
 											}`}
 										>
 											{statusLabel}
@@ -250,7 +257,7 @@
 									{/if}
 									{#if group.activeThreadCount > 0}
 										<span
-											class="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-1.5 py-0.5 text-[10px] text-emerald-200"
+											class="rounded-full border border-emerald-500/25 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-800 dark:text-emerald-200"
 										>
 											{group.activeThreadCount}
 										</span>
@@ -259,7 +266,7 @@
 
 								<button
 									type="button"
-									class="absolute top-0.5 right-1 inline-flex h-6 w-6 items-center justify-center rounded-md text-slate-500 opacity-0 transition group-hover:opacity-100 hover:bg-white/6 hover:text-white focus-visible:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
+									class="text-muted-foreground hover:text-foreground absolute top-0.5 right-1 inline-flex h-6 w-6 items-center justify-center rounded-md opacity-0 transition group-hover:opacity-100 hover:bg-[var(--hover-fill)] focus-visible:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
 									onclick={() => {
 										if (group.localWorkspaceAvailability === 'available') {
 											onStartThreadDraft(group.workspaceName);
@@ -283,9 +290,9 @@
 							</div>
 
 							{#if !isProjectCollapsed(group.key)}
-								<div class="ml-5 border-l border-white/6 pl-3">
+								<div class="ml-5 border-l border-[var(--hairline)] pl-3">
 									{#if group.localWorkspaceAvailability === 'unavailable' || group.localWorkspaceAvailability === 'unlinked'}
-										<p class="pb-2 text-[12px] leading-5 text-slate-500">
+										<p class="text-muted-foreground pb-2 text-[12px] leading-5">
 											{group.localWorkspaceError ??
 												(group.localWorkspaceAvailability === 'unlinked'
 													? 'This project needs a local directory attached before you can use it.'
@@ -293,7 +300,7 @@
 										</p>
 									{/if}
 									{#if group.threads.length === 0}
-										<p class="py-1.5 text-[12px] text-slate-500">No threads yet</p>
+										<p class="text-muted-foreground py-1.5 text-[12px]">No threads yet</p>
 									{:else}
 										{@const projectExpanded = isProjectExpanded(group.key)}
 										{@const visibleThreads = projectExpanded
@@ -319,7 +326,7 @@
 														<input
 															bind:this={renameInput}
 															bind:value={renameDraft}
-															class="h-9 w-full rounded-lg border border-white/10 bg-white/5 px-2 text-[13px] text-white outline-none focus:border-white/20"
+															class="border-border text-foreground focus:border-ring h-9 w-full rounded-lg border bg-[var(--hover-fill)] px-2 text-[13px] outline-none"
 															aria-label="Rename thread"
 															onkeydown={(event) => {
 																if (event.key === 'Escape') {
@@ -337,7 +344,9 @@
 														<button
 															type="button"
 															class={`${sidebarActionButtonClass} pr-8 ${
-																isSelected ? 'bg-white/5 text-white' : 'text-slate-400'
+																isSelected
+																	? 'text-foreground bg-[var(--hover-fill)]'
+																	: 'text-muted-foreground'
 															}`}
 															aria-current={isSelected ? 'page' : undefined}
 															onmouseenter={(event) => {
@@ -370,7 +379,7 @@
 														</button>
 														<button
 															type="button"
-															class={`absolute top-1.5 right-1 inline-flex h-6 w-6 items-center justify-center rounded-md text-slate-500 transition hover:bg-white/6 hover:text-white focus-visible:opacity-100 ${
+															class={`text-muted-foreground hover:text-foreground absolute top-1.5 right-1 inline-flex h-6 w-6 items-center justify-center rounded-md transition hover:bg-[var(--hover-fill)] focus-visible:opacity-100 ${
 																isSelected
 																	? 'opacity-100'
 																	: 'opacity-0 group-focus-within/thread:opacity-100 group-hover/thread:opacity-100'
@@ -391,7 +400,7 @@
 											{#if hasHiddenThreads}
 												<button
 													type="button"
-													class="px-2 py-1 text-[12px] text-slate-500 transition hover:text-slate-300"
+													class="text-muted-foreground hover:text-muted-foreground px-2 py-1 text-[12px] transition"
 													onclick={() => {
 														toggleProjectExpanded(group.key);
 													}}
@@ -420,7 +429,7 @@
 
 {#if hoveredThreadTitle && hoveredThreadTooltip && !contextMenu && !renamingThreadId}
 	<div
-		class="pointer-events-none fixed z-100 max-w-64 -translate-y-1/2 rounded-md bg-[#1a1d27] px-2.5 py-1.5 text-[12px] leading-4 text-slate-100 shadow-lg ring-1 ring-white/10"
+		class="bg-tooltip text-tooltip-foreground ring-border pointer-events-none fixed z-100 max-w-64 -translate-y-1/2 rounded-md px-2.5 py-1.5 text-[12px] leading-4 shadow-lg ring-1"
 		style={`top: ${hoveredThreadTooltip.top}px; left: ${hoveredThreadTooltip.left}px;`}
 		role="tooltip"
 	>
@@ -431,13 +440,13 @@
 {#if contextMenu}
 	<div
 		data-thread-context-menu
-		class="fixed z-110 min-w-36 rounded-lg border border-white/8 bg-[#1a1d27] py-1 shadow-xl"
+		class="bg-popover text-popover-foreground fixed z-110 min-w-36 rounded-lg border border-[var(--hairline)] py-1 shadow-xl"
 		style={`top: ${contextMenu.y}px; left: ${contextMenu.x}px;`}
 		role="menu"
 	>
 		<button
 			type="button"
-			class="flex w-full px-3 py-1.5 text-left text-[13px] text-slate-200 transition hover:bg-white/6 hover:text-white"
+			class="text-foreground hover:text-foreground flex w-full px-3 py-1.5 text-left text-[13px] transition hover:bg-[var(--hover-fill)]"
 			role="menuitem"
 			onclick={() => {
 				beginRename(contextMenu!.threadId, contextMenu!.title);

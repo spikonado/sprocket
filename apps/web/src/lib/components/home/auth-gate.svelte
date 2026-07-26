@@ -58,12 +58,12 @@
 <div inert={overlayOpen} aria-hidden={overlayOpen ? true : undefined}>
 	<CalmCentered title={headline} {description}>
 		{#if showError}
-			<p class="text-center text-sm text-rose-300" role="alert">{authState.error}</p>
+			<p class="text-destructive text-center text-sm" role="alert">{authState.error}</p>
 		{/if}
 
 		{#if authState.isLoading}
 			<div
-				class="flex items-center justify-center gap-2 text-sm text-slate-400"
+				class="text-muted-foreground flex items-center justify-center gap-2 text-sm"
 				aria-live="polite"
 				aria-busy="true"
 			>

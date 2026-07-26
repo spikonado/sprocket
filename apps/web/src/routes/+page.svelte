@@ -81,6 +81,7 @@
 		resolveDesktopApi
 	} from '$lib/local/client';
 	import { resolve } from '$app/paths';
+	import { applyTheme, resolveTheme, type SprocketTheme } from '$lib/theme';
 	import type {
 		DesktopApi,
 		ThreadMessage,
@@ -131,6 +132,7 @@
 	const restoreThreadMutation = useMutation(api.threads.restore);
 	const finalizeRun = useMutation(api.agentRuntime.finalizeRun);
 	const setLastThread = useMutation(api.uiPreferences.setLastThread);
+	const setThemePreference = useMutation(api.uiPreferences.setTheme);
 	const generateImageUploadUrl = useMutation(api.imageUploads.generateUploadUrl);
 	const registerImageUpload = useMutation(api.imageUploads.register);
 	const discardImageUpload = useMutation(api.imageUploads.discard);
@@ -372,6 +374,71 @@
 	);
 	const threadsQuery = useQuery(api.threads.listMine, getAuthenticatedQueryArgs);
 	const uiPreferencesQuery = useQuery(api.uiPreferences.getMine, getAuthenticatedQueryArgs);
+	let workspaceTheme = $state<SprocketTheme>(resolveTheme(null));
+	let hasHydratedTheme = false;
+	let lastServerTheme: SprocketTheme | null | undefined = undefined;
+	let pendingTheme: SprocketTheme | null = null;
+	let themeSaveGeneration = 0;
+
+	$effect(() => {
+		if (!authReady) {
+			hasHydratedTheme = false;
+			lastServerTheme = undefined;
+			pendingTheme = null;
+			themeSaveGeneration = 0;
+			return;
+		}
+
+		const preferences = uiPreferencesQuery.data;
+
+		// Wait for Convex before applying a workspace theme (boot script stays light for entry).
+		if (preferences === undefined) {
+			return;
+		}
+
+		// Ignore preference snapshots while a theme save is in flight.
+		if (pendingTheme !== null) {
+			return;
+		}
+
+		const serverTheme = preferences?.theme;
+		if (hasHydratedTheme && serverTheme === lastServerTheme) {
+			return;
+		}
+		hasHydratedTheme = true;
+		lastServerTheme = serverTheme;
+
+		const nextTheme = resolveTheme(serverTheme);
+		workspaceTheme = nextTheme;
+		applyTheme(nextTheme);
+	});
+
+	async function handleThemeChange(theme: SprocketTheme) {
+		const previous = workspaceTheme;
+		const generation = ++themeSaveGeneration;
+		pendingTheme = theme;
+		workspaceTheme = theme;
+		applyTheme(theme);
+		try {
+			await setThemePreference({ theme });
+			if (generation !== themeSaveGeneration) {
+				return;
+			}
+			lastServerTheme = theme;
+		} catch (error) {
+			if (generation !== themeSaveGeneration) {
+				return;
+			}
+			workspaceTheme = previous;
+			applyTheme(previous);
+			currentError = error instanceof Error ? error.message : 'Failed to save theme preference.';
+		} finally {
+			if (generation === themeSaveGeneration) {
+				pendingTheme = null;
+			}
+		}
+	}
+
 	const authenticatedThreadQueryArgs = () =>
 		currentThreadId && getAuthenticatedQueryArgs() !== 'skip'
 			? { threadId: currentThreadId }
@@ -1731,7 +1798,7 @@
 	>
 		{#snippet actions()}
 			<a
-				class="inline-flex h-10 items-center justify-center rounded-xl bg-white px-4 text-sm font-medium text-black transition hover:bg-slate-100"
+				class="bg-primary text-primary-foreground inline-flex h-10 items-center justify-center rounded-full px-5 text-sm font-medium transition hover:opacity-90"
 				href={resolve('/pair')}
 			>
 				Open pairing
@@ -1739,7 +1806,7 @@
 		{/snippet}
 	</CalmCentered>
 {:else if !authReady}
-	<div class="h-screen overflow-hidden bg-[#0f1218]">
+	<div class="bg-background h-screen overflow-hidden">
 		<AuthGate
 			authState={{
 				isLoading:
@@ -1768,12 +1835,12 @@
 	</div>
 {:else}
 	<div class="h-screen overflow-hidden">
-		<div
-			class="grid h-screen grid-cols-[292px_minmax(0,1fr)] overflow-hidden bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_26%),linear-gradient(180deg,rgba(22,22,24,0.98),rgba(15,15,17,1))]"
-		>
+		<div class="app-workspace-shell grid h-screen grid-cols-[292px_minmax(0,1fr)] overflow-hidden">
 			{#if settingsOpen}
 				<SettingsSidebar
 					activePage={settingsPage}
+					theme={workspaceTheme}
+					onThemeChange={(theme) => void handleThemeChange(theme)}
 					onBack={() => {
 						settingsOpen = false;
 						settingsPage = 'account';
@@ -1788,6 +1855,8 @@
 					{currentThreadId}
 					groups={groupedWorkspaceThreads}
 					{pendingAgentLaunches}
+					theme={workspaceTheme}
+					onThemeChange={(theme) => void handleThemeChange(theme)}
 					onChooseWorkspace={() => {
 						openWorkspacePicker('add');
 					}}

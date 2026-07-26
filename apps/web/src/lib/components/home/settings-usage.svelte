@@ -48,31 +48,31 @@
 		if (nearLimit) {
 			return 'bg-amber-400/90';
 		}
-		return 'bg-slate-200/90';
+		return 'bg-foreground/25';
 	}
 </script>
 
 <section class="flex h-full min-h-0 flex-col overflow-hidden">
 	<header class="flex h-12 shrink-0 items-center px-6">
-		<h1 class="text-[1rem] font-medium tracking-[-0.03em] text-white">Usage</h1>
+		<h1 class="text-foreground text-[1rem] font-medium tracking-[-0.03em]">Usage</h1>
 	</header>
 
 	<div class="min-h-0 flex-1 overflow-y-auto px-6 py-8">
 		<div class="max-w-xl space-y-10">
 			{#if usageQuery.error}
-				<p class="text-sm leading-6 text-slate-500">
+				<p class="text-muted-foreground text-sm leading-6">
 					Couldn’t load your usage right now. Try again in a moment.
 				</p>
 			{:else if usageQuery.isLoading || usageQuery.data === undefined}
 				<div class="animate-pulse space-y-10" aria-hidden="true">
-					<div class="h-4 w-24 rounded bg-white/5"></div>
+					<div class="h-4 w-24 rounded bg-[var(--hover-fill)]"></div>
 					{#each usageMeters as meter (meter.id)}
 						<div class="space-y-5">
-							<div class="h-3 w-28 rounded bg-white/5"></div>
+							<div class="h-3 w-28 rounded bg-[var(--hover-fill)]"></div>
 							{#each usagePeriods as period (period)}
 								<div class="space-y-2">
-									<div class="h-3.5 w-full rounded bg-white/5"></div>
-									<div class="h-1.5 w-full rounded-full bg-white/5"></div>
+									<div class="h-3.5 w-full rounded bg-[var(--hover-fill)]"></div>
+									<div class="h-1.5 w-full rounded-full bg-[var(--hover-fill)]"></div>
 								</div>
 							{/each}
 						</div>
@@ -80,17 +80,21 @@
 				</div>
 			{:else}
 				<div>
-					<p class="text-[11px] tracking-[0.18em] text-slate-500 uppercase">Subscription Tier</p>
-					<p class="mt-3 text-[15px] text-white">
+					<p class="text-muted-foreground text-[11px] tracking-[0.18em] uppercase">
+						Subscription Tier
+					</p>
+					<p class="text-foreground mt-3 text-[15px]">
 						{tierLabels[usageQuery.data.tier]}
 					</p>
 				</div>
 
 				{#each usageQuery.data.meters as meter (meter.id)}
 					<div>
-						<p class="text-[11px] tracking-[0.18em] text-slate-500 uppercase">{meter.label}</p>
+						<p class="text-muted-foreground text-[11px] tracking-[0.18em] uppercase">
+							{meter.label}
+						</p>
 						{#if meter.description}
-							<p class="mt-1 text-[12px] text-slate-500">{meter.description}</p>
+							<p class="text-muted-foreground mt-1 text-[12px]">{meter.description}</p>
 						{/if}
 						<div class="mt-4 space-y-6">
 							{#each meter.windows as meterWindow (meterWindow.period)}
@@ -102,22 +106,24 @@
 								{@const nearLimit = hasLimit && meterWindow.used >= meterWindow.limit * 0.9}
 								<div>
 									<div class="flex items-baseline justify-between gap-3">
-										<p class="text-[13px] text-slate-300">{periodLabels[meterWindow.period]}</p>
+										<p class="text-muted-foreground text-[13px]">
+											{periodLabels[meterWindow.period]}
+										</p>
 										{#if hasLimit}
 											<p
-												class={`text-[12px] ${atLimit ? 'text-rose-300' : nearLimit ? 'text-amber-300' : 'text-slate-500'}`}
+												class={`text-[12px] ${atLimit ? 'text-destructive' : nearLimit ? 'text-amber-800 dark:text-amber-300' : 'text-muted-foreground'}`}
 											>
 												{percent}% used
 											</p>
 										{/if}
 									</div>
-									<p class="mt-0.5 text-[12px] text-slate-500">
+									<p class="text-muted-foreground mt-0.5 text-[12px]">
 										{compactAmount.format(hasLimit ? meterWindow.used : 0)} / {compactAmount.format(
 											hasLimit ? meterWindow.limit : 0
 										)}
 									</p>
 									<div
-										class="mt-2 h-1.5 overflow-hidden rounded-full bg-white/5"
+										class="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--hover-fill)]"
 										role="progressbar"
 										aria-label={`${meter.label} — ${periodLabels[meterWindow.period]}`}
 										aria-valuemin={0}
@@ -131,7 +137,7 @@
 										></div>
 									</div>
 									{#if meterWindow.resetsAt !== null}
-										<p class="mt-1.5 text-[12px] text-slate-500">
+										<p class="text-muted-foreground mt-1.5 text-[12px]">
 											Resets in {formatResetsIn(meterWindow.resetsAt)}
 										</p>
 									{/if}
