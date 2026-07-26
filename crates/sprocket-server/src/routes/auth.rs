@@ -394,6 +394,7 @@ mod tests {
 
         let state = AppState {
             auth,
+            command_sessions: crate::command_sessions::CommandSessionStore::default(),
             desktop_login: DesktopLoginStore::new(),
             workspace_sessions: WorkspaceSessionStore::new(temp_dir),
             http_base_url: "http://127.0.0.1:7731".to_string(),

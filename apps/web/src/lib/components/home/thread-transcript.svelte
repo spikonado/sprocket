@@ -1,6 +1,7 @@
 <script lang="ts">
-	import { Check, Copy, LoaderCircle } from '@lucide/svelte';
+	import { Check, Copy, LoaderCircle, Trash2 } from '@lucide/svelte';
 	import { tick } from 'svelte';
+	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import { isJsonObject, type JsonValue } from '$convex/lib/json';
 	import {
 		assistantTimelineToolError,
@@ -8,6 +9,7 @@
 		buildAssistantTimeline,
 		buildCommandSessionCommandMap,
 		buildOpenExecCommandSessions,
+		commandSessionIdFromTool,
 		groupAssistantTimeline,
 		groupAssistantTimelineSections,
 		isAssistantTimelineToolRunning,
@@ -24,7 +26,12 @@
 	import ToolCallsDisclosure from '$lib/components/home/tool-calls-disclosure.svelte';
 	import WorkDisclosure from '$lib/components/home/work-disclosure.svelte';
 	import { formatElapsedDuration } from '$lib/format';
-	import type { ExecutorJob, ThreadMessage, WorkspaceSession } from '$lib/types/sprocket';
+	import type {
+		CommandSessionInfo,
+		ExecutorJob,
+		ThreadMessage,
+		WorkspaceSession
+	} from '$lib/types/sprocket';
 
 	type Props = {
 		currentError: string | null;
@@ -33,8 +40,10 @@
 		actions: ExecutorJob[];
 		activeRunId: ThreadMessage['runId'] | null;
 		workspaceSession: WorkspaceSession | null;
+		liveCommandSessions: CommandSessionInfo[] | null;
 		emptyStateMessage?: string;
 		emptyStateHint?: string | null;
+		onStopCommand: (threadId: ThreadMessage['threadId'], sessionId: string) => Promise<void>;
 	};
 
 	let {
@@ -44,6 +53,8 @@
 		actions,
 		activeRunId,
 		workspaceSession,
+		liveCommandSessions,
+		onStopCommand,
 		emptyStateMessage = workspaceSession
 			? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
 			: 'Add a project to begin.',
@@ -51,6 +62,55 @@
 	}: Props = $props();
 	let scrollViewport = $state<HTMLDivElement | null>(null);
 	let stickToBottom = $state(true);
+	const stoppingCommandSessions = new SvelteSet<string>();
+	const stoppedCommandSessions = new SvelteSet<string>();
+	const commandStopErrors = new SvelteMap<string, string>();
+	let stopStateThreadId = $state<ThreadMessage['threadId'] | null>(null);
+
+	const transcriptThreadId = $derived(messages[0]?.threadId ?? null);
+	const allTimelineTools = $derived.by(() =>
+		messages.flatMap((message) => {
+			if (message.type !== 'response') return [];
+			return buildAssistantTimeline(
+				message.parts ?? [],
+				actions.filter((job) => job.runId === message.runId)
+			).filter((item): item is AssistantTimelineTool => item.type === 'tool');
+		})
+	);
+	const sessionCommands = $derived(buildCommandSessionCommandMap(allTimelineTools));
+	const transcriptOpenCommandSessions = $derived(buildOpenExecCommandSessions(allTimelineTools));
+	const liveOpenCommandSessions = $derived(
+		new SvelteSet(
+			(liveCommandSessions ?? [])
+				.filter((session) => session.running)
+				.map((session) => session.sessionId)
+		)
+	);
+	const openCommandSessions = $derived.by(() => {
+		return new SvelteSet(
+			[...transcriptOpenCommandSessions].filter(
+				(sessionId) =>
+					liveOpenCommandSessions.has(sessionId) && !stoppedCommandSessions.has(sessionId)
+			)
+		);
+	});
+
+	$effect(() => {
+		const threadId = transcriptThreadId;
+		if (threadId === null || threadId === stopStateThreadId) return;
+		stopStateThreadId = threadId;
+		stoppingCommandSessions.clear();
+		stoppedCommandSessions.clear();
+		commandStopErrors.clear();
+	});
+
+	$effect(() => {
+		for (const sessionId of [...stoppedCommandSessions]) {
+			if (!liveOpenCommandSessions.has(sessionId)) {
+				stoppedCommandSessions.delete(sessionId);
+			}
+		}
+	});
 
 	const SCROLL_EPSILON_PX = 28;
 
@@ -274,6 +334,23 @@
 		return error ? `${summary} (${error})` : summary;
 	}
 
+	async function stopCommand(threadId: ThreadMessage['threadId'], sessionId: string) {
+		if (stoppingCommandSessions.has(sessionId) || stoppedCommandSessions.has(sessionId)) return;
+		stoppingCommandSessions.add(sessionId);
+		commandStopErrors.delete(sessionId);
+		try {
+			await onStopCommand(threadId, sessionId);
+			stoppedCommandSessions.add(sessionId);
+		} catch (error) {
+			commandStopErrors.set(
+				sessionId,
+				error instanceof Error ? error.message : 'Failed to stop command.'
+			);
+		} finally {
+			stoppingCommandSessions.delete(sessionId);
+		}
+	}
+
 	const userMessageClass =
 		'user-bubble w-fit max-w-[33rem] rounded-xl border px-5 py-3.5 text-[15.5px] leading-7 text-foreground';
 
@@ -446,7 +523,6 @@
 							{@const timelineTools = timeline.filter(
 								(item): item is AssistantTimelineTool => item.type === 'tool'
 							)}
-							{@const sessionCommands = buildCommandSessionCommandMap(timelineTools)}
 							{@const blocks = groupAssistantTimeline(timeline)}
 							{@const sections = groupAssistantTimelineSections(blocks)}
 							{@const { workIndexBySectionIndex, priorCompletedAtByWorkIndex } =
@@ -456,7 +532,10 @@
 								message.runStatus !== 'completed' &&
 								message.runStatus !== 'failed' &&
 								message.runStatus !== 'cancelled'}
-							{@const openSessions = buildOpenExecCommandSessions(timelineTools, isStreaming)}
+							{@const hasOpenCommand = timelineTools.some((tool) => {
+								const sessionId = commandSessionIdFromTool(tool);
+								return sessionId !== undefined && openCommandSessions.has(sessionId);
+							})}
 							{@const hasPersistedAssistantContent = timeline.some(
 								(part) => part.type === 'text' || part.type === 'reasoning'
 							)}
@@ -478,11 +557,11 @@
 											{@const { settledBlocks, runningTools } = partitionWorkSectionTools(
 												section.blocks,
 												isStreaming,
-												openSessions
+												openCommandSessions
 											)}
 											{@const workInProgress =
-												isStreaming &&
-												(sectionIndex === sections.length - 1 || runningTools.length > 0)}
+												runningTools.length > 0 ||
+												(isStreaming && sectionIndex === sections.length - 1)}
 											{@const workSectionOrder = workIndexBySectionIndex[sectionIndex] ?? 0}
 											{@const timing = workSectionTimingAnchor(section, {
 												inProgress: workInProgress,
@@ -573,7 +652,8 @@
 													{#snippet toolRow(tool)}
 														{@const ToolIcon = toolLogIcon(tool)}
 														{@const toolSummary = toolItemSummary(tool, sessionCommands)}
-														<p
+														{@const commandSessionId = commandSessionIdFromTool(tool)}
+														<div
 															class="flex min-w-0 items-start gap-1.5"
 															title={`${toolSummary} (running)`}
 														>
@@ -581,14 +661,34 @@
 																class="text-muted-foreground mt-1.5 size-3 shrink-0"
 																aria-hidden="true"
 															/>
-															<span class={toolSummaryClass(tool)}>{toolSummary}</span>
-														</p>
+															<span class={`min-w-0 flex-1 ${toolSummaryClass(tool)}`}
+																>{toolSummary}</span
+															>
+															{#if commandSessionId && openCommandSessions.has(commandSessionId)}
+																<button
+																	type="button"
+																	class="mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-md text-slate-500 transition hover:bg-rose-500/10 hover:text-rose-300 focus-visible:ring-2 focus-visible:ring-rose-300/50 focus-visible:outline-none disabled:cursor-wait disabled:opacity-50"
+																	disabled={stoppingCommandSessions.has(commandSessionId)}
+																	aria-label={`Stop command: ${toolSummary}`}
+																	title="Stop command"
+																	onclick={() =>
+																		void stopCommand(message.threadId, commandSessionId)}
+																>
+																	<Trash2 class="size-3.5" aria-hidden="true" />
+																</button>
+															{/if}
+														</div>
+														{#if commandSessionId && commandStopErrors.has(commandSessionId)}
+															<p class="pl-[18px] text-xs text-rose-300" role="alert">
+																{commandStopErrors.get(commandSessionId)}
+															</p>
+														{/if}
 													{/snippet}
 												</ToolCallsDisclosure>
 											{/if}
 										{/if}
 									{/each}
-									{#if !isStreaming && message.runCompletedAt !== undefined}
+									{#if !isStreaming && !hasOpenCommand && message.runCompletedAt !== undefined}
 										<p class="text-muted-foreground text-sm">
 											Worked for {formatElapsedDuration(
 												Math.max(

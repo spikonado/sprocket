@@ -25,7 +25,7 @@ pub use skills::{
     read_skill_content,
 };
 pub use tools::{
-    CommandExecOutput, CommandSessionManager, WorkspaceCancellation, WorkspaceOperationCancelled,
-    default_command_shell,
+    CommandExecOutput, CommandSessionInfo, CommandSessionManager, WorkspaceCancellation,
+    WorkspaceOperationCancelled, default_command_shell,
 };
 pub use workspace::resolve_workspace_root;

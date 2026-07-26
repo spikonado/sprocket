@@ -7,6 +7,7 @@ use rig::message::{
 };
 use serde::{Deserialize, Deserializer, Serialize};
 use sprocket_convex_provider::AuthTokenFetcher;
+use sprocket_workspace::CommandSessionManager;
 
 #[derive(Clone)]
 pub struct RunAgentRequest {
@@ -21,6 +22,7 @@ pub struct RunAgentRequest {
     pub reasoning_effort: String,
     pub service_tier: String,
     pub workspace_path: String,
+    pub command_sessions: CommandSessionManager,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

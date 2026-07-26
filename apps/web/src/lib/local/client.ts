@@ -231,7 +231,15 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 			request<AgentRunStart>('/api/agent/run', {
 				method: 'POST',
 				body: JSON.stringify(requestBody)
-			})
+			}),
+		listCommandSessions: (threadId) =>
+			request(`/api/agent/commands/${encodeURIComponent(threadId)}`),
+		stopCommand: async (threadId, sessionId) => {
+			await request(
+				`/api/agent/commands/${encodeURIComponent(threadId)}/${encodeURIComponent(sessionId)}`,
+				{ method: 'DELETE' }
+			);
+		}
 	};
 }
 

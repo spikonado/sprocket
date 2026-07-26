@@ -237,7 +237,7 @@ function jsonStringProp(value: JsonValue | undefined, key: string): string | und
 }
 
 /** Session id from command tool output, else input/payload (write_stdin completion omits it). */
-function commandSessionIdFromTool(tool: AssistantTimelineTool): string | undefined {
+export function commandSessionIdFromTool(tool: AssistantTimelineTool): string | undefined {
 	return (
 		jsonStringProp(tool.output, 'sessionId') ??
 		jsonStringProp(tool.input, 'sessionId') ??
@@ -284,18 +284,10 @@ export function resolveCommandSessionLabel(
 
 /**
  * Sessions still running that also have an exec_command row.
- * Returns empty when the run is not streaming so yielded commands settle after a crash/stop.
  * Later tool outputs win on the running flag (write_stdin completion clears the session).
- * Pass the full message tool list so monitors after text section breaks still close sessions.
+ * Pass the full thread tool list so later runs can close sessions started by earlier runs.
  */
-export function buildOpenExecCommandSessions(
-	tools: readonly AssistantTimelineTool[],
-	isStreaming: boolean
-): Set<string> {
-	if (!isStreaming) {
-		return new Set();
-	}
-
+export function buildOpenExecCommandSessions(tools: readonly AssistantTimelineTool[]): Set<string> {
 	const sessionRunning = new Map<string, boolean>();
 	const execSessions = new Set<string>();
 
@@ -306,6 +298,9 @@ export function buildOpenExecCommandSessions(
 		}
 		if (assistantTimelineToolKey(tool) === 'exec_command') {
 			execSessions.add(sessionId);
+			if (!sessionRunning.has(sessionId)) {
+				sessionRunning.set(sessionId, tool.job?.status !== 'failed');
+			}
 		}
 		if (isJsonObject(tool.output) && typeof tool.output.running === 'boolean') {
 			sessionRunning.set(sessionId, tool.output.running);

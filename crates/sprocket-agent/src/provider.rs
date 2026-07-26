@@ -67,6 +67,7 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) preamble: String,
     pub(crate) prior_history: Vec<Message>,
     pub(crate) workspace_root: PathBuf,
+    pub(crate) command_sessions: CommandSessionManager,
     pub(crate) skills: Arc<[WorkspaceSkill]>,
     pub(crate) model: String,
     pub(crate) reasoning_effort: String,
@@ -130,10 +131,10 @@ where
         request.run_id.clone(),
         request.claim_id.clone(),
         request.workspace_root.clone(),
+        request.command_sessions,
         tool_call_tracker.clone(),
         request.skills.clone(),
     );
-    let session_shutdown = CommandSessionShutdown::new(tools.command_sessions.clone());
     let agent = completion_client
         .agent(model)
         .preamble(&request.preamble)
@@ -227,39 +228,7 @@ where
         AgentProviderResult::Completed { text: final_text }
     };
 
-    session_shutdown.finish().await;
     result
-}
-
-/// Stops persistent command sessions on the normal path and if this future is
-/// dropped early (for example when claim lease renewal fails).
-struct CommandSessionShutdown {
-    sessions: Option<CommandSessionManager>,
-}
-
-impl CommandSessionShutdown {
-    fn new(sessions: CommandSessionManager) -> Self {
-        Self {
-            sessions: Some(sessions),
-        }
-    }
-
-    async fn finish(mut self) {
-        if let Some(sessions) = self.sessions.as_ref() {
-            sessions.stop_all().await;
-        }
-        self.sessions = None;
-    }
-}
-
-impl Drop for CommandSessionShutdown {
-    fn drop(&mut self) {
-        if let Some(sessions) = self.sessions.take() {
-            // Drop cannot await the async drain in stop_all; terminate is enough
-            // to stop leaked persistent command sessions after lease loss.
-            sessions.terminate_all();
-        }
-    }
 }
 
 #[cfg(test)]
