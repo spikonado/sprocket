@@ -1,6 +1,6 @@
 {
 	"name": "@spikonado/sprocket",
-	"version": "0.0.0-canary.1",
+	"version": "0.2.0",
 	"description": "Sprocket: Agentic platform for streamlining robotics development",
 	"license": "Apache-2.0",
 	"type": "module",
