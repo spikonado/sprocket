@@ -81,7 +81,7 @@
 		resolveDesktopApi
 	} from '$lib/local/client';
 	import { resolve } from '$app/paths';
-	import { isSprocketTheme, persistTheme, resolveTheme, type SprocketTheme } from '$lib/theme';
+	import { applyTheme, resolveTheme, type SprocketTheme } from '$lib/theme';
 	import type {
 		DesktopApi,
 		ThreadMessage,
@@ -378,26 +378,25 @@
 	let hasHydratedTheme = false;
 	let lastServerTheme: SprocketTheme | null | undefined = undefined;
 	let pendingTheme: SprocketTheme | null = null;
+	let themeSaveGeneration = 0;
 
 	$effect(() => {
 		if (!authReady) {
 			hasHydratedTheme = false;
 			lastServerTheme = undefined;
 			pendingTheme = null;
+			themeSaveGeneration = 0;
 			return;
 		}
 
 		const preferences = uiPreferencesQuery.data;
 
-		// Apply local preference as soon as the workspace mounts (boot script stays light for entry).
+		// Wait for Convex before applying a workspace theme (boot script stays light for entry).
 		if (preferences === undefined) {
-			const localTheme = resolveTheme(null);
-			workspaceTheme = localTheme;
-			persistTheme(localTheme);
 			return;
 		}
 
-		// Ignore preference snapshots while a local theme save is in flight.
+		// Ignore preference snapshots while a theme save is in flight.
 		if (pendingTheme !== null) {
 			return;
 		}
@@ -409,25 +408,34 @@
 		hasHydratedTheme = true;
 		lastServerTheme = serverTheme;
 
-		const nextTheme = isSprocketTheme(serverTheme) ? serverTheme : resolveTheme(null);
+		const nextTheme = resolveTheme(serverTheme);
 		workspaceTheme = nextTheme;
-		persistTheme(nextTheme);
+		applyTheme(nextTheme);
 	});
 
 	async function handleThemeChange(theme: SprocketTheme) {
 		const previous = workspaceTheme;
+		const generation = ++themeSaveGeneration;
 		pendingTheme = theme;
 		workspaceTheme = theme;
-		persistTheme(theme);
+		applyTheme(theme);
 		try {
 			await setThemePreference({ theme });
+			if (generation !== themeSaveGeneration) {
+				return;
+			}
 			lastServerTheme = theme;
 		} catch (error) {
+			if (generation !== themeSaveGeneration) {
+				return;
+			}
 			workspaceTheme = previous;
-			persistTheme(previous);
+			applyTheme(previous);
 			currentError = error instanceof Error ? error.message : 'Failed to save theme preference.';
 		} finally {
-			pendingTheme = null;
+			if (generation === themeSaveGeneration) {
+				pendingTheme = null;
+			}
 		}
 	}
 

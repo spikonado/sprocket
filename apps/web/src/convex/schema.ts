@@ -33,7 +33,7 @@ export default defineSchema({
 	uiPreferences: defineTable({
 		userId: v.string(),
 		lastThreadId: v.optional(v.id('threadRecords')),
-		theme: v.optional(v.union(v.literal('light'), v.literal('dark')))
+		theme: v.union(v.literal('light'), v.literal('dark'))
 	}).index('by_userId', ['userId']),
 	workspaceSessions: defineTable({
 		userId: v.string(),

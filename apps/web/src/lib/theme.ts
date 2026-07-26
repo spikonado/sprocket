@@ -1,27 +1,13 @@
 export type SprocketTheme = 'light' | 'dark';
 
-export const THEME_STORAGE_KEY = 'sprocket-theme';
 export const DEFAULT_THEME: SprocketTheme = 'dark';
 
 export function isSprocketTheme(value: unknown): value is SprocketTheme {
 	return value === 'light' || value === 'dark';
 }
 
-export function readStoredTheme(): SprocketTheme | null {
-	if (typeof localStorage === 'undefined') {
-		return null;
-	}
-
-	try {
-		const stored = localStorage.getItem(THEME_STORAGE_KEY);
-		return isSprocketTheme(stored) ? stored : null;
-	} catch {
-		return null;
-	}
-}
-
 export function resolveTheme(preference: SprocketTheme | null | undefined): SprocketTheme {
-	return preference ?? readStoredTheme() ?? DEFAULT_THEME;
+	return preference ?? DEFAULT_THEME;
 }
 
 let entryThemeDepth = 0;
@@ -44,20 +30,6 @@ export function applyTheme(theme: SprocketTheme): void {
 	}
 
 	writeTheme(theme);
-}
-
-export function persistTheme(theme: SprocketTheme): void {
-	applyTheme(theme);
-
-	if (typeof localStorage === 'undefined') {
-		return;
-	}
-
-	try {
-		localStorage.setItem(THEME_STORAGE_KEY, theme);
-	} catch {
-		// Ignore quota / private-mode failures; in-memory theme still applies.
-	}
 }
 
 /** Force light theme for entry shells; restores the previous theme when the last shell unmounts. */

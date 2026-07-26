@@ -1,13 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-	DEFAULT_THEME,
-	applyTheme,
-	forceEntryTheme,
-	isSprocketTheme,
-	persistTheme,
-	resolveTheme,
-	THEME_STORAGE_KEY
-} from './theme';
+import { DEFAULT_THEME, applyTheme, forceEntryTheme, isSprocketTheme, resolveTheme } from './theme';
 
 function stubDocument(theme: string | undefined = undefined) {
 	const dataset: Record<string, string> = {};
@@ -32,34 +24,11 @@ describe('theme helpers', () => {
 		expect(isSprocketTheme(null)).toBe(false);
 	});
 
-	it('resolves an explicit preference first', () => {
+	it('resolves an explicit preference first, otherwise the default', () => {
 		expect(resolveTheme('light')).toBe('light');
 		expect(resolveTheme('dark')).toBe('dark');
-	});
-
-	it('falls back to stored theme, then the default', () => {
-		vi.stubGlobal('localStorage', {
-			getItem: (key: string) => (key === THEME_STORAGE_KEY ? 'light' : null),
-			setItem: () => {},
-			removeItem: () => {},
-			clear: () => {},
-			key: () => null,
-			length: 0
-		} satisfies Storage);
-
-		expect(resolveTheme(null)).toBe('light');
-		expect(resolveTheme(undefined)).toBe('light');
-
-		vi.stubGlobal('localStorage', {
-			getItem: () => null,
-			setItem: () => {},
-			removeItem: () => {},
-			clear: () => {},
-			key: () => null,
-			length: 0
-		} satisfies Storage);
-
 		expect(resolveTheme(null)).toBe(DEFAULT_THEME);
+		expect(resolveTheme(undefined)).toBe(DEFAULT_THEME);
 	});
 
 	it('parks applyTheme while entry theme is forced, then restores on last release', () => {
@@ -74,7 +43,7 @@ describe('theme helpers', () => {
 			applyTheme('dark');
 			expect(dataset.theme).toBe('light');
 
-			persistTheme('light');
+			applyTheme('light');
 			expect(dataset.theme).toBe('light');
 
 			releaseA();
