@@ -6,6 +6,8 @@ Sprocket is currently a lightweight coding agent that writes high-quality code, 
 
 ![Sprocket](./assets/sprocket.png)
 
+![Sprocket Dark](./assets/sprocket-dark.png)
+
 ## Using Sprocket
 
 To directly launch Sprocket in the browser without having to install anything:
