@@ -57,7 +57,7 @@ jobs:
           fi
           echo "value=$version" >> "$GITHUB_OUTPUT"
           echo "source-sha=$source_sha" >> "$GITHUB_OUTPUT"
-          if [[ "$version" == 0.0.0-dev.* ]]; then
+          if [[ "$version" == 0.2.0-dev.* ]]; then
             echo "npm-tag=dev" >> "$GITHUB_OUTPUT"
           elif [[ "$version" == *-canary.* ]]; then
             echo "npm-tag=canary" >> "$GITHUB_OUTPUT"
