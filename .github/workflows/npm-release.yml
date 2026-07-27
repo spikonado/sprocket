@@ -75,7 +75,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run --cwd apps/web build
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: web
           path: apps/web/dist
@@ -142,7 +142,7 @@ jobs:
           else
             cp "target/release/${{ matrix.executable }}" artifact/
           fi
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.id }}
           path: artifact/${{ matrix.executable }}
@@ -160,7 +160,7 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: '*'
           path: release-artifacts
@@ -188,7 +188,7 @@ jobs:
           while IFS= read -r binary; do
             test -x "$binary"
           done <<< "$binaries"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: npm-packages-${{ needs.prepare.outputs.version }}
           path: npm-dist
@@ -210,7 +210,7 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: npm-packages-${{ needs.prepare.outputs.version }}
           path: npm-dist
