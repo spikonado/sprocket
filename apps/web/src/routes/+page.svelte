@@ -1053,9 +1053,11 @@
 				...(answerText ? { text: answerText } : {})
 			});
 		} catch (error) {
-			prompt = submittedPrompt;
-			selectedQuestionOptionId = submittedOptionId;
-			currentError = error instanceof Error ? error.message : String(error);
+			if (currentThreadId === threadId) {
+				prompt = submittedPrompt;
+				selectedQuestionOptionId = submittedOptionId;
+				currentError = error instanceof Error ? error.message : String(error);
+			}
 		} finally {
 			answeringAgentQuestion = false;
 		}

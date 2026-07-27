@@ -845,7 +845,7 @@ fn prepare_ask_question(args: &AskQuestionArgs) -> Result<PreparedAskQuestion, A
             "Question cannot be empty.".to_string(),
         ));
     }
-    if question.len() > MAX_QUESTION_CHARS {
+    if question.chars().count() > MAX_QUESTION_CHARS {
         return Err(AgentToolError::Message(format!(
             "Question cannot exceed {MAX_QUESTION_CHARS} characters."
         )));
@@ -871,12 +871,12 @@ fn prepare_ask_question(args: &AskQuestionArgs) -> Result<PreparedAskQuestion, A
                 "Option label cannot be empty.".to_string(),
             ));
         }
-        if id.len() > MAX_OPTION_ID_CHARS {
+        if id.chars().count() > MAX_OPTION_ID_CHARS {
             return Err(AgentToolError::Message(format!(
                 "Option id cannot exceed {MAX_OPTION_ID_CHARS} characters."
             )));
         }
-        if label.len() > MAX_OPTION_LABEL_CHARS {
+        if label.chars().count() > MAX_OPTION_LABEL_CHARS {
             return Err(AgentToolError::Message(format!(
                 "Option label cannot exceed {MAX_OPTION_LABEL_CHARS} characters."
             )));
@@ -1248,6 +1248,19 @@ mod tests {
         })
         .expect_err("overlong question");
         assert!(error.to_string().contains("2000"));
+
+        // Multibyte Unicode must be counted by characters, matching Convex validation.
+        let unicode_question = "é".repeat(MAX_QUESTION_CHARS);
+        prepare_ask_question(&AskQuestionArgs {
+            question: unicode_question,
+            options: vec![AskQuestionOption {
+                id: "a".to_string(),
+                label: "café".to_string(),
+            }],
+            yield_time_ms: 0,
+            timeout_ms: DEFAULT_ASK_QUESTION_TIMEOUT_MS,
+        })
+        .expect("unicode within character limits");
 
         let reserved = prepare_ask_question(&AskQuestionArgs {
             question: "Pick one".to_string(),
