@@ -1053,7 +1053,10 @@
 				...(answerText ? { text: answerText } : {})
 			});
 		} catch (error) {
-			if (currentThreadId === threadId) {
+			if (
+				currentThreadId === threadId &&
+				pendingAgentQuestion?.questionId === question.questionId
+			) {
 				prompt = submittedPrompt;
 				selectedQuestionOptionId = submittedOptionId;
 				currentError = error instanceof Error ? error.message : String(error);
