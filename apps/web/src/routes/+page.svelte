@@ -23,6 +23,7 @@
 	import PromptComposer from '$lib/components/home/prompt-composer.svelte';
 	import SettingsAccount from '$lib/components/home/settings-account.svelte';
 	import SettingsArchived from '$lib/components/home/settings-archived.svelte';
+	import SettingsProviders from '$lib/components/home/settings-providers.svelte';
 	import SettingsSidebar, { type SettingsPage } from '$lib/components/home/settings-sidebar.svelte';
 	import SettingsUsage from '$lib/components/home/settings-usage.svelte';
 	import ThreadTranscript from '$lib/components/home/thread-transcript.svelte';
@@ -1889,6 +1890,8 @@
 						/>
 					{:else if settingsPage === 'usage'}
 						<SettingsUsage />
+					{:else if settingsPage === 'providers'}
+						<SettingsProviders />
 					{:else}
 						<SettingsAccount user={$authState.user} onSignOut={() => void signOut()} />
 					{/if}

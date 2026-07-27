@@ -1,5 +1,5 @@
 <script lang="ts">
-	import OpenAiBlossom from '$lib/components/openai-blossom.svelte';
+	import OpenAIBlossom from '$lib/components/openai-blossom.svelte';
 	import { cn } from '$lib/utils';
 
 	type Props = {
@@ -12,7 +12,7 @@
 </script>
 
 {#if provider === 'openai'}
-	<OpenAiBlossom className={cn('size-4 text-foreground', className)} />
+	<OpenAIBlossom className={cn('size-4 text-foreground', className)} />
 {:else if provider === 'anthropic'}
 	<svg
 		viewBox="0 0 24 24"

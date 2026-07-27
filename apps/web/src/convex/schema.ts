@@ -1,11 +1,13 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
 import {
+	vCompletionProviderId,
 	vExecutorJobKind,
 	vExecutorJobPayload,
 	vExecutorJobResult,
 	vExecutorJobStatus,
 	vModelId,
+	vCredentialProviderId,
 	vReasoningEffort,
 	vServiceTier,
 	vRunStatus,
@@ -35,6 +37,19 @@ export default defineSchema({
 		lastThreadId: v.optional(v.id('threadRecords')),
 		theme: v.union(v.literal('light'), v.literal('dark'))
 	}).index('by_userId', ['userId']),
+	providerPreferences: defineTable({
+		userId: v.string(),
+		providers: v.array(vCompletionProviderId)
+	}).index('by_userId', ['userId']),
+	providerCredentialRefs: defineTable({
+		userId: v.string(),
+		provider: vCredentialProviderId,
+		vaultObjectId: v.string(),
+		keyHint: v.string(),
+		updatedAt: v.number()
+	})
+		.index('by_userId', ['userId'])
+		.index('by_userId_provider', ['userId', 'provider']),
 	workspaceSessions: defineTable({
 		userId: v.string(),
 		workspaceName: v.string(),

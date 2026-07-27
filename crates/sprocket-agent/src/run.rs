@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use crate::RunContextResponse;
 use crate::convex::RuntimeClient;
-use crate::provider::{AgentProvider, AgentProviderRequest, AgentProviderResult};
+use crate::provider::{AgentProviderRequest, AgentProviderResult, run_with_provider_fallback};
 use crate::types::{RunAgentRequest, deserialize_agent_history};
 
 // Keep RUN_CLAIM_LEASE_DURATION synchronized with
@@ -330,7 +330,7 @@ async fn finalize_provider_result(
             )
             .await
         }
-        AgentProviderResult::Failed { text, error } => {
+        AgentProviderResult::Failed { text, error, .. } => {
             let error_text = error.to_string();
             eprintln!("sprocket-agent: model failed {}: {}", run_id, error_text);
 
@@ -603,14 +603,13 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
             content: OneOrMany::many(prompt_contents)
                 .map_err(|_| anyhow!("run prompt content cannot be empty"))?,
         };
-        let provider = AgentProvider::default_for_run(&runtime, &context, &run_id, &claim_id);
-        let prior_history = deserialize_agent_history(context.agent_history)?;
+        let prior_history = deserialize_agent_history(context.agent_history.clone())?;
         let preamble =
             build_workspace_preamble(&request.workspace_path, &workspace_instructions, &skills);
-        Ok((prompt, provider, prior_history, preamble, skills))
+        Ok((prompt, context, prior_history, preamble, skills))
     })();
 
-    let (prompt, provider, prior_history, preamble, skills) = match prepared {
+    let (prompt, context, prior_history, preamble, skills) = match prepared {
         Ok(values) => values,
         Err(error) => return abort_before_start(&runtime, &run_id, error).await,
     };
@@ -625,9 +624,8 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
     };
 
     eprintln!(
-        "sprocket-agent: selected provider {} for run {}",
-        provider.kind().as_str(),
-        run_id
+        "sprocket-agent: provider preference {:?} for run {}",
+        context.provider_preference, run_id
     );
 
     match timeout(RUN_CLAIM_ATTEMPT_TIMEOUT, runtime.run_finished(&run_id)).await {
@@ -646,24 +644,24 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
     }
 
     match run_with_claim_lease(&runtime, &run_id, &claim_id, lease_started_at, async {
-        let provider_result = provider
-            .run(
-                runtime.clone(),
-                AgentProviderRequest {
-                    run_id: run_id.clone(),
-                    claim_id: claim_id.clone(),
-                    prompt,
-                    preamble,
-                    prior_history,
-                    workspace_root,
-                    skills,
-                    model,
-                    reasoning_effort,
-                    service_tier,
-                    context_budget,
-                },
-            )
-            .await;
+        let provider_result = run_with_provider_fallback(
+            runtime.clone(),
+            &context,
+            AgentProviderRequest {
+                run_id: run_id.clone(),
+                claim_id: claim_id.clone(),
+                prompt,
+                preamble,
+                prior_history,
+                workspace_root,
+                skills,
+                model,
+                reasoning_effort,
+                service_tier,
+                context_budget,
+            },
+        )
+        .await;
 
         finalize_provider_result(&runtime, &run_id, &claim_id, provider_result).await
     })

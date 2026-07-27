@@ -1,21 +1,23 @@
 # sprocket-convex-provider
 
-`sprocket-convex-provider` adapts Convex-backed model completion to Rig's
-completion traits. It lets the Rust agent use Rig's normal multi-turn loop while
-provider credentials, model selection, rate limiting, and response persistence
-remain in the cloud backend.
+`sprocket-convex-provider` adapts Convex-backed model completion to Rig's completion traits.
+It lets the Rust agent use Rig's normal multi-turn loop while hosted provider credentials, model selection, rate limiting, and response persistence remain in the cloud backend.
 
 See [ARCHITECTURE.md](../../ARCHITECTURE.md) for the end-to-end run flow.
 
 ## Role in the system
 
-The adapter translates Rig history, tool schemas, provider options, and usage
-into a Convex action request. It translates the result back into Rig assistant
-content and streaming events.
+The hosted adapter translates Rig history, tool schemas, provider options, and
+usage into a Convex `completion:complete` action. That action streams the model
+and persists live output for the web UI. The Rust side receives the completed
+event sequence so Rig can continue its local tool loop without becoming the
+source of truth for the transcript.
 
-The Convex action persists live output for the web UI. The Rust side receives
-the completed event sequence so Rig can continue its local tool loop without
-becoming the source of truth for the transcript.
+For other Rig providers, the model call happens locally through Rig. `ConvexStreamSync`
+mirrors the same durable stream mutations (`registerCompletionAttempt`,
+`beginAssistantMessage`, `mergeAssistantStreamEvents`) beside that local stream
+so the UI transcript stays consistent without double-writing through
+`completion:complete`.
 
 ## Design constraints
 
@@ -25,10 +27,11 @@ becoming the source of truth for the transcript.
 - Concurrent Convex operations must not be serialized behind a long model call.
 - A superseded stream is treated as stale ownership rather than a model
   failure.
-- Wire-format changes must be coordinated with the Convex completion action.
+- Wire-format changes must be coordinated with the Convex completion action and stream-sync event mapping.
+- User BYOK secrets are never stored here; they arrive only as run-scoped decrypted values from WorkOS Vault via Convex.
 
 The supported crate interface is re-exported from `src/lib.rs`. Transport and
-Rig integration live in `client.rs`; history conversion lives in `messages.rs`.
+Rig integration live in `client.rs`; side-by-side sync in `stream_sync.rs`; history conversion in `messages.rs`.
 
 ## Validation
 

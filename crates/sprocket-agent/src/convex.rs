@@ -13,6 +13,15 @@ use crate::types::{
 const CREATE_RUN_MAX_ATTEMPTS: usize = 3;
 const CREATE_RUN_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "provider", rename_all = "camelCase")]
+enum RunProviderCredential {
+    #[serde(rename = "openai")]
+    OpenAI { api_key: String },
+    #[serde(rename = "chatgpt")]
+    ChatGPT { auth_json: String },
+}
+
 #[derive(Clone)]
 pub(crate) struct RuntimeClient {
     pub(crate) client: ConvexProviderClient,
@@ -300,6 +309,78 @@ impl RuntimeClient {
             .await
     }
 
+    pub(crate) async fn get_openai_api_key(
+        &self,
+        run_id: &str,
+        claim_id: &str,
+    ) -> anyhow::Result<Option<String>> {
+        match self
+            .get_run_provider_credential(run_id, claim_id, "openai")
+            .await?
+        {
+            Some(RunProviderCredential::OpenAI { api_key }) => Ok(Some(api_key)),
+            Some(_) => Err(anyhow!("expected OpenAI credential")),
+            None => Ok(None),
+        }
+    }
+
+    pub(crate) async fn get_chatgpt_auth_json(
+        &self,
+        run_id: &str,
+        claim_id: &str,
+    ) -> anyhow::Result<Option<String>> {
+        match self
+            .get_run_provider_credential(run_id, claim_id, "chatgpt")
+            .await?
+        {
+            Some(RunProviderCredential::ChatGPT { auth_json }) => Ok(Some(auth_json)),
+            Some(_) => Err(anyhow!("expected ChatGPT credential")),
+            None => Ok(None),
+        }
+    }
+
+    async fn get_run_provider_credential(
+        &self,
+        run_id: &str,
+        claim_id: &str,
+        provider: &str,
+    ) -> anyhow::Result<Option<RunProviderCredential>> {
+        let mut args = self.run_args_with_claim(run_id, claim_id);
+        args.insert("provider".to_string(), provider.to_string().into());
+        self.action_json("providerCredentials:getRunProviderCredential", args)
+            .await
+    }
+
+    pub(crate) async fn update_chatgpt_auth(
+        &self,
+        run_id: &str,
+        claim_id: &str,
+        auth_json: &str,
+    ) -> anyhow::Result<bool> {
+        #[derive(Deserialize)]
+        struct UpdateResponse {
+            updated: bool,
+        }
+        let mut args = self.run_args_with_claim(run_id, claim_id);
+        args.insert("authJson".to_string(), auth_json.to_string().into());
+        let result = self
+            .action_json::<UpdateResponse>("providerCredentials:updateRunChatGPTAuth", args)
+            .await?;
+        Ok(result.updated)
+    }
+
+    pub(crate) async fn completion_stream_sequence(&self, run_id: &str) -> anyhow::Result<u64> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct ActorSnapshot {
+            stream_sequence: f64,
+        }
+        let snapshot = self
+            .query_json::<ActorSnapshot>("agentRuntime:completionActor", self.run_args(run_id))
+            .await?;
+        Ok(snapshot.stream_sequence as u64)
+    }
+
     pub(crate) async fn run_finished(&self, run_id: &str) -> anyhow::Result<bool> {
         self.query_json("agentRuntime:isFinished", self.run_args(run_id))
             .await
@@ -400,6 +481,7 @@ impl RuntimeClient {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SummarizeResponse {
     pub(crate) summary: String,
+    #[serde(default)]
     pub(crate) usage: CompletionUsage,
 }
 

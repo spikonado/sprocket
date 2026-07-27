@@ -37,6 +37,7 @@
         "@fontsource/ibm-plex-mono": "^5.3.0",
         "@lucide/svelte": "^1.18.0",
         "@workos-inc/authkit-js": "^0.20.0",
+        "@workos-inc/node": "^10.8.0",
         "ai": "^7.0.37",
         "ai-fallback": "^3.0.0",
         "clsx": "^2.1.1",
@@ -571,6 +572,8 @@
     "@workflow/serde": ["@workflow/serde@4.1.0", "", {}, "sha512-pav4F2BoirECWR7Nf1TKt+2eETcBj7jj4cBefQ8VXQCA6NPkaKeLfj/zMgi+3zYV5ZIBT4GuUiphsj0/b9hPQQ=="],
 
     "@workos-inc/authkit-js": ["@workos-inc/authkit-js@0.20.1", "", {}, "sha512-ThIC/LrN2I9QbdJFCLmCNW6YAwOMmO7IYDz+KKN+gV9lUpY6grRU7dxfb6tjt0vNK8adQ9mSpNRoRQQFuEDGRQ=="],
+
+    "@workos-inc/node": ["@workos-inc/node@10.8.0", "", {}, "sha512-BmKwxaouV4hYhoJ9K0UPLC9LTpVfvnayvAy3lG9ELbZBoEWeaKkXoYn4W+d3vK7SZQ4qj/8PE7ve7sUKXnpRDA=="],
 
     "@xmldom/xmldom": ["@xmldom/xmldom@0.8.13", "", {}, "sha512-KRYzxepc14G/CEpEGc3Yn+JKaAeT63smlDr+vjB8jRfgTBBI9wRj/nkQEO+ucV8p8I9bfKLWp37uHgFrbntPvw=="],
 

@@ -53,6 +53,19 @@ pub struct RunContextResponse {
     pub agent_history: Vec<AgentHistoryMessage>,
     pub workspace_session: WorkspaceSessionSnapshot,
     pub context_budget: ContextBudget,
+    pub provider_preference: Vec<String>,
+    #[serde(default)]
+    pub available_providers: Vec<AvailableProvider>,
+    /// Empty when missing so OpenAI BYOK is not incorrectly enabled for all models.
+    #[serde(default)]
+    pub model_provider: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AvailableProvider {
+    pub id: String,
+    pub configured: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

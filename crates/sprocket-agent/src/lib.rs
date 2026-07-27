@@ -4,6 +4,7 @@ mod hooks;
 mod provider;
 mod run;
 mod tools;
+mod transcript_sync;
 mod types;
 
 pub use run::{AgentRun, finalize_failed_start, run_agent, start_agent_run};

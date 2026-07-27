@@ -1,5 +1,6 @@
 import { v, type Infer } from 'convex/values';
 import { modelIds, reasoningEffortIds, serviceTierIds } from '@convex/lib/models';
+import { completionProviders, credentialProviders } from '@convex/lib/providers';
 import { subscriptionTierIds } from '@convex/lib/tiers';
 
 function literals<const TValues extends readonly string[]>(values: TValues) {
@@ -15,6 +16,12 @@ export const vServiceTier = v.union(...literals(serviceTierIds));
 export const vModelId = v.union(...literals(modelIds));
 
 export const vSubscriptionTier = v.union(...literals(subscriptionTierIds));
+
+export const vCompletionProviderId = v.union(...literals(completionProviders));
+export type CompletionProviderId = Infer<typeof vCompletionProviderId>;
+
+export const vCredentialProviderId = v.union(...literals(credentialProviders));
+export type CredentialProviderId = Infer<typeof vCredentialProviderId>;
 
 export const vSubscriptionStatus = v.union(
 	v.literal('active'),

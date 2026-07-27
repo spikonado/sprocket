@@ -105,7 +105,7 @@ export function buildAgentHistoryFromAssistantParts(args: {
 				part.providerMetadata,
 				args.stripProviderItemReferences
 			);
-			const openai = openAiMetadata(providerMetadata);
+			const openai = openAIMetadata(providerMetadata);
 			const itemId = typeof openai?.itemId === 'string' ? openai.itemId : undefined;
 			const blocks: unknown[] = [];
 			if (part.text.length > 0) {
@@ -201,21 +201,21 @@ function providerMetadataForReplay(
 	if (Array.isArray(value)) return value;
 
 	const metadata = value as Record<string, unknown>;
-	const openai = openAiMetadata(metadata);
+	const openai = openAIMetadata(metadata);
 	if (!openai || !Object.hasOwn(openai, 'itemId')) return value;
 
-	const replayableOpenAi = { ...openai };
-	delete replayableOpenAi.itemId;
+	const replayableOpenAI = { ...openai };
+	delete replayableOpenAI.itemId;
 	const replayableMetadata = { ...metadata };
-	if (Object.keys(replayableOpenAi).length > 0) {
-		replayableMetadata.openai = replayableOpenAi;
+	if (Object.keys(replayableOpenAI).length > 0) {
+		replayableMetadata.openai = replayableOpenAI;
 	} else {
 		delete replayableMetadata.openai;
 	}
 	return Object.keys(replayableMetadata).length > 0 ? replayableMetadata : undefined;
 }
 
-function openAiMetadata(value: unknown): Record<string, unknown> | undefined {
+function openAIMetadata(value: unknown): Record<string, unknown> | undefined {
 	if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
 	const openai = (value as Record<string, unknown>).openai;
 	return openai && typeof openai === 'object' && !Array.isArray(openai)
