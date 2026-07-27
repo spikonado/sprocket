@@ -65,14 +65,14 @@
 				</p>
 			{:else if usageQuery.isLoading || usageQuery.data === undefined}
 				<div class="animate-pulse space-y-10" aria-hidden="true">
-					<div class="h-4 w-24 rounded bg-[var(--hover-fill)]"></div>
+					<div class="bg-hover-fill h-4 w-24 rounded"></div>
 					{#each usageMeters as meter (meter.id)}
 						<div class="space-y-5">
-							<div class="h-3 w-28 rounded bg-[var(--hover-fill)]"></div>
+							<div class="bg-hover-fill h-3 w-28 rounded"></div>
 							{#each usagePeriods as period (period)}
 								<div class="space-y-2">
-									<div class="h-3.5 w-full rounded bg-[var(--hover-fill)]"></div>
-									<div class="h-1.5 w-full rounded-full bg-[var(--hover-fill)]"></div>
+									<div class="bg-hover-fill h-3.5 w-full rounded"></div>
+									<div class="bg-hover-fill h-1.5 w-full rounded-full"></div>
 								</div>
 							{/each}
 						</div>
@@ -123,7 +123,7 @@
 										)}
 									</p>
 									<div
-										class="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--hover-fill)]"
+										class="bg-hover-fill mt-2 h-1.5 overflow-hidden rounded-full"
 										role="progressbar"
 										aria-label={`${meter.label} — ${periodLabels[meterWindow.period]}`}
 										aria-valuemin={0}

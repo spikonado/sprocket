@@ -64,9 +64,28 @@ export const vReadSkillPayload = v.object({
 	name: v.string()
 });
 
+export const vAskQuestionOption = v.object({
+	id: v.string(),
+	label: v.string()
+});
+
+export const vAskQuestionPayload = v.object({
+	question: v.string(),
+	options: v.array(vAskQuestionOption),
+	yieldTimeMs: v.optional(v.number()),
+	timeoutMs: v.optional(v.number())
+});
+
+export const vAwaitQuestionPayload = v.object({
+	questionId: v.id('agentQuestions'),
+	yieldTimeMs: v.optional(v.number())
+});
+
 export const vExecutorJobPayload = v.union(
 	v.object({}),
 	vApplyPatchPayload,
+	vAskQuestionPayload,
+	vAwaitQuestionPayload,
 	vExecCommandPayload,
 	vReadSkillPayload,
 	vScrapeUrlPayload,
@@ -130,10 +149,26 @@ export const vReadSkillResult = v.object({
 	truncated: v.optional(v.boolean())
 });
 
+export const vAskQuestionAnswer = v.object({
+	optionId: v.optional(v.string()),
+	optionLabel: v.optional(v.string()),
+	text: v.optional(v.string())
+});
+
+export const vAskQuestionResult = v.object({
+	questionId: v.id('agentQuestions'),
+	question: v.string(),
+	options: v.array(vAskQuestionOption),
+	pending: v.boolean(),
+	timedOut: v.boolean(),
+	answer: v.optional(vAskQuestionAnswer)
+});
+
 export const vExecutorJobResult = v.union(
 	v.string(),
 	v.array(vWorkspaceInstruction),
 	vApplyPatchResult,
+	vAskQuestionResult,
 	vCommandExecResult,
 	vReadSkillResult,
 	vScrapeUrlResult,
@@ -163,12 +198,21 @@ export function isRunFinalStatus(
 
 export const vExecutorJobKind = v.union(
 	v.literal('apply_patch'),
+	v.literal('ask_question'),
+	v.literal('await_question'),
 	v.literal('exec_command'),
 	v.literal('get_workspace_instructions'),
 	v.literal('read_skill'),
 	v.literal('scrape_url'),
 	v.literal('web_search'),
 	v.literal('write_stdin')
+);
+
+export const vAgentQuestionStatus = v.union(
+	v.literal('pending'),
+	v.literal('answered'),
+	v.literal('timedOut'),
+	v.literal('cancelled')
 );
 
 export const vExecutorJobStatus = v.union(

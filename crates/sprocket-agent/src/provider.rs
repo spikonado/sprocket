@@ -138,6 +138,8 @@ where
         .agent(model)
         .preamble(&request.preamble)
         .tool(tools.apply_patch)
+        .tool(tools.ask_question)
+        .tool(tools.await_question)
         .tool(tools.exec_command)
         .tool(tools.read_skill)
         .tool(tools.scrape_url)

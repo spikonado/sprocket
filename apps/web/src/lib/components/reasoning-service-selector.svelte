@@ -82,7 +82,7 @@
 	<button
 		bind:this={triggerElement}
 		type="button"
-		class="focus-visible:ring-ring/60 text-muted-foreground inline-flex h-9 shrink-0 items-center gap-1 rounded-lg px-2 text-[15px] transition outline-none hover:bg-[var(--hover-fill)] focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50"
+		class="focus-visible:ring-ring/60 text-muted-foreground hover:bg-hover-fill inline-flex h-9 shrink-0 items-center gap-1 rounded-lg px-2 text-[15px] transition outline-none focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50"
 		aria-haspopup="dialog"
 		aria-expanded={isOpen}
 		aria-label="Select reasoning effort and service tier"
@@ -111,7 +111,7 @@
 				{#each model.reasoningEfforts as effort (effort)}
 					<button
 						type="button"
-						class="focus-visible:ring-ring/60 text-foreground flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm outline-none hover:bg-[var(--hover-fill)] focus-visible:ring-2"
+						class="focus-visible:ring-ring/60 text-foreground hover:bg-hover-fill flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm outline-none focus-visible:ring-2"
 						aria-pressed={effort === reasoningEffort}
 						onclick={() => selectReasoning(effort)}
 					>
@@ -135,7 +135,7 @@
 				{#each model.serviceTiers as tier (tier)}
 					<button
 						type="button"
-						class="focus-visible:ring-ring/60 text-foreground flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm outline-none hover:bg-[var(--hover-fill)] focus-visible:ring-2"
+						class="focus-visible:ring-ring/60 text-foreground hover:bg-hover-fill flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm outline-none focus-visible:ring-2"
 						aria-pressed={tier === serviceTier}
 						onclick={() => selectServiceTier(tier)}
 					>

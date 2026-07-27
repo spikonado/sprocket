@@ -1,7 +1,9 @@
 import {
 	BookOpen,
+	CircleQuestionMark,
 	FileDiff,
 	Globe,
+	Hourglass,
 	NotebookPen,
 	ScrollText,
 	Search,
@@ -13,6 +15,8 @@ import {
 
 const TOOL_KIND_ICONS: Record<string, LucideIcon> = {
 	apply_patch: FileDiff,
+	ask_question: CircleQuestionMark,
+	await_question: Hourglass,
 	check_docs: BookOpen,
 	exec_command: Terminal,
 	get_workspace_instructions: ScrollText,

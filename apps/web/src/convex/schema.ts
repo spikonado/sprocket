@@ -1,6 +1,9 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
 import {
+	vAgentQuestionStatus,
+	vAskQuestionAnswer,
+	vAskQuestionOption,
 	vExecutorJobKind,
 	vExecutorJobPayload,
 	vExecutorJobResult,
@@ -138,5 +141,21 @@ export default defineSchema({
 		.index('by_workspaceSessionId_sequence', ['workspaceSessionId', 'sequence'])
 		.index('by_threadId_sequence', ['threadId', 'sequence'])
 		.index('by_runId_sequence', ['runId', 'sequence'])
-		.index('by_runId_hidden_sequence', ['runId', 'hidden', 'sequence'])
+		.index('by_runId_hidden_sequence', ['runId', 'hidden', 'sequence']),
+	agentQuestions: defineTable({
+		threadId: v.id('threadRecords'),
+		runId: v.id('runs'),
+		jobId: v.id('executorJobs'),
+		question: v.string(),
+		options: v.array(vAskQuestionOption),
+		status: vAgentQuestionStatus,
+		answer: v.optional(vAskQuestionAnswer),
+		createdAt: v.number(),
+		timeoutAt: v.number(),
+		answeredAt: v.optional(v.number()),
+		sequence: v.number()
+	})
+		.index('by_runId_sequence', ['runId', 'sequence'])
+		.index('by_threadId_sequence', ['threadId', 'sequence'])
+		.index('by_threadId_status_sequence', ['threadId', 'status', 'sequence'])
 });

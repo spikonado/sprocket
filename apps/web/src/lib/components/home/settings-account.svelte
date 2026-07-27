@@ -72,10 +72,7 @@
 						Couldn’t load your subscription right now.
 					</p>
 				{:else}
-					<div
-						class="mt-3.5 h-4 w-16 animate-pulse rounded bg-[var(--hover-fill)]"
-						aria-hidden="true"
-					></div>
+					<div class="bg-hover-fill mt-3.5 h-4 w-16 animate-pulse rounded" aria-hidden="true"></div>
 				{/if}
 			</div>
 

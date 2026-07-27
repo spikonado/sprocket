@@ -12,7 +12,7 @@
 
 <button
 	type="button"
-	class="text-muted-foreground hover:text-foreground inline-flex size-7 shrink-0 items-center justify-center rounded-md transition hover:bg-[var(--hover-fill)]"
+	class="text-muted-foreground hover:text-foreground hover:bg-hover-fill inline-flex size-7 shrink-0 items-center justify-center rounded-md transition"
 	aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
 	title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
 	onclick={() => onThemeChange(theme === 'dark' ? 'light' : 'dark')}

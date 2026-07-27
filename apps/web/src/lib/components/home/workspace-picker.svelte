@@ -257,7 +257,7 @@
 			tabindex="-1"
 			onkeydown={handleDialogKeydown}
 		>
-			<div class="border-b border-[var(--hairline)] px-2.5 py-1.5">
+			<div class="border-hairline border-b px-2.5 py-1.5">
 				<div class="relative flex items-center">
 					<div class="text-muted-foreground pointer-events-none flex items-center ps-2">
 						<FolderPlus class="size-4" />
@@ -277,7 +277,7 @@
 					{/if}
 					<button
 						type="button"
-						class="border-border text-foreground absolute inset-e-2 top-1/2 -translate-y-1/2 rounded-md border bg-[var(--hover-fill)] px-2 py-1 text-[12px] transition hover:bg-[var(--hover-fill-strong)] disabled:cursor-not-allowed disabled:opacity-40"
+						class="border-border text-foreground bg-hover-fill hover:bg-hover-fill-strong absolute inset-e-2 top-1/2 -translate-y-1/2 rounded-md border px-2 py-1 text-[12px] transition disabled:cursor-not-allowed disabled:opacity-40"
 						disabled={!canSubmit || isSubmitting}
 						onclick={() => {
 							void confirmSelection();
@@ -294,11 +294,11 @@
 			</div>
 
 			{#if recentWorkspaces.length > 0}
-				<div class="flex flex-wrap gap-1.5 border-b border-[var(--hairline)] px-3 py-2">
+				<div class="border-hairline flex flex-wrap gap-1.5 border-b px-3 py-2">
 					{#each recentWorkspaces as recent (recent.workspacePath)}
 						<button
 							type="button"
-							class="text-muted-foreground hover:text-foreground rounded-md px-2 py-0.5 text-[11px] transition hover:bg-[var(--hover-fill)]"
+							class="text-muted-foreground hover:text-foreground hover:bg-hover-fill rounded-md px-2 py-0.5 text-[11px] transition"
 							onclick={() => {
 								selectRecentWorkspace(recent);
 							}}
@@ -320,8 +320,8 @@
 							type="button"
 							class={`flex min-h-8 w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition ${
 								highlightedPath === entry.fullPath
-									? 'text-foreground bg-[var(--hover-fill-strong)]'
-									: 'text-muted-foreground hover:text-foreground hover:bg-[var(--hover-fill)]'
+									? 'text-foreground bg-hover-fill-strong'
+									: 'text-muted-foreground hover:text-foreground hover:bg-hover-fill'
 							}`}
 							role="option"
 							aria-selected={highlightedPath === entry.fullPath}
@@ -347,7 +347,7 @@
 			{/if}
 
 			<footer
-				class="text-muted-foreground flex items-center justify-between gap-3 border-t border-[var(--hairline)] px-3 py-2 text-[11px]"
+				class="text-muted-foreground border-hairline flex items-center justify-between gap-3 border-t px-3 py-2 text-[11px]"
 			>
 				<div class="flex flex-wrap items-center gap-3">
 					<span>↑↓ Navigate</span>

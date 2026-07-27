@@ -23,9 +23,8 @@
 
 	const navItemClass =
 		'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition';
-	const navItemActiveClass = 'bg-[var(--hover-fill-strong)] text-foreground';
-	const navItemIdleClass =
-		'text-muted-foreground hover:bg-[var(--hover-fill)] hover:text-foreground';
+	const navItemActiveClass = 'bg-hover-fill-strong text-foreground';
+	const navItemIdleClass = 'text-muted-foreground hover:bg-hover-fill hover:text-foreground';
 </script>
 
 <aside class="app-sidebar-panel">
@@ -33,7 +32,7 @@
 		<div class="flex items-center justify-between gap-2 px-3.5 pt-3 pb-3">
 			<button
 				type="button"
-				class="text-muted-foreground hover:text-foreground inline-flex h-8 items-center gap-2 rounded-lg px-2 text-[13px] transition hover:bg-[var(--hover-fill)]"
+				class="text-muted-foreground hover:text-foreground hover:bg-hover-fill inline-flex h-8 items-center gap-2 rounded-lg px-2 text-[13px] transition"
 				onclick={onBack}
 			>
 				<ArrowLeft class="size-3.5" aria-hidden="true" />
