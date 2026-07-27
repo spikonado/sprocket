@@ -35,6 +35,11 @@ export const vApplyPatchPayload = v.object({
 	patch: v.string()
 });
 
+export const vCloneRefRepoPayload = v.object({
+	url: v.string(),
+	reference: v.optional(v.string())
+});
+
 export const vExecCommandPayload = v.object({
 	cmd: v.string(),
 	workdir: v.optional(v.string()),
@@ -67,6 +72,7 @@ export const vReadSkillPayload = v.object({
 export const vExecutorJobPayload = v.union(
 	v.object({}),
 	vApplyPatchPayload,
+	vCloneRefRepoPayload,
 	vExecCommandPayload,
 	vReadSkillPayload,
 	vScrapeUrlPayload,
@@ -87,6 +93,12 @@ export const vApplyPatchResult = v.object({
 			)
 		})
 	)
+});
+
+export const vCloneRefRepoResult = v.object({
+	path: v.string(),
+	commit: v.string(),
+	reused: v.boolean()
 });
 
 export const vCommandExecResult = v.object({
@@ -134,6 +146,7 @@ export const vExecutorJobResult = v.union(
 	v.string(),
 	v.array(vWorkspaceInstruction),
 	vApplyPatchResult,
+	vCloneRefRepoResult,
 	vCommandExecResult,
 	vReadSkillResult,
 	vScrapeUrlResult,
@@ -163,6 +176,7 @@ export function isRunFinalStatus(
 
 export const vExecutorJobKind = v.union(
 	v.literal('apply_patch'),
+	v.literal('clone_ref_repo'),
 	v.literal('exec_command'),
 	v.literal('get_workspace_instructions'),
 	v.literal('read_skill'),

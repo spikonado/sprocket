@@ -1,6 +1,7 @@
 import {
 	BookOpen,
 	FileDiff,
+	GitFork,
 	Globe,
 	NotebookPen,
 	ScrollText,
@@ -14,6 +15,7 @@ import {
 const TOOL_KIND_ICONS: Record<string, LucideIcon> = {
 	apply_patch: FileDiff,
 	check_docs: BookOpen,
+	clone_ref_repo: GitFork,
 	exec_command: Terminal,
 	get_workspace_instructions: ScrollText,
 	read_skill: NotebookPen,
