@@ -23,7 +23,9 @@ fails.
 Command execution has a different trust boundary. Commands start in the
 workspace by default, but they are not sandboxed and may access the wider
 machine with the permissions of the Sprocket process. Output is bounded, and
-cancellation or timeout stops the process tree.
+timeouts stop the process tree. Cancelling an observer (including an agent run)
+detaches it without stopping the command; the session remains available for a
+later observer until it is explicitly terminated or its timeout expires.
 
 Workspace instruction loading follows the project hierarchy so deeper
 instructions can refine root-level guidance without coupling that behavior to

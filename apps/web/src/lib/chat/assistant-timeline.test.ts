@@ -370,11 +370,7 @@ describe('groupAssistantTimelineSections', () => {
 describe('partitionWorkSectionTools', () => {
 	function partition(blocks: AssistantTimelineWorkBlock[], isStreaming: boolean) {
 		const tools = blocks.flatMap((block) => (block.type === 'tool-group' ? block.tools : []));
-		return partitionWorkSectionTools(
-			blocks,
-			isStreaming,
-			buildOpenExecCommandSessions(tools, isStreaming)
-		);
+		return partitionWorkSectionTools(blocks, isStreaming, buildOpenExecCommandSessions(tools));
 	}
 
 	it('pulls running tools out and leaves settled reasoning/tools behind', () => {
@@ -492,7 +488,7 @@ describe('partitionWorkSectionTools', () => {
 		]);
 	});
 
-	it('closes sessions using message-wide open state across text section breaks', () => {
+	it('closes earlier-run sessions using thread-wide monitor state', () => {
 		const exec = tool('exec-1', 'exec_command', {
 			input: { cmd: 'npm run dev' },
 			output: { sessionId: '7', running: true },
@@ -507,7 +503,7 @@ describe('partitionWorkSectionTools', () => {
 				payload: { sessionId: '7' }
 			})
 		});
-		const openSessions = buildOpenExecCommandSessions([exec, monitor], true);
+		const openSessions = buildOpenExecCommandSessions([exec, monitor]);
 		const earlierSection: AssistantTimelineWorkBlock[] = [
 			{ type: 'tool-group', toolKey: 'exec_command', tools: [exec] }
 		];
@@ -528,7 +524,7 @@ describe('partitionWorkSectionTools', () => {
 		]);
 	});
 
-	it('settles in-flight tools and yielded commands after the run stops', () => {
+	it('keeps yielded commands running after the agent run stops', () => {
 		const claimedTool = tool('patch-1', 'apply_patch', {
 			job: executorJob('job-patch', 1, { status: 'claimed', kind: 'apply_patch' })
 		});
@@ -548,14 +544,35 @@ describe('partitionWorkSectionTools', () => {
 
 		const { settledBlocks, runningTools } = partition(blocks, false);
 
-		expect(runningTools).toEqual([]);
-		expect(settledBlocks).toEqual(blocks);
+		expect(runningTools).toEqual([yieldedCommand]);
+		expect(settledBlocks).toEqual([
+			{ type: 'tool-group', toolKey: 'apply_patch', tools: [claimedTool, claimedToolWithResult] }
+		]);
 		expect(assistantTimelineToolFailureKind(claimedTool, false)).toBe('interrupted');
 		expect(assistantTimelineToolError(claimedTool, false)).toBe(
 			'The agent stopped before this tool call finished.'
 		);
 		expect(assistantTimelineToolFailureKind(claimedToolWithResult, false)).toBeUndefined();
 		expect(assistantTimelineToolFailureKind(yieldedCommand, false)).toBeUndefined();
+	});
+
+	it('keeps a cancelled run command open from its reserved session payload', () => {
+		const command = tool('exec-1', 'exec_command', {
+			input: { cmd: 'npm run dev' },
+			job: executorJob('job-exec', 1, {
+				status: 'cancelled',
+				kind: 'exec_command',
+				payload: { cmd: 'npm run dev', sessionId: 'reserved-session' }
+			})
+		});
+		const blocks: AssistantTimelineWorkBlock[] = [
+			{ type: 'tool-group', toolKey: 'exec_command', tools: [command] }
+		];
+
+		const { settledBlocks, runningTools } = partition(blocks, false);
+
+		expect(settledBlocks).toEqual([]);
+		expect(runningTools).toEqual([command]);
 	});
 });
 

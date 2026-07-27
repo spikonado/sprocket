@@ -36,7 +36,9 @@ the on-disk layout.
 The agent currently offers command execution, command-session input, workspace
 patching, skill loading (`read_skill`), web search, and web-page scraping. Every
 tool call is wrapped in a durable executor-job record and observes run
-cancellation while work is active.
+cancellation while work is active. Long-running command sessions are scoped to a
+thread rather than one run, so a later prompt can monitor a command that
+survived cancellation of its originating run.
 
 Command execution has full local process permissions. Patch operations are
 confined to the workspace by `sprocket-workspace`. Web search and scraping run

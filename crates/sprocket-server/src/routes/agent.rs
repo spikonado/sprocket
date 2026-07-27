@@ -4,10 +4,10 @@ use std::time::Duration;
 
 use anyhow::{Context, anyhow};
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
+use axum::routing::{delete, get, post};
 use axum_extra::extract::CookieJar;
 use serde::Deserialize;
 use sprocket_agent::{
@@ -56,7 +56,13 @@ fn static_auth_token_fetcher(token: String) -> AuthTokenFetcher {
 }
 
 pub fn routes() -> axum::Router<AppState> {
-    axum::Router::new().route("/agent/run", post(run_agent_handler))
+    axum::Router::new()
+        .route("/agent/run", post(run_agent_handler))
+        .route(
+            "/agent/commands/{thread_id}/{session_id}",
+            delete(stop_command_handler),
+        )
+        .route("/agent/commands/{thread_id}", get(list_commands_handler))
 }
 
 async fn run_agent_handler(
@@ -74,6 +80,13 @@ async fn run_agent_handler(
         .workspace_path(&payload.workspace_session_id)
         .await
         .map_err(ApiError::bad_request)?;
+    let workspace_root = sprocket_workspace::resolve_workspace_root(&workspace_path)
+        .map_err(ApiError::bad_request)?;
+    let command_sessions = state
+        .command_sessions
+        .for_thread(&payload.thread_id, &workspace_root)
+        .await
+        .map_err(ApiError::bad_request)?;
 
     let auth_token_fetcher = static_auth_token_fetcher(payload.auth_token);
     let request = RunAgentRequest {
@@ -88,6 +101,7 @@ async fn run_agent_handler(
         reasoning_effort: payload.reasoning_effort,
         service_tier: payload.service_tier,
         workspace_path,
+        command_sessions,
     };
 
     let cleanup_request = request.clone();
@@ -131,6 +145,37 @@ async fn run_agent_handler(
         .map_err(|_| ApiError::internal(anyhow!("agent launch task stopped unexpectedly")))?
         .map_err(|error| ApiError::internal(anyhow!(error)))?;
     Ok((StatusCode::ACCEPTED, Json(RunAgentStartResponse { run_id })))
+}
+
+async fn stop_command_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Path((thread_id, session_id)): Path<(String, String)>,
+) -> Result<StatusCode, ApiError> {
+    require_session(&state.auth, &headers, &jar)
+        .await
+        .map_err(ApiError::unauthorized)?;
+    state
+        .command_sessions
+        .stop_by_user(&thread_id, &session_id)
+        .await
+        .map_err(ApiError::not_found)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn list_commands_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Path(thread_id): Path<String>,
+) -> Result<Json<Vec<sprocket_workspace::CommandSessionInfo>>, ApiError> {
+    require_session(&state.auth, &headers, &jar)
+        .await
+        .map_err(ApiError::unauthorized)?;
+    Ok(Json(
+        state.command_sessions.available_sessions(&thread_id).await,
+    ))
 }
 
 async fn await_agent_start<F, T, C, CF>(
@@ -187,6 +232,10 @@ impl ApiError {
 
     fn bad_request(error: anyhow::Error) -> Self {
         Self::with_status(StatusCode::BAD_REQUEST, error)
+    }
+
+    fn not_found(error: anyhow::Error) -> Self {
+        Self::with_status(StatusCode::NOT_FOUND, error)
     }
 
     fn internal(error: anyhow::Error) -> Self {

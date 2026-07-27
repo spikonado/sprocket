@@ -82,7 +82,6 @@ pub(crate) struct ReadSkillTool {
 
 pub(crate) struct AgentToolSet {
     pub(crate) apply_patch: ApplyPatchTool,
-    pub(crate) command_sessions: CommandSessionManager,
     pub(crate) exec_command: ExecCommandTool,
     pub(crate) read_skill: ReadSkillTool,
     pub(crate) scrape_url: ScrapeUrlTool,
@@ -95,21 +94,20 @@ pub(crate) fn agent_tools(
     run_id: String,
     claim_id: String,
     workspace_root: PathBuf,
+    command_sessions: CommandSessionManager,
     tool_call_tracker: ToolCallTracker,
     skills: Arc<[WorkspaceSkill]>,
 ) -> AgentToolSet {
-    let command_sessions = CommandSessionManager::new(workspace_root.clone());
     let context = AgentToolContext::new(
         runtime,
         run_id,
         claim_id,
         workspace_root,
         tool_call_tracker,
-        command_sessions.clone(),
+        command_sessions,
     );
     AgentToolSet {
         apply_patch: ApplyPatchTool(context.clone()),
-        command_sessions,
         exec_command: ExecCommandTool(context.clone()),
         read_skill: ReadSkillTool {
             context: context.clone(),
@@ -314,19 +312,23 @@ impl rig::tool::Tool for ExecCommandTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let session_id = self.0.command_sessions.reserve_session_id();
+        let mut payload = serde_json::to_value(&args).map_err(tool_error)?;
+        payload["sessionId"] = session_id.clone().into();
         execute_tool_job(
             &self.0.runtime,
             &self.0.run_id,
             &self.0.claim_id,
             Self::NAME,
             &self.0.tool_call_tracker,
-            serde_json::to_value(&args).map_err(tool_error)?,
+            payload,
             |cancellation| async {
                 let output = self
                     .0
                     .command_sessions
-                    .exec_command(
+                    .exec_command_with_session_id(
                         cancellation,
+                        session_id,
                         &args.cmd,
                         &args.workdir,
                         &args.shell,

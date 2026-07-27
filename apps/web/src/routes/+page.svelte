@@ -83,6 +83,7 @@
 	import { resolve } from '$app/paths';
 	import { applyTheme, resolveTheme, type SprocketTheme } from '$lib/theme';
 	import type {
+		CommandSessionInfo,
 		DesktopApi,
 		ThreadMessage,
 		ThreadSummary,
@@ -177,6 +178,8 @@
 
 	let desktopApi = $state<DesktopApi | null>(null);
 	let desktopApiResolved = $state(false);
+	let liveCommandSessions = $state<CommandSessionInfo[] | null>(null);
+	let commandSessionsRequestSequence = 0;
 	let currentWorkspaceName = $state<string | null>(null);
 	let currentThreadId = $state<Id<'threadRecords'> | null>(null);
 	let draftWorkspaceName = $state<string | null>(null);
@@ -586,6 +589,48 @@
 
 	const runState = $derived(currentLatestRunData?.run ?? null);
 	const visibleActions = $derived((currentLatestRunData?.jobs ?? []).slice(-60));
+
+	async function refreshLiveCommandSessions(client: DesktopApi, threadId: Id<'threadRecords'>) {
+		const requestSequence = ++commandSessionsRequestSequence;
+		const sessions = await client.listCommandSessions(threadId);
+		if (
+			requestSequence === commandSessionsRequestSequence &&
+			desktopApi === client &&
+			currentThreadId === threadId
+		) {
+			liveCommandSessions = sessions;
+		}
+	}
+
+	$effect(() => {
+		const client = desktopApi;
+		const threadId = currentThreadId;
+		commandSessionsRequestSequence += 1;
+		liveCommandSessions = null;
+		if (!client || !threadId) return;
+
+		let disposed = false;
+		const refresh = async () => {
+			try {
+				await refreshLiveCommandSessions(client, threadId);
+			} catch {
+				// Keep the last confirmed state during a transient local API failure.
+			}
+		};
+		let timeoutId: ReturnType<typeof setTimeout> | undefined;
+		const poll = async () => {
+			await refresh();
+			if (!disposed) {
+				timeoutId = window.setTimeout(() => void poll(), 1_000);
+			}
+		};
+		void poll();
+		return () => {
+			disposed = true;
+			commandSessionsRequestSequence += 1;
+			if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+		};
+	});
 	const currentComposerScope = $derived(
 		getComposerScope(currentThreadId, currentWorkspaceSessionId)
 	);
@@ -1335,6 +1380,17 @@
 		}
 	}
 
+	async function stopCommand(threadId: Id<'threadRecords'>, sessionId: string) {
+		const client = desktopApi;
+		if (!client) {
+			throw new Error(localServerRequiredMessage);
+		}
+		await client.stopCommand(threadId, sessionId);
+		if (currentThreadId === threadId) {
+			await refreshLiveCommandSessions(client, threadId);
+		}
+	}
+
 	$effect(() => {
 		const data = currentLatestRunData;
 		if (!data) {
@@ -1900,6 +1956,8 @@
 						actions={visibleActions}
 						activeRunId={isRunning ? (runState?._id ?? null) : null}
 						workspaceSession={currentWorkspaceSession}
+						{liveCommandSessions}
+						onStopCommand={stopCommand}
 					/>
 
 					<PromptComposer

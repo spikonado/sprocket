@@ -55,6 +55,11 @@ fn tool_payload_compatible(raw: &serde_json::Value, normalized: &serde_json::Val
     match (raw, normalized) {
         (serde_json::Value::Object(raw), serde_json::Value::Object(normalized)) => {
             normalized.iter().all(|(key, value)| {
+                // exec_command reserves this internal field before persisting
+                // the job; it is not part of the model-facing tool arguments.
+                if key == "sessionId" && !raw.contains_key(key) {
+                    return true;
+                }
                 raw.get(key)
                     .is_some_and(|raw| tool_payload_compatible(raw, value))
             })
@@ -288,6 +293,23 @@ mod tests {
         assert_eq!(
             tracker.claim("exec_command", &serde_json::json!({ "cmd": "ls" })),
             Some("call-2".to_string())
+        );
+    }
+
+    #[test]
+    fn tracker_ignores_reserved_exec_session_id() {
+        let tracker = ToolCallTracker::default();
+        tracker.record(Some("call-1"), "exec_command", r#"{"cmd":"sleep 5"}"#);
+
+        assert_eq!(
+            tracker.claim(
+                "exec_command",
+                &serde_json::json!({
+                    "cmd": "sleep 5",
+                    "sessionId": "reserved-before-start"
+                })
+            ),
+            Some("call-1".to_string())
         );
     }
 

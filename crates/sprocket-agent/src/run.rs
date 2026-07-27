@@ -3,8 +3,9 @@ use rig::OneOrMany;
 use rig::completion::Message;
 use rig::message::{ImageMediaType, UserContent};
 use sprocket_workspace::{
-    BUILTIN_SKILLS, WorkspaceInstruction, WorkspaceSkill, default_user_skills_dirs,
-    load_workspace_instructions, load_workspace_skills, resolve_workspace_root,
+    BUILTIN_SKILLS, CommandSessionInfo, WorkspaceInstruction, WorkspaceSkill,
+    default_user_skills_dirs, load_workspace_instructions, load_workspace_skills,
+    resolve_workspace_root,
 };
 use std::future::Future;
 use std::sync::Arc;
@@ -64,6 +65,7 @@ fn build_workspace_preamble(
     workspace_path: &str,
     workspace_instructions: &[WorkspaceInstruction],
     skills: &[WorkspaceSkill],
+    command_sessions: &[CommandSessionInfo],
 ) -> String {
     let instruction_block = if workspace_instructions.is_empty() {
         "No AGENTS.md instructions were preloaded for the current workspace.".to_string()
@@ -90,6 +92,31 @@ fn build_workspace_preamble(
             .collect::<Vec<_>>()
             .join("\n");
         format!("<SKILLS>\n{entries}\n</SKILLS>")
+    };
+
+    let command_sessions_block = if command_sessions.is_empty() {
+        "There are no command sessions available from previous agent runs.".to_string()
+    } else {
+        let sessions = command_sessions
+            .iter()
+            .map(|session| {
+                let status = if session.running {
+                    "running".to_string()
+                } else if let Some(error) = &session.error {
+                    format!("finished: {error}")
+                } else {
+                    "finished".to_string()
+                };
+                format!(
+                    "- Session {} ({status}) in {}: {}",
+                    session.session_id, session.cwd, session.command
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "Command sessions from previous agent runs are still available. Use `write_stdin` with the session ID to monitor them or retrieve their final output:\n{sessions}"
+        )
     };
 
     [
@@ -140,6 +167,10 @@ fn build_workspace_preamble(
         "Skills may reference bundled files; for on-disk skills, the read_skill result includes a dir path for reading those with exec_command when needed.",
         "",
         &skills_block,
+        "",
+        "## Previous Command Sessions",
+        "",
+        &command_sessions_block,
         "",
         "## AGENTS.md Spec",
         "",
@@ -570,6 +601,7 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
         Err(error) => return abort_before_start(&runtime, &run_id, error).await,
     };
     eprintln!("sprocket-agent: loaded run context {}", run_id);
+    let available_command_sessions = request.command_sessions.available_sessions().await;
 
     let model = context.run.selected_model.clone();
     let reasoning_effort = context.run.reasoning_effort.clone();
@@ -605,8 +637,12 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
         };
         let provider = AgentProvider::default_for_run(&runtime, &context, &run_id, &claim_id);
         let prior_history = deserialize_agent_history(context.agent_history)?;
-        let preamble =
-            build_workspace_preamble(&request.workspace_path, &workspace_instructions, &skills);
+        let preamble = build_workspace_preamble(
+            &request.workspace_path,
+            &workspace_instructions,
+            &skills,
+            &available_command_sessions,
+        );
         Ok((prompt, provider, prior_history, preamble, skills))
     })();
 
@@ -656,6 +692,7 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
                     preamble,
                     prior_history,
                     workspace_root,
+                    command_sessions: request.command_sessions.clone(),
                     skills,
                     model,
                     reasoning_effort,
@@ -703,7 +740,7 @@ mod tests {
                 contents: "---\nname: pdf-processing\ndescription: Handle PDFs\n---\n",
             },
         }];
-        let preamble = build_workspace_preamble("/tmp/project", &[], &skills);
+        let preamble = build_workspace_preamble("/tmp/project", &[], &skills, &[]);
         assert!(preamble.contains("## Skills"));
         assert!(preamble.contains("<SKILLS>"));
         assert!(preamble.contains("- name: pdf-processing"));
@@ -713,7 +750,7 @@ mod tests {
 
     #[test]
     fn preamble_renders_empty_skills_line() {
-        let preamble = build_workspace_preamble("/tmp/project", &[], &[]);
+        let preamble = build_workspace_preamble("/tmp/project", &[], &[], &[]);
         assert!(preamble.contains("## Skills"));
         assert!(preamble.contains("No skills are installed."));
         assert!(!preamble.contains("<SKILLS>"));
@@ -728,7 +765,7 @@ mod tests {
                 contents: "---\nname: demo\ndescription: Line one\n---\n",
             },
         }];
-        let preamble = build_workspace_preamble("/tmp/project", &[], &skills);
+        let preamble = build_workspace_preamble("/tmp/project", &[], &skills, &[]);
         assert!(preamble.contains("description: Line one line two"));
         assert!(!preamble.contains("description: Line one\n"));
     }

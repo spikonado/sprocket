@@ -143,6 +143,14 @@ export type AgentRunStart = {
 	runId: Id<'runs'>;
 };
 
+export type CommandSessionInfo = {
+	sessionId: string;
+	command: string;
+	cwd: string;
+	running: boolean;
+	error?: string;
+};
+
 export type FilesystemBrowseEntry = {
 	name: string;
 	fullPath: string;
@@ -178,6 +186,8 @@ export type DesktopApi = {
 		session: WorkspaceSessionAttachment
 	) => Promise<WorkspaceSessionLocation>;
 	runAgent: (request: AgentRunRequest) => Promise<AgentRunStart>;
+	listCommandSessions: (threadId: Id<'threadRecords'>) => Promise<CommandSessionInfo[]>;
+	stopCommand: (threadId: Id<'threadRecords'>, sessionId: string) => Promise<void>;
 };
 
 export type WorkspacePathResolution = {

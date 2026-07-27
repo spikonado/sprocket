@@ -37,6 +37,9 @@ export const vApplyPatchPayload = v.object({
 
 export const vExecCommandPayload = v.object({
 	cmd: v.string(),
+	// Reserved by the local agent before the process starts so a cancelled run
+	// can still expose and stop the surviving command session.
+	sessionId: v.optional(v.string()),
 	workdir: v.optional(v.string()),
 	shell: v.optional(v.string()),
 	timeoutMs: v.optional(v.number()),

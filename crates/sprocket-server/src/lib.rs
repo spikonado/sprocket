@@ -1,4 +1,5 @@
 mod auth;
+mod command_sessions;
 mod config;
 pub mod repo_env;
 mod routes;
@@ -63,6 +64,7 @@ impl StartupInfo {
 #[derive(Clone)]
 pub struct AppState {
     pub auth: Arc<auth::AuthState>,
+    pub(crate) command_sessions: command_sessions::CommandSessionStore,
     pub desktop_login: Arc<auth::DesktopLoginStore>,
     pub workspace_sessions: Arc<workspace_sessions::WorkspaceSessionStore>,
     pub http_base_url: String,
@@ -109,6 +111,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
 
     let state = AppState {
         auth,
+        command_sessions: command_sessions::CommandSessionStore::default(),
         desktop_login: auth::DesktopLoginStore::new(),
         workspace_sessions,
         http_base_url: http_base_url.clone(),
