@@ -167,7 +167,7 @@
 		bind:this={triggerElement}
 		type="button"
 		class={cn(
-			'focus-visible:ring-ring/60 text-muted-foreground inline-flex h-8 shrink-0 items-center gap-2 rounded-lg border border-transparent bg-transparent px-2 text-sm font-medium transition outline-none hover:bg-[var(--hover-fill)] focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50',
+			'focus-visible:ring-ring/60 text-muted-foreground hover:bg-hover-fill inline-flex h-8 shrink-0 items-center gap-2 rounded-lg border border-transparent bg-transparent px-2 text-sm font-medium transition outline-none focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50',
 			!optionIcon && 'gap-1',
 			triggerClassName
 		)}
@@ -220,8 +220,8 @@
 						type="button"
 						class={cn(
 							'focus-visible:ring-ring/60 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left outline-none focus-visible:ring-2',
-							locked ? 'cursor-not-allowed opacity-45' : 'hover:bg-[var(--hover-fill)]',
-							!locked && option.id === value && 'bg-[var(--hover-fill)]'
+							locked ? 'cursor-not-allowed opacity-45' : 'hover:bg-hover-fill',
+							!locked && option.id === value && 'bg-hover-fill'
 						)}
 						aria-pressed={!locked && option.id === value}
 						aria-disabled={locked}

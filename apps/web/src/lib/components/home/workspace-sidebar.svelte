@@ -41,7 +41,7 @@
 
 	const DEFAULT_VISIBLE_THREAD_COUNT = 3;
 	const sidebarActionButtonClass =
-		'flex h-9 w-full min-w-0 items-center gap-2.5 rounded-lg px-2 text-[13px] font-medium tracking-[-0.02em] text-foreground transition hover:bg-[var(--hover-fill)] hover:text-foreground';
+		'flex h-9 w-full min-w-0 items-center gap-2.5 rounded-lg px-2 text-[13px] font-medium tracking-[-0.02em] text-foreground transition hover:bg-hover-fill hover:text-foreground';
 	const sidebarActionIconClass = 'size-4 shrink-0 text-muted-foreground';
 	let expandedProjects = $state<Record<string, boolean>>({});
 	let collapsedProjects = $state<Record<string, boolean>>({});
@@ -211,7 +211,7 @@
 
 			{#if groups.length === 0}
 				<div
-					class="text-muted-foreground rounded-3xl border border-dashed border-[var(--hairline)] bg-[var(--hover-fill)] px-4 py-4 text-sm leading-6"
+					class="text-muted-foreground bg-hover-fill rounded-3xl border border-dashed border-[var(--hairline)] px-4 py-4 text-sm leading-6"
 				>
 					Choose a project to start organizing threads.
 				</div>
@@ -266,7 +266,7 @@
 
 								<button
 									type="button"
-									class="text-muted-foreground hover:text-foreground absolute top-0.5 right-1 inline-flex h-6 w-6 items-center justify-center rounded-md opacity-0 transition group-hover:opacity-100 hover:bg-[var(--hover-fill)] focus-visible:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
+									class="text-muted-foreground hover:text-foreground hover:bg-hover-fill absolute top-0.5 right-1 inline-flex h-6 w-6 items-center justify-center rounded-md opacity-0 transition group-hover:opacity-100 focus-visible:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
 									onclick={() => {
 										if (group.localWorkspaceAvailability === 'available') {
 											onStartThreadDraft(group.workspaceName);
@@ -326,7 +326,7 @@
 														<input
 															bind:this={renameInput}
 															bind:value={renameDraft}
-															class="border-border text-foreground focus:border-ring h-9 w-full rounded-lg border bg-[var(--hover-fill)] px-2 text-[13px] outline-none"
+															class="border-border text-foreground focus:border-ring bg-hover-fill h-9 w-full rounded-lg border px-2 text-[13px] outline-none"
 															aria-label="Rename thread"
 															onkeydown={(event) => {
 																if (event.key === 'Escape') {
@@ -345,7 +345,7 @@
 															type="button"
 															class={`${sidebarActionButtonClass} pr-8 ${
 																isSelected
-																	? 'text-foreground bg-[var(--hover-fill)]'
+																	? 'text-foreground bg-hover-fill'
 																	: 'text-muted-foreground'
 															}`}
 															aria-current={isSelected ? 'page' : undefined}
@@ -379,7 +379,7 @@
 														</button>
 														<button
 															type="button"
-															class={`text-muted-foreground hover:text-foreground absolute top-1.5 right-1 inline-flex h-6 w-6 items-center justify-center rounded-md transition hover:bg-[var(--hover-fill)] focus-visible:opacity-100 ${
+															class={`text-muted-foreground hover:text-foreground hover:bg-hover-fill absolute top-1.5 right-1 inline-flex h-6 w-6 items-center justify-center rounded-md transition focus-visible:opacity-100 ${
 																isSelected
 																	? 'opacity-100'
 																	: 'opacity-0 group-focus-within/thread:opacity-100 group-hover/thread:opacity-100'
@@ -446,7 +446,7 @@
 	>
 		<button
 			type="button"
-			class="text-foreground hover:text-foreground flex w-full px-3 py-1.5 text-left text-[13px] transition hover:bg-[var(--hover-fill)]"
+			class="text-foreground hover:text-foreground hover:bg-hover-fill flex w-full px-3 py-1.5 text-left text-[13px] transition"
 			role="menuitem"
 			onclick={() => {
 				beginRename(contextMenu!.threadId, contextMenu!.title);

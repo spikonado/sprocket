@@ -21,7 +21,7 @@
 
 	const variantClass = $derived(
 		variant === 'outline'
-			? 'border-border bg-surface/80 text-foreground hover:bg-[var(--hover-fill)]'
+			? 'border-border bg-surface/80 text-foreground hover:bg-hover-fill'
 			: 'bg-primary text-primary-foreground hover:opacity-90'
 	);
 </script>

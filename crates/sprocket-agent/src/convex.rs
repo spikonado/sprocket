@@ -318,6 +318,22 @@ impl RuntimeClient {
         decode_function_result(result, "agentRuntime:isFinished")
     }
 
+    pub(crate) async fn subscribe(
+        &self,
+        function: &str,
+        mut args: BTreeMap<String, Value>,
+    ) -> anyhow::Result<QuerySubscription> {
+        self.add_execution_secret(&mut args);
+        self.client.subscribe(function, args).await
+    }
+
+    pub(crate) fn decode_subscription_update<T: for<'de> Deserialize<'de>>(
+        result: FunctionResult,
+        function: &str,
+    ) -> anyhow::Result<T> {
+        decode_function_result(result, function)
+    }
+
     pub(crate) async fn finalize_run(
         &self,
         run_id: &str,

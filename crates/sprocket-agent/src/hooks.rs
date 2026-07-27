@@ -6,6 +6,8 @@ use rig::completion::CompletionModel;
 
 pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
     "apply_patch",
+    "ask_question",
+    "await_question",
     "exec_command",
     "read_skill",
     "scrape_url",

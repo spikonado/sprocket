@@ -113,6 +113,18 @@ async function finalizeRunRecord(
 			completedAt: finalizedJob.completedAt
 		});
 	}
+	const pendingQuestions = await ctx.db
+		.query('agentQuestions')
+		.withIndex('by_runId_sequence', (query) => query.eq('runId', run._id))
+		.collect();
+	for (const question of pendingQuestions) {
+		if (question.status === 'pending') {
+			await ctx.db.patch(question._id, {
+				status: 'cancelled',
+				answeredAt: completedAt
+			});
+		}
+	}
 	if (alreadyFinal) {
 		if (run.activeJobId) {
 			await ctx.db.patch(run._id, { activeJobId: undefined });

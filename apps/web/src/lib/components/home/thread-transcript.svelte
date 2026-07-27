@@ -74,6 +74,10 @@
 		switch (toolKey) {
 			case 'apply_patch':
 				return 'Changed Files';
+			case 'ask_question':
+				return 'Asked Questions';
+			case 'await_question':
+				return 'Waiting for Answers';
 			case 'check_docs':
 				return 'Checked Docs';
 			case 'exec_command':
@@ -117,6 +121,10 @@
 		switch (name) {
 			case 'apply_patch':
 				return summarizePatchInput(input) ?? 'Patch';
+			case 'ask_question':
+				return typeof fields?.question === 'string' ? fields.question : 'Question';
+			case 'await_question':
+				return 'Waiting for answer';
 			case 'check_docs':
 				return typeof fields?.query === 'string'
 					? fields.query
@@ -409,7 +417,7 @@
 													</button>
 												{:else}
 													<span
-														class="text-muted-foreground inline-flex items-center rounded-xl border border-[var(--hairline)] bg-[var(--hover-fill)] px-3 py-2 text-xs"
+														class="text-muted-foreground border-hairline bg-hover-fill inline-flex items-center rounded-xl border px-3 py-2 text-xs"
 													>
 														{attachment.name} (unavailable)
 													</span>

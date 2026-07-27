@@ -2,12 +2,18 @@
 	import { ArrowUp, ImagePlus, Square, X } from '@lucide/svelte';
 	import { useAuth, useQuery } from 'convex-svelte';
 	import { api } from '$convex/_generated/api';
+	import type { Id } from '$convex/_generated/dataModel';
 	import OptionSelector from '$lib/components/option-selector.svelte';
 	import ProviderLogo from '$lib/components/provider-logo.svelte';
 	import ReasoningServiceSelector from '$lib/components/reasoning-service-selector.svelte';
 	import { shouldSubmitComposerFromKeydown } from '$lib/chat/composer';
 	import { applySkillSelection, filterSkills, getActiveDollarQuery } from '$lib/chat/dollar-skills';
 	import type { SkillSummary } from '$lib/types/sprocket';
+	import {
+		AGENT_DECIDE_OPTION_ID,
+		canSubmitQuestionAnswer,
+		type AgentQuestionOption
+	} from '$convex/lib/agentQuestions';
 	import {
 		defaultModelId,
 		defaultReasoningEffort,
@@ -29,6 +35,12 @@
 		type ComposerAttachment
 	} from '$lib/chat/attachments';
 
+	export type PendingAgentQuestion = {
+		questionId: Id<'agentQuestions'>;
+		question: string;
+		options: AgentQuestionOption[];
+	};
+
 	type Props = {
 		prompt?: string;
 		attachments: ComposerAttachment[];
@@ -38,6 +50,8 @@
 		selectedModel?: CatalogModelId;
 		selectedReasoningEffort?: SupportedReasoningEffort;
 		selectedServiceTier?: SupportedServiceTier;
+		pendingQuestion?: PendingAgentQuestion | null;
+		selectedQuestionOptionId?: string | null;
 		canSend: boolean;
 		isSubmitting: boolean;
 		isStarting: boolean;
@@ -67,6 +81,8 @@
 		selectedModel = $bindable(defaultModelId),
 		selectedReasoningEffort = $bindable<SupportedReasoningEffort>(defaultReasoningEffort),
 		selectedServiceTier = $bindable<SupportedServiceTier>(defaultServiceTier),
+		pendingQuestion = null,
+		selectedQuestionOptionId = $bindable<string | null>(null),
 		canSend,
 		isSubmitting,
 		isStarting,
@@ -113,13 +129,36 @@
 	let skillsCacheKey: string | null | undefined = undefined;
 	let optionElements = $state<Array<HTMLElement | null>>([]);
 
+	const answeringQuestion = $derived(pendingQuestion != null);
+	const composerLocked = $derived((isRunning && !answeringQuestion) || isSubmitting);
 	const hasMessageContent = $derived(Boolean(prompt.trim()) || attachments.length > 0);
+	const canAnswerQuestion = $derived(
+		canSubmitQuestionAnswer({
+			selectedOptionId: selectedQuestionOptionId,
+			text: prompt
+		})
+	);
+	const canSubmitContent = $derived(answeringQuestion ? canAnswerQuestion : hasMessageContent);
 	const attachmentsPending = $derived(
 		attachments.some((attachment) => attachment.status !== 'ready')
 	);
 	const canAttachMore = $derived(
-		attachments.length < MAX_IMAGE_ATTACHMENTS && !isRunning && !isSubmitting
+		attachments.length < MAX_IMAGE_ATTACHMENTS && !composerLocked && !answeringQuestion
 	);
+
+	let trackedPendingQuestionId = $state<string | null>(null);
+	$effect(() => {
+		const nextId = pendingQuestion?.questionId ?? null;
+		if (nextId !== trackedPendingQuestionId) {
+			trackedPendingQuestionId = nextId;
+			selectedQuestionOptionId = null;
+			// Drop answer draft when the pending question changes or clears so it
+			// cannot leak into the next question or a later normal send.
+			if (prompt.trim()) {
+				prompt = '';
+			}
+		}
+	});
 	const attachTooltipLabel = `Attach images (up to ${MAX_IMAGE_ATTACHMENTS})`;
 	const supportsFieldSizing = typeof CSS !== 'undefined' && CSS.supports('field-sizing', 'content');
 	const contextPercent = $derived(
@@ -136,7 +175,7 @@
 			: 0
 	);
 	const dollarQuery = $derived(getActiveDollarQuery(prompt, caretPosition));
-	const skillsPopupOpen = $derived(dollarQuery !== null && !skillsDismissed);
+	const skillsPopupOpen = $derived(dollarQuery !== null && !skillsDismissed && !answeringQuestion);
 	const filteredSkills = $derived(dollarQuery === null ? [] : filterSkills(skills, dollarQuery));
 	const activeOptionId = $derived(
 		skillsPopupOpen && filteredSkills.length > 0
@@ -222,7 +261,7 @@
 		const files = Array.from(event.clipboardData?.files ?? []).filter((file) =>
 			file.type.startsWith('image/')
 		);
-		if (files.length === 0 || isRunning || isSubmitting) {
+		if (files.length === 0 || isRunning || isSubmitting || answeringQuestion) {
 			return;
 		}
 		event.preventDefault();
@@ -289,11 +328,11 @@
 
 		if (
 			!canSend ||
-			!canSubmitWithModel ||
+			(!answeringQuestion && !canSubmitWithModel) ||
 			isSubmitting ||
-			isRunning ||
-			!hasMessageContent ||
-			attachmentsPending
+			composerLocked ||
+			!canSubmitContent ||
+			(!answeringQuestion && attachmentsPending)
 		) {
 			return;
 		}
@@ -304,6 +343,10 @@
 
 		event.preventDefault();
 		onSubmit();
+	}
+
+	function toggleQuestionOption(optionId: string) {
+		selectedQuestionOptionId = selectedQuestionOptionId === optionId ? null : optionId;
 	}
 
 	function handleModelChange(modelId: CatalogModelId) {
@@ -410,7 +453,38 @@
 		<div class={composerShellClass}>
 			<div class={composerInnerClass}>
 				<div class="relative flex min-h-33 flex-col px-4 pt-4 pb-2.5">
-					{#if attachments.length > 0}
+					{#if pendingQuestion}
+						<div class="mb-3" role="group" aria-label="Agent question">
+							<p class="text-foreground text-[14px] leading-6 font-medium">
+								{pendingQuestion.question}
+							</p>
+							<ul class="mt-2 flex flex-col gap-1.5" aria-label="Answer options">
+								{#each pendingQuestion.options as option (option.id)}
+									{@const isAgentDecide = option.id === AGENT_DECIDE_OPTION_ID}
+									{@const isSelected = selectedQuestionOptionId === option.id}
+									<li>
+										<button
+											type="button"
+											class={`w-full rounded-lg border px-3 py-2 text-left text-[13px] leading-5 transition ${
+												isSelected
+													? 'border-foreground/40 bg-hover-fill-strong text-foreground'
+													: isAgentDecide
+														? 'border-border/70 text-muted-foreground/80 hover:text-muted-foreground hover:bg-hover-fill'
+														: 'border-border text-muted-foreground hover:text-foreground hover:bg-hover-fill'
+											}`}
+											aria-pressed={isSelected}
+											onclick={() => {
+												toggleQuestionOption(option.id);
+											}}
+										>
+											{option.label}
+										</button>
+									</li>
+								{/each}
+							</ul>
+						</div>
+					{/if}
+					{#if attachments.length > 0 && !answeringQuestion}
 						<ul class="mb-3 flex flex-wrap items-center gap-2" aria-label="Attached images">
 							{#each attachments as attachment (attachment.localId)}
 								<li
@@ -449,7 +523,7 @@
 										type="button"
 										class="bg-foreground/70 text-background hover:bg-foreground/90 absolute top-1 right-1 flex size-4.5 cursor-pointer items-center justify-center rounded-full transition disabled:cursor-not-allowed disabled:opacity-40"
 										aria-label="Remove {attachment.name}"
-										disabled={isRunning || isSubmitting}
+										disabled={composerLocked}
 										onclick={() => onRemoveAttachment(attachment.localId)}
 									>
 										<X class="size-3" aria-hidden="true" />
@@ -493,8 +567,8 @@
 											id="composer-skill-option-{index}"
 											class={`flex w-full flex-col gap-0.5 px-3 py-2 text-left transition ${
 												highlightedIndex === index
-													? 'text-foreground bg-[var(--hover-fill-strong)]'
-													: 'text-muted-foreground hover:text-foreground hover:bg-[var(--hover-fill)]'
+													? 'text-foreground bg-hover-fill-strong'
+													: 'text-muted-foreground hover:text-foreground hover:bg-hover-fill'
 											}`}
 											role="option"
 											aria-selected={highlightedIndex === index}
@@ -519,8 +593,10 @@
 							bind:value={prompt}
 							rows="1"
 							class="text-foreground placeholder:text-muted-foreground field-sizing-content max-h-40 min-h-17 w-full resize-none overflow-y-auto border-0 bg-transparent px-0 py-0 text-[14px] leading-6 outline-none"
-							placeholder="Ask anything, @tag files/directories, or use $ to show available skills"
-							disabled={isRunning || isSubmitting}
+							placeholder={answeringQuestion
+								? 'Add detail, or type a custom answer'
+								: 'Ask anything, @tag files/directories, or use $ to show available skills'}
+							disabled={composerLocked}
 							role="combobox"
 							aria-autocomplete="list"
 							aria-haspopup="listbox"
@@ -569,16 +645,14 @@
 								<ImagePlus class="size-4" aria-hidden="true" />
 							</button>
 
-							<div
-								class="mx-1 hidden h-4 w-px shrink-0 bg-[var(--hover-fill-strong)] sm:block"
-							></div>
+							<div class="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
 
 							<OptionSelector
 								bind:value={selectedModel}
 								options={tierModelOptions}
 								ariaLabel="Select model"
 								menuTitle="Model"
-								disabled={isRunning || modelCatalog === undefined}
+								disabled={composerLocked || answeringQuestion || modelCatalog === undefined}
 								searchable
 								onValueChange={handleModelChange}
 								className="z-20 shrink-0"
@@ -589,16 +663,14 @@
 								{/snippet}
 							</OptionSelector>
 
-							<div
-								class="mx-1 hidden h-4 w-px shrink-0 bg-[var(--hover-fill-strong)] sm:block"
-							></div>
+							<div class="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
 
 							{#if selectedCatalogModel}
 								<ReasoningServiceSelector
 									model={selectedCatalogModel}
 									bind:reasoningEffort={selectedReasoningEffort}
 									bind:serviceTier={selectedServiceTier}
-									disabled={isRunning}
+									disabled={composerLocked || answeringQuestion}
 									className="z-20 shrink-0"
 								/>
 							{/if}
@@ -620,7 +692,7 @@
 								</button>
 								<div
 									id="context-window-details"
-									class="border-border bg-popover invisible absolute right-0 bottom-full z-50 mb-3 w-76 translate-y-1 rounded-xl border p-4 opacity-0 shadow-[var(--composer-shadow)] transition duration-150 group-focus-within/context:visible group-focus-within/context:translate-y-0 group-focus-within/context:opacity-100 group-hover/context:visible group-hover/context:translate-y-0 group-hover/context:opacity-100"
+									class="border-border bg-popover invisible absolute right-0 bottom-full z-50 mb-3 w-76 translate-y-1 rounded-xl border p-4 opacity-0 shadow-(--composer-shadow) transition duration-150 group-focus-within/context:visible group-focus-within/context:translate-y-0 group-focus-within/context:opacity-100 group-hover/context:visible group-hover/context:translate-y-0 group-hover/context:opacity-100"
 									role="tooltip"
 								>
 									<div class="flex items-center justify-between gap-4 text-[13px]">
@@ -631,7 +703,7 @@
 											)}</span
 										>
 									</div>
-									<div class="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--hover-fill)]">
+									<div class="bg-hover-fill mt-3 h-1.5 overflow-hidden rounded-full">
 										<div
 											class="bg-accent h-full rounded-full transition-[width] duration-300"
 											style={`width: ${contextPercent}%`}
@@ -659,17 +731,18 @@
 								>
 									<Square class="size-3.5 fill-current" />
 								</button>
-							{:else}
+							{/if}
+							{#if answeringQuestion || !isRunning}
 								<button
 									type="button"
 									class="bg-primary/90 text-primary-foreground hover:bg-primary flex h-10 w-10 items-center justify-center rounded-full transition-all duration-150 hover:scale-105 enabled:cursor-pointer disabled:pointer-events-none disabled:opacity-30 disabled:hover:scale-100"
 									onclick={onSubmit}
 									disabled={!canSend ||
-										!canSubmitWithModel ||
+										(!answeringQuestion && !canSubmitWithModel) ||
 										isSubmitting ||
-										!hasMessageContent ||
-										attachmentsPending}
-									aria-label="Send message"
+										!canSubmitContent ||
+										(!answeringQuestion && attachmentsPending)}
+									aria-label={answeringQuestion ? 'Submit answer' : 'Send message'}
 								>
 									<ArrowUp class="size-4" />
 								</button>

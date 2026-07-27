@@ -131,6 +131,7 @@
 	const archiveThreadMutation = useMutation(api.threads.archive);
 	const restoreThreadMutation = useMutation(api.threads.restore);
 	const finalizeRun = useMutation(api.agentRuntime.finalizeRun);
+	const answerAgentQuestion = useMutation(api.agentQuestions.answer);
 	const setLastThread = useMutation(api.uiPreferences.setLastThread);
 	const setThemePreference = useMutation(api.uiPreferences.setTheme);
 	const generateImageUploadUrl = useMutation(api.imageUploads.generateUploadUrl);
@@ -185,6 +186,8 @@
 	let selectedReasoningEffort = $state<SupportedReasoningEffort>(defaultReasoningEffort);
 	let selectedServiceTier = $state<SupportedServiceTier>(defaultServiceTier);
 	let prompt = $state('');
+	let selectedQuestionOptionId = $state<string | null>(null);
+	let answeringAgentQuestion = $state(false);
 	let composerAttachments = $state<ComposerAttachment[]>([]);
 	let currentError = $state<string | null>(null);
 	let executorClientId = $state<string | null>(null);
@@ -450,6 +453,10 @@
 	);
 	const liveMessagesQuery = useQuery(api.messages.listLiveForThread, authenticatedThreadQueryArgs);
 	const latestRunQuery = useQuery(api.chat.latestRunForThread, authenticatedThreadQueryArgs);
+	const pendingAgentQuestionQuery = useQuery(
+		api.agentQuestions.headPendingForThread,
+		authenticatedThreadQueryArgs
+	);
 	const queryError = $derived.by(() => {
 		for (const query of [
 			modelCatalogQuery,
@@ -459,7 +466,8 @@
 			activeThreadQuery,
 			historyMessagesQuery,
 			liveMessagesQuery,
-			latestRunQuery
+			latestRunQuery,
+			pendingAgentQuestionQuery
 		]) {
 			if (query.error) {
 				return query.error;
@@ -526,6 +534,9 @@
 		};
 	});
 	const currentLatestRunData = $derived(dataForThread(latestRunQuery.data, currentThreadId));
+	const pendingAgentQuestion = $derived(
+		dataForThread(pendingAgentQuestionQuery.data, currentThreadId)
+	);
 	const currentHistoryMessagesData = $derived(
 		dataForThread(historyMessagesQuery.data, currentThreadId)
 	);
@@ -624,10 +635,10 @@
 		Boolean(
 			currentWorkspaceSessionId &&
 			currentWorkspaceSession?.localWorkspaceAvailability === 'available' &&
-			!isRunning &&
 			!isSubmittingPrompt &&
+			!answeringAgentQuestion &&
 			!hasPendingAgentLaunch &&
-			isLatestRunReady
+			((!isRunning && isLatestRunReady) || pendingAgentQuestion)
 		)
 	);
 	const desiredAttachedWorkspaceSessionIds = $derived.by<Id<'workspaceSessions'>[]>(() =>
@@ -1017,7 +1028,45 @@
 		}
 	}
 
+	async function submitAgentQuestionAnswer() {
+		const question = pendingAgentQuestion;
+		const threadId = currentThreadId;
+		if (!question || !threadId || answeringAgentQuestion) {
+			return;
+		}
+		if (!selectedQuestionOptionId && !prompt.trim()) {
+			return;
+		}
+
+		answeringAgentQuestion = true;
+		currentError = null;
+		const submittedPrompt = prompt;
+		const submittedOptionId = selectedQuestionOptionId;
+		const answerText = submittedPrompt.trim();
+		prompt = '';
+		selectedQuestionOptionId = null;
+		try {
+			await answerAgentQuestion({
+				threadId,
+				questionId: question.questionId,
+				...(submittedOptionId ? { optionId: submittedOptionId } : {}),
+				...(answerText ? { text: answerText } : {})
+			});
+		} catch (error) {
+			prompt = submittedPrompt;
+			selectedQuestionOptionId = submittedOptionId;
+			currentError = error instanceof Error ? error.message : String(error);
+		} finally {
+			answeringAgentQuestion = false;
+		}
+	}
+
 	async function submitPrompt() {
+		if (pendingAgentQuestion) {
+			await submitAgentQuestionAnswer();
+			return;
+		}
+
 		if (isSubmittingPrompt) {
 			return;
 		}
@@ -1911,8 +1960,10 @@
 						bind:selectedModel
 						bind:selectedReasoningEffort
 						bind:selectedServiceTier
+						pendingQuestion={pendingAgentQuestion}
+						bind:selectedQuestionOptionId
 						{canSend}
-						isSubmitting={isSubmittingPrompt || hasPendingAgentLaunch}
+						isSubmitting={isSubmittingPrompt || hasPendingAgentLaunch || answeringAgentQuestion}
 						isStarting={hasPendingAgentLaunch}
 						{isRunning}
 						elapsedLabel={isRunning ? formatElapsedDuration(elapsedSeconds) : null}
