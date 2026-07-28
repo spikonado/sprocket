@@ -26,8 +26,8 @@ export default defineSchema({
 	subscriptions: defineTable({
 		userId: v.string(),
 		tier: vSubscriptionTier,
-		dodoSubscriptionId: v.optional(v.string()),
-		dodoProductId: v.optional(v.string()),
+		dodoSubscriptionId: v.string(),
+		dodoProductId: v.string(),
 		status: vSubscriptionStatus,
 		eventAt: v.number()
 	}).index('by_userId', ['userId']),
@@ -57,7 +57,7 @@ export default defineSchema({
 		reasoningEffort: vReasoningEffort,
 		serviceTier: vServiceTier,
 		contextTokens: v.optional(v.number()),
-		totalTokensProcessed: v.optional(v.number()),
+		totalTokensProcessed: v.number(),
 		contextSummary: v.optional(v.string()),
 		contextSummaryThroughRunId: v.optional(v.id('runs')),
 		lastMessageAt: v.number(),
@@ -75,7 +75,7 @@ export default defineSchema({
 		executionSecretHash: v.string(),
 		claimId: v.optional(v.string()),
 		claimExpiresAt: v.optional(v.number()),
-		completionAttemptSeq: v.optional(v.number()),
+		completionAttemptSeq: v.number(),
 		selectedModel: vModelId,
 		reasoningEffort: vReasoningEffort,
 		serviceTier: vServiceTier,
@@ -98,7 +98,7 @@ export default defineSchema({
 		type: vThreadMessageType,
 		text: v.string(),
 		imageUploadIds: v.optional(v.array(v.id('imageUploads'))),
-		parts: v.optional(v.array(vAssistantMessagePart))
+		parts: v.array(vAssistantMessagePart)
 	}),
 	completionStreamStates: defineTable({
 		runId: v.id('runs'),

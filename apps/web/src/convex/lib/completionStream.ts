@@ -1,4 +1,5 @@
 import { v, type Infer } from 'convex/values';
+import { vJsonValue } from '@convex/lib/json';
 
 export const vCompletionStreamEvent = v.union(
 	v.object({
@@ -6,7 +7,7 @@ export const vCompletionStreamEvent = v.union(
 		id: v.string(),
 		text: v.string(),
 		turnId: v.optional(v.string()),
-		providerMetadata: v.optional(v.any())
+		providerMetadata: v.optional(vJsonValue)
 	}),
 	v.object({
 		type: v.literal('reasoning'),
@@ -14,16 +15,16 @@ export const vCompletionStreamEvent = v.union(
 		text: v.string(),
 		turnId: v.optional(v.string()),
 		providerReasoningId: v.optional(v.string()),
-		providerMetadata: v.optional(v.any())
+		providerMetadata: v.optional(vJsonValue)
 	}),
 	v.object({
 		type: v.literal('toolCall'),
 		partId: v.string(),
 		callId: v.string(),
 		name: v.string(),
-		input: v.any(),
+		input: vJsonValue,
 		turnId: v.optional(v.string()),
-		providerMetadata: v.optional(v.any())
+		providerMetadata: v.optional(vJsonValue)
 	})
 );
 

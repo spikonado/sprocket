@@ -1,4 +1,5 @@
 import { v, type Infer } from 'convex/values';
+import { vJsonValue } from '@convex/lib/json';
 import { modelIds, reasoningEffortIds, serviceTierIds } from '@convex/lib/models';
 import { subscriptionTierIds } from '@convex/lib/tiers';
 
@@ -243,7 +244,7 @@ export const vAssistantTextPart = v.object({
 	id: v.string(),
 	text: v.string(),
 	turnId: v.optional(v.string()),
-	providerMetadata: v.optional(v.any())
+	providerMetadata: v.optional(vJsonValue)
 });
 
 export const vAssistantReasoningPart = v.object({
@@ -251,7 +252,7 @@ export const vAssistantReasoningPart = v.object({
 	id: v.string(),
 	text: v.string(),
 	turnId: v.optional(v.string()),
-	providerMetadata: v.optional(v.any())
+	providerMetadata: v.optional(vJsonValue)
 });
 
 export const vAssistantToolCallPart = v.object({
@@ -259,9 +260,9 @@ export const vAssistantToolCallPart = v.object({
 	partId: v.optional(v.string()),
 	callId: v.string(),
 	name: v.string(),
-	input: v.any(),
+	input: vJsonValue,
 	turnId: v.optional(v.string()),
-	providerMetadata: v.optional(v.any())
+	providerMetadata: v.optional(vJsonValue)
 });
 
 export const assistantToolResultErrorStatuses = ['cancelled', 'failed'] as const;
@@ -280,7 +281,7 @@ export const vAssistantToolResultPart = v.object({
 	type: v.literal('tool-result'),
 	callId: v.string(),
 	name: v.optional(v.string()),
-	output: v.any()
+	output: vJsonValue
 });
 
 export const vAssistantMessagePart = v.union(
@@ -289,6 +290,12 @@ export const vAssistantMessagePart = v.union(
 	vAssistantToolCallPart,
 	vAssistantToolResultPart
 );
+
+export type AssistantTextPart = Infer<typeof vAssistantTextPart>;
+export type AssistantReasoningPart = Infer<typeof vAssistantReasoningPart>;
+export type AssistantToolCallPart = Infer<typeof vAssistantToolCallPart>;
+export type AssistantToolResultPart = Infer<typeof vAssistantToolResultPart>;
+export type AssistantMessagePart = Infer<typeof vAssistantMessagePart>;
 
 export const vAgentHistoryRole = v.union(
 	v.literal('system'),

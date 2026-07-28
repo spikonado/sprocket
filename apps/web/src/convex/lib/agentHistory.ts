@@ -172,7 +172,7 @@ function buildAgentHistoryFromAssistantMessage(args: {
 	message: ThreadTranscriptMessage;
 	jobs: Doc<'executorJobs'>[];
 }): AgentHistoryMessage[] {
-	const persistedParts = (args.message.parts ?? []) as AssistantPart[];
+	const persistedParts = args.message.parts;
 	return buildAgentHistoryFromAssistantParts({
 		parts: persistedParts,
 		jobs: toPersistableExecutorToolJobs(args.jobs),

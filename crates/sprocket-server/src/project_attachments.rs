@@ -346,29 +346,16 @@ mod tests {
 
     #[test]
     fn workspace_path_resolution_uses_git_origin_repository_key() {
-        use std::process::Command;
-
         let temp_root =
             std::env::temp_dir().join(format!("sprocket-workspace-git-{}", crate::now_ms()));
         let project = temp_root.join("checkout");
         fs::create_dir_all(&project).expect("project dir");
-        let init = Command::new("git")
-            .args(["init"])
-            .current_dir(&project)
-            .status()
-            .expect("run git init");
-        assert!(init.success(), "git init failed");
-        let add_origin = Command::new("git")
-            .args([
-                "remote",
-                "add",
-                "origin",
-                "https://github.com/spikonado/sprocket.git",
-            ])
-            .current_dir(&project)
-            .status()
-            .expect("run git remote add");
-        assert!(add_origin.success(), "git remote add failed");
+        gix::init(&project).expect("gix init");
+        let config_path = project.join(".git/config");
+        let mut config = fs::read_to_string(&config_path).expect("read config");
+        config
+            .push_str("\n[remote \"origin\"]\n\turl = https://github.com/spikonado/sprocket.git\n");
+        fs::write(config_path, config).expect("write config");
 
         let resolved =
             resolve_workspace_path(&project.to_string_lossy(), false).expect("resolve project");

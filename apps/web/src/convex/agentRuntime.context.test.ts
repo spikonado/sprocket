@@ -152,6 +152,7 @@ describe('agentRuntime context accounting', () => {
 				projectId,
 				status: 'completed',
 				executionSecretHash: await executionSecretHash('context-concurrent-later-secret'),
+				completionAttemptSeq: 0,
 				selectedModel: 'gpt-5.6-sol',
 				reasoningEffort: 'medium',
 				serviceTier: 'standard',

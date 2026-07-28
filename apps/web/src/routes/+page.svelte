@@ -493,7 +493,7 @@
 			: undefined;
 		return {
 			inputTokens: currentActiveThread?.contextTokens ?? 0,
-			totalTokensProcessed: currentActiveThread?.totalTokensProcessed ?? 0,
+			totalTokensProcessed: currentActiveThread ? currentActiveThread.totalTokensProcessed : 0,
 			contextWindowTokens: model?.contextWindowTokens ?? 0,
 			autoCompactTokenLimit: model?.autoCompactTokenLimit ?? 0
 		};

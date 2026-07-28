@@ -252,7 +252,7 @@
 							</div>
 						{:else}
 							{@const messageActions = actions.filter((job) => job.runId === message.runId)}
-							{@const timeline = buildAssistantTimeline(message.parts ?? [], messageActions)}
+							{@const timeline = buildAssistantTimeline(message.parts, messageActions)}
 							{@const timelineTools = timeline.filter(
 								(item): item is AssistantTimelineTool => item.type === 'tool'
 							)}

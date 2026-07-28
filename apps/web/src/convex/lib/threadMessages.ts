@@ -24,7 +24,7 @@ export async function appendThreadMessage(
 		type: ThreadMessageType;
 		text: string;
 		imageUploadIds?: Id<'imageUploads'>[];
-		parts?: NonNullable<Doc<'threadMessages'>['parts']>;
+		parts?: Doc<'threadMessages'>['parts'];
 	}
 ): Promise<Id<'threadMessages'>> {
 	const threadRecord: Doc<'threadRecords'> = await getOwnedThreadRecord(

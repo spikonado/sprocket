@@ -162,7 +162,7 @@ async function finalizeRunRecord(
 		? await getThreadMessage(ctx, run.responseMessageId)
 		: undefined;
 
-	const persistedParts = (message?.parts ?? []) as AssistantPart[];
+	const persistedParts = message?.parts ?? [];
 	const nextParts: AssistantPart[] = ensureAssistantToolPartsFromJobs(
 		persistedParts,
 		toPersistableExecutorToolJobs(finalizedJobs)
@@ -533,7 +533,7 @@ export const completionActor = query({
 			status: run.status,
 			...(run.claimId ? { claimId: run.claimId } : {}),
 			...(run.claimExpiresAt ? { claimExpiresAt: run.claimExpiresAt } : {}),
-			completionAttemptSeq: run.completionAttemptSeq ?? 0,
+			completionAttemptSeq: run.completionAttemptSeq,
 			streamSequence: streamState.sequence,
 			...(streamState.streamAttemptId ? { streamAttemptId: streamState.streamAttemptId } : {})
 		};
@@ -581,7 +581,7 @@ export const saveContextCompaction = mutation({
 		}
 		await ctx.db.patch(thread._id, {
 			...(durableSummary ?? {}),
-			totalTokensProcessed: addTokenCounts(thread.totalTokensProcessed ?? 0, args.processedTokens)
+			totalTokensProcessed: addTokenCounts(thread.totalTokensProcessed, args.processedTokens)
 		});
 		return true;
 	}
@@ -603,7 +603,7 @@ export const recordContextUsage = mutation({
 		const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
 		await ctx.db.patch(thread._id, {
 			contextTokens: args.contextTokens,
-			totalTokensProcessed: addTokenCounts(thread.totalTokensProcessed ?? 0, args.processedTokens)
+			totalTokensProcessed: addTokenCounts(thread.totalTokensProcessed, args.processedTokens)
 		});
 		return true;
 	}
@@ -647,10 +647,10 @@ export const registerCompletionAttempt = mutation({
 		if (supersededStreamIds.length > 0 && run.responseMessageId) {
 			const superseded = new Set(supersededStreamIds);
 			const message = await getThreadMessage(ctx, run.responseMessageId);
-			const parts = ((message.parts ?? []) as AssistantPart[]).filter(
+			const parts = message.parts.filter(
 				(part) => !('turnId' in part && part.turnId && superseded.has(part.turnId))
 			);
-			if (parts.length !== (message.parts?.length ?? 0)) {
+			if (parts.length !== message.parts.length) {
 				await ctx.db.patch(run.responseMessageId, {
 					text: joinAssistantTextParts(parts),
 					parts
@@ -728,7 +728,7 @@ export const mergeAssistantStreamEvents = mutation({
 		if (classification !== 'append') {
 			return classification;
 		}
-		const parts: AssistantPart[] = [...((message.parts ?? []) as AssistantPart[])];
+		const parts: AssistantPart[] = [...message.parts];
 		const textIndexById = new Map<string, number>();
 		const toolIndexByCallId = new Map<string, number>();
 		for (const [index, part] of parts.entries()) {

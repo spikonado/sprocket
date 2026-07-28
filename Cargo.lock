@@ -3069,6 +3069,7 @@ dependencies = [
  "clap",
  "cookie",
  "dotenvy",
+ "gix",
  "hmac",
  "open",
  "reqwest",

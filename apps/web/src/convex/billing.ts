@@ -126,7 +126,8 @@ export const upsertSubscription = internalMutation({
 		if (
 			existing &&
 			args.status !== 'active' &&
-			existing.dodoSubscriptionId !== args.dodoSubscriptionId
+			(existing.dodoSubscriptionId === '' ||
+				existing.dodoSubscriptionId !== args.dodoSubscriptionId)
 		) {
 			return;
 		}

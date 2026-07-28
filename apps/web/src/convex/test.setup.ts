@@ -51,6 +51,8 @@ export async function seedOwnedThread(
 		await ctx.db.insert('subscriptions', {
 			userId: subject,
 			tier: 'admin',
+			dodoSubscriptionId: '',
+			dodoProductId: '',
 			status: 'active',
 			eventAt: 1
 		});

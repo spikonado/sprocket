@@ -197,6 +197,9 @@ export async function ensureSubscription(
 	await ctx.db.insert('subscriptions', {
 		userId,
 		tier: 'free',
+		// No Dodo binding yet; empty-string sentinels keep the fields required.
+		dodoSubscriptionId: '',
+		dodoProductId: '',
 		status: 'active',
 		eventAt: 0
 	});

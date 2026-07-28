@@ -113,7 +113,7 @@ export type ThreadMessage = {
 	type: Infer<typeof vThreadMessageType>;
 	text: string;
 	attachments: MessageAttachment[];
-	parts?: AssistantPart[];
+	parts: AssistantPart[];
 	runStatus: Infer<typeof vRunStatus>;
 	runStartedAt: number;
 	runCompletedAt?: number;

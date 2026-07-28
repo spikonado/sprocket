@@ -127,8 +127,8 @@ describe('subscription and usage backend', () => {
 		await asUser.mutation(api.billing.ensureMySubscription, {});
 		const created = await readSubscription();
 		expect(created).toMatchObject({ userId, tier: 'free', status: 'active', eventAt: 0 });
-		expect(created?.dodoSubscriptionId).toBeUndefined();
-		expect(created?.dodoProductId).toBeUndefined();
+		expect(created?.dodoSubscriptionId).toBe('');
+		expect(created?.dodoProductId).toBe('');
 
 		await t.run(async (ctx) => {
 			if (!created) throw new Error('Expected subscription row');
@@ -170,6 +170,8 @@ describe('subscription and usage backend', () => {
 			await ctx.db.insert('subscriptions', {
 				userId,
 				tier: 'admin',
+				dodoSubscriptionId: '',
+				dodoProductId: '',
 				status: 'active',
 				eventAt: 1_000
 			});

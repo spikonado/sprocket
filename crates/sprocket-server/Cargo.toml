@@ -32,3 +32,6 @@ uuid = { version = "1.21.0", features = ["v4"] }
 
 [build-dependencies]
 dotenvy = "0.15.7"
+
+[dev-dependencies]
+gix = { version = "0.86", default-features = false, features = ["sha1", "max-performance-safe"] }
