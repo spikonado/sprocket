@@ -39,14 +39,14 @@ import type * as lib_tiers from "../lib/tiers.js";
 import type * as lib_uiModelCatalog from "../lib/uiModelCatalog.js";
 import type * as lib_usageMeters from "../lib/usageMeters.js";
 import type * as lib_validators from "../lib/validators.js";
-import type * as lib_workspaceConnection from "../lib/workspaceConnection.js";
+import type * as lib_projectConnection from "../lib/projectConnection.js";
 import type * as messages from "../messages.js";
 import type * as modelCatalog from "../modelCatalog.js";
+import type * as projects from "../projects.js";
 import type * as threads from "../threads.js";
 import type * as uiPreferences from "../uiPreferences.js";
 import type * as usage from "../usage.js";
 import type * as webTools from "../webTools.js";
-import type * as workspaceSessions from "../workspaceSessions.js";
 
 import type {
   ApiFromModules,
@@ -86,14 +86,14 @@ declare const fullApi: ApiFromModules<{
   "lib/uiModelCatalog": typeof lib_uiModelCatalog;
   "lib/usageMeters": typeof lib_usageMeters;
   "lib/validators": typeof lib_validators;
-  "lib/workspaceConnection": typeof lib_workspaceConnection;
+  "lib/projectConnection": typeof lib_projectConnection;
   messages: typeof messages;
   modelCatalog: typeof modelCatalog;
+  projects: typeof projects;
   threads: typeof threads;
   uiPreferences: typeof uiPreferences;
   usage: typeof usage;
   webTools: typeof webTools;
-  workspaceSessions: typeof workspaceSessions;
 }>;
 
 /**

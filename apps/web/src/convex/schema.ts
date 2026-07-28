@@ -38,9 +38,10 @@ export default defineSchema({
 		lastThreadId: v.optional(v.id('threadRecords')),
 		theme: v.union(v.literal('light'), v.literal('dark'))
 	}).index('by_userId', ['userId']),
-	workspaceSessions: defineTable({
+	projects: defineTable({
 		userId: v.string(),
-		workspaceName: v.string(),
+		repositoryKey: v.string(),
+		displayName: v.string(),
 		lastHeartbeatAt: v.optional(v.number()),
 		connectedClientId: v.optional(v.string()),
 		nextExecutorSequence: v.number(),
@@ -48,11 +49,11 @@ export default defineSchema({
 	})
 		.index('by_userId', ['userId'])
 		.index('by_userId_lastSeenAt', ['userId', 'lastSeenAt'])
-		.index('by_user_workspaceName', ['userId', 'workspaceName']),
+		.index('by_user_repositoryKey', ['userId', 'repositoryKey']),
 	threadRecords: defineTable({
 		userId: v.string(),
 		submissionId: v.string(),
-		workspaceSessionId: v.id('workspaceSessions'),
+		projectId: v.id('projects'),
 		title: v.optional(v.string()),
 		selectedModel: vModelId,
 		reasoningEffort: vReasoningEffort,
@@ -66,12 +67,12 @@ export default defineSchema({
 	})
 		.index('by_userId_lastMessageAt', ['userId', 'lastMessageAt'])
 		.index('by_userId_submissionId', ['userId', 'submissionId'])
-		.index('by_workspaceSessionId', ['workspaceSessionId']),
+		.index('by_projectId', ['projectId']),
 	runs: defineTable({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
 		submissionId: v.string(),
-		workspaceSessionId: v.id('workspaceSessions'),
+		projectId: v.id('projects'),
 		status: vRunStatus,
 		// Hash of the bearer capability held only by the local executor.
 		executionSecretHash: v.string(),
@@ -93,7 +94,7 @@ export default defineSchema({
 		.index('by_threadId_status_startedAt', ['threadId', 'status', 'startedAt'])
 		.index('by_executionSecretHash', ['executionSecretHash'])
 		.index('by_userId_submissionId', ['userId', 'submissionId'])
-		.index('by_workspaceSessionId', ['workspaceSessionId'])
+		.index('by_projectId', ['projectId'])
 		.index('by_userId_startedAt', ['userId', 'startedAt']),
 	threadMessages: defineTable({
 		threadId: v.id('threadRecords'),
@@ -123,7 +124,7 @@ export default defineSchema({
 		.index('by_storageId', ['storageId'])
 		.index('by_attached', ['attached']),
 	executorJobs: defineTable({
-		workspaceSessionId: v.id('workspaceSessions'),
+		projectId: v.id('projects'),
 		threadId: v.id('threadRecords'),
 		runId: v.id('runs'),
 		kind: vExecutorJobKind,
@@ -138,7 +139,7 @@ export default defineSchema({
 		error: v.optional(v.string()),
 		sequence: v.number()
 	})
-		.index('by_workspaceSessionId_sequence', ['workspaceSessionId', 'sequence'])
+		.index('by_projectId_sequence', ['projectId', 'sequence'])
 		.index('by_threadId_sequence', ['threadId', 'sequence'])
 		.index('by_runId_sequence', ['runId', 'sequence'])
 		.index('by_runId_hidden_sequence', ['runId', 'hidden', 'sequence']),

@@ -97,17 +97,17 @@ the same paths in every runtime mode.
 
 Sprocket deliberately separates cloud and machine-local state.
 
-| State                                                                      | Owner                |
-| -------------------------------------------------------------------------- | -------------------- |
-| Users, workspace identities, threads, messages, runs, and tool-job records | Convex               |
-| Workspace identity to local path mapping                                   | Local server         |
-| Pairing credential and local browser sessions                              | Local server         |
-| Active commands, cancellation tokens, and run execution capabilities       | Local process memory |
-| Source files and build artifacts                                           | User workspace       |
-| Model and authentication provider secrets                                  | Cloud deployment     |
+| State                                                                | Owner                |
+| -------------------------------------------------------------------- | -------------------- |
+| Users, projects, threads, messages, runs, and tool-job records       | Convex               |
+| Project identity to local path mapping                               | Local server         |
+| Pairing credential and local browser sessions                        | Local server         |
+| Active commands, cancellation tokens, and run execution capabilities | Local process memory |
+| Source files and build artifacts                                     | User workspace       |
+| Model and authentication provider secrets                            | Cloud deployment     |
 
-A cloud workspace identity never needs to expose its machine path. The web app
-joins cloud workspace metadata with the local server's attachment state.
+A cloud project identity never needs to expose its machine path. The web app
+joins cloud project metadata with the local server's attachment state.
 
 ## Agent run flow
 

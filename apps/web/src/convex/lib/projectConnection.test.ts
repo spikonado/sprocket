@@ -3,23 +3,24 @@ import type { Id } from '@convex/_generated/dataModel';
 import {
 	EXECUTOR_HEARTBEAT_WRITE_THROTTLE_MS,
 	EXECUTOR_HEARTBEAT_TTL_MS,
-	getDetachedWorkspaceSessionIdsForClient,
+	getDetachedProjectIdsForClient,
 	getEffectiveExecutorStatus,
-	shouldRefreshWorkspaceHeartbeat
-} from '@convex/lib/workspaceConnection';
+	shouldRefreshProjectHeartbeat
+} from '@convex/lib/projectConnection';
 
-function makeWorkspaceSession(
+function makeProject(
 	overrides: Partial<{
-		_id: Id<'workspaceSessions'>;
+		_id: Id<'projects'>;
 		connectedClientId?: string;
 		lastHeartbeatAt?: number;
 	}> = {}
 ) {
 	return {
-		_id: overrides._id ?? ('ws-1' as Id<'workspaceSessions'>),
+		_id: overrides._id ?? ('project-1' as Id<'projects'>),
 		_creationTime: 0,
 		userId: 'user-1',
-		workspaceName: 'Workspace',
+		repositoryKey: 'Workspace',
+		displayName: 'Workspace',
 		lastHeartbeatAt: overrides.lastHeartbeatAt,
 		connectedClientId: overrides.connectedClientId,
 		nextExecutorSequence: 0,
@@ -27,52 +28,52 @@ function makeWorkspaceSession(
 	};
 }
 
-describe('workspaceConnection helpers', () => {
+describe('projectConnection helpers', () => {
 	it('reports disconnected when the heartbeat is stale', () => {
 		const now = 100_000;
-		const workspaceSession = makeWorkspaceSession({
+		const project = makeProject({
 			connectedClientId: 'client-1',
 			lastHeartbeatAt: now - EXECUTOR_HEARTBEAT_TTL_MS - 1
 		});
 
-		expect(getEffectiveExecutorStatus(workspaceSession, now)).toBe('disconnected');
+		expect(getEffectiveExecutorStatus(project, now)).toBe('disconnected');
 	});
 
-	it('returns omitted sessions to detach for the same client', () => {
-		const detached = getDetachedWorkspaceSessionIdsForClient(
+	it('returns omitted projects to detach for the same client', () => {
+		const detached = getDetachedProjectIdsForClient(
 			[
-				makeWorkspaceSession({
-					_id: 'ws-1' as Id<'workspaceSessions'>,
+				makeProject({
+					_id: 'project-1' as Id<'projects'>,
 					connectedClientId: 'client-1'
 				}),
-				makeWorkspaceSession({
-					_id: 'ws-2' as Id<'workspaceSessions'>,
+				makeProject({
+					_id: 'project-2' as Id<'projects'>,
 					connectedClientId: 'client-1'
 				}),
-				makeWorkspaceSession({
-					_id: 'ws-3' as Id<'workspaceSessions'>,
+				makeProject({
+					_id: 'project-3' as Id<'projects'>,
 					connectedClientId: 'client-2'
 				})
 			],
 			'client-1',
-			['ws-2' as Id<'workspaceSessions'>]
+			['project-2' as Id<'projects'>]
 		);
 
-		expect(detached).toEqual(['ws-1']);
+		expect(detached).toEqual(['project-1']);
 	});
 
 	it('skips redundant heartbeat writes for the same client until the throttle elapses', () => {
 		const now = 100_000;
-		const workspaceSession = makeWorkspaceSession({
+		const project = makeProject({
 			connectedClientId: 'client-1',
 			lastHeartbeatAt: now - EXECUTOR_HEARTBEAT_WRITE_THROTTLE_MS + 1
 		});
 
-		expect(shouldRefreshWorkspaceHeartbeat(workspaceSession, 'client-1', now)).toBe(false);
+		expect(shouldRefreshProjectHeartbeat(project, 'client-1', now)).toBe(false);
 		expect(
-			shouldRefreshWorkspaceHeartbeat(
+			shouldRefreshProjectHeartbeat(
 				{
-					...workspaceSession,
+					...project,
 					lastHeartbeatAt: now - EXECUTOR_HEARTBEAT_WRITE_THROTTLE_MS
 				},
 				'client-1',
@@ -85,8 +86,8 @@ describe('workspaceConnection helpers', () => {
 		const now = 100_000;
 
 		expect(
-			shouldRefreshWorkspaceHeartbeat(
-				makeWorkspaceSession({
+			shouldRefreshProjectHeartbeat(
+				makeProject({
 					connectedClientId: 'client-2',
 					lastHeartbeatAt: now
 				}),
@@ -95,8 +96,8 @@ describe('workspaceConnection helpers', () => {
 			)
 		).toBe(true);
 		expect(
-			shouldRefreshWorkspaceHeartbeat(
-				makeWorkspaceSession({
+			shouldRefreshProjectHeartbeat(
+				makeProject({
 					connectedClientId: 'client-1',
 					lastHeartbeatAt: undefined
 				}),

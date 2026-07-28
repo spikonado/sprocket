@@ -9,32 +9,33 @@
 		workspacePathRequiresCreation
 	} from '$lib/workspace/paths';
 
-	type RecentWorkspace = {
+	type RecentProjectPath = {
 		workspacePath: string;
-		workspaceName: string;
+		displayName: string;
 	};
 
 	type Props = {
 		open: boolean;
 		desktopApi: DesktopApi;
 		mode?: 'add' | 'reconnect';
-		expectedWorkspaceName?: string;
-		recentWorkspaces?: RecentWorkspace[];
+		expectedDisplayName?: string;
+		recentProjectPaths?: RecentProjectPath[];
 		onClose: () => void;
-		onSelect: (selection: WorkspaceSelection) => void | Promise<void>;
+		onSelect: (selection: ProjectSelection) => void | Promise<void>;
 	};
 
-	export type WorkspaceSelection = {
+	export type ProjectSelection = {
 		workspacePath: string;
-		workspaceName: string;
+		displayName: string;
+		repositoryKey: string;
 	};
 
 	let {
 		open,
 		desktopApi,
 		mode = 'add',
-		expectedWorkspaceName,
-		recentWorkspaces = [],
+		expectedDisplayName,
+		recentProjectPaths = [],
 		onClose,
 		onSelect
 	}: Props = $props();
@@ -77,7 +78,9 @@
 		resolvedWorkspacePath.length > 0 &&
 			(isFilesystemBrowseQuery(selectedPath) || browseParentPath.length > 0)
 	);
-	const submitLabel = $derived(willCreateDirectory ? 'Create & add' : 'Add');
+	const submitLabel = $derived(
+		mode === 'reconnect' ? 'Reconnect' : willCreateDirectory ? 'Create & add' : 'Add'
+	);
 	const displayedEntries = $derived.by(() => {
 		if (filteredEntries.length > 0) {
 			return filteredEntries;
@@ -99,9 +102,13 @@
 		isLoadingBrowse
 			? 'Loading directories…'
 			: resolvedWorkspacePath.length > 0 && !willCreateDirectory
-				? 'Press Enter to add this directory.'
+				? mode === 'reconnect'
+					? 'Press Enter to reconnect this directory.'
+					: 'Press Enter to add this directory.'
 				: willCreateDirectory
-					? 'Press Enter to create and add this directory.'
+					? mode === 'reconnect'
+						? 'Press Enter to create and reconnect this directory.'
+						: 'Press Enter to create and add this directory.'
 					: 'No matching directories in this path.'
 	);
 
@@ -182,7 +189,7 @@
 		highlightedPath = entry.fullPath;
 	}
 
-	function selectRecentWorkspace(recent: RecentWorkspace) {
+	function selectRecentProjectPath(recent: RecentProjectPath) {
 		query = `${recent.workspacePath}/`;
 		highlightedPath = recent.workspacePath;
 	}
@@ -203,18 +210,10 @@
 				createIfMissing: willCreateDirectory
 			});
 
-			if (
-				mode === 'reconnect' &&
-				expectedWorkspaceName &&
-				resolution.workspaceName !== expectedWorkspaceName
-			) {
-				errorMessage = `Selected project must be named "${expectedWorkspaceName}" to reconnect.`;
-				return;
-			}
-
 			await onSelect({
 				workspacePath: resolution.workspacePath,
-				workspaceName: resolution.workspaceName
+				displayName: resolution.displayName,
+				repositoryKey: resolution.repositoryKey
 			});
 			onClose();
 		} catch (error) {
@@ -253,7 +252,7 @@
 			class="border-border bg-popover text-foreground flex max-h-[min(32rem,70vh)] w-full max-w-xl min-w-0 flex-col overflow-hidden rounded-2xl border shadow-2xl"
 			role="dialog"
 			aria-modal="true"
-			aria-labelledby="workspace-picker-title"
+			aria-labelledby="project-picker-title"
 			tabindex="-1"
 			onkeydown={handleDialogKeydown}
 		>
@@ -263,7 +262,7 @@
 						<FolderPlus class="size-4" />
 					</div>
 					<input
-						id="workspace-picker-title"
+						id="project-picker-title"
 						class="text-foreground placeholder:text-muted-foreground min-w-0 flex-1 bg-transparent py-2 ps-2 pe-28 text-sm outline-none"
 						bind:value={query}
 						placeholder="Enter project path (e.g. ~/projects/my-robot)"
@@ -286,24 +285,24 @@
 						{isSubmitting ? 'Working…' : submitLabel}
 					</button>
 				</div>
-				{#if mode === 'reconnect' && expectedWorkspaceName}
+				{#if mode === 'reconnect' && expectedDisplayName}
 					<p class="text-muted-foreground px-2 pb-1 text-[11px]">
-						Reconnect <span class="text-muted-foreground">{expectedWorkspaceName}</span> to a local directory
+						Reconnect <span class="text-muted-foreground">{expectedDisplayName}</span> to a local directory
 					</p>
 				{/if}
 			</div>
 
-			{#if recentWorkspaces.length > 0}
+			{#if recentProjectPaths.length > 0}
 				<div class="border-hairline flex flex-wrap gap-1.5 border-b px-3 py-2">
-					{#each recentWorkspaces as recent (recent.workspacePath)}
+					{#each recentProjectPaths as recent (recent.workspacePath)}
 						<button
 							type="button"
 							class="text-muted-foreground hover:text-foreground hover:bg-hover-fill rounded-md px-2 py-0.5 text-[11px] transition"
 							onclick={() => {
-								selectRecentWorkspace(recent);
+								selectRecentProjectPath(recent);
 							}}
 						>
-							{recent.workspaceName}
+							{recent.displayName}
 						</button>
 					{/each}
 				</div>

@@ -107,7 +107,7 @@ mod tests {
         let root = temp_path("sprocket-instructions");
         let nested = root.join("packages/app");
         fs::create_dir_all(&nested).expect("nested dir should be created");
-        fs::create_dir_all(root.join(".git")).expect("git marker should be created");
+        gix::init(&root).expect("git repository should be created");
         fs::write(root.join("AGENTS.md"), "root instructions").expect("root instructions");
         fs::write(nested.join("AGENTS.md"), "nested instructions").expect("nested instructions");
 
@@ -123,7 +123,8 @@ mod tests {
     #[test]
     fn prefers_override_file_when_present() {
         let root = temp_path("sprocket-instructions-override");
-        fs::create_dir_all(root.join(".git")).expect("git marker should be created");
+        fs::create_dir_all(&root).expect("root dir should be created");
+        gix::init(&root).expect("git repository should be created");
         fs::write(root.join("AGENTS.md"), "versioned").expect("agents file");
         fs::write(root.join("AGENTS.override.md"), "override").expect("override file");
 

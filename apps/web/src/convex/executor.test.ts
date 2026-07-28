@@ -16,7 +16,7 @@ async function seedRunWithJob(
 ) {
 	const executionSecret = options.executionSecret;
 	const claimId = options.claimId ?? `claim-${Math.random()}`;
-	const { asUser, threadId, workspaceSessionId, subject } = await seedOwnedThread(t);
+	const { asUser, threadId, projectId, subject } = await seedOwnedThread(t);
 	const created = await asUser.mutation(api.agentRuntime.createRun, {
 		submissionId: `sub-job-${Math.random()}`,
 		threadId,
@@ -30,7 +30,7 @@ async function seedRunWithJob(
 
 	const jobId = await t.run(async (ctx) => {
 		const jobId = await ctx.db.insert('executorJobs', {
-			workspaceSessionId,
+			projectId,
 			threadId,
 			runId: created.runId,
 			kind: 'exec_command',
@@ -42,7 +42,7 @@ async function seedRunWithJob(
 			sequence: 0
 		});
 		const otherJobId = await ctx.db.insert('executorJobs', {
-			workspaceSessionId,
+			projectId,
 			threadId,
 			runId: created.runId,
 			kind: 'exec_command',

@@ -1,7 +1,7 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { DatabaseReader } from '@convex/_generated/server';
 
-type OwnerScopedTable = 'workspaceSessions' | 'threadRecords' | 'runs';
+type OwnerScopedTable = 'projects' | 'threadRecords' | 'runs';
 
 async function getOwnedRecord<TableName extends OwnerScopedTable>(
 	db: DatabaseReader,
@@ -16,17 +16,12 @@ async function getOwnedRecord<TableName extends OwnerScopedTable>(
 	return record;
 }
 
-export async function getOwnedWorkspaceSession(
+export async function getOwnedProject(
 	db: DatabaseReader,
 	userId: string,
-	workspaceSessionId: Id<'workspaceSessions'>
-): Promise<Doc<'workspaceSessions'>> {
-	return await getOwnedRecord<'workspaceSessions'>(
-		db,
-		userId,
-		workspaceSessionId,
-		'Workspace session not found.'
-	);
+	projectId: Id<'projects'>
+): Promise<Doc<'projects'>> {
+	return await getOwnedRecord<'projects'>(db, userId, projectId, 'Project not found.');
 }
 
 export async function getOwnedThreadRecord(
@@ -54,6 +49,6 @@ export async function getOwnedExecutorJob(
 	if (!job) {
 		throw new Error('Job not found.');
 	}
-	await getOwnedWorkspaceSession(db, userId, job.workspaceSessionId);
+	await getOwnedProject(db, userId, job.projectId);
 	return job;
 }

@@ -2,18 +2,18 @@ import type { Id } from '$convex/_generated/dataModel';
 import type {
 	AgentRunRequest,
 	DesktopApi,
-	LocalWorkspaceAvailability,
-	RunState,
-	WorkspaceSession,
-	WorkspaceSessionAttachment,
-	WorkspaceSessionLocation
+	LocalAttachmentAvailability,
+	Project,
+	ProjectAttachment,
+	ProjectAttachmentRequest,
+	RunState
 } from '$lib/types/sprocket';
 import { isRunClaimLeaseActive } from '$convex/lib/runLease';
 import { isRunFinalStatus } from '$convex/lib/validators';
 import { areImageUploadIdsEqual } from '$lib/chat/attachments';
 
-export type WorkspaceSessionState = WorkspaceSession & {
-	localWorkspaceAvailability: LocalWorkspaceAvailability;
+export type ProjectState = Project & {
+	localAttachmentAvailability: LocalAttachmentAvailability;
 };
 
 export function resolveSubmissionId(args: {
@@ -83,7 +83,7 @@ export function launchAgentRun(args: {
 	reasoningEffort: AgentRunRequest['reasoningEffort'];
 	serviceTier: AgentRunRequest['serviceTier'];
 	submissionId: string;
-	workspaceSessionId: Id<'workspaceSessions'>;
+	projectId: Id<'projects'>;
 }) {
 	void args.desktopApi
 		.runAgent({
@@ -95,7 +95,7 @@ export function launchAgentRun(args: {
 			reasoningEffort: args.reasoningEffort,
 			serviceTier: args.serviceTier,
 			submissionId: args.submissionId,
-			workspaceSessionId: args.workspaceSessionId
+			projectId: args.projectId
 		})
 		.then(({ runId }) => {
 			args.onStarted(runId);
@@ -106,48 +106,44 @@ export function launchAgentRun(args: {
 		});
 }
 
-function buildDesktopWorkspaceSessionsById(
-	desktopWorkspaceSessions: WorkspaceSessionLocation[]
-): Record<string, WorkspaceSessionLocation> {
+function buildDesktopProjectAttachmentsById(
+	desktopProjectAttachments: ProjectAttachment[]
+): Record<string, ProjectAttachment> {
 	return Object.fromEntries(
-		desktopWorkspaceSessions.map((workspaceSession) => [
-			workspaceSession.workspaceSessionId,
-			workspaceSession
-		])
+		desktopProjectAttachments.map((attachment) => [attachment.projectId, attachment])
 	);
 }
 
-export async function refreshDesktopWorkspaceSessions(desktopApi: DesktopApi | null) {
+export async function refreshDesktopProjectAttachments(desktopApi: DesktopApi | null) {
 	if (!desktopApi) {
 		return {};
 	}
 
-	return buildDesktopWorkspaceSessionsById(await desktopApi.listWorkspaceSessions());
+	return buildDesktopProjectAttachmentsById(await desktopApi.listProjectAttachments());
 }
 
-export async function attachLocalWorkspaceSession(args: {
+export async function attachLocalProject(args: {
 	desktopApi: DesktopApi;
-	workspaceSessionId: Id<'workspaceSessions'>;
+	projectId: Id<'projects'>;
 	workspacePath: string;
 }) {
-	return await args.desktopApi.attachWorkspaceSession({
-		workspaceSessionId: args.workspaceSessionId,
+	return await args.desktopApi.attachProject({
+		projectId: args.projectId,
 		workspacePath: args.workspacePath
-	} satisfies WorkspaceSessionAttachment);
+	} satisfies ProjectAttachmentRequest);
 }
 
-export function getDesiredAttachedWorkspaceSessionIds(
-	desktopWorkspaceSessions: WorkspaceSessionLocation[],
-	backendWorkspaceSessionIds: Id<'workspaceSessions'>[]
-): Id<'workspaceSessions'>[] {
-	const backendWorkspaceSessionIdSet = new Set(backendWorkspaceSessionIds);
-	return desktopWorkspaceSessions
+export function getDesiredAttachedProjectIds(
+	desktopProjectAttachments: ProjectAttachment[],
+	backendProjectIds: Id<'projects'>[]
+): Id<'projects'>[] {
+	const backendProjectIdSet = new Set(backendProjectIds);
+	return desktopProjectAttachments
 		.filter(
-			(workspaceSession) =>
-				workspaceSession.availability === 'available' &&
-				backendWorkspaceSessionIdSet.has(workspaceSession.workspaceSessionId)
+			(attachment) =>
+				attachment.availability === 'available' && backendProjectIdSet.has(attachment.projectId)
 		)
-		.map((workspaceSession) => workspaceSession.workspaceSessionId);
+		.map((attachment) => attachment.projectId);
 }
 
 type PendingLatestTask<T> = {
@@ -222,25 +218,25 @@ export function createLatestTaskQueue<T>(run: (value: T) => Promise<void>) {
 	};
 }
 
-export async function verifyWorkspaceSession(args: {
+export async function verifyProjectAttachment(args: {
 	desktopApi: DesktopApi | null;
-	refreshDesktopWorkspaceSessions: () => Promise<void>;
-	workspaceSessionId: Id<'workspaceSessions'>;
+	refreshDesktopProjectAttachments: () => Promise<void>;
+	projectId: Id<'projects'>;
 }) {
 	if (!args.desktopApi) {
 		return;
 	}
 
 	try {
-		const session = (await args.desktopApi.listWorkspaceSessions()).find(
-			(session) => session.workspaceSessionId === args.workspaceSessionId
+		const attachment = (await args.desktopApi.listProjectAttachments()).find(
+			(candidate) => candidate.projectId === args.projectId
 		);
-		if (!session || session.availability !== 'available') {
-			throw new Error(session?.unavailableReason ?? 'Workspace path is unavailable.');
+		if (!attachment || attachment.availability !== 'available') {
+			throw new Error(attachment?.unavailableReason ?? 'Workspace path is unavailable.');
 		}
-		await args.refreshDesktopWorkspaceSessions();
+		await args.refreshDesktopProjectAttachments();
 	} catch (error) {
-		await args.refreshDesktopWorkspaceSessions();
+		await args.refreshDesktopProjectAttachments();
 		throw error;
 	}
 }

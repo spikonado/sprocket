@@ -129,7 +129,7 @@ describe('agentRuntime context accounting', () => {
 
 	it('carries a compacted prefix into later runs without replaying covered history', async () => {
 		const t = initConvexTest();
-		const { asUser, threadId, workspaceSessionId } = await seedOwnedThread(t);
+		const { asUser, threadId, projectId } = await seedOwnedThread(t);
 		const firstSecret = 'context-first-secret';
 		const first = await createQueuedRun(
 			asUser,
@@ -169,7 +169,7 @@ describe('agentRuntime context accounting', () => {
 				threadId,
 				userId: 'user_alice',
 				submissionId: 'context-concurrent-later',
-				workspaceSessionId,
+				projectId,
 				status: 'completed',
 				executionSecretHash: await executionSecretHash('context-concurrent-later-secret'),
 				selectedModel: 'gpt-5.6-sol',

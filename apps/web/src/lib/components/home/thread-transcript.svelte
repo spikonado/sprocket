@@ -24,7 +24,7 @@
 	import ToolCallsDisclosure from '$lib/components/home/tool-calls-disclosure.svelte';
 	import WorkDisclosure from '$lib/components/home/work-disclosure.svelte';
 	import { formatElapsedDuration } from '$lib/format';
-	import type { ExecutorJob, ThreadMessage, WorkspaceSession } from '$lib/types/sprocket';
+	import type { ExecutorJob, ThreadMessage, Project } from '$lib/types/sprocket';
 
 	type Props = {
 		currentError: string | null;
@@ -32,7 +32,9 @@
 		messages: ThreadMessage[];
 		actions: ExecutorJob[];
 		activeRunId: ThreadMessage['runId'] | null;
-		workspaceSession: WorkspaceSession | null;
+		project: Project | null;
+		remoteChangeNotice?: string | null;
+		onDismissRemoteChangeNotice?: () => void;
 		emptyStateMessage?: string;
 		emptyStateHint?: string | null;
 	};
@@ -43,12 +45,15 @@
 		messages,
 		actions,
 		activeRunId,
-		workspaceSession,
-		emptyStateMessage = workspaceSession
+		project,
+		remoteChangeNotice = null,
+		onDismissRemoteChangeNotice,
+		emptyStateMessage = project
 			? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
 			: 'Add a project to begin.',
 		emptyStateHint = null
 	}: Props = $props();
+	const firstPromptMessageId = $derived(messages.find((message) => message.type === 'prompt')?._id);
 	let scrollViewport = $state<HTMLDivElement | null>(null);
 	let stickToBottom = $state(true);
 
@@ -446,6 +451,25 @@
 											<Copy class="size-3.5" aria-hidden="true" />
 										{/if}
 									</button>
+								{/if}
+								{#if remoteChangeNotice && message._id === firstPromptMessageId}
+									<div
+										role="status"
+										class="w-full max-w-132 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-left text-sm text-amber-800 dark:text-amber-200"
+									>
+										<div class="flex items-start justify-between gap-3">
+											<p class="min-w-0 flex-1 leading-6">{remoteChangeNotice}</p>
+											{#if onDismissRemoteChangeNotice}
+												<button
+													type="button"
+													class="shrink-0 text-xs font-medium tracking-[-0.01em] text-amber-800/80 underline-offset-2 hover:text-amber-900 hover:underline dark:text-amber-200/80 dark:hover:text-amber-100"
+													onclick={onDismissRemoteChangeNotice}
+												>
+													Dismiss
+												</button>
+											{/if}
+										</div>
+									</div>
 								{/if}
 							</div>
 						{:else}

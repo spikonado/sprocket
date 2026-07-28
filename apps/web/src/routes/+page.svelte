@@ -4,7 +4,7 @@
 	import { useAuth, useMutation, useQuery } from 'convex-svelte';
 	import type { Id } from '$convex/_generated/dataModel';
 	import { api } from '$convex/_generated/api';
-	import { EXECUTOR_HEARTBEAT_WRITE_THROTTLE_MS } from '$convex/lib/workspaceConnection';
+	import { EXECUTOR_HEARTBEAT_WRITE_THROTTLE_MS } from '$convex/lib/projectConnection';
 	import {
 		advanceConvexAuthRetryPending,
 		authState,
@@ -26,21 +26,19 @@
 	import SettingsSidebar, { type SettingsPage } from '$lib/components/home/settings-sidebar.svelte';
 	import SettingsUsage from '$lib/components/home/settings-usage.svelte';
 	import ThreadTranscript from '$lib/components/home/thread-transcript.svelte';
-	import WorkspacePicker, {
-		type WorkspaceSelection
-	} from '$lib/components/home/workspace-picker.svelte';
-	import WorkspaceSidebar from '$lib/components/home/workspace-sidebar.svelte';
+	import ProjectPicker, { type ProjectSelection } from '$lib/components/home/project-picker.svelte';
+	import ProjectSidebar from '$lib/components/home/project-sidebar.svelte';
 	import {
-		attachLocalWorkspaceSession as attachLocalWorkspaceSessionForPath,
+		attachLocalProject as attachLocalProjectForPath,
 		createLatestTaskQueue,
-		getDesiredAttachedWorkspaceSessionIds,
+		getDesiredAttachedProjectIds,
 		isRunBlockingAgentLaunch,
 		launchAgentRun,
-		refreshDesktopWorkspaceSessions as refreshDesktopWorkspaceSessionsFromDesktop,
+		refreshDesktopProjectAttachments as refreshDesktopProjectAttachmentsFromDesktop,
 		resolveDraftRunSubmissionId,
 		resolveSubmissionId,
-		verifyWorkspaceSession as verifyWorkspaceSessionForExecution,
-		type WorkspaceSessionState
+		verifyProjectAttachment as verifyProjectAttachmentForExecution,
+		type ProjectState
 	} from '$lib/home/desktop';
 	import { formatElapsedDuration } from '$lib/format';
 	import { validateImageAttachmentAddition, type ComposerAttachment } from '$lib/chat/attachments';
@@ -62,8 +60,9 @@
 		clearPendingAgentLaunch,
 		dataForThread,
 		findThreadById,
-		findWorkspaceSessionByName,
-		getWorkspaceThreadGroups,
+		findProjectById,
+		findProjectByRepositoryKey,
+		getProjectThreadGroups,
 		isActiveThread,
 		isAgentLaunchPending,
 		isLatestRunReadyForThread,
@@ -71,10 +70,11 @@
 		resolvePendingAgentLaunch,
 		resolvePendingAgentLaunchesFromThreads,
 		resolvePendingCreatedThreadId,
-		resolveWorkspaceThreadSelection,
+		resolveProjectThreadSelection,
+		shouldForkProjectForRemoteChange,
 		type PendingAgentLaunches
-	} from '$lib/workspace/threads';
-	import { mergeThreadTranscriptMessages } from '$lib/workspace/transcript';
+	} from '$lib/project/threads';
+	import { mergeThreadTranscriptMessages } from '$lib/project/transcript';
 	import {
 		clearLaunchHash,
 		readWorkspaceLaunchFromHash,
@@ -86,9 +86,9 @@
 		DesktopApi,
 		ThreadMessage,
 		ThreadSummary,
-		WorkspaceSession,
-		WorkspaceSessionLocation,
-		WorkspaceThreadGroup
+		Project,
+		ProjectAttachment,
+		ProjectThreadGroup
 	} from '$lib/types/sprocket';
 
 	const convexAuth = useAuth();
@@ -125,7 +125,7 @@
 			convexAuthRetryPending.set(false);
 		}
 	});
-	const upsertWorkspaceSession = useMutation(api.workspaceSessions.upsertSelected);
+	const upsertProject = useMutation(api.projects.upsertSelected);
 	const createThreadMutation = useMutation(api.threads.create);
 	const renameThreadMutation = useMutation(api.threads.rename);
 	const archiveThreadMutation = useMutation(api.threads.archive);
@@ -137,7 +137,7 @@
 	const generateImageUploadUrl = useMutation(api.imageUploads.generateUploadUrl);
 	const registerImageUpload = useMutation(api.imageUploads.register);
 	const discardImageUpload = useMutation(api.imageUploads.discard);
-	const heartbeatAttached = useMutation(api.workspaceSessions.heartbeatAttached);
+	const heartbeatAttached = useMutation(api.projects.heartbeatAttached);
 	const ensureMySubscription = useMutation(api.billing.ensureMySubscription);
 	const modelCatalogQuery = useQuery(api.modelCatalog.get, () => ({}));
 	const modelCatalog = $derived(modelCatalogQuery.data);
@@ -155,7 +155,7 @@
 		ensureSubscriptionAttemptedFor = userId;
 		void ensureMySubscription({}).catch(() => {});
 	});
-	const localServerRequiredMessage = 'Connect to a running Sprocket server to use this workspace.';
+	const localServerRequiredMessage = 'Connect to a running Sprocket server to use this project.';
 	const agentLaunchTimeoutMs = 30_000;
 	type ComposerRecovery = {
 		message: string;
@@ -167,20 +167,20 @@
 		selectedModel?: CatalogModelId;
 		submissionId?: string;
 	};
-	const workspaceAttachmentHeartbeatQueue = createLatestTaskQueue(
-		async (request: { clientId: string; workspaceSessionIds: Id<'workspaceSessions'>[] }) => {
+	const projectAttachmentHeartbeatQueue = createLatestTaskQueue(
+		async (request: { clientId: string; projectIds: Id<'projects'>[] }) => {
 			await heartbeatAttached({
 				clientId: request.clientId,
-				workspaceSessionIds: request.workspaceSessionIds
+				projectIds: request.projectIds
 			});
 		}
 	);
 
 	let desktopApi = $state<DesktopApi | null>(null);
 	let desktopApiResolved = $state(false);
-	let currentWorkspaceName = $state<string | null>(null);
+	let currentRepositoryKey = $state<string | null>(null);
 	let currentThreadId = $state<Id<'threadRecords'> | null>(null);
-	let draftWorkspaceName = $state<string | null>(null);
+	let draftRepositoryKey = $state<string | null>(null);
 	// Seed from compiled defaults; composer effects adopt live catalog defaults once loaded.
 	let selectedModel = $state<CatalogModelId>(defaultModelId);
 	let selectedReasoningEffort = $state<SupportedReasoningEffort>(defaultReasoningEffort);
@@ -217,29 +217,30 @@
 	let nextAgentLaunchId = 0;
 	let nextSubmissionSequence = 0;
 	let hasResolvedInitialSelection = $state(false);
-	let restoredWorkspaceSessionIdToAttach = $state<Id<'workspaceSessions'> | null>(null);
+	let restoredProjectIdToAttach = $state<Id<'projects'> | null>(null);
 	let lastSavedThreadId = $state<Id<'threadRecords'> | null>(null);
 	let lastSyncedComposerThreadId: Id<'threadRecords'> | null = null;
-	let workspaceSelectionGeneration = $state(0);
+	let projectSelectionGeneration = $state(0);
 	let pendingCreatedThreadId = $state<Id<'threadRecords'> | null>(null);
-	let desktopWorkspaceSessionsById = $state<Record<string, WorkspaceSessionLocation>>({});
-	let hasLoadedDesktopWorkspaceSessions = $state(false);
-	let desktopWorkspaceSessionsGeneration = 0;
+	let desktopProjectAttachmentsById = $state<Record<string, ProjectAttachment>>({});
+	let hasLoadedDesktopProjectAttachments = $state(false);
+	let desktopProjectAttachmentsGeneration = 0;
 	let selectionUserId = $state<string | null>(null);
-	let workspacePickerOpen = $state(false);
-	let workspacePickerMode = $state<'add' | 'reconnect'>('add');
-	let workspacePickerExpectedName = $state<string | undefined>(undefined);
-	let workspacePickerReconnectSessionId = $state<Id<'workspaceSessions'> | null>(null);
+	let projectPickerOpen = $state(false);
+	let projectPickerMode = $state<'add' | 'reconnect'>('add');
+	let projectPickerExpectedDisplayName = $state<string | undefined>(undefined);
+	let projectPickerReconnectProjectId = $state<Id<'projects'> | null>(null);
 	let settingsOpen = $state(false);
 	let settingsPage = $state<SettingsPage>('account');
-	let pendingWorkspaceLaunches = $state<string[]>([]);
-	let workspaceLaunchInFlight = $state(false);
-	let initialWorkspaceLaunchResolved = $state(false);
+	let pendingProjectLaunches = $state<string[]>([]);
+	let projectLaunchInFlight = $state(false);
+	let initialProjectLaunchResolved = $state(false);
+	const remoteChangeNotices = new SvelteMap<Id<'threadRecords'>, string>();
+	const REMOTE_CHANGE_NOTICE =
+		'A new project was created because this directory’s git remote changed. Earlier threads stay on the previous project.';
 	function getCurrentUserId() {
 		return $authState.user?.id ?? null;
 	}
-	const workspaceNameCache = new SvelteMap<Id<'workspaceSessions'>, string>();
-	let workspaceNameCacheUserId: string | null = null;
 
 	function updateComposerAttachment(localId: string, patch: Partial<ComposerAttachment>) {
 		const attachment = composerAttachments.find((entry) => entry.localId === localId);
@@ -338,13 +339,9 @@
 
 	function getComposerScope(
 		threadId: Id<'threadRecords'> | null,
-		workspaceSessionId: Id<'workspaceSessions'> | null
+		projectId: Id<'projects'> | null
 	) {
-		return threadId
-			? `thread:${threadId}`
-			: workspaceSessionId
-				? `draft:${workspaceSessionId}`
-				: null;
+		return threadId ? `thread:${threadId}` : projectId ? `draft:${projectId}` : null;
 	}
 
 	function clearSubmittingPrompt(scope: string, submissionSequence: number) {
@@ -371,10 +368,7 @@
 		return $authState.user && convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip';
 	}
 
-	const workspaceSessionsQuery = useQuery(
-		api.workspaceSessions.listMine,
-		getAuthenticatedQueryArgs
-	);
+	const projectsQuery = useQuery(api.projects.listMine, getAuthenticatedQueryArgs);
 	const threadsQuery = useQuery(api.threads.listMine, getAuthenticatedQueryArgs);
 	const uiPreferencesQuery = useQuery(api.uiPreferences.getMine, getAuthenticatedQueryArgs);
 	let workspaceTheme = $state<SprocketTheme>(resolveTheme(null));
@@ -460,7 +454,7 @@
 	const queryError = $derived.by(() => {
 		for (const query of [
 			modelCatalogQuery,
-			workspaceSessionsQuery,
+			projectsQuery,
 			threadsQuery,
 			uiPreferencesQuery,
 			activeThreadQuery,
@@ -476,50 +470,20 @@
 
 		return null;
 	});
-	const workspaceSessions = $derived.by<WorkspaceSessionState[]>(() =>
-		((workspaceSessionsQuery.data ?? []) as WorkspaceSession[]).map((session) => {
-			const desktopWorkspace = desktopWorkspaceSessionsById[session._id];
+	const projects = $derived.by<ProjectState[]>(() =>
+		((projectsQuery.data ?? []) as Project[]).map((project) => {
+			const desktopAttachment = desktopProjectAttachmentsById[project._id];
 			return {
-				...session,
-				workspacePath: desktopWorkspace?.workspacePath,
-				localWorkspaceAvailability: desktopWorkspace
-					? desktopWorkspace.availability
+				...project,
+				workspacePath: desktopAttachment?.workspacePath,
+				localAttachmentAvailability: desktopAttachment
+					? desktopAttachment.availability
 					: ('unlinked' as const),
-				localWorkspaceError: desktopWorkspace?.unavailableReason
+				localAttachmentError: desktopAttachment?.unavailableReason
 			};
 		})
 	);
-	$effect(() => {
-		const userId = getCurrentUserId();
-		if (workspaceNameCacheUserId !== userId) {
-			workspaceNameCache.clear();
-			workspaceNameCacheUserId = userId;
-		}
-		if (workspaceSessionsQuery.data === undefined) {
-			return;
-		}
-		workspaceNameCache.clear();
-		for (const workspaceSession of workspaceSessions) {
-			workspaceNameCache.set(workspaceSession._id, workspaceSession.workspaceName);
-		}
-	});
-	const threads = $derived.by<ThreadSummary[]>(() => {
-		const workspaceNames = new Map(
-			workspaceSessions.map((workspaceSession) => [
-				workspaceSession._id,
-				workspaceSession.workspaceName
-			])
-		);
-		return (threadsQuery.data ?? []).map((thread) => {
-			const workspaceName =
-				workspaceNames.get(thread.workspaceSessionId) ??
-				(workspaceSessionsQuery.data === undefined
-					? workspaceNameCache.get(thread.workspaceSessionId)
-					: undefined) ??
-				'Unknown workspace';
-			return { ...thread, workspaceName } as ThreadSummary;
-		});
-	});
+	const threads = $derived((threadsQuery.data ?? []) as ThreadSummary[]);
 	const currentActiveThread = $derived(dataForThread(activeThreadQuery.data, currentThreadId));
 	const contextUsage = $derived.by(() => {
 		const model = modelCatalog
@@ -554,17 +518,17 @@
 		});
 	});
 
-	const currentWorkspaceSession = $derived.by<WorkspaceSessionState | null>(() => {
-		if (!currentWorkspaceName) {
+	const currentProject = $derived.by<ProjectState | null>(() => {
+		if (!currentRepositoryKey) {
 			return null;
 		}
 
-		return findWorkspaceSessionByName(workspaceSessions, currentWorkspaceName);
+		return findProjectByRepositoryKey(projects, currentRepositoryKey);
 	});
 
-	const currentWorkspaceSessionId = $derived(currentWorkspaceSession?._id ?? null);
-	const composerWorkspaceSkills = $derived.by(() => {
-		const workspacePath = currentWorkspaceSession?.workspacePath ?? null;
+	const currentProjectId = $derived(currentProject?._id ?? null);
+	const composerProjectSkills = $derived.by(() => {
+		const workspacePath = currentProject?.workspacePath ?? null;
 		const api = desktopApi;
 		return {
 			workspacePath,
@@ -581,25 +545,23 @@
 		};
 	});
 
-	const currentWorkspaceThreads = $derived.by<ThreadSummary[]>(() => {
-		if (!currentWorkspaceName) {
+	const currentProjectThreads = $derived.by<ThreadSummary[]>(() => {
+		if (!currentProjectId) {
 			return [];
 		}
 
 		return threads
-			.filter((thread) => thread.workspaceName === currentWorkspaceName && isActiveThread(thread))
+			.filter((thread) => thread.projectId === currentProjectId && isActiveThread(thread))
 			.sort((left, right) => right.lastMessageAt - left.lastMessageAt);
 	});
 
-	const groupedWorkspaceThreads = $derived.by<WorkspaceThreadGroup[]>(() =>
-		getWorkspaceThreadGroups(workspaceSessions, threads)
+	const groupedProjectThreads = $derived.by<ProjectThreadGroup[]>(() =>
+		getProjectThreadGroups(projects, threads)
 	);
 
 	const runState = $derived(currentLatestRunData?.run ?? null);
 	const visibleActions = $derived((currentLatestRunData?.jobs ?? []).slice(-60));
-	const currentComposerScope = $derived(
-		getComposerScope(currentThreadId, currentWorkspaceSessionId)
-	);
+	const currentComposerScope = $derived(getComposerScope(currentThreadId, currentProjectId));
 	const estimatedServerNow = $derived(
 		latestRunServerClock && latestRunServerClock.runId === (runState?._id ?? null)
 			? latestRunServerClock.serverNow +
@@ -633,142 +595,140 @@
 	);
 	const canSend = $derived(
 		Boolean(
-			currentWorkspaceSessionId &&
-			currentWorkspaceSession?.localWorkspaceAvailability === 'available' &&
+			currentProjectId &&
+			currentProject?.localAttachmentAvailability === 'available' &&
 			!isSubmittingPrompt &&
 			!answeringAgentQuestion &&
 			!hasPendingAgentLaunch &&
 			((!isRunning && isLatestRunReady) || pendingAgentQuestion)
 		)
 	);
-	const desiredAttachedWorkspaceSessionIds = $derived.by<Id<'workspaceSessions'>[]>(() =>
-		getDesiredAttachedWorkspaceSessionIds(
-			Object.values(desktopWorkspaceSessionsById),
-			workspaceSessions.map((workspaceSession) => workspaceSession._id)
+	const desiredAttachedProjectIds = $derived.by<Id<'projects'>[]>(() =>
+		getDesiredAttachedProjectIds(
+			Object.values(desktopProjectAttachmentsById),
+			projects.map((project) => project._id)
 		)
 	);
-	const desiredAttachedWorkspaceSessionIdsKey = $derived.by(() =>
-		[...desiredAttachedWorkspaceSessionIds].sort().join('\0')
+	const desiredAttachedProjectIdsKey = $derived.by(() =>
+		[...desiredAttachedProjectIds].sort().join('\0')
 	);
-	const recentWorkspaceDirectories = $derived.by(() => {
+	const recentProjectDirectories = $derived.by(() => {
 		const seen = new SvelteSet<string>();
-		const recents: Array<{ workspacePath: string; workspaceName: string }> = [];
+		const recents: Array<{ workspacePath: string; displayName: string }> = [];
 
-		for (const session of Object.values(desktopWorkspaceSessionsById)) {
-			if (session.availability !== 'available' || seen.has(session.workspacePath)) {
+		for (const attachment of Object.values(desktopProjectAttachmentsById)) {
+			if (attachment.availability !== 'available' || seen.has(attachment.workspacePath)) {
 				continue;
 			}
 
-			seen.add(session.workspacePath);
-			const workspaceName =
-				session.workspacePath.split(/[/\\]/).filter(Boolean).at(-1) ?? session.workspacePath;
+			seen.add(attachment.workspacePath);
+			const displayName =
+				attachment.workspacePath.split(/[/\\]/).filter(Boolean).at(-1) ?? attachment.workspacePath;
 			recents.push({
-				workspacePath: session.workspacePath,
-				workspaceName
+				workspacePath: attachment.workspacePath,
+				displayName
 			});
 		}
 
-		return recents.sort((left, right) => right.workspaceName.localeCompare(left.workspaceName));
+		return recents.sort((left, right) => right.displayName.localeCompare(left.displayName));
 	});
 
-	async function refreshDesktopWorkspaceSessions() {
-		const refreshGeneration = ++desktopWorkspaceSessionsGeneration;
-		const nextWorkspaceSessions = await refreshDesktopWorkspaceSessionsFromDesktop(desktopApi);
-		if (refreshGeneration !== desktopWorkspaceSessionsGeneration) {
+	async function refreshDesktopProjectAttachments() {
+		const refreshGeneration = ++desktopProjectAttachmentsGeneration;
+		const nextAttachments = await refreshDesktopProjectAttachmentsFromDesktop(desktopApi);
+		if (refreshGeneration !== desktopProjectAttachmentsGeneration) {
 			return;
 		}
 
-		desktopWorkspaceSessionsById = nextWorkspaceSessions;
-		hasLoadedDesktopWorkspaceSessions = true;
+		desktopProjectAttachmentsById = nextAttachments;
+		hasLoadedDesktopProjectAttachments = true;
 	}
 
-	function applyWorkspaceSelection(
-		workspaceName: string,
+	function applyProjectSelection(
+		repositoryKey: string,
 		threadId: Id<'threadRecords'> | null = null,
 		draft: boolean = false
 	) {
-		currentWorkspaceName = workspaceName;
+		currentRepositoryKey = repositoryKey;
 		currentThreadId = threadId;
-		draftWorkspaceName = draft ? workspaceName : null;
+		draftRepositoryKey = draft ? repositoryKey : null;
 		if (threadId !== pendingCreatedThreadId) {
 			pendingCreatedThreadId = null;
 		}
 	}
 
-	function setWorkspaceSelection(
-		workspaceName: string,
+	function setProjectSelection(
+		repositoryKey: string,
 		threadId: Id<'threadRecords'> | null = null,
 		draft: boolean = false,
 		preserveError: boolean = false
 	) {
-		workspaceSelectionGeneration += 1;
+		projectSelectionGeneration += 1;
 		if (!preserveError) {
 			currentError = null;
 		}
-		applyWorkspaceSelection(workspaceName, threadId, draft);
+		applyProjectSelection(repositoryKey, threadId, draft);
 	}
 
-	async function attachLocalWorkspaceSession(
-		workspaceSessionId: Id<'workspaceSessions'>,
-		workspacePath: string
-	) {
+	async function attachLocalProject(projectId: Id<'projects'>, workspacePath: string) {
 		if (!desktopApi) {
 			throw new Error(localServerRequiredMessage);
 		}
 
-		const session = await attachLocalWorkspaceSessionForPath({
+		const attachment = await attachLocalProjectForPath({
 			desktopApi,
-			workspaceSessionId,
+			projectId,
 			workspacePath
 		});
-		desktopWorkspaceSessionsGeneration += 1;
-		desktopWorkspaceSessionsById = {
-			...desktopWorkspaceSessionsById,
-			[session.workspaceSessionId]: session
+		desktopProjectAttachmentsGeneration += 1;
+		desktopProjectAttachmentsById = {
+			...desktopProjectAttachmentsById,
+			[attachment.projectId]: attachment
 		};
-		hasLoadedDesktopWorkspaceSessions = true;
-		return session;
+		hasLoadedDesktopProjectAttachments = true;
+		return attachment;
 	}
 
-	function openWorkspaceSession(
-		workspaceName: string,
+	function openProject(
+		repositoryKey: string,
 		selection: { threadId?: Id<'threadRecords'> | null; draft?: boolean } = {}
 	) {
-		const workspaceSession = findWorkspaceSessionByName(workspaceSessions, workspaceName);
-		if (!workspaceSession) {
-			currentError = 'Choose a workspace first.';
+		const project = findProjectByRepositoryKey(projects, repositoryKey);
+		if (!project) {
+			currentError = 'Choose a project first.';
 			return;
 		}
 
-		setWorkspaceSelection(workspaceName, selection.threadId, selection.draft);
-		const selectionGeneration = workspaceSelectionGeneration;
-		void verifyWorkspaceSession(workspaceSession._id).catch((error) => {
-			if (selectionGeneration === workspaceSelectionGeneration) {
-				currentError = error instanceof Error ? error.message : 'Failed to attach workspace.';
+		setProjectSelection(repositoryKey, selection.threadId, selection.draft);
+		const selectionGeneration = projectSelectionGeneration;
+		void verifyProject(project._id).catch((error) => {
+			if (selectionGeneration === projectSelectionGeneration) {
+				currentError = error instanceof Error ? error.message : 'Failed to attach project.';
 			}
 		});
 	}
 
-	function openWorkspacePicker(
+	function openProjectPicker(
 		mode: 'add' | 'reconnect' = 'add',
-		workspaceSessionId: Id<'workspaceSessions'> | null = null
+		projectId: Id<'projects'> | null = null
 	) {
 		if (!desktopApi || !executorClientId) {
 			currentError = localServerRequiredMessage;
 			return;
 		}
 
-		workspacePickerMode = mode;
-		workspacePickerReconnectSessionId = workspaceSessionId;
-		workspacePickerExpectedName =
-			mode === 'reconnect' && workspaceSessionId
-				? workspaceSessions.find((session) => session._id === workspaceSessionId)?.workspaceName
+		projectPickerMode = mode;
+		projectPickerReconnectProjectId = projectId;
+		const reconnectProject =
+			mode === 'reconnect' && projectId
+				? projects.find((project) => project._id === projectId)
 				: undefined;
-		workspacePickerOpen = true;
+		projectPickerExpectedDisplayName = reconnectProject?.displayName;
+		projectPickerOpen = true;
 		currentError = null;
 	}
 
-	async function handleWorkspaceSelected(selection: WorkspaceSelection) {
+	async function handleProjectSelected(selection: ProjectSelection) {
 		if (!desktopApi || !executorClientId) {
 			currentError = localServerRequiredMessage;
 			return;
@@ -781,71 +741,88 @@
 		}
 
 		try {
-			if (workspacePickerMode === 'reconnect' && workspacePickerReconnectSessionId) {
-				const reconnectSession = workspaceSessions.find(
-					(session) => session._id === workspacePickerReconnectSessionId
+			if (projectPickerMode === 'reconnect' && projectPickerReconnectProjectId) {
+				await reconnectProjectSelection(
+					selection,
+					projectPickerReconnectProjectId,
+					pickerUserId,
+					pickerClientId
 				);
-				if (!reconnectSession) {
-					currentError = 'Workspace session not found.';
-					return;
-				}
-
-				await attachLocalWorkspaceSession(
-					workspacePickerReconnectSessionId,
-					selection.workspacePath
-				);
-				if (getCurrentUserId() !== pickerUserId) {
-					return;
-				}
-				setWorkspaceSelection(reconnectSession.workspaceName, currentThreadId);
-				currentError = null;
 				return;
 			}
 
-			await addWorkspaceSelection(selection, pickerUserId, pickerClientId);
+			await addProjectSelection(selection, pickerUserId, pickerClientId);
 		} catch (error) {
 			if (getCurrentUserId() !== pickerUserId) {
 				return;
 			}
-			currentError = error instanceof Error ? error.message : 'Failed to attach workspace.';
+			currentError = error instanceof Error ? error.message : 'Failed to attach project.';
 			throw error;
 		}
 	}
 
-	async function addWorkspaceSelection(
-		selection: WorkspaceSelection,
+	async function upsertCloudProject(selection: ProjectSelection, connectedClientId: string) {
+		const project = await upsertProject({
+			repositoryKey: selection.repositoryKey,
+			displayName: selection.displayName,
+			connectedClientId
+		});
+		if (!project) {
+			throw new Error('Failed to create or update the project.');
+		}
+		return project;
+	}
+
+	async function addProjectSelection(
+		selection: ProjectSelection,
 		expectedUserId: string,
 		connectedClientId: string
 	) {
-		const session = await upsertWorkspaceSession({
-			workspaceName: selection.workspaceName,
-			connectedClientId
-		});
-		if (!session) {
-			throw new Error('Failed to create or update the workspace session.');
-		}
+		const project = await upsertCloudProject(selection, connectedClientId);
 		if (getCurrentUserId() !== expectedUserId) {
 			return;
 		}
 
-		await attachLocalWorkspaceSession(session._id, selection.workspacePath);
+		await attachLocalProject(project._id, selection.workspacePath);
 		if (getCurrentUserId() !== expectedUserId) {
 			return;
 		}
-		setWorkspaceSelection(session.workspaceName, null, true);
+		setProjectSelection(selection.repositoryKey, null, true);
 		currentError = null;
 	}
 
-	function queueWorkspaceLaunch(workspacePath: string | null | undefined) {
+	async function reconnectProjectSelection(
+		selection: ProjectSelection,
+		reconnectProjectId: Id<'projects'>,
+		expectedUserId: string,
+		connectedClientId: string
+	) {
+		const previousProject = projects.find((project) => project._id === reconnectProjectId);
+		const project = await upsertCloudProject(selection, connectedClientId);
+		if (getCurrentUserId() !== expectedUserId) {
+			return;
+		}
+
+		await attachLocalProject(project._id, selection.workspacePath);
+		if (getCurrentUserId() !== expectedUserId) {
+			return;
+		}
+		const keepThread =
+			previousProject?.repositoryKey === selection.repositoryKey ? currentThreadId : null;
+		setProjectSelection(selection.repositoryKey, keepThread);
+		currentError = null;
+	}
+
+	function queueProjectLaunch(workspacePath: string | null | undefined) {
 		const normalizedPath = workspacePath?.trim();
 		if (!normalizedPath) {
 			return;
 		}
 
-		pendingWorkspaceLaunches = [...pendingWorkspaceLaunches, normalizedPath];
+		pendingProjectLaunches = [...pendingProjectLaunches, normalizedPath];
 	}
 
-	async function takeDesktopWorkspaceLaunches() {
+	async function takeDesktopProjectLaunches() {
 		const bridge = window.sprocketDesktopBridge;
 		if (!bridge?.takeWorkspaceLaunch) {
 			return;
@@ -856,11 +833,11 @@
 			if (!workspacePath) {
 				return;
 			}
-			queueWorkspaceLaunch(workspacePath);
+			queueProjectLaunch(workspacePath);
 		}
 	}
 
-	async function openLaunchedWorkspace(
+	async function openLaunchedProject(
 		workspacePath: string,
 		client: DesktopApi,
 		userId: string,
@@ -870,19 +847,19 @@
 		if (getCurrentUserId() !== userId) {
 			return;
 		}
-		await addWorkspaceSelection(selection, userId, clientId);
+		await addProjectSelection(selection, userId, clientId);
 	}
 
-	async function verifyWorkspaceSession(workspaceSessionId: Id<'workspaceSessions'>) {
-		await verifyWorkspaceSessionForExecution({
+	async function verifyProject(projectId: Id<'projects'>) {
+		await verifyProjectAttachmentForExecution({
 			desktopApi,
-			refreshDesktopWorkspaceSessions,
-			workspaceSessionId
+			refreshDesktopProjectAttachments,
+			projectId
 		});
 	}
 
-	function reconnectWorkspaceSession(workspaceSessionId: Id<'workspaceSessions'>) {
-		openWorkspacePicker('reconnect', workspaceSessionId);
+	function reconnectProject(projectId: Id<'projects'>) {
+		openProjectPicker('reconnect', projectId);
 	}
 
 	function schedulePendingCreatedThreadExpiration(args: {
@@ -895,23 +872,23 @@
 		submissionId: string;
 		threadId: Id<'threadRecords'>;
 		userId: string;
-		workspaceName: string;
-		workspaceSessionId: Id<'workspaceSessions'>;
+		repositoryKey: string;
+		projectId: Id<'projects'>;
 	}) {
 		window.setTimeout(() => {
 			if (
 				getCurrentUserId() !== args.userId ||
 				pendingCreatedThreadId !== args.threadId ||
 				currentThreadId !== args.threadId ||
-				currentWorkspaceName !== args.workspaceName ||
+				currentRepositoryKey !== args.repositoryKey ||
 				threads.some((thread) => thread.threadId === args.threadId)
 			) {
 				return;
 			}
 
 			pendingCreatedThreadId = null;
-			setWorkspaceSelection(args.workspaceName, null, true);
-			const recoveryScope = getComposerScope(null, args.workspaceSessionId);
+			setProjectSelection(args.repositoryKey, null, true);
+			const recoveryScope = getComposerScope(null, args.projectId);
 			if (recoveryScope) {
 				storeComposerRecovery(args.userId, recoveryScope, {
 					message: 'The new thread did not appear. Review your prompt and try sending it again.',
@@ -938,12 +915,12 @@
 		selectedServiceTier: SupportedServiceTier;
 		submissionId: string;
 		userId: string;
-		workspaceName: string;
-		workspaceSessionId: Id<'workspaceSessions'>;
+		repositoryKey: string;
+		projectId: Id<'projects'>;
 	}) {
 		const result = await createThreadMutation({
 			submissionId: args.submissionId,
-			workspaceSessionId: args.workspaceSessionId,
+			projectId: args.projectId,
 			selectedModel: asSupportedModelId(args.selectedModel),
 			reasoningEffort: args.selectedReasoningEffort,
 			serviceTier: args.selectedServiceTier
@@ -954,12 +931,12 @@
 
 		if (
 			args.userId === getCurrentUserId() &&
-			args.selectionGeneration === workspaceSelectionGeneration
+			args.selectionGeneration === projectSelectionGeneration
 		) {
 			pendingCreatedThreadId = result.threadId;
-			workspaceSelectionGeneration += 1;
+			projectSelectionGeneration += 1;
 			currentThreadId = result.threadId;
-			draftWorkspaceName = null;
+			draftRepositoryKey = null;
 			schedulePendingCreatedThreadExpiration({
 				prompt: args.prompt,
 				attachments: args.attachments,
@@ -970,20 +947,25 @@
 				submissionId: args.submissionId,
 				threadId: result.threadId,
 				userId: args.userId,
-				workspaceName: args.workspaceName,
-				workspaceSessionId: args.workspaceSessionId
+				repositoryKey: args.repositoryKey,
+				projectId: args.projectId
 			});
 		}
 
 		return result;
 	}
 
-	function startThreadDraftForWorkspace(workspaceName: string) {
-		openWorkspaceSession(workspaceName, { draft: true });
+	function startThreadDraftForProject(repositoryKey: string) {
+		openProject(repositoryKey, { draft: true });
 	}
 
 	function selectThread(thread: ThreadSummary) {
-		openWorkspaceSession(thread.workspaceName, { threadId: thread.threadId });
+		const project = findProjectById(projects, thread.projectId);
+		if (!project) {
+			currentError = 'Choose a project first.';
+			return;
+		}
+		openProject(project.repositoryKey, { threadId: thread.threadId });
 	}
 
 	async function renameThread(threadId: Id<'threadRecords'>, title: string) {
@@ -1005,7 +987,7 @@
 				if (currentThreadId === threadId) {
 					currentThreadId = null;
 					pendingCreatedThreadId = null;
-					workspaceSelectionGeneration += 1;
+					projectSelectionGeneration += 1;
 				}
 				if (lastSavedThreadId === threadId) {
 					lastSavedThreadId = null;
@@ -1085,9 +1067,9 @@
 			return;
 		}
 
-		const workspaceSessionId = currentWorkspaceSessionId;
-		if (!workspaceSessionId) {
-			currentError = 'Choose a workspace first.';
+		const projectId = currentProjectId;
+		if (!projectId) {
+			currentError = 'Choose a project first.';
 			return;
 		}
 
@@ -1105,21 +1087,23 @@
 			currentError =
 				isRunning || hasPendingAgentLaunch || isSubmittingPrompt
 					? 'Wait for the current agent launch or run to finish.'
-					: currentWorkspaceSession?.localWorkspaceAvailability === 'available'
-						? 'You need an active workspace session before sending.'
-						: 'This workspace needs to be attached before sending.';
+					: currentProject?.localAttachmentAvailability === 'available'
+						? 'You need an active project before sending.'
+						: 'This project needs to be attached before sending.';
 			return;
 		}
 
 		elapsedSeconds = 0;
 
-		const selectionGeneration = workspaceSelectionGeneration;
+		const selectionGeneration = projectSelectionGeneration;
 		const selectedThreadId = currentThreadId;
-		const submittedWorkspaceName = currentWorkspaceName;
-		if (!submittedWorkspaceName) {
-			currentError = 'Choose a workspace first.';
+		let submittedRepositoryKey = currentRepositoryKey;
+		if (!submittedRepositoryKey) {
+			currentError = 'Choose a project first.';
 			return;
 		}
+		let targetProjectId = projectId;
+		let forkedForRemoteChange = false;
 		const submittedUserId = getCurrentUserId();
 		if (!submittedUserId) {
 			currentError = 'User session is not ready.';
@@ -1135,9 +1119,7 @@
 		const submittedReasoningEffort = selectedReasoningEffort;
 		const submittedServiceTier = selectedServiceTier;
 		const previousRunId = selectedThreadId ? (runState?._id ?? null) : null;
-		let submissionScope = selectedThreadId
-			? `thread:${selectedThreadId}`
-			: `draft:${workspaceSessionId}`;
+		let submissionScope = selectedThreadId ? `thread:${selectedThreadId}` : `draft:${projectId}`;
 		const originatingRecoveryScope = submissionScope;
 		let recoveryScope = originatingRecoveryScope;
 		const originatingRecoveryKey = getComposerRecoveryKey(
@@ -1212,6 +1194,43 @@
 		submittingPromptScopes.set(submissionScope, submissionSequence);
 
 		try {
+			if (!selectedThreadId) {
+				const workspacePath = currentProject?.workspacePath;
+				if (!workspacePath) {
+					throw new Error('This project needs to be attached before sending.');
+				}
+				const resolution = await desktopApi.resolveWorkspacePath({ workspacePath });
+				if (!isSubmissionCurrent()) {
+					return;
+				}
+				if (shouldForkProjectForRemoteChange(submittedRepositoryKey, resolution.repositoryKey)) {
+					if (!executorClientId) {
+						throw new Error(localServerRequiredMessage);
+					}
+					const forkedProject = await upsertCloudProject(
+						{
+							workspacePath: resolution.workspacePath,
+							displayName: resolution.displayName,
+							repositoryKey: resolution.repositoryKey
+						},
+						executorClientId
+					);
+					if (!isSubmissionCurrent()) {
+						return;
+					}
+					await attachLocalProject(forkedProject._id, resolution.workspacePath);
+					if (!isSubmissionCurrent()) {
+						return;
+					}
+					targetProjectId = forkedProject._id;
+					submittedRepositoryKey = resolution.repositoryKey;
+					forkedForRemoteChange = true;
+					clearSubmittingPrompt(submissionScope, submissionSequence);
+					submissionScope = `draft:${targetProjectId}`;
+					submittingPromptScopes.set(submissionScope, submissionSequence);
+				}
+			}
+
 			const threadCreation = selectedThreadId
 				? null
 				: await createThread({
@@ -1225,8 +1244,8 @@
 						selectedServiceTier: submittedServiceTier,
 						submissionId: threadSubmissionId,
 						userId: submittedUserId,
-						workspaceName: submittedWorkspaceName,
-						workspaceSessionId
+						repositoryKey: submittedRepositoryKey,
+						projectId: targetProjectId
 					});
 			const threadId = selectedThreadId ?? threadCreation?.threadId ?? null;
 			if (!threadId || !isSubmissionCurrent()) {
@@ -1257,6 +1276,10 @@
 				recoveryScope = `thread:${threadId}`;
 				submissionTrackingKey = getComposerRecoveryKey(submittedUserId, recoveryScope);
 				latestSubmissionSequencesByRecoveryScope.set(submissionTrackingKey, submissionSequence);
+				if (forkedForRemoteChange) {
+					setProjectSelection(submittedRepositoryKey, threadId);
+					remoteChangeNotices.set(threadId, REMOTE_CHANGE_NOTICE);
+				}
 			}
 			// The browser is no longer involved after Convex binds the run-scoped
 			// executor capability. Start with a fresh token so closing the tab during
@@ -1342,7 +1365,7 @@
 				submissionId: runSubmissionId,
 				reasoningEffort: submittedReasoningEffort,
 				serviceTier: submittedServiceTier,
-				workspaceSessionId
+				projectId: targetProjectId
 			});
 		} catch (error) {
 			if (launchedThreadId && agentLaunchId !== null) {
@@ -1360,7 +1383,7 @@
 				return;
 			}
 			recoverSubmission(error instanceof Error ? error.message : 'Failed to send prompt.');
-			void refreshDesktopWorkspaceSessions().catch(() => {});
+			void refreshDesktopProjectAttachments().catch(() => {});
 		} finally {
 			window.clearTimeout(submissionTimeoutId);
 			clearSubmittingPrompt(submissionScope, submissionSequence);
@@ -1422,7 +1445,7 @@
 
 	$effect(() => {
 		const userId = getCurrentUserId();
-		const recoveryScope = getComposerScope(currentThreadId, currentWorkspaceSessionId);
+		const recoveryScope = getComposerScope(currentThreadId, currentProjectId);
 		const staleRun = runState;
 		if (
 			!userId ||
@@ -1489,16 +1512,16 @@
 
 		selectionUserId = userId;
 		hasResolvedInitialSelection = false;
-		currentWorkspaceName = null;
+		currentRepositoryKey = null;
 		currentThreadId = null;
-		draftWorkspaceName = null;
+		draftRepositoryKey = null;
 		pendingCreatedThreadId = null;
 		pendingAgentLaunches = {};
-		restoredWorkspaceSessionIdToAttach = null;
+		restoredProjectIdToAttach = null;
 		lastSavedThreadId = null;
 		ensureSubscriptionAttemptedFor = null;
 		lastSyncedComposerThreadId = null;
-		workspaceSelectionGeneration += 1;
+		projectSelectionGeneration += 1;
 		prompt = '';
 		clearComposerAttachments({ discard: true });
 		currentError = null;
@@ -1506,45 +1529,45 @@
 		selectedModel = modelCatalog?.defaultModelId ?? defaultModelId;
 		selectedReasoningEffort = modelCatalog?.defaultReasoningEffort ?? defaultReasoningEffort;
 		selectedServiceTier = modelCatalog?.defaultServiceTier ?? defaultServiceTier;
-		workspacePickerOpen = false;
-		workspacePickerReconnectSessionId = null;
-		workspacePickerExpectedName = undefined;
+		projectPickerOpen = false;
+		projectPickerReconnectProjectId = null;
+		projectPickerExpectedDisplayName = undefined;
 	});
 
 	$effect(() => {
-		const workspacePath = pendingWorkspaceLaunches[0];
+		const workspacePath = pendingProjectLaunches[0];
 		const client = desktopApi;
 		const userId = getCurrentUserId();
 		const clientId = executorClientId;
 		if (
 			!workspacePath ||
-			workspaceLaunchInFlight ||
+			projectLaunchInFlight ||
 			!authReady ||
 			!client ||
 			!userId ||
 			!clientId ||
-			workspaceSessionsQuery.data === undefined
+			projectsQuery.data === undefined
 		) {
 			return;
 		}
 
-		pendingWorkspaceLaunches = pendingWorkspaceLaunches.slice(1);
-		workspaceLaunchInFlight = true;
+		pendingProjectLaunches = pendingProjectLaunches.slice(1);
+		projectLaunchInFlight = true;
 		hasResolvedInitialSelection = true;
-		restoredWorkspaceSessionIdToAttach = null;
-		workspacePickerOpen = false;
+		restoredProjectIdToAttach = null;
+		projectPickerOpen = false;
 		settingsOpen = false;
 		currentError = null;
-		void openLaunchedWorkspace(workspacePath, client, userId, clientId)
+		void openLaunchedProject(workspacePath, client, userId, clientId)
 			.catch((error) => {
 				if (getCurrentUserId() === userId) {
 					hasResolvedInitialSelection = false;
 					currentError =
-						error instanceof Error ? error.message : 'Failed to open the requested workspace.';
+						error instanceof Error ? error.message : 'Failed to open the requested project.';
 				}
 			})
 			.finally(() => {
-				workspaceLaunchInFlight = false;
+				projectLaunchInFlight = false;
 			});
 	});
 
@@ -1561,7 +1584,7 @@
 
 	$effect(() => {
 		const userId = getCurrentUserId();
-		const recoveryScope = getComposerScope(currentThreadId, currentWorkspaceSessionId);
+		const recoveryScope = getComposerScope(currentThreadId, currentProjectId);
 		if (!userId || !recoveryScope) {
 			return;
 		}
@@ -1624,92 +1647,89 @@
 		const uiPreferences = uiPreferencesQuery.data;
 		if (
 			hasResolvedInitialSelection ||
-			!initialWorkspaceLaunchResolved ||
-			pendingWorkspaceLaunches.length > 0 ||
-			workspaceLaunchInFlight
+			!initialProjectLaunchResolved ||
+			pendingProjectLaunches.length > 0 ||
+			projectLaunchInFlight
 		) {
 			return;
 		}
 
-		if (!workspaceSessionsQuery.data || !threadsQuery.data || uiPreferences === undefined) {
+		if (!projectsQuery.data || !threadsQuery.data || uiPreferences === undefined) {
 			return;
 		}
 
 		hasResolvedInitialSelection = true;
 		const restoredThread = findThreadById(threads, uiPreferences?.lastThreadId ?? null);
 		if (restoredThread && isActiveThread(restoredThread)) {
-			setWorkspaceSelection(restoredThread.workspaceName, restoredThread.threadId, false, true);
-			restoredWorkspaceSessionIdToAttach =
-				findWorkspaceSessionByName(workspaceSessions, restoredThread.workspaceName)?._id ??
-				restoredThread.workspaceSessionId;
-			lastSavedThreadId = restoredThread.threadId;
-			return;
+			const restoredProject = findProjectById(projects, restoredThread.projectId);
+			if (restoredProject) {
+				setProjectSelection(restoredProject.repositoryKey, restoredThread.threadId, false, true);
+				restoredProjectIdToAttach = restoredProject._id;
+				lastSavedThreadId = restoredThread.threadId;
+				return;
+			}
 		}
 
-		if (workspaceSessions[0]) {
-			setWorkspaceSelection(workspaceSessions[0].workspaceName, null, false, true);
-			restoredWorkspaceSessionIdToAttach = workspaceSessions[0]._id;
+		if (projects[0]) {
+			setProjectSelection(projects[0].repositoryKey, null, false, true);
+			restoredProjectIdToAttach = projects[0]._id;
 		}
 	});
 
 	$effect(() => {
-		const workspaceSessionId = restoredWorkspaceSessionIdToAttach;
-		if (!workspaceSessionId || !desktopApi || !hasLoadedDesktopWorkspaceSessions) {
+		const projectId = restoredProjectIdToAttach;
+		if (!projectId || !desktopApi || !hasLoadedDesktopProjectAttachments) {
 			return;
 		}
 
-		const workspaceSession = workspaceSessions.find(
-			(session) => session._id === workspaceSessionId
-		);
-		if (!workspaceSession) {
-			restoredWorkspaceSessionIdToAttach = null;
+		const project = projects.find((candidate) => candidate._id === projectId);
+		if (!project) {
+			restoredProjectIdToAttach = null;
 			return;
 		}
 
-		restoredWorkspaceSessionIdToAttach = null;
-		const selectionGeneration = workspaceSelectionGeneration;
-		void verifyWorkspaceSession(workspaceSessionId).catch((error) => {
-			if (selectionGeneration === workspaceSelectionGeneration) {
-				currentError = error instanceof Error ? error.message : 'Failed to attach workspace.';
+		restoredProjectIdToAttach = null;
+		const selectionGeneration = projectSelectionGeneration;
+		void verifyProject(projectId).catch((error) => {
+			if (selectionGeneration === projectSelectionGeneration) {
+				currentError = error instanceof Error ? error.message : 'Failed to attach project.';
 			}
 		});
 	});
 
 	$effect(() => {
 		const activeThreadSummary = currentThreadId ? findThreadById(threads, currentThreadId) : null;
-		if (
-			activeThreadSummary?.workspaceName &&
-			activeThreadSummary.workspaceName !== currentWorkspaceName
-		) {
-			setWorkspaceSelection(
-				activeThreadSummary.workspaceName,
+		const threadProject = findProjectById(projects, activeThreadSummary?.projectId);
+		if (threadProject && threadProject.repositoryKey !== currentRepositoryKey) {
+			setProjectSelection(
+				threadProject.repositoryKey,
 				currentThreadId,
-				draftWorkspaceName === activeThreadSummary.workspaceName
+				draftRepositoryKey === threadProject.repositoryKey
 			);
 		}
 	});
 
 	$effect(() => {
-		const threads = currentWorkspaceThreads;
-		if (!hasResolvedInitialSelection || !currentWorkspaceName) {
+		const threads = currentProjectThreads;
+		if (!hasResolvedInitialSelection || !currentRepositoryKey) {
 			return;
 		}
 
-		const nextThreadId = resolveWorkspaceThreadSelection({
+		const nextThreadId = resolveProjectThreadSelection({
 			threads,
 			currentThreadId,
-			currentWorkspaceName,
-			draftWorkspaceName,
+			currentRepositoryKey,
+			draftRepositoryKey,
 			pendingCreatedThreadId
 		});
 		if (nextThreadId === currentThreadId) {
 			return;
 		}
 
-		setWorkspaceSelection(
-			currentWorkspaceName,
+		setProjectSelection(
+			currentRepositoryKey,
 			nextThreadId,
-			draftWorkspaceName === currentWorkspaceName,
+			draftRepositoryKey === currentRepositoryKey,
 			true
 		);
 	});
@@ -1766,32 +1786,30 @@
 
 	$effect(() => {
 		const clientId = executorClientId;
-		const workspaceSessionIdsKey = desiredAttachedWorkspaceSessionIdsKey;
+		const projectIdsKey = desiredAttachedProjectIdsKey;
 		if (
 			!clientId ||
 			!desktopApi ||
-			!hasLoadedDesktopWorkspaceSessions ||
-			workspaceSessionsQuery.data === undefined ||
+			!hasLoadedDesktopProjectAttachments ||
+			projectsQuery.data === undefined ||
 			getAuthenticatedQueryArgs() === 'skip'
 		) {
 			return;
 		}
 		const request = {
 			clientId,
-			workspaceSessionIds: workspaceSessionIdsKey
-				? (workspaceSessionIdsKey.split('\0') as Id<'workspaceSessions'>[])
-				: []
+			projectIds: projectIdsKey ? (projectIdsKey.split('\0') as Id<'projects'>[]) : []
 		};
 
-		void workspaceAttachmentHeartbeatQueue.enqueue(request).catch(() => {});
+		void projectAttachmentHeartbeatQueue.enqueue(request).catch(() => {});
 
 		const intervalId = window.setInterval(() => {
-			void workspaceAttachmentHeartbeatQueue.enqueue(request).catch(() => {});
+			void projectAttachmentHeartbeatQueue.enqueue(request).catch(() => {});
 		}, EXECUTOR_HEARTBEAT_WRITE_THROTTLE_MS);
 
 		return () => {
 			window.clearInterval(intervalId);
-			workspaceAttachmentHeartbeatQueue.cancelPending();
+			projectAttachmentHeartbeatQueue.cancelPending();
 		};
 	});
 
@@ -1800,29 +1818,29 @@
 		const bridge = window.sprocketDesktopBridge;
 		const unsubscribeWorkspaceLaunch = bridge?.onWorkspaceLaunch
 			? bridge.onWorkspaceLaunch(() => {
-					void takeDesktopWorkspaceLaunches();
+					void takeDesktopProjectLaunches();
 				})
 			: undefined;
 		const workspacePath = readWorkspaceLaunchFromHash();
 		if (workspacePath) {
-			queueWorkspaceLaunch(workspacePath);
+			queueProjectLaunch(workspacePath);
 			clearLaunchHash();
 		}
 		if (bridge?.takeWorkspaceLaunch) {
-			void takeDesktopWorkspaceLaunches().finally(() => {
-				initialWorkspaceLaunchResolved = true;
+			void takeDesktopProjectLaunches().finally(() => {
+				initialProjectLaunchResolved = true;
 			});
 		} else {
-			initialWorkspaceLaunchResolved = true;
+			initialProjectLaunchResolved = true;
 		}
 
 		void resolveDesktopApi()
 			.then((client) => {
 				desktopApi = client;
 				desktopApiResolved = true;
-				void refreshDesktopWorkspaceSessions().catch((error) => {
+				void refreshDesktopProjectAttachments().catch((error) => {
 					currentError =
-						error instanceof Error ? error.message : 'Failed to load local workspace sessions.';
+						error instanceof Error ? error.message : 'Failed to load local project attachments.';
 				});
 			})
 			.catch((error) => {
@@ -1904,24 +1922,24 @@
 					}}
 				/>
 			{:else}
-				<WorkspaceSidebar
-					{currentWorkspaceName}
+				<ProjectSidebar
+					{currentRepositoryKey}
 					{currentThreadId}
-					groups={groupedWorkspaceThreads}
+					groups={groupedProjectThreads}
 					{pendingAgentLaunches}
 					theme={workspaceTheme}
 					onThemeChange={(theme) => void handleThemeChange(theme)}
-					onChooseWorkspace={() => {
-						openWorkspacePicker('add');
+					onAddProject={() => {
+						openProjectPicker('add');
 					}}
-					onReconnectWorkspace={(workspaceSessionId) => {
-						void reconnectWorkspaceSession(workspaceSessionId);
+					onReconnectProject={(projectId) => {
+						void reconnectProject(projectId);
 					}}
 					onOpenSettings={() => {
 						settingsPage = 'account';
 						settingsOpen = true;
 					}}
-					onStartThreadDraft={startThreadDraftForWorkspace}
+					onStartThreadDraft={startThreadDraftForProject}
 					onSelectThread={selectThread}
 					onRenameThread={(threadId, title) => {
 						void renameThread(threadId, title);
@@ -1937,6 +1955,7 @@
 					{#if settingsPage === 'archived'}
 						<SettingsArchived
 							{threads}
+							{projects}
 							onRestore={(threadId) => {
 								void restoreThread(threadId);
 							}}
@@ -1953,7 +1972,15 @@
 						messages={visibleMessages}
 						actions={visibleActions}
 						activeRunId={isRunning ? (runState?._id ?? null) : null}
-						workspaceSession={currentWorkspaceSession}
+						project={currentProject}
+						remoteChangeNotice={currentThreadId
+							? (remoteChangeNotices.get(currentThreadId) ?? null)
+							: null}
+						onDismissRemoteChangeNotice={() => {
+							if (currentThreadId) {
+								remoteChangeNotices.delete(currentThreadId);
+							}
+						}}
 					/>
 
 					<PromptComposer
@@ -1973,7 +2000,7 @@
 						{isRunning}
 						elapsedLabel={isRunning ? formatElapsedDuration(elapsedSeconds) : null}
 						{contextUsage}
-						workspaceSkills={composerWorkspaceSkills}
+						projectSkills={composerProjectSkills}
 						onSubmit={() => {
 							void submitPrompt();
 						}}
@@ -1985,23 +2012,23 @@
 			</main>
 		</div>
 
-		{#if desktopApi && workspacePickerOpen}
-			<WorkspacePicker
-				open={workspacePickerOpen}
+		{#if desktopApi && projectPickerOpen}
+			<ProjectPicker
+				open={projectPickerOpen}
 				{desktopApi}
-				mode={workspacePickerMode}
-				expectedWorkspaceName={workspacePickerExpectedName}
-				recentWorkspaces={recentWorkspaceDirectories}
+				mode={projectPickerMode}
+				expectedDisplayName={projectPickerExpectedDisplayName}
+				recentProjectPaths={recentProjectDirectories}
 				onClose={() => {
-					workspacePickerOpen = false;
-					workspacePickerReconnectSessionId = null;
-					workspacePickerExpectedName = undefined;
+					projectPickerOpen = false;
+					projectPickerReconnectProjectId = null;
+					projectPickerExpectedDisplayName = undefined;
 				}}
 				onSelect={async (selection) => {
 					try {
-						await handleWorkspaceSelected(selection);
+						await handleProjectSelected(selection);
 					} catch {
-						await refreshDesktopWorkspaceSessions();
+						await refreshDesktopProjectAttachments();
 					}
 				}}
 			/>

@@ -221,11 +221,11 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 					...(input.createIfMissing ? { createIfMissing: true } : {})
 				})
 			}),
-		listWorkspaceSessions: () => request('/api/workspace/sessions'),
-		attachWorkspaceSession: (session) =>
-			request('/api/workspace/sessions', {
+		listProjectAttachments: () => request('/api/workspace/projects'),
+		attachProject: (attachment) =>
+			request('/api/workspace/projects', {
 				method: 'POST',
-				body: JSON.stringify(session)
+				body: JSON.stringify(attachment)
 			}),
 		runAgent: (requestBody) =>
 			request<AgentRunStart>('/api/agent/run', {

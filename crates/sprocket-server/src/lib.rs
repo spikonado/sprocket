@@ -1,10 +1,10 @@
 mod auth;
 mod config;
+mod project_attachments;
 pub mod repo_env;
 mod routes;
 mod static_dir;
 mod static_files;
-mod workspace_sessions;
 
 pub use config::{DEFAULT_DEV_WEB_URL, DEFAULT_PORT, SESSION_COOKIE_NAME, ServerConfig};
 use static_dir::is_valid_static_dir;
@@ -64,7 +64,7 @@ impl StartupInfo {
 pub struct AppState {
     pub auth: Arc<auth::AuthState>,
     pub desktop_login: Arc<auth::DesktopLoginStore>,
-    pub workspace_sessions: Arc<workspace_sessions::WorkspaceSessionStore>,
+    pub project_attachments: Arc<project_attachments::ProjectAttachmentStore>,
     pub http_base_url: String,
     pub desktop_login_callback_url: String,
     pub loopback_desktop_login_supported: bool,
@@ -94,7 +94,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
     let data_dir = config.resolve_data_dir();
     let auth = auth::AuthState::load(&data_dir)?;
     let pairing_credential = auth.pairing_credential().to_string();
-    let workspace_sessions = workspace_sessions::WorkspaceSessionStore::new(data_dir.clone());
+    let project_attachments = project_attachments::ProjectAttachmentStore::new(data_dir.clone());
     let http_base_url = config.listen_url();
     let web_ui_enabled = config
         .resolve_static_dir()
@@ -110,7 +110,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
     let state = AppState {
         auth,
         desktop_login: auth::DesktopLoginStore::new(),
-        workspace_sessions,
+        project_attachments,
         http_base_url: http_base_url.clone(),
         desktop_login_callback_url: auth::desktop_login_callback_url(config.port),
         loopback_desktop_login_supported: auth::host_supports_loopback_desktop_login(&config.host),
