@@ -6,7 +6,6 @@ license.workspace = true
 
 [dependencies]
 anyhow = "1.0.102"
-cap-std = "4.0.2"
 diffy = { version = "0.5.0", features = ["std"] }
 gix = { version = "0.86", default-features = false, features = ["sha1", "max-performance-safe"] }
 libc = "0.2.186"

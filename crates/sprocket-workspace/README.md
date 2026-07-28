@@ -11,14 +11,14 @@ See [ARCHITECTURE.md](../../ARCHITECTURE.md) for its role in the complete system
 - Resolve and browse workspace paths.
 - Load scoped workspace instructions and skills.
 - Run cancellable shell commands and manage long-running sessions.
-- Apply multi-file patches inside a workspace.
+- Apply multi-file patches, including paths outside the workspace.
 
 ## Design
 
-Path and patch operations canonicalize their inputs and prevent patch paths
-from escaping the workspace, including through symlinks. Patches are prepared
-before mutation, serialized per workspace, and rolled back when application
-fails.
+Path and patch operations canonicalize their inputs without confining them to
+the workspace: patch paths may point anywhere the Sprocket process can write,
+including through symlinks. Patches are prepared before mutation, serialized
+per workspace, and rolled back when application fails.
 
 Command execution has a different trust boundary. Commands start in the
 workspace by default, but they are not sandboxed and may access the wider
@@ -35,7 +35,7 @@ the agent implementation.
 - `agents.rs`: workspace instruction discovery.
 - `skills.rs` and `skills/`: skill discovery and built-in skill embedding.
 - `tools.rs`: command sessions and cancellation.
-- `patch.rs`: confined transactional patches.
+- `patch.rs`: transactional patches.
 
 ## Built-in skills
 
