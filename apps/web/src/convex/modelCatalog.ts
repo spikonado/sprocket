@@ -6,6 +6,7 @@ import {
 } from '@convex/lib/models';
 import {
 	modelLockUpgradeMessage,
+	serviceTierLockUpgradeMessage,
 	tierAllowedModels,
 	tierAllowedServiceTiers
 } from '@convex/lib/tiers';
@@ -32,6 +33,7 @@ export const get = query({
 			}),
 			tierAllowedModels,
 			tierAllowedServiceTiers,
-			modelLockUpgradeMessage
+			modelLockUpgradeMessage,
+			serviceTierLockUpgradeMessage
 		}) satisfies ModelCatalog
 });

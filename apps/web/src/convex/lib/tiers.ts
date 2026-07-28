@@ -62,6 +62,8 @@ export const tierAllowedServiceTiers: Record<SubscriptionTier, readonly Supporte
 };
 
 export const modelLockUpgradeMessage = 'Upgrade to a higher tier to unlock this model' as const;
+export const serviceTierLockUpgradeMessage =
+	'Upgrade to a higher tier to unlock this service tier' as const;
 
 export function isModelAllowedForTier(tier: SubscriptionTier, modelId: SupportedModelId): boolean {
 	return tierAllowedModels[tier].includes(modelId);

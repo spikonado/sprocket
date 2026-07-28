@@ -26,6 +26,7 @@
 		isModelAllowedForTier,
 		modelOptionsForTier,
 		resolveModelForTier,
+		serviceTierOptionsForModelAndTier,
 		serviceTiersForModelAndTier,
 		type CatalogModelId,
 		type ModelCatalog
@@ -110,7 +111,11 @@
 	);
 	const selectedServiceTierOptions = $derived(
 		modelCatalog && selectedCatalogModel
-			? serviceTiersForModelAndTier(modelCatalog, subscriptionTier ?? 'free', selectedCatalogModel)
+			? serviceTierOptionsForModelAndTier(
+					modelCatalog,
+					subscriptionTier ?? 'free',
+					selectedCatalogModel
+				)
 			: undefined
 	);
 	// Block send until a catalog model is selected. If the subscription query fails, keep send
@@ -685,7 +690,7 @@
 							{#if selectedCatalogModel}
 								<ReasoningServiceSelector
 									model={selectedCatalogModel}
-									allowedServiceTiers={selectedServiceTierOptions}
+									serviceTierOptions={selectedServiceTierOptions}
 									bind:reasoningEffort={selectedReasoningEffort}
 									bind:serviceTier={selectedServiceTier}
 									disabled={composerLocked || answeringQuestion}

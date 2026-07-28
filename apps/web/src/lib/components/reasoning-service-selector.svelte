@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Check, ChevronDown, Zap } from '@lucide/svelte';
+	import { Check, ChevronDown, Lock, Zap } from '@lucide/svelte';
 	import {
 		defaultReasoningEffort,
 		defaultServiceTier,
@@ -8,6 +8,7 @@
 	} from '$convex/lib/models';
 	import {
 		type CatalogModel,
+		type ServiceTierSelectorOption,
 		reasoningEffortLabel,
 		serviceTierLabel
 	} from '$lib/chat/model-catalog';
@@ -15,7 +16,8 @@
 
 	type Props = {
 		model: CatalogModel;
-		allowedServiceTiers?: readonly SupportedServiceTier[];
+		/** When set, shows every model service tier with paid ones locked (like the model picker). */
+		serviceTierOptions?: readonly ServiceTierSelectorOption[];
 		reasoningEffort?: SupportedReasoningEffort;
 		serviceTier?: SupportedServiceTier;
 		disabled?: boolean;
@@ -24,25 +26,75 @@
 
 	let {
 		model,
-		allowedServiceTiers,
+		serviceTierOptions,
 		reasoningEffort = $bindable<SupportedReasoningEffort>(defaultReasoningEffort),
 		serviceTier = $bindable<SupportedServiceTier>(defaultServiceTier),
 		disabled = false,
 		className = ''
 	}: Props = $props();
 
-	const selectableServiceTiers = $derived(allowedServiceTiers ?? model.serviceTiers);
+	const tierOptions = $derived.by((): readonly ServiceTierSelectorOption[] => {
+		if (serviceTierOptions) return serviceTierOptions;
+		return model.serviceTiers.map((tier) => ({
+			id: tier,
+			label: serviceTierLabel(tier)
+		}));
+	});
+	const unlockedServiceTiers = $derived(
+		tierOptions.filter((option) => !option.locked).map((option) => option.id)
+	);
 
 	let isOpen = $state(false);
 	let rootElement = $state<HTMLDivElement | null>(null);
 	let triggerElement = $state<HTMLButtonElement | null>(null);
+	let lockTooltip = $state<{ top: number; left: number; label: string } | null>(null);
+	let stickyLockTooltip = $state(false);
+	let stickyLockTooltipTimer: ReturnType<typeof setTimeout> | null = null;
 
 	function selectReasoning(next: SupportedReasoningEffort) {
 		reasoningEffort = next;
 	}
 
-	function selectServiceTier(next: SupportedServiceTier) {
-		if (!selectableServiceTiers.includes(next)) return;
+	function clearStickyLockTooltipTimer() {
+		if (!stickyLockTooltipTimer) return;
+		clearTimeout(stickyLockTooltipTimer);
+		stickyLockTooltipTimer = null;
+	}
+
+	function showLockTooltip(event: MouseEvent | FocusEvent, label: string, sticky = false) {
+		const target = event.currentTarget;
+		if (!(target instanceof HTMLElement)) return;
+		const rect = target.getBoundingClientRect();
+		clearStickyLockTooltipTimer();
+		stickyLockTooltip = sticky;
+		lockTooltip = {
+			top: rect.top - 8,
+			left: rect.left + rect.width / 2,
+			label
+		};
+		if (sticky) {
+			stickyLockTooltipTimer = setTimeout(() => {
+				stickyLockTooltip = false;
+				stickyLockTooltipTimer = null;
+				lockTooltip = null;
+			}, 2500);
+		}
+	}
+
+	function hideLockTooltip(force = false) {
+		if (stickyLockTooltip && !force) return;
+		clearStickyLockTooltipTimer();
+		stickyLockTooltip = false;
+		lockTooltip = null;
+	}
+
+	function selectServiceTier(next: SupportedServiceTier, event?: MouseEvent) {
+		const option = tierOptions.find((entry) => entry.id === next);
+		if (!option) return;
+		if (option.locked) {
+			if (event && option.lockTooltip) showLockTooltip(event, option.lockTooltip, true);
+			return;
+		}
 		serviceTier = next;
 	}
 
@@ -51,13 +103,16 @@
 		if (!supportedReasoning.includes(reasoningEffort)) {
 			reasoningEffort = model.defaultReasoningEffort;
 		}
-		if (!selectableServiceTiers.includes(serviceTier)) {
-			serviceTier = selectableServiceTiers[0] ?? defaultServiceTier;
+		if (!unlockedServiceTiers.includes(serviceTier)) {
+			serviceTier = unlockedServiceTiers[0] ?? defaultServiceTier;
 		}
 	});
 
 	$effect(() => {
-		if (!isOpen) return;
+		if (!isOpen) {
+			hideLockTooltip();
+			return;
+		}
 
 		function handlePointerDown(event: PointerEvent) {
 			if (event.target instanceof Node && !rootElement?.contains(event.target)) isOpen = false;
@@ -136,22 +191,44 @@
 			<div class="mx-2 my-2 h-px bg-[var(--hairline)]"></div>
 			<p class="text-muted-foreground px-3 pb-1.5 text-[11px] font-medium">Service tier</p>
 			<div class="space-y-0.5">
-				{#each selectableServiceTiers as tier (tier)}
+				{#each tierOptions as option (option.id)}
+					{@const locked = Boolean(option.locked)}
 					<button
 						type="button"
-						class="focus-visible:ring-ring/60 text-foreground hover:bg-hover-fill flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm outline-none focus-visible:ring-2"
-						aria-pressed={tier === serviceTier}
-						onclick={() => selectServiceTier(tier)}
+						class={cn(
+							'focus-visible:ring-ring/60 flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm outline-none focus-visible:ring-2',
+							locked ? 'cursor-not-allowed opacity-45' : 'text-foreground hover:bg-hover-fill'
+						)}
+						aria-pressed={!locked && option.id === serviceTier}
+						aria-disabled={locked}
+						aria-label={locked && option.lockTooltip
+							? `${option.label}. ${option.lockTooltip}`
+							: undefined}
+						onmouseenter={(event) => {
+							if (locked && option.lockTooltip) showLockTooltip(event, option.lockTooltip);
+						}}
+						onmouseleave={() => hideLockTooltip()}
+						onfocus={(event) => {
+							if (locked && option.lockTooltip) showLockTooltip(event, option.lockTooltip);
+						}}
+						onblur={() => hideLockTooltip()}
+						onclick={(event) => selectServiceTier(option.id, event)}
 					>
-						<Check
-							class={cn(
-								'size-4 shrink-0 transition-opacity',
-								tier === serviceTier ? 'opacity-100' : 'opacity-0'
-							)}
-						/>
-						{#if tier === 'fast'}<Zap class="size-3.5 text-amber-400" />{/if}
-						<span>{serviceTierLabel(tier)}</span>
-						{#if tier === selectableServiceTiers[0]}
+						{#if locked}
+							<span class="text-muted-foreground shrink-0" aria-hidden="true">
+								<Lock class="size-3.5" />
+							</span>
+						{:else}
+							<Check
+								class={cn(
+									'size-4 shrink-0 transition-opacity',
+									option.id === serviceTier ? 'opacity-100' : 'opacity-0'
+								)}
+							/>
+						{/if}
+						{#if option.id === 'fast'}<Zap class="size-3.5 shrink-0 text-amber-400" />{/if}
+						<span class={cn(locked && 'text-muted-foreground')}>{option.label}</span>
+						{#if !locked && option.id === unlockedServiceTiers[0]}
 							<span class="text-muted-foreground ml-auto text-xs">Default</span>
 						{/if}
 					</button>
@@ -160,3 +237,13 @@
 		</div>
 	{/if}
 </div>
+
+{#if lockTooltip}
+	<div
+		class="text-tooltip-foreground bg-tooltip ring-border pointer-events-none fixed z-100 -translate-x-1/2 -translate-y-full rounded-md px-2.5 py-1.5 text-[12px] leading-4 whitespace-nowrap shadow-lg ring-1"
+		style={`top: ${lockTooltip.top}px; left: ${lockTooltip.left}px;`}
+		role="tooltip"
+	>
+		{lockTooltip.label}
+	</div>
+{/if}

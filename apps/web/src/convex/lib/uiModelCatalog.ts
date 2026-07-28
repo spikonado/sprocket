@@ -17,4 +17,5 @@ export type ModelCatalog = {
 	tierAllowedModels: Readonly<Record<SubscriptionTier, readonly SupportedModelId[]>>;
 	tierAllowedServiceTiers: Readonly<Record<SubscriptionTier, readonly SupportedServiceTier[]>>;
 	modelLockUpgradeMessage: string;
+	serviceTierLockUpgradeMessage: string;
 };

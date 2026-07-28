@@ -18,6 +18,13 @@ export type ModelSelectorOption = {
 	lockTooltip?: string;
 };
 
+export type ServiceTierSelectorOption = {
+	id: SupportedServiceTier;
+	label: string;
+	locked?: boolean;
+	lockTooltip?: string;
+};
+
 export function getCatalogModel(
 	catalog: ModelCatalog,
 	modelId: CatalogModelId
@@ -42,13 +49,43 @@ export function resolveModelForTier(
 	return catalog.tierAllowedModels[tier]?.[0] ?? catalog.defaultModelId;
 }
 
+export function isServiceTierAllowedForTier(
+	catalog: ModelCatalog,
+	tier: SubscriptionTier,
+	serviceTier: SupportedServiceTier
+): boolean {
+	return (catalog.tierAllowedServiceTiers[tier] ?? []).includes(serviceTier);
+}
+
+/** Unlocked service tiers for a model on a subscription (used to coerce selections). */
 export function serviceTiersForModelAndTier(
 	catalog: ModelCatalog,
 	tier: SubscriptionTier,
 	model: CatalogModel
 ): readonly SupportedServiceTier[] {
-	const allowed = catalog.tierAllowedServiceTiers[tier] ?? [];
-	return model.serviceTiers.filter((serviceTier) => allowed.includes(serviceTier));
+	return model.serviceTiers.filter((serviceTier) =>
+		isServiceTierAllowedForTier(catalog, tier, serviceTier)
+	);
+}
+
+/** All model service tiers, with paid-only ones marked locked (mirrors modelOptionsForTier). */
+export function serviceTierOptionsForModelAndTier(
+	catalog: ModelCatalog,
+	tier: SubscriptionTier,
+	model: CatalogModel
+): ServiceTierSelectorOption[] {
+	return model.serviceTiers.map((serviceTier) => {
+		const option: ServiceTierSelectorOption = {
+			id: serviceTier,
+			label: serviceTierLabel(serviceTier)
+		};
+		if (isServiceTierAllowedForTier(catalog, tier, serviceTier)) return option;
+		return {
+			...option,
+			locked: true,
+			lockTooltip: catalog.serviceTierLockUpgradeMessage
+		};
+	});
 }
 
 export function modelOptionsForTier(
