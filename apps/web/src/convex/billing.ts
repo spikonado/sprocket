@@ -1,8 +1,4 @@
-import {
-	DodoPayments,
-	type CheckoutResponse,
-	type CustomerPortalResponse
-} from '@dodopayments/convex';
+import { DodoPayments } from '@dodopayments/convex';
 import type { ComponentApi } from '@dodopayments/convex/_generated/component';
 import { v } from 'convex/values';
 import {
@@ -14,6 +10,7 @@ import {
 } from '@convex/_generated/server';
 import { components, internal } from '@convex/_generated/api';
 import { getUserId } from '@convex/lib/auth';
+import { vCheckoutResponse, vCustomerPortalResponse } from '@convex/lib/docs';
 import {
 	ensureSubscription,
 	getSubscriptionDocExclusive,
@@ -48,6 +45,7 @@ function assertPaymentsConfigured(): void {
 
 export const getMySubscription = query({
 	args: {},
+	returns: v.object({ tier: vSubscriptionTier }),
 	handler: async (ctx) => {
 		const userId = await getUserId(ctx);
 		return { tier: await getSubscriptionTier(ctx, userId) };
@@ -56,6 +54,7 @@ export const getMySubscription = query({
 
 export const ensureMySubscription = mutation({
 	args: {},
+	returns: v.null(),
 	handler: async (ctx) => {
 		const userId = await getUserId(ctx);
 		await ensureSubscription(ctx, userId);
@@ -64,7 +63,8 @@ export const ensureMySubscription = mutation({
 
 export const checkout = action({
 	args: { tier: vSubscriptionTier },
-	handler: async (ctx, { tier }): Promise<CheckoutResponse> => {
+	returns: vCheckoutResponse,
+	handler: async (ctx, { tier }) => {
 		assertPaymentsConfigured();
 		const productId = tierProductIds[tier];
 		if (!productId) throw new Error(`No checkout product is configured for the ${tier} tier.`);
@@ -80,7 +80,8 @@ export const checkout = action({
 
 export const customerPortal = action({
 	args: {},
-	handler: async (ctx): Promise<CustomerPortalResponse> => {
+	returns: vCustomerPortalResponse,
+	handler: async (ctx) => {
 		assertPaymentsConfigured();
 		await getUserId(ctx);
 		return payments.customerPortal(ctx);

@@ -3,8 +3,15 @@ import { mutation, query, type MutationCtx } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getOwnedThreadRecord, getOwnedProject } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
+import { vThreadRecordDoc, vThreadSummary } from '@convex/lib/docs';
 import { assertModelConfigurationAllowedForUser } from '@convex/lib/tiers';
-import { isRunFinalStatus, vModelId, vReasoningEffort, vServiceTier } from '@convex/lib/validators';
+import {
+	isRunFinalStatus,
+	vModelId,
+	vReasoningEffort,
+	vRunStatus,
+	vServiceTier
+} from '@convex/lib/validators';
 
 async function patchOwnedThread(
 	ctx: MutationCtx,
@@ -24,14 +31,12 @@ export const create = mutation({
 		reasoningEffort: vReasoningEffort,
 		serviceTier: vServiceTier
 	},
-	handler: async (
-		ctx,
-		args
-	): Promise<{
-		threadId: Id<'threadRecords'>;
-		submissionRunStatus: Doc<'runs'>['status'] | null;
-	}> => {
-		const userId: string = await getUserId(ctx);
+	returns: v.object({
+		threadId: v.id('threadRecords'),
+		submissionRunStatus: v.union(vRunStatus, v.null())
+	}),
+	handler: async (ctx, args) => {
+		const userId = await getUserId(ctx);
 		await assertModelConfigurationAllowedForUser(ctx, userId, {
 			modelId: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
@@ -92,8 +97,9 @@ export const create = mutation({
 
 export const listMine = query({
 	args: {},
+	returns: v.array(vThreadSummary),
 	handler: async (ctx) => {
-		const userId: string = await getUserId(ctx);
+		const userId = await getUserId(ctx);
 		const records = await ctx.db
 			.query('threadRecords')
 			.withIndex('by_userId_lastMessageAt', (query) => query.eq('userId', userId))
@@ -127,8 +133,9 @@ export const getByThreadId = query({
 	args: {
 		threadId: v.id('threadRecords')
 	},
+	returns: vThreadRecordDoc,
 	handler: async (ctx, args) => {
-		const userId: string = await getUserId(ctx);
+		const userId = await getUserId(ctx);
 		return await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 	}
 });
@@ -138,6 +145,7 @@ export const rename = mutation({
 		threadId: v.id('threadRecords'),
 		title: v.string()
 	},
+	returns: v.null(),
 	handler: async (ctx, args) => {
 		const title = args.title.trim();
 		if (title.length === 0) {
@@ -151,6 +159,7 @@ export const archive = mutation({
 	args: {
 		threadId: v.id('threadRecords')
 	},
+	returns: v.null(),
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
@@ -171,6 +180,7 @@ export const restore = mutation({
 	args: {
 		threadId: v.id('threadRecords')
 	},
+	returns: v.null(),
 	handler: async (ctx, args) => {
 		await patchOwnedThread(ctx, args.threadId, { archivedAt: undefined });
 	}

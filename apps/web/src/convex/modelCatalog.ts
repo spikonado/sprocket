@@ -10,6 +10,7 @@ import {
 	tierAllowedModels,
 	tierAllowedServiceTiers
 } from '@convex/lib/tiers';
+import { vModelCatalog } from '@convex/lib/docs';
 import type { ModelCatalog } from '@convex/lib/uiModelCatalog';
 import { query } from './_generated/server';
 
@@ -20,8 +21,9 @@ import { query } from './_generated/server';
  */
 export const get = query({
 	args: {},
-	handler: async () =>
-		({
+	returns: vModelCatalog,
+	handler: async () => {
+		const catalog = {
 			defaultModelId,
 			defaultReasoningEffort,
 			defaultServiceTier,
@@ -29,11 +31,25 @@ export const get = query({
 			models: modelDefinitions.map((definition) => {
 				const { usageWeights, ...model } = definition;
 				void usageWeights;
-				return model;
+				return {
+					...model,
+					reasoningEfforts: [...model.reasoningEfforts],
+					serviceTiers: [...model.serviceTiers]
+				};
 			}),
-			tierAllowedModels,
-			tierAllowedServiceTiers,
+			tierAllowedModels: {
+				free: [...tierAllowedModels.free],
+				pro: [...tierAllowedModels.pro],
+				admin: [...tierAllowedModels.admin]
+			},
+			tierAllowedServiceTiers: {
+				free: [...tierAllowedServiceTiers.free],
+				pro: [...tierAllowedServiceTiers.pro],
+				admin: [...tierAllowedServiceTiers.admin]
+			},
 			modelLockUpgradeMessage,
 			serviceTierLockUpgradeMessage
-		}) satisfies ModelCatalog
+		} satisfies ModelCatalog;
+		return catalog;
+	}
 });

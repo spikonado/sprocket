@@ -1,6 +1,6 @@
 'use node';
 
-import { v, type Infer } from 'convex/values';
+import { v } from 'convex/values';
 import { ContextDev } from '@context-dot-dev/convex';
 import { ExaClient } from '@exalabs/convex-exa';
 import { action } from '@convex/_generated/server';
@@ -24,9 +24,6 @@ const SCRAPE_MARKDOWN_MAX_CHARS = 40_000;
 const SCRAPE_TIMEOUT_MS = 60_000;
 const SEARCH_RESULT_TEXT_MAX_CHARS = 2_000;
 const SEARCH_TIMEOUT_MS = 30_000;
-
-type ScrapeUrlResult = Infer<typeof vScrapeUrlResult>;
-type WebSearchResult = Infer<typeof vWebSearchResult>;
 
 class WebToolTimeout extends Error {}
 
@@ -74,7 +71,8 @@ export const scrapeUrl = action({
 		claimId: v.string(),
 		executionSecret: v.string()
 	},
-	handler: async (ctx, args): Promise<ScrapeUrlResult> => {
+	returns: vScrapeUrlResult,
+	handler: async (ctx, args) => {
 		const actor = await ctx.runQuery(api.agentRuntime.completionActor, {
 			runId: args.runId,
 			executionSecret: args.executionSecret
@@ -124,7 +122,8 @@ export const webSearch = action({
 		claimId: v.string(),
 		executionSecret: v.string()
 	},
-	handler: async (ctx, args): Promise<WebSearchResult> => {
+	returns: vWebSearchResult,
+	handler: async (ctx, args) => {
 		const actor = await ctx.runQuery(api.agentRuntime.completionActor, {
 			runId: args.runId,
 			executionSecret: args.executionSecret

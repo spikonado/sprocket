@@ -1,14 +1,16 @@
 import { mutation, query } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getUserId } from '@convex/lib/auth';
+import { vUiPreferencesDoc } from '@convex/lib/docs';
 
 const vTheme = v.union(v.literal('light'), v.literal('dark'));
 const DEFAULT_THEME = 'dark' as const;
 
 export const getMine = query({
 	args: {},
+	returns: v.union(vUiPreferencesDoc, v.null()),
 	handler: async (ctx) => {
-		const userId: string = await getUserId(ctx);
+		const userId = await getUserId(ctx);
 		return await ctx.db
 			.query('uiPreferences')
 			.withIndex('by_userId', (query) => query.eq('userId', userId))
@@ -20,8 +22,9 @@ export const setLastThread = mutation({
 	args: {
 		threadId: v.id('threadRecords')
 	},
+	returns: v.union(vUiPreferencesDoc, v.null()),
 	handler: async (ctx, args) => {
-		const userId: string = await getUserId(ctx);
+		const userId = await getUserId(ctx);
 		const existing = await ctx.db
 			.query('uiPreferences')
 			.withIndex('by_userId', (query) => query.eq('userId', userId))
@@ -47,8 +50,9 @@ export const setTheme = mutation({
 	args: {
 		theme: vTheme
 	},
+	returns: v.union(vUiPreferencesDoc, v.null()),
 	handler: async (ctx, args) => {
-		const userId: string = await getUserId(ctx);
+		const userId = await getUserId(ctx);
 		const existing = await ctx.db
 			.query('uiPreferences')
 			.withIndex('by_userId', (query) => query.eq('userId', userId))

@@ -7,16 +7,16 @@ import {
 	type MutationCtx,
 	type QueryCtx
 } from '@convex/_generated/server';
-import { v } from 'convex/values';
+import { v, type Infer } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import {
 	finalizeQuestionOptions,
 	normalizeQuestionAnswer,
-	validateQuestionText,
-	type AgentQuestionOption
+	validateQuestionText
 } from '@convex/lib/agentQuestions';
 import { getExecutionRun, getUserId } from '@convex/lib/auth';
 import { assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
+import { vAgentQuestionSnapshot } from '@convex/lib/docs';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
 import { vAskQuestionOption } from '@convex/lib/validators';
 
@@ -24,18 +24,7 @@ const DEFAULT_QUESTION_TIMEOUT_MS = 30 * 60 * 1000;
 const MIN_QUESTION_TIMEOUT_MS = 1_000;
 const MAX_QUESTION_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
-type AgentQuestionSnapshot = {
-	threadId: Id<'threadRecords'>;
-	questionId: Id<'agentQuestions'>;
-	question: string;
-	options: AgentQuestionOption[];
-	status: Doc<'agentQuestions'>['status'];
-	answer?: Doc<'agentQuestions'>['answer'];
-	sequence: number;
-	createdAt: number;
-	timeoutAt: number;
-	answeredAt?: number;
-};
+export type AgentQuestionSnapshot = Infer<typeof vAgentQuestionSnapshot>;
 
 function toSnapshot(question: Doc<'agentQuestions'>): AgentQuestionSnapshot {
 	return {
@@ -122,16 +111,14 @@ export const create = mutation({
 		timeoutMs: v.optional(v.number()),
 		executionSecret: v.string()
 	},
-	handler: async (
-		ctx,
-		args
-	): Promise<{
-		questionId: Id<'agentQuestions'>;
-		question: string;
-		options: AgentQuestionOption[];
-		timeoutAt: number;
-		sequence: number;
-	}> => {
+	returns: v.object({
+		questionId: v.id('agentQuestions'),
+		question: v.string(),
+		options: v.array(vAskQuestionOption),
+		timeoutAt: v.number(),
+		sequence: v.number()
+	}),
+	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		assertRunAcceptsModelCompletion(run.status);
 		if (run.claimId !== args.claimId || !isRunClaimLeaseActive(run, Date.now())) {
@@ -182,7 +169,8 @@ export const answer = mutation({
 		optionId: v.optional(v.string()),
 		text: v.optional(v.string())
 	},
-	handler: async (ctx, args): Promise<AgentQuestionSnapshot> => {
+	returns: vAgentQuestionSnapshot,
+	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 
@@ -244,7 +232,8 @@ export const getForExecutor = query({
 		questionId: v.id('agentQuestions'),
 		executionSecret: v.string()
 	},
-	handler: async (ctx, args): Promise<AgentQuestionSnapshot | null> => {
+	returns: v.union(vAgentQuestionSnapshot, v.null()),
+	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		const question = await ctx.db.get(args.questionId);
 		if (!question || question.runId !== run._id) {
@@ -258,7 +247,8 @@ export const headPendingForThread = query({
 	args: {
 		threadId: v.id('threadRecords')
 	},
-	handler: async (ctx, args): Promise<AgentQuestionSnapshot | null> => {
+	returns: v.union(vAgentQuestionSnapshot, v.null()),
+	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 		const head = await headLivePendingQuestion(ctx, args.threadId, Date.now());

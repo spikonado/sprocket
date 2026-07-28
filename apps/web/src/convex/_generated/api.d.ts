@@ -26,6 +26,7 @@ import type * as lib_assistantParts from "../lib/assistantParts.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_completionStream from "../lib/completionStream.js";
 import type * as lib_contextCompaction from "../lib/contextCompaction.js";
+import type * as lib_docs from "../lib/docs.js";
 import type * as lib_imageUploads from "../lib/imageUploads.js";
 import type * as lib_json from "../lib/json.js";
 import type * as lib_modelRegistry from "../lib/modelRegistry.js";
@@ -73,6 +74,7 @@ declare const fullApi: ApiFromModules<{
   "lib/auth": typeof lib_auth;
   "lib/completionStream": typeof lib_completionStream;
   "lib/contextCompaction": typeof lib_contextCompaction;
+  "lib/docs": typeof lib_docs;
   "lib/imageUploads": typeof lib_imageUploads;
   "lib/json": typeof lib_json;
   "lib/modelRegistry": typeof lib_modelRegistry;

@@ -1,10 +1,12 @@
 import { query } from '@convex/_generated/server';
 import { getUserId } from '@convex/lib/auth';
+import { vMyUsage } from '@convex/lib/docs';
 import { getMeterWindow, usageMeters, usagePeriods } from '@convex/lib/rateLimits';
 import { getSubscriptionTier, tierLimits } from '@convex/lib/tiers';
 
 export const getMyUsage = query({
 	args: {},
+	returns: vMyUsage,
 	handler: async (ctx) => {
 		const userId = await getUserId(ctx);
 		const tier = await getSubscriptionTier(ctx, userId);
