@@ -90,7 +90,7 @@ Start the browser development environment:
 bun dev
 ```
 
-After creating a convex deployment and configuring authkit following the instructions, configure the Convex deployment with the API key for each enabled model provider (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `XAI_API_KEY`).
+After creating a convex deployment and configuring authkit following the instructions, configure the Convex deployment with the API key for each model provider you want to enable.
 
 Optional Amazon Bedrock fallback for OpenAI and Anthropic: set `AWS_BEARER_TOKEN_BEDROCK`, or `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY`. `AWS_REGION` defaults to `us-east-1` (use a US Bedrock region; Anthropic fallback uses `us.` inference profiles).
 

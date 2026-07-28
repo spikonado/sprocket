@@ -9,7 +9,11 @@ import {
 	type SupportedModelId,
 	type SupportedServiceTier
 } from '@convex/lib/models';
-import { assertModelAllowedForTier, getSubscriptionTier } from '@convex/lib/tiers';
+import {
+	assertModelAllowedForTier,
+	assertServiceTierAllowedForTier,
+	getSubscriptionTier
+} from '@convex/lib/tiers';
 import { buildCanonicalAgentHistory } from '@convex/lib/agentHistory';
 import { contextSummaryText } from '@convex/lib/contextCompaction';
 import { appendThreadMessage, getThreadMessage } from '@convex/lib/threadMessages';
@@ -202,7 +206,9 @@ export const createRun = mutation({
 			serviceTier: args.serviceTier
 		});
 		const userId: string = await getUserId(ctx);
-		assertModelAllowedForTier(await getSubscriptionTier(ctx, userId), args.selectedModel);
+		const subscriptionTier = await getSubscriptionTier(ctx, userId);
+		assertModelAllowedForTier(subscriptionTier, args.selectedModel);
+		assertServiceTierAllowedForTier(subscriptionTier, args.serviceTier);
 		const secretHash = await executionSecretHash(args.executionSecret);
 		const threadRecord: Doc<'threadRecords'> = await getOwnedThreadRecord(
 			ctx.db,

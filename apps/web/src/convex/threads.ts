@@ -4,7 +4,11 @@ import { v } from 'convex/values';
 import { getOwnedThreadRecord, getOwnedProject } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
 import { assertSupportedModelConfiguration } from '@convex/lib/models';
-import { assertModelAllowedForTier, getSubscriptionTier } from '@convex/lib/tiers';
+import {
+	assertModelAllowedForTier,
+	assertServiceTierAllowedForTier,
+	getSubscriptionTier
+} from '@convex/lib/tiers';
 import { isRunFinalStatus, vModelId, vReasoningEffort, vServiceTier } from '@convex/lib/validators';
 
 async function patchOwnedThread(
@@ -38,7 +42,9 @@ export const create = mutation({
 			serviceTier: args.serviceTier
 		});
 		const userId: string = await getUserId(ctx);
-		assertModelAllowedForTier(await getSubscriptionTier(ctx, userId), args.selectedModel);
+		const subscriptionTier = await getSubscriptionTier(ctx, userId);
+		assertModelAllowedForTier(subscriptionTier, args.selectedModel);
+		assertServiceTierAllowedForTier(subscriptionTier, args.serviceTier);
 		await getOwnedProject(ctx.db, userId, args.projectId);
 		const existingRecord = await ctx.db
 			.query('threadRecords')

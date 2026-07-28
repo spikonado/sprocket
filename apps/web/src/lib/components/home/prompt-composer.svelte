@@ -26,6 +26,8 @@
 		isModelAllowedForTier,
 		modelOptionsForTier,
 		resolveModelForTier,
+		serviceTierOptionsForModelAndTier,
+		serviceTiersForModelAndTier,
 		type CatalogModelId,
 		type ModelCatalog
 	} from '$lib/chat/model-catalog';
@@ -106,6 +108,15 @@
 	);
 	const selectedCatalogModel = $derived(
 		modelCatalog ? getCatalogModel(modelCatalog, selectedModel) : undefined
+	);
+	const selectedServiceTierOptions = $derived(
+		modelCatalog && selectedCatalogModel
+			? serviceTierOptionsForModelAndTier(
+					modelCatalog,
+					subscriptionTier ?? 'free',
+					selectedCatalogModel
+				)
+			: undefined
 	);
 	// Block send until a catalog model is selected. If the subscription query fails, keep send
 	// enabled for a known selection and let the backend enforce entitlements.
@@ -379,11 +390,22 @@
 		// free defaults during loading or transient query failures.
 		if (!modelCatalog || !subscriptionTier) return;
 		const allowedModel = resolveModelForTier(modelCatalog, subscriptionTier, selectedModel);
-		if (allowedModel === selectedModel) return;
-		selectedModel = allowedModel;
-		selectedReasoningEffort =
-			getCatalogModel(modelCatalog, allowedModel)?.defaultReasoningEffort ??
-			modelCatalog.defaultReasoningEffort;
+		if (allowedModel !== selectedModel) {
+			selectedModel = allowedModel;
+			selectedReasoningEffort =
+				getCatalogModel(modelCatalog, allowedModel)?.defaultReasoningEffort ??
+				modelCatalog.defaultReasoningEffort;
+		}
+		const catalogModel = getCatalogModel(modelCatalog, allowedModel);
+		if (!catalogModel) return;
+		const allowedServiceTiers = serviceTiersForModelAndTier(
+			modelCatalog,
+			subscriptionTier,
+			catalogModel
+		);
+		if (!allowedServiceTiers.includes(selectedServiceTier)) {
+			selectedServiceTier = allowedServiceTiers[0] ?? modelCatalog.defaultServiceTier;
+		}
 	});
 
 	$effect(() => {
@@ -668,6 +690,7 @@
 							{#if selectedCatalogModel}
 								<ReasoningServiceSelector
 									model={selectedCatalogModel}
+									serviceTierOptions={selectedServiceTierOptions}
 									bind:reasoningEffort={selectedReasoningEffort}
 									bind:serviceTier={selectedServiceTier}
 									disabled={composerLocked || answeringQuestion}

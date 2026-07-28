@@ -1,6 +1,12 @@
 import type { GenericMutationCtx, GenericQueryCtx } from 'convex/server';
 import type { DataModel, Doc } from '@convex/_generated/dataModel';
-import { getModelDefinition, modelIds, type SupportedModelId } from '@convex/lib/models';
+import {
+	getModelDefinition,
+	modelIds,
+	serviceTierIds,
+	type SupportedModelId,
+	type SupportedServiceTier
+} from '@convex/lib/models';
 
 export const subscriptionTierIds = ['free', 'pro', 'admin'] as const;
 export type SubscriptionTier = (typeof subscriptionTierIds)[number];
@@ -44,12 +50,20 @@ export const tierLimits: Record<SubscriptionTier, TierLimits> = {
 };
 
 export const tierAllowedModels: Record<SubscriptionTier, readonly SupportedModelId[]> = {
-	free: ['claude-opus-5'],
+	free: ['kimi-k3'],
 	pro: modelIds,
 	admin: modelIds
 };
 
+export const tierAllowedServiceTiers: Record<SubscriptionTier, readonly SupportedServiceTier[]> = {
+	free: ['standard'],
+	pro: serviceTierIds,
+	admin: serviceTierIds
+};
+
 export const modelLockUpgradeMessage = 'Upgrade to a higher tier to unlock this model' as const;
+export const serviceTierLockUpgradeMessage =
+	'Upgrade to a higher tier to unlock this service tier' as const;
 
 export function isModelAllowedForTier(tier: SubscriptionTier, modelId: SupportedModelId): boolean {
 	return tierAllowedModels[tier].includes(modelId);
@@ -68,6 +82,23 @@ export function resolveModelForTier(
 ): SupportedModelId {
 	if (isModelAllowedForTier(tier, modelId)) return modelId;
 	return tierAllowedModels[tier][0];
+}
+
+export function isServiceTierAllowedForTier(
+	tier: SubscriptionTier,
+	serviceTier: SupportedServiceTier
+): boolean {
+	return tierAllowedServiceTiers[tier].includes(serviceTier);
+}
+
+export function assertServiceTierAllowedForTier(
+	tier: SubscriptionTier,
+	serviceTier: SupportedServiceTier
+): void {
+	if (isServiceTierAllowedForTier(tier, serviceTier)) return;
+	throw new Error(
+		`The ${serviceTier} service tier is not available on the ${tierLabels[tier]} plan. Upgrade to a higher tier to unlock it.`
+	);
 }
 
 /** Dodo product id per paid tier; 'free' and 'admin' never have one. */
