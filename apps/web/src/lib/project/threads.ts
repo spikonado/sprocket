@@ -1,88 +1,96 @@
 import type { Id } from '$convex/_generated/dataModel';
-import type { ThreadSummary, WorkspaceSession, WorkspaceThreadGroup } from '$lib/types/sprocket';
+import type { Project, ThreadSummary, ProjectThreadGroup } from '$lib/types/sprocket';
 
-export function findWorkspaceSessionByName<T extends Pick<WorkspaceSession, 'workspaceName'>>(
-	workspaceSessions: T[],
-	workspaceName: string
+export function findProjectByRepositoryKey<T extends Pick<Project, 'repositoryKey'>>(
+	projects: T[],
+	repositoryKey: string
 ): T | null {
-	return workspaceSessions.find((session) => session.workspaceName === workspaceName) ?? null;
+	return projects.find((project) => project.repositoryKey === repositoryKey) ?? null;
+}
+
+export function findProjectById<T extends Pick<Project, '_id'>>(
+	projects: T[],
+	projectId: Id<'projects'> | null | undefined
+): T | null {
+	if (!projectId) {
+		return null;
+	}
+	return projects.find((project) => project._id === projectId) ?? null;
+}
+
+/** True when a draft send should land on a new project because the path's git remote changed. */
+export function shouldForkProjectForRemoteChange(
+	selectedRepositoryKey: string,
+	resolvedRepositoryKey: string
+) {
+	return (
+		selectedRepositoryKey.trim().length > 0 &&
+		resolvedRepositoryKey.trim().length > 0 &&
+		selectedRepositoryKey !== resolvedRepositoryKey
+	);
 }
 
 export function isActiveThread(thread: Pick<ThreadSummary, 'threadStatus'>) {
 	return thread.threadStatus !== 'archived';
 }
 
-export function getWorkspaceThreadGroups(
-	workspaceSessions: WorkspaceSession[],
-	threads: ThreadSummary[]
-) {
-	const groups = new Map<string, WorkspaceThreadGroup>();
-	const activeThreads = threads.filter(isActiveThread);
+function unknownProject(projectId: Id<'projects'>): Project {
+	return {
+		_id: projectId,
+		userId: '',
+		repositoryKey: 'unknown',
+		displayName: 'Unknown project',
+		executorStatus: 'disconnected',
+		lastSeenAt: 0,
+		localAttachmentAvailability: 'unlinked'
+	};
+}
 
-	for (const thread of activeThreads) {
-		const existingGroup = groups.get(thread.workspaceName);
+function buildProjectThreadGroup(project: Project, threads: ThreadSummary[]): ProjectThreadGroup {
+	const sortedThreads = sortThreadsRunningFirst(threads);
+	return {
+		project,
+		threads: sortedThreads,
+		latestThreadAt: sortedThreads.reduce(
+			(latest, thread) => Math.max(latest, thread.lastMessageAt),
+			0
+		),
+		activeThreadCount: countActiveThreads(sortedThreads)
+	};
+}
 
-		if (existingGroup) {
-			existingGroup.threads.push(thread);
-			existingGroup.latestThreadAt = Math.max(existingGroup.latestThreadAt, thread.lastMessageAt);
+export function getProjectThreadGroups(projects: Project[], threads: ThreadSummary[]) {
+	const threadsByProjectId = new Map<Id<'projects'>, ThreadSummary[]>();
+
+	for (const thread of threads.filter(isActiveThread)) {
+		const existing = threadsByProjectId.get(thread.projectId);
+		if (existing) {
+			existing.push(thread);
 			continue;
 		}
-
-		groups.set(thread.workspaceName, {
-			key: thread.workspaceName,
-			workspaceName: thread.workspaceName,
-			workspaceSessionId: thread.workspaceSessionId,
-			executorStatus: null,
-			lastSeenAt: 0,
-			latestThreadAt: thread.lastMessageAt,
-			activeThreadCount: 0,
-			threads: [thread]
-		});
+		threadsByProjectId.set(thread.projectId, [thread]);
 	}
 
-	for (const workspaceSession of workspaceSessions) {
-		const existingGroup = groups.get(workspaceSession.workspaceName);
+	const groups: ProjectThreadGroup[] = [];
 
-		if (existingGroup) {
-			existingGroup.workspaceSessionId = workspaceSession._id;
-			existingGroup.executorStatus = workspaceSession.executorStatus;
-			existingGroup.lastSeenAt = workspaceSession.lastSeenAt;
-			existingGroup.localWorkspaceAvailability = workspaceSession.localWorkspaceAvailability;
-			existingGroup.localWorkspaceError = workspaceSession.localWorkspaceError;
-			existingGroup.workspacePath = workspaceSession.workspacePath;
-			continue;
+	for (const project of projects) {
+		groups.push(buildProjectThreadGroup(project, threadsByProjectId.get(project._id) ?? []));
+		threadsByProjectId.delete(project._id);
+	}
+
+	for (const [projectId, projectThreads] of threadsByProjectId) {
+		groups.push(buildProjectThreadGroup(unknownProject(projectId), projectThreads));
+	}
+
+	return groups.sort((left, right) => {
+		const leftSortKey = left.latestThreadAt || left.project.lastSeenAt;
+		const rightSortKey = right.latestThreadAt || right.project.lastSeenAt;
+		if (rightSortKey !== leftSortKey) {
+			return rightSortKey - leftSortKey;
 		}
 
-		groups.set(workspaceSession.workspaceName, {
-			key: workspaceSession.workspaceName,
-			workspaceName: workspaceSession.workspaceName,
-			workspaceSessionId: workspaceSession._id,
-			executorStatus: workspaceSession.executorStatus,
-			lastSeenAt: workspaceSession.lastSeenAt,
-			latestThreadAt: 0,
-			activeThreadCount: 0,
-			localWorkspaceAvailability: workspaceSession.localWorkspaceAvailability,
-			localWorkspaceError: workspaceSession.localWorkspaceError,
-			workspacePath: workspaceSession.workspacePath,
-			threads: []
-		});
-	}
-
-	return [...groups.values()]
-		.map((group) => ({
-			...group,
-			activeThreadCount: countActiveThreads(group.threads),
-			threads: sortThreadsRunningFirst(group.threads)
-		}))
-		.sort((left, right) => {
-			const leftSortKey = left.latestThreadAt || left.lastSeenAt;
-			const rightSortKey = right.latestThreadAt || right.lastSeenAt;
-			if (rightSortKey !== leftSortKey) {
-				return rightSortKey - leftSortKey;
-			}
-
-			return left.workspaceName.localeCompare(right.workspaceName);
-		});
+		return left.project.displayName.localeCompare(right.project.displayName);
+	});
 }
 
 function sortThreadsRunningFirst(threads: ThreadSummary[]) {
@@ -245,22 +253,22 @@ export function resolveExpiredAgentLaunch(
 	};
 }
 
-export function resolveWorkspaceThreadSelection(args: {
+export function resolveProjectThreadSelection(args: {
 	threads: ThreadSummary[];
 	currentThreadId: Id<'threadRecords'> | null;
-	currentWorkspaceName: string | null;
-	draftWorkspaceName: string | null;
+	currentRepositoryKey: string | null;
+	draftRepositoryKey: string | null;
 	pendingCreatedThreadId?: Id<'threadRecords'> | null;
 }) {
 	const {
 		threads,
 		currentThreadId,
-		currentWorkspaceName,
-		draftWorkspaceName,
+		currentRepositoryKey,
+		draftRepositoryKey,
 		pendingCreatedThreadId = null
 	} = args;
 
-	if (currentWorkspaceName && draftWorkspaceName === currentWorkspaceName) {
+	if (currentRepositoryKey && draftRepositoryKey === currentRepositoryKey) {
 		return null;
 	}
 

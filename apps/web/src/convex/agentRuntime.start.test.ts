@@ -106,7 +106,7 @@ describe('agentRuntime.start', () => {
 
 	it('takes over an expired claim, hides in-flight jobs, and clears partial response', async () => {
 		const t = initConvexTest();
-		const { asUser, threadId, workspaceSessionId } = await seedOwnedThread(t);
+		const { asUser, threadId, projectId } = await seedOwnedThread(t);
 		const executionSecret = 'start-takeover-secret';
 		const { runId } = await createQueuedRun(asUser, threadId, 'sub-takeover', executionSecret);
 
@@ -130,7 +130,7 @@ describe('agentRuntime.start', () => {
 				parts: [{ type: 'text', id: 'text-1', text: 'partial', turnId: 'turn-1' }]
 			});
 			const pendingJobId = await ctx.db.insert('executorJobs', {
-				workspaceSessionId,
+				projectId,
 				threadId,
 				runId,
 				kind: 'exec_command',
@@ -141,7 +141,7 @@ describe('agentRuntime.start', () => {
 				sequence: 0
 			});
 			const completedJobId = await ctx.db.insert('executorJobs', {
-				workspaceSessionId,
+				projectId,
 				threadId,
 				runId,
 				kind: 'exec_command',

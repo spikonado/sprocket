@@ -34,7 +34,7 @@ struct RunAgentApiRequest {
     selected_model: String,
     reasoning_effort: String,
     service_tier: String,
-    workspace_session_id: String,
+    project_id: String,
 }
 
 #[derive(serde::Serialize)]
@@ -70,8 +70,8 @@ async fn run_agent_handler(
         .map_err(ApiError::unauthorized)?;
 
     let workspace_path = state
-        .workspace_sessions
-        .workspace_path(&payload.workspace_session_id)
+        .project_attachments
+        .workspace_path(&payload.project_id)
         .await
         .map_err(ApiError::bad_request)?;
 

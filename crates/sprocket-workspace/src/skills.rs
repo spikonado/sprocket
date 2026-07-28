@@ -417,7 +417,7 @@ mod tests {
         let project_skills = root.join(".sprocket/skills");
         let sprocket_user = temp_workspace();
         let agents_user = temp_workspace();
-        fs::create_dir_all(root.join(".git")).expect("git marker");
+        gix::init(&root).expect("git repository");
         fs::create_dir_all(&project_skills).expect("project skills");
 
         write_skill(&project_skills, "alpha", "from project", "project body");
@@ -475,7 +475,7 @@ mod tests {
     fn skips_invalid_skills_with_warnings() {
         let root = temp_workspace();
         let skills = root.join(".sprocket/skills");
-        fs::create_dir_all(root.join(".git")).expect("git marker");
+        gix::init(&root).expect("git repository");
         fs::create_dir_all(&skills).expect("skills dir");
 
         let mismatch = skills.join("good-name");
@@ -558,7 +558,7 @@ mod tests {
         let root = temp_workspace();
         let skills = root.join(".sprocket/skills");
         let skill_dir = skills.join("huge");
-        fs::create_dir_all(root.join(".git")).unwrap();
+        gix::init(&root).expect("git repository");
         fs::create_dir_all(&skill_dir).unwrap();
 
         let mut contents = String::from("---\nname: huge\ndescription: oversized\n---\n");
@@ -580,7 +580,7 @@ mod tests {
     fn read_skill_content_strips_frontmatter_and_returns_dir() {
         let root = temp_workspace();
         let skills = root.join(".sprocket/skills");
-        fs::create_dir_all(root.join(".git")).unwrap();
+        gix::init(&root).expect("git repository");
         write_skill(&skills, "demo", "A demo skill", "# Instructions\n\nGo.");
 
         let loaded = load_workspace_skills(&root, &[], &[]);

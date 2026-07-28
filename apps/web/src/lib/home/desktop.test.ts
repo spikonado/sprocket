@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
 	createLatestTaskQueue,
-	getDesiredAttachedWorkspaceSessionIds,
+	getDesiredAttachedProjectIds,
 	isRunBlockingAgentLaunch,
 	launchAgentRun,
 	resolveDraftRunSubmissionId,
 	resolveSubmissionId
 } from '$lib/home/desktop';
-import type { DesktopApi, RunState, WorkspaceSessionLocation } from '$lib/types/sprocket';
+import type { DesktopApi, RunState, ProjectAttachment } from '$lib/types/sprocket';
 
 const recoveredSubmission = {
 	prompt: 'Inspect the robot',
@@ -23,8 +23,8 @@ function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 		browseFilesystem: vi.fn(),
 		listWorkspaceSkills: vi.fn(),
 		resolveWorkspacePath: vi.fn(),
-		listWorkspaceSessions: vi.fn(),
-		attachWorkspaceSession: vi.fn(),
+		listProjectAttachments: vi.fn(),
+		attachProject: vi.fn(),
 		runAgent
 	} as unknown as DesktopApi;
 }
@@ -44,7 +44,7 @@ function launchArgs(
 		reasoningEffort: 'medium',
 		serviceTier: 'standard',
 		submissionId: 'submission-1',
-		workspaceSessionId: 'workspace-1' as never,
+		projectId: 'workspace-1' as never,
 		...overrides
 	};
 }
@@ -92,7 +92,7 @@ describe('launchAgentRun', () => {
 			submissionId: 'submission-1',
 			reasoningEffort: 'medium',
 			serviceTier: 'standard',
-			workspaceSessionId: 'workspace-1'
+			projectId: 'workspace-1'
 		});
 		await vi.waitFor(() => {
 			expect(onStarted).toHaveBeenCalledWith('run-1');
@@ -271,21 +271,21 @@ describe('createLatestTaskQueue', () => {
 	});
 });
 
-describe('getDesiredAttachedWorkspaceSessionIds', () => {
-	it('includes only locally available sessions belonging to the current viewer', () => {
+describe('getDesiredAttachedProjectIds', () => {
+	it('includes only locally available attachments belonging to the current viewer', () => {
 		const location = (
-			workspaceSessionId: string,
-			availability: WorkspaceSessionLocation['availability'] = 'available'
-		): WorkspaceSessionLocation => ({
-			workspaceSessionId: workspaceSessionId as never,
-			workspacePath: `/workspaces/${workspaceSessionId}`,
+			projectId: string,
+			availability: ProjectAttachment['availability'] = 'available'
+		): ProjectAttachment => ({
+			projectId: projectId as never,
+			workspacePath: `/workspaces/${projectId}`,
 			availability,
 			lastValidatedAt: 1,
 			lastUsedAt: 1
 		});
 
 		expect(
-			getDesiredAttachedWorkspaceSessionIds(
+			getDesiredAttachedProjectIds(
 				[location('local'), location('old-viewer'), location('confirmed', 'unavailable')],
 				['local' as never, 'confirmed' as never]
 			)

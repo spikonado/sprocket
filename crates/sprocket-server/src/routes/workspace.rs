@@ -8,9 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::AppState;
 use crate::auth::require_session;
-use crate::workspace_sessions::{
-    AttachWorkspaceSessionRequest, WorkspacePathResolution, WorkspaceSessionRecord,
-    resolve_workspace_path,
+use crate::project_attachments::{
+    AttachProjectRequest, ProjectAttachmentRecord, WorkspacePathResolution, resolve_workspace_path,
 };
 use sprocket_workspace::{
     BUILTIN_SKILLS, FilesystemBrowseResult, browse_filesystem, default_user_skills_dirs,
@@ -55,45 +54,45 @@ struct WorkspaceSkillsResponse {
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
         .route(
-            "/workspace/sessions",
-            get(list_sessions).post(attach_session),
+            "/workspace/projects",
+            get(list_projects).post(attach_project),
         )
         .route("/workspace/resolve", post(resolve_path))
         .route("/workspace/browse", post(browse_path))
         .route("/workspace/skills", post(list_skills))
 }
 
-async fn list_sessions(
+async fn list_projects(
     State(state): State<AppState>,
     headers: HeaderMap,
     jar: CookieJar,
-) -> Result<Json<Vec<WorkspaceSessionRecord>>, ApiError> {
+) -> Result<Json<Vec<ProjectAttachmentRecord>>, ApiError> {
     require_session(&state.auth, &headers, &jar)
         .await
         .map_err(ApiError::unauthorized)?;
-    let sessions = state
-        .workspace_sessions
+    let projects = state
+        .project_attachments
         .list()
         .await
         .map_err(ApiError::internal)?;
-    Ok(Json(sessions))
+    Ok(Json(projects))
 }
 
-async fn attach_session(
+async fn attach_project(
     State(state): State<AppState>,
     headers: HeaderMap,
     jar: CookieJar,
-    Json(payload): Json<AttachWorkspaceSessionRequest>,
-) -> Result<Json<WorkspaceSessionRecord>, ApiError> {
+    Json(payload): Json<AttachProjectRequest>,
+) -> Result<Json<ProjectAttachmentRecord>, ApiError> {
     require_session(&state.auth, &headers, &jar)
         .await
         .map_err(ApiError::unauthorized)?;
-    let session = state
-        .workspace_sessions
+    let project = state
+        .project_attachments
         .attach(payload)
         .await
         .map_err(ApiError::bad_request)?;
-    Ok(Json(session))
+    Ok(Json(project))
 }
 
 async fn resolve_path(

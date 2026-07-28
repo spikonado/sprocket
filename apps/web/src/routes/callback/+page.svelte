@@ -19,5 +19,5 @@
 
 <CalmCentered
 	title="Completing sign-in"
-	description="Sprocket is finishing authentication and will return to your workspace automatically."
+	description="Sprocket is finishing authentication and will return to your projects automatically."
 />

@@ -51,7 +51,7 @@ pub struct RunContextResponse {
     pub prompt: String,
     pub prompt_attachments: Vec<ResolvedImageAttachment>,
     pub agent_history: Vec<AgentHistoryMessage>,
-    pub workspace_session: WorkspaceSessionSnapshot,
+    pub project: ProjectSnapshot,
     pub context_budget: ContextBudget,
 }
 
@@ -166,7 +166,7 @@ pub struct RunSnapshot {
     #[serde(rename = "_id")]
     pub id: String,
     pub thread_id: String,
-    pub workspace_session_id: String,
+    pub project_id: String,
     pub selected_model: String,
     pub reasoning_effort: String,
     pub service_tier: String,
@@ -177,16 +177,16 @@ pub struct RunSnapshot {
 pub struct ThreadRecordSnapshot {
     #[serde(rename = "_id")]
     pub id: String,
-    pub workspace_session_id: String,
+    pub project_id: String,
     pub title: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct WorkspaceSessionSnapshot {
+pub struct ProjectSnapshot {
     #[serde(rename = "_id")]
     pub id: String,
-    pub workspace_name: String,
+    pub display_name: String,
 }
 
 fn vec_to_one_or_many<T: Clone>(items: Vec<T>, what: &str) -> anyhow::Result<OneOrMany<T>> {

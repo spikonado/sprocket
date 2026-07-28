@@ -383,7 +383,7 @@ mod tests {
 
     use super::*;
     use crate::auth::{self, DesktopLoginStore};
-    use crate::workspace_sessions::WorkspaceSessionStore;
+    use crate::project_attachments::ProjectAttachmentStore;
 
     async fn test_state(loopback_supported: bool) -> (AppState, String, String) {
         let temp_dir =
@@ -395,7 +395,7 @@ mod tests {
         let state = AppState {
             auth,
             desktop_login: DesktopLoginStore::new(),
-            workspace_sessions: WorkspaceSessionStore::new(temp_dir),
+            project_attachments: ProjectAttachmentStore::new(temp_dir),
             http_base_url: "http://127.0.0.1:7731".to_string(),
             desktop_login_callback_url: auth::desktop_login_callback_url(7731),
             loopback_desktop_login_supported: loopback_supported,

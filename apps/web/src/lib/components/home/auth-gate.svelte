@@ -43,7 +43,7 @@
 		!authState.isConfigured
 			? 'Account sign-in is not configured on this deployment, so account actions are disabled.'
 			: showConfirming
-				? 'Verifying your secure connection before opening your workspace.'
+				? 'Verifying your secure connection before opening your projects.'
 				: authState.connectionFailed
 					? 'You’re signed in, but the secure connection could not be confirmed. Retry or sign out and sign in again.'
 					: showPreparing

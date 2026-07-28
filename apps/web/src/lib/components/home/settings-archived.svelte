@@ -1,14 +1,15 @@
 <script lang="ts">
 	import type { Id } from '$convex/_generated/dataModel';
-	import type { ThreadSummary } from '$lib/types/sprocket';
-	import { isActiveThread } from '$lib/workspace/threads';
+	import type { Project, ThreadSummary } from '$lib/types/sprocket';
+	import { findProjectById, isActiveThread } from '$lib/project/threads';
 
 	type Props = {
 		threads: ThreadSummary[];
+		projects: Project[];
 		onRestore: (threadId: Id<'threadRecords'>) => void;
 	};
 
-	let { threads, onRestore }: Props = $props();
+	let { threads, projects, onRestore }: Props = $props();
 
 	const archivedThreads = $derived(
 		[...threads]
@@ -31,10 +32,13 @@
 		{:else}
 			<ul class="max-w-xl space-y-1">
 				{#each archivedThreads as thread (thread.threadId)}
+					{@const project = findProjectById(projects, thread.projectId)}
 					<li class="group flex items-center gap-3 py-2">
 						<div class="min-w-0 flex-1">
 							<p class="text-foreground truncate text-[14px]">{thread.title}</p>
-							<p class="text-muted-foreground truncate text-[12px]">{thread.workspaceName}</p>
+							<p class="text-muted-foreground truncate text-[12px]">
+								{project?.displayName ?? 'Unknown project'}
+							</p>
 						</div>
 						<button
 							type="button"

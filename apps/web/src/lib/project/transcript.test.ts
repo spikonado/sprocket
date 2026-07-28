@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Id } from '$convex/_generated/dataModel';
 import type { ThreadMessage } from '$lib/types/sprocket';
-import { mergeThreadTranscriptMessages } from '$lib/workspace/transcript';
+import { mergeThreadTranscriptMessages } from '$lib/project/transcript';
 
 function message(
 	overrides: Partial<ThreadMessage> & Pick<ThreadMessage, '_id' | 'type'>

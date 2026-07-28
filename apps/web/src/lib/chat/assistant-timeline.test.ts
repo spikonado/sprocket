@@ -25,7 +25,7 @@ function executorJob(
 ): ExecutorJob {
 	return {
 		_id: id as ExecutorJob['_id'],
-		workspaceSessionId: 'workspace' as ExecutorJob['workspaceSessionId'],
+		projectId: 'workspace' as ExecutorJob['projectId'],
 		threadId: 'thread' as ExecutorJob['threadId'],
 		runId: 'run' as ExecutorJob['runId'],
 		kind: 'exec_command',

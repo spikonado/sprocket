@@ -1,7 +1,7 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { mutation, query, type MutationCtx, type QueryCtx } from '@convex/_generated/server';
 import { v, type Infer } from 'convex/values';
-import { getOwnedRun, getOwnedThreadRecord, getOwnedWorkspaceSession } from '@convex/lib/access';
+import { getOwnedRun, getOwnedThreadRecord, getOwnedProject } from '@convex/lib/access';
 import { executionSecretHash, getExecutionRun, getUserId } from '@convex/lib/auth';
 import {
 	assertSupportedModelConfiguration,
@@ -268,7 +268,7 @@ export const createRun = mutation({
 			threadId: args.threadId,
 			userId,
 			submissionId: args.submissionId,
-			workspaceSessionId: threadRecord.workspaceSessionId,
+			projectId: threadRecord.projectId,
 			status: 'queued',
 			executionSecretHash: secretHash,
 			selectedModel: args.selectedModel,
@@ -406,7 +406,7 @@ export const getContext = query({
 			serviceTier: SupportedServiceTier;
 		};
 		threadRecord: Doc<'threadRecords'>;
-		workspaceSession: Doc<'workspaceSessions'>;
+		project: Doc<'projects'>;
 		prompt: string;
 		promptAttachments: RuntimePromptAttachment[];
 		agentHistory: AgentHistoryMessage[];
@@ -422,11 +422,7 @@ export const getContext = query({
 			userId,
 			run.threadId
 		);
-		const workspaceSession: Doc<'workspaceSessions'> = await getOwnedWorkspaceSession(
-			ctx.db,
-			userId,
-			run.workspaceSessionId
-		);
+		const project: Doc<'projects'> = await getOwnedProject(ctx.db, userId, run.projectId);
 		const messages: ThreadTranscriptMessage[] = await buildThreadTranscript(ctx, run.threadId);
 		const jobs: Doc<'executorJobs'>[] = await ctx.db
 			.query('executorJobs')
@@ -484,7 +480,7 @@ export const getContext = query({
 			prompt,
 			promptAttachments,
 			agentHistory,
-			workspaceSession,
+			project,
 			contextBudget: {
 				contextWindowTokens: model.contextWindowTokens,
 				autoCompactTokenLimit: model.autoCompactTokenLimit
@@ -955,19 +951,15 @@ export const beginToolJob = mutation({
 		if (run.claimId !== args.claimId || !isRunClaimLeaseActive(run, Date.now())) {
 			throw new Error('Run is no longer active.');
 		}
-		const workspaceSession: Doc<'workspaceSessions'> = await getOwnedWorkspaceSession(
-			ctx.db,
-			userId,
-			run.workspaceSessionId
-		);
+		const project: Doc<'projects'> = await getOwnedProject(ctx.db, userId, run.projectId);
 
-		const nextSequence: number = workspaceSession.nextExecutorSequence;
-		await ctx.db.patch(workspaceSession._id, {
+		const nextSequence: number = project.nextExecutorSequence;
+		await ctx.db.patch(project._id, {
 			nextExecutorSequence: nextSequence + 1
 		});
 
 		const jobId: Id<'executorJobs'> = await ctx.db.insert('executorJobs', {
-			workspaceSessionId: run.workspaceSessionId,
+			projectId: run.projectId,
 			threadId: run.threadId,
 			runId: args.runId,
 			kind: args.kind,

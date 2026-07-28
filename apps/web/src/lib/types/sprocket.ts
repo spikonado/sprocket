@@ -15,31 +15,30 @@ import {
 	type WorkspaceInstruction
 } from '$convex/lib/validators';
 
-export type LocalWorkspaceAvailability = 'available' | 'unavailable' | 'unlinked';
+export type LocalAttachmentAvailability = 'available' | 'unavailable' | 'unlinked';
 
 export type { WorkspaceInstruction, ExecutorJobPayload, ExecutorJobResult };
 
-export type WorkspaceToolName = Infer<typeof vExecutorJobKind>;
+export type AgentToolName = Infer<typeof vExecutorJobKind>;
 
-export type WorkspaceSession = {
-	_id: Id<'workspaceSessions'>;
+export type Project = {
+	_id: Id<'projects'>;
 	_creationTime?: number;
 	userId: string;
-	workspaceName: string;
+	repositoryKey: string;
+	displayName: string;
 	workspacePath?: string;
 	executorStatus: Infer<typeof vExecutorStatus>;
 	lastHeartbeatAt?: number;
 	connectedClientId?: string;
 	lastSeenAt: number;
-	localWorkspaceAvailability?: LocalWorkspaceAvailability;
-	localWorkspaceError?: string;
+	localAttachmentAvailability?: LocalAttachmentAvailability;
+	localAttachmentError?: string;
 };
 
 export type ThreadSummary = {
-	_id: Id<'threadRecords'>;
 	threadId: Id<'threadRecords'>;
-	workspaceSessionId: Id<'workspaceSessions'>;
-	workspaceName: string;
+	projectId: Id<'projects'>;
 	title: string;
 	selectedModel: Infer<typeof vModelId>;
 	reasoningEffort: Infer<typeof vReasoningEffort>;
@@ -53,26 +52,19 @@ export type ThreadSummary = {
 	hasActiveRun: boolean;
 };
 
-export type WorkspaceThreadGroup = {
-	key: string;
-	workspaceName: string;
-	workspacePath?: string;
-	workspaceSessionId: Id<'workspaceSessions'>;
-	executorStatus: WorkspaceSession['executorStatus'] | null;
-	lastSeenAt: number;
+export type ProjectThreadGroup = {
+	project: Project;
+	threads: ThreadSummary[];
 	latestThreadAt: number;
 	activeThreadCount: number;
-	localWorkspaceAvailability?: LocalWorkspaceAvailability;
-	localWorkspaceError?: string;
-	threads: ThreadSummary[];
 };
 
 export type ExecutorJob = {
 	_id: Id<'executorJobs'>;
-	workspaceSessionId: Id<'workspaceSessions'>;
+	projectId: Id<'projects'>;
 	threadId: Id<'threadRecords'>;
 	runId: Id<'runs'>;
-	kind: WorkspaceToolName;
+	kind: AgentToolName;
 	callId?: string;
 	payload: ExecutorJobPayload;
 	hidden: boolean;
@@ -89,7 +81,7 @@ export type RunState = {
 	_id: Id<'runs'>;
 	threadId: Id<'threadRecords'>;
 	userId: string;
-	workspaceSessionId: Id<'workspaceSessions'>;
+	projectId: Id<'projects'>;
 	status: Infer<typeof vRunStatus>;
 	submissionId: string;
 	claimExpiresAt?: number;
@@ -136,7 +128,7 @@ export type AgentRunRequest = {
 	selectedModel: Infer<typeof vModelId>;
 	reasoningEffort: Infer<typeof vReasoningEffort>;
 	serviceTier: Infer<typeof vServiceTier>;
-	workspaceSessionId: Id<'workspaceSessions'>;
+	projectId: Id<'projects'>;
 };
 
 export type AgentRunStart = {
@@ -173,27 +165,26 @@ export type DesktopApi = {
 		workspacePath: string;
 		createIfMissing?: boolean;
 	}) => Promise<WorkspacePathResolution>;
-	listWorkspaceSessions: () => Promise<WorkspaceSessionLocation[]>;
-	attachWorkspaceSession: (
-		session: WorkspaceSessionAttachment
-	) => Promise<WorkspaceSessionLocation>;
+	listProjectAttachments: () => Promise<ProjectAttachment[]>;
+	attachProject: (attachment: ProjectAttachmentRequest) => Promise<ProjectAttachment>;
 	runAgent: (request: AgentRunRequest) => Promise<AgentRunStart>;
 };
 
 export type WorkspacePathResolution = {
 	workspacePath: string;
-	workspaceName: string;
+	displayName: string;
+	repositoryKey: string;
 };
 
-export type WorkspaceSessionAttachment = {
-	workspaceSessionId: Id<'workspaceSessions'>;
+export type ProjectAttachmentRequest = {
+	projectId: Id<'projects'>;
 	workspacePath: string;
 };
 
-export type WorkspaceSessionLocation = {
-	workspaceSessionId: Id<'workspaceSessions'>;
+export type ProjectAttachment = {
+	projectId: Id<'projects'>;
 	workspacePath: string;
-	availability: Exclude<LocalWorkspaceAvailability, 'unlinked'>;
+	availability: Exclude<LocalAttachmentAvailability, 'unlinked'>;
 	lastValidatedAt: number;
 	lastUsedAt: number;
 	unavailableReason?: string;

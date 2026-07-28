@@ -63,8 +63,8 @@
 			contextWindowTokens: number;
 			autoCompactTokenLimit: number;
 		};
-		/** Workspace-keyed skill loader; cache invalidates when `workspacePath` changes. */
-		workspaceSkills?: {
+		/** Project-path skill loader; cache invalidates when `workspacePath` changes. */
+		projectSkills?: {
 			workspacePath: string | null;
 			load: () => Promise<SkillSummary[]>;
 		} | null;
@@ -89,7 +89,7 @@
 		isRunning,
 		elapsedLabel,
 		contextUsage,
-		workspaceSkills = null,
+		projectSkills = null,
 		onSubmit,
 		onCancel
 	}: Props = $props();
@@ -206,7 +206,7 @@
 			return;
 		}
 
-		if (!workspaceSkills?.load) {
+		if (!projectSkills?.load) {
 			skills = [];
 			skillsLoadState = 'ready';
 			return;
@@ -215,7 +215,7 @@
 		const requestId = ++skillsRequestId;
 		skillsLoadState = 'loading';
 		try {
-			const nextSkills = await workspaceSkills.load();
+			const nextSkills = await projectSkills.load();
 			if (requestId !== skillsRequestId) {
 				return;
 			}
@@ -392,7 +392,7 @@
 	});
 
 	$effect(() => {
-		const path = workspaceSkills?.workspacePath ?? null;
+		const path = projectSkills?.workspacePath ?? null;
 		if (skillsCacheKey !== path) {
 			skillsCacheKey = path;
 			invalidateSkillsCache();

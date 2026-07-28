@@ -42,7 +42,7 @@ export async function seedOwnedThread(
 ): Promise<{
 	asUser: AuthenticatedTest;
 	subject: string;
-	workspaceSessionId: Id<'workspaceSessions'>;
+	projectId: Id<'projects'>;
 	threadId: Id<'threadRecords'>;
 }> {
 	const asUser = t.withIdentity({ subject });
@@ -55,16 +55,17 @@ export async function seedOwnedThread(
 			eventAt: 1
 		});
 	});
-	const workspaceSession = await asUser.mutation(api.workspaceSessions.upsertSelected, {
-		workspaceName: 'alpha',
+	const project = await asUser.mutation(api.projects.upsertSelected, {
+		repositoryKey: 'alpha',
+		displayName: 'alpha',
 		connectedClientId: 'client-1'
 	});
-	if (!workspaceSession) {
-		throw new Error('Expected workspace session');
+	if (!project) {
+		throw new Error('Expected project');
 	}
 	const created = await asUser.mutation(api.threads.create, {
 		submissionId: `thread-${subject}-${Date.now()}-${Math.random()}`,
-		workspaceSessionId: workspaceSession._id,
+		projectId: project._id,
 		selectedModel: 'gpt-5.6-sol',
 		reasoningEffort: 'medium',
 		serviceTier: 'standard'
@@ -72,7 +73,7 @@ export async function seedOwnedThread(
 	return {
 		asUser,
 		subject,
-		workspaceSessionId: workspaceSession._id,
+		projectId: project._id,
 		threadId: created.threadId
 	};
 }

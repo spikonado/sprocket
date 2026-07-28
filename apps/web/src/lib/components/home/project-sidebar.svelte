@@ -4,34 +4,34 @@
 	import SidebarTopActions from '$lib/components/home/sidebar-top-actions.svelte';
 	import type { Id } from '$convex/_generated/dataModel';
 	import type { SprocketTheme } from '$lib/theme';
-	import type { ThreadSummary, WorkspaceThreadGroup } from '$lib/types/sprocket';
-	import { isAgentLaunchPending, type PendingAgentLaunches } from '$lib/workspace/threads';
+	import type { ThreadSummary, ProjectThreadGroup } from '$lib/types/sprocket';
+	import { isAgentLaunchPending, type PendingAgentLaunches } from '$lib/project/threads';
 
 	type Props = {
-		currentWorkspaceName: string | null;
+		currentRepositoryKey: string | null;
 		currentThreadId: Id<'threadRecords'> | null;
-		groups: WorkspaceThreadGroup[];
+		groups: ProjectThreadGroup[];
 		pendingAgentLaunches?: PendingAgentLaunches;
 		theme: SprocketTheme;
 		onThemeChange: (theme: SprocketTheme) => void;
-		onChooseWorkspace: () => void;
-		onReconnectWorkspace: (workspaceSessionId: Id<'workspaceSessions'>) => void;
+		onAddProject: () => void;
+		onReconnectProject: (projectId: Id<'projects'>) => void;
 		onOpenSettings: () => void;
-		onStartThreadDraft: (workspaceName: string) => void;
+		onStartThreadDraft: (repositoryKey: string) => void;
 		onSelectThread: (thread: ThreadSummary) => void;
 		onRenameThread: (threadId: Id<'threadRecords'>, title: string) => void;
 		onArchiveThread: (threadId: Id<'threadRecords'>) => void;
 	};
 
 	let {
-		currentWorkspaceName,
+		currentRepositoryKey,
 		currentThreadId,
 		groups,
 		pendingAgentLaunches = {},
 		theme,
 		onThemeChange,
-		onChooseWorkspace,
-		onReconnectWorkspace,
+		onAddProject,
+		onReconnectProject,
 		onOpenSettings,
 		onStartThreadDraft,
 		onSelectThread,
@@ -136,12 +136,12 @@
 		};
 	}
 
-	function workspaceStatusLabel(group: WorkspaceThreadGroup) {
-		if (group.localWorkspaceAvailability === 'unavailable') {
+	function projectStatusLabel(group: ProjectThreadGroup) {
+		if (group.project.localAttachmentAvailability === 'unavailable') {
 			return 'Missing';
 		}
 
-		if (group.localWorkspaceAvailability === 'unlinked') {
+		if (group.project.localAttachmentAvailability === 'unlinked') {
 			return 'Link';
 		}
 
@@ -198,7 +198,7 @@
 		</header>
 
 		<div class="px-3.5 pb-1">
-			<button type="button" class={sidebarActionButtonClass} onclick={onChooseWorkspace}>
+			<button type="button" class={sidebarActionButtonClass} onclick={onAddProject}>
 				<FolderOpen class={sidebarActionIconClass} aria-hidden="true" />
 				<span class="truncate">Add project</span>
 			</button>
@@ -217,37 +217,45 @@
 				</div>
 			{:else}
 				<div class="space-y-4">
-					{#each groups as group (group.key)}
-						{@const statusLabel = workspaceStatusLabel(group)}
+					{#each groups as group (group.project._id)}
+						{@const project = group.project}
+						{@const statusLabel = projectStatusLabel(group)}
 						<section class="space-y-1.5">
 							<div class="group relative flex items-center px-2">
 								<button
 									type="button"
 									class={`flex min-w-0 flex-1 items-center gap-2 rounded-xl px-2 py-1 pr-8 text-left transition ${
-										group.workspaceName === currentWorkspaceName
+										project.repositoryKey === currentRepositoryKey
 											? 'text-foreground'
 											: 'text-muted-foreground hover:text-foreground'
 									}`}
 									onclick={() => {
-										toggleProjectCollapsed(group.key);
+										toggleProjectCollapsed(project.repositoryKey);
 									}}
-									aria-label={isProjectCollapsed(group.key)
-										? `Expand ${group.workspaceName} threads`
-										: `Collapse ${group.workspaceName} threads`}
+									aria-label={isProjectCollapsed(project.repositoryKey)
+										? `Expand ${project.displayName} threads`
+										: `Collapse ${project.displayName} threads`}
 								>
 									<ChevronRight
 										class={`text-muted-foreground size-3 shrink-0 transition-transform ${
-											isProjectCollapsed(group.key) ? '' : 'rotate-90'
+											isProjectCollapsed(project.repositoryKey) ? '' : 'rotate-90'
 										}`}
 									/>
 									<Folder class="text-muted-foreground size-4 shrink-0" />
-									<p class="truncate text-[0.88rem] font-medium tracking-[-0.02em]">
-										{group.workspaceName}
-									</p>
+									<div class="min-w-0 flex-1">
+										<p class="truncate text-[0.88rem] font-medium tracking-[-0.02em]">
+											{project.displayName}
+										</p>
+										{#if project.repositoryKey !== project.displayName}
+											<p class="text-muted-foreground truncate text-[10px] tracking-[-0.01em]">
+												{project.workspacePath ?? project.repositoryKey}
+											</p>
+										{/if}
+									</div>
 									{#if statusLabel}
 										<span
 											class={`rounded-full px-1.5 py-0.5 text-[10px] ${
-												group.localWorkspaceAvailability === 'unavailable'
+												project.localAttachmentAvailability === 'unavailable'
 													? 'border border-amber-500/25 bg-amber-500/10 text-amber-800 dark:text-amber-200'
 													: 'border border-sky-500/25 bg-sky-500/10 text-sky-800 dark:text-sky-200'
 											}`}
@@ -268,20 +276,18 @@
 									type="button"
 									class="text-muted-foreground hover:text-foreground hover:bg-hover-fill absolute top-0.5 right-1 inline-flex h-6 w-6 items-center justify-center rounded-md opacity-0 transition group-hover:opacity-100 focus-visible:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
 									onclick={() => {
-										if (group.localWorkspaceAvailability === 'available') {
-											onStartThreadDraft(group.workspaceName);
+										if (project.localAttachmentAvailability === 'available') {
+											onStartThreadDraft(project.repositoryKey);
 											return;
 										}
 
-										if (group.workspaceSessionId) {
-											onReconnectWorkspace(group.workspaceSessionId);
-										}
+										onReconnectProject(project._id);
 									}}
-									aria-label={group.localWorkspaceAvailability === 'available'
-										? `Create thread in ${group.workspaceName}`
-										: `Reconnect ${group.workspaceName}`}
+									aria-label={project.localAttachmentAvailability === 'available'
+										? `Create thread in ${project.displayName}`
+										: `Reconnect ${project.displayName}`}
 								>
-									{#if group.localWorkspaceAvailability === 'available'}
+									{#if project.localAttachmentAvailability === 'available'}
 										<SquarePen class="size-4" />
 									{:else}
 										<FolderOpen class="size-4" />
@@ -289,12 +295,12 @@
 								</button>
 							</div>
 
-							{#if !isProjectCollapsed(group.key)}
+							{#if !isProjectCollapsed(project.repositoryKey)}
 								<div class="ml-5 border-l border-[var(--hairline)] pl-3">
-									{#if group.localWorkspaceAvailability === 'unavailable' || group.localWorkspaceAvailability === 'unlinked'}
+									{#if project.localAttachmentAvailability === 'unavailable' || project.localAttachmentAvailability === 'unlinked'}
 										<p class="text-muted-foreground pb-2 text-[12px] leading-5">
-											{group.localWorkspaceError ??
-												(group.localWorkspaceAvailability === 'unlinked'
+											{project.localAttachmentError ??
+												(project.localAttachmentAvailability === 'unlinked'
 													? 'This project needs a local directory attached before you can use it.'
 													: 'This project needs to be reconnected.')}
 										</p>
@@ -302,7 +308,7 @@
 									{#if group.threads.length === 0}
 										<p class="text-muted-foreground py-1.5 text-[12px]">No threads yet</p>
 									{:else}
-										{@const projectExpanded = isProjectExpanded(group.key)}
+										{@const projectExpanded = isProjectExpanded(project.repositoryKey)}
 										{@const visibleThreads = projectExpanded
 											? group.threads
 											: group.threads.slice(0, DEFAULT_VISIBLE_THREAD_COUNT)}
@@ -402,7 +408,7 @@
 													type="button"
 													class="text-muted-foreground hover:text-muted-foreground px-2 py-1 text-[12px] transition"
 													onclick={() => {
-														toggleProjectExpanded(group.key);
+														toggleProjectExpanded(project.repositoryKey);
 													}}
 												>
 													{projectExpanded ? 'Show less' : 'Show more'}

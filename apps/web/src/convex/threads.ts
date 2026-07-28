@@ -1,7 +1,7 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { mutation, query, type MutationCtx } from '@convex/_generated/server';
 import { v } from 'convex/values';
-import { getOwnedThreadRecord, getOwnedWorkspaceSession } from '@convex/lib/access';
+import { getOwnedThreadRecord, getOwnedProject } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
 import { assertSupportedModelConfiguration } from '@convex/lib/models';
 import { assertModelAllowedForTier, getSubscriptionTier } from '@convex/lib/tiers';
@@ -20,7 +20,7 @@ async function patchOwnedThread(
 export const create = mutation({
 	args: {
 		submissionId: v.string(),
-		workspaceSessionId: v.id('workspaceSessions'),
+		projectId: v.id('projects'),
 		selectedModel: vModelId,
 		reasoningEffort: vReasoningEffort,
 		serviceTier: vServiceTier
@@ -39,7 +39,7 @@ export const create = mutation({
 		});
 		const userId: string = await getUserId(ctx);
 		assertModelAllowedForTier(await getSubscriptionTier(ctx, userId), args.selectedModel);
-		await getOwnedWorkspaceSession(ctx.db, userId, args.workspaceSessionId);
+		await getOwnedProject(ctx.db, userId, args.projectId);
 		const existingRecord = await ctx.db
 			.query('threadRecords')
 			.withIndex('by_userId_submissionId', (query) =>
@@ -48,7 +48,7 @@ export const create = mutation({
 			.unique();
 		if (existingRecord) {
 			if (
-				existingRecord.workspaceSessionId !== args.workspaceSessionId ||
+				existingRecord.projectId !== args.projectId ||
 				existingRecord.selectedModel !== args.selectedModel ||
 				existingRecord.reasoningEffort !== args.reasoningEffort ||
 				existingRecord.serviceTier !== args.serviceTier
@@ -77,7 +77,7 @@ export const create = mutation({
 		const recordId = await ctx.db.insert('threadRecords', {
 			userId: userId,
 			submissionId: args.submissionId,
-			workspaceSessionId: args.workspaceSessionId,
+			projectId: args.projectId,
 			selectedModel: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
 			serviceTier: args.serviceTier,

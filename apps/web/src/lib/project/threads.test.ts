@@ -3,8 +3,8 @@ import {
 	beginPendingAgentLaunch,
 	clearPendingAgentLaunch,
 	dataForThread,
-	findWorkspaceSessionByName,
-	getWorkspaceThreadGroups,
+	findProjectByRepositoryKey,
+	getProjectThreadGroups,
 	isActiveThread,
 	isAgentLaunchPending,
 	isLatestRunReadyForThread,
@@ -12,12 +12,13 @@ import {
 	resolvePendingAgentLaunch,
 	resolvePendingAgentLaunchesFromThreads,
 	resolvePendingCreatedThreadId,
-	resolveWorkspaceThreadSelection,
+	resolveProjectThreadSelection,
+	shouldForkProjectForRemoteChange,
 	type PendingAgentLaunch,
 	type PendingAgentLaunches
-} from '$lib/workspace/threads';
+} from '$lib/project/threads';
 import { defaultModelId, defaultReasoningEffort, defaultServiceTier } from '$convex/lib/models';
-import type { ThreadSummary, WorkspaceSession } from '$lib/types/sprocket';
+import type { ThreadSummary, Project } from '$lib/types/sprocket';
 
 type RunId = NonNullable<ThreadSummary['latestRunId']>;
 
@@ -28,11 +29,12 @@ const runA2 = 'run-a-2' as RunId;
 const runB1 = 'run-b-1' as RunId;
 const runB2 = 'run-b-2' as RunId;
 
-function makeWorkspaceSession(overrides: Partial<WorkspaceSession> = {}): WorkspaceSession {
+function makeProject(overrides: Partial<Project> = {}): Project {
 	return {
-		_id: (overrides._id ?? 'ws-1') as WorkspaceSession['_id'],
+		_id: (overrides._id ?? 'ws-1') as Project['_id'],
 		userId: 'user-1',
-		workspaceName: 'Workspace',
+		repositoryKey: overrides.repositoryKey ?? overrides.displayName ?? 'Project',
+		displayName: 'Project',
 		executorStatus: 'disconnected',
 		lastHeartbeatAt: undefined,
 		connectedClientId: undefined,
@@ -43,13 +45,8 @@ function makeWorkspaceSession(overrides: Partial<WorkspaceSession> = {}): Worksp
 
 function makeThreadSummary(overrides: Partial<ThreadSummary> = {}): ThreadSummary {
 	return {
-		_id: (overrides._id ?? 'thread-record-1') as ThreadSummary['_id'],
-		threadId: (overrides.threadId ??
-			overrides._id ??
-			'thread-record-1') as ThreadSummary['threadId'],
-		workspaceSessionId: (overrides.workspaceSessionId ??
-			'ws-1') as ThreadSummary['workspaceSessionId'],
-		workspaceName: 'Workspace',
+		threadId: (overrides.threadId ?? 'thread-record-1') as ThreadSummary['threadId'],
+		projectId: (overrides.projectId ?? 'ws-1') as ThreadSummary['projectId'],
 		title: 'Thread',
 		selectedModel: overrides.selectedModel ?? defaultModelId,
 		reasoningEffort: overrides.reasoningEffort ?? defaultReasoningEffort,
@@ -80,54 +77,55 @@ function beginLaunch(
 	});
 }
 
-describe('workspace thread helpers', () => {
-	it('groups threads by exact workspace name', () => {
-		const groups = getWorkspaceThreadGroups(
+describe('project thread helpers', () => {
+	it('groups threads by project id', () => {
+		const groups = getProjectThreadGroups(
 			[
-				makeWorkspaceSession({
-					_id: 'ws-current' as WorkspaceSession['_id'],
-					workspaceName: 'sprocket'
+				makeProject({
+					_id: 'ws-current' as Project['_id'],
+					repositoryKey: 'github.com/spikonado/sprocket',
+					displayName: 'sprocket'
+				}),
+				makeProject({
+					_id: 'ws-other' as Project['_id'],
+					repositoryKey: 'local-sprocket',
+					displayName: 'sprocket'
 				})
 			],
 			[
 				makeThreadSummary({
-					workspaceSessionId: 'ws-current' as ThreadSummary['workspaceSessionId'],
-					workspaceName: 'sprocket',
+					projectId: 'ws-current' as ThreadSummary['projectId'],
 					lastMessageAt: 10
 				}),
 				makeThreadSummary({
-					_id: 'thread-record-2' as ThreadSummary['_id'],
 					threadId: 'thread-record-2' as ThreadSummary['threadId'],
-					workspaceSessionId: 'ws-stale' as ThreadSummary['workspaceSessionId'],
-					workspaceName: 'sprocket',
+					projectId: 'ws-stale' as ThreadSummary['projectId'],
 					lastMessageAt: 20
 				}),
 				makeThreadSummary({
-					_id: 'thread-record-3' as ThreadSummary['_id'],
 					threadId: 'thread-record-3' as ThreadSummary['threadId'],
-					workspaceSessionId: 'ws-other' as ThreadSummary['workspaceSessionId'],
-					workspaceName: 'Sprocket',
+					projectId: 'ws-other' as ThreadSummary['projectId'],
 					lastMessageAt: 30
 				})
 			]
 		);
 
-		expect(groups).toHaveLength(2);
-		expect(groups.find((group) => group.workspaceName === 'sprocket')?.threads).toHaveLength(2);
-		expect(groups.find((group) => group.workspaceName === 'Sprocket')?.threads).toHaveLength(1);
+		expect(groups).toHaveLength(3);
+		expect(groups.find((group) => group.project._id === 'ws-current')?.threads).toHaveLength(1);
+		expect(groups.find((group) => group.project._id === 'ws-other')?.threads).toHaveLength(1);
+		expect(groups.find((group) => group.project._id === 'ws-stale')?.project.displayName).toBe(
+			'Unknown project'
+		);
 	});
 
 	it('excludes archived threads from project groups', () => {
 		const active = makeThreadSummary({
-			workspaceSessionId: 'ws-current' as ThreadSummary['workspaceSessionId'],
-			workspaceName: 'sprocket',
+			projectId: 'ws-current' as ThreadSummary['projectId'],
 			lastMessageAt: 10
 		});
 		const archived = makeThreadSummary({
-			_id: 'thread-record-2' as ThreadSummary['_id'],
 			threadId: 'thread-record-2' as ThreadSummary['threadId'],
-			workspaceSessionId: 'ws-current' as ThreadSummary['workspaceSessionId'],
-			workspaceName: 'sprocket',
+			projectId: 'ws-current' as ThreadSummary['projectId'],
 			lastMessageAt: 20,
 			threadStatus: 'archived'
 		});
@@ -135,11 +133,12 @@ describe('workspace thread helpers', () => {
 		expect(isActiveThread(active)).toBe(true);
 		expect(isActiveThread(archived)).toBe(false);
 
-		const groups = getWorkspaceThreadGroups(
+		const groups = getProjectThreadGroups(
 			[
-				makeWorkspaceSession({
-					_id: 'ws-current' as WorkspaceSession['_id'],
-					workspaceName: 'sprocket'
+				makeProject({
+					_id: 'ws-current' as Project['_id'],
+					repositoryKey: 'sprocket',
+					displayName: 'sprocket'
 				})
 			],
 			[active, archived]
@@ -151,22 +150,19 @@ describe('workspace thread helpers', () => {
 	});
 
 	it('lists running threads before newer completed threads in each project', () => {
-		const groups = getWorkspaceThreadGroups(
+		const groups = getProjectThreadGroups(
 			[],
 			[
 				makeThreadSummary({
-					_id: 'thread-record-completed-newer' as ThreadSummary['_id'],
 					threadId: 'thread-record-completed-newer' as ThreadSummary['threadId'],
 					lastMessageAt: 30
 				}),
 				makeThreadSummary({
-					_id: 'thread-record-running-older' as ThreadSummary['_id'],
 					threadId: 'thread-record-running-older' as ThreadSummary['threadId'],
 					lastMessageAt: 10,
 					hasActiveRun: true
 				}),
 				makeThreadSummary({
-					_id: 'thread-record-running-newer' as ThreadSummary['_id'],
 					threadId: 'thread-record-running-newer' as ThreadSummary['threadId'],
 					lastMessageAt: 20,
 					hasActiveRun: true
@@ -181,45 +177,70 @@ describe('workspace thread helpers', () => {
 		]);
 	});
 
-	it('finds a workspace session by exact name', () => {
-		const session = findWorkspaceSessionByName(
-			[
-				makeWorkspaceSession({
-					_id: 'ws-1' as WorkspaceSession['_id'],
-					workspaceName: 'Sprocket'
-				})
-			],
-			'sprocket'
-		);
+	it('finds a project by repository key', () => {
+		const match = makeProject({
+			_id: 'ws-1' as Project['_id'],
+			repositoryKey: 'github.com/spikonado/sprocket',
+			displayName: 'sprocket'
+		});
+		const projects = [
+			match,
+			makeProject({
+				_id: 'ws-2' as Project['_id'],
+				repositoryKey: 'local-sprocket',
+				displayName: 'sprocket'
+			})
+		];
 
-		expect(session).toBeNull();
+		expect(findProjectByRepositoryKey(projects, 'github.com/spikonado/sprocket')).toBe(match);
+		expect(findProjectByRepositoryKey(projects, 'sprocket')).toBeNull();
 	});
 
-	it('preserves a blank draft selection for the current workspace', () => {
+	it('keeps project fields on the group rather than copying them', () => {
+		const project = makeProject({
+			_id: 'ws-current' as Project['_id'],
+			repositoryKey: 'github.com/spikonado/sprocket',
+			displayName: 'sprocket-checkout'
+		});
+		const groups = getProjectThreadGroups(
+			[project],
+			[
+				makeThreadSummary({
+					projectId: 'ws-current' as ThreadSummary['projectId'],
+					lastMessageAt: 10
+				})
+			]
+		);
+
+		expect(groups).toHaveLength(1);
+		expect(groups[0]?.project).toBe(project);
+		expect(groups[0]?.project.displayName).toBe('sprocket-checkout');
+	});
+
+	it('preserves a blank draft selection for the current repository', () => {
 		expect(
-			resolveWorkspaceThreadSelection({
+			resolveProjectThreadSelection({
 				threads: [makeThreadSummary()],
 				currentThreadId: null,
-				currentWorkspaceName: 'Workspace',
-				draftWorkspaceName: 'Workspace'
+				currentRepositoryKey: 'Project',
+				draftRepositoryKey: 'Project'
 			})
 		).toBeNull();
 	});
 
 	it('preserves a newly created thread id before the reactive list includes it', () => {
 		const existing = makeThreadSummary({
-			_id: 'thread-record-old' as ThreadSummary['_id'],
 			threadId: 'thread-record-old' as ThreadSummary['threadId'],
 			lastMessageAt: 20
 		});
 		const pendingThreadId = 'thread-record-new' as ThreadSummary['threadId'];
 
 		expect(
-			resolveWorkspaceThreadSelection({
+			resolveProjectThreadSelection({
 				threads: [existing],
 				currentThreadId: pendingThreadId,
-				currentWorkspaceName: 'Workspace',
-				draftWorkspaceName: null,
+				currentRepositoryKey: 'Project',
+				draftRepositoryKey: null,
 				pendingCreatedThreadId: pendingThreadId
 			})
 		).toBe(pendingThreadId);
@@ -227,17 +248,16 @@ describe('workspace thread helpers', () => {
 
 	it('falls back when an established thread disappears from the list', () => {
 		const newest = makeThreadSummary({
-			_id: 'thread-record-newest' as ThreadSummary['_id'],
 			threadId: 'thread-record-newest' as ThreadSummary['threadId'],
 			lastMessageAt: 30
 		});
 
 		expect(
-			resolveWorkspaceThreadSelection({
+			resolveProjectThreadSelection({
 				threads: [newest],
 				currentThreadId: 'thread-record-vanished' as ThreadSummary['threadId'],
-				currentWorkspaceName: 'Workspace',
-				draftWorkspaceName: null,
+				currentRepositoryKey: 'Project',
+				draftRepositoryKey: null,
 				pendingCreatedThreadId: null
 			})
 		).toBe(newest.threadId);
@@ -245,33 +265,29 @@ describe('workspace thread helpers', () => {
 
 	it('falls back to the newest thread only after the current id is cleared', () => {
 		const newest = makeThreadSummary({
-			_id: 'thread-record-newest' as ThreadSummary['_id'],
 			threadId: 'thread-record-newest' as ThreadSummary['threadId'],
 			lastMessageAt: 30
 		});
 
 		expect(
-			resolveWorkspaceThreadSelection({
+			resolveProjectThreadSelection({
 				threads: [newest],
 				currentThreadId: null,
-				currentWorkspaceName: 'Workspace',
-				draftWorkspaceName: null
+				currentRepositoryKey: 'Project',
+				draftRepositoryKey: null
 			})
 		).toBe(newest.threadId);
 	});
 
 	it('keeps a created id pinned through unrelated list updates until the thread appears', () => {
 		const existing = makeThreadSummary({
-			_id: 'thread-record-old' as ThreadSummary['_id'],
 			threadId: 'thread-record-old' as ThreadSummary['threadId']
 		});
 		const pendingThreadId = 'thread-record-new' as ThreadSummary['threadId'];
 		const created = makeThreadSummary({
-			_id: pendingThreadId,
 			threadId: pendingThreadId
 		});
 		const unrelated = makeThreadSummary({
-			_id: 'thread-record-unrelated' as ThreadSummary['_id'],
 			threadId: 'thread-record-unrelated' as ThreadSummary['threadId'],
 			lastMessageAt: 10
 		});
@@ -404,5 +420,19 @@ describe('workspace thread helpers', () => {
 		expect(dataForThread(activeThreadRecord, thread.threadId)).toBe(activeThreadRecord);
 		expect(dataForThread(thread, 'thread-record-2' as ThreadSummary['threadId'])).toBeNull();
 		expect(dataForThread(undefined, thread.threadId)).toBeNull();
+	});
+
+	it('forks when selected and resolved repository keys differ', () => {
+		expect(
+			shouldForkProjectForRemoteChange('github.com/spikonado/old', 'github.com/spikonado/sprocket')
+		).toBe(true);
+		expect(
+			shouldForkProjectForRemoteChange(
+				'github.com/spikonado/sprocket',
+				'github.com/spikonado/sprocket'
+			)
+		).toBe(false);
+		expect(shouldForkProjectForRemoteChange('', 'github.com/spikonado/sprocket')).toBe(false);
+		expect(shouldForkProjectForRemoteChange('github.com/spikonado/sprocket', '')).toBe(false);
 	});
 });

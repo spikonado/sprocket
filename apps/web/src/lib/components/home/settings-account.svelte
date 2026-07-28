@@ -81,7 +81,7 @@
 					Session
 				</p>
 				<p class="text-muted-foreground mt-2 text-sm leading-6">
-					Sign out of this device. You’ll need to authenticate again to open your workspace.
+					Sign out of this device. You’ll need to authenticate again to open your projects.
 				</p>
 				<div class="mt-4">
 					<Button variant="outline" onclick={onSignOut}>
