@@ -8,13 +8,14 @@ export const modelIds = [
 	'gpt-5.6-luna',
 	'claude-opus-5',
 	'claude-fable-5',
-	'grok-4.5'
+	'grok-4.5',
+	'kimi-k3'
 ] as const;
 
 export type SupportedModelId = (typeof modelIds)[number];
 export type SupportedReasoningEffort = (typeof reasoningEffortIds)[number];
 export type SupportedServiceTier = (typeof serviceTierIds)[number];
-export type ModelProvider = 'openai' | 'anthropic' | 'xai';
+export type ModelProvider = 'openai' | 'anthropic' | 'xai' | 'fireworks';
 
 type TokenUsageWeights = { input: number; cacheRead: number; cacheWrite: number; output: number };
 
@@ -136,6 +137,23 @@ export const modelDefinitions = [
 			cacheWrite: 0.002,
 			output: 0.006,
 			fastMultiplier: 2
+		}
+	},
+	{
+		id: 'kimi-k3',
+		label: 'Kimi K3',
+		provider: 'fireworks',
+		contextWindowTokens: 1_000_000,
+		autoCompactTokenLimit: 967_000,
+		reasoningEfforts: ['low', 'high', 'max'],
+		defaultReasoningEffort: 'max',
+		serviceTiers: serviceTierIds,
+		usageWeights: {
+			input: 0.003,
+			cacheRead: 0.0003,
+			cacheWrite: 0.003,
+			output: 0.015,
+			fastMultiplier: 1.5
 		}
 	}
 ] as const satisfies readonly ModelDefinition[];

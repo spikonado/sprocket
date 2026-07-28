@@ -4,7 +4,11 @@ import {
 	defaultServiceTier,
 	modelDefinitions
 } from '@convex/lib/models';
-import { modelLockUpgradeMessage, tierAllowedModels } from '@convex/lib/tiers';
+import {
+	modelLockUpgradeMessage,
+	tierAllowedModels,
+	tierAllowedServiceTiers
+} from '@convex/lib/tiers';
 import type { ModelCatalog } from '@convex/lib/uiModelCatalog';
 import { query } from './_generated/server';
 
@@ -27,6 +31,7 @@ export const get = query({
 				return model;
 			}),
 			tierAllowedModels,
+			tierAllowedServiceTiers,
 			modelLockUpgradeMessage
 		}) satisfies ModelCatalog
 });

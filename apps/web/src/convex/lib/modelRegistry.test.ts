@@ -20,6 +20,13 @@ describe('model provider request configuration', () => {
 				promptCacheOptions: { mode: 'implicit', ttl: '30m' }
 			}
 		});
+		expect(resolveProviderOptions('kimi-k3', 'max', 'standard', 'thread:abc')).toEqual({
+			fireworks: {
+				reasoningEffort: 'max',
+				promptCacheKey: 'thread:abc',
+				reasoningHistory: 'interleaved'
+			}
+		});
 	});
 
 	it('adds xAI prompt cache routing only to Responses API requests', async () => {
@@ -78,6 +85,9 @@ describe('Amazon Bedrock fallback routing', () => {
 		expect(resolveLanguageModel('grok-4.5', 'standard', 'thread:abc')).not.toBeInstanceOf(
 			FallbackModel
 		);
+		expect(resolveLanguageModel('kimi-k3', 'standard', 'thread:abc')).not.toBeInstanceOf(
+			FallbackModel
+		);
 
 		vi.stubEnv('AWS_BEARER_TOKEN_BEDROCK', 'test-bedrock-token');
 		const openaiFallback = resolveLanguageModel('gpt-5.6-sol', 'standard', 'thread:abc');
@@ -105,6 +115,15 @@ describe('Amazon Bedrock fallback routing', () => {
 		expect(resolveLanguageModel('grok-4.5', 'standard', 'thread:abc')).not.toBeInstanceOf(
 			FallbackModel
 		);
+		expect(resolveLanguageModel('kimi-k3', 'standard', 'thread:abc')).not.toBeInstanceOf(
+			FallbackModel
+		);
+		expect(resolveLanguageModel('kimi-k3', 'fast', 'thread:abc')).toMatchObject({
+			modelId: 'accounts/fireworks/routers/kimi-k3-fast'
+		});
+		expect(resolveLanguageModel('kimi-k3', 'standard', 'thread:abc')).toMatchObject({
+			modelId: 'accounts/fireworks/models/kimi-k3'
+		});
 
 		const shouldRetry = (openaiFallback as FallbackModel).settings.shouldRetryThisError!;
 		expect(shouldRetry(Object.assign(new Error('auth'), { statusCode: 401 }))).toBe(false);

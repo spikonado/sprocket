@@ -1,4 +1,4 @@
-import type { ModelProvider, SupportedModelId } from '$convex/lib/models';
+import type { ModelProvider, SupportedModelId, SupportedServiceTier } from '$convex/lib/models';
 import type { SubscriptionTier } from '$convex/lib/tiers';
 import type { CatalogModel, ModelCatalog } from '$convex/lib/uiModelCatalog';
 
@@ -40,6 +40,15 @@ export function resolveModelForTier(
 ): CatalogModelId {
 	if (isModelAllowedForTier(catalog, tier, modelId)) return modelId;
 	return catalog.tierAllowedModels[tier]?.[0] ?? catalog.defaultModelId;
+}
+
+export function serviceTiersForModelAndTier(
+	catalog: ModelCatalog,
+	tier: SubscriptionTier,
+	model: CatalogModel
+): readonly SupportedServiceTier[] {
+	const allowed = catalog.tierAllowedServiceTiers[tier] ?? [];
+	return model.serviceTiers.filter((serviceTier) => allowed.includes(serviceTier));
 }
 
 export function modelOptionsForTier(

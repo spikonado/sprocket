@@ -3,6 +3,7 @@
 import { createBedrockAnthropic } from '@ai-sdk/amazon-bedrock/anthropic';
 import { createBedrockMantle } from '@ai-sdk/amazon-bedrock/mantle';
 import { createAnthropic, type AnthropicProvider } from '@ai-sdk/anthropic';
+import { createFireworks, type FireworksProvider } from '@ai-sdk/fireworks';
 import { createOpenAI, type OpenAIProvider } from '@ai-sdk/openai';
 import { createXai, type XaiProvider } from '@ai-sdk/xai';
 import {
@@ -75,6 +76,9 @@ const anthropic: AnthropicProvider = createAnthropic({
 const anthropicFast: AnthropicProvider = createAnthropic({
 	apiKey: process.env.ANTHROPIC_API_KEY,
 	fetch: createProviderFetch({ serviceTier: 'auto' })
+});
+const fireworks: FireworksProvider = createFireworks({
+	apiKey: process.env.FIREWORKS_API_KEY
 });
 
 export function hasBedrockCredentials(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -163,6 +167,14 @@ export function resolveLanguageModel(
 		});
 		return xai(modelId);
 	}
+	if (provider === 'fireworks') {
+		if (modelId !== 'kimi-k3') throw new Error(`Unsupported Fireworks model: ${modelId}`);
+		return fireworks(
+			serviceTier === 'fast'
+				? 'accounts/fireworks/routers/kimi-k3-fast'
+				: 'accounts/fireworks/models/kimi-k3'
+		);
+	}
 	return withBedrockFallback(openai(modelId), () => resolveBedrockFallbackModel('openai', modelId));
 }
 
@@ -183,6 +195,15 @@ export function resolveProviderOptions(
 	}
 	if (provider === 'xai') {
 		return { xai: { ...(reasoningEffort !== undefined ? { reasoningEffort } : {}) } };
+	}
+	if (provider === 'fireworks') {
+		return {
+			fireworks: {
+				...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+				promptCacheKey,
+				reasoningHistory: 'interleaved'
+			}
+		};
 	}
 	return {
 		openai: {

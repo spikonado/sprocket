@@ -15,6 +15,7 @@
 
 	type Props = {
 		model: CatalogModel;
+		allowedServiceTiers?: readonly SupportedServiceTier[];
 		reasoningEffort?: SupportedReasoningEffort;
 		serviceTier?: SupportedServiceTier;
 		disabled?: boolean;
@@ -23,11 +24,14 @@
 
 	let {
 		model,
+		allowedServiceTiers,
 		reasoningEffort = $bindable<SupportedReasoningEffort>(defaultReasoningEffort),
 		serviceTier = $bindable<SupportedServiceTier>(defaultServiceTier),
 		disabled = false,
 		className = ''
 	}: Props = $props();
+
+	const selectableServiceTiers = $derived(allowedServiceTiers ?? model.serviceTiers);
 
 	let isOpen = $state(false);
 	let rootElement = $state<HTMLDivElement | null>(null);
@@ -38,7 +42,7 @@
 	}
 
 	function selectServiceTier(next: SupportedServiceTier) {
-		if (!model.serviceTiers.includes(next)) return;
+		if (!selectableServiceTiers.includes(next)) return;
 		serviceTier = next;
 	}
 
@@ -47,8 +51,8 @@
 		if (!supportedReasoning.includes(reasoningEffort)) {
 			reasoningEffort = model.defaultReasoningEffort;
 		}
-		if (!model.serviceTiers.includes(serviceTier)) {
-			serviceTier = model.serviceTiers[0] ?? defaultServiceTier;
+		if (!selectableServiceTiers.includes(serviceTier)) {
+			serviceTier = selectableServiceTiers[0] ?? defaultServiceTier;
 		}
 	});
 
@@ -132,7 +136,7 @@
 			<div class="mx-2 my-2 h-px bg-[var(--hairline)]"></div>
 			<p class="text-muted-foreground px-3 pb-1.5 text-[11px] font-medium">Service tier</p>
 			<div class="space-y-0.5">
-				{#each model.serviceTiers as tier (tier)}
+				{#each selectableServiceTiers as tier (tier)}
 					<button
 						type="button"
 						class="focus-visible:ring-ring/60 text-foreground hover:bg-hover-fill flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm outline-none focus-visible:ring-2"
@@ -147,7 +151,7 @@
 						/>
 						{#if tier === 'fast'}<Zap class="size-3.5 text-amber-400" />{/if}
 						<span>{serviceTierLabel(tier)}</span>
-						{#if tier === model.serviceTiers[0]}
+						{#if tier === selectableServiceTiers[0]}
 							<span class="text-muted-foreground ml-auto text-xs">Default</span>
 						{/if}
 					</button>
