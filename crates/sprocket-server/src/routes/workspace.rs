@@ -1,7 +1,6 @@
 use axum::Json;
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
+use axum::http::HeaderMap;
 use axum::routing::{get, post};
 use axum_extra::extract::CookieJar;
 use serde::{Deserialize, Serialize};
@@ -11,6 +10,7 @@ use crate::auth::require_session;
 use crate::project_attachments::{
     AttachProjectRequest, ProjectAttachmentRecord, WorkspacePathResolution, resolve_workspace_path,
 };
+use crate::routes::api_error::ApiError;
 use sprocket_workspace::{
     BUILTIN_SKILLS, FilesystemBrowseResult, browse_filesystem, default_user_skills_dirs,
     load_workspace_skills,
@@ -151,43 +151,4 @@ async fn list_skills(
         skills,
         warnings: loaded.warnings,
     }))
-}
-
-#[derive(Debug)]
-struct ApiError {
-    status: StatusCode,
-    message: String,
-}
-
-impl ApiError {
-    fn unauthorized(error: anyhow::Error) -> Self {
-        Self {
-            status: StatusCode::UNAUTHORIZED,
-            message: error.to_string(),
-        }
-    }
-
-    fn bad_request(error: anyhow::Error) -> Self {
-        Self {
-            status: StatusCode::BAD_REQUEST,
-            message: error.to_string(),
-        }
-    }
-
-    fn internal(error: anyhow::Error) -> Self {
-        Self {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: error.to_string(),
-        }
-    }
-}
-
-impl IntoResponse for ApiError {
-    fn into_response(self) -> Response {
-        (
-            self.status,
-            Json(serde_json::json!({ "error": self.message })),
-        )
-            .into_response()
-    }
 }

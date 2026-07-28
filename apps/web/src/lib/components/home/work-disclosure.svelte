@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { ChevronRight } from '@lucide/svelte';
 	import type { Snippet } from 'svelte';
+	import { createInProgressDisclosure } from '$lib/components/home/in-progress-disclosure.svelte';
 	import { formatElapsedDuration } from '$lib/format';
 
 	type Props = {
@@ -15,16 +16,7 @@
 	let { inProgress, startedAtMs, completedAtMs, children }: Props = $props();
 
 	let elapsedSeconds = $state(0);
-	let manuallyExpanded = $state(false);
-	let manuallyCollapsed = $state(false);
-
-	$effect(() => {
-		if (inProgress) {
-			manuallyCollapsed = false;
-		} else {
-			manuallyExpanded = false;
-		}
-	});
+	const disclosure = createInProgressDisclosure(() => inProgress);
 
 	$effect(() => {
 		const start = startedAtMs;
@@ -44,36 +36,27 @@
 		elapsedSeconds = Math.max(0, Math.floor((end - start) / 1000));
 	});
 
-	const expanded = $derived(inProgress ? !manuallyCollapsed : manuallyExpanded);
 	const label = $derived(
 		inProgress
 			? `Working for ${formatElapsedDuration(elapsedSeconds)}`
 			: `Worked for ${formatElapsedDuration(elapsedSeconds)}`
 	);
-
-	function toggle() {
-		if (inProgress) {
-			manuallyCollapsed = !manuallyCollapsed;
-		} else {
-			manuallyExpanded = !manuallyExpanded;
-		}
-	}
 </script>
 
 <div class="text-muted-foreground text-sm">
 	<button
 		type="button"
 		class="text-muted-foreground hover:text-muted-foreground inline-flex items-center gap-1 transition"
-		onclick={toggle}
-		aria-expanded={expanded}
+		onclick={disclosure.toggle}
+		aria-expanded={disclosure.expanded}
 	>
 		<span>{label}</span>
 		<ChevronRight
-			class={`size-3.5 shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
+			class={`size-3.5 shrink-0 transition-transform ${disclosure.expanded ? 'rotate-90' : ''}`}
 			aria-hidden="true"
 		/>
 	</button>
-	{#if expanded}
+	{#if disclosure.expanded}
 		<div class="mt-1.5 space-y-2">
 			{@render children()}
 		</div>

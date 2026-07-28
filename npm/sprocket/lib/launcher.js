@@ -1,18 +1,16 @@
 import { spawnSync } from 'node:child_process';
-import { accessSync, chmodSync, constants } from 'node:fs';
+import { accessSync, chmodSync, constants, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 
-const PLATFORM_PACKAGES = new Map([
-	['linux:x64', ['@spikonado/sprocket-linux-x64-gnu', 'sprocket']],
-	['linux:arm64', ['@spikonado/sprocket-linux-arm64-gnu', 'sprocket']],
-	['darwin:x64', ['@spikonado/sprocket-darwin-x64', 'sprocket']],
-	['darwin:arm64', ['@spikonado/sprocket-darwin-arm64', 'sprocket']],
-	['win32:x64', ['@spikonado/sprocket-win32-x64-msvc', 'sprocket.exe']]
-]);
+const TARGETS = JSON.parse(readFileSync(path.join(import.meta.dirname, '../targets.json'), 'utf8'));
+
+const PLATFORM_PACKAGES = new Map(
+	TARGETS.map((target) => [`${target.os}:${target.cpu}`, [target.packageName, target.executable]])
+);
 
 export function nativePackage(platform = process.platform, arch = process.arch) {
 	return PLATFORM_PACKAGES.get(`${platform}:${arch}`);

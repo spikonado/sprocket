@@ -4,16 +4,11 @@ import { v, type Infer } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord, getOwnedProject } from '@convex/lib/access';
 import { executionSecretHash, getExecutionRun, getUserId } from '@convex/lib/auth';
 import {
-	assertSupportedModelConfiguration,
 	getModelDefinition,
 	type SupportedModelId,
 	type SupportedServiceTier
 } from '@convex/lib/models';
-import {
-	assertModelAllowedForTier,
-	assertServiceTierAllowedForTier,
-	getSubscriptionTier
-} from '@convex/lib/tiers';
+import { assertModelConfigurationAllowedForUser } from '@convex/lib/tiers';
 import { buildCanonicalAgentHistory } from '@convex/lib/agentHistory';
 import { contextSummaryText } from '@convex/lib/contextCompaction';
 import { appendThreadMessage, getThreadMessage } from '@convex/lib/threadMessages';
@@ -28,7 +23,11 @@ import {
 	type ThreadTranscriptMessage
 } from '@convex/lib/threadTranscript';
 import { RUN_NO_LONGER_ACTIVE, assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
-import { assertThreadCanStartRun, cancelExecutorJobsForTerminalRun } from '@convex/lib/runs';
+import {
+	assertThreadCanStartRun,
+	cancelExecutorJobsForTerminalRun,
+	compareRunStartedAt
+} from '@convex/lib/runs';
 import {
 	canRegisterCompletionAttempt,
 	canFinalizeAfterClaimFailure,
@@ -42,6 +41,7 @@ import {
 import {
 	ensureAssistantToolPartsFromJobs,
 	joinAssistantTextParts,
+	toPersistableExecutorToolJobs,
 	type AssistantPart
 } from '@convex/lib/assistantParts';
 import {
@@ -68,6 +68,11 @@ type FinalizeRunArgs = {
 	lastError?: string;
 };
 
+type FinalizeExpectationArgs = {
+	expectedStatus?: Infer<typeof vRunStatus>;
+	expectedClaimId?: string;
+};
+
 type RuntimePromptAttachment = Pick<ThreadTranscriptAttachment, 'mediaType' | 'url'>;
 
 async function getCompletionStreamState(
@@ -84,10 +89,18 @@ async function getCompletionStreamState(
 	return state;
 }
 
-export const authenticatedUserId = query({
-	args: {},
-	handler: async (ctx): Promise<string> => await getUserId(ctx)
-});
+function matchesFinalizeExpectations(run: Doc<'runs'>, args: FinalizeExpectationArgs): boolean {
+	if (args.expectedStatus && run.status !== args.expectedStatus) {
+		return false;
+	}
+	if (
+		args.expectedClaimId &&
+		(run.claimId !== args.expectedClaimId || !isRunClaimLeaseActive(run, Date.now()))
+	) {
+		return false;
+	}
+	return true;
+}
 
 async function finalizeRunRecord(
 	ctx: MutationCtx,
@@ -152,18 +165,7 @@ async function finalizeRunRecord(
 	const persistedParts = (message?.parts ?? []) as AssistantPart[];
 	const nextParts: AssistantPart[] = ensureAssistantToolPartsFromJobs(
 		persistedParts,
-		finalizedJobs
-			.filter((job) => !job.hidden)
-			.sort((left, right) => left.sequence - right.sequence)
-			.map((job) => ({
-				id: job._id,
-				kind: job.kind,
-				...(job.callId ? { callId: job.callId } : {}),
-				payload: job.payload,
-				status: job.status,
-				result: job.result,
-				error: job.error
-			}))
+		toPersistableExecutorToolJobs(finalizedJobs)
 	);
 	const streamedText: string = joinAssistantTextParts(nextParts);
 	await ctx.db.patch(responseMessageId, {
@@ -200,15 +202,12 @@ export const createRun = mutation({
 		runId: Id<'runs'>;
 		promptMessageId: Id<'threadMessages'>;
 	}> => {
-		assertSupportedModelConfiguration({
+		const userId: string = await getUserId(ctx);
+		await assertModelConfigurationAllowedForUser(ctx, userId, {
 			modelId: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
 			serviceTier: args.serviceTier
 		});
-		const userId: string = await getUserId(ctx);
-		const subscriptionTier = await getSubscriptionTier(ctx, userId);
-		assertModelAllowedForTier(subscriptionTier, args.selectedModel);
-		assertServiceTierAllowedForTier(subscriptionTier, args.serviceTier);
 		const secretHash = await executionSecretHash(args.executionSecret);
 		const threadRecord: Doc<'threadRecords'> = await getOwnedThreadRecord(
 			ctx.db,
@@ -277,6 +276,7 @@ export const createRun = mutation({
 			projectId: threadRecord.projectId,
 			status: 'queued',
 			executionSecretHash: secretHash,
+			completionAttemptSeq: 0,
 			selectedModel: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
 			serviceTier: args.serviceTier,
@@ -609,13 +609,6 @@ export const recordContextUsage = mutation({
 	}
 });
 
-function compareRunStartedAt(
-	left: { startedAt: number; _creationTime: number },
-	right: { startedAt: number; _creationTime: number }
-): number {
-	return left.startedAt - right.startedAt || left._creationTime - right._creationTime;
-}
-
 function assertValidTokenCount(value: number): void {
 	if (!Number.isSafeInteger(value) || value < 0) {
 		throw new Error('Invalid token count.');
@@ -828,13 +821,7 @@ export const finalizeRun = mutation({
 	handler: async (ctx, args): Promise<boolean> => {
 		const userId = await getUserId(ctx);
 		const run = await getOwnedRun(ctx.db, userId, args.runId);
-		if (args.expectedStatus && run.status !== args.expectedStatus) {
-			return false;
-		}
-		if (
-			args.expectedClaimId &&
-			(run.claimId !== args.expectedClaimId || !isRunClaimLeaseActive(run, Date.now()))
-		) {
+		if (!matchesFinalizeExpectations(run, args)) {
 			return false;
 		}
 		return finalizeRunRecord(ctx, userId, run, args);
@@ -853,13 +840,7 @@ export const finalizeExecutorRun = mutation({
 	},
 	handler: async (ctx, args): Promise<boolean> => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		if (args.expectedStatus && run.status !== args.expectedStatus) {
-			return false;
-		}
-		if (
-			args.expectedClaimId &&
-			(run.claimId !== args.expectedClaimId || !isRunClaimLeaseActive(run, Date.now()))
-		) {
+		if (!matchesFinalizeExpectations(run, args)) {
 			return false;
 		}
 		return finalizeRunRecord(ctx, run.userId, run, args);

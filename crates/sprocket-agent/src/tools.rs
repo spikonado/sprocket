@@ -9,8 +9,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sprocket_workspace::{
-    CommandSessionManager, WorkspaceCancellation, WorkspaceSkill, apply_workspace_patch,
-    default_command_shell, read_skill_content,
+    CommandSessionManager, WorkspaceCancellation, WorkspaceOperationCancelled, WorkspaceSkill,
+    apply_workspace_patch, default_command_shell, read_skill_content,
 };
 use tokio::time::{Instant, sleep};
 
@@ -455,7 +455,7 @@ impl rig::tool::Tool for ExecCommandTool {
             &self.0.claim_id,
             Self::NAME,
             &self.0.tool_call_tracker,
-            serde_json::to_value(&args).map_err(tool_error)?,
+            serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?,
             |cancellation| async {
                 let output = self
                     .0
@@ -471,7 +471,7 @@ impl rig::tool::Tool for ExecCommandTool {
                     )
                     .await
                     .map_err(tool_error)?;
-                serde_json::to_value(output).map_err(tool_error)
+                serde_json::to_value(output).map_err(|e| tool_error(e.into()))
             },
         )
         .await
@@ -500,7 +500,7 @@ impl rig::tool::Tool for WriteStdinTool {
             &self.0.claim_id,
             Self::NAME,
             &self.0.tool_call_tracker,
-            serde_json::to_value(&args).map_err(tool_error)?,
+            serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?,
             |cancellation| async {
                 let output = self
                     .0
@@ -514,7 +514,7 @@ impl rig::tool::Tool for WriteStdinTool {
                     )
                     .await
                     .map_err(tool_error)?;
-                serde_json::to_value(output).map_err(tool_error)
+                serde_json::to_value(output).map_err(|e| tool_error(e.into()))
             },
         )
         .await
@@ -539,7 +539,7 @@ impl rig::tool::Tool for AskQuestionTool {
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let prepared = prepare_ask_question(&args)?;
-        let payload = serde_json::to_value(&args).map_err(tool_error)?;
+        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         execute_tool_job(
             &self.0.runtime,
             &self.0.run_id,
@@ -599,7 +599,7 @@ impl rig::tool::Tool for AwaitQuestionTool {
                 "questionId cannot be empty".to_string(),
             ));
         }
-        let payload = serde_json::to_value(&args).map_err(tool_error)?;
+        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         execute_tool_job(
             &self.0.runtime,
             &self.0.run_id,
@@ -662,13 +662,13 @@ impl rig::tool::Tool for ApplyPatchTool {
             &self.0.claim_id,
             Self::NAME,
             &self.0.tool_call_tracker,
-            serde_json::to_value(&args).map_err(tool_error)?,
+            serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?,
             |cancellation| async {
                 let output =
                     apply_workspace_patch(self.0.workspace_root.clone(), cancellation, &args.patch)
                         .await
                         .map_err(tool_error)?;
-                serde_json::to_value(output).map_err(tool_error)
+                serde_json::to_value(output).map_err(|e| tool_error(e.into()))
             },
         )
         .await
@@ -691,7 +691,7 @@ impl rig::tool::Tool for WebSearchTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let payload = serde_json::to_value(&args).map_err(tool_error)?;
+        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         execute_tool_job(
             &self.0.runtime,
             &self.0.run_id,
@@ -739,7 +739,7 @@ impl rig::tool::Tool for ScrapeUrlTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let payload = serde_json::to_value(&args).map_err(tool_error)?;
+        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         execute_tool_job(
             &self.0.runtime,
             &self.0.run_id,
@@ -780,7 +780,7 @@ impl rig::tool::Tool for ReadSkillTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let payload = serde_json::to_value(&args).map_err(tool_error)?;
+        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         let skills = self.skills.clone();
         execute_tool_job(
             &self.context.runtime,
@@ -817,7 +817,7 @@ pub(crate) fn resolve_read_skill(
         )));
     };
 
-    let content = read_skill_content(skill).map_err(tool_error)?;
+    let content = read_skill_content(skill).map_err(|e| tool_error(anyhow::Error::msg(e)))?;
     let mut value = json!({
         "name": content.name,
         "description": content.description,
@@ -917,7 +917,8 @@ async fn create_agent_question(
     args.insert("question".to_string(), question.to_string().into());
     args.insert(
         "options".to_string(),
-        Value::try_from(serde_json::to_value(options).map_err(tool_error)?).map_err(tool_error)?,
+        Value::try_from(serde_json::to_value(options).map_err(|e| tool_error(e.into()))?)
+            .map_err(tool_error)?,
     );
     args.insert("timeoutMs".to_string(), Value::Float64(timeout_ms as f64));
     runtime
@@ -1151,7 +1152,7 @@ where
                     Err(error) => {
                         cancellation.cancel();
                         let _ = operation.await;
-                        break Err(tool_error(format!("run status subscription failed: {error}")));
+                        break Err(tool_error(anyhow::anyhow!("run status subscription failed: {error}")));
                     }
                 }
             },
@@ -1185,6 +1186,11 @@ where
                 "sprocket-agent: failed tool {} for run {}: {}",
                 kind, run_id, error
             );
+            // Terminal runs already cancel claimed jobs via
+            // cancelExecutorJobsForTerminalRun in finalizeRunRecord.
+            if matches!(error, AgentToolError::Cancelled) {
+                return Err(AgentToolError::Cancelled);
+            }
             let mut fail_args = BTreeMap::new();
             fail_args.insert("jobId".to_string(), job_id.into());
             fail_args.insert("runId".to_string(), run_id.to_string().into());
@@ -1203,8 +1209,12 @@ where
     }
 }
 
-fn tool_error(error: impl std::fmt::Display) -> AgentToolError {
-    AgentToolError::Message(error.to_string())
+fn tool_error(error: anyhow::Error) -> AgentToolError {
+    if error.is::<WorkspaceOperationCancelled>() {
+        AgentToolError::Cancelled
+    } else {
+        AgentToolError::Message(error.to_string())
+    }
 }
 
 #[cfg(test)]

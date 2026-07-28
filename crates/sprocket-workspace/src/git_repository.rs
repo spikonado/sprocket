@@ -111,18 +111,9 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::process::Command;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_dir(label: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "sprocket-git-repo-{}-{}-{}",
-            label,
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|duration| duration.as_nanos())
-                .unwrap_or(0)
-        ))
+        crate::test_support::temp_workspace_labeled(&format!("sprocket-git-repo-{label}"))
     }
 
     fn init_repo(root: &Path) {

@@ -55,7 +55,7 @@ Before tagging, a manual workflow run with publishing disabled can be used to bu
 
 ## Development releases
 
-After **Build and Test** succeeds for a commit on `main`, the npm workflow automatically publishes a development release as `0.0.0-dev.<full-commit-sha>` with the npm `dev` dist-tag.
+After **Build and Test** succeeds for a commit on `main`, the npm workflow automatically publishes a development release as `0.2.0-dev.<full-commit-sha>` with the npm `dev` dist-tag.
 
 Install the newest development build with:
 

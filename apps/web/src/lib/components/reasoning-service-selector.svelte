@@ -12,6 +12,9 @@
 		reasoningEffortLabel,
 		serviceTierLabel
 	} from '$lib/chat/model-catalog';
+	import { createLockTooltip } from '$lib/components/ui/lock-tooltip.svelte';
+	import { listenOpenMenuDismiss } from '$lib/components/ui/menu-dismiss.svelte';
+	import Tooltip from '$lib/components/ui/tooltip.svelte';
 	import { cn } from '$lib/utils';
 
 	type Props = {
@@ -47,52 +50,18 @@
 	let isOpen = $state(false);
 	let rootElement = $state<HTMLDivElement | null>(null);
 	let triggerElement = $state<HTMLButtonElement | null>(null);
-	let lockTooltip = $state<{ top: number; left: number; label: string } | null>(null);
-	let stickyLockTooltip = $state(false);
-	let stickyLockTooltipTimer: ReturnType<typeof setTimeout> | null = null;
+	const lockTooltipState = createLockTooltip();
 
 	function selectReasoning(next: SupportedReasoningEffort) {
 		reasoningEffort = next;
-	}
-
-	function clearStickyLockTooltipTimer() {
-		if (!stickyLockTooltipTimer) return;
-		clearTimeout(stickyLockTooltipTimer);
-		stickyLockTooltipTimer = null;
-	}
-
-	function showLockTooltip(event: MouseEvent | FocusEvent, label: string, sticky = false) {
-		const target = event.currentTarget;
-		if (!(target instanceof HTMLElement)) return;
-		const rect = target.getBoundingClientRect();
-		clearStickyLockTooltipTimer();
-		stickyLockTooltip = sticky;
-		lockTooltip = {
-			top: rect.top - 8,
-			left: rect.left + rect.width / 2,
-			label
-		};
-		if (sticky) {
-			stickyLockTooltipTimer = setTimeout(() => {
-				stickyLockTooltip = false;
-				stickyLockTooltipTimer = null;
-				lockTooltip = null;
-			}, 2500);
-		}
-	}
-
-	function hideLockTooltip(force = false) {
-		if (stickyLockTooltip && !force) return;
-		clearStickyLockTooltipTimer();
-		stickyLockTooltip = false;
-		lockTooltip = null;
 	}
 
 	function selectServiceTier(next: SupportedServiceTier, event?: MouseEvent) {
 		const option = tierOptions.find((entry) => entry.id === next);
 		if (!option) return;
 		if (option.locked) {
-			if (event && option.lockTooltip) showLockTooltip(event, option.lockTooltip, true);
+			if (event && option.lockTooltip)
+				lockTooltipState.showLockTooltip(event, option.lockTooltip, true);
 			return;
 		}
 		serviceTier = next;
@@ -110,26 +79,20 @@
 
 	$effect(() => {
 		if (!isOpen) {
-			hideLockTooltip();
+			lockTooltipState.hideLockTooltip();
 			return;
 		}
 
-		function handlePointerDown(event: PointerEvent) {
-			if (event.target instanceof Node && !rootElement?.contains(event.target)) isOpen = false;
-		}
-
-		function handleKeyDown(event: KeyboardEvent) {
-			if (event.key !== 'Escape') return;
-			isOpen = false;
-			triggerElement?.focus();
-		}
-
-		document.addEventListener('pointerdown', handlePointerDown);
-		document.addEventListener('keydown', handleKeyDown);
-		return () => {
-			document.removeEventListener('pointerdown', handlePointerDown);
-			document.removeEventListener('keydown', handleKeyDown);
-		};
+		return listenOpenMenuDismiss({
+			getRoot: () => rootElement,
+			onOutside: () => {
+				isOpen = false;
+			},
+			onEscape: () => {
+				isOpen = false;
+				triggerElement?.focus();
+			}
+		});
 	});
 
 	$effect(() => {
@@ -205,13 +168,15 @@
 							? `${option.label}. ${option.lockTooltip}`
 							: undefined}
 						onmouseenter={(event) => {
-							if (locked && option.lockTooltip) showLockTooltip(event, option.lockTooltip);
+							if (locked && option.lockTooltip)
+								lockTooltipState.showLockTooltip(event, option.lockTooltip);
 						}}
-						onmouseleave={() => hideLockTooltip()}
+						onmouseleave={() => lockTooltipState.hideLockTooltip()}
 						onfocus={(event) => {
-							if (locked && option.lockTooltip) showLockTooltip(event, option.lockTooltip);
+							if (locked && option.lockTooltip)
+								lockTooltipState.showLockTooltip(event, option.lockTooltip);
 						}}
-						onblur={() => hideLockTooltip()}
+						onblur={() => lockTooltipState.hideLockTooltip()}
 						onclick={(event) => selectServiceTier(option.id, event)}
 					>
 						{#if locked}
@@ -238,12 +203,4 @@
 	{/if}
 </div>
 
-{#if lockTooltip}
-	<div
-		class="text-tooltip-foreground bg-tooltip ring-border pointer-events-none fixed z-100 -translate-x-1/2 -translate-y-full rounded-md px-2.5 py-1.5 text-[12px] leading-4 whitespace-nowrap shadow-lg ring-1"
-		style={`top: ${lockTooltip.top}px; left: ${lockTooltip.left}px;`}
-		role="tooltip"
-	>
-		{lockTooltip.label}
-	</div>
-{/if}
+<Tooltip tooltip={lockTooltipState.lockTooltip} />

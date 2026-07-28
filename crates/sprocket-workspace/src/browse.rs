@@ -143,7 +143,7 @@ fn list_directory_entries(directory: &Path) -> Result<Vec<FilesystemBrowseEntry>
 }
 
 fn default_browse_directory() -> Result<PathBuf> {
-    if let Some(home) = default_home_dir() {
+    if let Some(home) = crate::paths::home_dir() {
         if home.exists() {
             return home
                 .canonicalize()
@@ -154,12 +154,6 @@ fn default_browse_directory() -> Result<PathBuf> {
     PathBuf::from("/")
         .canonicalize()
         .context("failed to resolve /")
-}
-
-fn default_home_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
 }
 
 fn is_relative_path(path: &str) -> bool {
@@ -208,18 +202,11 @@ fn normalize_path(path: &Path) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
 
     fn temp_dir(name: &str) -> PathBuf {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock should be after unix epoch")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("{name}-{unique}"));
-        fs::create_dir_all(&path).expect("temp dir should be created");
-        path.canonicalize().expect("temp dir should resolve")
+        crate::test_support::temp_workspace_labeled(name)
     }
 
     #[test]

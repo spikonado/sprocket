@@ -6,7 +6,6 @@ use anyhow::{Context, anyhow};
 use axum::Json;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum_extra::extract::CookieJar;
 use serde::Deserialize;
@@ -19,6 +18,7 @@ use uuid::Uuid;
 
 use crate::AppState;
 use crate::auth::require_session;
+use crate::routes::api_error::ApiError;
 
 const AGENT_START_TIMEOUT: Duration = Duration::from_secs(20);
 const AGENT_START_CLEANUP_TIMEOUT: Duration = Duration::from_secs(12);
@@ -128,8 +128,13 @@ async fn run_agent_handler(
 
     let run_id = start_result_receiver
         .await
-        .map_err(|_| ApiError::internal(anyhow!("agent launch task stopped unexpectedly")))?
-        .map_err(|error| ApiError::internal(anyhow!(error)))?;
+        .map_err(|_| {
+            ApiError::internal_with(
+                "failed to start agent run",
+                anyhow!("agent launch task stopped unexpectedly"),
+            )
+        })?
+        .map_err(|error| ApiError::internal_with("failed to start agent run", anyhow!(error)))?;
     Ok((StatusCode::ACCEPTED, Json(RunAgentStartResponse { run_id })))
 }
 
@@ -164,46 +169,6 @@ where
                 )),
             }
         }
-    }
-}
-
-#[derive(Debug)]
-struct ApiError {
-    status: StatusCode,
-    message: String,
-}
-
-impl ApiError {
-    fn with_status(status: StatusCode, error: anyhow::Error) -> Self {
-        Self {
-            status,
-            message: error.to_string(),
-        }
-    }
-
-    fn unauthorized(error: anyhow::Error) -> Self {
-        Self::with_status(StatusCode::UNAUTHORIZED, error)
-    }
-
-    fn bad_request(error: anyhow::Error) -> Self {
-        Self::with_status(StatusCode::BAD_REQUEST, error)
-    }
-
-    fn internal(error: anyhow::Error) -> Self {
-        Self {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: format!("failed to start agent run: {error:#}"),
-        }
-    }
-}
-
-impl IntoResponse for ApiError {
-    fn into_response(self) -> Response {
-        (
-            self.status,
-            Json(serde_json::json!({ "error": self.message })),
-        )
-            .into_response()
     }
 }
 

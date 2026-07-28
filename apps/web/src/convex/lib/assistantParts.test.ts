@@ -16,7 +16,7 @@ describe('assistant tool parts', () => {
 		).toBe('First turn. Continued.\n\nSecond turn.');
 	});
 
-	it('preserves final text when reconciliation removes the only provisional tool call', () => {
+	it('returns no text when reconciliation removes the only provisional tool call', () => {
 		const reconciledParts = ensureAssistantToolPartsFromJobs(
 			[
 				{
@@ -31,7 +31,7 @@ describe('assistant tool parts', () => {
 		);
 
 		expect(reconciledParts).toEqual([]);
-		expect(joinAssistantTextParts(reconciledParts) || 'Final answer').toBe('Final answer');
+		expect(joinAssistantTextParts(reconciledParts)).toBe('');
 	});
 
 	it('backfills assistant timeline parts from executor jobs when no streamed tool parts were persisted', () => {

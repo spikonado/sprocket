@@ -1,0 +1,39 @@
+[
+	{
+		"id": "linux-x64-gnu",
+		"packageName": "@spikonado/sprocket-linux-x64-gnu",
+		"os": "linux",
+		"cpu": "x64",
+		"libc": "glibc",
+		"executable": "sprocket"
+	},
+	{
+		"id": "linux-arm64-gnu",
+		"packageName": "@spikonado/sprocket-linux-arm64-gnu",
+		"os": "linux",
+		"cpu": "arm64",
+		"libc": "glibc",
+		"executable": "sprocket"
+	},
+	{
+		"id": "darwin-x64",
+		"packageName": "@spikonado/sprocket-darwin-x64",
+		"os": "darwin",
+		"cpu": "x64",
+		"executable": "sprocket"
+	},
+	{
+		"id": "darwin-arm64",
+		"packageName": "@spikonado/sprocket-darwin-arm64",
+		"os": "darwin",
+		"cpu": "arm64",
+		"executable": "sprocket"
+	},
+	{
+		"id": "win32-x64-msvc",
+		"packageName": "@spikonado/sprocket-win32-x64-msvc",
+		"os": "win32",
+		"cpu": "x64",
+		"executable": "sprocket.exe"
+	}
+]

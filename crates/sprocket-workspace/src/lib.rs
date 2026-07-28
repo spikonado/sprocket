@@ -22,6 +22,7 @@ pub use browse::{
 pub use builtin_skills::BUILTIN_SKILLS;
 pub use git_repository::{GitRepositoryIdentity, resolve_git_repository_identity};
 pub use patch::{ApplyPatchOutput, PatchChangeOutput, PatchOperation, apply_workspace_patch};
+pub use paths::home_dir;
 pub use skills::{
     SkillSource, WorkspaceSkill, WorkspaceSkills, default_user_skills_dirs, load_workspace_skills,
     read_skill_content,

@@ -3,6 +3,7 @@ import { query, type QueryCtx } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
+import { compareRunStartedAt } from '@convex/lib/runs';
 import {
 	compareTranscriptMessages,
 	hydrateTranscriptMessages,
@@ -16,13 +17,6 @@ type ThreadTranscriptQueryResult = {
 	threadId: Id<'threadRecords'>;
 	messages: ThreadTranscriptMessage[];
 };
-
-function compareRunsNewestFirst(left: Doc<'runs'>, right: Doc<'runs'>): number {
-	if (right.startedAt !== left.startedAt) {
-		return right.startedAt - left.startedAt;
-	}
-	return right._creationTime - left._creationTime;
-}
 
 async function requireOwnedThread(ctx: QueryCtx, threadId: Id<'threadRecords'>): Promise<void> {
 	const userId = await getUserId(ctx);
@@ -46,7 +40,10 @@ async function loadNewestTerminalRuns(
 		)
 	);
 
-	return perStatus.flat().sort(compareRunsNewestFirst).slice(0, limit);
+	return perStatus
+		.flat()
+		.sort((left, right) => compareRunStartedAt(right, left))
+		.slice(0, limit);
 }
 
 async function hydrateSortedTranscript(

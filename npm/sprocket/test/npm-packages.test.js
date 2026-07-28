@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { constants } from 'node:fs';
+import { constants, readFileSync } from 'node:fs';
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -7,13 +7,9 @@ import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 const ROOT = path.resolve(import.meta.dirname, '../../..');
-const TARGETS = [
-	['linux-x64-gnu', 'sprocket'],
-	['linux-arm64-gnu', 'sprocket'],
-	['darwin-x64', 'sprocket'],
-	['darwin-arm64', 'sprocket'],
-	['win32-x64-msvc', 'sprocket.exe']
-];
+const TARGETS = JSON.parse(
+	readFileSync(path.join(import.meta.dirname, '../targets.json'), 'utf8')
+).map((target) => [target.id, target.executable]);
 
 test('assembles version-matched root and native packages', async () => {
 	const temporary = await mkdtemp(path.join(tmpdir(), 'sprocket-npm-'));
@@ -55,6 +51,7 @@ test('assembles version-matched root and native packages', async () => {
 		assert.equal(rootManifest.version, '1.2.3');
 		assert.equal(rootManifest.optionalDependencies['@spikonado/sprocket-linux-x64-gnu'], '1.2.3');
 		await access(path.join(output, 'sprocket/web/index.html'));
+		await access(path.join(output, 'sprocket/targets.json'));
 
 		const nativeManifest = JSON.parse(
 			await readFile(path.join(output, 'linux-x64-gnu/package.json'), 'utf8')

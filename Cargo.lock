@@ -3035,10 +3035,8 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
- "hmac",
  "open",
  "reqwest",
- "sha2",
  "sprocket-server",
  "sprocket-workspace",
  "tokio",
@@ -3079,7 +3077,6 @@ dependencies = [
  "sha2",
  "sprocket-agent",
  "sprocket-workspace",
- "thiserror",
  "tokio",
  "tower",
  "tower-http 0.7.0",
@@ -3103,7 +3100,6 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-util",
- "walkdir",
 ]
 
 [[package]]

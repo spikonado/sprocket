@@ -13,6 +13,7 @@ use crate::auth::{
     DesktopLoginResultResponse, DesktopLoginStartResponse, extract_session_token,
     peer_may_complete_desktop_login_callback, require_session,
 };
+use crate::routes::api_error::ApiError;
 use crate::{AppState, PairingProofRequest, PairingProofResponse};
 
 const DESKTOP_BOOTSTRAP_TOKEN_HEADER: &str = "x-sprocket-desktop-bootstrap-token";
@@ -114,7 +115,7 @@ async fn desktop_bootstrap(
     headers: HeaderMap,
 ) -> Result<Json<DesktopBootstrapResponse>, ApiError> {
     let Some(desktop_bootstrap_token) = &state.desktop_bootstrap_token else {
-        return Err(ApiError::unauthorized());
+        return Err(ApiError::authentication_required());
     };
     let Some(provided_token) = headers
         .get(DESKTOP_BOOTSTRAP_TOKEN_HEADER)
@@ -122,12 +123,12 @@ async fn desktop_bootstrap(
         .map(str::trim)
         .filter(|value| !value.is_empty())
     else {
-        return Err(ApiError::unauthorized());
+        return Err(ApiError::authentication_required());
     };
 
     let mut expected_token = desktop_bootstrap_token.lock().await;
     if expected_token.as_deref() != Some(provided_token) {
-        return Err(ApiError::unauthorized());
+        return Err(ApiError::authentication_required());
     }
     *expected_token = None;
 
@@ -142,7 +143,7 @@ async fn desktop_login_start(
 ) -> Result<Json<DesktopLoginStartResponse>, ApiError> {
     let session_token = require_session(&state.auth, &headers, &jar)
         .await
-        .map_err(|_| ApiError::unauthorized())?;
+        .map_err(|_| ApiError::authentication_required())?;
 
     if !state.loopback_desktop_login_supported {
         return Err(ApiError::bad_request(anyhow::anyhow!(
@@ -254,7 +255,7 @@ async fn desktop_login_result(
 ) -> Result<Json<DesktopLoginResultResponse>, ApiError> {
     let session_token = require_session(&state.auth, &headers, &jar)
         .await
-        .map_err(|_| ApiError::unauthorized())?;
+        .map_err(|_| ApiError::authentication_required())?;
 
     Ok(Json(state.desktop_login.take_result(&session_token).await))
 }
@@ -267,7 +268,7 @@ async fn desktop_login_cancel(
 ) -> Result<Json<DesktopLoginStartResponse>, ApiError> {
     let session_token = require_session(&state.auth, &headers, &jar)
         .await
-        .map_err(|_| ApiError::unauthorized())?;
+        .map_err(|_| ApiError::authentication_required())?;
 
     state
         .desktop_login
@@ -338,38 +339,6 @@ fn html_escape(value: &str) -> String {
         .replace('\'', "&#39;")
 }
 
-#[derive(Debug)]
-struct ApiError {
-    status: StatusCode,
-    message: String,
-}
-
-impl ApiError {
-    fn bad_request(error: anyhow::Error) -> Self {
-        Self {
-            status: StatusCode::BAD_REQUEST,
-            message: error.to_string(),
-        }
-    }
-
-    fn unauthorized() -> Self {
-        Self {
-            status: StatusCode::UNAUTHORIZED,
-            message: "authentication required".to_string(),
-        }
-    }
-}
-
-impl IntoResponse for ApiError {
-    fn into_response(self) -> Response {
-        (
-            self.status,
-            Json(serde_json::json!({ "error": self.message })),
-        )
-            .into_response()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -377,7 +346,6 @@ mod tests {
     use axum::body::Body;
     use axum::extract::ConnectInfo;
     use axum::http::{Request, header};
-    use hmac::{KeyInit, Mac};
     use tower::ServiceExt;
     use uuid::Uuid;
 
@@ -466,9 +434,11 @@ mod tests {
             payload["httpBaseUrl"].as_str().unwrap(),
             payload["webUiEnabled"].as_bool().unwrap(),
         );
-        let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(credential.as_bytes()).unwrap();
-        mac.update(message.as_bytes());
-        mac.verify_slice(&proof).unwrap();
+        assert!(crate::auth::verify_pairing_proof(
+            &credential,
+            &message,
+            &proof
+        ));
     }
 
     #[tokio::test]

@@ -28,6 +28,7 @@
 	import ThreadTranscript from '$lib/components/home/thread-transcript.svelte';
 	import ProjectPicker, { type ProjectSelection } from '$lib/components/home/project-picker.svelte';
 	import ProjectSidebar from '$lib/components/home/project-sidebar.svelte';
+	import Button from '$lib/components/ui/button/button.svelte';
 	import {
 		attachLocalProject as attachLocalProjectForPath,
 		createLatestTaskQueue,
@@ -1869,12 +1870,7 @@
 		description={currentError ?? 'Connect to your Sprocket server to continue.'}
 	>
 		{#snippet actions()}
-			<a
-				class="bg-primary text-primary-foreground inline-flex h-10 items-center justify-center rounded-full px-5 text-sm font-medium transition hover:opacity-90"
-				href={resolve('/pair')}
-			>
-				Open pairing
-			</a>
+			<Button href={resolve('/pair')}>Open pairing</Button>
 		{/snippet}
 	</CalmCentered>
 {:else if !authReady}

@@ -1,26 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { api } from '@convex/_generated/api';
-import type { Id } from '@convex/_generated/dataModel';
 import { RUN_CLAIM_LEASE_DURATION_MS } from '@convex/lib/runLease';
-import { initConvexTest, seedOwnedThread } from './test.setup';
-
-async function createQueuedRun(
-	asUser: ReturnType<ReturnType<typeof initConvexTest>['withIdentity']>,
-	threadId: Id<'threadRecords'>,
-	submissionId: string,
-	executionSecret: string
-) {
-	return await asUser.mutation(api.agentRuntime.createRun, {
-		submissionId,
-		threadId,
-		prompt: 'Do the thing',
-		imageUploadIds: [],
-		selectedModel: 'gpt-5.6-sol',
-		reasoningEffort: 'medium',
-		serviceTier: 'standard',
-		executionSecret
-	});
-}
+import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 
 describe('agentRuntime.start', () => {
 	it('claims a queued run and renews the same claim', async () => {

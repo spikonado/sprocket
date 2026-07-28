@@ -7,12 +7,7 @@ import {
 } from '$convex/lib/validators';
 import { areImageUploadIdsEqual } from '$convex/lib/imageUploads';
 
-export {
-	MAX_IMAGE_ATTACHMENTS,
-	MAX_IMAGE_ATTACHMENT_BYTES,
-	MAX_IMAGE_ATTACHMENT_LABEL,
-	areImageUploadIdsEqual
-};
+export { MAX_IMAGE_ATTACHMENTS, areImageUploadIdsEqual };
 export const SUPPORTED_IMAGE_MEDIA_TYPES = supportedImageMediaTypes;
 
 export type ComposerAttachment = {

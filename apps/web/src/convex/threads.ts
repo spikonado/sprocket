@@ -3,12 +3,7 @@ import { mutation, query, type MutationCtx } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getOwnedThreadRecord, getOwnedProject } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
-import { assertSupportedModelConfiguration } from '@convex/lib/models';
-import {
-	assertModelAllowedForTier,
-	assertServiceTierAllowedForTier,
-	getSubscriptionTier
-} from '@convex/lib/tiers';
+import { assertModelConfigurationAllowedForUser } from '@convex/lib/tiers';
 import { isRunFinalStatus, vModelId, vReasoningEffort, vServiceTier } from '@convex/lib/validators';
 
 async function patchOwnedThread(
@@ -36,15 +31,12 @@ export const create = mutation({
 		threadId: Id<'threadRecords'>;
 		submissionRunStatus: Doc<'runs'>['status'] | null;
 	}> => {
-		assertSupportedModelConfiguration({
+		const userId: string = await getUserId(ctx);
+		await assertModelConfigurationAllowedForUser(ctx, userId, {
 			modelId: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
 			serviceTier: args.serviceTier
 		});
-		const userId: string = await getUserId(ctx);
-		const subscriptionTier = await getSubscriptionTier(ctx, userId);
-		assertModelAllowedForTier(subscriptionTier, args.selectedModel);
-		assertServiceTierAllowedForTier(subscriptionTier, args.serviceTier);
 		await getOwnedProject(ctx.db, userId, args.projectId);
 		const existingRecord = await ctx.db
 			.query('threadRecords')
@@ -87,6 +79,7 @@ export const create = mutation({
 			selectedModel: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
 			serviceTier: args.serviceTier,
+			totalTokensProcessed: 0,
 			lastMessageAt: now
 		});
 

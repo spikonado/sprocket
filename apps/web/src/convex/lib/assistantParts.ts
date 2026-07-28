@@ -81,6 +81,35 @@ export type MatchableExecutorToolJob = Pick<
 	'id' | 'kind' | 'callId' | 'payload'
 >;
 
+type PersistableExecutorJobSource = {
+	_id: string;
+	hidden?: boolean;
+	sequence: number;
+	kind: Infer<typeof vExecutorJobKind>;
+	callId?: string;
+	payload: ExecutorJobPayload;
+	status: Infer<typeof vExecutorJobStatus>;
+	result?: ExecutorJobResult;
+	error?: string;
+};
+
+export function toPersistableExecutorToolJobs(
+	jobs: readonly PersistableExecutorJobSource[]
+): PersistableExecutorToolJob[] {
+	return jobs
+		.filter((job) => !job.hidden)
+		.sort((left, right) => left.sequence - right.sequence)
+		.map((job) => ({
+			id: job._id,
+			kind: job.kind,
+			...(job.callId ? { callId: job.callId } : {}),
+			payload: job.payload,
+			status: job.status,
+			result: job.result,
+			error: job.error
+		}));
+}
+
 function cloneAssistantToolPayload<T>(value: T): T {
 	return value === undefined ? value : structuredClone(value);
 }

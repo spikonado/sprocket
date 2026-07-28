@@ -77,3 +77,22 @@ export async function seedOwnedThread(
 		threadId: created.threadId
 	};
 }
+
+export async function createQueuedRun(
+	asUser: AuthenticatedTest,
+	threadId: Id<'threadRecords'>,
+	submissionId: string,
+	executionSecret: string,
+	prompt = 'Do the thing'
+) {
+	return await asUser.mutation(api.agentRuntime.createRun, {
+		submissionId,
+		threadId,
+		prompt,
+		imageUploadIds: [],
+		selectedModel: 'gpt-5.6-sol',
+		reasoningEffort: 'medium',
+		serviceTier: 'standard',
+		executionSecret
+	});
+}

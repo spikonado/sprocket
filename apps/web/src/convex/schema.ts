@@ -22,9 +22,7 @@ export default defineSchema({
 	billingCustomers: defineTable({
 		userId: v.string(),
 		dodoCustomerId: v.string()
-	})
-		.index('by_userId', ['userId'])
-		.index('by_dodoCustomerId', ['dodoCustomerId']),
+	}).index('by_userId', ['userId']),
 	subscriptions: defineTable({
 		userId: v.string(),
 		tier: vSubscriptionTier,
@@ -66,8 +64,7 @@ export default defineSchema({
 		archivedAt: v.optional(v.number())
 	})
 		.index('by_userId_lastMessageAt', ['userId', 'lastMessageAt'])
-		.index('by_userId_submissionId', ['userId', 'submissionId'])
-		.index('by_projectId', ['projectId']),
+		.index('by_userId_submissionId', ['userId', 'submissionId']),
 	runs: defineTable({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
@@ -93,9 +90,7 @@ export default defineSchema({
 		.index('by_threadId_startedAt', ['threadId', 'startedAt'])
 		.index('by_threadId_status_startedAt', ['threadId', 'status', 'startedAt'])
 		.index('by_executionSecretHash', ['executionSecretHash'])
-		.index('by_userId_submissionId', ['userId', 'submissionId'])
-		.index('by_projectId', ['projectId'])
-		.index('by_userId_startedAt', ['userId', 'startedAt']),
+		.index('by_userId_submissionId', ['userId', 'submissionId']),
 	threadMessages: defineTable({
 		threadId: v.id('threadRecords'),
 		runId: v.id('runs'),
