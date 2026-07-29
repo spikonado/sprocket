@@ -43,6 +43,13 @@
       {
         formatter = pkgs.nixfmt-tree;
 
+        devShells.convex = pkgs.mkShell {
+          packages = with pkgs; [
+            bun
+            nodejs_24
+          ];
+        };
+
         devShells.default = pkgs.mkShell.override { stdenv = pkgs.clangStdenv; } {
           packages =
             with pkgs;

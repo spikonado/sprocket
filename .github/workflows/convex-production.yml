@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: convex-production
+  cancel-in-progress: false
+
 jobs:
   deploy:
     if: github.event.workflow_run.conclusion == 'success'
@@ -16,23 +20,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - uses: cachix/install-nix-action@v31.11.0
+      - uses: ./.github/actions/setup-nix-shell
         with:
-          extra_nix_config: |
-            accept-flake-config = true
-
-      - uses: cachix/cachix-action@v17
-        with:
-          name: spikonado
-          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
-
-      - name: Build and Cache Shell Environment
-        run: |
-          nix develop --profile sprocket-shell -c true
-          cachix push spikonado sprocket-shell
+          dev-shell: '.#convex'
+          trusted: 'true'
 
       - name: Install dependencies
-        shell: 'nix develop --profile sprocket-shell -c bash -e {0}'
+        shell: 'nix develop ./sprocket-shell -c bash -e {0}'
         run: bun install --frozen-lockfile
 
       - name: Validate production deploy key
@@ -46,7 +40,7 @@ jobs:
 
       - name: Deploy Convex production
         working-directory: apps/web
-        shell: 'nix develop --profile ../../sprocket-shell -c bash -e {0}'
+        shell: 'nix develop ../../sprocket-shell -c bash -e {0}'
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_PRODUCTION_DEPLOY_KEY }}
           CONVEX_DEPLOY_MESSAGE: Production deploy for ${{ github.event.workflow_run.head_sha }}

@@ -1,0 +1,72 @@
+name: Setup Nix shell
+description: >-
+  Mounts the persistent Nix store, installs Nix, and realises the sprocket-shell
+  dev shell profile so later steps can run `nix develop ./sprocket-shell`.
+
+inputs:
+  dev-shell:
+    description: >-
+      Flake installable to realise into the profile, for example ".#convex".
+      Defaults to the flake's default dev shell. Later steps keep referring to
+      the profile by name, so they do not need to repeat this.
+    required: false
+    default: ''
+
+  trusted:
+    description: >-
+      Set to "true" for jobs that hold privileged credentials and only ever run
+      code from a protected branch. Those jobs mount a separate store that no
+      pull-request job can write to.
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    # /nix is empty at this point, so the recursive chmod is O(1).
+    - name: Create Nix store mount point
+      shell: bash
+      run: |
+        sudo mkdir -p /nix/store
+        sudo chmod -R 777 /nix
+
+    # Concurrent jobs all clone the same snapshot and only the first commit
+    # survives, so two shells sharing a disk would leave the loser re-fetching
+    # its closure every run. The shell is part of the key to keep them apart.
+    - name: Derive store name
+      id: store
+      shell: bash
+      env:
+        DEV_SHELL: ${{ inputs.dev-shell }}
+      run: |
+        name="${DEV_SHELL:-default}"
+        echo "name=${name//[^a-zA-Z0-9]/-}" >> "$GITHUB_OUTPUT"
+
+    # Jobs own the mount, so anything they leave in the store runs in every
+    # later job on the same disk: credentialed jobs and forks get their own.
+    # The flake.lock hash retires old closures via the 7-day idle eviction,
+    # since concurrent clone-and-commit makes in-store collection unsafe.
+    - name: Mount Nix store
+      uses: useblacksmith/stickydisk@v1.4.0
+      with:
+        key: >-
+          ${{ github.repository }}-nix-store-${{ inputs.trusted == 'true' && 'trusted'
+          || (github.event.pull_request.head.repo.fork && 'fork' || 'shared')
+          }}-${{ steps.store.outputs.name }}-${{ hashFiles('flake.lock') }}
+        path: /nix
+
+    # A fresh disk is root-owned and the installer needs /nix writable. Only
+    # the top level is touched, so warm multi-gigabyte stores stay a no-op.
+    - name: Ensure Nix store is writable
+      shell: bash
+      run: |
+        sudo mkdir -p /nix/store /nix/var
+        sudo chown "$(id -u):$(id -g)" /nix /nix/store /nix/var
+
+    # Unlike cachix/install-nix-action this unpacks into an existing /nix
+    # instead of refusing to run, which is what lets the store persist.
+    - uses: nixbuild/nix-quick-install-action@v35
+
+    - name: Build shell environment
+      shell: bash
+      run: nix develop ${{ inputs.dev-shell }} --profile sprocket-shell -c true

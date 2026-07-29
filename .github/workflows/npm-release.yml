@@ -21,6 +21,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: npm-release-${{ github.event_name == 'workflow_run' && 'main-dev' || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_run' }}
+
 jobs:
   prepare:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
