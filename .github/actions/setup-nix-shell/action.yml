@@ -1,0 +1,42 @@
+name: Setup Nix shell
+description: >-
+  Mounts the persistent Nix store, installs Nix, and realises the sprocket-shell
+  dev shell profile so later steps can run `nix develop --profile sprocket-shell`.
+
+runs:
+  using: composite
+  steps:
+    # The sticky disk needs an existing mount point. /nix is always empty at
+    # this stage, so the recursive chmod is O(1).
+    - name: Create Nix store mount point
+      shell: bash
+      run: |
+        sudo mkdir -p /nix/store
+        sudo chmod -R 777 /nix
+
+    - name: Mount Nix store
+      uses: useblacksmith/stickydisk@v1.4.0
+      with:
+        key: ${{ github.repository }}-nix-store
+        path: /nix
+
+    # A freshly formatted sticky disk is owned by root, and
+    # nix-quick-install-action refuses to run unless /nix is writable by the
+    # runner user. Only the top-level directories are touched so that warm,
+    # multi-gigabyte stores stay a no-op.
+    - name: Ensure Nix store is writable
+      shell: bash
+      run: |
+        sudo mkdir -p /nix/store /nix/var
+        sudo chown "$(id -u):$(id -g)" /nix /nix/store /nix/var
+
+    # Unlike cachix/install-nix-action, this installer unpacks into an existing
+    # /nix (tar --skip-old-files) instead of refusing to run, which is what lets
+    # the store persist across jobs. It enables `nix-command flakes` and
+    # `accept-flake-config` on its own, so the flake's extra-substituters are
+    # still honoured.
+    - uses: nixbuild/nix-quick-install-action@v35
+
+    - name: Build shell environment
+      shell: bash
+      run: nix develop --profile sprocket-shell -c true

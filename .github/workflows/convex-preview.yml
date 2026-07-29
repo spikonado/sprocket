@@ -15,20 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - uses: cachix/install-nix-action@v31.11.0
-        with:
-          extra_nix_config: |
-            accept-flake-config = true
-
-      - uses: cachix/cachix-action@v17
-        with:
-          name: spikonado
-          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
-
-      - name: Build and Cache Shell Environment
-        run: |
-          nix develop --profile sprocket-shell -c true
-          cachix push spikonado sprocket-shell
+      - uses: ./.github/actions/setup-nix-shell
 
       - name: Install dependencies
         shell: 'nix develop --profile sprocket-shell -c bash -e {0}'
