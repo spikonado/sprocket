@@ -43,8 +43,6 @@
       {
         formatter = pkgs.nixfmt-tree;
 
-        # Convex only needs `bun install` and `bunx convex deploy`. The
-        # default shell costs ~5 GiB of closure to get hold of `bun`.
         devShells.convex = pkgs.mkShell {
           packages = with pkgs; [
             bun
