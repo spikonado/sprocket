@@ -21,6 +21,15 @@ on:
 permissions:
   contents: read
 
+# Every successful main build kicks off a dev release. When several land in
+# quick succession, the older ones are thrown away by the freshness guards in
+# `publish` regardless, so cancel them before they burn five native build jobs
+# (two of which are macOS runners). Tag and manual releases get their own group
+# and are never cancelled.
+concurrency:
+  group: npm-release-${{ github.event_name == 'workflow_run' && 'main-dev' || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_run' }}
+
 jobs:
   prepare:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'

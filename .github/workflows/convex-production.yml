@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# Production deploys must not race each other, and cancelling one midway could
+# leave a half-applied deployment, so queue them instead.
+concurrency:
+  group: convex-production
+  cancel-in-progress: false
+
 jobs:
   deploy:
     if: github.event.workflow_run.conclusion == 'success'
