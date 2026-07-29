@@ -320,4 +320,37 @@ describe('assistant tool parts', () => {
 		expect(hydrated[0]).toMatchObject({ name: 'exec_command', input: { cmd: 'new' } });
 		expect(hydrated[0]).not.toBe(parts[0]);
 	});
+
+	it('pairs a tool call from an unfinished job with an interrupted result', () => {
+		const hydrated = ensureAssistantToolPartsFromJobs(
+			[],
+			[
+				{
+					id: 'job-1',
+					kind: 'exec_command',
+					payload: { cmd: 'sleep 60' },
+					status: 'claimed'
+				}
+			]
+		);
+
+		// Providers reject replaying a dangling tool call.
+		expect(hydrated).toEqual([
+			{
+				type: 'tool-call',
+				callId: 'executor-job:job-1',
+				name: 'exec_command',
+				input: { cmd: 'sleep 60' }
+			},
+			{
+				type: 'tool-result',
+				callId: 'executor-job:job-1',
+				name: 'exec_command',
+				output: {
+					error: 'The agent stopped before this tool call finished.',
+					status: 'cancelled'
+				}
+			}
+		]);
+	});
 });

@@ -47,7 +47,7 @@ describe('agentRuntime.start', () => {
 		).resolves.toEqual({ claimed: false });
 	});
 
-	it('rejects completion writes and terminal cleanup after a claim expires', async () => {
+	it('rejects completion writes after a claim expires but lets the owner terminalize the run', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'start-expired-writes-secret';
@@ -77,12 +77,22 @@ describe('agentRuntime.start', () => {
 		await expect(
 			asUser.mutation(api.agentRuntime.finalizeClaimFailure, {
 				runId,
-				claimId: 'claim-expired',
+				claimId: 'claim-someone-else',
 				text: 'stale failure',
 				lastError: 'claim expired',
 				executionSecret
 			})
 		).resolves.toBe(false);
+		await expect(
+			asUser.mutation(api.agentRuntime.finalizeClaimFailure, {
+				runId,
+				claimId: 'claim-expired',
+				text: 'stale failure',
+				lastError: 'claim expired',
+				executionSecret
+			})
+		).resolves.toBe(true);
+		expect(await t.run(async (ctx) => (await ctx.db.get(runId))?.status)).toBe('failed');
 	});
 
 	it('takes over an expired claim, hides in-flight jobs, and clears partial response', async () => {
@@ -203,5 +213,40 @@ describe('agentRuntime.start', () => {
 		expect(takeover.claimExpiresAt).toBeLessThanOrEqual(
 			Date.now() + RUN_CLAIM_LEASE_DURATION_MS + 1_000
 		);
+	});
+
+	it('re-claims with the same claim after a lapse without resetting run state', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'start-reclaim-secret';
+		const { runId } = await createQueuedRun(asUser, threadId, 'sub-reclaim', executionSecret);
+		await asUser.mutation(api.agentRuntime.start, {
+			claimId: 'claim-a',
+			runId,
+			executionSecret
+		});
+		await t.run(async (ctx) => {
+			await ctx.db.patch(runId, {
+				completionAttemptSeq: 2,
+				claimExpiresAt: Date.now() - 1
+			});
+		});
+
+		const reclaimed = await asUser.mutation(api.agentRuntime.start, {
+			claimId: 'claim-a',
+			runId,
+			executionSecret
+		});
+		expect(reclaimed.claimed).toBe(true);
+		expect(reclaimed.claimExpiresAt).toBeGreaterThan(Date.now());
+
+		const run = await t.run(async (ctx) => ctx.db.get(runId));
+		// Same-claim re-start keeps run state; takeover cleanup is only for a
+		// different claim.
+		expect(run).toMatchObject({
+			claimId: 'claim-a',
+			completionAttemptSeq: 2,
+			claimExpiresAt: reclaimed.claimExpiresAt
+		});
 	});
 });

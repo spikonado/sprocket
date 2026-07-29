@@ -9,7 +9,7 @@ use sprocket_workspace::{
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::time::{Instant, MissedTickBehavior, sleep, timeout};
+use tokio::time::{Instant, sleep, sleep_until, timeout};
 use uuid::Uuid;
 
 use crate::RunContextResponse;
@@ -23,6 +23,7 @@ const RUN_CLAIM_LEASE_DURATION: Duration = Duration::from_secs(60);
 const RUN_CLAIM_RENEW_INTERVAL: Duration = Duration::from_secs(20);
 const RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(8);
 const RUN_CLAIM_EXPIRY_SAFETY_MARGIN: Duration = Duration::from_secs(5);
+const RUN_CLAIM_RENEW_RETRY_DELAY: Duration = Duration::from_millis(250);
 const RUN_CLAIM_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(8);
 const FAILURE_CLEANUP_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(5);
 const START_FAILURE_CLEANUP_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(2_500);
@@ -414,33 +415,121 @@ async fn renew_claim_once(
     .map(|response| (response.renewed, request_started_at))
 }
 
-async fn renew_claim(
+/// Re-claims the run with the same claim after a lease lapse; the server
+/// accepts only if nobody else took over.
+async fn reclaim_run_once(
     runtime: &RuntimeClient,
     run_id: &str,
     claim_id: &str,
 ) -> anyhow::Result<(bool, Instant)> {
-    match renew_claim_once(runtime, run_id, claim_id).await {
-        Ok(outcome) => Ok(outcome),
-        Err(first_error) => {
-            eprintln!(
-                "sprocket-agent: claim renewal failed for run {}; retrying: {}",
-                run_id, first_error
-            );
-            renew_claim_once(runtime, run_id, claim_id)
-                .await
-                .map_err(|retry_error| {
-                    anyhow!(
-                        "failed to renew claim for run {run_id} after retry: {retry_error}; initial attempt failed: {first_error}"
-                    )
-                })
+    let request_started_at = Instant::now();
+    timeout(
+        RUN_CLAIM_ATTEMPT_TIMEOUT,
+        runtime.start_run(run_id, claim_id),
+    )
+    .await
+    .map_err(|_| anyhow!("reclaim attempt timed out"))?
+    .map(|start| (start.claimed, request_started_at))
+}
+
+/// Retries transient renewal failures while the lease window can still fit
+/// another attempt.
+async fn renew_claim_with<F, Fut>(
+    run_id: &str,
+    lease_deadline: Instant,
+    mut attempt: F,
+) -> anyhow::Result<(bool, Instant)>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = anyhow::Result<(bool, Instant)>>,
+{
+    let mut first_error: Option<String> = None;
+    loop {
+        match attempt().await {
+            Ok(outcome) => return Ok(outcome),
+            Err(error) => {
+                let retry_window_fits = Instant::now()
+                    + RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT
+                    + RUN_CLAIM_EXPIRY_SAFETY_MARGIN
+                    < lease_deadline;
+                if !retry_window_fits {
+                    return Err(match &first_error {
+                        Some(first) => anyhow!(
+                            "failed to renew claim for run {run_id} before the lease window closed: {error}; initial attempt failed: {first}"
+                        ),
+                        None => anyhow!("failed to renew claim for run {run_id}: {error}"),
+                    });
+                }
+                first_error.get_or_insert_with(|| error.to_string());
+                eprintln!(
+                    "sprocket-agent: claim renewal failed for run {run_id}; retrying: {error}"
+                );
+                sleep(RUN_CLAIM_RENEW_RETRY_DELAY).await;
+            }
         }
     }
 }
 
 /// Runs `operation` while renewing the claim lease.
 ///
+/// Renewals are anchored to the last successful renewal request start, so a
+/// slow renewal (reconnect, CPU starvation) cannot push the next one past
+/// the lease deadline. The server is the authority on lease ownership, so
+/// renewals are attempted even past the conservative local deadline estimate,
+/// and a reported loss is retried once via re-claim before giving up.
+///
 /// Only claim/lease failures are returned as `Err`; the operation's value
 /// (including its own errors) is wrapped in `Ok`.
+async fn drive_claim_lease<R, RFut, C, CFut, F, T>(
+    run_id: &str,
+    lease_started_at: Instant,
+    mut renew: R,
+    mut reclaim: C,
+    operation: F,
+) -> anyhow::Result<T>
+where
+    R: FnMut(Instant) -> RFut,
+    RFut: Future<Output = anyhow::Result<(bool, Instant)>>,
+    C: FnMut() -> CFut,
+    CFut: Future<Output = anyhow::Result<(bool, Instant)>>,
+    F: Future<Output = T>,
+{
+    let mut lease_deadline = lease_started_at + RUN_CLAIM_LEASE_DURATION;
+    let mut next_renewal_at = lease_started_at + RUN_CLAIM_RENEW_INTERVAL;
+    tokio::pin!(operation);
+
+    loop {
+        tokio::select! {
+            biased;
+            _ = sleep_until(next_renewal_at) => {
+                match renew(lease_deadline).await {
+                    Ok((true, renewal_started_at)) => {
+                        lease_deadline = renewal_started_at + RUN_CLAIM_LEASE_DURATION;
+                        next_renewal_at = renewal_started_at + RUN_CLAIM_RENEW_INTERVAL;
+                    }
+                    Ok((false, _)) => {
+                        match reclaim().await {
+                            Ok((true, reclaim_started_at)) => {
+                                eprintln!(
+                                    "sprocket-agent: re-claimed run {run_id} after the claim lease lapsed"
+                                );
+                                lease_deadline = reclaim_started_at + RUN_CLAIM_LEASE_DURATION;
+                                next_renewal_at = reclaim_started_at + RUN_CLAIM_RENEW_INTERVAL;
+                            }
+                            Ok((false, _)) => {
+                                return Err(anyhow!("claim lease for run {run_id} was lost"));
+                            }
+                            Err(error) => return Err(error),
+                        }
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            result = &mut operation => return Ok(result),
+        }
+    }
+}
+
 async fn run_with_claim_lease<F, T>(
     runtime: &RuntimeClient,
     run_id: &str,
@@ -451,39 +540,18 @@ async fn run_with_claim_lease<F, T>(
 where
     F: Future<Output = T>,
 {
-    let mut lease_deadline = lease_started_at + RUN_CLAIM_LEASE_DURATION;
-    let mut renewals = tokio::time::interval_at(
-        Instant::now() + RUN_CLAIM_RENEW_INTERVAL,
-        RUN_CLAIM_RENEW_INTERVAL,
-    );
-    renewals.set_missed_tick_behavior(MissedTickBehavior::Delay);
-    tokio::pin!(operation);
-
-    loop {
-        tokio::select! {
-            biased;
-            _ = renewals.tick() => {
-                let renewal_budget = RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT * 2
-                    + RUN_CLAIM_EXPIRY_SAFETY_MARGIN;
-                if Instant::now() + renewal_budget >= lease_deadline {
-                    return Err(anyhow!("claim lease for run {run_id} cannot be renewed safely before expiry"));
-                }
-                match renew_claim(runtime, run_id, claim_id).await {
-                    Ok((true, renewal_started_at)) => {
-                        if Instant::now() + RUN_CLAIM_EXPIRY_SAFETY_MARGIN >= lease_deadline {
-                            return Err(anyhow!("claim renewal for run {run_id} was not confirmed safely before expiry"));
-                        }
-                        lease_deadline = renewal_started_at + RUN_CLAIM_LEASE_DURATION;
-                    }
-                    Ok((false, _)) => {
-                        return Err(anyhow!("claim lease for run {run_id} was lost"));
-                    }
-                    Err(error) => return Err(error),
-                }
-            }
-            result = &mut operation => return Ok(result),
-        }
-    }
+    drive_claim_lease(
+        run_id,
+        lease_started_at,
+        move |lease_deadline| {
+            renew_claim_with(run_id, lease_deadline, move || {
+                renew_claim_once(runtime, run_id, claim_id)
+            })
+        },
+        || reclaim_run_once(runtime, run_id, claim_id),
+        operation,
+    )
+    .await
 }
 
 pub async fn start_agent_run(request: RunAgentRequest) -> anyhow::Result<AgentRun> {
@@ -674,7 +742,14 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
     .await
     {
         Ok(result) => result,
-        Err(error) => abort_after_claim(&runtime, &run_id, &claim_id, error).await,
+        Err(error) => {
+            // A renewal tick can race the operation's own finalization; a run
+            // that already finished server-side must not be reported as failed.
+            match runtime.run_finished(&run_id).await {
+                Ok(true) => Ok(()),
+                _ => abort_after_claim(&runtime, &run_id, &claim_id, error).await,
+            }
+        }
     }
 }
 
@@ -735,5 +810,185 @@ mod tests {
         let preamble = build_workspace_preamble("/tmp/project", &[], &skills);
         assert!(preamble.contains("description: Line one line two"));
         assert!(!preamble.contains("description: Line one\n"));
+    }
+}
+
+#[cfg(test)]
+mod claim_lease_tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    use anyhow::anyhow;
+    use tokio::time::{Instant, sleep};
+
+    use super::{
+        RUN_CLAIM_EXPIRY_SAFETY_MARGIN, RUN_CLAIM_LEASE_DURATION, RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT,
+        RUN_CLAIM_RENEW_INTERVAL, drive_claim_lease, renew_claim_with,
+    };
+
+    async fn reclaim_refused() -> anyhow::Result<(bool, Instant)> {
+        Ok((false, Instant::now()))
+    }
+
+    /// Regression: a starved renewal tick (CPU saturation, slow reconnect)
+    /// must not fail an otherwise healthy run.
+    #[tokio::test(start_paused = true)]
+    async fn scheduling_stall_after_a_successful_renewal_does_not_fail_the_run() {
+        let renewals = AtomicUsize::new(0);
+        let result = drive_claim_lease(
+            "run-stalled-tick",
+            Instant::now(),
+            |_lease_deadline| {
+                let attempt = renewals.fetch_add(1, Ordering::SeqCst);
+                let request_started_at = Instant::now();
+                async move {
+                    if attempt == 0 {
+                        sleep(RUN_CLAIM_RENEW_INTERVAL + Duration::from_secs(25)).await;
+                    }
+                    Ok((true, request_started_at))
+                }
+            },
+            reclaim_refused,
+            async {
+                sleep(Duration::from_secs(50)).await;
+                "done"
+            },
+        )
+        .await;
+        assert_eq!(result.ok(), Some("done"));
+        assert!(renewals.load(Ordering::SeqCst) >= 2);
+    }
+
+    /// The local deadline is only an estimate; a renewal tick pushed past it
+    /// must still be attempted.
+    #[tokio::test(start_paused = true)]
+    async fn renewal_is_attempted_after_the_estimated_lease_deadline() {
+        let renewals = AtomicUsize::new(0);
+        let result = drive_claim_lease(
+            "run-past-estimated-deadline",
+            Instant::now(),
+            |_lease_deadline| {
+                let attempt = renewals.fetch_add(1, Ordering::SeqCst);
+                let request_started_at = Instant::now();
+                async move {
+                    if attempt == 0 {
+                        sleep(RUN_CLAIM_LEASE_DURATION + Duration::from_secs(10)).await;
+                    }
+                    Ok((true, request_started_at))
+                }
+            },
+            reclaim_refused,
+            async {
+                sleep(Duration::from_secs(100)).await;
+                "done"
+            },
+        )
+        .await;
+        assert_eq!(result.ok(), Some("done"));
+        assert!(renewals.load(Ordering::SeqCst) >= 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn renewal_failures_retry_until_the_lease_window_closes() {
+        let attempts = AtomicUsize::new(0);
+        let started_at = Instant::now();
+        let result = renew_claim_with("run-flaky", started_at + RUN_CLAIM_LEASE_DURATION, || {
+            attempts.fetch_add(1, Ordering::SeqCst);
+            async {
+                sleep(RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT).await;
+                Err(anyhow!("claim renewal timed out"))
+            }
+        })
+        .await;
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("initial attempt failed"), "{error}");
+        // Keeps renewing while another attempt can still land before the
+        // lease deadline, then stops.
+        assert!(attempts.load(Ordering::SeqCst) >= 3);
+        assert!(
+            Instant::now()
+                >= started_at + RUN_CLAIM_LEASE_DURATION
+                    - RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT
+                    - RUN_CLAIM_EXPIRY_SAFETY_MARGIN
+        );
+        assert!(Instant::now() <= started_at + RUN_CLAIM_LEASE_DURATION);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn lost_lease_is_not_retried() {
+        let attempts = AtomicUsize::new(0);
+        let result = renew_claim_with(
+            "run-lost",
+            Instant::now() + RUN_CLAIM_LEASE_DURATION,
+            || {
+                attempts.fetch_add(1, Ordering::SeqCst);
+                async { Ok((false, Instant::now())) }
+            },
+        )
+        .await;
+        assert_eq!(result.ok().map(|(renewed, _)| renewed), Some(false));
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn drive_fails_the_run_when_the_lease_is_lost() {
+        let result: anyhow::Result<()> = drive_claim_lease(
+            "run-taken-over",
+            Instant::now(),
+            |_lease_deadline| async { Ok((false, Instant::now())) },
+            reclaim_refused,
+            std::future::pending(),
+        )
+        .await;
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("was lost"), "{error}");
+    }
+
+    /// After a lease lapse with no takeover, the same claim re-`start`s and
+    /// the run continues.
+    #[tokio::test(start_paused = true)]
+    async fn reclaimed_lease_resumes_renewals() {
+        let renewals = AtomicUsize::new(0);
+        let reclaims = AtomicUsize::new(0);
+        let result = drive_claim_lease(
+            "run-reclaim",
+            Instant::now(),
+            |_lease_deadline| {
+                let attempt = renewals.fetch_add(1, Ordering::SeqCst);
+                let request_started_at = Instant::now();
+                async move {
+                    if attempt == 0 {
+                        return Ok((false, request_started_at));
+                    }
+                    Ok((true, request_started_at))
+                }
+            },
+            || {
+                reclaims.fetch_add(1, Ordering::SeqCst);
+                async { Ok((true, Instant::now())) }
+            },
+            async {
+                sleep(Duration::from_secs(50)).await;
+                "done"
+            },
+        )
+        .await;
+        assert_eq!(result.ok(), Some("done"));
+        assert_eq!(reclaims.load(Ordering::SeqCst), 1);
+        assert!(renewals.load(Ordering::SeqCst) >= 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn drive_fails_the_run_when_the_reclaim_fails() {
+        let result: anyhow::Result<()> = drive_claim_lease(
+            "run-reclaim-unreachable",
+            Instant::now(),
+            |_lease_deadline| async { Ok((false, Instant::now())) },
+            || async { Err(anyhow!("reclaim attempt timed out")) },
+            std::future::pending(),
+        )
+        .await;
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("reclaim attempt timed out"), "{error}");
     }
 }

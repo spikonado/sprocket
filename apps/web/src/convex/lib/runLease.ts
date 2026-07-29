@@ -31,12 +31,11 @@ export function ownsActiveRunClaim(run: ClaimableRun, claimId: string, now: numb
 	return run.claimId === claimId && isRunClaimLeaseActive(run, now);
 }
 
-export function canFinalizeAfterClaimFailure(
-	run: ClaimableRun,
-	claimId: string,
-	now: number
-): boolean {
-	return ownsActiveRunClaim(run, claimId, now);
+export function canFinalizeAfterClaimFailure(run: ClaimableRun, claimId: string): boolean {
+	// Requiring an active lease here would strand runs whose executor only
+	// reports the failure after expiry. A takeover changes claimId, so stale
+	// executors stay rejected.
+	return isClaimedRunStatus(run.status) && run.claimId === claimId;
 }
 
 export function claimExpiresAt(now: number): number {
