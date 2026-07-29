@@ -179,6 +179,54 @@ describe('canonical agent history', () => {
 		]);
 	});
 
+	it('answers tool calls from jobs that never finished with an interrupted result', () => {
+		// Providers reject replaying a dangling tool call, so the next agent
+		// must see an interrupted result instead.
+		const history = buildCanonicalAgentHistory({
+			messages: [
+				{
+					_id: 'message-1',
+					runId: 'run-1',
+					runStatus: 'failed',
+					type: 'response',
+					text: '',
+					parts: [],
+					attachments: []
+				}
+			] as unknown as Parameters<typeof buildCanonicalAgentHistory>[0]['messages'],
+			jobs: [
+				{
+					_id: 'job-1',
+					runId: 'run-1',
+					hidden: false,
+					sequence: 0,
+					kind: 'exec_command',
+					payload: { cmd: 'sleep 60' },
+					status: 'claimed'
+				}
+			] as unknown as Parameters<typeof buildCanonicalAgentHistory>[0]['jobs']
+		});
+
+		expect(history.map((message) => message.role)).toEqual(['assistant', 'user']);
+		expect(history[0]?.contents).toMatchObject([
+			{ type: 'toolCall', callId: 'executor-job:job-1' }
+		]);
+		expect(history[1]?.contents).toMatchObject([
+			{
+				type: 'toolResult',
+				callId: 'executor-job:job-1',
+				items: [
+					{
+						text: JSON.stringify({
+							error: 'The agent stopped before this tool call finished.',
+							status: 'cancelled'
+						})
+					}
+				]
+			}
+		]);
+	});
+
 	it('preserves assistant text provider metadata in the canonical wire format', () => {
 		const history = buildAgentHistoryFromAssistantParts({
 			parts: [

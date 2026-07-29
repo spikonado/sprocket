@@ -328,7 +328,7 @@ function removeAbandonedAssistantTurns(
 	);
 	const removedCallIds = new Set(abandonedCalls.map((part) => part.callId));
 
-	return parts.filter((part) => {
+	const retainedParts = parts.filter((part) => {
 		if (part.type === 'tool-result') {
 			return !removedCallIds.has(part.callId);
 		}
@@ -337,4 +337,28 @@ function removeAbandonedAssistantTurns(
 		}
 		return part.type !== 'tool-call' || !removedCallIds.has(part.callId);
 	});
+
+	// Providers reject replaying a tool call without its result; pair dangling
+	// calls with an interrupted result instead of dropping the work.
+	const answeredCallIds = new Set(
+		retainedParts
+			.filter((part): part is AssistantToolResultPart => part.type === 'tool-result')
+			.map((part) => part.callId)
+	);
+	const pairedParts: AssistantPart[] = [];
+	for (const part of retainedParts) {
+		pairedParts.push(part);
+		if (part.type === 'tool-call' && !answeredCallIds.has(part.callId)) {
+			pairedParts.push({
+				type: 'tool-result',
+				callId: part.callId,
+				name: part.name,
+				output: assistantToolResultErrorOutput(
+					'cancelled',
+					'The agent stopped before this tool call finished.'
+				)
+			});
+		}
+	}
+	return pairedParts;
 }

@@ -192,6 +192,8 @@ export const createRun = mutation({
 		runId: v.id('runs'),
 		promptMessageId: v.id('threadMessages')
 	}),
+	// Also terminalizes a previous claimed run whose lease lapsed — it was
+	// abandoned by its executor and would block every later submission.
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		await assertModelConfigurationAllowedForUser(ctx, userId, {
@@ -254,7 +256,19 @@ export const createRun = mutation({
 			.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', args.threadId))
 			.order('desc')
 			.first();
-		assertThreadCanStartRun(latestRun?.status);
+		if (
+			latestRun &&
+			isClaimedRunStatus(latestRun.status) &&
+			!isRunClaimLeaseActive(latestRun, Date.now())
+		) {
+			await finalizeRunRecord(ctx, userId, latestRun, {
+				text: 'Run aborted: The local agent stopped responding before this run finished.',
+				status: 'failed',
+				lastError: 'The local agent stopped responding before this run finished.'
+			});
+		} else {
+			assertThreadCanStartRun(latestRun?.status);
+		}
 
 		const runId = await ctx.db.insert('runs', {
 			threadId: args.threadId,
@@ -878,7 +892,7 @@ export const finalizeClaimFailure = mutation({
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		const userId = run.userId;
-		if (!canFinalizeAfterClaimFailure(run, args.claimId, Date.now())) {
+		if (!canFinalizeAfterClaimFailure(run, args.claimId)) {
 			return false;
 		}
 		return finalizeRunRecord(ctx, userId, run, {
