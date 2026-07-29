@@ -109,7 +109,7 @@ fn build_workspace_preamble(
         "If the workspace is already dirty, do not revert the changes. Try to work around them. If they conflict with the changes you need to make, ask the user what to do with them.",
         "Don't hesitate to ask the user questions before, after, or while working. Don't assume what the user wants. This is to avoid cases similar to the following happening:",
         "  - The user asked you to delete some virtual machines, you couldn't find the exact ones and assumed that the ones you were seeing are the ones that need to be deleted and deleted them.",
-        "  - You had to make some breaking changes to the schema of the project's database and assumed by yourself that the current data in the database was important and had to be migrated instead of just being deleted."
+        "  - You had to make some breaking changes to the schema of a project's dev database and assumed by yourself that the current data in the database was important and had to be migrated instead of just being deleted.",
         "",
         "### Working on Software",
         "",
