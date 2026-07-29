@@ -32,37 +32,18 @@ runs:
         sudo chmod -R 777 /nix
 
     # Jobs run checkout-controlled code as the owner of the mounted store, so
-    # whatever they leave behind is executed by every later job on the same
-    # disk. The store is therefore split three ways by who is allowed to write
-    # to it:
+    # whatever they leave behind runs in every later job on the same disk. Hence
+    # three stores: `trusted` for credentialed jobs that only run protected
+    # branches, `fork` for pull requests carrying code from outside the
+    # repository (Convex Preview runs on pull_request with a deploy key, so
+    # forks must not be able to plant binaries it later executes), and `shared`
+    # for code that someone with write access already controls.
     #
-    #   trusted - jobs holding privileged credentials. Only ever runs code from
-    #             a protected branch.
-    #   fork    - pull requests from forks. They get no secrets, but they do
-    #             execute code from outside the repository, so they must not be
-    #             able to plant binaries that a credentialed job later runs
-    #             (Convex Preview runs on pull_request with a deploy key).
-    #   shared  - everything else, i.e. code that someone with write access to
-    #             this repository already controls.
-    #
-    # The key also carries a hash of flake.lock, so each lockfile generation
-    # gets its own disk. Nothing here ever runs nix-collect-garbage, and it
-    # cannot safely: each job clones the last snapshot and commits it back when
-    # it finishes, so a job that collected garbage would just be overwritten by
-    # a concurrent job that had cloned the pre-collection snapshot. Without a
-    # per-generation key the store would only ever grow. renovate refreshes
-    # flake.lock every Monday and automerges it, and because these inputs track
-    # nixos-unstable each refresh moves stdenv, which rebuilds everything below
-    # it: comparing the two most recent locked revisions, the runtime closure of
-    # bun and nodejs shares zero of its 63 store paths with its predecessor,
-    # despite both revisions pinning identical package versions. So a whole
-    # closure would be added and none of it dropped, roughly 5 GB a week,
-    # forever, until the disk filled and every Nix workflow failed at once.
-    # Keying by generation instead lets the sticky disk's own 7-day idle
-    # eviction do the collecting: last Monday's disk stops being mounted the
-    # moment the bump merges and is purged a week later, leaving two live
-    # generations at steady state. The cost is that the first jobs after a bump
-    # start from an empty disk and re-fetch the closure once.
+    # The flake.lock hash gives each lockfile generation its own disk. In-store
+    # garbage collection is unsafe here (concurrent jobs clone and commit the
+    # same snapshot, so a collection just gets overwritten), and a nixpkgs bump
+    # shares no store paths with its predecessor, so an un-keyed disk would only
+    # grow. This lets the 7-day idle eviction retire old generations instead.
     - name: Mount Nix store
       uses: useblacksmith/stickydisk@v1.4.0
       with:
@@ -83,10 +64,8 @@ runs:
         sudo chown "$(id -u):$(id -g)" /nix /nix/store /nix/var
 
     # Unlike cachix/install-nix-action, this installer unpacks into an existing
-    # /nix (tar --skip-old-files) instead of refusing to run, which is what lets
-    # the store persist across jobs. It enables `nix-command flakes` and
-    # `accept-flake-config` on its own, so the flake's extra-substituters are
-    # still honoured.
+    # /nix instead of refusing to run, which is what lets the store persist. It
+    # enables `nix-command flakes` and `accept-flake-config` on its own.
     - uses: nixbuild/nix-quick-install-action@v35
 
     - name: Build shell environment
