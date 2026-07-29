@@ -26,6 +26,17 @@ jobs:
         with:
           cmd-format: nix develop --profile sprocket-shell -c {0}
 
+      # Only `lint` and `check` run here, and neither declares `outputs` in
+      # turbo.json, so a cache hit just replays the recorded result. Nothing is
+      # restored into target/, which keeps this from fighting rust-cache.
+      - name: Cache Turborepo
+        uses: actions/cache@v6.1.0
+        with:
+          path: .turbo
+          key: turbo-prek-${{ github.sha }}
+          restore-keys: |
+            turbo-prek-
+
       - name: Install dependencies
         shell: 'nix develop --profile sprocket-shell -c bash -e {0}'
         run: bun install --frozen-lockfile
