@@ -31,14 +31,25 @@ runs:
         sudo mkdir -p /nix/store
         sudo chmod -R 777 /nix
 
-    # Pull-request jobs run checkout-controlled code as the owner of the mounted
-    # store, so anything they leave behind is attacker-controlled. Jobs that
-    # hold privileged credentials therefore mount a store of their own, which
-    # only ever sees code from a protected branch.
+    # Jobs run checkout-controlled code as the owner of the mounted store, so
+    # whatever they leave behind is executed by every later job on the same
+    # disk. The store is therefore split three ways by who is allowed to write
+    # to it:
+    #
+    #   trusted - jobs holding privileged credentials. Only ever runs code from
+    #             a protected branch.
+    #   fork    - pull requests from forks. They get no secrets, but they do
+    #             execute code from outside the repository, so they must not be
+    #             able to plant binaries that a credentialed job later runs
+    #             (Convex Preview runs on pull_request with a deploy key).
+    #   shared  - everything else, i.e. code that someone with write access to
+    #             this repository already controls.
     - name: Mount Nix store
       uses: useblacksmith/stickydisk@v1.4.0
       with:
-        key: ${{ github.repository }}-nix-store-${{ inputs.trusted == 'true' && 'trusted' || 'shared' }}
+        key: >-
+          ${{ github.repository }}-nix-store-${{ inputs.trusted == 'true' && 'trusted'
+          || (github.event.pull_request.head.repo.fork && 'fork' || 'shared') }}
         path: /nix
 
     # A freshly formatted sticky disk is owned by root, and
