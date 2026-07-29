@@ -8,7 +8,7 @@ type ClaimableRun = {
 
 type CompletionAttemptRun = {
 	claimId?: string;
-	completionAttemptSeq?: number;
+	completionAttemptSeq: number;
 };
 
 export function isClaimedRunStatus(status: string): boolean {
@@ -50,7 +50,7 @@ export function canRegisterCompletionAttempt(
 	claimId: string,
 	attemptSeq: number
 ): boolean {
-	return run.claimId === claimId && attemptSeq > (run.completionAttemptSeq ?? 0);
+	return run.claimId === claimId && attemptSeq > run.completionAttemptSeq;
 }
 
 export function isCurrentCompletionAttempt(
@@ -58,5 +58,5 @@ export function isCurrentCompletionAttempt(
 	claimId: string,
 	attemptSeq: number
 ): boolean {
-	return run.claimId === claimId && (run.completionAttemptSeq ?? 0) === attemptSeq;
+	return run.claimId === claimId && run.completionAttemptSeq === attemptSeq;
 }

@@ -1,6 +1,7 @@
 import { mutation, query, type MutationCtx } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getUserId } from '@convex/lib/auth';
+import { vProjectDoc, vProjectWithExecutorStatus } from '@convex/lib/docs';
 import {
 	getDetachedProjectIdsForClient,
 	shouldRefreshProjectHeartbeat,
@@ -27,8 +28,9 @@ export const upsertSelected = mutation({
 		displayName: v.string(),
 		connectedClientId: v.string()
 	},
+	returns: v.union(vProjectDoc, v.null()),
 	handler: async (ctx, args) => {
-		const userId: string = await getUserId(ctx);
+		const userId = await getUserId(ctx);
 		const repositoryKey = args.repositoryKey.trim();
 		const displayName = args.displayName.trim();
 		if (repositoryKey.length === 0) {
@@ -65,8 +67,9 @@ export const upsertSelected = mutation({
 
 export const listMine = query({
 	args: {},
+	returns: v.array(vProjectWithExecutorStatus),
 	handler: async (ctx) => {
-		const userId: string = await getUserId(ctx);
+		const userId = await getUserId(ctx);
 		const projects = await ctx.db
 			.query('projects')
 			.withIndex('by_userId_lastSeenAt', (query) => query.eq('userId', userId))
@@ -82,8 +85,9 @@ export const heartbeatAttached = mutation({
 		clientId: v.string(),
 		projectIds: v.array(v.id('projects'))
 	},
+	returns: v.boolean(),
 	handler: async (ctx, args) => {
-		const userId: string = await getUserId(ctx);
+		const userId = await getUserId(ctx);
 		const now = Date.now();
 		const requestedIds = new Set(args.projectIds);
 		const projects = await ctx.db

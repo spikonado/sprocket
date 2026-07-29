@@ -1,26 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
-import { initConvexTest, seedOwnedThread } from './test.setup';
-
-async function createQueuedRun(
-	asUser: ReturnType<ReturnType<typeof initConvexTest>['withIdentity']>,
-	threadId: Id<'threadRecords'>,
-	submissionId: string,
-	executionSecret: string,
-	prompt = `Prompt ${submissionId}`
-) {
-	return await asUser.mutation(api.agentRuntime.createRun, {
-		submissionId,
-		threadId,
-		prompt,
-		imageUploadIds: [],
-		selectedModel: 'gpt-5.6-sol',
-		reasoningEffort: 'medium',
-		serviceTier: 'standard',
-		executionSecret
-	});
-}
+import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 
 async function completeRun(
 	t: ReturnType<typeof initConvexTest>,

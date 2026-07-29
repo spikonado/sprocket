@@ -1,6 +1,6 @@
 import type { ThreadMessage } from '$lib/types/sprocket';
 
-export const VISIBLE_TRANSCRIPT_MESSAGE_LIMIT = 40;
+const VISIBLE_TRANSCRIPT_MESSAGE_LIMIT = 40;
 
 function compareMessagesChronologically(left: ThreadMessage, right: ThreadMessage): number {
 	if (left.runStartedAt !== right.runStartedAt) {
@@ -18,7 +18,7 @@ function compareMessagesChronologically(left: ThreadMessage, right: ThreadMessag
 }
 
 /** Drop oldest whole runs until the window fits; never leave a response without its prompt. */
-export function truncateTranscriptToNewestRuns(
+function truncateTranscriptToNewestRuns(
 	messages: ThreadMessage[],
 	limit = VISIBLE_TRANSCRIPT_MESSAGE_LIMIT
 ): ThreadMessage[] {

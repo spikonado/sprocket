@@ -3,7 +3,7 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use axum::http::HeaderMap;
 use axum_extra::extract::CookieJar;
@@ -356,7 +356,18 @@ impl AuthState {
         mac.update(message.as_bytes());
         Ok(mac.finalize().into_bytes().to_vec())
     }
+}
 
+/// Constant-time HMAC-SHA256 verification of a pairing proof.
+pub fn verify_pairing_proof(credential: &str, message: &str, proof: &[u8]) -> bool {
+    let Ok(mut mac) = HmacSha256::new_from_slice(credential.as_bytes()) else {
+        return false;
+    };
+    mac.update(message.as_bytes());
+    mac.verify_slice(proof).is_ok()
+}
+
+impl AuthState {
     pub async fn session_state(&self, session_token: Option<&str>) -> AuthSessionResponse {
         let Some(session_token) = session_token else {
             return AuthSessionResponse {
@@ -405,7 +416,7 @@ impl AuthState {
             session_token.clone(),
             SessionRecord {
                 role: "owner".to_string(),
-                created_at: now_ms(),
+                created_at: crate::now_ms(),
             },
         );
         self.persist_sessions().await?;
@@ -527,14 +538,7 @@ fn sessions_snapshot(sessions: &HashMap<String, SessionRecord>) -> Vec<Persisted
 }
 
 fn session_is_expired(session: &SessionRecord) -> bool {
-    now_ms().saturating_sub(session.created_at) > SESSION_MAX_AGE_MS
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
+    crate::now_ms().saturating_sub(session.created_at) > SESSION_MAX_AGE_MS
 }
 
 #[cfg(test)]

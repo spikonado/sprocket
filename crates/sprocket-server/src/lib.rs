@@ -21,6 +21,14 @@ use axum::response::IntoResponse;
 use tokio::sync::Mutex;
 use tokio::time::{Duration, sleep};
 
+pub(crate) fn now_ms() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct RunOptions {
     pub quiet: bool,
@@ -245,6 +253,7 @@ pub fn read_pairing_credential(config: &ServerConfig) -> anyhow::Result<Option<S
     auth::read_pairing_credential(&config.resolve_data_dir())
 }
 
+pub use auth::verify_pairing_proof;
 pub use repo_env::load_repo_env;
 
 #[cfg(test)]

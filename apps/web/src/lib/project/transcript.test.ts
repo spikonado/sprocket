@@ -12,6 +12,7 @@ function message(
 		userId: 'user_1',
 		text: '',
 		attachments: [],
+		parts: [],
 		runStatus: 'completed',
 		runStartedAt: 1,
 		...overrides

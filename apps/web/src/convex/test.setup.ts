@@ -51,6 +51,8 @@ export async function seedOwnedThread(
 		await ctx.db.insert('subscriptions', {
 			userId: subject,
 			tier: 'admin',
+			dodoSubscriptionId: '',
+			dodoProductId: '',
 			status: 'active',
 			eventAt: 1
 		});
@@ -76,4 +78,23 @@ export async function seedOwnedThread(
 		projectId: project._id,
 		threadId: created.threadId
 	};
+}
+
+export async function createQueuedRun(
+	asUser: AuthenticatedTest,
+	threadId: Id<'threadRecords'>,
+	submissionId: string,
+	executionSecret: string,
+	prompt = 'Do the thing'
+) {
+	return await asUser.mutation(api.agentRuntime.createRun, {
+		submissionId,
+		threadId,
+		prompt,
+		imageUploadIds: [],
+		selectedModel: 'gpt-5.6-sol',
+		reasoningEffort: 'medium',
+		serviceTier: 'standard',
+		executionSecret
+	});
 }

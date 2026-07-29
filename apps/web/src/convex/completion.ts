@@ -14,6 +14,7 @@ import {
 	ownsActiveRunClaim
 } from '@convex/lib/runLease';
 import { chargeModelUsage, checkModelUsageLimit } from '@convex/lib/rateLimits';
+import { vCompleteActionResult, vSummarizeActionResult } from '@convex/lib/docs';
 import { vModelId, vReasoningEffort, vServiceTier } from '@convex/lib/validators';
 import {
 	assertSupportedModelConfiguration,
@@ -80,21 +81,8 @@ export const complete = action({
 			)
 		)
 	},
-	handler: async (
-		ctx,
-		args
-	): Promise<{
-		text: string;
-		usage: CompletionActionResult['usage'];
-		message_id: string | undefined;
-		tool_calls: Array<{
-			id: string;
-			name: string;
-			arguments: JsonValue;
-			provider_metadata?: JsonValue;
-		}>;
-		stream_events: CompletionStreamEvent[];
-	}> => {
+	returns: vCompleteActionResult,
+	handler: async (ctx, args) => {
 		// Register before any model work so a reconnect-replayed orphan dies
 		// on the monotonic (claimId, attemptSeq) fence instead of racing the live attempt.
 		await ctx.runMutation(api.agentRuntime.registerCompletionAttempt, {
@@ -215,13 +203,8 @@ export const summarize = action({
 		claimId: v.string(),
 		executionSecret: v.string()
 	},
-	handler: async (
-		ctx,
-		args
-	): Promise<{
-		summary: string;
-		usage: GenerateTextResult['usage'];
-	}> => {
+	returns: vSummarizeActionResult,
+	handler: async (ctx, args) => {
 		const modelId = args.modelId;
 		const serviceTier = args.serviceTier ?? defaultServiceTier;
 		if (args.reasoningEffort !== undefined || args.serviceTier !== undefined) {

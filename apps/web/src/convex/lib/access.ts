@@ -39,16 +39,3 @@ export async function getOwnedRun(
 ): Promise<Doc<'runs'>> {
 	return await getOwnedRecord<'runs'>(db, userId, runId, 'Run not found.');
 }
-
-export async function getOwnedExecutorJob(
-	db: DatabaseReader,
-	userId: string,
-	jobId: Id<'executorJobs'>
-): Promise<Doc<'executorJobs'>> {
-	const job: Doc<'executorJobs'> | null = await db.get(jobId);
-	if (!job) {
-		throw new Error('Job not found.');
-	}
-	await getOwnedProject(db, userId, job.projectId);
-	return job;
-}

@@ -13,10 +13,11 @@ export const complete = mutation({
 		claimId: v.string(),
 		executionSecret: v.string()
 	},
+	returns: v.boolean(),
 	handler: async (ctx, args) => {
 		const job = await ctx.db.get(args.jobId);
 		if (!job || job.runId !== args.runId) throw new Error('Executor job not found.');
-		const run = await getExecutionRun(ctx, job.runId, args.executionSecret);
+		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		if (job.status === 'cancelled' || job.status === 'failed') {
 			return false;
 		}
@@ -53,10 +54,11 @@ export const fail = mutation({
 		claimId: v.string(),
 		executionSecret: v.string()
 	},
+	returns: v.boolean(),
 	handler: async (ctx, args) => {
 		const job = await ctx.db.get(args.jobId);
 		if (!job || job.runId !== args.runId) throw new Error('Executor job not found.');
-		const run = await getExecutionRun(ctx, job.runId, args.executionSecret);
+		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		if (job.status === 'cancelled' || job.status === 'completed' || job.status === 'failed') {
 			return false;
 		}

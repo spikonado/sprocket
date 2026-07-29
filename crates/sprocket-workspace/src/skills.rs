@@ -37,10 +37,7 @@ pub(crate) struct ParsedSkill {
 
 /// User skill dirs in precedence order: `~/.sprocket/skills`, then `~/.agents/skills`.
 pub fn default_user_skills_dirs() -> Vec<PathBuf> {
-    let Some(home) = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-    else {
+    let Some(home) = crate::paths::home_dir() else {
         return Vec::new();
     };
 
@@ -252,8 +249,16 @@ fn scan_skills_dir(
     };
 
     let mut dirs: Vec<PathBuf> = entries
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
+        .filter_map(|entry| match entry {
+            Ok(entry) => Some(entry.path()),
+            Err(error) => {
+                warnings.push(format!(
+                    "failed to read entry in skills directory {} ({source_label}): {error}",
+                    dir.display()
+                ));
+                None
+            }
+        })
         .filter(|path| path.is_dir())
         .collect();
     dirs.sort();

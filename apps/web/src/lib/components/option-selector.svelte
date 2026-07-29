@@ -3,6 +3,9 @@
 	generics="TOption extends { id: string; label: string; triggerLabel?: string; locked?: boolean; lockTooltip?: string }"
 >
 	import { Check, ChevronDown, Lock, Search } from '@lucide/svelte';
+	import { createLockTooltip } from '$lib/components/ui/lock-tooltip.svelte';
+	import { listenOpenMenuDismiss } from '$lib/components/ui/menu-dismiss.svelte';
+	import Tooltip from '$lib/components/ui/tooltip.svelte';
 	import { cn } from '$lib/utils';
 
 	type Props = {
@@ -36,9 +39,7 @@
 	let rootElement = $state<HTMLDivElement | null>(null);
 	let triggerElement = $state<HTMLButtonElement | null>(null);
 	let searchElement = $state<HTMLInputElement | null>(null);
-	let lockTooltip = $state<{ top: number; left: number; label: string } | null>(null);
-	let stickyLockTooltip = $state(false);
-	let stickyLockTooltipTimer: ReturnType<typeof setTimeout> | null = null;
+	const lockTooltipState = createLockTooltip();
 	let selectedOption = $derived.by(() => {
 		const matched = options.find((option) => option.id === value);
 		if (matched && !matched.locked) return matched;
@@ -67,7 +68,8 @@
 		const option = options.find((entry) => entry.id === optionId);
 		if (!option) return;
 		if (option.locked) {
-			if (event && option.lockTooltip) showLockTooltip(event, option.lockTooltip, true);
+			if (event && option.lockTooltip)
+				lockTooltipState.showLockTooltip(event, option.lockTooltip, true);
 			return;
 		}
 		if (optionId !== value) {
@@ -76,7 +78,7 @@
 		}
 		isOpen = false;
 		searchQuery = '';
-		hideLockTooltip(true);
+		lockTooltipState.hideLockTooltip(true);
 		triggerElement?.focus();
 	}
 
@@ -86,73 +88,23 @@
 		selectOption(selectableFilteredOptions[0].id);
 	}
 
-	function clearStickyLockTooltipTimer() {
-		if (!stickyLockTooltipTimer) return;
-		clearTimeout(stickyLockTooltipTimer);
-		stickyLockTooltipTimer = null;
-	}
-
-	function showLockTooltip(event: MouseEvent | FocusEvent, label: string, sticky = false) {
-		const target = event.currentTarget;
-		if (!(target instanceof HTMLElement)) return;
-		const rect = target.getBoundingClientRect();
-		clearStickyLockTooltipTimer();
-		stickyLockTooltip = sticky;
-		lockTooltip = {
-			top: rect.top - 8,
-			left: rect.left + rect.width / 2,
-			label
-		};
-		if (sticky) {
-			stickyLockTooltipTimer = setTimeout(() => {
-				stickyLockTooltip = false;
-				stickyLockTooltipTimer = null;
-				lockTooltip = null;
-			}, 2500);
-		}
-	}
-
-	function hideLockTooltip(force = false) {
-		if (stickyLockTooltip && !force) return;
-		clearStickyLockTooltipTimer();
-		stickyLockTooltip = false;
-		lockTooltip = null;
-	}
-
 	$effect(() => {
 		if (!isOpen) {
 			searchQuery = '';
-			hideLockTooltip();
+			lockTooltipState.hideLockTooltip();
 			return;
 		}
 
-		function handlePointerDown(event: PointerEvent) {
-			const target = event.target;
-			if (!(target instanceof Node)) {
-				return;
-			}
-
-			if (!rootElement?.contains(target)) {
+		return listenOpenMenuDismiss({
+			getRoot: () => rootElement,
+			onOutside: () => {
 				isOpen = false;
+			},
+			onEscape: () => {
+				isOpen = false;
+				triggerElement?.focus();
 			}
-		}
-
-		function handleKeyDown(event: KeyboardEvent) {
-			if (event.key !== 'Escape') {
-				return;
-			}
-
-			isOpen = false;
-			triggerElement?.focus();
-		}
-
-		document.addEventListener('pointerdown', handlePointerDown);
-		document.addEventListener('keydown', handleKeyDown);
-
-		return () => {
-			document.removeEventListener('pointerdown', handlePointerDown);
-			document.removeEventListener('keydown', handleKeyDown);
-		};
+		});
 	});
 
 	$effect(() => {
@@ -229,13 +181,15 @@
 							? `${option.label}. ${option.lockTooltip}`
 							: undefined}
 						onmouseenter={(event) => {
-							if (locked && option.lockTooltip) showLockTooltip(event, option.lockTooltip);
+							if (locked && option.lockTooltip)
+								lockTooltipState.showLockTooltip(event, option.lockTooltip);
 						}}
-						onmouseleave={() => hideLockTooltip()}
+						onmouseleave={() => lockTooltipState.hideLockTooltip()}
 						onfocus={(event) => {
-							if (locked && option.lockTooltip) showLockTooltip(event, option.lockTooltip);
+							if (locked && option.lockTooltip)
+								lockTooltipState.showLockTooltip(event, option.lockTooltip);
 						}}
-						onblur={() => hideLockTooltip()}
+						onblur={() => lockTooltipState.hideLockTooltip()}
 						onclick={(event) => {
 							selectOption(option.id, event);
 						}}
@@ -278,12 +232,4 @@
 	{/if}
 </div>
 
-{#if lockTooltip}
-	<div
-		class="text-tooltip-foreground bg-tooltip ring-border pointer-events-none fixed z-100 -translate-x-1/2 -translate-y-full rounded-md px-2.5 py-1.5 text-[12px] leading-4 whitespace-nowrap shadow-lg ring-1"
-		style={`top: ${lockTooltip.top}px; left: ${lockTooltip.left}px;`}
-		role="tooltip"
-	>
-		{lockTooltip.label}
-	</div>
-{/if}
+<Tooltip tooltip={lockTooltipState.lockTooltip} />

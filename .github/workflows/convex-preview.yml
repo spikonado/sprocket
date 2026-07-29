@@ -50,4 +50,4 @@ jobs:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_PREVIEW_DEPLOY_KEY }}
           CONVEX_PREVIEW_NAME: pr-${{ github.event.pull_request.number }}
         run: |
-          nix develop -c bunx convex deploy --preview-name "$CONVEX_PREVIEW_NAME"
+          bunx convex deploy --preview-name "$CONVEX_PREVIEW_NAME"

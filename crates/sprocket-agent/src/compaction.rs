@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use rig::agent::{AgentHook, Flow, RequestPatch, StepEvent, StepEventKind};
 use rig::completion::{CompletionModel, Message, Usage};
-use rig::message::UserContent;
+use rig::message::{AssistantContent, UserContent};
 use sprocket_convex_provider::completion_messages_json;
 use tokio::time::timeout;
 
@@ -356,8 +356,36 @@ fn should_compact(
 }
 
 fn estimate_context_tokens(messages: &[Message]) -> u64 {
-    let serialized = serde_json::to_string(messages).unwrap_or_default();
-    serialized.len().div_ceil(3) as u64
+    match serde_json::to_string(messages) {
+        Ok(serialized) => serialized.len().div_ceil(3) as u64,
+        Err(error) => {
+            eprintln!(
+                "sprocket-agent: failed to serialize messages for context token estimate: {error}"
+            );
+            let content_bytes: usize = messages.iter().map(rough_message_content_bytes).sum();
+            content_bytes.max(messages.len()).div_ceil(3) as u64
+        }
+    }
+}
+
+fn rough_message_content_bytes(message: &Message) -> usize {
+    match message {
+        Message::System { content } => content.len(),
+        Message::User { content } => content
+            .iter()
+            .map(|part| match part {
+                UserContent::Text(text) => text.text.len(),
+                _ => 1,
+            })
+            .sum(),
+        Message::Assistant { content, .. } => content
+            .iter()
+            .map(|part| match part {
+                AssistantContent::Text(text) => text.text.len(),
+                _ => 1,
+            })
+            .sum(),
+    }
 }
 
 fn prior_boundary_in_effective(

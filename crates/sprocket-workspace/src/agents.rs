@@ -89,17 +89,11 @@ fn instruction_file_for_directory(directory: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::load_workspace_instructions;
 
-    fn temp_path(prefix: &str) -> PathBuf {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock should be after unix epoch")
-            .as_nanos();
-        std::env::temp_dir().join(format!("{prefix}-{unique}"))
+    fn temp_path(prefix: &str) -> std::path::PathBuf {
+        crate::test_support::temp_workspace_labeled(prefix)
     }
 
     #[test]

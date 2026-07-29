@@ -1,28 +1,16 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { query, type QueryCtx } from '@convex/_generated/server';
-import { v } from 'convex/values';
+import { v, type Infer } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
-import {
-	compareTranscriptMessages,
-	hydrateTranscriptMessages,
-	type ThreadTranscriptMessage
-} from '@convex/lib/threadTranscript';
+import { vThreadTranscriptQueryResult } from '@convex/lib/docs';
+import { compareRunStartedAt } from '@convex/lib/runs';
+import { compareTranscriptMessages, hydrateTranscriptMessages } from '@convex/lib/threadTranscript';
 import { isRunFinalStatus, runFinalStatus } from '@convex/lib/validators';
 
 const HISTORY_RUN_LIMIT = 20;
 
-type ThreadTranscriptQueryResult = {
-	threadId: Id<'threadRecords'>;
-	messages: ThreadTranscriptMessage[];
-};
-
-function compareRunsNewestFirst(left: Doc<'runs'>, right: Doc<'runs'>): number {
-	if (right.startedAt !== left.startedAt) {
-		return right.startedAt - left.startedAt;
-	}
-	return right._creationTime - left._creationTime;
-}
+export type ThreadTranscriptQueryResult = Infer<typeof vThreadTranscriptQueryResult>;
 
 async function requireOwnedThread(ctx: QueryCtx, threadId: Id<'threadRecords'>): Promise<void> {
 	const userId = await getUserId(ctx);
@@ -46,7 +34,10 @@ async function loadNewestTerminalRuns(
 		)
 	);
 
-	return perStatus.flat().sort(compareRunsNewestFirst).slice(0, limit);
+	return perStatus
+		.flat()
+		.sort((left, right) => compareRunStartedAt(right, left))
+		.slice(0, limit);
 }
 
 async function hydrateSortedTranscript(
@@ -62,7 +53,8 @@ export const listHistoryForThread = query({
 	args: {
 		threadId: v.id('threadRecords')
 	},
-	handler: async (ctx, args): Promise<ThreadTranscriptQueryResult> => {
+	returns: vThreadTranscriptQueryResult,
+	handler: async (ctx, args) => {
 		await requireOwnedThread(ctx, args.threadId);
 		const terminalRuns = await loadNewestTerminalRuns(ctx, args.threadId, HISTORY_RUN_LIMIT);
 		return hydrateSortedTranscript(ctx, args.threadId, terminalRuns);
@@ -73,7 +65,8 @@ export const listLiveForThread = query({
 	args: {
 		threadId: v.id('threadRecords')
 	},
-	handler: async (ctx, args): Promise<ThreadTranscriptQueryResult> => {
+	returns: vThreadTranscriptQueryResult,
+	handler: async (ctx, args) => {
 		await requireOwnedThread(ctx, args.threadId);
 
 		const latestRun = await ctx.db

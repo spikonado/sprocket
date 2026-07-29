@@ -1,19 +1,14 @@
 {
 	"name": "@sprocket/eslint-config",
 	"version": "0.0.0",
+	"private": true,
 	"license": "Apache-2.0",
 	"type": "module",
-	"publishConfig": {
-		"access": "public"
-	},
 	"devDependencies": {
 		"@eslint/compat": "^2.0.3",
-		"@eslint/eslintrc": "^3.3.5",
 		"@eslint/js": "^10.0.0",
 		"eslint": "^10.0.0",
 		"eslint-config-prettier": "^10.1.8",
-		"eslint-config-turbo": "^2.9.8",
-		"eslint-plugin-storybook": "^10.3.6",
 		"eslint-plugin-svelte": "^3.17.1",
 		"globals": "^17.6.0",
 		"typescript-eslint": "^8.59.1"

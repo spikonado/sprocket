@@ -1,27 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { api } from '@convex/_generated/api';
-import type { Id } from '@convex/_generated/dataModel';
 import { executionSecretHash } from '@convex/lib/auth';
-import { initConvexTest, seedOwnedThread } from './test.setup';
-
-async function createQueuedRun(
-	asUser: ReturnType<ReturnType<typeof initConvexTest>['withIdentity']>,
-	threadId: Id<'threadRecords'>,
-	submissionId: string,
-	executionSecret: string,
-	prompt: string
-) {
-	return await asUser.mutation(api.agentRuntime.createRun, {
-		submissionId,
-		threadId,
-		prompt,
-		imageUploadIds: [],
-		selectedModel: 'gpt-5.6-sol',
-		reasoningEffort: 'medium',
-		serviceTier: 'standard',
-		executionSecret
-	});
-}
+import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 
 describe('agentRuntime context accounting', () => {
 	it('fences compaction and usage writes to the active claim', async () => {
@@ -172,6 +152,7 @@ describe('agentRuntime context accounting', () => {
 				projectId,
 				status: 'completed',
 				executionSecretHash: await executionSecretHash('context-concurrent-later-secret'),
+				completionAttemptSeq: 0,
 				selectedModel: 'gpt-5.6-sol',
 				reasoningEffort: 'medium',
 				serviceTier: 'standard',

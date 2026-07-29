@@ -1,10 +1,12 @@
 import type { GenericMutationCtx, GenericQueryCtx } from 'convex/server';
 import type { DataModel, Doc } from '@convex/_generated/dataModel';
 import {
+	assertSupportedModelConfiguration,
 	getModelDefinition,
 	modelIds,
 	serviceTierIds,
 	type SupportedModelId,
+	type SupportedReasoningEffort,
 	type SupportedServiceTier
 } from '@convex/lib/models';
 
@@ -101,6 +103,22 @@ export function assertServiceTierAllowedForTier(
 	);
 }
 
+export async function assertModelConfigurationAllowedForUser(
+	ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>,
+	userId: string,
+	args: {
+		modelId: SupportedModelId;
+		reasoningEffort?: SupportedReasoningEffort;
+		serviceTier: SupportedServiceTier;
+	}
+): Promise<SubscriptionTier> {
+	assertSupportedModelConfiguration(args);
+	const subscriptionTier = await getSubscriptionTier(ctx, userId);
+	assertModelAllowedForTier(subscriptionTier, args.modelId);
+	assertServiceTierAllowedForTier(subscriptionTier, args.serviceTier);
+	return subscriptionTier;
+}
+
 /** Dodo product id per paid tier; 'free' and 'admin' never have one. */
 export const tierProductIds: Partial<Record<SubscriptionTier, string>> = {};
 
@@ -179,6 +197,9 @@ export async function ensureSubscription(
 	await ctx.db.insert('subscriptions', {
 		userId,
 		tier: 'free',
+		// No Dodo binding yet; empty-string sentinels keep the fields required.
+		dodoSubscriptionId: '',
+		dodoProductId: '',
 		status: 'active',
 		eventAt: 0
 	});

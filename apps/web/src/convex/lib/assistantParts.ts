@@ -1,45 +1,24 @@
 import type { Infer } from 'convex/values';
 import { isJsonObject, type JsonValue } from '@convex/lib/json';
 import type {
+	AssistantMessagePart,
+	AssistantReasoningPart,
+	AssistantTextPart,
+	AssistantToolCallPart,
 	AssistantToolResultErrorOutput,
 	AssistantToolResultErrorStatus,
+	AssistantToolResultPart,
 	ExecutorJobPayload,
 	ExecutorJobResult,
 	vExecutorJobKind,
 	vExecutorJobStatus
 } from '@convex/lib/validators';
 
-export type AssistantTextPart = {
-	type: 'text';
-	id: string;
-	text: string;
-	turnId?: string;
-	providerMetadata?: JsonValue;
-};
-
-export type AssistantReasoningPart = {
-	type: 'reasoning';
-	id: string;
-	text: string;
-	turnId?: string;
-	providerMetadata?: JsonValue;
-};
-
-export type AssistantToolCallPart = {
-	type: 'tool-call';
-	partId?: string;
-	callId: string;
-	name: string;
-	input: JsonValue;
-	turnId?: string;
-	providerMetadata?: JsonValue;
-};
-
-export type AssistantToolResultPart = {
-	type: 'tool-result';
-	callId: string;
-	name?: string;
-	output: JsonValue;
+export type {
+	AssistantTextPart,
+	AssistantReasoningPart,
+	AssistantToolCallPart,
+	AssistantToolResultPart
 };
 
 export type { AssistantToolResultErrorOutput, AssistantToolResultErrorStatus };
@@ -63,8 +42,7 @@ function assistantToolResultErrorOutput(
 	return { error, status };
 }
 
-export type AssistantPart =
-	AssistantTextPart | AssistantReasoningPart | AssistantToolCallPart | AssistantToolResultPart;
+export type AssistantPart = AssistantMessagePart;
 
 export type PersistableExecutorToolJob = {
 	id: string;
@@ -80,6 +58,35 @@ export type MatchableExecutorToolJob = Pick<
 	PersistableExecutorToolJob,
 	'id' | 'kind' | 'callId' | 'payload'
 >;
+
+type PersistableExecutorJobSource = {
+	_id: string;
+	hidden?: boolean;
+	sequence: number;
+	kind: Infer<typeof vExecutorJobKind>;
+	callId?: string;
+	payload: ExecutorJobPayload;
+	status: Infer<typeof vExecutorJobStatus>;
+	result?: ExecutorJobResult;
+	error?: string;
+};
+
+export function toPersistableExecutorToolJobs(
+	jobs: readonly PersistableExecutorJobSource[]
+): PersistableExecutorToolJob[] {
+	return jobs
+		.filter((job) => !job.hidden)
+		.sort((left, right) => left.sequence - right.sequence)
+		.map((job) => ({
+			id: job._id,
+			kind: job.kind,
+			...(job.callId ? { callId: job.callId } : {}),
+			payload: job.payload,
+			status: job.status,
+			result: job.result,
+			error: job.error
+		}));
+}
 
 function cloneAssistantToolPayload<T>(value: T): T {
 	return value === undefined ? value : structuredClone(value);

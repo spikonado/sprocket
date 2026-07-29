@@ -4,6 +4,7 @@ import type { AgentHistoryMessage } from '@convex/lib/validators';
 import { isRunFinalStatus } from '@convex/lib/validators';
 import {
 	ensureAssistantToolPartsFromJobs,
+	toPersistableExecutorToolJobs,
 	type AssistantPart,
 	type PersistableExecutorToolJob
 } from '@convex/lib/assistantParts';
@@ -171,21 +172,10 @@ function buildAgentHistoryFromAssistantMessage(args: {
 	message: ThreadTranscriptMessage;
 	jobs: Doc<'executorJobs'>[];
 }): AgentHistoryMessage[] {
-	const persistedParts = (args.message.parts ?? []) as AssistantPart[];
+	const persistedParts = args.message.parts;
 	return buildAgentHistoryFromAssistantParts({
 		parts: persistedParts,
-		jobs: args.jobs
-			.filter((job) => !job.hidden)
-			.sort((left, right) => left.sequence - right.sequence)
-			.map((job) => ({
-				id: job._id,
-				kind: job.kind,
-				...(job.callId ? { callId: job.callId } : {}),
-				payload: job.payload,
-				status: job.status,
-				result: job.result,
-				error: job.error
-			})),
+		jobs: toPersistableExecutorToolJobs(args.jobs),
 		fallbackText: args.message.text,
 		stripProviderItemReferences: args.message.runStatus !== 'completed'
 	});
@@ -271,13 +261,4 @@ export function buildCanonicalAgentHistory(args: {
 	}
 
 	return history;
-}
-
-export function findLatestPrompt(messages: ThreadTranscriptMessage[]): string {
-	for (let index = messages.length - 1; index >= 0; index -= 1) {
-		if (messages[index]?.type === 'prompt') {
-			return messages[index].text.trim();
-		}
-	}
-	throw new Error('Run does not contain a user prompt.');
 }

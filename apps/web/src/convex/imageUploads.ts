@@ -1,7 +1,8 @@
-import type { Doc, Id } from '@convex/_generated/dataModel';
+import type { Doc } from '@convex/_generated/dataModel';
 import { internalMutation, mutation, type MutationCtx } from '@convex/_generated/server';
-import { v } from 'convex/values';
+import { v, type Infer } from 'convex/values';
 import { getUserId } from '@convex/lib/auth';
+import { vRegisterImageUploadResult } from '@convex/lib/docs';
 import {
 	MAX_IMAGE_ATTACHMENT_BYTES,
 	MAX_IMAGE_ATTACHMENT_LABEL,
@@ -13,19 +14,12 @@ const MAX_IMAGE_NAME_LENGTH = 255;
 const ORPHAN_RETENTION_MS = 24 * 60 * 60 * 1_000;
 const ORPHAN_CLEANUP_BATCH_SIZE = 100;
 
-type RegisteredImageUpload = {
-	imageUploadId: Id<'imageUploads'>;
-	name: string;
-	mediaType: string;
-	size: number;
-	url: string;
-};
-
-type RegisterImageUploadResult = RegisteredImageUpload | { error: string };
+export type RegisterImageUploadResult = Infer<typeof vRegisterImageUploadResult>;
 
 export const generateUploadUrl = mutation({
 	args: {},
-	handler: async (ctx): Promise<string> => {
+	returns: v.string(),
+	handler: async (ctx) => {
 		await getUserId(ctx);
 		return await ctx.storage.generateUploadUrl();
 	}
@@ -36,7 +30,8 @@ export const register = mutation({
 		storageId: v.id('_storage'),
 		name: v.string()
 	},
-	handler: async (ctx, args): Promise<RegisterImageUploadResult> => {
+	returns: vRegisterImageUploadResult,
+	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		const existing = await ctx.db
 			.query('imageUploads')
@@ -95,7 +90,8 @@ export const discard = mutation({
 	args: {
 		imageUploadId: v.id('imageUploads')
 	},
-	handler: async (ctx, args): Promise<boolean> => {
+	returns: v.boolean(),
+	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		const upload = await ctx.db.get(args.imageUploadId);
 		if (!upload || upload.userId !== userId || upload.attached) {

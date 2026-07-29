@@ -85,9 +85,7 @@ impl ServerConfig {
 }
 
 fn default_data_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
+    sprocket_workspace::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".sprocket")
 }

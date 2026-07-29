@@ -5,11 +5,10 @@ use std::time::Duration;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
-use hmac::{Hmac, KeyInit, Mac};
-use sha2::Sha256;
 use sprocket_server::{
     INSTALLED_WEB_DIR, PairingProofRequest, PairingProofResponse, RunOptions, ServerConfig,
     browser_launch_url, load_repo_env, pairing_proof_message, read_pairing_credential, run,
+    verify_pairing_proof,
 };
 use sprocket_workspace::resolve_workspace_root;
 use tracing_subscriber::EnvFilter;
@@ -21,7 +20,6 @@ const VERSION: &str = match option_env!("SPROCKET_VERSION") {
     Some(version) => version,
     None => env!("CARGO_PKG_VERSION"),
 };
-type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -204,13 +202,11 @@ async fn open_running_web_app(
         &pairing_proof.http_base_url,
         pairing_proof.web_ui_enabled,
     );
-    let mut mac = HmacSha256::new_from_slice(credential.as_bytes())?;
-    mac.update(message.as_bytes());
-    mac.verify_slice(&pairing_proof.proof).map_err(|_| {
-        anyhow::anyhow!(
+    if !verify_pairing_proof(&credential, &message, &pairing_proof.proof) {
+        anyhow::bail!(
             "Sprocket is already running at {expected_base_url}, but it uses a different data directory. Set SPROCKET_DATA_DIR to the running server's data directory"
-        )
-    })?;
+        );
+    }
     if !pairing_proof.web_ui_enabled {
         anyhow::bail!(
             "Sprocket is already running at {expected_base_url} in API-only mode; stop it or set SPROCKET_PORT to launch the web app on a different port"

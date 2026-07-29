@@ -66,7 +66,9 @@ describe('run claim leases', () => {
 		expect(canRegisterCompletionAttempt(run, 'claim-a', 3)).toBe(true);
 		expect(canRegisterCompletionAttempt(run, 'claim-a', 2)).toBe(false);
 		expect(canRegisterCompletionAttempt(run, 'claim-b', 3)).toBe(false);
-		expect(canRegisterCompletionAttempt({ claimId: 'claim-a' }, 'claim-a', 1)).toBe(true);
+		expect(
+			canRegisterCompletionAttempt({ claimId: 'claim-a', completionAttemptSeq: 0 }, 'claim-a', 1)
+		).toBe(true);
 		expect(isCurrentCompletionAttempt(run, 'claim-a', 2)).toBe(true);
 		expect(isCurrentCompletionAttempt(run, 'claim-a', 3)).toBe(false);
 		expect(isCurrentCompletionAttempt(run, 'claim-b', 2)).toBe(false);

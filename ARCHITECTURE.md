@@ -168,8 +168,8 @@ The local server binds to loopback by default. Exposing it on another interface
 changes the trust model and should be treated as a security-sensitive
 deployment choice.
 
-Workspace patches are confined to the attached workspace. Shell commands are
-not sandboxed: they run with the permissions of the local Sprocket process.
+Workspace patches and shell commands are not sandboxed: both run with the
+permissions of the local Sprocket process, confined only by the OS user.
 
 ## Reliability model
 

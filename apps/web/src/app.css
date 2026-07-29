@@ -274,26 +274,6 @@ body::after {
 	mask-image: radial-gradient(ellipse 75% 70% at 50% 45%, black 20%, transparent 72%);
 }
 
-.mark-accent {
-	color: var(--accent-strong);
-	padding-inline: 0.2em;
-	border-radius: 0.25rem;
-	background-image: linear-gradient(var(--accent-soft), var(--accent-soft));
-	background-repeat: no-repeat;
-	background-size: 100% 0.72em;
-	background-position: 0 0.78em;
-	box-decoration-break: clone;
-	-webkit-box-decoration-break: clone;
-}
-
-.mark-verb {
-	background-color: var(--mark);
-	border-radius: 0.15rem;
-	padding-inline: 0.15em;
-	box-decoration-break: clone;
-	-webkit-box-decoration-break: clone;
-}
-
 .chat-markdown {
 	min-width: 0;
 	overflow-wrap: anywhere;

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { chmod, cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
@@ -5,45 +6,7 @@ import process from 'node:process';
 const ROOT = path.resolve(import.meta.dirname, '..');
 const SOURCE_PACKAGE = path.join(ROOT, 'npm/sprocket');
 
-const TARGETS = [
-	{
-		id: 'linux-x64-gnu',
-		packageName: '@spikonado/sprocket-linux-x64-gnu',
-		os: 'linux',
-		cpu: 'x64',
-		libc: 'glibc',
-		executable: 'sprocket'
-	},
-	{
-		id: 'linux-arm64-gnu',
-		packageName: '@spikonado/sprocket-linux-arm64-gnu',
-		os: 'linux',
-		cpu: 'arm64',
-		libc: 'glibc',
-		executable: 'sprocket'
-	},
-	{
-		id: 'darwin-x64',
-		packageName: '@spikonado/sprocket-darwin-x64',
-		os: 'darwin',
-		cpu: 'x64',
-		executable: 'sprocket'
-	},
-	{
-		id: 'darwin-arm64',
-		packageName: '@spikonado/sprocket-darwin-arm64',
-		os: 'darwin',
-		cpu: 'arm64',
-		executable: 'sprocket'
-	},
-	{
-		id: 'win32-x64-msvc',
-		packageName: '@spikonado/sprocket-win32-x64-msvc',
-		os: 'win32',
-		cpu: 'x64',
-		executable: 'sprocket.exe'
-	}
-];
+const TARGETS = JSON.parse(readFileSync(path.join(SOURCE_PACKAGE, 'targets.json'), 'utf8'));
 
 function argumentsFrom(argv) {
 	const values = new Map();
@@ -63,7 +26,7 @@ function argumentsFrom(argv) {
 async function copyRootPackage(output, web, version) {
 	const destination = path.join(output, 'sprocket');
 	await mkdir(destination, { recursive: true });
-	for (const entry of ['bin', 'lib', 'README.md']) {
+	for (const entry of ['bin', 'lib', 'README.md', 'targets.json']) {
 		await cp(path.join(SOURCE_PACKAGE, entry), path.join(destination, entry), { recursive: true });
 	}
 	await chmod(path.join(destination, 'bin', 'sprocket.js'), 0o755);

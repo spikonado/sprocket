@@ -10,6 +10,13 @@ type ExecutorJobState = {
 type FinalizedExecutorJob<T extends ExecutorJobState> = Omit<T, keyof ExecutorJobState> &
 	ExecutorJobState;
 
+export function compareRunStartedAt(
+	left: { startedAt: number; _creationTime: number },
+	right: { startedAt: number; _creationTime: number }
+): number {
+	return left.startedAt - right.startedAt || left._creationTime - right._creationTime;
+}
+
 export function assertThreadCanStartRun(status: Infer<typeof vRunStatus> | null | undefined) {
 	if (!status || isRunFinalStatus(status)) {
 		return;

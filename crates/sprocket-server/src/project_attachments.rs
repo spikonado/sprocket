@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -76,7 +75,7 @@ impl ProjectAttachmentStore {
 
     pub async fn attach(&self, request: AttachProjectRequest) -> Result<ProjectAttachmentRecord> {
         self.ensure_loaded().await?;
-        let now = now_ms();
+        let now = crate::now_ms();
         let validated = validate_session_async(ProjectAttachmentRecord {
             project_id: request.project_id,
             workspace_path: request.workspace_path,
@@ -201,7 +200,7 @@ impl ProjectAttachmentStore {
     }
 
     async fn prune(&self) {
-        let now = now_ms();
+        let now = crate::now_ms();
         let mut store = self.attachments.write().await;
         let mut sessions: Vec<ProjectAttachmentRecord> = store
             .values()
@@ -230,7 +229,7 @@ fn mark_available(
     ProjectAttachmentRecord {
         workspace_path,
         availability: WorkspaceAvailability::Available,
-        last_validated_at: now_ms(),
+        last_validated_at: crate::now_ms(),
         unavailable_reason: None,
         ..session
     }
@@ -242,7 +241,7 @@ fn mark_unavailable(
 ) -> ProjectAttachmentRecord {
     ProjectAttachmentRecord {
         availability: WorkspaceAvailability::Unavailable,
-        last_validated_at: now_ms(),
+        last_validated_at: crate::now_ms(),
         unavailable_reason: Some(error.to_string()),
         ..session
     }
@@ -294,13 +293,6 @@ pub fn resolve_workspace_path(
     })
 }
 
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -309,7 +301,7 @@ mod tests {
     #[tokio::test]
     async fn attach_and_list_project_attachment() {
         let temp_root =
-            std::env::temp_dir().join(format!("sprocket-project-attachments-{}", now_ms()));
+            std::env::temp_dir().join(format!("sprocket-project-attachments-{}", crate::now_ms()));
         fs::create_dir_all(&temp_root).expect("temp dir");
         let store = ProjectAttachmentStore::new(temp_root.clone());
 
@@ -333,7 +325,8 @@ mod tests {
     fn workspace_path_resolution_uses_canonical_name_and_root_fallback() {
         use std::os::unix::fs::symlink;
 
-        let temp_root = std::env::temp_dir().join(format!("sprocket-workspace-path-{}", now_ms()));
+        let temp_root =
+            std::env::temp_dir().join(format!("sprocket-workspace-path-{}", crate::now_ms()));
         let target = temp_root.join("real-project");
         let link = temp_root.join("project-link");
         fs::create_dir_all(&target).expect("target dir");
@@ -353,28 +346,16 @@ mod tests {
 
     #[test]
     fn workspace_path_resolution_uses_git_origin_repository_key() {
-        use std::process::Command;
-
-        let temp_root = std::env::temp_dir().join(format!("sprocket-workspace-git-{}", now_ms()));
+        let temp_root =
+            std::env::temp_dir().join(format!("sprocket-workspace-git-{}", crate::now_ms()));
         let project = temp_root.join("checkout");
         fs::create_dir_all(&project).expect("project dir");
-        let init = Command::new("git")
-            .args(["init"])
-            .current_dir(&project)
-            .status()
-            .expect("run git init");
-        assert!(init.success(), "git init failed");
-        let add_origin = Command::new("git")
-            .args([
-                "remote",
-                "add",
-                "origin",
-                "https://github.com/spikonado/sprocket.git",
-            ])
-            .current_dir(&project)
-            .status()
-            .expect("run git remote add");
-        assert!(add_origin.success(), "git remote add failed");
+        gix::init(&project).expect("gix init");
+        let config_path = project.join(".git/config");
+        let mut config = fs::read_to_string(&config_path).expect("read config");
+        config
+            .push_str("\n[remote \"origin\"]\n\turl = https://github.com/spikonado/sprocket.git\n");
+        fs::write(config_path, config).expect("write config");
 
         let resolved =
             resolve_workspace_path(&project.to_string_lossy(), false).expect("resolve project");
