@@ -30,13 +30,18 @@ describe('artifact-preview', () => {
 		);
 	});
 
-	it('escapes script breakouts in artifact source', () => {
+	it('escapes script breakouts in react artifact source', () => {
 		const doc = buildReactPreviewDocument(
 			'const x = "</script><script>alert(1)</script>"; <!-- <script>'
 		);
 		expect(doc).not.toContain('</script><script>alert(1)</script>');
 		expect(doc).not.toContain('<!--');
 		expect(doc).not.toContain('<script>alert(1)');
+	});
+
+	it('keeps script tags in html artifacts functional', () => {
+		const script = '<script>document.body.dataset.ok = "1"</script>';
+		expect(buildHtmlPreviewDocument(`<p>hi</p>${script}`)).toContain(script);
 	});
 
 	it('passes through full html documents and wraps fragments', () => {
