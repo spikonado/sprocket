@@ -192,6 +192,10 @@ export const createRun = mutation({
 		runId: v.id('runs'),
 		promptMessageId: v.id('threadMessages')
 	}),
+	// Beyond inserting the run, this mutation reconciles the thread: a
+	// previous run that is still in a claimed status but whose lease lapsed
+	// was abandoned by its executor, so it is terminalized as failed here —
+	// otherwise it would block every later submission forever.
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		await assertModelConfigurationAllowedForUser(ctx, userId, {
@@ -259,14 +263,10 @@ export const createRun = mutation({
 			isClaimedRunStatus(latestRun.status) &&
 			!isRunClaimLeaseActive(latestRun, Date.now())
 		) {
-			// A claimed run whose lease lapsed was abandoned by its executor
-			// (crash or connectivity loss) without being terminalized. Mark it
-			// failed so the thread is not blocked from starting another run;
-			// its partial output stays visible.
 			await finalizeRunRecord(ctx, userId, latestRun, {
-				text: 'Run abandoned: the local agent stopped responding before this run finished.',
+				text: 'Run aborted: The local agent stopped responding before this run finished.',
 				status: 'failed',
-				lastError: 'The agent claim lease expired before the run was finalized.'
+				lastError: 'The local agent stopped responding before this run finished.'
 			});
 		} else {
 			assertThreadCanStartRun(latestRun?.status);

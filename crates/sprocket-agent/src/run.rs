@@ -415,22 +415,10 @@ async fn renew_claim_once(
     .map(|response| (response.renewed, request_started_at))
 }
 
-/// Renews the claim lease, retrying transient failures for as long as the
-/// remaining lease window can still fit another attempt. A renewed lease
-/// moves the deadline forward, so temporary backend unavailability must not
-/// fail the run while there is still time to renew.
-async fn renew_claim(
-    runtime: &RuntimeClient,
-    run_id: &str,
-    claim_id: &str,
-    lease_deadline: Instant,
-) -> anyhow::Result<(bool, Instant)> {
-    renew_claim_with(run_id, lease_deadline, || {
-        renew_claim_once(runtime, run_id, claim_id)
-    })
-    .await
-}
-
+/// Renews the claim lease via `attempt`, retrying transient failures for as
+/// long as the remaining lease window can still fit another attempt. A
+/// renewed lease moves the deadline forward, so temporary backend
+/// unavailability must not fail the run while there is still time to renew.
 async fn renew_claim_with<F, Fut>(
     run_id: &str,
     lease_deadline: Instant,
@@ -480,6 +468,11 @@ where
 /// therefore attempted even when a scheduling stall (CPU saturation, slow
 /// reconnect) pushed the tick past that estimate: the server answers whether
 /// the lease is still owned, and must not be preemptively declared lost.
+///
+/// Renewing runs inside the select arm, so `operation` is not polled while
+/// renewal attempts are in flight. That pause is bounded by the lease window
+/// (retries stop once another attempt could not land before the deadline) and
+/// is accepted in exchange for surviving backend unavailability.
 ///
 /// Only claim/lease failures are returned as `Err`; the operation's value
 /// (including its own errors) is wrapped in `Ok`.
@@ -531,7 +524,11 @@ where
     drive_claim_lease(
         run_id,
         lease_started_at,
-        |lease_deadline| renew_claim(runtime, run_id, claim_id, lease_deadline),
+        move |lease_deadline| {
+            renew_claim_with(run_id, lease_deadline, move || {
+                renew_claim_once(runtime, run_id, claim_id)
+            })
+        },
         operation,
     )
     .await
@@ -725,7 +722,16 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
     .await
     {
         Ok(result) => result,
-        Err(error) => abort_after_claim(&runtime, &run_id, &claim_id, error).await,
+        Err(error) => {
+            // A renewal tick can race the operation's own finalization: if the
+            // run already reached a terminal state server-side, there is
+            // nothing to abort and the lease error must not be reported as a
+            // failure.
+            match runtime.run_finished(&run_id).await {
+                Ok(true) => Ok(()),
+                _ => abort_after_claim(&runtime, &run_id, &claim_id, error).await,
+            }
+        }
     }
 }
 
@@ -798,8 +804,8 @@ mod claim_lease_tests {
     use tokio::time::{Instant, sleep};
 
     use super::{
-        RUN_CLAIM_LEASE_DURATION, RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT, RUN_CLAIM_RENEW_INTERVAL,
-        drive_claim_lease, renew_claim_with,
+        RUN_CLAIM_EXPIRY_SAFETY_MARGIN, RUN_CLAIM_LEASE_DURATION, RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT,
+        RUN_CLAIM_RENEW_INTERVAL, drive_claim_lease, renew_claim_with,
     };
 
     /// Regression: a renewal tick that fires late because the task was
@@ -879,6 +885,14 @@ mod claim_lease_tests {
         // Keeps renewing while another attempt can still land before the
         // lease deadline.
         assert!(attempts.load(Ordering::SeqCst) >= 3);
+        // ...but not past the point where another attempt could not land
+        // before it.
+        assert!(
+            Instant::now()
+                >= started_at + RUN_CLAIM_LEASE_DURATION
+                    - RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT
+                    - RUN_CLAIM_EXPIRY_SAFETY_MARGIN
+        );
         assert!(Instant::now() <= started_at + RUN_CLAIM_LEASE_DURATION);
     }
 

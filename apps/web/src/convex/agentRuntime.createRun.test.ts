@@ -225,8 +225,39 @@ describe('agentRuntime.createRun', () => {
 		const abandonedRun = await t.run(async (ctx) => ctx.db.get(abandoned.runId));
 		expect(abandonedRun).toMatchObject({
 			status: 'failed',
-			lastError: 'The agent claim lease expired before the run was finalized.'
+			lastError: 'The local agent stopped responding before this run finished.'
 		});
+		const abandonedResponse = await t.run(async (ctx) =>
+			abandonedRun?.responseMessageId ? ctx.db.get(abandonedRun.responseMessageId) : null
+		);
+		expect(abandonedResponse?.text).toBe(
+			'Run aborted: The local agent stopped responding before this run finished.'
+		);
+	});
+
+	it('rejects a new submission while the latest run holds an active claim', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'active-claim-secret';
+		const { runId } = await createQueuedRun(asUser, threadId, 'sub-active-claim', executionSecret);
+		await asUser.mutation(api.agentRuntime.start, {
+			claimId: 'claim-active',
+			runId,
+			executionSecret
+		});
+
+		await expect(
+			asUser.mutation(api.agentRuntime.createRun, {
+				submissionId: 'sub-during-active-claim',
+				threadId,
+				prompt: 'Second',
+				imageUploadIds: [],
+				selectedModel: 'gpt-5.6-sol',
+				reasoningEffort: 'medium',
+				serviceTier: 'standard',
+				executionSecret: 'during-active-claim-secret'
+			})
+		).rejects.toThrow('Finish or cancel the active run before sending another message.');
 	});
 
 	it('allows a new run after the previous run reaches a final status', async () => {
