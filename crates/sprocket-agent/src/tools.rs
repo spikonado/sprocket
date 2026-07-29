@@ -1195,10 +1195,8 @@ async fn run_convex_tool_action(
     }
 }
 
-/// Runs a tool's work as a Convex mutation, aborting the wait when the run is
-/// cancelled. Used for tools that only need transactional DB writes. Note the
-/// mutation itself still commits server-side if it already started; only the
-/// wait is aborted.
+/// Runs a tool's work as a Convex mutation. Cancellation only aborts the wait;
+/// the mutation still commits server-side if it already started.
 async fn run_convex_tool_mutation(
     runtime: &RuntimeClient,
     cancellation: WorkspaceCancellation,

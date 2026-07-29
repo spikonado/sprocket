@@ -9,11 +9,7 @@ export function parseArtifactType(value: unknown): ArtifactType {
 	return 'markdown';
 }
 
-/**
- * Escape sequences that would let artifact source break out of its inline
- * script tag. Only used where the source lands inside a <script> element —
- * never on full documents (their own script tags must keep working).
- */
+/** Escape sequences that would break out of the inline <script> holding the react source. */
 function escapeInlineScript(source: string): string {
 	return source
 		.replace(/<\/(script)/gi, '<\\/$1')

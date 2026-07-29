@@ -82,7 +82,6 @@
 		content: string;
 	};
 
-	/** First JSON object among the candidates; the job wins, the streamed call is the fallback. */
 	function firstJsonObject(...candidates: (JsonValue | undefined)[]): JsonObject | null {
 		return candidates.find(isJsonObject) ?? null;
 	}

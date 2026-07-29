@@ -8,8 +8,7 @@ import { ownsActiveRunClaim } from '@convex/lib/runLease';
 import { RUN_NO_LONGER_ACTIVE } from '@convex/lib/agentErrors';
 
 const MAX_TITLE_LENGTH = 200;
-// Convex documents cap at 1 MiB and content is also stored in the executor job
-// payload, so keep artifacts comfortably below that.
+// Content also lives in the executor job payload; stay well under Convex's 1 MiB document cap.
 const MAX_CONTENT_LENGTH = 500_000;
 
 const vArtifactMutationResult = v.object({

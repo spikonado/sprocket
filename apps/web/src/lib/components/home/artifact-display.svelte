@@ -12,10 +12,7 @@
 
 	let { title, artifactType, content }: Props = $props();
 
-	// srcdoc (opaque origin) rather than a blob: URL, which would inherit the app origin.
-	// Null for artifact types that have no live preview, which also drives the source toggle.
 	const previewDocument = $derived(buildArtifactPreviewDocument(artifactType, content));
-	// Expand previewable artifacts on first render; later toggles are user-controlled.
 	// svelte-ignore state_referenced_locally
 	let expanded = $state(artifactType === 'react' || artifactType === 'html');
 	let showSource = $state(false);
