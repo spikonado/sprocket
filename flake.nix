@@ -43,10 +43,8 @@
       {
         formatter = pkgs.nixfmt-tree;
 
-        # Deploying Convex only needs `bun install` and `bunx convex deploy`.
-        # Pulling in the default shell for that would drag along the Rust
-        # toolchain, clang and the Electron runtime libraries, which is roughly
-        # 5 GiB of closure to get hold of `bun`.
+        # Convex only needs `bun install` and `bunx convex deploy`. The
+        # default shell costs ~5 GiB of closure to get hold of `bun`.
         devShells.convex = pkgs.mkShell {
           packages = with pkgs; [
             bun

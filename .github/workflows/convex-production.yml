@@ -9,8 +9,7 @@ on:
 permissions:
   contents: read
 
-# Production deploys must not race each other, and cancelling one midway could
-# leave a half-applied deployment, so queue them instead.
+# Cancelling a deploy midway could leave it half applied, so queue instead.
 concurrency:
   group: convex-production
   cancel-in-progress: false
@@ -22,10 +21,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      # This job holds the production deploy key, so it must not consume a Nix
-      # store that pull-request jobs can write to. Realising only the slim
-      # Convex shell keeps that dedicated store small enough to be worth
-      # keeping around.
       - uses: ./.github/actions/setup-nix-shell
         with:
           dev-shell: '.#convex'

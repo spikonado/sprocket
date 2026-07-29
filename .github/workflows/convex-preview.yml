@@ -15,8 +15,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      # Deploying Convex only needs bun, so realise the slim shell rather than
-      # the full toolchain.
       - uses: ./.github/actions/setup-nix-shell
         with:
           dev-shell: '.#convex'

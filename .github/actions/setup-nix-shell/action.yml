@@ -23,27 +23,17 @@ inputs:
 runs:
   using: composite
   steps:
-    # The sticky disk needs an existing mount point. /nix is always empty at
-    # this stage, so the recursive chmod is O(1).
+    # /nix is empty at this point, so the recursive chmod is O(1).
     - name: Create Nix store mount point
       shell: bash
       run: |
         sudo mkdir -p /nix/store
         sudo chmod -R 777 /nix
 
-    # Jobs run checkout-controlled code as the owner of the mounted store, so
-    # whatever they leave behind runs in every later job on the same disk. Hence
-    # three stores: `trusted` for credentialed jobs that only run protected
-    # branches, `fork` for pull requests carrying code from outside the
-    # repository (Convex Preview runs on pull_request with a deploy key, so
-    # forks must not be able to plant binaries it later executes), and `shared`
-    # for code that someone with write access already controls.
-    #
-    # The flake.lock hash gives each lockfile generation its own disk. In-store
-    # garbage collection is unsafe here (concurrent jobs clone and commit the
-    # same snapshot, so a collection just gets overwritten), and a nixpkgs bump
-    # shares no store paths with its predecessor, so an un-keyed disk would only
-    # grow. This lets the 7-day idle eviction retire old generations instead.
+    # Jobs own the mount, so anything they leave in the store runs in every
+    # later job on the same disk: credentialed jobs and forks get their own.
+    # The flake.lock hash retires old closures via the 7-day idle eviction,
+    # since concurrent clone-and-commit makes in-store collection unsafe.
     - name: Mount Nix store
       uses: useblacksmith/stickydisk@v1.4.0
       with:
@@ -53,19 +43,16 @@ runs:
           }}-${{ hashFiles('flake.lock') }}
         path: /nix
 
-    # A freshly formatted sticky disk is owned by root, and
-    # nix-quick-install-action refuses to run unless /nix is writable by the
-    # runner user. Only the top-level directories are touched so that warm,
-    # multi-gigabyte stores stay a no-op.
+    # A fresh disk is root-owned and the installer needs /nix writable. Only
+    # the top level is touched, so warm multi-gigabyte stores stay a no-op.
     - name: Ensure Nix store is writable
       shell: bash
       run: |
         sudo mkdir -p /nix/store /nix/var
         sudo chown "$(id -u):$(id -g)" /nix /nix/store /nix/var
 
-    # Unlike cachix/install-nix-action, this installer unpacks into an existing
-    # /nix instead of refusing to run, which is what lets the store persist. It
-    # enables `nix-command flakes` and `accept-flake-config` on its own.
+    # Unlike cachix/install-nix-action this unpacks into an existing /nix
+    # instead of refusing to run, which is what lets the store persist.
     - uses: nixbuild/nix-quick-install-action@v35
 
     - name: Build shell environment
