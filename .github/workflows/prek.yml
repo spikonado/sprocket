@@ -24,16 +24,16 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          cmd-format: nix develop --profile sprocket-shell -c {0}
+          cmd-format: nix develop ./sprocket-shell -c {0}
 
       - name: Install dependencies
-        shell: 'nix develop --profile sprocket-shell -c bash -e {0}'
+        shell: 'nix develop ./sprocket-shell -c bash -e {0}'
         run: bun install --frozen-lockfile
 
       - name: Run prek
-        shell: 'nix develop --profile sprocket-shell -c bash -e {0}'
+        shell: 'nix develop ./sprocket-shell -c bash -e {0}'
         run: prek run -a
 
       - name: Run fmt
-        shell: 'nix develop --profile sprocket-shell -c bash -e {0}'
+        shell: 'nix develop ./sprocket-shell -c bash -e {0}'
         run: nix fmt

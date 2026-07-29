@@ -15,10 +15,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
+      # Deploying Convex only needs bun, so realise the slim shell rather than
+      # the full toolchain.
       - uses: ./.github/actions/setup-nix-shell
+        with:
+          dev-shell: '.#convex'
 
       - name: Install dependencies
-        shell: 'nix develop --profile sprocket-shell -c bash -e {0}'
+        shell: 'nix develop ./sprocket-shell -c bash -e {0}'
         run: bun install --frozen-lockfile
 
       - name: Validate preview deploy key
@@ -32,7 +36,7 @@ jobs:
 
       - name: Deploy Convex preview
         working-directory: apps/web
-        shell: 'nix develop --profile ../../sprocket-shell -c bash -e {0}'
+        shell: 'nix develop ../../sprocket-shell -c bash -e {0}'
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_PREVIEW_DEPLOY_KEY }}
           CONVEX_PREVIEW_NAME: pr-${{ github.event.pull_request.number }}

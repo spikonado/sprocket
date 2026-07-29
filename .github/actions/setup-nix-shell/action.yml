@@ -1,9 +1,17 @@
 name: Setup Nix shell
 description: >-
   Mounts the persistent Nix store, installs Nix, and realises the sprocket-shell
-  dev shell profile so later steps can run `nix develop --profile sprocket-shell`.
+  dev shell profile so later steps can run `nix develop ./sprocket-shell`.
 
 inputs:
+  dev-shell:
+    description: >-
+      Flake installable to realise into the profile, for example ".#convex".
+      Defaults to the flake's default dev shell. Later steps keep referring to
+      the profile by name, so they do not need to repeat this.
+    required: false
+    default: ''
+
   trusted:
     description: >-
       Set to "true" for jobs that hold privileged credentials and only ever run
@@ -52,4 +60,4 @@ runs:
 
     - name: Build shell environment
       shell: bash
-      run: nix develop --profile sprocket-shell -c true
+      run: nix develop ${{ inputs.dev-shell }} --profile sprocket-shell -c true

@@ -23,13 +23,16 @@ jobs:
       - uses: actions/checkout@v7.0.1
 
       # This job holds the production deploy key, so it must not consume a Nix
-      # store that pull-request jobs can write to.
+      # store that pull-request jobs can write to. Realising only the slim
+      # Convex shell keeps that dedicated store small enough to be worth
+      # keeping around.
       - uses: ./.github/actions/setup-nix-shell
         with:
+          dev-shell: '.#convex'
           trusted: 'true'
 
       - name: Install dependencies
-        shell: 'nix develop --profile sprocket-shell -c bash -e {0}'
+        shell: 'nix develop ./sprocket-shell -c bash -e {0}'
         run: bun install --frozen-lockfile
 
       - name: Validate production deploy key
@@ -43,7 +46,7 @@ jobs:
 
       - name: Deploy Convex production
         working-directory: apps/web
-        shell: 'nix develop --profile ../../sprocket-shell -c bash -e {0}'
+        shell: 'nix develop ../../sprocket-shell -c bash -e {0}'
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_PRODUCTION_DEPLOY_KEY }}
           CONVEX_DEPLOY_MESSAGE: Production deploy for ${{ github.event.workflow_run.head_sha }}
