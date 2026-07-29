@@ -44,12 +44,32 @@ runs:
     #             (Convex Preview runs on pull_request with a deploy key).
     #   shared  - everything else, i.e. code that someone with write access to
     #             this repository already controls.
+    #
+    # The key also carries a hash of flake.lock, so each lockfile generation
+    # gets its own disk. Nothing here ever runs nix-collect-garbage, and it
+    # cannot safely: each job clones the last snapshot and commits it back when
+    # it finishes, so a job that collected garbage would just be overwritten by
+    # a concurrent job that had cloned the pre-collection snapshot. Without a
+    # per-generation key the store would only ever grow. renovate refreshes
+    # flake.lock every Monday and automerges it, and because these inputs track
+    # nixos-unstable each refresh moves stdenv, which rebuilds everything below
+    # it: comparing the two most recent locked revisions, the runtime closure of
+    # bun and nodejs shares zero of its 63 store paths with its predecessor,
+    # despite both revisions pinning identical package versions. So a whole
+    # closure would be added and none of it dropped, roughly 5 GB a week,
+    # forever, until the disk filled and every Nix workflow failed at once.
+    # Keying by generation instead lets the sticky disk's own 7-day idle
+    # eviction do the collecting: last Monday's disk stops being mounted the
+    # moment the bump merges and is purged a week later, leaving two live
+    # generations at steady state. The cost is that the first jobs after a bump
+    # start from an empty disk and re-fetch the closure once.
     - name: Mount Nix store
       uses: useblacksmith/stickydisk@v1.4.0
       with:
         key: >-
           ${{ github.repository }}-nix-store-${{ inputs.trusted == 'true' && 'trusted'
-          || (github.event.pull_request.head.repo.fork && 'fork' || 'shared') }}
+          || (github.event.pull_request.head.repo.fork && 'fork' || 'shared')
+          }}-${{ hashFiles('flake.lock') }}
         path: /nix
 
     # A freshly formatted sticky disk is owned by root, and
