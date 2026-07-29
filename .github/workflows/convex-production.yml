@@ -9,7 +9,6 @@ on:
 permissions:
   contents: read
 
-# Cancelling a deploy midway could leave it half applied, so queue instead.
 concurrency:
   group: convex-production
   cancel-in-progress: false
