@@ -10,6 +10,7 @@
 
 import type * as agentQuestions from "../agentQuestions.js";
 import type * as agentRuntime from "../agentRuntime.js";
+import type * as artifacts from "../artifacts.js";
 import type * as authBootstrap from "../authBootstrap.js";
 import type * as billing from "../billing.js";
 import type * as chat from "../chat.js";
@@ -58,6 +59,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   agentQuestions: typeof agentQuestions;
   agentRuntime: typeof agentRuntime;
+  artifacts: typeof artifacts;
   authBootstrap: typeof authBootstrap;
   billing: typeof billing;
   chat: typeof chat;

@@ -21,4 +21,31 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn artifacts_skill_teaches_create_artifact_tool() {
+        let (_, contents) = BUILTIN_SKILLS
+            .iter()
+            .copied()
+            .find(|(name, _)| *name == "artifacts")
+            .expect("artifacts built-in skill must exist");
+        let parsed = parse_skill_markdown(contents).expect("artifacts skill parses");
+        assert!(
+            parsed.description.to_lowercase().contains("react")
+                || parsed.description.to_lowercase().contains("design"),
+            "description should mention react/design so the agent selects it"
+        );
+        assert!(
+            parsed.body.contains("create_artifact"),
+            "skill body must instruct use of create_artifact"
+        );
+        assert!(
+            parsed.body.contains("contentType"),
+            "skill body must document contentType including react"
+        );
+        assert!(
+            parsed.body.contains("App"),
+            "skill body must require an App component for react previews"
+        );
+    }
 }

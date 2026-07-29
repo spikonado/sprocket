@@ -61,6 +61,19 @@ export const vWriteStdinPayload = v.object({
 	yieldTimeMs: v.optional(v.number())
 });
 
+export const vArtifactType = v.union(v.literal('markdown'), v.literal('html'), v.literal('react'));
+
+export const vCreateArtifactPayload = v.object({
+	title: v.string(),
+	contentType: vArtifactType,
+	content: v.string()
+});
+
+export const vUpdateArtifactPayload = v.object({
+	artifactId: v.string(),
+	content: v.string()
+});
+
 export const vReadSkillPayload = v.object({
 	name: v.string()
 });
@@ -91,7 +104,9 @@ export const vExecutorJobPayload = v.union(
 	vReadSkillPayload,
 	vScrapeUrlPayload,
 	vWebSearchPayload,
-	vWriteStdinPayload
+	vWriteStdinPayload,
+	vCreateArtifactPayload,
+	vUpdateArtifactPayload
 );
 
 export const vApplyPatchResult = v.object({
@@ -165,6 +180,13 @@ export const vAskQuestionResult = v.object({
 	answer: v.optional(vAskQuestionAnswer)
 });
 
+export const vArtifactResult = v.object({
+	artifactId: v.string(),
+	version: v.number(),
+	title: v.optional(v.string()),
+	contentType: v.optional(vArtifactType)
+});
+
 export const vExecutorJobResult = v.union(
 	v.string(),
 	v.array(vWorkspaceInstruction),
@@ -173,7 +195,8 @@ export const vExecutorJobResult = v.union(
 	vCommandExecResult,
 	vReadSkillResult,
 	vScrapeUrlResult,
-	vWebSearchResult
+	vWebSearchResult,
+	vArtifactResult
 );
 
 export const vExecutorStatus = v.union(v.literal('disconnected'), v.literal('connected'));
@@ -206,7 +229,9 @@ export const vExecutorJobKind = v.union(
 	v.literal('read_skill'),
 	v.literal('scrape_url'),
 	v.literal('web_search'),
-	v.literal('write_stdin')
+	v.literal('write_stdin'),
+	v.literal('create_artifact'),
+	v.literal('update_artifact')
 );
 
 export const vAgentQuestionStatus = v.union(
@@ -371,3 +396,4 @@ export type ExecutorJobResult = Infer<typeof vExecutorJobResult>;
 export type AssistantToolResultErrorStatus = Infer<typeof vAssistantToolResultErrorStatus>;
 export type AssistantToolResultErrorOutput = Infer<typeof vAssistantToolResultErrorOutput>;
 export type WorkspaceInstruction = Infer<typeof vWorkspaceInstruction>;
+export type ArtifactType = Infer<typeof vArtifactType>;

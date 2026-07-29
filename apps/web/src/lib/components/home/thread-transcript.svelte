@@ -4,6 +4,7 @@
 	import {
 		assistantTimelineToolError,
 		assistantTimelineToolFailureKind,
+		assistantTimelineToolKey,
 		buildAssistantTimeline,
 		buildCommandSessionCommandMap,
 		buildOpenExecCommandSessions,
@@ -12,8 +13,11 @@
 		partitionWorkSectionTools,
 		workSectionTimingAnchor,
 		workSectionTimingIndexes,
-		type AssistantTimelineTool
+		type AssistantTimelineTool,
+		type AssistantTimelineWorkBlock
 	} from '$lib/chat/assistant-timeline';
+	import { parseArtifactType } from '$lib/chat/artifact-preview';
+	import { isJsonObject, type JsonObject, type JsonValue } from '$convex/lib/json';
 	import { toolKindIcon, toolLogIcon } from '$lib/chat/tool-icons';
 	import {
 		changedFileCount,
@@ -22,6 +26,8 @@
 		toolItemSummary,
 		toolSummaryClass
 	} from '$lib/chat/tool-summaries';
+	import ArtifactDisplay from '$lib/components/home/artifact-display.svelte';
+	import type { ArtifactType } from '$convex/lib/validators';
 	import ChatMarkdown from '$lib/components/chat-markdown.svelte';
 	import ImageViewer, { type ViewerImage } from '$lib/components/image-viewer.svelte';
 	import ReasoningDisclosure from '$lib/components/home/reasoning-disclosure.svelte';
@@ -68,6 +74,54 @@
 		}
 		const distanceToBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
 		stickToBottom = distanceToBottom <= SCROLL_EPSILON_PX;
+	}
+
+	type ArtifactData = {
+		title: string;
+		artifactType: ArtifactType;
+		content: string;
+	};
+
+	/** First JSON object among the candidates; the job wins, the streamed call is the fallback. */
+	function firstJsonObject(...candidates: (JsonValue | undefined)[]): JsonObject | null {
+		return candidates.find(isJsonObject) ?? null;
+	}
+
+	function getArtifactData(tool: AssistantTimelineTool): ArtifactData | null {
+		const kind = assistantTimelineToolKey(tool);
+		const payload = firstJsonObject(tool.job?.payload, tool.input);
+		if (!payload) return null;
+		const content = typeof payload.content === 'string' ? payload.content : '';
+		if (!content) return null;
+
+		if (kind === 'create_artifact') {
+			return {
+				title: typeof payload.title === 'string' ? payload.title : 'Untitled',
+				artifactType: parseArtifactType(payload.contentType),
+				content
+			};
+		}
+
+		if (kind !== 'update_artifact') return null;
+
+		// update_artifact only carries the new content, so title and type come from the result.
+		const result = firstJsonObject(tool.job?.result, tool.output);
+		const title =
+			typeof result?.title === 'string'
+				? result.title
+				: typeof result?.version === 'number'
+					? `Updated Artifact (v${result.version})`
+					: 'Updated Artifact';
+		return { title, artifactType: parseArtifactType(result?.contentType), content };
+	}
+
+	function isArtifactToolGroup(
+		block: AssistantTimelineWorkBlock
+	): block is Extract<AssistantTimelineWorkBlock, { type: 'tool-group' }> {
+		return (
+			block.type === 'tool-group' &&
+			(block.toolKey === 'create_artifact' || block.toolKey === 'update_artifact')
+		);
 	}
 
 	const userMessageClass =
@@ -290,6 +344,9 @@
 												isStreaming,
 												openSessions
 											)}
+											{@const artifactTools = settledBlocks
+												.filter(isArtifactToolGroup)
+												.flatMap((block) => block.tools)}
 											{@const workInProgress =
 												isStreaming &&
 												(sectionIndex === sections.length - 1 || runningTools.length > 0)}
@@ -372,6 +429,16 @@
 													{/each}
 												</WorkDisclosure>
 											{/if}
+											{#each artifactTools as tool (tool.callId)}
+												{@const artifactData = getArtifactData(tool)}
+												{#if artifactData && !assistantTimelineToolError(tool, isStreaming)}
+													<ArtifactDisplay
+														title={artifactData.title}
+														artifactType={artifactData.artifactType}
+														content={artifactData.content}
+													/>
+												{/if}
+											{/each}
 											{#if runningTools.length > 0}
 												<ToolCallsDisclosure
 													label="Running"

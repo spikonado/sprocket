@@ -4,6 +4,7 @@ import { vJsonValue } from '@convex/lib/json';
 import {
 	vAgentHistoryMessage,
 	vAgentQuestionStatus,
+	vArtifactType,
 	vAskQuestionAnswer,
 	vAskQuestionOption,
 	vAssistantMessagePart,
@@ -148,6 +149,25 @@ export const subscriptionFields = {
 	dodoProductId: v.string(),
 	status: vSubscriptionStatus,
 	eventAt: v.number()
+};
+
+export const artifactFields = {
+	threadId: v.id('threadRecords'),
+	userId: v.string(),
+	title: v.string(),
+	type: vArtifactType,
+	currentVersion: v.number(),
+	createdById: v.id('runs'),
+	createdAt: v.number(),
+	updatedAt: v.number()
+};
+
+export const artifactVersionFields = {
+	artifactId: v.id('artifacts'),
+	userId: v.string(),
+	version: v.number(),
+	content: v.string(),
+	createdAt: v.number()
 };
 
 /** Document validators (table fields + Convex system fields). */

@@ -93,6 +93,12 @@ pub(crate) struct WebSearchTool(AgentToolContext);
 pub(crate) struct WriteStdinTool(AgentToolContext);
 
 #[derive(Clone)]
+pub(crate) struct CreateArtifactTool(AgentToolContext);
+
+#[derive(Clone)]
+pub(crate) struct UpdateArtifactTool(AgentToolContext);
+
+#[derive(Clone)]
 pub(crate) struct ReadSkillTool {
     context: AgentToolContext,
     skills: Arc<[WorkspaceSkill]>,
@@ -108,6 +114,8 @@ pub(crate) struct AgentToolSet {
     pub(crate) scrape_url: ScrapeUrlTool,
     pub(crate) web_search: WebSearchTool,
     pub(crate) write_stdin: WriteStdinTool,
+    pub(crate) create_artifact: CreateArtifactTool,
+    pub(crate) update_artifact: UpdateArtifactTool,
 }
 
 pub(crate) fn agent_tools(
@@ -139,7 +147,9 @@ pub(crate) fn agent_tools(
         },
         scrape_url: ScrapeUrlTool(context.clone()),
         web_search: WebSearchTool(context.clone()),
-        write_stdin: WriteStdinTool(context),
+        write_stdin: WriteStdinTool(context.clone()),
+        create_artifact: CreateArtifactTool(context.clone()),
+        update_artifact: UpdateArtifactTool(context),
     }
 }
 
@@ -349,6 +359,33 @@ pub(crate) struct WebSearchArgs {
 pub(crate) struct ScrapeUrlArgs {
     /// URL of the web page to read.
     url: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct CreateArtifactArgs {
+    /// Title for the artifact.
+    title: String,
+    #[serde(rename = "contentType")]
+    content_type: ArtifactContentType,
+    /// Full content of the artifact.
+    content: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum ArtifactContentType {
+    Markdown,
+    Html,
+    React,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct UpdateArtifactArgs {
+    /// ID of the artifact to update.
+    #[serde(rename = "artifactId")]
+    artifact_id: String,
+    /// The new full content of the artifact.
+    content: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -764,6 +801,84 @@ impl rig::tool::Tool for ScrapeUrlTool {
     }
 }
 
+impl rig::tool::Tool for CreateArtifactTool {
+    const NAME: &'static str = "create_artifact";
+    type Error = AgentToolError;
+    type Args = CreateArtifactArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Create a markdown/html/react artifact that's rendered for the user.".to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(CreateArtifactArgs))
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
+        execute_tool_job(
+            &self.0.runtime,
+            &self.0.run_id,
+            &self.0.claim_id,
+            Self::NAME,
+            &self.0.tool_call_tracker,
+            payload.clone(),
+            |cancellation| async {
+                let mutation_args =
+                    mutation_args_from_payload(&self.0.run_id, &self.0.claim_id, &payload)?;
+                run_convex_tool_mutation(
+                    &self.0.runtime,
+                    cancellation,
+                    "artifacts:createArtifact",
+                    mutation_args,
+                )
+                .await
+            },
+        )
+        .await
+    }
+}
+
+impl rig::tool::Tool for UpdateArtifactTool {
+    const NAME: &'static str = "update_artifact";
+    type Error = AgentToolError;
+    type Args = UpdateArtifactArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Replace an existing artifact's content, creating a new version.".to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(UpdateArtifactArgs))
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
+        execute_tool_job(
+            &self.0.runtime,
+            &self.0.run_id,
+            &self.0.claim_id,
+            Self::NAME,
+            &self.0.tool_call_tracker,
+            payload.clone(),
+            |cancellation| async {
+                let mutation_args =
+                    mutation_args_from_payload(&self.0.run_id, &self.0.claim_id, &payload)?;
+                run_convex_tool_mutation(
+                    &self.0.runtime,
+                    cancellation,
+                    "artifacts:appendArtifactVersion",
+                    mutation_args,
+                )
+                .await
+            },
+        )
+        .await
+    }
+}
+
 impl rig::tool::Tool for ReadSkillTool {
     const NAME: &'static str = "read_skill";
     type Error = AgentToolError;
@@ -1078,6 +1193,48 @@ async fn run_convex_tool_action(
             result.map_err(tool_error)
         }
     }
+}
+
+/// Runs a tool's work as a Convex mutation, aborting the wait when the run is
+/// cancelled. Used for tools that only need transactional DB writes. Note the
+/// mutation itself still commits server-side if it already started; only the
+/// wait is aborted.
+async fn run_convex_tool_mutation(
+    runtime: &RuntimeClient,
+    cancellation: WorkspaceCancellation,
+    function: &str,
+    args: BTreeMap<String, Value>,
+) -> Result<serde_json::Value, AgentToolError> {
+    tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => Err(AgentToolError::Cancelled),
+        result = runtime.mutation_json::<serde_json::Value>(function, args) => {
+            result.map_err(tool_error)
+        }
+    }
+}
+
+/// Merge run claim fields with a serialized tool-args object for a Convex mutation.
+fn mutation_args_from_payload(
+    run_id: &str,
+    claim_id: &str,
+    payload: &serde_json::Value,
+) -> Result<BTreeMap<String, Value>, AgentToolError> {
+    let mut mutation_args = BTreeMap::new();
+    mutation_args.insert("runId".to_string(), run_id.to_string().into());
+    mutation_args.insert("claimId".to_string(), claim_id.to_string().into());
+    let Some(fields) = payload.as_object() else {
+        return Err(AgentToolError::Message(
+            "artifact tool payload must be an object".to_string(),
+        ));
+    };
+    for (key, value) in fields {
+        mutation_args.insert(
+            key.clone(),
+            Value::try_from(value.clone()).map_err(tool_error)?,
+        );
+    }
+    Ok(mutation_args)
 }
 
 async fn execute_tool_job<F, Fut>(
@@ -1396,5 +1553,66 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("Unknown skill 'missing'"));
         assert!(message.contains("alpha, bravo"));
+    }
+
+    #[test]
+    fn create_artifact_args_round_trip() {
+        let args: CreateArtifactArgs = serde_json::from_value(serde_json::json!({
+            "title": "Landing mock",
+            "contentType": "react",
+            "content": "function App() { return null; }"
+        }))
+        .expect("create artifact args should deserialize");
+
+        assert_eq!(args.title, "Landing mock");
+        assert_eq!(args.content_type, ArtifactContentType::React);
+        assert_eq!(args.content, "function App() { return null; }");
+
+        let value = serde_json::to_value(&args).unwrap();
+        assert_eq!(value["title"], "Landing mock");
+        assert_eq!(value["contentType"], "react");
+        assert_eq!(value["content"], "function App() { return null; }");
+    }
+
+    #[test]
+    fn update_artifact_args_round_trip() {
+        let args: UpdateArtifactArgs = serde_json::from_value(serde_json::json!({
+            "artifactId": "abc123",
+            "content": "updated content"
+        }))
+        .expect("update artifact args should deserialize");
+
+        assert_eq!(args.artifact_id, "abc123");
+        assert_eq!(args.content, "updated content");
+
+        let value = serde_json::to_value(&args).unwrap();
+        assert_eq!(value["artifactId"], "abc123");
+        assert_eq!(value["content"], "updated content");
+    }
+
+    #[test]
+    fn create_artifact_rejects_unknown_content_type() {
+        let error = serde_json::from_value::<CreateArtifactArgs>(serde_json::json!({
+            "title": "Notes",
+            "contentType": "jsx",
+            "content": "x"
+        }))
+        .expect_err("unknown content type must be rejected before reaching Convex");
+
+        assert!(error.to_string().contains("unknown variant"));
+    }
+
+    #[test]
+    fn mutation_args_from_payload_merges_run_claim() {
+        let payload = serde_json::json!({
+            "title": "Landing",
+            "contentType": "react",
+            "content": "function App() { return null; }"
+        });
+        let args = mutation_args_from_payload("run-1", "claim-1", &payload).unwrap();
+        assert_eq!(args.get("runId"), Some(&Value::from("run-1")));
+        assert_eq!(args.get("claimId"), Some(&Value::from("claim-1")));
+        assert_eq!(args.get("title"), Some(&Value::from("Landing")));
+        assert_eq!(args.get("contentType"), Some(&Value::from("react")));
     }
 }

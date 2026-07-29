@@ -145,6 +145,8 @@ where
         .tool(tools.scrape_url)
         .tool(tools.web_search)
         .tool(tools.write_stdin)
+        .tool(tools.create_artifact)
+        .tool(tools.update_artifact)
         .build();
 
     eprintln!("sprocket-agent: built agent {}", request.run_id);

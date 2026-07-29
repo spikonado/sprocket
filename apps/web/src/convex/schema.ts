@@ -1,6 +1,8 @@
 import { defineSchema, defineTable } from 'convex/server';
 import {
 	agentQuestionFields,
+	artifactFields,
+	artifactVersionFields,
 	billingCustomerFields,
 	completionStreamStateFields,
 	executorJobFields,
@@ -43,5 +45,12 @@ export default defineSchema({
 	agentQuestions: defineTable(agentQuestionFields)
 		.index('by_runId_sequence', ['runId', 'sequence'])
 		.index('by_threadId_sequence', ['threadId', 'sequence'])
-		.index('by_threadId_status_sequence', ['threadId', 'status', 'sequence'])
+		.index('by_threadId_status_sequence', ['threadId', 'status', 'sequence']),
+	artifacts: defineTable(artifactFields)
+		.index('by_threadId', ['threadId'])
+		.index('by_threadId_title', ['threadId', 'title']),
+	artifactVersions: defineTable(artifactVersionFields).index('by_artifactId_version', [
+		'artifactId',
+		'version'
+	])
 });
