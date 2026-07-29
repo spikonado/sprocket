@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	RUN_CLAIM_LEASE_DURATION_MS,
+	canFinalizeAfterClaimFailure,
 	canRegisterCompletionAttempt,
 	ownsActiveRunClaim,
 	canStartRunWithClaim,
@@ -72,5 +73,15 @@ describe('run claim leases', () => {
 		expect(isCurrentCompletionAttempt(run, 'claim-a', 2)).toBe(true);
 		expect(isCurrentCompletionAttempt(run, 'claim-a', 3)).toBe(false);
 		expect(isCurrentCompletionAttempt(run, 'claim-b', 2)).toBe(false);
+	});
+
+	it('lets the current claim owner terminalize its run even after the lease lapses', () => {
+		const expired = { status: 'awaiting_executor', claimId: 'claim-a', claimExpiresAt: 100 };
+		expect(canFinalizeAfterClaimFailure(expired, 'claim-a')).toBe(true);
+		expect(canFinalizeAfterClaimFailure(expired, 'claim-b')).toBe(false);
+		expect(canFinalizeAfterClaimFailure({ status: 'failed', claimId: 'claim-a' }, 'claim-a')).toBe(
+			false
+		);
+		expect(canFinalizeAfterClaimFailure({ status: 'queued' }, 'claim-a')).toBe(false);
 	});
 });

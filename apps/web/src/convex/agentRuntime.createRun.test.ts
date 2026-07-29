@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
-import { initConvexTest, seedOwnedThread } from './test.setup';
+import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 
 describe('agentRuntime.createRun', () => {
 	it('rejects an empty prompt with no images', async () => {
@@ -193,6 +193,40 @@ describe('agentRuntime.createRun', () => {
 				executionSecret: 'active-second-secret'
 			})
 		).rejects.toThrow('Finish or cancel the active run before sending another message.');
+	});
+
+	it('marks an abandoned claimed run as failed when a new submission arrives', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'abandoned-secret';
+		const abandoned = await createQueuedRun(asUser, threadId, 'sub-abandoned', executionSecret);
+		await asUser.mutation(api.agentRuntime.start, {
+			claimId: 'claim-abandoned',
+			runId: abandoned.runId,
+			executionSecret
+		});
+		await t.run(async (ctx) => {
+			await ctx.db.patch(abandoned.runId, { claimExpiresAt: Date.now() - 1 });
+		});
+
+		const next = await asUser.mutation(api.agentRuntime.createRun, {
+			submissionId: 'sub-after-abandoned',
+			threadId,
+			prompt: 'Second',
+			imageUploadIds: [],
+			selectedModel: 'gpt-5.6-sol',
+			reasoningEffort: 'medium',
+			serviceTier: 'standard',
+			executionSecret: 'after-abandoned-secret'
+		});
+		expect(next.created).toBe(true);
+		expect(next.runId).not.toBe(abandoned.runId);
+
+		const abandonedRun = await t.run(async (ctx) => ctx.db.get(abandoned.runId));
+		expect(abandonedRun).toMatchObject({
+			status: 'failed',
+			lastError: 'The agent claim lease expired before the run was finalized.'
+		});
 	});
 
 	it('allows a new run after the previous run reaches a final status', async () => {
