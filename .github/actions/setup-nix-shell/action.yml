@@ -3,6 +3,15 @@ description: >-
   Mounts the persistent Nix store, installs Nix, and realises the sprocket-shell
   dev shell profile so later steps can run `nix develop --profile sprocket-shell`.
 
+inputs:
+  trusted:
+    description: >-
+      Set to "true" for jobs that hold privileged credentials and only ever run
+      code from a protected branch. Those jobs mount a separate store that no
+      pull-request job can write to.
+    required: false
+    default: 'false'
+
 runs:
   using: composite
   steps:
@@ -14,10 +23,14 @@ runs:
         sudo mkdir -p /nix/store
         sudo chmod -R 777 /nix
 
+    # Pull-request jobs run checkout-controlled code as the owner of the mounted
+    # store, so anything they leave behind is attacker-controlled. Jobs that
+    # hold privileged credentials therefore mount a store of their own, which
+    # only ever sees code from a protected branch.
     - name: Mount Nix store
       uses: useblacksmith/stickydisk@v1.4.0
       with:
-        key: ${{ github.repository }}-nix-store
+        key: ${{ github.repository }}-nix-store-${{ inputs.trusted == 'true' && 'trusted' || 'shared' }}
         path: /nix
 
     # A freshly formatted sticky disk is owned by root, and

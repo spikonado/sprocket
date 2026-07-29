@@ -22,7 +22,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
+      # This job holds the production deploy key, so it must not consume a Nix
+      # store that pull-request jobs can write to.
       - uses: ./.github/actions/setup-nix-shell
+        with:
+          trusted: 'true'
 
       - name: Install dependencies
         shell: 'nix develop --profile sprocket-shell -c bash -e {0}'
