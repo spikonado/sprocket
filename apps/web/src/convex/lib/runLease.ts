@@ -32,12 +32,9 @@ export function ownsActiveRunClaim(run: ClaimableRun, claimId: string, now: numb
 }
 
 export function canFinalizeAfterClaimFailure(run: ClaimableRun, claimId: string): boolean {
-	// The current claim owner may always terminalize its own run, even after
-	// the lease lapsed. Requiring an active lease here strands runs in a
-	// claimed status forever when the executor only manages to report the
-	// failure after expiry (e.g. reconnecting to the backend), which blocks
-	// the thread from ever starting another run. A takeover changes claimId,
-	// so cleanup from a stale executor stays rejected.
+	// Requiring an active lease here would strand runs whose executor only
+	// reports the failure after expiry. A takeover changes claimId, so stale
+	// executors stay rejected.
 	return isClaimedRunStatus(run.status) && run.claimId === claimId;
 }
 

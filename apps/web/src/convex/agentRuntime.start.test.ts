@@ -241,9 +241,8 @@ describe('agentRuntime.start', () => {
 		expect(reclaimed.claimExpiresAt).toBeGreaterThan(Date.now());
 
 		const run = await t.run(async (ctx) => ctx.db.get(runId));
-		// Same-claim renewal keeps status and completion attempt sequence: the
-		// takeover cleanup (hidden jobs, cleared response, stream reset) is
-		// only for a different claim.
+		// Same-claim re-start keeps run state; takeover cleanup is only for a
+		// different claim.
 		expect(run).toMatchObject({
 			claimId: 'claim-a',
 			completionAttemptSeq: 2,

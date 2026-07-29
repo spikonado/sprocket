@@ -338,10 +338,8 @@ function removeAbandonedAssistantTurns(
 		return part.type !== 'tool-call' || !removedCallIds.has(part.callId);
 	});
 
-	// A tool call without a result (e.g. the agent stopped mid-execution) is
-	// not a valid model transcript: providers reject replaying it. Pair every
-	// dangling call with an interrupted result instead of dropping it, so the
-	// work that did happen stays visible.
+	// Providers reject replaying a tool call without its result; pair dangling
+	// calls with an interrupted result instead of dropping the work.
 	const answeredCallIds = new Set(
 		retainedParts
 			.filter((part): part is AssistantToolResultPart => part.type === 'tool-result')

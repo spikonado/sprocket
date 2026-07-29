@@ -334,8 +334,7 @@ describe('assistant tool parts', () => {
 			]
 		);
 
-		// Providers reject replaying a tool call without its result, so a
-		// dangling call would break the transcript the next agent loads.
+		// Providers reject replaying a dangling tool call.
 		expect(hydrated).toEqual([
 			{
 				type: 'tool-call',

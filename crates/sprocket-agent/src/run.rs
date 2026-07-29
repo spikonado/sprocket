@@ -415,9 +415,8 @@ async fn renew_claim_once(
     .map(|response| (response.renewed, request_started_at))
 }
 
-/// Tries to re-claim the run with the same claim after the lease lapsed. The
-/// server accepts this only if nobody else took over and the run is still in
-/// a claimed status, so it is safe to attempt exactly once.
+/// Re-claims the run with the same claim after a lease lapse; the server
+/// accepts only if nobody else took over.
 async fn reclaim_run_once(
     runtime: &RuntimeClient,
     run_id: &str,
@@ -433,10 +432,8 @@ async fn reclaim_run_once(
     .map(|start| (start.claimed, request_started_at))
 }
 
-/// Renews the claim lease via `attempt`, retrying transient failures for as
-/// long as the remaining lease window can still fit another attempt. A
-/// renewed lease moves the deadline forward, so temporary backend
-/// unavailability must not fail the run while there is still time to renew.
+/// Retries transient renewal failures while the lease window can still fit
+/// another attempt.
 async fn renew_claim_with<F, Fut>(
     run_id: &str,
     lease_deadline: Instant,
@@ -475,27 +472,11 @@ where
 
 /// Runs `operation` while renewing the claim lease.
 ///
-/// Renewals are anchored to when the last successful renewal request started
-/// rather than to a free-running interval: a renewal that completes slowly
-/// (e.g. while reconnecting to the backend) must not push the next renewal
-/// past the lease deadline. A renewal anchor that is already in the past
-/// fires immediately.
-///
-/// The local lease deadline is a conservative estimate (request start + lease
-/// duration); the server is the authority on lease ownership. Renewals are
-/// therefore attempted even when a scheduling stall (CPU saturation, slow
-/// reconnect) pushed the tick past that estimate: the server answers whether
-/// the lease is still owned, and must not be preemptively declared lost.
-///
-/// Renewing runs inside the select arm, so `operation` is not polled while
-/// renewal attempts are in flight. That pause is bounded by the lease window
-/// (retries stop once another attempt could not land before the deadline) and
-/// is accepted in exchange for surviving backend unavailability.
-///
-/// When the server reports the lease as gone, the claim is re-`start`ed once:
-/// a lapse with no takeover (suspend, CPU starvation, network drop) lets the
-/// same claim continue, while a real takeover or a terminal run refuses the
-/// re-claim and the lease failure is returned.
+/// Renewals are anchored to the last successful renewal request start, so a
+/// slow renewal (reconnect, CPU starvation) cannot push the next one past
+/// the lease deadline. The server is the authority on lease ownership, so
+/// renewals are attempted even past the conservative local deadline estimate,
+/// and a reported loss is retried once via re-claim before giving up.
 ///
 /// Only claim/lease failures are returned as `Err`; the operation's value
 /// (including its own errors) is wrapped in `Ok`.
@@ -762,10 +743,8 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
     {
         Ok(result) => result,
         Err(error) => {
-            // A renewal tick can race the operation's own finalization: if the
-            // run already reached a terminal state server-side, there is
-            // nothing to abort and the lease error must not be reported as a
-            // failure.
+            // A renewal tick can race the operation's own finalization; a run
+            // that already finished server-side must not be reported as failed.
             match runtime.run_finished(&run_id).await {
                 Ok(true) => Ok(()),
                 _ => abort_after_claim(&runtime, &run_id, &claim_id, error).await,
@@ -851,11 +830,8 @@ mod claim_lease_tests {
         Ok((false, Instant::now()))
     }
 
-    /// Regression: a renewal tick that fires late because the task was
-    /// starved (CPU saturation, slow reconnect) must not fail an otherwise
-    /// healthy run. The first renewal below takes longer than the renew
-    /// interval, pushing the next tick past the point where a conservative
-    /// local pre-check would refuse to renew.
+    /// Regression: a starved renewal tick (CPU saturation, slow reconnect)
+    /// must not fail an otherwise healthy run.
     #[tokio::test(start_paused = true)]
     async fn scheduling_stall_after_a_successful_renewal_does_not_fail_the_run() {
         let renewals = AtomicUsize::new(0);
@@ -883,9 +859,8 @@ mod claim_lease_tests {
         assert!(renewals.load(Ordering::SeqCst) >= 2);
     }
 
-    /// The local lease deadline is only an estimate; when a stall pushes a
-    /// renewal tick past it, the renewal must still be attempted and the
-    /// server decides whether the lease is still owned.
+    /// The local deadline is only an estimate; a renewal tick pushed past it
+    /// must still be attempted.
     #[tokio::test(start_paused = true)]
     async fn renewal_is_attempted_after_the_estimated_lease_deadline() {
         let renewals = AtomicUsize::new(0);
@@ -928,10 +903,8 @@ mod claim_lease_tests {
         let error = result.unwrap_err().to_string();
         assert!(error.contains("initial attempt failed"), "{error}");
         // Keeps renewing while another attempt can still land before the
-        // lease deadline.
+        // lease deadline, then stops.
         assert!(attempts.load(Ordering::SeqCst) >= 3);
-        // ...but not past the point where another attempt could not land
-        // before it.
         assert!(
             Instant::now()
                 >= started_at + RUN_CLAIM_LEASE_DURATION
@@ -971,8 +944,8 @@ mod claim_lease_tests {
         assert!(error.contains("was lost"), "{error}");
     }
 
-    /// After a genuine lease lapse with no takeover (suspend, starvation,
-    /// network drop), the same claim re-`start`s and the run continues.
+    /// After a lease lapse with no takeover, the same claim re-`start`s and
+    /// the run continues.
     #[tokio::test(start_paused = true)]
     async fn reclaimed_lease_resumes_renewals() {
         let renewals = AtomicUsize::new(0);

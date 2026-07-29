@@ -180,10 +180,8 @@ describe('canonical agent history', () => {
 	});
 
 	it('answers tool calls from jobs that never finished with an interrupted result', () => {
-		// An executor that vanished mid-job leaves a claimed job with no
-		// result. A dangling tool call is not a valid transcript (providers
-		// reject replaying it), so the next agent loading this history must
-		// see an interrupted result instead.
+		// Providers reject replaying a dangling tool call, so the next agent
+		// must see an interrupted result instead.
 		const history = buildCanonicalAgentHistory({
 			messages: [
 				{

@@ -192,10 +192,8 @@ export const createRun = mutation({
 		runId: v.id('runs'),
 		promptMessageId: v.id('threadMessages')
 	}),
-	// Beyond inserting the run, this mutation reconciles the thread: a
-	// previous run that is still in a claimed status but whose lease lapsed
-	// was abandoned by its executor, so it is terminalized as failed here —
-	// otherwise it would block every later submission forever.
+	// Also terminalizes a previous claimed run whose lease lapsed — it was
+	// abandoned by its executor and would block every later submission.
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		await assertModelConfigurationAllowedForUser(ctx, userId, {
