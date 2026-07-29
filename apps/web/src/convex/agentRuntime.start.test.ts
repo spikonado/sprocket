@@ -214,4 +214,40 @@ describe('agentRuntime.start', () => {
 			Date.now() + RUN_CLAIM_LEASE_DURATION_MS + 1_000
 		);
 	});
+
+	it('re-claims with the same claim after a lapse without resetting run state', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'start-reclaim-secret';
+		const { runId } = await createQueuedRun(asUser, threadId, 'sub-reclaim', executionSecret);
+		await asUser.mutation(api.agentRuntime.start, {
+			claimId: 'claim-a',
+			runId,
+			executionSecret
+		});
+		await t.run(async (ctx) => {
+			await ctx.db.patch(runId, {
+				completionAttemptSeq: 2,
+				claimExpiresAt: Date.now() - 1
+			});
+		});
+
+		const reclaimed = await asUser.mutation(api.agentRuntime.start, {
+			claimId: 'claim-a',
+			runId,
+			executionSecret
+		});
+		expect(reclaimed.claimed).toBe(true);
+		expect(reclaimed.claimExpiresAt).toBeGreaterThan(Date.now());
+
+		const run = await t.run(async (ctx) => ctx.db.get(runId));
+		// Same-claim renewal keeps status and completion attempt sequence: the
+		// takeover cleanup (hidden jobs, cleared response, stream reset) is
+		// only for a different claim.
+		expect(run).toMatchObject({
+			claimId: 'claim-a',
+			completionAttemptSeq: 2,
+			claimExpiresAt: reclaimed.claimExpiresAt
+		});
+	});
 });
