@@ -21,9 +21,6 @@ on:
 permissions:
   contents: read
 
-# Superseded dev releases are discarded by the freshness guards in `publish`
-# anyway, so cancel them before they burn five native builds. Tag and manual
-# releases get their own group and are never cancelled.
 concurrency:
   group: npm-release-${{ github.event_name == 'workflow_run' && 'main-dev' || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'workflow_run' }}
