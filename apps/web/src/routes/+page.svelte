@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { PanelRight } from '@lucide/svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import { useAuth, useMutation, useQuery } from 'convex-svelte';
 	import type { Id } from '$convex/_generated/dataModel';
@@ -1975,7 +1976,25 @@
 				/>
 			{/if}
 
-			<main class="flex h-screen min-h-0 min-w-0 flex-col overflow-hidden">
+			<main class="relative flex h-screen min-h-0 min-w-0 flex-col overflow-hidden">
+				{#if !settingsOpen}
+					<button
+						type="button"
+						class="bg-card text-muted-foreground hover:text-foreground absolute top-3 right-3 z-40 inline-flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-xs transition"
+						onclick={() => {
+							artifactPanelOpen = !artifactPanelOpen;
+						}}
+						aria-label={artifactPanelOpen ? 'Close artifacts panel' : 'Open artifacts panel'}
+						aria-pressed={artifactPanelOpen}
+					>
+						<PanelRight class="size-4" aria-hidden="true" />
+						{#if threadArtifacts.length > 0}
+							<span class="bg-muted rounded px-1 text-[10px] leading-4">
+								{threadArtifacts.length}
+							</span>
+						{/if}
+					</button>
+				{/if}
 				{#if settingsOpen}
 					{#if settingsPage === 'archived'}
 						<SettingsArchived
