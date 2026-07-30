@@ -1,0 +1,139 @@
+name: Desktop Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - id: version
+        name: Resolve version
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          stable_pattern='^[0-9]+\.[0-9]+\.[0-9]+$'
+          canary_pattern='^[0-9]+\.[0-9]+\.[0-9]+-canary\.[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*$'
+          if [[ ! "$version" =~ $stable_pattern && ! "$version" =~ $canary_pattern ]]; then
+            echo "::error::Invalid desktop release version: $version"
+            exit 1
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+
+  web:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run --cwd apps/web build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web
+          path: apps/web/dist
+          if-no-files-found: error
+
+  package:
+    needs: [prepare, web]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux-x64
+            runner: ubuntu-latest
+            electron_args: --linux AppImage --x64
+            artifact_glob: 'sprocket-desktop-*.AppImage'
+          - id: linux-arm64
+            runner: ubuntu-24.04-arm
+            electron_args: --linux AppImage --arm64
+            artifact_glob: 'sprocket-desktop-*.AppImage'
+          - id: darwin-arm64
+            runner: macos-latest
+            electron_args: --mac dmg --arm64
+            artifact_glob: 'sprocket-desktop-*.dmg'
+          - id: darwin-x64
+            runner: macos-15-intel
+            electron_args: --mac dmg --x64
+            artifact_glob: 'sprocket-desktop-*.dmg'
+          - id: win32-x64
+            runner: windows-2022
+            electron_args: --win nsis --x64
+            artifact_glob: 'sprocket-desktop-*.exe'
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: desktop-${{ matrix.id }}
+      - name: Install Linux AppImage dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfuse2t64 || sudo apt-get install -y libfuse2
+      - uses: actions/download-artifact@v8
+        with:
+          name: web
+          path: apps/web/dist
+      - name: Sync desktop package version
+        working-directory: apps/desktop
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          bun -e '
+            const fs = require("node:fs");
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            pkg.version = process.env.VERSION;
+            fs.writeFileSync("package.json", `${JSON.stringify(pkg, null, "\t")}\n`);
+          '
+      - name: Build Rust CLI
+        shell: bash
+        env:
+          SPROCKET_VERSION: ${{ needs.prepare.outputs.version }}
+        run: cargo build --locked --release -p sprocket-cli
+      - name: Package desktop installer
+        working-directory: apps/desktop
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: bunx electron-builder ${{ matrix.electron_args }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: desktop-${{ matrix.id }}
+          path: apps/desktop/dist/${{ matrix.artifact_glob }}
+          if-no-files-found: error
+
+  publish:
+    needs: [prepare, package]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: desktop-*
+          path: release-assets
+          merge-multiple: true
+      - name: Generate checksums
+        working-directory: release-assets
+        run: sha256sum sprocket-desktop-* | tee SHA256SUMS
+      - name: Upload assets to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: ${{ contains(github.ref_name, '-canary.') }}
+          files: |
+            release-assets/sprocket-desktop-*
+            release-assets/SHA256SUMS
+          fail_on_unmatched_files: true

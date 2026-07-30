@@ -290,10 +290,7 @@ fn installed_desktop_candidates() -> Vec<PathBuf> {
         if let Some(home) = std::env::var_os("HOME") {
             let home = PathBuf::from(home);
             candidates.push(home.join(".local/bin/sprocket-desktop"));
-            candidates.push(home.join(format!(
-                "Applications/Sprocket-{}.AppImage",
-                env!("CARGO_PKG_VERSION")
-            )));
+            candidates.extend(linux_appimage_candidates(&home));
         }
     }
 
@@ -333,6 +330,96 @@ const DESKTOP_EXECUTABLE_NAME: &str = if cfg!(windows) {
     "sprocket-desktop"
 };
 
+#[cfg(target_os = "linux")]
+fn linux_appimage_candidates(home: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(home.join("Applications")) else {
+        return Vec::new();
+    };
+    let electron_arch = match std::env::consts::ARCH {
+        "x86_64" => "x64",
+        "aarch64" => "arm64",
+        other => other,
+    };
+    let mut candidates = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(is_sprocket_appimage_name)
+        })
+        .collect::<Vec<_>>();
+    if candidates.iter().any(|path| {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| appimage_matches_arch(name, electron_arch))
+    }) {
+        candidates.retain(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| appimage_matches_arch(name, electron_arch))
+        });
+    }
+    candidates.sort_by(|left, right| {
+        let left_name = left
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        let right_name = right
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        appimage_preference(right_name, electron_arch)
+            .cmp(&appimage_preference(left_name, electron_arch))
+            .then_with(|| left_name.cmp(right_name))
+    });
+    candidates
+}
+
+#[cfg(target_os = "linux")]
+fn is_sprocket_appimage_name(name: &str) -> bool {
+    name.ends_with(".AppImage")
+        && (name.starts_with("sprocket-desktop-") || name.starts_with("Sprocket-"))
+}
+
+#[cfg(target_os = "linux")]
+fn appimage_matches_version(name: &str) -> bool {
+    let Some(stem) = name.strip_suffix(".AppImage") else {
+        return false;
+    };
+    let Some(rest) = stem
+        .strip_prefix("sprocket-desktop-")
+        .or_else(|| stem.strip_prefix("Sprocket-"))
+    else {
+        return false;
+    };
+    if rest == VERSION {
+        return true;
+    }
+    rest.strip_prefix(VERSION)
+        .is_some_and(|suffix| suffix.starts_with('-') && !suffix[1..].contains('.'))
+}
+
+#[cfg(target_os = "linux")]
+fn appimage_matches_arch(name: &str, electron_arch: &str) -> bool {
+    let Some(stem) = name.strip_suffix(".AppImage") else {
+        return false;
+    };
+    if stem.ends_with(&format!("-{electron_arch}")) {
+        return true;
+    }
+    // Arch-agnostic names (no -x64/-arm64 suffix) are acceptable on any host.
+    !stem.ends_with("-x64") && !stem.ends_with("-arm64") && !stem.ends_with("-ia32")
+}
+
+#[cfg(target_os = "linux")]
+fn appimage_preference(name: &str, electron_arch: &str) -> (u8, u8) {
+    (
+        u8::from(appimage_matches_version(name)),
+        u8::from(appimage_matches_arch(name, electron_arch)),
+    )
+}
+
 #[cfg(debug_assertions)]
 fn find_dev_desktop_launcher() -> Option<PathBuf> {
     let candidate = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apps/desktop/launch.cjs");
@@ -368,5 +455,54 @@ mod tests {
         assert!(!server.web);
         assert!(server.directory.is_none());
         assert!(matches!(server.command, Some(Commands::Serve(_))));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn discovers_versioned_and_arch_appimages() {
+        let temp =
+            std::env::temp_dir().join(format!("sprocket-appimage-candidates-{}", Uuid::new_v4()));
+        let applications = temp.join("Applications");
+        std::fs::create_dir_all(&applications).unwrap();
+        let host_arch = match std::env::consts::ARCH {
+            "x86_64" => "x64",
+            "aarch64" => "arm64",
+            other => other,
+        };
+        let other_arch = if host_arch == "x64" { "arm64" } else { "x64" };
+        let matching = applications.join(format!(
+            "sprocket-desktop-{VERSION}-linux-{host_arch}.AppImage"
+        ));
+        let wrong_arch = applications.join(format!(
+            "sprocket-desktop-{VERSION}-linux-{other_arch}.AppImage"
+        ));
+        let other_version =
+            applications.join(format!("sprocket-desktop-9.9.9-linux-{host_arch}.AppImage"));
+        let canary_collision = applications.join(format!(
+            "sprocket-desktop-{VERSION}-canary.1-linux-{host_arch}.AppImage"
+        ));
+        for path in [&matching, &wrong_arch, &other_version, &canary_collision] {
+            std::fs::write(path, []).unwrap();
+        }
+
+        let candidates = linux_appimage_candidates(&temp);
+        assert_eq!(candidates, [matching, canary_collision, other_version]);
+        assert!(!candidates.contains(&wrong_arch));
+        assert!(appimage_matches_version(&format!(
+            "sprocket-desktop-{VERSION}-linux-{host_arch}.AppImage"
+        )));
+        assert!(!appimage_matches_version(&format!(
+            "sprocket-desktop-{VERSION}-canary.1-linux-{host_arch}.AppImage"
+        )));
+        assert!(appimage_matches_arch(
+            &format!("sprocket-desktop-{VERSION}-linux-{host_arch}.AppImage"),
+            host_arch
+        ));
+        assert!(!appimage_matches_arch(
+            &format!("sprocket-desktop-{VERSION}-linux-{other_arch}.AppImage"),
+            host_arch
+        ));
+
+        std::fs::remove_dir_all(&temp).unwrap();
     }
 }

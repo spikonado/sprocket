@@ -9,7 +9,7 @@
 	"scripts": {
 		"dev": "cargo build -q -p sprocket-cli && node ./launch.cjs",
 		"build": "cargo build -p sprocket-cli",
-		"build:release": "cargo build --release -p sprocket-cli && electron-builder && node ./copy-release-cli.cjs"
+		"build:release": "cargo build --release -p sprocket-cli && electron-builder"
 	},
 	"build": {
 		"appId": "com.spikonado.sprocket",
@@ -47,7 +47,27 @@
 				"AppImage"
 			],
 			"category": "Development",
-			"syncDesktopName": true
+			"syncDesktopName": true,
+			"artifactName": "sprocket-desktop-${version}-${os}-${arch}.${ext}"
+		},
+		"mac": {
+			"target": [
+				"dmg"
+			],
+			"category": "public.app-category.developer-tools",
+			"forceCodeSigning": false,
+			"artifactName": "sprocket-desktop-${version}-${os}-${arch}.${ext}"
+		},
+		"win": {
+			"target": [
+				"nsis"
+			],
+			"forceCodeSigning": false,
+			"artifactName": "sprocket-desktop-${version}-${os}-${arch}.${ext}"
+		},
+		"nsis": {
+			"oneClick": false,
+			"allowToChangeInstallationDirectory": true
 		}
 	},
 	"devDependencies": {

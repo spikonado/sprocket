@@ -10,34 +10,38 @@ Sprocket is currently a lightweight coding agent that writes high-quality code, 
 
 ## Using Sprocket
 
-To directly launch Sprocket in the browser without having to install anything:
+### Run without installing
 
 ```sh
 npx @spikonado/sprocket --web
 ```
 
-Installing the `sprocket` CLI and using it:
+### Desktop App
+
+Install `sprocket-desktop` for your OS from the latest [GitHub Release](https://github.com/spikonado/sprocket/releases) and run it.
+
+### CLI
 
 ```sh
 npm i -g @spikonado/sprocket
 sprocket --web
 ```
 
-After installing the Sprocket desktop application and the `sprocket` CLI, launch it from a terminal:
+`--web` starts the local server and opens Sprocket in your default browser.
+
+The CLI doesn't ship with Electron; the desktop app does.
+
+If you have the desktop app installed, you can also run `sprocket` in your terminal to launch it:
 
 ```sh
 sprocket
 ```
 
-This starts the local Sprocket server and opens the separately installed desktop application.
+With no flags, the CLI looks for `sprocket-desktop` (on `PATH`, common install locations, or `SPROCKET_DESKTOP_EXECUTABLE`) and launches it. The desktop app brings up its own UI and local server. If the desktop app is not installed, `sprocket` errors and tells you to install it or use `--web`.
 
-To use Sprocket entirely in your default browser, run:
+### Workspaces
 
-```sh
-sprocket --web
-```
-
-Pass a directory to either command to add or reconnect that workspace and open a new thread for it:
+Pass a directory to open or reconnect that workspace in a new thread:
 
 ```sh
 sprocket .
@@ -45,28 +49,29 @@ sprocket --web ../my-robot
 ```
 
 Sprocket remembers attached workspaces and local server sessions between launches.
-Its local state is stored in `$HOME/.sprocket`, falling back to `%USERPROFILE%\.sprocket` on Windows when `HOME` is unavailable.
-Override this with `SPROCKET_DATA_DIR`.
+Local state lives in `$HOME/.sprocket` (or `%USERPROFILE%\.sprocket` on Windows when `HOME` is unset).
+Override with `SPROCKET_DATA_DIR`.
 
 ## CLI reference
 
-| Command                      | Behavior                                                                       |
-| ---------------------------- | ------------------------------------------------------------------------------ |
-| `sprocket [DIRECTORY]`       | Start the server and desktop app, optionally opening a workspace.              |
-| `sprocket --web [DIRECTORY]` | Start the server and browser app, optionally opening a workspace.              |
-| `sprocket serve`             | Run the local server in the foreground without launching a client.             |
-| `sprocket serve --api-only`  | Serve only `/api`; intended for development (see [Development](#development)). |
+| Command                      | Behavior                                                                        |
+| ---------------------------- | ------------------------------------------------------------------------------- |
+| `sprocket [DIRECTORY]`       | Launch the installed `sprocket-desktop` app, optionally opening a workspace.    |
+| `sprocket --web [DIRECTORY]` | Start the local server and open the browser UI, optionally opening a workspace. |
+| `sprocket serve`             | Run the local server in the foreground without launching a client.              |
+| `sprocket serve --api-only`  | Serve only `/api`; intended for development (see [Development](#development)).  |
 
 Run `sprocket --help` or `sprocket serve --help` for all options.
 Common server overrides are also available as environment variables:
 
-| Variable              | Purpose                                                   |
-| --------------------- | --------------------------------------------------------- |
-| `SPROCKET_HOST`       | Bind host; defaults to `127.0.0.1`.                       |
-| `SPROCKET_PORT`       | Local server port; defaults to `17731` for installed use. |
-| `SPROCKET_DATA_DIR`   | Directory for pairing, sessions, and workspace state.     |
-| `SPROCKET_STATIC_DIR` | Web build to serve instead of the bundled build.          |
-| `PUBLIC_CONVEX_URL`   | Convex deployment used by the agent runtime.              |
+| Variable                      | Purpose                                                             |
+| ----------------------------- | ------------------------------------------------------------------- |
+| `SPROCKET_HOST`               | Bind host; defaults to `127.0.0.1`.                                 |
+| `SPROCKET_PORT`               | Local server port; defaults to `17731` for installed use.           |
+| `SPROCKET_DATA_DIR`           | Directory for pairing, sessions, and workspace state.               |
+| `SPROCKET_STATIC_DIR`         | Web build to serve instead of the bundled build.                    |
+| `SPROCKET_DESKTOP_EXECUTABLE` | Full path to `sprocket-desktop` when it is not found automatically. |
+| `PUBLIC_CONVEX_URL`           | Convex deployment used by the agent runtime.                        |
 
 ## Development
 
@@ -92,8 +97,6 @@ bun dev
 
 After creating a convex deployment and configuring authkit following the instructions, configure the Convex deployment with the API key for each model provider you want to enable.
 
-Optional Amazon Bedrock fallback for OpenAI and Anthropic: set `AWS_BEARER_TOKEN_BEDROCK`, or `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY`. `AWS_REGION` defaults to `us-east-1` (use a US Bedrock region; Anthropic fallback uses `us.` inference profiles).
-
 This runs Vite at `http://localhost:5173` and the Rust API at `http://127.0.0.1:7731`, with development state kept in `.sprocket-dev` inside the repository.
 To develop against Electron instead, run:
 
@@ -110,17 +113,18 @@ bun run build
 prek run -a
 ```
 
-Create the optimized desktop package and standalone CLI bundle with:
+Create a local Electron installer package with:
 
 ```sh
 bun run build:release
 ```
 
-Release artifacts are written to `apps/desktop/dist/`.
-The Electron desktop package and standalone CLI bundle are separate artifacts.
-The CLI bundle contains only the native `sprocket` executable and the static web files needed by `sprocket --web`; it does not contain Electron.
+Artifacts are written to `apps/desktop/dist/` as `sprocket-desktop-*` (`.AppImage` / `.dmg` / `.exe` depending on the host OS).
+Published installers come from GitHub Releases; the `sprocket` CLI is published separately on npm.
 
 ## Troubleshooting
 
 - If `17731` is already occupied, set `SPROCKET_PORT` before launching.
-- If the CLI cannot locate the desktop executable, set `SPROCKET_DESKTOP_EXECUTABLE` to its full path, or use `sprocket --web` without the desktop application.
+- If `sprocket` cannot find the desktop app, install it from [GitHub Releases](https://github.com/spikonado/sprocket/releases), set `SPROCKET_DESKTOP_EXECUTABLE` to its full path, or use `sprocket --web`.
+- Unsigned macOS and Windows desktop builds may need a Gatekeeper / SmartScreen override the first time you open them.
+- Contact [aarav@spikonado.com](mailto:aarav@spikonado.com) for help.
