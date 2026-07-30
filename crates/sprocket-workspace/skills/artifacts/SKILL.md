@@ -1,6 +1,6 @@
 ---
 name: artifacts
-description: Use to create rendered markdown docs, HTML pages, or self-contained React UI for design previews, interactive mocks, or durable docs that can be iterated on.
+description: Use when creating artifacts (rendered markdown docs, HTML pages, or self-contained React UI) for design previews, interactive mocks, or durable docs that can be iterated on.
 ---
 
 # Artifacts
@@ -10,7 +10,7 @@ Publish rendered content into the conversation with `create_artifact` / `update_
 - Reusing an existing title in the same thread updates that artifact (new version) instead of creating a duplicate.
 - `update_artifact` replaces content only (full replacement, not a patch); `title` and `contentType` are fixed at creation.
 
-## React pages (`contentType: "react"`) — default for design docs
+## React UI (`contentType: "react"`): The default for most scenarios
 
 The preview is a sandboxed iframe (`allow-scripts` only) with React 19 and Babel JSX in scope — no bundler, no `import`/`require`, no npm packages, no `localStorage`/`sessionStorage`, no forms, no popups.
 

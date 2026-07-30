@@ -37,26 +37,44 @@ export function buildReactPreviewDocument(source: string): string {
 		`<style>
   html, body, #root { margin: 0; min-height: 100%; }
   body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+  #artifact-error { margin: 16px; padding: 12px; border: 1px solid #f87171; border-radius: 8px; color: #b91c1c; font: 13px/1.5 ui-monospace, monospace; white-space: pre-wrap; }
 </style>
 <script src="https://unpkg.com/@babel/standalone@7.26.5/babel.min.js"></script>
+<script>
+window.addEventListener('error', (event) => {
+  const root = document.getElementById('root');
+  if (!root || root.hasChildNodes()) return;
+  const el = document.createElement('div');
+  el.id = 'artifact-error';
+  el.textContent = 'Artifact failed to render: ' + (event.message || 'unknown error');
+  root.appendChild(el);
+});
+</script>
 `,
 		`<div id="root"></div>
 <script type="module">
 import * as React from "https://esm.sh/react@19.1.0";
 import { createRoot } from "https://esm.sh/react-dom@19.1.0/client";
-window.__artifactRuntime = { React, createRoot };
+window.React = React;
+window.createRoot = createRoot;
+window.exports = {};
+window.require = (name) => {
+  if (name === 'react') return React;
+  if (name === 'react-dom' || name === 'react-dom/client') return { createRoot };
+  if (name === 'react/jsx-runtime')
+    return { jsx: React.createElement, jsxs: React.createElement, Fragment: React.Fragment };
+  throw new Error('Artifact previews cannot import "' + name + '"');
+};
 </script>
-<script type="text/babel" data-presets="react">
-const { React, createRoot } = window.__artifactRuntime;
-delete window.__artifactRuntime;
-
+<script type="text/babel" data-presets="react" data-plugins="transform-modules-commonjs">
 ${body}
 
 const __root = document.getElementById('root');
-if (typeof App === 'undefined') {
+const __App = typeof App !== 'undefined' ? App : exports.default;
+if (!__App) {
   __root.textContent = 'React artifact must define a function/component named App.';
 } else {
-  createRoot(__root).render(React.createElement(App));
+  window.createRoot(__root).render(window.React.createElement(__App));
 }
 </script>`
 	);
