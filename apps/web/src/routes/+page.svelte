@@ -26,6 +26,9 @@
 	import SettingsSidebar, { type SettingsPage } from '$lib/components/home/settings-sidebar.svelte';
 	import SettingsUsage from '$lib/components/home/settings-usage.svelte';
 	import ThreadTranscript from '$lib/components/home/thread-transcript.svelte';
+	import ArtifactPanel from '$lib/components/home/artifact-panel.svelte';
+	import ArtifactDisplay from '$lib/components/home/artifact-display.svelte';
+	import { collectArtifacts } from '$lib/chat/artifacts';
 	import ProjectPicker, { type ProjectSelection } from '$lib/components/home/project-picker.svelte';
 	import ProjectSidebar from '$lib/components/home/project-sidebar.svelte';
 	import Button from '$lib/components/ui/button/button.svelte';
@@ -237,6 +240,9 @@
 	let projectLaunchInFlight = $state(false);
 	let initialProjectLaunchResolved = $state(false);
 	const remoteChangeNotices = new SvelteMap<Id<'threadRecords'>, string>();
+	let artifactPanelOpen = $state(false);
+	let artifactFullscreenKey = $state<string | null>(null);
+	const artifactSelections = new SvelteMap<Id<'threadRecords'>, string | null>();
 	const REMOTE_CHANGE_NOTICE =
 		'A new project was created because this directory’s git remote changed. Earlier threads stay on the previous project.';
 	function getCurrentUserId() {
@@ -562,6 +568,29 @@
 
 	const runState = $derived(currentLatestRunData?.run ?? null);
 	const visibleActions = $derived((currentLatestRunData?.jobs ?? []).slice(-60));
+	const threadArtifacts = $derived(collectArtifacts(visibleActions));
+	const selectedArtifactKey = $derived(
+		currentThreadId ? (artifactSelections.get(currentThreadId) ?? null) : null
+	);
+	const fullscreenArtifact = $derived(
+		threadArtifacts.find((artifact) => artifact.key === artifactFullscreenKey) ?? null
+	);
+	// New artifacts open the panel while their run is live; loads and thread
+	// switches leave it alone.
+	let seenArtifactKeys = new SvelteSet<string>();
+	$effect(() => {
+		const latest = threadArtifacts.at(-1);
+		if (!latest || !isRunning) {
+			seenArtifactKeys = new SvelteSet(threadArtifacts.map((artifact) => artifact.key));
+			return;
+		}
+		if (seenArtifactKeys.has(latest.key)) return;
+		seenArtifactKeys.add(latest.key);
+		if (currentThreadId) {
+			artifactSelections.set(currentThreadId, latest.key);
+		}
+		artifactPanelOpen = true;
+	});
 	const currentComposerScope = $derived(getComposerScope(currentThreadId, currentProjectId));
 	const estimatedServerNow = $derived(
 		latestRunServerClock && latestRunServerClock.runId === (runState?._id ?? null)
@@ -1902,7 +1931,7 @@
 		/>
 	</div>
 {:else}
-	<div class="h-screen overflow-hidden">
+	<div class="relative h-screen overflow-hidden">
 		<div class="app-workspace-shell grid h-screen grid-cols-[292px_minmax(0,1fr)] overflow-hidden">
 			{#if settingsOpen}
 				<SettingsSidebar
@@ -2006,7 +2035,44 @@
 					/>
 				{/if}
 			</main>
+
+			{#if !settingsOpen && artifactPanelOpen}
+				<ArtifactPanel
+					artifacts={threadArtifacts}
+					selectedKey={selectedArtifactKey}
+					onSelect={(key) => {
+						if (currentThreadId) {
+							artifactSelections.set(currentThreadId, key);
+						}
+					}}
+					onBack={() => {
+						if (currentThreadId) {
+							artifactSelections.set(currentThreadId, null);
+						}
+					}}
+					onExpand={(key) => {
+						artifactFullscreenKey = key;
+					}}
+					onClose={() => {
+						artifactPanelOpen = false;
+					}}
+				/>
+			{/if}
 		</div>
+
+		{#if fullscreenArtifact}
+			<div class="bg-background/95 absolute inset-0 z-50 p-4">
+				<ArtifactDisplay
+					title={fullscreenArtifact.title}
+					artifactType={fullscreenArtifact.artifactType}
+					content={fullscreenArtifact.content}
+					variant="full"
+					onBack={() => {
+						artifactFullscreenKey = null;
+					}}
+				/>
+			</div>
+		{/if}
 
 		{#if desktopApi && projectPickerOpen}
 			<ProjectPicker

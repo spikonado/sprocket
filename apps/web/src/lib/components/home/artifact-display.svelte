@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ChevronRight, Copy, Check, Code2, Eye } from '@lucide/svelte';
+	import { ArrowLeft, Check, Code2, Copy, Eye, Maximize2 } from '@lucide/svelte';
 	import ChatMarkdown from '$lib/components/chat-markdown.svelte';
 	import type { ArtifactType } from '$convex/lib/validators';
 	import { buildArtifactPreviewDocument } from '$lib/chat/artifact-preview';
@@ -8,20 +8,17 @@
 		title: string;
 		artifactType: ArtifactType;
 		content: string;
+		variant?: 'card' | 'full';
+		onExpand?: () => void;
+		onBack?: () => void;
 	};
 
-	let { title, artifactType, content }: Props = $props();
+	let { title, artifactType, content, variant = 'card', onExpand, onBack }: Props = $props();
 
 	const previewDocument = $derived(buildArtifactPreviewDocument(artifactType, content));
-	// svelte-ignore state_referenced_locally
-	let expanded = $state(artifactType === 'react' || artifactType === 'html');
 	let showSource = $state(false);
 	let copied = $state(false);
 	let copyTimeout: ReturnType<typeof setTimeout> | null = null;
-
-	function toggle() {
-		expanded = !expanded;
-	}
 
 	async function copyContent() {
 		try {
@@ -48,22 +45,27 @@
 	});
 </script>
 
-<div class="bg-card rounded-lg border">
+<div
+	class={variant === 'full'
+		? 'bg-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border'
+		: 'bg-card rounded-lg border'}
+>
 	<div class="flex items-center gap-2 px-3 py-2">
-		<button
-			type="button"
-			class="text-muted-foreground hover:text-foreground flex min-w-0 flex-1 items-center gap-2 text-left text-sm transition"
-			onclick={toggle}
-			aria-expanded={expanded}
-		>
-			<ChevronRight
-				class={`size-3.5 shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
-				aria-hidden="true"
-			/>
-			<span class="text-foreground min-w-0 truncate font-medium">{title}</span>
+		{#if onBack}
+			<button
+				type="button"
+				class="text-muted-foreground hover:text-foreground shrink-0 transition"
+				onclick={onBack}
+				aria-label="Back to artifacts"
+			>
+				<ArrowLeft class="size-4" aria-hidden="true" />
+			</button>
+		{/if}
+		<div class="flex min-w-0 flex-1 items-center gap-2">
+			<span class="text-foreground min-w-0 truncate text-sm font-medium">{title}</span>
 			<span class="text-muted-foreground shrink-0 text-[11px]">{artifactType}</span>
-		</button>
-		{#if previewDocument && expanded}
+		</div>
+		{#if previewDocument}
 			<button
 				type="button"
 				class="text-muted-foreground hover:text-foreground inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-[11px] transition"
@@ -79,20 +81,31 @@
 				{/if}
 			</button>
 		{/if}
+		{#if onExpand}
+			<button
+				type="button"
+				class="text-muted-foreground hover:text-foreground shrink-0 transition"
+				onclick={onExpand}
+				aria-label="Open fullscreen"
+			>
+				<Maximize2 class="size-4" aria-hidden="true" />
+			</button>
+		{/if}
 	</div>
-	{#if expanded}
-		<div class="relative border-t">
+	{#snippet body(frameClass: string)}
+		<div class="relative min-h-0 flex-1 border-t">
 			{#if previewDocument && !showSource}
 				<iframe
 					title={`${title} preview`}
 					srcdoc={previewDocument}
 					sandbox="allow-scripts"
-					class="block h-112 w-full bg-white"
+					class={`block w-full bg-white ${frameClass}`}
 				></iframe>
 			{:else if previewDocument}
-				<pre class="overflow-x-auto p-3 pr-10 text-[13px] leading-6"><code>{content}</code></pre>
+				<pre class="h-full overflow-auto p-3 pr-10 text-[13px] leading-6"><code>{content}</code
+					></pre>
 			{:else}
-				<div class="p-3 pr-10">
+				<div class="h-full overflow-auto p-3 pr-10">
 					<ChatMarkdown {content} className="text-sm text-foreground" />
 				</div>
 			{/if}
@@ -109,5 +122,10 @@
 				{/if}
 			</button>
 		</div>
+	{/snippet}
+	{#if variant === 'full'}
+		{@render body('h-full')}
+	{:else}
+		{@render body('h-64')}
 	{/if}
 </div>
