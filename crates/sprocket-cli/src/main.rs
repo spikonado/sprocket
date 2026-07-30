@@ -94,11 +94,8 @@ fn main() -> anyhow::Result<()> {
                 return Ok(());
             }
 
-            anyhow::bail!(
-                "Sprocket desktop app was not found. Install it alongside the CLI, or set \
-                 {DESKTOP_EXECUTABLE_ENV} to its executable path. Use `sprocket --web` to launch \
-                 the browser app without the desktop app."
-            )
+            let server = ServerConfig::try_parse_from(["sprocket"])?;
+            serve_local(server, false, true, workspace_path)
         }
     }
 }
@@ -221,18 +218,14 @@ async fn open_running_web_app(
 }
 
 fn launch_desktop(workspace_path: Option<&str>) -> anyhow::Result<bool> {
-    let desktop_executable = std::env::var_os(DESKTOP_EXECUTABLE_ENV)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            installed_desktop_candidates()
-                .into_iter()
-                .find(|candidate| candidate.is_file())
-        });
-
-    if let Some(target) = desktop_executable {
-        spawn_desktop(Command::new(&target), workspace_path)
-            .with_context(|| format!("failed to launch {}", target.display()))?;
+    if let Some(target) = std::env::var_os(DESKTOP_EXECUTABLE_ENV).filter(|value| !value.is_empty())
+    {
+        spawn_desktop(Command::new(&target), workspace_path).with_context(|| {
+            format!(
+                "failed to launch desktop app from {DESKTOP_EXECUTABLE_ENV}={}",
+                Path::new(&target).display()
+            )
+        })?;
         return Ok(true);
     }
 
@@ -272,179 +265,11 @@ fn spawn_desktop(mut command: Command, workspace_path: Option<&str>) -> std::io:
     Ok(())
 }
 
-fn installed_desktop_candidates() -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
-    if let Ok(executable) = std::env::current_exe()
-        && let Some(executable_dir) = executable.parent()
-    {
-        candidates.push(executable_dir.join(DESKTOP_EXECUTABLE_NAME));
-
-        #[cfg(target_os = "macos")]
-        candidates.push(executable_dir.join("MacOS/sprocket-desktop"));
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        candidates.push(PathBuf::from("/opt/Sprocket/sprocket-desktop"));
-        candidates.push(PathBuf::from("/opt/sprocket/sprocket-desktop"));
-        if let Some(home) = std::env::var_os("HOME") {
-            let home = PathBuf::from(home);
-            candidates.push(home.join(".local/bin/sprocket-desktop"));
-            candidates.extend(linux_appimage_candidates(&home));
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        if let Some(root) = std::env::var_os("LOCALAPPDATA") {
-            let root = PathBuf::from(root);
-            candidates.push(root.join("Programs/Sprocket/sprocket-desktop.exe"));
-            candidates.push(root.join("Sprocket/sprocket-desktop.exe"));
-        }
-        for root in ["PROGRAMFILES", "PROGRAMFILES(X86)"] {
-            if let Some(root) = std::env::var_os(root) {
-                candidates.push(PathBuf::from(root).join("Sprocket/sprocket-desktop.exe"));
-            }
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        candidates.push(PathBuf::from(
-            "/Applications/Sprocket.app/Contents/MacOS/sprocket-desktop",
-        ));
-        if let Some(home) = std::env::var_os("HOME") {
-            candidates.push(
-                PathBuf::from(home)
-                    .join("Applications/Sprocket.app/Contents/MacOS/sprocket-desktop"),
-            );
-        }
-    }
-
-    candidates
-}
-
 const DESKTOP_EXECUTABLE_NAME: &str = if cfg!(windows) {
     "sprocket-desktop.exe"
 } else {
     "sprocket-desktop"
 };
-
-#[cfg(target_os = "linux")]
-fn linux_appimage_candidates(home: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(home.join("Applications")) else {
-        return Vec::new();
-    };
-    let electron_arch = match std::env::consts::ARCH {
-        "x86_64" => "x64",
-        "aarch64" => "arm64",
-        other => other,
-    };
-    let mut candidates = entries
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| {
-                    is_sprocket_appimage_name(name) && appimage_matches_arch(name, electron_arch)
-                })
-        })
-        .collect::<Vec<_>>();
-    candidates.sort_by(|left, right| {
-        let left_name = left
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("");
-        let right_name = right
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("");
-        // Prefer an exact CLI version match, then newer embedded versions.
-        u8::from(appimage_matches_version(right_name))
-            .cmp(&u8::from(appimage_matches_version(left_name)))
-            .then_with(|| appimage_version_key(right_name).cmp(&appimage_version_key(left_name)))
-            .then_with(|| left_name.cmp(right_name))
-    });
-    candidates
-}
-
-#[cfg(target_os = "linux")]
-fn is_sprocket_appimage_name(name: &str) -> bool {
-    name.ends_with(".AppImage")
-        && (name.starts_with("sprocket-desktop-") || name.starts_with("Sprocket-"))
-}
-
-#[cfg(target_os = "linux")]
-fn appimage_matches_version(name: &str) -> bool {
-    let Some(stem) = name.strip_suffix(".AppImage") else {
-        return false;
-    };
-    let Some(rest) = stem
-        .strip_prefix("sprocket-desktop-")
-        .or_else(|| stem.strip_prefix("Sprocket-"))
-    else {
-        return false;
-    };
-    if rest == VERSION {
-        return true;
-    }
-    rest.strip_prefix(VERSION)
-        .is_some_and(|suffix| suffix.starts_with('-') && !suffix[1..].contains('.'))
-}
-
-#[cfg(target_os = "linux")]
-fn appimage_matches_arch(name: &str, electron_arch: &str) -> bool {
-    let Some(stem) = name.strip_suffix(".AppImage") else {
-        return false;
-    };
-    if stem.ends_with(&format!("-{electron_arch}")) {
-        return true;
-    }
-    // Arch-agnostic names (no -x64/-arm64 suffix) are acceptable on any host.
-    !stem.ends_with("-x64") && !stem.ends_with("-arm64") && !stem.ends_with("-ia32")
-}
-
-#[cfg(target_os = "linux")]
-fn appimage_embedded_version(name: &str) -> Option<&str> {
-    let stem = name.strip_suffix(".AppImage")?;
-    let rest = stem
-        .strip_prefix("sprocket-desktop-")
-        .or_else(|| stem.strip_prefix("Sprocket-"))?;
-    let rest = rest
-        .strip_suffix("-x64")
-        .or_else(|| rest.strip_suffix("-arm64"))
-        .or_else(|| rest.strip_suffix("-ia32"))
-        .unwrap_or(rest);
-    Some(
-        rest.strip_suffix("-linux")
-            .or_else(|| rest.strip_suffix("-mac"))
-            .or_else(|| rest.strip_suffix("-win"))
-            .unwrap_or(rest),
-    )
-}
-
-#[cfg(target_os = "linux")]
-fn appimage_version_key(name: &str) -> (u64, u64, u64, bool, &str) {
-    let Some(version) = appimage_embedded_version(name) else {
-        return (0, 0, 0, false, "");
-    };
-    let (core, prerelease) = match version.split_once('-') {
-        Some((core, prerelease)) => (core, Some(prerelease)),
-        None => (version, None),
-    };
-    let mut parts = core.split('.');
-    let major = parts.next().and_then(|part| part.parse().ok()).unwrap_or(0);
-    let minor = parts.next().and_then(|part| part.parse().ok()).unwrap_or(0);
-    let patch = parts.next().and_then(|part| part.parse().ok()).unwrap_or(0);
-    (
-        major,
-        minor,
-        patch,
-        prerelease.is_none(),
-        prerelease.unwrap_or(""),
-    )
-}
 
 #[cfg(debug_assertions)]
 fn find_dev_desktop_launcher() -> Option<PathBuf> {
@@ -481,103 +306,5 @@ mod tests {
         assert!(!server.web);
         assert!(server.directory.is_none());
         assert!(matches!(server.command, Some(Commands::Serve(_))));
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn discovers_versioned_and_arch_appimages() {
-        let temp =
-            std::env::temp_dir().join(format!("sprocket-appimage-candidates-{}", Uuid::new_v4()));
-        let applications = temp.join("Applications");
-        std::fs::create_dir_all(&applications).unwrap();
-        let host_arch = match std::env::consts::ARCH {
-            "x86_64" => "x64",
-            "aarch64" => "arm64",
-            other => other,
-        };
-        let other_arch = if host_arch == "x64" { "arm64" } else { "x64" };
-        let matching = applications.join(format!(
-            "sprocket-desktop-{VERSION}-linux-{host_arch}.AppImage"
-        ));
-        let wrong_arch = applications.join(format!(
-            "sprocket-desktop-{VERSION}-linux-{other_arch}.AppImage"
-        ));
-        let other_version =
-            applications.join(format!("sprocket-desktop-9.9.9-linux-{host_arch}.AppImage"));
-        let canary_collision = applications.join(format!(
-            "sprocket-desktop-{VERSION}-canary.1-linux-{host_arch}.AppImage"
-        ));
-        for path in [&matching, &wrong_arch, &other_version, &canary_collision] {
-            std::fs::write(path, []).unwrap();
-        }
-
-        let candidates = linux_appimage_candidates(&temp);
-        assert_eq!(candidates, [matching, other_version, canary_collision]);
-        assert!(!candidates.contains(&wrong_arch));
-        assert!(appimage_matches_version(&format!(
-            "sprocket-desktop-{VERSION}-linux-{host_arch}.AppImage"
-        )));
-        assert!(!appimage_matches_version(&format!(
-            "sprocket-desktop-{VERSION}-canary.1-linux-{host_arch}.AppImage"
-        )));
-        assert!(appimage_matches_arch(
-            &format!("sprocket-desktop-{VERSION}-linux-{host_arch}.AppImage"),
-            host_arch
-        ));
-        assert!(!appimage_matches_arch(
-            &format!("sprocket-desktop-{VERSION}-linux-{other_arch}.AppImage"),
-            host_arch
-        ));
-
-        std::fs::remove_dir_all(&temp).unwrap();
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn ignores_wrong_architecture_only_appimages() {
-        let temp = std::env::temp_dir().join(format!(
-            "sprocket-appimage-wrong-arch-only-{}",
-            Uuid::new_v4()
-        ));
-        let applications = temp.join("Applications");
-        std::fs::create_dir_all(&applications).unwrap();
-        let other_arch = match std::env::consts::ARCH {
-            "x86_64" => "arm64",
-            _ => "x64",
-        };
-        std::fs::write(
-            applications.join(format!(
-                "sprocket-desktop-{VERSION}-linux-{other_arch}.AppImage"
-            )),
-            [],
-        )
-        .unwrap();
-
-        assert!(linux_appimage_candidates(&temp).is_empty());
-        std::fs::remove_dir_all(&temp).unwrap();
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn prefers_newer_appimage_when_version_does_not_match() {
-        let temp = std::env::temp_dir().join(format!(
-            "sprocket-appimage-newer-fallback-{}",
-            Uuid::new_v4()
-        ));
-        let applications = temp.join("Applications");
-        std::fs::create_dir_all(&applications).unwrap();
-        let host_arch = match std::env::consts::ARCH {
-            "x86_64" => "x64",
-            "aarch64" => "arm64",
-            other => other,
-        };
-        let older = applications.join(format!("sprocket-desktop-1.0.0-linux-{host_arch}.AppImage"));
-        let newer = applications.join(format!("sprocket-desktop-2.0.0-linux-{host_arch}.AppImage"));
-        for path in [&newer, &older] {
-            std::fs::write(path, []).unwrap();
-        }
-
-        assert_eq!(linux_appimage_candidates(&temp), [newer, older]);
-        std::fs::remove_dir_all(&temp).unwrap();
     }
 }
