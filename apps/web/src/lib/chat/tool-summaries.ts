@@ -23,6 +23,8 @@ export function toolGroupLabel(toolKey: string) {
 			return 'Waiting for Answers';
 		case 'check_docs':
 			return 'Checked Docs';
+		case 'create_artifact':
+			return 'Created Artifacts';
 		case 'exec_command':
 			return 'Ran Commands';
 		case 'get_workspace_instructions':
@@ -31,6 +33,8 @@ export function toolGroupLabel(toolKey: string) {
 			return 'Read Skill';
 		case 'scrape_url':
 			return 'Read Pages';
+		case 'update_artifact':
+			return 'Updated Artifacts';
 		case 'web_search':
 			return 'Searched Web';
 		case 'write_stdin':
@@ -74,6 +78,8 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 				: typeof fields?.path === 'string'
 					? fields.path
 					: 'Docs';
+		case 'create_artifact':
+			return typeof fields?.title === 'string' ? fields.title : 'Artifact';
 		case 'exec_command':
 			return typeof fields?.cmd === 'string'
 				? `${fields.cmd}${describeExecCommandOptions(input)}`
@@ -84,6 +90,8 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 			return typeof fields?.name === 'string' ? `$${fields.name}` : 'Skill';
 		case 'scrape_url':
 			return typeof fields?.url === 'string' ? fields.url : 'Web page';
+		case 'update_artifact':
+			return 'Updated artifact';
 		case 'web_search':
 			return typeof fields?.query === 'string' ? fields.query : 'Web search';
 		case 'write_stdin':

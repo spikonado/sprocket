@@ -1,7 +1,9 @@
 import {
 	BookOpen,
 	CircleQuestionMark,
+	FileCode,
 	FileDiff,
+	FileText,
 	Globe,
 	Hourglass,
 	NotebookPen,
@@ -18,10 +20,12 @@ const TOOL_KIND_ICONS: Record<string, LucideIcon> = {
 	ask_question: CircleQuestionMark,
 	await_question: Hourglass,
 	check_docs: BookOpen,
+	create_artifact: FileCode,
 	exec_command: Terminal,
 	get_workspace_instructions: ScrollText,
 	read_skill: NotebookPen,
 	scrape_url: Globe,
+	update_artifact: FileText,
 	web_search: Search,
 	write_stdin: SquareTerminal
 };

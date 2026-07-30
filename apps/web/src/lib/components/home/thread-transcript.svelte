@@ -12,7 +12,8 @@
 		partitionWorkSectionTools,
 		workSectionTimingAnchor,
 		workSectionTimingIndexes,
-		type AssistantTimelineTool
+		type AssistantTimelineTool,
+		type AssistantTimelineWorkBlock
 	} from '$lib/chat/assistant-timeline';
 	import { toolKindIcon, toolLogIcon } from '$lib/chat/tool-icons';
 	import {
@@ -68,6 +69,19 @@
 		}
 		const distanceToBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
 		stickToBottom = distanceToBottom <= SCROLL_EPSILON_PX;
+	}
+
+	function isArtifactToolGroup(
+		block: AssistantTimelineWorkBlock
+	): block is Extract<AssistantTimelineWorkBlock, { type: 'tool-group' }> {
+		return (
+			block.type === 'tool-group' &&
+			(block.toolKey === 'create_artifact' || block.toolKey === 'update_artifact')
+		);
+	}
+
+	function isVisibleWorkBlock(block: AssistantTimelineWorkBlock): boolean {
+		return !isArtifactToolGroup(block);
 	}
 
 	const userMessageClass =
@@ -290,6 +304,7 @@
 												isStreaming,
 												openSessions
 											)}
+											{@const visibleBlocks = settledBlocks.filter(isVisibleWorkBlock)}
 											{@const workInProgress =
 												isStreaming &&
 												(sectionIndex === sections.length - 1 || runningTools.length > 0)}
@@ -301,18 +316,18 @@
 												runCompletedAt: message.runCompletedAt,
 												priorWorkCompletedAtMs: priorCompletedAtByWorkIndex[workSectionOrder]
 											})}
-											{#if settledBlocks.length > 0 || workInProgress || runningTools.length > 0}
+											{#if visibleBlocks.length > 0 || workInProgress || runningTools.length > 0}
 												<WorkDisclosure
 													inProgress={workInProgress}
 													startedAtMs={timing.startedAtMs}
 													completedAtMs={timing.completedAtMs}
 												>
-													{#each settledBlocks as block, blockIndex (`${block.type}-${block.type === 'tool-group' ? block.tools.map((tool) => tool.callId).join(',') : block.id}-${blockIndex}`)}
+													{#each visibleBlocks as block, blockIndex (`${block.type}-${block.type === 'tool-group' ? block.tools.map((tool) => tool.callId).join(',') : block.id}-${blockIndex}`)}
 														{#if block.type === 'reasoning'}
 															{@const reasoningInProgress =
 																workInProgress &&
 																runningTools.length === 0 &&
-																blockIndex === settledBlocks.length - 1}
+																blockIndex === visibleBlocks.length - 1}
 															<ReasoningDisclosure
 																text={block.text}
 																inProgress={reasoningInProgress}

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { PanelRight } from '@lucide/svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import { useAuth, useMutation, useQuery } from 'convex-svelte';
 	import type { Id } from '$convex/_generated/dataModel';
@@ -26,6 +27,9 @@
 	import SettingsSidebar, { type SettingsPage } from '$lib/components/home/settings-sidebar.svelte';
 	import SettingsUsage from '$lib/components/home/settings-usage.svelte';
 	import ThreadTranscript from '$lib/components/home/thread-transcript.svelte';
+	import ArtifactPanel from '$lib/components/home/artifact-panel.svelte';
+	import ArtifactDisplay from '$lib/components/home/artifact-display.svelte';
+	import type { ArtifactPanelSnapshot } from '$lib/chat/artifacts';
 	import ProjectPicker, { type ProjectSelection } from '$lib/components/home/project-picker.svelte';
 	import ProjectSidebar from '$lib/components/home/project-sidebar.svelte';
 	import Button from '$lib/components/ui/button/button.svelte';
@@ -237,6 +241,7 @@
 	let projectLaunchInFlight = $state(false);
 	let initialProjectLaunchResolved = $state(false);
 	const remoteChangeNotices = new SvelteMap<Id<'threadRecords'>, string>();
+	let artifactFullscreenKey = $state<string | null>(null);
 	const REMOTE_CHANGE_NOTICE =
 		'A new project was created because this directory’s git remote changed. Earlier threads stay on the previous project.';
 	function getCurrentUserId() {
@@ -448,6 +453,10 @@
 	);
 	const liveMessagesQuery = useQuery(api.messages.listLiveForThread, authenticatedThreadQueryArgs);
 	const latestRunQuery = useQuery(api.chat.latestRunForThread, authenticatedThreadQueryArgs);
+	const artifactsQuery = useQuery(
+		api.artifacts.listArtifactsForThread,
+		authenticatedThreadQueryArgs
+	);
 	const pendingAgentQuestionQuery = useQuery(
 		api.agentQuestions.headPendingForThread,
 		authenticatedThreadQueryArgs
@@ -562,6 +571,50 @@
 
 	const runState = $derived(currentLatestRunData?.run ?? null);
 	const visibleActions = $derived((currentLatestRunData?.jobs ?? []).slice(-60));
+	const threadArtifacts = $derived(
+		(artifactsQuery.data ?? []).map((entry) => ({
+			key: entry.artifact._id as string,
+			title: entry.artifact.title,
+			artifactType: entry.artifact.type,
+			content: entry.currentContent
+		}))
+	);
+	// Panel state snapshots survive thread switches; the live thread always has
+	// an entry after the restore effect below runs.
+	const artifactSnapshots = new SvelteMap<Id<'threadRecords'>, ArtifactPanelSnapshot>();
+	let artifactPanel = $state<ArtifactPanelSnapshot>({ open: false, selectedKey: null });
+	let artifactPanelThreadId: Id<'threadRecords'> | null = null;
+
+	$effect(() => {
+		const threadId = currentThreadId;
+		if (threadId === artifactPanelThreadId) return;
+		if (artifactPanelThreadId) {
+			artifactSnapshots.set(artifactPanelThreadId, artifactPanel);
+		}
+		artifactPanelThreadId = threadId;
+		artifactPanel = (threadId && artifactSnapshots.get(threadId)) || {
+			open: false,
+			selectedKey: null
+		};
+	});
+
+	const selectedArtifactKey = $derived(artifactPanel.selectedKey);
+	const fullscreenArtifact = $derived(
+		threadArtifacts.find((artifact) => artifact.key === artifactFullscreenKey) ?? null
+	);
+	// New artifacts open the panel while their run is live; loads and thread
+	// switches leave it alone.
+	let seenArtifactKeys = new SvelteSet<string>();
+	$effect(() => {
+		const latest = threadArtifacts.at(-1);
+		if (!latest || !isRunning) {
+			seenArtifactKeys = new SvelteSet(threadArtifacts.map((artifact) => artifact.key));
+			return;
+		}
+		if (seenArtifactKeys.has(latest.key)) return;
+		seenArtifactKeys.add(latest.key);
+		artifactPanel = { open: true, selectedKey: latest.key };
+	});
 	const currentComposerScope = $derived(getComposerScope(currentThreadId, currentProjectId));
 	const estimatedServerNow = $derived(
 		latestRunServerClock && latestRunServerClock.runId === (runState?._id ?? null)
@@ -1902,8 +1955,12 @@
 		/>
 	</div>
 {:else}
-	<div class="h-screen overflow-hidden">
-		<div class="app-workspace-shell grid h-screen grid-cols-[292px_minmax(0,1fr)] overflow-hidden">
+	<div class="relative h-screen overflow-hidden">
+		<div
+			class="app-workspace-shell grid h-screen overflow-hidden {settingsOpen || !artifactPanel.open
+				? 'grid-cols-[292px_minmax(0,1fr)]'
+				: 'grid-cols-[292px_minmax(0,1fr)_26rem]'}"
+		>
 			{#if settingsOpen}
 				<SettingsSidebar
 					activePage={settingsPage}
@@ -1946,7 +2003,20 @@
 				/>
 			{/if}
 
-			<main class="flex h-screen min-h-0 min-w-0 flex-col overflow-hidden">
+			<main class="relative flex h-screen min-h-0 min-w-0 flex-col overflow-hidden">
+				{#if !settingsOpen}
+					<button
+						type="button"
+						class="text-muted-foreground hover:text-foreground hover:bg-muted absolute top-3 right-3 z-100 inline-flex items-center justify-center rounded-md p-2 transition"
+						onclick={() => {
+							artifactPanel = { ...artifactPanel, open: !artifactPanel.open };
+						}}
+						aria-label={artifactPanel.open ? 'Close artifacts panel' : 'Open artifacts panel'}
+						aria-pressed={artifactPanel.open}
+					>
+						<PanelRight class="size-4" aria-hidden="true" />
+					</button>
+				{/if}
 				{#if settingsOpen}
 					{#if settingsPage === 'archived'}
 						<SettingsArchived
@@ -2006,7 +2076,40 @@
 					/>
 				{/if}
 			</main>
+
+			{#if !settingsOpen && artifactPanel.open}
+				<ArtifactPanel
+					artifacts={threadArtifacts}
+					selectedKey={selectedArtifactKey}
+					onSelect={(key) => {
+						artifactPanel = { ...artifactPanel, selectedKey: key };
+					}}
+					onBack={() => {
+						artifactPanel = { ...artifactPanel, selectedKey: null };
+					}}
+					onExpand={(key) => {
+						artifactFullscreenKey = key;
+					}}
+					onClose={() => {
+						artifactPanel = { ...artifactPanel, open: false };
+					}}
+				/>
+			{/if}
 		</div>
+
+		{#if fullscreenArtifact}
+			<div class="bg-background/95 fixed inset-0 z-100 flex flex-col p-4">
+				<ArtifactDisplay
+					title={fullscreenArtifact.title}
+					artifactType={fullscreenArtifact.artifactType}
+					content={fullscreenArtifact.content}
+					variant="full"
+					onBack={() => {
+						artifactFullscreenKey = null;
+					}}
+				/>
+			</div>
+		{/if}
 
 		{#if desktopApi && projectPickerOpen}
 			<ProjectPicker

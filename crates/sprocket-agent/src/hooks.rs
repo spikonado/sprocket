@@ -8,9 +8,11 @@ pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
     "apply_patch",
     "ask_question",
     "await_question",
+    "create_artifact",
     "exec_command",
     "read_skill",
     "scrape_url",
+    "update_artifact",
     "web_search",
     "write_stdin",
 ];
