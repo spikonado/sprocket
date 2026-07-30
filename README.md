@@ -10,15 +10,21 @@ Sprocket is currently a lightweight coding agent that writes high-quality code, 
 
 ## Using Sprocket
 
+> [!NOTE]
+> You can run Sprocket using any of the ways defined below with no impact on Sprocket's capabilities or performance.
+> The desktop app may take more RAM than using Sprocket through your browser.
+
 ### Run without installing
 
 ```sh
-npx @spikonado/sprocket --web
+npx @spikonado/sprocket
 ```
+
+The above runs Sprocket through your browser unless you have the desktop app installed.
 
 ### Desktop App
 
-Install `sprocket-desktop` for your OS from the latest [GitHub Release](https://github.com/spikonado/sprocket/releases) and run it.
+Install it for your OS from the latest [GitHub Release Artifacts](https://github.com/spikonado/sprocket/releases) and run it.
 
 ### CLI
 
@@ -27,7 +33,7 @@ npm i -g @spikonado/sprocket
 sprocket
 ```
 
-The CLI by default launches the desktop app if it's installed, and falls back to opening a tab in your browser.
+The above runs Sprocket through your browser unless you have the desktop app installed.
 
 To always open a tab in your browser when using Sprocket, use the `--web` flag:
 

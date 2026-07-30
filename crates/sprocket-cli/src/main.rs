@@ -94,6 +94,10 @@ fn main() -> anyhow::Result<()> {
                 return Ok(());
             }
 
+            eprintln!(
+                "The desktop app is not installed on this system, running Sprocket in the browser instead.\n\
+                 Note: This has no impact on Sprocket's capabilities or performance."
+            );
             let server = ServerConfig::try_parse_from(["sprocket"])?;
             serve_local(server, false, true, workspace_path)
         }
