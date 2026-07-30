@@ -1956,7 +1956,11 @@
 	</div>
 {:else}
 	<div class="relative h-screen overflow-hidden">
-		<div class="app-workspace-shell grid h-screen grid-cols-[292px_minmax(0,1fr)] overflow-hidden">
+		<div
+			class="app-workspace-shell grid h-screen overflow-hidden {settingsOpen || !artifactPanel.open
+				? 'grid-cols-[292px_minmax(0,1fr)]'
+				: 'grid-cols-[292px_minmax(0,1fr)_26rem]'}"
+		>
 			{#if settingsOpen}
 				<SettingsSidebar
 					activePage={settingsPage}
@@ -2003,7 +2007,7 @@
 				{#if !settingsOpen}
 					<button
 						type="button"
-						class="text-muted-foreground hover:text-foreground absolute top-3 right-3 z-40 transition"
+						class="text-muted-foreground hover:text-foreground hover:bg-muted absolute top-3 right-3 z-100 inline-flex items-center justify-center rounded-md p-2 transition"
 						onclick={() => {
 							artifactPanel = { ...artifactPanel, open: !artifactPanel.open };
 						}}
@@ -2094,7 +2098,7 @@
 		</div>
 
 		{#if fullscreenArtifact}
-			<div class="bg-background/95 absolute inset-0 z-50 p-4">
+			<div class="bg-background/95 fixed inset-0 z-100 flex flex-col p-4">
 				<ArtifactDisplay
 					title={fullscreenArtifact.title}
 					artifactType={fullscreenArtifact.artifactType}
