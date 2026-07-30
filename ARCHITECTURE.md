@@ -1,8 +1,9 @@
 # Sprocket Architecture
 
-Sprocket is a local-first agentic development environment for robotics. Its web
-interface and durable conversation state are cloud-connected, while filesystem
-access and command execution stay on the user's machine.
+Sprocket is an agentic platform for streamlining hardware and software
+development. Its web interface and durable conversation state are
+cloud-connected, while filesystem access and command execution stay on the
+user's machine.
 
 This document describes the stable system boundaries and data flows. User setup
 belongs in [README.md](README.md); crate-specific implementation notes live in
