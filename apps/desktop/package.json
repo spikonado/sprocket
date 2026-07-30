@@ -3,19 +3,21 @@
 	"version": "0.0.0",
 	"private": true,
 	"license": "Apache-2.0",
+	"author": "Spikonado",
+	"description": "Sprocket desktop application",
 	"type": "module",
 	"main": "./main.mjs",
 	"desktopName": "com.spikonado.sprocket.desktop",
 	"scripts": {
 		"dev": "cargo build -q -p sprocket-cli && node ./launch.cjs",
 		"build": "cargo build -p sprocket-cli",
-		"build:release": "cargo build --release -p sprocket-cli && electron-builder"
+		"build:release": "cargo build --release -p sprocket-cli && electron-builder --publish never"
 	},
 	"build": {
 		"appId": "com.spikonado.sprocket",
 		"productName": "Sprocket",
 		"executableName": "sprocket-desktop",
-		"icon": "../web/static/favicon.png",
+		"icon": "build/icon.png",
 		"directories": {
 			"output": "dist"
 		},

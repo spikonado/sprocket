@@ -110,7 +110,7 @@ jobs:
         shell: bash
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: bunx electron-builder ${{ matrix.electron_args }}
+        run: bunx electron-builder ${{ matrix.electron_args }} --publish never
       - uses: actions/upload-artifact@v7
         with:
           name: desktop-${{ matrix.id }}
