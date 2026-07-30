@@ -24,7 +24,7 @@ const VERSION: &str = match option_env!("SPROCKET_VERSION") {
 #[derive(Debug, Parser)]
 #[command(
     name = "sprocket",
-    about = "Sprocket robotics development platform",
+    about = "Agentic platform for streamlining hardware and software development",
     version = VERSION,
     arg_required_else_help = false
 )]
