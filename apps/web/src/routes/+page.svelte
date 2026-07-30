@@ -29,7 +29,7 @@
 	import ThreadTranscript from '$lib/components/home/thread-transcript.svelte';
 	import ArtifactPanel from '$lib/components/home/artifact-panel.svelte';
 	import ArtifactDisplay from '$lib/components/home/artifact-display.svelte';
-	import { collectArtifacts } from '$lib/chat/artifacts';
+	import type { ArtifactPanelSnapshot } from '$lib/chat/artifacts';
 	import ProjectPicker, { type ProjectSelection } from '$lib/components/home/project-picker.svelte';
 	import ProjectSidebar from '$lib/components/home/project-sidebar.svelte';
 	import Button from '$lib/components/ui/button/button.svelte';
@@ -241,9 +241,7 @@
 	let projectLaunchInFlight = $state(false);
 	let initialProjectLaunchResolved = $state(false);
 	const remoteChangeNotices = new SvelteMap<Id<'threadRecords'>, string>();
-	let artifactPanelOpen = $state(false);
 	let artifactFullscreenKey = $state<string | null>(null);
-	const artifactSelections = new SvelteMap<Id<'threadRecords'>, string | null>();
 	const REMOTE_CHANGE_NOTICE =
 		'A new project was created because this directory’s git remote changed. Earlier threads stay on the previous project.';
 	function getCurrentUserId() {
@@ -455,6 +453,10 @@
 	);
 	const liveMessagesQuery = useQuery(api.messages.listLiveForThread, authenticatedThreadQueryArgs);
 	const latestRunQuery = useQuery(api.chat.latestRunForThread, authenticatedThreadQueryArgs);
+	const artifactsQuery = useQuery(
+		api.artifacts.listArtifactsForThread,
+		authenticatedThreadQueryArgs
+	);
 	const pendingAgentQuestionQuery = useQuery(
 		api.agentQuestions.headPendingForThread,
 		authenticatedThreadQueryArgs
@@ -569,10 +571,34 @@
 
 	const runState = $derived(currentLatestRunData?.run ?? null);
 	const visibleActions = $derived((currentLatestRunData?.jobs ?? []).slice(-60));
-	const threadArtifacts = $derived(collectArtifacts(visibleActions));
-	const selectedArtifactKey = $derived(
-		currentThreadId ? (artifactSelections.get(currentThreadId) ?? null) : null
+	const threadArtifacts = $derived(
+		(artifactsQuery.data ?? []).map((entry) => ({
+			key: entry.artifact._id as string,
+			title: entry.artifact.title,
+			artifactType: entry.artifact.type,
+			content: entry.currentContent
+		}))
 	);
+	// Panel state snapshots survive thread switches; the live thread always has
+	// an entry after the restore effect below runs.
+	const artifactSnapshots = new SvelteMap<Id<'threadRecords'>, ArtifactPanelSnapshot>();
+	let artifactPanel = $state<ArtifactPanelSnapshot>({ open: false, selectedKey: null });
+	let artifactPanelThreadId: Id<'threadRecords'> | null = null;
+
+	$effect(() => {
+		const threadId = currentThreadId;
+		if (threadId === artifactPanelThreadId) return;
+		if (artifactPanelThreadId) {
+			artifactSnapshots.set(artifactPanelThreadId, artifactPanel);
+		}
+		artifactPanelThreadId = threadId;
+		artifactPanel = (threadId && artifactSnapshots.get(threadId)) || {
+			open: false,
+			selectedKey: null
+		};
+	});
+
+	const selectedArtifactKey = $derived(artifactPanel.selectedKey);
 	const fullscreenArtifact = $derived(
 		threadArtifacts.find((artifact) => artifact.key === artifactFullscreenKey) ?? null
 	);
@@ -587,10 +613,7 @@
 		}
 		if (seenArtifactKeys.has(latest.key)) return;
 		seenArtifactKeys.add(latest.key);
-		if (currentThreadId) {
-			artifactSelections.set(currentThreadId, latest.key);
-		}
-		artifactPanelOpen = true;
+		artifactPanel = { open: true, selectedKey: latest.key };
 	});
 	const currentComposerScope = $derived(getComposerScope(currentThreadId, currentProjectId));
 	const estimatedServerNow = $derived(
@@ -1980,19 +2003,14 @@
 				{#if !settingsOpen}
 					<button
 						type="button"
-						class="bg-card text-muted-foreground hover:text-foreground absolute top-3 right-3 z-40 inline-flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-xs transition"
+						class="text-muted-foreground hover:text-foreground absolute top-3 right-3 z-40 transition"
 						onclick={() => {
-							artifactPanelOpen = !artifactPanelOpen;
+							artifactPanel = { ...artifactPanel, open: !artifactPanel.open };
 						}}
-						aria-label={artifactPanelOpen ? 'Close artifacts panel' : 'Open artifacts panel'}
-						aria-pressed={artifactPanelOpen}
+						aria-label={artifactPanel.open ? 'Close artifacts panel' : 'Open artifacts panel'}
+						aria-pressed={artifactPanel.open}
 					>
 						<PanelRight class="size-4" aria-hidden="true" />
-						{#if threadArtifacts.length > 0}
-							<span class="bg-muted rounded px-1 text-[10px] leading-4">
-								{threadArtifacts.length}
-							</span>
-						{/if}
 					</button>
 				{/if}
 				{#if settingsOpen}
@@ -2055,25 +2073,21 @@
 				{/if}
 			</main>
 
-			{#if !settingsOpen && artifactPanelOpen}
+			{#if !settingsOpen && artifactPanel.open}
 				<ArtifactPanel
 					artifacts={threadArtifacts}
 					selectedKey={selectedArtifactKey}
 					onSelect={(key) => {
-						if (currentThreadId) {
-							artifactSelections.set(currentThreadId, key);
-						}
+						artifactPanel = { ...artifactPanel, selectedKey: key };
 					}}
 					onBack={() => {
-						if (currentThreadId) {
-							artifactSelections.set(currentThreadId, null);
-						}
+						artifactPanel = { ...artifactPanel, selectedKey: null };
 					}}
 					onExpand={(key) => {
 						artifactFullscreenKey = key;
 					}}
 					onClose={() => {
-						artifactPanelOpen = false;
+						artifactPanel = { ...artifactPanel, open: false };
 					}}
 				/>
 			{/if}
