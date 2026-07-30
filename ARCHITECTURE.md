@@ -205,23 +205,10 @@ in the Rust agent and Convex backend together.
 
 ## Build and deployment
 
-The web app is built as static assets. Installed desktop packages combine those
-assets with Electron and the native Sprocket executable. A standalone CLI
-bundle includes the native executable and the assets needed for browser mode.
+`apps/web` builds to static assets. Those assets are packaged in two separate products:
+
+- **`sprocket-desktop`** (GitHub Releases): Electron app that embeds the static web UI and a native `sprocket` server binary. Users get `.AppImage`/`.dmg`/`.exe` installers.
+- **`sprocket` CLI** (npm `@spikonado/sprocket`): the same native binary plus the static web UI for `sprocket --web`. No Electron.
 
 The local executable receives only public runtime configuration. WorkOS and
 model-provider secrets remain in the Convex deployment.
-
-## Validation
-
-Run checks relevant to a change from the repository root:
-
-```sh
-cargo test
-bun run test
-bun run build
-prek run -a
-```
-
-After changing Convex code, validate the deployment functions from `apps/web/`
-as described in [AGENTS.md](AGENTS.md).

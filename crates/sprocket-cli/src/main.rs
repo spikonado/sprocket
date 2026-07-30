@@ -94,11 +94,12 @@ fn main() -> anyhow::Result<()> {
                 return Ok(());
             }
 
-            anyhow::bail!(
-                "Sprocket desktop app was not found. Install it alongside the CLI, or set \
-                 {DESKTOP_EXECUTABLE_ENV} to its executable path. Use `sprocket --web` to launch \
-                 the browser app without the desktop app."
-            )
+            eprintln!(
+                "The desktop app is not installed on this system, running Sprocket in the browser instead.\n\
+                 Note: This has no impact on Sprocket's capabilities or performance."
+            );
+            let server = ServerConfig::try_parse_from(["sprocket"])?;
+            serve_local(server, false, true, workspace_path)
         }
     }
 }
@@ -221,18 +222,14 @@ async fn open_running_web_app(
 }
 
 fn launch_desktop(workspace_path: Option<&str>) -> anyhow::Result<bool> {
-    let desktop_executable = std::env::var_os(DESKTOP_EXECUTABLE_ENV)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            installed_desktop_candidates()
-                .into_iter()
-                .find(|candidate| candidate.is_file())
-        });
-
-    if let Some(target) = desktop_executable {
-        spawn_desktop(Command::new(&target), workspace_path)
-            .with_context(|| format!("failed to launch {}", target.display()))?;
+    if let Some(target) = std::env::var_os(DESKTOP_EXECUTABLE_ENV).filter(|value| !value.is_empty())
+    {
+        spawn_desktop(Command::new(&target), workspace_path).with_context(|| {
+            format!(
+                "failed to launch desktop app from {DESKTOP_EXECUTABLE_ENV}={}",
+                Path::new(&target).display()
+            )
+        })?;
         return Ok(true);
     }
 
@@ -270,61 +267,6 @@ fn spawn_desktop(mut command: Command, workspace_path: Option<&str>) -> std::io:
         .stderr(Stdio::null())
         .spawn()?;
     Ok(())
-}
-
-fn installed_desktop_candidates() -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
-    if let Ok(executable) = std::env::current_exe()
-        && let Some(executable_dir) = executable.parent()
-    {
-        candidates.push(executable_dir.join(DESKTOP_EXECUTABLE_NAME));
-
-        #[cfg(target_os = "macos")]
-        candidates.push(executable_dir.join("MacOS/sprocket-desktop"));
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        candidates.push(PathBuf::from("/opt/Sprocket/sprocket-desktop"));
-        candidates.push(PathBuf::from("/opt/sprocket/sprocket-desktop"));
-        if let Some(home) = std::env::var_os("HOME") {
-            let home = PathBuf::from(home);
-            candidates.push(home.join(".local/bin/sprocket-desktop"));
-            candidates.push(home.join(format!(
-                "Applications/Sprocket-{}.AppImage",
-                env!("CARGO_PKG_VERSION")
-            )));
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        if let Some(root) = std::env::var_os("LOCALAPPDATA") {
-            let root = PathBuf::from(root);
-            candidates.push(root.join("Programs/Sprocket/sprocket-desktop.exe"));
-            candidates.push(root.join("Sprocket/sprocket-desktop.exe"));
-        }
-        for root in ["PROGRAMFILES", "PROGRAMFILES(X86)"] {
-            if let Some(root) = std::env::var_os(root) {
-                candidates.push(PathBuf::from(root).join("Sprocket/sprocket-desktop.exe"));
-            }
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        candidates.push(PathBuf::from(
-            "/Applications/Sprocket.app/Contents/MacOS/sprocket-desktop",
-        ));
-        if let Some(home) = std::env::var_os("HOME") {
-            candidates.push(
-                PathBuf::from(home)
-                    .join("Applications/Sprocket.app/Contents/MacOS/sprocket-desktop"),
-            );
-        }
-    }
-
-    candidates
 }
 
 const DESKTOP_EXECUTABLE_NAME: &str = if cfg!(windows) {
