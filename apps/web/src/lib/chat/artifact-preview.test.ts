@@ -31,12 +31,16 @@ describe('artifact-preview', () => {
 	});
 
 	it('escapes script breakouts in react artifact source', () => {
-		const doc = buildReactPreviewDocument(
-			'const x = "</script><script>alert(1)</script>"; <!-- <script>'
-		);
+		const doc = buildReactPreviewDocument('const x = "</script><script>alert(1)</script>"; <!--');
 		expect(doc).not.toContain('</script><script>alert(1)</script>');
 		expect(doc).not.toContain('<!--');
-		expect(doc).not.toContain('<script>alert(1)');
+	});
+
+	it('keeps literal script markup and jsx script elements intact', () => {
+		expect(buildReactPreviewDocument('const html = "<script>";')).toContain('"<script>"');
+		expect(buildReactPreviewDocument('const el = <script src="x" />;')).toContain(
+			'<script src="x" />'
+		);
 	});
 
 	it('keeps script tags in html artifacts functional', () => {

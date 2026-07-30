@@ -11,10 +11,7 @@ export function parseArtifactType(value: unknown): ArtifactType {
 
 /** Escape sequences that would break out of the inline <script> holding the react source. */
 function escapeInlineScript(source: string): string {
-	return source
-		.replace(/<\/(script)/gi, '<\\/$1')
-		.replace(/<!--/g, '<\\!--')
-		.replace(/<(script)/gi, '<\\$1');
+	return source.replace(/<\/(script)/gi, '<\\/$1').replace(/<!--/g, '<\\!--');
 }
 
 function previewDocumentShell(headExtra: string, body: string): string {
