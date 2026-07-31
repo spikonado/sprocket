@@ -183,7 +183,8 @@ async function startLocalServer() {
 	const host = serverHost;
 	const dataDir = getLocalDataDir();
 	const serverBinary = getServerBinaryPath();
-	const staticDir = isDevelopment ? undefined : path.join(__dirname, 'web/dist');
+	// extraResources (not asar): the Rust server must read these from disk.
+	const staticDir = isDevelopment ? undefined : path.join(process.resourcesPath, 'web');
 	const fallbackBaseUrl = `http://${host}:${port}`;
 	if (await attachToRunningServer(fallbackBaseUrl, dataDir)) {
 		return serverBaseUrl;
