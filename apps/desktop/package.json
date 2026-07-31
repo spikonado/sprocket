@@ -25,14 +25,7 @@
 			"main.mjs",
 			"preload.cjs",
 			"local-config.mjs",
-			"package.json",
-			{
-				"from": "../web/dist/",
-				"to": "web/dist/",
-				"filter": [
-					"**/*"
-				]
-			}
+			"package.json"
 		],
 		"extraResources": [
 			{
@@ -41,6 +34,13 @@
 				"filter": [
 					"sprocket",
 					"sprocket.exe"
+				]
+			},
+			{
+				"from": "../web/dist/",
+				"to": "web/",
+				"filter": [
+					"**/*"
 				]
 			}
 		],
