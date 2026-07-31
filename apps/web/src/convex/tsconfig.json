@@ -5,11 +5,9 @@
 		"paths": {
 			"@convex/*": ["./*"]
 		},
-		"moduleResolution": "Bundler",
+		"moduleResolution": "bundler",
 		"jsx": "react-jsx",
 		"skipLibCheck": true,
-		"allowSyntheticDefaultImports": true,
-
 		"target": "ESNext",
 		"lib": ["ES2023", "dom"],
 		"types": ["node"],

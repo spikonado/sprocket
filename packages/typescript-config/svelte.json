@@ -2,7 +2,6 @@
 	"compilerOptions": {
 		"allowJs": true,
 		"checkJs": true,
-		"esModuleInterop": true,
 		"forceConsistentCasingInFileNames": true,
 		"resolveJsonModule": true,
 		"skipLibCheck": true,
@@ -13,6 +12,7 @@
 		"target": "esnext",
 		"verbatimModuleSyntax": true,
 		"isolatedModules": true,
-		"lib": ["esnext", "DOM", "DOM.Iterable"]
+		"lib": ["esnext", "DOM", "DOM.Iterable"],
+		"types": ["node"]
 	}
 }
