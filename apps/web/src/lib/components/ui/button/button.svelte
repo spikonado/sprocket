@@ -37,6 +37,8 @@
 </script>
 
 {#if href && !disabled}
+	<!-- href is already a ResolvedPathname from the caller -->
+	<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
 	<a {href} class={sharedClass} {onclick}>
 		{@render children?.()}
 	</a>

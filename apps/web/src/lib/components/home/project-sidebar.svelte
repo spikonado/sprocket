@@ -200,7 +200,7 @@
 		<div class="px-3.5 pb-1">
 			<button type="button" class={sidebarActionButtonClass} onclick={onAddProject}>
 				<FolderOpen class={sidebarActionIconClass} aria-hidden="true" />
-				<span class="truncate">Add project</span>
+				<span class="truncate">Create/Add</span>
 			</button>
 		</div>
 
