@@ -133,4 +133,34 @@ describe('browserAgent', () => {
 		expect(extract).toHaveBeenCalledWith('read the order total');
 		expect(String((extracted as { text: string }).text)).toContain('1,240');
 	});
+
+	it('bounds the actions payload and marks it truncated for a hostile page', async () => {
+		process.env.BROWSERBASE_API_KEY = 'bb_key';
+		process.env.BROWSERBASE_PROJECT_ID = 'project-1';
+		process.env.OPENAI_API_KEY = 'openai_key';
+		// A page that makes Stagehand return thousands of actions.
+		observe.mockResolvedValueOnce(
+			Array.from({ length: 5_000 }, (_, index) => ({
+				selector: `#el-${index}`,
+				description: `Element ${index} with a long description to inflate the payload size`,
+				method: 'click',
+				arguments: []
+			}))
+		);
+		const t = initConvexTest();
+		const run = await startRun(t);
+
+		const observed = await t.action(api.browserAgent.observe, {
+			instruction: 'find everything',
+			runId: run.runId,
+			claimId: run.claimId,
+			executionSecret: run.executionSecret
+		});
+
+		expect(observed.truncated).toBe(true);
+		// The structured array itself is bounded, not just its text mirror.
+		expect(observed.actions.length).toBeLessThanOrEqual(50);
+		expect(JSON.stringify(observed.actions).length).toBeLessThanOrEqual(8_000);
+		expect(observed.text.length).toBeLessThanOrEqual(8_100);
+	});
 });

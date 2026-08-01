@@ -12,6 +12,9 @@ import { vBrowserTaskResult } from '@convex/lib/validators';
 const DEFAULT_MODEL = 'openai/gpt-5.6-luna';
 // Bounds text returned to the main agent so a runaway page can't flood the transcript.
 const MAX_RESULT_CHARS = 8_000;
+// Bound the structured actions array itself, not just its text mirror — a
+// hostile or complex page can make Stagehand return thousands of actions.
+const MAX_OBSERVE_ACTIONS = 50;
 
 const vAction = v.object({
 	selector: v.string(),
@@ -54,6 +57,25 @@ async function activeActor(
 function clip(text: string): { text: string; truncated: boolean } {
 	if (text.length <= MAX_RESULT_CHARS) return { text, truncated: false };
 	return { text: `${text.slice(0, MAX_RESULT_CHARS)}\n[... truncated ...]`, truncated: true };
+}
+
+/** Trim observed actions to a count and serialized-size budget so the result
+ * can't flood the executor/model transcript. truncated is set whenever any
+ * action is dropped. */
+function boundActions<T>(actions: T[]): { actions: T[]; truncated: boolean } {
+	const kept: T[] = [];
+	let size = 0;
+	for (const action of actions) {
+		if (kept.length >= MAX_OBSERVE_ACTIONS) {
+			return { actions: kept, truncated: true };
+		}
+		size += JSON.stringify(action).length;
+		if (size > MAX_RESULT_CHARS) {
+			return { actions: kept, truncated: true };
+		}
+		kept.push(action);
+	}
+	return { actions: kept, truncated: false };
 }
 
 /** Attach a Stagehand to the run's Browserbase session, creating and
@@ -137,8 +159,13 @@ export const observe = action({
 		try {
 			await gotoIfProvided(stagehand, args.startUrl);
 			const actions = await stagehand.observe(args.instruction);
-			const clipped = clip(JSON.stringify(actions));
-			return { actions, text: clipped.text, truncated: clipped.truncated };
+			const bounded = boundActions(actions);
+			const clipped = clip(JSON.stringify(bounded.actions));
+			return {
+				actions: bounded.actions,
+				text: clipped.text,
+				truncated: bounded.truncated || clipped.truncated
+			};
 		} finally {
 			await stagehand.close().catch(() => {});
 		}
