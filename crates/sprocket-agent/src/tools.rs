@@ -30,7 +30,6 @@ const MAX_AGENT_OPTIONS: usize = 4;
 const AGENT_DECIDE_OPTION_ID: &str = "agent_decide";
 const GET_QUESTION_FUNCTION: &str = "agentQuestions:getForExecutor";
 
-use crate::browser::{BrowserSession, PaymentField};
 use crate::convex::RuntimeClient;
 use crate::hooks::ToolCallTracker;
 
@@ -50,7 +49,6 @@ struct AgentToolContext {
     workspace_root: PathBuf,
     tool_call_tracker: ToolCallTracker,
     command_sessions: CommandSessionManager,
-    browser_session: Arc<tokio::sync::Mutex<Option<BrowserSession>>>,
     payment_credentials:
         Arc<tokio::sync::Mutex<std::collections::HashMap<String, PaymentCredential>>>,
 }
@@ -63,7 +61,6 @@ impl AgentToolContext {
         workspace_root: PathBuf,
         tool_call_tracker: ToolCallTracker,
         command_sessions: CommandSessionManager,
-        browser_session: Arc<tokio::sync::Mutex<Option<BrowserSession>>>,
         payment_credentials: Arc<
             tokio::sync::Mutex<std::collections::HashMap<String, PaymentCredential>>,
         >,
@@ -75,7 +72,6 @@ impl AgentToolContext {
             workspace_root,
             tool_call_tracker,
             command_sessions,
-            browser_session,
             payment_credentials,
         }
     }
@@ -115,9 +111,9 @@ pub(crate) struct BrowserObserveTool(AgentToolContext);
 #[derive(Clone)]
 pub(crate) struct BrowserExtractTool(AgentToolContext);
 #[derive(Clone)]
-pub(crate) struct BrowserFillPaymentTool(AgentToolContext);
-#[derive(Clone)]
 pub(crate) struct PurchaseCreateSessionTool(AgentToolContext);
+#[derive(Clone)]
+pub(crate) struct PurchaseCredentialTool(AgentToolContext);
 #[derive(Clone)]
 pub(crate) struct PurchaseStatusTool(AgentToolContext);
 #[derive(Clone)]
@@ -144,8 +140,8 @@ pub(crate) struct AgentToolSet {
     pub(crate) browser_observe: BrowserObserveTool,
     pub(crate) browser_act: BrowserActTool,
     pub(crate) browser_extract: BrowserExtractTool,
-    pub(crate) browser_fill_payment: BrowserFillPaymentTool,
     pub(crate) purchase_create_session: PurchaseCreateSessionTool,
+    pub(crate) purchase_credential: PurchaseCredentialTool,
     pub(crate) purchase_status: PurchaseStatusTool,
     pub(crate) purchase_report_status: PurchaseReportStatusTool,
 }
@@ -159,7 +155,6 @@ pub(crate) fn agent_tools(
     skills: Arc<[WorkspaceSkill]>,
 ) -> AgentToolSet {
     let command_sessions = CommandSessionManager::new(workspace_root.clone());
-    let browser_session = Arc::new(tokio::sync::Mutex::new(None));
     let payment_credentials = Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
     let context = AgentToolContext::new(
         runtime,
@@ -168,7 +163,6 @@ pub(crate) fn agent_tools(
         workspace_root,
         tool_call_tracker,
         command_sessions.clone(),
-        browser_session,
         payment_credentials,
     );
     AgentToolSet {
@@ -189,8 +183,8 @@ pub(crate) fn agent_tools(
         browser_observe: BrowserObserveTool(context.clone()),
         browser_act: BrowserActTool(context.clone()),
         browser_extract: BrowserExtractTool(context.clone()),
-        browser_fill_payment: BrowserFillPaymentTool(context.clone()),
         purchase_create_session: PurchaseCreateSessionTool(context.clone()),
+        purchase_credential: PurchaseCredentialTool(context.clone()),
         purchase_status: PurchaseStatusTool(context.clone()),
         purchase_report_status: PurchaseReportStatusTool(context),
     }
@@ -453,23 +447,6 @@ pub(crate) struct BrowserExtractArgs {
     start_url: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum BrowserPaymentField {
-    Number,
-    Cvv,
-    Expiry,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct BrowserFillPaymentArgs {
-    /// Purchase session identifier.
-    #[serde(rename = "purchaseId")]
-    purchase_id: String,
-    /// Payment field to fill.
-    field: BrowserPaymentField,
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PurchaseItem {
@@ -497,6 +474,13 @@ pub(crate) struct PurchaseCreateSessionArgs {
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct PurchaseStatusArgs {
+    /// Purchase session identifier.
+    #[serde(rename = "purchaseId")]
+    purchase_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct PurchaseCredentialArgs {
     /// Purchase session identifier.
     #[serde(rename = "purchaseId")]
     purchase_id: String,
@@ -1086,7 +1070,7 @@ impl rig::tool::Tool for BrowserActTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Perform a browser action via the sub-agent: a natural-language instruction, or one specific action from browser_observe (validate-then-act). Use for all web browsing and checkout steps except entering payment card details.".to_string()
+        "Perform a browser action via the sub-agent: a natural-language instruction, or one specific action from browser_observe (validate-then-act). Use for all web browsing and checkout steps, including typing payment card details returned by purchase_credential.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -1183,67 +1167,6 @@ impl rig::tool::Tool for BrowserExtractTool {
     }
 }
 
-impl rig::tool::Tool for BrowserFillPaymentTool {
-    const NAME: &'static str = "browser_fill_payment";
-    type Error = AgentToolError;
-    type Args = BrowserFillPaymentArgs;
-    type Output = serde_json::Value;
-
-    fn description(&self) -> String {
-        "Fill one payment field using the credential associated with a purchase session."
-            .to_string()
-    }
-
-    fn parameters(&self) -> serde_json::Value {
-        json!(schemars::schema_for!(BrowserFillPaymentArgs))
-    }
-
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
-        execute_tool_job(
-            &self.0.runtime,
-            &self.0.run_id,
-            &self.0.claim_id,
-            Self::NAME,
-            &self.0.tool_call_tracker,
-            payload,
-            |cancellation| async {
-                let credential =
-                    poll_payment_credential(&self.0, &args.purchase_id, cancellation.clone())
-                        .await?;
-                let (field, value) = match args.field {
-                    BrowserPaymentField::Number => (PaymentField::Number, credential.token),
-                    BrowserPaymentField::Cvv => (PaymentField::Cvv, credential.dynamic_cvv),
-                    BrowserPaymentField::Expiry => (
-                        PaymentField::Expiry,
-                        // Pass month and 2-digit year separated by NUL so the
-                        // driver can fill either a combined MM/YY field or
-                        // split month/year fields. Never persisted.
-                        format!(
-                            "{:0>2}\u{0}{}",
-                            credential.expiry_month,
-                            &credential.expiry_year
-                                [credential.expiry_year.len().saturating_sub(2)..]
-                        ),
-                    ),
-                };
-                let mut session = self.0.browser_session.lock().await;
-                ensure_browser_session(&self.0, &mut session, cancellation).await?;
-                session
-                    .as_ref()
-                    .expect("browser session initialized")
-                    .fill_payment_field(field, &value)
-                    .await
-                    .map_err(|_| {
-                        AgentToolError::Message("failed to fill the payment field".to_string())
-                    })?;
-                Ok(json!("filled"))
-            },
-        )
-        .await
-    }
-}
-
 impl rig::tool::Tool for PurchaseCreateSessionTool {
     const NAME: &'static str = "purchase_create_session";
     type Error = AgentToolError;
@@ -1265,6 +1188,45 @@ impl rig::tool::Tool for PurchaseCreateSessionTool {
             Self::NAME,
             "payments:createPurchaseSession",
             serde_json::to_value(args).map_err(|e| tool_error(e.into()))?,
+        )
+        .await
+    }
+}
+
+impl rig::tool::Tool for PurchaseCredentialTool {
+    const NAME: &'static str = "purchase_credential";
+    type Error = AgentToolError;
+    type Args = PurchaseCredentialArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Wait for the user to approve the purchase (passkey), then return the one-time payment credential: card token, dynamic CVV, and expiry. Type these into the checkout's payment fields with browser_act."
+            .to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(PurchaseCredentialArgs))
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
+        execute_tool_job(
+            &self.0.runtime,
+            &self.0.run_id,
+            &self.0.claim_id,
+            Self::NAME,
+            &self.0.tool_call_tracker,
+            payload,
+            |cancellation| async {
+                let credential =
+                    poll_payment_credential(&self.0, &args.purchase_id, cancellation).await?;
+                Ok(json!({
+                    "token": credential.token,
+                    "dynamicCvv": credential.dynamic_cvv,
+                    "expiryMonth": credential.expiry_month,
+                    "expiryYear": credential.expiry_year,
+                }))
+            },
         )
         .await
     }
@@ -1560,51 +1522,6 @@ fn question_result_from_snapshot(
             "Unexpected question status '{other}'"
         ))),
     }
-}
-
-async fn ensure_browser_session(
-    context: &AgentToolContext,
-    session: &mut Option<BrowserSession>,
-    cancellation: WorkspaceCancellation,
-) -> Result<(), AgentToolError> {
-    if session.is_some() {
-        return Ok(());
-    }
-
-    let has_connect_override = std::env::var("SPROCKET_BROWSER_CONNECT_URL")
-        .ok()
-        .is_some_and(|value| !value.trim().is_empty());
-    let use_local = std::env::var("SPROCKET_BROWSER_LOCAL").as_deref() == Ok("1");
-    let connect_url = if has_connect_override || use_local {
-        String::new()
-    } else {
-        let mut args = BTreeMap::new();
-        args.insert("runId".to_string(), context.run_id.clone().into());
-        args.insert("claimId".to_string(), context.claim_id.clone().into());
-        let response = run_convex_tool_action(
-            &context.runtime,
-            cancellation,
-            "browserSessions:start",
-            args,
-        )
-        .await?;
-        response
-            .get("connectUrl")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| {
-                AgentToolError::Message(
-                    "browserSessions:start did not return a connectUrl".to_string(),
-                )
-            })?
-            .to_string()
-    };
-
-    *session = Some(
-        BrowserSession::connect(&connect_url)
-            .await
-            .map_err(tool_error)?,
-    );
-    Ok(())
 }
 
 async fn purchase_action_job(

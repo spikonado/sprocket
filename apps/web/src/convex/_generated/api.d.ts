@@ -15,7 +15,6 @@ import type * as authBootstrap from "../authBootstrap.js";
 import type * as billing from "../billing.js";
 import type * as browserAgent from "../browserAgent.js";
 import type * as browserSessions from "../browserSessions.js";
-import type * as browserSessionsNode from "../browserSessionsNode.js";
 import type * as chat from "../chat.js";
 import type * as completion from "../completion.js";
 import type * as crons from "../crons.js";
@@ -68,7 +67,6 @@ declare const fullApi: ApiFromModules<{
   billing: typeof billing;
   browserAgent: typeof browserAgent;
   browserSessions: typeof browserSessions;
-  browserSessionsNode: typeof browserSessionsNode;
   chat: typeof chat;
   completion: typeof completion;
   crons: typeof crons;

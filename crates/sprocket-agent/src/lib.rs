@@ -1,4 +1,3 @@
-pub mod browser;
 mod compaction;
 mod convex;
 mod hooks;

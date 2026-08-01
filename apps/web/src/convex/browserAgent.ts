@@ -56,8 +56,8 @@ function clip(text: string): { text: string; truncated: boolean } {
 	return { text: `${text.slice(0, MAX_RESULT_CHARS)}\n[... truncated ...]`, truncated: true };
 }
 
-/** Attach a Stagehand to the run's Browserbase session (shared with the
- * executor's fill_payment), creating and persisting it on first use. */
+/** Attach a Stagehand to the run's Browserbase session, creating and
+ * persisting it on first use so all of the run's browser calls share it. */
 async function attachStagehand(
 	ctx: ActionCtx,
 	userId: string,
@@ -82,8 +82,7 @@ async function attachStagehand(
 		await ctx.runMutation(internal.browserSessions.insert, {
 			runId,
 			userId,
-			browserbaseSessionId: stagehand.browserbaseSessionId,
-			liveViewUrl: ''
+			browserbaseSessionId: stagehand.browserbaseSessionId
 		});
 	}
 	return stagehand;

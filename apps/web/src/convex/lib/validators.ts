@@ -78,11 +78,6 @@ export const vReadSkillPayload = v.object({
 	name: v.string()
 });
 
-export const vBrowserFillPaymentPayload = v.object({
-	purchaseId: v.string(),
-	field: v.union(v.literal('number'), v.literal('cvv'), v.literal('expiry'))
-});
-
 export const vBrowserActPayload = v.object({
 	instruction: v.optional(v.string()),
 	action: v.optional(
@@ -152,7 +147,6 @@ export const vExecutorJobPayload = v.union(
 	vWriteStdinPayload,
 	vCreateArtifactPayload,
 	vUpdateArtifactPayload,
-	vBrowserFillPaymentPayload,
 	vBrowserActPayload,
 	vPurchaseCreateSessionPayload,
 	vPurchaseIdPayload,
@@ -242,11 +236,6 @@ export const vPurchaseStatusResult = v.object({
 	description: v.string()
 });
 
-export const vBrowserSessionResult = v.object({
-	connectUrl: v.string(),
-	liveViewUrl: v.string()
-});
-
 export const vBrowserTaskResult = v.object({
 	text: v.string(),
 	truncated: v.boolean()
@@ -322,12 +311,12 @@ export const vExecutorJobKind = v.union(
 	v.literal('apply_patch'),
 	v.literal('ask_question'),
 	v.literal('await_question'),
-	v.literal('browser_fill_payment'),
 	v.literal('browser_observe'),
 	v.literal('browser_act'),
 	v.literal('browser_extract'),
 	v.literal('exec_command'),
 	v.literal('get_workspace_instructions'),
+	v.literal('purchase_credential'),
 	v.literal('purchase_create_session'),
 	v.literal('purchase_report_status'),
 	v.literal('purchase_status'),

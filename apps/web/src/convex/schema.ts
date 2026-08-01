@@ -84,7 +84,6 @@ export default defineSchema({
 		runId: v.id('runs'),
 		userId: v.string(),
 		browserbaseSessionId: v.string(),
-		liveViewUrl: v.string(),
 		startedAt: v.number()
 	}).index('by_run', ['runId'])
 });
