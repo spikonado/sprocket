@@ -91,31 +91,41 @@ export const vBrowserActPayload = v.object({
 	startUrl: v.optional(v.string())
 });
 
-export const vPurchaseItem = v.object({
+export const vMandateSetupPayload = v.object({
+	userEmail: v.optional(v.string()),
+	merchantName: v.optional(v.string()),
+	merchantUrl: v.optional(v.string()),
+	countryCode: v.optional(v.string()),
+	amountCap: v.string(),
+	currency: v.string(),
+	frequency: v.union(
+		v.literal('one_time'),
+		v.literal('weekly'),
+		v.literal('monthly'),
+		v.literal('yearly')
+	),
+	scope: v.union(v.literal('listed'), v.literal('any')),
 	description: v.string(),
-	unitPrice: v.string(),
-	quantity: v.optional(v.number())
+	maxCharges: v.optional(v.number()),
+	validUntil: v.optional(v.string())
 });
 
-export const vPurchaseCreateSessionPayload = v.object({
-	userEmail: v.optional(v.string()),
-	merchantName: v.string(),
-	merchantUrl: v.string(),
-	countryCode: v.string(),
-	totalAmount: v.string(),
+export const vMandateIdPayload = v.object({
+	mandateId: v.string()
+});
+
+export const vMandateChargePayload = v.object({
+	mandateId: v.string(),
+	amount: v.string(),
 	currency: v.string(),
 	description: v.string(),
-	items: v.optional(v.array(vPurchaseItem))
+	reference: v.optional(v.string())
 });
 
-export const vPurchaseIdPayload = v.object({
-	purchaseId: v.string()
-});
-
-export const vPurchaseReportStatusPayload = v.object({
-	purchaseId: v.string(),
+export const vMandateReportPayload = v.object({
+	chargeId: v.string(),
 	outcome: v.union(v.literal('approved'), v.literal('declined')),
-	txnRefId: v.optional(v.string())
+	amountPaid: v.optional(v.string())
 });
 
 export const vAskQuestionOption = v.object({
@@ -148,9 +158,10 @@ export const vExecutorJobPayload = v.union(
 	vCreateArtifactPayload,
 	vUpdateArtifactPayload,
 	vBrowserActPayload,
-	vPurchaseCreateSessionPayload,
-	vPurchaseIdPayload,
-	vPurchaseReportStatusPayload
+	vMandateSetupPayload,
+	vMandateIdPayload,
+	vMandateChargePayload,
+	vMandateReportPayload
 );
 
 export const vApplyPatchResult = v.object({
@@ -201,46 +212,54 @@ export const vWebSearchResult = v.object({
 	)
 });
 
-export const vCreatePurchaseSessionResult = v.object({
-	purchaseId: v.string(),
-	iframeUrl: v.string(),
+export const vMandateSetupResult = v.object({
+	mandateId: v.id('mandates'),
+	approvalUrl: v.string(),
 	expiresAt: v.string()
 });
 
-const vPurchaseCredentialResult = v.object({
+export const vMandateStatusResult = v.object({
+	mandateId: v.id('mandates'),
+	pravaMandateId: v.optional(v.string()),
+	status: v.string(),
+	merchantName: v.optional(v.string()),
+	amountCap: v.string(),
+	remaining: v.optional(v.string()),
+	currency: v.string(),
+	frequency: v.string(),
+	scope: v.string(),
+	approvalUrl: v.optional(v.string()),
+	validUntil: v.optional(v.string()),
+	renewsAt: v.optional(v.string())
+});
+
+export const vMandateListResult = v.object({
+	mandates: v.array(
+		v.object({
+			pravaMandateId: v.string(),
+			status: v.string(),
+			merchantName: v.optional(v.string()),
+			approvedAmount: v.string(),
+			remaining: v.optional(v.string()),
+			currency: v.string(),
+			validUntil: v.optional(v.string()),
+			renewsAt: v.optional(v.string())
+		})
+	)
+});
+
+export const vMandateChargeResult = v.object({
+	chargeId: v.id('mandateCharges'),
+	transactionId: v.string(),
 	token: v.string(),
 	dynamicCvv: v.string(),
 	expiryMonth: v.string(),
 	expiryYear: v.string()
 });
 
-export const vPaymentCredentialResult = v.union(
-	v.object({
-		ready: v.literal(false),
-		status: v.string()
-	}),
-	v.object({
-		ready: v.literal(true),
-		token: v.string(),
-		dynamicCvv: v.string(),
-		expiryMonth: v.string(),
-		expiryYear: v.string(),
-		txnRefId: v.string()
-	})
-);
-
-export const vReportPurchaseStatusResult = v.object({
+export const vMandateReportResult = v.object({
 	reported: v.boolean(),
 	alreadyReported: v.optional(v.boolean())
-});
-
-export const vPurchaseStatusResult = v.object({
-	status: v.string(),
-	merchantName: v.string(),
-	merchantUrl: v.string(),
-	totalAmount: v.string(),
-	currency: v.string(),
-	description: v.string()
 });
 
 export const vBrowserTaskResult = v.object({
@@ -288,10 +307,11 @@ export const vExecutorJobResult = v.union(
 	vScrapeUrlResult,
 	vWebSearchResult,
 	vArtifactResult,
-	vCreatePurchaseSessionResult,
-	vPurchaseCredentialResult,
-	vPurchaseStatusResult,
-	vReportPurchaseStatusResult
+	vMandateSetupResult,
+	vMandateStatusResult,
+	vMandateListResult,
+	vMandateChargeResult,
+	vMandateReportResult
 );
 
 export const vExecutorStatus = v.union(v.literal('disconnected'), v.literal('connected'));
@@ -324,10 +344,11 @@ export const vExecutorJobKind = v.union(
 	v.literal('browser_extract'),
 	v.literal('exec_command'),
 	v.literal('get_workspace_instructions'),
-	v.literal('purchase_create_session'),
-	v.literal('purchase_credential'),
-	v.literal('purchase_report_status'),
-	v.literal('purchase_status'),
+	v.literal('mandate_setup'),
+	v.literal('mandate_status'),
+	v.literal('mandate_list'),
+	v.literal('mandate_charge'),
+	v.literal('mandate_report'),
 	v.literal('read_skill'),
 	v.literal('scrape_url'),
 	v.literal('web_search'),

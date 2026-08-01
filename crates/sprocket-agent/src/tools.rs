@@ -49,8 +49,6 @@ struct AgentToolContext {
     workspace_root: PathBuf,
     tool_call_tracker: ToolCallTracker,
     command_sessions: CommandSessionManager,
-    payment_credentials:
-        Arc<tokio::sync::Mutex<std::collections::HashMap<String, PaymentCredential>>>,
 }
 
 impl AgentToolContext {
@@ -61,9 +59,6 @@ impl AgentToolContext {
         workspace_root: PathBuf,
         tool_call_tracker: ToolCallTracker,
         command_sessions: CommandSessionManager,
-        payment_credentials: Arc<
-            tokio::sync::Mutex<std::collections::HashMap<String, PaymentCredential>>,
-        >,
     ) -> Self {
         Self {
             runtime,
@@ -72,7 +67,6 @@ impl AgentToolContext {
             workspace_root,
             tool_call_tracker,
             command_sessions,
-            payment_credentials,
         }
     }
 }
@@ -111,13 +105,15 @@ pub(crate) struct BrowserObserveTool(AgentToolContext);
 #[derive(Clone)]
 pub(crate) struct BrowserExtractTool(AgentToolContext);
 #[derive(Clone)]
-pub(crate) struct PurchaseCreateSessionTool(AgentToolContext);
+pub(crate) struct MandateSetupTool(AgentToolContext);
 #[derive(Clone)]
-pub(crate) struct PurchaseCredentialTool(AgentToolContext);
+pub(crate) struct MandateStatusTool(AgentToolContext);
 #[derive(Clone)]
-pub(crate) struct PurchaseStatusTool(AgentToolContext);
+pub(crate) struct MandateListTool(AgentToolContext);
 #[derive(Clone)]
-pub(crate) struct PurchaseReportStatusTool(AgentToolContext);
+pub(crate) struct MandateChargeTool(AgentToolContext);
+#[derive(Clone)]
+pub(crate) struct MandateReportTool(AgentToolContext);
 
 #[derive(Clone)]
 pub(crate) struct ReadSkillTool {
@@ -140,10 +136,11 @@ pub(crate) struct AgentToolSet {
     pub(crate) browser_observe: BrowserObserveTool,
     pub(crate) browser_act: BrowserActTool,
     pub(crate) browser_extract: BrowserExtractTool,
-    pub(crate) purchase_create_session: PurchaseCreateSessionTool,
-    pub(crate) purchase_credential: PurchaseCredentialTool,
-    pub(crate) purchase_status: PurchaseStatusTool,
-    pub(crate) purchase_report_status: PurchaseReportStatusTool,
+    pub(crate) mandate_setup: MandateSetupTool,
+    pub(crate) mandate_status: MandateStatusTool,
+    pub(crate) mandate_list: MandateListTool,
+    pub(crate) mandate_charge: MandateChargeTool,
+    pub(crate) mandate_report: MandateReportTool,
 }
 
 pub(crate) fn agent_tools(
@@ -155,7 +152,6 @@ pub(crate) fn agent_tools(
     skills: Arc<[WorkspaceSkill]>,
 ) -> AgentToolSet {
     let command_sessions = CommandSessionManager::new(workspace_root.clone());
-    let payment_credentials = Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
     let context = AgentToolContext::new(
         runtime,
         run_id,
@@ -163,7 +159,6 @@ pub(crate) fn agent_tools(
         workspace_root,
         tool_call_tracker,
         command_sessions.clone(),
-        payment_credentials,
     );
     AgentToolSet {
         apply_patch: ApplyPatchTool(context.clone()),
@@ -183,10 +178,11 @@ pub(crate) fn agent_tools(
         browser_observe: BrowserObserveTool(context.clone()),
         browser_act: BrowserActTool(context.clone()),
         browser_extract: BrowserExtractTool(context.clone()),
-        purchase_create_session: PurchaseCreateSessionTool(context.clone()),
-        purchase_credential: PurchaseCredentialTool(context.clone()),
-        purchase_status: PurchaseStatusTool(context.clone()),
-        purchase_report_status: PurchaseReportStatusTool(context),
+        mandate_setup: MandateSetupTool(context.clone()),
+        mandate_status: MandateStatusTool(context.clone()),
+        mandate_list: MandateListTool(context.clone()),
+        mandate_charge: MandateChargeTool(context.clone()),
+        mandate_report: MandateReportTool(context),
     }
 }
 
@@ -447,53 +443,87 @@ pub(crate) struct BrowserExtractArgs {
     start_url: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct PurchaseItem {
-    description: String,
-    unit_price: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    quantity: Option<u32>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct PurchaseCreateSessionArgs {
-    /// Email the user uses for purchase approvals; optional when one is already on file.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    user_email: Option<String>,
-    merchant_name: String,
-    merchant_url: String,
-    country_code: String,
-    total_amount: String,
-    currency: String,
-    description: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    items: Option<Vec<PurchaseItem>>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct PurchaseIdArgs {
-    /// Purchase session identifier.
-    #[serde(rename = "purchaseId")]
-    purchase_id: String,
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum MandateFrequency {
+    OneTime,
+    Weekly,
+    Monthly,
+    Yearly,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum PurchaseOutcome {
+pub(crate) enum MandateScope {
+    Listed,
+    Any,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MandateSetupArgs {
+    /// Email the user uses for purchase approvals; optional when one is already on file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user_email: Option<String>,
+    /// Merchant to lock this mandate to (required for `listed` scope).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    merchant_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    merchant_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    country_code: Option<String>,
+    /// Per-charge cap as a decimal string, e.g. "120.00".
+    amount_cap: String,
+    currency: String,
+    frequency: MandateFrequency,
+    /// `listed` locks to one merchant; `any` allows any merchant (one-time only).
+    scope: MandateScope,
+    description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_charges: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    valid_until: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct MandateIdArgs {
+    /// Mandate identifier returned by mandate_setup or mandate_status.
+    #[serde(rename = "mandateId")]
+    mandate_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MandateChargeArgs {
+    /// Mandate identifier to charge.
+    #[serde(rename = "mandateId")]
+    mandate_id: String,
+    /// Charge amount as a decimal string, within the mandate's cap.
+    amount: String,
+    currency: String,
+    description: String,
+    /// Idempotency key; reusing it returns the original charge.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reference: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum ChargeOutcome {
     Approved,
     Declined,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct PurchaseReportStatusArgs {
-    /// Purchase session identifier.
-    #[serde(rename = "purchaseId")]
-    purchase_id: String,
-    outcome: PurchaseOutcome,
-    #[serde(rename = "txnRefId", skip_serializing_if = "Option::is_none")]
-    txn_ref_id: Option<String>,
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MandateReportArgs {
+    /// Charge identifier returned by mandate_charge.
+    #[serde(rename = "chargeId")]
+    charge_id: String,
+    outcome: ChargeOutcome,
+    /// Amount actually captured, if known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    amount_paid: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -1063,7 +1093,7 @@ impl rig::tool::Tool for BrowserActTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Perform a browser action via the sub-agent: a natural-language instruction, or one specific action from browser_observe (validate-then-act). Use for all web browsing and checkout steps, including typing payment card details returned by purchase_credential.".to_string()
+        "Perform a browser action via the sub-agent: a natural-language instruction, or one specific action from browser_observe (validate-then-act). Use for all web browsing and checkout steps, including typing the payment credential returned by mandate_charge.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -1160,135 +1190,124 @@ impl rig::tool::Tool for BrowserExtractTool {
     }
 }
 
-impl rig::tool::Tool for PurchaseCreateSessionTool {
-    const NAME: &'static str = "purchase_create_session";
+impl rig::tool::Tool for MandateSetupTool {
+    const NAME: &'static str = "mandate_setup";
     type Error = AgentToolError;
-    type Args = PurchaseCreateSessionArgs;
+    type Args = MandateSetupArgs;
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Create a purchase session and return its identifier, approval iframe URL, and expiry."
+        "Set up a Prava spending mandate the user approves once with a passkey. Returns the approval URL to give the user. Charge later with mandate_charge (no further passkey)."
             .to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
-        json!(schemars::schema_for!(PurchaseCreateSessionArgs))
+        json!(schemars::schema_for!(MandateSetupArgs))
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        purchase_action_job(
+        mandate_action_job(
             &self.0,
             Self::NAME,
-            "payments:createPurchaseSession",
+            "payments:mandateSetup",
             serde_json::to_value(args).map_err(|e| tool_error(e.into()))?,
         )
         .await
     }
 }
 
-impl rig::tool::Tool for PurchaseCredentialTool {
-    const NAME: &'static str = "purchase_credential";
+impl rig::tool::Tool for MandateStatusTool {
+    const NAME: &'static str = "mandate_status";
     type Error = AgentToolError;
-    type Args = PurchaseIdArgs;
+    type Args = MandateIdArgs;
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Wait for the user to approve the purchase (passkey), then return the one-time payment credential: card token, dynamic CVV, and expiry. Type these into the checkout's payment fields with browser_act."
+        "Return a mandate's status, remaining spend, and caps. Pending means the user hasn't approved it yet."
             .to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
-        json!(schemars::schema_for!(PurchaseIdArgs))
+        json!(schemars::schema_for!(MandateIdArgs))
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
-        execute_tool_job(
-            &self.0.runtime,
-            &self.0.run_id,
-            &self.0.claim_id,
-            Self::NAME,
-            &self.0.tool_call_tracker,
-            payload,
-            |cancellation| async {
-                let credential =
-                    poll_payment_credential(&self.0, &args.purchase_id, cancellation).await?;
-                Ok(json!({
-                    "token": credential.token,
-                    "dynamicCvv": credential.dynamic_cvv,
-                    "expiryMonth": credential.expiry_month,
-                    "expiryYear": credential.expiry_year,
-                }))
-            },
-        )
-        .await
-    }
-}
-
-impl rig::tool::Tool for PurchaseStatusTool {
-    const NAME: &'static str = "purchase_status";
-    type Error = AgentToolError;
-    type Args = PurchaseIdArgs;
-    type Output = serde_json::Value;
-
-    fn description(&self) -> String {
-        "Return the current status and summary of a purchase session.".to_string()
-    }
-
-    fn parameters(&self) -> serde_json::Value {
-        json!(schemars::schema_for!(PurchaseIdArgs))
-    }
-
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        purchase_action_job(
+        mandate_action_job(
             &self.0,
             Self::NAME,
-            "payments:getPurchaseStatus",
+            "payments:mandateStatus",
             serde_json::to_value(args).map_err(|e| tool_error(e.into()))?,
         )
         .await
     }
 }
 
-impl rig::tool::Tool for PurchaseReportStatusTool {
-    const NAME: &'static str = "purchase_report_status";
+impl rig::tool::Tool for MandateListTool {
+    const NAME: &'static str = "mandate_list";
     type Error = AgentToolError;
-    type Args = PurchaseReportStatusArgs;
+    type Args = serde_json::Value;
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Report an approved or declined purchase outcome.".to_string()
+        "List the user's standing (pre-authorized) mandates with caps and remaining spend. Use to discover an existing mandate before proposing a new one."
+            .to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
-        json!(schemars::schema_for!(PurchaseReportStatusArgs))
+        json!({ "type": "object", "properties": {}, "additionalProperties": false })
+    }
+
+    async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
+        mandate_action_job(&self.0, Self::NAME, "payments:mandateList", json!({})).await
+    }
+}
+
+impl rig::tool::Tool for MandateChargeTool {
+    const NAME: &'static str = "mandate_charge";
+    type Error = AgentToolError;
+    type Args = MandateChargeArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Charge an active mandate (no passkey needed) and return the single-use payment credential: token, dynamic CVV, and expiry. Type these into the merchant checkout with browser_act, then settle with mandate_report."
+            .to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(MandateChargeArgs))
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        // Reuse the credential's transaction reference when we already hold
-        // it, so a report never re-fetches from Prava.
-        let args = if args.txn_ref_id.is_none() {
-            let cached = self
-                .0
-                .payment_credentials
-                .lock()
-                .await
-                .get(&args.purchase_id)
-                .map(|credential| credential.txn_ref_id.clone());
-            match cached {
-                Some(txn_ref_id) => PurchaseReportStatusArgs {
-                    txn_ref_id: Some(txn_ref_id),
-                    ..args
-                },
-                None => args,
-            }
-        } else {
-            args
-        };
-        purchase_action_job(
+        mandate_action_job(
             &self.0,
             Self::NAME,
-            "payments:reportStatus",
+            "payments:mandateCharge",
+            serde_json::to_value(args).map_err(|e| tool_error(e.into()))?,
+        )
+        .await
+    }
+}
+
+impl rig::tool::Tool for MandateReportTool {
+    const NAME: &'static str = "mandate_report";
+    type Error = AgentToolError;
+    type Args = MandateReportArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Report an approved or declined outcome for a charge, settling it with the card network."
+            .to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(MandateReportArgs))
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        mandate_action_job(
+            &self.0,
+            Self::NAME,
+            "payments:mandateReport",
             serde_json::to_value(args).map_err(|e| tool_error(e.into()))?,
         )
         .await
@@ -1517,7 +1536,7 @@ fn question_result_from_snapshot(
     }
 }
 
-async fn purchase_action_job(
+async fn mandate_action_job(
     context: &AgentToolContext,
     kind: &str,
     function: &'static str,
@@ -1537,86 +1556,6 @@ async fn purchase_action_job(
         },
     )
     .await
-}
-
-#[derive(Clone)]
-struct PaymentCredential {
-    token: String,
-    dynamic_cvv: String,
-    expiry_month: String,
-    expiry_year: String,
-    txn_ref_id: String,
-}
-
-/// Prava purchase sessions live ~15 minutes and first-time passkey enrollment
-/// can take a few minutes, so poll well past that window while still
-/// failing fast once Prava reports a terminal state.
-async fn poll_payment_credential(
-    context: &AgentToolContext,
-    purchase_id: &str,
-    cancellation: WorkspaceCancellation,
-) -> Result<PaymentCredential, AgentToolError> {
-    if let Some(credential) = context.payment_credentials.lock().await.get(purchase_id) {
-        return Ok(credential.clone());
-    }
-
-    // ~14 minutes of polling at 2s intervals, with cancellation.
-    for _ in 0..420 {
-        let mut args = BTreeMap::new();
-        args.insert("runId".to_string(), context.run_id.clone().into());
-        args.insert("claimId".to_string(), context.claim_id.clone().into());
-        args.insert("purchaseId".to_string(), purchase_id.to_string().into());
-        let response = run_convex_tool_action(
-            &context.runtime,
-            cancellation.clone(),
-            "payments:getPaymentCredential",
-            args,
-        )
-        .await?;
-
-        if response.get("ready").and_then(serde_json::Value::as_bool) == Some(true) {
-            let credential = PaymentCredential {
-                token: credential_string(&response, "token")?,
-                dynamic_cvv: credential_string(&response, "dynamicCvv")?,
-                expiry_month: credential_string(&response, "expiryMonth")?,
-                expiry_year: credential_string(&response, "expiryYear")?,
-                txn_ref_id: credential_string(&response, "txnRefId")?,
-            };
-            context
-                .payment_credentials
-                .lock()
-                .await
-                .insert(purchase_id.to_string(), credential.clone());
-            return Ok(credential);
-        }
-
-        let status = response
-            .get("status")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("pending");
-        if status.eq_ignore_ascii_case("failed") || status.eq_ignore_ascii_case("expired") {
-            return Err(AgentToolError::Message(format!(
-                "payment credential is no longer available (status '{status}')"
-            )));
-        }
-        tokio::select! {
-            _ = cancellation.cancelled() => return Err(AgentToolError::Cancelled),
-            _ = sleep(Duration::from_secs(2)) => {}
-        }
-    }
-    Err(AgentToolError::Message(
-        "payment credential was not ready before the timeout".to_string(),
-    ))
-}
-
-fn credential_string(response: &serde_json::Value, key: &str) -> Result<String, AgentToolError> {
-    response
-        .get(key)
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| {
-            AgentToolError::Message("payment credential response was incomplete".to_string())
-        })
 }
 
 async fn observe_question(

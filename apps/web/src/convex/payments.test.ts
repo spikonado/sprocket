@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { api } from '@convex/_generated/api';
-import type { Id } from '@convex/_generated/dataModel';
 import {
 	createQueuedRun,
 	initConvexTest,
@@ -11,14 +10,14 @@ import {
 
 async function startRun(t: ConvexTestInstance, subject: string) {
 	const { asUser, threadId } = await seedOwnedThread(t, subject);
-	const executionSecret = `payment-secret-${subject}`;
+	const executionSecret = `mandate-secret-${subject}`;
 	const created = await createQueuedRun(
 		asUser,
 		threadId,
-		`payment-submission-${subject}-${Math.random()}`,
+		`mandate-${subject}-${Math.random()}`,
 		executionSecret
 	);
-	const claimId = `payment-claim-${subject}`;
+	const claimId = `mandate-claim-${subject}`;
 	await t.mutation(api.agentRuntime.start, {
 		runId: created.runId,
 		claimId,
@@ -40,20 +39,65 @@ function jsonResponse(value: unknown, status = 200) {
 	});
 }
 
-function createArgs(run: Awaited<ReturnType<typeof startRun>>) {
+function auth(run: Awaited<ReturnType<typeof startRun>>) {
+	return { runId: run.runId, claimId: run.claimId, executionSecret: run.executionSecret };
+}
+
+function setupArgs(run: Awaited<ReturnType<typeof startRun>>) {
 	return {
 		merchantName: 'Example Shop',
 		merchantUrl: 'https://shop.example',
 		countryCode: 'US',
-		totalAmount: '42.50',
+		amountCap: '120.00',
 		currency: 'USD',
-		description: 'Test order',
-		items: [{ description: 'Widget', unitPrice: '21.25', quantity: 2 }],
+		frequency: 'monthly' as const,
+		scope: 'listed' as const,
+		description: 'Monthly budget',
 		userEmail: run.userEmail,
-		runId: run.runId,
-		claimId: run.claimId,
-		executionSecret: run.executionSecret
+		...auth(run)
 	};
+}
+
+async function createApprovedMandate(
+	t: ConvexTestInstance,
+	run: Awaited<ReturnType<typeof startRun>>
+) {
+	const fetchMock = vi
+		.fn()
+		// mandateSetup → create session
+		.mockResolvedValueOnce(
+			jsonResponse({
+				session_id: 'prava-session-1',
+				iframe_url: 'https://pay.prava.space/approve/1',
+				expires_at: '2026-08-01T10:15:00Z',
+				authorizeOnly: true
+			})
+		)
+		// resolvePravaMandate → list
+		.mockResolvedValueOnce(
+			jsonResponse({
+				mandates: [
+					{
+						id: 'mdt_1',
+						status: 'active',
+						merchantName: 'Example Shop',
+						approvedAmount: '120.00',
+						remaining: '120.00',
+						currency: 'USD',
+						validUntil: '2027-08-01T00:00:00Z',
+						renewsAt: '2026-09-01T00:00:00Z'
+					}
+				]
+			})
+		);
+	vi.stubGlobal('fetch', fetchMock);
+
+	const setup = await run.asUser.action(api.payments.mandateSetup, setupArgs(run));
+	const status = await run.asUser.action(api.payments.mandateStatus, {
+		mandateId: setup.mandateId,
+		...auth(run)
+	});
+	return { setup, status, fetchMock };
 }
 
 afterEach(() => {
@@ -62,291 +106,176 @@ afterEach(() => {
 	delete process.env.PRAVA_BACKEND_URL;
 });
 
-describe('payments', () => {
-	it('maps a Prava purchase session and stores only non-sensitive purchase state', async () => {
+describe('payments mandates', () => {
+	it('creates an authorize-only mandate setup session and stores non-sensitive state', async () => {
 		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const fetchMock = vi.fn().mockResolvedValue(
 			jsonResponse({
 				session_id: 'prava-session-1',
-				session_token: 'session-token',
+				iframe_url: 'https://pay.prava.space/approve/1',
 				expires_at: '2026-08-01T10:15:00Z',
-				iframe_url: 'https://sandbox.api.prava.space/iframe/1',
-				order_id: 'order-1'
+				authorizeOnly: true
 			})
 		);
 		vi.stubGlobal('fetch', fetchMock);
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
 
-		const result = await run.asUser.action(api.payments.createPurchaseSession, createArgs(run));
+		const result = await run.asUser.action(api.payments.mandateSetup, setupArgs(run));
 
 		expect(result).toEqual({
-			purchaseId: expect.any(String),
-			iframeUrl: 'https://sandbox.api.prava.space/iframe/1',
+			mandateId: expect.any(String),
+			approvalUrl: 'https://pay.prava.space/approve/1',
 			expiresAt: '2026-08-01T10:15:00Z'
 		});
-		const request = fetchMock.mock.calls[0];
-		expect(request[0]).toBe('https://sandbox.api.prava.space/v1/sessions');
-		expect(request[1]?.headers).toMatchObject({
-			Authorization: 'Bearer sk_test_secret'
-		});
-		expect(JSON.parse(String(request[1]?.body))).toMatchObject({
+		const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+		expect(body).toMatchObject({
 			user_id: 'user_alice',
 			user_email: 'user_alice@example.com',
-			total_amount: '42.50',
-			purchase_context: [
-				{
-					merchant_details: {
-						name: 'Example Shop',
-						url: 'https://shop.example',
-						country_code_iso2: 'US'
-					},
-					product_details: [{ description: 'Widget', unit_price: '21.25', quantity: 2 }],
-					effective_until_minutes: 15
-				}
-			]
+			total_amount: '120.00',
+			mandate_setup: {
+				intent: 'mandate_setup',
+				recurring_frequency: 'monthly',
+				merchant_scope: 'listed'
+			}
 		});
-		const stored = await t.run(async (ctx) => ctx.db.get(result.purchaseId as Id<'purchases'>));
+		const stored = await t.run(async (ctx) => ctx.db.get(result.mandateId));
 		expect(stored).toMatchObject({
 			userId: 'user_alice',
-			runId: run.runId,
 			pravaSessionId: 'prava-session-1',
-			status: 'awaiting_passkey'
+			status: 'pending',
+			approvalUrl: 'https://pay.prava.space/approve/1'
 		});
 		expect(stored).not.toHaveProperty('session_token');
-		expect(stored).not.toHaveProperty('token');
 	});
 
-	it('returns pending then ready credentials without persisting credentials', async () => {
+	it('syncs a pending mandate to active once the owner approves', async () => {
 		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
-		const fetchMock = vi
-			.fn()
-			.mockResolvedValueOnce(
-				jsonResponse({
-					session_id: 'prava-session-2',
-					session_token: 'session-token',
-					expires_at: '2026-08-01T10:15:00Z',
-					iframe_url: 'https://sandbox.api.prava.space/iframe/2',
-					order_id: 'order-2'
-				})
-			)
-			.mockResolvedValueOnce(
-				jsonResponse({ session_id: 'prava-session-2', status: 'pending', transactions: [] })
-			)
-			.mockResolvedValueOnce(
-				jsonResponse({
-					session_id: 'prava-session-2',
-					status: 'awaiting_result',
-					transactions: [
-						{
-							txn_id: 'txn-1',
-							status: 'READY',
-							line_items: [
-								{
-									txn_ref_id: 'ref-1',
-									merchant_name: 'Example Shop',
-									merchant_url: 'https://shop.example',
-									total_amount: '42.50',
-									status: 'READY',
-									token: '4111111111111111',
-									dynamic_cvv: '123',
-									expiry_month: '12',
-									expiry_year: '2030'
-								}
-							]
-						}
-					]
-				})
-			);
-		vi.stubGlobal('fetch', fetchMock);
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
-		const created = await run.asUser.action(api.payments.createPurchaseSession, createArgs(run));
-		const credentialArgs = {
-			purchaseId: created.purchaseId as Id<'purchases'>,
-			runId: run.runId,
-			claimId: run.claimId,
-			executionSecret: run.executionSecret
-		};
+		const { status } = await createApprovedMandate(t, run);
 
-		await expect(
-			run.asUser.action(api.payments.getPaymentCredential, credentialArgs)
-		).resolves.toEqual({ ready: false, status: 'pending' });
-		await expect(
-			run.asUser.action(api.payments.getPaymentCredential, credentialArgs)
-		).resolves.toEqual({
-			ready: true,
-			token: '4111111111111111',
-			dynamicCvv: '123',
-			expiryMonth: '12',
-			expiryYear: '2030',
-			txnRefId: 'ref-1'
+		expect(status.status).toBe('active');
+		expect(status.pravaMandateId).toBe('mdt_1');
+		expect(status.remaining).toBe('120.00');
+	});
+
+	it('charges an active mandate and stores the charge without persisting credentials', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+		const { setup, fetchMock } = await createApprovedMandate(t, run);
+
+		// resolvePravaMandate (now has pravaMandateId) → GET /v1/mandates/mdt_1
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse({ id: 'mdt_1', status: 'active', remaining: '120.00' })
+		);
+		// charge
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse({
+				transactionId: 'txn_9',
+				status: 'awaiting_result',
+				credentials: {
+					token: '4111111111111111',
+					dynamicCvv: '123',
+					expiryMonth: '12',
+					expiryYear: '2030'
+				}
+			})
+		);
+
+		const charge = await run.asUser.action(api.payments.mandateCharge, {
+			mandateId: setup.mandateId,
+			amount: '40.00',
+			currency: 'USD',
+			description: 'Order 8842',
+			reference: 'order-8842',
+			...auth(run)
 		});
 
-		const stored = await t.run(async (ctx) => ctx.db.get(credentialArgs.purchaseId));
-		expect(stored?.status).toBe('awaiting_result');
+		expect(charge).toMatchObject({
+			transactionId: 'txn_9',
+			token: '4111111111111111',
+			dynamicCvv: '123'
+		});
+		const chargeBody = JSON.parse(String(fetchMock.mock.calls.at(-1)![1]?.body));
+		expect(chargeBody).toEqual({ amount: '40.00', reference: 'order-8842' });
+
+		const stored = await t.run(async (ctx) => ctx.db.get(charge.chargeId));
+		expect(stored).toMatchObject({
+			userId: 'user_alice',
+			pravaTransactionId: 'txn_9',
+			amount: '40.00',
+			status: 'awaiting_result'
+		});
 		expect(stored).not.toHaveProperty('token');
 		expect(stored).not.toHaveProperty('dynamicCvv');
-		expect(stored).not.toHaveProperty('expiryMonth');
-		expect(stored).not.toHaveProperty('expiryYear');
 	});
 
-	it('reports an outcome only once', async () => {
+	it('reports a charge outcome only once', async () => {
 		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
-		const fetchMock = vi
-			.fn()
-			.mockResolvedValueOnce(
-				jsonResponse({
-					session_id: 'prava-session-3',
-					session_token: 'session-token',
-					expires_at: '2026-08-01T10:15:00Z',
-					iframe_url: 'https://sandbox.api.prava.space/iframe/3',
-					order_id: 'order-3'
-				})
-			)
-			.mockResolvedValueOnce(jsonResponse({ ok: true }));
-		vi.stubGlobal('fetch', fetchMock);
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
-		const created = await run.asUser.action(api.payments.createPurchaseSession, createArgs(run));
-		const reportArgs = {
-			purchaseId: created.purchaseId as Id<'purchases'>,
-			outcome: 'approved' as const,
-			txnRefId: 'ref-3',
-			runId: run.runId,
-			claimId: run.claimId,
-			executionSecret: run.executionSecret
-		};
-
-		await expect(run.asUser.action(api.payments.reportStatus, reportArgs)).resolves.toEqual({
-			reported: true
+		const { setup, fetchMock } = await createApprovedMandate(t, run);
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse({ id: 'mdt_1', status: 'active', remaining: '120.00' })
+		);
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse({
+				transactionId: 'txn_9',
+				status: 'awaiting_result',
+				credentials: { token: 't', dynamicCvv: 'c', expiryMonth: '12', expiryYear: '2030' }
+			})
+		);
+		const charge = await run.asUser.action(api.payments.mandateCharge, {
+			mandateId: setup.mandateId,
+			amount: '40.00',
+			currency: 'USD',
+			description: 'Order 8842',
+			...auth(run)
 		});
-		await expect(run.asUser.action(api.payments.reportStatus, reportArgs)).resolves.toEqual({
-			reported: true,
-			alreadyReported: true
+
+		fetchMock.mockResolvedValueOnce(jsonResponse({ status: 'completed', mandateStatus: 'active' }));
+		const first = await run.asUser.action(api.payments.mandateReport, {
+			chargeId: charge.chargeId,
+			outcome: 'approved',
+			...auth(run)
 		});
-		expect(fetchMock).toHaveBeenCalledTimes(2);
-		const stored = await t.run(async (ctx) => ctx.db.get(reportArgs.purchaseId));
-		expect(stored).toMatchObject({ status: 'spent', reportedAt: expect.any(Number) });
-	});
-
-	it('reports to Prava exactly once when reportStatus races', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
-		const fetchMock = vi
-			.fn()
-			.mockResolvedValueOnce(
-				jsonResponse({
-					session_id: 'prava-session-race',
-					session_token: 'session-token',
-					expires_at: '2026-08-01T10:15:00Z',
-					iframe_url: 'https://sandbox.api.prava.space/iframe/race',
-					order_id: 'order-race'
-				})
-			)
-			// The single Prava report-status call that should ever happen.
-			.mockResolvedValueOnce(jsonResponse({ ok: true }));
-		vi.stubGlobal('fetch', fetchMock);
-		const t = initConvexTest();
-		const run = await startRun(t, 'user_alice');
-		const created = await run.asUser.action(api.payments.createPurchaseSession, createArgs(run));
-		const reportArgs = {
-			purchaseId: created.purchaseId as Id<'purchases'>,
-			outcome: 'approved' as const,
-			txnRefId: 'ref-race',
-			runId: run.runId,
-			claimId: run.claimId,
-			executionSecret: run.executionSecret
-		};
-
-		const [first, second] = await Promise.all([
-			run.asUser.action(api.payments.reportStatus, reportArgs),
-			run.asUser.action(api.payments.reportStatus, reportArgs)
-		]);
+		const second = await run.asUser.action(api.payments.mandateReport, {
+			chargeId: charge.chargeId,
+			outcome: 'approved',
+			...auth(run)
+		});
 
 		expect(first).toEqual({ reported: true });
 		expect(second).toEqual({ reported: true, alreadyReported: true });
-		// One create + exactly one report-status call to Prava.
-		expect(fetchMock).toHaveBeenCalledTimes(2);
-		const stored = await t.run(async (ctx) => ctx.db.get(reportArgs.purchaseId));
-		expect(stored).toMatchObject({
-			status: 'spent',
-			reportedAt: expect.any(Number)
+		const reportCall = fetchMock.mock.calls.at(-1)!;
+		expect(String(reportCall[0])).toBe(
+			'https://sandbox.api.prava.space/v1/mandates/mdt_1/charges/txn_9/report'
+		);
+		expect(JSON.parse(String(reportCall[1]?.body))).toMatchObject({
+			txn_status: 'APPROVED',
+			txn_type: 'PURCHASE'
 		});
-		expect(stored?.reportingStartedAt).toBeUndefined();
 	});
 
-	it('reconciles a stale in-flight report claim to the terminal state on retry', async () => {
+	it('rejects charging another user’s mandate before calling Prava', async () => {
 		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
-		// Only the create-session call hits Prava; the retry must not re-report.
-		const fetchMock = vi.fn().mockResolvedValueOnce(
-			jsonResponse({
-				session_id: 'prava-session-stale',
-				session_token: 'session-token',
-				expires_at: '2026-08-01T10:15:00Z',
-				iframe_url: 'https://sandbox.api.prava.space/iframe/stale',
-				order_id: 'order-stale'
-			})
-		);
-		vi.stubGlobal('fetch', fetchMock);
-		const t = initConvexTest();
-		const run = await startRun(t, 'user_alice');
-		const created = await run.asUser.action(api.payments.createPurchaseSession, createArgs(run));
-		const purchaseId = created.purchaseId as Id<'purchases'>;
-		// Simulate a crashed caller: claim held, Prava accepted, but the durable
-		// finish never ran (claim is older than the staleness window).
-		const staleSince = Date.now() - 120_000;
-		await t.run(async (ctx) => {
-			await ctx.db.patch(purchaseId, {
-				reportingStartedAt: staleSince,
-				reportOutcome: 'approved',
-				updatedAt: staleSince
-			});
-		});
-
-		const result = await run.asUser.action(api.payments.reportStatus, {
-			purchaseId,
-			outcome: 'approved',
-			runId: run.runId,
-			claimId: run.claimId,
-			executionSecret: run.executionSecret
-		});
-
-		expect(result).toEqual({ reported: true, alreadyReported: true });
-		// No re-report to Prava — only the original create-session call.
-		expect(fetchMock).toHaveBeenCalledTimes(1);
-		const stored = await t.run(async (ctx) => ctx.db.get(purchaseId));
-		expect(stored).toMatchObject({ status: 'spent', reportedAt: expect.any(Number) });
-		expect(stored?.reportingStartedAt).toBeUndefined();
-	});
-
-	it('rejects access to another user’s purchase before calling Prava', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
-		const fetchMock = vi.fn().mockResolvedValue(
-			jsonResponse({
-				session_id: 'prava-session-4',
-				session_token: 'session-token',
-				expires_at: '2026-08-01T10:15:00Z',
-				iframe_url: 'https://sandbox.api.prava.space/iframe/4',
-				order_id: 'order-4'
-			})
-		);
-		vi.stubGlobal('fetch', fetchMock);
 		const t = initConvexTest();
 		const alice = await startRun(t, 'user_alice');
-		const created = await alice.asUser.action(
-			api.payments.createPurchaseSession,
-			createArgs(alice)
-		);
 		const bob = await startRun(t, 'user_bob');
+		const { setup, fetchMock } = await createApprovedMandate(t, alice);
+		fetchMock.mockClear();
 
 		await expect(
-			bob.asUser.action(api.payments.getPaymentCredential, {
-				purchaseId: created.purchaseId as Id<'purchases'>,
-				runId: bob.runId,
-				claimId: bob.claimId,
-				executionSecret: bob.executionSecret
+			bob.asUser.action(api.payments.mandateCharge, {
+				mandateId: setup.mandateId,
+				amount: '40.00',
+				currency: 'USD',
+				description: 'Nope',
+				...auth(bob)
 			})
-		).rejects.toThrow('Purchase not found.');
-		expect(fetchMock).toHaveBeenCalledTimes(1);
+		).rejects.toThrow('Mandate not found');
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 });

@@ -150,10 +150,11 @@ where
         .tool(tools.browser_act)
         .tool(tools.browser_observe)
         .tool(tools.browser_extract)
-        .tool(tools.purchase_create_session)
-        .tool(tools.purchase_credential)
-        .tool(tools.purchase_status)
-        .tool(tools.purchase_report_status)
+        .tool(tools.mandate_setup)
+        .tool(tools.mandate_status)
+        .tool(tools.mandate_list)
+        .tool(tools.mandate_charge)
+        .tool(tools.mandate_report)
         .build();
 
     eprintln!("sprocket-agent: built agent {}", request.run_id);

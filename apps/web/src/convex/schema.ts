@@ -54,32 +54,64 @@ export default defineSchema({
 		'artifactId',
 		'version'
 	]),
-	purchases: defineTable({
+	mandates: defineTable({
 		userId: v.string(),
-		runId: v.id('runs'),
-		pravaSessionId: v.string(),
-		merchantName: v.string(),
-		merchantUrl: v.string(),
-		totalAmount: v.string(),
+		pravaMandateId: v.optional(v.string()),
+		pravaSessionId: v.optional(v.string()),
+		merchantName: v.optional(v.string()),
+		merchantUrl: v.optional(v.string()),
+		countryCode: v.optional(v.string()),
+		amountCap: v.string(),
 		currency: v.string(),
-		description: v.string(),
+		frequency: v.union(
+			v.literal('one_time'),
+			v.literal('weekly'),
+			v.literal('monthly'),
+			v.literal('yearly')
+		),
+		scope: v.union(v.literal('listed'), v.literal('any')),
 		status: v.union(
-			v.literal('awaiting_passkey'),
-			v.literal('awaiting_result'),
-			v.literal('spent'),
-			v.literal('declined'),
-			v.literal('failed'),
+			v.literal('pending'),
+			v.literal('active'),
+			v.literal('paused'),
+			v.literal('consumed'),
+			v.literal('cancelled'),
 			v.literal('expired')
 		),
-		reportedAt: v.optional(v.number()),
-		reportingStartedAt: v.optional(v.number()),
-		reportOutcome: v.optional(v.union(v.literal('approved'), v.literal('declined'))),
+		approvalUrl: v.optional(v.string()),
+		validUntil: v.optional(v.string()),
+		renewsAt: v.optional(v.string()),
+		remaining: v.optional(v.string()),
 		createdAt: v.number(),
 		updatedAt: v.number()
 	})
 		.index('by_user', ['userId'])
-		.index('by_run', ['runId'])
+		.index('by_prava_mandate', ['pravaMandateId'])
 		.index('by_prava_session', ['pravaSessionId']),
+	mandateCharges: defineTable({
+		mandateId: v.id('mandates'),
+		runId: v.id('runs'),
+		userId: v.string(),
+		pravaTransactionId: v.optional(v.string()),
+		amount: v.string(),
+		currency: v.string(),
+		description: v.string(),
+		reference: v.optional(v.string()),
+		status: v.union(
+			v.literal('awaiting_result'),
+			v.literal('completed'),
+			v.literal('declined'),
+			v.literal('failed')
+		),
+		reportOutcome: v.optional(v.union(v.literal('approved'), v.literal('declined'))),
+		reportedAt: v.optional(v.number()),
+		reportingStartedAt: v.optional(v.number()),
+		createdAt: v.number(),
+		updatedAt: v.number()
+	})
+		.index('by_mandate', ['mandateId'])
+		.index('by_run', ['runId'])
+		.index('by_prava_transaction', ['pravaTransactionId']),
 	browserSessions: defineTable({
 		runId: v.id('runs'),
 		userId: v.string(),
