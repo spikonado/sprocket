@@ -1,4 +1,5 @@
 import { defineSchema, defineTable } from 'convex/server';
+import { v } from 'convex/values';
 import {
 	agentQuestionFields,
 	artifactFields,
@@ -52,5 +53,36 @@ export default defineSchema({
 	artifactVersions: defineTable(artifactVersionFields).index('by_artifactId_version', [
 		'artifactId',
 		'version'
-	])
+	]),
+	purchases: defineTable({
+		userId: v.string(),
+		runId: v.id('runs'),
+		pravaSessionId: v.string(),
+		merchantName: v.string(),
+		merchantUrl: v.string(),
+		totalAmount: v.string(),
+		currency: v.string(),
+		description: v.string(),
+		status: v.union(
+			v.literal('awaiting_passkey'),
+			v.literal('awaiting_result'),
+			v.literal('spent'),
+			v.literal('declined'),
+			v.literal('failed'),
+			v.literal('expired')
+		),
+		reportedAt: v.optional(v.number()),
+		createdAt: v.number(),
+		updatedAt: v.number()
+	})
+		.index('by_user', ['userId'])
+		.index('by_run', ['runId'])
+		.index('by_prava_session', ['pravaSessionId']),
+	browserSessions: defineTable({
+		runId: v.id('runs'),
+		userId: v.string(),
+		browserbaseSessionId: v.string(),
+		liveViewUrl: v.string(),
+		startedAt: v.number()
+	}).index('by_run', ['runId'])
 });

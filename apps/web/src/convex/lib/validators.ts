@@ -157,6 +157,46 @@ export const vWebSearchResult = v.object({
 	)
 });
 
+export const vCreatePurchaseSessionResult = v.object({
+	purchaseId: v.string(),
+	iframeUrl: v.string(),
+	expiresAt: v.string()
+});
+
+export const vPaymentCredentialResult = v.union(
+	v.object({
+		ready: v.boolean(),
+		status: v.string()
+	}),
+	v.object({
+		ready: v.boolean(),
+		token: v.string(),
+		dynamicCvv: v.string(),
+		expiryMonth: v.string(),
+		expiryYear: v.string(),
+		txnRefId: v.string()
+	})
+);
+
+export const vReportPurchaseStatusResult = v.object({
+	reported: v.boolean(),
+	alreadyReported: v.optional(v.boolean())
+});
+
+export const vPurchaseStatusResult = v.object({
+	status: v.string(),
+	merchantName: v.string(),
+	merchantUrl: v.string(),
+	totalAmount: v.string(),
+	currency: v.string(),
+	description: v.string()
+});
+
+export const vBrowserSessionResult = v.object({
+	connectUrl: v.string(),
+	liveViewUrl: v.string()
+});
+
 export const vReadSkillResult = v.object({
 	name: v.string(),
 	description: v.string(),

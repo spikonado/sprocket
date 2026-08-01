@@ -30,6 +30,7 @@ const MAX_AGENT_OPTIONS: usize = 4;
 const AGENT_DECIDE_OPTION_ID: &str = "agent_decide";
 const GET_QUESTION_FUNCTION: &str = "agentQuestions:getForExecutor";
 
+use crate::browser::{BrowserSession, PaymentField, ScrollDirection};
 use crate::convex::RuntimeClient;
 use crate::hooks::ToolCallTracker;
 
@@ -49,6 +50,7 @@ struct AgentToolContext {
     workspace_root: PathBuf,
     tool_call_tracker: ToolCallTracker,
     command_sessions: CommandSessionManager,
+    browser_session: Arc<tokio::sync::Mutex<Option<BrowserSession>>>,
 }
 
 impl AgentToolContext {
@@ -59,6 +61,7 @@ impl AgentToolContext {
         workspace_root: PathBuf,
         tool_call_tracker: ToolCallTracker,
         command_sessions: CommandSessionManager,
+        browser_session: Arc<tokio::sync::Mutex<Option<BrowserSession>>>,
     ) -> Self {
         Self {
             runtime,
@@ -67,6 +70,7 @@ impl AgentToolContext {
             workspace_root,
             tool_call_tracker,
             command_sessions,
+            browser_session,
         }
     }
 }
@@ -99,6 +103,27 @@ pub(crate) struct CreateArtifactTool(AgentToolContext);
 pub(crate) struct UpdateArtifactTool(AgentToolContext);
 
 #[derive(Clone)]
+pub(crate) struct BrowserNavigateTool(AgentToolContext);
+#[derive(Clone)]
+pub(crate) struct BrowserSnapshotTool(AgentToolContext);
+#[derive(Clone)]
+pub(crate) struct BrowserClickTool(AgentToolContext);
+#[derive(Clone)]
+pub(crate) struct BrowserTypeTool(AgentToolContext);
+#[derive(Clone)]
+pub(crate) struct BrowserSelectOptionTool(AgentToolContext);
+#[derive(Clone)]
+pub(crate) struct BrowserScrollTool(AgentToolContext);
+#[derive(Clone)]
+pub(crate) struct BrowserFillPaymentTool(AgentToolContext);
+#[derive(Clone)]
+pub(crate) struct PurchaseCreateSessionTool(AgentToolContext);
+#[derive(Clone)]
+pub(crate) struct PurchaseStatusTool(AgentToolContext);
+#[derive(Clone)]
+pub(crate) struct PurchaseReportStatusTool(AgentToolContext);
+
+#[derive(Clone)]
 pub(crate) struct ReadSkillTool {
     context: AgentToolContext,
     skills: Arc<[WorkspaceSkill]>,
@@ -116,6 +141,16 @@ pub(crate) struct AgentToolSet {
     pub(crate) write_stdin: WriteStdinTool,
     pub(crate) create_artifact: CreateArtifactTool,
     pub(crate) update_artifact: UpdateArtifactTool,
+    pub(crate) browser_navigate: BrowserNavigateTool,
+    pub(crate) browser_snapshot: BrowserSnapshotTool,
+    pub(crate) browser_click: BrowserClickTool,
+    pub(crate) browser_type: BrowserTypeTool,
+    pub(crate) browser_select_option: BrowserSelectOptionTool,
+    pub(crate) browser_scroll: BrowserScrollTool,
+    pub(crate) browser_fill_payment: BrowserFillPaymentTool,
+    pub(crate) purchase_create_session: PurchaseCreateSessionTool,
+    pub(crate) purchase_status: PurchaseStatusTool,
+    pub(crate) purchase_report_status: PurchaseReportStatusTool,
 }
 
 pub(crate) fn agent_tools(
@@ -127,6 +162,7 @@ pub(crate) fn agent_tools(
     skills: Arc<[WorkspaceSkill]>,
 ) -> AgentToolSet {
     let command_sessions = CommandSessionManager::new(workspace_root.clone());
+    let browser_session = Arc::new(tokio::sync::Mutex::new(None));
     let context = AgentToolContext::new(
         runtime,
         run_id,
@@ -134,6 +170,7 @@ pub(crate) fn agent_tools(
         workspace_root,
         tool_call_tracker,
         command_sessions.clone(),
+        browser_session,
     );
     AgentToolSet {
         apply_patch: ApplyPatchTool(context.clone()),
@@ -149,7 +186,17 @@ pub(crate) fn agent_tools(
         web_search: WebSearchTool(context.clone()),
         write_stdin: WriteStdinTool(context.clone()),
         create_artifact: CreateArtifactTool(context.clone()),
-        update_artifact: UpdateArtifactTool(context),
+        update_artifact: UpdateArtifactTool(context.clone()),
+        browser_navigate: BrowserNavigateTool(context.clone()),
+        browser_snapshot: BrowserSnapshotTool(context.clone()),
+        browser_click: BrowserClickTool(context.clone()),
+        browser_type: BrowserTypeTool(context.clone()),
+        browser_select_option: BrowserSelectOptionTool(context.clone()),
+        browser_scroll: BrowserScrollTool(context.clone()),
+        browser_fill_payment: BrowserFillPaymentTool(context.clone()),
+        purchase_create_session: PurchaseCreateSessionTool(context.clone()),
+        purchase_status: PurchaseStatusTool(context.clone()),
+        purchase_report_status: PurchaseReportStatusTool(context),
     }
 }
 
@@ -371,6 +418,119 @@ pub(crate) struct WebSearchArgs {
 pub(crate) struct ScrapeUrlArgs {
     /// URL of the web page to read.
     url: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct BrowserNavigateArgs {
+    /// URL to open.
+    url: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct BrowserSnapshotArgs {}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct BrowserRefArgs {
+    /// Element reference from the latest browser snapshot.
+    #[serde(rename = "ref")]
+    reference: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct BrowserTypeArgs {
+    /// Element reference from the latest browser snapshot.
+    #[serde(rename = "ref")]
+    reference: String,
+    /// Text to type.
+    text: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct BrowserSelectOptionArgs {
+    /// Select element reference from the latest browser snapshot.
+    #[serde(rename = "ref")]
+    reference: String,
+    /// Option value to select.
+    value: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum BrowserScrollDirection {
+    Up,
+    Down,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct BrowserScrollArgs {
+    /// Scroll direction.
+    direction: BrowserScrollDirection,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum BrowserPaymentField {
+    Number,
+    Cvv,
+    Expiry,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct BrowserFillPaymentArgs {
+    /// Purchase session identifier.
+    #[serde(rename = "purchaseId")]
+    purchase_id: String,
+    /// Payment field to fill.
+    field: BrowserPaymentField,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PurchaseItem {
+    description: String,
+    unit_price: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    quantity: Option<f64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PurchaseCreateSessionArgs {
+    /// Email the user uses for purchase approvals; optional when one is already on file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user_email: Option<String>,
+    merchant_name: String,
+    merchant_url: String,
+    country_code: String,
+    total_amount: String,
+    currency: String,
+    description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    items: Option<Vec<PurchaseItem>>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct PurchaseStatusArgs {
+    /// Purchase session identifier.
+    #[serde(rename = "purchaseId")]
+    purchase_id: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum PurchaseOutcome {
+    Approved,
+    Declined,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct PurchaseReportStatusArgs {
+    /// Purchase session identifier.
+    #[serde(rename = "purchaseId")]
+    purchase_id: String,
+    outcome: PurchaseOutcome,
+    #[serde(rename = "txnRefId", skip_serializing_if = "Option::is_none")]
+    txn_ref_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -890,6 +1050,309 @@ impl rig::tool::Tool for UpdateArtifactTool {
     }
 }
 
+impl rig::tool::Tool for BrowserNavigateTool {
+    const NAME: &'static str = "browser_navigate";
+    type Error = AgentToolError;
+    type Args = BrowserNavigateArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Open a URL in the browser and return a semantic page snapshot.".to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(BrowserNavigateArgs))
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
+        execute_tool_job(
+            &self.0.runtime,
+            &self.0.run_id,
+            &self.0.claim_id,
+            Self::NAME,
+            &self.0.tool_call_tracker,
+            payload,
+            |cancellation| async {
+                let mut session = self.0.browser_session.lock().await;
+                ensure_browser_session(&self.0, &mut session, cancellation).await?;
+                let snapshot = session
+                    .as_mut()
+                    .expect("browser session initialized")
+                    .navigate(&args.url)
+                    .await
+                    .map_err(tool_error)?;
+                Ok(json!(snapshot.into_string()))
+            },
+        )
+        .await
+    }
+}
+
+impl rig::tool::Tool for BrowserSnapshotTool {
+    const NAME: &'static str = "browser_snapshot";
+    type Error = AgentToolError;
+    type Args = BrowserSnapshotArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Return a semantic snapshot of the current browser page.".to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(BrowserSnapshotArgs))
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        browser_snapshot_job(
+            &self.0,
+            Self::NAME,
+            serde_json::to_value(args).unwrap(),
+            BrowserSnapshotOperation::Snapshot,
+        )
+        .await
+    }
+}
+
+impl rig::tool::Tool for BrowserClickTool {
+    const NAME: &'static str = "browser_click";
+    type Error = AgentToolError;
+    type Args = BrowserRefArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Click an element from the latest browser snapshot and return a new snapshot.".to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(BrowserRefArgs))
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
+        browser_snapshot_job(
+            &self.0,
+            Self::NAME,
+            payload,
+            BrowserSnapshotOperation::Click(args.reference),
+        )
+        .await
+    }
+}
+
+impl rig::tool::Tool for BrowserTypeTool {
+    const NAME: &'static str = "browser_type";
+    type Error = AgentToolError;
+    type Args = BrowserTypeArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Type text into an element from the latest browser snapshot and return a new snapshot."
+            .to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(BrowserTypeArgs))
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
+        browser_snapshot_job(
+            &self.0,
+            Self::NAME,
+            payload,
+            BrowserSnapshotOperation::Type(args.reference, args.text),
+        )
+        .await
+    }
+}
+
+impl rig::tool::Tool for BrowserSelectOptionTool {
+    const NAME: &'static str = "browser_select_option";
+    type Error = AgentToolError;
+    type Args = BrowserSelectOptionArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Select an option in an element from the latest browser snapshot and return a new snapshot."
+            .to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(BrowserSelectOptionArgs))
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
+        browser_snapshot_job(
+            &self.0,
+            Self::NAME,
+            payload,
+            BrowserSnapshotOperation::Select(args.reference, args.value),
+        )
+        .await
+    }
+}
+
+impl rig::tool::Tool for BrowserScrollTool {
+    const NAME: &'static str = "browser_scroll";
+    type Error = AgentToolError;
+    type Args = BrowserScrollArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Scroll the browser page and return a new semantic snapshot.".to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(BrowserScrollArgs))
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
+        let direction = match args.direction {
+            BrowserScrollDirection::Up => ScrollDirection::Up,
+            BrowserScrollDirection::Down => ScrollDirection::Down,
+        };
+        browser_snapshot_job(
+            &self.0,
+            Self::NAME,
+            payload,
+            BrowserSnapshotOperation::Scroll(direction),
+        )
+        .await
+    }
+}
+
+impl rig::tool::Tool for BrowserFillPaymentTool {
+    const NAME: &'static str = "browser_fill_payment";
+    type Error = AgentToolError;
+    type Args = BrowserFillPaymentArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Fill one payment field using the credential associated with a purchase session."
+            .to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(BrowserFillPaymentArgs))
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
+        execute_tool_job(
+            &self.0.runtime,
+            &self.0.run_id,
+            &self.0.claim_id,
+            Self::NAME,
+            &self.0.tool_call_tracker,
+            payload,
+            |cancellation| async {
+                let credential =
+                    poll_payment_credential(&self.0, &args.purchase_id, cancellation.clone())
+                        .await?;
+                let (field, value) = match args.field {
+                    BrowserPaymentField::Number => (PaymentField::Number, credential.token),
+                    BrowserPaymentField::Cvv => (PaymentField::Cvv, credential.dynamic_cvv),
+                    BrowserPaymentField::Expiry => (
+                        PaymentField::Expiry,
+                        format!("{:0>2}/{}", credential.expiry_month, credential.expiry_year),
+                    ),
+                };
+                let mut session = self.0.browser_session.lock().await;
+                ensure_browser_session(&self.0, &mut session, cancellation).await?;
+                session
+                    .as_ref()
+                    .expect("browser session initialized")
+                    .fill_payment_field(field, &value)
+                    .await
+                    .map_err(|_| {
+                        AgentToolError::Message("failed to fill the payment field".to_string())
+                    })?;
+                Ok(json!("filled"))
+            },
+        )
+        .await
+    }
+}
+
+impl rig::tool::Tool for PurchaseCreateSessionTool {
+    const NAME: &'static str = "purchase_create_session";
+    type Error = AgentToolError;
+    type Args = PurchaseCreateSessionArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Create a purchase session and return its identifier, approval iframe URL, and expiry."
+            .to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(PurchaseCreateSessionArgs))
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        purchase_action_job(
+            &self.0,
+            Self::NAME,
+            "payments:createPurchaseSession",
+            serde_json::to_value(args).map_err(|e| tool_error(e.into()))?,
+        )
+        .await
+    }
+}
+
+impl rig::tool::Tool for PurchaseStatusTool {
+    const NAME: &'static str = "purchase_status";
+    type Error = AgentToolError;
+    type Args = PurchaseStatusArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Return the current status and summary of a purchase session.".to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(PurchaseStatusArgs))
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        purchase_action_job(
+            &self.0,
+            Self::NAME,
+            "payments:getPurchaseStatus",
+            serde_json::to_value(args).map_err(|e| tool_error(e.into()))?,
+        )
+        .await
+    }
+}
+
+impl rig::tool::Tool for PurchaseReportStatusTool {
+    const NAME: &'static str = "purchase_report_status";
+    type Error = AgentToolError;
+    type Args = PurchaseReportStatusArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Report an approved or declined purchase outcome.".to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(PurchaseReportStatusArgs))
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        purchase_action_job(
+            &self.0,
+            Self::NAME,
+            "payments:reportStatus",
+            serde_json::to_value(args).map_err(|e| tool_error(e.into()))?,
+        )
+        .await
+    }
+}
+
 impl rig::tool::Tool for ReadSkillTool {
     const NAME: &'static str = "read_skill";
     type Error = AgentToolError;
@@ -1112,6 +1575,182 @@ fn question_result_from_snapshot(
     }
 }
 
+enum BrowserSnapshotOperation {
+    Snapshot,
+    Click(String),
+    Type(String, String),
+    Select(String, String),
+    Scroll(ScrollDirection),
+}
+
+async fn browser_snapshot_job(
+    context: &AgentToolContext,
+    kind: &str,
+    payload: serde_json::Value,
+    operation: BrowserSnapshotOperation,
+) -> Result<serde_json::Value, AgentToolError> {
+    execute_tool_job(
+        &context.runtime,
+        &context.run_id,
+        &context.claim_id,
+        kind,
+        &context.tool_call_tracker,
+        payload,
+        |cancellation| async {
+            let mut guard = context.browser_session.lock().await;
+            ensure_browser_session(context, &mut guard, cancellation).await?;
+            let session = guard.as_mut().expect("browser session initialized");
+            let snapshot = match operation {
+                BrowserSnapshotOperation::Snapshot => session.snapshot().await,
+                BrowserSnapshotOperation::Click(reference) => session.click(&reference).await,
+                BrowserSnapshotOperation::Type(reference, text) => {
+                    session.type_text(&reference, &text).await
+                }
+                BrowserSnapshotOperation::Select(reference, value) => {
+                    session.select_option(&reference, &value).await
+                }
+                BrowserSnapshotOperation::Scroll(direction) => session.scroll(direction).await,
+            }
+            .map_err(tool_error)?;
+            Ok(json!(snapshot.into_string()))
+        },
+    )
+    .await
+}
+
+async fn ensure_browser_session(
+    context: &AgentToolContext,
+    session: &mut Option<BrowserSession>,
+    cancellation: WorkspaceCancellation,
+) -> Result<(), AgentToolError> {
+    if session.is_some() {
+        return Ok(());
+    }
+
+    let has_connect_override = std::env::var("SPROCKET_BROWSER_CONNECT_URL")
+        .ok()
+        .is_some_and(|value| !value.trim().is_empty());
+    let use_local = std::env::var("SPROCKET_BROWSER_LOCAL").as_deref() == Ok("1");
+    let connect_url = if has_connect_override || use_local {
+        String::new()
+    } else {
+        let mut args = BTreeMap::new();
+        args.insert("runId".to_string(), context.run_id.clone().into());
+        args.insert("claimId".to_string(), context.claim_id.clone().into());
+        let response = run_convex_tool_action(
+            &context.runtime,
+            cancellation,
+            "browserSessions:start",
+            args,
+        )
+        .await?;
+        response
+            .get("connectUrl")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                AgentToolError::Message(
+                    "browserSessions:start did not return a connectUrl".to_string(),
+                )
+            })?
+            .to_string()
+    };
+
+    *session = Some(
+        BrowserSession::connect(&connect_url)
+            .await
+            .map_err(tool_error)?,
+    );
+    Ok(())
+}
+
+async fn purchase_action_job(
+    context: &AgentToolContext,
+    kind: &str,
+    function: &'static str,
+    payload: serde_json::Value,
+) -> Result<serde_json::Value, AgentToolError> {
+    execute_tool_job(
+        &context.runtime,
+        &context.run_id,
+        &context.claim_id,
+        kind,
+        &context.tool_call_tracker,
+        payload.clone(),
+        |cancellation| async {
+            let action_args =
+                action_args_from_payload(&context.run_id, &context.claim_id, &payload)?;
+            run_convex_tool_action(&context.runtime, cancellation, function, action_args).await
+        },
+    )
+    .await
+}
+
+struct PaymentCredential {
+    token: String,
+    dynamic_cvv: String,
+    expiry_month: String,
+    expiry_year: String,
+}
+
+async fn poll_payment_credential(
+    context: &AgentToolContext,
+    purchase_id: &str,
+    cancellation: WorkspaceCancellation,
+) -> Result<PaymentCredential, AgentToolError> {
+    for attempt in 0..45 {
+        let mut args = BTreeMap::new();
+        args.insert("runId".to_string(), context.run_id.clone().into());
+        args.insert("claimId".to_string(), context.claim_id.clone().into());
+        args.insert("purchaseId".to_string(), purchase_id.to_string().into());
+        let response = run_convex_tool_action(
+            &context.runtime,
+            cancellation.clone(),
+            "payments:getPaymentCredential",
+            args,
+        )
+        .await?;
+
+        if response.get("ready").and_then(serde_json::Value::as_bool) == Some(true) {
+            return Ok(PaymentCredential {
+                token: credential_string(&response, "token")?,
+                dynamic_cvv: credential_string(&response, "dynamicCvv")?,
+                expiry_month: credential_string(&response, "expiryMonth")?,
+                expiry_year: credential_string(&response, "expiryYear")?,
+            });
+        }
+
+        let status = response
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("pending");
+        if status.eq_ignore_ascii_case("failed") {
+            return Err(AgentToolError::Message(format!(
+                "payment credential failed with status '{status}'"
+            )));
+        }
+        if attempt == 44 {
+            break;
+        }
+        tokio::select! {
+            _ = cancellation.cancelled() => return Err(AgentToolError::Cancelled),
+            _ = sleep(Duration::from_secs(2)) => {}
+        }
+    }
+    Err(AgentToolError::Message(
+        "payment credential was not ready before the timeout".to_string(),
+    ))
+}
+
+fn credential_string(response: &serde_json::Value, key: &str) -> Result<String, AgentToolError> {
+    response
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| {
+            AgentToolError::Message("payment credential response was incomplete".to_string())
+        })
+}
+
 async fn observe_question(
     runtime: &RuntimeClient,
     run_id: &str,
@@ -1244,6 +1883,26 @@ fn mutation_args_from_payload(
         );
     }
     Ok(mutation_args)
+}
+
+fn action_args_from_payload(
+    run_id: &str,
+    claim_id: &str,
+    payload: &serde_json::Value,
+) -> Result<BTreeMap<String, Value>, AgentToolError> {
+    let mut args = BTreeMap::new();
+    args.insert("runId".to_string(), run_id.to_string().into());
+    args.insert("claimId".to_string(), claim_id.to_string().into());
+    let fields = payload
+        .as_object()
+        .ok_or_else(|| AgentToolError::Message("tool payload must be an object".to_string()))?;
+    for (key, value) in fields {
+        args.insert(
+            key.clone(),
+            Value::try_from(value.clone()).map_err(tool_error)?,
+        );
+    }
+    Ok(args)
 }
 
 async fn execute_tool_job<F, Fut>(

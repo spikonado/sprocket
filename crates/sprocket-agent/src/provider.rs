@@ -147,6 +147,16 @@ where
         .tool(tools.write_stdin)
         .tool(tools.create_artifact)
         .tool(tools.update_artifact)
+        .tool(tools.browser_navigate)
+        .tool(tools.browser_snapshot)
+        .tool(tools.browser_click)
+        .tool(tools.browser_type)
+        .tool(tools.browser_select_option)
+        .tool(tools.browser_scroll)
+        .tool(tools.browser_fill_payment)
+        .tool(tools.purchase_create_session)
+        .tool(tools.purchase_status)
+        .tool(tools.purchase_report_status)
         .build();
 
     eprintln!("sprocket-agent: built agent {}", request.run_id);

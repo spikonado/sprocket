@@ -72,3 +72,27 @@ export const setTheme = mutation({
 		return await ctx.db.get(id);
 	}
 });
+
+export const setPaymentsEmail = mutation({
+	args: { email: v.string() },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const userId = await getUserId(ctx);
+		const email = args.email.trim();
+		if (!email) throw new Error('Email cannot be empty.');
+		const existing = await ctx.db
+			.query('uiPreferences')
+			.withIndex('by_userId', (query) => query.eq('userId', userId))
+			.unique();
+		if (existing) {
+			await ctx.db.patch(existing._id, { paymentsEmail: email });
+		} else {
+			await ctx.db.insert('uiPreferences', {
+				userId,
+				theme: DEFAULT_THEME,
+				paymentsEmail: email
+			});
+		}
+		return null;
+	}
+});
