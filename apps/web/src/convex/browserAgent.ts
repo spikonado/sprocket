@@ -8,17 +8,33 @@ import { Stagehand } from '@browserbasehq/stagehand';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
 import { vBrowserTaskResult } from '@convex/lib/validators';
 
-const DEFAULT_MODEL = 'openai/gpt-5-mini';
-// Bounds the text returned to the main agent so a runaway page can't flood the
-// transcript.
+// The browsing sub-agent's model. Uses the same OpenAI key as the main agent.
+const DEFAULT_MODEL = 'openai/gpt-5.6-luna';
+// Bounds text returned to the main agent so a runaway page can't flood the transcript.
 const MAX_RESULT_CHARS = 8_000;
 
-function browserbaseConfig(): { apiKey: string; projectId: string; model: string } {
+const vAction = v.object({
+	selector: v.string(),
+	description: v.string(),
+	method: v.optional(v.string()),
+	arguments: v.optional(v.array(v.string()))
+});
+
+function config() {
 	const apiKey = process.env.BROWSERBASE_API_KEY?.trim();
 	if (!apiKey) throw new Error('BROWSERBASE_API_KEY is not configured.');
 	const projectId = process.env.BROWSERBASE_PROJECT_ID?.trim();
 	if (!projectId) throw new Error('BROWSERBASE_PROJECT_ID is not configured.');
-	return { apiKey, projectId, model: process.env.BROWSER_TASK_MODEL?.trim() || DEFAULT_MODEL };
+	const openaiApiKey = process.env.OPENAI_API_KEY?.trim();
+	if (!openaiApiKey) throw new Error('OPENAI_API_KEY is not configured.');
+	return {
+		apiKey,
+		projectId,
+		model: {
+			modelName: process.env.BROWSER_TASK_MODEL?.trim() || DEFAULT_MODEL,
+			apiKey: openaiApiKey
+		}
+	};
 }
 
 async function activeActor(
@@ -40,6 +56,45 @@ function clip(text: string): { text: string; truncated: boolean } {
 	return { text: `${text.slice(0, MAX_RESULT_CHARS)}\n[... truncated ...]`, truncated: true };
 }
 
+/** Attach a Stagehand to the run's Browserbase session (shared with the
+ * executor's fill_payment), creating and persisting it on first use. */
+async function attachStagehand(
+	ctx: ActionCtx,
+	userId: string,
+	runId: Doc<'runs'>['_id']
+): Promise<Stagehand> {
+	const { apiKey, projectId, model } = config();
+	const existing: { browserbaseSessionId: string } | null = await ctx.runQuery(
+		internal.browserSessions.getForRun,
+		{ runId, userId }
+	);
+	const stagehand = new Stagehand({
+		env: 'BROWSERBASE',
+		apiKey,
+		projectId,
+		model,
+		selfHeal: true,
+		keepAlive: true,
+		...(existing ? { browserbaseSessionID: existing.browserbaseSessionId } : {})
+	});
+	await stagehand.init();
+	if (!existing && stagehand.browserbaseSessionId) {
+		await ctx.runMutation(internal.browserSessions.insert, {
+			runId,
+			userId,
+			browserbaseSessionId: stagehand.browserbaseSessionId,
+			liveViewUrl: ''
+		});
+	}
+	return stagehand;
+}
+
+async function gotoIfProvided(stagehand: Stagehand, startUrl?: string): Promise<void> {
+	if (startUrl) {
+		await stagehand.context.pages()[0]?.goto(startUrl);
+	}
+}
+
 export const runTask = action({
 	args: {
 		instruction: v.string(),
@@ -51,47 +106,78 @@ export const runTask = action({
 	returns: vBrowserTaskResult,
 	handler: async (ctx, args): Promise<Infer<typeof vBrowserTaskResult>> => {
 		const actor = await activeActor(ctx, args);
-		const { apiKey, projectId, model } = browserbaseConfig();
-
-		// Attach to the run's existing Browserbase session (created by
-		// browserSessions.start, also used by the executor's fill_payment), or
-		// create one on first use.
-		const existing: { browserbaseSessionId: string } | null = await ctx.runQuery(
-			internal.browserSessions.getForRun,
-			{ runId: args.runId, userId: actor.userId }
-		);
-
-		const stagehand = new Stagehand({
-			env: 'BROWSERBASE',
-			apiKey,
-			projectId,
-			model,
-			selfHeal: true,
-			keepAlive: true,
-			...(existing ? { browserbaseSessionID: existing.browserbaseSessionId } : {})
-		});
+		const stagehand = await attachStagehand(ctx, actor.userId, args.runId);
 		try {
-			await stagehand.init();
-			// Persist the session id so the executor's fill_payment attaches to the
-			// same browser on first use.
-			if (!existing) {
-				const sessionId = stagehand.browserbaseSessionId;
-				if (sessionId) {
-					await ctx.runMutation(internal.browserSessions.insert, {
-						runId: args.runId,
-						userId: actor.userId,
-						browserbaseSessionId: sessionId,
-						liveViewUrl: ''
-					});
-				}
-			}
-			if (args.startUrl) {
-				await stagehand.context.pages()[0]?.goto(args.startUrl);
-			}
+			await gotoIfProvided(stagehand, args.startUrl);
 			const result = await stagehand.act(args.instruction);
-			const summary = `success: ${result.success}\n${result.message ?? ''}`.trim();
-			const { text, truncated } = clip(summary);
-			return { text, truncated };
+			return clip(`success: ${result.success}\n${result.message}`.trim());
+		} finally {
+			await stagehand.close().catch(() => {});
+		}
+	}
+});
+
+export const observeTask = action({
+	args: {
+		instruction: v.string(),
+		startUrl: v.optional(v.string()),
+		runId: v.id('runs'),
+		claimId: v.string(),
+		executionSecret: v.string()
+	},
+	returns: v.object({ actions: v.array(vAction), text: v.string(), truncated: v.boolean() }),
+	handler: async (ctx, args) => {
+		const actor = await activeActor(ctx, args);
+		const stagehand = await attachStagehand(ctx, actor.userId, args.runId);
+		try {
+			await gotoIfProvided(stagehand, args.startUrl);
+			const actions = await stagehand.observe(args.instruction);
+			const clipped = clip(JSON.stringify(actions));
+			return { actions, text: clipped.text, truncated: clipped.truncated };
+		} finally {
+			await stagehand.close().catch(() => {});
+		}
+	}
+});
+
+export const actAction = action({
+	args: {
+		action: vAction,
+		startUrl: v.optional(v.string()),
+		runId: v.id('runs'),
+		claimId: v.string(),
+		executionSecret: v.string()
+	},
+	returns: vBrowserTaskResult,
+	handler: async (ctx, args): Promise<Infer<typeof vBrowserTaskResult>> => {
+		const actor = await activeActor(ctx, args);
+		const stagehand = await attachStagehand(ctx, actor.userId, args.runId);
+		try {
+			await gotoIfProvided(stagehand, args.startUrl);
+			const result = await stagehand.act(args.action);
+			return clip(`success: ${result.success}\n${result.message}`.trim());
+		} finally {
+			await stagehand.close().catch(() => {});
+		}
+	}
+});
+
+export const extractTask = action({
+	args: {
+		instruction: v.string(),
+		startUrl: v.optional(v.string()),
+		runId: v.id('runs'),
+		claimId: v.string(),
+		executionSecret: v.string()
+	},
+	returns: vBrowserTaskResult,
+	handler: async (ctx, args): Promise<Infer<typeof vBrowserTaskResult>> => {
+		const actor = await activeActor(ctx, args);
+		const stagehand = await attachStagehand(ctx, actor.userId, args.runId);
+		try {
+			await gotoIfProvided(stagehand, args.startUrl);
+			const result = await stagehand.extract(args.instruction);
+			return clip(JSON.stringify(result));
 		} finally {
 			await stagehand.close().catch(() => {});
 		}

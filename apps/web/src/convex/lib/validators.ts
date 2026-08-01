@@ -88,6 +88,16 @@ export const vBrowserTaskPayload = v.object({
 	startUrl: v.optional(v.string())
 });
 
+export const vBrowserActActionPayload = v.object({
+	action: v.object({
+		selector: v.string(),
+		description: v.string(),
+		method: v.optional(v.string()),
+		arguments: v.optional(v.array(v.string()))
+	}),
+	startUrl: v.optional(v.string())
+});
+
 export const vPurchaseItem = v.object({
 	description: v.string(),
 	unitPrice: v.string(),
@@ -146,6 +156,7 @@ export const vExecutorJobPayload = v.union(
 	vUpdateArtifactPayload,
 	vBrowserFillPaymentPayload,
 	vBrowserTaskPayload,
+	vBrowserActActionPayload,
 	vPurchaseCreateSessionPayload,
 	vPurchaseIdPayload,
 	vPurchaseReportStatusPayload
@@ -316,6 +327,9 @@ export const vExecutorJobKind = v.union(
 	v.literal('await_question'),
 	v.literal('browser_fill_payment'),
 	v.literal('browser_task'),
+	v.literal('browser_observe'),
+	v.literal('browser_act'),
+	v.literal('browser_extract'),
 	v.literal('exec_command'),
 	v.literal('get_workspace_instructions'),
 	v.literal('purchase_create_session'),

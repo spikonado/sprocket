@@ -111,6 +111,12 @@ pub(crate) struct UpdateArtifactTool(AgentToolContext);
 #[derive(Clone)]
 pub(crate) struct BrowserTaskTool(AgentToolContext);
 #[derive(Clone)]
+pub(crate) struct BrowserObserveTool(AgentToolContext);
+#[derive(Clone)]
+pub(crate) struct BrowserActTool(AgentToolContext);
+#[derive(Clone)]
+pub(crate) struct BrowserExtractTool(AgentToolContext);
+#[derive(Clone)]
 pub(crate) struct BrowserFillPaymentTool(AgentToolContext);
 #[derive(Clone)]
 pub(crate) struct PurchaseCreateSessionTool(AgentToolContext);
@@ -138,6 +144,9 @@ pub(crate) struct AgentToolSet {
     pub(crate) create_artifact: CreateArtifactTool,
     pub(crate) update_artifact: UpdateArtifactTool,
     pub(crate) browser_task: BrowserTaskTool,
+    pub(crate) browser_observe: BrowserObserveTool,
+    pub(crate) browser_act: BrowserActTool,
+    pub(crate) browser_extract: BrowserExtractTool,
     pub(crate) browser_fill_payment: BrowserFillPaymentTool,
     pub(crate) purchase_create_session: PurchaseCreateSessionTool,
     pub(crate) purchase_status: PurchaseStatusTool,
@@ -181,6 +190,9 @@ pub(crate) fn agent_tools(
         create_artifact: CreateArtifactTool(context.clone()),
         update_artifact: UpdateArtifactTool(context.clone()),
         browser_task: BrowserTaskTool(context.clone()),
+        browser_observe: BrowserObserveTool(context.clone()),
+        browser_act: BrowserActTool(context.clone()),
+        browser_extract: BrowserExtractTool(context.clone()),
         browser_fill_payment: BrowserFillPaymentTool(context.clone()),
         purchase_create_session: PurchaseCreateSessionTool(context.clone()),
         purchase_status: PurchaseStatusTool(context.clone()),
@@ -413,6 +425,37 @@ pub(crate) struct BrowserTaskArgs {
     /// Natural-language browsing instruction for the sub-agent, e.g. 'search the site for X, add 2 to cart, go to checkout, stop at the payment form'.
     instruction: String,
     /// Optional URL to open first.
+    #[serde(rename = "startUrl", skip_serializing_if = "Option::is_none")]
+    start_url: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct BrowserObserveArgs {
+    instruction: String,
+    #[serde(rename = "startUrl", skip_serializing_if = "Option::is_none")]
+    start_url: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct BrowserAction {
+    selector: String,
+    description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    method: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    arguments: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct BrowserActToolArgs {
+    action: BrowserAction,
+    #[serde(rename = "startUrl", skip_serializing_if = "Option::is_none")]
+    start_url: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct BrowserExtractArgs {
+    instruction: String,
     #[serde(rename = "startUrl", skip_serializing_if = "Option::is_none")]
     start_url: Option<String>,
 }
@@ -1035,6 +1078,140 @@ impl rig::tool::Tool for BrowserTaskTool {
                     &self.0.runtime,
                     cancellation,
                     "browserAgent:runTask",
+                    action_args,
+                )
+            },
+        )
+        .await
+    }
+}
+
+impl rig::tool::Tool for BrowserObserveTool {
+    const NAME: &'static str = "browser_observe";
+    type Error = AgentToolError;
+    type Args = BrowserObserveArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Discover actionable elements on the current page without executing them. Returns candidate actions (selector, description, method, arguments) that browser_act can then run.".to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(BrowserObserveArgs))
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
+        execute_tool_job(
+            &self.0.runtime,
+            &self.0.run_id,
+            &self.0.claim_id,
+            Self::NAME,
+            &self.0.tool_call_tracker,
+            payload,
+            |cancellation| {
+                let mut action_args = BTreeMap::new();
+                action_args.insert("runId".to_string(), self.0.run_id.clone().into());
+                action_args.insert("claimId".to_string(), self.0.claim_id.clone().into());
+                action_args.insert("instruction".to_string(), args.instruction.clone().into());
+                if let Some(start_url) = &args.start_url {
+                    action_args.insert("startUrl".to_string(), start_url.clone().into());
+                }
+                run_convex_tool_action(
+                    &self.0.runtime,
+                    cancellation,
+                    "browserAgent:observeTask",
+                    action_args,
+                )
+            },
+        )
+        .await
+    }
+}
+
+impl rig::tool::Tool for BrowserActTool {
+    const NAME: &'static str = "browser_act";
+    type Error = AgentToolError;
+    type Args = BrowserActToolArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Run one specific action previously returned by browser_observe (validate-then-act)."
+            .to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(BrowserActToolArgs))
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
+        let action =
+            Value::try_from(serde_json::to_value(&args.action).map_err(|e| tool_error(e.into()))?)
+                .map_err(tool_error)?;
+        execute_tool_job(
+            &self.0.runtime,
+            &self.0.run_id,
+            &self.0.claim_id,
+            Self::NAME,
+            &self.0.tool_call_tracker,
+            payload,
+            |cancellation| {
+                let mut action_args = BTreeMap::new();
+                action_args.insert("runId".to_string(), self.0.run_id.clone().into());
+                action_args.insert("claimId".to_string(), self.0.claim_id.clone().into());
+                action_args.insert("action".to_string(), action.clone());
+                if let Some(start_url) = &args.start_url {
+                    action_args.insert("startUrl".to_string(), start_url.clone().into());
+                }
+                run_convex_tool_action(
+                    &self.0.runtime,
+                    cancellation,
+                    "browserAgent:actAction",
+                    action_args,
+                )
+            },
+        )
+        .await
+    }
+}
+
+impl rig::tool::Tool for BrowserExtractTool {
+    const NAME: &'static str = "browser_extract";
+    type Error = AgentToolError;
+    type Args = BrowserExtractArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Extract structured data or text from the current page (e.g. the order summary and total)."
+            .to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(BrowserExtractArgs))
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
+        execute_tool_job(
+            &self.0.runtime,
+            &self.0.run_id,
+            &self.0.claim_id,
+            Self::NAME,
+            &self.0.tool_call_tracker,
+            payload,
+            |cancellation| {
+                let mut action_args = BTreeMap::new();
+                action_args.insert("runId".to_string(), self.0.run_id.clone().into());
+                action_args.insert("claimId".to_string(), self.0.claim_id.clone().into());
+                action_args.insert("instruction".to_string(), args.instruction.clone().into());
+                if let Some(start_url) = &args.start_url {
+                    action_args.insert("startUrl".to_string(), start_url.clone().into());
+                }
+                run_convex_tool_action(
+                    &self.0.runtime,
+                    cancellation,
+                    "browserAgent:extractTask",
                     action_args,
                 )
             },

@@ -14,6 +14,12 @@ const act = vi.fn().mockResolvedValue({
 	actionDescription: 'did the thing',
 	actions: []
 });
+const observe = vi
+	.fn()
+	.mockResolvedValue([
+		{ selector: '#pay', description: 'Pay button', method: 'click', arguments: [] }
+	]);
+const extract = vi.fn().mockResolvedValue({ total: '₹1,240', items: 2 });
 const init = vi.fn().mockResolvedValue(undefined);
 const close = vi.fn().mockResolvedValue(undefined);
 const goto = vi.fn().mockResolvedValue(undefined);
@@ -22,6 +28,8 @@ vi.mock('@browserbasehq/stagehand', () => ({
 		init = init;
 		close = close;
 		act = act;
+		observe = observe;
+		extract = extract;
 		browserbaseSessionId = 'bb-session-task';
 		context = { pages: () => [{ goto }] };
 	}
@@ -49,12 +57,14 @@ afterEach(() => {
 	vi.clearAllMocks();
 	delete process.env.BROWSERBASE_API_KEY;
 	delete process.env.BROWSERBASE_PROJECT_ID;
+	delete process.env.OPENAI_API_KEY;
 });
 
 describe('browserAgent.runTask', () => {
 	it('drives the browser via the sub-agent and persists the session for the executor', async () => {
 		process.env.BROWSERBASE_API_KEY = 'bb_key';
 		process.env.BROWSERBASE_PROJECT_ID = 'project-1';
+		process.env.OPENAI_API_KEY = 'openai_key';
 		const t = initConvexTest();
 		const run = await startRun(t);
 
@@ -81,5 +91,46 @@ describe('browserAgent.runTask', () => {
 		);
 		expect(stored).toHaveLength(1);
 		expect(stored[0]).toMatchObject({ browserbaseSessionId: 'bb-session-task' });
+	});
+
+	it('observe returns candidate actions, act runs one, extract reads page data', async () => {
+		process.env.BROWSERBASE_API_KEY = 'bb_key';
+		process.env.BROWSERBASE_PROJECT_ID = 'project-1';
+		process.env.OPENAI_API_KEY = 'openai_key';
+		const t = initConvexTest();
+		const run = await startRun(t);
+		const auth = {
+			runId: run.runId,
+			claimId: run.claimId,
+			executionSecret: run.executionSecret
+		};
+
+		const observed = await t.action(api.browserAgent.observeTask, {
+			instruction: 'find the pay button',
+			...auth
+		});
+		expect(observe).toHaveBeenCalledWith('find the pay button');
+		expect(observed.actions).toEqual([
+			{ selector: '#pay', description: 'Pay button', method: 'click', arguments: [] }
+		]);
+
+		const acted = await t.action(api.browserAgent.actAction, {
+			action: { selector: '#pay', description: 'Pay button', method: 'click', arguments: [] },
+			...auth
+		});
+		expect(act).toHaveBeenCalledWith({
+			selector: '#pay',
+			description: 'Pay button',
+			method: 'click',
+			arguments: []
+		});
+		expect(String((acted as { text: string }).text)).toContain('Action performed');
+
+		const extracted = await t.action(api.browserAgent.extractTask, {
+			instruction: 'read the order total',
+			...auth
+		});
+		expect(extract).toHaveBeenCalledWith('read the order total');
+		expect(String((extracted as { text: string }).text)).toContain('1,240');
 	});
 });
