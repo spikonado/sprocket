@@ -68,6 +68,7 @@ async function createApprovedMandate(
 		.mockResolvedValueOnce(
 			jsonResponse({
 				iframe_url: 'https://pay.prava.space/approve/1',
+				session_token: 'session-token-1',
 				expires_at: '2026-08-01T10:15:00Z'
 			})
 		)
@@ -110,6 +111,7 @@ describe('payments mandates', () => {
 		const fetchMock = vi.fn().mockResolvedValue(
 			jsonResponse({
 				iframe_url: 'https://pay.prava.space/approve/1',
+				session_token: 'session-token-1',
 				expires_at: '2026-08-01T10:15:00Z'
 			})
 		);
@@ -122,6 +124,7 @@ describe('payments mandates', () => {
 		expect(result).toEqual({
 			mandateId: expect.any(String),
 			approvalUrl: 'https://pay.prava.space/approve/1',
+			sessionToken: 'session-token-1',
 			expiresAt: '2026-08-01T10:15:00Z'
 		});
 		const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));

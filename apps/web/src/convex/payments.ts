@@ -411,10 +411,12 @@ export const mandateSetup = action({
 
 		const response = await pravaRequest<{
 			iframe_url: string;
+			session_token: string;
 			expires_at: string;
 		}>('/v1/sessions', {
 			method: 'POST',
 			body: JSON.stringify({
+				integration_type: 'embedding',
 				user_id: actor.userId,
 				user_email: userEmail,
 				total_amount: args.amountCap,
@@ -449,7 +451,12 @@ export const mandateSetup = action({
 			scope: args.scope,
 			approvalUrl: response.iframe_url
 		});
-		return { mandateId, approvalUrl: response.iframe_url, expiresAt: response.expires_at };
+		return {
+			mandateId,
+			approvalUrl: response.iframe_url,
+			sessionToken: response.session_token,
+			expiresAt: response.expires_at
+		};
 	}
 });
 

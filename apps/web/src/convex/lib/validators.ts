@@ -240,6 +240,7 @@ export const vWebSearchResult = v.object({
 export const vMandateSetupResult = v.object({
 	mandateId: v.id('mandates'),
 	approvalUrl: v.string(),
+	sessionToken: v.string(),
 	expiresAt: v.string()
 });
 
