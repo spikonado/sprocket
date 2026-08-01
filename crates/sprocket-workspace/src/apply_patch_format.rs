@@ -66,11 +66,17 @@ pub(crate) fn parse_apply_patch(patch: &str) -> Result<Vec<PatchHunk>> {
         .map(|line| line.strip_suffix('\r').unwrap_or(line))
         .collect::<Vec<_>>();
 
+    if lines.is_empty() {
+        bail!("Begin Patch input is empty");
+    }
     if lines.first().map(|line| line.trim()) != Some(BEGIN_PATCH) {
-        bail!("apply_patch input must start with '{BEGIN_PATCH}'");
+        bail!(
+            "Begin Patch input must start with '{BEGIN_PATCH}' (got '{}')",
+            lines[0].chars().take(40).collect::<String>()
+        );
     }
     if lines.last().map(|line| line.trim()) != Some(END_PATCH) {
-        bail!("apply_patch input must end with '{END_PATCH}'");
+        bail!("Begin Patch input must end with '{END_PATCH}'");
     }
 
     let mut hunks = Vec::new();
@@ -192,6 +198,34 @@ fn is_file_header(line: &str) -> bool {
         || line.starts_with(COPY_FILE)
 }
 
+/// `@@ -n,m +p,q @@` / `@@ -n +p @@` (optional function suffix) — not Begin Patch anchors.
+fn is_unified_style_hunk_header(line: &str) -> bool {
+    let Some(rest) = line.strip_prefix("@@ ") else {
+        return false;
+    };
+    let Some((ranges, _)) = rest.split_once(" @@") else {
+        return false;
+    };
+    let Some((old_part, new_part)) = ranges.split_once(' ') else {
+        return false;
+    };
+    is_unified_hunk_range(old_part, '-') && is_unified_hunk_range(new_part, '+')
+}
+
+fn is_unified_hunk_range(part: &str, prefix: char) -> bool {
+    let Some(range) = part.strip_prefix(prefix) else {
+        return false;
+    };
+    if let Some((start, len)) = range.split_once(',') {
+        !start.is_empty()
+            && !len.is_empty()
+            && start.chars().all(|c| c.is_ascii_digit())
+            && len.chars().all(|c| c.is_ascii_digit())
+    } else {
+        !range.is_empty() && range.chars().all(|c| c.is_ascii_digit())
+    }
+}
+
 fn parse_update_chunks(lines: &[&str], mut index: usize) -> Result<(Vec<UpdateChunk>, usize)> {
     let mut chunks: Vec<UpdateChunk> = Vec::new();
 
@@ -209,6 +243,13 @@ fn parse_update_chunks(lines: &[&str], mut index: usize) -> Result<(Vec<UpdateCh
             ensure_previous_chunk_has_lines(&chunks, index)?;
             chunks.push(UpdateChunk::new(None));
         } else if let Some(context) = trimmed_end.strip_prefix("@@ ") {
+            if is_unified_style_hunk_header(trimmed_end) {
+                bail!(
+                    "invalid update line {}: Begin Patch wants '@@' or '@@ anchor text' only; \
+                     unified hunk ranges like '{trimmed_end}' belong in unified/`diff --git` patches",
+                    index + 1
+                );
+            }
             ensure_previous_chunk_has_lines(&chunks, index)?;
             chunks.push(UpdateChunk::new(Some(context.to_owned())));
         } else if trimmed_end == END_OF_FILE {
@@ -562,5 +603,29 @@ mod tests {
             }
             _ => panic!("expected a single update hunk"),
         }
+    }
+
+    #[test]
+    fn rejects_unified_style_hunk_headers_in_begin_patch() {
+        let error = parse_apply_patch(
+            "*** Begin Patch\n\
+             *** Update File: file.txt\n\
+             @@ -1 +1 @@\n\
+             -before\n\
+             +after\n\
+             *** End Patch",
+        )
+        .err()
+        .expect("unified @@ ranges must not parse as Begin Patch anchors");
+
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("Begin Patch wants '@@' or '@@ anchor text' only"),
+            "unexpected error: {message}"
+        );
+        assert!(
+            message.contains("unified/`diff --git`"),
+            "unexpected error: {message}"
+        );
     }
 }

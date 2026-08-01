@@ -337,7 +337,19 @@ pub(crate) struct WriteStdinArgs {
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct ApplyPatchArgs {
-    /// Begin Patch envelope or unified/`diff --git` patch.
+    /// Prefer Begin Patch format.
+    /// For Begin Patch, use `@@` or `@@ anchor`, never unified `@@ -n,m +p,q @@`.
+    /// Supports `*** Delete File:`, `*** Move to:`, `*** Copy File:` / `*** Copy to:`.
+    /// Unified/`diff --git` also accepted; well-formed hunk line counts are auto-corrected.
+    /// Example:
+    /// *** Begin Patch
+    /// *** Add File: path/to/new.txt
+    /// +hello
+    /// *** Update File: path/to/existing.txt
+    /// @@
+    /// -old
+    /// +new
+    /// *** End Patch
     patch: String,
 }
 
@@ -684,8 +696,7 @@ impl rig::tool::Tool for ApplyPatchTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Create, update, delete, rename, or copy workspace files via a Begin Patch envelope or unified/`diff --git` patch."
-            .to_string()
+        "Use to create, update, delete, rename, or copy files.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -1368,7 +1379,7 @@ fn tool_error(error: anyhow::Error) -> AgentToolError {
     if error.is::<WorkspaceOperationCancelled>() {
         AgentToolError::Cancelled
     } else {
-        AgentToolError::Message(error.to_string())
+        AgentToolError::Message(format!("{error:#}"))
     }
 }
 
@@ -1377,6 +1388,25 @@ mod tests {
     use sprocket_workspace::{SkillSource, WorkspaceSkill};
 
     use super::*;
+
+    #[test]
+    fn tool_error_includes_anyhow_context_chain() {
+        let error =
+            anyhow::anyhow!("invalid add-file line").context("failed to parse Begin Patch input");
+        match tool_error(error) {
+            AgentToolError::Message(message) => {
+                assert!(
+                    message.contains("failed to parse Begin Patch input"),
+                    "missing outer context: {message}"
+                );
+                assert!(
+                    message.contains("invalid add-file line"),
+                    "missing root cause: {message}"
+                );
+            }
+            AgentToolError::Cancelled => panic!("expected message error"),
+        }
+    }
 
     #[test]
     fn prepare_ask_question_normalizes_and_enforces_limits() {

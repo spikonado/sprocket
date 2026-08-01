@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::Permissions;
 use std::path::{Component, Path, PathBuf};
@@ -159,10 +160,11 @@ fn release_workspace_patch_lock(root: &Path, lock: &Arc<WorkspacePatchLock>) {
 /// existing paths (or the deepest existing ancestor when `allow_missing`).
 /// Does not confine results to the workspace root.
 fn resolve_patch_path(root: &Path, path: &str, allow_missing: bool) -> Result<PathBuf> {
-    let candidate = if Path::new(path).is_absolute() {
-        PathBuf::from(path)
+    let expanded = crate::paths::expand_home(path);
+    let candidate = if Path::new(&expanded).is_absolute() {
+        PathBuf::from(&expanded)
     } else {
-        root.join(path)
+        root.join(&expanded)
     };
 
     let resolved = normalize_path(&candidate)?;
@@ -250,20 +252,28 @@ fn display_path(root: &Path, path: &Path) -> String {
 }
 
 async fn prepare_changes(root: &Path, patch: &str) -> Result<Vec<PreparedChange>> {
+    let patch = strip_surrounding_markdown_fence(patch);
     if is_apply_patch_format(patch) {
         return prepare_apply_patch_changes(root, patch).await;
     }
 
+    // Without a trailing newline, the last body line is treated as a no-newline-at-EOF edit.
+    let patch = if patch.ends_with('\n') {
+        Cow::Borrowed(patch)
+    } else {
+        Cow::Owned(format!("{patch}\n"))
+    };
+    let patch = normalize_unified_diff_hunk_counts(&patch)?;
     let (options, default_strip) = if patch.trim_start().starts_with("diff --git ") {
         (ParseOptions::gitdiff(), 1)
     } else {
-        (ParseOptions::unidiff(), unidiff_path_strip(patch))
+        (ParseOptions::unidiff(), unidiff_path_strip(&patch))
     };
 
     let mut changes = Vec::new();
     let mut touched_paths = BTreeSet::new();
 
-    for parsed in PatchSet::parse(patch, options) {
+    for parsed in PatchSet::parse(&patch, options) {
         let parsed = parsed.context("failed to parse unified diff")?;
         let operation = parsed.operation();
         let strip = match operation {
@@ -353,7 +363,7 @@ async fn prepare_changes(root: &Path, patch: &str) -> Result<Vec<PreparedChange>
 }
 
 async fn prepare_apply_patch_changes(root: &Path, patch: &str) -> Result<Vec<PreparedChange>> {
-    let hunks = parse_apply_patch(patch).context("failed to parse apply_patch input")?;
+    let hunks = parse_apply_patch(patch).context("failed to parse Begin Patch input")?;
     let mut changes = Vec::with_capacity(hunks.len());
     let mut touched_paths = BTreeSet::new();
 
@@ -445,6 +455,193 @@ fn unidiff_path_strip(patch: &str) -> usize {
         }
     }
     usize::from(saw_a && saw_b)
+}
+
+/// Strip a single surrounding markdown code fence (` ``` ` / ` ```diff `) when present.
+fn strip_surrounding_markdown_fence(patch: &str) -> &str {
+    let trimmed = patch.trim();
+    if !trimmed.starts_with("```") {
+        // Keep the original (incl. trailing newline); trimming would invent a no-newline-at-EOF edit.
+        return patch;
+    }
+    let after_open = &trimmed[3..];
+    let Some(newline) = after_open.find('\n') else {
+        return patch;
+    };
+    let language = after_open[..newline].trim();
+    if language
+        .chars()
+        .any(|c| !(c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+    {
+        return patch;
+    }
+    let body = after_open[newline + 1..].trim_end();
+    let Some(content) = body.strip_suffix("```") else {
+        return patch;
+    };
+    content.trim_end_matches('\r').trim()
+}
+
+const NO_NEWLINE_MARKER: &str = "\\ No newline at end of file";
+
+/// Rewrite `@@` hunk lengths from the body so wrong counts cannot truncate or fail before apply.
+fn normalize_unified_diff_hunk_counts(patch: &str) -> Result<String> {
+    let had_trailing_newline = patch.ends_with('\n');
+    let lines = patch
+        .lines()
+        .map(|line| line.strip_suffix('\r').unwrap_or(line))
+        .collect::<Vec<_>>();
+
+    let mut output = Vec::with_capacity(lines.len());
+    let mut index = 0;
+    while index < lines.len() {
+        let line = lines[index];
+        let Some((old_start, new_start, suffix)) = parse_unified_hunk_header(line) else {
+            output.push(line.to_owned());
+            index += 1;
+            continue;
+        };
+
+        index += 1;
+        let body_start = index;
+        let mut old_count = 0usize;
+        let mut new_count = 0usize;
+        while index < lines.len() {
+            if is_unified_section_boundary(&lines, index) {
+                break;
+            }
+            let body_line = lines[index];
+            // Blank lines immediately before the next file/hunk are padding, not context.
+            if body_line.is_empty() && next_nonempty_is_section_boundary(&lines, index + 1) {
+                break;
+            }
+            if is_no_newline_marker(body_line) {
+                index += 1;
+                continue;
+            }
+            match body_line.as_bytes().first() {
+                None | Some(b' ') => {
+                    old_count += 1;
+                    new_count += 1;
+                }
+                Some(b'-') => old_count += 1,
+                Some(b'+') => new_count += 1,
+                _ => bail!(
+                    "unexpected hunk body line at line {}: '{}'; \
+                     expected a line starting with ' ', '+', or '-', or '{NO_NEWLINE_MARKER}'",
+                    index + 1,
+                    body_line
+                ),
+            }
+            index += 1;
+        }
+
+        output.push(format_unified_hunk_header(
+            old_start, old_count, new_start, new_count, suffix,
+        ));
+        output.extend(
+            lines[body_start..index]
+                .iter()
+                .map(|line| (*line).to_owned()),
+        );
+
+        if index < lines.len() && !is_unified_section_boundary(&lines, index) {
+            reject_orphaned_hunk_content(&lines, index)?;
+        }
+    }
+
+    let mut normalized = output.join("\n");
+    if had_trailing_newline {
+        normalized.push('\n');
+    }
+    Ok(normalized)
+}
+
+/// Returns `(old_start, new_start, suffix)` — declared lengths are ignored (recounted from the body).
+fn parse_unified_hunk_header(line: &str) -> Option<(usize, usize, &str)> {
+    let rest = line.strip_prefix("@@ ")?;
+    let (ranges, after) = rest.split_once(" @@")?;
+    let (old_part, new_part) = ranges.split_once(' ')?;
+    let old_part = old_part.strip_prefix('-')?;
+    let new_part = new_part.strip_prefix('+')?;
+    let (old_start, _) = parse_hunk_range(old_part)?;
+    let (new_start, _) = parse_hunk_range(new_part)?;
+    Some((old_start, new_start, after))
+}
+
+fn parse_hunk_range(range: &str) -> Option<(usize, usize)> {
+    if let Some((start, len)) = range.split_once(',') {
+        Some((start.parse().ok()?, len.parse().ok()?))
+    } else {
+        Some((range.parse().ok()?, 1))
+    }
+}
+
+fn format_unified_hunk_header(
+    old_start: usize,
+    old_len: usize,
+    new_start: usize,
+    new_len: usize,
+    suffix: &str,
+) -> String {
+    format!(
+        "@@ -{} +{} @@{suffix}",
+        format_hunk_range(old_start, old_len),
+        format_hunk_range(new_start, new_len),
+    )
+}
+
+fn format_hunk_range(start: usize, len: usize) -> String {
+    if len == 1 {
+        start.to_string()
+    } else {
+        format!("{start},{len}")
+    }
+}
+
+fn is_no_newline_marker(line: &str) -> bool {
+    line.starts_with(NO_NEWLINE_MARKER)
+}
+
+fn is_file_header_pair(lines: &[&str], index: usize) -> bool {
+    if !lines[index].starts_with("--- ") {
+        return false;
+    }
+    let mut next = index + 1;
+    while next < lines.len() && lines[next].is_empty() {
+        next += 1;
+    }
+    next < lines.len() && lines[next].starts_with("+++ ")
+}
+
+fn is_unified_section_boundary(lines: &[&str], index: usize) -> bool {
+    let line = lines[index];
+    line.starts_with("@@ ") || line.starts_with("diff --git ") || is_file_header_pair(lines, index)
+}
+
+fn next_nonempty_is_section_boundary(lines: &[&str], mut index: usize) -> bool {
+    while index < lines.len() && lines[index].is_empty() {
+        index += 1;
+    }
+    index >= lines.len() || is_unified_section_boundary(lines, index)
+}
+
+fn reject_orphaned_hunk_content(lines: &[&str], mut index: usize) -> Result<()> {
+    while index < lines.len() {
+        if is_unified_section_boundary(lines, index) {
+            return Ok(());
+        }
+        if !lines[index].is_empty() {
+            bail!(
+                "orphaned hunk content at line {}: '{}'; \
+                 fix the surrounding hunk or remove the leftover lines",
+                index + 1,
+                lines[index]
+            );
+        }
+        index += 1;
+    }
+    Ok(())
 }
 
 fn apply_text_patch(path: &Path, base: &[u8], patch: &PatchKind<'_, str>) -> Result<Vec<u8>> {
@@ -728,10 +925,13 @@ fn change_outputs(root: &Path, changes: &[PreparedChange]) -> Vec<PatchChangeOut
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::sync::Mutex;
 
-    use super::{apply_workspace_patch, write_new_file};
+    use super::{apply_workspace_patch, normalize_unified_diff_hunk_counts, write_new_file};
     use crate::test_support::temp_workspace;
     use crate::tools::{WorkspaceCancellation, WorkspaceOperationCancelled};
+
+    static HOME_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[tokio::test]
     async fn applies_begin_patch_format() {
@@ -1087,5 +1287,222 @@ mod tests {
             "before\n"
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn applies_all_lines_when_hunk_count_under_declared() {
+        let root = temp_workspace();
+        // Declares 2 added lines but body has 3 — previously truncated silently.
+        let patch = "diff --git a/file.txt b/file.txt\n\
+            new file mode 100644\n\
+            --- /dev/null\n\
+            +++ b/file.txt\n\
+            @@ -0,0 +1,2 @@\n\
+            +one\n\
+            +two\n\
+            +three\n";
+
+        apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), patch)
+            .await
+            .expect("under-declared hunk counts should be corrected");
+
+        assert_eq!(
+            fs::read_to_string(root.join("file.txt")).unwrap(),
+            "one\ntwo\nthree\n"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejects_orphaned_hunk_body_after_junk() {
+        let root = temp_workspace();
+        let patch = "--- file.txt\n\
+            +++ file.txt\n\
+            @@ -1 +1 @@\n\
+            -before\n\
+            +after\n\
+            not-a-hunk-line\n\
+            +orphaned\n";
+        fs::write(root.join("file.txt"), "before\n").unwrap();
+
+        let error = apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), patch)
+            .await
+            .expect_err("orphaned hunk lines must not be ignored");
+
+        assert!(
+            error.to_string().contains("unexpected hunk body line"),
+            "unexpected error: {error:#}"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("file.txt")).unwrap(),
+            "before\n"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejects_create_hunk_body_without_plus_prefixes() {
+        let root = temp_workspace();
+        let patch = "--- /dev/null\n\
+            +++ file.txt\n\
+            @@ -0,0 +1 @@\n\
+            hello\n";
+
+        let error = apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), patch)
+            .await
+            .expect_err("create body without + prefixes must fail");
+
+        assert!(
+            error.to_string().contains("unexpected hunk body line"),
+            "unexpected error: {error:#}"
+        );
+        assert!(!root.join("file.txt").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejects_update_hunk_body_that_is_only_junk() {
+        let root = temp_workspace();
+        fs::write(root.join("file.txt"), "before\n").unwrap();
+        let patch = "--- file.txt\n\
+            +++ file.txt\n\
+            @@ -1 +1 @@\n\
+            this is junk\n";
+
+        let error = apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), patch)
+            .await
+            .expect_err("junk-only update body must fail");
+
+        assert!(
+            error.to_string().contains("unexpected hunk body line"),
+            "unexpected error: {error:#}"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("file.txt")).unwrap(),
+            "before\n"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn applies_non_ascii_content_via_begin_patch_and_unified_diff() {
+        let root = temp_workspace();
+        fs::write(root.join("existing.txt"), "café\n").unwrap();
+
+        let begin_patch = "*** Begin Patch\n\
+            *** Add File: unicode.txt\n\
+            +こんにちは\n\
+            *** Update File: existing.txt\n\
+            @@\n\
+            -café\n\
+            +café crème\n\
+            *** End Patch";
+        apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), begin_patch)
+            .await
+            .expect("Begin Patch with non-ASCII should apply");
+        assert_eq!(
+            fs::read_to_string(root.join("unicode.txt")).unwrap(),
+            "こんにちは\n"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("existing.txt")).unwrap(),
+            "café crème\n"
+        );
+
+        let unified = "--- existing.txt\n\
+            +++ existing.txt\n\
+            @@ -1 +1 @@\n\
+            -café crème\n\
+            +naïve résumé\n";
+        apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), unified)
+            .await
+            .expect("unified diff with non-ASCII should apply");
+        assert_eq!(
+            fs::read_to_string(root.join("existing.txt")).unwrap(),
+            "naïve résumé\n"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn applies_begin_patch_inside_markdown_fence() {
+        let root = temp_workspace();
+        let patch = "```\n\
+            *** Begin Patch\n\
+            *** Add File: fenced.txt\n\
+            +hello\n\
+            *** End Patch\n\
+            ```";
+
+        apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), patch)
+            .await
+            .expect("fenced Begin Patch should apply");
+
+        assert_eq!(
+            fs::read_to_string(root.join("fenced.txt")).unwrap(),
+            "hello\n"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn expands_home_prefix_in_patch_paths() {
+        let _guard = HOME_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let root = temp_workspace();
+        let home = temp_workspace();
+        let previous_home = std::env::var_os("HOME");
+        // SAFETY: serialized by HOME_ENV_LOCK for this test only.
+        unsafe {
+            std::env::set_var("HOME", &home);
+        }
+
+        let patch = "*** Begin Patch\n\
+            *** Add File: ~/from-home.txt\n\
+            +home-relative\n\
+            *** End Patch";
+        let result = apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), patch).await;
+
+        match previous_home {
+            Some(value) => unsafe { std::env::set_var("HOME", value) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+
+        result.expect("~/ paths should resolve under $HOME");
+        assert_eq!(
+            fs::read_to_string(home.join("from-home.txt")).unwrap(),
+            "home-relative\n"
+        );
+        assert!(!root.join("~/from-home.txt").exists());
+        assert!(!root.join("from-home.txt").exists());
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn normalize_rewrites_under_and_over_declared_hunk_lengths() {
+        let under = "\
+--- a/file.txt
++++ b/file.txt
+@@ -1,1 +1,2 @@
+ keep
+-old
++new
++extra
+";
+        let under_normalized = normalize_unified_diff_hunk_counts(under).expect("normalize");
+        assert!(under_normalized.contains("@@ -1,2 +1,3 @@"));
+        assert!(under_normalized.contains("+extra\n"));
+
+        let over = "\
+--- /dev/null
++++ b/file.txt
+@@ -0,0 +1,5 @@
++one
++two
+";
+        let over_normalized = normalize_unified_diff_hunk_counts(over).expect("normalize");
+        assert!(over_normalized.contains("@@ -0,0 +1,2 @@"));
     }
 }
