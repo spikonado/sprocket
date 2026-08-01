@@ -496,7 +496,6 @@ pub(crate) struct MandateIdArgs {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MandateChargeArgs {
     /// Mandate identifier to charge.
-    #[serde(rename = "mandateId")]
     mandate_id: String,
     /// Charge amount as a decimal string, within the mandate's cap.
     amount: String,
@@ -518,7 +517,6 @@ pub(crate) enum ChargeOutcome {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MandateReportArgs {
     /// Charge identifier returned by mandate_charge.
-    #[serde(rename = "chargeId")]
     charge_id: String,
     outcome: ChargeOutcome,
     /// Amount actually captured, if known.

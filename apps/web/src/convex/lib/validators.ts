@@ -91,6 +91,36 @@ export const vBrowserActPayload = v.object({
 	startUrl: v.optional(v.string())
 });
 
+const mandateFrequencies = ['one_time', 'weekly', 'monthly', 'yearly'] as const;
+export const vMandateFrequency = v.union(...literals(mandateFrequencies));
+
+export const vMandateScope = v.union(v.literal('listed'), v.literal('any'));
+
+const mandateStatuses = [
+	'pending',
+	'active',
+	'paused',
+	'consumed',
+	'cancelled',
+	'expired'
+] as const;
+export const vMandateStatus = v.union(...literals(mandateStatuses));
+
+export function isMandateStatus(
+	status: string | undefined
+): status is Infer<typeof vMandateStatus> {
+	return status !== undefined && (mandateStatuses as readonly string[]).includes(status);
+}
+
+export const vMandateChargeStatus = v.union(
+	v.literal('awaiting_result'),
+	v.literal('completed'),
+	v.literal('declined'),
+	v.literal('failed')
+);
+
+export const vMandateReportOutcome = v.union(v.literal('approved'), v.literal('declined'));
+
 export const vMandateSetupPayload = v.object({
 	userEmail: v.optional(v.string()),
 	merchantName: v.optional(v.string()),
@@ -98,13 +128,8 @@ export const vMandateSetupPayload = v.object({
 	countryCode: v.optional(v.string()),
 	amountCap: v.string(),
 	currency: v.string(),
-	frequency: v.union(
-		v.literal('one_time'),
-		v.literal('weekly'),
-		v.literal('monthly'),
-		v.literal('yearly')
-	),
-	scope: v.union(v.literal('listed'), v.literal('any')),
+	frequency: vMandateFrequency,
+	scope: vMandateScope,
 	description: v.string(),
 	maxCharges: v.optional(v.number()),
 	validUntil: v.optional(v.string())
@@ -124,7 +149,7 @@ export const vMandateChargePayload = v.object({
 
 export const vMandateReportPayload = v.object({
 	chargeId: v.string(),
-	outcome: v.union(v.literal('approved'), v.literal('declined')),
+	outcome: vMandateReportOutcome,
 	amountPaid: v.optional(v.string())
 });
 
@@ -221,13 +246,13 @@ export const vMandateSetupResult = v.object({
 export const vMandateStatusResult = v.object({
 	mandateId: v.id('mandates'),
 	pravaMandateId: v.optional(v.string()),
-	status: v.string(),
+	status: vMandateStatus,
 	merchantName: v.optional(v.string()),
 	amountCap: v.string(),
 	remaining: v.optional(v.string()),
 	currency: v.string(),
-	frequency: v.string(),
-	scope: v.string(),
+	frequency: vMandateFrequency,
+	scope: vMandateScope,
 	approvalUrl: v.optional(v.string()),
 	validUntil: v.optional(v.string()),
 	renewsAt: v.optional(v.string())

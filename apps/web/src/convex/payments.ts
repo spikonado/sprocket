@@ -1,9 +1,21 @@
 import { v, type Infer } from 'convex/values';
-import { action, internalMutation, internalQuery, type ActionCtx } from '@convex/_generated/server';
+import {
+	action,
+	internalMutation,
+	internalQuery,
+	type ActionCtx,
+	type MutationCtx
+} from '@convex/_generated/server';
 import { api, internal } from '@convex/_generated/api';
-import type { Doc } from '@convex/_generated/dataModel';
+import type { Doc, Id } from '@convex/_generated/dataModel';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
 import {
+	isMandateStatus,
+	vMandateChargeStatus,
+	vMandateFrequency,
+	vMandateReportOutcome,
+	vMandateScope,
+	vMandateStatus,
 	vMandateSetupResult,
 	vMandateStatusResult,
 	vMandateListResult,
@@ -12,6 +24,7 @@ import {
 } from '@convex/lib/validators';
 
 const DEFAULT_PRAVA_BACKEND_URL = 'https://sandbox.api.prava.space';
+const REPORT_CLAIM_STALE_MS = 60_000;
 
 function pravaConfig(): { baseUrl: string; secretKey: string } {
 	const secretKey = process.env.PRAVA_SECRET_KEY?.trim();
@@ -67,28 +80,11 @@ function requiredUserEmail(userEmail: string): string {
 	return email;
 }
 
-const vMandateFrequency = v.union(
-	v.literal('one_time'),
-	v.literal('weekly'),
-	v.literal('monthly'),
-	v.literal('yearly')
-);
-const vMandateScope = v.union(v.literal('listed'), v.literal('any'));
-const vMandateStatus = v.union(
-	v.literal('pending'),
-	v.literal('active'),
-	v.literal('paused'),
-	v.literal('consumed'),
-	v.literal('cancelled'),
-	v.literal('expired')
-);
-
 const mandateDoc = v.object({
 	_id: v.id('mandates'),
 	_creationTime: v.number(),
 	userId: v.string(),
 	pravaMandateId: v.optional(v.string()),
-	pravaSessionId: v.optional(v.string()),
 	merchantName: v.optional(v.string()),
 	merchantUrl: v.optional(v.string()),
 	countryCode: v.optional(v.string()),
@@ -116,13 +112,8 @@ const chargeDoc = v.object({
 	currency: v.string(),
 	description: v.string(),
 	reference: v.optional(v.string()),
-	status: v.union(
-		v.literal('awaiting_result'),
-		v.literal('completed'),
-		v.literal('declined'),
-		v.literal('failed')
-	),
-	reportOutcome: v.optional(v.union(v.literal('approved'), v.literal('declined'))),
+	status: vMandateChargeStatus,
+	reportOutcome: v.optional(vMandateReportOutcome),
 	reportedAt: v.optional(v.number()),
 	reportingStartedAt: v.optional(v.number()),
 	createdAt: v.number(),
@@ -141,17 +132,39 @@ type PravaMandate = {
 };
 
 function pravaStatusToLocal(status: string | undefined): Infer<typeof vMandateStatus> | undefined {
-	switch (status) {
-		case 'pending':
-		case 'active':
-		case 'paused':
-		case 'consumed':
-		case 'cancelled':
-		case 'expired':
-			return status;
-		default:
-			return undefined;
+	return isMandateStatus(status) ? status : undefined;
+}
+
+async function ownedCharge(
+	ctx: MutationCtx,
+	chargeId: Id<'mandateCharges'>,
+	userId: string
+): Promise<Doc<'mandateCharges'>> {
+	const charge = await ctx.db.get(chargeId);
+	if (!charge || charge.userId !== userId) {
+		throw new Error('Charge not found.');
 	}
+	return charge;
+}
+
+function statusForOutcome(outcome: Infer<typeof vMandateReportOutcome>): 'completed' | 'declined' {
+	return outcome === 'approved' ? 'completed' : 'declined';
+}
+
+function mandateSyncArgs(
+	mandateId: Id<'mandates'>,
+	userId: string,
+	mandate: PravaMandate & { id: string }
+) {
+	return {
+		mandateId,
+		userId,
+		pravaMandateId: mandate.id,
+		status: pravaStatusToLocal(mandate.status),
+		remaining: mandate.remaining ?? undefined,
+		validUntil: mandate.validUntil ?? undefined,
+		renewsAt: mandate.renewsAt ?? undefined
+	};
 }
 
 // ---------------------------------------------------------------------------
@@ -173,7 +186,6 @@ export const getPaymentsEmail = internalQuery({
 export const insertMandate = internalMutation({
 	args: {
 		userId: v.string(),
-		pravaSessionId: v.string(),
 		merchantName: v.optional(v.string()),
 		merchantUrl: v.optional(v.string()),
 		countryCode: v.optional(v.string()),
@@ -201,17 +213,6 @@ export const getOwnedMandate = internalQuery({
 	handler: async (ctx, args) => {
 		const mandate = await ctx.db.get(args.mandateId);
 		return mandate?.userId === args.userId ? mandate : null;
-	}
-});
-
-export const listUserMandates = internalQuery({
-	args: { userId: v.string() },
-	returns: v.array(mandateDoc),
-	handler: async (ctx, args) => {
-		return await ctx.db
-			.query('mandates')
-			.withIndex('by_user', (query) => query.eq('userId', args.userId))
-			.collect();
 	}
 });
 
@@ -288,10 +289,7 @@ export const updateChargeStatus = internalMutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const charge = await ctx.db.get(args.chargeId);
-		if (!charge || charge.userId !== args.userId) {
-			throw new Error('Charge not found.');
-		}
+		const charge = await ownedCharge(ctx, args.chargeId, args.userId);
 		if (!charge.reportedAt) {
 			await ctx.db.patch(args.chargeId, { status: args.status, updatedAt: Date.now() });
 		}
@@ -300,20 +298,17 @@ export const updateChargeStatus = internalMutation({
 });
 
 /** Atomically claim the right to report a charge to Prava. 'claimed' lets this
- * caller proceed; 'already' means a terminal report happened (or a live
- * same-outcome claim is in flight). */
+ * caller proceed; 'already' means a terminal report happened or another live
+ * claim is in flight. */
 export const claimChargeReport = internalMutation({
 	args: {
 		chargeId: v.id('mandateCharges'),
 		userId: v.string(),
-		outcome: v.union(v.literal('approved'), v.literal('declined'))
+		outcome: vMandateReportOutcome
 	},
 	returns: v.union(v.literal('claimed'), v.literal('already')),
 	handler: async (ctx, args) => {
-		const charge = await ctx.db.get(args.chargeId);
-		if (!charge || charge.userId !== args.userId) {
-			throw new Error('Charge not found.');
-		}
+		const charge = await ownedCharge(ctx, args.chargeId, args.userId);
 		if (charge.reportedAt || charge.reportingStartedAt) {
 			return 'already';
 		}
@@ -330,10 +325,7 @@ export const releaseChargeReport = internalMutation({
 	args: { chargeId: v.id('mandateCharges'), userId: v.string() },
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const charge = await ctx.db.get(args.chargeId);
-		if (!charge || charge.userId !== args.userId) {
-			throw new Error('Charge not found.');
-		}
+		const charge = await ownedCharge(ctx, args.chargeId, args.userId);
 		if (!charge.reportedAt) {
 			await ctx.db.patch(args.chargeId, {
 				reportingStartedAt: undefined,
@@ -353,10 +345,7 @@ export const finishChargeReport = internalMutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const charge = await ctx.db.get(args.chargeId);
-		if (!charge || charge.userId !== args.userId) {
-			throw new Error('Charge not found.');
-		}
+		const charge = await ownedCharge(ctx, args.chargeId, args.userId);
 		if (!charge.reportedAt) {
 			const now = Date.now();
 			await ctx.db.patch(args.chargeId, {
@@ -400,26 +389,29 @@ export const mandateSetup = action({
 		});
 		const userEmail = requiredUserEmail(args.userEmail ?? storedEmail ?? '');
 
-		const isListed = args.scope === 'listed';
-		if (isListed && (!args.merchantName || !args.merchantUrl || !args.countryCode)) {
-			throw new Error('Listed-scope mandates require merchant name, URL, and country.');
-		}
 		// Generic (any-scope) mandates are one-time only; Prava still needs a
 		// purchase_context entry, so name a placeholder merchant for it.
-		const merchantDetails =
-			isListed && args.merchantName && args.merchantUrl && args.countryCode
-				? {
-						name: args.merchantName,
-						url: args.merchantUrl,
-						country_code_iso2: args.countryCode
-					}
-				: { name: 'Any merchant', url: 'https://prava.space', country_code_iso2: 'US' };
+		let merchantDetails: { name: string; url: string; country_code_iso2: string };
+		if (args.scope === 'listed') {
+			if (!args.merchantName || !args.merchantUrl || !args.countryCode) {
+				throw new Error('Listed-scope mandates require merchant name, URL, and country.');
+			}
+			merchantDetails = {
+				name: args.merchantName,
+				url: args.merchantUrl,
+				country_code_iso2: args.countryCode
+			};
+		} else {
+			merchantDetails = {
+				name: 'Any merchant',
+				url: 'https://prava.space',
+				country_code_iso2: 'US'
+			};
+		}
 
 		const response = await pravaRequest<{
-			session_id: string;
 			iframe_url: string;
 			expires_at: string;
-			authorizeOnly?: boolean;
 		}>('/v1/sessions', {
 			method: 'POST',
 			body: JSON.stringify({
@@ -448,7 +440,6 @@ export const mandateSetup = action({
 
 		const mandateId = await ctx.runMutation(internal.payments.insertMandate, {
 			userId: actor.userId,
-			pravaSessionId: response.session_id,
 			merchantName: args.merchantName,
 			merchantUrl: args.merchantUrl,
 			countryCode: args.countryCode,
@@ -492,16 +483,12 @@ async function resolvePravaMandate(
 	if (!found?.id) {
 		throw new Error('Mandate is not yet approved.');
 	}
-	await ctx.runMutation(internal.payments.syncMandate, {
-		mandateId: mandate._id,
-		userId,
-		pravaMandateId: found.id,
-		status: pravaStatusToLocal(found.status),
-		remaining: found.remaining ?? undefined,
-		validUntil: found.validUntil ?? undefined,
-		renewsAt: found.renewsAt ?? undefined
-	});
-	return { ...found, id: found.id };
+	const resolved = { ...found, id: found.id };
+	await ctx.runMutation(
+		internal.payments.syncMandate,
+		mandateSyncArgs(mandate._id, userId, resolved)
+	);
+	return resolved;
 }
 
 export const mandateStatus = action({
@@ -534,15 +521,10 @@ export const mandateStatus = action({
 				if (prava.remaining !== undefined) remaining = prava.remaining;
 				if (prava.validUntil != null) validUntil = prava.validUntil;
 				if (prava.renewsAt != null) renewsAt = prava.renewsAt;
-				await ctx.runMutation(internal.payments.syncMandate, {
-					mandateId: mandate._id,
-					userId: actor.userId,
-					pravaMandateId: prava.id,
-					status: local,
-					remaining: prava.remaining ?? undefined,
-					validUntil: prava.validUntil ?? undefined,
-					renewsAt: prava.renewsAt ?? undefined
-				});
+				await ctx.runMutation(
+					internal.payments.syncMandate,
+					mandateSyncArgs(mandate._id, actor.userId, prava)
+				);
 			} catch {
 				// Still awaiting the owner's passkey approval — keep the stored status.
 			}
@@ -630,18 +612,18 @@ export const mandateCharge = action({
 			})
 		});
 
-		const failed = result.status === 'failed' || !result.credentials || !result.transactionId;
+		const { credentials, transactionId } = result;
 		const chargeId = await ctx.runMutation(internal.payments.insertCharge, {
 			mandateId: mandate._id,
 			runId: args.runId,
 			userId: actor.userId,
-			pravaTransactionId: result.transactionId,
+			pravaTransactionId: transactionId,
 			amount: args.amount,
 			currency: args.currency,
 			description: args.description,
 			reference: args.reference
 		});
-		if (failed) {
+		if (result.status === 'failed' || !credentials || !transactionId) {
 			await ctx.runMutation(internal.payments.updateChargeStatus, {
 				chargeId,
 				userId: actor.userId,
@@ -651,11 +633,8 @@ export const mandateCharge = action({
 		}
 		return {
 			chargeId,
-			transactionId: result.transactionId!,
-			token: result.credentials!.token,
-			dynamicCvv: result.credentials!.dynamicCvv,
-			expiryMonth: result.credentials!.expiryMonth,
-			expiryYear: result.credentials!.expiryYear
+			transactionId,
+			...credentials
 		};
 	}
 });
@@ -663,7 +642,7 @@ export const mandateCharge = action({
 export const mandateReport = action({
 	args: {
 		chargeId: v.id('mandateCharges'),
-		outcome: v.union(v.literal('approved'), v.literal('declined')),
+		outcome: vMandateReportOutcome,
 		amountPaid: v.optional(v.string()),
 		runId: v.id('runs'),
 		claimId: v.string(),
@@ -683,7 +662,6 @@ export const mandateReport = action({
 
 		// A claim older than the report window belongs to a crashed caller;
 		// reconcile it to the stored outcome's terminal state on retry.
-		const REPORT_CLAIM_STALE_MS = 60_000;
 		const claimIsStale =
 			charge.reportingStartedAt !== undefined &&
 			Date.now() - charge.reportingStartedAt > REPORT_CLAIM_STALE_MS;
@@ -691,7 +669,7 @@ export const mandateReport = action({
 			await ctx.runMutation(internal.payments.finishChargeReport, {
 				chargeId: charge._id,
 				userId: actor.userId,
-				status: charge.reportOutcome === 'approved' ? 'completed' : 'declined'
+				status: statusForOutcome(charge.reportOutcome)
 			});
 			return { reported: true, alreadyReported: true };
 		}
@@ -745,7 +723,7 @@ export const mandateReport = action({
 		await ctx.runMutation(internal.payments.finishChargeReport, {
 			chargeId: charge._id,
 			userId: actor.userId,
-			status: args.outcome === 'approved' ? 'completed' : 'declined'
+			status: statusForOutcome(args.outcome)
 		});
 		return { reported: true };
 	}

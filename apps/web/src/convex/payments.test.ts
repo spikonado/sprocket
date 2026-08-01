@@ -67,10 +67,8 @@ async function createApprovedMandate(
 		// mandateSetup → create session
 		.mockResolvedValueOnce(
 			jsonResponse({
-				session_id: 'prava-session-1',
 				iframe_url: 'https://pay.prava.space/approve/1',
-				expires_at: '2026-08-01T10:15:00Z',
-				authorizeOnly: true
+				expires_at: '2026-08-01T10:15:00Z'
 			})
 		)
 		// resolvePravaMandate → list
@@ -107,14 +105,12 @@ afterEach(() => {
 });
 
 describe('payments mandates', () => {
-	it('creates an authorize-only mandate setup session and stores non-sensitive state', async () => {
+	it('creates a mandate setup session and stores non-sensitive state', async () => {
 		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const fetchMock = vi.fn().mockResolvedValue(
 			jsonResponse({
-				session_id: 'prava-session-1',
 				iframe_url: 'https://pay.prava.space/approve/1',
-				expires_at: '2026-08-01T10:15:00Z',
-				authorizeOnly: true
+				expires_at: '2026-08-01T10:15:00Z'
 			})
 		);
 		vi.stubGlobal('fetch', fetchMock);
@@ -142,7 +138,6 @@ describe('payments mandates', () => {
 		const stored = await t.run(async (ctx) => ctx.db.get(result.mandateId));
 		expect(stored).toMatchObject({
 			userId: 'user_alice',
-			pravaSessionId: 'prava-session-1',
 			status: 'pending',
 			approvalUrl: 'https://pay.prava.space/approve/1'
 		});
