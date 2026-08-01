@@ -64,10 +64,10 @@ export const modelDefinitions = [
 		defaultReasoningEffort: 'medium',
 		serviceTiers: serviceTierIds,
 		usageWeights: {
-			input: 0.0025,
-			cacheRead: 0.00025,
-			cacheWrite: 0.003125,
-			output: 0.015,
+			input: 0.002,
+			cacheRead: 0.0002,
+			cacheWrite: 0.0025,
+			output: 0.012,
 			fastMultiplier: 2
 		}
 	},
@@ -81,10 +81,10 @@ export const modelDefinitions = [
 		defaultReasoningEffort: 'medium',
 		serviceTiers: serviceTierIds,
 		usageWeights: {
-			input: 0.001,
-			cacheRead: 0.0001,
-			cacheWrite: 0.00125,
-			output: 0.006,
+			input: 0.0002,
+			cacheRead: 0.00002,
+			cacheWrite: 0.00025,
+			output: 0.0012,
 			fastMultiplier: 2
 		}
 	},
