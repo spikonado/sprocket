@@ -76,6 +76,15 @@ export const getForRun = internalQuery({
 	}
 });
 
+export const remove = internalMutation({
+	args: { id: v.id('browserSessions') },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		await ctx.db.delete(args.id);
+		return null;
+	}
+});
+
 export const insert = internalMutation({
 	args: {
 		runId: v.id('runs'),
@@ -102,20 +111,34 @@ export const start = action({
 	handler: async (ctx, args): Promise<Infer<typeof vBrowserSessionResult>> => {
 		const actor = await activeActor(ctx, args);
 		const { apiKey, projectId } = browserbaseConfig();
-		const existing: { browserbaseSessionId: string; liveViewUrl: string } | null =
-			await ctx.runQuery(internal.browserSessions.getForRun, {
-				runId: args.runId,
-				userId: actor.userId
-			});
+		type Existing = {
+			_id: Doc<'browserSessions'>['_id'];
+			browserbaseSessionId: string;
+			liveViewUrl: string;
+		};
+		const existing: Existing | null = await ctx.runQuery(internal.browserSessions.getForRun, {
+			runId: args.runId,
+			userId: actor.userId
+		});
 		if (existing) {
-			await browserbaseRequest(
-				apiKey,
-				`/v1/sessions/${encodeURIComponent(existing.browserbaseSessionId)}`
-			);
-			return {
-				connectUrl: connectUrl(apiKey, existing.browserbaseSessionId),
-				liveViewUrl: existing.liveViewUrl
-			};
+			// Reuse only if the remote session is still alive; otherwise drop the
+			// stale row and fall through to create a fresh one.
+			try {
+				const remote = await browserbaseRequest<{ status?: string }>(
+					apiKey,
+					`/v1/sessions/${encodeURIComponent(existing.browserbaseSessionId)}`
+				);
+				const alive = !remote.status || /run|active/i.test(remote.status);
+				if (alive) {
+					return {
+						connectUrl: connectUrl(apiKey, existing.browserbaseSessionId),
+						liveViewUrl: existing.liveViewUrl
+					};
+				}
+			} catch {
+				// Remote session is gone (404) or unreachable — recreate below.
+			}
+			await ctx.runMutation(internal.browserSessions.remove, { id: existing._id });
 		}
 
 		const session = await browserbaseRequest<{ id: string; connectUrl: string }>(

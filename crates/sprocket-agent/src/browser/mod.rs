@@ -45,6 +45,9 @@ const SNAPSHOT_SCRIPT: &str = r#"
     const ref = "e" + (i + 1);
     el.setAttribute("data-sprocket-ref", ref);
     const isSensitive = sensitive(el);
+    // Never echo values from password inputs or sensitive (payment) fields
+    // into the snapshot; they would otherwise persist into tool results.
+    const hidesValue = isSensitive || (el.tagName === "INPUT" && (el.type || "").toLowerCase() === "password");
     return {
       ref,
       tag: el.tagName.toLowerCase(),
@@ -54,7 +57,7 @@ const SNAPSHOT_SCRIPT: &str = r#"
       inputType: el.tagName === "INPUT" ? (el.type || "text") : null,
       name: el.getAttribute("name"),
       placeholder: el.getAttribute("placeholder"),
-      value: !isSensitive && ("value" in el) ? String(el.value || "") : null,
+      value: !hidesValue && ("value" in el) ? String(el.value || "") : null,
       sensitive: isSensitive
     };
   });
@@ -333,10 +336,27 @@ impl BrowserSession {
             .find_element("[data-sprocket-payment-target]")
             .await
             .map_err(|_| anyhow!("failed to fill the payment field"))?;
-        element
-            .click()
+        // Clear any existing value so retries never append digits.
+        let cleared: bool = self
+            .page
+            .evaluate_expression(
+                r#"(() => {
+                  const el = document.querySelector("[data-sprocket-payment-target]");
+                  if (!el) return false;
+                  el.focus();
+                  el.value = "";
+                  el.dispatchEvent(new Event("input", { bubbles: true }));
+                  return true;
+                })()"#,
+            )
             .await
             .map_err(|_| anyhow!("failed to fill the payment field"))?
+            .into_value()
+            .map_err(|_| anyhow!("failed to fill the payment field"))?;
+        if !cleared {
+            return Err(anyhow!("failed to fill the payment field"));
+        }
+        element
             .type_str(value)
             .await
             .map_err(|_| anyhow!("failed to fill the payment field"))?;

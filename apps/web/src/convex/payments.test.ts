@@ -230,6 +230,51 @@ describe('payments', () => {
 		expect(stored).toMatchObject({ status: 'spent', reportedAt: expect.any(Number) });
 	});
 
+	it('reports to Prava exactly once when reportStatus races', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(
+				jsonResponse({
+					session_id: 'prava-session-race',
+					session_token: 'session-token',
+					expires_at: '2026-08-01T10:15:00Z',
+					iframe_url: 'https://sandbox.api.prava.space/iframe/race',
+					order_id: 'order-race'
+				})
+			)
+			// The single Prava report-status call that should ever happen.
+			.mockResolvedValueOnce(jsonResponse({ ok: true }));
+		vi.stubGlobal('fetch', fetchMock);
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+		const created = await run.asUser.action(api.payments.createPurchaseSession, createArgs(run));
+		const reportArgs = {
+			purchaseId: created.purchaseId as Id<'purchases'>,
+			outcome: 'approved' as const,
+			txnRefId: 'ref-race',
+			runId: run.runId,
+			claimId: run.claimId,
+			executionSecret: run.executionSecret
+		};
+
+		const [first, second] = await Promise.all([
+			run.asUser.action(api.payments.reportStatus, reportArgs),
+			run.asUser.action(api.payments.reportStatus, reportArgs)
+		]);
+
+		expect(first).toEqual({ reported: true });
+		expect(second).toEqual({ reported: true, alreadyReported: true });
+		// One create + exactly one report-status call to Prava.
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		const stored = await t.run(async (ctx) => ctx.db.get(reportArgs.purchaseId));
+		expect(stored).toMatchObject({
+			status: 'spent',
+			reportedAt: expect.any(Number)
+		});
+		expect(stored?.reportingStartedAt).toBeUndefined();
+	});
+
 	it('rejects access to another user’s purchase before calling Prava', async () => {
 		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const fetchMock = vi.fn().mockResolvedValue(

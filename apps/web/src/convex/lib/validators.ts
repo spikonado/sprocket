@@ -78,6 +78,60 @@ export const vReadSkillPayload = v.object({
 	name: v.string()
 });
 
+export const vBrowserNavigatePayload = v.object({
+	url: v.string()
+});
+
+export const vBrowserRefPayload = v.object({
+	ref: v.string()
+});
+
+export const vBrowserTypePayload = v.object({
+	ref: v.string(),
+	text: v.string()
+});
+
+export const vBrowserSelectOptionPayload = v.object({
+	ref: v.string(),
+	value: v.string()
+});
+
+export const vBrowserScrollPayload = v.object({
+	direction: v.union(v.literal('up'), v.literal('down'))
+});
+
+export const vBrowserFillPaymentPayload = v.object({
+	purchaseId: v.string(),
+	field: v.union(v.literal('number'), v.literal('cvv'), v.literal('expiry'))
+});
+
+export const vPurchaseItem = v.object({
+	description: v.string(),
+	unitPrice: v.string(),
+	quantity: v.optional(v.number())
+});
+
+export const vPurchaseCreateSessionPayload = v.object({
+	userEmail: v.optional(v.string()),
+	merchantName: v.string(),
+	merchantUrl: v.string(),
+	countryCode: v.string(),
+	totalAmount: v.string(),
+	currency: v.string(),
+	description: v.string(),
+	items: v.optional(v.array(vPurchaseItem))
+});
+
+export const vPurchaseIdPayload = v.object({
+	purchaseId: v.string()
+});
+
+export const vPurchaseReportStatusPayload = v.object({
+	purchaseId: v.string(),
+	outcome: v.union(v.literal('approved'), v.literal('declined')),
+	txnRefId: v.optional(v.string())
+});
+
 export const vAskQuestionOption = v.object({
 	id: v.string(),
 	label: v.string()
@@ -106,7 +160,16 @@ export const vExecutorJobPayload = v.union(
 	vWebSearchPayload,
 	vWriteStdinPayload,
 	vCreateArtifactPayload,
-	vUpdateArtifactPayload
+	vUpdateArtifactPayload,
+	vBrowserNavigatePayload,
+	vBrowserRefPayload,
+	vBrowserTypePayload,
+	vBrowserSelectOptionPayload,
+	vBrowserScrollPayload,
+	vBrowserFillPaymentPayload,
+	vPurchaseCreateSessionPayload,
+	vPurchaseIdPayload,
+	vPurchaseReportStatusPayload
 );
 
 export const vApplyPatchResult = v.object({
@@ -236,7 +299,10 @@ export const vExecutorJobResult = v.union(
 	vReadSkillResult,
 	vScrapeUrlResult,
 	vWebSearchResult,
-	vArtifactResult
+	vArtifactResult,
+	vCreatePurchaseSessionResult,
+	vPurchaseStatusResult,
+	vReportPurchaseStatusResult
 );
 
 export const vExecutorStatus = v.union(v.literal('disconnected'), v.literal('connected'));
@@ -264,8 +330,18 @@ export const vExecutorJobKind = v.union(
 	v.literal('apply_patch'),
 	v.literal('ask_question'),
 	v.literal('await_question'),
+	v.literal('browser_click'),
+	v.literal('browser_fill_payment'),
+	v.literal('browser_navigate'),
+	v.literal('browser_scroll'),
+	v.literal('browser_select_option'),
+	v.literal('browser_snapshot'),
+	v.literal('browser_type'),
 	v.literal('exec_command'),
 	v.literal('get_workspace_instructions'),
+	v.literal('purchase_create_session'),
+	v.literal('purchase_report_status'),
+	v.literal('purchase_status'),
 	v.literal('read_skill'),
 	v.literal('scrape_url'),
 	v.literal('web_search'),

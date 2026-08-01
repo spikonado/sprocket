@@ -51,6 +51,8 @@ struct AgentToolContext {
     tool_call_tracker: ToolCallTracker,
     command_sessions: CommandSessionManager,
     browser_session: Arc<tokio::sync::Mutex<Option<BrowserSession>>>,
+    payment_credentials:
+        Arc<tokio::sync::Mutex<std::collections::HashMap<String, PaymentCredential>>>,
 }
 
 impl AgentToolContext {
@@ -62,6 +64,9 @@ impl AgentToolContext {
         tool_call_tracker: ToolCallTracker,
         command_sessions: CommandSessionManager,
         browser_session: Arc<tokio::sync::Mutex<Option<BrowserSession>>>,
+        payment_credentials: Arc<
+            tokio::sync::Mutex<std::collections::HashMap<String, PaymentCredential>>,
+        >,
     ) -> Self {
         Self {
             runtime,
@@ -71,6 +76,7 @@ impl AgentToolContext {
             tool_call_tracker,
             command_sessions,
             browser_session,
+            payment_credentials,
         }
     }
 }
@@ -163,6 +169,7 @@ pub(crate) fn agent_tools(
 ) -> AgentToolSet {
     let command_sessions = CommandSessionManager::new(workspace_root.clone());
     let browser_session = Arc::new(tokio::sync::Mutex::new(None));
+    let payment_credentials = Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
     let context = AgentToolContext::new(
         runtime,
         run_id,
@@ -171,6 +178,7 @@ pub(crate) fn agent_tools(
         tool_call_tracker,
         command_sessions.clone(),
         browser_session,
+        payment_credentials,
     );
     AgentToolSet {
         apply_patch: ApplyPatchTool(context.clone()),
@@ -1257,7 +1265,13 @@ impl rig::tool::Tool for BrowserFillPaymentTool {
                     BrowserPaymentField::Cvv => (PaymentField::Cvv, credential.dynamic_cvv),
                     BrowserPaymentField::Expiry => (
                         PaymentField::Expiry,
-                        format!("{:0>2}/{}", credential.expiry_month, credential.expiry_year),
+                        // Most checkout forms expect MM/YY.
+                        format!(
+                            "{:0>2}/{}",
+                            credential.expiry_month,
+                            &credential.expiry_year
+                                [credential.expiry_year.len().saturating_sub(2)..]
+                        ),
                     ),
                 };
                 let mut session = self.0.browser_session.lock().await;
@@ -1343,6 +1357,26 @@ impl rig::tool::Tool for PurchaseReportStatusTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        // Reuse the credential's transaction reference when we already hold
+        // it, so a report never re-fetches from Prava.
+        let args = if args.txn_ref_id.is_none() {
+            let cached = self
+                .0
+                .payment_credentials
+                .lock()
+                .await
+                .get(&args.purchase_id)
+                .map(|credential| credential.txn_ref_id.clone());
+            match cached {
+                Some(txn_ref_id) => PurchaseReportStatusArgs {
+                    txn_ref_id: Some(txn_ref_id),
+                    ..args
+                },
+                None => args,
+            }
+        } else {
+            args
+        };
         purchase_action_job(
             &self.0,
             Self::NAME,
@@ -1685,19 +1719,29 @@ async fn purchase_action_job(
     .await
 }
 
+#[derive(Clone)]
 struct PaymentCredential {
     token: String,
     dynamic_cvv: String,
     expiry_month: String,
     expiry_year: String,
+    txn_ref_id: String,
 }
 
+/// Prava purchase sessions live ~15 minutes and first-time passkey enrollment
+/// can take a few minutes, so poll well past that window while still
+/// failing fast once Prava reports a terminal state.
 async fn poll_payment_credential(
     context: &AgentToolContext,
     purchase_id: &str,
     cancellation: WorkspaceCancellation,
 ) -> Result<PaymentCredential, AgentToolError> {
-    for attempt in 0..45 {
+    if let Some(credential) = context.payment_credentials.lock().await.get(purchase_id) {
+        return Ok(credential.clone());
+    }
+
+    // ~14 minutes of polling at 2s intervals, with cancellation.
+    for _ in 0..420 {
         let mut args = BTreeMap::new();
         args.insert("runId".to_string(), context.run_id.clone().into());
         args.insert("claimId".to_string(), context.claim_id.clone().into());
@@ -1711,25 +1755,29 @@ async fn poll_payment_credential(
         .await?;
 
         if response.get("ready").and_then(serde_json::Value::as_bool) == Some(true) {
-            return Ok(PaymentCredential {
+            let credential = PaymentCredential {
                 token: credential_string(&response, "token")?,
                 dynamic_cvv: credential_string(&response, "dynamicCvv")?,
                 expiry_month: credential_string(&response, "expiryMonth")?,
                 expiry_year: credential_string(&response, "expiryYear")?,
-            });
+                txn_ref_id: credential_string(&response, "txnRefId")?,
+            };
+            context
+                .payment_credentials
+                .lock()
+                .await
+                .insert(purchase_id.to_string(), credential.clone());
+            return Ok(credential);
         }
 
         let status = response
             .get("status")
             .and_then(serde_json::Value::as_str)
             .unwrap_or("pending");
-        if status.eq_ignore_ascii_case("failed") {
+        if status.eq_ignore_ascii_case("failed") || status.eq_ignore_ascii_case("expired") {
             return Err(AgentToolError::Message(format!(
-                "payment credential failed with status '{status}'"
+                "payment credential is no longer available (status '{status}')"
             )));
-        }
-        if attempt == 44 {
-            break;
         }
         tokio::select! {
             _ = cancellation.cancelled() => return Err(AgentToolError::Cancelled),

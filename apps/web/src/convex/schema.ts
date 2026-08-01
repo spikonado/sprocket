@@ -72,6 +72,8 @@ export default defineSchema({
 			v.literal('expired')
 		),
 		reportedAt: v.optional(v.number()),
+		reportingStartedAt: v.optional(v.number()),
+		reportOutcome: v.optional(v.union(v.literal('approved'), v.literal('declined'))),
 		createdAt: v.number(),
 		updatedAt: v.number()
 	})

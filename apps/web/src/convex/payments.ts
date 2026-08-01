@@ -137,6 +137,8 @@ const purchaseDoc = v.object({
 		v.literal('expired')
 	),
 	reportedAt: v.optional(v.number()),
+	reportingStartedAt: v.optional(v.number()),
+	reportOutcome: v.optional(v.union(v.literal('approved'), v.literal('declined'))),
 	createdAt: v.number(),
 	updatedAt: v.number()
 });
@@ -196,7 +198,62 @@ export const updatePurchaseStatus = internalMutation({
 		if (!purchase || purchase.userId !== args.userId) {
 			throw new Error('Purchase not found.');
 		}
+		// Never rewind a terminal or already-reported purchase.
+		if (
+			purchase.reportedAt ||
+			purchase.status === 'spent' ||
+			purchase.status === 'declined' ||
+			purchase.status === 'failed' ||
+			purchase.status === 'expired'
+		) {
+			return null;
+		}
 		await ctx.db.patch(args.purchaseId, { status: args.status, updatedAt: Date.now() });
+		return null;
+	}
+});
+
+/** Atomically claim the right to report to Prava. 'claimed' means this caller
+ * may proceed; 'already' means a report already happened or is in flight. */
+export const claimPurchaseReport = internalMutation({
+	args: {
+		purchaseId: v.id('purchases'),
+		userId: v.string(),
+		outcome: v.union(v.literal('approved'), v.literal('declined'))
+	},
+	returns: v.union(v.literal('claimed'), v.literal('already')),
+	handler: async (ctx, args) => {
+		const purchase = await ctx.db.get(args.purchaseId);
+		if (!purchase || purchase.userId !== args.userId) {
+			throw new Error('Purchase not found.');
+		}
+		if (purchase.reportedAt || purchase.reportingStartedAt) {
+			return 'already';
+		}
+		await ctx.db.patch(args.purchaseId, {
+			reportingStartedAt: Date.now(),
+			reportOutcome: args.outcome,
+			updatedAt: Date.now()
+		});
+		return 'claimed';
+	}
+});
+
+export const releasePurchaseReport = internalMutation({
+	args: { purchaseId: v.id('purchases'), userId: v.string() },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const purchase = await ctx.db.get(args.purchaseId);
+		if (!purchase || purchase.userId !== args.userId) {
+			throw new Error('Purchase not found.');
+		}
+		if (!purchase.reportedAt) {
+			await ctx.db.patch(args.purchaseId, {
+				reportingStartedAt: undefined,
+				reportOutcome: undefined,
+				updatedAt: Date.now()
+			});
+		}
 		return null;
 	}
 });
@@ -217,6 +274,8 @@ export const finishPurchaseReport = internalMutation({
 			const now = Date.now();
 			await ctx.db.patch(args.purchaseId, {
 				status: args.status,
+				reportingStartedAt: undefined,
+				reportOutcome: undefined,
 				reportedAt: now,
 				updatedAt: now
 			});
@@ -369,6 +428,15 @@ export const reportStatus = action({
 			return { reported: true, alreadyReported: true };
 		}
 
+		const claim = await ctx.runMutation(internal.payments.claimPurchaseReport, {
+			purchaseId: purchase._id,
+			userId: actor.userId,
+			outcome: args.outcome
+		});
+		if (claim === 'already') {
+			return { reported: true, alreadyReported: true };
+		}
+
 		let txnRefId = args.txnRefId?.trim();
 		if (!txnRefId) {
 			const result = await paymentResult(purchase.pravaSessionId);
@@ -377,18 +445,30 @@ export const reportStatus = action({
 				.find((item) => item.txn_ref_id)?.txn_ref_id;
 		}
 		if (!txnRefId) {
+			await ctx.runMutation(internal.payments.releasePurchaseReport, {
+				purchaseId: purchase._id,
+				userId: actor.userId
+			});
 			throw new Error('Prava transaction reference is unavailable.');
 		}
-		await pravaRequest(
-			`/v1/sessions/${encodeURIComponent(purchase.pravaSessionId)}/report-status`,
-			{
-				method: 'POST',
-				body: JSON.stringify({
-					txn_ref_id: txnRefId,
-					txn_status: args.outcome === 'approved' ? 'APPROVED' : 'DECLINED'
-				})
-			}
-		);
+		try {
+			await pravaRequest(
+				`/v1/sessions/${encodeURIComponent(purchase.pravaSessionId)}/report-status`,
+				{
+					method: 'POST',
+					body: JSON.stringify({
+						txn_ref_id: txnRefId,
+						txn_status: args.outcome === 'approved' ? 'APPROVED' : 'DECLINED'
+					})
+				}
+			);
+		} catch (error) {
+			await ctx.runMutation(internal.payments.releasePurchaseReport, {
+				purchaseId: purchase._id,
+				userId: actor.userId
+			});
+			throw error;
+		}
 		await ctx.runMutation(internal.payments.finishPurchaseReport, {
 			purchaseId: purchase._id,
 			userId: actor.userId,
