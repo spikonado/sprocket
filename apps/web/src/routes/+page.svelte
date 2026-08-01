@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { PanelRight } from '@lucide/svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import { useAuth, useMutation, useQuery } from 'convex-svelte';
@@ -29,7 +29,12 @@
 	import ThreadTranscript from '$lib/components/home/thread-transcript.svelte';
 	import ArtifactPanel from '$lib/components/home/artifact-panel.svelte';
 	import ArtifactScreenFullscreen from '$lib/components/home/artifact-screen-fullscreen.svelte';
-	import type { ArtifactPanelSnapshot } from '$lib/chat/artifacts';
+	import {
+		DEFAULT_ARTIFACT_PANEL_SNAPSHOT,
+		nextArtifactRevisionWatch,
+		type ArtifactPanelSnapshot,
+		type ArtifactRevision
+	} from '$lib/chat/artifacts';
 	import ProjectPicker, { type ProjectSelection } from '$lib/components/home/project-picker.svelte';
 	import ProjectSidebar from '$lib/components/home/project-sidebar.svelte';
 	import Button from '$lib/components/ui/button/button.svelte';
@@ -582,12 +587,13 @@
 	// Panel state snapshots survive thread switches; the live thread always has
 	// an entry after the restore effect below runs.
 	const artifactSnapshots = new SvelteMap<Id<'threadRecords'>, ArtifactPanelSnapshot>();
-	let artifactPanel = $state<ArtifactPanelSnapshot>({
-		open: true,
-		expanded: false,
-		selectedKey: null
-	});
+	let artifactPanel = $state<ArtifactPanelSnapshot>({ ...DEFAULT_ARTIFACT_PANEL_SNAPSHOT });
 	let artifactPanelThreadId: Id<'threadRecords'> | null = null;
+	// Baseline for create/update detection; null means the next observation only seeds.
+	let artifactRevisionWatch: {
+		threadId: Id<'threadRecords'>;
+		revisions: Map<string, ArtifactRevision>;
+	} | null = null;
 
 	$effect(() => {
 		const threadId = currentThreadId;
@@ -597,10 +603,42 @@
 		}
 		artifactPanelThreadId = threadId;
 		artifactFullscreenKey = null;
-		artifactPanel = (threadId && artifactSnapshots.get(threadId)) || {
+		artifactPanel = {
+			...((threadId && artifactSnapshots.get(threadId)) || DEFAULT_ARTIFACT_PANEL_SNAPSHOT)
+		};
+	});
+
+	$effect(() => {
+		const threadId = currentThreadId;
+		const data = artifactsQuery.data;
+		if (!threadId) {
+			artifactRevisionWatch = null;
+			return;
+		}
+		// Drop the prior thread's baseline immediately on switch, even while loading,
+		// so A→B(loading)→A re-seeds instead of treating away-updates as live changes.
+		if (artifactRevisionWatch && artifactRevisionWatch.threadId !== threadId) {
+			artifactRevisionWatch = null;
+		}
+		if (data === undefined) return;
+
+		const current: ArtifactRevision[] = data.map((entry) => ({
+			id: entry.artifact._id as string,
+			currentVersion: entry.artifact.currentVersion,
+			updatedAt: entry.artifact.updatedAt
+		}));
+		const previous = artifactRevisionWatch?.revisions ?? null;
+		const { revisions, changedId } = nextArtifactRevisionWatch(previous, current);
+		artifactRevisionWatch = { threadId, revisions };
+
+		if (!changedId) return;
+		// Avoid depending on panel UI state for re-runs; only follow selection when
+		// opening or when the user is still on the list view.
+		const prior = untrack(() => artifactPanel);
+		artifactPanel = {
+			...prior,
 			open: true,
-			expanded: false,
-			selectedKey: null
+			selectedKey: !prior.open || prior.selectedKey === null ? changedId : prior.selectedKey
 		};
 	});
 
