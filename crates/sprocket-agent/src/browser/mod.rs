@@ -1,83 +1,9 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use anyhow::{Context, anyhow};
 use chromiumoxide::browser::{Browser, BrowserConfig};
 use chromiumoxide::page::Page;
 use futures::StreamExt;
-use serde::Deserialize;
-
-const SNAPSHOT_LIMIT: usize = 20_000;
-const REF_ATTRIBUTE: &str = "data-sprocket-ref";
-
-const SNAPSHOT_SCRIPT: &str = r#"
-() => {
-  const visible = (el) => {
-    const style = getComputedStyle(el);
-    const rect = el.getBoundingClientRect();
-    return style.display !== "none" && style.visibility !== "hidden" &&
-      Number(style.opacity || 1) !== 0 && rect.width > 0 && rect.height > 0;
-  };
-  const clean = (s) => (s || "").replace(/\s+/g, " ").trim();
-  const label = (el) => {
-    const aria = el.getAttribute("aria-label");
-    if (aria) return clean(aria);
-    if (el.getAttribute("aria-labelledby")) {
-      const text = el.getAttribute("aria-labelledby").split(/\s+/)
-        .map(id => document.getElementById(id)?.textContent || "").join(" ");
-      if (clean(text)) return clean(text);
-    }
-    if (el.labels?.length) return clean(Array.from(el.labels).map(x => x.textContent).join(" "));
-    return clean(el.textContent || el.getAttribute("title") || el.getAttribute("alt") || "");
-  };
-  const sensitive = (el) => {
-    const haystack = [
-      el.getAttribute("autocomplete"), el.name, el.id,
-      el.getAttribute("placeholder"), el.getAttribute("aria-label")
-    ].filter(Boolean).join(" ");
-    return /cc-(number|csc|exp|exp-month|exp-year)/i.test(haystack) ||
-      /card.?number|cc.?num|cvv|cvc|csc|security.?code|expir|exp.?date|mm.?\/?.?yy/i.test(haystack);
-  };
-  document.querySelectorAll("[" + "data-sprocket-ref" + "]")
-    .forEach(el => el.removeAttribute("data-sprocket-ref"));
-  const selector = 'a,button,input,select,textarea,[role="button"],[role="link"],summary';
-  const elements = Array.from(document.querySelectorAll(selector)).filter(visible).map((el, i) => {
-    const ref = "e" + (i + 1);
-    el.setAttribute("data-sprocket-ref", ref);
-    const isSensitive = sensitive(el);
-    // Never echo values from password inputs or sensitive (payment) fields
-    // into the snapshot; they would otherwise persist into tool results.
-    const hidesValue = isSensitive || (el.tagName === "INPUT" && (el.type || "").toLowerCase() === "password");
-    // Even for non-sensitive fields, redact values that look like payment
-    // data (long digit runs / card-like groupings) so merchant or user data
-    // that merely resembles a credential is not persisted into tool results.
-    const redactValue = (raw) => {
-      if (raw == null) return null;
-      const s = String(raw);
-      const digits = s.replace(/\\D/g, "");
-      if (digits.length >= 12) return "[redacted]";
-      return s;
-    };
-    return {
-      ref,
-      tag: el.tagName.toLowerCase(),
-      role: el.getAttribute("role"),
-      label: label(el),
-      href: el.href || null,
-      inputType: el.tagName === "INPUT" ? (el.type || "text") : null,
-      name: el.getAttribute("name"),
-      placeholder: el.getAttribute("placeholder"),
-      value: !hidesValue && ("value" in el) ? redactValue(el.value || "") : null,
-      sensitive: isSensitive
-    };
-  });
-  const headings = Array.from(document.querySelectorAll("h1,h2,h3"))
-    .filter(visible).slice(0, 30).map(el => clean(el.textContent)).filter(Boolean);
-  const text = Array.from(document.querySelectorAll("main p,main li,article p,article li,form label"))
-    .filter(visible).slice(0, 40).map(el => clean(el.textContent)).filter(Boolean);
-  return { title: document.title || "", url: location.href, headings, text, elements };
-}
-"#;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PaymentField {
@@ -86,57 +12,9 @@ pub enum PaymentField {
     Expiry,
 }
 
-#[derive(Clone, Debug)]
-pub struct Snapshot {
-    text: String,
-}
-
-impl Snapshot {
-    pub fn as_str(&self) -> &str {
-        &self.text
-    }
-
-    pub fn into_string(self) -> String {
-        self.text
-    }
-}
-
-impl std::fmt::Display for Snapshot {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.text)
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RawSnapshot {
-    title: String,
-    url: String,
-    headings: Vec<String>,
-    text: Vec<String>,
-    elements: Vec<RawElement>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RawElement {
-    #[serde(rename = "ref")]
-    reference: String,
-    tag: String,
-    role: Option<String>,
-    label: String,
-    href: Option<String>,
-    input_type: Option<String>,
-    name: Option<String>,
-    placeholder: Option<String>,
-    value: Option<String>,
-    sensitive: bool,
-}
-
 pub struct BrowserSession {
     _browser: Browser,
     page: Page,
-    locators: HashMap<String, String>,
     _handler_task: tokio::task::JoinHandle<()>,
 }
 
@@ -183,116 +61,8 @@ impl BrowserSession {
         Ok(Self {
             _browser: browser,
             page,
-            locators: HashMap::new(),
             _handler_task: handler_task,
         })
-    }
-
-    pub async fn navigate(&mut self, url: &str) -> anyhow::Result<Snapshot> {
-        self.page
-            .goto(url)
-            .await
-            .context("browser navigation failed")?;
-        self.snapshot().await
-    }
-
-    pub async fn snapshot(&mut self) -> anyhow::Result<Snapshot> {
-        let raw: RawSnapshot = self
-            .page
-            .evaluate_function(SNAPSHOT_SCRIPT)
-            .await
-            .context("failed to inspect the browser page")?
-            .into_value()
-            .context("browser page returned an invalid snapshot")?;
-
-        self.locators = raw
-            .elements
-            .iter()
-            .map(|element| {
-                (
-                    element.reference.clone(),
-                    format!("[{REF_ATTRIBUTE}=\"{}\"]", element.reference),
-                )
-            })
-            .collect();
-
-        Ok(Snapshot {
-            text: render_snapshot(raw),
-        })
-    }
-
-    pub async fn click(&mut self, reference: &str) -> anyhow::Result<Snapshot> {
-        let selector = self.resolve(reference)?;
-        let element = self
-            .page
-            .find_element(selector)
-            .await
-            .map_err(|_| stale_reference(reference))?;
-        element
-            .click()
-            .await
-            .context("failed to click browser element; take a new snapshot")?;
-        self.snapshot().await
-    }
-
-    pub async fn type_text(&mut self, reference: &str, text: &str) -> anyhow::Result<Snapshot> {
-        let selector = self.resolve(reference)?;
-        let element = self
-            .page
-            .find_element(selector)
-            .await
-            .map_err(|_| stale_reference(reference))?;
-        element
-            .click()
-            .await
-            .context("failed to focus browser element; take a new snapshot")?
-            .type_str(text)
-            .await
-            .context("failed to type into browser element; take a new snapshot")?;
-        self.snapshot().await
-    }
-
-    pub async fn select_option(
-        &mut self,
-        reference: &str,
-        value: &str,
-    ) -> anyhow::Result<Snapshot> {
-        let selector = self.resolve(reference)?;
-        let expression = format!(
-            r#"(() => {{
-              const el = document.querySelector({});
-              if (!el) return false;
-              el.value = {};
-              el.dispatchEvent(new Event("input", {{ bubbles: true }}));
-              el.dispatchEvent(new Event("change", {{ bubbles: true }}));
-              return true;
-            }})()"#,
-            serde_json::to_string(&selector)?,
-            serde_json::to_string(value)?
-        );
-        let selected: bool = self
-            .page
-            .evaluate_expression(expression)
-            .await
-            .context("failed to select browser option")?
-            .into_value()
-            .context("browser returned an invalid selection result")?;
-        if !selected {
-            return Err(stale_reference(reference));
-        }
-        self.snapshot().await
-    }
-
-    pub async fn scroll(&mut self, direction: ScrollDirection) -> anyhow::Result<Snapshot> {
-        let delta = match direction {
-            ScrollDirection::Up => -700,
-            ScrollDirection::Down => 700,
-        };
-        self.page
-            .evaluate_expression(format!("window.scrollBy(0, {delta})"))
-            .await
-            .context("failed to scroll browser page")?;
-        self.snapshot().await
     }
 
     pub async fn fill_payment_field(&self, field: PaymentField, value: &str) -> anyhow::Result<()> {
@@ -488,19 +258,6 @@ impl BrowserSession {
             .into_value()
             .context("browser evaluation returned an invalid value")
     }
-
-    fn resolve(&self, reference: &str) -> anyhow::Result<String> {
-        self.locators
-            .get(reference)
-            .cloned()
-            .ok_or_else(|| stale_reference(reference))
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ScrollDirection {
-    Up,
-    Down,
 }
 
 pub fn find_browser_binary() -> Option<PathBuf> {
@@ -520,70 +277,4 @@ pub fn find_browser_binary() -> Option<PathBuf> {
         }
     }
     None
-}
-
-fn stale_reference(reference: &str) -> anyhow::Error {
-    anyhow!("browser element reference '{reference}' is stale; take a new snapshot")
-}
-
-fn render_snapshot(raw: RawSnapshot) -> String {
-    let mut lines = vec![format!("Title: {}", raw.title), format!("URL: {}", raw.url)];
-    if !raw.headings.is_empty() {
-        lines.push("Headings:".to_string());
-        lines.extend(
-            raw.headings
-                .into_iter()
-                .map(|heading| format!("- {heading}")),
-        );
-    }
-    if !raw.text.is_empty() {
-        lines.push("Text:".to_string());
-        lines.extend(raw.text.into_iter().map(|text| format!("- {text}")));
-    }
-    lines.push("Interactive elements:".to_string());
-    for element in raw.elements {
-        let mut line = format!("[{}] <{}", element.reference, element.tag);
-        if let Some(role) = element.role {
-            line.push_str(&format!(" role={role}"));
-        }
-        if let Some(input_type) = element.input_type {
-            line.push_str(&format!(" type={input_type}"));
-        }
-        if let Some(name) = element.name {
-            line.push_str(&format!(" name={name:?}"));
-        }
-        if let Some(placeholder) = element.placeholder {
-            line.push_str(&format!(" placeholder={placeholder:?}"));
-        }
-        line.push('>');
-        if !element.label.is_empty() {
-            line.push_str(&format!(" {}", element.label));
-        }
-        if let Some(href) = element.href {
-            line.push_str(&format!(" href={href:?}"));
-        }
-        if element.sensitive {
-            line.push_str(" [sensitive]");
-        } else if let Some(value) = element.value.filter(|value| !value.is_empty()) {
-            line.push_str(&format!(" value={value:?}"));
-        }
-        lines.push(line);
-    }
-
-    let text = lines.join("\n");
-    truncate_snapshot(text)
-}
-
-fn truncate_snapshot(mut text: String) -> String {
-    const MARKER: &str = "\n[... snapshot truncated ...]";
-    if text.len() <= SNAPSHOT_LIMIT {
-        return text;
-    }
-    let mut boundary = SNAPSHOT_LIMIT.saturating_sub(MARKER.len());
-    while !text.is_char_boundary(boundary) {
-        boundary -= 1;
-    }
-    text.truncate(boundary);
-    text.push_str(MARKER);
-    text
 }

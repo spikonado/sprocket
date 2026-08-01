@@ -30,7 +30,7 @@ const MAX_AGENT_OPTIONS: usize = 4;
 const AGENT_DECIDE_OPTION_ID: &str = "agent_decide";
 const GET_QUESTION_FUNCTION: &str = "agentQuestions:getForExecutor";
 
-use crate::browser::{BrowserSession, PaymentField, ScrollDirection};
+use crate::browser::{BrowserSession, PaymentField};
 use crate::convex::RuntimeClient;
 use crate::hooks::ToolCallTracker;
 
@@ -109,17 +109,7 @@ pub(crate) struct CreateArtifactTool(AgentToolContext);
 pub(crate) struct UpdateArtifactTool(AgentToolContext);
 
 #[derive(Clone)]
-pub(crate) struct BrowserNavigateTool(AgentToolContext);
-#[derive(Clone)]
-pub(crate) struct BrowserSnapshotTool(AgentToolContext);
-#[derive(Clone)]
-pub(crate) struct BrowserClickTool(AgentToolContext);
-#[derive(Clone)]
-pub(crate) struct BrowserTypeTool(AgentToolContext);
-#[derive(Clone)]
-pub(crate) struct BrowserSelectOptionTool(AgentToolContext);
-#[derive(Clone)]
-pub(crate) struct BrowserScrollTool(AgentToolContext);
+pub(crate) struct BrowserTaskTool(AgentToolContext);
 #[derive(Clone)]
 pub(crate) struct BrowserFillPaymentTool(AgentToolContext);
 #[derive(Clone)]
@@ -147,12 +137,7 @@ pub(crate) struct AgentToolSet {
     pub(crate) write_stdin: WriteStdinTool,
     pub(crate) create_artifact: CreateArtifactTool,
     pub(crate) update_artifact: UpdateArtifactTool,
-    pub(crate) browser_navigate: BrowserNavigateTool,
-    pub(crate) browser_snapshot: BrowserSnapshotTool,
-    pub(crate) browser_click: BrowserClickTool,
-    pub(crate) browser_type: BrowserTypeTool,
-    pub(crate) browser_select_option: BrowserSelectOptionTool,
-    pub(crate) browser_scroll: BrowserScrollTool,
+    pub(crate) browser_task: BrowserTaskTool,
     pub(crate) browser_fill_payment: BrowserFillPaymentTool,
     pub(crate) purchase_create_session: PurchaseCreateSessionTool,
     pub(crate) purchase_status: PurchaseStatusTool,
@@ -195,12 +180,7 @@ pub(crate) fn agent_tools(
         write_stdin: WriteStdinTool(context.clone()),
         create_artifact: CreateArtifactTool(context.clone()),
         update_artifact: UpdateArtifactTool(context.clone()),
-        browser_navigate: BrowserNavigateTool(context.clone()),
-        browser_snapshot: BrowserSnapshotTool(context.clone()),
-        browser_click: BrowserClickTool(context.clone()),
-        browser_type: BrowserTypeTool(context.clone()),
-        browser_select_option: BrowserSelectOptionTool(context.clone()),
-        browser_scroll: BrowserScrollTool(context.clone()),
+        browser_task: BrowserTaskTool(context.clone()),
         browser_fill_payment: BrowserFillPaymentTool(context.clone()),
         purchase_create_session: PurchaseCreateSessionTool(context.clone()),
         purchase_status: PurchaseStatusTool(context.clone()),
@@ -429,50 +409,12 @@ pub(crate) struct ScrapeUrlArgs {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct BrowserNavigateArgs {
-    /// URL to open.
-    url: String,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct BrowserSnapshotArgs {}
-
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct BrowserRefArgs {
-    /// Element reference from the latest browser snapshot.
-    #[serde(rename = "ref")]
-    reference: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct BrowserTypeArgs {
-    /// Element reference from the latest browser snapshot.
-    #[serde(rename = "ref")]
-    reference: String,
-    /// Text to type.
-    text: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct BrowserSelectOptionArgs {
-    /// Select element reference from the latest browser snapshot.
-    #[serde(rename = "ref")]
-    reference: String,
-    /// Option value to select.
-    value: String,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum BrowserScrollDirection {
-    Up,
-    Down,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct BrowserScrollArgs {
-    /// Scroll direction.
-    direction: BrowserScrollDirection,
+pub(crate) struct BrowserTaskArgs {
+    /// Natural-language browsing instruction for the sub-agent, e.g. 'search the site for X, add 2 to cart, go to checkout, stop at the payment form'.
+    instruction: String,
+    /// Optional URL to open first.
+    #[serde(rename = "startUrl", skip_serializing_if = "Option::is_none")]
+    start_url: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema)]
@@ -1058,18 +1000,18 @@ impl rig::tool::Tool for UpdateArtifactTool {
     }
 }
 
-impl rig::tool::Tool for BrowserNavigateTool {
-    const NAME: &'static str = "browser_navigate";
+impl rig::tool::Tool for BrowserTaskTool {
+    const NAME: &'static str = "browser_task";
     type Error = AgentToolError;
-    type Args = BrowserNavigateArgs;
+    type Args = BrowserTaskArgs;
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Open a URL in the browser and return a semantic page snapshot.".to_string()
+        "Delegate a browsing task to a sub-agent that drives the browser (navigate, click, fill forms, extract). Use for all web browsing and checkout steps except entering payment card details.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
-        json!(schemars::schema_for!(BrowserNavigateArgs))
+        json!(schemars::schema_for!(BrowserTaskArgs))
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
@@ -1081,152 +1023,21 @@ impl rig::tool::Tool for BrowserNavigateTool {
             Self::NAME,
             &self.0.tool_call_tracker,
             payload,
-            |cancellation| async {
-                let mut session = self.0.browser_session.lock().await;
-                ensure_browser_session(&self.0, &mut session, cancellation).await?;
-                let snapshot = session
-                    .as_mut()
-                    .expect("browser session initialized")
-                    .navigate(&args.url)
-                    .await
-                    .map_err(tool_error)?;
-                Ok(json!(snapshot.into_string()))
+            |cancellation| {
+                let mut action_args = BTreeMap::new();
+                action_args.insert("runId".to_string(), self.0.run_id.clone().into());
+                action_args.insert("claimId".to_string(), self.0.claim_id.clone().into());
+                action_args.insert("instruction".to_string(), args.instruction.clone().into());
+                if let Some(start_url) = &args.start_url {
+                    action_args.insert("startUrl".to_string(), start_url.clone().into());
+                }
+                run_convex_tool_action(
+                    &self.0.runtime,
+                    cancellation,
+                    "browserAgent:runTask",
+                    action_args,
+                )
             },
-        )
-        .await
-    }
-}
-
-impl rig::tool::Tool for BrowserSnapshotTool {
-    const NAME: &'static str = "browser_snapshot";
-    type Error = AgentToolError;
-    type Args = BrowserSnapshotArgs;
-    type Output = serde_json::Value;
-
-    fn description(&self) -> String {
-        "Return a semantic snapshot of the current browser page.".to_string()
-    }
-
-    fn parameters(&self) -> serde_json::Value {
-        json!(schemars::schema_for!(BrowserSnapshotArgs))
-    }
-
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        browser_snapshot_job(
-            &self.0,
-            Self::NAME,
-            serde_json::to_value(args).unwrap(),
-            BrowserSnapshotOperation::Snapshot,
-        )
-        .await
-    }
-}
-
-impl rig::tool::Tool for BrowserClickTool {
-    const NAME: &'static str = "browser_click";
-    type Error = AgentToolError;
-    type Args = BrowserRefArgs;
-    type Output = serde_json::Value;
-
-    fn description(&self) -> String {
-        "Click an element from the latest browser snapshot and return a new snapshot.".to_string()
-    }
-
-    fn parameters(&self) -> serde_json::Value {
-        json!(schemars::schema_for!(BrowserRefArgs))
-    }
-
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
-        browser_snapshot_job(
-            &self.0,
-            Self::NAME,
-            payload,
-            BrowserSnapshotOperation::Click(args.reference),
-        )
-        .await
-    }
-}
-
-impl rig::tool::Tool for BrowserTypeTool {
-    const NAME: &'static str = "browser_type";
-    type Error = AgentToolError;
-    type Args = BrowserTypeArgs;
-    type Output = serde_json::Value;
-
-    fn description(&self) -> String {
-        "Type text into an element from the latest browser snapshot and return a new snapshot."
-            .to_string()
-    }
-
-    fn parameters(&self) -> serde_json::Value {
-        json!(schemars::schema_for!(BrowserTypeArgs))
-    }
-
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
-        browser_snapshot_job(
-            &self.0,
-            Self::NAME,
-            payload,
-            BrowserSnapshotOperation::Type(args.reference, args.text),
-        )
-        .await
-    }
-}
-
-impl rig::tool::Tool for BrowserSelectOptionTool {
-    const NAME: &'static str = "browser_select_option";
-    type Error = AgentToolError;
-    type Args = BrowserSelectOptionArgs;
-    type Output = serde_json::Value;
-
-    fn description(&self) -> String {
-        "Select an option in an element from the latest browser snapshot and return a new snapshot."
-            .to_string()
-    }
-
-    fn parameters(&self) -> serde_json::Value {
-        json!(schemars::schema_for!(BrowserSelectOptionArgs))
-    }
-
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
-        browser_snapshot_job(
-            &self.0,
-            Self::NAME,
-            payload,
-            BrowserSnapshotOperation::Select(args.reference, args.value),
-        )
-        .await
-    }
-}
-
-impl rig::tool::Tool for BrowserScrollTool {
-    const NAME: &'static str = "browser_scroll";
-    type Error = AgentToolError;
-    type Args = BrowserScrollArgs;
-    type Output = serde_json::Value;
-
-    fn description(&self) -> String {
-        "Scroll the browser page and return a new semantic snapshot.".to_string()
-    }
-
-    fn parameters(&self) -> serde_json::Value {
-        json!(schemars::schema_for!(BrowserScrollArgs))
-    }
-
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
-        let direction = match args.direction {
-            BrowserScrollDirection::Up => ScrollDirection::Up,
-            BrowserScrollDirection::Down => ScrollDirection::Down,
-        };
-        browser_snapshot_job(
-            &self.0,
-            Self::NAME,
-            payload,
-            BrowserSnapshotOperation::Scroll(direction),
         )
         .await
     }
@@ -1609,49 +1420,6 @@ fn question_result_from_snapshot(
             "Unexpected question status '{other}'"
         ))),
     }
-}
-
-enum BrowserSnapshotOperation {
-    Snapshot,
-    Click(String),
-    Type(String, String),
-    Select(String, String),
-    Scroll(ScrollDirection),
-}
-
-async fn browser_snapshot_job(
-    context: &AgentToolContext,
-    kind: &str,
-    payload: serde_json::Value,
-    operation: BrowserSnapshotOperation,
-) -> Result<serde_json::Value, AgentToolError> {
-    execute_tool_job(
-        &context.runtime,
-        &context.run_id,
-        &context.claim_id,
-        kind,
-        &context.tool_call_tracker,
-        payload,
-        |cancellation| async {
-            let mut guard = context.browser_session.lock().await;
-            ensure_browser_session(context, &mut guard, cancellation).await?;
-            let session = guard.as_mut().expect("browser session initialized");
-            let snapshot = match operation {
-                BrowserSnapshotOperation::Snapshot => session.snapshot().await,
-                BrowserSnapshotOperation::Click(reference) => session.click(&reference).await,
-                BrowserSnapshotOperation::Type(reference, text) => {
-                    session.type_text(&reference, &text).await
-                }
-                BrowserSnapshotOperation::Select(reference, value) => {
-                    session.select_option(&reference, &value).await
-                }
-                BrowserSnapshotOperation::Scroll(direction) => session.scroll(direction).await,
-            }
-            .map_err(tool_error)?;
-            Ok(json!(snapshot.into_string()))
-        },
-    )
-    .await
 }
 
 async fn ensure_browser_session(

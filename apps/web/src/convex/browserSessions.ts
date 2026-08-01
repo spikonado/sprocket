@@ -1,58 +1,22 @@
 import { v, type Infer } from 'convex/values';
-import { action, internalMutation, internalQuery, type ActionCtx } from '@convex/_generated/server';
-import { api, internal } from '@convex/_generated/api';
-import type { Doc } from '@convex/_generated/dataModel';
-import { isRunClaimLeaseActive } from '@convex/lib/runLease';
+import { action, internalMutation, internalQuery } from '@convex/_generated/server';
+import { internal } from '@convex/_generated/api';
 import { vBrowserSessionResult } from '@convex/lib/validators';
 
-const BROWSERBASE_API_URL = 'https://api.browserbase.com';
-
-function browserbaseConfig(): { apiKey: string; projectId: string } {
-	const apiKey = process.env.BROWSERBASE_API_KEY?.trim();
-	if (!apiKey) throw new Error('BROWSERBASE_API_KEY is not configured.');
-	const projectId = process.env.BROWSERBASE_PROJECT_ID?.trim();
-	if (!projectId) throw new Error('BROWSERBASE_PROJECT_ID is not configured.');
-	return { apiKey, projectId };
-}
-
-async function browserbaseRequest<T>(apiKey: string, path: string, init?: RequestInit): Promise<T> {
-	const response = await fetch(`${BROWSERBASE_API_URL}${path}`, {
-		...init,
-		headers: {
-			'X-BB-API-Key': apiKey,
-			...(init?.body ? { 'Content-Type': 'application/json' } : {}),
-			...init?.headers
-		}
-	});
-	if (!response.ok) {
-		const details = await response.text();
-		throw new Error(
-			`Browserbase request failed (${response.status})${details ? `: ${details}` : '.'}`
-		);
+/** Public entry: delegates to the Node-runtime internal action that drives the
+ * Browserbase SDK. Kept as a separate module because the SDK's Node deps
+ * (node-fetch, agentkeepalive) cannot load in the default Convex runtime. */
+export const start = action({
+	args: {
+		runId: v.id('runs'),
+		claimId: v.string(),
+		executionSecret: v.string()
+	},
+	returns: vBrowserSessionResult,
+	handler: async (ctx, args): Promise<Infer<typeof vBrowserSessionResult>> => {
+		return await ctx.runAction(internal.browserSessionsNode.startInternal, args);
 	}
-	return (await response.json()) as T;
-}
-
-async function activeActor(
-	ctx: ActionCtx,
-	args: { runId: Doc<'runs'>['_id']; claimId: string; executionSecret: string }
-) {
-	const actor = await ctx.runQuery(api.agentRuntime.completionActor, {
-		runId: args.runId,
-		executionSecret: args.executionSecret
-	});
-	if (actor.claimId !== args.claimId || !isRunClaimLeaseActive(actor, Date.now())) {
-		throw new Error('Run is no longer active.');
-	}
-	return actor;
-}
-
-function connectUrl(apiKey: string, sessionId: string): string {
-	const url = new URL('wss://connect.browserbase.com/');
-	url.searchParams.set('apiKey', apiKey);
-	url.searchParams.set('sessionId', sessionId);
-	return url.toString();
-}
+});
 
 const browserSessionDoc = v.object({
 	_id: v.id('browserSessions'),
@@ -98,70 +62,5 @@ export const insert = internalMutation({
 			...args,
 			startedAt: Date.now()
 		});
-	}
-});
-
-export const start = action({
-	args: {
-		runId: v.id('runs'),
-		claimId: v.string(),
-		executionSecret: v.string()
-	},
-	returns: vBrowserSessionResult,
-	handler: async (ctx, args): Promise<Infer<typeof vBrowserSessionResult>> => {
-		const actor = await activeActor(ctx, args);
-		const { apiKey, projectId } = browserbaseConfig();
-		type Existing = {
-			_id: Doc<'browserSessions'>['_id'];
-			browserbaseSessionId: string;
-			liveViewUrl: string;
-		};
-		const existing: Existing | null = await ctx.runQuery(internal.browserSessions.getForRun, {
-			runId: args.runId,
-			userId: actor.userId
-		});
-		if (existing) {
-			// Reuse only if the remote session is still alive; otherwise drop the
-			// stale row and fall through to create a fresh one.
-			try {
-				const remote = await browserbaseRequest<{ status?: string }>(
-					apiKey,
-					`/v1/sessions/${encodeURIComponent(existing.browserbaseSessionId)}`
-				);
-				const alive = !remote.status || /run|active/i.test(remote.status);
-				if (alive) {
-					return {
-						connectUrl: connectUrl(apiKey, existing.browserbaseSessionId),
-						liveViewUrl: existing.liveViewUrl
-					};
-				}
-			} catch {
-				// Remote session is gone (404) or unreachable — recreate below.
-			}
-			await ctx.runMutation(internal.browserSessions.remove, { id: existing._id });
-		}
-
-		const session = await browserbaseRequest<{ id: string; connectUrl: string }>(
-			apiKey,
-			'/v1/sessions',
-			{
-				method: 'POST',
-				body: JSON.stringify({ projectId, keepAlive: true })
-			}
-		);
-		const liveUrls = await browserbaseRequest<{ debuggerFullscreenUrl: string }>(
-			apiKey,
-			`/v1/sessions/${encodeURIComponent(session.id)}/debug`
-		);
-		await ctx.runMutation(internal.browserSessions.insert, {
-			runId: args.runId,
-			userId: actor.userId,
-			browserbaseSessionId: session.id,
-			liveViewUrl: liveUrls.debuggerFullscreenUrl
-		});
-		return {
-			connectUrl: session.connectUrl || connectUrl(apiKey, session.id),
-			liveViewUrl: liveUrls.debuggerFullscreenUrl
-		};
 	}
 });

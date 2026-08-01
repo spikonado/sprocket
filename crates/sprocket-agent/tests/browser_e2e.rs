@@ -1,8 +1,9 @@
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::time::Duration;
 
 use anyhow::Result;
-use sprocket_agent::browser::{BrowserSession, PaymentField, ScrollDirection, find_browser_binary};
+use sprocket_agent::browser::{BrowserSession, PaymentField, find_browser_binary};
 
 const CHECKOUT_HTML: &str = r#"<!doctype html>
 <html>
@@ -33,7 +34,7 @@ const CHECKOUT_HTML: &str = r#"<!doctype html>
 </html>"#;
 
 #[tokio::test]
-async fn drives_mock_checkout_without_exposing_payment_values() -> Result<()> {
+async fn fills_payment_fields_in_mock_checkout() -> Result<()> {
     let Some(browser_path) = find_browser_binary() else {
         eprintln!("skipping browser e2e test: no Chromium browser binary found");
         return Ok(());
@@ -63,95 +64,53 @@ async fn drives_mock_checkout_without_exposing_payment_values() -> Result<()> {
         std::env::remove_var("SPROCKET_BROWSER_CONNECT_URL");
     }
 
-    let mut browser = BrowserSession::connect("").await?;
-    let snapshot = browser
-        .navigate(&format!("http://{address}/checkout"))
-        .await?;
-    let initial = snapshot.as_str();
-    assert!(initial.contains("Mock checkout"));
-    assert!(initial.contains("name=\"fullName\""));
-    assert!(initial.contains("name=\"cardNumber\""));
-    assert!(initial.contains("name=\"expiry\""));
-    assert!(initial.contains("name=\"cvv\""));
-    assert!(initial.matches("[sensitive]").count() >= 3);
-
-    let address_ref = element_ref(initial, "name=\"address\"");
-    let country_ref = element_ref(initial, "name=\"country\"");
-    let pay_ref = element_ref(initial, "Pay now");
+    let browser = BrowserSession::connect("").await?;
+    let checkout_url = serde_json::to_string(&format!("http://{address}/checkout"))?;
+    let _ = browser
+        .evaluate_json(&format!("window.location.href = {checkout_url}"))
+        .await;
+    let mut loaded = false;
+    for _ in 0..100 {
+        if browser
+            .evaluate_json("document.title === 'Mock checkout'")
+            .await
+            .ok()
+            .and_then(|value| value.as_bool())
+            == Some(true)
+        {
+            loaded = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(loaded, "mock checkout did not load");
 
     browser
         .fill_payment_field(PaymentField::Number, "4111111111111111")
         .await?;
-    assert_eq!(
-        browser
-            .evaluate_json("document.querySelector('[name=cardNumber]').value")
-            .await?,
-        "4111111111111111"
-    );
-    let post_fill = browser.snapshot().await?;
-    assert!(!post_fill.as_str().contains("4111111111111111"));
-    assert!(post_fill.as_str().matches("[sensitive]").count() >= 3);
-
-    browser.type_text(&address_ref, "1 Test Lane").await?;
-    assert_eq!(
-        browser
-            .evaluate_json("document.querySelector('[name=address]').value")
-            .await?,
-        "1 Test Lane"
-    );
-    browser.select_option(&country_ref, "CA").await?;
-    assert_eq!(
-        browser
-            .evaluate_json("document.querySelector('[name=country]').value")
-            .await?,
-        "CA"
-    );
-    browser.scroll(ScrollDirection::Down).await?;
-    assert!(
-        browser
-            .evaluate_json("window.scrollY")
-            .await?
-            .as_f64()
-            .unwrap_or_default()
-            > 0.0
-    );
-    browser.click(&pay_ref).await?;
-    assert_eq!(
-        browser
-            .evaluate_json("document.querySelector('form').dataset.paid")
-            .await?,
-        "yes"
-    );
-
-    // Split month/year fields: combined expiry "12\034" fills month then year
-    // separately, and the year field must not receive the combined value.
+    browser.fill_payment_field(PaymentField::Cvv, "123").await?;
     browser
         .fill_payment_field(PaymentField::Expiry, "12\u{0}30")
         .await?;
     assert_eq!(
         browser
-            .evaluate_json("document.querySelector('[name=expMonth]').value")
+            .evaluate_json(
+                r#"({
+                  cardNumber: document.querySelector("[name=cardNumber]").value,
+                  cvv: document.querySelector("[name=cvv]").value,
+                  expMonth: document.querySelector("[name=expMonth]").value,
+                  expYear: document.querySelector("[name=expYear]").value,
+                })"#,
+            )
             .await?,
-        "12"
-    );
-    assert_eq!(
-        browser
-            .evaluate_json("document.querySelector('[name=expYear]').value")
-            .await?,
-        "30"
+        serde_json::json!({
+            "cardNumber": "4111111111111111",
+            "cvv": "123",
+            "expMonth": "12",
+            "expYear": "30",
+        })
     );
 
     server.join().unwrap();
     Ok(())
-}
-
-fn element_ref(snapshot: &str, marker: &str) -> String {
-    let line = snapshot
-        .lines()
-        .find(|line| line.contains(marker))
-        .unwrap_or_else(|| panic!("snapshot did not contain {marker:?}"));
-    line.strip_prefix('[')
-        .and_then(|value| value.split_once(']'))
-        .map(|(reference, _)| reference.to_string())
-        .unwrap_or_else(|| panic!("snapshot line had no element reference: {line}"))
 }

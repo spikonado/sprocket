@@ -78,31 +78,14 @@ export const vReadSkillPayload = v.object({
 	name: v.string()
 });
 
-export const vBrowserNavigatePayload = v.object({
-	url: v.string()
-});
-
-export const vBrowserRefPayload = v.object({
-	ref: v.string()
-});
-
-export const vBrowserTypePayload = v.object({
-	ref: v.string(),
-	text: v.string()
-});
-
-export const vBrowserSelectOptionPayload = v.object({
-	ref: v.string(),
-	value: v.string()
-});
-
-export const vBrowserScrollPayload = v.object({
-	direction: v.union(v.literal('up'), v.literal('down'))
-});
-
 export const vBrowserFillPaymentPayload = v.object({
 	purchaseId: v.string(),
 	field: v.union(v.literal('number'), v.literal('cvv'), v.literal('expiry'))
+});
+
+export const vBrowserTaskPayload = v.object({
+	instruction: v.string(),
+	startUrl: v.optional(v.string())
 });
 
 export const vPurchaseItem = v.object({
@@ -161,12 +144,8 @@ export const vExecutorJobPayload = v.union(
 	vWriteStdinPayload,
 	vCreateArtifactPayload,
 	vUpdateArtifactPayload,
-	vBrowserNavigatePayload,
-	vBrowserRefPayload,
-	vBrowserTypePayload,
-	vBrowserSelectOptionPayload,
-	vBrowserScrollPayload,
 	vBrowserFillPaymentPayload,
+	vBrowserTaskPayload,
 	vPurchaseCreateSessionPayload,
 	vPurchaseIdPayload,
 	vPurchaseReportStatusPayload
@@ -260,6 +239,11 @@ export const vBrowserSessionResult = v.object({
 	liveViewUrl: v.string()
 });
 
+export const vBrowserTaskResult = v.object({
+	text: v.string(),
+	truncated: v.boolean()
+});
+
 export const vReadSkillResult = v.object({
 	name: v.string(),
 	description: v.string(),
@@ -330,13 +314,8 @@ export const vExecutorJobKind = v.union(
 	v.literal('apply_patch'),
 	v.literal('ask_question'),
 	v.literal('await_question'),
-	v.literal('browser_click'),
 	v.literal('browser_fill_payment'),
-	v.literal('browser_navigate'),
-	v.literal('browser_scroll'),
-	v.literal('browser_select_option'),
-	v.literal('browser_snapshot'),
-	v.literal('browser_type'),
+	v.literal('browser_task'),
 	v.literal('exec_command'),
 	v.literal('get_workspace_instructions'),
 	v.literal('purchase_create_session'),

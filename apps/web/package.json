@@ -18,6 +18,8 @@
 		"@ai-sdk/fireworks": "^3.0.17",
 		"@ai-sdk/openai": "^4.0.22",
 		"@ai-sdk/xai": "^4.0.20",
+		"@browserbasehq/sdk": "^2.16.0",
+		"@browserbasehq/stagehand": "^3.7.1",
 		"@context-dot-dev/convex": "^1.0.1",
 		"@convex-dev/rate-limiter": "^0.3.2",
 		"@dodopayments/convex": "^0.2.12",
