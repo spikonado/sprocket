@@ -8,6 +8,7 @@ import {
 } from '@convex/_generated/server';
 import { api, internal } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
+import { getUserId } from '@convex/lib/auth';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
 import {
 	isMandateStatus,
@@ -747,5 +748,176 @@ export const mandateReport = action({
 			status: statusForOutcome(args.outcome)
 		});
 		return { reported: true };
+	}
+});
+
+// ---------------------------------------------------------------------------
+// User-facing actions (settings screen — authenticated user, no agent run).
+// These resolve the same identity.subject as the executor tools, so mandate
+// ownership checks are identical on both paths.
+// ---------------------------------------------------------------------------
+
+export const listMyMandates = action({
+	args: {},
+	returns: vMandateListResult,
+	handler: async (ctx): Promise<Infer<typeof vMandateListResult>> => {
+		const userId = await getUserId(ctx);
+		const list = await pravaRequest<{ mandates?: PravaMandate[] }>(
+			`/v1/mandates?customer_id=${encodeURIComponent(userId)}&standing_only=true`
+		);
+		return {
+			mandates: (list.mandates ?? []).map((m) => ({
+				pravaMandateId: m.id ?? '',
+				status: m.status ?? 'unknown',
+				merchantName: m.merchantName ?? undefined,
+				approvedAmount: m.approvedAmount ?? '',
+				remaining: m.remaining,
+				currency: m.currency ?? '',
+				validUntil: m.validUntil ?? undefined,
+				renewsAt: m.renewsAt ?? undefined
+			}))
+		};
+	}
+});
+
+export const setupMyMandate = action({
+	args: {
+		userEmail: v.optional(v.string()),
+		merchantName: v.optional(v.string()),
+		merchantUrl: v.optional(v.string()),
+		countryCode: v.optional(v.string()),
+		amountCap: v.string(),
+		currency: v.string(),
+		frequency: vMandateFrequency,
+		scope: vMandateScope,
+		description: v.string(),
+		maxCharges: v.optional(v.number()),
+		validUntil: v.optional(v.string())
+	},
+	returns: vMandateSetupResult,
+	handler: async (ctx, args): Promise<Infer<typeof vMandateSetupResult>> => {
+		const userId = await getUserId(ctx);
+		const storedEmail: string | null = await ctx.runQuery(internal.payments.getPaymentsEmail, {
+			userId
+		});
+		const userEmail = requiredUserEmail(args.userEmail ?? storedEmail ?? '');
+
+		let merchantDetails: { name: string; url: string; country_code_iso2: string };
+		if (args.scope === 'listed') {
+			if (!args.merchantName || !args.merchantUrl || !args.countryCode) {
+				throw new Error('Listed-scope mandates require merchant name, URL, and country.');
+			}
+			merchantDetails = {
+				name: args.merchantName,
+				url: args.merchantUrl,
+				country_code_iso2: args.countryCode
+			};
+		} else {
+			merchantDetails = {
+				name: 'Any merchant',
+				url: 'https://prava.space',
+				country_code_iso2: 'US'
+			};
+		}
+
+		const response = await pravaRequest<{
+			iframe_url: string;
+			session_id: string;
+			session_token: string;
+			expires_at: string;
+		}>('/v1/sessions', {
+			method: 'POST',
+			body: JSON.stringify({
+				integration_type: 'embedding',
+				user_id: userId,
+				user_email: userEmail,
+				total_amount: args.amountCap,
+				currency: args.currency,
+				description: args.description,
+				purchase_context: [
+					{
+						merchant_details: merchantDetails,
+						product_details: [
+							{ description: args.description, unit_price: args.amountCap, quantity: 1 }
+						]
+					}
+				],
+				mandate_setup: {
+					intent: 'mandate_setup',
+					recurring_frequency: args.frequency,
+					merchant_scope: args.scope,
+					...(args.maxCharges !== undefined ? { max_charges: args.maxCharges } : {}),
+					...(args.validUntil !== undefined ? { valid_until: args.validUntil } : {})
+				}
+			})
+		});
+
+		const mandateId = await ctx.runMutation(internal.payments.insertMandate, {
+			userId,
+			pravaSessionId: response.session_id,
+			merchantName: args.merchantName,
+			merchantUrl: args.merchantUrl,
+			countryCode: args.countryCode,
+			amountCap: args.amountCap,
+			currency: args.currency,
+			frequency: args.frequency,
+			scope: args.scope,
+			approvalUrl: response.iframe_url
+		});
+		return {
+			mandateId,
+			approvalUrl: response.iframe_url,
+			sessionToken: response.session_token,
+			expiresAt: response.expires_at
+		};
+	}
+});
+
+const vLifecycleAction = v.union(v.literal('pause'), v.literal('resume'), v.literal('cancel'));
+
+export const setMyMandateLifecycle = action({
+	args: {
+		mandateId: v.id('mandates'),
+		action: vLifecycleAction
+	},
+	returns: vMandateStatusResult,
+	handler: async (ctx, args): Promise<Infer<typeof vMandateStatusResult>> => {
+		const userId = await getUserId(ctx);
+		const mandate = await ctx.runQuery(internal.payments.getOwnedMandate, {
+			mandateId: args.mandateId,
+			userId
+		});
+		if (!mandate) throw new Error('Mandate not found.');
+		if (!mandate.pravaMandateId) {
+			throw new Error('Mandate is not yet approved.');
+		}
+
+		const updated = await pravaRequest<PravaMandate>(
+			`/v1/mandates/${encodeURIComponent(mandate.pravaMandateId)}/${args.action}`,
+			{ method: 'POST' }
+		);
+		const status = pravaStatusToLocal(updated.status);
+		await ctx.runMutation(internal.payments.syncMandate, {
+			mandateId: mandate._id,
+			userId,
+			status,
+			remaining: updated.remaining ?? undefined,
+			validUntil: updated.validUntil ?? undefined,
+			renewsAt: updated.renewsAt ?? undefined
+		});
+		return {
+			mandateId: mandate._id,
+			pravaMandateId: mandate.pravaMandateId,
+			status: status ?? mandate.status,
+			merchantName: mandate.merchantName,
+			amountCap: mandate.amountCap,
+			remaining: updated.remaining ?? mandate.remaining,
+			currency: mandate.currency,
+			frequency: mandate.frequency,
+			scope: mandate.scope,
+			approvalUrl: mandate.approvalUrl,
+			validUntil: updated.validUntil ?? mandate.validUntil,
+			renewsAt: updated.renewsAt ?? mandate.renewsAt
+		};
 	}
 });

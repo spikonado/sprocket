@@ -355,4 +355,104 @@ describe('payments mandates', () => {
 		// No charge POST should have been issued against either mandate.
 		expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/charge'))).toBe(false);
 	});
+
+	it('lists only the calling user’s mandates via the user-facing action', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const fetchMock = vi.fn().mockResolvedValue(
+			jsonResponse({
+				mandates: [
+					{
+						id: 'mdt_1',
+						status: 'active',
+						merchantName: 'Example Shop',
+						approvedAmount: '120.00',
+						remaining: '120.00',
+						currency: 'USD'
+					}
+				]
+			})
+		);
+		vi.stubGlobal('fetch', fetchMock);
+		const t = initConvexTest();
+		const alice = await startRun(t, 'user_alice');
+
+		const result = await alice.asUser.action(api.payments.listMyMandates, {});
+
+		expect(result.mandates).toHaveLength(1);
+		expect(result.mandates[0]).toMatchObject({ pravaMandateId: 'mdt_1', status: 'active' });
+		// Scoped to the caller, standing-only.
+		expect(String(fetchMock.mock.calls[0][0])).toBe(
+			'https://sandbox.api.prava.space/v1/mandates?customer_id=user_alice&standing_only=true'
+		);
+	});
+
+	it('rejects the user-facing lifecycle action on another user’s mandate', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const t = initConvexTest();
+		const alice = await startRun(t, 'user_alice');
+		const bob = await startRun(t, 'user_bob');
+		const { setup, fetchMock } = await createApprovedMandate(t, alice);
+		fetchMock.mockClear();
+
+		await expect(
+			bob.asUser.action(api.payments.setMyMandateLifecycle, {
+				mandateId: setup.mandateId,
+				action: 'pause'
+			})
+		).rejects.toThrow('Mandate not found');
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it('pauses an owned mandate via the lifecycle action', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const t = initConvexTest();
+		const alice = await startRun(t, 'user_alice');
+		const fetchMock = vi
+			.fn()
+			// mandateSetup → create session
+			.mockResolvedValueOnce(
+				jsonResponse({
+					session_id: 'prava-session-1',
+					iframe_url: 'https://pay.prava.space/approve/1',
+					session_token: 'session-token-1',
+					expires_at: '2026-08-01T10:15:00Z'
+				})
+			)
+			// mandateStatus → resolve list (approves the mandate)
+			.mockResolvedValueOnce(
+				jsonResponse({
+					mandates: [
+						{
+							id: 'mdt_1',
+							status: 'active',
+							merchantName: 'Example Shop',
+							approvedAmount: '120.00',
+							remaining: '120.00',
+							currency: 'USD'
+						}
+					]
+				})
+			);
+		vi.stubGlobal('fetch', fetchMock);
+		const setup = await alice.asUser.action(api.payments.mandateSetup, setupArgs(alice));
+		await alice.asUser.action(api.payments.mandateStatus, {
+			mandateId: setup.mandateId,
+			...auth(alice)
+		});
+		fetchMock.mockClear();
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse({ id: 'mdt_1', status: 'paused', remaining: '120.00' })
+		);
+
+		const result = await alice.asUser.action(api.payments.setMyMandateLifecycle, {
+			mandateId: setup.mandateId,
+			action: 'pause'
+		});
+
+		expect(result.status).toBe('paused');
+		expect(String(fetchMock.mock.calls.at(-1)![0])).toBe(
+			'https://sandbox.api.prava.space/v1/mandates/mdt_1/pause'
+		);
+		expect(fetchMock.mock.calls.at(-1)![1]?.method).toBe('POST');
+	});
 });
