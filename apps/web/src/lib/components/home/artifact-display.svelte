@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ArrowLeft, Check, Code2, Copy, Eye, Maximize2 } from '@lucide/svelte';
+	import { ArrowLeft, Check, Code2, Copy, Eye, Fullscreen } from '@lucide/svelte';
 	import ChatMarkdown from '$lib/components/chat-markdown.svelte';
 	import type { ArtifactType } from '$convex/lib/validators';
 	import { buildArtifactPreviewDocument } from '$lib/chat/artifact-preview';
@@ -9,11 +9,19 @@
 		artifactType: ArtifactType;
 		content: string;
 		variant?: 'card' | 'full';
-		onExpand?: () => void;
+		/** Enter true browser fullscreen for this artifact (content only). */
+		onOpenFullscreen?: () => void;
 		onBack?: () => void;
 	};
 
-	let { title, artifactType, content, variant = 'card', onExpand, onBack }: Props = $props();
+	let {
+		title,
+		artifactType,
+		content,
+		variant = 'card',
+		onOpenFullscreen,
+		onBack
+	}: Props = $props();
 
 	const previewDocument = $derived(buildArtifactPreviewDocument(artifactType, content));
 	let showSource = $state(false);
@@ -81,14 +89,15 @@
 				{/if}
 			</button>
 		{/if}
-		{#if onExpand}
+		{#if onOpenFullscreen}
 			<button
 				type="button"
 				class="text-muted-foreground hover:text-foreground shrink-0 transition"
-				onclick={onExpand}
+				onclick={onOpenFullscreen}
 				aria-label="Open fullscreen"
+				title="Open fullscreen"
 			>
-				<Maximize2 class="size-4" aria-hidden="true" />
+				<Fullscreen class="size-4" aria-hidden="true" />
 			</button>
 		{/if}
 	</div>
