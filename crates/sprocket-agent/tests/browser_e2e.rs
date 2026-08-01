@@ -24,6 +24,10 @@ const CHECKOUT_HTML: &str = r#"<!doctype html>
         <label>CVV <input name="cvv" autocomplete="cc-csc"></label>
         <button type="submit">Pay now</button>
       </form>
+      <form id="split">
+        <label>Exp month <input name="expMonth" autocomplete="cc-exp-month"></label>
+        <label>Exp year <input name="expYear" autocomplete="cc-exp-year"></label>
+      </form>
     </main>
   </body>
 </html>"#;
@@ -117,6 +121,24 @@ async fn drives_mock_checkout_without_exposing_payment_values() -> Result<()> {
             .evaluate_json("document.querySelector('form').dataset.paid")
             .await?,
         "yes"
+    );
+
+    // Split month/year fields: combined expiry "12\034" fills month then year
+    // separately, and the year field must not receive the combined value.
+    browser
+        .fill_payment_field(PaymentField::Expiry, "12\u{0}30")
+        .await?;
+    assert_eq!(
+        browser
+            .evaluate_json("document.querySelector('[name=expMonth]').value")
+            .await?,
+        "12"
+    );
+    assert_eq!(
+        browser
+            .evaluate_json("document.querySelector('[name=expYear]').value")
+            .await?,
+        "30"
     );
 
     server.join().unwrap();

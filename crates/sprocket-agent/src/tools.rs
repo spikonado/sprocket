@@ -1265,9 +1265,11 @@ impl rig::tool::Tool for BrowserFillPaymentTool {
                     BrowserPaymentField::Cvv => (PaymentField::Cvv, credential.dynamic_cvv),
                     BrowserPaymentField::Expiry => (
                         PaymentField::Expiry,
-                        // Most checkout forms expect MM/YY.
+                        // Pass month and 2-digit year separated by NUL so the
+                        // driver can fill either a combined MM/YY field or
+                        // split month/year fields. Never persisted.
                         format!(
-                            "{:0>2}/{}",
+                            "{:0>2}\u{0}{}",
                             credential.expiry_month,
                             &credential.expiry_year
                                 [credential.expiry_year.len().saturating_sub(2)..]

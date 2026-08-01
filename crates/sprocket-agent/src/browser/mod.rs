@@ -48,6 +48,16 @@ const SNAPSHOT_SCRIPT: &str = r#"
     // Never echo values from password inputs or sensitive (payment) fields
     // into the snapshot; they would otherwise persist into tool results.
     const hidesValue = isSensitive || (el.tagName === "INPUT" && (el.type || "").toLowerCase() === "password");
+    // Even for non-sensitive fields, redact values that look like payment
+    // data (long digit runs / card-like groupings) so merchant or user data
+    // that merely resembles a credential is not persisted into tool results.
+    const redactValue = (raw) => {
+      if (raw == null) return null;
+      const s = String(raw);
+      const digits = s.replace(/\\D/g, "");
+      if (digits.length >= 12) return "[redacted]";
+      return s;
+    };
     return {
       ref,
       tag: el.tagName.toLowerCase(),
@@ -57,7 +67,7 @@ const SNAPSHOT_SCRIPT: &str = r#"
       inputType: el.tagName === "INPUT" ? (el.type || "text") : null,
       name: el.getAttribute("name"),
       placeholder: el.getAttribute("placeholder"),
-      value: !hidesValue && ("value" in el) ? String(el.value || "") : null,
+      value: !hidesValue && ("value" in el) ? redactValue(el.value || "") : null,
       sensitive: isSensitive
     };
   });
@@ -286,10 +296,19 @@ impl BrowserSession {
     }
 
     pub async fn fill_payment_field(&self, field: PaymentField, value: &str) -> anyhow::Result<()> {
+        if field == PaymentField::Expiry {
+            // The executor packs "MM\0YY" so split month/year fields can be
+            // filled independently. Fall back to a single combined field when
+            // no separate month/year inputs exist.
+            let mut parts = value.split('\u{0}');
+            let month = parts.next().unwrap_or("");
+            let year = parts.next().unwrap_or("");
+            return self.fill_expiry(month, year).await;
+        }
         let field_name = match field {
             PaymentField::Number => "number",
             PaymentField::Cvv => "cvv",
-            PaymentField::Expiry => "expiry",
+            PaymentField::Expiry => unreachable!(),
         };
         let expression = format!(
             r#"(() => {{
@@ -349,6 +368,104 @@ impl BrowserSession {
                   return true;
                 })()"#,
             )
+            .await
+            .map_err(|_| anyhow!("failed to fill the payment field"))?
+            .into_value()
+            .map_err(|_| anyhow!("failed to fill the payment field"))?;
+        if !cleared {
+            return Err(anyhow!("failed to fill the payment field"));
+        }
+        element
+            .type_str(value)
+            .await
+            .map_err(|_| anyhow!("failed to fill the payment field"))?;
+        Ok(())
+    }
+
+    /// Fill expiry into either split month/year inputs (preferred) or a single
+    /// combined field. Values never appear in returns, logs, or errors.
+    async fn fill_expiry(&self, month: &str, year: &str) -> anyhow::Result<()> {
+        let expression = r#"(() => {
+          document.querySelectorAll("[data-sprocket-exp-month],[data-sprocket-exp-year],[data-sprocket-payment-target]")
+            .forEach(el => {
+              el.removeAttribute("data-sprocket-exp-month");
+              el.removeAttribute("data-sprocket-exp-year");
+              el.removeAttribute("data-sprocket-payment-target");
+            });
+          const inputs = Array.from(document.querySelectorAll("input"));
+          const meta = (el) => [
+            (el.autocomplete || "").toLowerCase(), el.name, el.id,
+            el.placeholder, el.getAttribute("aria-label")
+          ].filter(Boolean).join(" ").toLowerCase();
+          let monthEl = null, yearEl = null;
+          for (const el of inputs) {
+            const ac = (el.autocomplete || "").toLowerCase();
+            const m = meta(el);
+            if (ac === "cc-exp-month" || /exp.?month|\bmm\b/.test(m)) monthEl = monthEl || el;
+            if (ac === "cc-exp-year" || /exp.?year|\byy\b/.test(m)) yearEl = yearEl || el;
+          }
+          if (monthEl && yearEl) {
+            monthEl.setAttribute("data-sprocket-exp-month", "true");
+            yearEl.setAttribute("data-sprocket-exp-year", "true");
+            return "split";
+          }
+          let combined = null, score = 0;
+          for (const el of inputs) {
+            const ac = (el.autocomplete || "").toLowerCase();
+            const m = meta(el);
+            let s = 0;
+            if (ac === "cc-exp") s = 100;
+            else if (/expir|exp.?date|mm.?\/?.?yy/.test(m)) s = 40;
+            if (s > score) { score = s; combined = el; }
+          }
+          if (combined) {
+            combined.setAttribute("data-sprocket-payment-target", "true");
+            return "combined";
+          }
+          return "none";
+        })()"#;
+        let mode: String = self
+            .page
+            .evaluate_expression(expression)
+            .await
+            .map_err(|_| anyhow!("failed to fill the payment field"))?
+            .into_value()
+            .map_err(|_| anyhow!("failed to fill the payment field"))?;
+        match mode.as_str() {
+            "split" => {
+                self.fill_marked("[data-sprocket-exp-month]", month).await?;
+                self.fill_marked("[data-sprocket-exp-year]", year).await?;
+                Ok(())
+            }
+            "combined" => {
+                self.fill_marked("[data-sprocket-payment-target]", &format!("{month}/{year}"))
+                    .await
+            }
+            _ => Err(anyhow!("no matching payment field was found")),
+        }
+    }
+
+    /// Clear then type into the element marked by `selector`. Value is never
+    /// echoed into returns, logs, or errors.
+    async fn fill_marked(&self, selector: &str, value: &str) -> anyhow::Result<()> {
+        let element = self
+            .page
+            .find_element(selector)
+            .await
+            .map_err(|_| anyhow!("failed to fill the payment field"))?;
+        let cleared: bool = self
+            .page
+            .evaluate_expression(format!(
+                r#"(() => {{
+                  const el = document.querySelector({});
+                  if (!el) return false;
+                  el.focus();
+                  el.value = "";
+                  el.dispatchEvent(new Event("input", {{ bubbles: true }}));
+                  return true;
+                }})()"#,
+                serde_json::to_string(selector)?
+            ))
             .await
             .map_err(|_| anyhow!("failed to fill the payment field"))?
             .into_value()
