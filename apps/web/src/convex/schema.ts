@@ -79,7 +79,7 @@ export default defineSchema({
 		remaining: v.optional(v.string()),
 		createdAt: v.number(),
 		updatedAt: v.number()
-	}),
+	}).index('by_user', ['userId']),
 	mandateCharges: defineTable({
 		mandateId: v.id('mandates'),
 		runId: v.id('runs'),

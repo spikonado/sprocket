@@ -220,6 +220,17 @@ export const getOwnedMandate = internalQuery({
 	}
 });
 
+export const listLocalMandates = internalQuery({
+	args: { userId: v.string() },
+	returns: v.array(mandateDoc),
+	handler: async (ctx, args) => {
+		return await ctx.db
+			.query('mandates')
+			.withIndex('by_user', (query) => query.eq('userId', args.userId))
+			.collect();
+	}
+});
+
 export const syncMandate = internalMutation({
 	args: {
 		mandateId: v.id('mandates'),
@@ -765,8 +776,17 @@ export const listMyMandates = action({
 		const list = await pravaRequest<{ mandates?: PravaMandate[] }>(
 			`/v1/mandates?customer_id=${encodeURIComponent(userId)}&standing_only=true`
 		);
+		// Join Prava's live standing mandates with the local rows (keyed on the
+		// Prava mandate id) so each entry carries the local mandateId the
+		// lifecycle action needs. Entries without a local row (e.g. approved
+		// elsewhere) are still listed, just without a mandateId.
+		const local = await ctx.runQuery(internal.payments.listLocalMandates, { userId });
+		const localByPravaId = new Map(
+			local.filter((m) => m.pravaMandateId).map((m) => [m.pravaMandateId as string, m._id])
+		);
 		return {
 			mandates: (list.mandates ?? []).map((m) => ({
+				mandateId: m.id ? localByPravaId.get(m.id) : undefined,
 				pravaMandateId: m.id ?? '',
 				status: m.status ?? 'unknown',
 				merchantName: m.merchantName ?? undefined,

@@ -262,6 +262,7 @@ export const vMandateStatusResult = v.object({
 export const vMandateListResult = v.object({
 	mandates: v.array(
 		v.object({
+			mandateId: v.optional(v.id('mandates')),
 			pravaMandateId: v.string(),
 			status: v.string(),
 			merchantName: v.optional(v.string()),
