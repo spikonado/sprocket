@@ -95,9 +95,10 @@ async function gotoIfProvided(stagehand: Stagehand, startUrl?: string): Promise<
 	}
 }
 
-export const runTask = action({
+export const act = action({
 	args: {
-		instruction: v.string(),
+		instruction: v.optional(v.string()),
+		action: v.optional(vAction),
 		startUrl: v.optional(v.string()),
 		runId: v.id('runs'),
 		claimId: v.string(),
@@ -109,7 +110,12 @@ export const runTask = action({
 		const stagehand = await attachStagehand(ctx, actor.userId, args.runId);
 		try {
 			await gotoIfProvided(stagehand, args.startUrl);
-			const result = await stagehand.act(args.instruction);
+			if (!args.instruction && !args.action) {
+				throw new Error('browser_act needs an instruction or an action.');
+			}
+			const result = args.action
+				? await stagehand.act(args.action)
+				: await stagehand.act(args.instruction!);
 			return clip(`success: ${result.success}\n${result.message}`.trim());
 		} finally {
 			await stagehand.close().catch(() => {});
@@ -117,7 +123,7 @@ export const runTask = action({
 	}
 });
 
-export const observeTask = action({
+export const observe = action({
 	args: {
 		instruction: v.string(),
 		startUrl: v.optional(v.string()),
@@ -140,29 +146,7 @@ export const observeTask = action({
 	}
 });
 
-export const actAction = action({
-	args: {
-		action: vAction,
-		startUrl: v.optional(v.string()),
-		runId: v.id('runs'),
-		claimId: v.string(),
-		executionSecret: v.string()
-	},
-	returns: vBrowserTaskResult,
-	handler: async (ctx, args): Promise<Infer<typeof vBrowserTaskResult>> => {
-		const actor = await activeActor(ctx, args);
-		const stagehand = await attachStagehand(ctx, actor.userId, args.runId);
-		try {
-			await gotoIfProvided(stagehand, args.startUrl);
-			const result = await stagehand.act(args.action);
-			return clip(`success: ${result.success}\n${result.message}`.trim());
-		} finally {
-			await stagehand.close().catch(() => {});
-		}
-	}
-});
-
-export const extractTask = action({
+export const extract = action({
 	args: {
 		instruction: v.string(),
 		startUrl: v.optional(v.string()),

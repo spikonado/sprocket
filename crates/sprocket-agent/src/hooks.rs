@@ -12,7 +12,6 @@ pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
     "browser_extract",
     "browser_fill_payment",
     "browser_observe",
-    "browser_task",
     "create_artifact",
     "exec_command",
     "purchase_create_session",

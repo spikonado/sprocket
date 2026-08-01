@@ -60,7 +60,7 @@ afterEach(() => {
 	delete process.env.OPENAI_API_KEY;
 });
 
-describe('browserAgent.runTask', () => {
+describe('browserAgent', () => {
 	it('drives the browser via the sub-agent and persists the session for the executor', async () => {
 		process.env.BROWSERBASE_API_KEY = 'bb_key';
 		process.env.BROWSERBASE_PROJECT_ID = 'project-1';
@@ -68,7 +68,7 @@ describe('browserAgent.runTask', () => {
 		const t = initConvexTest();
 		const run = await startRun(t);
 
-		const out = await t.action(api.browserAgent.runTask, {
+		const out = await t.action(api.browserAgent.act, {
 			instruction: 'add the part to cart and stop at the payment form',
 			startUrl: 'https://shop.example',
 			runId: run.runId,
@@ -105,7 +105,7 @@ describe('browserAgent.runTask', () => {
 			executionSecret: run.executionSecret
 		};
 
-		const observed = await t.action(api.browserAgent.observeTask, {
+		const observed = await t.action(api.browserAgent.observe, {
 			instruction: 'find the pay button',
 			...auth
 		});
@@ -114,7 +114,7 @@ describe('browserAgent.runTask', () => {
 			{ selector: '#pay', description: 'Pay button', method: 'click', arguments: [] }
 		]);
 
-		const acted = await t.action(api.browserAgent.actAction, {
+		const acted = await t.action(api.browserAgent.act, {
 			action: { selector: '#pay', description: 'Pay button', method: 'click', arguments: [] },
 			...auth
 		});
@@ -126,7 +126,7 @@ describe('browserAgent.runTask', () => {
 		});
 		expect(String((acted as { text: string }).text)).toContain('Action performed');
 
-		const extracted = await t.action(api.browserAgent.extractTask, {
+		const extracted = await t.action(api.browserAgent.extract, {
 			instruction: 'read the order total',
 			...auth
 		});

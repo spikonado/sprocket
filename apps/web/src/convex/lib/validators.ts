@@ -83,18 +83,16 @@ export const vBrowserFillPaymentPayload = v.object({
 	field: v.union(v.literal('number'), v.literal('cvv'), v.literal('expiry'))
 });
 
-export const vBrowserTaskPayload = v.object({
-	instruction: v.string(),
-	startUrl: v.optional(v.string())
-});
-
-export const vBrowserActActionPayload = v.object({
-	action: v.object({
-		selector: v.string(),
-		description: v.string(),
-		method: v.optional(v.string()),
-		arguments: v.optional(v.array(v.string()))
-	}),
+export const vBrowserActPayload = v.object({
+	instruction: v.optional(v.string()),
+	action: v.optional(
+		v.object({
+			selector: v.string(),
+			description: v.string(),
+			method: v.optional(v.string()),
+			arguments: v.optional(v.array(v.string()))
+		})
+	),
 	startUrl: v.optional(v.string())
 });
 
@@ -155,8 +153,7 @@ export const vExecutorJobPayload = v.union(
 	vCreateArtifactPayload,
 	vUpdateArtifactPayload,
 	vBrowserFillPaymentPayload,
-	vBrowserTaskPayload,
-	vBrowserActActionPayload,
+	vBrowserActPayload,
 	vPurchaseCreateSessionPayload,
 	vPurchaseIdPayload,
 	vPurchaseReportStatusPayload
@@ -326,7 +323,6 @@ export const vExecutorJobKind = v.union(
 	v.literal('ask_question'),
 	v.literal('await_question'),
 	v.literal('browser_fill_payment'),
-	v.literal('browser_task'),
 	v.literal('browser_observe'),
 	v.literal('browser_act'),
 	v.literal('browser_extract'),
