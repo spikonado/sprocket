@@ -318,6 +318,63 @@ describe('payments mandates', () => {
 		expect(stored).toMatchObject({ status: 'completed', reportedAt: expect.any(Number) });
 	});
 
+	it('reports an in-flight claim as not-yet-reported instead of claiming success', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+		const { setup, fetchMock } = await createApprovedMandate(t, run);
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse({
+				transactionId: 'txn_9',
+				status: 'awaiting_result',
+				credentials: { token: 't', dynamicCvv: 'c', expiryMonth: '12', expiryYear: '2030' }
+			})
+		);
+		const charge = await run.asUser.action(api.payments.mandateCharge, {
+			mandateId: setup.mandateId,
+			amount: '40.00',
+			currency: 'USD',
+			description: 'Order 8842',
+			...auth(run)
+		});
+
+		// A fresh (non-stale) claim held by a competing caller, no report completed.
+		await t.run(async (ctx) =>
+			ctx.db.patch(charge.chargeId, { reportingStartedAt: Date.now(), reportOutcome: 'approved' })
+		);
+		fetchMock.mockClear();
+
+		const result = await run.asUser.action(api.payments.mandateReport, {
+			chargeId: charge.chargeId,
+			outcome: 'approved',
+			...auth(run)
+		});
+
+		expect(result).toEqual({ reported: false, inFlight: true });
+		// No report request issued, and the charge stays unreported.
+		expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/report'))).toBe(false);
+		const stored = await t.run(async (ctx) => ctx.db.get(charge.chargeId));
+		expect(stored?.reportedAt).toBeUndefined();
+	});
+
+	it('rejects a recurring frequency for an any-merchant mandate', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+
+		await expect(
+			run.asUser.action(api.payments.mandateSetup, {
+				scope: 'any',
+				frequency: 'monthly',
+				amountCap: '200.00',
+				currency: 'USD',
+				description: 'Weekly groceries',
+				userEmail: run.userEmail,
+				...auth(run)
+			})
+		).rejects.toThrow(/one-time/);
+	});
+
 	it('rejects charging when multiple approved mandates match instead of picking one', async () => {
 		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();

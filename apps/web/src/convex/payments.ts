@@ -81,6 +81,18 @@ function requiredUserEmail(userEmail: string): string {
 	return email;
 }
 
+/** Any-scope (generic) mandates are one-time only. Prava rejects a recurring
+ * frequency with any-scope, but enforce it locally so a one-time authorization
+ * can never become a reusable recurring one. */
+function assertMandateFrequencyAllowed(args: {
+	scope: Infer<typeof vMandateScope>;
+	frequency: Infer<typeof vMandateFrequency>;
+}) {
+	if (args.scope === 'any' && args.frequency !== 'one_time') {
+		throw new Error('Any-merchant mandates must be one-time.');
+	}
+}
+
 const mandateDoc = v.object({
 	_id: v.id('mandates'),
 	_creationTime: v.number(),
@@ -313,15 +325,15 @@ export const updateChargeStatus = internalMutation({
 });
 
 /** Atomically claim the right to report a charge to Prava. 'claimed' lets this
- * caller proceed; 'already' means a terminal report happened or another live
- * claim is in flight. */
+ * caller proceed; 'already' means a terminal report already happened; 'inFlight'
+ * means a live (non-stale) claim is in flight and no report has completed yet. */
 export const claimChargeReport = internalMutation({
 	args: {
 		chargeId: v.id('mandateCharges'),
 		userId: v.string(),
 		outcome: vMandateReportOutcome
 	},
-	returns: v.union(v.literal('claimed'), v.literal('already')),
+	returns: v.union(v.literal('claimed'), v.literal('already'), v.literal('inFlight')),
 	handler: async (ctx, args) => {
 		const charge = await ownedCharge(ctx, args.chargeId, args.userId);
 		if (charge.reportedAt) {
@@ -329,11 +341,11 @@ export const claimChargeReport = internalMutation({
 		}
 		if (charge.reportingStartedAt) {
 			// A claim newer than the report window belongs to a live concurrent
-			// caller — leave it. An older one is abandoned (its caller died, either
-			// before or after reaching Prava), so this caller reclaims it and
-			// re-sends; the provider report is idempotent on the transaction id.
+			// caller and has not completed — say so rather than claim success. An
+			// older one is abandoned (its caller died), so reclaim it and re-send;
+			// the provider report is idempotent on the transaction id.
 			if (Date.now() - charge.reportingStartedAt <= REPORT_CLAIM_STALE_MS) {
-				return 'already';
+				return 'inFlight';
 			}
 		}
 		await ctx.db.patch(args.chargeId, {
@@ -412,6 +424,7 @@ export const mandateSetup = action({
 			userId: actor.userId
 		});
 		const userEmail = requiredUserEmail(args.userEmail ?? storedEmail ?? '');
+		assertMandateFrequencyAllowed(args);
 
 		// Generic (any-scope) mandates are one-time only; Prava still needs a
 		// purchase_context entry, so name a placeholder merchant for it.
@@ -715,6 +728,10 @@ export const mandateReport = action({
 		if (claim === 'already') {
 			return { reported: true, alreadyReported: true };
 		}
+		if (claim === 'inFlight') {
+			// Another caller is mid-report. Not yet delivered — don't claim success.
+			return { reported: false, inFlight: true };
+		}
 
 		if (!charge.pravaTransactionId) {
 			await ctx.runMutation(internal.payments.releaseChargeReport, {
@@ -821,6 +838,7 @@ export const setupMyMandate = action({
 			userId
 		});
 		const userEmail = requiredUserEmail(args.userEmail ?? storedEmail ?? '');
+		assertMandateFrequencyAllowed(args);
 
 		let merchantDetails: { name: string; url: string; country_code_iso2: string };
 		if (args.scope === 'listed') {

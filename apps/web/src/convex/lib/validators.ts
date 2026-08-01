@@ -286,7 +286,8 @@ export const vMandateChargeResult = v.object({
 
 export const vMandateReportResult = v.object({
 	reported: v.boolean(),
-	alreadyReported: v.optional(v.boolean())
+	alreadyReported: v.optional(v.boolean()),
+	inFlight: v.optional(v.boolean())
 });
 
 export const vBrowserTaskResult = v.object({
