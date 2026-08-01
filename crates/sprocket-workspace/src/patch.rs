@@ -458,6 +458,9 @@ fn unidiff_path_strip(patch: &str) -> usize {
 }
 
 /// Strip a single surrounding markdown code fence (` ``` ` / ` ```diff `) when present.
+///
+/// Preserves patch-body whitespace (including trailing spaces/tabs on the last hunk line).
+/// Only fence-separating newlines around the closing fence are removed.
 fn strip_surrounding_markdown_fence(patch: &str) -> &str {
     let trimmed = patch.trim();
     if !trimmed.starts_with("```") {
@@ -475,11 +478,18 @@ fn strip_surrounding_markdown_fence(patch: &str) -> &str {
     {
         return patch;
     }
-    let body = after_open[newline + 1..].trim_end();
-    let Some(content) = body.strip_suffix("```") else {
-        return patch;
-    };
-    content.trim_end_matches('\r').trim()
+    let body = &after_open[newline + 1..];
+    // Closing fence on its own line (optional indent). Avoid `trim()` on the body — that
+    // would strip intentional trailing spaces/tabs from the final hunk line.
+    if let Some((content, fence_line)) = body.rsplit_once('\n') {
+        if fence_line.trim() == "```" {
+            return content.strip_suffix('\r').unwrap_or(content);
+        }
+    }
+    if body.trim() == "```" {
+        return "";
+    }
+    patch
 }
 
 const NO_NEWLINE_MARKER: &str = "\\ No newline at end of file";
@@ -1442,6 +1452,25 @@ mod tests {
             fs::read_to_string(root.join("fenced.txt")).unwrap(),
             "hello\n"
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn preserves_trailing_whitespace_in_fenced_unified_diff() {
+        let root = temp_workspace();
+        // Last hunk line ends with two spaces and a tab — must survive fence stripping.
+        let patch = "```diff\n\
+            --- /dev/null\n\
+            +++ spaced.txt\n\
+            @@ -0,0 +1 @@\n\
+            +final  \t\n\
+            ```";
+
+        apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), patch)
+            .await
+            .expect("fenced unified diff should apply");
+
+        assert_eq!(fs::read(root.join("spaced.txt")).unwrap(), b"final  \t\n");
         fs::remove_dir_all(root).unwrap();
     }
 
