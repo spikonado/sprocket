@@ -2110,14 +2110,13 @@
 		{/if}
 
 		{#if fullscreenArtifact}
-			{#key fullscreenArtifact.key}
-				<ArtifactScreenFullscreen
-					artifact={fullscreenArtifact}
-					onClose={() => {
-						artifactFullscreenKey = null;
-					}}
-				/>
-			{/key}
+			<!-- No {#key}: remounting would exit document fullscreen during artifact switches. -->
+			<ArtifactScreenFullscreen
+				artifact={fullscreenArtifact}
+				onClose={() => {
+					artifactFullscreenKey = null;
+				}}
+			/>
 		{/if}
 
 		{#if desktopApi && projectPickerOpen}
