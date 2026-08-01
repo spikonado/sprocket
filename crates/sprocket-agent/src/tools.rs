@@ -473,14 +473,7 @@ pub(crate) struct PurchaseCreateSessionArgs {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct PurchaseStatusArgs {
-    /// Purchase session identifier.
-    #[serde(rename = "purchaseId")]
-    purchase_id: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct PurchaseCredentialArgs {
+pub(crate) struct PurchaseIdArgs {
     /// Purchase session identifier.
     #[serde(rename = "purchaseId")]
     purchase_id: String,
@@ -1196,7 +1189,7 @@ impl rig::tool::Tool for PurchaseCreateSessionTool {
 impl rig::tool::Tool for PurchaseCredentialTool {
     const NAME: &'static str = "purchase_credential";
     type Error = AgentToolError;
-    type Args = PurchaseCredentialArgs;
+    type Args = PurchaseIdArgs;
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
@@ -1205,7 +1198,7 @@ impl rig::tool::Tool for PurchaseCredentialTool {
     }
 
     fn parameters(&self) -> serde_json::Value {
-        json!(schemars::schema_for!(PurchaseCredentialArgs))
+        json!(schemars::schema_for!(PurchaseIdArgs))
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
@@ -1235,7 +1228,7 @@ impl rig::tool::Tool for PurchaseCredentialTool {
 impl rig::tool::Tool for PurchaseStatusTool {
     const NAME: &'static str = "purchase_status";
     type Error = AgentToolError;
-    type Args = PurchaseStatusArgs;
+    type Args = PurchaseIdArgs;
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
@@ -1243,7 +1236,7 @@ impl rig::tool::Tool for PurchaseStatusTool {
     }
 
     fn parameters(&self) -> serde_json::Value {
-        json!(schemars::schema_for!(PurchaseStatusArgs))
+        json!(schemars::schema_for!(PurchaseIdArgs))
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {

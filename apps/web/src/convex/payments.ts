@@ -13,23 +13,15 @@ import {
 const DEFAULT_PRAVA_BACKEND_URL = 'https://sandbox.api.prava.space';
 
 type PaymentResult = {
-	session_id: string;
 	status: string;
 	transactions: Array<{
-		txn_id: string;
-		status: string;
 		line_items: Array<{
 			txn_ref_id: string;
-			merchant_name: string;
-			merchant_url: string;
-			total_amount: string;
-			status: string;
 			token: string | null;
 			dynamic_cvv: string | null;
 			expiry_month: string | null;
 			expiry_year: string | null;
 		}>;
-		error?: { code: string; message: string };
 	}>;
 };
 
@@ -333,10 +325,8 @@ export const createPurchaseSession = action({
 				: [{ description: args.description, unit_price: args.totalAmount, quantity: 1 }];
 		const response = await pravaRequest<{
 			session_id: string;
-			session_token: string;
 			expires_at: string;
 			iframe_url: string;
-			order_id: string;
 		}>('/v1/sessions', {
 			method: 'POST',
 			body: JSON.stringify({

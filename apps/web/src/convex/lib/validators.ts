@@ -207,13 +207,20 @@ export const vCreatePurchaseSessionResult = v.object({
 	expiresAt: v.string()
 });
 
+const vPurchaseCredentialResult = v.object({
+	token: v.string(),
+	dynamicCvv: v.string(),
+	expiryMonth: v.string(),
+	expiryYear: v.string()
+});
+
 export const vPaymentCredentialResult = v.union(
 	v.object({
-		ready: v.boolean(),
+		ready: v.literal(false),
 		status: v.string()
 	}),
 	v.object({
-		ready: v.boolean(),
+		ready: v.literal(true),
 		token: v.string(),
 		dynamicCvv: v.string(),
 		expiryMonth: v.string(),
@@ -282,6 +289,7 @@ export const vExecutorJobResult = v.union(
 	vWebSearchResult,
 	vArtifactResult,
 	vCreatePurchaseSessionResult,
+	vPurchaseCredentialResult,
 	vPurchaseStatusResult,
 	vReportPurchaseStatusResult
 );
@@ -316,8 +324,8 @@ export const vExecutorJobKind = v.union(
 	v.literal('browser_extract'),
 	v.literal('exec_command'),
 	v.literal('get_workspace_instructions'),
-	v.literal('purchase_credential'),
 	v.literal('purchase_create_session'),
+	v.literal('purchase_credential'),
 	v.literal('purchase_report_status'),
 	v.literal('purchase_status'),
 	v.literal('read_skill'),

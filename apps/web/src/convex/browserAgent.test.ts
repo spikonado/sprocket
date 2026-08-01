@@ -61,7 +61,7 @@ afterEach(() => {
 });
 
 describe('browserAgent', () => {
-	it('drives the browser via the sub-agent and persists the session for the executor', async () => {
+	it('drives the browser via the sub-agent and persists the shared session', async () => {
 		process.env.BROWSERBASE_API_KEY = 'bb_key';
 		process.env.BROWSERBASE_PROJECT_ID = 'project-1';
 		process.env.OPENAI_API_KEY = 'openai_key';

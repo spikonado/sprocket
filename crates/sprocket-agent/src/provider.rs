@@ -150,8 +150,8 @@ where
         .tool(tools.browser_act)
         .tool(tools.browser_observe)
         .tool(tools.browser_extract)
-        .tool(tools.purchase_credential)
         .tool(tools.purchase_create_session)
+        .tool(tools.purchase_credential)
         .tool(tools.purchase_status)
         .tool(tools.purchase_report_status)
         .build();
