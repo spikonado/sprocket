@@ -498,7 +498,7 @@ pub(crate) struct PurchaseItem {
     description: String,
     unit_price: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    quantity: Option<f64>,
+    quantity: Option<u32>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
