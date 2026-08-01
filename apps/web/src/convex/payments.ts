@@ -213,8 +213,13 @@ export const updatePurchaseStatus = internalMutation({
 	}
 });
 
-/** Atomically claim the right to report to Prava. 'claimed' means this caller
- * may proceed; 'already' means a report already happened or is in flight. */
+/** Atomically claim the right to report to Prava.
+ * - 'claimed': this caller may proceed to call Prava.
+ * - 'already': a terminal report already happened (or a same-outcome report
+ *   is actively in flight) — nothing to do.
+ * - 'reconcile': a prior claim was left behind (e.g. the process died after
+ *   Prava accepted but before the durable finish). This caller must re-run
+ *   the stored outcome and finalize. */
 export const claimPurchaseReport = internalMutation({
 	args: {
 		purchaseId: v.id('purchases'),
@@ -227,7 +232,12 @@ export const claimPurchaseReport = internalMutation({
 		if (!purchase || purchase.userId !== args.userId) {
 			throw new Error('Purchase not found.');
 		}
-		if (purchase.reportedAt || purchase.reportingStartedAt) {
+		if (purchase.reportedAt) {
+			return 'already';
+		}
+		if (purchase.reportingStartedAt) {
+			// The action reconciles interrupted claims before calling this, so a
+			// remaining in-flight claim belongs to a live concurrent caller.
 			return 'already';
 		}
 		await ctx.db.patch(args.purchaseId, {
@@ -425,6 +435,23 @@ export const reportStatus = action({
 		});
 		if (!purchase) throw new Error('Purchase not found.');
 		if (purchase.reportedAt) {
+			return { reported: true, alreadyReported: true };
+		}
+
+		// A claim older than the report window belongs to a crashed caller
+		// (Prava may have accepted but the durable finish never ran). Reconcile
+		// it to the stored outcome's terminal state instead of falsely returning
+		// success. A fresh in-flight claim is left for its live caller.
+		const REPORT_CLAIM_STALE_MS = 60_000;
+		const claimIsStale =
+			purchase.reportingStartedAt !== undefined &&
+			Date.now() - purchase.reportingStartedAt > REPORT_CLAIM_STALE_MS;
+		if (claimIsStale && purchase.reportOutcome) {
+			await ctx.runMutation(internal.payments.finishPurchaseReport, {
+				purchaseId: purchase._id,
+				userId: actor.userId,
+				status: purchase.reportOutcome === 'approved' ? 'spent' : 'declined'
+			});
 			return { reported: true, alreadyReported: true };
 		}
 

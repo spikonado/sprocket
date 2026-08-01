@@ -275,6 +275,50 @@ describe('payments', () => {
 		expect(stored?.reportingStartedAt).toBeUndefined();
 	});
 
+	it('reconciles a stale in-flight report claim to the terminal state on retry', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		// Only the create-session call hits Prava; the retry must not re-report.
+		const fetchMock = vi.fn().mockResolvedValueOnce(
+			jsonResponse({
+				session_id: 'prava-session-stale',
+				session_token: 'session-token',
+				expires_at: '2026-08-01T10:15:00Z',
+				iframe_url: 'https://sandbox.api.prava.space/iframe/stale',
+				order_id: 'order-stale'
+			})
+		);
+		vi.stubGlobal('fetch', fetchMock);
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+		const created = await run.asUser.action(api.payments.createPurchaseSession, createArgs(run));
+		const purchaseId = created.purchaseId as Id<'purchases'>;
+		// Simulate a crashed caller: claim held, Prava accepted, but the durable
+		// finish never ran (claim is older than the staleness window).
+		const staleSince = Date.now() - 120_000;
+		await t.run(async (ctx) => {
+			await ctx.db.patch(purchaseId, {
+				reportingStartedAt: staleSince,
+				reportOutcome: 'approved',
+				updatedAt: staleSince
+			});
+		});
+
+		const result = await run.asUser.action(api.payments.reportStatus, {
+			purchaseId,
+			outcome: 'approved',
+			runId: run.runId,
+			claimId: run.claimId,
+			executionSecret: run.executionSecret
+		});
+
+		expect(result).toEqual({ reported: true, alreadyReported: true });
+		// No re-report to Prava — only the original create-session call.
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		const stored = await t.run(async (ctx) => ctx.db.get(purchaseId));
+		expect(stored).toMatchObject({ status: 'spent', reportedAt: expect.any(Number) });
+		expect(stored?.reportingStartedAt).toBeUndefined();
+	});
+
 	it('rejects access to another user’s purchase before calling Prava', async () => {
 		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const fetchMock = vi.fn().mockResolvedValue(
