@@ -60,43 +60,37 @@ function setupArgs(run: Awaited<ReturnType<typeof startRun>>) {
 
 async function createApprovedMandate(
 	t: ConvexTestInstance,
-	run: Awaited<ReturnType<typeof startRun>>
+	run: Awaited<ReturnType<typeof startRun>>,
+	mandates: unknown[] = [
+		{
+			id: 'mdt_1',
+			status: 'active',
+			merchantName: 'Example Shop',
+			approvedAmount: '120.00',
+			remaining: '120.00',
+			currency: 'USD',
+			validUntil: '2027-08-01T00:00:00Z',
+			renewsAt: '2026-09-01T00:00:00Z'
+		}
+	]
 ) {
 	const fetchMock = vi
 		.fn()
 		// mandateSetup → create session
 		.mockResolvedValueOnce(
 			jsonResponse({
+				session_id: 'prava-session-1',
 				iframe_url: 'https://pay.prava.space/approve/1',
 				session_token: 'session-token-1',
 				expires_at: '2026-08-01T10:15:00Z'
 			})
 		)
 		// resolvePravaMandate → list
-		.mockResolvedValueOnce(
-			jsonResponse({
-				mandates: [
-					{
-						id: 'mdt_1',
-						status: 'active',
-						merchantName: 'Example Shop',
-						approvedAmount: '120.00',
-						remaining: '120.00',
-						currency: 'USD',
-						validUntil: '2027-08-01T00:00:00Z',
-						renewsAt: '2026-09-01T00:00:00Z'
-					}
-				]
-			})
-		);
+		.mockResolvedValueOnce(jsonResponse({ mandates }));
 	vi.stubGlobal('fetch', fetchMock);
 
 	const setup = await run.asUser.action(api.payments.mandateSetup, setupArgs(run));
-	const status = await run.asUser.action(api.payments.mandateStatus, {
-		mandateId: setup.mandateId,
-		...auth(run)
-	});
-	return { setup, status, fetchMock };
+	return { setup, fetchMock };
 }
 
 afterEach(() => {
@@ -110,6 +104,7 @@ describe('payments mandates', () => {
 		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const fetchMock = vi.fn().mockResolvedValue(
 			jsonResponse({
+				session_id: 'prava-session-1',
 				iframe_url: 'https://pay.prava.space/approve/1',
 				session_token: 'session-token-1',
 				expires_at: '2026-08-01T10:15:00Z'
@@ -151,7 +146,11 @@ describe('payments mandates', () => {
 		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
-		const { status } = await createApprovedMandate(t, run);
+		const { setup } = await createApprovedMandate(t, run);
+		const status = await run.asUser.action(api.payments.mandateStatus, {
+			mandateId: setup.mandateId,
+			...auth(run)
+		});
 
 		expect(status.status).toBe('active');
 		expect(status.pravaMandateId).toBe('mdt_1');
@@ -164,10 +163,6 @@ describe('payments mandates', () => {
 		const run = await startRun(t, 'user_alice');
 		const { setup, fetchMock } = await createApprovedMandate(t, run);
 
-		// resolvePravaMandate (now has pravaMandateId) → GET /v1/mandates/mdt_1
-		fetchMock.mockResolvedValueOnce(
-			jsonResponse({ id: 'mdt_1', status: 'active', remaining: '120.00' })
-		);
 		// charge
 		fetchMock.mockResolvedValueOnce(
 			jsonResponse({
@@ -215,9 +210,6 @@ describe('payments mandates', () => {
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
 		const { setup, fetchMock } = await createApprovedMandate(t, run);
-		fetchMock.mockResolvedValueOnce(
-			jsonResponse({ id: 'mdt_1', status: 'active', remaining: '120.00' })
-		);
 		fetchMock.mockResolvedValueOnce(
 			jsonResponse({
 				transactionId: 'txn_9',
@@ -275,5 +267,92 @@ describe('payments mandates', () => {
 			})
 		).rejects.toThrow('Mandate not found');
 		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it('re-sends the report to Prava when retrying an abandoned stale claim', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+		const { setup, fetchMock } = await createApprovedMandate(t, run);
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse({
+				transactionId: 'txn_9',
+				status: 'awaiting_result',
+				credentials: { token: 't', dynamicCvv: 'c', expiryMonth: '12', expiryYear: '2030' }
+			})
+		);
+		const charge = await run.asUser.action(api.payments.mandateCharge, {
+			mandateId: setup.mandateId,
+			amount: '40.00',
+			currency: 'USD',
+			description: 'Order 8842',
+			...auth(run)
+		});
+
+		// Simulate a crash after claiming the report but before the Prava POST:
+		// an old reportingStartedAt with no reportedAt.
+		const stale = Date.now() - 120_000;
+		await t.run(async (ctx) =>
+			ctx.db.patch(charge.chargeId, { reportingStartedAt: stale, reportOutcome: 'approved' })
+		);
+		fetchMock.mockClear();
+		fetchMock.mockResolvedValueOnce(jsonResponse({ status: 'completed', mandateStatus: 'active' }));
+
+		const result = await run.asUser.action(api.payments.mandateReport, {
+			chargeId: charge.chargeId,
+			outcome: 'approved',
+			...auth(run)
+		});
+
+		expect(result).toEqual({ reported: true });
+		// The retry must actually deliver the outcome to Prava, not just finalize locally.
+		const reportCall = fetchMock.mock.calls.at(-1)!;
+		expect(String(reportCall[0])).toBe(
+			'https://sandbox.api.prava.space/v1/mandates/mdt_1/charges/txn_9/report'
+		);
+		expect(JSON.parse(String(reportCall[1]?.body))).toMatchObject({
+			txn_status: 'APPROVED',
+			txn_type: 'PURCHASE'
+		});
+		const stored = await t.run(async (ctx) => ctx.db.get(charge.chargeId));
+		expect(stored).toMatchObject({ status: 'completed', reportedAt: expect.any(Number) });
+	});
+
+	it('rejects charging when multiple approved mandates match instead of picking one', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+		// Two approvals with the same merchant + amount: resolution must not guess.
+		const { setup, fetchMock } = await createApprovedMandate(t, run, [
+			{
+				id: 'mdt_old',
+				status: 'active',
+				merchantName: 'Example Shop',
+				approvedAmount: '120.00',
+				remaining: '120.00',
+				currency: 'USD'
+			},
+			{
+				id: 'mdt_new',
+				status: 'active',
+				merchantName: 'Example Shop',
+				approvedAmount: '120.00',
+				remaining: '120.00',
+				currency: 'USD'
+			}
+		]);
+		fetchMock.mockClear();
+
+		await expect(
+			run.asUser.action(api.payments.mandateCharge, {
+				mandateId: setup.mandateId,
+				amount: '40.00',
+				currency: 'USD',
+				description: 'Order 8842',
+				...auth(run)
+			})
+		).rejects.toThrow(/Multiple approved mandates/);
+		// No charge POST should have been issued against either mandate.
+		expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/charge'))).toBe(false);
 	});
 });

@@ -85,6 +85,7 @@ const mandateDoc = v.object({
 	_creationTime: v.number(),
 	userId: v.string(),
 	pravaMandateId: v.optional(v.string()),
+	pravaSessionId: v.optional(v.string()),
 	merchantName: v.optional(v.string()),
 	merchantUrl: v.optional(v.string()),
 	countryCode: v.optional(v.string()),
@@ -122,6 +123,7 @@ const chargeDoc = v.object({
 
 type PravaMandate = {
 	id?: string;
+	sessionId?: string;
 	status?: string;
 	remaining?: string;
 	approvedAmount?: string;
@@ -186,6 +188,7 @@ export const getPaymentsEmail = internalQuery({
 export const insertMandate = internalMutation({
 	args: {
 		userId: v.string(),
+		pravaSessionId: v.string(),
 		merchantName: v.optional(v.string()),
 		merchantUrl: v.optional(v.string()),
 		countryCode: v.optional(v.string()),
@@ -309,8 +312,17 @@ export const claimChargeReport = internalMutation({
 	returns: v.union(v.literal('claimed'), v.literal('already')),
 	handler: async (ctx, args) => {
 		const charge = await ownedCharge(ctx, args.chargeId, args.userId);
-		if (charge.reportedAt || charge.reportingStartedAt) {
+		if (charge.reportedAt) {
 			return 'already';
+		}
+		if (charge.reportingStartedAt) {
+			// A claim newer than the report window belongs to a live concurrent
+			// caller — leave it. An older one is abandoned (its caller died, either
+			// before or after reaching Prava), so this caller reclaims it and
+			// re-sends; the provider report is idempotent on the transaction id.
+			if (Date.now() - charge.reportingStartedAt <= REPORT_CLAIM_STALE_MS) {
+				return 'already';
+			}
 		}
 		await ctx.db.patch(args.chargeId, {
 			reportingStartedAt: Date.now(),
@@ -411,6 +423,7 @@ export const mandateSetup = action({
 
 		const response = await pravaRequest<{
 			iframe_url: string;
+			session_id: string;
 			session_token: string;
 			expires_at: string;
 		}>('/v1/sessions', {
@@ -442,6 +455,7 @@ export const mandateSetup = action({
 
 		const mandateId = await ctx.runMutation(internal.payments.insertMandate, {
 			userId: actor.userId,
+			pravaSessionId: response.session_id,
 			merchantName: args.merchantName,
 			merchantUrl: args.merchantUrl,
 			countryCode: args.countryCode,
@@ -477,7 +491,7 @@ async function resolvePravaMandate(
 	const list = await pravaRequest<{ mandates?: PravaMandate[] }>(
 		`/v1/mandates?customer_id=${encodeURIComponent(userId)}`
 	);
-	const found = (list.mandates ?? []).find((m) => {
+	const matches = (list.mandates ?? []).filter((m) => {
 		if (!m.id) return false;
 		if (mandate.scope === 'listed') {
 			return (
@@ -487,10 +501,22 @@ async function resolvePravaMandate(
 		}
 		return m.approvedAmount === mandate.amountCap;
 	});
-	if (!found?.id) {
+	// Prefer the mandate created by this setup's session when Prava links one,
+	// then require a unique match — charging an arbitrary same-merchant+amount
+	// approval could settle against the wrong authorization.
+	const sessionLinked = matches.filter(
+		(m) => mandate.pravaSessionId && m.sessionId === mandate.pravaSessionId
+	);
+	const candidates = sessionLinked.length > 0 ? sessionLinked : matches;
+	if (candidates.length === 0) {
 		throw new Error('Mandate is not yet approved.');
 	}
-	const resolved = { ...found, id: found.id };
+	if (candidates.length > 1) {
+		throw new Error(
+			'Multiple approved mandates match this setup; resolve the ambiguity before charging.'
+		);
+	}
+	const resolved = { ...candidates[0], id: candidates[0].id! };
 	await ctx.runMutation(
 		internal.payments.syncMandate,
 		mandateSyncArgs(mandate._id, userId, resolved)
@@ -667,20 +693,8 @@ export const mandateReport = action({
 			return { reported: true, alreadyReported: true };
 		}
 
-		// A claim older than the report window belongs to a crashed caller;
-		// reconcile it to the stored outcome's terminal state on retry.
-		const claimIsStale =
-			charge.reportingStartedAt !== undefined &&
-			Date.now() - charge.reportingStartedAt > REPORT_CLAIM_STALE_MS;
-		if (claimIsStale && charge.reportOutcome) {
-			await ctx.runMutation(internal.payments.finishChargeReport, {
-				chargeId: charge._id,
-				userId: actor.userId,
-				status: statusForOutcome(charge.reportOutcome)
-			});
-			return { reported: true, alreadyReported: true };
-		}
-
+		// claimChargeReport atomically reserves this report (reclaiming an
+		// abandoned stale claim), so only one caller reaches Prava per attempt.
 		const claim = await ctx.runMutation(internal.payments.claimChargeReport, {
 			chargeId: charge._id,
 			userId: actor.userId,

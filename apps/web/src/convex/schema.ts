@@ -64,6 +64,7 @@ export default defineSchema({
 	mandates: defineTable({
 		userId: v.string(),
 		pravaMandateId: v.optional(v.string()),
+		pravaSessionId: v.optional(v.string()),
 		merchantName: v.optional(v.string()),
 		merchantUrl: v.optional(v.string()),
 		countryCode: v.optional(v.string()),
