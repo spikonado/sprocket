@@ -28,7 +28,7 @@
 	import SettingsUsage from '$lib/components/home/settings-usage.svelte';
 	import ThreadTranscript from '$lib/components/home/thread-transcript.svelte';
 	import ArtifactPanel from '$lib/components/home/artifact-panel.svelte';
-	import ArtifactDisplay from '$lib/components/home/artifact-display.svelte';
+	import ArtifactScreenFullscreen from '$lib/components/home/artifact-screen-fullscreen.svelte';
 	import type { ArtifactPanelSnapshot } from '$lib/chat/artifacts';
 	import ProjectPicker, { type ProjectSelection } from '$lib/components/home/project-picker.svelte';
 	import ProjectSidebar from '$lib/components/home/project-sidebar.svelte';
@@ -582,7 +582,11 @@
 	// Panel state snapshots survive thread switches; the live thread always has
 	// an entry after the restore effect below runs.
 	const artifactSnapshots = new SvelteMap<Id<'threadRecords'>, ArtifactPanelSnapshot>();
-	let artifactPanel = $state<ArtifactPanelSnapshot>({ open: false, selectedKey: null });
+	let artifactPanel = $state<ArtifactPanelSnapshot>({
+		open: true,
+		expanded: false,
+		selectedKey: null
+	});
 	let artifactPanelThreadId: Id<'threadRecords'> | null = null;
 
 	$effect(() => {
@@ -592,29 +596,17 @@
 			artifactSnapshots.set(artifactPanelThreadId, artifactPanel);
 		}
 		artifactPanelThreadId = threadId;
+		artifactFullscreenKey = null;
 		artifactPanel = (threadId && artifactSnapshots.get(threadId)) || {
-			open: false,
+			open: true,
+			expanded: false,
 			selectedKey: null
 		};
 	});
 
-	const selectedArtifactKey = $derived(artifactPanel.selectedKey);
 	const fullscreenArtifact = $derived(
 		threadArtifacts.find((artifact) => artifact.key === artifactFullscreenKey) ?? null
 	);
-	// New artifacts open the panel while their run is live; loads and thread
-	// switches leave it alone.
-	let seenArtifactKeys = new SvelteSet<string>();
-	$effect(() => {
-		const latest = threadArtifacts.at(-1);
-		if (!latest || !isRunning) {
-			seenArtifactKeys = new SvelteSet(threadArtifacts.map((artifact) => artifact.key));
-			return;
-		}
-		if (seenArtifactKeys.has(latest.key)) return;
-		seenArtifactKeys.add(latest.key);
-		artifactPanel = { open: true, selectedKey: latest.key };
-	});
 	const currentComposerScope = $derived(getComposerScope(currentThreadId, currentProjectId));
 	const estimatedServerNow = $derived(
 		latestRunServerClock && latestRunServerClock.runId === (runState?._id ?? null)
@@ -1957,9 +1949,14 @@
 {:else}
 	<div class="relative h-screen overflow-hidden">
 		<div
-			class="app-workspace-shell grid h-screen overflow-hidden {settingsOpen || !artifactPanel.open
-				? 'grid-cols-[292px_minmax(0,1fr)]'
-				: 'grid-cols-[292px_minmax(0,1fr)_26rem]'}"
+			class="app-workspace-shell grid h-screen grid-cols-[292px_minmax(0,1fr)] overflow-hidden {!settingsOpen &&
+			artifactPanel.open &&
+			!artifactPanel.expanded
+				? 'pr-[20rem]'
+				: ''}"
+			inert={fullscreenArtifact || (artifactPanel.open && artifactPanel.expanded)
+				? true
+				: undefined}
 		>
 			{#if settingsOpen}
 				<SettingsSidebar
@@ -2004,15 +2001,14 @@
 			{/if}
 
 			<main class="relative flex h-screen min-h-0 min-w-0 flex-col overflow-hidden">
-				{#if !settingsOpen}
+				{#if !settingsOpen && !artifactPanel.open}
 					<button
 						type="button"
 						class="text-muted-foreground hover:text-foreground hover:bg-muted absolute top-3 right-3 z-100 inline-flex items-center justify-center rounded-md p-2 transition"
 						onclick={() => {
-							artifactPanel = { ...artifactPanel, open: !artifactPanel.open };
+							artifactPanel = { ...artifactPanel, open: true };
 						}}
-						aria-label={artifactPanel.open ? 'Close artifacts panel' : 'Open artifacts panel'}
-						aria-pressed={artifactPanel.open}
+						aria-label="Open artifacts panel"
 					>
 						<PanelRight class="size-4" aria-hidden="true" />
 					</button>
@@ -2076,39 +2072,51 @@
 					/>
 				{/if}
 			</main>
+		</div>
 
-			{#if !settingsOpen && artifactPanel.open}
+		{#if !settingsOpen && artifactPanel.open}
+			<div
+				class={artifactPanel.expanded
+					? 'bg-background fixed inset-0 z-50'
+					: 'absolute inset-y-0 right-0 z-40 w-[20rem]'}
+				inert={fullscreenArtifact ? true : undefined}
+			>
 				<ArtifactPanel
 					artifacts={threadArtifacts}
-					selectedKey={selectedArtifactKey}
+					selectedKey={artifactPanel.selectedKey}
+					expanded={artifactPanel.expanded}
 					onSelect={(key) => {
 						artifactPanel = { ...artifactPanel, selectedKey: key };
 					}}
 					onBack={() => {
 						artifactPanel = { ...artifactPanel, selectedKey: null };
 					}}
-					onExpand={(key) => {
+					onOpenFullscreen={(key) => {
 						artifactFullscreenKey = key;
+						// Request in the click gesture so Firefox keeps true browser
+						// fullscreen; the overlay only observes/exits the session.
+						if (!document.fullscreenElement) {
+							void document.documentElement.requestFullscreen?.().catch(() => {});
+						}
+					}}
+					onToggleExpanded={() => {
+						artifactPanel = { ...artifactPanel, expanded: !artifactPanel.expanded };
 					}}
 					onClose={() => {
-						artifactPanel = { ...artifactPanel, open: false };
-					}}
-				/>
-			{/if}
-		</div>
-
-		{#if fullscreenArtifact}
-			<div class="bg-background/95 fixed inset-0 z-100 flex flex-col p-4">
-				<ArtifactDisplay
-					title={fullscreenArtifact.title}
-					artifactType={fullscreenArtifact.artifactType}
-					content={fullscreenArtifact.content}
-					variant="full"
-					onBack={() => {
-						artifactFullscreenKey = null;
+						artifactPanel = { ...artifactPanel, open: false, expanded: false };
 					}}
 				/>
 			</div>
+		{/if}
+
+		{#if fullscreenArtifact}
+			<!-- No {#key}: remounting would exit document fullscreen during artifact switches. -->
+			<ArtifactScreenFullscreen
+				artifact={fullscreenArtifact}
+				onClose={() => {
+					artifactFullscreenKey = null;
+				}}
+			/>
 		{/if}
 
 		{#if desktopApi && projectPickerOpen}

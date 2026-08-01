@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { FileCode, FileText, Globe, Maximize2, X } from '@lucide/svelte';
+	import { Expand, FileCode, FileText, Fullscreen, Globe, Shrink, X } from '@lucide/svelte';
 	import ArtifactDisplay from '$lib/components/home/artifact-display.svelte';
 	import type { ArtifactEntry } from '$lib/chat/artifacts';
 	import type { ArtifactType } from '$convex/lib/validators';
@@ -7,13 +7,26 @@
 	type Props = {
 		artifacts: ArtifactEntry[];
 		selectedKey: string | null;
+		/** When true, the panel covers the full Sprocket workspace UI (not browser fullscreen). */
+		expanded: boolean;
 		onSelect: (key: string) => void;
 		onBack: () => void;
-		onExpand: (key: string) => void;
+		/** Enter true browser fullscreen for a single artifact (content only). */
+		onOpenFullscreen: (key: string) => void;
+		onToggleExpanded: () => void;
 		onClose: () => void;
 	};
 
-	let { artifacts, selectedKey, onSelect, onBack, onExpand, onClose }: Props = $props();
+	let {
+		artifacts,
+		selectedKey,
+		expanded,
+		onSelect,
+		onBack,
+		onOpenFullscreen,
+		onToggleExpanded,
+		onClose
+	}: Props = $props();
 
 	const selected = $derived(artifacts.find((artifact) => artifact.key === selectedKey) ?? null);
 
@@ -22,9 +35,27 @@
 		html: Globe,
 		react: FileCode
 	};
+
+	$effect(() => {
+		if (!expanded) return;
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key !== 'Escape') return;
+			// Artifact screen-fullscreen (browser FS or CSS fallback) owns Escape.
+			if (
+				document.fullscreenElement ||
+				document.querySelector('[data-artifact-screen-fullscreen]')
+			) {
+				return;
+			}
+			event.preventDefault();
+			onToggleExpanded();
+		};
+		window.addEventListener('keydown', onKeyDown);
+		return () => window.removeEventListener('keydown', onKeyDown);
+	});
 </script>
 
-<aside class="flex h-screen min-h-0 w-full flex-col border-l">
+<aside class="bg-background flex h-full min-h-0 w-full flex-col {expanded ? '' : 'border-l'}">
 	<div class="flex items-center gap-1 border-b px-2 py-1.5">
 		<span
 			class="bg-muted text-foreground rounded-md px-2.5 py-1 text-xs font-medium"
@@ -35,7 +66,21 @@
 		<div class="flex-1"></div>
 		<button
 			type="button"
-			class="text-muted-foreground hover:text-foreground transition"
+			class="text-muted-foreground hover:text-foreground rounded-md p-1 transition"
+			onclick={onToggleExpanded}
+			aria-label={expanded ? 'Exit full workspace' : 'Expand to full workspace'}
+			title={expanded ? 'Exit full workspace' : 'Expand to full workspace'}
+			aria-pressed={expanded}
+		>
+			{#if expanded}
+				<Shrink class="size-4" aria-hidden="true" />
+			{:else}
+				<Expand class="size-4" aria-hidden="true" />
+			{/if}
+		</button>
+		<button
+			type="button"
+			class="text-muted-foreground hover:text-foreground rounded-md p-1 transition"
 			onclick={onClose}
 			aria-label="Close panel"
 		>
@@ -49,7 +94,7 @@
 				artifactType={selected.artifactType}
 				content={selected.content}
 				variant="full"
-				onExpand={() => onExpand(selected.key)}
+				onOpenFullscreen={() => onOpenFullscreen(selected.key)}
 				{onBack}
 			/>
 		</div>
@@ -58,10 +103,7 @@
 			{#each artifacts as artifact (artifact.key)}
 				{@const TypeIcon = TYPE_ICONS[artifact.artifactType]}
 				<div
-					class="group hover:bg-muted flex items-center gap-2 rounded-md px-2 py-1.5 {selectedKey ===
-					artifact.key
-						? 'bg-muted'
-						: ''}"
+					class="group hover:bg-muted focus-within:bg-muted flex items-center gap-2 rounded-md px-2 py-1.5"
 				>
 					<button
 						type="button"
@@ -73,11 +115,12 @@
 					</button>
 					<button
 						type="button"
-						class="text-muted-foreground hover:text-foreground shrink-0 opacity-0 transition group-hover:opacity-100"
-						onclick={() => onExpand(artifact.key)}
+						class="text-muted-foreground hover:text-foreground shrink-0 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 focus:opacity-100"
+						onclick={() => onOpenFullscreen(artifact.key)}
 						aria-label={`Open ${artifact.title} fullscreen`}
+						title="Open fullscreen"
 					>
-						<Maximize2 class="size-3.5" aria-hidden="true" />
+						<Fullscreen class="size-3.5" aria-hidden="true" />
 					</button>
 				</div>
 			{:else}
