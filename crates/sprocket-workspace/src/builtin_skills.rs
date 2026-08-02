@@ -48,4 +48,35 @@ mod tests {
             "skill body must require an App component for react previews"
         );
     }
+
+    #[test]
+    fn ucp_shopping_skill_teaches_checkout_flow() {
+        let (_, contents) = BUILTIN_SKILLS
+            .iter()
+            .copied()
+            .find(|(name, _)| *name == "ucp-shopping")
+            .expect("ucp-shopping built-in skill must exist");
+        let parsed = parse_skill_markdown(contents).expect("ucp-shopping skill parses");
+        assert!(
+            parsed.description.to_lowercase().contains("shop")
+                || parsed.description.to_lowercase().contains("buy"),
+            "description should mention shopping/buying so the agent selects it"
+        );
+        assert!(
+            parsed.body.contains("/.well-known/ucp"),
+            "skill body must teach profile discovery"
+        );
+        assert!(
+            parsed.body.contains("checkout-sessions"),
+            "skill body must teach the checkout session endpoints"
+        );
+        assert!(
+            parsed.body.contains("continue_url"),
+            "skill body must teach browser tool handoff via continue_url"
+        );
+        assert!(
+            parsed.body.contains("mandate_charge"),
+            "skill body must teach paying with a Prava mandate credential"
+        );
+    }
 }
