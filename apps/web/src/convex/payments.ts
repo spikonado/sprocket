@@ -166,6 +166,7 @@ const chargeDoc = v.object({
 	reportedAt: v.optional(v.number()),
 	reportingStartedAt: v.optional(v.number()),
 	chargingStartedAt: v.optional(v.number()),
+	providerRequestedAt: v.optional(v.number()),
 	createdAt: v.number(),
 	updatedAt: v.number()
 });
@@ -493,6 +494,13 @@ export const reserveCharge = internalMutation({
 						}
 					};
 				}
+				if (existing.providerRequestedAt !== undefined) {
+					// Ambiguous delivery: the provider POST may have committed.
+					// Never reclaim for another charge — that would double-bill.
+					throw new Error(
+						'A previous charge attempt for this reference may have already been submitted to Prava; refusing to charge again.'
+					);
+				}
 				if (existing.status === 'failed') {
 					await ctx.db.patch(existing._id, {
 						runId: args.runId,
@@ -503,6 +511,7 @@ export const reserveCharge = internalMutation({
 						dynamicCvv: undefined,
 						expiryMonth: undefined,
 						expiryYear: undefined,
+						providerRequestedAt: undefined,
 						chargingStartedAt: now,
 						updatedAt: now
 					});
@@ -514,7 +523,7 @@ export const reserveCharge = internalMutation({
 				) {
 					return { kind: 'inFlight' as const };
 				}
-				// Abandoned reservation (or legacy row without credentials): reclaim.
+				// Abandoned reservation that never reached Prava: reclaim.
 				await ctx.db.patch(existing._id, {
 					runId: args.runId,
 					description: args.description,
@@ -540,6 +549,19 @@ export const reserveCharge = internalMutation({
 			updatedAt: now
 		});
 		return { kind: 'reserved' as const, chargeId };
+	}
+});
+
+export const markChargeProviderRequested = internalMutation({
+	args: { chargeId: v.id('mandateCharges'), userId: v.string() },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		await ownedCharge(ctx, args.chargeId, args.userId);
+		await ctx.db.patch(args.chargeId, {
+			providerRequestedAt: Date.now(),
+			updatedAt: Date.now()
+		});
+		return null;
 	}
 });
 
@@ -573,6 +595,8 @@ export const releaseChargeReservation = internalMutation({
 	handler: async (ctx, args) => {
 		const charge = await ownedCharge(ctx, args.chargeId, args.userId);
 		if (!charge.pravaTransactionId) {
+			// Drop the live claim so callers aren't stuck in inFlight, but keep
+			// providerRequestedAt — an ambiguous POST must not be reclaimed.
 			await ctx.db.patch(args.chargeId, {
 				chargingStartedAt: undefined,
 				updatedAt: Date.now()
@@ -604,6 +628,9 @@ export const updateChargeStatus = internalMutation({
 			await ctx.db.patch(args.chargeId, {
 				status: args.status,
 				chargingStartedAt: undefined,
+				// Definitive provider failure (or local fail) — allow a later
+				// same-reference retry to reclaim the row.
+				...(args.status === 'failed' ? { providerRequestedAt: undefined } : {}),
 				updatedAt: Date.now()
 			});
 		}
@@ -1076,6 +1103,12 @@ export const mandateCharge = action({
 			};
 			errorMessage?: string;
 		};
+		// Mark before the network call so a lost response cannot be mistaken
+		// for an abandoned reservation that is safe to reclaim.
+		await ctx.runMutation(internal.payments.markChargeProviderRequested, {
+			chargeId: reservation.chargeId,
+			userId: actor.userId
+		});
 		try {
 			result = await pravaRequest(`/v1/mandates/${encodeURIComponent(prava.id)}/charge`, {
 				method: 'POST',

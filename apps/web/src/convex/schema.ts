@@ -106,6 +106,10 @@ export default defineSchema({
 		reportedAt: v.optional(v.number()),
 		reportingStartedAt: v.optional(v.number()),
 		chargingStartedAt: v.optional(v.number()),
+		// Set immediately before POST /charge. After a transport error the remote
+		// may have committed, so a row with this set and no transaction id must
+		// not be reclaimed for another provider request.
+		providerRequestedAt: v.optional(v.number()),
 		createdAt: v.number(),
 		updatedAt: v.number()
 	}).index('by_mandate_reference', ['mandateId', 'reference']),

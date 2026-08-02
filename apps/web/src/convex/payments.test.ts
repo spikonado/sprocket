@@ -258,6 +258,58 @@ describe('payments mandates', () => {
 		expect(charges).toHaveLength(1);
 	});
 
+	it('refuses to re-POST after a lost Prava charge response for the same reference', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+		const { setup, fetchMock } = await createApprovedMandate(t, run);
+
+		// Prava may have accepted the charge even though the client saw a transport error.
+		fetchMock.mockRejectedValueOnce(new Error('network lost after charge commit'));
+		await expect(
+			run.asUser.action(api.payments.mandateCharge, {
+				mandateId: setup.mandateId,
+				amount: '40.00',
+				currency: 'USD',
+				description: 'Order 8842',
+				reference: 'order-8842',
+				...auth(run)
+			})
+		).rejects.toThrow(/network lost after charge commit/);
+
+		const afterLoss = await t.run(async (ctx) =>
+			ctx.db
+				.query('mandateCharges')
+				.withIndex('by_mandate_reference', (query) =>
+					query.eq('mandateId', setup.mandateId).eq('reference', 'order-8842')
+				)
+				.unique()
+		);
+		expect(afterLoss?.providerRequestedAt).toEqual(expect.any(Number));
+		expect(afterLoss?.pravaTransactionId).toBeUndefined();
+		expect(afterLoss?.chargingStartedAt).toBeUndefined();
+
+		fetchMock.mockClear();
+		// Even after the claim is long stale, do not reclaim for a second POST.
+		await t.run(async (ctx) => {
+			if (!afterLoss) throw new Error('missing charge');
+			await ctx.db.patch(afterLoss._id, {
+				chargingStartedAt: Date.now() - 120_000
+			});
+		});
+		await expect(
+			run.asUser.action(api.payments.mandateCharge, {
+				mandateId: setup.mandateId,
+				amount: '40.00',
+				currency: 'USD',
+				description: 'Order 8842',
+				reference: 'order-8842',
+				...auth(run)
+			})
+		).rejects.toThrow(/may have already been submitted/);
+		expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/charge'))).toBe(false);
+	});
+
 	it('rejects over-cap, invalid, and currency-mismatched charges without calling Prava', async () => {
 		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
