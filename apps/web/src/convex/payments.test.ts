@@ -58,21 +58,26 @@ function setupArgs(run: Awaited<ReturnType<typeof startRun>>) {
 	};
 }
 
+function liveListedMandate(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+	return {
+		id: 'mdt_1',
+		status: 'active',
+		merchantName: 'Example Shop',
+		merchantUrl: 'https://shop.example',
+		countryCode: 'US',
+		approvedAmount: '120.00',
+		remaining: '120.00',
+		currency: 'USD',
+		validUntil: '2027-08-01T00:00:00Z',
+		renewsAt: '2026-09-01T00:00:00Z',
+		...overrides
+	};
+}
+
 async function createApprovedMandate(
 	t: ConvexTestInstance,
 	run: Awaited<ReturnType<typeof startRun>>,
-	mandates: unknown[] = [
-		{
-			id: 'mdt_1',
-			status: 'active',
-			merchantName: 'Example Shop',
-			approvedAmount: '120.00',
-			remaining: '120.00',
-			currency: 'USD',
-			validUntil: '2027-08-01T00:00:00Z',
-			renewsAt: '2026-09-01T00:00:00Z'
-		}
-	]
+	mandates: unknown[] = [liveListedMandate()]
 ) {
 	const fetchMock = vi
 		.fn()
@@ -350,14 +355,7 @@ describe('payments mandates', () => {
 		const run = await startRun(t, 'user_alice');
 		// Only a EUR approval exists for the USD local mandate's merchant + cap.
 		const { setup } = await createApprovedMandate(t, run, [
-			{
-				id: 'mdt_eur',
-				status: 'active',
-				merchantName: 'Example Shop',
-				approvedAmount: '120.00',
-				remaining: '120.00',
-				currency: 'EUR'
-			}
+			liveListedMandate({ id: 'mdt_eur', currency: 'EUR' })
 		]);
 
 		await expect(
@@ -647,22 +645,8 @@ describe('payments mandates', () => {
 		const run = await startRun(t, 'user_alice');
 		// Two approvals with the same merchant + amount: resolution must not guess.
 		const { setup, fetchMock } = await createApprovedMandate(t, run, [
-			{
-				id: 'mdt_old',
-				status: 'active',
-				merchantName: 'Example Shop',
-				approvedAmount: '120.00',
-				remaining: '120.00',
-				currency: 'USD'
-			},
-			{
-				id: 'mdt_new',
-				status: 'active',
-				merchantName: 'Example Shop',
-				approvedAmount: '120.00',
-				remaining: '120.00',
-				currency: 'USD'
-			}
+			liveListedMandate({ id: 'mdt_old' }),
+			liveListedMandate({ id: 'mdt_new' })
 		]);
 		fetchMock.mockClear();
 
@@ -686,21 +670,8 @@ describe('payments mandates', () => {
 		// A stale cancelled approval with the same merchant + amount must not
 		// poison resolution of the one live mandate.
 		const { setup } = await createApprovedMandate(t, run, [
-			{
-				id: 'mdt_stale',
-				status: 'cancelled',
-				merchantName: 'Example Shop',
-				approvedAmount: '120.00',
-				currency: 'USD'
-			},
-			{
-				id: 'mdt_live',
-				status: 'active',
-				merchantName: 'Example Shop',
-				approvedAmount: '120.00',
-				remaining: '120.00',
-				currency: 'USD'
-			}
+			liveListedMandate({ id: 'mdt_stale', status: 'cancelled', remaining: undefined }),
+			liveListedMandate({ id: 'mdt_live' })
 		]);
 
 		const status = await run.asUser.action(api.payments.mandateStatus, {
@@ -713,20 +684,33 @@ describe('payments mandates', () => {
 		expect(stored).toMatchObject({ status: 'active', pravaMandateId: 'mdt_live' });
 	});
 
+	it('does not link a listed mandate to a same-name approval for another URL or country', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+		const { setup } = await createApprovedMandate(t, run, [
+			liveListedMandate({
+				id: 'mdt_other',
+				merchantUrl: 'https://different-merchant.example',
+				countryCode: 'GB'
+			})
+		]);
+
+		const status = await run.asUser.action(api.payments.mandateStatus, {
+			mandateId: setup.mandateId,
+			...auth(run)
+		});
+		expect(status.status).toBe('pending');
+		expect(status.pravaMandateId).toBeUndefined();
+		const stored = await t.run(async (ctx) => await ctx.db.get(setup.mandateId));
+		expect(stored?.pravaMandateId).toBeUndefined();
+	});
+
 	it('lists only the calling user’s mandates via the user-facing action', async () => {
 		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const fetchMock = vi.fn().mockResolvedValue(
 			jsonResponse({
-				mandates: [
-					{
-						id: 'mdt_1',
-						status: 'active',
-						merchantName: 'Example Shop',
-						approvedAmount: '120.00',
-						remaining: '120.00',
-						currency: 'USD'
-					}
-				]
+				mandates: [liveListedMandate()]
 			})
 		);
 		vi.stubGlobal('fetch', fetchMock);
@@ -767,16 +751,7 @@ describe('payments mandates', () => {
 			)
 			.mockResolvedValueOnce(
 				jsonResponse({
-					mandates: [
-						{
-							id: 'mdt_1',
-							status: 'active',
-							merchantName: 'Example Shop',
-							approvedAmount: '120.00',
-							remaining: '120.00',
-							currency: 'USD'
-						}
-					]
+					mandates: [liveListedMandate()]
 				})
 			);
 		vi.stubGlobal('fetch', fetchMock);
@@ -828,16 +803,7 @@ describe('payments mandates', () => {
 			)
 			.mockResolvedValueOnce(
 				jsonResponse({
-					mandates: [
-						{
-							id: 'mdt_1',
-							status: 'active',
-							merchantName: 'Example Shop',
-							approvedAmount: '120.00',
-							remaining: '120.00',
-							currency: 'USD'
-						}
-					]
+					mandates: [liveListedMandate()]
 				})
 			);
 		vi.stubGlobal('fetch', fetchMock);
@@ -925,16 +891,7 @@ describe('payments mandates', () => {
 			// mandateStatus → resolve list (approves the mandate)
 			.mockResolvedValueOnce(
 				jsonResponse({
-					mandates: [
-						{
-							id: 'mdt_1',
-							status: 'active',
-							merchantName: 'Example Shop',
-							approvedAmount: '120.00',
-							remaining: '120.00',
-							currency: 'USD'
-						}
-					]
+					mandates: [liveListedMandate()]
 				})
 			);
 		vi.stubGlobal('fetch', fetchMock);
