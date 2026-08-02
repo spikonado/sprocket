@@ -178,6 +178,40 @@ function pravaStatusToLocal(status: string | undefined): Infer<typeof vMandateSt
 	return isMandateStatus(status) ? status : undefined;
 }
 
+/** Parse a decimal money string to minor units as a bigint. Fixed-point, so
+ * "0.1" + "0.2" class errors can't leak into cap comparisons. */
+function parseMoneyMinor(value: string): bigint | undefined {
+	const match = /^(\d+)(?:\.(\d{1,2}))?$/.exec(value.trim());
+	if (!match) return undefined;
+	const units = BigInt(match[1]);
+	const fraction = (match[2] ?? '').padEnd(2, '0');
+	return units * 100n + BigInt(fraction || '0');
+}
+
+/** Fail fast on a charge the mandate obviously can't authorize. Prava is
+ * still the authoritative limit enforcer at the card network — these checks
+ * only stop clearly wrong requests from producing misleading local records. */
+function assertChargeable(
+	mandate: Doc<'mandates'>,
+	args: { amount: string; currency: string }
+): void {
+	if (args.currency.trim().toUpperCase() !== mandate.currency.toUpperCase()) {
+		throw new Error(`Charge currency must match the mandate's ${mandate.currency}.`);
+	}
+	const amount = parseMoneyMinor(args.amount);
+	if (amount === undefined || amount <= 0n) {
+		throw new Error('Charge amount must be a positive decimal string.');
+	}
+	const cap = parseMoneyMinor(mandate.amountCap);
+	if (cap !== undefined && amount > cap) {
+		throw new Error(`Charge amount exceeds the mandate's ${mandate.amountCap} cap.`);
+	}
+	const remaining = mandate.remaining ? parseMoneyMinor(mandate.remaining) : undefined;
+	if (remaining !== undefined && amount > remaining) {
+		throw new Error(`Charge amount exceeds the mandate's remaining ${mandate.remaining}.`);
+	}
+}
+
 async function ownedCharge(
 	ctx: MutationCtx,
 	chargeId: Id<'mandateCharges'>,
@@ -545,6 +579,9 @@ async function resolvePravaMandate(
 	const matches = list.filter((m) => {
 		if (!m.id) return false;
 		if (!LIVE_MANDATE_STATUSES.has(m.status ?? '')) return false;
+		// A mandate approved in another currency is a different authorization —
+		// never resolve (and later charge) it for this setup.
+		if ((m.currency ?? '').toUpperCase() !== mandate.currency.toUpperCase()) return false;
 		if (mandate.scope === 'listed') {
 			return (
 				(m.merchantName ?? '').toLowerCase() === (mandate.merchantName ?? '').toLowerCase() &&
@@ -681,6 +718,7 @@ export const mandateCharge = action({
 			userId: actor.userId
 		});
 		if (!mandate) throw new Error('Mandate not found.');
+		assertChargeable(mandate, args);
 
 		const prava = await resolvePravaMandate(ctx, actor.userId, mandate);
 		const result = await pravaRequest<{
@@ -708,7 +746,7 @@ export const mandateCharge = action({
 			userId: actor.userId,
 			pravaTransactionId: transactionId,
 			amount: args.amount,
-			currency: args.currency,
+			currency: mandate.currency,
 			description: args.description,
 			reference: args.reference
 		});

@@ -205,6 +205,67 @@ describe('payments mandates', () => {
 		expect(stored).not.toHaveProperty('dynamicCvv');
 	});
 
+	it('rejects over-cap, invalid, and currency-mismatched charges without calling Prava', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+		const { setup, fetchMock } = await createApprovedMandate(t, run);
+		fetchMock.mockClear();
+
+		const base = { mandateId: setup.mandateId, description: 'Order 8842', ...auth(run) };
+		await expect(
+			run.asUser.action(api.payments.mandateCharge, {
+				...base,
+				amount: '1200.00',
+				currency: 'USD'
+			})
+		).rejects.toThrow(/exceeds the mandate's 120.00 cap/);
+		await expect(
+			run.asUser.action(api.payments.mandateCharge, {
+				...base,
+				amount: '40.00',
+				currency: 'EUR'
+			})
+		).rejects.toThrow(/currency must match/);
+		await expect(
+			run.asUser.action(api.payments.mandateCharge, {
+				...base,
+				amount: '-5',
+				currency: 'USD'
+			})
+		).rejects.toThrow(/positive decimal/);
+
+		// None of these should have issued a charge request.
+		expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/charge'))).toBe(false);
+	});
+
+	it('does not resolve a mandate approved in a different currency', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+		// Only a EUR approval exists for the USD local mandate's merchant + cap.
+		const { setup } = await createApprovedMandate(t, run, [
+			{
+				id: 'mdt_eur',
+				status: 'active',
+				merchantName: 'Example Shop',
+				approvedAmount: '120.00',
+				remaining: '120.00',
+				currency: 'EUR'
+			}
+		]);
+
+		await expect(
+			run.asUser.action(api.payments.mandateCharge, {
+				mandateId: setup.mandateId,
+				amount: '40.00',
+				currency: 'USD',
+				description: 'Order 8842',
+				...auth(run)
+			})
+		).rejects.toThrow(/not yet approved/);
+	});
+
 	it('reports a charge outcome only once', async () => {
 		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
