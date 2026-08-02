@@ -24,17 +24,14 @@
 	import PromptComposer from '$lib/components/home/prompt-composer.svelte';
 	import SettingsAccount from '$lib/components/home/settings-account.svelte';
 	import SettingsArchived from '$lib/components/home/settings-archived.svelte';
+	import SettingsPayments from '$lib/components/home/settings-payments.svelte';
 	import SettingsSidebar, { type SettingsPage } from '$lib/components/home/settings-sidebar.svelte';
 	import SettingsUsage from '$lib/components/home/settings-usage.svelte';
 	import ThreadTranscript from '$lib/components/home/thread-transcript.svelte';
-	import ArtifactPanel from '$lib/components/home/artifact-panel.svelte';
+	import SidePanel from '$lib/components/home/side-panel.svelte';
 	import ArtifactScreenFullscreen from '$lib/components/home/artifact-screen-fullscreen.svelte';
-	import {
-		DEFAULT_ARTIFACT_PANEL_SNAPSHOT,
-		nextArtifactRevisionWatch,
-		type ArtifactPanelSnapshot,
-		type ArtifactRevision
-	} from '$lib/chat/artifacts';
+	import { nextArtifactRevisionWatch, type ArtifactRevision } from '$lib/chat/artifacts';
+	import { DEFAULT_SIDE_PANEL_SNAPSHOT, type SidePanelSnapshot } from '$lib/chat/side-panel';
 	import ProjectPicker, { type ProjectSelection } from '$lib/components/home/project-picker.svelte';
 	import ProjectSidebar from '$lib/components/home/project-sidebar.svelte';
 	import Button from '$lib/components/ui/button/button.svelte';
@@ -462,6 +459,10 @@
 		api.artifacts.listArtifactsForThread,
 		authenticatedThreadQueryArgs
 	);
+	const browserLiveViewQuery = useQuery(
+		api.browserSessions.liveViewForThread,
+		authenticatedThreadQueryArgs
+	);
 	const pendingAgentQuestionQuery = useQuery(
 		api.agentQuestions.headPendingForThread,
 		authenticatedThreadQueryArgs
@@ -476,6 +477,7 @@
 			historyMessagesQuery,
 			liveMessagesQuery,
 			latestRunQuery,
+			browserLiveViewQuery,
 			pendingAgentQuestionQuery
 		]) {
 			if (query.error) {
@@ -586,25 +588,30 @@
 	);
 	// Panel state snapshots survive thread switches; the live thread always has
 	// an entry after the restore effect below runs.
-	const artifactSnapshots = new SvelteMap<Id<'threadRecords'>, ArtifactPanelSnapshot>();
-	let artifactPanel = $state<ArtifactPanelSnapshot>({ ...DEFAULT_ARTIFACT_PANEL_SNAPSHOT });
-	let artifactPanelThreadId: Id<'threadRecords'> | null = null;
+	const sidePanelSnapshots = new SvelteMap<Id<'threadRecords'>, SidePanelSnapshot>();
+	let sidePanel = $state<SidePanelSnapshot>({ ...DEFAULT_SIDE_PANEL_SNAPSHOT });
+	let sidePanelThreadId: Id<'threadRecords'> | null = null;
 	// Baseline for create/update detection; null means the next observation only seeds.
 	let artifactRevisionWatch: {
 		threadId: Id<'threadRecords'>;
 		revisions: Map<string, ArtifactRevision>;
 	} | null = null;
+	// Baseline for browser-activity detection; same seeding rule as artifacts.
+	let browserLiveViewWatch: {
+		threadId: Id<'threadRecords'>;
+		runId: Id<'runs'> | null;
+	} | null = null;
 
 	$effect(() => {
 		const threadId = currentThreadId;
-		if (threadId === artifactPanelThreadId) return;
-		if (artifactPanelThreadId) {
-			artifactSnapshots.set(artifactPanelThreadId, artifactPanel);
+		if (threadId === sidePanelThreadId) return;
+		if (sidePanelThreadId) {
+			sidePanelSnapshots.set(sidePanelThreadId, sidePanel);
 		}
-		artifactPanelThreadId = threadId;
+		sidePanelThreadId = threadId;
 		artifactFullscreenKey = null;
-		artifactPanel = {
-			...((threadId && artifactSnapshots.get(threadId)) || DEFAULT_ARTIFACT_PANEL_SNAPSHOT)
+		sidePanel = {
+			...((threadId && sidePanelSnapshots.get(threadId)) || DEFAULT_SIDE_PANEL_SNAPSHOT)
 		};
 	});
 
@@ -634,12 +641,43 @@
 		if (!changedId) return;
 		// Avoid depending on panel UI state for re-runs; only follow selection when
 		// opening or when the user is still on the list view.
-		const prior = untrack(() => artifactPanel);
-		artifactPanel = {
+		const prior = untrack(() => sidePanel);
+		sidePanel = {
 			...prior,
 			open: true,
+			// Don't yank the user off the live view they deliberately opened.
+			tab: prior.open ? prior.tab : 'artifacts',
 			selectedKey: !prior.open || prior.selectedKey === null ? changedId : prior.selectedKey
 		};
+	});
+
+	// The agent started working with the browser tools when the session's
+	// lastUsedRunId becomes the currently active run: open the side panel
+	// straight onto the live view. Keying on the run (not session starts)
+	// catches runs that reuse the previous session, and doesn't re-open for
+	// mid-run session rotations or after the user closed the panel.
+	$effect(() => {
+		const threadId = currentThreadId;
+		const data = browserLiveViewQuery.data;
+		const activeRunId = isRunning ? (runState?._id ?? null) : null;
+		if (!threadId) {
+			browserLiveViewWatch = null;
+			return;
+		}
+		if (browserLiveViewWatch && browserLiveViewWatch.threadId !== threadId) {
+			browserLiveViewWatch = null;
+		}
+		if (data === undefined) return;
+
+		const sessionRunId = data?.lastUsedRunId ?? null;
+		const previous = browserLiveViewWatch;
+		browserLiveViewWatch = { threadId, runId: sessionRunId };
+		if (sessionRunId === null || sessionRunId !== activeRunId) return;
+		if (previous && previous.runId === sessionRunId) return;
+
+		const prior = untrack(() => sidePanel);
+		if (prior.open && prior.tab === 'live') return;
+		sidePanel = { ...prior, open: true, tab: 'live' };
 	});
 
 	const fullscreenArtifact = $derived(
@@ -1988,13 +2026,11 @@
 	<div class="relative h-screen overflow-hidden">
 		<div
 			class="app-workspace-shell grid h-screen grid-cols-[292px_minmax(0,1fr)] overflow-hidden {!settingsOpen &&
-			artifactPanel.open &&
-			!artifactPanel.expanded
+			sidePanel.open &&
+			!sidePanel.expanded
 				? 'pr-[20rem]'
 				: ''}"
-			inert={fullscreenArtifact || (artifactPanel.open && artifactPanel.expanded)
-				? true
-				: undefined}
+			inert={fullscreenArtifact || (sidePanel.open && sidePanel.expanded) ? true : undefined}
 		>
 			{#if settingsOpen}
 				<SettingsSidebar
@@ -2039,14 +2075,14 @@
 			{/if}
 
 			<main class="relative flex h-screen min-h-0 min-w-0 flex-col overflow-hidden">
-				{#if !settingsOpen && !artifactPanel.open}
+				{#if !settingsOpen && !sidePanel.open}
 					<button
 						type="button"
 						class="text-muted-foreground hover:text-foreground hover:bg-muted absolute top-3 right-3 z-100 inline-flex items-center justify-center rounded-md p-2 transition"
 						onclick={() => {
-							artifactPanel = { ...artifactPanel, open: true };
+							sidePanel = { ...sidePanel, open: true };
 						}}
-						aria-label="Open artifacts panel"
+						aria-label="Open side panel"
 					>
 						<PanelRight class="size-4" aria-hidden="true" />
 					</button>
@@ -2062,6 +2098,8 @@
 						/>
 					{:else if settingsPage === 'usage'}
 						<SettingsUsage />
+					{:else if settingsPage === 'payments'}
+						<SettingsPayments />
 					{:else}
 						<SettingsAccount user={$authState.user} onSignOut={() => void signOut()} />
 					{/if}
@@ -2112,22 +2150,28 @@
 			</main>
 		</div>
 
-		{#if !settingsOpen && artifactPanel.open}
+		{#if !settingsOpen && sidePanel.open}
 			<div
-				class={artifactPanel.expanded
+				class={sidePanel.expanded
 					? 'bg-background fixed inset-0 z-50'
 					: 'absolute inset-y-0 right-0 z-40 w-[20rem]'}
 				inert={fullscreenArtifact ? true : undefined}
 			>
-				<ArtifactPanel
+				<SidePanel
 					artifacts={threadArtifacts}
-					selectedKey={artifactPanel.selectedKey}
-					expanded={artifactPanel.expanded}
+					selectedKey={sidePanel.selectedKey}
+					tab={sidePanel.tab}
+					liveView={browserLiveViewQuery.data}
+					liveActive={isRunning && browserLiveViewQuery.data?.lastUsedRunId === runState?._id}
+					expanded={sidePanel.expanded}
 					onSelect={(key) => {
-						artifactPanel = { ...artifactPanel, selectedKey: key };
+						sidePanel = { ...sidePanel, selectedKey: key };
 					}}
 					onBack={() => {
-						artifactPanel = { ...artifactPanel, selectedKey: null };
+						sidePanel = { ...sidePanel, selectedKey: null };
+					}}
+					onTabChange={(tab) => {
+						sidePanel = { ...sidePanel, tab };
 					}}
 					onOpenFullscreen={(key) => {
 						artifactFullscreenKey = key;
@@ -2138,10 +2182,10 @@
 						}
 					}}
 					onToggleExpanded={() => {
-						artifactPanel = { ...artifactPanel, expanded: !artifactPanel.expanded };
+						sidePanel = { ...sidePanel, expanded: !sidePanel.expanded };
 					}}
 					onClose={() => {
-						artifactPanel = { ...artifactPanel, open: false, expanded: false };
+						sidePanel = { ...sidePanel, open: false, expanded: false };
 					}}
 				/>
 			</div>

@@ -7,20 +7,6 @@ export type ArtifactEntry = {
 	content: string;
 };
 
-/** Stored panel state, restored when revisiting a thread. */
-export type ArtifactPanelSnapshot = {
-	open: boolean;
-	/** When true, the panel covers the full Sprocket workspace UI. */
-	expanded: boolean;
-	selectedKey: string | null;
-};
-
-export const DEFAULT_ARTIFACT_PANEL_SNAPSHOT: ArtifactPanelSnapshot = {
-	open: false,
-	expanded: false,
-	selectedKey: null
-};
-
 /** Revision used to detect creates/updates for auto-opening the panel. */
 export type ArtifactRevision = {
 	id: string;

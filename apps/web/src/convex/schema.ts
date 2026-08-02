@@ -1,4 +1,5 @@
 import { defineSchema, defineTable } from 'convex/server';
+import { v } from 'convex/values';
 import {
 	agentQuestionFields,
 	artifactFields,
@@ -14,6 +15,13 @@ import {
 	threadRecordFields,
 	uiPreferencesFields
 } from '@convex/lib/docs';
+import {
+	vMandateChargeStatus,
+	vMandateFrequency,
+	vMandateReportOutcome,
+	vMandateScope,
+	vMandateStatus
+} from '@convex/lib/validators';
 
 export default defineSchema({
 	billingCustomers: defineTable(billingCustomerFields).index('by_userId', ['userId']),
@@ -52,5 +60,60 @@ export default defineSchema({
 	artifactVersions: defineTable(artifactVersionFields).index('by_artifactId_version', [
 		'artifactId',
 		'version'
-	])
+	]),
+	mandates: defineTable({
+		userId: v.string(),
+		// Present only after the owner approves in Prava.
+		pravaMandateId: v.optional(v.string()),
+		pravaSessionId: v.string(),
+		// Omitted for any-merchant mandates.
+		merchantName: v.optional(v.string()),
+		merchantUrl: v.optional(v.string()),
+		countryCode: v.optional(v.string()),
+		// Integer minor units (cents). Prava decimal strings convert at the boundary.
+		amountCap: v.number(),
+		currency: v.string(),
+		frequency: vMandateFrequency,
+		scope: vMandateScope,
+		status: vMandateStatus,
+		description: v.string(),
+		approvalUrl: v.string(),
+		validUntil: v.optional(v.string()),
+		renewsAt: v.optional(v.string()),
+		remaining: v.optional(v.number()),
+		createdAt: v.number(),
+		updatedAt: v.number()
+	}).index('by_user', ['userId']),
+	mandateCharges: defineTable({
+		mandateId: v.id('mandates'),
+		runId: v.id('runs'),
+		userId: v.string(),
+		pravaTransactionId: v.optional(v.string()),
+		// Integer minor units (cents).
+		amount: v.number(),
+		currency: v.string(),
+		description: v.string(),
+		// When set, (mandateId, reference) is an idempotency key for mandateCharge.
+		reference: v.optional(v.string()),
+		status: vMandateChargeStatus,
+		reportOutcome: v.optional(vMandateReportOutcome),
+		reportedAt: v.optional(v.number()),
+		reportingStartedAt: v.optional(v.number()),
+		chargingStartedAt: v.optional(v.number()),
+		// Set immediately before POST /charge. After a transport error the remote
+		// may have committed, so a row with this set and no transaction id must
+		// not be reclaimed for another provider request.
+		providerRequestedAt: v.optional(v.number()),
+		createdAt: v.number(),
+		updatedAt: v.number()
+	}).index('by_mandate_reference', ['mandateId', 'reference']),
+	browserSessions: defineTable({
+		threadId: v.id('threadRecords'),
+		runId: v.id('runs'),
+		lastUsedRunId: v.id('runs'),
+		userId: v.string(),
+		browserbaseSessionId: v.string(),
+		liveViewUrl: v.optional(v.string()),
+		startedAt: v.number()
+	}).index('by_thread', ['threadId'])
 });

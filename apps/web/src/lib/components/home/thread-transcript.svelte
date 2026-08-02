@@ -25,9 +25,11 @@
 	} from '$lib/chat/tool-summaries';
 	import ChatMarkdown from '$lib/components/chat-markdown.svelte';
 	import ImageViewer, { type ViewerImage } from '$lib/components/image-viewer.svelte';
+	import MandateApprovalForm from '$lib/components/home/mandate-approval-form.svelte';
 	import ReasoningDisclosure from '$lib/components/home/reasoning-disclosure.svelte';
 	import ToolCallsDisclosure from '$lib/components/home/tool-calls-disclosure.svelte';
 	import WorkDisclosure from '$lib/components/home/work-disclosure.svelte';
+	import { mandateApprovals } from '$lib/chat/mandate';
 	import { formatElapsedDuration } from '$lib/format';
 	import type { ExecutorJob, ThreadMessage, Project } from '$lib/types/sprocket';
 
@@ -305,6 +307,9 @@
 												openSessions
 											)}
 											{@const visibleBlocks = settledBlocks.filter(isVisibleWorkBlock)}
+											{@const sectionMandateApprovals = visibleBlocks.flatMap((block) =>
+												block.type === 'tool-group' ? mandateApprovals(block.tools) : []
+											)}
 											{@const workInProgress =
 												isStreaming &&
 												(sectionIndex === sections.length - 1 || runningTools.length > 0)}
@@ -387,6 +392,9 @@
 													{/each}
 												</WorkDisclosure>
 											{/if}
+											{#each sectionMandateApprovals as approval (approval.mandateId)}
+												<MandateApprovalForm {approval} />
+											{/each}
 											{#if runningTools.length > 0}
 												<ToolCallsDisclosure
 													label="Running"

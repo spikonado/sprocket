@@ -99,6 +99,23 @@ pub(crate) struct CreateArtifactTool(AgentToolContext);
 pub(crate) struct UpdateArtifactTool(AgentToolContext);
 
 #[derive(Clone)]
+pub(crate) struct BrowserActTool(AgentToolContext);
+#[derive(Clone)]
+pub(crate) struct BrowserObserveTool(AgentToolContext);
+#[derive(Clone)]
+pub(crate) struct BrowserExtractTool(AgentToolContext);
+#[derive(Clone)]
+pub(crate) struct MandateSetupTool(AgentToolContext);
+#[derive(Clone)]
+pub(crate) struct MandateStatusTool(AgentToolContext);
+#[derive(Clone)]
+pub(crate) struct MandateListTool(AgentToolContext);
+#[derive(Clone)]
+pub(crate) struct MandateChargeTool(AgentToolContext);
+#[derive(Clone)]
+pub(crate) struct MandateReportTool(AgentToolContext);
+
+#[derive(Clone)]
 pub(crate) struct ReadSkillTool {
     context: AgentToolContext,
     skills: Arc<[WorkspaceSkill]>,
@@ -116,6 +133,14 @@ pub(crate) struct AgentToolSet {
     pub(crate) write_stdin: WriteStdinTool,
     pub(crate) create_artifact: CreateArtifactTool,
     pub(crate) update_artifact: UpdateArtifactTool,
+    pub(crate) browser_observe: BrowserObserveTool,
+    pub(crate) browser_act: BrowserActTool,
+    pub(crate) browser_extract: BrowserExtractTool,
+    pub(crate) mandate_setup: MandateSetupTool,
+    pub(crate) mandate_status: MandateStatusTool,
+    pub(crate) mandate_list: MandateListTool,
+    pub(crate) mandate_charge: MandateChargeTool,
+    pub(crate) mandate_report: MandateReportTool,
 }
 
 pub(crate) fn agent_tools(
@@ -149,7 +174,15 @@ pub(crate) fn agent_tools(
         web_search: WebSearchTool(context.clone()),
         write_stdin: WriteStdinTool(context.clone()),
         create_artifact: CreateArtifactTool(context.clone()),
-        update_artifact: UpdateArtifactTool(context),
+        update_artifact: UpdateArtifactTool(context.clone()),
+        browser_observe: BrowserObserveTool(context.clone()),
+        browser_act: BrowserActTool(context.clone()),
+        browser_extract: BrowserExtractTool(context.clone()),
+        mandate_setup: MandateSetupTool(context.clone()),
+        mandate_status: MandateStatusTool(context.clone()),
+        mandate_list: MandateListTool(context.clone()),
+        mandate_charge: MandateChargeTool(context.clone()),
+        mandate_report: MandateReportTool(context),
     }
 }
 
@@ -371,6 +404,124 @@ pub(crate) struct WebSearchArgs {
 pub(crate) struct ScrapeUrlArgs {
     /// URL of the web page to read.
     url: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct BrowserObserveArgs {
+    instruction: String,
+    #[serde(rename = "startUrl", skip_serializing_if = "Option::is_none")]
+    start_url: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct BrowserAction {
+    selector: String,
+    description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    method: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    arguments: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct BrowserActToolArgs {
+    /// Natural-language instruction for the sub-agent, e.g. 'add 2 to cart and stop at the payment form'. Provide this or `action`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    instruction: Option<String>,
+    /// A structured action returned by browser_observe (validate-then-act). Provide this or `instruction`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    action: Option<BrowserAction>,
+    /// Optional URL to open first.
+    #[serde(rename = "startUrl", skip_serializing_if = "Option::is_none")]
+    start_url: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct BrowserExtractArgs {
+    instruction: String,
+    #[serde(rename = "startUrl", skip_serializing_if = "Option::is_none")]
+    start_url: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum MandateFrequency {
+    OneTime,
+    Weekly,
+    Monthly,
+    Yearly,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum MandateScope {
+    Listed,
+    Any,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MandateSetupArgs {
+    /// Email the user uses for purchase approvals; optional when one is already on file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user_email: Option<String>,
+    /// Merchant to lock this mandate to (required for `listed` scope).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    merchant_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    merchant_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    country_code: Option<String>,
+    /// Per-charge cap as a decimal string, e.g. "120.00".
+    amount_cap: String,
+    currency: String,
+    frequency: MandateFrequency,
+    /// `listed` locks to one merchant; `any` allows any merchant (one-time only).
+    scope: MandateScope,
+    description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_charges: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    valid_until: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct MandateIdArgs {
+    /// Mandate identifier returned by mandate_setup or mandate_status.
+    #[serde(rename = "mandateId")]
+    mandate_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MandateChargeArgs {
+    /// Mandate identifier to charge.
+    mandate_id: String,
+    /// Charge amount as a decimal string, within the mandate's cap.
+    amount: String,
+    currency: String,
+    description: String,
+    /// Idempotency key; reusing it returns the original charge handle without re-issuing credentials.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reference: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum ChargeOutcome {
+    Approved,
+    Declined,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MandateReportArgs {
+    /// Charge identifier returned by mandate_charge.
+    charge_id: String,
+    outcome: ChargeOutcome,
+    /// Amount actually captured, if known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    amount_paid: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -890,6 +1041,277 @@ impl rig::tool::Tool for UpdateArtifactTool {
     }
 }
 
+impl rig::tool::Tool for BrowserObserveTool {
+    const NAME: &'static str = "browser_observe";
+    type Error = AgentToolError;
+    type Args = BrowserObserveArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Discover actionable elements on the current page without executing them. Returns candidate actions (selector, description, method, arguments) that browser_act can then run.".to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(BrowserObserveArgs))
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
+        execute_tool_job(
+            &self.0.runtime,
+            &self.0.run_id,
+            &self.0.claim_id,
+            Self::NAME,
+            &self.0.tool_call_tracker,
+            payload,
+            |cancellation| {
+                let mut action_args = BTreeMap::new();
+                action_args.insert("runId".to_string(), self.0.run_id.clone().into());
+                action_args.insert("claimId".to_string(), self.0.claim_id.clone().into());
+                action_args.insert("instruction".to_string(), args.instruction.clone().into());
+                if let Some(start_url) = &args.start_url {
+                    action_args.insert("startUrl".to_string(), start_url.clone().into());
+                }
+                run_convex_tool_action(
+                    &self.0.runtime,
+                    cancellation,
+                    "browserAgent:observe",
+                    action_args,
+                )
+            },
+        )
+        .await
+    }
+}
+
+impl rig::tool::Tool for BrowserActTool {
+    const NAME: &'static str = "browser_act";
+    type Error = AgentToolError;
+    type Args = BrowserActToolArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Perform a browser action via the sub-agent: a natural-language instruction, or one specific action from browser_observe (validate-then-act). Use for all web browsing and checkout steps, including typing the payment credential returned by mandate_charge.".to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(BrowserActToolArgs))
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
+        if args.instruction.is_none() && args.action.is_none() {
+            return Err(AgentToolError::Message(
+                "browser_act needs an instruction or an action".to_string(),
+            ));
+        }
+        let action = match &args.action {
+            Some(action) => Some(
+                Value::try_from(serde_json::to_value(action).map_err(|e| tool_error(e.into()))?)
+                    .map_err(tool_error)?,
+            ),
+            None => None,
+        };
+        execute_tool_job(
+            &self.0.runtime,
+            &self.0.run_id,
+            &self.0.claim_id,
+            Self::NAME,
+            &self.0.tool_call_tracker,
+            payload,
+            |cancellation| {
+                let mut action_args = BTreeMap::new();
+                action_args.insert("runId".to_string(), self.0.run_id.clone().into());
+                action_args.insert("claimId".to_string(), self.0.claim_id.clone().into());
+                if let Some(instruction) = &args.instruction {
+                    action_args.insert("instruction".to_string(), instruction.clone().into());
+                }
+                if let Some(action) = action {
+                    action_args.insert("action".to_string(), action);
+                }
+                if let Some(start_url) = &args.start_url {
+                    action_args.insert("startUrl".to_string(), start_url.clone().into());
+                }
+                run_convex_tool_action(
+                    &self.0.runtime,
+                    cancellation,
+                    "browserAgent:act",
+                    action_args,
+                )
+            },
+        )
+        .await
+    }
+}
+
+impl rig::tool::Tool for BrowserExtractTool {
+    const NAME: &'static str = "browser_extract";
+    type Error = AgentToolError;
+    type Args = BrowserExtractArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Extract structured data or text from the current page (e.g. the order summary and total)."
+            .to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(BrowserExtractArgs))
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
+        execute_tool_job(
+            &self.0.runtime,
+            &self.0.run_id,
+            &self.0.claim_id,
+            Self::NAME,
+            &self.0.tool_call_tracker,
+            payload,
+            |cancellation| {
+                let mut action_args = BTreeMap::new();
+                action_args.insert("runId".to_string(), self.0.run_id.clone().into());
+                action_args.insert("claimId".to_string(), self.0.claim_id.clone().into());
+                action_args.insert("instruction".to_string(), args.instruction.clone().into());
+                if let Some(start_url) = &args.start_url {
+                    action_args.insert("startUrl".to_string(), start_url.clone().into());
+                }
+                run_convex_tool_action(
+                    &self.0.runtime,
+                    cancellation,
+                    "browserAgent:extract",
+                    action_args,
+                )
+            },
+        )
+        .await
+    }
+}
+
+impl rig::tool::Tool for MandateSetupTool {
+    const NAME: &'static str = "mandate_setup";
+    type Error = AgentToolError;
+    type Args = MandateSetupArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Set up a Prava spending mandate the user approves once with a passkey. The UI shows the approval link; do not paste it in your response, just tell the user to approve. Charge later with mandate_charge (no further passkey)."
+            .to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(MandateSetupArgs))
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        mandate_action_job(
+            &self.0,
+            Self::NAME,
+            "payments:mandateSetup",
+            serde_json::to_value(args).map_err(|e| tool_error(e.into()))?,
+        )
+        .await
+    }
+}
+
+impl rig::tool::Tool for MandateStatusTool {
+    const NAME: &'static str = "mandate_status";
+    type Error = AgentToolError;
+    type Args = MandateIdArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Return a mandate's status, remaining spend, and caps. Pending means the user hasn't approved it yet."
+            .to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(MandateIdArgs))
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        mandate_action_job(
+            &self.0,
+            Self::NAME,
+            "payments:mandateStatus",
+            serde_json::to_value(args).map_err(|e| tool_error(e.into()))?,
+        )
+        .await
+    }
+}
+
+impl rig::tool::Tool for MandateListTool {
+    const NAME: &'static str = "mandate_list";
+    type Error = AgentToolError;
+    type Args = serde_json::Value;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "List the user's live mandates (one-time and standing) with status, caps, and remaining spend. Each entry includes the local mandateId that mandate_charge and mandate_status take. Use to discover an existing mandate before proposing a new one."
+            .to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!({ "type": "object", "properties": {}, "additionalProperties": false })
+    }
+
+    async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
+        mandate_action_job(&self.0, Self::NAME, "payments:mandateList", json!({})).await
+    }
+}
+
+impl rig::tool::Tool for MandateChargeTool {
+    const NAME: &'static str = "mandate_charge";
+    type Error = AgentToolError;
+    type Args = MandateChargeArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Charge an active mandate (no passkey needed) and return a single-use payment credential (token, dynamic CVV, expiry) only on that first response — credentials are not stored or replayed. Reusing `reference` returns the charge handle without credentials. Every charge MUST be settled afterwards with mandate_report — approved when the order completes, declined when it does not. A charge left unreported holds the mandate's remaining balance and eventually expires as abandoned."
+            .to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(MandateChargeArgs))
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        mandate_action_job(
+            &self.0,
+            Self::NAME,
+            "payments:mandateCharge",
+            serde_json::to_value(args).map_err(|e| tool_error(e.into()))?,
+        )
+        .await
+    }
+}
+
+impl rig::tool::Tool for MandateReportTool {
+    const NAME: &'static str = "mandate_report";
+    type Error = AgentToolError;
+    type Args = MandateReportArgs;
+    type Output = serde_json::Value;
+
+    fn description(&self) -> String {
+        "Report the final outcome of a charge to settle it with the card network. MANDATORY after every mandate_charge: approved when the checkout completes, declined when the checkout fails, is abandoned, or the credential goes unused. Never leave a charge unreported — the network holds the amount until you settle."
+            .to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(MandateReportArgs))
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        mandate_action_job(
+            &self.0,
+            Self::NAME,
+            "payments:mandateReport",
+            serde_json::to_value(args).map_err(|e| tool_error(e.into()))?,
+        )
+        .await
+    }
+}
+
 impl rig::tool::Tool for ReadSkillTool {
     const NAME: &'static str = "read_skill";
     type Error = AgentToolError;
@@ -1112,6 +1534,28 @@ fn question_result_from_snapshot(
     }
 }
 
+async fn mandate_action_job(
+    context: &AgentToolContext,
+    kind: &str,
+    function: &'static str,
+    payload: serde_json::Value,
+) -> Result<serde_json::Value, AgentToolError> {
+    execute_tool_job(
+        &context.runtime,
+        &context.run_id,
+        &context.claim_id,
+        kind,
+        &context.tool_call_tracker,
+        payload.clone(),
+        |cancellation| async {
+            let action_args =
+                action_args_from_payload(&context.run_id, &context.claim_id, &payload)?;
+            run_convex_tool_action(&context.runtime, cancellation, function, action_args).await
+        },
+    )
+    .await
+}
+
 async fn observe_question(
     runtime: &RuntimeClient,
     run_id: &str,
@@ -1244,6 +1688,26 @@ fn mutation_args_from_payload(
         );
     }
     Ok(mutation_args)
+}
+
+fn action_args_from_payload(
+    run_id: &str,
+    claim_id: &str,
+    payload: &serde_json::Value,
+) -> Result<BTreeMap<String, Value>, AgentToolError> {
+    let mut args = BTreeMap::new();
+    args.insert("runId".to_string(), run_id.to_string().into());
+    args.insert("claimId".to_string(), claim_id.to_string().into());
+    let fields = payload
+        .as_object()
+        .ok_or_else(|| AgentToolError::Message("tool payload must be an object".to_string()))?;
+    for (key, value) in fields {
+        args.insert(
+            key.clone(),
+            Value::try_from(value.clone()).map_err(tool_error)?,
+        );
+    }
+    Ok(args)
 }
 
 async fn execute_tool_job<F, Fut>(

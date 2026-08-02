@@ -29,6 +29,16 @@ export function toolGroupLabel(toolKey: string) {
 			return 'Ran Commands';
 		case 'get_workspace_instructions':
 			return 'Read Instructions';
+		case 'mandate_charge':
+			return 'Charged Card';
+		case 'mandate_list':
+			return 'Listed Mandates';
+		case 'mandate_report':
+			return 'Settled Charges';
+		case 'mandate_setup':
+			return 'Set Up Mandate';
+		case 'mandate_status':
+			return 'Checked Mandate';
 		case 'read_skill':
 			return 'Read Skill';
 		case 'scrape_url':
@@ -86,6 +96,16 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 				: 'Command';
 		case 'get_workspace_instructions':
 			return 'Workspace instructions';
+		case 'mandate_charge':
+			return summarizeMandateCharge(fields);
+		case 'mandate_list':
+			return 'Standing mandates';
+		case 'mandate_report':
+			return fields?.outcome === 'approved' ? 'Charge approved' : 'Charge declined';
+		case 'mandate_setup':
+			return summarizeMandateSetup(fields);
+		case 'mandate_status':
+			return 'Mandate status';
 		case 'read_skill':
 			return typeof fields?.name === 'string' ? `$${fields.name}` : 'Skill';
 		case 'scrape_url':
@@ -108,6 +128,25 @@ export function toolSummaryClass(toolLog: AssistantTimelineTool) {
 	return (toolLog.job?.kind ?? toolLog.name) === 'apply_patch'
 		? 'whitespace-pre-wrap [overflow-wrap:anywhere]'
 		: 'truncate';
+}
+
+/** "Merchant · 120.00 USD monthly" from a mandate setup payload. */
+function summarizeMandateSetup(fields: Record<string, JsonValue> | undefined) {
+	const merchant = typeof fields?.merchantName === 'string' ? fields.merchantName : 'Any merchant';
+	const cap = typeof fields?.amountCap === 'string' ? fields.amountCap : undefined;
+	const currency = typeof fields?.currency === 'string' ? fields.currency : '';
+	const frequency = typeof fields?.frequency === 'string' ? fields.frequency : '';
+	const amount = cap ? ` · ${cap} ${currency}`.trimEnd() : '';
+	const cycle = frequency && frequency !== 'one_time' ? ` ${frequency}` : '';
+	return `${merchant}${amount}${cycle}`;
+}
+
+/** "Merchant charge · 40.00 USD" from a mandate charge payload. */
+function summarizeMandateCharge(fields: Record<string, JsonValue> | undefined) {
+	const description = typeof fields?.description === 'string' ? fields.description : 'Charge';
+	const amount = typeof fields?.amount === 'string' ? fields.amount : undefined;
+	const currency = typeof fields?.currency === 'string' ? fields.currency : '';
+	return amount ? `${description} · ${amount} ${currency}`.trimEnd() : description;
 }
 
 const PATCH_ENVELOPE_FILE_HEADERS = [
