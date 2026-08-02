@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { page } from '$app/state';
+	import { browser } from '$app/environment';
 	import { useAction, useAuth, useMutation, useQuery } from 'convex-svelte';
 	import type { Id } from '$convex/_generated/dataModel';
 	import { api } from '$convex/_generated/api';
 	import type { MandateApproval } from '$lib/chat/mandate';
-	import MandateApprovalCard from '$lib/components/home/mandate-approval-card.svelte';
+	import MandateApprovalForm from '$lib/components/home/mandate-approval-form.svelte';
 	import Button from '$lib/components/ui/button/button.svelte';
 
 	type MandateFrequency = 'one_time' | 'weekly' | 'monthly' | 'yearly';
@@ -15,6 +15,7 @@
 		mandateId?: Id<'mandates'>;
 		pravaMandateId: string;
 		status: string;
+		description?: string;
 		merchantName?: string;
 		approvedAmount: string;
 		remaining?: string;
@@ -32,8 +33,6 @@
 	const setupMyMandate = useAction(api.payments.setupMyMandate);
 	const setMyMandateLifecycle = useAction(api.payments.setMyMandateLifecycle);
 
-	const publishableKey = $derived(page.data.env?.PUBLIC_PRAVA_PUBLISHABLE_KEY);
-
 	/** Convex action errors arrive wrapped in request-id/stack noise; show just
 	 * the meaningful message. */
 	function friendlyError(error: unknown, fallback: string): string {
@@ -45,8 +44,8 @@
 	const fieldClass =
 		'border-border bg-hover-fill text-foreground placeholder:text-muted-foreground focus:border-ring h-9 w-full rounded-lg border px-3 text-[13px] outline-none';
 	const labelClass = 'text-muted-foreground text-[12px]';
-	const actionButtonClass =
-		'text-foreground hover:bg-muted inline-flex items-center rounded-md border px-2.5 py-1 text-xs transition disabled:pointer-events-none disabled:opacity-40';
+	const actionLinkClass =
+		'text-muted-foreground hover:text-foreground text-[12px] transition disabled:pointer-events-none disabled:opacity-40';
 
 	let paymentsEmail = $state('');
 	let emailHydrated = $state(false);
@@ -70,6 +69,21 @@
 	let mandatesLoading = $state(false);
 	let mandatesError = $state<string | null>(null);
 	let lifecycleBusyId = $state<string | null>(null);
+	let lifecycleBusyAction = $state<LifecycleAction | null>(null);
+
+	const lifecycleLabels: Record<LifecycleAction, { idle: string; busy: string }> = {
+		pause: { idle: 'Pause', busy: 'Pausing…' },
+		resume: { idle: 'Resume', busy: 'Resuming…' },
+		cancel: { idle: 'Cancel', busy: 'Cancelling…' }
+	};
+
+	// Prava rejects recurring any-merchant mandates; keep the form from
+	// offering an invalid combination.
+	$effect(() => {
+		if (scope === 'any' && frequency !== 'one_time') {
+			frequency = 'one_time';
+		}
+	});
 
 	$effect(() => {
 		const data = prefsQuery.data;
@@ -87,12 +101,43 @@
 		void refreshMandates();
 	});
 
+	// After the user finishes Prava approval in another tab, refresh when they
+	// return so Pause/Cancel appear without a full page reload.
+	$effect(() => {
+		if (!browser || !pendingApproval || !convexAuth.isAuthenticated) {
+			return;
+		}
+		const onReturn = () => {
+			if (document.visibilityState && document.visibilityState !== 'visible') {
+				return;
+			}
+			void refreshMandates();
+		};
+		window.addEventListener('focus', onReturn);
+		document.addEventListener('visibilitychange', onReturn);
+		return () => {
+			window.removeEventListener('focus', onReturn);
+			document.removeEventListener('visibilitychange', onReturn);
+		};
+	});
+
 	async function refreshMandates() {
 		mandatesLoading = true;
 		mandatesError = null;
 		try {
 			const result = await listMyMandates({});
 			mandates = result.mandates;
+			const pendingId = pendingApproval?.mandateId;
+			if (
+				pendingId &&
+				mandates.some(
+					(mandate) =>
+						mandate.mandateId === pendingId &&
+						(mandate.status === 'active' || mandate.status === 'paused')
+				)
+			) {
+				pendingApproval = null;
+			}
 		} catch (error) {
 			mandatesError = friendlyError(error, 'Couldn’t load mandates.');
 		} finally {
@@ -123,23 +168,25 @@
 		setupSubmitting = true;
 		setupError = null;
 		pendingApproval = null;
+		// Merchant fields are disabled (and ignored by Prava) for any-merchant
+		// mandates; don't submit leftover values that would mislabel the mandate.
+		const listed = scope === 'listed';
 		try {
 			const result = await setupMyMandate({
-				merchantName: merchantName.trim() || undefined,
-				merchantUrl: merchantUrl.trim() || undefined,
-				countryCode: countryCode.trim() || undefined,
+				merchantName: listed ? merchantName.trim() || undefined : undefined,
+				merchantUrl: listed ? merchantUrl.trim() || undefined : undefined,
+				countryCode: listed ? countryCode.trim() || undefined : undefined,
 				amountCap: amountCap.trim(),
 				currency: currency.trim(),
 				frequency,
 				scope,
 				description: description.trim(),
-				userEmail: paymentsEmail.trim() || undefined
+				userEmail: paymentsEmail.trim()
 			});
 			pendingApproval = {
 				mandateId: result.mandateId,
 				approvalUrl: result.approvalUrl,
-				sessionToken: result.sessionToken,
-				expiresAt: result.expiresAt
+				label: description.trim()
 			};
 			await refreshMandates();
 		} catch (error) {
@@ -150,8 +197,9 @@
 	}
 
 	async function runLifecycle(mandate: MandateRow, action: LifecycleAction) {
-		if (!mandate.mandateId) return;
+		if (!mandate.mandateId || lifecycleBusyId !== null) return;
 		lifecycleBusyId = mandate.pravaMandateId;
+		lifecycleBusyAction = action;
 		mandatesError = null;
 		try {
 			await setMyMandateLifecycle({
@@ -163,13 +211,8 @@
 			mandatesError = friendlyError(error, `Couldn’t ${action} mandate.`);
 		} finally {
 			lifecycleBusyId = null;
+			lifecycleBusyAction = null;
 		}
-	}
-
-	function statusChipClass(status: string) {
-		return status === 'active'
-			? 'text-foreground border-border'
-			: 'text-muted-foreground border-border';
 	}
 </script>
 
@@ -203,6 +246,10 @@
 							bind:value={paymentsEmail}
 							placeholder="you@example.com"
 							disabled={emailSaving || prefsQuery.isLoading}
+							oninput={() => {
+								emailSaved = false;
+								emailError = null;
+							}}
 						/>
 					</label>
 					<Button type="submit" variant="outline" disabled={emailSaving || !paymentsEmail.trim()}>
@@ -221,7 +268,7 @@
 					Set up a spending mandate
 				</p>
 				<p class="text-muted-foreground mt-2 text-sm leading-6">
-					Create a Prava mandate, then approve it inline with your passkey.
+					Create a Prava mandate, then approve it in a new tab with your passkey.
 				</p>
 				<form class="mt-4 space-y-3" onsubmit={submitMandateSetup}>
 					<div class="grid gap-3 sm:grid-cols-2">
@@ -274,7 +321,11 @@
 						</label>
 						<label class="block space-y-1.5">
 							<span class={labelClass}>Frequency</span>
-							<select class={fieldClass} bind:value={frequency} disabled={setupSubmitting}>
+							<select
+								class={fieldClass}
+								bind:value={frequency}
+								disabled={setupSubmitting || scope === 'any'}
+							>
 								<option value="one_time">One time</option>
 								<option value="weekly">Weekly</option>
 								<option value="monthly">Monthly</option>
@@ -308,11 +359,7 @@
 				</form>
 				{#if pendingApproval}
 					<div class="mt-4">
-						<MandateApprovalCard
-							approval={pendingApproval}
-							{publishableKey}
-							merchant={merchantName.trim() || (scope === 'any' ? 'Any merchant' : undefined)}
-						/>
+						<MandateApprovalForm approval={pendingApproval} />
 					</div>
 				{/if}
 			</div>
@@ -325,78 +372,64 @@
 					<p class="text-destructive mt-3 text-sm">{mandatesError}</p>
 				{/if}
 				{#if mandatesLoading && mandates.length === 0}
-					<div class="mt-4 animate-pulse space-y-3" aria-hidden="true">
+					<div class="mt-4 animate-pulse space-y-4" aria-hidden="true">
 						{#each [0, 1] as row (row)}
-							<div class="bg-hover-fill h-14 w-full rounded-lg"></div>
+							<div class="space-y-2">
+								<div class="bg-hover-fill h-3.5 w-40 rounded"></div>
+								<div class="bg-hover-fill h-3 w-56 rounded"></div>
+							</div>
 						{/each}
 					</div>
 				{:else if mandates.length === 0}
 					<p class="text-muted-foreground mt-3 text-sm leading-6">No mandates yet.</p>
 				{:else}
-					<ul class="mt-4 space-y-2">
+					<ul class="mt-3 space-y-1">
 						{#each mandates as mandate (mandate.pravaMandateId)}
 							{@const busy = lifecycleBusyId === mandate.pravaMandateId}
-							<li class="bg-card rounded-lg border px-3.5 py-3">
-								<div class="flex flex-wrap items-start justify-between gap-3">
-									<div class="min-w-0 space-y-1">
-										<p class="text-foreground truncate text-[14px]">
-											{mandate.merchantName?.trim() || 'Any merchant'}
-										</p>
-										<p class="text-muted-foreground text-[12px]">
-											{mandate.approvedAmount}
-											{mandate.currency}
-											{#if mandate.remaining !== undefined}
-												· {mandate.remaining} remaining
-											{/if}
-										</p>
-										{#if mandate.validUntil || mandate.renewsAt}
-											<p class="text-muted-foreground text-[12px]">
-												{#if mandate.validUntil}
-													Valid until {mandate.validUntil}
-												{/if}
-												{#if mandate.validUntil && mandate.renewsAt}
-													·
-												{/if}
-												{#if mandate.renewsAt}
-													Renews {mandate.renewsAt}
-												{/if}
-											</p>
-										{/if}
-									</div>
-									<span
-										class={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[11px] capitalize ${statusChipClass(mandate.status)}`}
-									>
+							{@const busyAction = busy ? lifecycleBusyAction : null}
+							{@const canPause = Boolean(mandate.mandateId) && mandate.status === 'active'}
+							{@const canResume = Boolean(mandate.mandateId) && mandate.status === 'paused'}
+							<li class="py-2">
+								<div class="flex items-baseline justify-between gap-3">
+									<p class="text-foreground truncate text-[14px]">
+										{mandate.description?.trim() ||
+											mandate.merchantName?.trim() ||
+											'Spending mandate'}
+									</p>
+									<p class="text-muted-foreground shrink-0 text-[12px] capitalize">
 										{mandate.status}
-									</span>
+									</p>
 								</div>
-								<div class="mt-3 flex flex-wrap gap-2">
-									<button
-										type="button"
-										class={actionButtonClass}
-										disabled={busy || !mandate.mandateId || mandate.status !== 'active'}
-										onclick={() => void runLifecycle(mandate, 'pause')}
-									>
-										Pause
-									</button>
-									<button
-										type="button"
-										class={actionButtonClass}
-										disabled={busy || !mandate.mandateId || mandate.status !== 'paused'}
-										onclick={() => void runLifecycle(mandate, 'resume')}
-									>
-										Resume
-									</button>
-									<button
-										type="button"
-										class={actionButtonClass}
-										disabled={busy ||
-											!mandate.mandateId ||
-											(mandate.status !== 'active' && mandate.status !== 'paused')}
-										onclick={() => void runLifecycle(mandate, 'cancel')}
-									>
-										Cancel
-									</button>
-								</div>
+								<p class="text-muted-foreground mt-0.5 text-[12px]">
+									{mandate.approvedAmount}
+									{mandate.currency}
+									{#if mandate.remaining !== undefined}
+										· {mandate.remaining} remaining
+									{/if}
+									{#if mandate.validUntil}
+										· until {mandate.validUntil}
+									{/if}
+									{#if mandate.renewsAt}
+										· renews {mandate.renewsAt}
+									{/if}
+								</p>
+								{#if canPause || canResume}
+									{@const rowActions = [canPause ? 'pause' : 'resume', 'cancel'] as const}
+									<div class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+										{#each rowActions as action (action)}
+											<button
+												type="button"
+												class={actionLinkClass}
+												disabled={lifecycleBusyId !== null}
+												onclick={() => void runLifecycle(mandate, action)}
+											>
+												{busyAction === action
+													? lifecycleLabels[action].busy
+													: lifecycleLabels[action].idle}
+											</button>
+										{/each}
+									</div>
+								{/if}
 							</li>
 						{/each}
 					</ul>

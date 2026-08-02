@@ -25,11 +25,11 @@
 	} from '$lib/chat/tool-summaries';
 	import ChatMarkdown from '$lib/components/chat-markdown.svelte';
 	import ImageViewer, { type ViewerImage } from '$lib/components/image-viewer.svelte';
-	import MandateApprovalCard from '$lib/components/home/mandate-approval-card.svelte';
+	import MandateApprovalForm from '$lib/components/home/mandate-approval-form.svelte';
 	import ReasoningDisclosure from '$lib/components/home/reasoning-disclosure.svelte';
 	import ToolCallsDisclosure from '$lib/components/home/tool-calls-disclosure.svelte';
 	import WorkDisclosure from '$lib/components/home/work-disclosure.svelte';
-	import { mandateApprovals, mandateSetupMerchant } from '$lib/chat/mandate';
+	import { mandateApprovals } from '$lib/chat/mandate';
 	import { formatElapsedDuration } from '$lib/format';
 	import type { ExecutorJob, ThreadMessage, Project } from '$lib/types/sprocket';
 
@@ -43,7 +43,6 @@
 		remoteChangeNotice?: string | null;
 		onDismissRemoteChangeNotice?: () => void;
 		emptyStateMessage?: string;
-		pravaPublishableKey?: string;
 	};
 
 	let {
@@ -55,7 +54,6 @@
 		project,
 		remoteChangeNotice = null,
 		onDismissRemoteChangeNotice,
-		pravaPublishableKey,
 		emptyStateMessage = project
 			? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
 			: 'Add a project to begin.'
@@ -309,6 +307,9 @@
 												openSessions
 											)}
 											{@const visibleBlocks = settledBlocks.filter(isVisibleWorkBlock)}
+											{@const sectionMandateApprovals = visibleBlocks.flatMap((block) =>
+												block.type === 'tool-group' ? mandateApprovals(block.tools) : []
+											)}
 											{@const workInProgress =
 												isStreaming &&
 												(sectionIndex === sections.length - 1 || runningTools.length > 0)}
@@ -387,21 +388,13 @@
 																	{/if}
 																{/snippet}
 															</ToolCallsDisclosure>
-															{#each mandateApprovals(block.tools) as approval (approval.mandateId)}
-																<MandateApprovalCard
-																	{approval}
-																	publishableKey={pravaPublishableKey}
-																	merchant={mandateSetupMerchant(
-																		block.tools.find(
-																			(tool) => (tool.job?.kind ?? tool.name) === 'mandate_setup'
-																		) ?? block.tools[0]
-																	)}
-																/>
-															{/each}
 														{/if}
 													{/each}
 												</WorkDisclosure>
 											{/if}
+											{#each sectionMandateApprovals as approval (approval.mandateId)}
+												<MandateApprovalForm {approval} />
+											{/each}
 											{#if runningTools.length > 0}
 												<ToolCallsDisclosure
 													label="Running"

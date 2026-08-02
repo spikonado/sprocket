@@ -27,7 +27,6 @@
 		"@fontsource/dm-sans": "^5.2.8",
 		"@fontsource/ibm-plex-mono": "^5.3.0",
 		"@lucide/svelte": "^1.18.0",
-		"@prava-sdk/core": "^0.1.2",
 		"@workos-inc/authkit-js": "^0.20.0",
 		"ai": "^7.0.40",
 		"ai-fallback": "^3.0.0",

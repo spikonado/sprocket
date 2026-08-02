@@ -116,10 +116,11 @@ describe('payments mandates', () => {
 
 		const result = await run.asUser.action(api.payments.mandateSetup, setupArgs(run));
 
+		// The Prava session token must not leak into the tool result (it goes to
+		// the model transcript); the new-tab approval link doesn't need it.
 		expect(result).toEqual({
 			mandateId: expect.any(String),
 			approvalUrl: 'https://pay.prava.space/approve/1',
-			sessionToken: 'session-token-1',
 			expiresAt: '2026-08-01T10:15:00Z'
 		});
 		const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
@@ -137,6 +138,8 @@ describe('payments mandates', () => {
 		expect(stored).toMatchObject({
 			userId: 'user_alice',
 			status: 'pending',
+			amountCap: 12_000,
+			description: 'Monthly budget',
 			approvalUrl: 'https://pay.prava.space/approve/1'
 		});
 		expect(stored).not.toHaveProperty('session_token');
@@ -198,7 +201,7 @@ describe('payments mandates', () => {
 		expect(stored).toMatchObject({
 			userId: 'user_alice',
 			pravaTransactionId: 'txn_9',
-			amount: '40.00',
+			amount: 4_000,
 			status: 'awaiting_result'
 		});
 		expect(stored).not.toHaveProperty('token');
@@ -511,7 +514,7 @@ describe('payments mandates', () => {
 				description: 'Order 8842',
 				...auth(run)
 			})
-		).rejects.toThrow(/Multiple approved mandates/);
+		).rejects.toThrow(/Cannot uniquely match this setup/);
 		// No charge POST should have been issued against either mandate.
 		expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/charge'))).toBe(false);
 	});
@@ -578,6 +581,134 @@ describe('payments mandates', () => {
 		expect(String(fetchMock.mock.calls[0][0])).toBe(
 			'https://sandbox.api.prava.space/v1/mandates?customer_id=user_alice'
 		);
+	});
+
+	it('does not link an approval when multiple local setups match it', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const t = initConvexTest();
+		const alice = await startRun(t, 'user_alice');
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(
+				jsonResponse({
+					session_id: 'prava-session-1',
+					iframe_url: 'https://pay.prava.space/approve/1',
+					session_token: 'session-token-1',
+					expires_at: '2026-08-01T10:15:00Z'
+				})
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({
+					session_id: 'prava-session-2',
+					iframe_url: 'https://pay.prava.space/approve/2',
+					session_token: 'session-token-2',
+					expires_at: '2026-08-01T10:15:00Z'
+				})
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({
+					mandates: [
+						{
+							id: 'mdt_1',
+							status: 'active',
+							merchantName: 'Example Shop',
+							approvedAmount: '120.00',
+							remaining: '120.00',
+							currency: 'USD'
+						}
+					]
+				})
+			);
+		vi.stubGlobal('fetch', fetchMock);
+		const setupArgs = {
+			merchantName: 'Example Shop',
+			merchantUrl: 'https://shop.example',
+			countryCode: 'US',
+			amountCap: '120.00',
+			currency: 'USD',
+			frequency: 'monthly' as const,
+			scope: 'listed' as const,
+			userEmail: alice.userEmail
+		};
+		const first = await alice.asUser.action(api.payments.setupMyMandate, {
+			...setupArgs,
+			description: 'Budget A'
+		});
+		const second = await alice.asUser.action(api.payments.setupMyMandate, {
+			...setupArgs,
+			description: 'Budget B'
+		});
+
+		const result = await alice.asUser.action(api.payments.listMyMandates, {});
+
+		expect(result.mandates).toHaveLength(1);
+		expect(result.mandates[0].mandateId).toBeUndefined();
+		const storedFirst = await t.run(async (ctx) => await ctx.db.get(first.mandateId));
+		const storedSecond = await t.run(async (ctx) => await ctx.db.get(second.mandateId));
+		expect(storedFirst?.pravaMandateId).toBeUndefined();
+		expect(storedSecond?.pravaMandateId).toBeUndefined();
+	});
+
+	it('links a newly approved mandate so settings can pause or cancel it', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const t = initConvexTest();
+		const alice = await startRun(t, 'user_alice');
+		// Setup inserts a local pending row without pravaMandateId. New-tab
+		// approval never calls mandateStatus, so listing itself must link it.
+		// Prava normalizes "120" → "120.00"; matching must tolerate that.
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(
+				jsonResponse({
+					session_id: 'prava-session-1',
+					iframe_url: 'https://pay.prava.space/approve/1',
+					session_token: 'session-token-1',
+					expires_at: '2026-08-01T10:15:00Z'
+				})
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({
+					mandates: [
+						{
+							id: 'mdt_1',
+							status: 'active',
+							merchantName: 'Example Shop',
+							approvedAmount: '120.00',
+							remaining: '120.00',
+							currency: 'USD'
+						}
+					]
+				})
+			);
+		vi.stubGlobal('fetch', fetchMock);
+		const setup = await alice.asUser.action(api.payments.setupMyMandate, {
+			merchantName: 'Example Shop',
+			merchantUrl: 'https://shop.example',
+			countryCode: 'US',
+			amountCap: '120',
+			currency: 'USD',
+			frequency: 'monthly' as const,
+			scope: 'listed' as const,
+			description: 'Monthly budget',
+			userEmail: alice.userEmail
+		});
+
+		const result = await alice.asUser.action(api.payments.listMyMandates, {});
+
+		expect(result.mandates).toHaveLength(1);
+		expect(result.mandates[0]).toMatchObject({
+			mandateId: setup.mandateId,
+			pravaMandateId: 'mdt_1',
+			status: 'active',
+			description: 'Monthly budget'
+		});
+		const stored = await t.run(async (ctx) => await ctx.db.get(setup.mandateId));
+		expect(stored).toMatchObject({
+			pravaMandateId: 'mdt_1',
+			status: 'active',
+			amountCap: 12_000,
+			description: 'Monthly budget'
+		});
 	});
 
 	it('treats a first-time customer’s CUSTOMER_NOT_FOUND as an empty mandate list', async () => {

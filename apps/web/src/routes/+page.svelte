@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
-	import { page } from '$app/state';
 	import { PanelRight } from '@lucide/svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import { useAuth, useMutation, useQuery } from 'convex-svelte';
@@ -2115,7 +2114,6 @@
 						remoteChangeNotice={currentThreadId
 							? (remoteChangeNotices.get(currentThreadId) ?? null)
 							: null}
-						pravaPublishableKey={page.data.env?.PUBLIC_PRAVA_PUBLISHABLE_KEY}
 						onDismissRemoteChangeNotice={() => {
 							if (currentThreadId) {
 								remoteChangeNotices.delete(currentThreadId);

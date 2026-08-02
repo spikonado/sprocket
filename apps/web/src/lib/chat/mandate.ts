@@ -4,13 +4,15 @@ import type { AssistantTimelineTool } from '$lib/chat/assistant-timeline';
 export type MandateApproval = {
 	mandateId: string;
 	approvalUrl: string;
-	sessionToken: string;
-	expiresAt?: string;
+	/** Short human label from the setup call (description or merchant name). */
+	label?: string;
 };
 
-/** Read the mandate-setup approval (approval iframe URL + session token) off a
- * mandate_setup tool's result, so the transcript can mount the Prava iframe. */
-export function mandateApprovalFromTool(tool: AssistantTimelineTool): MandateApproval | undefined {
+/** Read the mandate-setup approval URL off a mandate_setup tool's result so the
+ * transcript can offer a new-tab Prava approval link. */
+function mandateApprovalFromTool(
+	tool: AssistantTimelineTool
+): Pick<MandateApproval, 'mandateId' | 'approvalUrl'> | undefined {
 	const kind = tool.job?.kind ?? tool.name;
 	if (kind !== 'mandate_setup') {
 		return undefined;
@@ -19,38 +21,30 @@ export function mandateApprovalFromTool(tool: AssistantTimelineTool): MandateApp
 	if (!isJsonObject(output)) {
 		return undefined;
 	}
-	const { mandateId, approvalUrl, sessionToken, expiresAt } = output;
-	if (
-		typeof mandateId !== 'string' ||
-		typeof approvalUrl !== 'string' ||
-		typeof sessionToken !== 'string'
-	) {
+	const { mandateId, approvalUrl } = output;
+	if (typeof mandateId !== 'string' || typeof approvalUrl !== 'string') {
 		return undefined;
 	}
-	return {
-		mandateId,
-		approvalUrl,
-		sessionToken,
-		expiresAt: typeof expiresAt === 'string' ? expiresAt : undefined
-	};
+	return { mandateId, approvalUrl };
 }
 
-/** Collect every mandate approval across a tool-group (usually just one). */
-export function mandateApprovals(tools: AssistantTimelineTool[]): MandateApproval[] {
-	const approvals: MandateApproval[] = [];
-	for (const tool of tools) {
-		const approval = mandateApprovalFromTool(tool);
-		if (approval) {
-			approvals.push(approval);
-		}
-	}
-	return approvals;
-}
-
-export function mandateSetupMerchant(tool: AssistantTimelineTool): string | undefined {
+function mandateSetupLabel(tool: AssistantTimelineTool): string | undefined {
 	const input: JsonValue | undefined = tool.job?.payload ?? tool.input;
-	if (!isJsonObject(input) || typeof input.merchantName !== 'string') {
-		return undefined;
+	if (!isJsonObject(input)) return undefined;
+	if (typeof input.description === 'string' && input.description.trim()) {
+		return input.description.trim();
 	}
-	return input.merchantName;
+	if (typeof input.merchantName === 'string' && input.merchantName.trim()) {
+		return input.merchantName.trim();
+	}
+	return undefined;
+}
+
+/** Collect every mandate approval across a tool-group (usually just one), each
+ * labeled from its own mandate_setup call. */
+export function mandateApprovals(tools: AssistantTimelineTool[]): MandateApproval[] {
+	return tools.flatMap((tool) => {
+		const approval = mandateApprovalFromTool(tool);
+		return approval ? [{ ...approval, label: mandateSetupLabel(tool) }] : [];
+	});
 }

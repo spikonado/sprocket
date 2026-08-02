@@ -1,4 +1,4 @@
-import { v, type Infer } from 'convex/values';
+import { v, type Infer, type ObjectType } from 'convex/values';
 import {
 	action,
 	internalMutation,
@@ -127,19 +127,20 @@ const mandateDoc = v.object({
 	_creationTime: v.number(),
 	userId: v.string(),
 	pravaMandateId: v.optional(v.string()),
-	pravaSessionId: v.optional(v.string()),
+	pravaSessionId: v.string(),
 	merchantName: v.optional(v.string()),
 	merchantUrl: v.optional(v.string()),
 	countryCode: v.optional(v.string()),
-	amountCap: v.string(),
+	amountCap: v.number(),
 	currency: v.string(),
 	frequency: vMandateFrequency,
 	scope: vMandateScope,
 	status: vMandateStatus,
-	approvalUrl: v.optional(v.string()),
+	description: v.string(),
+	approvalUrl: v.string(),
 	validUntil: v.optional(v.string()),
 	renewsAt: v.optional(v.string()),
-	remaining: v.optional(v.string()),
+	remaining: v.optional(v.number()),
 	createdAt: v.number(),
 	updatedAt: v.number()
 });
@@ -151,7 +152,7 @@ const chargeDoc = v.object({
 	runId: v.id('runs'),
 	userId: v.string(),
 	pravaTransactionId: v.optional(v.string()),
-	amount: v.string(),
+	amount: v.number(),
 	currency: v.string(),
 	description: v.string(),
 	reference: v.optional(v.string()),
@@ -166,7 +167,7 @@ const chargeDoc = v.object({
 type PravaMandate = {
 	id?: string;
 	status?: string;
-	remaining?: string;
+	remaining?: string | null;
 	approvedAmount?: string;
 	currency?: string;
 	merchantName?: string | null;
@@ -178,14 +179,30 @@ function pravaStatusToLocal(status: string | undefined): Infer<typeof vMandateSt
 	return isMandateStatus(status) ? status : undefined;
 }
 
-/** Parse a decimal money string to minor units as a bigint. Fixed-point, so
- * "0.1" + "0.2" class errors can't leak into cap comparisons. */
-function parseMoneyMinor(value: string): bigint | undefined {
+/** Parse a Prava/agent decimal money string into integer minor units (cents).
+ * Fixed-point, so "0.1" + "0.2" class errors can't leak into comparisons. */
+function parseMoneyMinor(value: string): number | undefined {
 	const match = /^(\d+)(?:\.(\d{1,2}))?$/.exec(value.trim());
 	if (!match) return undefined;
-	const units = BigInt(match[1]);
-	const fraction = (match[2] ?? '').padEnd(2, '0');
-	return units * 100n + BigInt(fraction || '0');
+	const units = Number(match[1]);
+	const fraction = Number((match[2] ?? '').padEnd(2, '0') || '0');
+	if (!Number.isSafeInteger(units) || !Number.isSafeInteger(fraction)) return undefined;
+	const minor = units * 100 + fraction;
+	return Number.isSafeInteger(minor) ? minor : undefined;
+}
+
+function requireMoneyMinor(value: string, label: string): number {
+	const minor = parseMoneyMinor(value);
+	if (minor === undefined) {
+		throw new Error(`${label} must be a non-negative decimal amount.`);
+	}
+	return minor;
+}
+
+/** Format integer minor units for Prava/agent/UI decimal strings. Minor units
+ * only enter through parseMoneyMinor, so they are always non-negative. */
+function formatMoneyMinor(minor: number): string {
+	return `${Math.floor(minor / 100)}.${(minor % 100).toString().padStart(2, '0')}`;
 }
 
 /** Fail fast on a charge the mandate obviously can't authorize. Prava is
@@ -199,16 +216,18 @@ function assertChargeable(
 		throw new Error(`Charge currency must match the mandate's ${mandate.currency}.`);
 	}
 	const amount = parseMoneyMinor(args.amount);
-	if (amount === undefined || amount <= 0n) {
+	if (amount === undefined || amount <= 0) {
 		throw new Error('Charge amount must be a positive decimal string.');
 	}
-	const cap = parseMoneyMinor(mandate.amountCap);
-	if (cap !== undefined && amount > cap) {
-		throw new Error(`Charge amount exceeds the mandate's ${mandate.amountCap} cap.`);
+	if (amount > mandate.amountCap) {
+		throw new Error(
+			`Charge amount exceeds the mandate's ${formatMoneyMinor(mandate.amountCap)} cap.`
+		);
 	}
-	const remaining = mandate.remaining ? parseMoneyMinor(mandate.remaining) : undefined;
-	if (remaining !== undefined && amount > remaining) {
-		throw new Error(`Charge amount exceeds the mandate's remaining ${mandate.remaining}.`);
+	if (mandate.remaining !== undefined && amount > mandate.remaining) {
+		throw new Error(
+			`Charge amount exceeds the mandate's remaining ${formatMoneyMinor(mandate.remaining)}.`
+		);
 	}
 }
 
@@ -238,9 +257,42 @@ function mandateSyncArgs(
 		userId,
 		pravaMandateId: mandate.id,
 		status: pravaStatusToLocal(mandate.status),
-		remaining: mandate.remaining ?? undefined,
+		remaining: mandate.remaining == null ? undefined : parseMoneyMinor(mandate.remaining),
 		validUntil: mandate.validUntil ?? undefined,
 		renewsAt: mandate.renewsAt ?? undefined
+	};
+}
+
+/** Overlay freshly synced Prava fields onto the local mandate doc. */
+function withMandateSync(
+	mandate: Doc<'mandates'>,
+	sync: ReturnType<typeof mandateSyncArgs>
+): Doc<'mandates'> {
+	return {
+		...mandate,
+		pravaMandateId: sync.pravaMandateId,
+		status: sync.status ?? mandate.status,
+		remaining: sync.remaining ?? mandate.remaining,
+		validUntil: sync.validUntil ?? mandate.validUntil,
+		renewsAt: sync.renewsAt ?? mandate.renewsAt
+	};
+}
+
+function mandateStatusResult(mandate: Doc<'mandates'>): Infer<typeof vMandateStatusResult> {
+	return {
+		mandateId: mandate._id,
+		pravaMandateId: mandate.pravaMandateId,
+		status: mandate.status,
+		description: mandate.description,
+		merchantName: mandate.merchantName,
+		amountCap: formatMoneyMinor(mandate.amountCap),
+		remaining: mandate.remaining !== undefined ? formatMoneyMinor(mandate.remaining) : undefined,
+		currency: mandate.currency,
+		frequency: mandate.frequency,
+		scope: mandate.scope,
+		approvalUrl: mandate.approvalUrl,
+		validUntil: mandate.validUntil,
+		renewsAt: mandate.renewsAt
 	};
 }
 
@@ -271,13 +323,28 @@ export const insertMandate = internalMutation({
 		currency: v.string(),
 		frequency: vMandateFrequency,
 		scope: vMandateScope,
+		description: v.string(),
 		approvalUrl: v.string()
 	},
 	returns: v.id('mandates'),
 	handler: async (ctx, args) => {
+		const description = args.description.trim();
+		if (!description) {
+			throw new Error('Mandate description is required.');
+		}
 		const now = Date.now();
 		return await ctx.db.insert('mandates', {
-			...args,
+			userId: args.userId,
+			pravaSessionId: args.pravaSessionId,
+			merchantName: args.merchantName,
+			merchantUrl: args.merchantUrl,
+			countryCode: args.countryCode,
+			amountCap: requireMoneyMinor(args.amountCap, 'Amount cap'),
+			currency: args.currency,
+			frequency: args.frequency,
+			scope: args.scope,
+			description,
+			approvalUrl: args.approvalUrl,
 			status: 'pending',
 			createdAt: now,
 			updatedAt: now
@@ -311,7 +378,7 @@ export const syncMandate = internalMutation({
 		userId: v.string(),
 		pravaMandateId: v.optional(v.string()),
 		status: v.optional(vMandateStatus),
-		remaining: v.optional(v.string()),
+		remaining: v.optional(v.number()),
 		validUntil: v.optional(v.string()),
 		renewsAt: v.optional(v.string())
 	},
@@ -353,7 +420,14 @@ export const insertCharge = internalMutation({
 	handler: async (ctx, args) => {
 		const now = Date.now();
 		return await ctx.db.insert('mandateCharges', {
-			...args,
+			mandateId: args.mandateId,
+			runId: args.runId,
+			userId: args.userId,
+			pravaTransactionId: args.pravaTransactionId,
+			amount: requireMoneyMinor(args.amount, 'Charge amount'),
+			currency: args.currency,
+			description: args.description,
+			reference: args.reference,
 			status: 'awaiting_result',
 			createdAt: now,
 			updatedAt: now
@@ -471,19 +545,107 @@ export const finishChargeReport = internalMutation({
 // Public actions (called by the executor's tools)
 // ---------------------------------------------------------------------------
 
+const mandateSetupArgs = {
+	userEmail: v.optional(v.string()),
+	merchantName: v.optional(v.string()),
+	merchantUrl: v.optional(v.string()),
+	countryCode: v.optional(v.string()),
+	amountCap: v.string(),
+	currency: v.string(),
+	frequency: vMandateFrequency,
+	scope: vMandateScope,
+	description: v.string(),
+	maxCharges: v.optional(v.number()),
+	validUntil: v.optional(v.string())
+};
+
+/** Create a Prava approval session plus the local pending mandate row. Shared
+ * by the executor tool and the settings screen. */
+async function createMandateSetup(
+	ctx: ActionCtx,
+	userId: string,
+	args: ObjectType<typeof mandateSetupArgs>
+): Promise<Infer<typeof vMandateSetupResult>> {
+	const storedEmail: string | null = await ctx.runQuery(internal.payments.getPaymentsEmail, {
+		userId
+	});
+	const userEmail = requiredUserEmail(args.userEmail ?? storedEmail ?? '');
+	assertMandateFrequencyAllowed(args);
+
+	// Generic (any-scope) mandates are one-time only; Prava still needs a
+	// purchase_context entry, so name a placeholder merchant for it.
+	let merchantDetails: { name: string; url: string; country_code_iso2: string };
+	if (args.scope === 'listed') {
+		if (!args.merchantName || !args.merchantUrl || !args.countryCode) {
+			throw new Error('Listed-scope mandates require merchant name, URL, and country.');
+		}
+		merchantDetails = {
+			name: args.merchantName,
+			url: args.merchantUrl,
+			country_code_iso2: args.countryCode
+		};
+	} else {
+		merchantDetails = {
+			name: 'Any merchant',
+			url: 'https://prava.space',
+			country_code_iso2: 'US'
+		};
+	}
+
+	const response = await pravaRequest<{
+		iframe_url: string;
+		session_id: string;
+		expires_at: string;
+	}>('/v1/sessions', {
+		method: 'POST',
+		body: JSON.stringify({
+			integration_type: 'embedding',
+			user_id: userId,
+			user_email: userEmail,
+			total_amount: args.amountCap,
+			currency: args.currency,
+			description: args.description,
+			purchase_context: [
+				{
+					merchant_details: merchantDetails,
+					product_details: [
+						{ description: args.description, unit_price: args.amountCap, quantity: 1 }
+					]
+				}
+			],
+			mandate_setup: {
+				intent: 'mandate_setup',
+				recurring_frequency: args.frequency,
+				merchant_scope: args.scope,
+				...(args.maxCharges !== undefined ? { max_charges: args.maxCharges } : {}),
+				...(args.validUntil !== undefined ? { valid_until: args.validUntil } : {})
+			}
+		})
+	});
+
+	const mandateId = await ctx.runMutation(internal.payments.insertMandate, {
+		userId,
+		pravaSessionId: response.session_id,
+		merchantName: args.merchantName,
+		merchantUrl: args.merchantUrl,
+		countryCode: args.countryCode,
+		amountCap: args.amountCap,
+		currency: args.currency,
+		frequency: args.frequency,
+		scope: args.scope,
+		description: args.description,
+		approvalUrl: response.iframe_url
+	});
+	return {
+		mandateId,
+		approvalUrl: response.iframe_url,
+		expiresAt: response.expires_at
+	};
+}
+
 export const mandateSetup = action({
 	args: {
-		userEmail: v.optional(v.string()),
-		merchantName: v.optional(v.string()),
-		merchantUrl: v.optional(v.string()),
-		countryCode: v.optional(v.string()),
-		amountCap: v.string(),
-		currency: v.string(),
-		frequency: vMandateFrequency,
-		scope: vMandateScope,
-		description: v.string(),
-		maxCharges: v.optional(v.number()),
-		validUntil: v.optional(v.string()),
+		...mandateSetupArgs,
 		runId: v.id('runs'),
 		claimId: v.string(),
 		executionSecret: v.string()
@@ -491,84 +653,73 @@ export const mandateSetup = action({
 	returns: vMandateSetupResult,
 	handler: async (ctx, args): Promise<Infer<typeof vMandateSetupResult>> => {
 		const actor = await activeActor(ctx, args);
-		const storedEmail: string | null = await ctx.runQuery(internal.payments.getPaymentsEmail, {
-			userId: actor.userId
-		});
-		const userEmail = requiredUserEmail(args.userEmail ?? storedEmail ?? '');
-		assertMandateFrequencyAllowed(args);
-
-		// Generic (any-scope) mandates are one-time only; Prava still needs a
-		// purchase_context entry, so name a placeholder merchant for it.
-		let merchantDetails: { name: string; url: string; country_code_iso2: string };
-		if (args.scope === 'listed') {
-			if (!args.merchantName || !args.merchantUrl || !args.countryCode) {
-				throw new Error('Listed-scope mandates require merchant name, URL, and country.');
-			}
-			merchantDetails = {
-				name: args.merchantName,
-				url: args.merchantUrl,
-				country_code_iso2: args.countryCode
-			};
-		} else {
-			merchantDetails = {
-				name: 'Any merchant',
-				url: 'https://prava.space',
-				country_code_iso2: 'US'
-			};
-		}
-
-		const response = await pravaRequest<{
-			iframe_url: string;
-			session_id: string;
-			session_token: string;
-			expires_at: string;
-		}>('/v1/sessions', {
-			method: 'POST',
-			body: JSON.stringify({
-				integration_type: 'embedding',
-				user_id: actor.userId,
-				user_email: userEmail,
-				total_amount: args.amountCap,
-				currency: args.currency,
-				description: args.description,
-				purchase_context: [
-					{
-						merchant_details: merchantDetails,
-						product_details: [
-							{ description: args.description, unit_price: args.amountCap, quantity: 1 }
-						]
-					}
-				],
-				mandate_setup: {
-					intent: 'mandate_setup',
-					recurring_frequency: args.frequency,
-					merchant_scope: args.scope,
-					...(args.maxCharges !== undefined ? { max_charges: args.maxCharges } : {}),
-					...(args.validUntil !== undefined ? { valid_until: args.validUntil } : {})
-				}
-			})
-		});
-
-		const mandateId = await ctx.runMutation(internal.payments.insertMandate, {
-			userId: actor.userId,
-			pravaSessionId: response.session_id,
-			merchantName: args.merchantName,
-			merchantUrl: args.merchantUrl,
-			countryCode: args.countryCode,
-			amountCap: args.amountCap,
-			currency: args.currency,
-			frequency: args.frequency,
-			scope: args.scope,
-			approvalUrl: response.iframe_url
-		});
-		return {
-			mandateId,
-			approvalUrl: response.iframe_url,
-			sessionToken: response.session_token,
-			expiresAt: response.expires_at
-		};
+		return await createMandateSetup(ctx, actor.userId, args);
 	}
 });
+
+/** True when a live Prava mandate uniquely matches a local setup's merchant,
+ * amount cap, and currency. Used both for charge-time resolution and for
+ * linking local rows after the owner approves in a new tab. */
+function isMatchingLivePravaMandate(mandate: Doc<'mandates'>, prava: PravaMandate): boolean {
+	if (!prava.id) return false;
+	if (!LIVE_MANDATE_STATUSES.has(prava.status ?? '')) return false;
+	// A mandate approved in another currency is a different authorization —
+	// never resolve (and later charge) it for this setup.
+	if ((prava.currency ?? '').toUpperCase() !== mandate.currency.toUpperCase()) return false;
+	const approvedMinor = prava.approvedAmount ? parseMoneyMinor(prava.approvedAmount) : undefined;
+	if (approvedMinor === undefined || approvedMinor !== mandate.amountCap) return false;
+	if (mandate.scope === 'listed') {
+		return (prava.merchantName ?? '').toLowerCase() === (mandate.merchantName ?? '').toLowerCase();
+	}
+	return true;
+}
+
+function matchingLivePravaMandates(
+	mandate: Doc<'mandates'>,
+	list: PravaMandate[],
+	claimedIds?: ReadonlySet<string>
+): Array<PravaMandate & { id: string }> {
+	return list
+		.filter((m) => {
+			if (!m.id || claimedIds?.has(m.id)) return false;
+			return isMatchingLivePravaMandate(mandate, m);
+		})
+		.map((m) => ({ ...m, id: m.id! }));
+}
+
+function isUnresolvedLocal(mandate: Doc<'mandates'>): boolean {
+	return !mandate.pravaMandateId && LIVE_MANDATE_STATUSES.has(mandate.status);
+}
+
+/** A Prava mandate is only safe to bind when it uniquely matches this local
+ * setup and no other unresolved local setup also matches it. Otherwise two
+ * same-merchant/amount pending rows can steal each other's approval. */
+function uniquelyAttributablePravaMandate(
+	mandate: Doc<'mandates'>,
+	list: PravaMandate[],
+	allLocal: Doc<'mandates'>[]
+):
+	| { kind: 'matched'; mandate: PravaMandate & { id: string } }
+	| { kind: 'none' }
+	| { kind: 'ambiguous' } {
+	const claimed = new Set(
+		allLocal
+			.filter((row) => row.pravaMandateId && row._id !== mandate._id)
+			.map((row) => row.pravaMandateId as string)
+	);
+	const matches = matchingLivePravaMandates(mandate, list, claimed);
+	if (matches.length === 0) return { kind: 'none' };
+	if (matches.length > 1) return { kind: 'ambiguous' };
+	const candidate = matches[0];
+	const contested = allLocal.some(
+		(peer) =>
+			peer._id !== mandate._id &&
+			isUnresolvedLocal(peer) &&
+			isMatchingLivePravaMandate(peer, candidate)
+	);
+	if (contested) return { kind: 'ambiguous' };
+	return { kind: 'matched', mandate: candidate };
+}
 
 /** Resolve the Prava-side mandate id for a locally stored mandate. It only
  * exists once the owner approves, so resolve lazily by listing the user's
@@ -585,38 +736,88 @@ async function resolvePravaMandate(
 		return { ...found, id: mandate.pravaMandateId };
 	}
 	const list = await listPravaMandates(userId, false);
-	const matches = list.filter((m) => {
-		if (!m.id) return false;
-		if (!LIVE_MANDATE_STATUSES.has(m.status ?? '')) return false;
-		// A mandate approved in another currency is a different authorization —
-		// never resolve (and later charge) it for this setup.
-		if ((m.currency ?? '').toUpperCase() !== mandate.currency.toUpperCase()) return false;
-		if (mandate.scope === 'listed') {
-			return (
-				(m.merchantName ?? '').toLowerCase() === (mandate.merchantName ?? '').toLowerCase() &&
-				m.approvedAmount === mandate.amountCap
-			);
-		}
-		return m.approvedAmount === mandate.amountCap;
-	});
+	const local = await ctx.runQuery(internal.payments.listLocalMandates, { userId });
+	const match = uniquelyAttributablePravaMandate(mandate, list, local);
 	// Require a unique live match — charging an arbitrary same-merchant+amount
 	// approval could settle against the wrong authorization. Prava mandates
 	// don't carry their setup session id, so there is no stronger link to
 	// prefer on.
-	if (matches.length === 0) {
+	if (match.kind === 'none') {
 		throw new Error('Mandate is not yet approved.');
 	}
-	if (matches.length > 1) {
+	if (match.kind === 'ambiguous') {
 		throw new Error(
-			'Multiple approved mandates match this setup; resolve the ambiguity before charging.'
+			'Cannot uniquely match this setup to an approved mandate; resolve the ambiguity before charging.'
 		);
 	}
-	const resolved = { ...matches[0], id: matches[0].id! };
+	const resolved = match.mandate;
 	await ctx.runMutation(
 		internal.payments.syncMandate,
 		mandateSyncArgs(mandate._id, userId, resolved)
 	);
 	return resolved;
+}
+
+/** Join Prava's live mandates to local rows. After new-tab approval the local
+ * row still lacks pravaMandateId, so uniquely match unresolved locals against
+ * the live list and persist the link — otherwise settings can't pause/cancel. */
+async function linkLocalMandates(
+	ctx: ActionCtx,
+	userId: string,
+	list: PravaMandate[]
+): Promise<{
+	localByPravaId: Map<string, Id<'mandates'>>;
+	localById: Map<Id<'mandates'>, Doc<'mandates'>>;
+}> {
+	const local = await ctx.runQuery(internal.payments.listLocalMandates, { userId });
+	const localById = new Map(local.map((m) => [m._id, m]));
+	const localByPravaId = new Map(
+		local.filter((m) => m.pravaMandateId).map((m) => [m.pravaMandateId as string, m._id])
+	);
+	for (const mandate of local.filter(isUnresolvedLocal)) {
+		const match = uniquelyAttributablePravaMandate(mandate, list, local);
+		if (match.kind !== 'matched') continue;
+		const sync = mandateSyncArgs(mandate._id, userId, match.mandate);
+		await ctx.runMutation(internal.payments.syncMandate, sync);
+		const linked = withMandateSync(mandate, sync);
+		localByPravaId.set(sync.pravaMandateId, mandate._id);
+		localById.set(mandate._id, linked);
+		// Keep later uniqueness checks aware of the link we just persisted.
+		local[local.indexOf(mandate)] = linked;
+	}
+	return { localByPravaId, localById };
+}
+
+/** List the user's live Prava mandates joined to local rows (linking any
+ * still-unresolved setups) so each entry carries the local mandateId the
+ * lifecycle action needs. Entries without a local row (e.g. approved
+ * elsewhere) are still listed, just without a mandateId. */
+async function listLinkedMandates(
+	ctx: ActionCtx,
+	userId: string
+): Promise<Infer<typeof vMandateListResult>> {
+	const list = (await listPravaMandates(userId, false)).filter((m) =>
+		LIVE_MANDATE_STATUSES.has(m.status ?? '')
+	);
+	const { localByPravaId, localById } = await linkLocalMandates(ctx, userId, list);
+	return {
+		mandates: list.map((m) => {
+			const mandateId = m.id ? localByPravaId.get(m.id) : undefined;
+			const local = mandateId ? localById.get(mandateId) : undefined;
+			return {
+				mandateId,
+				pravaMandateId: m.id ?? '',
+				status: m.status ?? 'unknown',
+				description: local?.description,
+				merchantName: m.merchantName ?? local?.merchantName ?? undefined,
+				approvedAmount: m.approvedAmount ?? '',
+				remaining: m.remaining ?? undefined,
+				currency: m.currency ?? '',
+				validUntil: m.validUntil ?? undefined,
+				renewsAt: m.renewsAt ?? undefined
+			};
+		})
+	};
 }
 
 export const mandateStatus = action({
@@ -635,42 +836,18 @@ export const mandateStatus = action({
 		});
 		if (!mandate) throw new Error('Mandate not found.');
 
-		let status = mandate.status;
-		let remaining = mandate.remaining;
-		let pravaMandateId = mandate.pravaMandateId;
-		let validUntil = mandate.validUntil;
-		let renewsAt = mandate.renewsAt;
-		if (status === 'pending' || status === 'active' || status === 'paused') {
+		let synced = mandate;
+		if (LIVE_MANDATE_STATUSES.has(mandate.status)) {
 			try {
 				const prava = await resolvePravaMandate(ctx, actor.userId, mandate);
-				pravaMandateId = prava.id;
-				const local = pravaStatusToLocal(prava.status);
-				if (local) status = local;
-				if (prava.remaining !== undefined) remaining = prava.remaining;
-				if (prava.validUntil != null) validUntil = prava.validUntil;
-				if (prava.renewsAt != null) renewsAt = prava.renewsAt;
-				await ctx.runMutation(
-					internal.payments.syncMandate,
-					mandateSyncArgs(mandate._id, actor.userId, prava)
-				);
+				const sync = mandateSyncArgs(mandate._id, actor.userId, prava);
+				await ctx.runMutation(internal.payments.syncMandate, sync);
+				synced = withMandateSync(mandate, sync);
 			} catch {
 				// Still awaiting the owner's passkey approval — keep the stored status.
 			}
 		}
-		return {
-			mandateId: mandate._id,
-			pravaMandateId,
-			status,
-			merchantName: mandate.merchantName,
-			amountCap: mandate.amountCap,
-			remaining,
-			currency: mandate.currency,
-			frequency: mandate.frequency,
-			scope: mandate.scope,
-			approvalUrl: mandate.approvalUrl,
-			validUntil,
-			renewsAt
-		};
+		return mandateStatusResult(synced);
 	}
 });
 
@@ -683,28 +860,7 @@ export const mandateList = action({
 	returns: vMandateListResult,
 	handler: async (ctx, args): Promise<Infer<typeof vMandateListResult>> => {
 		const actor = await activeActor(ctx, args);
-		const list = (await listPravaMandates(actor.userId, false)).filter((m) =>
-			LIVE_MANDATE_STATUSES.has(m.status ?? '')
-		);
-		const local = await ctx.runQuery(internal.payments.listLocalMandates, {
-			userId: actor.userId
-		});
-		const localByPravaId = new Map(
-			local.filter((m) => m.pravaMandateId).map((m) => [m.pravaMandateId as string, m._id])
-		);
-		return {
-			mandates: list.map((m) => ({
-				mandateId: m.id ? localByPravaId.get(m.id) : undefined,
-				pravaMandateId: m.id ?? '',
-				status: m.status ?? 'unknown',
-				merchantName: m.merchantName ?? undefined,
-				approvedAmount: m.approvedAmount ?? '',
-				remaining: m.remaining,
-				currency: m.currency ?? '',
-				validUntil: m.validUntil ?? undefined,
-				renewsAt: m.renewsAt ?? undefined
-			}))
-		};
+		return await listLinkedMandates(ctx, actor.userId);
 	}
 });
 
@@ -870,125 +1026,15 @@ export const listMyMandates = action({
 	args: {},
 	returns: vMandateListResult,
 	handler: async (ctx): Promise<Infer<typeof vMandateListResult>> => {
-		const userId = await getUserId(ctx);
-		const list = (await listPravaMandates(userId, false)).filter((m) =>
-			LIVE_MANDATE_STATUSES.has(m.status ?? '')
-		);
-		// Join Prava's live mandates with the local rows (keyed on the
-		// Prava mandate id) so each entry carries the local mandateId the
-		// lifecycle action needs. Entries without a local row (e.g. approved
-		// elsewhere) are still listed, just without a mandateId.
-		const local = await ctx.runQuery(internal.payments.listLocalMandates, { userId });
-		const localByPravaId = new Map(
-			local.filter((m) => m.pravaMandateId).map((m) => [m.pravaMandateId as string, m._id])
-		);
-		return {
-			mandates: list.map((m) => ({
-				mandateId: m.id ? localByPravaId.get(m.id) : undefined,
-				pravaMandateId: m.id ?? '',
-				status: m.status ?? 'unknown',
-				merchantName: m.merchantName ?? undefined,
-				approvedAmount: m.approvedAmount ?? '',
-				remaining: m.remaining,
-				currency: m.currency ?? '',
-				validUntil: m.validUntil ?? undefined,
-				renewsAt: m.renewsAt ?? undefined
-			}))
-		};
+		return await listLinkedMandates(ctx, await getUserId(ctx));
 	}
 });
 
 export const setupMyMandate = action({
-	args: {
-		userEmail: v.optional(v.string()),
-		merchantName: v.optional(v.string()),
-		merchantUrl: v.optional(v.string()),
-		countryCode: v.optional(v.string()),
-		amountCap: v.string(),
-		currency: v.string(),
-		frequency: vMandateFrequency,
-		scope: vMandateScope,
-		description: v.string(),
-		maxCharges: v.optional(v.number()),
-		validUntil: v.optional(v.string())
-	},
+	args: mandateSetupArgs,
 	returns: vMandateSetupResult,
 	handler: async (ctx, args): Promise<Infer<typeof vMandateSetupResult>> => {
-		const userId = await getUserId(ctx);
-		const storedEmail: string | null = await ctx.runQuery(internal.payments.getPaymentsEmail, {
-			userId
-		});
-		const userEmail = requiredUserEmail(args.userEmail ?? storedEmail ?? '');
-		assertMandateFrequencyAllowed(args);
-
-		let merchantDetails: { name: string; url: string; country_code_iso2: string };
-		if (args.scope === 'listed') {
-			if (!args.merchantName || !args.merchantUrl || !args.countryCode) {
-				throw new Error('Listed-scope mandates require merchant name, URL, and country.');
-			}
-			merchantDetails = {
-				name: args.merchantName,
-				url: args.merchantUrl,
-				country_code_iso2: args.countryCode
-			};
-		} else {
-			merchantDetails = {
-				name: 'Any merchant',
-				url: 'https://prava.space',
-				country_code_iso2: 'US'
-			};
-		}
-
-		const response = await pravaRequest<{
-			iframe_url: string;
-			session_id: string;
-			session_token: string;
-			expires_at: string;
-		}>('/v1/sessions', {
-			method: 'POST',
-			body: JSON.stringify({
-				integration_type: 'embedding',
-				user_id: userId,
-				user_email: userEmail,
-				total_amount: args.amountCap,
-				currency: args.currency,
-				description: args.description,
-				purchase_context: [
-					{
-						merchant_details: merchantDetails,
-						product_details: [
-							{ description: args.description, unit_price: args.amountCap, quantity: 1 }
-						]
-					}
-				],
-				mandate_setup: {
-					intent: 'mandate_setup',
-					recurring_frequency: args.frequency,
-					merchant_scope: args.scope,
-					...(args.maxCharges !== undefined ? { max_charges: args.maxCharges } : {}),
-					...(args.validUntil !== undefined ? { valid_until: args.validUntil } : {})
-				}
-			})
-		});
-
-		const mandateId = await ctx.runMutation(internal.payments.insertMandate, {
-			userId,
-			pravaSessionId: response.session_id,
-			merchantName: args.merchantName,
-			merchantUrl: args.merchantUrl,
-			countryCode: args.countryCode,
-			amountCap: args.amountCap,
-			currency: args.currency,
-			frequency: args.frequency,
-			scope: args.scope,
-			approvalUrl: response.iframe_url
-		});
-		return {
-			mandateId,
-			approvalUrl: response.iframe_url,
-			sessionToken: response.session_token,
-			expiresAt: response.expires_at
-		};
+		return await createMandateSetup(ctx, await getUserId(ctx), args);
 	}
 });
 
@@ -1007,36 +1053,17 @@ export const setMyMandateLifecycle = action({
 			userId
 		});
 		if (!mandate) throw new Error('Mandate not found.');
-		if (!mandate.pravaMandateId) {
-			throw new Error('Mandate is not yet approved.');
-		}
+		// Settings approve in a new tab, so the local row may still lack the
+		// Prava mandate id until the first list/lifecycle call links it.
+		const pravaMandateId =
+			mandate.pravaMandateId ?? (await resolvePravaMandate(ctx, userId, mandate)).id;
 
 		const updated = await pravaRequest<PravaMandate>(
-			`/v1/mandates/${encodeURIComponent(mandate.pravaMandateId)}/${args.action}`,
+			`/v1/mandates/${encodeURIComponent(pravaMandateId)}/${args.action}`,
 			{ method: 'POST' }
 		);
-		const status = pravaStatusToLocal(updated.status);
-		await ctx.runMutation(internal.payments.syncMandate, {
-			mandateId: mandate._id,
-			userId,
-			status,
-			remaining: updated.remaining ?? undefined,
-			validUntil: updated.validUntil ?? undefined,
-			renewsAt: updated.renewsAt ?? undefined
-		});
-		return {
-			mandateId: mandate._id,
-			pravaMandateId: mandate.pravaMandateId,
-			status: status ?? mandate.status,
-			merchantName: mandate.merchantName,
-			amountCap: mandate.amountCap,
-			remaining: updated.remaining ?? mandate.remaining,
-			currency: mandate.currency,
-			frequency: mandate.frequency,
-			scope: mandate.scope,
-			approvalUrl: mandate.approvalUrl,
-			validUntil: updated.validUntil ?? mandate.validUntil,
-			renewsAt: updated.renewsAt ?? mandate.renewsAt
-		};
+		const sync = mandateSyncArgs(mandate._id, userId, { ...updated, id: pravaMandateId });
+		await ctx.runMutation(internal.payments.syncMandate, sync);
+		return mandateStatusResult(withMandateSync(mandate, sync));
 	}
 });

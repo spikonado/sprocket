@@ -1195,7 +1195,7 @@ impl rig::tool::Tool for MandateSetupTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Set up a Prava spending mandate the user approves once with a passkey. Returns the approval URL to give the user. Charge later with mandate_charge (no further passkey)."
+        "Set up a Prava spending mandate the user approves once with a passkey. The UI shows the approval link; do not paste it in your response, just tell the user to approve. Charge later with mandate_charge (no further passkey)."
             .to_string()
     }
 

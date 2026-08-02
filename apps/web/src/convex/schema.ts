@@ -63,20 +63,24 @@ export default defineSchema({
 	]),
 	mandates: defineTable({
 		userId: v.string(),
+		// Present only after the owner approves in Prava.
 		pravaMandateId: v.optional(v.string()),
-		pravaSessionId: v.optional(v.string()),
+		pravaSessionId: v.string(),
+		// Omitted for any-merchant mandates.
 		merchantName: v.optional(v.string()),
 		merchantUrl: v.optional(v.string()),
 		countryCode: v.optional(v.string()),
-		amountCap: v.string(),
+		// Integer minor units (cents). Prava decimal strings convert at the boundary.
+		amountCap: v.number(),
 		currency: v.string(),
 		frequency: vMandateFrequency,
 		scope: vMandateScope,
 		status: vMandateStatus,
-		approvalUrl: v.optional(v.string()),
+		description: v.string(),
+		approvalUrl: v.string(),
 		validUntil: v.optional(v.string()),
 		renewsAt: v.optional(v.string()),
-		remaining: v.optional(v.string()),
+		remaining: v.optional(v.number()),
 		createdAt: v.number(),
 		updatedAt: v.number()
 	}).index('by_user', ['userId']),
@@ -85,7 +89,8 @@ export default defineSchema({
 		runId: v.id('runs'),
 		userId: v.string(),
 		pravaTransactionId: v.optional(v.string()),
-		amount: v.string(),
+		// Integer minor units (cents).
+		amount: v.number(),
 		currency: v.string(),
 		description: v.string(),
 		reference: v.optional(v.string()),

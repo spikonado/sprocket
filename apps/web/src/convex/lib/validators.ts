@@ -240,7 +240,6 @@ export const vWebSearchResult = v.object({
 export const vMandateSetupResult = v.object({
 	mandateId: v.id('mandates'),
 	approvalUrl: v.string(),
-	sessionToken: v.string(),
 	expiresAt: v.string()
 });
 
@@ -248,7 +247,10 @@ export const vMandateStatusResult = v.object({
 	mandateId: v.id('mandates'),
 	pravaMandateId: v.optional(v.string()),
 	status: vMandateStatus,
+	// Optional for older persisted executor job results that predate the field.
+	description: v.optional(v.string()),
 	merchantName: v.optional(v.string()),
+	/** Decimal string for agent/Prava wire format (e.g. "120.00"). */
 	amountCap: v.string(),
 	remaining: v.optional(v.string()),
 	currency: v.string(),
@@ -265,6 +267,7 @@ export const vMandateListResult = v.object({
 			mandateId: v.optional(v.id('mandates')),
 			pravaMandateId: v.string(),
 			status: v.string(),
+			description: v.optional(v.string()),
 			merchantName: v.optional(v.string()),
 			approvedAmount: v.string(),
 			remaining: v.optional(v.string()),
