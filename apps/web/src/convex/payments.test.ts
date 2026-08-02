@@ -160,7 +160,7 @@ describe('payments mandates', () => {
 		expect(status.remaining).toBe('120.00');
 	});
 
-	it('charges an active mandate and stores the charge without persisting credentials', async () => {
+	it('charges an active mandate and stores credentials for reference retries', async () => {
 		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
@@ -202,10 +202,60 @@ describe('payments mandates', () => {
 			userId: 'user_alice',
 			pravaTransactionId: 'txn_9',
 			amount: 4_000,
-			status: 'awaiting_result'
+			status: 'awaiting_result',
+			token: '4111111111111111',
+			dynamicCvv: '123'
 		});
-		expect(stored).not.toHaveProperty('token');
-		expect(stored).not.toHaveProperty('dynamicCvv');
+	});
+
+	it('reuses a completed charge when the same reference is charged again', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+		const { setup, fetchMock } = await createApprovedMandate(t, run);
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse({
+				transactionId: 'txn_9',
+				status: 'awaiting_result',
+				credentials: {
+					token: '4111111111111111',
+					dynamicCvv: '123',
+					expiryMonth: '12',
+					expiryYear: '2030'
+				}
+			})
+		);
+
+		const first = await run.asUser.action(api.payments.mandateCharge, {
+			mandateId: setup.mandateId,
+			amount: '40.00',
+			currency: 'USD',
+			description: 'Order 8842',
+			reference: 'order-8842',
+			...auth(run)
+		});
+		fetchMock.mockClear();
+
+		const second = await run.asUser.action(api.payments.mandateCharge, {
+			mandateId: setup.mandateId,
+			amount: '40.00',
+			currency: 'USD',
+			description: 'Order 8842',
+			reference: 'order-8842',
+			...auth(run)
+		});
+
+		expect(second).toEqual(first);
+		expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/charge'))).toBe(false);
+		const charges = await t.run(async (ctx) =>
+			ctx.db
+				.query('mandateCharges')
+				.withIndex('by_mandate_reference', (query) =>
+					query.eq('mandateId', setup.mandateId).eq('reference', 'order-8842')
+				)
+				.collect()
+		);
+		expect(charges).toHaveLength(1);
 	});
 
 	it('rejects over-cap, invalid, and currency-mismatched charges without calling Prava', async () => {

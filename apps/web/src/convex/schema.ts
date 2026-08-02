@@ -93,14 +93,22 @@ export default defineSchema({
 		amount: v.number(),
 		currency: v.string(),
 		description: v.string(),
+		// When set, (mandateId, reference) is an idempotency key for mandateCharge.
 		reference: v.optional(v.string()),
 		status: vMandateChargeStatus,
+		// Single-use virtual-card credentials retained so a reference retry can
+		// return the original charge result without posting to Prava again.
+		token: v.optional(v.string()),
+		dynamicCvv: v.optional(v.string()),
+		expiryMonth: v.optional(v.string()),
+		expiryYear: v.optional(v.string()),
 		reportOutcome: v.optional(vMandateReportOutcome),
 		reportedAt: v.optional(v.number()),
 		reportingStartedAt: v.optional(v.number()),
+		chargingStartedAt: v.optional(v.number()),
 		createdAt: v.number(),
 		updatedAt: v.number()
-	}),
+	}).index('by_mandate_reference', ['mandateId', 'reference']),
 	browserSessions: defineTable({
 		threadId: v.id('threadRecords'),
 		runId: v.id('runs'),

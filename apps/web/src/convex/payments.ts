@@ -26,6 +26,7 @@ import {
 
 const DEFAULT_PRAVA_BACKEND_URL = 'https://sandbox.api.prava.space';
 const REPORT_CLAIM_STALE_MS = 60_000;
+const CHARGE_CLAIM_STALE_MS = 60_000;
 
 function pravaConfig(): { baseUrl: string; secretKey: string } {
 	const secretKey = process.env.PRAVA_SECRET_KEY?.trim();
@@ -157,11 +158,23 @@ const chargeDoc = v.object({
 	description: v.string(),
 	reference: v.optional(v.string()),
 	status: vMandateChargeStatus,
+	token: v.optional(v.string()),
+	dynamicCvv: v.optional(v.string()),
+	expiryMonth: v.optional(v.string()),
+	expiryYear: v.optional(v.string()),
 	reportOutcome: v.optional(vMandateReportOutcome),
 	reportedAt: v.optional(v.number()),
 	reportingStartedAt: v.optional(v.number()),
+	chargingStartedAt: v.optional(v.number()),
 	createdAt: v.number(),
 	updatedAt: v.number()
+});
+
+const chargeCredentials = v.object({
+	token: v.string(),
+	dynamicCvv: v.string(),
+	expiryMonth: v.string(),
+	expiryYear: v.string()
 });
 
 type PravaMandate = {
@@ -405,33 +418,167 @@ export const syncMandate = internalMutation({
 	}
 });
 
-export const insertCharge = internalMutation({
+const reserveChargeResult = v.union(
+	v.object({
+		kind: v.literal('reserved'),
+		chargeId: v.id('mandateCharges')
+	}),
+	v.object({
+		kind: v.literal('existing'),
+		chargeId: v.id('mandateCharges'),
+		transactionId: v.string(),
+		credentials: chargeCredentials
+	}),
+	v.object({ kind: v.literal('inFlight') })
+);
+
+/** Atomically reserve a charge row. When `reference` is set, (mandateId,
+ * reference) is an idempotency key: a completed prior charge is returned, a
+ * live in-flight claim reports inFlight, and only a fresh/stale reservation
+ * proceeds to Prava. */
+export const reserveCharge = internalMutation({
 	args: {
 		mandateId: v.id('mandates'),
 		runId: v.id('runs'),
 		userId: v.string(),
-		pravaTransactionId: v.optional(v.string()),
 		amount: v.string(),
 		currency: v.string(),
 		description: v.string(),
 		reference: v.optional(v.string())
 	},
-	returns: v.id('mandateCharges'),
+	returns: reserveChargeResult,
 	handler: async (ctx, args) => {
+		const amount = requireMoneyMinor(args.amount, 'Charge amount');
+		const reference = args.reference?.trim() || undefined;
 		const now = Date.now();
-		return await ctx.db.insert('mandateCharges', {
+
+		if (reference !== undefined) {
+			const matches = await ctx.db
+				.query('mandateCharges')
+				.withIndex('by_mandate_reference', (query) =>
+					query.eq('mandateId', args.mandateId).eq('reference', reference)
+				)
+				.take(2);
+			if (matches.length > 1) {
+				throw new Error('Charge reference matches multiple existing charges.');
+			}
+			const existing = matches[0];
+			if (existing) {
+				if (existing.userId !== args.userId) {
+					throw new Error('Charge not found.');
+				}
+				if (existing.amount !== amount || existing.currency !== args.currency) {
+					throw new Error('Charge reference was already used with a different amount or currency.');
+				}
+				if (existing.pravaTransactionId) {
+					if (
+						!existing.token ||
+						!existing.dynamicCvv ||
+						!existing.expiryMonth ||
+						!existing.expiryYear
+					) {
+						throw new Error(
+							'Charge reference was already used; credentials are unavailable for replay.'
+						);
+					}
+					return {
+						kind: 'existing' as const,
+						chargeId: existing._id,
+						transactionId: existing.pravaTransactionId,
+						credentials: {
+							token: existing.token,
+							dynamicCvv: existing.dynamicCvv,
+							expiryMonth: existing.expiryMonth,
+							expiryYear: existing.expiryYear
+						}
+					};
+				}
+				if (existing.status === 'failed') {
+					await ctx.db.patch(existing._id, {
+						runId: args.runId,
+						description: args.description,
+						status: 'awaiting_result',
+						pravaTransactionId: undefined,
+						token: undefined,
+						dynamicCvv: undefined,
+						expiryMonth: undefined,
+						expiryYear: undefined,
+						chargingStartedAt: now,
+						updatedAt: now
+					});
+					return { kind: 'reserved' as const, chargeId: existing._id };
+				}
+				if (
+					existing.chargingStartedAt !== undefined &&
+					now - existing.chargingStartedAt <= CHARGE_CLAIM_STALE_MS
+				) {
+					return { kind: 'inFlight' as const };
+				}
+				// Abandoned reservation (or legacy row without credentials): reclaim.
+				await ctx.db.patch(existing._id, {
+					runId: args.runId,
+					description: args.description,
+					status: 'awaiting_result',
+					chargingStartedAt: now,
+					updatedAt: now
+				});
+				return { kind: 'reserved' as const, chargeId: existing._id };
+			}
+		}
+
+		const chargeId = await ctx.db.insert('mandateCharges', {
 			mandateId: args.mandateId,
 			runId: args.runId,
 			userId: args.userId,
-			pravaTransactionId: args.pravaTransactionId,
-			amount: requireMoneyMinor(args.amount, 'Charge amount'),
+			amount,
 			currency: args.currency,
 			description: args.description,
-			reference: args.reference,
+			reference,
 			status: 'awaiting_result',
+			chargingStartedAt: now,
 			createdAt: now,
 			updatedAt: now
 		});
+		return { kind: 'reserved' as const, chargeId };
+	}
+});
+
+export const completeCharge = internalMutation({
+	args: {
+		chargeId: v.id('mandateCharges'),
+		userId: v.string(),
+		pravaTransactionId: v.string(),
+		credentials: chargeCredentials
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const charge = await ownedCharge(ctx, args.chargeId, args.userId);
+		await ctx.db.patch(args.chargeId, {
+			pravaTransactionId: args.pravaTransactionId,
+			token: args.credentials.token,
+			dynamicCvv: args.credentials.dynamicCvv,
+			expiryMonth: args.credentials.expiryMonth,
+			expiryYear: args.credentials.expiryYear,
+			status: charge.status === 'failed' ? 'failed' : 'awaiting_result',
+			chargingStartedAt: undefined,
+			updatedAt: Date.now()
+		});
+		return null;
+	}
+});
+
+export const releaseChargeReservation = internalMutation({
+	args: { chargeId: v.id('mandateCharges'), userId: v.string() },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const charge = await ownedCharge(ctx, args.chargeId, args.userId);
+		if (!charge.pravaTransactionId) {
+			await ctx.db.patch(args.chargeId, {
+				chargingStartedAt: undefined,
+				updatedAt: Date.now()
+			});
+		}
+		return null;
 	}
 });
 
@@ -454,7 +601,11 @@ export const updateChargeStatus = internalMutation({
 	handler: async (ctx, args) => {
 		const charge = await ownedCharge(ctx, args.chargeId, args.userId);
 		if (!charge.reportedAt) {
-			await ctx.db.patch(args.chargeId, { status: args.status, updatedAt: Date.now() });
+			await ctx.db.patch(args.chargeId, {
+				status: args.status,
+				chargingStartedAt: undefined,
+				updatedAt: Date.now()
+			});
 		}
 		return null;
 	}
@@ -892,8 +1043,29 @@ export const mandateCharge = action({
 		if (!mandate) throw new Error('Mandate not found.');
 		assertChargeable(mandate, args);
 
+		const reference = args.reference?.trim() || undefined;
+		const reservation = await ctx.runMutation(internal.payments.reserveCharge, {
+			mandateId: mandate._id,
+			runId: args.runId,
+			userId: actor.userId,
+			amount: args.amount,
+			currency: mandate.currency,
+			description: args.description,
+			reference
+		});
+		if (reservation.kind === 'existing') {
+			return {
+				chargeId: reservation.chargeId,
+				transactionId: reservation.transactionId,
+				...reservation.credentials
+			};
+		}
+		if (reservation.kind === 'inFlight') {
+			throw new Error('A charge with this reference is already in progress. Retry shortly.');
+		}
+
 		const prava = await resolvePravaMandate(ctx, actor.userId, mandate);
-		const result = await pravaRequest<{
+		let result: {
 			transactionId?: string;
 			status?: string;
 			credentials?: {
@@ -903,35 +1075,40 @@ export const mandateCharge = action({
 				expiryYear: string;
 			};
 			errorMessage?: string;
-		}>(`/v1/mandates/${encodeURIComponent(prava.id)}/charge`, {
-			method: 'POST',
-			body: JSON.stringify({
-				amount: args.amount,
-				...(args.reference !== undefined ? { reference: args.reference } : {})
-			})
-		});
+		};
+		try {
+			result = await pravaRequest(`/v1/mandates/${encodeURIComponent(prava.id)}/charge`, {
+				method: 'POST',
+				body: JSON.stringify({
+					amount: args.amount,
+					...(reference !== undefined ? { reference } : {})
+				})
+			});
+		} catch (error) {
+			await ctx.runMutation(internal.payments.releaseChargeReservation, {
+				chargeId: reservation.chargeId,
+				userId: actor.userId
+			});
+			throw error;
+		}
 
 		const { credentials, transactionId } = result;
-		const chargeId = await ctx.runMutation(internal.payments.insertCharge, {
-			mandateId: mandate._id,
-			runId: args.runId,
-			userId: actor.userId,
-			pravaTransactionId: transactionId,
-			amount: args.amount,
-			currency: mandate.currency,
-			description: args.description,
-			reference: args.reference
-		});
 		if (result.status === 'failed' || !credentials || !transactionId) {
 			await ctx.runMutation(internal.payments.updateChargeStatus, {
-				chargeId,
+				chargeId: reservation.chargeId,
 				userId: actor.userId,
 				status: 'failed'
 			});
 			throw new Error(result.errorMessage ?? 'Mandate charge failed.');
 		}
+		await ctx.runMutation(internal.payments.completeCharge, {
+			chargeId: reservation.chargeId,
+			userId: actor.userId,
+			pravaTransactionId: transactionId,
+			credentials
+		});
 		return {
-			chargeId,
+			chargeId: reservation.chargeId,
 			transactionId,
 			...credentials
 		};
