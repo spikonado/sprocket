@@ -11,7 +11,7 @@ And <ins>here's the best part</ins>: Sprocket can (on its own) <ins>buy anything
 
 [Sprocket Demo](https://www.youtube.com/watch?v=E8KWO3Vh9YU)
 
-![Sprocket](./assets/sprocket.png)
+[![Sprocket](./assets/sprocket.png)](https://www.youtube.com/watch?v=E8KWO3Vh9YU)
 
 ## Using Sprocket
 
