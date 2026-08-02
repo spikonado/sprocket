@@ -99,6 +99,7 @@ export default defineSchema({
 	browserSessions: defineTable({
 		threadId: v.id('threadRecords'),
 		runId: v.id('runs'),
+		lastUsedRunId: v.id('runs'),
 		userId: v.string(),
 		browserbaseSessionId: v.string(),
 		liveViewUrl: v.optional(v.string()),

@@ -39,6 +39,13 @@ vi.mock('@browserbasehq/stagehand', () => ({
 	}
 }));
 
+const LIVE_VIEW_URL = 'https://live.browserbase.test/fullscreen/bb-session-task';
+const fetchMock = vi.fn().mockResolvedValue({
+	ok: true,
+	json: async () => ({ debuggerFullscreenUrl: LIVE_VIEW_URL })
+});
+vi.stubGlobal('fetch', fetchMock);
+
 async function startRun(
 	t: ConvexTestInstance,
 	asUser: Awaited<ReturnType<typeof seedOwnedThread>>['asUser'],
@@ -106,7 +113,14 @@ describe('browserAgent', () => {
 				.collect()
 		);
 		expect(stored).toHaveLength(1);
-		expect(stored[0]).toMatchObject({ browserbaseSessionId: 'bb-session-task' });
+		expect(stored[0]).toMatchObject({
+			browserbaseSessionId: 'bb-session-task',
+			liveViewUrl: LIVE_VIEW_URL
+		});
+		expect(fetchMock).toHaveBeenCalledWith(
+			'https://api.browserbase.com/v1/sessions/bb-session-task/debug',
+			expect.objectContaining({ headers: { 'x-bb-api-key': 'bb_key' } })
+		);
 
 		// A later run in the same thread resumes the same Browserbase session.
 		await t.run(async (ctx) => await ctx.db.patch(run.runId, { status: 'completed' }));
@@ -128,6 +142,75 @@ describe('browserAgent', () => {
 				.collect()
 		);
 		expect(afterResume).toHaveLength(1);
+		// Resuming the session in a new run marks that run as the browser user.
+		expect(afterResume[0].lastUsedRunId).toBe(secondRun.runId);
+		// The stored live view URL is reused, not refetched.
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+
+	it('still records the session when the live view URL fetch fails', async () => {
+		process.env.BROWSERBASE_API_KEY = 'bb_key';
+		process.env.BROWSERBASE_PROJECT_ID = 'project-1';
+		process.env.OPENAI_API_KEY = 'openai_key';
+		fetchMock.mockRejectedValueOnce(new Error('browserbase debug endpoint down'));
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
+		const run = await startRun(t, asUser, threadId);
+
+		const out = await t.action(api.browserAgent.act, {
+			instruction: 'browse anyway',
+			runId: run.runId,
+			claimId: run.claimId,
+			executionSecret: run.executionSecret
+		});
+		expect(String((out as { text: string }).text)).toContain('Action performed');
+
+		const stored = await t.run(async (ctx) =>
+			ctx.db
+				.query('browserSessions')
+				.withIndex('by_thread', (query) => query.eq('threadId', threadId))
+				.first()
+		);
+		expect(stored).toMatchObject({
+			browserbaseSessionId: 'bb-session-task',
+			lastUsedRunId: run.runId
+		});
+		expect(stored?.liveViewUrl).toBeUndefined();
+	});
+
+	it('backfills the live view URL for a session row missing it', async () => {
+		process.env.BROWSERBASE_API_KEY = 'bb_key';
+		process.env.BROWSERBASE_PROJECT_ID = 'project-1';
+		process.env.OPENAI_API_KEY = 'openai_key';
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
+		const run = await startRun(t, asUser, threadId);
+		await t.run(async (ctx) => {
+			const thread = await ctx.db.get(threadId);
+			await ctx.db.insert('browserSessions', {
+				threadId,
+				runId: run.runId,
+				lastUsedRunId: run.runId,
+				userId: thread!.userId,
+				browserbaseSessionId: 'bb-session-task',
+				startedAt: Date.now()
+			});
+		});
+
+		await t.action(api.browserAgent.act, {
+			instruction: 'keep browsing',
+			runId: run.runId,
+			claimId: run.claimId,
+			executionSecret: run.executionSecret
+		});
+
+		const stored = await t.run(async (ctx) =>
+			ctx.db
+				.query('browserSessions')
+				.withIndex('by_thread', (query) => query.eq('threadId', threadId))
+				.first()
+		);
+		expect(stored?.liveViewUrl).toBe(LIVE_VIEW_URL);
 	});
 
 	it('observe returns candidate actions, act runs one, extract reads page data', async () => {

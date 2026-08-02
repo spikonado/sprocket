@@ -14,7 +14,7 @@ async function seedRun(t: ConvexTestInstance, subject: string) {
 		serviceTier: 'standard',
 		executionSecret: `secret-${Math.random()}`
 	});
-	return { threadId, runId: created.runId, userId: subject };
+	return { asUser, threadId, runId: created.runId, userId: subject };
 }
 
 describe('browserSessions', () => {
@@ -88,5 +88,139 @@ describe('browserSessions', () => {
 				userId: other.userId
 			})
 		).resolves.toBeNull();
+	});
+
+	it('serves the live view state to the thread owner only', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId, runId, userId } = await seedRun(t, 'user_browser_live');
+
+		await expect(
+			asUser.query(api.browserSessions.liveViewForThread, { threadId })
+		).resolves.toBeNull();
+
+		await t.mutation(internal.browserSessions.upsertForThread, {
+			threadId,
+			runId,
+			userId,
+			browserbaseSessionId: 'bb-1',
+			liveViewUrl: 'https://live.browserbase.test/full'
+		});
+
+		const live = await asUser.query(api.browserSessions.liveViewForThread, { threadId });
+		expect(live).toEqual({
+			url: 'https://live.browserbase.test/full',
+			lastUsedRunId: runId,
+			startedAt: expect.any(Number)
+		});
+
+		const other = await seedOwnedThread(t, 'user_browser_other');
+		await expect(
+			other.asUser.query(api.browserSessions.liveViewForThread, { threadId })
+		).rejects.toThrow('Thread not found.');
+	});
+
+	it('clears the stale live view URL when the session rotates without one', async () => {
+		const t = initConvexTest();
+		const { threadId, runId, userId } = await seedRun(t, 'user_browser_rotate');
+		await t.mutation(internal.browserSessions.upsertForThread, {
+			threadId,
+			runId,
+			userId,
+			browserbaseSessionId: 'bb-old',
+			liveViewUrl: 'https://live.browserbase.test/old'
+		});
+
+		await t.mutation(internal.browserSessions.upsertForThread, {
+			threadId,
+			runId,
+			userId,
+			browserbaseSessionId: 'bb-new'
+		});
+
+		const session = await t.query(internal.browserSessions.getForThread, { threadId, userId });
+		expect(session?.browserbaseSessionId).toBe('bb-new');
+		expect(session?.liveViewUrl).toBeUndefined();
+
+		// A stale backfill for the rotated-away session must not stamp its URL
+		// onto the new session's row.
+		await t.mutation(internal.browserSessions.setLiveViewUrl, {
+			threadId,
+			browserbaseSessionId: 'bb-old',
+			liveViewUrl: 'https://live.browserbase.test/stale'
+		});
+		expect(
+			(await t.query(internal.browserSessions.getForThread, { threadId, userId }))?.liveViewUrl
+		).toBeUndefined();
+
+		await t.mutation(internal.browserSessions.setLiveViewUrl, {
+			threadId,
+			browserbaseSessionId: 'bb-new',
+			liveViewUrl: 'https://live.browserbase.test/new'
+		});
+		const backfilled = await t.query(internal.browserSessions.getForThread, {
+			threadId,
+			userId
+		});
+		expect(backfilled?.liveViewUrl).toBe('https://live.browserbase.test/new');
+		// Backfill does not refresh startedAt — it is not new agent activity.
+		expect(backfilled?.startedAt).toBe(session?.startedAt);
+
+		// An existing URL is never overwritten by the backfill path.
+		await t.mutation(internal.browserSessions.setLiveViewUrl, {
+			threadId,
+			browserbaseSessionId: 'bb-new',
+			liveViewUrl: 'https://live.browserbase.test/other'
+		});
+		const unchanged = await t.query(internal.browserSessions.getForThread, {
+			threadId,
+			userId
+		});
+		expect(unchanged?.liveViewUrl).toBe('https://live.browserbase.test/new');
+	});
+
+	it('tracks the run that last used the browser session', async () => {
+		const t = initConvexTest();
+		const first = await seedRun(t, 'user_browser_touch');
+		await t.mutation(internal.browserSessions.upsertForThread, {
+			threadId: first.threadId,
+			runId: first.runId,
+			userId: first.userId,
+			browserbaseSessionId: 'bb-1'
+		});
+
+		let live = await first.asUser.query(api.browserSessions.liveViewForThread, {
+			threadId: first.threadId
+		});
+		expect(live?.lastUsedRunId).toBe(first.runId);
+
+		// A later run in the same thread reuses the session; touching it moves
+		// lastUsedRunId without disturbing the session row.
+		await t.run(async (ctx) => await ctx.db.patch(first.runId, { status: 'completed' }));
+		const secondRun = await first.asUser.mutation(api.agentRuntime.createRun, {
+			submissionId: `sub-${Math.random()}`,
+			threadId: first.threadId,
+			prompt: 'Browse more',
+			imageUploadIds: [],
+			selectedModel: 'gpt-5.6-sol',
+			reasoningEffort: 'medium',
+			serviceTier: 'standard',
+			executionSecret: `secret-${Math.random()}`
+		});
+		await t.mutation(internal.browserSessions.touchForThread, {
+			threadId: first.threadId,
+			runId: secondRun.runId
+		});
+
+		live = await first.asUser.query(api.browserSessions.liveViewForThread, {
+			threadId: first.threadId
+		});
+		expect(live?.lastUsedRunId).toBe(secondRun.runId);
+
+		const session = await t.query(internal.browserSessions.getForThread, {
+			threadId: first.threadId,
+			userId: first.userId
+		});
+		expect(session?.browserbaseSessionId).toBe('bb-1');
+		expect(session?.runId).toBe(first.runId);
 	});
 });

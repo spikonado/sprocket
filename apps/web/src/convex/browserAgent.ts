@@ -88,7 +88,9 @@ type StagehandConfig = ReturnType<typeof config>;
 async function fetchLiveViewUrl(apiKey: string, sessionId: string): Promise<string | null> {
 	try {
 		const response = await fetch(`https://api.browserbase.com/v1/sessions/${sessionId}/debug`, {
-			headers: { 'x-bb-api-key': apiKey }
+			headers: { 'x-bb-api-key': apiKey },
+			// Bound the wait so a stalled endpoint can't hold up the tool call.
+			signal: AbortSignal.timeout(5_000)
 		});
 		if (!response.ok) return null;
 		const urls: { debuggerFullscreenUrl?: unknown } = await response.json();
@@ -153,6 +155,7 @@ async function attachStagehand(
 
 	const browserbaseSessionId = stagehand.browserbaseSessionId;
 	if (!browserbaseSessionId) {
+		await stagehand.close().catch(() => {});
 		throw new Error('Stagehand did not report a Browserbase session id.');
 	}
 	if (browserbaseSessionId !== reusable?.browserbaseSessionId) {
@@ -164,14 +167,21 @@ async function attachStagehand(
 			browserbaseSessionId,
 			...(liveViewUrl ? { liveViewUrl } : {})
 		});
-	} else if (existing && !existing.liveViewUrl) {
-		const liveViewUrl = await fetchLiveViewUrl(cfg.apiKey, browserbaseSessionId);
-		if (liveViewUrl) {
-			await ctx.runMutation(internal.browserSessions.setLiveViewUrl, {
-				threadId,
-				liveViewUrl
-			});
+	} else if (existing) {
+		if (!existing.liveViewUrl) {
+			const liveViewUrl = await fetchLiveViewUrl(cfg.apiKey, browserbaseSessionId);
+			if (liveViewUrl) {
+				await ctx.runMutation(internal.browserSessions.setLiveViewUrl, {
+					threadId,
+					browserbaseSessionId,
+					liveViewUrl
+				});
+			}
 		}
+		await ctx.runMutation(internal.browserSessions.touchForThread, {
+			threadId,
+			runId
+		});
 	}
 	return stagehand;
 }
