@@ -876,9 +876,6 @@ function isMatchingLivePravaMandate(mandate: Doc<'mandates'>, prava: PravaMandat
 	const approvedMinor = prava.approvedAmount ? parseMoneyMinor(prava.approvedAmount) : undefined;
 	if (approvedMinor === undefined || approvedMinor !== mandate.amountCap) return false;
 	if (mandate.scope === 'listed') {
-		// Name alone is not enough — same display name can cover different
-		// merchant URL/country authorizations. If Prava omits those fields,
-		// refuse to attribute rather than guess.
 		const localName = mandate.merchantName?.trim();
 		const localUrl = mandate.merchantUrl?.trim();
 		const localCountry = mandate.countryCode?.trim();
@@ -1106,6 +1103,9 @@ export const mandateCharge = action({
 		});
 		if (!mandate) throw new Error('Mandate not found.');
 		assertChargeable(mandate, args);
+		if (mandate.status === 'paused') {
+			throw new Error('Mandate is paused and cannot be charged.');
+		}
 
 		const reference = args.reference?.trim() || undefined;
 		const reservation = await ctx.runMutation(internal.payments.reserveCharge, {
@@ -1129,6 +1129,13 @@ export const mandateCharge = action({
 		}
 
 		const prava = await resolvePravaMandate(ctx, actor.userId, mandate);
+		if ((prava.status ?? '').toLowerCase() !== 'active') {
+			await ctx.runMutation(internal.payments.releaseChargeReservation, {
+				chargeId: reservation.chargeId,
+				userId: actor.userId
+			});
+			throw new Error('Mandate is not active and cannot be charged.');
+		}
 		let result: {
 			transactionId?: string;
 			status?: string;

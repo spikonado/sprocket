@@ -349,6 +349,27 @@ describe('payments mandates', () => {
 		expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/charge'))).toBe(false);
 	});
 
+	it('rejects charging a paused mandate before calling Prava', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+		const { setup, fetchMock } = await createApprovedMandate(t, run, [
+			liveListedMandate({ status: 'paused' })
+		]);
+		fetchMock.mockClear();
+
+		await expect(
+			run.asUser.action(api.payments.mandateCharge, {
+				mandateId: setup.mandateId,
+				amount: '40.00',
+				currency: 'USD',
+				description: 'Order 8842',
+				...auth(run)
+			})
+		).rejects.toThrow(/not active/);
+		expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/charge'))).toBe(false);
+	});
+
 	it('does not resolve a mandate approved in a different currency', async () => {
 		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
