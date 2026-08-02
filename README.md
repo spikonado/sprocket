@@ -9,7 +9,7 @@ In terms of hardware design, Sprocket can make beautiful schematics in React, cr
 
 And <ins>here's the best part</ins>: Sprocket can (on its own) <ins>buy anything from any website</ins> when you tell it to do so. From hardware parts to SaaS subscriptions.
 
-![Sprocket Demo](https://www.youtube.com/watch?v=E8KWO3Vh9YU)
+[Sprocket Demo](https://www.youtube.com/watch?v=E8KWO3Vh9YU)
 
 ![Sprocket](./assets/sprocket.png)
 
