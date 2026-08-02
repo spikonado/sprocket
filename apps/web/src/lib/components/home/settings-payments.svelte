@@ -34,6 +34,14 @@
 
 	const publishableKey = $derived(page.data.env?.PUBLIC_PRAVA_PUBLISHABLE_KEY);
 
+	/** Convex action errors arrive wrapped in request-id/stack noise; show just
+	 * the meaningful message. */
+	function friendlyError(error: unknown, fallback: string): string {
+		if (!(error instanceof Error)) return fallback;
+		const match = error.message.match(/Uncaught Error: ([^(\n]+)/);
+		return (match?.[1] ?? error.message).trim() || fallback;
+	}
+
 	const fieldClass =
 		'border-border bg-hover-fill text-foreground placeholder:text-muted-foreground focus:border-ring h-9 w-full rounded-lg border px-3 text-[13px] outline-none';
 	const labelClass = 'text-muted-foreground text-[12px]';
@@ -86,7 +94,7 @@
 			const result = await listMyMandates({});
 			mandates = result.mandates;
 		} catch (error) {
-			mandatesError = error instanceof Error ? error.message : 'Couldn’t load mandates.';
+			mandatesError = friendlyError(error, 'Couldn’t load mandates.');
 		} finally {
 			mandatesLoading = false;
 		}
@@ -100,7 +108,7 @@
 			await setPaymentsEmail({ email: paymentsEmail.trim() });
 			emailSaved = true;
 		} catch (error) {
-			emailError = error instanceof Error ? error.message : 'Couldn’t save email.';
+			emailError = friendlyError(error, 'Couldn’t save email.');
 		} finally {
 			emailSaving = false;
 		}
@@ -108,6 +116,10 @@
 
 	async function submitMandateSetup(event: Event) {
 		event.preventDefault();
+		if (!paymentsEmail.trim()) {
+			setupError = 'Save your payments email above first — it’s required to set up a mandate.';
+			return;
+		}
 		setupSubmitting = true;
 		setupError = null;
 		pendingApproval = null;
@@ -131,7 +143,7 @@
 			};
 			await refreshMandates();
 		} catch (error) {
-			setupError = error instanceof Error ? error.message : 'Couldn’t set up mandate.';
+			setupError = friendlyError(error, 'Couldn’t set up mandate.');
 		} finally {
 			setupSubmitting = false;
 		}
@@ -148,7 +160,7 @@
 			});
 			await refreshMandates();
 		} catch (error) {
-			mandatesError = error instanceof Error ? error.message : `Couldn’t ${action} mandate.`;
+			mandatesError = friendlyError(error, `Couldn’t ${action} mandate.`);
 		} finally {
 			lifecycleBusyId = null;
 		}
