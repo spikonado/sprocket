@@ -379,6 +379,48 @@ describe('payments mandates', () => {
 		expect(stored).toMatchObject({ status: 'completed', reportedAt: expect.any(Number) });
 	});
 
+	it('rejects an opposite-outcome retry instead of posting a conflicting report', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+		const { setup, fetchMock } = await createApprovedMandate(t, run);
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse({
+				transactionId: 'txn_9',
+				status: 'awaiting_result',
+				credentials: { token: 't', dynamicCvv: 'c', expiryMonth: '12', expiryYear: '2030' }
+			})
+		);
+		const charge = await run.asUser.action(api.payments.mandateCharge, {
+			mandateId: setup.mandateId,
+			amount: '40.00',
+			currency: 'USD',
+			description: 'Order 8842',
+			...auth(run)
+		});
+
+		// Crash boundary: approved was claimed (and may already have been POSTed
+		// to Prava), but never finalized locally. A declined retry must not
+		// overwrite it and send the opposite terminal outcome.
+		const stale = Date.now() - 120_000;
+		await t.run(async (ctx) =>
+			ctx.db.patch(charge.chargeId, { reportingStartedAt: stale, reportOutcome: 'approved' })
+		);
+		fetchMock.mockClear();
+
+		await expect(
+			run.asUser.action(api.payments.mandateReport, {
+				chargeId: charge.chargeId,
+				outcome: 'declined',
+				...auth(run)
+			})
+		).rejects.toThrow(/approved report in progress/);
+		expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/report'))).toBe(false);
+		const stored = await t.run(async (ctx) => ctx.db.get(charge.chargeId));
+		expect(stored).toMatchObject({ reportOutcome: 'approved' });
+		expect(stored?.reportedAt).toBeUndefined();
+	});
+
 	it('reports an in-flight claim as not-yet-reported instead of claiming success', async () => {
 		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();

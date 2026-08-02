@@ -401,6 +401,15 @@ export const claimChargeReport = internalMutation({
 		if (charge.reportedAt) {
 			return 'already';
 		}
+		// The first-claimed outcome is immutable. A conflicting report must
+		// never be sent — a crash between the provider POST and the local
+		// finalize would otherwise let a retry overwrite the outcome and POST
+		// the opposite terminal state to the card network.
+		if (charge.reportOutcome && charge.reportOutcome !== args.outcome) {
+			throw new Error(
+				`Charge already has a ${charge.reportOutcome} report in progress; the outcome cannot be changed.`
+			);
+		}
 		if (charge.reportingStartedAt) {
 			// A claim newer than the report window belongs to a live concurrent
 			// caller and has not completed — say so rather than claim success. An
@@ -820,13 +829,16 @@ export const mandateReport = action({
 			});
 			throw new Error('Prava mandate id is unavailable.');
 		}
+		// The outcome being reported is the one bound at claim time, not
+		// whatever this caller passed — a stale retry can't switch it.
+		const outcome = charge.reportOutcome ?? args.outcome;
 		try {
 			await pravaRequest(
 				`/v1/mandates/${encodeURIComponent(mandate.pravaMandateId)}/charges/${encodeURIComponent(charge.pravaTransactionId)}/report`,
 				{
 					method: 'POST',
 					body: JSON.stringify({
-						txn_status: args.outcome === 'approved' ? 'APPROVED' : 'DECLINED',
+						txn_status: outcome === 'approved' ? 'APPROVED' : 'DECLINED',
 						txn_type: 'PURCHASE',
 						...(args.amountPaid !== undefined ? { amount_paid: args.amountPaid } : {})
 					})
@@ -842,7 +854,7 @@ export const mandateReport = action({
 		await ctx.runMutation(internal.payments.finishChargeReport, {
 			chargeId: charge._id,
 			userId: actor.userId,
-			status: statusForOutcome(args.outcome)
+			status: statusForOutcome(outcome)
 		});
 		return { reported: true };
 	}
