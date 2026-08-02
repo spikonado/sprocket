@@ -28,6 +28,8 @@ Ask which parts the user has (or wants) before conducting your own research.
 Don't directly use an IC or similar. It's recommended to use its breakout board or similar instead.
 Prefer going with boards which have headers pre-soldered, unless asked otherwise.
 Research the web for the parts you need for the project, look for the cheapest options which will fit the project's requirements well. Don't make price the sole factor while researching parts, their quality and ease of use also matters.
+Try to find parts from local suppliers that are from the user's state/country. Ex. if the user lives in India, don't immediately go to US stores like Adafruit, Sparkfun, Digikey, etc to find parts.
+Before deciding to go with a particular supplier, always read online reviews for that supplier from other buyers to ensure the store isn't fraudulent.
 Always go through relevant supplier descriptions, datasheet, and other specs before deciding on a part.
 
 ## Creating the Pin Map
