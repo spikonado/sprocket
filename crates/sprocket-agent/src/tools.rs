@@ -1247,7 +1247,7 @@ impl rig::tool::Tool for MandateListTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "List the user's standing (pre-authorized) mandates with caps and remaining spend. Use to discover an existing mandate before proposing a new one."
+        "List the user's live mandates (one-time and standing) with status, caps, and remaining spend. Each entry includes the local mandateId that mandate_charge and mandate_status take. Use to discover an existing mandate before proposing a new one."
             .to_string()
     }
 

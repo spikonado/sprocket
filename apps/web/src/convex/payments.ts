@@ -59,6 +59,35 @@ async function pravaRequest<T>(path: string, init?: RequestInit): Promise<T> {
 	return (body ? JSON.parse(body) : undefined) as T;
 }
 
+/** A first-time customer has no Prava customer record yet, so listing their
+ * mandates 404s with CUSTOMER_NOT_FOUND — treat that as "no mandates yet"
+ * rather than an error. */
+function isPravaCustomerNotFound(error: unknown): boolean {
+	return error instanceof Error && error.message.includes('CUSTOMER_NOT_FOUND');
+}
+
+/** List a customer's mandates from Prava, treating a first-time customer's
+ * CUSTOMER_NOT_FOUND 404 as an empty list rather than an error. */
+async function listPravaMandates(userId: string, standingOnly: boolean): Promise<PravaMandate[]> {
+	try {
+		const list = await pravaRequest<{ mandates?: PravaMandate[] }>(
+			`/v1/mandates?customer_id=${encodeURIComponent(userId)}${standingOnly ? '&standing_only=true' : ''}`
+		);
+		return list.mandates ?? [];
+	} catch (error) {
+		if (isPravaCustomerNotFound(error)) {
+			return [];
+		}
+		throw error;
+	}
+}
+
+/** Only these mandate states can be charged or should be surfaced to the
+ * agent/user. Cancelled/expired/consumed approvals must not match a local
+ * setup during resolution — a stale same-merchant+amount approval otherwise
+ * poisons the unique-match check forever. */
+const LIVE_MANDATE_STATUSES = new Set(['pending', 'active', 'paused']);
+
 async function activeActor(
 	ctx: ActionCtx,
 	args: { runId: Doc<'runs'>['_id']; claimId: string; executionSecret: string }
@@ -76,7 +105,7 @@ async function activeActor(
 function requiredUserEmail(userEmail: string): string {
 	const email = userEmail.trim();
 	if (!email) {
-		throw new Error('User email is required.');
+		throw new Error('EMAIL_REQUIRED');
 	}
 	return email;
 }
@@ -136,7 +165,6 @@ const chargeDoc = v.object({
 
 type PravaMandate = {
 	id?: string;
-	sessionId?: string;
 	status?: string;
 	remaining?: string;
 	approvedAmount?: string;
@@ -513,11 +541,10 @@ async function resolvePravaMandate(
 		);
 		return { ...found, id: mandate.pravaMandateId };
 	}
-	const list = await pravaRequest<{ mandates?: PravaMandate[] }>(
-		`/v1/mandates?customer_id=${encodeURIComponent(userId)}`
-	);
-	const matches = (list.mandates ?? []).filter((m) => {
+	const list = await listPravaMandates(userId, false);
+	const matches = list.filter((m) => {
 		if (!m.id) return false;
+		if (!LIVE_MANDATE_STATUSES.has(m.status ?? '')) return false;
 		if (mandate.scope === 'listed') {
 			return (
 				(m.merchantName ?? '').toLowerCase() === (mandate.merchantName ?? '').toLowerCase() &&
@@ -526,22 +553,19 @@ async function resolvePravaMandate(
 		}
 		return m.approvedAmount === mandate.amountCap;
 	});
-	// Prefer the mandate created by this setup's session when Prava links one,
-	// then require a unique match — charging an arbitrary same-merchant+amount
-	// approval could settle against the wrong authorization.
-	const sessionLinked = matches.filter(
-		(m) => mandate.pravaSessionId && m.sessionId === mandate.pravaSessionId
-	);
-	const candidates = sessionLinked.length > 0 ? sessionLinked : matches;
-	if (candidates.length === 0) {
+	// Require a unique live match — charging an arbitrary same-merchant+amount
+	// approval could settle against the wrong authorization. Prava mandates
+	// don't carry their setup session id, so there is no stronger link to
+	// prefer on.
+	if (matches.length === 0) {
 		throw new Error('Mandate is not yet approved.');
 	}
-	if (candidates.length > 1) {
+	if (matches.length > 1) {
 		throw new Error(
 			'Multiple approved mandates match this setup; resolve the ambiguity before charging.'
 		);
 	}
-	const resolved = { ...candidates[0], id: candidates[0].id! };
+	const resolved = { ...matches[0], id: matches[0].id! };
 	await ctx.runMutation(
 		internal.payments.syncMandate,
 		mandateSyncArgs(mandate._id, userId, resolved)
@@ -613,11 +637,18 @@ export const mandateList = action({
 	returns: vMandateListResult,
 	handler: async (ctx, args): Promise<Infer<typeof vMandateListResult>> => {
 		const actor = await activeActor(ctx, args);
-		const list = await pravaRequest<{ mandates?: PravaMandate[] }>(
-			`/v1/mandates?customer_id=${encodeURIComponent(actor.userId)}&standing_only=true`
+		const list = (await listPravaMandates(actor.userId, false)).filter((m) =>
+			LIVE_MANDATE_STATUSES.has(m.status ?? '')
+		);
+		const local = await ctx.runQuery(internal.payments.listLocalMandates, {
+			userId: actor.userId
+		});
+		const localByPravaId = new Map(
+			local.filter((m) => m.pravaMandateId).map((m) => [m.pravaMandateId as string, m._id])
 		);
 		return {
-			mandates: (list.mandates ?? []).map((m) => ({
+			mandates: list.map((m) => ({
+				mandateId: m.id ? localByPravaId.get(m.id) : undefined,
 				pravaMandateId: m.id ?? '',
 				status: m.status ?? 'unknown',
 				merchantName: m.merchantName ?? undefined,
@@ -790,10 +821,10 @@ export const listMyMandates = action({
 	returns: vMandateListResult,
 	handler: async (ctx): Promise<Infer<typeof vMandateListResult>> => {
 		const userId = await getUserId(ctx);
-		const list = await pravaRequest<{ mandates?: PravaMandate[] }>(
-			`/v1/mandates?customer_id=${encodeURIComponent(userId)}&standing_only=true`
+		const list = (await listPravaMandates(userId, false)).filter((m) =>
+			LIVE_MANDATE_STATUSES.has(m.status ?? '')
 		);
-		// Join Prava's live standing mandates with the local rows (keyed on the
+		// Join Prava's live mandates with the local rows (keyed on the
 		// Prava mandate id) so each entry carries the local mandateId the
 		// lifecycle action needs. Entries without a local row (e.g. approved
 		// elsewhere) are still listed, just without a mandateId.
@@ -802,7 +833,7 @@ export const listMyMandates = action({
 			local.filter((m) => m.pravaMandateId).map((m) => [m.pravaMandateId as string, m._id])
 		);
 		return {
-			mandates: (list.mandates ?? []).map((m) => ({
+			mandates: list.map((m) => ({
 				mandateId: m.id ? localByPravaId.get(m.id) : undefined,
 				pravaMandateId: m.id ?? '',
 				status: m.status ?? 'unknown',

@@ -413,6 +413,40 @@ describe('payments mandates', () => {
 		expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/charge'))).toBe(false);
 	});
 
+	it('syncs a pending mandate to active when exactly one live approval matches', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+		// A stale cancelled approval with the same merchant + amount must not
+		// poison resolution of the one live mandate.
+		const { setup } = await createApprovedMandate(t, run, [
+			{
+				id: 'mdt_stale',
+				status: 'cancelled',
+				merchantName: 'Example Shop',
+				approvedAmount: '120.00',
+				currency: 'USD'
+			},
+			{
+				id: 'mdt_live',
+				status: 'active',
+				merchantName: 'Example Shop',
+				approvedAmount: '120.00',
+				remaining: '120.00',
+				currency: 'USD'
+			}
+		]);
+
+		const status = await run.asUser.action(api.payments.mandateStatus, {
+			mandateId: setup.mandateId,
+			...auth(run)
+		});
+
+		expect(status).toMatchObject({ status: 'active', pravaMandateId: 'mdt_live' });
+		const stored = await t.run(async (ctx) => await ctx.db.get(setup.mandateId));
+		expect(stored).toMatchObject({ status: 'active', pravaMandateId: 'mdt_live' });
+	});
+
 	it('lists only the calling user’s mandates via the user-facing action', async () => {
 		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const fetchMock = vi.fn().mockResolvedValue(
@@ -437,10 +471,29 @@ describe('payments mandates', () => {
 
 		expect(result.mandates).toHaveLength(1);
 		expect(result.mandates[0]).toMatchObject({ pravaMandateId: 'mdt_1', status: 'active' });
-		// Scoped to the caller, standing-only.
+		// Scoped to the caller, all mandate kinds (standing and one-time).
 		expect(String(fetchMock.mock.calls[0][0])).toBe(
-			'https://sandbox.api.prava.space/v1/mandates?customer_id=user_alice&standing_only=true'
+			'https://sandbox.api.prava.space/v1/mandates?customer_id=user_alice'
 		);
+	});
+
+	it('treats a first-time customer’s CUSTOMER_NOT_FOUND as an empty mandate list', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValue(
+				jsonResponse(
+					{ error: { code: 'CUSTOMER_NOT_FOUND', message: 'No such customer for this merchant' } },
+					404
+				)
+			);
+		vi.stubGlobal('fetch', fetchMock);
+		const t = initConvexTest();
+		const alice = await startRun(t, 'user_alice');
+
+		const result = await alice.asUser.action(api.payments.listMyMandates, {});
+
+		expect(result.mandates).toEqual([]);
 	});
 
 	it('rejects the user-facing lifecycle action on another user’s mandate', async () => {
