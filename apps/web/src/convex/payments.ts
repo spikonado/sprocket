@@ -1115,11 +1115,15 @@ export const mandateCharge = action({
 			userId: actor.userId,
 			pravaTransactionId: transactionId
 		});
-		// Return credentials only for this response — do not persist them.
+		// Return only validated credential fields — Prava may include extras
+		// (e.g. dynamicDataType) that must not leak into the action result.
 		return {
 			chargeId: reservation.chargeId,
 			transactionId,
-			...credentials
+			token: credentials.token,
+			dynamicCvv: credentials.dynamicCvv,
+			expiryMonth: credentials.expiryMonth,
+			expiryYear: credentials.expiryYear
 		};
 	}
 });
