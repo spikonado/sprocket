@@ -1267,7 +1267,7 @@ impl rig::tool::Tool for MandateChargeTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Charge an active mandate (no passkey needed) and return the single-use payment credential: token, dynamic CVV, and expiry. Type these into the merchant checkout with browser_act, then settle with mandate_report."
+        "Charge an active mandate (no passkey needed) and return the single-use payment credential: token, dynamic CVV, and expiry. Type these into the merchant checkout with browser_act. Every charge MUST be settled afterwards with mandate_report — approved when the order completes, declined when it does not. A charge left unreported holds the mandate's remaining balance and eventually expires as abandoned."
             .to_string()
     }
 
@@ -1293,7 +1293,7 @@ impl rig::tool::Tool for MandateReportTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Report an approved or declined outcome for a charge, settling it with the card network."
+        "Report the final outcome of a charge to settle it with the card network. MANDATORY after every mandate_charge: approved when the checkout completes, declined when the checkout fails, is abandoned, or the credential goes unused. Never leave a charge unreported — the network holds the amount until you settle."
             .to_string()
     }
 
