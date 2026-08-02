@@ -281,10 +281,11 @@ export const vMandateListResult = v.object({
 export const vMandateChargeResult = v.object({
 	chargeId: v.id('mandateCharges'),
 	transactionId: v.string(),
-	token: v.string(),
-	dynamicCvv: v.string(),
-	expiryMonth: v.string(),
-	expiryYear: v.string()
+	/** Present only on a freshly issued charge — never persisted or replayed. */
+	token: v.optional(v.string()),
+	dynamicCvv: v.optional(v.string()),
+	expiryMonth: v.optional(v.string()),
+	expiryYear: v.optional(v.string())
 });
 
 export const vMandateReportResult = v.object({

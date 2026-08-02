@@ -501,7 +501,7 @@ pub(crate) struct MandateChargeArgs {
     amount: String,
     currency: String,
     description: String,
-    /// Idempotency key; reusing it returns the original charge.
+    /// Idempotency key; reusing it returns the original charge handle without re-issuing credentials.
     #[serde(skip_serializing_if = "Option::is_none")]
     reference: Option<String>,
 }
@@ -1267,7 +1267,7 @@ impl rig::tool::Tool for MandateChargeTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Charge an active mandate (no passkey needed) and return the single-use payment credential: token, dynamic CVV, and expiry. Type these into the merchant checkout with browser_act. Every charge MUST be settled afterwards with mandate_report — approved when the order completes, declined when it does not. A charge left unreported holds the mandate's remaining balance and eventually expires as abandoned."
+        "Charge an active mandate (no passkey needed) and return a single-use payment credential (token, dynamic CVV, expiry) only on that first response — credentials are not stored or replayed. Reusing `reference` returns the charge handle without credentials. Every charge MUST be settled afterwards with mandate_report — approved when the order completes, declined when it does not. A charge left unreported holds the mandate's remaining balance and eventually expires as abandoned."
             .to_string()
     }
 

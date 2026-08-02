@@ -96,12 +96,6 @@ export default defineSchema({
 		// When set, (mandateId, reference) is an idempotency key for mandateCharge.
 		reference: v.optional(v.string()),
 		status: vMandateChargeStatus,
-		// Single-use virtual-card credentials retained so a reference retry can
-		// return the original charge result without posting to Prava again.
-		token: v.optional(v.string()),
-		dynamicCvv: v.optional(v.string()),
-		expiryMonth: v.optional(v.string()),
-		expiryYear: v.optional(v.string()),
 		reportOutcome: v.optional(vMandateReportOutcome),
 		reportedAt: v.optional(v.number()),
 		reportingStartedAt: v.optional(v.number()),

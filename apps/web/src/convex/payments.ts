@@ -158,10 +158,6 @@ const chargeDoc = v.object({
 	description: v.string(),
 	reference: v.optional(v.string()),
 	status: vMandateChargeStatus,
-	token: v.optional(v.string()),
-	dynamicCvv: v.optional(v.string()),
-	expiryMonth: v.optional(v.string()),
-	expiryYear: v.optional(v.string()),
 	reportOutcome: v.optional(vMandateReportOutcome),
 	reportedAt: v.optional(v.number()),
 	reportingStartedAt: v.optional(v.number()),
@@ -169,13 +165,6 @@ const chargeDoc = v.object({
 	providerRequestedAt: v.optional(v.number()),
 	createdAt: v.number(),
 	updatedAt: v.number()
-});
-
-const chargeCredentials = v.object({
-	token: v.string(),
-	dynamicCvv: v.string(),
-	expiryMonth: v.string(),
-	expiryYear: v.string()
 });
 
 type PravaMandate = {
@@ -449,16 +438,16 @@ const reserveChargeResult = v.union(
 	v.object({
 		kind: v.literal('existing'),
 		chargeId: v.id('mandateCharges'),
-		transactionId: v.string(),
-		credentials: chargeCredentials
+		transactionId: v.string()
 	}),
 	v.object({ kind: v.literal('inFlight') })
 );
 
 /** Atomically reserve a charge row. When `reference` is set, (mandateId,
- * reference) is an idempotency key: a completed prior charge is returned, a
- * live in-flight claim reports inFlight, and only a fresh/stale reservation
- * proceeds to Prava. */
+ * reference) is an idempotency key: a completed prior charge returns its
+ * non-sensitive handle (credentials are never persisted), a live in-flight
+ * claim reports inFlight, and only a fresh/stale reservation proceeds to
+ * Prava. */
 export const reserveCharge = internalMutation({
 	args: {
 		mandateId: v.id('mandates'),
@@ -494,26 +483,10 @@ export const reserveCharge = internalMutation({
 					throw new Error('Charge reference was already used with a different amount or currency.');
 				}
 				if (existing.pravaTransactionId) {
-					if (
-						!existing.token ||
-						!existing.dynamicCvv ||
-						!existing.expiryMonth ||
-						!existing.expiryYear
-					) {
-						throw new Error(
-							'Charge reference was already used; credentials are unavailable for replay.'
-						);
-					}
 					return {
 						kind: 'existing' as const,
 						chargeId: existing._id,
-						transactionId: existing.pravaTransactionId,
-						credentials: {
-							token: existing.token,
-							dynamicCvv: existing.dynamicCvv,
-							expiryMonth: existing.expiryMonth,
-							expiryYear: existing.expiryYear
-						}
+						transactionId: existing.pravaTransactionId
 					};
 				}
 				if (existing.providerRequestedAt !== undefined) {
@@ -529,10 +502,6 @@ export const reserveCharge = internalMutation({
 						description: args.description,
 						status: 'awaiting_result',
 						pravaTransactionId: undefined,
-						token: undefined,
-						dynamicCvv: undefined,
-						expiryMonth: undefined,
-						expiryYear: undefined,
 						providerRequestedAt: undefined,
 						chargingStartedAt: now,
 						updatedAt: now
@@ -591,18 +560,13 @@ export const completeCharge = internalMutation({
 	args: {
 		chargeId: v.id('mandateCharges'),
 		userId: v.string(),
-		pravaTransactionId: v.string(),
-		credentials: chargeCredentials
+		pravaTransactionId: v.string()
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const charge = await ownedCharge(ctx, args.chargeId, args.userId);
 		await ctx.db.patch(args.chargeId, {
 			pravaTransactionId: args.pravaTransactionId,
-			token: args.credentials.token,
-			dynamicCvv: args.credentials.dynamicCvv,
-			expiryMonth: args.credentials.expiryMonth,
-			expiryYear: args.credentials.expiryYear,
 			status: charge.status === 'failed' ? 'failed' : 'awaiting_result',
 			chargingStartedAt: undefined,
 			updatedAt: Date.now()
@@ -1118,10 +1082,10 @@ export const mandateCharge = action({
 			reference
 		});
 		if (reservation.kind === 'existing') {
+			// Credentials are never persisted — only the non-sensitive handle.
 			return {
 				chargeId: reservation.chargeId,
-				transactionId: reservation.transactionId,
-				...reservation.credentials
+				transactionId: reservation.transactionId
 			};
 		}
 		if (reservation.kind === 'inFlight') {
@@ -1181,9 +1145,9 @@ export const mandateCharge = action({
 		await ctx.runMutation(internal.payments.completeCharge, {
 			chargeId: reservation.chargeId,
 			userId: actor.userId,
-			pravaTransactionId: transactionId,
-			credentials
+			pravaTransactionId: transactionId
 		});
+		// Return credentials only for this response — do not persist them.
 		return {
 			chargeId: reservation.chargeId,
 			transactionId,

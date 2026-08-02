@@ -165,7 +165,7 @@ describe('payments mandates', () => {
 		expect(status.remaining).toBe('120.00');
 	});
 
-	it('charges an active mandate and stores credentials for reference retries', async () => {
+	it('charges an active mandate and returns credentials without persisting them', async () => {
 		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
@@ -207,13 +207,15 @@ describe('payments mandates', () => {
 			userId: 'user_alice',
 			pravaTransactionId: 'txn_9',
 			amount: 4_000,
-			status: 'awaiting_result',
-			token: '4111111111111111',
-			dynamicCvv: '123'
+			status: 'awaiting_result'
 		});
+		expect(stored).not.toHaveProperty('token');
+		expect(stored).not.toHaveProperty('dynamicCvv');
+		expect(stored).not.toHaveProperty('expiryMonth');
+		expect(stored).not.toHaveProperty('expiryYear');
 	});
 
-	it('reuses a completed charge when the same reference is charged again', async () => {
+	it('reuses a completed charge handle without replaying credentials', async () => {
 		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
@@ -250,7 +252,12 @@ describe('payments mandates', () => {
 			...auth(run)
 		});
 
-		expect(second).toEqual(first);
+		expect(second).toEqual({
+			chargeId: first.chargeId,
+			transactionId: first.transactionId
+		});
+		expect(second).not.toHaveProperty('token');
+		expect(second).not.toHaveProperty('dynamicCvv');
 		expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/charge'))).toBe(false);
 		const charges = await t.run(async (ctx) =>
 			ctx.db
@@ -261,6 +268,7 @@ describe('payments mandates', () => {
 				.collect()
 		);
 		expect(charges).toHaveLength(1);
+		expect(charges[0]).not.toHaveProperty('dynamicCvv');
 	});
 
 	it('refuses to re-POST after a lost Prava charge response for the same reference', async () => {
