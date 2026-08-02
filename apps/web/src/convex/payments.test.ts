@@ -424,6 +424,64 @@ describe('payments mandates', () => {
 		expect(stored?.reportedAt).toBeUndefined();
 	});
 
+	it('keeps the first-claimed outcome after a lost Prava response', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+		const { setup, fetchMock } = await createApprovedMandate(t, run);
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse({
+				transactionId: 'txn_9',
+				status: 'awaiting_result',
+				credentials: { token: 't', dynamicCvv: 'c', expiryMonth: '12', expiryYear: '2030' }
+			})
+		);
+		const charge = await run.asUser.action(api.payments.mandateCharge, {
+			mandateId: setup.mandateId,
+			amount: '40.00',
+			currency: 'USD',
+			description: 'Order 8842',
+			...auth(run)
+		});
+
+		// Prava may have accepted APPROVED even though the client saw a transport error.
+		fetchMock.mockRejectedValueOnce(new Error('network lost after commit'));
+		await expect(
+			run.asUser.action(api.payments.mandateReport, {
+				chargeId: charge.chargeId,
+				outcome: 'approved',
+				...auth(run)
+			})
+		).rejects.toThrow(/network lost after commit/);
+
+		const afterLoss = await t.run(async (ctx) => ctx.db.get(charge.chargeId));
+		expect(afterLoss).toMatchObject({ reportOutcome: 'approved' });
+		expect(afterLoss?.reportingStartedAt).toBeUndefined();
+		expect(afterLoss?.reportedAt).toBeUndefined();
+
+		fetchMock.mockClear();
+		await expect(
+			run.asUser.action(api.payments.mandateReport, {
+				chargeId: charge.chargeId,
+				outcome: 'declined',
+				...auth(run)
+			})
+		).rejects.toThrow(/approved report in progress/);
+		expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/report'))).toBe(false);
+
+		// Same-outcome retry can still re-send (Prava is idempotent on txn id).
+		fetchMock.mockResolvedValueOnce(jsonResponse({ status: 'completed', mandateStatus: 'active' }));
+		const retry = await run.asUser.action(api.payments.mandateReport, {
+			chargeId: charge.chargeId,
+			outcome: 'approved',
+			...auth(run)
+		});
+		expect(retry).toEqual({ reported: true });
+		expect(JSON.parse(String(fetchMock.mock.calls.at(-1)![1]?.body))).toMatchObject({
+			txn_status: 'APPROVED'
+		});
+	});
+
 	it('reports an in-flight claim as not-yet-reported instead of claiming success', async () => {
 		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const t = initConvexTest();

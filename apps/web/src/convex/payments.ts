@@ -503,14 +503,21 @@ export const claimChargeReport = internalMutation({
 });
 
 export const releaseChargeReport = internalMutation({
-	args: { chargeId: v.id('mandateCharges'), userId: v.string() },
+	args: {
+		chargeId: v.id('mandateCharges'),
+		userId: v.string(),
+		/** Only clear the bound outcome when no report request can have reached
+		 * Prava yet (e.g. missing local ids). After a transport error the remote
+		 * may already have committed, so the first-claimed outcome must stick. */
+		clearOutcome: v.optional(v.boolean())
+	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const charge = await ownedCharge(ctx, args.chargeId, args.userId);
 		if (!charge.reportedAt) {
 			await ctx.db.patch(args.chargeId, {
 				reportingStartedAt: undefined,
-				reportOutcome: undefined,
+				...(args.clearOutcome ? { reportOutcome: undefined } : {}),
 				updatedAt: Date.now()
 			});
 		}
@@ -970,7 +977,8 @@ export const mandateReport = action({
 		if (!charge.pravaTransactionId) {
 			await ctx.runMutation(internal.payments.releaseChargeReport, {
 				chargeId: charge._id,
-				userId: actor.userId
+				userId: actor.userId,
+				clearOutcome: true
 			});
 			throw new Error('Prava transaction id is unavailable.');
 		}
@@ -981,13 +989,14 @@ export const mandateReport = action({
 		if (!mandate?.pravaMandateId) {
 			await ctx.runMutation(internal.payments.releaseChargeReport, {
 				chargeId: charge._id,
-				userId: actor.userId
+				userId: actor.userId,
+				clearOutcome: true
 			});
 			throw new Error('Prava mandate id is unavailable.');
 		}
-		// The outcome being reported is the one bound at claim time, not
-		// whatever this caller passed — a stale retry can't switch it.
-		const outcome = charge.reportOutcome ?? args.outcome;
+		// claimChargeReport rejects a conflicting outcome, so args.outcome is
+		// the bound terminal state for this charge.
+		const outcome = args.outcome;
 		try {
 			await pravaRequest(
 				`/v1/mandates/${encodeURIComponent(mandate.pravaMandateId)}/charges/${encodeURIComponent(charge.pravaTransactionId)}/report`,
@@ -1001,6 +1010,10 @@ export const mandateReport = action({
 				}
 			);
 		} catch (error) {
+			// Ambiguous delivery: the POST may have committed remotely. Drop the
+			// in-flight claim so a same-outcome retry can re-send (idempotent on
+			// transaction id), but keep reportOutcome so the opposite result
+			// cannot be reserved later.
 			await ctx.runMutation(internal.payments.releaseChargeReport, {
 				chargeId: charge._id,
 				userId: actor.userId
