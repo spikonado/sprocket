@@ -295,6 +295,19 @@ export const vBrowserTaskResult = v.object({
 	truncated: v.boolean()
 });
 
+export const vBrowserObservedAction = v.object({
+	selector: v.string(),
+	description: v.string(),
+	method: v.optional(v.string()),
+	arguments: v.optional(v.array(v.string()))
+});
+
+export const vBrowserObserveResult = v.object({
+	actions: v.array(vBrowserObservedAction),
+	text: v.string(),
+	truncated: v.boolean()
+});
+
 export const vReadSkillResult = v.object({
 	name: v.string(),
 	description: v.string(),
@@ -335,6 +348,8 @@ export const vExecutorJobResult = v.union(
 	vScrapeUrlResult,
 	vWebSearchResult,
 	vArtifactResult,
+	vBrowserTaskResult,
+	vBrowserObserveResult,
 	vMandateSetupResult,
 	vMandateStatusResult,
 	vMandateListResult,

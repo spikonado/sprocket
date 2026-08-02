@@ -107,6 +107,44 @@ describe('executor', () => {
 		expect(state.run?.activeJobId ?? undefined).toBeUndefined();
 	});
 
+	it('accepts browser tool result shapes', async () => {
+		const t = initConvexTest();
+		const { asUser, runId, jobId, claimId, executionSecret } = await seedRunWithJob(t, {
+			executionSecret: 'executor-browser-result-secret'
+		});
+
+		// browser_act / browser_extract
+		const taskResult = { text: 'success: true', truncated: false };
+		await expect(
+			asUser.mutation(api.executor.complete, {
+				jobId,
+				result: taskResult,
+				runId,
+				claimId,
+				executionSecret
+			})
+		).resolves.toBe(true);
+
+		// browser_observe, on a fresh job
+		const observeResult = {
+			actions: [{ selector: 'xpath=/html/body/button', description: 'Pay' }],
+			text: '[]',
+			truncated: false
+		};
+		const second = await seedRunWithJob(t, {
+			executionSecret: 'executor-browser-observe-secret'
+		});
+		await expect(
+			second.asUser.mutation(api.executor.complete, {
+				jobId: second.jobId,
+				result: observeResult,
+				runId: second.runId,
+				claimId: second.claimId,
+				executionSecret: second.executionSecret
+			})
+		).resolves.toBe(true);
+	});
+
 	it('is idempotent for an already completed job and ignores terminal runs', async () => {
 		const t = initConvexTest();
 		const { asUser, runId, jobId, claimId, executionSecret } = await seedRunWithJob(t, {
