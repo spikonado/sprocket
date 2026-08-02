@@ -6,7 +6,11 @@ import { api, internal } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
 import { Stagehand } from '@browserbasehq/stagehand';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
-import { vBrowserTaskResult } from '@convex/lib/validators';
+import {
+	vBrowserObservedAction,
+	vBrowserObserveResult,
+	vBrowserTaskResult
+} from '@convex/lib/validators';
 
 // The browsing sub-agent's model. Uses the same OpenAI key as the main agent.
 const DEFAULT_MODEL = 'openai/gpt-5.6-luna';
@@ -15,13 +19,6 @@ const MAX_RESULT_CHARS = 8_000;
 // Bound the structured actions array itself, not just its text mirror — a
 // hostile or complex page can make Stagehand return thousands of actions.
 const MAX_OBSERVE_ACTIONS = 50;
-
-const vAction = v.object({
-	selector: v.string(),
-	description: v.string(),
-	method: v.optional(v.string()),
-	arguments: v.optional(v.array(v.string()))
-});
 
 function config() {
 	const apiKey = process.env.BROWSERBASE_API_KEY?.trim();
@@ -78,18 +75,36 @@ function boundActions<T>(actions: T[]): { actions: T[]; truncated: boolean } {
 	return { actions: kept, truncated: false };
 }
 
-/** Attach a Stagehand to the run's Browserbase session, creating and
- * persisting it on first use so all of the run's browser calls share it. */
-async function attachStagehand(
-	ctx: ActionCtx,
-	userId: string,
-	runId: Doc<'runs'>['_id']
-): Promise<Stagehand> {
-	const { apiKey, projectId, model } = config();
-	const existing: { browserbaseSessionId: string } | null = await ctx.runQuery(
-		internal.browserSessions.getForRun,
-		{ runId, userId }
-	);
+// Browserbase hard-stops a session when its `timeout` elapses, regardless of
+// activity. Give thread sessions an hour and rotate a little early.
+const SESSION_TIMEOUT_SECONDS = 3600;
+const SESSION_REUSE_MS = 55 * 60 * 1000;
+
+type StagehandConfig = ReturnType<typeof config>;
+
+/** Fetch the embeddable live view URL for a running session. Best effort:
+ * the browser tool call must not fail because observability did; a missing
+ * URL is backfilled on a later call. */
+async function fetchLiveViewUrl(apiKey: string, sessionId: string): Promise<string | null> {
+	try {
+		const response = await fetch(`https://api.browserbase.com/v1/sessions/${sessionId}/debug`, {
+			headers: { 'x-bb-api-key': apiKey }
+		});
+		if (!response.ok) return null;
+		const urls: { debuggerFullscreenUrl?: unknown } = await response.json();
+		return typeof urls.debuggerFullscreenUrl === 'string' ? urls.debuggerFullscreenUrl : null;
+	} catch {
+		return null;
+	}
+}
+
+/** Start a Stagehand on Browserbase, resuming `browserbaseSessionID` when
+ * given. Returns null when a resume fails (dead session) so the caller can
+ * fall back to a fresh one; failures of a fresh session throw. */
+async function startStagehand(
+	{ apiKey, projectId, model }: StagehandConfig,
+	browserbaseSessionID?: string
+): Promise<Stagehand | null> {
 	const stagehand = new Stagehand({
 		env: 'BROWSERBASE',
 		apiKey,
@@ -97,15 +112,66 @@ async function attachStagehand(
 		model,
 		selfHeal: true,
 		keepAlive: true,
-		...(existing ? { browserbaseSessionID: existing.browserbaseSessionId } : {})
+		// Convex actions can't spawn pino's transport worker, which the
+		// default pretty-printing logger needs — it fails to resolve
+		// pino-pretty and crashes Stagehand construction.
+		disablePino: true,
+		browserbaseSessionCreateParams: { keepAlive: true, timeout: SESSION_TIMEOUT_SECONDS },
+		...(browserbaseSessionID ? { browserbaseSessionID } : {})
 	});
-	await stagehand.init();
-	if (!existing && stagehand.browserbaseSessionId) {
-		await ctx.runMutation(internal.browserSessions.insert, {
+	try {
+		await stagehand.init();
+		return stagehand;
+	} catch (error) {
+		await stagehand.close().catch(() => {});
+		if (browserbaseSessionID) return null;
+		throw error;
+	}
+}
+
+/** Attach a Stagehand to the thread's shared Browserbase session, creating or
+ * rotating it as needed. All runs and tool calls in a thread share one
+ * session so the agent keeps its page state between turns. */
+async function attachStagehand(
+	ctx: ActionCtx,
+	userId: string,
+	runId: Doc<'runs'>['_id'],
+	threadId: Doc<'threadRecords'>['_id']
+): Promise<Stagehand> {
+	const cfg = config();
+	const existing = await ctx.runQuery(internal.browserSessions.getForThread, {
+		threadId,
+		userId
+	});
+	const reusable = existing && Date.now() - existing.startedAt < SESSION_REUSE_MS ? existing : null;
+
+	let stagehand = reusable ? await startStagehand(cfg, reusable.browserbaseSessionId) : null;
+	stagehand ??= await startStagehand(cfg);
+	if (!stagehand) {
+		throw new Error('Failed to start a browser session.');
+	}
+
+	const browserbaseSessionId = stagehand.browserbaseSessionId;
+	if (!browserbaseSessionId) {
+		throw new Error('Stagehand did not report a Browserbase session id.');
+	}
+	if (browserbaseSessionId !== reusable?.browserbaseSessionId) {
+		const liveViewUrl = await fetchLiveViewUrl(cfg.apiKey, browserbaseSessionId);
+		await ctx.runMutation(internal.browserSessions.upsertForThread, {
+			threadId,
 			runId,
 			userId,
-			browserbaseSessionId: stagehand.browserbaseSessionId
+			browserbaseSessionId,
+			...(liveViewUrl ? { liveViewUrl } : {})
 		});
+	} else if (existing && !existing.liveViewUrl) {
+		const liveViewUrl = await fetchLiveViewUrl(cfg.apiKey, browserbaseSessionId);
+		if (liveViewUrl) {
+			await ctx.runMutation(internal.browserSessions.setLiveViewUrl, {
+				threadId,
+				liveViewUrl
+			});
+		}
 	}
 	return stagehand;
 }
@@ -119,7 +185,7 @@ async function gotoIfProvided(stagehand: Stagehand, startUrl?: string): Promise<
 export const act = action({
 	args: {
 		instruction: v.optional(v.string()),
-		action: v.optional(vAction),
+		action: v.optional(vBrowserObservedAction),
 		startUrl: v.optional(v.string()),
 		runId: v.id('runs'),
 		claimId: v.string(),
@@ -128,7 +194,7 @@ export const act = action({
 	returns: vBrowserTaskResult,
 	handler: async (ctx, args): Promise<Infer<typeof vBrowserTaskResult>> => {
 		const actor = await activeActor(ctx, args);
-		const stagehand = await attachStagehand(ctx, actor.userId, args.runId);
+		const stagehand = await attachStagehand(ctx, actor.userId, args.runId, actor.threadId);
 		try {
 			await gotoIfProvided(stagehand, args.startUrl);
 			if (!args.instruction && !args.action) {
@@ -152,10 +218,10 @@ export const observe = action({
 		claimId: v.string(),
 		executionSecret: v.string()
 	},
-	returns: v.object({ actions: v.array(vAction), text: v.string(), truncated: v.boolean() }),
+	returns: vBrowserObserveResult,
 	handler: async (ctx, args) => {
 		const actor = await activeActor(ctx, args);
-		const stagehand = await attachStagehand(ctx, actor.userId, args.runId);
+		const stagehand = await attachStagehand(ctx, actor.userId, args.runId, actor.threadId);
 		try {
 			await gotoIfProvided(stagehand, args.startUrl);
 			const actions = await stagehand.observe(args.instruction);
@@ -183,7 +249,7 @@ export const extract = action({
 	returns: vBrowserTaskResult,
 	handler: async (ctx, args): Promise<Infer<typeof vBrowserTaskResult>> => {
 		const actor = await activeActor(ctx, args);
-		const stagehand = await attachStagehand(ctx, actor.userId, args.runId);
+		const stagehand = await attachStagehand(ctx, actor.userId, args.runId, actor.threadId);
 		try {
 			await gotoIfProvided(stagehand, args.startUrl);
 			const result = await stagehand.extract(args.instruction);

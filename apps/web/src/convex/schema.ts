@@ -97,9 +97,11 @@ export default defineSchema({
 		updatedAt: v.number()
 	}),
 	browserSessions: defineTable({
+		threadId: v.id('threadRecords'),
 		runId: v.id('runs'),
 		userId: v.string(),
 		browserbaseSessionId: v.string(),
+		liveViewUrl: v.optional(v.string()),
 		startedAt: v.number()
-	}).index('by_run', ['runId'])
+	}).index('by_thread', ['threadId'])
 });

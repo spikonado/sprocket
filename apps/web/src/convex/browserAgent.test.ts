@@ -23,8 +23,12 @@ const extract = vi.fn().mockResolvedValue({ total: '₹1,240', items: 2 });
 const init = vi.fn().mockResolvedValue(undefined);
 const close = vi.fn().mockResolvedValue(undefined);
 const goto = vi.fn().mockResolvedValue(undefined);
+const stagehandOptions: Record<string, unknown>[] = [];
 vi.mock('@browserbasehq/stagehand', () => ({
 	Stagehand: class {
+		constructor(options: Record<string, unknown>) {
+			stagehandOptions.push(options);
+		}
 		init = init;
 		close = close;
 		act = act;
@@ -35,9 +39,12 @@ vi.mock('@browserbasehq/stagehand', () => ({
 	}
 }));
 
-async function startRun(t: ConvexTestInstance) {
-	const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
-	const executionSecret = 'browser-task-secret';
+async function startRun(
+	t: ConvexTestInstance,
+	asUser: Awaited<ReturnType<typeof seedOwnedThread>>['asUser'],
+	threadId: Awaited<ReturnType<typeof seedOwnedThread>>['threadId']
+) {
+	const executionSecret = `browser-task-secret-${Math.random()}`;
 	const created = await createQueuedRun(
 		asUser,
 		threadId,
@@ -55,6 +62,7 @@ async function startRun(t: ConvexTestInstance) {
 
 afterEach(() => {
 	vi.clearAllMocks();
+	stagehandOptions.length = 0;
 	delete process.env.BROWSERBASE_API_KEY;
 	delete process.env.BROWSERBASE_PROJECT_ID;
 	delete process.env.OPENAI_API_KEY;
@@ -66,7 +74,8 @@ describe('browserAgent', () => {
 		process.env.BROWSERBASE_PROJECT_ID = 'project-1';
 		process.env.OPENAI_API_KEY = 'openai_key';
 		const t = initConvexTest();
-		const run = await startRun(t);
+		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
+		const run = await startRun(t, asUser, threadId);
 
 		const out = await t.action(api.browserAgent.act, {
 			instruction: 'add the part to cart and stop at the payment form',
@@ -83,14 +92,42 @@ describe('browserAgent', () => {
 		expect(out).toMatchObject({ truncated: false });
 		expect(String((out as { text: string }).text)).toContain('Action performed');
 
+		// First call in a thread creates a long-lived keep-alive session.
+		expect(stagehandOptions.at(-1)).toMatchObject({
+			keepAlive: true,
+			browserbaseSessionCreateParams: { keepAlive: true, timeout: 3600 }
+		});
+		expect(stagehandOptions.at(-1)).not.toHaveProperty('browserbaseSessionID');
+
 		const stored = await t.run(async (ctx) =>
 			ctx.db
 				.query('browserSessions')
-				.withIndex('by_run', (query) => query.eq('runId', run.runId))
+				.withIndex('by_thread', (query) => query.eq('threadId', threadId))
 				.collect()
 		);
 		expect(stored).toHaveLength(1);
 		expect(stored[0]).toMatchObject({ browserbaseSessionId: 'bb-session-task' });
+
+		// A later run in the same thread resumes the same Browserbase session.
+		await t.run(async (ctx) => await ctx.db.patch(run.runId, { status: 'completed' }));
+		const secondRun = await startRun(t, asUser, threadId);
+		await t.action(api.browserAgent.act, {
+			instruction: 'continue on the same page',
+			runId: secondRun.runId,
+			claimId: secondRun.claimId,
+			executionSecret: secondRun.executionSecret
+		});
+		expect(stagehandOptions.at(-1)).toMatchObject({
+			browserbaseSessionID: 'bb-session-task'
+		});
+
+		const afterResume = await t.run(async (ctx) =>
+			ctx.db
+				.query('browserSessions')
+				.withIndex('by_thread', (query) => query.eq('threadId', threadId))
+				.collect()
+		);
+		expect(afterResume).toHaveLength(1);
 	});
 
 	it('observe returns candidate actions, act runs one, extract reads page data', async () => {
@@ -98,7 +135,8 @@ describe('browserAgent', () => {
 		process.env.BROWSERBASE_PROJECT_ID = 'project-1';
 		process.env.OPENAI_API_KEY = 'openai_key';
 		const t = initConvexTest();
-		const run = await startRun(t);
+		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
+		const run = await startRun(t, asUser, threadId);
 		const auth = {
 			runId: run.runId,
 			claimId: run.claimId,
@@ -148,7 +186,8 @@ describe('browserAgent', () => {
 			}))
 		);
 		const t = initConvexTest();
-		const run = await startRun(t);
+		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
+		const run = await startRun(t, asUser, threadId);
 
 		const observed = await t.action(api.browserAgent.observe, {
 			instruction: 'find everything',
