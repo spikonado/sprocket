@@ -713,28 +713,6 @@ describe('payments mandates', () => {
 		expect(stored).toMatchObject({ status: 'active', pravaMandateId: 'mdt_live' });
 	});
 
-	it('does not link a listed mandate to a same-name approval for another URL or country', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
-		const t = initConvexTest();
-		const run = await startRun(t, 'user_alice');
-		const { setup } = await createApprovedMandate(t, run, [
-			liveListedMandate({
-				id: 'mdt_other',
-				merchantUrl: 'https://different-merchant.example',
-				countryCode: 'GB'
-			})
-		]);
-
-		const status = await run.asUser.action(api.payments.mandateStatus, {
-			mandateId: setup.mandateId,
-			...auth(run)
-		});
-		expect(status.status).toBe('pending');
-		expect(status.pravaMandateId).toBeUndefined();
-		const stored = await t.run(async (ctx) => await ctx.db.get(setup.mandateId));
-		expect(stored?.pravaMandateId).toBeUndefined();
-	});
-
 	it('lists only the calling user’s mandates via the user-facing action', async () => {
 		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const fetchMock = vi.fn().mockResolvedValue(

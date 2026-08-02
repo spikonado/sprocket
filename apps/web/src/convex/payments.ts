@@ -174,31 +174,9 @@ type PravaMandate = {
 	approvedAmount?: string;
 	currency?: string;
 	merchantName?: string | null;
-	merchantUrl?: string | null;
-	merchant_url?: string | null;
-	countryCode?: string | null;
-	country_code_iso2?: string | null;
 	validUntil?: string | null;
 	renewsAt?: string | null;
 };
-
-function normalizeMerchantUrl(url: string): string {
-	return url.trim().toLowerCase().replace(/\/+$/, '');
-}
-
-function normalizeCountryCode(code: string): string {
-	return code.trim().toUpperCase();
-}
-
-function pravaMerchantUrl(mandate: PravaMandate): string | undefined {
-	const url = mandate.merchantUrl ?? mandate.merchant_url;
-	return url?.trim() ? url : undefined;
-}
-
-function pravaCountryCode(mandate: PravaMandate): string | undefined {
-	const code = mandate.countryCode ?? mandate.country_code_iso2;
-	return code?.trim() ? code : undefined;
-}
 
 function pravaStatusToLocal(status: string | undefined): Infer<typeof vMandateStatus> | undefined {
 	return isMandateStatus(status) ? status : undefined;
@@ -841,18 +819,8 @@ function isMatchingLivePravaMandate(mandate: Doc<'mandates'>, prava: PravaMandat
 	if (approvedMinor === undefined || approvedMinor !== mandate.amountCap) return false;
 	if (mandate.scope === 'listed') {
 		const localName = mandate.merchantName?.trim();
-		const localUrl = mandate.merchantUrl?.trim();
-		const localCountry = mandate.countryCode?.trim();
-		const remoteUrl = pravaMerchantUrl(prava);
-		const remoteCountry = pravaCountryCode(prava);
-		if (!localName || !localUrl || !localCountry || !remoteUrl || !remoteCountry) {
-			return false;
-		}
-		return (
-			(prava.merchantName ?? '').toLowerCase() === localName.toLowerCase() &&
-			normalizeMerchantUrl(remoteUrl) === normalizeMerchantUrl(localUrl) &&
-			normalizeCountryCode(remoteCountry) === normalizeCountryCode(localCountry)
-		);
+		if (!localName) return false;
+		return (prava.merchantName ?? '').toLowerCase() === localName.toLowerCase();
 	}
 	return true;
 }
