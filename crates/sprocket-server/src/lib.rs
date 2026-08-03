@@ -10,10 +10,12 @@ pub use config::{DEFAULT_DEV_WEB_URL, DEFAULT_PORT, SESSION_COOKIE_NAME, ServerC
 use static_dir::is_valid_static_dir;
 pub use static_dir::{INSTALLED_WEB_DIR, resolve_static_dir};
 
+use std::io::ErrorKind;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use anyhow::Context as _;
 use axum::Json;
 use axum::Router;
 use axum::http::StatusCode;
@@ -135,7 +137,19 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
     };
 
     let dev_web_url = config.api_only.then(default_dev_web_url).flatten();
-    let listener = tokio::net::TcpListener::bind(config.bind_address()).await?;
+    let listener = match tokio::net::TcpListener::bind(config.bind_address()).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            let hint = match error.kind() {
+                // Covers a real port conflict and Windows WSAEACCES on reserved port ranges.
+                ErrorKind::AddrInUse | ErrorKind::PermissionDenied => {
+                    "the port may already be in use or reserved; set SPROCKET_PORT to a free port"
+                }
+                _ => "check that SPROCKET_HOST and SPROCKET_PORT form a valid, available address",
+            };
+            return Err(error).context(format!("failed to bind {}: {hint}", config.bind_address()));
+        }
+    };
 
     if options.quiet {
         println!("SPROCKET_LISTENING={}", startup.listen_url);
