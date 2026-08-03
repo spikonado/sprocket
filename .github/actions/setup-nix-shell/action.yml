@@ -47,7 +47,7 @@ runs:
     # The flake.lock hash retires old closures via the 7-day idle eviction,
     # since concurrent clone-and-commit makes in-store collection unsafe.
     - name: Mount Nix store
-      uses: useblacksmith/stickydisk@v1.4.0
+      uses: useblacksmith/stickydisk@v1.5.0
       with:
         key: >-
           ${{ github.repository }}-nix-store-${{ inputs.trusted == 'true' && 'trusted'
