@@ -2,12 +2,12 @@
 
 **Goal**: To make the world's best platform for developing hardware and software.
 
-Sprocket is a lightweight agent that can <ins>create hardware designs</ins> and write code.
+Here's what makes Sprocket special:
 
-Sprocket retrieves <ins>best-in-class context from the web</ins> for everything it does. It is therefore incredibly reliable.
-In terms of hardware design, Sprocket can make beautiful schematics in React, create your BOM, and create detailed assembly instructions.
-
-And <ins>here's the best part</ins>: Sprocket can (on its own) <ins>buy anything from any website</ins> when you tell it to do so. From hardware parts to SaaS subscriptions.
+- The only AI agent that can work on both <ins>hardware</ins> and <ins>software</ins>.
+- Retrieves best-in-class <ins>context from the web</ins> for everything it does, so it stays <ins>incredibly reliable</ins>.
+- <ins>Buys anything from any website</ins> when you ask, from hardware parts to SaaS subscriptions.
+- Makes <ins>beautifully detailed schematics</ins>, creates your <ins>BOM</ins>, and writes <ins>assembly instructions</ins>.
 
 [Sprocket Demo](https://www.youtube.com/watch?v=E8KWO3Vh9YU)
 
