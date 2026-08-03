@@ -6,6 +6,7 @@ The best and only AI agent for developing both <ins>hardware</ins> and <ins>soft
 
 Here's what makes Sprocket special:
 
+- The only AI agent that can work on both <ins>hardware</ins> and <ins>software</ins>
 - Retrieves best-in-class <ins>context from the web</ins> for everything it does, so it stays <ins>incredibly reliable</ins>.
 - <ins>Buys anything from any website</ins> when you ask, from hardware parts to SaaS subscriptions.
 - Makes <ins>beautifully detailed schematics</ins>, creates your <ins>BOM</ins>, and writes <ins>assembly instructions</ins>.
