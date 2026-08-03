@@ -14,6 +14,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use anyhow::Context as _;
 use axum::Json;
 use axum::Router;
 use axum::http::StatusCode;
@@ -135,7 +136,14 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
     };
 
     let dev_web_url = config.api_only.then(default_dev_web_url).flatten();
-    let listener = tokio::net::TcpListener::bind(config.bind_address()).await?;
+    let listener = tokio::net::TcpListener::bind(config.bind_address())
+        .await
+        .with_context(|| {
+            format!(
+                "failed to bind {}; set SPROCKET_PORT to a free port",
+                config.bind_address()
+            )
+        })?;
 
     if options.quiet {
         println!("SPROCKET_LISTENING={}", startup.listen_url);

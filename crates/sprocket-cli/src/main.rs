@@ -172,7 +172,10 @@ async fn open_running_web_app(
             "Port {} is already used by another service; set SPROCKET_PORT to a free port",
             server.port
         ),
-        Err(error) if error.is_connect() => return Ok(false),
+        // No Sprocket server proved itself. Windows filter drivers can swallow
+        // SYNs to dead loopback ports, so a timeout is not a fatal signal here;
+        // the subsequent TCP bind is the authoritative check.
+        Err(error) if error.is_connect() || error.is_timeout() => return Ok(false),
         Err(error) => return Err(error).context("failed to check for a running Sprocket server"),
     };
     let pairing_proof = response
