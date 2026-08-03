@@ -2,8 +2,6 @@
 
 **Goal**: To make the world's best platform for developing hardware and software.
 
-The best and only AI agent for developing both <ins>hardware</ins> and <ins>software</ins>.
-
 Here's what makes Sprocket special:
 
 - The only AI agent that can work on both <ins>hardware</ins> and <ins>software</ins>.
