@@ -3,6 +3,8 @@ import type { Doc } from '@convex/_generated/dataModel';
 // Heartbeats both write and reactively re-run `projects.listMine` on every
 // connected client, so cadence is expensive. The TTL comfortably exceeds two
 // throttle intervals so one skipped/hidden-tab beat never flaps the status.
+// This staleness is currently invisible: no UI consumes executorStatus yet —
+// revisit the TTL before surfacing a connected/disconnected badge.
 export const EXECUTOR_HEARTBEAT_TTL_MS = 300_000;
 export const EXECUTOR_HEARTBEAT_WRITE_THROTTLE_MS = 90_000;
 

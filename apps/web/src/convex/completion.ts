@@ -53,6 +53,9 @@ const SUMMARIZE_ACCEPTANCE_CHECK_INTERVAL_MS = 5_000;
 // flush, so a fixed-interval poll mostly burns query calls. Only poll when the
 // provider stream has been silent (long model-thinking gaps carry no flush).
 const COMPLETION_ACCEPTANCE_CHECK_LULL_MS = 10_000;
+// Non-persisted parts (tool-input deltas, step boundaries) postpone the lull
+// without producing any fenced flush, so cap the gap between polls regardless.
+const COMPLETION_ACCEPTANCE_CHECK_MAX_INTERVAL_MS = 30_000;
 // Persisting a growing message rewrites and reactively rereads the whole document.
 // Keep the UI responsive without paying that cost for every token-sized provider delta.
 const COMPLETION_STREAM_FLUSH_INTERVAL_MS = 500;
@@ -367,6 +370,7 @@ async function collectStreamingCompletion(
 	try {
 		let nextPart = iterator.next();
 		let lastStreamPartAt = Date.now();
+		let lastAcceptanceCheckAt = lastStreamPartAt;
 		let nextAcceptanceCheckAt = lastStreamPartAt + COMPLETION_ACCEPTANCE_CHECK_LULL_MS;
 		while (true) {
 			if (pendingEvents.length > 0 && nextFlushAt !== undefined && Date.now() >= nextFlushAt) {
@@ -405,11 +409,18 @@ async function collectStreamingCompletion(
 			}
 			if (next.type === 'acceptance-check') {
 				const now = Date.now();
-				if (now - lastStreamPartAt >= COMPLETION_ACCEPTANCE_CHECK_LULL_MS) {
+				if (
+					now - lastStreamPartAt >= COMPLETION_ACCEPTANCE_CHECK_LULL_MS ||
+					now - lastAcceptanceCheckAt >= COMPLETION_ACCEPTANCE_CHECK_MAX_INTERVAL_MS
+				) {
 					await assertCompletionStillAccepted(ctx, attempt);
+					lastAcceptanceCheckAt = now;
 					nextAcceptanceCheckAt = now + COMPLETION_ACCEPTANCE_CHECK_LULL_MS;
 				} else {
-					nextAcceptanceCheckAt = lastStreamPartAt + COMPLETION_ACCEPTANCE_CHECK_LULL_MS;
+					nextAcceptanceCheckAt = Math.min(
+						lastStreamPartAt + COMPLETION_ACCEPTANCE_CHECK_LULL_MS,
+						lastAcceptanceCheckAt + COMPLETION_ACCEPTANCE_CHECK_MAX_INTERVAL_MS
+					);
 				}
 				continue;
 			}

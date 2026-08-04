@@ -195,6 +195,18 @@ export const vThreadRecordDoc = v.object({
 	...threadRecordFields
 });
 
+/**
+ * threads.getByThreadId merges the threadUsage counters back into the legacy
+ * response shape for older clients, so its contract keeps the pre-migration
+ * required `totalTokensProcessed` even while the table field is optional.
+ */
+export const vThreadRecordWithUsageDoc = v.object({
+	_id: v.id('threadRecords'),
+	_creationTime: v.number(),
+	...threadRecordFields,
+	totalTokensProcessed: v.number()
+});
+
 export const vRunDoc = v.object({
 	_id: v.id('runs'),
 	_creationTime: v.number(),

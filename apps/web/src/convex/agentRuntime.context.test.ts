@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { api } from '@convex/_generated/api';
+import { api, internal } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { executionSecretHash } from '@convex/lib/auth';
 import {
@@ -192,6 +192,32 @@ describe('agentRuntime context accounting', () => {
 		expect(await readThreadUsage(t, threadId)).toMatchObject({
 			contextTokens: 7_000,
 			totalTokensProcessed: 110_000
+		});
+	});
+
+	it('sweeps legacy counters in batches via the cron mutation', async () => {
+		const t = initConvexTest();
+		const { threadId } = await seedOwnedThread(t);
+		const { threadId: otherThreadId } = await seedOwnedThread(t, 'user_bob');
+		await seedLegacyUsage(t, threadId);
+		await seedLegacyUsage(t, otherThreadId);
+
+		await t.mutation(internal.threads.migrateLegacyUsageBatch, {});
+
+		for (const migratedId of [threadId, otherThreadId]) {
+			const thread = await t.run(async (ctx) => ctx.db.get(migratedId));
+			expect(thread).not.toHaveProperty('contextTokens');
+			expect(thread).not.toHaveProperty('totalTokensProcessed');
+			expect(await readThreadUsage(t, migratedId)).toMatchObject({
+				contextTokens: 4_000,
+				totalTokensProcessed: 100_000
+			});
+		}
+
+		// Clean table: the sweep is a no-op.
+		await t.mutation(internal.threads.migrateLegacyUsageBatch, {});
+		expect(await readThreadUsage(t, threadId)).toMatchObject({
+			totalTokensProcessed: 100_000
 		});
 	});
 
