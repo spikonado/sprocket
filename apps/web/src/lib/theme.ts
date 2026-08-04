@@ -1,6 +1,6 @@
 export type SprocketTheme = 'light' | 'dark';
 
-export const DEFAULT_THEME: SprocketTheme = 'dark';
+export const DEFAULT_THEME: SprocketTheme = 'light';
 
 export function isSprocketTheme(value: unknown): value is SprocketTheme {
 	return value === 'light' || value === 'dark';

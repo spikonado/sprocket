@@ -117,7 +117,7 @@ export const agentQuestionFields = {
 export const uiPreferencesFields = {
 	userId: v.string(),
 	lastThreadId: v.optional(v.id('threadRecords')),
-	theme: v.union(v.literal('light'), v.literal('dark')),
+	theme: v.optional(v.union(v.literal('light'), v.literal('dark'))),
 	paymentsEmail: v.optional(v.string())
 };
 

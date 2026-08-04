@@ -4,7 +4,6 @@ import { getUserId } from '@convex/lib/auth';
 import { vUiPreferencesDoc } from '@convex/lib/docs';
 
 const vTheme = v.union(v.literal('light'), v.literal('dark'));
-const DEFAULT_THEME = 'dark' as const;
 
 export const getMine = query({
 	args: {},
@@ -39,8 +38,7 @@ export const setLastThread = mutation({
 
 		const id = await ctx.db.insert('uiPreferences', {
 			userId,
-			lastThreadId: args.threadId,
-			theme: DEFAULT_THEME
+			lastThreadId: args.threadId
 		});
 		return await ctx.db.get(id);
 	}
@@ -89,7 +87,6 @@ export const setPaymentsEmail = mutation({
 		} else {
 			await ctx.db.insert('uiPreferences', {
 				userId,
-				theme: DEFAULT_THEME,
 				paymentsEmail: email
 			});
 		}
