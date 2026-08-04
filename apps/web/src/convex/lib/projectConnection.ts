@@ -1,7 +1,10 @@
 import type { Doc } from '@convex/_generated/dataModel';
 
-export const EXECUTOR_HEARTBEAT_TTL_MS = 45_000;
-export const EXECUTOR_HEARTBEAT_WRITE_THROTTLE_MS = 20_000;
+// Heartbeats both write and reactively re-run `projects.listMine` on every
+// connected client, so cadence is expensive. The TTL comfortably exceeds two
+// throttle intervals so one skipped/hidden-tab beat never flaps the status.
+export const EXECUTOR_HEARTBEAT_TTL_MS = 300_000;
+export const EXECUTOR_HEARTBEAT_WRITE_THROTTLE_MS = 90_000;
 
 type ProjectDoc = Doc<'projects'>;
 

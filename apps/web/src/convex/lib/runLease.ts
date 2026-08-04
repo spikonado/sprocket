@@ -1,4 +1,7 @@
-export const RUN_CLAIM_LEASE_DURATION_MS = 60_000;
+// Longer leases mean fewer renewal writes; every renewal reactively re-runs
+// thread/run subscriptions for every connected client. The trade-off is a
+// longer worst-case wait before a dead executor's run can be taken over.
+export const RUN_CLAIM_LEASE_DURATION_MS = 120_000;
 
 type ClaimableRun = {
 	status: string;

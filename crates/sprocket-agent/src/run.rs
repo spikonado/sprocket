@@ -19,8 +19,8 @@ use crate::types::{RunAgentRequest, deserialize_agent_history};
 
 // Keep RUN_CLAIM_LEASE_DURATION synchronized with
 // apps/web/src/convex/lib/runLease.ts (RUN_CLAIM_LEASE_DURATION_MS).
-const RUN_CLAIM_LEASE_DURATION: Duration = Duration::from_secs(60);
-const RUN_CLAIM_RENEW_INTERVAL: Duration = Duration::from_secs(20);
+const RUN_CLAIM_LEASE_DURATION: Duration = Duration::from_secs(120);
+const RUN_CLAIM_RENEW_INTERVAL: Duration = Duration::from_secs(40);
 const RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(8);
 const RUN_CLAIM_EXPIRY_SAFETY_MARGIN: Duration = Duration::from_secs(5);
 const RUN_CLAIM_RENEW_RETRY_DELAY: Duration = Duration::from_millis(250);
@@ -976,7 +976,9 @@ mod claim_lease_tests {
                 async { Ok((true, Instant::now())) }
             },
             async {
-                sleep(Duration::from_secs(50)).await;
+                // Outlasts two renewal intervals so a post-reclaim renewal
+                // happens before the work completes.
+                sleep(Duration::from_secs(100)).await;
                 "done"
             },
         )

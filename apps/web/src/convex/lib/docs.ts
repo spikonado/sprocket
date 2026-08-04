@@ -42,12 +42,22 @@ export const threadRecordFields = {
 	selectedModel: vModelId,
 	reasoningEffort: vReasoningEffort,
 	serviceTier: vServiceTier,
+	// Legacy token accounting. Per-turn counters now live in `threadUsage` so
+	// token writes stop invalidating every thread-scoped subscription. Kept
+	// optional until the lazy migration (lib/threadUsage.ts) has moved all rows.
 	contextTokens: v.optional(v.number()),
-	totalTokensProcessed: v.number(),
+	totalTokensProcessed: v.optional(v.number()),
 	contextSummary: v.optional(v.string()),
 	contextSummaryThroughRunId: v.optional(v.id('runs')),
 	lastMessageAt: v.number(),
 	archivedAt: v.optional(v.number())
+};
+
+export const threadUsageFields = {
+	threadId: v.id('threadRecords'),
+	userId: v.string(),
+	contextTokens: v.optional(v.number()),
+	totalTokensProcessed: v.number()
 };
 
 export const runFields = {

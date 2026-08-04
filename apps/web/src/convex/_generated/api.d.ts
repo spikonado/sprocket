@@ -40,6 +40,7 @@ import type * as lib_runLease from "../lib/runLease.js";
 import type * as lib_runs from "../lib/runs.js";
 import type * as lib_threadMessages from "../lib/threadMessages.js";
 import type * as lib_threadTranscript from "../lib/threadTranscript.js";
+import type * as lib_threadUsage from "../lib/threadUsage.js";
 import type * as lib_tiers from "../lib/tiers.js";
 import type * as lib_uiModelCatalog from "../lib/uiModelCatalog.js";
 import type * as lib_usageMeters from "../lib/usageMeters.js";
@@ -92,6 +93,7 @@ declare const fullApi: ApiFromModules<{
   "lib/runs": typeof lib_runs;
   "lib/threadMessages": typeof lib_threadMessages;
   "lib/threadTranscript": typeof lib_threadTranscript;
+  "lib/threadUsage": typeof lib_threadUsage;
   "lib/tiers": typeof lib_tiers;
   "lib/uiModelCatalog": typeof lib_uiModelCatalog;
   "lib/usageMeters": typeof lib_usageMeters;

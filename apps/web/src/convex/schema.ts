@@ -13,6 +13,7 @@ import {
 	subscriptionFields,
 	threadMessageFields,
 	threadRecordFields,
+	threadUsageFields,
 	uiPreferencesFields
 } from '@convex/lib/docs';
 import {
@@ -34,6 +35,7 @@ export default defineSchema({
 	threadRecords: defineTable(threadRecordFields)
 		.index('by_userId_lastMessageAt', ['userId', 'lastMessageAt'])
 		.index('by_userId_submissionId', ['userId', 'submissionId']),
+	threadUsage: defineTable(threadUsageFields).index('by_threadId', ['threadId']),
 	runs: defineTable(runFields)
 		.index('by_threadId_startedAt', ['threadId', 'startedAt'])
 		.index('by_threadId_status_startedAt', ['threadId', 'status', 'startedAt'])

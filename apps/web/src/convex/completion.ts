@@ -48,10 +48,14 @@ type CompletionActionResult = Pick<GenerateTextResult, 'text' | 'usage' | 'toolC
 type CompletionRequest = Parameters<typeof generateText>[0];
 type SharedCompletionRequest = Omit<CompletionRequest, 'prompt' | 'messages'>;
 
-const COMPLETION_ACCEPTANCE_CHECK_INTERVAL_MS = 1_000;
+const COMPLETION_ACCEPTANCE_CHECK_INTERVAL_MS = 5_000;
+// While streaming, supersede/cancel fences are enforced on every persisted
+// flush, so a fixed-interval poll mostly burns query calls. Only poll when the
+// provider stream has been silent (long model-thinking gaps carry no flush).
+const COMPLETION_ACCEPTANCE_CHECK_LULL_MS = 10_000;
 // Persisting a growing message rewrites and reactively rereads the whole document.
 // Keep the UI responsive without paying that cost for every token-sized provider delta.
-const COMPLETION_STREAM_FLUSH_INTERVAL_MS = 250;
+const COMPLETION_STREAM_FLUSH_INTERVAL_MS = 500;
 // AI SDK retries only retryable provider failures and honors Retry-After headers.
 // Allow a longer recovery window for short provider rate-limit bursts.
 const MODEL_PROVIDER_MAX_RETRIES = 5;
@@ -362,7 +366,8 @@ async function collectStreamingCompletion(
 	const iterator = result.stream[Symbol.asyncIterator]();
 	try {
 		let nextPart = iterator.next();
-		let nextAcceptanceCheckAt = Date.now() + COMPLETION_ACCEPTANCE_CHECK_INTERVAL_MS;
+		let lastStreamPartAt = Date.now();
+		let nextAcceptanceCheckAt = lastStreamPartAt + COMPLETION_ACCEPTANCE_CHECK_LULL_MS;
 		while (true) {
 			if (pendingEvents.length > 0 && nextFlushAt !== undefined && Date.now() >= nextFlushAt) {
 				await flush();
@@ -399,8 +404,13 @@ async function collectStreamingCompletion(
 				if (acceptanceTimer !== undefined) clearTimeout(acceptanceTimer);
 			}
 			if (next.type === 'acceptance-check') {
-				await assertCompletionStillAccepted(ctx, attempt);
-				nextAcceptanceCheckAt = Date.now() + COMPLETION_ACCEPTANCE_CHECK_INTERVAL_MS;
+				const now = Date.now();
+				if (now - lastStreamPartAt >= COMPLETION_ACCEPTANCE_CHECK_LULL_MS) {
+					await assertCompletionStillAccepted(ctx, attempt);
+					nextAcceptanceCheckAt = now + COMPLETION_ACCEPTANCE_CHECK_LULL_MS;
+				} else {
+					nextAcceptanceCheckAt = lastStreamPartAt + COMPLETION_ACCEPTANCE_CHECK_LULL_MS;
+				}
 				continue;
 			}
 			if (next.type === 'flush') {
@@ -410,6 +420,7 @@ async function collectStreamingCompletion(
 			if (next.value.done) break;
 			const part = next.value.value;
 			nextPart = iterator.next();
+			lastStreamPartAt = Date.now();
 			switch (part.type) {
 				case 'text-start':
 					updateText(part.id, '', part.providerMetadata as JsonValue | undefined);

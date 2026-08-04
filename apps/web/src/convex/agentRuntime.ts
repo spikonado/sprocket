@@ -13,6 +13,7 @@ import {
 	vGetContextResult
 } from '@convex/lib/docs';
 import { appendThreadMessage, getThreadMessage } from '@convex/lib/threadMessages';
+import { assertValidTokenCount, recordThreadUsage } from '@convex/lib/threadUsage';
 import {
 	areImageUploadIdsEqual,
 	attachImageUploads,
@@ -540,6 +541,7 @@ export const saveContextCompaction = mutation({
 		}
 		assertValidTokenCount(args.processedTokens);
 		const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
+		await recordThreadUsage(ctx, thread, { addProcessedTokens: args.processedTokens });
 		let durableSummary:
 			{ contextSummary: string; contextSummaryThroughRunId: Id<'runs'> } | undefined;
 		if (args.persistForFutureRuns) {
@@ -562,10 +564,9 @@ export const saveContextCompaction = mutation({
 				};
 			}
 		}
-		await ctx.db.patch(thread._id, {
-			...(durableSummary ?? {}),
-			totalTokensProcessed: addTokenCounts(thread.totalTokensProcessed, args.processedTokens)
-		});
+		if (durableSummary) {
+			await ctx.db.patch(thread._id, durableSummary);
+		}
 		return true;
 	}
 });
@@ -585,27 +586,13 @@ export const recordContextUsage = mutation({
 		assertValidTokenCount(args.contextTokens);
 		assertValidTokenCount(args.processedTokens);
 		const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
-		await ctx.db.patch(thread._id, {
+		await recordThreadUsage(ctx, thread, {
 			contextTokens: args.contextTokens,
-			totalTokensProcessed: addTokenCounts(thread.totalTokensProcessed, args.processedTokens)
+			addProcessedTokens: args.processedTokens
 		});
 		return true;
 	}
 });
-
-function assertValidTokenCount(value: number): void {
-	if (!Number.isSafeInteger(value) || value < 0) {
-		throw new Error('Invalid token count.');
-	}
-}
-
-function addTokenCounts(left: number, right: number): number {
-	assertValidTokenCount(left);
-	assertValidTokenCount(right);
-	const total = left + right;
-	assertValidTokenCount(total);
-	return total;
-}
 
 export const registerCompletionAttempt = mutation({
 	args: {
