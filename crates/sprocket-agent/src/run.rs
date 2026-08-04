@@ -976,8 +976,7 @@ mod claim_lease_tests {
                 async { Ok((true, Instant::now())) }
             },
             async {
-                // Outlasts two renewal intervals so a post-reclaim renewal
-                // happens before the work completes.
+                // Outlasts two renewal intervals so a post-reclaim renewal happens first.
                 sleep(Duration::from_secs(100)).await;
                 "done"
             },

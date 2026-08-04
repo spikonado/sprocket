@@ -1,17 +1,9 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { DatabaseReader, DatabaseWriter } from '@convex/_generated/server';
 
-/**
- * Per-turn token counters live here instead of on `threadRecords`: a context
- * meter only needs the active thread's viewer, while a hot thread document
- * invalidates every thread-scoped subscription for every connected client.
- *
- * Legacy `contextTokens`/`totalTokensProcessed` fields on `threadRecords` are
- * migrated lazily: reads fall back to them, opening a thread schedules
- * `threads.migrateLegacyUsage` (queries cannot schedule), and usage writes
- * fold them in atomically. Once every row is migrated the fields can be
- * dropped from the schema.
- */
+// Per-turn counters live here so token writes don't invalidate the
+// thread-scoped subscriptions reading `threadRecords`. Legacy on-thread
+// fields migrate lazily (see PR follow-up checklist); drop them after.
 
 type ThreadUsageValues = {
 	contextTokens: number | undefined;
@@ -64,7 +56,7 @@ function toUsageValues(
 	};
 }
 
-/** Current counters for a thread, falling back to unmigrated legacy fields. */
+/** Current counters, falling back to unmigrated legacy fields. */
 export async function getThreadUsageValues(
 	db: DatabaseReader,
 	thread: Doc<'threadRecords'>
@@ -73,9 +65,8 @@ export async function getThreadUsageValues(
 }
 
 /**
- * Upsert the usage row and apply a delta, folding in any legacy fields still
- * on the thread document (and clearing them) in the same transaction.
- * Token counts are validated here; callers don't need to pre-validate.
+ * Upsert the usage row and apply a delta, folding in (and clearing) any
+ * legacy fields in the same transaction. Validates token counts.
  */
 export async function recordThreadUsage(
 	ctx: { db: DatabaseWriter },

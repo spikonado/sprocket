@@ -1923,8 +1923,7 @@
 			projectIds: projectIdsKey ? (projectIdsKey.split('\0') as Id<'projects'>[]) : []
 		};
 
-		// Hidden tabs stop beating; the server TTL outlasts long background
-		// periods, and returning to the foreground beats immediately.
+		// Hidden tabs stop beating; the server TTL outlasts background periods.
 		const enqueueHeartbeat = () => {
 			if (document.visibilityState === 'hidden') return;
 			void projectAttachmentHeartbeatQueue.enqueue(request).catch(() => {});

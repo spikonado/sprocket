@@ -27,8 +27,8 @@ export const setLastThread = mutation({
 	returns: v.union(vUiPreferencesDoc, v.null()),
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
-		// Clients fire this on every thread open, making it the lazy-migration
-		// trigger for legacy on-thread token counters (queries cannot schedule).
+		// Clients fire this on every thread open — the lazy-migration trigger
+		// for legacy usage counters (queries cannot schedule).
 		const thread = await ctx.db.get(args.threadId);
 		if (thread && thread.userId === userId && hasLegacyUsageFields(thread)) {
 			await ctx.scheduler.runAfter(0, internal.threads.migrateLegacyUsage, {

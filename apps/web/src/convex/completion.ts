@@ -49,12 +49,11 @@ type CompletionRequest = Parameters<typeof generateText>[0];
 type SharedCompletionRequest = Omit<CompletionRequest, 'prompt' | 'messages'>;
 
 const SUMMARIZE_ACCEPTANCE_CHECK_INTERVAL_MS = 5_000;
-// While streaming, supersede/cancel fences are enforced on every persisted
-// flush, so a fixed-interval poll mostly burns query calls. Only poll when the
-// provider stream has been silent (long model-thinking gaps carry no flush).
+// Every persisted flush is already fenced against cancel/supersede, so only
+// poll while the provider stream is silent (no flushes happening).
 const COMPLETION_ACCEPTANCE_CHECK_LULL_MS = 10_000;
-// Non-persisted parts (tool-input deltas, step boundaries) postpone the lull
-// without producing any fenced flush, so cap the gap between polls regardless.
+// Non-persisted parts (tool-input deltas) postpone the lull without producing
+// fenced flushes, so cap the gap regardless.
 const COMPLETION_ACCEPTANCE_CHECK_MAX_INTERVAL_MS = 30_000;
 // Persisting a growing message rewrites and reactively rereads the whole document.
 // Keep the UI responsive without paying that cost for every token-sized provider delta.

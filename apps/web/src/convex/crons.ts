@@ -9,8 +9,7 @@ crons.interval(
 	internal.imageUploads.cleanupOrphans
 );
 
-// Temporary: convergence backstop for the threadUsage lazy migration. Delete
-// once the legacy on-thread counters are removed from the schema.
+// Temporary backstop for the threadUsage migration; delete with the legacy fields.
 crons.interval(
 	'migrate legacy thread usage counters',
 	{ hours: 1 },

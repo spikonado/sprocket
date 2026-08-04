@@ -141,14 +141,12 @@ describe('agentRuntime context accounting', () => {
 		const { asUser, threadId } = await seedOwnedThread(t);
 		await seedLegacyUsage(t, threadId);
 
-		// The merged read keeps the old response shape before migration.
+		// Pre-migration reads keep the old response shape.
 		await expect(asUser.query(api.threads.getByThreadId, { threadId })).resolves.toMatchObject({
 			contextTokens: 4_000,
 			totalTokensProcessed: 100_000
 		});
-		// Opening the thread (clients fire setLastThread) schedules the migration.
 		await asUser.mutation(api.uiPreferences.setLastThread, { threadId });
-		// convex-test fires scheduled functions on a macrotask before tracking them.
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		await t.finishInProgressScheduledFunctions();
 		const migratedThread = await t.run(async (ctx) => ctx.db.get(threadId));
@@ -214,7 +212,6 @@ describe('agentRuntime context accounting', () => {
 			});
 		}
 
-		// Clean table: the sweep is a no-op.
 		await t.mutation(internal.threads.migrateLegacyUsageBatch, {});
 		expect(await readThreadUsage(t, threadId)).toMatchObject({
 			totalTokensProcessed: 100_000

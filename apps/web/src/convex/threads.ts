@@ -147,18 +147,12 @@ export const getByThreadId = query({
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		const thread = await getOwnedThreadRecord(ctx.db, userId, args.threadId);
-		// Surface counters on the thread document shape so existing clients keep
-		// working; they are stored separately to keep token writes off this read.
+		// Keep the pre-migration response shape for older clients.
 		const usage = await getThreadUsageValues(ctx.db, thread);
 		return { ...thread, ...usage };
 	}
 });
 
-/**
- * Lazy migration step for legacy on-thread token counters. Scheduled when an
- * unmigrated thread is opened (uiPreferences.setLastThread) and folded in by
- * usage writes; idempotent and a no-op once the legacy fields are cleared.
- */
 export const migrateLegacyUsage = internalMutation({
 	args: { threadId: v.id('threadRecords') },
 	returns: v.null(),
@@ -174,12 +168,8 @@ export const migrateLegacyUsage = internalMutation({
 
 const LEGACY_USAGE_MIGRATION_BATCH_SIZE = 100;
 
-/**
- * Convergence backstop for the lazy migration: the on-open and on-write
- * triggers can never reach archived or abandoned threads. Chains through the
- * table in batches until clean; driven hourly by crons.ts. Temporary — delete
- * together with the legacy fields once the sweep reports zero rows.
- */
+// Convergence backstop: on-access triggers never reach archived threads.
+// Chained batches driven hourly by crons.ts; delete with the legacy fields.
 export const migrateLegacyUsageBatch = internalMutation({
 	args: { cursor: v.optional(v.union(v.string(), v.null())) },
 	returns: v.null(),
