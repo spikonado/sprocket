@@ -52,7 +52,7 @@ export const tierLimits: Record<SubscriptionTier, TierLimits> = {
 };
 
 export const tierAllowedModels: Record<SubscriptionTier, readonly SupportedModelId[]> = {
-	free: ['gpt-5.6-terra', 'gpt-5.6-luna', 'kimi-k3'],
+	free: ['kimi-k3', 'gpt-5.6-terra', 'gpt-5.6-luna'],
 	pro: modelIds,
 	admin: modelIds
 };

@@ -158,7 +158,7 @@ export const modelDefinitions = [
 	}
 ] as const satisfies readonly ModelDefinition[];
 
-export const defaultModelId = 'gpt-5.6-sol' as const;
+export const defaultModelId = 'kimi-k3' as const;
 export const defaultReasoningEffort: SupportedReasoningEffort =
 	getModelDefinition(defaultModelId).defaultReasoningEffort;
 export const defaultServiceTier = 'standard' as const;
