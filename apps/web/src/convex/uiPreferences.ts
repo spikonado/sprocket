@@ -1,10 +1,25 @@
-import { mutation, query } from '@convex/_generated/server';
+import { internalMutation, mutation, query } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getUserId } from '@convex/lib/auth';
 import { vUiPreferencesDoc } from '@convex/lib/docs';
 
 const vTheme = v.union(v.literal('light'), v.literal('dark'));
-const DEFAULT_THEME = 'light' as const;
+
+export const clearDarkTheme = internalMutation({
+	args: {},
+	returns: v.number(),
+	handler: async (ctx) => {
+		const rows = await ctx.db.query('uiPreferences').collect();
+		let cleared = 0;
+		for (const row of rows) {
+			if (row.theme === 'dark') {
+				await ctx.db.patch(row._id, { theme: undefined });
+				cleared += 1;
+			}
+		}
+		return cleared;
+	}
+});
 
 export const getMine = query({
 	args: {},
@@ -39,8 +54,7 @@ export const setLastThread = mutation({
 
 		const id = await ctx.db.insert('uiPreferences', {
 			userId,
-			lastThreadId: args.threadId,
-			theme: DEFAULT_THEME
+			lastThreadId: args.threadId
 		});
 		return await ctx.db.get(id);
 	}
@@ -89,7 +103,6 @@ export const setPaymentsEmail = mutation({
 		} else {
 			await ctx.db.insert('uiPreferences', {
 				userId,
-				theme: DEFAULT_THEME,
 				paymentsEmail: email
 			});
 		}
