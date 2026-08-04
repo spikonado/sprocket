@@ -9,4 +9,12 @@ crons.interval(
 	internal.imageUploads.cleanupOrphans
 );
 
+// Temporary backstop for the threadUsage migration; delete with the legacy fields.
+crons.interval(
+	'migrate legacy thread usage counters',
+	{ hours: 1 },
+	internal.threads.migrateLegacyUsageBatch,
+	{}
+);
+
 export default crons;

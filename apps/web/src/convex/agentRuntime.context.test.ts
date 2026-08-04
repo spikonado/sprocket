@@ -1,7 +1,34 @@
 import { describe, expect, it } from 'vitest';
-import { api } from '@convex/_generated/api';
+import { api, internal } from '@convex/_generated/api';
+import type { Id } from '@convex/_generated/dataModel';
 import { executionSecretHash } from '@convex/lib/auth';
-import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
+import {
+	createQueuedRun,
+	initConvexTest,
+	seedOwnedThread,
+	type ConvexTestInstance
+} from './test.setup';
+
+async function readThreadUsage(t: ConvexTestInstance, threadId: Id<'threadRecords'>) {
+	return await t.run(async (ctx) =>
+		ctx.db
+			.query('threadUsage')
+			.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
+			.unique()
+	);
+}
+
+/** Simulate a pre-migration thread: legacy counters on the record, no usage row. */
+async function seedLegacyUsage(t: ConvexTestInstance, threadId: Id<'threadRecords'>) {
+	await t.run(async (ctx) => {
+		const usageRow = await ctx.db
+			.query('threadUsage')
+			.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
+			.unique();
+		if (usageRow) await ctx.db.delete(usageRow._id);
+		await ctx.db.patch(threadId, { contextTokens: 4_000, totalTokensProcessed: 100_000 });
+	});
+}
 
 describe('agentRuntime context accounting', () => {
 	it('fences compaction and usage writes to the active claim', async () => {
@@ -42,7 +69,9 @@ describe('agentRuntime context accounting', () => {
 		).resolves.toBe(true);
 
 		const thread = await t.run(async (ctx) => ctx.db.get(threadId));
-		expect(thread).toMatchObject({
+		expect(thread).not.toHaveProperty('contextTokens');
+		expect(thread).not.toHaveProperty('totalTokensProcessed');
+		expect(await readThreadUsage(t, threadId)).toMatchObject({
 			contextTokens: 8_000,
 			totalTokensProcessed: 259_000
 		});
@@ -74,7 +103,7 @@ describe('agentRuntime context accounting', () => {
 				persistForFutureRuns: true
 			})
 		).resolves.toBe(false);
-		expect(await t.run(async (ctx) => (await ctx.db.get(threadId))?.contextTokens)).toBe(8_000);
+		expect((await readThreadUsage(t, threadId))?.contextTokens).toBe(8_000);
 		expect(await t.run(async (ctx) => (await ctx.db.get(threadId))?.contextSummary)).toBeFalsy();
 	});
 
@@ -105,6 +134,88 @@ describe('agentRuntime context accounting', () => {
 			})
 		).rejects.toThrow('Invalid token count.');
 		expect(await t.run(async (ctx) => ctx.db.get(threadId))).not.toHaveProperty('contextTokens');
+	});
+
+	it('migrates legacy on-thread counters when the thread is opened', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		await seedLegacyUsage(t, threadId);
+
+		// Pre-migration reads keep the old response shape.
+		await expect(asUser.query(api.threads.getByThreadId, { threadId })).resolves.toMatchObject({
+			contextTokens: 4_000,
+			totalTokensProcessed: 100_000
+		});
+		await asUser.mutation(api.uiPreferences.setLastThread, { threadId });
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		await t.finishInProgressScheduledFunctions();
+		const migratedThread = await t.run(async (ctx) => ctx.db.get(threadId));
+		expect(migratedThread).not.toHaveProperty('contextTokens');
+		expect(migratedThread).not.toHaveProperty('totalTokensProcessed');
+		expect(await readThreadUsage(t, threadId)).toMatchObject({
+			contextTokens: 4_000,
+			totalTokensProcessed: 100_000
+		});
+	});
+
+	it('folds legacy counters into the first usage write', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'legacy-fold-secret';
+		const { runId } = await createQueuedRun(
+			asUser,
+			threadId,
+			'legacy-fold',
+			executionSecret,
+			'Continue'
+		);
+		await asUser.mutation(api.agentRuntime.start, {
+			runId,
+			claimId: 'claim-a',
+			executionSecret
+		});
+		await seedLegacyUsage(t, threadId);
+
+		await asUser.mutation(api.agentRuntime.recordContextUsage, {
+			runId,
+			claimId: 'claim-a',
+			executionSecret,
+			contextTokens: 7_000,
+			processedTokens: 10_000
+		});
+
+		const thread = await t.run(async (ctx) => ctx.db.get(threadId));
+		expect(thread).not.toHaveProperty('contextTokens');
+		expect(thread).not.toHaveProperty('totalTokensProcessed');
+		expect(await readThreadUsage(t, threadId)).toMatchObject({
+			contextTokens: 7_000,
+			totalTokensProcessed: 110_000
+		});
+	});
+
+	it('sweeps legacy counters in batches via the cron mutation', async () => {
+		const t = initConvexTest();
+		const { threadId } = await seedOwnedThread(t);
+		const { threadId: otherThreadId } = await seedOwnedThread(t, 'user_bob');
+		await seedLegacyUsage(t, threadId);
+		await seedLegacyUsage(t, otherThreadId);
+
+		await t.mutation(internal.threads.migrateLegacyUsageBatch, {});
+
+		for (const migratedId of [threadId, otherThreadId]) {
+			const thread = await t.run(async (ctx) => ctx.db.get(migratedId));
+			expect(thread).not.toHaveProperty('contextTokens');
+			expect(thread).not.toHaveProperty('totalTokensProcessed');
+			expect(await readThreadUsage(t, migratedId)).toMatchObject({
+				contextTokens: 4_000,
+				totalTokensProcessed: 100_000
+			});
+		}
+
+		await t.mutation(internal.threads.migrateLegacyUsageBatch, {});
+		expect(await readThreadUsage(t, threadId)).toMatchObject({
+			totalTokensProcessed: 100_000
+		});
 	});
 
 	it('carries a compacted prefix into later runs without replaying covered history', async () => {

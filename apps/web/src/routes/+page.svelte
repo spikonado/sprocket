@@ -1923,14 +1923,22 @@
 			projectIds: projectIdsKey ? (projectIdsKey.split('\0') as Id<'projects'>[]) : []
 		};
 
-		void projectAttachmentHeartbeatQueue.enqueue(request).catch(() => {});
-
-		const intervalId = window.setInterval(() => {
+		// Hidden tabs stop beating; the server TTL outlasts background periods.
+		const enqueueHeartbeat = () => {
+			if (document.visibilityState === 'hidden') return;
 			void projectAttachmentHeartbeatQueue.enqueue(request).catch(() => {});
-		}, EXECUTOR_HEARTBEAT_WRITE_THROTTLE_MS);
+		};
+		const handleVisibilityChange = () => {
+			if (document.visibilityState === 'visible') enqueueHeartbeat();
+		};
+
+		enqueueHeartbeat();
+		const intervalId = window.setInterval(enqueueHeartbeat, EXECUTOR_HEARTBEAT_WRITE_THROTTLE_MS);
+		document.addEventListener('visibilitychange', handleVisibilityChange);
 
 		return () => {
 			window.clearInterval(intervalId);
+			document.removeEventListener('visibilitychange', handleVisibilityChange);
 			projectAttachmentHeartbeatQueue.cancelPending();
 		};
 	});

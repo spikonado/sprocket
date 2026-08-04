@@ -1,9 +1,15 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
-import { mutation, query, type MutationCtx } from '@convex/_generated/server';
+import { internalMutation, mutation, query, type MutationCtx } from '@convex/_generated/server';
 import { v } from 'convex/values';
+import { internal } from '@convex/_generated/api';
 import { getOwnedThreadRecord, getOwnedProject } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
-import { vThreadRecordDoc, vThreadSummary } from '@convex/lib/docs';
+import { vThreadRecordWithUsageDoc, vThreadSummary } from '@convex/lib/docs';
+import {
+	getThreadUsageValues,
+	hasLegacyUsageFields,
+	recordThreadUsage
+} from '@convex/lib/threadUsage';
 import { assertModelConfigurationAllowedForUser } from '@convex/lib/tiers';
 import {
 	isRunFinalStatus,
@@ -84,8 +90,12 @@ export const create = mutation({
 			selectedModel: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
 			serviceTier: args.serviceTier,
-			totalTokensProcessed: 0,
 			lastMessageAt: now
+		});
+		await ctx.db.insert('threadUsage', {
+			threadId: recordId,
+			userId,
+			totalTokensProcessed: 0
 		});
 
 		return {
@@ -133,10 +143,51 @@ export const getByThreadId = query({
 	args: {
 		threadId: v.id('threadRecords')
 	},
-	returns: vThreadRecordDoc,
+	returns: vThreadRecordWithUsageDoc,
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
-		return await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+		const thread = await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+		// Keep the pre-migration response shape for older clients.
+		const usage = await getThreadUsageValues(ctx.db, thread);
+		return { ...thread, ...usage };
+	}
+});
+
+export const migrateLegacyUsage = internalMutation({
+	args: { threadId: v.id('threadRecords') },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const thread = await ctx.db.get(args.threadId);
+		if (!thread || !hasLegacyUsageFields(thread)) {
+			return null;
+		}
+		await recordThreadUsage(ctx, thread, {});
+		return null;
+	}
+});
+
+const LEGACY_USAGE_MIGRATION_BATCH_SIZE = 100;
+
+// Convergence backstop: on-access triggers never reach archived threads.
+// Chained batches driven hourly by crons.ts; delete with the legacy fields.
+export const migrateLegacyUsageBatch = internalMutation({
+	args: { cursor: v.optional(v.union(v.string(), v.null())) },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const { page, isDone, continueCursor } = await ctx.db
+			.query('threadRecords')
+			.paginate({ numItems: LEGACY_USAGE_MIGRATION_BATCH_SIZE, cursor: args.cursor ?? null });
+		for (const thread of page) {
+			if (hasLegacyUsageFields(thread)) {
+				await recordThreadUsage(ctx, thread, {});
+			}
+		}
+		if (!isDone) {
+			await ctx.scheduler.runAfter(0, internal.threads.migrateLegacyUsageBatch, {
+				cursor: continueCursor
+			});
+		}
+		return null;
 	}
 });
 
