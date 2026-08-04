@@ -13,7 +13,7 @@ import {
 	vGetContextResult
 } from '@convex/lib/docs';
 import { appendThreadMessage, getThreadMessage } from '@convex/lib/threadMessages';
-import { assertValidTokenCount, recordThreadUsage } from '@convex/lib/threadUsage';
+import { recordThreadUsage } from '@convex/lib/threadUsage';
 import {
 	areImageUploadIdsEqual,
 	attachImageUploads,
@@ -539,7 +539,6 @@ export const saveContextCompaction = mutation({
 		if (!args.summary.trim()) {
 			throw new Error('Invalid context compaction.');
 		}
-		assertValidTokenCount(args.processedTokens);
 		const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
 		await recordThreadUsage(ctx, thread, { addProcessedTokens: args.processedTokens });
 		let durableSummary:
@@ -583,8 +582,6 @@ export const recordContextUsage = mutation({
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) return false;
-		assertValidTokenCount(args.contextTokens);
-		assertValidTokenCount(args.processedTokens);
 		const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
 		await recordThreadUsage(ctx, thread, {
 			contextTokens: args.contextTokens,

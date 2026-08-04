@@ -1,8 +1,9 @@
+import { internal } from '@convex/_generated/api';
 import { mutation, query } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getUserId } from '@convex/lib/auth';
 import { vUiPreferencesDoc } from '@convex/lib/docs';
-import { hasLegacyUsageFields, scheduleLegacyUsageMigration } from '@convex/lib/threadUsage';
+import { hasLegacyUsageFields } from '@convex/lib/threadUsage';
 
 const vTheme = v.union(v.literal('light'), v.literal('dark'));
 const DEFAULT_THEME = 'dark' as const;
@@ -30,7 +31,9 @@ export const setLastThread = mutation({
 		// trigger for legacy on-thread token counters (queries cannot schedule).
 		const thread = await ctx.db.get(args.threadId);
 		if (thread && thread.userId === userId && hasLegacyUsageFields(thread)) {
-			await scheduleLegacyUsageMigration(ctx, thread._id);
+			await ctx.scheduler.runAfter(0, internal.threads.migrateLegacyUsage, {
+				threadId: thread._id
+			});
 		}
 		const existing = await ctx.db
 			.query('uiPreferences')

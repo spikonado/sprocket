@@ -48,7 +48,7 @@ type CompletionActionResult = Pick<GenerateTextResult, 'text' | 'usage' | 'toolC
 type CompletionRequest = Parameters<typeof generateText>[0];
 type SharedCompletionRequest = Omit<CompletionRequest, 'prompt' | 'messages'>;
 
-const COMPLETION_ACCEPTANCE_CHECK_INTERVAL_MS = 5_000;
+const SUMMARIZE_ACCEPTANCE_CHECK_INTERVAL_MS = 5_000;
 // While streaming, supersede/cancel fences are enforced on every persisted
 // flush, so a fixed-interval poll mostly burns query calls. Only poll when the
 // provider stream has been silent (long model-thinking gaps carry no flush).
@@ -643,7 +643,7 @@ async function waitForCompletionWithAcceptance<T>(
 	while (true) {
 		const outcome = await Promise.race([
 			completion.then((value) => ({ type: 'completed' as const, value })),
-			delay(COMPLETION_ACCEPTANCE_CHECK_INTERVAL_MS).then(() => ({ type: 'check' as const }))
+			delay(SUMMARIZE_ACCEPTANCE_CHECK_INTERVAL_MS).then(() => ({ type: 'check' as const }))
 		]);
 		if (outcome.type === 'completed') return outcome.value;
 		try {
