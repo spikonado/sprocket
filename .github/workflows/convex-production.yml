@@ -16,14 +16,13 @@ concurrency:
 jobs:
   deploy:
     if: github.event.workflow_run.conclusion == 'success'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
 
       - uses: ./.github/actions/setup-nix-shell
         with:
           dev-shell: '.#convex'
-          trusted: 'true'
 
       - name: Install dependencies
         shell: 'nix develop ./sprocket-shell -c bash -e {0}'
