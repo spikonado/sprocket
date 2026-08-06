@@ -1,9 +1,7 @@
-import { internal } from '@convex/_generated/api';
 import { mutation, query } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getUserId } from '@convex/lib/auth';
 import { vUiPreferencesDoc } from '@convex/lib/docs';
-import { hasLegacyUsageFields } from '@convex/lib/threadUsage';
 
 const vTheme = v.union(v.literal('light'), v.literal('dark'));
 
@@ -26,14 +24,6 @@ export const setLastThread = mutation({
 	returns: v.union(vUiPreferencesDoc, v.null()),
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
-		// Clients fire this on every thread open — the lazy-migration trigger
-		// for legacy usage counters (queries cannot schedule).
-		const thread = await ctx.db.get(args.threadId);
-		if (thread && thread.userId === userId && hasLegacyUsageFields(thread)) {
-			await ctx.scheduler.runAfter(0, internal.threads.migrateLegacyUsage, {
-				threadId: thread._id
-			});
-		}
 		const existing = await ctx.db
 			.query('uiPreferences')
 			.withIndex('by_userId', (query) => query.eq('userId', userId))
