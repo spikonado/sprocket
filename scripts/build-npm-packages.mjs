@@ -30,7 +30,7 @@ async function copyRootPackage(output, web, version) {
 		await cp(path.join(SOURCE_PACKAGE, entry), path.join(destination, entry), { recursive: true });
 	}
 	await chmod(path.join(destination, 'bin', 'sprocket.js'), 0o755);
-	await cp(path.join(ROOT, 'LICENSE'), path.join(destination, 'LICENSE'));
+	await cp(path.join(ROOT, 'LICENSE.md'), path.join(destination, 'LICENSE'));
 	await cp(web, path.join(destination, 'web'), { recursive: true });
 
 	const manifest = JSON.parse(await readFile(path.join(SOURCE_PACKAGE, 'package.json'), 'utf8'));
@@ -49,13 +49,13 @@ async function copyPlatformPackage(output, artifacts, version, target) {
 	if (target.os !== 'win32') {
 		await chmod(binaryDestination, 0o755);
 	}
-	await cp(path.join(ROOT, 'LICENSE'), path.join(destination, 'LICENSE'));
+	await cp(path.join(ROOT, 'LICENSE.md'), path.join(destination, 'LICENSE'));
 
 	const manifest = {
 		name: target.packageName,
 		version,
 		description: `Sprocket native executable for ${target.os}/${target.cpu}`,
-		license: 'Apache-2.0',
+		license: 'FSL-1.1-ALv2',
 		os: [target.os],
 		cpu: [target.cpu],
 		files: ['bin/'],

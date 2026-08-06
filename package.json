@@ -1,7 +1,7 @@
 {
 	"name": "@sprocket/monorepo",
 	"private": true,
-	"license": "Apache-2.0",
+	"license": "FSL-1.1-ALv2",
 	"scripts": {
 		"build": "node ./scripts/create-turbo-cache-key.js && bunx turbo run build",
 		"build:release": "node ./scripts/create-turbo-cache-key.js && bunx turbo run build:release",
