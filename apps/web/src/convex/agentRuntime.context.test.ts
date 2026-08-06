@@ -121,6 +121,36 @@ describe('agentRuntime context accounting', () => {
 		expect((await readThreadUsage(t, threadId))?.totalTokensProcessed ?? 0).toBe(0);
 	});
 
+	it('getByThreadId returns the thread with usage counters merged in', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'merged-shape-secret';
+		const { runId } = await createQueuedRun(
+			asUser,
+			threadId,
+			'merged-shape',
+			executionSecret,
+			'Continue'
+		);
+		await asUser.mutation(api.agentRuntime.start, {
+			runId,
+			claimId: 'claim-a',
+			executionSecret
+		});
+		await asUser.mutation(api.agentRuntime.recordContextUsage, {
+			runId,
+			claimId: 'claim-a',
+			executionSecret,
+			contextTokens: 8_000,
+			processedTokens: 9_000
+		});
+
+		await expect(asUser.query(api.threads.getByThreadId, { threadId })).resolves.toMatchObject({
+			contextTokens: 8_000,
+			totalTokensProcessed: 9_000
+		});
+	});
+
 	it('carries a compacted prefix into later runs without replaying covered history', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId, projectId } = await seedOwnedThread(t);

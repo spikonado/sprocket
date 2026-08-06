@@ -190,6 +190,16 @@ export const vThreadRecordDoc = v.object({
 	...threadRecordFields
 });
 
+// getByThreadId's live response shape: thread record plus usage counters
+// merged in from the threadUsage table.
+export const vThreadWithUsageDoc = v.object({
+	_id: v.id('threadRecords'),
+	_creationTime: v.number(),
+	...threadRecordFields,
+	contextTokens: v.optional(v.number()),
+	totalTokensProcessed: v.number()
+});
+
 export const vRunDoc = v.object({
 	_id: v.id('runs'),
 	_creationTime: v.number(),

@@ -3,7 +3,7 @@ import { mutation, query, type MutationCtx } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getOwnedThreadRecord, getOwnedProject } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
-import { vThreadRecordDoc, vThreadSummary } from '@convex/lib/docs';
+import { vThreadSummary, vThreadWithUsageDoc } from '@convex/lib/docs';
 import { getThreadUsageValues } from '@convex/lib/threadUsage';
 import { assertModelConfigurationAllowedForUser } from '@convex/lib/tiers';
 import {
@@ -138,7 +138,7 @@ export const getByThreadId = query({
 	args: {
 		threadId: v.id('threadRecords')
 	},
-	returns: vThreadRecordDoc,
+	returns: vThreadWithUsageDoc,
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		const thread = await getOwnedThreadRecord(ctx.db, userId, args.threadId);
