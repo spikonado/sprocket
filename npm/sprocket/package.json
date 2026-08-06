@@ -2,7 +2,7 @@
 	"name": "@spikonado/sprocket",
 	"version": "0.2.0",
 	"description": "Agentic platform for streamlining hardware and software development",
-	"license": "Apache-2.0",
+	"license": "FSL-1.1-ALv2",
 	"type": "module",
 	"bin": {
 		"sprocket": "bin/sprocket.js"
