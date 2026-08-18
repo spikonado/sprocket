@@ -240,7 +240,8 @@ export const vProjectWithExecutorStatus = v.object({
 	_id: v.id('projects'),
 	_creationTime: v.number(),
 	...projectFields,
-	executorStatus: vExecutorStatus
+	// Absent for `listMine({ slim: true })` callers.
+	executorStatus: v.optional(vExecutorStatus)
 });
 
 export const vThreadTranscriptAttachment = v.object({

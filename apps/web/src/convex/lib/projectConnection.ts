@@ -1,69 +1,57 @@
-import type { Doc } from '@convex/_generated/dataModel';
+import type { Doc, Id } from '@convex/_generated/dataModel';
 
-// Heartbeats write and re-run `projects.listMine`, so cadence is expensive.
-// The TTL exceeds two throttle intervals so a skipped beat never flaps
-// status; it's safe to be this stale only because no UI consumes
-// executorStatus yet — revisit before surfacing a connection badge.
+// Heartbeats write `projectConnections` rows, which no hot list subscription
+// reads, so cadence is no longer expensive there. The TTL exceeds two
+// throttle intervals so a skipped beat never flaps status; staleness is safe
+// because connection state only feeds the executor badge, not execution.
 export const EXECUTOR_HEARTBEAT_TTL_MS = 300_000;
 export const EXECUTOR_HEARTBEAT_WRITE_THROTTLE_MS = 90_000;
 
-type ProjectDoc = Doc<'projects'>;
+type ProjectConnectionDoc = Doc<'projectConnections'>;
 
 function isExecutorHeartbeatFresh(lastHeartbeatAt: number | undefined, now: number = Date.now()) {
 	return lastHeartbeatAt !== undefined && now - lastHeartbeatAt <= EXECUTOR_HEARTBEAT_TTL_MS;
 }
 
-function isProjectEffectivelyConnected(
-	project: Pick<ProjectDoc, 'connectedClientId' | 'lastHeartbeatAt'>,
+function isConnectionLive(
+	connection: Pick<ProjectConnectionDoc, 'clientId' | 'lastHeartbeatAt'> | null | undefined,
 	now: number = Date.now()
 ) {
-	return Boolean(
-		project.connectedClientId && isExecutorHeartbeatFresh(project.lastHeartbeatAt, now)
-	);
+	return Boolean(connection?.clientId && isExecutorHeartbeatFresh(connection.lastHeartbeatAt, now));
 }
 
 export function getEffectiveExecutorStatus(
-	project: Pick<ProjectDoc, 'connectedClientId' | 'lastHeartbeatAt'>,
+	connection: Pick<ProjectConnectionDoc, 'clientId' | 'lastHeartbeatAt'> | null | undefined,
 	now: number = Date.now()
 ) {
-	return isProjectEffectivelyConnected(project, now)
-		? ('connected' as const)
-		: ('disconnected' as const);
+	return isConnectionLive(connection, now) ? ('connected' as const) : ('disconnected' as const);
 }
 
-export function withEffectiveProjectState<T extends ProjectDoc>(
-	project: T,
-	now: number = Date.now()
-) {
-	return {
-		...project,
-		executorStatus: getEffectiveExecutorStatus(project, now)
-	};
-}
-
-export function getDetachedProjectIdsForClient(
-	projects: ProjectDoc[],
+export function getDetachedConnectionProjectIds(
+	connections: ProjectConnectionDoc[],
 	clientId: string,
-	attachedProjectIds: Iterable<string>
+	attachedProjectIds: Iterable<Id<'projects'>>
 ) {
-	const attachedIds = new Set(attachedProjectIds);
-	return projects
-		.filter((project) => project.connectedClientId === clientId && !attachedIds.has(project._id))
-		.map((project) => project._id);
+	const attachedIds = new Set<string>(attachedProjectIds);
+	return connections
+		.filter(
+			(connection) => connection.clientId === clientId && !attachedIds.has(connection.projectId)
+		)
+		.map((connection) => connection.projectId);
 }
 
 export function shouldRefreshProjectHeartbeat(
-	project: Pick<ProjectDoc, 'connectedClientId' | 'lastHeartbeatAt'>,
+	connection: Pick<ProjectConnectionDoc, 'clientId' | 'lastHeartbeatAt'> | null | undefined,
 	clientId: string,
 	now: number = Date.now()
 ) {
-	if (project.connectedClientId !== clientId) {
+	if (!connection) {
 		return true;
 	}
 
-	if (project.lastHeartbeatAt === undefined) {
+	if (connection.clientId !== clientId) {
 		return true;
 	}
 
-	return now - project.lastHeartbeatAt >= EXECUTOR_HEARTBEAT_WRITE_THROTTLE_MS;
+	return now - connection.lastHeartbeatAt >= EXECUTOR_HEARTBEAT_WRITE_THROTTLE_MS;
 }
