@@ -110,7 +110,7 @@ export const listMine = query({
 			.withIndex('by_userId_lastMessageAt', (query) => query.eq('userId', userId))
 			.order('desc')
 			.collect();
-		return await Promise.all(
+		const summaries = await Promise.all(
 			records.map(async (record) => {
 				const latestRun = await ctx.db
 					.query('runs')
@@ -131,6 +131,10 @@ export const listMine = query({
 				};
 			})
 		);
+		// Running threads first, then most recently active. The index already
+		// returns lastMessageAt-desc, so the comparator only needs to promote
+		// active runs while staying stable for the rest.
+		return summaries.sort((left, right) => Number(right.hasActiveRun) - Number(left.hasActiveRun));
 	}
 });
 

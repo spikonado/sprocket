@@ -1,13 +1,14 @@
-import { mutation, query, type MutationCtx } from '@convex/_generated/server';
-import { v } from 'convex/values';
+import { mutation, query, type MutationCtx, type QueryCtx } from '@convex/_generated/server';
+import { v, type Infer } from 'convex/values';
 import { getUserId } from '@convex/lib/auth';
-import { vProjectDoc, vProjectWithExecutorStatus } from '@convex/lib/docs';
+import { vProjectDoc, vProjectListItem } from '@convex/lib/docs';
 import {
-	getDetachedProjectIdsForClient,
-	shouldRefreshProjectHeartbeat,
-	withEffectiveProjectState
+	getDetachedConnections,
+	getEffectiveExecutorStatus,
+	legacyConnectionFromProject,
+	shouldRefreshProjectHeartbeat
 } from '@convex/lib/projectConnection';
-import type { Doc } from '@convex/_generated/dataModel';
+import type { Doc, Id } from '@convex/_generated/dataModel';
 
 async function findProjectForRepository(
 	ctx: MutationCtx,
@@ -20,6 +21,47 @@ async function findProjectForRepository(
 			query.eq('userId', userId).eq('repositoryKey', repositoryKey)
 		)
 		.unique();
+}
+
+async function getConnectionForProject(
+	ctx: QueryCtx | MutationCtx,
+	projectId: Id<'projects'>
+): Promise<Doc<'projectConnections'> | null> {
+	return await ctx.db
+		.query('projectConnections')
+		.withIndex('by_projectId', (query) => query.eq('projectId', projectId))
+		.unique();
+}
+
+async function upsertConnection(
+	ctx: MutationCtx,
+	args: { projectId: Id<'projects'>; userId: string; clientId: string; now: number }
+) {
+	const existing = await getConnectionForProject(ctx, args.projectId);
+	if (existing) {
+		await ctx.db.patch(existing._id, {
+			clientId: args.clientId,
+			lastHeartbeatAt: args.now
+		});
+		return;
+	}
+	await ctx.db.insert('projectConnections', {
+		projectId: args.projectId,
+		userId: args.userId,
+		clientId: args.clientId,
+		lastHeartbeatAt: args.now
+	});
+}
+
+async function getConnectionsForUser(
+	ctx: QueryCtx | MutationCtx,
+	userId: string
+): Promise<Map<Id<'projects'>, Doc<'projectConnections'>>> {
+	const connections = await ctx.db
+		.query('projectConnections')
+		.withIndex('by_userId', (query) => query.eq('userId', userId))
+		.collect();
+	return new Map(connections.map((connection) => [connection.projectId, connection]));
 }
 
 export const upsertSelected = mutation({
@@ -41,42 +83,62 @@ export const upsertSelected = mutation({
 		}
 
 		const now = Date.now();
-		const patch = {
-			repositoryKey,
-			displayName,
-			lastHeartbeatAt: now,
-			connectedClientId: args.connectedClientId,
-			lastSeenAt: now
-		};
-
 		const project = await findProjectForRepository(ctx, userId, repositoryKey);
 
 		if (project) {
-			await ctx.db.patch(project._id, patch);
+			await ctx.db.patch(project._id, { repositoryKey, displayName, lastSeenAt: now });
+			await upsertConnection(ctx, {
+				projectId: project._id,
+				userId,
+				clientId: args.connectedClientId,
+				now
+			});
 			return await ctx.db.get(project._id);
 		}
 
 		const id = await ctx.db.insert('projects', {
 			userId,
 			nextExecutorSequence: 0,
-			...patch
+			repositoryKey,
+			displayName,
+			lastSeenAt: now
 		});
+		await upsertConnection(ctx, { projectId: id, userId, clientId: args.connectedClientId, now });
 		return await ctx.db.get(id);
 	}
 });
 
 export const listMine = query({
-	args: {},
-	returns: v.array(vProjectWithExecutorStatus),
-	handler: async (ctx) => {
+	args: {
+		// Older released clients omit this and keep receiving a live
+		// `executorStatus`. Callers passing `false` skip the `projectConnections`
+		// read entirely, so heartbeats never re-run their subscription. Once old
+		// clients age out, drop the arg and the `executorStatus` field.
+		includeExecutorStatus: v.optional(v.boolean())
+	},
+	returns: v.array(vProjectListItem),
+	handler: async (ctx, args): Promise<Infer<typeof vProjectListItem>[]> => {
 		const userId = await getUserId(ctx);
+		// Order by creation, newest first: every Convex index implicitly ends
+		// with `_creationTime`, so `by_userId` is creation-ordered within a
+		// user. Stable across thread activity.
 		const projects = await ctx.db
 			.query('projects')
-			.withIndex('by_userId_lastSeenAt', (query) => query.eq('userId', userId))
+			.withIndex('by_userId', (query) => query.eq('userId', userId))
 			.order('desc')
 			.collect();
+		if (args.includeExecutorStatus === false) {
+			return projects;
+		}
 		const now = Date.now();
-		return projects.map((project) => withEffectiveProjectState(project, now));
+		const connectionByProjectId = await getConnectionsForUser(ctx, userId);
+		return projects.map((project) => ({
+			...project,
+			executorStatus: getEffectiveExecutorStatus(
+				connectionByProjectId.get(project._id) ?? legacyConnectionFromProject(project),
+				now
+			)
+		}));
 	}
 });
 
@@ -89,43 +151,34 @@ export const heartbeatAttached = mutation({
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		const now = Date.now();
-		const requestedIds = new Set(args.projectIds);
-		const projects = await ctx.db
-			.query('projects')
-			.withIndex('by_userId', (query) => query.eq('userId', userId))
-			.collect();
-		const ownedProjectIds = new Set(projects.map((project) => project._id));
-		for (const projectId of requestedIds) {
-			if (!ownedProjectIds.has(projectId)) {
-				throw new Error('Project not found.');
-			}
-		}
-		const detachedProjectIds = getDetachedProjectIdsForClient(
-			projects,
-			args.clientId,
-			requestedIds
-		);
-		const detachedProjectIdSet = new Set(detachedProjectIds);
-
+		const requestedIds = new Set<Id<'projects'>>(args.projectIds);
+		// The requested set is small (the attached projects), so validate
+		// ownership per id instead of scanning every project the user has.
 		await Promise.all(
-			projects.map(async (project) => {
-				if (requestedIds.has(project._id)) {
-					if (shouldRefreshProjectHeartbeat(project, args.clientId, now)) {
-						await ctx.db.patch(project._id, {
-							connectedClientId: args.clientId,
-							lastHeartbeatAt: now
-						});
-					}
-					return;
-				}
-
-				if (detachedProjectIdSet.has(project._id)) {
-					await ctx.db.patch(project._id, {
-						connectedClientId: undefined
-					});
+			[...requestedIds].map(async (projectId) => {
+				const project = await ctx.db.get(projectId);
+				if (!project || project.userId !== userId) {
+					throw new Error('Project not found.');
 				}
 			})
 		);
+
+		const connectionByProjectId = await getConnectionsForUser(ctx, userId);
+		const detachedConnections = getDetachedConnections(
+			[...connectionByProjectId.values()],
+			args.clientId,
+			requestedIds
+		);
+
+		await Promise.all([
+			...[...requestedIds].map(async (projectId) => {
+				const connection = connectionByProjectId.get(projectId);
+				if (shouldRefreshProjectHeartbeat(connection, args.clientId, now)) {
+					await upsertConnection(ctx, { projectId, userId, clientId: args.clientId, now });
+				}
+			}),
+			...detachedConnections.map((connection) => ctx.db.delete(connection._id))
+		]);
 
 		return true;
 	}

@@ -3,77 +3,78 @@ import type { Id } from '@convex/_generated/dataModel';
 import {
 	EXECUTOR_HEARTBEAT_WRITE_THROTTLE_MS,
 	EXECUTOR_HEARTBEAT_TTL_MS,
-	getDetachedProjectIdsForClient,
+	getDetachedConnections,
 	getEffectiveExecutorStatus,
 	shouldRefreshProjectHeartbeat
 } from '@convex/lib/projectConnection';
 
-function makeProject(
+function makeConnection(
 	overrides: Partial<{
-		_id: Id<'projects'>;
-		connectedClientId?: string;
-		lastHeartbeatAt?: number;
+		projectId: Id<'projects'>;
+		clientId: string;
+		lastHeartbeatAt: number;
 	}> = {}
 ) {
 	return {
-		_id: overrides._id ?? ('project-1' as Id<'projects'>),
+		_id: 'conn-1' as Id<'projectConnections'>,
 		_creationTime: 0,
+		projectId: overrides.projectId ?? ('project-1' as Id<'projects'>),
 		userId: 'user-1',
-		repositoryKey: 'Workspace',
-		displayName: 'Workspace',
-		lastHeartbeatAt: overrides.lastHeartbeatAt,
-		connectedClientId: overrides.connectedClientId,
-		nextExecutorSequence: 0,
-		lastSeenAt: 0
+		clientId: overrides.clientId ?? 'client-1',
+		lastHeartbeatAt: overrides.lastHeartbeatAt ?? 0
 	};
 }
 
 describe('projectConnection helpers', () => {
 	it('reports disconnected when the heartbeat is stale', () => {
 		const now = 100_000;
-		const project = makeProject({
-			connectedClientId: 'client-1',
+		const connection = makeConnection({
+			clientId: 'client-1',
 			lastHeartbeatAt: now - EXECUTOR_HEARTBEAT_TTL_MS - 1
 		});
 
-		expect(getEffectiveExecutorStatus(project, now)).toBe('disconnected');
+		expect(getEffectiveExecutorStatus(connection, now)).toBe('disconnected');
 	});
 
-	it('returns omitted projects to detach for the same client', () => {
-		const detached = getDetachedProjectIdsForClient(
+	it('reports disconnected when there is no connection row', () => {
+		expect(getEffectiveExecutorStatus(null, 100_000)).toBe('disconnected');
+	});
+
+	it('returns omitted connections to detach for the same client', () => {
+		const detached = getDetachedConnections(
 			[
-				makeProject({
-					_id: 'project-1' as Id<'projects'>,
-					connectedClientId: 'client-1'
+				makeConnection({
+					projectId: 'project-1' as Id<'projects'>,
+					clientId: 'client-1'
 				}),
-				makeProject({
-					_id: 'project-2' as Id<'projects'>,
-					connectedClientId: 'client-1'
+				makeConnection({
+					projectId: 'project-2' as Id<'projects'>,
+					clientId: 'client-1'
 				}),
-				makeProject({
-					_id: 'project-3' as Id<'projects'>,
-					connectedClientId: 'client-2'
+				makeConnection({
+					projectId: 'project-3' as Id<'projects'>,
+					clientId: 'client-2'
 				})
 			],
 			'client-1',
 			['project-2' as Id<'projects'>]
 		);
 
-		expect(detached).toEqual(['project-1']);
+		expect(detached.map((connection) => connection.projectId)).toEqual(['project-1']);
 	});
 
 	it('skips redundant heartbeat writes for the same client until the throttle elapses', () => {
 		const now = 100_000;
-		const project = makeProject({
-			connectedClientId: 'client-1',
+		const connection = makeConnection({
+			clientId: 'client-1',
 			lastHeartbeatAt: now - EXECUTOR_HEARTBEAT_WRITE_THROTTLE_MS + 1
 		});
 
-		expect(shouldRefreshProjectHeartbeat(project, 'client-1', now)).toBe(false);
+		expect(shouldRefreshProjectHeartbeat(connection, 'client-1', now)).toBe(false);
 		expect(
 			shouldRefreshProjectHeartbeat(
 				{
-					...project,
+					...connection,
 					lastHeartbeatAt: now - EXECUTOR_HEARTBEAT_WRITE_THROTTLE_MS
 				},
 				'client-1',
@@ -87,23 +88,14 @@ describe('projectConnection helpers', () => {
 
 		expect(
 			shouldRefreshProjectHeartbeat(
-				makeProject({
-					connectedClientId: 'client-2',
+				makeConnection({
+					clientId: 'client-2',
 					lastHeartbeatAt: now
 				}),
 				'client-1',
 				now
 			)
 		).toBe(true);
-		expect(
-			shouldRefreshProjectHeartbeat(
-				makeProject({
-					connectedClientId: 'client-1',
-					lastHeartbeatAt: undefined
-				}),
-				'client-1',
-				now
-			)
-		).toBe(true);
+		expect(shouldRefreshProjectHeartbeat(null, 'client-1', now)).toBe(true);
 	});
 });

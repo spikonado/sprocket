@@ -40,8 +40,6 @@ function unknownProject(projectId: Id<'projects'>): Project {
 		userId: '',
 		repositoryKey: 'unknown',
 		displayName: 'Unknown project',
-		executorStatus: 'disconnected',
-		lastSeenAt: 0,
 		localAttachmentAvailability: 'unlinked'
 	};
 }
@@ -51,10 +49,6 @@ function buildProjectThreadGroup(project: Project, threads: ThreadSummary[]): Pr
 	return {
 		project,
 		threads: sortedThreads,
-		latestThreadAt: sortedThreads.reduce(
-			(latest, thread) => Math.max(latest, thread.lastMessageAt),
-			0
-		),
 		activeThreadCount: countActiveThreads(sortedThreads)
 	};
 }
@@ -82,15 +76,10 @@ export function getProjectThreadGroups(projects: Project[], threads: ThreadSumma
 		groups.push(buildProjectThreadGroup(unknownProject(projectId), projectThreads));
 	}
 
-	return groups.sort((left, right) => {
-		const leftSortKey = left.latestThreadAt || left.project.lastSeenAt;
-		const rightSortKey = right.latestThreadAt || right.project.lastSeenAt;
-		if (rightSortKey !== leftSortKey) {
-			return rightSortKey - leftSortKey;
-		}
-
-		return left.project.displayName.localeCompare(right.project.displayName);
-	});
+	// Preserve the project order supplied by `projects.listMine` (creation,
+	// newest first). Thread activity reorders threads within a project, never
+	// the projects themselves.
+	return groups;
 }
 
 function sortThreadsRunningFirst(threads: ThreadSummary[]) {
@@ -116,6 +105,24 @@ export function findThreadById(
 	}
 
 	return threads.find((thread) => thread.threadId === threadId) ?? null;
+}
+
+/**
+ * Session-restore target: the non-archived thread the user most recently
+ * prompted or got a response in. Deliberately ignores run state — a
+ * background run in another project should not hijack the session on load.
+ */
+export function pickThreadToRestore(threads: ThreadSummary[]): ThreadSummary | null {
+	let latest: ThreadSummary | null = null;
+	for (const thread of threads) {
+		if (!isActiveThread(thread)) {
+			continue;
+		}
+		if (!latest || thread.lastMessageAt > latest.lastMessageAt) {
+			latest = thread;
+		}
+	}
+	return latest;
 }
 
 export function dataForThread<

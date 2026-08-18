@@ -111,3 +111,101 @@ describe('projects.upsertSelected', () => {
 		expect(oldProject?.repositoryKey).toBe('github.com/spikonado/old');
 	});
 });
+
+describe('projects.listMine ordering', () => {
+	it('orders by creation, not by which project was re-selected most recently', async () => {
+		const t = initConvexTest();
+		const asUser = t.withIdentity({ subject: 'user_order' });
+
+		const older = await asUser.mutation(api.projects.upsertSelected, {
+			repositoryKey: 'github.com/spikonado/older',
+			displayName: 'older',
+			connectedClientId: 'client-1'
+		});
+		const newer = await asUser.mutation(api.projects.upsertSelected, {
+			repositoryKey: 'github.com/spikonado/newer',
+			displayName: 'newer',
+			connectedClientId: 'client-1'
+		});
+
+		// Re-selecting the older project must not move it above the newer one.
+		await asUser.mutation(api.projects.upsertSelected, {
+			repositoryKey: 'github.com/spikonado/older',
+			displayName: 'older',
+			connectedClientId: 'client-1'
+		});
+
+		const projects = await asUser.query(api.projects.listMine, {});
+		expect(projects.map((project) => project._id)).toEqual([newer!._id, older!._id]);
+	});
+});
+
+describe('projects.heartbeatAttached', () => {
+	it('tracks liveness in projectConnections without mutating the project row', async () => {
+		const t = initConvexTest();
+		const asUser = t.withIdentity({ subject: 'user_heartbeat' });
+
+		const project = await asUser.mutation(api.projects.upsertSelected, {
+			repositoryKey: 'github.com/spikonado/sprocket',
+			displayName: 'sprocket',
+			connectedClientId: 'client-1'
+		});
+
+		const before = await t.run(async (ctx) => ctx.db.get(project!._id));
+
+		await asUser.mutation(api.projects.heartbeatAttached, {
+			clientId: 'client-1',
+			projectIds: [project!._id]
+		});
+
+		const after = await t.run(async (ctx) => ctx.db.get(project!._id));
+		expect(after).toEqual(before);
+
+		const connection = await t.run(async (ctx) =>
+			ctx.db
+				.query('projectConnections')
+				.withIndex('by_projectId', (query) => query.eq('projectId', project!._id))
+				.unique()
+		);
+		expect(connection).toMatchObject({ clientId: 'client-1' });
+	});
+
+	it('drops the connection row when the client stops attaching the project', async () => {
+		const t = initConvexTest();
+		const asUser = t.withIdentity({ subject: 'user_detach' });
+
+		const project = await asUser.mutation(api.projects.upsertSelected, {
+			repositoryKey: 'github.com/spikonado/sprocket',
+			displayName: 'sprocket',
+			connectedClientId: 'client-1'
+		});
+
+		await asUser.mutation(api.projects.heartbeatAttached, {
+			clientId: 'client-1',
+			projectIds: []
+		});
+
+		const connection = await t.run(async (ctx) =>
+			ctx.db
+				.query('projectConnections')
+				.withIndex('by_projectId', (query) => query.eq('projectId', project!._id))
+				.unique()
+		);
+		expect(connection).toBeNull();
+	});
+
+	it('omits executorStatus when includeExecutorStatus is false', async () => {
+		const t = initConvexTest();
+		const asUser = t.withIdentity({ subject: 'user_no_executor_status' });
+
+		await asUser.mutation(api.projects.upsertSelected, {
+			repositoryKey: 'github.com/spikonado/sprocket',
+			displayName: 'sprocket',
+			connectedClientId: 'client-1'
+		});
+
+		const listed = await asUser.query(api.projects.listMine, { includeExecutorStatus: false });
+		expect(listed).toHaveLength(1);
+		expect(listed[0]).not.toHaveProperty('executorStatus');
+	});
+});

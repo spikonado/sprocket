@@ -28,10 +28,17 @@ export type Project = {
 	repositoryKey: string;
 	displayName: string;
 	workspacePath?: string;
-	executorStatus: Infer<typeof vExecutorStatus>;
+	// Deprecated: only returned by `projects.listMine` for older clients that
+	// don't pass `includeExecutorStatus: false`. Nothing in the current UI
+	// consumes it.
+	executorStatus?: Infer<typeof vExecutorStatus>;
+	// Deprecated: executor liveness moved to `projectConnections`; only present
+	// on pre-migration project rows. Nothing in the current UI consumes them.
 	lastHeartbeatAt?: number;
 	connectedClientId?: string;
-	lastSeenAt: number;
+	// Still bumped on every project open; older released clients use it to
+	// order their sidebar. The current UI orders projects by creation instead.
+	lastSeenAt?: number;
 	localAttachmentAvailability?: LocalAttachmentAvailability;
 	localAttachmentError?: string;
 };
@@ -55,7 +62,6 @@ export type ThreadSummary = {
 export type ProjectThreadGroup = {
 	project: Project;
 	threads: ThreadSummary[];
-	latestThreadAt: number;
 	activeThreadCount: number;
 };
 

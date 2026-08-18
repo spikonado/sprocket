@@ -30,8 +30,17 @@ export default defineSchema({
 	uiPreferences: defineTable(uiPreferencesFields).index('by_userId', ['userId']),
 	projects: defineTable(projectFields)
 		.index('by_userId', ['userId'])
-		.index('by_userId_lastSeenAt', ['userId', 'lastSeenAt'])
 		.index('by_user_repositoryKey', ['userId', 'repositoryKey']),
+	// Executor liveness lives apart from `projects` so heartbeats don't
+	// invalidate `projects.listMine` subscriptions.
+	projectConnections: defineTable({
+		projectId: v.id('projects'),
+		userId: v.string(),
+		clientId: v.string(),
+		lastHeartbeatAt: v.number()
+	})
+		.index('by_projectId', ['projectId'])
+		.index('by_userId', ['userId']),
 	threadRecords: defineTable(threadRecordFields)
 		.index('by_userId_lastMessageAt', ['userId', 'lastMessageAt'])
 		.index('by_userId_submissionId', ['userId', 'submissionId']),

@@ -17,6 +17,10 @@ export const getMine = query({
 	}
 });
 
+// Deprecated: kept for older released clients, which call it on every thread
+// switch and read `lastThreadId` for session restore. The current client does
+// neither, so it is effectively a no-op for new sessions. Remove with the
+// `lastThreadId` field once those clients age out.
 export const setLastThread = mutation({
 	args: {
 		threadId: v.id('threadRecords')

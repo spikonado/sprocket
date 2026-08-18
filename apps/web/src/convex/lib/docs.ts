@@ -28,6 +28,8 @@ export const projectFields = {
 	userId: v.string(),
 	repositoryKey: v.string(),
 	displayName: v.string(),
+	// Deprecated: executor liveness moved to `projectConnections`. No longer
+	// written; kept optional so pre-migration rows still validate.
 	lastHeartbeatAt: v.optional(v.number()),
 	connectedClientId: v.optional(v.string()),
 	nextExecutorSequence: v.number(),
@@ -121,6 +123,9 @@ export const agentQuestionFields = {
 
 export const uiPreferencesFields = {
 	userId: v.string(),
+	// Deprecated: only older released clients still write/read this via
+	// setLastThread. New clients resume the latest active thread instead.
+	// Remove once those clients age out.
 	lastThreadId: v.optional(v.id('threadRecords')),
 	theme: v.optional(v.union(v.literal('light'), v.literal('dark'))),
 	paymentsEmail: v.optional(v.string())
@@ -236,11 +241,12 @@ export const vImageUploadDoc = v.object({
 	...imageUploadFields
 });
 
-export const vProjectWithExecutorStatus = v.object({
+export const vProjectListItem = v.object({
 	_id: v.id('projects'),
 	_creationTime: v.number(),
 	...projectFields,
-	executorStatus: vExecutorStatus
+	// Absent for `listMine({ includeExecutorStatus: false })` callers.
+	executorStatus: v.optional(vExecutorStatus)
 });
 
 export const vThreadTranscriptAttachment = v.object({
