@@ -161,8 +161,13 @@ describe('projects.heartbeatAttached', () => {
 		const after = await t.run(async (ctx) => ctx.db.get(project!._id));
 		expect(after).toEqual(before);
 
-		const listed = await asUser.query(api.projects.listMine, {});
-		expect(listed.find((entry) => entry._id === project!._id)?.executorStatus).toBe('connected');
+		const connection = await t.run(async (ctx) =>
+			ctx.db
+				.query('projectConnections')
+				.withIndex('by_projectId', (query) => query.eq('projectId', project!._id))
+				.unique()
+		);
+		expect(connection).toMatchObject({ clientId: 'client-1' });
 	});
 
 	it('drops the connection row when the client stops attaching the project', async () => {
@@ -180,13 +185,18 @@ describe('projects.heartbeatAttached', () => {
 			projectIds: []
 		});
 
-		const listed = await asUser.query(api.projects.listMine, {});
-		expect(listed.find((entry) => entry._id === project!._id)?.executorStatus).toBe('disconnected');
+		const connection = await t.run(async (ctx) =>
+			ctx.db
+				.query('projectConnections')
+				.withIndex('by_projectId', (query) => query.eq('projectId', project!._id))
+				.unique()
+		);
+		expect(connection).toBeNull();
 	});
 
 	it('omits executorStatus when includeExecutorStatus is false', async () => {
 		const t = initConvexTest();
-		const asUser = t.withIdentity({ subject: 'user_slim' });
+		const asUser = t.withIdentity({ subject: 'user_no_executor_status' });
 
 		await asUser.mutation(api.projects.upsertSelected, {
 			repositoryKey: 'github.com/spikonado/sprocket',
@@ -194,11 +204,8 @@ describe('projects.heartbeatAttached', () => {
 			connectedClientId: 'client-1'
 		});
 
-		const slim = await asUser.query(api.projects.listMine, { includeExecutorStatus: false });
-		expect(slim).toHaveLength(1);
-		expect(slim[0]).not.toHaveProperty('executorStatus');
-
-		const legacy = await asUser.query(api.projects.listMine, {});
-		expect(legacy[0]?.executorStatus).toBe('connected');
+		const listed = await asUser.query(api.projects.listMine, { includeExecutorStatus: false });
+		expect(listed).toHaveLength(1);
+		expect(listed[0]).not.toHaveProperty('executorStatus');
 	});
 });
