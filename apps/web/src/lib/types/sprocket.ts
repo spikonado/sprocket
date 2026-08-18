@@ -29,7 +29,8 @@ export type Project = {
 	displayName: string;
 	workspacePath?: string;
 	// Deprecated: only returned by `projects.listMine` for older clients that
-	// don't pass `slim: true`. Nothing in the current UI consumes it.
+	// don't pass `includeExecutorStatus: false`. Nothing in the current UI
+	// consumes it.
 	executorStatus?: Infer<typeof vExecutorStatus>;
 	// Deprecated: executor liveness moved to `projectConnections`; only present
 	// on pre-migration project rows. Nothing in the current UI consumes them.
