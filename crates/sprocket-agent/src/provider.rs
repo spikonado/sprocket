@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use anyhow::anyhow;
 use futures::StreamExt;
-use rig::client::CompletionClient;
-use rig::completion::{CompletionModel, Message};
+use rig::client::{AgentClientExt, CompletionClient};
+use rig::completion::Message;
 use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
 use sprocket_convex_provider::{Client as ConvexProviderClient, is_completion_stream_superseded};
 use sprocket_workspace::{CommandSessionManager, WorkspaceSkill};
@@ -121,8 +121,7 @@ async fn run_with_completion_client<C>(
 ) -> AgentProviderResult
 where
     C: CompletionClient,
-    C::CompletionModel: CompletionModel<Client = C> + 'static,
-    <C::CompletionModel as CompletionModel>::StreamingResponse: 'static,
+    C::CompletionModel: 'static,
 {
     let tool_call_tracker = ToolCallTracker::default();
     let tools = agent_tools(
@@ -200,15 +199,15 @@ where
                 Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
                     StreamedAssistantContent::ToolCall { .. }
                     | StreamedAssistantContent::ToolCallDelta { .. }
-                    | StreamedAssistantContent::Reasoning(_)
+                    | StreamedAssistantContent::Reasoning { .. }
                     | StreamedAssistantContent::ReasoningDelta { .. }
                     | StreamedAssistantContent::Final(_)
                     | StreamedAssistantContent::Unknown(_),
                 ))
-                | Ok(rig::agent::MultiTurnStreamItem::ToolExecutionStart { .. })
+                | Ok(rig::agent::MultiTurnStreamItem::ToolExecutionCommitted { .. })
+                | Ok(rig::agent::MultiTurnStreamItem::ModelTurnRetried { .. })
                 | Ok(rig::agent::MultiTurnStreamItem::StreamUserItem(_))
                 | Ok(rig::agent::MultiTurnStreamItem::CompletionCall(_)) => {}
-                Ok(_) => {}
                 Err(error) => {
                     let text = if final_text.is_empty() {
                         streamed_text

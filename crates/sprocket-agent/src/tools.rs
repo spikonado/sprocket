@@ -648,7 +648,11 @@ impl rig::tool::Tool for ExecCommandTool {
         exec_command_parameters()
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    async fn call(
+        &self,
+        _context: &mut rig::tool::ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         execute_tool_job(
             &self.0.runtime,
             &self.0.run_id,
@@ -693,7 +697,11 @@ impl rig::tool::Tool for WriteStdinTool {
         write_stdin_parameters()
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    async fn call(
+        &self,
+        _context: &mut rig::tool::ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         execute_tool_job(
             &self.0.runtime,
             &self.0.run_id,
@@ -737,7 +745,11 @@ impl rig::tool::Tool for AskQuestionTool {
         ask_question_parameters()
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    async fn call(
+        &self,
+        _context: &mut rig::tool::ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         let prepared = prepare_ask_question(&args)?;
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         execute_tool_job(
@@ -793,7 +805,11 @@ impl rig::tool::Tool for AwaitQuestionTool {
         await_question_parameters()
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    async fn call(
+        &self,
+        _context: &mut rig::tool::ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         if args.question_id.trim().is_empty() {
             return Err(AgentToolError::Message(
                 "questionId cannot be empty".to_string(),
@@ -854,7 +870,11 @@ impl rig::tool::Tool for ApplyPatchTool {
         json!(schemars::schema_for!(ApplyPatchArgs))
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    async fn call(
+        &self,
+        _context: &mut rig::tool::ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         execute_tool_job(
             &self.0.runtime,
             &self.0.run_id,
@@ -889,7 +909,11 @@ impl rig::tool::Tool for WebSearchTool {
         web_search_parameters()
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    async fn call(
+        &self,
+        _context: &mut rig::tool::ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         execute_tool_job(
             &self.0.runtime,
@@ -937,7 +961,11 @@ impl rig::tool::Tool for ScrapeUrlTool {
         json!(schemars::schema_for!(ScrapeUrlArgs))
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    async fn call(
+        &self,
+        _context: &mut rig::tool::ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         execute_tool_job(
             &self.0.runtime,
@@ -977,7 +1005,11 @@ impl rig::tool::Tool for CreateArtifactTool {
         json!(schemars::schema_for!(CreateArtifactArgs))
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    async fn call(
+        &self,
+        _context: &mut rig::tool::ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         execute_tool_job(
             &self.0.runtime,
@@ -1016,7 +1048,11 @@ impl rig::tool::Tool for UpdateArtifactTool {
         json!(schemars::schema_for!(UpdateArtifactArgs))
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    async fn call(
+        &self,
+        _context: &mut rig::tool::ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         execute_tool_job(
             &self.0.runtime,
@@ -1055,7 +1091,11 @@ impl rig::tool::Tool for BrowserObserveTool {
         json!(schemars::schema_for!(BrowserObserveArgs))
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    async fn call(
+        &self,
+        _context: &mut rig::tool::ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         execute_tool_job(
             &self.0.runtime,
@@ -1098,7 +1138,11 @@ impl rig::tool::Tool for BrowserActTool {
         json!(schemars::schema_for!(BrowserActToolArgs))
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    async fn call(
+        &self,
+        _context: &mut rig::tool::ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         if args.instruction.is_none() && args.action.is_none() {
             return Err(AgentToolError::Message(
@@ -1159,7 +1203,11 @@ impl rig::tool::Tool for BrowserExtractTool {
         json!(schemars::schema_for!(BrowserExtractArgs))
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    async fn call(
+        &self,
+        _context: &mut rig::tool::ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         execute_tool_job(
             &self.0.runtime,
@@ -1203,7 +1251,11 @@ impl rig::tool::Tool for MandateSetupTool {
         json!(schemars::schema_for!(MandateSetupArgs))
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    async fn call(
+        &self,
+        _context: &mut rig::tool::ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         mandate_action_job(
             &self.0,
             Self::NAME,
@@ -1229,7 +1281,11 @@ impl rig::tool::Tool for MandateStatusTool {
         json!(schemars::schema_for!(MandateIdArgs))
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    async fn call(
+        &self,
+        _context: &mut rig::tool::ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         mandate_action_job(
             &self.0,
             Self::NAME,
@@ -1255,7 +1311,11 @@ impl rig::tool::Tool for MandateListTool {
         json!({ "type": "object", "properties": {}, "additionalProperties": false })
     }
 
-    async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
+    async fn call(
+        &self,
+        _context: &mut rig::tool::ToolContext,
+        _args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         mandate_action_job(&self.0, Self::NAME, "payments:mandateList", json!({})).await
     }
 }
@@ -1275,7 +1335,11 @@ impl rig::tool::Tool for MandateChargeTool {
         json!(schemars::schema_for!(MandateChargeArgs))
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    async fn call(
+        &self,
+        _context: &mut rig::tool::ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         mandate_action_job(
             &self.0,
             Self::NAME,
@@ -1301,7 +1365,11 @@ impl rig::tool::Tool for MandateReportTool {
         json!(schemars::schema_for!(MandateReportArgs))
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    async fn call(
+        &self,
+        _context: &mut rig::tool::ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         mandate_action_job(
             &self.0,
             Self::NAME,
@@ -1327,7 +1395,11 @@ impl rig::tool::Tool for ReadSkillTool {
         json!(schemars::schema_for!(ReadSkillArgs))
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    async fn call(
+        &self,
+        _context: &mut rig::tool::ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         let skills = self.skills.clone();
         execute_tool_job(

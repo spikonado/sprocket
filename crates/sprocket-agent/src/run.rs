@@ -1,5 +1,4 @@
 use anyhow::anyhow;
-use rig::OneOrMany;
 use rig::completion::Message;
 use rig::message::{ImageMediaType, UserContent};
 use sprocket_workspace::{
@@ -680,8 +679,7 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
             ));
         }
         let prompt = Message::User {
-            content: OneOrMany::many(prompt_contents)
-                .map_err(|_| anyhow!("run prompt content cannot be empty"))?,
+            content: prompt_contents,
         };
         let provider = AgentProvider::default_for_run(&runtime, &context, &run_id, &claim_id);
         let prior_history = deserialize_agent_history(context.agent_history)?;

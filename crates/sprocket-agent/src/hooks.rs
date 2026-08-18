@@ -1,8 +1,10 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
-use rig::agent::{AgentHook, Flow, InvalidToolCallContext, StepEvent, StepEventKind};
-use rig::completion::CompletionModel;
+use rig::agent::{
+    AgentHook, HookContext, InvalidToolCallAction, InvalidToolCallContext, StepEventKind,
+    ToolCallAction,
+};
 
 pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
     "apply_patch",
@@ -93,24 +95,23 @@ impl AgentPromptHook {
     }
 }
 
-impl<M> AgentHook<M> for AgentPromptHook
-where
-    M: CompletionModel,
-{
-    async fn on_event(&self, _context: &rig::agent::HookContext, event: StepEvent<'_, M>) -> Flow {
-        match event {
-            StepEvent::InvalidToolCall(context) => resolve_invalid_tool_call(context),
-            StepEvent::ToolCall {
-                tool_name,
-                tool_call_id,
-                args,
-                ..
-            } => {
-                self.tracker.record(tool_call_id, tool_name, args);
-                Flow::cont()
-            }
-            _ => Flow::cont(),
-        }
+impl AgentHook for AgentPromptHook {
+    async fn on_tool_call(
+        &self,
+        _context: &HookContext,
+        event: rig::agent::ToolCall<'_>,
+    ) -> ToolCallAction {
+        self.tracker
+            .record(event.tool_call_id, event.tool_name, event.args);
+        ToolCallAction::Run
+    }
+
+    async fn on_invalid_tool_call(
+        &self,
+        _context: &HookContext,
+        event: &InvalidToolCallContext,
+    ) -> Option<InvalidToolCallAction> {
+        Some(resolve_invalid_tool_call(event))
     }
 
     fn observes(&self, kind: StepEventKind) -> bool {
@@ -121,11 +122,11 @@ where
     }
 }
 
-pub(crate) fn resolve_invalid_tool_call(context: &InvalidToolCallContext) -> Flow {
+pub(crate) fn resolve_invalid_tool_call(context: &InvalidToolCallContext) -> InvalidToolCallAction {
     resolve_invalid_tool_name(&context.tool_name, &context.available_tools)
 }
 
-fn resolve_invalid_tool_name(tool_name: &str, available_tools: &[String]) -> Flow {
+fn resolve_invalid_tool_name(tool_name: &str, available_tools: &[String]) -> InvalidToolCallAction {
     let candidates = if available_tools.is_empty() {
         AGENT_TOOL_NAMES
             .iter()
@@ -136,10 +137,10 @@ fn resolve_invalid_tool_name(tool_name: &str, available_tools: &[String]) -> Flo
     };
 
     if let Some(repaired) = repair_tool_name(tool_name, &candidates) {
-        return Flow::repair(repaired);
+        return InvalidToolCallAction::repair(repaired);
     }
 
-    Flow::retry(format!(
+    InvalidToolCallAction::retry(format!(
         "Unknown or disallowed tool `{}`. Use one of: {}.",
         tool_name,
         candidates.join(", ")
@@ -231,34 +232,24 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn repairs_near_miss_tool_names() {
-        match resolve_invalid_tool_name("exec-command", &tools()) {
-            Flow::Repair { tool_name } => {
-                assert_eq!(tool_name, "exec_command");
-            }
-            other => panic!("expected repair, got {other:?}"),
-        }
-
-        match resolve_invalid_tool_name("apply-patch", &tools()) {
-            Flow::Repair { tool_name } => {
-                assert_eq!(tool_name, "apply_patch");
-            }
-            other => panic!("expected repair, got {other:?}"),
-        }
-
-        match resolve_invalid_tool_name("writestdin", &tools()) {
-            Flow::Repair { tool_name } => {
-                assert_eq!(tool_name, "write_stdin");
-            }
+    fn assert_repaired(tool_name: &str, expected: &str) {
+        match resolve_invalid_tool_name(tool_name, &tools()) {
+            InvalidToolCallAction::Repair { tool_name } => assert_eq!(tool_name, expected),
             other => panic!("expected repair, got {other:?}"),
         }
     }
 
     #[test]
+    fn repairs_near_miss_tool_names() {
+        assert_repaired("exec-command", "exec_command");
+        assert_repaired("apply-patch", "apply_patch");
+        assert_repaired("writestdin", "write_stdin");
+    }
+
+    #[test]
     fn retries_unknown_tool_names() {
         match resolve_invalid_tool_name("launch_missiles", &tools()) {
-            Flow::Retry { feedback } => {
+            InvalidToolCallAction::Retry { feedback } => {
                 assert!(feedback.contains("exec_command"));
                 assert!(feedback.contains("write_stdin"));
                 assert!(feedback.contains("apply_patch"));
