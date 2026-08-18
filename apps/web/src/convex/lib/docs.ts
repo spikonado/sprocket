@@ -42,10 +42,6 @@ export const threadRecordFields = {
 	selectedModel: vModelId,
 	reasoningEffort: vReasoningEffort,
 	serviceTier: vServiceTier,
-	// Legacy; moved to the `threadUsage` table (lib/threadUsage.ts). Delete
-	// once every row is migrated.
-	contextTokens: v.optional(v.number()),
-	totalTokensProcessed: v.optional(v.number()),
 	contextSummary: v.optional(v.string()),
 	contextSummaryThroughRunId: v.optional(v.id('runs')),
 	lastMessageAt: v.number(),
@@ -194,12 +190,13 @@ export const vThreadRecordDoc = v.object({
 	...threadRecordFields
 });
 
-// getByThreadId merges threadUsage counters into the legacy response shape,
-// so its contract keeps the pre-migration required totalTokensProcessed.
-export const vThreadRecordWithUsageDoc = v.object({
+// getByThreadId's live response shape: thread record plus usage counters
+// merged in from the threadUsage table.
+export const vThreadWithUsageDoc = v.object({
 	_id: v.id('threadRecords'),
 	_creationTime: v.number(),
 	...threadRecordFields,
+	contextTokens: v.optional(v.number()),
 	totalTokensProcessed: v.number()
 });
 
