@@ -30,7 +30,6 @@ export default defineSchema({
 	uiPreferences: defineTable(uiPreferencesFields).index('by_userId', ['userId']),
 	projects: defineTable(projectFields)
 		.index('by_userId', ['userId'])
-		.index('by_userId_lastSeenAt', ['userId', 'lastSeenAt'])
 		.index('by_user_repositoryKey', ['userId', 'repositoryKey']),
 	// Executor liveness lives apart from `projects` so heartbeats don't
 	// invalidate `projects.listMine` subscriptions.

@@ -28,6 +28,8 @@ export const projectFields = {
 	userId: v.string(),
 	repositoryKey: v.string(),
 	displayName: v.string(),
+	// Deprecated: executor liveness moved to `projectConnections`. No longer
+	// written; kept optional so pre-migration rows still validate.
 	lastHeartbeatAt: v.optional(v.number()),
 	connectedClientId: v.optional(v.string()),
 	nextExecutorSequence: v.number(),

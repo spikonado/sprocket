@@ -3,7 +3,7 @@ import { v, type Infer } from 'convex/values';
 import { getUserId } from '@convex/lib/auth';
 import { vProjectDoc, vProjectWithExecutorStatus } from '@convex/lib/docs';
 import {
-	getDetachedConnectionProjectIds,
+	getDetachedConnections,
 	getEffectiveExecutorStatus,
 	shouldRefreshProjectHeartbeat
 } from '@convex/lib/projectConnection';
@@ -106,8 +106,9 @@ export const listMine = query({
 	returns: v.array(vProjectWithExecutorStatus),
 	handler: async (ctx, args): Promise<Infer<typeof vProjectWithExecutorStatus>[]> => {
 		const userId = await getUserId(ctx);
-		// Order by creation, newest first: `by_userId` orders by userId then the
-		// system `_id` (which is creation-ordered). Stable across thread activity.
+		// Order by creation, newest first: every Convex index implicitly ends
+		// with `_creationTime`, so `by_userId` is creation-ordered within a
+		// user. Stable across thread activity.
 		const projects = await ctx.db
 			.query('projects')
 			.withIndex('by_userId', (query) => query.eq('userId', userId))
@@ -160,37 +161,21 @@ export const heartbeatAttached = mutation({
 			}
 		}
 
-		const detachedProjectIds = new Set(
-			getDetachedConnectionProjectIds(
-				[...connectionByProjectId.values()],
-				args.clientId,
-				requestedIds
-			)
+		const detachedConnections = getDetachedConnections(
+			[...connectionByProjectId.values()],
+			args.clientId,
+			requestedIds
 		);
 
-		await Promise.all(
-			projects.map(async (project) => {
-				if (requestedIds.has(project._id)) {
-					const connection = connectionByProjectId.get(project._id) ?? null;
-					if (shouldRefreshProjectHeartbeat(connection, args.clientId, now)) {
-						await upsertConnection(ctx, {
-							projectId: project._id,
-							userId,
-							clientId: args.clientId,
-							now
-						});
-					}
-					return;
+		await Promise.all([
+			...[...requestedIds].map(async (projectId) => {
+				const connection = connectionByProjectId.get(projectId);
+				if (shouldRefreshProjectHeartbeat(connection, args.clientId, now)) {
+					await upsertConnection(ctx, { projectId, userId, clientId: args.clientId, now });
 				}
-
-				if (detachedProjectIds.has(project._id)) {
-					const connection = connectionByProjectId.get(project._id);
-					if (connection) {
-						await ctx.db.delete(connection._id);
-					}
-				}
-			})
-		);
+			}),
+			...detachedConnections.map((connection) => ctx.db.delete(connection._id))
+		]);
 
 		return true;
 	}

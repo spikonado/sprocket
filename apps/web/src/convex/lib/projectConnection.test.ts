@@ -3,7 +3,7 @@ import type { Id } from '@convex/_generated/dataModel';
 import {
 	EXECUTOR_HEARTBEAT_WRITE_THROTTLE_MS,
 	EXECUTOR_HEARTBEAT_TTL_MS,
-	getDetachedConnectionProjectIds,
+	getDetachedConnections,
 	getEffectiveExecutorStatus,
 	shouldRefreshProjectHeartbeat
 } from '@convex/lib/projectConnection';
@@ -11,12 +11,12 @@ import {
 function makeConnection(
 	overrides: Partial<{
 		projectId: Id<'projects'>;
-		clientId?: string;
-		lastHeartbeatAt?: number;
+		clientId: string;
+		lastHeartbeatAt: number;
 	}> = {}
 ) {
 	return {
-		_id: 'conn-1' as never,
+		_id: 'conn-1' as Id<'projectConnections'>,
 		_creationTime: 0,
 		projectId: overrides.projectId ?? ('project-1' as Id<'projects'>),
 		userId: 'user-1',
@@ -40,8 +40,8 @@ describe('projectConnection helpers', () => {
 		expect(getEffectiveExecutorStatus(null, 100_000)).toBe('disconnected');
 	});
 
-	it('returns omitted projects to detach for the same client', () => {
-		const detached = getDetachedConnectionProjectIds(
+	it('returns omitted connections to detach for the same client', () => {
+		const detached = getDetachedConnections(
 			[
 				makeConnection({
 					projectId: 'project-1' as Id<'projects'>,
@@ -60,7 +60,7 @@ describe('projectConnection helpers', () => {
 			['project-2' as Id<'projects'>]
 		);
 
-		expect(detached).toEqual(['project-1']);
+		expect(detached.map((connection) => connection.projectId)).toEqual(['project-1']);
 	});
 
 	it('skips redundant heartbeat writes for the same client until the throttle elapses', () => {
