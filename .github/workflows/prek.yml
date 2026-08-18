@@ -25,6 +25,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cmd-format: nix develop ./sprocket-shell -c {0}
+          # Cached build scripts embed Nix interpreter paths from flake.lock.
+          prefix-key: v0-rust-${{ hashFiles('flake.lock') }}
 
       - name: Install dependencies
         shell: 'nix develop ./sprocket-shell -c bash -e {0}'
