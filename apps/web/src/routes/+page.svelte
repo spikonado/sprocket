@@ -73,6 +73,7 @@
 		isActiveThread,
 		isAgentLaunchPending,
 		isLatestRunReadyForThread,
+		pickThreadToRestore,
 		resolveExpiredAgentLaunch,
 		resolvePendingAgentLaunch,
 		resolvePendingAgentLaunchesFromThreads,
@@ -375,7 +376,7 @@
 	}
 
 	const projectsQuery = useQuery(api.projects.listMine, () =>
-		getAuthenticatedQueryArgs() === 'skip' ? 'skip' : { slim: true }
+		getAuthenticatedQueryArgs() === 'skip' ? 'skip' : { includeExecutorStatus: false }
 	);
 	const threadsQuery = useQuery(api.threads.listMine, getAuthenticatedQueryArgs);
 	const uiPreferencesQuery = useQuery(api.uiPreferences.getMine, getAuthenticatedQueryArgs);
@@ -1776,9 +1777,7 @@
 		}
 
 		hasResolvedInitialSelection = true;
-		// Resume the most recently active thread; threads.listMine already orders
-		// running-first then by lastMessageAt.
-		const restoredThread = threads.find(isActiveThread);
+		const restoredThread = pickThreadToRestore(threads);
 		if (restoredThread) {
 			const restoredProject = findProjectById(projects, restoredThread.projectId);
 			if (restoredProject) {

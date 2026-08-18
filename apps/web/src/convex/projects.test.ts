@@ -184,7 +184,7 @@ describe('projects.heartbeatAttached', () => {
 		expect(listed.find((entry) => entry._id === project!._id)?.executorStatus).toBe('disconnected');
 	});
 
-	it('omits executorStatus for slim callers', async () => {
+	it('omits executorStatus when includeExecutorStatus is false', async () => {
 		const t = initConvexTest();
 		const asUser = t.withIdentity({ subject: 'user_slim' });
 
@@ -194,7 +194,7 @@ describe('projects.heartbeatAttached', () => {
 			connectedClientId: 'client-1'
 		});
 
-		const slim = await asUser.query(api.projects.listMine, { slim: true });
+		const slim = await asUser.query(api.projects.listMine, { includeExecutorStatus: false });
 		expect(slim).toHaveLength(1);
 		expect(slim[0]).not.toHaveProperty('executorStatus');
 

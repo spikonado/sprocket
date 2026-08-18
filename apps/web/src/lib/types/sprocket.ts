@@ -35,8 +35,8 @@ export type Project = {
 	// on pre-migration project rows. Nothing in the current UI consumes them.
 	lastHeartbeatAt?: number;
 	connectedClientId?: string;
-	// Deprecated: still returned by `projects.listMine` for older clients, but
-	// no longer drives ordering.
+	// Still bumped on every project open; older released clients use it to
+	// order their sidebar. The current UI orders projects by creation instead.
 	lastSeenAt?: number;
 	localAttachmentAvailability?: LocalAttachmentAvailability;
 	localAttachmentError?: string;

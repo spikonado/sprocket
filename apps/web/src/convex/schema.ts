@@ -38,7 +38,9 @@ export default defineSchema({
 		userId: v.string(),
 		clientId: v.string(),
 		lastHeartbeatAt: v.number()
-	}).index('by_projectId', ['projectId']),
+	})
+		.index('by_projectId', ['projectId'])
+		.index('by_userId', ['userId']),
 	threadRecords: defineTable(threadRecordFields)
 		.index('by_userId_lastMessageAt', ['userId', 'lastMessageAt'])
 		.index('by_userId_submissionId', ['userId', 'submissionId']),

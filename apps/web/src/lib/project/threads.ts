@@ -107,6 +107,24 @@ export function findThreadById(
 	return threads.find((thread) => thread.threadId === threadId) ?? null;
 }
 
+/**
+ * Session-restore target: the non-archived thread the user most recently
+ * prompted or got a response in. Deliberately ignores run state — a
+ * background run in another project should not hijack the session on load.
+ */
+export function pickThreadToRestore(threads: ThreadSummary[]): ThreadSummary | null {
+	let latest: ThreadSummary | null = null;
+	for (const thread of threads) {
+		if (!isActiveThread(thread)) {
+			continue;
+		}
+		if (!latest || thread.lastMessageAt > latest.lastMessageAt) {
+			latest = thread;
+		}
+	}
+	return latest;
+}
+
 export function dataForThread<
 	T extends { threadId?: Id<'threadRecords'>; _id?: Id<'threadRecords'> }
 >(data: T | null | undefined, threadId: Id<'threadRecords'> | null): T | null {

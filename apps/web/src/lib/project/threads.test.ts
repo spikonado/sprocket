@@ -8,6 +8,7 @@ import {
 	isActiveThread,
 	isAgentLaunchPending,
 	isLatestRunReadyForThread,
+	pickThreadToRestore,
 	resolveExpiredAgentLaunch,
 	resolvePendingAgentLaunch,
 	resolvePendingAgentLaunchesFromThreads,
@@ -134,6 +135,30 @@ describe('project thread helpers', () => {
 		);
 
 		expect(groups.map((group) => group.project._id)).toEqual(['ws-older', 'ws-newer']);
+	});
+
+	it('restores the most recently active thread, ignoring run state', () => {
+		const runningOlder = makeThreadSummary({
+			threadId: 'thread-record-running' as ThreadSummary['threadId'],
+			lastMessageAt: 10,
+			hasActiveRun: true
+		});
+		const idleNewer = makeThreadSummary({
+			threadId: 'thread-record-idle' as ThreadSummary['threadId'],
+			lastMessageAt: 20
+		});
+		const archivedNewest = makeThreadSummary({
+			threadId: 'thread-record-archived' as ThreadSummary['threadId'],
+			lastMessageAt: 30,
+			threadStatus: 'archived'
+		});
+
+		// Running-first listMine order must not leak into session restore.
+		expect(pickThreadToRestore([runningOlder, idleNewer, archivedNewest])?.threadId).toBe(
+			'thread-record-idle'
+		);
+		expect(pickThreadToRestore([archivedNewest])).toBeNull();
+		expect(pickThreadToRestore([])).toBeNull();
 	});
 
 	it('excludes archived threads from project groups', () => {
