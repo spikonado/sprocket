@@ -1,8 +1,11 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use rig::agent::{AgentHook, Flow, RequestPatch, StepEvent, StepEventKind};
-use rig::completion::{CompletionModel, Message, Usage};
+use rig::agent::{
+    AgentHook, CompletionCallAction, CompletionCallEvent, HookContext, ModelTurnAction,
+    ModelTurnFinished, RequestPatch, StepEventKind,
+};
+use rig::completion::{Message, Usage};
 use rig::message::{AssistantContent, UserContent};
 use sprocket_convex_provider::completion_messages_json;
 use tokio::time::timeout;
@@ -72,19 +75,22 @@ impl ContextCompactionHook {
     }
 }
 
-impl<M> AgentHook<M> for ContextCompactionHook
-where
-    M: CompletionModel,
-{
-    async fn on_event(&self, _context: &rig::agent::HookContext, event: StepEvent<'_, M>) -> Flow {
-        match event {
-            StepEvent::ModelTurnFinished { usage, .. } => {
-                self.on_model_turn_finished(usage).await;
-                Flow::cont()
-            }
-            StepEvent::CompletionCall { history, .. } => self.on_completion_call(history).await,
-            _ => Flow::cont(),
-        }
+impl AgentHook for ContextCompactionHook {
+    async fn on_model_turn_finished(
+        &self,
+        _context: &HookContext,
+        event: ModelTurnFinished<'_>,
+    ) -> ModelTurnAction {
+        self.on_model_turn_finished(event.usage).await;
+        ModelTurnAction::Continue
+    }
+
+    async fn on_completion_call(
+        &self,
+        _context: &HookContext,
+        event: CompletionCallEvent<'_>,
+    ) -> CompletionCallAction {
+        self.on_completion_call(event.history).await
     }
 
     fn observes(&self, kind: StepEventKind) -> bool {
@@ -136,11 +142,11 @@ impl ContextCompactionHook {
         }
     }
 
-    async fn on_completion_call(&self, history: &[Message]) -> Flow {
+    async fn on_completion_call(&self, history: &[Message]) -> CompletionCallAction {
         let (last_input_tokens, active_summary) = {
             let state = match self.state.lock() {
                 Ok(state) => state,
-                Err(_) => return Flow::cont(),
+                Err(_) => return CompletionCallAction::Continue,
             };
             (state.last_input_tokens, state.active_summary.clone())
         };
@@ -194,6 +200,7 @@ impl ContextCompactionHook {
 
         let processed_tokens = summary.processed_tokens();
         let summary_text = summary.summary;
+        let compacted_summary = context_summary_text(&summary_text);
         let replaced_prefix_len =
             next_replaced_prefix_len(active_summary.as_ref(), history.len(), split);
         let persist_for_future_runs =
@@ -227,14 +234,14 @@ impl ContextCompactionHook {
 
         if let Ok(mut state) = self.state.lock() {
             state.active_summary = Some(CompactedContext {
-                summary: summary_text.clone(),
+                summary: summary_text,
                 replaced_prefix_len,
             });
         }
 
-        let mut compacted = vec![Message::user(context_summary_text(&summary_text))];
+        let mut compacted = vec![Message::user(compacted_summary)];
         compacted.extend(tail);
-        Flow::patch_request(RequestPatch::new().history(compacted))
+        CompletionCallAction::patch(RequestPatch::new().history(compacted))
     }
 
     async fn summarize_with_retry(
@@ -279,10 +286,10 @@ impl ContextCompactionHook {
         &self,
         has_active_summary: bool,
         effective_history: &[Message],
-    ) -> Flow {
+    ) -> CompletionCallAction {
         let estimated = estimate_context_tokens(effective_history);
         if estimated >= self.context_budget.context_window_tokens {
-            return Flow::terminate(format!(
+            return CompletionCallAction::stop(format!(
                 "Context compaction failed and the conversation (~{estimated} tokens) exceeds the model context window ({} tokens).",
                 self.context_budget.context_window_tokens
             ));
@@ -304,11 +311,11 @@ fn context_summary_text(summary: &str) -> String {
     )
 }
 
-fn continue_with_history(has_active_summary: bool, history: Vec<Message>) -> Flow {
+fn continue_with_history(has_active_summary: bool, history: Vec<Message>) -> CompletionCallAction {
     if has_active_summary {
-        Flow::patch_request(RequestPatch::new().history(history))
+        CompletionCallAction::patch(RequestPatch::new().history(history))
     } else {
-        Flow::cont()
+        CompletionCallAction::Continue
     }
 }
 
@@ -482,10 +489,7 @@ fn is_summary_user_message(message: &Message) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rig::OneOrMany;
-    use rig::message::{
-        AssistantContent, Text, ToolCall, ToolFunction, ToolResult, ToolResultContent,
-    };
+    use rig::message::{AssistantContent, ToolResultContent};
 
     fn user_text(text: &str) -> Message {
         Message::user(text)
@@ -494,26 +498,21 @@ mod tests {
     fn assistant_tool_call(id: &str) -> Message {
         Message::Assistant {
             id: None,
-            content: OneOrMany::one(AssistantContent::ToolCall(ToolCall {
-                id: id.to_string(),
-                call_id: Some(id.to_string()),
-                function: ToolFunction {
-                    name: "exec_command".to_string(),
-                    arguments: serde_json::json!({ "cmd": "pwd" }),
-                },
-                signature: None,
-                additional_params: None,
-            })),
+            content: vec![AssistantContent::tool_call(
+                id,
+                "exec_command",
+                serde_json::json!({ "cmd": "pwd" }),
+            )],
         }
     }
 
     fn user_tool_result(id: &str) -> Message {
         Message::User {
-            content: OneOrMany::one(UserContent::ToolResult(ToolResult {
-                id: id.to_string(),
-                call_id: Some(id.to_string()),
-                content: OneOrMany::one(ToolResultContent::Text(Text::new("ok"))),
-            })),
+            content: vec![UserContent::tool_result(
+                id,
+                "exec_command",
+                vec![ToolResultContent::text("ok")],
+            )],
         }
     }
 

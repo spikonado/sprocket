@@ -1,7 +1,10 @@
 use std::collections::BTreeMap;
 
 use rig::completion::{CompletionError, CompletionRequest, Message};
-use rig::message::{AssistantContent, ReasoningContent, ToolResultContent, UserContent};
+use rig::message::{
+    AssistantContent, DocumentSourceKind, Image, MimeType, ReasoningContent, ToolResultContent,
+    UserContent,
+};
 
 pub(crate) fn build_model_messages(
     request: &CompletionRequest,
@@ -34,16 +37,17 @@ pub fn completion_messages_json<'a>(
                         UserContent::Image(image) => {
                             user_parts.push(serde_json::json!({
                                 "type": "image",
-                                "image": image.clone().try_into_url()?
+                                "image": image_url(image)?
                             }));
                         }
                         UserContent::ToolResult(result) => {
-                            let tool_call_id: &str = &result.id;
+                            let tool_call_id: &str = result.wire_call_id();
                             let output: String = result
                                 .content
                                 .iter()
                                 .filter_map(|content| match content {
                                     ToolResultContent::Text(text) => Some(text.text.clone()),
+                                    ToolResultContent::Json { value } => Some(value.to_string()),
                                     ToolResultContent::Image(_) => None,
                                 })
                                 .collect::<Vec<_>>()
@@ -51,10 +55,7 @@ pub fn completion_messages_json<'a>(
                             tool_results.push(serde_json::json!({
                                 "type": "tool-result",
                                 "toolCallId": tool_call_id,
-                                "toolName": tool_names_by_call_id
-                                    .get(tool_call_id)
-                                    .cloned()
-                                    .unwrap_or_else(|| "unknown_tool".to_string()),
+                                "toolName": tool_result_name(&tool_names_by_call_id, result),
                                 "output": tool_result_output(&output)
                             }));
                         }
@@ -90,7 +91,7 @@ pub fn completion_messages_json<'a>(
                                 "text": text.text.clone()
                             });
                             if let Some(provider_options) = &text.additional_params {
-                                part["providerOptions"] = provider_options.clone();
+                                part["providerOptions"] = provider_options.clone().into_value();
                             }
                             parts.push(part);
                         }
@@ -126,7 +127,7 @@ pub fn completion_messages_json<'a>(
                             }
                         }
                         AssistantContent::ToolCall(tool_call) => {
-                            let tool_call_id: String = tool_call.id.clone();
+                            let tool_call_id = tool_call.wire_call_id().to_string();
                             tool_names_by_call_id
                                 .insert(tool_call_id.clone(), tool_call.function.name.clone());
                             let mut part = serde_json::json!({
@@ -159,6 +160,41 @@ pub fn completion_messages_json<'a>(
     }
 
     Ok(serde_json::Value::Array(messages))
+}
+
+fn tool_result_name<'a>(
+    tool_names_by_call_id: &'a BTreeMap<String, String>,
+    result: &'a rig::message::ToolResult,
+) -> &'a str {
+    // The call-id map wins so a result's name always matches the name its
+    // tool call is replayed with — Convex history restores results with an
+    // empty name, and a repaired call keeps its originally persisted name.
+    tool_names_by_call_id
+        .get(result.wire_call_id())
+        .filter(|name| !name.is_empty())
+        .map_or_else(
+            || (!result.name.is_empty()).then_some(result.name.as_str()),
+            |name| Some(name.as_str()),
+        )
+        .unwrap_or("unknown_tool")
+}
+
+fn image_url(image: &Image) -> Result<String, CompletionError> {
+    match &image.data {
+        DocumentSourceKind::Url(url) => Ok(url.clone()),
+        DocumentSourceKind::Base64(data) => {
+            let Some(media_type) = &image.media_type else {
+                return Err(CompletionError::ProviderError(
+                    "A media type is required to create a valid base64-encoded image URL"
+                        .to_string(),
+                ));
+            };
+            Ok(format!("data:{};base64,{data}", media_type.to_mime_type()))
+        }
+        other => Err(CompletionError::ProviderError(format!(
+            "Convex-backed Rig provider only supports URL or base64 images, got {other:?}"
+        ))),
+    }
 }
 
 fn tool_result_output(output: &str) -> serde_json::Value {
@@ -213,27 +249,16 @@ pub(crate) fn instructions_text(request: &CompletionRequest) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use rig::OneOrMany;
     use rig::completion::{CompletionRequest, Message};
-    use rig::message::{AssistantContent, ImageMediaType, Text, UserContent};
+    use rig::message::{AdditionalParams, AssistantContent, ImageMediaType, Text, UserContent};
 
     use super::{build_model_messages, instructions_text, normalize_convex_json_numbers};
 
-    #[test]
-    fn builds_structured_messages_and_extracts_instructions() {
-        let messages: OneOrMany<Message> = OneOrMany::many(vec![
-            Message::System {
-                content: "You are precise.".to_string(),
-            },
-            Message::user("Inspect src/lib.rs"),
-            Message::assistant("I found the relevant module."),
-        ])
-        .expect("messages");
-
-        let structured: serde_json::Value = build_model_messages(&CompletionRequest {
+    fn completion_request(chat_history: Vec<Message>) -> CompletionRequest {
+        CompletionRequest {
             model: None,
             preamble: None,
-            chat_history: messages.clone(),
+            chat_history,
             documents: vec![],
             tools: vec![],
             temperature: None,
@@ -241,8 +266,22 @@ mod tests {
             tool_choice: None,
             additional_params: None,
             output_schema: None,
-        })
-        .expect("structured");
+            record_telemetry_content: false,
+        }
+    }
+
+    #[test]
+    fn builds_structured_messages_and_extracts_instructions() {
+        let messages = vec![
+            Message::System {
+                content: "You are precise.".to_string(),
+            },
+            Message::user("Inspect src/lib.rs"),
+            Message::assistant("I found the relevant module."),
+        ];
+
+        let structured: serde_json::Value =
+            build_model_messages(&completion_request(messages.clone())).expect("structured");
         let array = structured.as_array().expect("array");
         assert_eq!(array.len(), 2);
         assert_eq!(array[0]["role"], "user");
@@ -255,49 +294,25 @@ mod tests {
             "I found the relevant module."
         );
         assert_eq!(
-            instructions_text(&CompletionRequest {
-                model: None,
-                preamble: None,
-                chat_history: messages,
-                documents: vec![],
-                tools: vec![],
-                temperature: None,
-                max_tokens: None,
-                tool_choice: None,
-                additional_params: None,
-                output_schema: None,
-            }),
+            instructions_text(&completion_request(messages)),
             Some("You are precise.".to_string())
         );
     }
 
     #[test]
     fn preserves_images_in_user_messages() {
-        let messages = OneOrMany::one(Message::User {
-            content: OneOrMany::many(vec![
+        let messages = vec![Message::User {
+            content: vec![
                 UserContent::text("Describe this image"),
                 UserContent::image_url(
                     "https://example.com/robot.png",
                     Some(ImageMediaType::PNG),
                     None,
                 ),
-            ])
-            .expect("user content"),
-        });
+            ],
+        }];
 
-        let structured = build_model_messages(&CompletionRequest {
-            model: None,
-            preamble: None,
-            chat_history: messages,
-            documents: vec![],
-            tools: vec![],
-            temperature: None,
-            max_tokens: None,
-            tool_choice: None,
-            additional_params: None,
-            output_schema: None,
-        })
-        .expect("structured");
+        let structured = build_model_messages(&completion_request(messages)).expect("structured");
 
         assert_eq!(structured[0]["content"][0]["type"], "text");
         assert_eq!(structured[0]["content"][1]["type"], "image");
@@ -309,44 +324,31 @@ mod tests {
 
     #[test]
     fn preserves_tool_protocol_shape_for_follow_up_turns() {
-        let messages: OneOrMany<Message> = OneOrMany::many(vec![
+        let messages = vec![
             Message::user("Inspect src/lib.rs"),
             Message::Assistant {
                 id: None,
-                content: OneOrMany::many(vec![AssistantContent::tool_call(
+                content: vec![AssistantContent::tool_call(
                     "tool_call_1",
                     "exec_command",
                     serde_json::json!({
                         "cmd": "cat src/lib.rs"
                     }),
-                )])
-                .expect("assistant content"),
+                )],
             },
             Message::User {
-                content: OneOrMany::many(vec![UserContent::tool_result(
+                content: vec![UserContent::tool_result(
                     "tool_call_1",
-                    rig::OneOrMany::one(rig::completion::message::ToolResultContent::text(
+                    "exec_command",
+                    vec![rig::completion::message::ToolResultContent::text(
                         "{\"path\":\"src/lib.rs\",\"contents\":\"fn main() {}\"}",
-                    )),
-                )])
-                .expect("user content"),
+                    )],
+                )],
             },
-        ])
-        .expect("messages");
+        ];
 
-        let structured: serde_json::Value = build_model_messages(&CompletionRequest {
-            model: None,
-            preamble: None,
-            chat_history: messages,
-            documents: vec![],
-            tools: vec![],
-            temperature: None,
-            max_tokens: None,
-            tool_choice: None,
-            additional_params: None,
-            output_schema: None,
-        })
-        .expect("structured");
+        let structured: serde_json::Value =
+            build_model_messages(&completion_request(messages)).expect("structured");
 
         let array: &Vec<serde_json::Value> = structured.as_array().expect("array");
         assert_eq!(array.len(), 3);
@@ -368,29 +370,18 @@ mod tests {
 
     #[test]
     fn preserves_assistant_text_provider_options() {
-        let messages = OneOrMany::one(Message::Assistant {
+        let messages = vec![Message::Assistant {
             id: None,
-            content: OneOrMany::one(AssistantContent::Text(Text {
+            content: vec![AssistantContent::Text(Text {
                 text: "Grounded answer".to_string(),
-                additional_params: Some(serde_json::json!({
-                    "openai": { "itemId": "msg_123" }
-                })),
-            })),
-        });
+                additional_params: AdditionalParams::from_entries([(
+                    "openai",
+                    serde_json::json!({ "itemId": "msg_123" }),
+                )]),
+            })],
+        }];
 
-        let structured = build_model_messages(&CompletionRequest {
-            model: None,
-            preamble: None,
-            chat_history: messages,
-            documents: vec![],
-            tools: vec![],
-            temperature: None,
-            max_tokens: None,
-            tool_choice: None,
-            additional_params: None,
-            output_schema: None,
-        })
-        .expect("structured");
+        let structured = build_model_messages(&completion_request(messages)).expect("structured");
 
         assert_eq!(
             structured[0]["content"][0]["providerOptions"],

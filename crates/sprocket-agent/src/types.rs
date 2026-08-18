@@ -1,9 +1,8 @@
 use anyhow::{Context, anyhow};
-use rig::OneOrMany;
 use rig::completion::Message;
 use rig::message::{
-    AssistantContent, ReasoningContent, Text, ToolCall, ToolFunction, ToolResult,
-    ToolResultContent, UserContent,
+    AdditionalParams, AssistantContent, ProviderCallId, ReasoningContent, Text, ToolCall,
+    ToolCallId, ToolFunction, ToolResult, ToolResultContent, UserContent,
 };
 use serde::{Deserialize, Deserializer, Serialize};
 use sprocket_convex_provider::AuthTokenFetcher;
@@ -189,12 +188,28 @@ pub struct ProjectSnapshot {
     pub display_name: String,
 }
 
-fn vec_to_one_or_many<T: Clone>(items: Vec<T>, what: &str) -> anyhow::Result<OneOrMany<T>> {
-    OneOrMany::many(items).map_err(|_| anyhow!("{what} cannot be empty"))
+fn require_non_empty<T>(items: Vec<T>, what: &str) -> anyhow::Result<Vec<T>> {
+    if items.is_empty() {
+        Err(anyhow!("{what} cannot be empty"))
+    } else {
+        Ok(items)
+    }
 }
 
 fn from_json_string<T: for<'de> Deserialize<'de>>(value: &str, what: &str) -> anyhow::Result<T> {
     serde_json::from_str(value).with_context(|| format!("failed to deserialize {what}"))
+}
+
+fn additional_params_from_json(
+    json: Option<&str>,
+    what: &str,
+) -> anyhow::Result<Option<AdditionalParams>> {
+    let Some(json) = json else {
+        return Ok(None);
+    };
+    let value: serde_json::Value = from_json_string(json, what)?;
+    AdditionalParams::try_from_value(value)
+        .map_err(|value| anyhow!("{what} must be a JSON object, got {value}"))
 }
 
 impl AgentHistoryContent {
@@ -202,9 +217,13 @@ impl AgentHistoryContent {
         match self {
             Self::Text { text, .. } => Ok(UserContent::Text(Text::new(text))),
             Self::ToolResult { id, call_id, items } => Ok(UserContent::ToolResult(ToolResult {
-                id,
-                call_id,
-                content: vec_to_one_or_many(
+                call: ToolCallId::new_or_mint(id),
+                provider: call_id.and_then(ProviderCallId::new),
+                // The Convex history format does not record the executed tool's
+                // name on results; the provider's message serializer resolves
+                // it from the matching call instead.
+                name: String::new(),
+                content: require_non_empty(
                     items
                         .into_iter()
                         .map(AgentHistoryToolResultItem::into_tool_result_content)
@@ -241,10 +260,10 @@ impl AgentHistoryContent {
                 additional_params_json,
             } => Ok(AssistantContent::Text(Text {
                 text,
-                additional_params: additional_params_json
-                    .as_deref()
-                    .map(|json| from_json_string(json, "text additional params"))
-                    .transpose()?,
+                additional_params: additional_params_from_json(
+                    additional_params_json.as_deref(),
+                    "text additional params",
+                )?,
             })),
             Self::Reasoning { id, blocks_json } => Ok(AssistantContent::Reasoning(
                 serde_json::from_value(serde_json::json!({
@@ -264,8 +283,8 @@ impl AgentHistoryContent {
                 signature,
                 additional_params_json,
             } => Ok(AssistantContent::ToolCall(ToolCall {
-                id,
-                call_id,
+                id: ToolCallId::new_or_mint(id),
+                provider: call_id.and_then(ProviderCallId::new),
                 function: ToolFunction {
                     name,
                     arguments: from_json_string(&arguments_json, "tool call arguments")?,
@@ -319,7 +338,7 @@ impl TryFrom<AgentHistoryMessage> for Message {
                 Ok(Message::System { content: text })
             }
             AgentHistoryRole::User => Ok(Message::User {
-                content: vec_to_one_or_many(
+                content: require_non_empty(
                     message
                         .contents
                         .into_iter()
@@ -330,7 +349,7 @@ impl TryFrom<AgentHistoryMessage> for Message {
             }),
             AgentHistoryRole::Assistant => Ok(Message::Assistant {
                 id: message.assistant_id,
-                content: vec_to_one_or_many(
+                content: require_non_empty(
                     message
                         .contents
                         .into_iter()
@@ -408,7 +427,10 @@ mod tests {
             Message::Assistant { content, .. } => match content.iter().next() {
                 Some(AssistantContent::ToolCall(tool_call)) => {
                     assert_eq!(tool_call.id, "tool_call_1");
-                    assert_eq!(tool_call.call_id.as_deref(), Some("call_1"));
+                    assert_eq!(
+                        tool_call.provider.as_ref().map(|id| id.call_id.as_str()),
+                        Some("call_1")
+                    );
                 }
                 other => panic!("expected assistant tool call, got {other:?}"),
             },
@@ -418,8 +440,11 @@ mod tests {
         match &messages[1] {
             Message::User { content } => match content.iter().next() {
                 Some(UserContent::ToolResult(tool_result)) => {
-                    assert_eq!(tool_result.id, "tool_call_1");
-                    assert_eq!(tool_result.call_id.as_deref(), Some("call_1"));
+                    assert_eq!(tool_result.call, "tool_call_1");
+                    assert_eq!(
+                        tool_result.provider.as_ref().map(|id| id.call_id.as_str()),
+                        Some("call_1")
+                    );
                 }
                 other => panic!("expected user tool result, got {other:?}"),
             },

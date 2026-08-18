@@ -8,14 +8,18 @@ use std::time::Duration;
 use anyhow::Context;
 use convex::{AuthenticationToken, ConvexClient, FunctionResult, QuerySubscription, Value};
 use futures::stream;
-use rig::OneOrMany;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::{
     AssistantContent, CompletionError, CompletionModel as RigCompletionModel, CompletionRequest,
-    CompletionResponse, GetTokenUsage, ToolDefinition, Usage as RigUsage,
+    CompletionResponse, ToolDefinition, Usage as RigUsage,
 };
-use rig::message::{ReasoningContent, ToolCall as RigToolCall, ToolChoice, ToolFunction};
-use rig::streaming::{RawStreamingChoice, RawStreamingToolCall, StreamingCompletionResponse};
+use rig::message::{
+    AdditionalParams, ReasoningContent, ToolCall as RigToolCall, ToolChoice, ToolFunction,
+};
+use rig::streaming::{
+    MintKind, RawStreamingChoice, RawStreamingToolCall, StreamFinal, StreamPartId,
+    StreamingCompletionResponse, WireId, normalize_stream,
+};
 use rustls::crypto::ring::default_provider;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -26,6 +30,8 @@ use crate::messages::{build_model_messages, instructions_text, normalize_convex_
 const CONVEX_RPC_TIMEOUT: Duration = Duration::from_secs(20 * 60);
 const COMPLETION_TRANSPORT_ATTEMPTS: u32 = 3;
 const COMPLETION_TRANSPORT_RETRY_DELAY: Duration = Duration::from_millis(400);
+
+const PROVIDER_NAME: &str = "sprocket-convex";
 
 pub const COMPLETION_STREAM_SUPERSEDED: &str = "SPROCKET_COMPLETION_STREAM_SUPERSEDED";
 
@@ -192,6 +198,13 @@ impl ProviderClient for Client {
 
 impl CompletionClient for Client {
     type CompletionModel = CompletionModel;
+
+    fn completion_model(&self, model: impl Into<String>) -> Self::CompletionModel {
+        CompletionModel {
+            client: self.clone(),
+            model: model.into(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -275,8 +288,8 @@ pub struct OutputTokenDetails {
     pub reasoning_tokens: u64,
 }
 
-impl GetTokenUsage for CompletionOutput {
-    fn token_usage(&self) -> RigUsage {
+impl CompletionOutput {
+    fn rig_usage(&self) -> RigUsage {
         RigUsage {
             input_tokens: self.usage.input_tokens,
             output_tokens: self.usage.output_tokens,
@@ -323,21 +336,120 @@ enum ConvexToolChoice {
 }
 
 impl RigCompletionModel for CompletionModel {
-    type Response = CompletionOutput;
-    type StreamingResponse = CompletionOutput;
-    type Client = Client;
-
-    fn make(client: &Self::Client, model: impl Into<String>) -> Self {
-        Self {
-            client: client.clone(),
-            model: model.into(),
-        }
-    }
-
     async fn completion(
         &self,
         request: CompletionRequest,
-    ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
+    ) -> Result<CompletionResponse, CompletionError> {
+        let output = self.complete(request).await?;
+        let raw = serde_json::to_value(&output).map_err(|error| {
+            CompletionError::ProviderError(format!(
+                "failed to serialize Convex completion payload: {error}"
+            ))
+        })?;
+
+        Ok(CompletionResponse::new(
+            completion_choice(&output),
+            output.rig_usage(),
+            PROVIDER_NAME,
+        )
+        .with_optional_message_id(output.message_id.clone())
+        .with_raw(raw))
+    }
+
+    async fn stream(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<StreamingCompletionResponse, CompletionError> {
+        let output = self.complete(request).await?;
+        let mut chunks: Vec<Result<RawStreamingChoice<CompletionOutput>, CompletionError>> =
+            Vec::new();
+        if output.stream_events.is_empty() {
+            if !output.text.is_empty() {
+                chunks.push(Ok(RawStreamingChoice::Message(output.text.clone())));
+            }
+            for (index, tool_call) in output.tool_calls.iter().enumerate() {
+                chunks.push(Ok(RawStreamingChoice::ToolCall(
+                    RawStreamingToolCall::new(
+                        MintKind::Tool.for_wire_index(index as u64),
+                        tool_call.name.clone(),
+                        tool_call.arguments.clone(),
+                    )
+                    .with_call_id(tool_call.id.clone())
+                    .with_additional_params(tool_call.provider_metadata.clone()),
+                )));
+            }
+        } else {
+            let mut tool_part_index = 0u64;
+            for event in &output.stream_events {
+                match event {
+                    CompletionStreamEvent::Text {
+                        id,
+                        text,
+                        provider_metadata,
+                        ..
+                    } => chunks.extend(
+                        text_stream_choices(id, text, provider_metadata)
+                            .into_iter()
+                            .map(Ok),
+                    ),
+                    CompletionStreamEvent::Reasoning {
+                        id,
+                        text,
+                        provider_reasoning_id,
+                        provider_metadata,
+                        ..
+                    } => chunks.extend(
+                        reasoning_stream_choices(
+                            id,
+                            text,
+                            provider_reasoning_id.as_deref(),
+                            provider_metadata,
+                        )
+                        .into_iter()
+                        .map(Ok),
+                    ),
+                    CompletionStreamEvent::ToolCall {
+                        call_id,
+                        name,
+                        input,
+                        provider_metadata,
+                        ..
+                    } => {
+                        // Minted accumulation key: `part_id` is a
+                        // Convex-internal composite, not a provider-issued
+                        // handle, so it must not become the call's `WireId`.
+                        // The provider's call id travels via `with_call_id`.
+                        let key = MintKind::Tool.for_wire_index(tool_part_index);
+                        tool_part_index += 1;
+                        chunks.push(Ok(RawStreamingChoice::ToolCall(
+                            RawStreamingToolCall::new(key, name.clone(), input.clone())
+                                .with_call_id(call_id.clone())
+                                .with_additional_params(provider_metadata.clone()),
+                        )));
+                    }
+                }
+            }
+        }
+        chunks.push(Ok(RawStreamingChoice::FinalResponse(output)));
+        let normalized = normalize_stream(
+            Box::pin(stream::iter(chunks)),
+            |output: CompletionOutput| {
+                Ok(StreamFinal::new(PROVIDER_NAME, output.rig_usage())
+                    .with_optional_message_id(output.message_id.clone()))
+            },
+        );
+        Ok(StreamingCompletionResponse::stream(
+            PROVIDER_NAME,
+            normalized,
+        ))
+    }
+}
+
+impl CompletionModel {
+    async fn complete(
+        &self,
+        request: CompletionRequest,
+    ) -> Result<CompletionOutput, CompletionError> {
         let instructions = instructions_text(&request);
         let messages = build_model_messages(&request)?;
         let args = ConvexActionArgs {
@@ -363,113 +475,36 @@ impl RigCompletionModel for CompletionModel {
         };
 
         let value = call_completion_action(&self.client, &args).await?;
-        let output = parse_completion_output(value)?;
-        let usage = output.token_usage();
-        let choice = completion_choice(&output);
-
-        Ok(CompletionResponse {
-            choice,
-            usage,
-            raw_response: output.clone(),
-            message_id: output.message_id.clone(),
-        })
-    }
-
-    async fn stream(
-        &self,
-        request: CompletionRequest,
-    ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
-        let completion = self.completion(request).await?;
-        let mut chunks: Vec<Result<RawStreamingChoice<CompletionOutput>, CompletionError>> =
-            Vec::new();
-        if completion.raw_response.stream_events.is_empty() {
-            if !completion.raw_response.text.is_empty() {
-                chunks.push(Ok(RawStreamingChoice::Message(
-                    completion.raw_response.text.clone(),
-                )));
-            }
-            for tool_call in &completion.raw_response.tool_calls {
-                chunks.push(Ok(RawStreamingChoice::ToolCall(
-                    RawStreamingToolCall::new(
-                        tool_call.id.clone(),
-                        tool_call.name.clone(),
-                        tool_call.arguments.clone(),
-                    )
-                    .with_call_id(tool_call.id.clone())
-                    .with_additional_params(tool_call.provider_metadata.clone()),
-                )));
-            }
-        } else {
-            for event in &completion.raw_response.stream_events {
-                match event {
-                    CompletionStreamEvent::Text {
-                        text,
-                        provider_metadata,
-                        ..
-                    } => chunks.extend(
-                        text_stream_choices(text, provider_metadata)
-                            .into_iter()
-                            .map(Ok),
-                    ),
-                    CompletionStreamEvent::Reasoning {
-                        text,
-                        provider_reasoning_id,
-                        provider_metadata,
-                        ..
-                    } => chunks.extend(
-                        reasoning_stream_choices(
-                            text,
-                            provider_reasoning_id.as_deref(),
-                            provider_metadata,
-                        )
-                        .into_iter()
-                        .map(Ok),
-                    ),
-                    CompletionStreamEvent::ToolCall {
-                        call_id,
-                        name,
-                        input,
-                        provider_metadata,
-                        ..
-                    } => chunks.push(Ok(RawStreamingChoice::ToolCall(
-                        RawStreamingToolCall::new(call_id.clone(), name.clone(), input.clone())
-                            .with_call_id(call_id.clone())
-                            .with_additional_params(provider_metadata.clone()),
-                    ))),
-                }
-            }
-        }
-        chunks.push(Ok(RawStreamingChoice::FinalResponse(
-            completion.raw_response.clone(),
-        )));
-        let stream = stream::iter(chunks);
-        Ok(StreamingCompletionResponse::stream(Box::pin(stream)))
+        parse_completion_output(value)
     }
 }
 
 fn text_stream_choices(
+    id: &str,
     text: &str,
     provider_metadata: &Option<serde_json::Value>,
 ) -> [RawStreamingChoice<CompletionOutput>; 2] {
     [
         RawStreamingChoice::TextStart {
-            additional_params: provider_metadata.clone(),
+            id: StreamPartId::wire(id.to_owned()),
+            additional_params: additional_params(provider_metadata),
         },
         RawStreamingChoice::Message(text.to_owned()),
     ]
 }
 
 fn reasoning_stream_choices(
+    event_id: &str,
     text: &str,
     provider_reasoning_id: Option<&str>,
     provider_metadata: &Option<serde_json::Value>,
 ) -> Vec<RawStreamingChoice<CompletionOutput>> {
-    let id = provider_reasoning_id.map(str::to_owned).or_else(|| {
+    let provider_id = provider_reasoning_id.and_then(WireId::new).or_else(|| {
         provider_metadata
             .as_ref()
             .and_then(|metadata| metadata.pointer("/openai/itemId"))
             .and_then(serde_json::Value::as_str)
-            .map(str::to_owned)
+            .and_then(WireId::new)
     });
     let encrypted = provider_metadata
         .as_ref()
@@ -478,9 +513,10 @@ fn reasoning_stream_choices(
     let mut choices = Vec::new();
 
     // ID-only stored reasoning still needs a chunk so Rig retains its replay reference.
-    if !text.is_empty() || (id.is_some() && encrypted.is_none()) {
+    if !text.is_empty() || (provider_id.is_some() && encrypted.is_none()) {
         choices.push(RawStreamingChoice::Reasoning {
-            id: id.clone(),
+            id: StreamPartId::wire(event_id.to_owned()),
+            provider_id: provider_id.clone(),
             content: ReasoningContent::Text {
                 text: text.to_owned(),
                 signature: None,
@@ -489,12 +525,29 @@ fn reasoning_stream_choices(
     }
     if let Some(encrypted) = encrypted {
         choices.push(RawStreamingChoice::Reasoning {
-            id,
+            id: StreamPartId::wire(event_id.to_owned()),
+            provider_id,
             content: ReasoningContent::Encrypted(encrypted.to_owned()),
         });
     }
 
     choices
+}
+
+fn additional_params(metadata: &Option<serde_json::Value>) -> Option<AdditionalParams> {
+    metadata.clone().and_then(|value| {
+        match AdditionalParams::try_from_value(value) {
+            Ok(params) => params,
+            Err(value) => {
+                // Provider metadata is a keyed namespace; a non-object value
+                // has no meaning there, so drop it rather than fail the turn.
+                eprintln!(
+                    "sprocket-convex-provider: dropping non-object provider metadata: {value}"
+                );
+                None
+            }
+        }
+    })
 }
 
 /// Clone `T` under a brief mutex hold so callers can await work on the clone
@@ -746,22 +799,22 @@ fn parse_completion_output(value: Value) -> Result<CompletionOutput, CompletionE
     Ok(output)
 }
 
-fn completion_choice(output: &CompletionOutput) -> OneOrMany<AssistantContent> {
+fn completion_choice(output: &CompletionOutput) -> Vec<AssistantContent> {
     let mut parts = Vec::new();
     if !output.text.is_empty() {
         parts.push(AssistantContent::text(output.text.clone()));
     }
     parts.extend(output.tool_calls.iter().map(|tool_call| {
-        AssistantContent::ToolCall(RigToolCall {
-            id: tool_call.id.clone(),
-            call_id: Some(tool_call.id.clone()),
-            function: ToolFunction::new(tool_call.name.clone(), tool_call.arguments.clone()),
-            signature: None,
-            additional_params: tool_call.provider_metadata.clone(),
-        })
+        AssistantContent::ToolCall(
+            RigToolCall::from_wire(
+                tool_call.id.clone(),
+                ToolFunction::new(tool_call.name.clone(), tool_call.arguments.clone()),
+            )
+            .with_additional_params(tool_call.provider_metadata.clone()),
+        )
     }));
 
-    OneOrMany::many(parts).unwrap_or_else(|_| OneOrMany::one(AssistantContent::text(String::new())))
+    parts
 }
 
 fn convert_tool_choice(choice: &ToolChoice) -> ConvexToolChoice {
@@ -805,7 +858,7 @@ mod tests {
         is_completion_stream_superseded, reasoning_stream_choices,
         should_retry_superseded_completion, text_stream_choices,
     };
-    use rig::completion::{CompletionError, GetTokenUsage};
+    use rig::completion::CompletionError;
     use rig::message::AssistantContent;
     use rig::streaming::RawStreamingChoice;
     use std::sync::Arc;
@@ -864,12 +917,15 @@ mod tests {
         };
         assert_eq!(turn_id.as_deref(), Some("turn-1"));
 
-        let choices = text_stream_choices(&text, &provider_metadata);
-        let RawStreamingChoice::TextStart { additional_params } = &choices[0] else {
+        let choices = text_stream_choices("turn-1:text:output-1", &text, &provider_metadata);
+        let RawStreamingChoice::TextStart {
+            additional_params, ..
+        } = &choices[0]
+        else {
             panic!("expected text-start event before text");
         };
         assert_eq!(
-            additional_params.as_ref().unwrap()["openai"]["itemId"],
+            additional_params.as_ref().unwrap().get("openai").unwrap()["itemId"],
             "msg_123"
         );
         assert!(matches!(&choices[1], RawStreamingChoice::Message(value) if value == "hello"));
@@ -878,6 +934,7 @@ mod tests {
     #[test]
     fn streams_id_only_reasoning_for_openai_replay() {
         let choices = reasoning_stream_choices(
+            "turn-1:reasoning:output-1",
             "",
             None,
             &Some(serde_json::json!({
@@ -891,9 +948,10 @@ mod tests {
         assert!(matches!(
             choices.as_slice(),
             [RawStreamingChoice::Reasoning {
-                id: Some(id),
-                content: rig::message::ReasoningContent::Text { text, .. }
-            }] if id == "rs_123" && text.is_empty()
+                provider_id: Some(id),
+                content: rig::message::ReasoningContent::Text { text, .. },
+                ..
+            }] if id.as_str() == "rs_123" && text.is_empty()
         ));
     }
 
@@ -941,11 +999,14 @@ mod tests {
         };
 
         let choice = completion_choice(&output);
-        let AssistantContent::ToolCall(tool_call) = choice.first() else {
+        let Some(AssistantContent::ToolCall(tool_call)) = choice.first() else {
             panic!("expected tool call");
         };
         assert_eq!(tool_call.id, "call_123");
-        assert_eq!(tool_call.call_id.as_deref(), Some("call_123"));
+        assert_eq!(
+            tool_call.provider.as_ref().map(|id| id.call_id.as_str()),
+            Some("call_123")
+        );
     }
 
     #[test]
@@ -964,7 +1025,7 @@ mod tests {
             stream_events: Vec::new(),
         };
 
-        let usage = output.token_usage();
+        let usage = output.rig_usage();
         assert_eq!(usage.cached_input_tokens, 120);
         assert_eq!(usage.cache_creation_input_tokens, 80);
     }
