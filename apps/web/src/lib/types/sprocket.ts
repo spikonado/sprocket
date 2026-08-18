@@ -28,10 +28,14 @@ export type Project = {
 	repositoryKey: string;
 	displayName: string;
 	workspacePath?: string;
-	executorStatus: Infer<typeof vExecutorStatus>;
+	// Deprecated: only returned by `projects.listMine` for older clients that
+	// don't pass `slim: true`. Nothing in the current UI consumes it.
+	executorStatus?: Infer<typeof vExecutorStatus>;
 	lastHeartbeatAt?: number;
 	connectedClientId?: string;
-	lastSeenAt: number;
+	// Deprecated: still returned by `projects.listMine` for older clients, but
+	// no longer drives ordering.
+	lastSeenAt?: number;
 	localAttachmentAvailability?: LocalAttachmentAvailability;
 	localAttachmentError?: string;
 };
@@ -55,7 +59,6 @@ export type ThreadSummary = {
 export type ProjectThreadGroup = {
 	project: Project;
 	threads: ThreadSummary[];
-	latestThreadAt: number;
 	activeThreadCount: number;
 };
 

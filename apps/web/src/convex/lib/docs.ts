@@ -121,6 +121,9 @@ export const agentQuestionFields = {
 
 export const uiPreferencesFields = {
 	userId: v.string(),
+	// Deprecated: only older released clients still write/read this via
+	// setLastThread. New clients resume the latest active thread instead.
+	// Remove once those clients age out.
 	lastThreadId: v.optional(v.id('threadRecords')),
 	theme: v.optional(v.union(v.literal('light'), v.literal('dark'))),
 	paymentsEmail: v.optional(v.string())

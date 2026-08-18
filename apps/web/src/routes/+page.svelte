@@ -139,7 +139,6 @@
 	const restoreThreadMutation = useMutation(api.threads.restore);
 	const finalizeRun = useMutation(api.agentRuntime.finalizeRun);
 	const answerAgentQuestion = useMutation(api.agentQuestions.answer);
-	const setLastThread = useMutation(api.uiPreferences.setLastThread);
 	const setThemePreference = useMutation(api.uiPreferences.setTheme);
 	const generateImageUploadUrl = useMutation(api.imageUploads.generateUploadUrl);
 	const registerImageUpload = useMutation(api.imageUploads.register);
@@ -225,7 +224,6 @@
 	let nextSubmissionSequence = 0;
 	let hasResolvedInitialSelection = $state(false);
 	let restoredProjectIdToAttach = $state<Id<'projects'> | null>(null);
-	let lastSavedThreadId = $state<Id<'threadRecords'> | null>(null);
 	let lastSyncedComposerThreadId: Id<'threadRecords'> | null = null;
 	let projectSelectionGeneration = $state(0);
 	let pendingCreatedThreadId = $state<Id<'threadRecords'> | null>(null);
@@ -376,7 +374,9 @@
 		return $authState.user && convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip';
 	}
 
-	const projectsQuery = useQuery(api.projects.listMine, getAuthenticatedQueryArgs);
+	const projectsQuery = useQuery(api.projects.listMine, () =>
+		getAuthenticatedQueryArgs() === 'skip' ? 'skip' : { slim: true }
+	);
 	const threadsQuery = useQuery(api.threads.listMine, getAuthenticatedQueryArgs);
 	const uiPreferencesQuery = useQuery(api.uiPreferences.getMine, getAuthenticatedQueryArgs);
 	let workspaceTheme = $state<SprocketTheme>(resolveTheme(null));
@@ -1111,9 +1111,6 @@
 					pendingCreatedThreadId = null;
 					projectSelectionGeneration += 1;
 				}
-				if (lastSavedThreadId === threadId) {
-					lastSavedThreadId = null;
-				}
 				currentError = null;
 			}
 		} catch (error) {
@@ -1640,7 +1637,6 @@
 		pendingCreatedThreadId = null;
 		pendingAgentLaunches = {};
 		restoredProjectIdToAttach = null;
-		lastSavedThreadId = null;
 		ensureSubscriptionAttemptedFor = null;
 		lastSyncedComposerThreadId = null;
 		projectSelectionGeneration += 1;
@@ -1766,7 +1762,6 @@
 	});
 
 	$effect(() => {
-		const uiPreferences = uiPreferencesQuery.data;
 		if (
 			hasResolvedInitialSelection ||
 			!initialProjectLaunchResolved ||
@@ -1776,18 +1771,19 @@
 			return;
 		}
 
-		if (!projectsQuery.data || !threadsQuery.data || uiPreferences === undefined) {
+		if (!projectsQuery.data || !threadsQuery.data) {
 			return;
 		}
 
 		hasResolvedInitialSelection = true;
-		const restoredThread = findThreadById(threads, uiPreferences?.lastThreadId ?? null);
-		if (restoredThread && isActiveThread(restoredThread)) {
+		// Resume the most recently active thread; threads.listMine already orders
+		// running-first then by lastMessageAt.
+		const restoredThread = threads.find(isActiveThread);
+		if (restoredThread) {
 			const restoredProject = findProjectById(projects, restoredThread.projectId);
 			if (restoredProject) {
 				setProjectSelection(restoredProject.repositoryKey, restoredThread.threadId, false, true);
 				restoredProjectIdToAttach = restoredProject._id;
-				lastSavedThreadId = restoredThread.threadId;
 				return;
 			}
 		}
@@ -1854,19 +1850,6 @@
 			draftRepositoryKey === currentRepositoryKey,
 			true
 		);
-	});
-
-	$effect(() => {
-		if (!hasResolvedInitialSelection || !currentThreadId) {
-			return;
-		}
-
-		if (currentThreadId === lastSavedThreadId) {
-			return;
-		}
-
-		lastSavedThreadId = currentThreadId;
-		void setLastThread({ threadId: currentThreadId });
 	});
 
 	$effect(() => {

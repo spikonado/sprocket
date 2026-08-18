@@ -35,10 +35,6 @@ function makeProject(overrides: Partial<Project> = {}): Project {
 		userId: 'user-1',
 		repositoryKey: overrides.repositoryKey ?? overrides.displayName ?? 'Project',
 		displayName: 'Project',
-		executorStatus: 'disconnected',
-		lastHeartbeatAt: undefined,
-		connectedClientId: undefined,
-		lastSeenAt: 0,
 		...overrides
 	};
 }
@@ -116,6 +112,28 @@ describe('project thread helpers', () => {
 		expect(groups.find((group) => group.project._id === 'ws-stale')?.project.displayName).toBe(
 			'Unknown project'
 		);
+	});
+
+	it('keeps projects in their given order regardless of thread activity', () => {
+		const groups = getProjectThreadGroups(
+			[
+				makeProject({ _id: 'ws-older' as Project['_id'], displayName: 'older' }),
+				makeProject({ _id: 'ws-newer' as Project['_id'], displayName: 'newer' })
+			],
+			[
+				// Heavy recent activity on the older project must not reorder it.
+				makeThreadSummary({
+					projectId: 'ws-older' as ThreadSummary['projectId'],
+					lastMessageAt: 100
+				}),
+				makeThreadSummary({
+					projectId: 'ws-newer' as ThreadSummary['projectId'],
+					lastMessageAt: 1
+				})
+			]
+		);
+
+		expect(groups.map((group) => group.project._id)).toEqual(['ws-older', 'ws-newer']);
 	});
 
 	it('excludes archived threads from project groups', () => {
