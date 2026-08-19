@@ -27,9 +27,9 @@ state does not remain indefinitely active.
 
 ## Built-in skills
 
-Built-in skills live in [`sprocket-workspace/skills`](../sprocket-workspace/skills)
-and are discovered at run time with project and user skills. See that crate for
-the on-disk layout.
+Built-in skills live in `sprocket-workspace` ([`skills/`](../sprocket-workspace/skills)
+for authored, `.agents/skills/` for vendored) and are discovered at run time
+with project and user skills. See that crate for the on-disk layout.
 
 ## Tools
 
