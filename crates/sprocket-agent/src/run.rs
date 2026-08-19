@@ -605,12 +605,19 @@ pub async fn finalize_failed_start(
         )
         .await;
         match result {
-            Ok(Ok(true)) => return Ok(()),
-            Ok(Ok(false)) => {
+            Ok(Ok(crate::convex::FailedStartCleanup::Finalized)) => return Ok(()),
+            Ok(Ok(crate::convex::FailedStartCleanup::Pending)) => {
                 eprintln!(
                     "sprocket-agent: startup failure cleanup has not observed submission {}; retrying",
                     request.submission_id
                 );
+            }
+            Ok(Ok(crate::convex::FailedStartCleanup::Observed)) => {
+                eprintln!(
+                    "sprocket-agent: submission {} already belongs to an active run; standing down",
+                    request.submission_id
+                );
+                return Ok(());
             }
             Ok(Err(error)) => {
                 eprintln!(

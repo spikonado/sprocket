@@ -830,23 +830,49 @@ export const finalizeFailedStart = mutation({
 		lastError: v.string(),
 		executionSecret: v.string()
 	},
-	returns: v.boolean(),
+	// `finalized`: the queued run was terminalized. `pending`: no run is
+	// visible yet for the capability; the caller should retry while createRun
+	// may still be in flight. `observed`: the run already belongs to an active
+	// executor (a racing launch rebound it) or is past the queued stage, so
+	// the caller must stand down without terminalizing it.
+	returns: v.union(v.literal('finalized'), v.literal('pending'), v.literal('observed')),
 	handler: async (ctx, args) => {
+		// The browser identity can be gone by the time this cleanup runs; the
+		// execution secret is the capability. A secret match on a still-queued
+		// run means it is waiting on this executor, so terminalizing is safe.
 		const secretHash = await executionSecretHash(args.executionSecret);
 		const run = await ctx.db
 			.query('runs')
 			.withIndex('by_executionSecretHash', (query) => query.eq('executionSecretHash', secretHash))
 			.unique();
+		if (!run) {
+			// A racing launch may already have rebound the run to its own
+			// secret; tell the loser to stand down instead of retrying forever.
+			if (ctx.auth.getUserIdentity() !== null) {
+				const userId = await getUserId(ctx);
+				const submittedRun = await ctx.db
+					.query('runs')
+					.withIndex('by_userId_submissionId', (query) =>
+						query.eq('userId', userId).eq('submissionId', args.submissionId)
+					)
+					.unique();
+				if (submittedRun) {
+					return 'observed';
+				}
+			}
+			return 'pending';
+		}
+		if (run.status !== 'queued' || run.executionSecretHash !== secretHash) {
+			return 'observed';
+		}
 		if (
-			!run ||
-			run.status !== 'queued' ||
 			run.threadId !== args.threadId ||
 			run.selectedModel !== args.selectedModel ||
 			run.reasoningEffort !== args.reasoningEffort ||
 			run.serviceTier !== args.serviceTier ||
 			!run.promptMessageId
 		) {
-			return false;
+			return 'observed';
 		}
 		const promptMessage = await ctx.db.get(run.promptMessageId);
 		if (
@@ -854,13 +880,14 @@ export const finalizeFailedStart = mutation({
 			promptMessage.text !== args.prompt.trim() ||
 			!areImageUploadIdsEqual(promptMessage.imageUploadIds, args.imageUploadIds)
 		) {
-			return false;
+			return 'observed';
 		}
-		return finalizeRunRecord(ctx, run.userId, run, {
+		await finalizeRunRecord(ctx, run.userId, run, {
 			text: args.text,
 			status: 'failed',
 			lastError: args.lastError
 		});
+		return 'finalized';
 	}
 });
 

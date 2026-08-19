@@ -7,7 +7,11 @@ import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import type { JsonValue } from '@convex/lib/json';
 import { resolveLanguageModel, resolveProviderOptions } from '@convex/lib/modelRegistry';
-import { RUN_NO_LONGER_ACTIVE, assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
+import {
+	RUN_NO_LONGER_ACTIVE,
+	assertRunAcceptsModelCompletion,
+	toModelCompletionConvexError
+} from '@convex/lib/agentErrors';
 import {
 	isCurrentCompletionAttempt,
 	isRunClaimLeaseActive,
@@ -167,7 +171,7 @@ export const complete = action({
 			);
 		} catch (error) {
 			abortController.abort(error);
-			throw error;
+			throw toModelCompletionConvexError(error, { modelId, serviceTier });
 		}
 		await chargeModelUsage(ctx, {
 			userId: completionContext.userId,

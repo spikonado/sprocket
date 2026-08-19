@@ -13,6 +13,14 @@ use crate::types::{
 const CREATE_RUN_MAX_ATTEMPTS: usize = 3;
 const CREATE_RUN_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum FailedStartCleanup {
+    Finalized,
+    Pending,
+    Observed,
+}
+
 #[derive(Clone)]
 pub(crate) struct RuntimeClient {
     pub(crate) client: ConvexProviderClient,
@@ -170,7 +178,7 @@ impl RuntimeClient {
         request: &RunAgentRequest,
         text: &str,
         last_error: &str,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<FailedStartCleanup> {
         let mut args = BTreeMap::new();
         args.insert(
             "submissionId".to_string(),

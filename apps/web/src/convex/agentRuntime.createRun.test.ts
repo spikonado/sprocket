@@ -162,8 +162,95 @@ describe('agentRuntime.createRun', () => {
 				text: 'Run failed before the model started.',
 				lastError: 'startup timed out'
 			})
-		).resolves.toBe(true);
+		).resolves.toBe('finalized');
 		expect(await t.run(async (ctx) => (await ctx.db.get(created.runId))?.status)).toBe('failed');
+	});
+
+	it('reports pending while the submission has no run yet', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+
+		await expect(
+			asUser.mutation(api.agentRuntime.finalizeFailedStart, {
+				submissionId: 'sub-not-created-yet',
+				threadId,
+				prompt: 'Reconcile me',
+				imageUploadIds: [],
+				selectedModel: 'gpt-5.6-sol',
+				reasoningEffort: 'medium',
+				serviceTier: 'standard',
+				executionSecret: 'some-secret',
+				text: 'Run failed before the model started.',
+				lastError: 'startup timed out'
+			})
+		).resolves.toBe('pending');
+	});
+
+	it('tells the losing launch of a racing submission to stand down', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const args = {
+			submissionId: 'sub-raced',
+			threadId,
+			prompt: 'Two launches, one submission',
+			imageUploadIds: [] as Id<'imageUploads'>[],
+			selectedModel: 'gpt-5.6-sol' as const,
+			reasoningEffort: 'medium' as const,
+			serviceTier: 'standard' as const
+		};
+		const created = await asUser.mutation(api.agentRuntime.createRun, {
+			...args,
+			executionSecret: 'loser-secret'
+		});
+		// The winning launch resumes the submission and rebinds its capability.
+		await asUser.mutation(api.agentRuntime.createRun, {
+			...args,
+			executionSecret: 'winner-secret'
+		});
+
+		await expect(
+			asUser.mutation(api.agentRuntime.finalizeFailedStart, {
+				...args,
+				executionSecret: 'loser-secret',
+				text: 'Run failed before the model started.',
+				lastError: 'lost the launch race'
+			})
+		).resolves.toBe('observed');
+		expect(await t.run(async (ctx) => (await ctx.db.get(created.runId))?.status)).toBe('queued');
+	});
+
+	it('leaves a claimed run to its executor', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'claimed-secret';
+		const args = {
+			submissionId: 'sub-claimed',
+			threadId,
+			prompt: 'Already running',
+			imageUploadIds: [] as Id<'imageUploads'>[],
+			selectedModel: 'gpt-5.6-sol' as const,
+			reasoningEffort: 'medium' as const,
+			serviceTier: 'standard' as const
+		};
+		const created = await asUser.mutation(api.agentRuntime.createRun, {
+			...args,
+			executionSecret
+		});
+		await t.mutation(api.agentRuntime.start, {
+			runId: created.runId,
+			claimId: 'claim-claimed',
+			executionSecret
+		});
+
+		await expect(
+			asUser.mutation(api.agentRuntime.finalizeFailedStart, {
+				...args,
+				executionSecret,
+				text: 'Run failed before the model started.',
+				lastError: 'late cleanup'
+			})
+		).resolves.toBe('observed');
+		expect(await t.run(async (ctx) => (await ctx.db.get(created.runId))?.status)).toBe('running');
 	});
 
 	it('rejects a second run while the thread has an active run', async () => {
