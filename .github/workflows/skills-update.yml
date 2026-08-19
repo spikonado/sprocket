@@ -1,0 +1,77 @@
+name: Vendored Skills Update
+
+# Opens a PR when upstream sources of vendored skills changed.
+#
+# The PR is authored by a GitHub App because PRs created by GITHUB_TOKEN never
+# trigger pull_request workflows, and main's ruleset requires green checks.
+# One-time setup: create a GitHub App with contents:write and
+# pull_requests:write scoped to this repo, install it, then set the
+# SKILLS_BUMPER_APP_ID variable and SKILLS_BUMPER_APP_PRIVATE_KEY secret.
+
+on:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: skills-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ vars.SKILLS_BUMPER_APP_ID }}
+          private-key: ${{ secrets.SKILLS_BUMPER_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v7.0.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Update vendored skills
+        run: bun run skills:update
+
+      - name: Open update PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          paths=(crates/sprocket-workspace/.agents crates/sprocket-workspace/skills-lock.json)
+          if [ -z "$(git status --porcelain -- "${paths[@]}")" ]; then
+            echo "Vendored skills are up to date."
+            exit 0
+          fi
+
+          branch="chore/vendored-skills-update"
+          app_slug="${{ steps.app-token.outputs.app-slug }}"
+          bot_id="$(gh api "users/${app_slug}%5Bbot%5D" --jq .id)"
+          git config user.name "${app_slug}[bot]"
+          git config user.email "${bot_id}+${app_slug}[bot]@users.noreply.github.com"
+
+          git checkout -B "$branch"
+          git add -- "${paths[@]}"
+          git commit -m "chore(skills): Update vendored skills"
+          # Refresh the lease if the update branch already exists remotely.
+          git fetch origin "+refs/heads/${branch}:refs/remotes/origin/${branch}" 2>/dev/null || true
+          git push --force-with-lease origin "$branch"
+
+          if gh pr view "$branch" >/dev/null 2>&1; then
+            echo "Existing update PR refreshed."
+            exit 0
+          fi
+
+          diff_stat="$(git diff --stat origin/main...HEAD)"
+          body="$(printf 'Updates vendored skills under `crates/sprocket-workspace/.agents/skills` from upstream via `bun run skills:update`.\n\n```\n%s\n```\n\nReview the SKILL.md diffs before merging: these are instructions the agent executes, shipped verbatim to every install.' "$diff_stat")"
+          gh pr create \
+            --base main \
+            --head "$branch" \
+            --title "chore(skills): Update vendored skills" \
+            --body "$body"

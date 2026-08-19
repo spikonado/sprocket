@@ -12,6 +12,7 @@ mod git_repository;
 mod patch;
 mod paths;
 mod project_root;
+mod skill_limits;
 mod skill_name;
 mod skills;
 #[cfg(test)]

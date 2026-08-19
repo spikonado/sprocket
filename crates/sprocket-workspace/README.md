@@ -37,27 +37,37 @@ the agent implementation.
 
 - `workspace.rs`, `paths.rs`, and `browse.rs`: path resolution and selection.
 - `agents.rs`: workspace instruction discovery.
-- `skills.rs` and `skills/`: skill discovery and built-in skill embedding.
+- `skills.rs`, `skills/`, and `.agents/skills/`: skill discovery and built-in skill embedding.
 - `commands.rs`: command sessions and cancellation.
 - `patch.rs`: transactional patches.
 - `unified_diff.rs`: unified-diff normalization helpers used by `patch.rs`.
 
 ## Built-in skills
 
-Each subdirectory of `skills/` is an [Agent Skill](https://agentskills.io/specification):
+Built-in skills are compiled into the binary by `build.rs` from two directories:
+
+- `skills/`: authored in this repository.
+- `.agents/skills/`: vendored verbatim from the ecosystem with the
+  [`skills` CLI](https://skills.sh), tracked by `skills-lock.json`. Never edit
+  vendored files by hand; `cargo test` checks them against the lock. Run
+  `bun run skills:add <owner/repo> --skill <name>` or `bun run skills:update`
+  from the repository root to manage them.
+
+Each built-in subdirectory is an [Agent Skill](https://agentskills.io/specification):
 
 ```text
 skills/
   my-skill/
-    SKILL.md          # required
-    scripts/          # optional
-    references/       # optional
-    assets/           # optional
+    SKILL.md          # the only file allowed in a built-in skill
 ```
 
 `SKILL.md` must use YAML frontmatter whose `name` matches the directory name.
-`description` must be a single-line string (quoted or unquoted). Built-in skills
-under `skills/` are compiled into the binary by `build.rs`.
+`description` must be a single-line string (quoted or unquoted). The name must
+not exist in both tiers. Project and user skills can include additional files.
+
+Project and user skills override built-ins by name. Discovery scans, in order:
+the project's `.sprocket/skills` and `.agents/skills`, then the user's
+`~/.sprocket/skills`, `~/.agents/skills`, and `~/.config/agents/skills`.
 
 The crate exposes these capabilities through the re-exports in `src/lib.rs`.
 
