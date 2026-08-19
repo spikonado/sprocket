@@ -63,7 +63,7 @@ jobs:
           git fetch origin "+refs/heads/${branch}:refs/remotes/origin/${branch}" 2>/dev/null || true
           git push --force-with-lease origin "$branch"
 
-          if gh pr view "$branch" >/dev/null 2>&1; then
+          if [ -n "$(gh pr list --head "$branch" --state open --json number --jq '.[0].number')" ]; then
             echo "Existing update PR refreshed."
             exit 0
           fi
