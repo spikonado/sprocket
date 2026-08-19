@@ -227,14 +227,14 @@ describe('canonical agent history', () => {
 		]);
 	});
 
-	it('preserves assistant text provider metadata in the canonical wire format', () => {
+	it('strips an orphaned OpenAI message reference from canonical history', () => {
 		const history = buildAgentHistoryFromAssistantParts({
 			parts: [
 				{
 					type: 'text',
 					id: 'text-1',
 					text: 'Hello',
-					providerMetadata: { openai: { itemId: 'msg_123' } }
+					providerMetadata: { openai: { itemId: 'msg_123', phase: 'final_answer' } }
 				}
 			],
 			jobs: [],
@@ -248,7 +248,7 @@ describe('canonical agent history', () => {
 					{
 						type: 'text',
 						text: 'Hello',
-						additionalParamsJson: JSON.stringify({ openai: { itemId: 'msg_123' } })
+						additionalParamsJson: JSON.stringify({ openai: { phase: 'final_answer' } })
 					}
 				]
 			}
