@@ -83,6 +83,7 @@ pub fn completion_messages_json<'a>(
             }
             Message::Assistant { content, .. } => {
                 let mut parts: Vec<serde_json::Value> = Vec::new();
+                let mut has_openai_reasoning_reference = false;
                 for item in content.iter() {
                     match item {
                         AssistantContent::Text(text) => {
@@ -92,6 +93,9 @@ pub fn completion_messages_json<'a>(
                             });
                             if let Some(provider_options) = &text.additional_params {
                                 part["providerOptions"] = provider_options.clone().into_value();
+                            }
+                            if !has_openai_reasoning_reference {
+                                strip_openai_item_reference(&mut part);
                             }
                             parts.push(part);
                         }
@@ -106,6 +110,9 @@ pub fn completion_messages_json<'a>(
                             let mut openai = serde_json::Map::new();
                             if let Some(id) = &reasoning.id {
                                 openai.insert("itemId".to_string(), id.clone().into());
+                                if id.starts_with("rs_") {
+                                    has_openai_reasoning_reference = true;
+                                }
                             }
                             if let Some(encrypted) = encrypted {
                                 openai.insert(
@@ -139,6 +146,9 @@ pub fn completion_messages_json<'a>(
                             if let Some(provider_options) = &tool_call.additional_params {
                                 part["providerOptions"] = provider_options.clone();
                             }
+                            if !has_openai_reasoning_reference {
+                                strip_openai_item_reference(&mut part);
+                            }
                             parts.push(part);
                         }
                         _ => {
@@ -160,6 +170,31 @@ pub fn completion_messages_json<'a>(
     }
 
     Ok(serde_json::Value::Array(messages))
+}
+
+fn strip_openai_item_reference(part: &mut serde_json::Value) {
+    let Some(provider_options) = part
+        .get_mut("providerOptions")
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+    let Some(openai) = provider_options
+        .get_mut("openai")
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+
+    openai.remove("itemId");
+    if openai.is_empty() {
+        provider_options.remove("openai");
+    }
+    if provider_options.is_empty() {
+        part.as_object_mut()
+            .expect("model message part")
+            .remove("providerOptions");
+    }
 }
 
 fn tool_result_name<'a>(
@@ -250,7 +285,10 @@ pub(crate) fn instructions_text(request: &CompletionRequest) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use rig::completion::{CompletionRequest, Message};
-    use rig::message::{AdditionalParams, AssistantContent, ImageMediaType, Text, UserContent};
+    use rig::message::{
+        AdditionalParams, AssistantContent, ImageMediaType, Reasoning, ReasoningContent, Text,
+        UserContent,
+    };
 
     use super::{build_model_messages, instructions_text, normalize_convex_json_numbers};
 
@@ -369,14 +407,14 @@ mod tests {
     }
 
     #[test]
-    fn preserves_assistant_text_provider_options() {
+    fn strips_orphaned_openai_item_reference_from_assistant_text() {
         let messages = vec![Message::Assistant {
             id: None,
             content: vec![AssistantContent::Text(Text {
                 text: "Grounded answer".to_string(),
                 additional_params: AdditionalParams::from_entries([(
                     "openai",
-                    serde_json::json!({ "itemId": "msg_123" }),
+                    serde_json::json!({ "itemId": "msg_123", "phase": "final_answer" }),
                 )]),
             })],
         }];
@@ -385,7 +423,48 @@ mod tests {
 
         assert_eq!(
             structured[0]["content"][0]["providerOptions"],
-            serde_json::json!({ "openai": { "itemId": "msg_123" } })
+            serde_json::json!({ "openai": { "phase": "final_answer" } })
+        );
+    }
+
+    #[test]
+    fn preserves_openai_item_reference_after_reasoning_reference() {
+        let messages = vec![Message::Assistant {
+            id: None,
+            content: vec![
+                AssistantContent::Reasoning(Reasoning {
+                    id: Some("rs_123".to_string()),
+                    content: vec![ReasoningContent::Text {
+                        text: String::new(),
+                        signature: None,
+                    }],
+                }),
+                AssistantContent::Text(Text {
+                    text: "Grounded answer".to_string(),
+                    additional_params: AdditionalParams::from_entries([(
+                        "openai",
+                        serde_json::json!({ "itemId": "msg_123" }),
+                    )]),
+                }),
+            ],
+        }];
+
+        let structured = build_model_messages(&completion_request(messages)).expect("structured");
+
+        assert_eq!(
+            structured[0]["content"],
+            serde_json::json!([
+                {
+                    "type": "reasoning",
+                    "text": "",
+                    "providerOptions": { "openai": { "itemId": "rs_123" } }
+                },
+                {
+                    "type": "text",
+                    "text": "Grounded answer",
+                    "providerOptions": { "openai": { "itemId": "msg_123" } }
+                }
+            ])
         );
     }
 

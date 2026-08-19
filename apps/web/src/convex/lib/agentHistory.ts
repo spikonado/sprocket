@@ -22,6 +22,7 @@ export function buildAgentHistoryFromAssistantParts(args: {
 				id?: string;
 				assistant: AgentHistoryMessage['contents'];
 				results: AgentHistoryMessage['contents'];
+				hasOpenAiReasoningReference: boolean;
 		  }
 		| undefined;
 	let sawAssistantText = false;
@@ -45,7 +46,7 @@ export function buildAgentHistoryFromAssistantParts(args: {
 
 	for (const part of parts) {
 		if (part.type === 'tool-result') {
-			turn ??= { assistant: [], results: [] };
+			turn ??= { assistant: [], results: [], hasOpenAiReasoningReference: false };
 			turn.results.push({
 				type: 'toolResult',
 				id: part.callId,
@@ -78,7 +79,8 @@ export function buildAgentHistoryFromAssistantParts(args: {
 		turn ??= {
 			...(partTurnId !== undefined ? { id: partTurnId } : {}),
 			assistant: [],
-			results: []
+			results: [],
+			hasOpenAiReasoningReference: false
 		};
 
 		if (part.type === 'text') {
@@ -89,7 +91,7 @@ export function buildAgentHistoryFromAssistantParts(args: {
 			sawAssistantText = true;
 			const providerMetadata = providerMetadataForReplay(
 				part.providerMetadata,
-				args.stripProviderItemReferences
+				args.stripProviderItemReferences || !turn.hasOpenAiReasoningReference
 			);
 			turn.assistant.push({
 				type: 'text',
@@ -121,6 +123,7 @@ export function buildAgentHistoryFromAssistantParts(args: {
 					...(itemId !== undefined ? { id: itemId } : {}),
 					blocksJson: JSON.stringify(blocks)
 				});
+				if (itemId?.startsWith('rs_')) turn.hasOpenAiReasoningReference = true;
 			}
 			continue;
 		}
@@ -128,7 +131,7 @@ export function buildAgentHistoryFromAssistantParts(args: {
 		if (part.type === 'tool-call') {
 			const providerMetadata = providerMetadataForReplay(
 				part.providerMetadata,
-				args.stripProviderItemReferences
+				args.stripProviderItemReferences || !turn.hasOpenAiReasoningReference
 			);
 			turn.assistant.push({
 				type: 'toolCall',
