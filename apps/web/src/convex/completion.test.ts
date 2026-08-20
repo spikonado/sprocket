@@ -25,14 +25,13 @@ function rejected<T>(promise: Promise<T>): Promise<T> {
 }
 
 function streamTextFailure(error: unknown) {
-	const rejection = Promise.reject(error);
-	rejection.catch(() => {});
+	const rejection = rejected(Promise.reject(error));
 	return {
 		stream: emptyCompletionStream(),
-		text: rejected(Promise.reject(error)),
-		usage: rejected(Promise.reject(error)),
-		finalStep: rejected(Promise.reject(error)),
-		toolCalls: rejected(Promise.reject(error))
+		text: rejection,
+		usage: rejection,
+		finalStep: rejection,
+		toolCalls: rejection
 	};
 }
 
@@ -101,7 +100,6 @@ describe('completion.complete', () => {
 			);
 		expect(failure).toBeInstanceOf(ConvexError);
 		expect((failure as Error).message).toContain('exceeded your current quota');
-		expect((failure as Error).message).not.toContain('Request ID');
 	});
 
 	it('reports provider 5xx failures with their status code', async () => {

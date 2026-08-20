@@ -862,10 +862,8 @@ export const finalizeFailedStart = mutation({
 			}
 			return 'pending';
 		}
-		if (run.status !== 'queued' || run.executionSecretHash !== secretHash) {
-			return 'observed';
-		}
 		if (
+			run.status !== 'queued' ||
 			run.threadId !== args.threadId ||
 			run.selectedModel !== args.selectedModel ||
 			run.reasoningEffort !== args.reasoningEffort ||
