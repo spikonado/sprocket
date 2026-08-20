@@ -1,6 +1,6 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { mutation, query, type MutationCtx, type QueryCtx } from '@convex/_generated/server';
-import { v, type Infer } from 'convex/values';
+import { ConvexError, v, type Infer } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord, getOwnedProject } from '@convex/lib/access';
 import { executionSecretHash, getExecutionRun, getUserId } from '@convex/lib/auth';
 import { getModelDefinition } from '@convex/lib/models';
@@ -223,7 +223,9 @@ export const createRun = mutation({
 					(isClaimedRunStatus(existingRun.status) &&
 						!isRunClaimLeaseActive(existingRun, Date.now()));
 				if (!canRecoverExecutor) {
-					throw new Error('Submission belongs to a different active executor.');
+					// ConvexError keeps this text readable in production; the losing
+					// launch's startup cleanup recognizes it and stands down.
+					throw new ConvexError('Submission belongs to a different active executor.');
 				}
 				await ctx.db.patch(existingRun._id, { executionSecretHash: secretHash });
 			}
@@ -235,7 +237,7 @@ export const createRun = mutation({
 				!existingRun.promptMessageId ||
 				!existingRun.completionStreamStateId
 			) {
-				throw new Error('Submission belongs to a different or incomplete run.');
+				throw new ConvexError('Submission belongs to a different or incomplete run.');
 			}
 			const existingPrompt = await ctx.db.get(existingRun.promptMessageId);
 			if (
@@ -604,10 +606,10 @@ export const registerCompletionAttempt = mutation({
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		assertRunAcceptsModelCompletion(run.status);
 		if (!isRunClaimLeaseActive(run, Date.now())) {
-			throw new Error(RUN_NO_LONGER_ACTIVE);
+			throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 		}
 		if (!canRegisterCompletionAttempt(run, args.claimId, args.attemptSeq)) {
-			throw new Error(COMPLETION_STREAM_SUPERSEDED);
+			throw new ConvexError(COMPLETION_STREAM_SUPERSEDED);
 		}
 		await ctx.db.patch(args.runId, { completionAttemptSeq: args.attemptSeq });
 		// Completion turns stamp parts with turnId = streamId, so a retry can
@@ -674,7 +676,7 @@ export const mergeAssistantStreamEvents = mutation({
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		assertRunAcceptsModelCompletion(run.status);
 		if (!isRunClaimLeaseActive(run, Date.now())) {
-			throw new Error(RUN_NO_LONGER_ACTIVE);
+			throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 		}
 		// Fence every write: periodic acceptance checks alone leave a window
 		// where a superseded attempt could still append after a newer one registers.
@@ -830,15 +832,42 @@ export const finalizeFailedStart = mutation({
 		lastError: v.string(),
 		executionSecret: v.string()
 	},
-	returns: v.boolean(),
+	// `finalized`: the queued run was terminalized. `pending`: nothing is
+	// visible for the capability; either createRun is still in flight or, when
+	// the caller's identity is gone, a rebound run cannot be told apart from a
+	// missing one, so the caller keeps retrying until its deadline.
+	// `standDown`: the run belongs to an active executor (a racing launch
+	// rebound it) or is past the queued stage, so the caller stops without
+	// terminalizing it.
+	returns: v.union(v.literal('finalized'), v.literal('pending'), v.literal('standDown')),
 	handler: async (ctx, args) => {
+		// The browser identity can be gone by the time this cleanup runs; the
+		// execution secret is the capability. A secret match on a still-queued
+		// run means it is waiting on this executor, so terminalizing is safe.
 		const secretHash = await executionSecretHash(args.executionSecret);
 		const run = await ctx.db
 			.query('runs')
 			.withIndex('by_executionSecretHash', (query) => query.eq('executionSecretHash', secretHash))
 			.unique();
+		if (!run) {
+			// A racing launch may already have rebound the run to its own
+			// secret; when the caller is still authenticated, tell the loser to
+			// stand down instead of retrying until its deadline.
+			const identity = await ctx.auth.getUserIdentity();
+			if (identity !== null) {
+				const submittedRun = await ctx.db
+					.query('runs')
+					.withIndex('by_userId_submissionId', (query) =>
+						query.eq('userId', identity.subject).eq('submissionId', args.submissionId)
+					)
+					.unique();
+				if (submittedRun) {
+					return 'standDown';
+				}
+			}
+			return 'pending';
+		}
 		if (
-			!run ||
 			run.status !== 'queued' ||
 			run.threadId !== args.threadId ||
 			run.selectedModel !== args.selectedModel ||
@@ -846,7 +875,7 @@ export const finalizeFailedStart = mutation({
 			run.serviceTier !== args.serviceTier ||
 			!run.promptMessageId
 		) {
-			return false;
+			return 'standDown';
 		}
 		const promptMessage = await ctx.db.get(run.promptMessageId);
 		if (
@@ -854,13 +883,14 @@ export const finalizeFailedStart = mutation({
 			promptMessage.text !== args.prompt.trim() ||
 			!areImageUploadIdsEqual(promptMessage.imageUploadIds, args.imageUploadIds)
 		) {
-			return false;
+			return 'standDown';
 		}
-		return finalizeRunRecord(ctx, run.userId, run, {
+		await finalizeRunRecord(ctx, run.userId, run, {
 			text: args.text,
 			status: 'failed',
 			lastError: args.lastError
 		});
+		return 'finalized';
 	}
 });
 
@@ -906,7 +936,7 @@ export const beginToolJob = mutation({
 		const userId = run.userId;
 		assertRunAcceptsModelCompletion(run.status);
 		if (run.claimId !== args.claimId || !isRunClaimLeaseActive(run, Date.now())) {
-			throw new Error('Run is no longer active.');
+			throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 		}
 		const project = await getOwnedProject(ctx.db, userId, run.projectId);
 

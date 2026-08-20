@@ -667,12 +667,36 @@ async fn call_completion_action(
             backoff_completion_retry(&mut superseded_stream_ids, stream_id, &mut retry_delay).await;
             continue;
         }
+        if should_retry_server_failure(&provider_error, attempt) {
+            // The action raised a 5xx before or during the model call (Convex
+            // masks it as "[Request ID] Server Error" in production). A fresh
+            // attempt re-registers with a new seq; the backend drops the
+            // partial output of the superseded streams.
+            eprintln!(
+                "sprocket-convex-provider: action {} failed transiently (attempt {attempt}); retrying: {provider_error}",
+                client.completion_action,
+            );
+            backoff_completion_retry(&mut superseded_stream_ids, stream_id, &mut retry_delay).await;
+            continue;
+        }
         return Err(CompletionError::ProviderError(provider_error));
     }
 }
 
 fn should_retry_superseded_completion(message: &str, attempt: u32) -> bool {
     attempt < COMPLETION_TRANSPORT_ATTEMPTS && is_completion_stream_superseded(message)
+}
+
+/// Retries only the masked Convex internal error ("[Request ID ...] Server
+/// Error" in production builds, InternalServerError from the sync layer).
+/// Provider 5xx reach the executor as ConvexErrors with real messages and fail
+/// fast on purpose: the AI SDK already retried them, and another full action
+/// attempt would double provider spend for marginal recovery.
+fn should_retry_server_failure(message: &str, attempt: u32) -> bool {
+    if attempt >= COMPLETION_TRANSPORT_ATTEMPTS {
+        return false;
+    }
+    message.contains("] Server Error") || message.contains("InternalServerError")
 }
 
 async fn backoff_completion_retry(
@@ -855,7 +879,7 @@ mod tests {
     use super::{
         COMPLETION_STREAM_SUPERSEDED, COMPLETION_TRANSPORT_ATTEMPTS, CompletionOutput,
         CompletionStreamEvent, InputTokenDetails, ToolCall, Usage, clone_locked, completion_choice,
-        is_completion_stream_superseded, reasoning_stream_choices,
+        is_completion_stream_superseded, reasoning_stream_choices, should_retry_server_failure,
         should_retry_superseded_completion, text_stream_choices,
     };
     use rig::completion::CompletionError;
@@ -893,6 +917,37 @@ mod tests {
         }
 
         assert_eq!(*inner.lock().await, 1);
+    }
+
+    #[test]
+    fn retries_masked_convex_server_errors_but_not_billing_failures() {
+        assert!(should_retry_server_failure(
+            "[Request ID: de575a03dfa7bbac] Server Error",
+            1
+        ));
+        assert!(should_retry_server_failure(
+            "Convex action failed: InternalServerError",
+            1
+        ));
+        // Out of attempts: the final error is returned to the run.
+        assert!(!should_retry_server_failure(
+            "[Request ID: de575a03dfa7bbac] Server Error",
+            COMPLETION_TRANSPORT_ATTEMPTS
+        ));
+        // Provider 5xx already exhausted the AI SDK's retries inside the
+        // action; another full attempt would double provider spend.
+        assert!(!should_retry_server_failure(
+            "The model provider returned a server error (HTTP 502) while running gpt-5.6-sol: Bad Gateway",
+            1
+        ));
+        // Billing/auth failures must fail fast instead of burning more quota.
+        assert!(!should_retry_server_failure(
+            "The model provider rejected the request: You exceeded your current quota, please check your plan and billing details.",
+            1
+        ));
+        // Control-flow outcomes are never retried here.
+        assert!(!should_retry_server_failure("Run is cancelled.", 1));
+        assert!(!should_retry_server_failure("Run is no longer active.", 1));
     }
 
     #[test]

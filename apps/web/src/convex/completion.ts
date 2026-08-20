@@ -1,13 +1,17 @@
 'use node';
 
 import { generateText, jsonSchema, streamText, tool, type ModelMessage } from 'ai';
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import { action, type ActionCtx } from '@convex/_generated/server';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import type { JsonValue } from '@convex/lib/json';
 import { resolveLanguageModel, resolveProviderOptions } from '@convex/lib/modelRegistry';
-import { RUN_NO_LONGER_ACTIVE, assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
+import {
+	RUN_NO_LONGER_ACTIVE,
+	assertRunAcceptsModelCompletion,
+	toModelCompletionConvexError
+} from '@convex/lib/agentErrors';
 import {
 	isCurrentCompletionAttempt,
 	isRunClaimLeaseActive,
@@ -167,7 +171,7 @@ export const complete = action({
 			);
 		} catch (error) {
 			abortController.abort(error);
-			throw error;
+			throw toModelCompletionConvexError(error, modelId);
 		}
 		await chargeModelUsage(ctx, {
 			userId: completionContext.userId,
@@ -242,17 +246,22 @@ export const summarize = action({
 			completionContext.promptCacheKey
 		);
 		const abortController = new AbortController();
-		const result = await waitForCompletionWithAcceptance(
-			ctx,
-			generateText({
-				...sharedArgs,
-				messages,
-				maxOutputTokens: COMPACTION_MAX_OUTPUT_TOKENS,
-				abortSignal: abortController.signal
-			}),
-			claim,
-			abortController
-		);
+		let result: GenerateTextResult;
+		try {
+			result = await waitForCompletionWithAcceptance(
+				ctx,
+				generateText({
+					...sharedArgs,
+					messages,
+					maxOutputTokens: COMPACTION_MAX_OUTPUT_TOKENS,
+					abortSignal: abortController.signal
+				}),
+				claim,
+				abortController
+			);
+		} catch (error) {
+			throw toModelCompletionConvexError(error, modelId);
+		}
 		const summary = result.text.trim();
 		if (!summary) throw new Error('The model returned an empty context summary.');
 		await assertSummarizeStillAccepted(ctx, claim);
@@ -311,7 +320,7 @@ async function collectStreamingCompletion(
 					events
 				});
 				if (outcome === 'superseded') {
-					throw new Error(COMPLETION_STREAM_SUPERSEDED);
+					throw new ConvexError(COMPLETION_STREAM_SUPERSEDED);
 				}
 				pendingEvents.splice(0, events.length);
 				nextFlushAt = pendingEvents.length
@@ -616,10 +625,10 @@ async function assertCompletionStillAccepted(
 	});
 	assertRunAcceptsModelCompletion(actor.status);
 	if (!isRunClaimLeaseActive(actor, Date.now())) {
-		throw new Error(RUN_NO_LONGER_ACTIVE);
+		throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 	}
 	if (!isCurrentCompletionAttempt(actor, attempt.claimId, attempt.attemptSeq)) {
-		throw new Error(COMPLETION_STREAM_SUPERSEDED);
+		throw new ConvexError(COMPLETION_STREAM_SUPERSEDED);
 	}
 	if (
 		isCompletionStreamAttemptSuperseded({
@@ -629,7 +638,7 @@ async function assertCompletionStillAccepted(
 			streamId: attempt.streamId
 		})
 	) {
-		throw new Error(COMPLETION_STREAM_SUPERSEDED);
+		throw new ConvexError(COMPLETION_STREAM_SUPERSEDED);
 	}
 }
 
@@ -640,7 +649,7 @@ async function assertSummarizeStillAccepted(ctx: ActionCtx, claim: SummarizeClai
 	});
 	assertRunAcceptsModelCompletion(actor.status);
 	if (!ownsActiveRunClaim(actor, claim.claimId, Date.now())) {
-		throw new Error(RUN_NO_LONGER_ACTIVE);
+		throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 	}
 }
 
