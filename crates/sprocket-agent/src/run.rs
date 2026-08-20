@@ -12,7 +12,7 @@ use tokio::time::{Instant, sleep, sleep_until, timeout};
 use uuid::Uuid;
 
 use crate::RunContextResponse;
-use crate::convex::RuntimeClient;
+use crate::convex::{FailedStartCleanup, RuntimeClient};
 use crate::provider::{AgentProvider, AgentProviderRequest, AgentProviderResult};
 use crate::types::{RunAgentRequest, deserialize_agent_history};
 
@@ -28,6 +28,14 @@ const FAILURE_CLEANUP_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(5);
 const START_FAILURE_CLEANUP_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(2_500);
 const START_FAILURE_RECONCILE_TIMEOUT: Duration = Duration::from_secs(10);
 const FAILURE_CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(250);
+
+/// Must match the createRun conflict ConvexErrors in
+/// apps/web/src/convex/agentRuntime.ts ("Submission belongs to a different ...").
+const SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR: &str = "Submission belongs to a different";
+
+fn submission_owned_by_another_executor(error: &str) -> bool {
+    error.contains(SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR)
+}
 
 pub struct AgentRun {
     request: RunAgentRequest,
@@ -594,6 +602,15 @@ pub async fn finalize_failed_start(
     request: RunAgentRequest,
     startup_error: String,
 ) -> anyhow::Result<()> {
+    // createRun rejected the duplicate submission: a racing launch owns the
+    // run, so this executor's cleanup has nothing to terminalize.
+    if submission_owned_by_another_executor(&startup_error) {
+        eprintln!(
+            "sprocket-agent: submission {} already belongs to an active run; standing down",
+            request.submission_id
+        );
+        return Ok(());
+    }
     let runtime = RuntimeClient::from_request(&request).await?;
     runtime.completion_client().clear_auth().await;
     let text = format!("Run failed before the model started: {startup_error}");
@@ -605,14 +622,14 @@ pub async fn finalize_failed_start(
         )
         .await;
         match result {
-            Ok(Ok(crate::convex::FailedStartCleanup::Finalized)) => return Ok(()),
-            Ok(Ok(crate::convex::FailedStartCleanup::Pending)) => {
+            Ok(Ok(FailedStartCleanup::Finalized)) => return Ok(()),
+            Ok(Ok(FailedStartCleanup::Pending)) => {
                 eprintln!(
                     "sprocket-agent: startup failure cleanup has not observed submission {}; retrying",
                     request.submission_id
                 );
             }
-            Ok(Ok(crate::convex::FailedStartCleanup::Observed)) => {
+            Ok(Ok(FailedStartCleanup::StandDown)) => {
                 eprintln!(
                     "sprocket-agent: submission {} already belongs to an active run; standing down",
                     request.submission_id
@@ -784,7 +801,23 @@ fn image_media_type(media_type: &str) -> anyhow::Result<ImageMediaType> {
 mod tests {
     use sprocket_workspace::{SkillSource, WorkspaceSkill};
 
-    use super::build_workspace_preamble;
+    use super::{build_workspace_preamble, submission_owned_by_another_executor};
+
+    #[test]
+    fn submission_conflict_errors_match_the_convex_sentinel() {
+        assert!(submission_owned_by_another_executor(
+            "agentRuntime:createRun failed: Submission belongs to a different active executor."
+        ));
+        assert!(submission_owned_by_another_executor(
+            "Submission belongs to a different or incomplete run."
+        ));
+        assert!(!submission_owned_by_another_executor(
+            "timed out starting agent run"
+        ));
+        assert!(!submission_owned_by_another_executor(
+            "Submission prompt does not match the existing run."
+        ));
+    }
 
     #[test]
     fn preamble_renders_skills_block() {

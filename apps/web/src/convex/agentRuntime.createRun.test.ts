@@ -186,6 +186,40 @@ describe('agentRuntime.createRun', () => {
 		).resolves.toBe('pending');
 	});
 
+	it('reports pending for a rebound secret when the caller identity is gone', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const args = {
+			submissionId: 'sub-rebound-anonymous',
+			threadId,
+			prompt: 'Two launches, one submission',
+			imageUploadIds: [] as Id<'imageUploads'>[],
+			selectedModel: 'gpt-5.6-sol' as const,
+			reasoningEffort: 'medium' as const,
+			serviceTier: 'standard' as const
+		};
+		await asUser.mutation(api.agentRuntime.createRun, {
+			...args,
+			executionSecret: 'loser-secret'
+		});
+		await asUser.mutation(api.agentRuntime.createRun, {
+			...args,
+			executionSecret: 'winner-secret'
+		});
+
+		// Without an identity the mutation cannot tell a rebound run from a
+		// missing one. The executor avoids this path by standing down on the
+		// createRun conflict error instead.
+		await expect(
+			t.mutation(api.agentRuntime.finalizeFailedStart, {
+				...args,
+				executionSecret: 'loser-secret',
+				text: 'Run failed before the model started.',
+				lastError: 'lost the launch race'
+			})
+		).resolves.toBe('pending');
+	});
+
 	it('tells the losing launch of a racing submission to stand down', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
@@ -215,7 +249,7 @@ describe('agentRuntime.createRun', () => {
 				text: 'Run failed before the model started.',
 				lastError: 'lost the launch race'
 			})
-		).resolves.toBe('observed');
+		).resolves.toBe('standDown');
 		expect(await t.run(async (ctx) => (await ctx.db.get(created.runId))?.status)).toBe('queued');
 	});
 
@@ -249,8 +283,34 @@ describe('agentRuntime.createRun', () => {
 				text: 'Run failed before the model started.',
 				lastError: 'late cleanup'
 			})
-		).resolves.toBe('observed');
+		).resolves.toBe('standDown');
 		expect(await t.run(async (ctx) => (await ctx.db.get(created.runId))?.status)).toBe('running');
+	});
+
+	it('keeps the submission conflict message readable for the losing launch', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const created = await createQueuedRun(asUser, threadId, 'sub-owned', 'owner-secret');
+		await asUser.mutation(api.agentRuntime.start, {
+			claimId: 'claim-owner',
+			runId: created.runId,
+			executionSecret: 'owner-secret'
+		});
+
+		// The executor matches on this exact text when standing down a racing
+		// launch, so it must survive production error masking.
+		await expect(
+			asUser.mutation(api.agentRuntime.createRun, {
+				submissionId: 'sub-owned',
+				threadId,
+				prompt: 'Do the thing',
+				imageUploadIds: [],
+				selectedModel: 'gpt-5.6-sol',
+				reasoningEffort: 'medium',
+				serviceTier: 'standard',
+				executionSecret: 'intruder-secret'
+			})
+		).rejects.toThrow('Submission belongs to a different active executor.');
 	});
 
 	it('rejects a second run while the thread has an active run', async () => {

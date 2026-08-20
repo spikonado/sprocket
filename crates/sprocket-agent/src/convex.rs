@@ -18,7 +18,7 @@ const CREATE_RUN_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
 pub(crate) enum FailedStartCleanup {
     Finalized,
     Pending,
-    Observed,
+    StandDown,
 }
 
 #[derive(Clone)]

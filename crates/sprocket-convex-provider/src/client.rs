@@ -687,18 +687,16 @@ fn should_retry_superseded_completion(message: &str, attempt: u32) -> bool {
     attempt < COMPLETION_TRANSPORT_ATTEMPTS && is_completion_stream_superseded(message)
 }
 
-/// Only Convex-side 5xx failures qualify. Client-visible 4xx errors (billing,
-/// auth, validation) reach the executor as ConvexErrors with their real
-/// messages and must fail fast instead of burning more provider quota.
+/// Retries only the masked Convex internal error ("[Request ID ...] Server
+/// Error" in production builds, InternalServerError from the sync layer).
+/// Provider 5xx reach the executor as ConvexErrors with real messages and fail
+/// fast on purpose: the AI SDK already retried them, and another full action
+/// attempt would double provider spend for marginal recovery.
 fn should_retry_server_failure(message: &str, attempt: u32) -> bool {
     if attempt >= COMPLETION_TRANSPORT_ATTEMPTS {
         return false;
     }
-    message.contains("InternalServerError")
-        || message.contains("Server Error")
-        || message.contains("HTTP 5")
-        || message.contains("status code: 5")
-        || message.contains("status code 5")
+    message.contains("] Server Error") || message.contains("InternalServerError")
 }
 
 async fn backoff_completion_retry(
@@ -931,14 +929,16 @@ mod tests {
             "Convex action failed: InternalServerError",
             1
         ));
-        assert!(should_retry_server_failure(
-            "The model provider returned a server error (HTTP 502) while running gpt-5.6-sol on the standard tier: Bad Gateway",
-            1
-        ));
         // Out of attempts: the final error is returned to the run.
         assert!(!should_retry_server_failure(
             "[Request ID: de575a03dfa7bbac] Server Error",
             COMPLETION_TRANSPORT_ATTEMPTS
+        ));
+        // Provider 5xx already exhausted the AI SDK's retries inside the
+        // action; another full attempt would double provider spend.
+        assert!(!should_retry_server_failure(
+            "The model provider returned a server error (HTTP 502) while running gpt-5.6-sol: Bad Gateway",
+            1
         ));
         // Billing/auth failures must fail fast instead of burning more quota.
         assert!(!should_retry_server_failure(
