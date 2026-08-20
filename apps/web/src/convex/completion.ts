@@ -246,17 +246,22 @@ export const summarize = action({
 			completionContext.promptCacheKey
 		);
 		const abortController = new AbortController();
-		const result = await waitForCompletionWithAcceptance(
-			ctx,
-			generateText({
-				...sharedArgs,
-				messages,
-				maxOutputTokens: COMPACTION_MAX_OUTPUT_TOKENS,
-				abortSignal: abortController.signal
-			}),
-			claim,
-			abortController
-		);
+		let result: GenerateTextResult;
+		try {
+			result = await waitForCompletionWithAcceptance(
+				ctx,
+				generateText({
+					...sharedArgs,
+					messages,
+					maxOutputTokens: COMPACTION_MAX_OUTPUT_TOKENS,
+					abortSignal: abortController.signal
+				}),
+				claim,
+				abortController
+			);
+		} catch (error) {
+			throw toModelCompletionConvexError(error, { modelId, serviceTier });
+		}
 		const summary = result.text.trim();
 		if (!summary) throw new Error('The model returned an empty context summary.');
 		await assertSummarizeStillAccepted(ctx, claim);

@@ -8,10 +8,11 @@ import { toModelCompletionConvexError } from '@convex/lib/agentErrors';
 import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 
 const streamTextMock = vi.hoisted(() => vi.fn());
+const generateTextMock = vi.hoisted(() => vi.fn());
 
 vi.mock('ai', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('ai')>();
-	return { ...actual, streamText: streamTextMock };
+	return { ...actual, streamText: streamTextMock, generateText: generateTextMock };
 });
 
 function emptyCompletionStream() {
@@ -146,6 +147,50 @@ describe('completion.complete', () => {
 				(error: unknown) => error
 			);
 		expect((failure as Error).message).toContain(COMPLETION_STREAM_SUPERSEDED);
+	});
+});
+
+describe('completion.summarize', () => {
+	beforeEach(() => {
+		generateTextMock.mockReset();
+	});
+
+	it('surfaces provider billing errors from context compaction', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const { runId, executionSecret } = await startClaimedRun(t, asUser, threadId);
+		generateTextMock.mockRejectedValue(
+			new APICallError({
+				message: 'You exceeded your current quota, please check your plan and billing details.',
+				url: 'https://api.openai.com/v1/responses',
+				requestBodyValues: {},
+				statusCode: 429,
+				responseBody: JSON.stringify({
+					error: {
+						message: 'You exceeded your current quota, please check your plan and billing details.',
+						type: 'insufficient_quota',
+						code: 'insufficient_quota'
+					}
+				})
+			})
+		);
+
+		const failure = await t
+			.action(api.completion.summarize, {
+				modelId: 'gpt-5.6-sol',
+				messagesJson: JSON.stringify([{ role: 'user', content: 'Summarize this.' }]),
+				runId,
+				claimId: 'claim-completion',
+				executionSecret
+			})
+			.then(
+				() => {
+					throw new Error('expected the summarize action to fail');
+				},
+				(error: unknown) => error
+			);
+		expect(failure).toBeInstanceOf(ConvexError);
+		expect((failure as Error).message).toContain('exceeded your current quota');
 	});
 });
 
