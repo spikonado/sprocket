@@ -147,7 +147,7 @@ function fireworksModelPath(modelId: SupportedModelId): string {
 		case 'deepseek-v4-pro':
 			return 'accounts/fireworks/models/deepseek-v4-pro';
 		case 'deepseek-v4-flash':
-			return 'accounts/fireworks/models/deepseek-v4-flash';
+			return 'accounts/fireworks/models/deepseek-v4-flash-0731';
 		default:
 			throw new Error(`Unsupported Fireworks model: ${modelId}`);
 	}

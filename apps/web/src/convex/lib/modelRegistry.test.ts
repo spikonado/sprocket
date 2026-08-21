@@ -117,7 +117,7 @@ describe('Amazon Bedrock fallback routing', () => {
 			modelId: 'accounts/fireworks/models/kimi-k3'
 		});
 		expect(resolveLanguageModel('deepseek-v4-flash', 'standard')).toMatchObject({
-			modelId: 'accounts/fireworks/models/deepseek-v4-flash'
+			modelId: 'accounts/fireworks/models/deepseek-v4-flash-0731'
 		});
 		expect(resolveLanguageModel('glm-5.3', 'standard')).toMatchObject({
 			modelId: 'glm-5.3'
