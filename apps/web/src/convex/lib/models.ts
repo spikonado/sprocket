@@ -182,6 +182,21 @@ export function coercePersistedModelId(modelId: string): SupportedModelId {
 		: defaultModelId;
 }
 
+/** Retired ids and dropped Fast offerings still stored on old runs. */
+export function coercePersistedSelection(
+	modelId: string,
+	serviceTier: SupportedServiceTier
+): { modelId: SupportedModelId; serviceTier: SupportedServiceTier } {
+	const coercedModelId = coercePersistedModelId(modelId);
+	const model = getModelDefinition(coercedModelId);
+	return {
+		modelId: coercedModelId,
+		serviceTier: (model.serviceTiers as readonly SupportedServiceTier[]).includes(serviceTier)
+			? serviceTier
+			: model.serviceTiers[0]
+	};
+}
+
 export function normalizeCompletionUsage(usage: LanguageModelUsage): {
 	input: number;
 	cacheRead: number;

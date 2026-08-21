@@ -244,4 +244,31 @@ describe('agentRuntime context accounting', () => {
 			autoCompactTokenLimit: 258_000
 		});
 	});
+
+	it('coerces retired run models before the worker sees them', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'context-retired-secret';
+		const { runId } = await createQueuedRun(
+			asUser,
+			threadId,
+			'context-retired',
+			executionSecret,
+			'Continue'
+		);
+		await asUser.mutation(api.agentRuntime.start, {
+			runId,
+			claimId: 'claim-retired',
+			executionSecret
+		});
+		await t.run(async (ctx) => {
+			await ctx.db.patch(runId, { selectedModel: 'grok-4.5', serviceTier: 'fast' });
+		});
+		const context = await asUser.query(api.agentRuntime.getContext, {
+			runId,
+			executionSecret
+		});
+		expect(context.run.selectedModel).toBe('gpt-5.6-sol');
+		expect(context.run.serviceTier).toBe('standard');
+	});
 });

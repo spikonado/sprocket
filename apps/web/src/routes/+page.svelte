@@ -50,7 +50,7 @@
 	import { formatElapsedDuration } from '$lib/format';
 	import { validateImageAttachmentAddition, type ComposerAttachment } from '$lib/chat/attachments';
 	import {
-		coercePersistedModelId,
+		coercePersistedSelection,
 		defaultModelId,
 		defaultReasoningEffort,
 		defaultServiceTier,
@@ -1610,6 +1610,10 @@
 			status: 'ready',
 			imageUploadId: attachment.imageUploadId
 		}));
+		const recoveredSelection = coercePersistedSelection(
+			staleRun.selectedModel,
+			staleRun.serviceTier
+		);
 		storeComposerRecovery(userId, recoveryScope, {
 			message:
 				missingAttachmentCount > 0
@@ -1619,8 +1623,8 @@
 			attachments: recoveredAttachments,
 			imageUploadIds: staleImageUploadIds,
 			reasoningEffort: staleRun.reasoningEffort,
-			serviceTier: staleRun.serviceTier,
-			selectedModel: coercePersistedModelId(staleRun.selectedModel),
+			serviceTier: recoveredSelection.serviceTier,
+			selectedModel: recoveredSelection.modelId,
 			submissionId: staleRun.submissionId
 		});
 	});
@@ -1697,9 +1701,10 @@
 		if (threadId === lastSyncedComposerThreadId) return;
 		lastSyncedComposerThreadId = threadId;
 		if (!thread) return;
-		selectedModel = coercePersistedModelId(thread.selectedModel);
+		const selection = coercePersistedSelection(thread.selectedModel, thread.serviceTier);
+		selectedModel = selection.modelId;
 		selectedReasoningEffort = thread.reasoningEffort;
-		selectedServiceTier = thread.serviceTier;
+		selectedServiceTier = selection.serviceTier;
 	});
 
 	$effect(() => {

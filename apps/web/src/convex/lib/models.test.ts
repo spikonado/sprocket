@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	assertSupportedModelConfiguration,
 	coercePersistedModelId,
+	coercePersistedSelection,
 	getModelDefinition,
 	modelDefinitions,
 	modelIds,
@@ -37,6 +38,14 @@ describe('model configuration', () => {
 		);
 		expect(coercePersistedModelId('gpt-5.6-luna')).toBe('gpt-5.6-sol');
 		expect(coercePersistedModelId('kimi-k3')).toBe('kimi-k3');
+		expect(coercePersistedSelection('grok-4.5', 'fast')).toEqual({
+			modelId: 'gpt-5.6-sol',
+			serviceTier: 'standard'
+		});
+		expect(coercePersistedSelection('claude-opus-5', 'fast')).toEqual({
+			modelId: 'claude-opus-5',
+			serviceTier: 'fast'
+		});
 	});
 
 	it('labels models by lab, not inference host', () => {
