@@ -21,22 +21,16 @@ export const tierLabels: Record<SubscriptionTier, string> = {
 
 export type TierLimits = {
 	modelUsage: { weekly: number; monthly: number };
-	webTools: { weekly: number; monthly: number };
 };
 
 const freeLimits: TierLimits = {
-	modelUsage: { weekly: 5_000, monthly: 15_000 },
-	webTools: { weekly: 500, monthly: 1_500 }
+	modelUsage: { weekly: 5_000, monthly: 15_000 }
 };
 
 const proLimits: TierLimits = {
 	modelUsage: {
 		weekly: freeLimits.modelUsage.weekly * 5,
 		monthly: freeLimits.modelUsage.monthly * 5
-	},
-	webTools: {
-		weekly: freeLimits.webTools.weekly * 5,
-		monthly: freeLimits.webTools.monthly * 5
 	}
 };
 
@@ -46,13 +40,12 @@ export const tierLimits: Record<SubscriptionTier, TierLimits> = {
 	free: freeLimits,
 	pro: proLimits,
 	admin: {
-		modelUsage: { weekly: adminQuota, monthly: adminQuota },
-		webTools: { weekly: adminQuota, monthly: adminQuota }
+		modelUsage: { weekly: adminQuota, monthly: adminQuota }
 	}
 };
 
 export const tierAllowedModels: Record<SubscriptionTier, readonly SupportedModelId[]> = {
-	free: ['gpt-5.6-terra', 'gpt-5.6-luna', 'kimi-k3'],
+	free: ['deepseek-v4-pro', 'deepseek-v4-flash'],
 	pro: modelIds,
 	admin: modelIds
 };

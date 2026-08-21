@@ -721,7 +721,7 @@ function buildSharedCompletionRequest(
 ): SharedCompletionRequest {
 	const serviceTier = args.serviceTier ?? defaultServiceTier;
 	return {
-		model: resolveLanguageModel(args.modelId, serviceTier, promptCacheKey),
+		model: resolveLanguageModel(args.modelId, serviceTier),
 		maxRetries: MODEL_PROVIDER_MAX_RETRIES,
 		...(args.instructions !== undefined ? { instructions: args.instructions } : {}),
 		...(args.tools?.length ? { tools } : {}),

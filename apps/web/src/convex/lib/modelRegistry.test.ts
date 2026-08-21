@@ -12,10 +12,10 @@ describe('model provider request configuration', () => {
 		expect(resolveProviderOptions('claude-fable-5', undefined, 'standard', 'thread:abc')).toEqual({
 			anthropic: { cacheControl: { type: 'ephemeral' } }
 		});
-		expect(resolveProviderOptions('gpt-5.6-sol', 'high', 'fast', 'thread:abc')).toEqual({
+		expect(resolveProviderOptions('gpt-5.6-sol', 'high', 'standard', 'thread:abc')).toEqual({
 			openai: {
 				reasoningEffort: 'high',
-				serviceTier: 'priority',
+				serviceTier: 'default',
 				promptCacheKey: 'thread:abc',
 				promptCacheOptions: { mode: 'implicit', ttl: '30m' }
 			}
@@ -27,29 +27,36 @@ describe('model provider request configuration', () => {
 				reasoningHistory: 'interleaved'
 			}
 		});
+		expect(resolveProviderOptions('deepseek-v4-pro', 'max', 'standard', 'thread:abc')).toEqual({
+			fireworks: {
+				reasoningEffort: 'max',
+				promptCacheKey: 'thread:abc',
+				reasoningHistory: 'interleaved'
+			}
+		});
+		expect(resolveProviderOptions('glm-5.3', 'max', 'standard', 'thread:abc')).toEqual({
+			zai: { reasoningEffort: 'max' }
+		});
 	});
 
-	it('adds xAI prompt cache routing only to Responses API requests', async () => {
+	it('adds Anthropic service_tier only to completion request bodies', async () => {
 		const bodies: unknown[] = [];
-		const fetch = createProviderFetch({ promptCacheKey: 'thread:abc' }, async (_input, init) => {
+		const fetch = createProviderFetch({ serviceTier: 'standard_only' }, async (_input, init) => {
 			bodies.push(JSON.parse(String(init?.body)));
 			return new Response('{}');
 		});
 
-		await fetch('https://api.x.ai/v1/responses', {
-			method: 'POST',
-			body: JSON.stringify({ model: 'grok-4.5' })
-		});
 		await fetch('https://api.anthropic.com/v1/messages', {
+			method: 'POST',
+			body: JSON.stringify({ model: 'claude-fable-5' })
+		});
+		await fetch('https://api.anthropic.com/v1/models', {
 			method: 'POST',
 			body: JSON.stringify({ model: 'claude-fable-5' })
 		});
 
 		expect(bodies).toEqual([
-			{
-				model: 'grok-4.5',
-				prompt_cache_key: 'thread:abc'
-			},
+			{ model: 'claude-fable-5', service_tier: 'standard_only' },
 			{ model: 'claude-fable-5' }
 		]);
 	});
@@ -73,26 +80,14 @@ describe('Amazon Bedrock fallback routing', () => {
 		vi.stubEnv('AWS_ACCESS_KEY_ID', '');
 		vi.stubEnv('AWS_SECRET_ACCESS_KEY', '');
 
-		expect(resolveLanguageModel('gpt-5.6-sol', 'standard', 'thread:abc')).not.toBeInstanceOf(
-			FallbackModel
-		);
-		expect(resolveLanguageModel('claude-opus-5', 'standard', 'thread:abc')).not.toBeInstanceOf(
-			FallbackModel
-		);
-		expect(resolveLanguageModel('claude-fable-5', 'standard', 'thread:abc')).not.toBeInstanceOf(
-			FallbackModel
-		);
-		expect(resolveLanguageModel('grok-4.5', 'standard', 'thread:abc')).not.toBeInstanceOf(
-			FallbackModel
-		);
-		expect(resolveLanguageModel('kimi-k3', 'standard', 'thread:abc')).not.toBeInstanceOf(
-			FallbackModel
-		);
+		expect(resolveLanguageModel('gpt-5.6-sol', 'standard')).not.toBeInstanceOf(FallbackModel);
+		expect(resolveLanguageModel('claude-opus-5', 'standard')).not.toBeInstanceOf(FallbackModel);
+		expect(resolveLanguageModel('claude-fable-5', 'standard')).not.toBeInstanceOf(FallbackModel);
 
 		vi.stubEnv('AWS_BEARER_TOKEN_BEDROCK', 'test-bedrock-token');
-		const openaiFallback = resolveLanguageModel('gpt-5.6-sol', 'standard', 'thread:abc');
-		const opusFallback = resolveLanguageModel('claude-opus-5', 'standard', 'thread:abc');
-		const fableFallback = resolveLanguageModel('claude-fable-5', 'standard', 'thread:abc');
+		const openaiFallback = resolveLanguageModel('gpt-5.6-sol', 'standard');
+		const opusFallback = resolveLanguageModel('claude-opus-5', 'standard');
+		const fableFallback = resolveLanguageModel('claude-fable-5', 'standard');
 		expect(openaiFallback).toBeInstanceOf(FallbackModel);
 		expect(opusFallback).toBeInstanceOf(FallbackModel);
 		expect(fableFallback).toBeInstanceOf(FallbackModel);
@@ -112,17 +107,20 @@ describe('Amazon Bedrock fallback routing', () => {
 				models: [{ modelId: 'claude-fable-5' }, { modelId: 'us.anthropic.claude-fable-5' }]
 			}
 		});
-		expect(resolveLanguageModel('grok-4.5', 'standard', 'thread:abc')).not.toBeInstanceOf(
-			FallbackModel
-		);
-		expect(resolveLanguageModel('kimi-k3', 'standard', 'thread:abc')).not.toBeInstanceOf(
-			FallbackModel
-		);
-		expect(resolveLanguageModel('kimi-k3', 'fast', 'thread:abc')).toMatchObject({
-			modelId: 'accounts/fireworks/routers/kimi-k3-fast'
-		});
-		expect(resolveLanguageModel('kimi-k3', 'standard', 'thread:abc')).toMatchObject({
+		expect(resolveLanguageModel('claude-opus-5', 'fast')).not.toBeInstanceOf(FallbackModel);
+		expect(resolveLanguageModel('claude-fable-5', 'fast')).not.toBeInstanceOf(FallbackModel);
+		expect(resolveLanguageModel('gpt-5.6-sol', 'fast')).not.toBeInstanceOf(FallbackModel);
+		expect(resolveLanguageModel('glm-5.3', 'standard')).not.toBeInstanceOf(FallbackModel);
+		expect(resolveLanguageModel('kimi-k3', 'standard')).not.toBeInstanceOf(FallbackModel);
+		expect(resolveLanguageModel('deepseek-v4-pro', 'standard')).not.toBeInstanceOf(FallbackModel);
+		expect(resolveLanguageModel('kimi-k3', 'standard')).toMatchObject({
 			modelId: 'accounts/fireworks/models/kimi-k3'
+		});
+		expect(resolveLanguageModel('deepseek-v4-flash', 'standard')).toMatchObject({
+			modelId: 'accounts/fireworks/models/deepseek-v4-flash'
+		});
+		expect(resolveLanguageModel('glm-5.3', 'standard')).toMatchObject({
+			modelId: 'glm-5.3'
 		});
 
 		const shouldRetry = (openaiFallback as FallbackModel).settings.shouldRetryThisError!;

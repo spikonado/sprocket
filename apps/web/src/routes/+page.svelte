@@ -50,6 +50,7 @@
 	import { formatElapsedDuration } from '$lib/format';
 	import { validateImageAttachmentAddition, type ComposerAttachment } from '$lib/chat/attachments';
 	import {
+		coercePersistedModelId,
 		defaultModelId,
 		defaultReasoningEffort,
 		defaultServiceTier,
@@ -1619,7 +1620,7 @@
 			imageUploadIds: staleImageUploadIds,
 			reasoningEffort: staleRun.reasoningEffort,
 			serviceTier: staleRun.serviceTier,
-			selectedModel: staleRun.selectedModel,
+			selectedModel: coercePersistedModelId(staleRun.selectedModel),
 			submissionId: staleRun.submissionId
 		});
 	});
@@ -1696,7 +1697,7 @@
 		if (threadId === lastSyncedComposerThreadId) return;
 		lastSyncedComposerThreadId = threadId;
 		if (!thread) return;
-		selectedModel = thread.selectedModel;
+		selectedModel = coercePersistedModelId(thread.selectedModel);
 		selectedReasoningEffort = thread.reasoningEffort;
 		selectedServiceTier = thread.serviceTier;
 	});

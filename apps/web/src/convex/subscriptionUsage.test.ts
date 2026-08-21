@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
-import { URL_SCRAPE_USAGE_UNITS, WEB_SEARCH_USAGE_UNITS } from '@convex/lib/rateLimits';
 import { initConvexTest } from './test.setup';
 
 describe('subscription and usage backend', () => {
@@ -16,33 +15,13 @@ describe('subscription and usage backend', () => {
 		});
 
 		const usage = await asUser.query(api.usage.getMyUsage, {});
+		expect(usage.meters.map((meter) => meter.id)).toEqual(['modelUsage']);
 		const model = usage.meters.find((meter) => meter.id === 'modelUsage');
 		const weekly = model?.windows.find((window) => window.period === 'weekly');
 		expect(weekly && weekly.used > weekly.limit).toBe(true);
 		await expect(
 			t.mutation(internal.lib.rateLimits.checkModelUsageLimits, { userId })
 		).rejects.toThrow('Monthly model usage limit reached');
-	});
-
-	it('charges scrape and search against one shared web tools quota', async () => {
-		const t = initConvexTest();
-		const userId = 'user_web_tools';
-		const asUser = t.withIdentity({ subject: userId });
-		const used = async () => {
-			const usage = await asUser.query(api.usage.getMyUsage, {});
-			const meter = usage.meters.find((meter) => meter.id === 'webTools');
-			return meter?.windows.find((window) => window.period === 'monthly')?.used ?? 0;
-		};
-
-		await t.mutation(internal.lib.rateLimits.chargeUrlScrapeLimits, { userId });
-		expect(await used()).toBe(URL_SCRAPE_USAGE_UNITS);
-
-		await t.mutation(internal.lib.rateLimits.chargeWebSearchLimits, { userId });
-		expect(await used()).toBe(URL_SCRAPE_USAGE_UNITS + WEB_SEARCH_USAGE_UNITS);
-
-		// Same flat search cost again (not scaled by result count).
-		await t.mutation(internal.lib.rateLimits.chargeWebSearchLimits, { userId });
-		expect(await used()).toBe(URL_SCRAPE_USAGE_UNITS + 2 * WEB_SEARCH_USAGE_UNITS);
 	});
 
 	it('uses only active subscriptions and ignores stale webhook events', async () => {

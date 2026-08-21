@@ -14,6 +14,7 @@ import {
 	vExecutorJobStatus,
 	vExecutorStatus,
 	vModelId,
+	vPersistedModelId,
 	vReasoningEffort,
 	vRunStatus,
 	vServiceTier,
@@ -41,7 +42,7 @@ export const threadRecordFields = {
 	submissionId: v.string(),
 	projectId: v.id('projects'),
 	title: v.optional(v.string()),
-	selectedModel: vModelId,
+	selectedModel: vPersistedModelId,
 	reasoningEffort: vReasoningEffort,
 	serviceTier: vServiceTier,
 	contextSummary: v.optional(v.string()),
@@ -68,7 +69,7 @@ export const runFields = {
 	claimId: v.optional(v.string()),
 	claimExpiresAt: v.optional(v.number()),
 	completionAttemptSeq: v.number(),
-	selectedModel: vModelId,
+	selectedModel: vPersistedModelId,
 	reasoningEffort: vReasoningEffort,
 	serviceTier: vServiceTier,
 	startedAt: v.number(),
@@ -385,8 +386,9 @@ export const vCompletionStreamMergeResult = v.union(
 export const vModelProvider = v.union(
 	v.literal('openai'),
 	v.literal('anthropic'),
-	v.literal('xai'),
-	v.literal('fireworks')
+	v.literal('zai'),
+	v.literal('kimi'),
+	v.literal('deepseek')
 );
 
 export const vCatalogModel = v.object({
@@ -430,7 +432,7 @@ export const vMyUsage = v.object({
 	tier: vSubscriptionTier,
 	meters: v.array(
 		v.object({
-			id: v.union(v.literal('modelUsage'), v.literal('webTools')),
+			id: v.literal('modelUsage'),
 			label: v.string(),
 			description: v.string(),
 			windows: v.array(vUsageMeterWindow)

@@ -240,8 +240,8 @@ describe('agentRuntime context accounting', () => {
 		expect(serialized).not.toContain('Old prompt that should be covered');
 		expect(serialized).toContain('New prompt');
 		expect(context.contextBudget).toEqual({
-			contextWindowTokens: 258_400,
-			autoCompactTokenLimit: 244_800
+			contextWindowTokens: 272_000,
+			autoCompactTokenLimit: 258_000
 		});
 	});
 });

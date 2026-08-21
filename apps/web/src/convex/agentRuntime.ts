@@ -3,7 +3,7 @@ import { mutation, query, type MutationCtx, type QueryCtx } from '@convex/_gener
 import { ConvexError, v, type Infer } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord, getOwnedProject } from '@convex/lib/access';
 import { executionSecretHash, getExecutionRun, getUserId } from '@convex/lib/auth';
-import { getModelDefinition } from '@convex/lib/models';
+import { coercePersistedModelId, getModelDefinition } from '@convex/lib/models';
 import { assertModelConfigurationAllowedForUser } from '@convex/lib/tiers';
 import { buildCanonicalAgentHistory } from '@convex/lib/agentHistory';
 import { contextSummaryText } from '@convex/lib/contextCompaction';
@@ -473,7 +473,7 @@ export const getContext = query({
 			mediaType,
 			url
 		}));
-		const model = getModelDefinition(run.selectedModel);
+		const model = getModelDefinition(coercePersistedModelId(run.selectedModel));
 
 		return {
 			run,
