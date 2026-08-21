@@ -2,7 +2,8 @@ import {
 	defaultModelId,
 	defaultReasoningEffort,
 	defaultServiceTier,
-	modelDefinitions
+	modelDefinitions,
+	type ModelDefinition
 } from '@convex/lib/models';
 import {
 	modelLockUpgradeMessage,
@@ -27,9 +28,11 @@ export const get = query({
 			defaultModelId,
 			defaultReasoningEffort,
 			defaultServiceTier,
-			// Omit server-only pricing weights from the UI catalog.
-			models: modelDefinitions.map((definition) => {
-				const { usageWeights, ...model } = definition;
+			// Omit server-only routing and usage fields from the UI catalog.
+			models: modelDefinitions.map((definition: ModelDefinition) => {
+				const { inferenceProvider, usagePolicy, usageWeights, ...model } = definition;
+				void inferenceProvider;
+				void usagePolicy;
 				void usageWeights;
 				return {
 					...model,

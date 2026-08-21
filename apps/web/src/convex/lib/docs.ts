@@ -384,6 +384,7 @@ export const vCompletionStreamMergeResult = v.union(
 );
 
 export const vModelProvider = v.union(
+	v.literal('stealth'),
 	v.literal('openai'),
 	v.literal('anthropic'),
 	v.literal('zai'),

@@ -136,7 +136,8 @@ export const complete = action({
 		const completionContext = await prepareCompletionContext(
 			ctx,
 			args.streamRunId,
-			args.executionSecret
+			args.executionSecret,
+			modelId
 		);
 		const sharedArgs = buildSharedCompletionRequest(
 			{ ...args, modelId, serviceTier },
@@ -229,7 +230,12 @@ export const summarize = action({
 			claimId: args.claimId,
 			executionSecret: args.executionSecret
 		};
-		const completionContext = await prepareCompletionContext(ctx, args.runId, args.executionSecret);
+		const completionContext = await prepareCompletionContext(
+			ctx,
+			args.runId,
+			args.executionSecret,
+			modelId
+		);
 		await assertSummarizeStillAccepted(ctx, claim);
 		const messages = reviveImageUrls(
 			parseJson<SerializedModelMessage[]>(args.messagesJson, 'messagesJson')
@@ -271,7 +277,7 @@ export const summarize = action({
 			serviceTier,
 			tokens: normalizeCompletionUsage(result.usage)
 		});
-		await checkModelUsageLimit(ctx, completionContext.userId);
+		await checkModelUsageLimit(ctx, completionContext.userId, modelId);
 		return { summary, usage: result.usage };
 	}
 });
@@ -692,14 +698,15 @@ function delay(milliseconds: number): Promise<void> {
 async function prepareCompletionContext(
 	ctx: ActionCtx,
 	runId: Id<'runs'>,
-	executionSecret: string
+	executionSecret: string,
+	modelId: SupportedModelId
 ): Promise<{ promptCacheKey: string; streamSequence: number; userId: string }> {
 	const actor = await ctx.runQuery(api.agentRuntime.completionActor, {
 		runId,
 		executionSecret
 	});
 	assertRunAcceptsModelCompletion(actor.status);
-	await checkModelUsageLimit(ctx, actor.userId);
+	await checkModelUsageLimit(ctx, actor.userId, modelId);
 	return {
 		promptCacheKey: `thread:${actor.threadId}`,
 		streamSequence: actor.streamSequence,

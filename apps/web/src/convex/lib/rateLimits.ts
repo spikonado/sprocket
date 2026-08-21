@@ -16,6 +16,7 @@ import { getFunctionName, type FunctionArgs, type FunctionReference } from 'conv
 import { v } from 'convex/values';
 import {
 	completionUsageUnits,
+	isModelUsageMetered,
 	type SupportedModelId,
 	type SupportedServiceTier
 } from '@convex/lib/models';
@@ -137,8 +138,9 @@ export async function getMeterWindow(
 }
 
 export const checkModelUsageLimits = internalMutation({
-	args: { userId: v.string() },
-	handler: async (ctx, { userId }) => {
+	args: { userId: v.string(), modelId: vModelId },
+	handler: async (ctx, { userId, modelId }) => {
+		if (!isModelUsageMetered(modelId)) return;
 		const tier = await ensureSubscription(ctx, userId);
 		if (tier === 'admin') return;
 		await checkMeterLimits(ctx, 'modelUsage', userId, tierLimits[tier]);
@@ -158,6 +160,7 @@ export const chargeModelUsageLimits = internalMutation({
 		})
 	},
 	handler: async (ctx, args) => {
+		if (!isModelUsageMetered(args.modelId)) return;
 		const tier = await ensureSubscription(ctx, args.userId);
 		if (tier === 'admin') return;
 		const count = completionUsageUnits(args.modelId, args.serviceTier, args.tokens);
@@ -188,8 +191,12 @@ async function chargeUsageDurably<Mutation extends FunctionReference<'mutation',
 	}
 }
 
-export async function checkModelUsageLimit(ctx: ActionCtx, userId: string): Promise<void> {
-	await ctx.runMutation(internal.lib.rateLimits.checkModelUsageLimits, { userId });
+export async function checkModelUsageLimit(
+	ctx: ActionCtx,
+	userId: string,
+	modelId: SupportedModelId
+): Promise<void> {
+	await ctx.runMutation(internal.lib.rateLimits.checkModelUsageLimits, { userId, modelId });
 }
 
 export async function chargeModelUsage(

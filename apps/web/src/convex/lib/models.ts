@@ -3,6 +3,7 @@ import type { LanguageModelUsage } from 'ai';
 export const reasoningEffortIds = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 export const serviceTierIds = ['standard', 'fast'] as const;
 export const modelIds = [
+	'stealth/ox-alpha',
 	'gpt-5.6-sol',
 	'claude-opus-5',
 	'claude-fable-5',
@@ -15,7 +16,7 @@ export const modelIds = [
 export type SupportedModelId = (typeof modelIds)[number];
 export type SupportedReasoningEffort = (typeof reasoningEffortIds)[number];
 export type SupportedServiceTier = (typeof serviceTierIds)[number];
-export type ModelProvider = 'openai' | 'anthropic' | 'zai' | 'kimi' | 'deepseek';
+export type ModelProvider = 'stealth' | 'openai' | 'anthropic' | 'zai' | 'kimi' | 'deepseek';
 
 /** Removed from the catalog; kept so existing thread/run rows still validate. */
 export const retiredModelIds = [
@@ -37,10 +38,12 @@ const retiredModelReplacements = {
 
 type TokenUsageWeights = { input: number; cacheRead: number; cacheWrite: number; output: number };
 
-type ModelDefinition = {
+export type ModelDefinition = {
 	id: SupportedModelId;
 	label: string;
 	provider: ModelProvider;
+	/** Inference host when it differs from the model provider shown in the catalog. */
+	inferenceProvider?: 'openrouter';
 	supportsImages: boolean;
 	/** Context budget exposed by the provider's coding-agent harness. */
 	contextWindowTokens: number;
@@ -49,11 +52,16 @@ type ModelDefinition = {
 	reasoningEfforts: readonly SupportedReasoningEffort[];
 	defaultReasoningEffort: SupportedReasoningEffort;
 	serviceTiers: readonly SupportedServiceTier[];
+	/** Unset means usage is metered. */
+	usagePolicy?: 'unlimited';
 	usageWeights: TokenUsageWeights & { fastMultiplier: number };
 };
 
-/** UI-facing model entry (server pricing weights omitted). */
-export type CatalogModel = Omit<ModelDefinition, 'usageWeights'>;
+/** UI-facing model entry (server-only routing and usage fields omitted). */
+export type CatalogModel = Omit<
+	ModelDefinition,
+	'inferenceProvider' | 'usagePolicy' | 'usageWeights'
+>;
 
 const millionTokenContext = {
 	contextWindowTokens: 1_000_000,
@@ -63,6 +71,26 @@ const millionTokenContext = {
 const lowHighMaxReasoningEfforts = ['low', 'high', 'max'] as const;
 
 export const modelDefinitions = [
+	{
+		id: 'stealth/ox-alpha',
+		label: 'Ox Alpha',
+		provider: 'stealth',
+		inferenceProvider: 'openrouter',
+		supportsImages: true,
+		contextWindowTokens: 1_048_576,
+		autoCompactTokenLimit: 1_015_576,
+		reasoningEfforts: lowHighMaxReasoningEfforts,
+		defaultReasoningEffort: 'max',
+		serviceTiers: ['standard'],
+		usagePolicy: 'unlimited',
+		usageWeights: {
+			input: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			output: 0,
+			fastMultiplier: 1
+		}
+	},
 	{
 		id: 'gpt-5.6-sol',
 		label: 'GPT-5.6 Sol',
@@ -195,6 +223,10 @@ export function getModelDefinition(modelId: SupportedModelId): ModelDefinition {
 	const definition = modelDefinitions.find((model) => model.id === modelId);
 	if (!definition) throw new Error(`Unsupported model: ${modelId}`);
 	return definition;
+}
+
+export function isModelUsageMetered(modelId: SupportedModelId): boolean {
+	return getModelDefinition(modelId).usagePolicy !== 'unlimited';
 }
 
 /** Map a stored (possibly retired) model id onto the current catalog. */
