@@ -45,7 +45,7 @@ export const tierLimits: Record<SubscriptionTier, TierLimits> = {
 };
 
 export const tierAllowedModels: Record<SubscriptionTier, readonly SupportedModelId[]> = {
-	free: ['deepseek-v4-pro', 'deepseek-v4-flash'],
+	free: ['deepseek-v4-pro-0813', 'deepseek-v4-flash-0731'],
 	pro: modelIds,
 	admin: modelIds
 };

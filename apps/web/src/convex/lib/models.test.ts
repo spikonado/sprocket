@@ -32,11 +32,21 @@ describe('model configuration', () => {
 		expect(offered).not.toContain('gpt-5.6-luna');
 		expect(offered).not.toContain('gpt-5.6-terra');
 		expect(offered).not.toContain('grok-4.5');
+		expect(offered).not.toContain('deepseek-v4-pro');
+		expect(offered).not.toContain('deepseek-v4-flash');
 		expect(modelDefinitions.map((model) => model.id)).toEqual([...modelIds]);
 		expect(persistedModelIds as readonly string[]).toEqual(
-			expect.arrayContaining(['gpt-5.6-terra', 'gpt-5.6-luna', 'grok-4.5'])
+			expect.arrayContaining([
+				'gpt-5.6-terra',
+				'gpt-5.6-luna',
+				'grok-4.5',
+				'deepseek-v4-pro',
+				'deepseek-v4-flash'
+			])
 		);
 		expect(coercePersistedModelId('gpt-5.6-luna')).toBe('gpt-5.6-sol');
+		expect(coercePersistedModelId('deepseek-v4-pro')).toBe('deepseek-v4-pro-0813');
+		expect(coercePersistedModelId('deepseek-v4-flash')).toBe('deepseek-v4-flash-0731');
 		expect(coercePersistedModelId('kimi-k3')).toBe('kimi-k3');
 		expect(coercePersistedSelection('grok-4.5', 'fast')).toEqual({
 			modelId: 'gpt-5.6-sol',
@@ -49,8 +59,8 @@ describe('model configuration', () => {
 	});
 
 	it('labels models by lab, not inference host', () => {
-		expect(getModelDefinition('deepseek-v4-pro').provider).toBe('deepseek');
-		expect(getModelDefinition('deepseek-v4-flash').provider).toBe('deepseek');
+		expect(getModelDefinition('deepseek-v4-pro-0813').provider).toBe('deepseek');
+		expect(getModelDefinition('deepseek-v4-flash-0731').provider).toBe('deepseek');
 		expect(getModelDefinition('kimi-k3').provider).toBe('kimi');
 		expect(getModelDefinition('glm-5.3').provider).toBe('zai');
 	});
@@ -60,8 +70,8 @@ describe('model configuration', () => {
 		expect(getModelDefinition('claude-fable-5').serviceTiers).toEqual(['standard']);
 		expect(getModelDefinition('kimi-k3').serviceTiers).toEqual(['standard']);
 		expect(getModelDefinition('glm-5.3').serviceTiers).toEqual(['standard']);
-		expect(getModelDefinition('deepseek-v4-pro').serviceTiers).toEqual(['standard']);
-		expect(getModelDefinition('deepseek-v4-flash').serviceTiers).toEqual(['standard']);
+		expect(getModelDefinition('deepseek-v4-pro-0813').serviceTiers).toEqual(['standard']);
+		expect(getModelDefinition('deepseek-v4-flash-0731').serviceTiers).toEqual(['standard']);
 		expect(() =>
 			assertSupportedModelConfiguration({
 				modelId: 'kimi-k3',
@@ -70,7 +80,7 @@ describe('model configuration', () => {
 		).toThrow('Kimi K3 does not support the fast service tier.');
 		expect(() =>
 			assertSupportedModelConfiguration({
-				modelId: 'deepseek-v4-flash',
+				modelId: 'deepseek-v4-flash-0731',
 				serviceTier: 'fast'
 			})
 		).toThrow('DeepSeek V4 Flash does not support the fast service tier.');

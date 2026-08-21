@@ -8,8 +8,8 @@ export const modelIds = [
 	'claude-fable-5',
 	'glm-5.3',
 	'kimi-k3',
-	'deepseek-v4-pro',
-	'deepseek-v4-flash'
+	'deepseek-v4-pro-0813',
+	'deepseek-v4-flash-0731'
 ] as const;
 
 export type SupportedModelId = (typeof modelIds)[number];
@@ -18,8 +18,22 @@ export type SupportedServiceTier = (typeof serviceTierIds)[number];
 export type ModelProvider = 'openai' | 'anthropic' | 'zai' | 'kimi' | 'deepseek';
 
 /** Removed from the catalog; kept so existing thread/run rows still validate. */
-export const retiredModelIds = ['gpt-5.6-terra', 'gpt-5.6-luna', 'grok-4.5'] as const;
+export const retiredModelIds = [
+	'gpt-5.6-terra',
+	'gpt-5.6-luna',
+	'grok-4.5',
+	'deepseek-v4-pro',
+	'deepseek-v4-flash'
+] as const;
 export const persistedModelIds = [...modelIds, ...retiredModelIds] as const;
+
+const retiredModelReplacements = {
+	'gpt-5.6-terra': 'gpt-5.6-sol',
+	'gpt-5.6-luna': 'gpt-5.6-sol',
+	'grok-4.5': 'gpt-5.6-sol',
+	'deepseek-v4-pro': 'deepseek-v4-pro-0813',
+	'deepseek-v4-flash': 'deepseek-v4-flash-0731'
+} as const satisfies Record<(typeof retiredModelIds)[number], SupportedModelId>;
 
 type TokenUsageWeights = { input: number; cacheRead: number; cacheWrite: number; output: number };
 
@@ -131,7 +145,7 @@ export const modelDefinitions = [
 		}
 	},
 	{
-		id: 'deepseek-v4-pro',
+		id: 'deepseek-v4-pro-0813',
 		label: 'DeepSeek V4 Pro',
 		provider: 'deepseek',
 		...millionTokenContext,
@@ -147,7 +161,7 @@ export const modelDefinitions = [
 		}
 	},
 	{
-		id: 'deepseek-v4-flash',
+		id: 'deepseek-v4-flash-0731',
 		label: 'DeepSeek V4 Flash',
 		provider: 'deepseek',
 		...millionTokenContext,
@@ -177,9 +191,12 @@ export function getModelDefinition(modelId: SupportedModelId): ModelDefinition {
 
 /** Map a stored (possibly retired) model id onto the current catalog. */
 export function coercePersistedModelId(modelId: string): SupportedModelId {
-	return (modelIds as readonly string[]).includes(modelId)
-		? (modelId as SupportedModelId)
-		: defaultModelId;
+	if ((modelIds as readonly string[]).includes(modelId)) {
+		return modelId as SupportedModelId;
+	}
+	return (
+		retiredModelReplacements[modelId as keyof typeof retiredModelReplacements] ?? defaultModelId
+	);
 }
 
 /** Retired ids and dropped Fast offerings still stored on old runs. */
