@@ -27,13 +27,15 @@ describe('model provider request configuration', () => {
 				reasoningHistory: 'interleaved'
 			}
 		});
-		expect(resolveProviderOptions('deepseek-v4-pro', 'max', 'standard', 'thread:abc')).toEqual({
-			fireworks: {
-				reasoningEffort: 'max',
-				promptCacheKey: 'thread:abc',
-				reasoningHistory: 'interleaved'
+		expect(resolveProviderOptions('deepseek-v4-pro-0813', 'max', 'standard', 'thread:abc')).toEqual(
+			{
+				fireworks: {
+					reasoningEffort: 'max',
+					promptCacheKey: 'thread:abc',
+					reasoningHistory: 'interleaved'
+				}
 			}
-		});
+		);
 		expect(resolveProviderOptions('glm-5.3', 'max', 'standard', 'thread:abc')).toEqual({
 			zai: { reasoningEffort: 'max' }
 		});
@@ -112,11 +114,16 @@ describe('Amazon Bedrock fallback routing', () => {
 		expect(resolveLanguageModel('gpt-5.6-sol', 'fast')).not.toBeInstanceOf(FallbackModel);
 		expect(resolveLanguageModel('glm-5.3', 'standard')).not.toBeInstanceOf(FallbackModel);
 		expect(resolveLanguageModel('kimi-k3', 'standard')).not.toBeInstanceOf(FallbackModel);
-		expect(resolveLanguageModel('deepseek-v4-pro', 'standard')).not.toBeInstanceOf(FallbackModel);
+		expect(resolveLanguageModel('deepseek-v4-pro-0813', 'standard')).not.toBeInstanceOf(
+			FallbackModel
+		);
 		expect(resolveLanguageModel('kimi-k3', 'standard')).toMatchObject({
 			modelId: 'accounts/fireworks/models/kimi-k3'
 		});
-		expect(resolveLanguageModel('deepseek-v4-flash', 'standard')).toMatchObject({
+		expect(resolveLanguageModel('deepseek-v4-pro-0813', 'standard')).toMatchObject({
+			modelId: 'accounts/fireworks/models/deepseek-v4-pro-0813'
+		});
+		expect(resolveLanguageModel('deepseek-v4-flash-0731', 'standard')).toMatchObject({
 			modelId: 'accounts/fireworks/models/deepseek-v4-flash-0731'
 		});
 		expect(resolveLanguageModel('glm-5.3', 'standard')).toMatchObject({

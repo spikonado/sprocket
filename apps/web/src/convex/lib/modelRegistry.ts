@@ -141,16 +141,11 @@ function resolveBedrockFallbackModel(
 }
 
 function fireworksModelPath(modelId: SupportedModelId): string {
-	switch (modelId) {
-		case 'kimi-k3':
-			return 'accounts/fireworks/models/kimi-k3';
-		case 'deepseek-v4-pro':
-			return 'accounts/fireworks/models/deepseek-v4-pro';
-		case 'deepseek-v4-flash':
-			return 'accounts/fireworks/models/deepseek-v4-flash-0731';
-		default:
-			throw new Error(`Unsupported Fireworks model: ${modelId}`);
+	const provider = getModelDefinition(modelId).provider;
+	if (provider !== 'kimi' && provider !== 'deepseek') {
+		throw new Error(`Unsupported Fireworks model: ${modelId}`);
 	}
+	return `accounts/fireworks/models/${modelId}`;
 }
 
 export function resolveLanguageModel(
