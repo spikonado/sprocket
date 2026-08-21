@@ -39,6 +39,9 @@ describe('model provider request configuration', () => {
 		expect(resolveProviderOptions('glm-5.3', 'max', 'standard', 'thread:abc')).toEqual({
 			zai: { reasoningEffort: 'max' }
 		});
+		expect(resolveProviderOptions('stealth/ox-alpha', 'max', 'standard', 'thread:abc')).toEqual({
+			openrouter: { reasoningEffort: 'max' }
+		});
 	});
 
 	it('adds Anthropic service_tier only to completion request bodies', async () => {
@@ -117,6 +120,11 @@ describe('Amazon Bedrock fallback routing', () => {
 		expect(resolveLanguageModel('deepseek-v4-pro-0813', 'standard')).not.toBeInstanceOf(
 			FallbackModel
 		);
+		expect(resolveLanguageModel('stealth/ox-alpha', 'standard')).not.toBeInstanceOf(FallbackModel);
+		expect(resolveLanguageModel('stealth/ox-alpha', 'standard')).toMatchObject({
+			modelId: 'stealth/ox-alpha',
+			provider: 'openrouter.chat'
+		});
 		expect(resolveLanguageModel('kimi-k3', 'standard')).toMatchObject({
 			modelId: 'accounts/fireworks/models/kimi-k3'
 		});

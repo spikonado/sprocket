@@ -20,7 +20,10 @@ describe('subscription and usage backend', () => {
 		const weekly = model?.windows.find((window) => window.period === 'weekly');
 		expect(weekly && weekly.used > weekly.limit).toBe(true);
 		await expect(
-			t.mutation(internal.lib.rateLimits.checkModelUsageLimits, { userId })
+			t.mutation(internal.lib.rateLimits.checkModelUsageLimits, {
+				userId,
+				modelId: 'gpt-5.6-sol'
+			})
 		).rejects.toThrow('Monthly model usage limit reached');
 	});
 
@@ -196,7 +199,10 @@ describe('subscription and usage backend', () => {
 			tokens: { input: 1_000_000, cacheRead: 0, cacheWrite: 0, output: 2_000_000 }
 		});
 		await expect(
-			t.mutation(internal.lib.rateLimits.checkModelUsageLimits, { userId })
+			t.mutation(internal.lib.rateLimits.checkModelUsageLimits, {
+				userId,
+				modelId: 'gpt-5.6-sol'
+			})
 		).rejects.toThrow('Monthly model usage limit reached');
 
 		await t.run(async (ctx) => {
@@ -208,7 +214,10 @@ describe('subscription and usage backend', () => {
 			await ctx.db.patch(existing._id, { tier: 'admin' });
 		});
 
-		await t.mutation(internal.lib.rateLimits.checkModelUsageLimits, { userId });
+		await t.mutation(internal.lib.rateLimits.checkModelUsageLimits, {
+			userId,
+			modelId: 'gpt-5.6-sol'
+		});
 		await t.mutation(internal.lib.rateLimits.chargeModelUsageLimits, {
 			userId,
 			modelId: 'gpt-5.6-sol',
@@ -221,5 +230,37 @@ describe('subscription and usage backend', () => {
 			.find((meter) => meter.id === 'modelUsage')
 			?.windows.find((window) => window.period === 'weekly');
 		expect(weekly).toMatchObject({ used: 0 });
+	});
+
+	it('does not meter unlimited model usage or block it after overdraft', async () => {
+		const t = initConvexTest();
+		const userId = 'user_unlimited_model';
+		const asUser = t.withIdentity({ subject: userId });
+		const tokens = { input: 1_000_000, cacheRead: 0, cacheWrite: 0, output: 2_000_000 };
+
+		await t.mutation(internal.lib.rateLimits.chargeModelUsageLimits, {
+			userId,
+			modelId: 'gpt-5.6-sol',
+			serviceTier: 'standard',
+			tokens
+		});
+		await t.mutation(internal.lib.rateLimits.checkModelUsageLimits, {
+			userId,
+			modelId: 'stealth/ox-alpha'
+		});
+		const usageBeforeUnlimitedCharge = await asUser.query(api.usage.getMyUsage, {});
+		await t.mutation(internal.lib.rateLimits.chargeModelUsageLimits, {
+			userId,
+			modelId: 'stealth/ox-alpha',
+			serviceTier: 'standard',
+			tokens
+		});
+
+		const usage = await asUser.query(api.usage.getMyUsage, {});
+		const weekly = usage.meters
+			.find((meter) => meter.id === 'modelUsage')
+			?.windows.find((window) => window.period === 'weekly');
+		expect(weekly && weekly.used > weekly.limit).toBe(true);
+		expect(usage).toEqual(usageBeforeUnlimitedCharge);
 	});
 });

@@ -4,10 +4,12 @@ import {
 	coercePersistedModelId,
 	coercePersistedSelection,
 	getModelDefinition,
+	isModelUsageMetered,
 	modelDefinitions,
 	modelIds,
 	persistedModelIds
 } from '@convex/lib/models';
+import { subscriptionTierIds, tierAllowedModels } from '@convex/lib/tiers';
 
 describe('model configuration', () => {
 	it('rejects reasoning efforts unsupported by a model', () => {
@@ -65,6 +67,22 @@ describe('model configuration', () => {
 		expect(getModelDefinition('glm-5.3').provider).toBe('zai');
 	});
 
+	it('marks Ox Alpha as an unmetered OpenRouter model', () => {
+		expect(getModelDefinition('stealth/ox-alpha')).toMatchObject({
+			provider: 'stealth',
+			inferenceProvider: 'openrouter',
+			supportsImages: true
+		});
+		expect(isModelUsageMetered('stealth/ox-alpha')).toBe(false);
+		expect(isModelUsageMetered('gpt-5.6-sol')).toBe(true);
+	});
+
+	it('offers Ox Alpha on every subscription tier', () => {
+		for (const tier of subscriptionTierIds) {
+			expect(tierAllowedModels[tier]).toContain('stealth/ox-alpha');
+		}
+	});
+
 	it('does not advertise image support for DeepSeek models', () => {
 		expect(getModelDefinition('deepseek-v4-pro-0813').supportsImages).toBe(false);
 		expect(getModelDefinition('deepseek-v4-flash-0731').supportsImages).toBe(false);
@@ -72,6 +90,7 @@ describe('model configuration', () => {
 	});
 
 	it('does not advertise Fast for models without a faster route', () => {
+		expect(getModelDefinition('stealth/ox-alpha').serviceTiers).toEqual(['standard']);
 		expect(getModelDefinition('gpt-5.6-sol').serviceTiers).toEqual(['standard']);
 		expect(getModelDefinition('claude-fable-5').serviceTiers).toEqual(['standard']);
 		expect(getModelDefinition('kimi-k3').serviceTiers).toEqual(['standard']);

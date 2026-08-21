@@ -73,6 +73,12 @@ const zai = createOpenAICompatible({
 	// GLM 5.3 rejects thinking.type=disabled; thinking is always on.
 	transformRequestBody: (args) => ({ ...args, thinking: { type: 'enabled' } })
 });
+const openrouter = createOpenAICompatible({
+	name: 'openrouter',
+	baseURL: 'https://openrouter.ai/api/v1',
+	apiKey: process.env.OPENROUTER_API_KEY,
+	includeUsage: true
+});
 
 export function hasBedrockCredentials(env: NodeJS.ProcessEnv = process.env): boolean {
 	if (env.AWS_BEARER_TOKEN_BEDROCK?.trim()) return true;
@@ -152,12 +158,16 @@ export function resolveLanguageModel(
 	modelId: SupportedModelId,
 	serviceTier: SupportedServiceTier
 ): LanguageModel {
-	const provider = getModelDefinition(modelId).provider;
+	const model = getModelDefinition(modelId);
+	const provider = model.inferenceProvider ?? model.provider;
 	if (provider === 'anthropic') {
 		const primary = serviceTier === 'fast' ? anthropicFast(modelId) : anthropic(modelId);
 		// Bedrock has no priority/fast routes; fail over only on standard.
 		if (serviceTier === 'fast') return primary;
 		return withBedrockFallback(primary, () => resolveBedrockFallbackModel('anthropic', modelId));
+	}
+	if (provider === 'openrouter') {
+		return openrouter.chatModel(modelId);
 	}
 	if (provider === 'zai') {
 		return zai.chatModel(modelId);
@@ -176,7 +186,8 @@ export function resolveProviderOptions(
 	serviceTier: SupportedServiceTier,
 	promptCacheKey: string
 ): Record<string, Record<string, JSONValue>> {
-	const provider = getModelDefinition(modelId).provider;
+	const model = getModelDefinition(modelId);
+	const provider = model.inferenceProvider ?? model.provider;
 	if (provider === 'anthropic') {
 		return {
 			anthropic: {
@@ -185,9 +196,9 @@ export function resolveProviderOptions(
 			}
 		};
 	}
-	if (provider === 'zai') {
+	if (provider === 'openrouter' || provider === 'zai') {
 		return {
-			zai: {
+			[provider]: {
 				...(reasoningEffort !== undefined ? { reasoningEffort } : {})
 			}
 		};
