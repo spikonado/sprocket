@@ -65,6 +65,12 @@ describe('model configuration', () => {
 		expect(getModelDefinition('glm-5.3').provider).toBe('zai');
 	});
 
+	it('does not advertise image support for DeepSeek models', () => {
+		expect(getModelDefinition('deepseek-v4-pro-0813').supportsImages).toBe(false);
+		expect(getModelDefinition('deepseek-v4-flash-0731').supportsImages).toBe(false);
+		expect(getModelDefinition('gpt-5.6-sol').supportsImages).toBe(true);
+	});
+
 	it('does not advertise Fast for models without a faster route', () => {
 		expect(getModelDefinition('gpt-5.6-sol').serviceTiers).toEqual(['standard']);
 		expect(getModelDefinition('claude-fable-5').serviceTiers).toEqual(['standard']);

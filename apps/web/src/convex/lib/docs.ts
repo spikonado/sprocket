@@ -395,6 +395,7 @@ export const vCatalogModel = v.object({
 	id: vModelId,
 	label: v.string(),
 	provider: vModelProvider,
+	supportsImages: v.boolean(),
 	contextWindowTokens: v.number(),
 	autoCompactTokenLimit: v.number(),
 	reasoningEfforts: v.array(vReasoningEffort),

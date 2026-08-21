@@ -22,6 +22,36 @@ describe('agentRuntime.createRun', () => {
 		).rejects.toThrow('Message cannot be empty.');
 	});
 
+	it('rejects image attachments for models without image support', async () => {
+		const t = initConvexTest();
+		const { asUser, subject, threadId } = await seedOwnedThread(t);
+		const imageUploadId = await t.run(async (ctx) => {
+			const storageId = await ctx.storage.store(new Blob(['image'], { type: 'image/png' }));
+			return await ctx.db.insert('imageUploads', {
+				userId: subject,
+				storageId,
+				name: 'diagram.png',
+				mediaType: 'image/png',
+				size: 5,
+				messageIds: [],
+				attached: false
+			});
+		});
+
+		await expect(
+			asUser.mutation(api.agentRuntime.createRun, {
+				submissionId: 'sub-deepseek-image',
+				threadId,
+				prompt: 'Describe this image',
+				imageUploadIds: [imageUploadId],
+				selectedModel: 'deepseek-v4-pro-0813',
+				reasoningEffort: 'max',
+				serviceTier: 'standard',
+				executionSecret: 'deepseek-image-secret'
+			})
+		).rejects.toThrow('DeepSeek V4 Pro does not support image attachments.');
+	});
+
 	it('creates a queued run and is idempotent for the same submission', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
