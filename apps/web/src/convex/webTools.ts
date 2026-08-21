@@ -5,11 +5,6 @@ import { ContextDev } from '@context-dot-dev/convex';
 import { ExaClient } from '@exalabs/convex-exa';
 import { action } from '@convex/_generated/server';
 import { api, components } from '@convex/_generated/api';
-import {
-	chargeUrlScrapeUsage,
-	chargeWebSearchUsage,
-	checkWebToolsLimit
-} from '@convex/lib/rateLimits';
 import { vScrapeUrlResult, vWebSearchResult } from '@convex/lib/validators';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
 
@@ -80,7 +75,6 @@ export const scrapeUrl = action({
 		if (actor.claimId !== args.claimId || !isRunClaimLeaseActive(actor, Date.now())) {
 			throw new Error('Run is no longer active.');
 		}
-		const { userId } = actor;
 		let url: URL;
 		try {
 			url = new URL(args.url.trim());
@@ -90,7 +84,6 @@ export const scrapeUrl = action({
 		if (url.protocol !== 'http:' && url.protocol !== 'https:') {
 			throw new Error('Only http(s) URLs can be scraped.');
 		}
-		await checkWebToolsLimit(ctx, userId);
 
 		const response = await callComponent('Context.dev scrape', SCRAPE_TIMEOUT_MS, () =>
 			contextDev.scrapeMarkdown(ctx, {
@@ -101,7 +94,6 @@ export const scrapeUrl = action({
 				}
 			})
 		);
-		await chargeUrlScrapeUsage(ctx, userId);
 
 		const truncated = response.markdown.length > SCRAPE_MARKDOWN_MAX_CHARS;
 		return {
@@ -131,7 +123,6 @@ export const webSearch = action({
 		if (actor.claimId !== args.claimId || !isRunClaimLeaseActive(actor, Date.now())) {
 			throw new Error('Run is no longer active.');
 		}
-		const { userId } = actor;
 		const query = args.query.trim();
 		if (!query) {
 			throw new Error('Search query cannot be empty.');
@@ -140,7 +131,6 @@ export const webSearch = action({
 			? Math.floor(args.numResults as number)
 			: DEFAULT_SEARCH_RESULTS;
 		const numResults = Math.min(Math.max(requested, 1), MAX_SEARCH_RESULTS);
-		await checkWebToolsLimit(ctx, userId);
 
 		const response = await callComponent('Exa search', SEARCH_TIMEOUT_MS, () =>
 			exa.search(ctx, {
@@ -150,7 +140,6 @@ export const webSearch = action({
 				contents: { text: { maxCharacters: SEARCH_RESULT_TEXT_MAX_CHARS } }
 			})
 		);
-		await chargeWebSearchUsage(ctx, userId);
 
 		return {
 			results: response.results.flatMap((result) => {

@@ -5,7 +5,7 @@ import { createBedrockMantle } from '@ai-sdk/amazon-bedrock/mantle';
 import { createAnthropic, type AnthropicProvider } from '@ai-sdk/anthropic';
 import { createFireworks, type FireworksProvider } from '@ai-sdk/fireworks';
 import { createOpenAI, type OpenAIProvider } from '@ai-sdk/openai';
-import { createXai, type XaiProvider } from '@ai-sdk/xai';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import {
 	getModelDefinition,
 	type SupportedModelId,
@@ -20,31 +20,20 @@ type FallbackModels = NonNullable<Parameters<typeof createFallback>[0]['models']
 type ProviderFetch = NonNullable<NonNullable<Parameters<typeof createAnthropic>[0]>['fetch']>;
 type ProviderFetchInput = Parameters<ProviderFetch>[0];
 type ProviderRequestOptions = {
-	serviceTier?: 'auto' | 'priority' | 'standard_only';
-	promptCacheKey?: string;
+	serviceTier?: 'auto' | 'standard_only';
 };
 
 function providerPathname(input: ProviderFetchInput): string {
 	return new URL(input instanceof Request ? input.url : input.toString()).pathname;
 }
 
-function supportsProviderRequestOptions(pathname: string): boolean {
-	return (
-		pathname.endsWith('/messages') ||
-		pathname.endsWith('/responses') ||
-		pathname.endsWith('/chat/completions')
-	);
-}
-
-// The pinned Anthropic and xAI adapters do not expose their service-tier fields yet.
-// The xAI adapter also does not expose the Responses API prompt_cache_key field.
+// The pinned Anthropic adapter does not expose its service-tier field yet.
 export function createProviderFetch(
 	options: ProviderRequestOptions,
 	baseFetch: ProviderFetch = globalThis.fetch
 ): ProviderFetch {
 	return (input, init) => {
-		const pathname = providerPathname(input);
-		if (!supportsProviderRequestOptions(pathname)) return baseFetch(input, init);
+		if (!providerPathname(input).endsWith('/messages')) return baseFetch(input, init);
 		if (typeof init?.body !== 'string') {
 			throw new Error('Cannot apply provider request options without a JSON body.');
 		}
@@ -57,10 +46,7 @@ export function createProviderFetch(
 			...init,
 			body: JSON.stringify({
 				...body,
-				...(options.serviceTier !== undefined ? { service_tier: options.serviceTier } : {}),
-				...(options.promptCacheKey !== undefined && pathname.endsWith('/responses')
-					? { prompt_cache_key: options.promptCacheKey }
-					: {})
+				...(options.serviceTier !== undefined ? { service_tier: options.serviceTier } : {})
 			})
 		});
 	};
@@ -79,6 +65,13 @@ const anthropicFast: AnthropicProvider = createAnthropic({
 });
 const fireworks: FireworksProvider = createFireworks({
 	apiKey: process.env.FIREWORKS_API_KEY
+});
+const zai = createOpenAICompatible({
+	name: 'zai',
+	baseURL: 'https://api.z.ai/api/paas/v4',
+	apiKey: process.env.ZAI_API_KEY,
+	// GLM 5.3 rejects thinking.type=disabled; thinking is always on.
+	transformRequestBody: (args) => ({ ...args, thinking: { type: 'enabled' } })
 });
 
 export function hasBedrockCredentials(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -147,35 +140,39 @@ function resolveBedrockFallbackModel(
 	}).responses(`openai.${modelId}`);
 }
 
+function fireworksModelPath(modelId: SupportedModelId): string {
+	switch (modelId) {
+		case 'kimi-k3':
+			return 'accounts/fireworks/models/kimi-k3';
+		case 'deepseek-v4-pro':
+			return 'accounts/fireworks/models/deepseek-v4-pro';
+		case 'deepseek-v4-flash':
+			return 'accounts/fireworks/models/deepseek-v4-flash';
+		default:
+			throw new Error(`Unsupported Fireworks model: ${modelId}`);
+	}
+}
+
 export function resolveLanguageModel(
 	modelId: SupportedModelId,
-	serviceTier: SupportedServiceTier,
-	promptCacheKey: string
+	serviceTier: SupportedServiceTier
 ): LanguageModel {
 	const provider = getModelDefinition(modelId).provider;
 	if (provider === 'anthropic') {
 		const primary = serviceTier === 'fast' ? anthropicFast(modelId) : anthropic(modelId);
+		// Bedrock has no priority/fast routes; fail over only on standard.
+		if (serviceTier === 'fast') return primary;
 		return withBedrockFallback(primary, () => resolveBedrockFallbackModel('anthropic', modelId));
 	}
-	if (provider === 'xai') {
-		const xai: XaiProvider = createXai({
-			apiKey: process.env.XAI_API_KEY,
-			fetch: createProviderFetch({
-				...(serviceTier === 'fast' ? { serviceTier: 'priority' } : {}),
-				promptCacheKey
-			})
-		});
-		return xai(modelId);
+	if (provider === 'zai') {
+		return zai.chatModel(modelId);
 	}
-	if (provider === 'fireworks') {
-		if (modelId !== 'kimi-k3') throw new Error(`Unsupported Fireworks model: ${modelId}`);
-		return fireworks(
-			serviceTier === 'fast'
-				? 'accounts/fireworks/routers/kimi-k3-fast'
-				: 'accounts/fireworks/models/kimi-k3'
-		);
+	if (provider === 'kimi' || provider === 'deepseek') {
+		return fireworks(fireworksModelPath(modelId));
 	}
-	return withBedrockFallback(openai(modelId), () => resolveBedrockFallbackModel('openai', modelId));
+	const openaiPrimary = openai(modelId);
+	if (serviceTier === 'fast') return openaiPrimary;
+	return withBedrockFallback(openaiPrimary, () => resolveBedrockFallbackModel('openai', modelId));
 }
 
 export function resolveProviderOptions(
@@ -193,10 +190,14 @@ export function resolveProviderOptions(
 			}
 		};
 	}
-	if (provider === 'xai') {
-		return { xai: { ...(reasoningEffort !== undefined ? { reasoningEffort } : {}) } };
+	if (provider === 'zai') {
+		return {
+			zai: {
+				...(reasoningEffort !== undefined ? { reasoningEffort } : {})
+			}
+		};
 	}
-	if (provider === 'fireworks') {
+	if (provider === 'kimi' || provider === 'deepseek') {
 		return {
 			fireworks: {
 				...(reasoningEffort !== undefined ? { reasoningEffort } : {}),

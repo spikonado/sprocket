@@ -11,7 +11,7 @@ import {
 	type RunQueryCtx
 } from '@convex-dev/rate-limiter';
 import { components, internal } from '@convex/_generated/api';
-import { internalMutation, type ActionCtx, type MutationCtx } from '@convex/_generated/server';
+import { internalMutation, type ActionCtx } from '@convex/_generated/server';
 import { getFunctionName, type FunctionArgs, type FunctionReference } from 'convex/server';
 import { v } from 'convex/values';
 import {
@@ -21,8 +21,6 @@ import {
 } from '@convex/lib/models';
 import { ensureSubscription, tierLimits, type TierLimits } from '@convex/lib/tiers';
 import {
-	URL_SCRAPE_USAGE_UNITS,
-	WEB_SEARCH_USAGE_UNITS,
 	usageMeters,
 	usagePeriods,
 	type UsageMeterId,
@@ -30,14 +28,7 @@ import {
 } from '@convex/lib/usageMeters';
 import { vModelId, vServiceTier } from '@convex/lib/validators';
 
-export {
-	URL_SCRAPE_USAGE_UNITS,
-	WEB_SEARCH_USAGE_UNITS,
-	usageMeters,
-	usagePeriods,
-	type UsageMeterId,
-	type UsagePeriod
-};
+export { usageMeters, usagePeriods, type UsageMeterId, type UsagePeriod };
 
 const MONTH = 30 * DAY;
 export const rateLimiter = new RateLimiter(components.rateLimiter, {});
@@ -145,35 +136,6 @@ export async function getMeterWindow(
 	};
 }
 
-async function chargeWebTools(ctx: MutationCtx, userId: string, count: number): Promise<void> {
-	const tier = await ensureSubscription(ctx, userId);
-	if (tier === 'admin') return;
-	await chargeMeterLimits(ctx, 'webTools', userId, tierLimits[tier], count);
-}
-
-export const checkWebToolsLimits = internalMutation({
-	args: { userId: v.string() },
-	handler: async (ctx, { userId }) => {
-		const tier = await ensureSubscription(ctx, userId);
-		if (tier === 'admin') return;
-		await checkMeterLimits(ctx, 'webTools', userId, tierLimits[tier]);
-	}
-});
-
-export const chargeUrlScrapeLimits = internalMutation({
-	args: { userId: v.string() },
-	handler: async (ctx, { userId }) => {
-		await chargeWebTools(ctx, userId, URL_SCRAPE_USAGE_UNITS);
-	}
-});
-
-export const chargeWebSearchLimits = internalMutation({
-	args: { userId: v.string() },
-	handler: async (ctx, { userId }) => {
-		await chargeWebTools(ctx, userId, WEB_SEARCH_USAGE_UNITS);
-	}
-});
-
 export const checkModelUsageLimits = internalMutation({
 	args: { userId: v.string() },
 	handler: async (ctx, { userId }) => {
@@ -240,16 +202,4 @@ export async function chargeModelUsage(
 	}
 ): Promise<void> {
 	await chargeUsageDurably(ctx, internal.lib.rateLimits.chargeModelUsageLimits, args);
-}
-
-export async function checkWebToolsLimit(ctx: ActionCtx, userId: string): Promise<void> {
-	await ctx.runMutation(internal.lib.rateLimits.checkWebToolsLimits, { userId });
-}
-
-export async function chargeUrlScrapeUsage(ctx: ActionCtx, userId: string): Promise<void> {
-	await chargeUsageDurably(ctx, internal.lib.rateLimits.chargeUrlScrapeLimits, { userId });
-}
-
-export async function chargeWebSearchUsage(ctx: ActionCtx, userId: string): Promise<void> {
-	await chargeUsageDurably(ctx, internal.lib.rateLimits.chargeWebSearchLimits, { userId });
 }

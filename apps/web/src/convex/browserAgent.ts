@@ -13,7 +13,7 @@ import {
 } from '@convex/lib/validators';
 
 // The browsing sub-agent's model. Uses the same OpenAI key as the main agent.
-const DEFAULT_MODEL = 'openai/gpt-5.6-luna';
+const DEFAULT_MODEL = 'openai/gpt-5.6-sol';
 // Bounds text returned to the main agent so a runaway page can't flood the transcript.
 const MAX_RESULT_CHARS = 8_000;
 // Bound the structured actions array itself, not just its text mirror — a

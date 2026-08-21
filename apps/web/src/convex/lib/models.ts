@@ -4,18 +4,22 @@ export const reasoningEffortIds = ['none', 'low', 'medium', 'high', 'xhigh', 'ma
 export const serviceTierIds = ['standard', 'fast'] as const;
 export const modelIds = [
 	'gpt-5.6-sol',
-	'gpt-5.6-terra',
-	'gpt-5.6-luna',
 	'claude-opus-5',
 	'claude-fable-5',
-	'grok-4.5',
-	'kimi-k3'
+	'glm-5.3',
+	'kimi-k3',
+	'deepseek-v4-pro',
+	'deepseek-v4-flash'
 ] as const;
 
 export type SupportedModelId = (typeof modelIds)[number];
 export type SupportedReasoningEffort = (typeof reasoningEffortIds)[number];
 export type SupportedServiceTier = (typeof serviceTierIds)[number];
-export type ModelProvider = 'openai' | 'anthropic' | 'xai' | 'fireworks';
+export type ModelProvider = 'openai' | 'anthropic' | 'zai' | 'kimi' | 'deepseek';
+
+/** Removed from the catalog; kept so existing thread/run rows still validate. */
+export const retiredModelIds = ['gpt-5.6-terra', 'gpt-5.6-luna', 'grok-4.5'] as const;
+export const persistedModelIds = [...modelIds, ...retiredModelIds] as const;
 
 type TokenUsageWeights = { input: number; cacheRead: number; cacheWrite: number; output: number };
 
@@ -36,16 +40,24 @@ type ModelDefinition = {
 /** UI-facing model entry (server pricing weights omitted). */
 export type CatalogModel = Omit<ModelDefinition, 'usageWeights'>;
 
+const millionTokenContext = {
+	contextWindowTokens: 1_000_000,
+	autoCompactTokenLimit: 967_000
+} as const;
+
+const lowHighMaxReasoningEfforts = ['low', 'high', 'max'] as const;
+
 export const modelDefinitions = [
 	{
 		id: 'gpt-5.6-sol',
 		label: 'GPT-5.6 Sol',
 		provider: 'openai',
-		contextWindowTokens: 258_400,
-		autoCompactTokenLimit: 244_800,
+		// OpenAI bills the whole request at 1M rates once input exceeds 272k.
+		contextWindowTokens: 272_000,
+		autoCompactTokenLimit: 258_000,
 		reasoningEfforts: reasoningEffortIds,
 		defaultReasoningEffort: 'medium',
-		serviceTiers: serviceTierIds,
+		serviceTiers: ['standard'],
 		usageWeights: {
 			input: 0.005,
 			cacheRead: 0.0005,
@@ -55,45 +67,10 @@ export const modelDefinitions = [
 		}
 	},
 	{
-		id: 'gpt-5.6-terra',
-		label: 'GPT-5.6 Terra',
-		provider: 'openai',
-		contextWindowTokens: 258_400,
-		autoCompactTokenLimit: 244_800,
-		reasoningEfforts: reasoningEffortIds,
-		defaultReasoningEffort: 'medium',
-		serviceTiers: serviceTierIds,
-		usageWeights: {
-			input: 0.002,
-			cacheRead: 0.0002,
-			cacheWrite: 0.0025,
-			output: 0.012,
-			fastMultiplier: 2
-		}
-	},
-	{
-		id: 'gpt-5.6-luna',
-		label: 'GPT-5.6 Luna',
-		provider: 'openai',
-		contextWindowTokens: 258_400,
-		autoCompactTokenLimit: 244_800,
-		reasoningEfforts: reasoningEffortIds,
-		defaultReasoningEffort: 'medium',
-		serviceTiers: serviceTierIds,
-		usageWeights: {
-			input: 0.0002,
-			cacheRead: 0.00002,
-			cacheWrite: 0.00025,
-			output: 0.0012,
-			fastMultiplier: 2
-		}
-	},
-	{
 		id: 'claude-opus-5',
 		label: 'Claude Opus 5',
 		provider: 'anthropic',
-		contextWindowTokens: 1_000_000,
-		autoCompactTokenLimit: 967_000,
+		...millionTokenContext,
 		reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
 		defaultReasoningEffort: 'high',
 		serviceTiers: serviceTierIds,
@@ -109,11 +86,10 @@ export const modelDefinitions = [
 		id: 'claude-fable-5',
 		label: 'Claude Fable 5',
 		provider: 'anthropic',
-		contextWindowTokens: 1_000_000,
-		autoCompactTokenLimit: 967_000,
+		...millionTokenContext,
 		reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
 		defaultReasoningEffort: 'high',
-		serviceTiers: serviceTierIds,
+		serviceTiers: ['standard'],
 		usageWeights: {
 			input: 0.01,
 			cacheRead: 0.001,
@@ -123,37 +99,67 @@ export const modelDefinitions = [
 		}
 	},
 	{
-		id: 'grok-4.5',
-		label: 'Grok 4.5',
-		provider: 'xai',
-		contextWindowTokens: 500_000,
-		autoCompactTokenLimit: 400_000,
-		reasoningEfforts: ['low', 'medium', 'high'],
-		defaultReasoningEffort: 'high',
-		serviceTiers: serviceTierIds,
+		id: 'glm-5.3',
+		label: 'GLM 5.3',
+		provider: 'zai',
+		...millionTokenContext,
+		reasoningEfforts: lowHighMaxReasoningEfforts,
+		defaultReasoningEffort: 'max',
+		serviceTiers: ['standard'],
 		usageWeights: {
-			input: 0.002,
-			cacheRead: 0.0005,
-			cacheWrite: 0.002,
-			output: 0.006,
-			fastMultiplier: 2
+			input: 0.0014,
+			cacheRead: 0.00026,
+			cacheWrite: 0,
+			output: 0.0044,
+			fastMultiplier: 1
 		}
 	},
 	{
 		id: 'kimi-k3',
 		label: 'Kimi K3',
-		provider: 'fireworks',
-		contextWindowTokens: 1_000_000,
-		autoCompactTokenLimit: 967_000,
-		reasoningEfforts: ['low', 'high', 'max'],
+		provider: 'kimi',
+		...millionTokenContext,
+		reasoningEfforts: lowHighMaxReasoningEfforts,
 		defaultReasoningEffort: 'max',
-		serviceTiers: serviceTierIds,
+		serviceTiers: ['standard'],
 		usageWeights: {
 			input: 0.003,
 			cacheRead: 0.0003,
-			cacheWrite: 0.003,
+			cacheWrite: 0,
 			output: 0.015,
-			fastMultiplier: 1.5
+			fastMultiplier: 1
+		}
+	},
+	{
+		id: 'deepseek-v4-pro',
+		label: 'DeepSeek V4 Pro',
+		provider: 'deepseek',
+		...millionTokenContext,
+		reasoningEfforts: lowHighMaxReasoningEfforts,
+		defaultReasoningEffort: 'max',
+		serviceTiers: ['standard'],
+		usageWeights: {
+			input: 0.00066,
+			cacheRead: 0.00002,
+			cacheWrite: 0,
+			output: 0.00198,
+			fastMultiplier: 1
+		}
+	},
+	{
+		id: 'deepseek-v4-flash',
+		label: 'DeepSeek V4 Flash',
+		provider: 'deepseek',
+		...millionTokenContext,
+		reasoningEfforts: lowHighMaxReasoningEfforts,
+		defaultReasoningEffort: 'high',
+		serviceTiers: ['standard'],
+		usageWeights: {
+			input: 0.00013,
+			cacheRead: 0.00003,
+			cacheWrite: 0,
+			output: 0.00026,
+			fastMultiplier: 1
 		}
 	}
 ] as const satisfies readonly ModelDefinition[];
@@ -167,6 +173,28 @@ export function getModelDefinition(modelId: SupportedModelId): ModelDefinition {
 	const definition = modelDefinitions.find((model) => model.id === modelId);
 	if (!definition) throw new Error(`Unsupported model: ${modelId}`);
 	return definition;
+}
+
+/** Map a stored (possibly retired) model id onto the current catalog. */
+export function coercePersistedModelId(modelId: string): SupportedModelId {
+	return (modelIds as readonly string[]).includes(modelId)
+		? (modelId as SupportedModelId)
+		: defaultModelId;
+}
+
+/** Retired ids and dropped Fast offerings still stored on old runs. */
+export function coercePersistedSelection(
+	modelId: string,
+	serviceTier: SupportedServiceTier
+): { modelId: SupportedModelId; serviceTier: SupportedServiceTier } {
+	const coercedModelId = coercePersistedModelId(modelId);
+	const model = getModelDefinition(coercedModelId);
+	return {
+		modelId: coercedModelId,
+		serviceTier: (model.serviceTiers as readonly SupportedServiceTier[]).includes(serviceTier)
+			? serviceTier
+			: model.serviceTiers[0]
+	};
 }
 
 export function normalizeCompletionUsage(usage: LanguageModelUsage): {

@@ -240,8 +240,35 @@ describe('agentRuntime context accounting', () => {
 		expect(serialized).not.toContain('Old prompt that should be covered');
 		expect(serialized).toContain('New prompt');
 		expect(context.contextBudget).toEqual({
-			contextWindowTokens: 258_400,
-			autoCompactTokenLimit: 244_800
+			contextWindowTokens: 272_000,
+			autoCompactTokenLimit: 258_000
 		});
+	});
+
+	it('coerces retired run models before the worker sees them', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'context-retired-secret';
+		const { runId } = await createQueuedRun(
+			asUser,
+			threadId,
+			'context-retired',
+			executionSecret,
+			'Continue'
+		);
+		await asUser.mutation(api.agentRuntime.start, {
+			runId,
+			claimId: 'claim-retired',
+			executionSecret
+		});
+		await t.run(async (ctx) => {
+			await ctx.db.patch(runId, { selectedModel: 'grok-4.5', serviceTier: 'fast' });
+		});
+		const context = await asUser.query(api.agentRuntime.getContext, {
+			runId,
+			executionSecret
+		});
+		expect(context.run.selectedModel).toBe('gpt-5.6-sol');
+		expect(context.run.serviceTier).toBe('standard');
 	});
 });

@@ -1,6 +1,11 @@
 import { v, type Infer } from 'convex/values';
 import { vJsonValue } from '@convex/lib/json';
-import { modelIds, reasoningEffortIds, serviceTierIds } from '@convex/lib/models';
+import {
+	modelIds,
+	persistedModelIds,
+	reasoningEffortIds,
+	serviceTierIds
+} from '@convex/lib/models';
 import { subscriptionTierIds } from '@convex/lib/tiers';
 
 function literals<const TValues extends readonly string[]>(values: TValues) {
@@ -14,6 +19,9 @@ export const vReasoningEffort = v.union(...literals(reasoningEffortIds));
 export const vServiceTier = v.union(...literals(serviceTierIds));
 
 export const vModelId = v.union(...literals(modelIds));
+
+/** Catalog plus retired ids still stored on thread/run documents. */
+export const vPersistedModelId = v.union(...literals(persistedModelIds));
 
 export const vSubscriptionTier = v.union(...literals(subscriptionTierIds));
 
