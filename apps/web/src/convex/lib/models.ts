@@ -41,6 +41,7 @@ type ModelDefinition = {
 	id: SupportedModelId;
 	label: string;
 	provider: ModelProvider;
+	supportsImages: boolean;
 	/** Context budget exposed by the provider's coding-agent harness. */
 	contextWindowTokens: number;
 	/** Input-token count at which the harness automatically compacts. */
@@ -66,6 +67,7 @@ export const modelDefinitions = [
 		id: 'gpt-5.6-sol',
 		label: 'GPT-5.6 Sol',
 		provider: 'openai',
+		supportsImages: true,
 		// OpenAI bills the whole request at 1M rates once input exceeds 272k.
 		contextWindowTokens: 272_000,
 		autoCompactTokenLimit: 258_000,
@@ -84,6 +86,7 @@ export const modelDefinitions = [
 		id: 'claude-opus-5',
 		label: 'Claude Opus 5',
 		provider: 'anthropic',
+		supportsImages: true,
 		...millionTokenContext,
 		reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
 		defaultReasoningEffort: 'high',
@@ -100,6 +103,7 @@ export const modelDefinitions = [
 		id: 'claude-fable-5',
 		label: 'Claude Fable 5',
 		provider: 'anthropic',
+		supportsImages: true,
 		...millionTokenContext,
 		reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
 		defaultReasoningEffort: 'high',
@@ -116,6 +120,7 @@ export const modelDefinitions = [
 		id: 'glm-5.3',
 		label: 'GLM 5.3',
 		provider: 'zai',
+		supportsImages: true,
 		...millionTokenContext,
 		reasoningEfforts: lowHighMaxReasoningEfforts,
 		defaultReasoningEffort: 'max',
@@ -132,6 +137,7 @@ export const modelDefinitions = [
 		id: 'kimi-k3',
 		label: 'Kimi K3',
 		provider: 'kimi',
+		supportsImages: true,
 		...millionTokenContext,
 		reasoningEfforts: lowHighMaxReasoningEfforts,
 		defaultReasoningEffort: 'max',
@@ -148,6 +154,7 @@ export const modelDefinitions = [
 		id: 'deepseek-v4-pro-0813',
 		label: 'DeepSeek V4 Pro',
 		provider: 'deepseek',
+		supportsImages: false,
 		...millionTokenContext,
 		reasoningEfforts: lowHighMaxReasoningEfforts,
 		defaultReasoningEffort: 'max',
@@ -164,6 +171,7 @@ export const modelDefinitions = [
 		id: 'deepseek-v4-flash-0731',
 		label: 'DeepSeek V4 Flash',
 		provider: 'deepseek',
+		supportsImages: false,
 		...millionTokenContext,
 		reasoningEfforts: lowHighMaxReasoningEfforts,
 		defaultReasoningEffort: 'high',

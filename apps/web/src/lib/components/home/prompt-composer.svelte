@@ -143,6 +143,10 @@
 	const answeringQuestion = $derived(pendingQuestion != null);
 	const composerLocked = $derived((isRunning && !answeringQuestion) || isSubmitting);
 	const hasMessageContent = $derived(Boolean(prompt.trim()) || attachments.length > 0);
+	const selectedModelSupportsImages = $derived(selectedCatalogModel?.supportsImages === true);
+	const hasUnsupportedAttachments = $derived(
+		attachments.length > 0 && selectedCatalogModel?.supportsImages === false
+	);
 	const canAnswerQuestion = $derived(
 		canSubmitQuestionAnswer({
 			selectedOptionId: selectedQuestionOptionId,
@@ -154,7 +158,10 @@
 		attachments.some((attachment) => attachment.status !== 'ready')
 	);
 	const canAttachMore = $derived(
-		attachments.length < MAX_IMAGE_ATTACHMENTS && !composerLocked && !answeringQuestion
+		selectedModelSupportsImages &&
+			attachments.length < MAX_IMAGE_ATTACHMENTS &&
+			!composerLocked &&
+			!answeringQuestion
 	);
 
 	let trackedPendingQuestionId = $state<string | null>(null);
@@ -170,7 +177,11 @@
 			}
 		}
 	});
-	const attachTooltipLabel = `Attach images (up to ${MAX_IMAGE_ATTACHMENTS})`;
+	const attachTooltipLabel = $derived(
+		selectedCatalogModel?.supportsImages === false
+			? `${selectedCatalogModel.label} does not support image input`
+			: `Attach images (up to ${MAX_IMAGE_ATTACHMENTS})`
+	);
 	const supportsFieldSizing = typeof CSS !== 'undefined' && CSS.supports('field-sizing', 'content');
 	const contextPercent = $derived(
 		contextUsage.contextWindowTokens > 0
@@ -272,7 +283,13 @@
 		const files = Array.from(event.clipboardData?.files ?? []).filter((file) =>
 			file.type.startsWith('image/')
 		);
-		if (files.length === 0 || isRunning || isSubmitting || answeringQuestion) {
+		if (
+			files.length === 0 ||
+			isRunning ||
+			isSubmitting ||
+			answeringQuestion ||
+			!selectedModelSupportsImages
+		) {
 			return;
 		}
 		event.preventDefault();
@@ -281,7 +298,11 @@
 
 	function showAttachTooltip(event: MouseEvent | FocusEvent) {
 		const target = event.currentTarget;
-		if (!(target instanceof HTMLButtonElement) || target.disabled) {
+		if (!(target instanceof HTMLButtonElement)) {
+			return;
+		}
+		// Disabled attach still explains no-image models; skip other disabled reasons.
+		if (target.disabled && selectedCatalogModel?.supportsImages !== false) {
 			return;
 		}
 		const rect = target.getBoundingClientRect();
@@ -343,7 +364,7 @@
 			isSubmitting ||
 			composerLocked ||
 			!canSubmitContent ||
-			(!answeringQuestion && attachmentsPending)
+			(!answeringQuestion && (attachmentsPending || hasUnsupportedAttachments))
 		) {
 			return;
 		}
@@ -553,6 +574,12 @@
 								</li>
 							{/each}
 						</ul>
+						{#if hasUnsupportedAttachments && selectedCatalogModel}
+							<p class="text-destructive mb-3 text-xs" role="alert">
+								{selectedCatalogModel.label} does not support image input. Remove the images or choose
+								another model.
+							</p>
+						{/if}
 					{/if}
 					<div class="relative min-h-0 flex-1">
 						{#if skillsPopupOpen}
@@ -764,7 +791,7 @@
 										(!answeringQuestion && !canSubmitWithModel) ||
 										isSubmitting ||
 										!canSubmitContent ||
-										(!answeringQuestion && attachmentsPending)}
+										(!answeringQuestion && (attachmentsPending || hasUnsupportedAttachments))}
 									aria-label={answeringQuestion ? 'Submit answer' : 'Send message'}
 								>
 									<ArrowUp class="size-4" />

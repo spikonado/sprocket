@@ -202,6 +202,10 @@ export const createRun = mutation({
 			reasoningEffort: args.reasoningEffort,
 			serviceTier: args.serviceTier
 		});
+		const model = getModelDefinition(args.selectedModel);
+		if (args.imageUploadIds.length > 0 && !model.supportsImages) {
+			throw new Error(`${model.label} does not support image attachments.`);
+		}
 		const secretHash = await executionSecretHash(args.executionSecret);
 		const threadRecord = await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 		const prompt = args.prompt.trim();
