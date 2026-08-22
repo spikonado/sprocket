@@ -1,6 +1,6 @@
 {
 	"name": "@spikonado/sprocket",
-	"version": "0.2.0",
+	"version": "0.3.2",
 	"description": "Agentic platform for streamlining hardware and software development",
 	"license": "FSL-1.1-ALv2",
 	"type": "module",
