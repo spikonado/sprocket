@@ -44,7 +44,7 @@ jobs:
         run: |
           if [[ "$EVENT_NAME" == "workflow_run" ]]; then
             source_sha="$TESTED_SHA"
-            version="0.2.0-dev.$source_sha"
+            version="0.3.2-dev.$source_sha"
           elif [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
             source_sha="$GITHUB_SHA"
             version="${GITHUB_REF_NAME#v}"
