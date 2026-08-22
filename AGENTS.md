@@ -3,7 +3,7 @@
 ## Project Overview
 
 - Sprocket is an agentic platform that streamlines hardware and software development.
-- It's goal is to give its users and AI agents the best possible experience when creating apps, robots, devices, and the systems that glue them together.
+- The goal is to make the world's best platform for agents and humans to develop apps, robots, devices, and the systems that glue them together.
 - Sprocket should work seamlessly across different hardware platforms, operating systems, and Sprocket's own cloud for hardware and software development.
 
 ## Available Testing Commands
@@ -25,16 +25,16 @@ It provides all dependencies/tools you may need. Use it through `nix develop -c 
 2. Maintainability of code
 3. Performance of code
 
-All of these are core priorities; try your best to achieve all of them without having to make tradeoffs.
+All of these are core priorities; try your best to achieve all of them without having to make trade-offs.
 
 ## Maintaining Code
 
-- Don't be afraid to completely refactor existing code in order to improve on any of the priorities.
+- Don't be afraid to completely refactor existing code to improve on any of the priorities.
 - Make sure that changes are made in all the layers of the app when needed.
 
 ## Writing Code
 
-- Deleting code, often fixes more problems than writing code does. Sometimes writing too much code introduces problems.
+- Deleting code often fixes more problems than writing code does. Sometimes writing too much code introduces problems.
 - Specifically for gpt-5.6-sol: You often end up writing more code than needed, especially tests. Please don't do this.
 
 ## Subagents
@@ -42,25 +42,25 @@ All of these are core priorities; try your best to achieve all of them without h
 ### Working on Stuff - Only for Main Agents
 
 - Feel free to commit, branch, and spin up worktrees as you please. Don't push before asking.
-- Do the deep dives and figure out what needs to be done and delegate the rest accordingly and as needed to subagents.
+- Do the deep dives and figure out what needs to be done, and delegate the rest accordingly and as needed to subagents.
 - Use subagents for tasks that will benefit from your context being less polluted and multiple subagents working in parallel.
 - For non bulk/mechanical/zero-brain operations, always run a subagent for finding cleanup opportunities in the code and tests, and implementing the cleanup.
-- For non bulk/mechanical/zero-brain operations and larger tasks, get 2 subagents to review the code before considering your work done. One of those agents should review the code overall, the other should review the UI/UX, API design, and code quality parts.
+- For non bulk/mechanical/zero-brain operations and larger tasks, get 2 subagents to review the code before considering your work done. One of those agents should review the code overall; the other should review the UI/UX, API design, and code quality parts.
 
 #### PR Workflow
 
 - Unless requested, PRs should be made only against the default branch and should not be a draft.
-- After a PR is made, don't perform any code review using subagents, let Greptile review the code.
+- After a PR is made, don't perform any code review using subagents; let Greptile review the code.
 
 1. When requested, push code and make a PR. The PR title should have the same format as past PR titles. Ensure that your branch is updated with the latest main.
-2. Wait for the Greptile AI code review CI to complete and give its review on your changes.
+2. Wait for the Greptile AI code review CI to complete and give its review of your changes.
 3. Fix any relevant issues found by it:
    - These can be inline comments on the PR or somewhere above "Important Files Changed" in the PR description.
    - It often happens that some of the issues reported are false positives, outdated, not relevant, etc.
    - Don't spend any energy on these and skip them.
 4. Commit and push the code -> this time without asking.
 5. Loop on 2-4 till there are no more issues to fix.
-6. Cleanup any worktrees and branches you created for this PR when you are done.
+6. Clean up any worktrees and branches you created for this PR when you are done.
 
 ### Subagent Prompting
 
@@ -72,26 +72,3 @@ To main agents:
 To subagents:
 
 - Never create your own subagents.
-
-### Picking the Right Models for Subagents
-
-- Higher rankings = better. (higher ranking on the costs indicates lower cost of the model)
-- Cost reflects what the model costs me from subscriptions, credits, tokens it uses, etc. not its actual list price.
-- Intelligence shows how hard of a problem you can hand the model unsupervised.
-- Taste covers UI/UX, code quality, code cleanup ability, and API design.
-
-| model         | cost | intelligence | taste | reasoning to use | CLI to use             |
-| ------------- | ---- | ------------ | ----- | ---------------- | ---------------------- |
-| gpt-5.6-sol   | 8    | 9            | 6     | low              | codex                  |
-| fable-5       | 5    | 8            | 9     | low              | claude or cursor-agent |
-| gpt-5.6-terra | 9    | 7            | 5     | medium           | codex                  |
-| grok-4.5      | 10   | 6            | 7     | high, fast       | cursor-agent           |
-
-How to apply:
-
-- Only use the models listed above.
-- If you have a tool available for spawning subagents, never use that. Instead use the CLI of a specific coding agent harness directly.
-- If a cheaper model's output doesn't meet the bar, rerun/redo the work with a better model without asking.
-- The produced code meeting the priorities in "Priorities in Order" is much more important than what it costed.
-- For bulk/mechanical/zero-brain operations, always use the cheapest model first and only switch to a better model if the output doesn't meet the bar.
-- For user-facing UI/UX and APIs, use a model with good taste (>=7). If making those UIs/APIs is highly complicated, get a model with higher intelligence to complete the work after the core UI/API has been decided by the model with good taste.
