@@ -13,7 +13,7 @@ import {
 import { components, internal } from '@convex/_generated/api';
 import { internalMutation, type ActionCtx } from '@convex/_generated/server';
 import { getFunctionName, type FunctionArgs, type FunctionReference } from 'convex/server';
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import {
 	completionUsageUnits,
 	isModelUsageMetered,
@@ -21,6 +21,7 @@ import {
 	type SupportedServiceTier
 } from '@convex/lib/models';
 import { ensureSubscription, tierLimits, type TierLimits } from '@convex/lib/tiers';
+import { usageLimitExhaustedMessage } from '@convex/lib/usageLimitErrors';
 import {
 	usageMeters,
 	usagePeriods,
@@ -48,12 +49,6 @@ function meterLimitConfig(
 	return { kind: 'fixed window', period: periodDurations[period], rate: limits[meterId][period] };
 }
 
-function meterLimitLabel(meterId: UsageMeterId, period: UsagePeriod): string {
-	const meter = usageMeters.find(({ id }) => id === meterId);
-	if (!meter) throw new Error(`Unknown usage meter: ${meterId}`);
-	return `${period === 'weekly' ? 'Weekly' : 'Monthly'} ${meter.noun} limit`;
-}
-
 function formatRetryAfter(milliseconds: number): string {
 	let remaining = Math.max(SECOND, Math.ceil(milliseconds / SECOND) * SECOND);
 	const parts: string[] = [];
@@ -69,10 +64,6 @@ function formatRetryAfter(milliseconds: number): string {
 	const seconds = remaining / SECOND;
 	if (seconds > 0 || parts.length === 0) parts.push(`${seconds}s`);
 	return parts.join(' ');
-}
-
-function rateLimitError(label: string, retryAfter: number, cause?: unknown): Error {
-	return new Error(`${label} reached. Try again in ${formatRetryAfter(retryAfter)}.`, { cause });
 }
 
 async function checkMeterLimits(
@@ -94,7 +85,15 @@ async function checkMeterLimits(
 		.filter(({ status }) => !status.ok)
 		.sort((a, b) => (b.status.retryAfter ?? 0) - (a.status.retryAfter ?? 0))[0];
 	if (blocked && !blocked.status.ok) {
-		throw rateLimitError(meterLimitLabel(meterId, blocked.period), blocked.status.retryAfter);
+		// A ConvexError keeps its message through production error masking, and
+		// the executor only retries masked server failures.
+		throw new ConvexError(
+			usageLimitExhaustedMessage({
+				meterId,
+				period: blocked.period,
+				resetsIn: formatRetryAfter(blocked.status.retryAfter)
+			})
+		);
 	}
 }
 

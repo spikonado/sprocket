@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
+import { USAGE_LIMIT_EXCEEDED_PREFIX } from '@convex/lib/usageLimitErrors';
 import { initConvexTest } from './test.setup';
 
 describe('subscription and usage backend', () => {
@@ -24,7 +25,7 @@ describe('subscription and usage backend', () => {
 				userId,
 				modelId: 'gpt-5.6-sol'
 			})
-		).rejects.toThrow('Monthly model usage limit reached');
+		).rejects.toThrow(USAGE_LIMIT_EXCEEDED_PREFIX);
 	});
 
 	it('uses only active subscriptions and ignores stale webhook events', async () => {
@@ -203,7 +204,7 @@ describe('subscription and usage backend', () => {
 				userId,
 				modelId: 'gpt-5.6-sol'
 			})
-		).rejects.toThrow('Monthly model usage limit reached');
+		).rejects.toThrow(USAGE_LIMIT_EXCEEDED_PREFIX);
 
 		await t.run(async (ctx) => {
 			const existing = await ctx.db

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ArrowUp, ImagePlus, Square, X } from '@lucide/svelte';
+	import { ArrowUp, CircleAlert, ImagePlus, Square, X } from '@lucide/svelte';
 	import { useAuth, useQuery } from 'convex-svelte';
 	import { api } from '$convex/_generated/api';
 	import type { Id } from '$convex/_generated/dataModel';
@@ -54,6 +54,8 @@
 		selectedServiceTier?: SupportedServiceTier;
 		pendingQuestion?: PendingAgentQuestion | null;
 		selectedQuestionOptionId?: string | null;
+		/** Readable exhausted-usage copy; shown at the top of the composer while set. */
+		usageLimitNotice?: string | null;
 		canSend: boolean;
 		isSubmitting: boolean;
 		isStarting: boolean;
@@ -85,6 +87,7 @@
 		selectedServiceTier = $bindable<SupportedServiceTier>(defaultServiceTier),
 		pendingQuestion = null,
 		selectedQuestionOptionId = $bindable<string | null>(null),
+		usageLimitNotice = null,
 		canSend,
 		isSubmitting,
 		isStarting,
@@ -496,6 +499,25 @@
 		<div class={composerShellClass}>
 			<div class={composerInnerClass}>
 				<div class="relative flex min-h-33 flex-col px-4 pt-4 pb-2.5">
+					{#if usageLimitNotice}
+						<div
+							class="mb-3 flex items-start gap-2.5 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3.5 py-3"
+							role="alert"
+						>
+							<CircleAlert
+								class="mt-0.5 size-4 shrink-0 text-amber-800 dark:text-amber-200"
+								aria-hidden="true"
+							/>
+							<div class="min-w-0">
+								<p class="text-[13px] leading-5 font-medium text-amber-800 dark:text-amber-200">
+									You're out of usage
+								</p>
+								<p class="text-[12.5px] leading-5 text-amber-800/90 dark:text-amber-200/90">
+									{usageLimitNotice}
+								</p>
+							</div>
+						</div>
+					{/if}
 					{#if pendingQuestion}
 						<div class="mb-3" role="group" aria-label="Agent question">
 							<p class="text-foreground text-[14px] leading-6 font-medium">
