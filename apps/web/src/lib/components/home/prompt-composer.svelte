@@ -184,9 +184,14 @@
 		return usageLimitDetail;
 	});
 	// An unexpired failure means the same fixed window still rejects metered
-	// sends, so the fallback blocks like live data does.
+	// sends, so the fallback blocks like live data does. While usage is unknown
+	// we block too, mirroring the tier gate; on query errors sending stays
+	// available and the backend enforces.
 	const usageBlocked = $derived(
-		(exhaustedUsageWindow !== null || reactiveUsageDetail !== null) && !selectedModelUnmetered
+		(exhaustedUsageWindow !== null ||
+			reactiveUsageDetail !== null ||
+			(usageQuery.data === undefined && !usageQuery.error)) &&
+			!selectedModelUnmetered
 	);
 	const unlimitedAlternativeLabel = $derived.by(() => {
 		if (!modelCatalog) return null;
