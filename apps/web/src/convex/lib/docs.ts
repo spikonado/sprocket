@@ -434,6 +434,8 @@ export const vUsageMeterWindow = v.object({
 export const vMyUsage = v.object({
 	tier: vSubscriptionTier,
 	serverNow: v.number(),
+	exhausted: v.boolean(),
+	resetsAt: v.union(v.number(), v.null()),
 	meters: v.array(
 		v.object({
 			id: v.literal('modelUsage'),

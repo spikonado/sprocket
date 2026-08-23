@@ -89,7 +89,7 @@ So nobody goes hunting for shims that do not exist:
 - The light-mode default flip (#171) is additive. Explicit stored preferences are untouched.
 - Accepting Begin Patch envelopes alongside unified diffs (#66) is a permanent feature, not compat.
 - Dropping orphaned OpenAI item references (#188) must stay forever. Compaction can drop reasoning items from any history, not just pre-fix ones.
-- Usage-limit run errors write `Usage limit exceeded: {json payload}` into `runs.lastError` (#200) instead of masked server errors or plain text, letting the composer count down to reset without refetching. Clients released before #200 render the raw prefixed string in their transcript banner. It is display-only text that clears on the next run, so no compat layer ships.
+- Usage-limit run errors (#200) now throw ConvexErrors, so `runs.lastError` carries a readable sentence where production used to mask them to `[Request ID] Server Error` strings. Clients released before #200 render that sentence in their transcript banner. It is display-only text that clears on the next run, so no compat layer ships.
 
 ## Removal checklist
 

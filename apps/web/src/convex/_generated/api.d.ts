@@ -43,7 +43,6 @@ import type * as lib_threadTranscript from "../lib/threadTranscript.js";
 import type * as lib_threadUsage from "../lib/threadUsage.js";
 import type * as lib_tiers from "../lib/tiers.js";
 import type * as lib_uiModelCatalog from "../lib/uiModelCatalog.js";
-import type * as lib_usageLimitErrors from "../lib/usageLimitErrors.js";
 import type * as lib_usageMeters from "../lib/usageMeters.js";
 import type * as lib_validators from "../lib/validators.js";
 import type * as messages from "../messages.js";
@@ -97,7 +96,6 @@ declare const fullApi: ApiFromModules<{
   "lib/threadUsage": typeof lib_threadUsage;
   "lib/tiers": typeof lib_tiers;
   "lib/uiModelCatalog": typeof lib_uiModelCatalog;
-  "lib/usageLimitErrors": typeof lib_usageLimitErrors;
   "lib/usageMeters": typeof lib_usageMeters;
   "lib/validators": typeof lib_validators;
   messages: typeof messages;

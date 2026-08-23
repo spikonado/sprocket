@@ -1,6 +1,9 @@
 import {
 	DAY,
+	HOUR,
+	MINUTE,
 	RateLimiter,
+	SECOND,
 	WEEK,
 	calculateRateLimit,
 	type RateLimitConfig,
@@ -18,7 +21,6 @@ import {
 	type SupportedServiceTier
 } from '@convex/lib/models';
 import { ensureSubscription, tierLimits, type TierLimits } from '@convex/lib/tiers';
-import { usageLimitExhaustedMessage } from '@convex/lib/usageLimitErrors';
 import {
 	usageMeters,
 	usagePeriods,
@@ -46,6 +48,29 @@ function meterLimitConfig(
 	return { kind: 'fixed window', period: periodDurations[period], rate: limits[meterId][period] };
 }
 
+function meterLimitLabel(meterId: UsageMeterId, period: UsagePeriod): string {
+	const meter = usageMeters.find((candidate) => candidate.id === meterId);
+	if (!meter) throw new Error(`Unknown usage meter: ${meterId}`);
+	return `${period === 'weekly' ? 'Weekly' : 'Monthly'} ${meter.noun} limit`;
+}
+
+function formatRetryAfter(milliseconds: number): string {
+	let remaining = Math.max(SECOND, Math.ceil(milliseconds / SECOND) * SECOND);
+	const parts: string[] = [];
+	for (const [suffix, size] of [
+		['d', DAY],
+		['h', HOUR],
+		['m', MINUTE]
+	] as const) {
+		const value = Math.floor(remaining / size);
+		remaining %= size;
+		if (value > 0) parts.push(`${value}${suffix}`);
+	}
+	const seconds = remaining / SECOND;
+	if (seconds > 0 || parts.length === 0) parts.push(`${seconds}s`);
+	return parts.join(' ');
+}
+
 async function checkMeterLimits(
 	ctx: RunMutationCtx,
 	meterId: UsageMeterId,
@@ -68,11 +93,7 @@ async function checkMeterLimits(
 		// A ConvexError keeps its message through production error masking, and
 		// the executor only retries masked server failures.
 		throw new ConvexError(
-			usageLimitExhaustedMessage({
-				meterId,
-				period: blocked.period,
-				resetsAt: Date.now() + blocked.status.retryAfter
-			})
+			`${meterLimitLabel(meterId, blocked.period)} reached. Try again in ${formatRetryAfter(blocked.status.retryAfter)}.`
 		);
 	}
 }

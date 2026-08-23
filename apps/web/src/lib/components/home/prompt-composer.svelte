@@ -37,11 +37,6 @@
 		SUPPORTED_IMAGE_MEDIA_TYPES,
 		type ComposerAttachment
 	} from '$lib/chat/attachments';
-	import {
-		pickExhaustedUsageWindow,
-		type UsageLimitExceededDetail
-	} from '$convex/lib/usageLimitErrors';
-
 	export type PendingAgentQuestion = {
 		questionId: Id<'agentQuestions'>;
 		question: string;
@@ -59,8 +54,6 @@
 		selectedServiceTier?: SupportedServiceTier;
 		pendingQuestion?: PendingAgentQuestion | null;
 		selectedQuestionOptionId?: string | null;
-		/** Exhausted-usage failure from the thread's last run, if any. */
-		usageLimitDetail?: UsageLimitExceededDetail | null;
 		canSend: boolean;
 		isSubmitting: boolean;
 		isStarting: boolean;
@@ -92,7 +85,6 @@
 		selectedServiceTier = $bindable<SupportedServiceTier>(defaultServiceTier),
 		pendingQuestion = null,
 		selectedQuestionOptionId = $bindable<string | null>(null),
-		usageLimitDetail = null,
 		canSend,
 		isSubmitting,
 		isStarting,
@@ -183,33 +175,13 @@
 		};
 	});
 
-	// The usage query only re-runs when the limiter document changes, so a reset
-	// time that has passed means the backend admits again even without new data.
-	const exhaustedUsageWindow = $derived.by(() => {
-		const exhausted = usageQuery.data ? pickExhaustedUsageWindow(usageQuery.data.meters) : null;
-		if (exhausted === null || exhausted.resetsAt === null) return exhausted;
-		return exhausted.resetsAt <= now ? null : exhausted;
-	});
 	// Unknown policies count as metered, matching backend enforcement.
 	const selectedModelUnmetered = $derived(selectedCatalogModel?.usagePolicy === 'unlimited');
-	// Last run's failure covers query gaps; expired reset times hide stale ones.
-	const reactiveUsageDetail = $derived.by(() => {
-		if (
-			usageLimitDetail === null ||
-			(usageLimitDetail.resetsAt !== null && usageLimitDetail.resetsAt <= now)
-		) {
-			return null;
-		}
-		return usageLimitDetail;
-	});
-	// An unexpired failure means the same fixed window still rejects metered
-	// sends, so the fallback blocks like live data does. While usage is unknown
-	// we block too, mirroring the tier gate; on query errors sending stays
-	// available and the backend enforces.
+	// The cached result can outlive its own reset time because the query only
+	// re-runs when the limiter document changes, so expire it on the local clock.
 	const usageBlocked = $derived(
-		(exhaustedUsageWindow !== null ||
-			reactiveUsageDetail !== null ||
-			(usageQuery.data === undefined && !usageQuery.error)) &&
+		usageQuery.data?.exhausted === true &&
+			(usageQuery.data.resetsAt === null || usageQuery.data.resetsAt > now) &&
 			!selectedModelUnmetered
 	);
 	const unlimitedAlternativeLabel = $derived.by(() => {
@@ -221,21 +193,14 @@
 		);
 		return option?.label ?? null;
 	});
-	// Notices are hidden entirely for unmetered selections, where the failure no
-	// longer applies.
-	const usageNoticeDetail = $derived.by(() => {
-		if (selectedModelUnmetered) return null;
-		if (exhaustedUsageWindow !== null) return exhaustedUsageWindow;
-		return reactiveUsageDetail;
-	});
 	const composerNotice = $derived.by(() => {
-		if (usageNoticeDetail === null) return null;
+		if (!usageBlocked || usageQuery.data === undefined) return null;
 		const keepGoing =
 			unlimitedAlternativeLabel !== null
 				? `Switch to ${unlimitedAlternativeLabel} or upgrade your subscription to keep going.`
 				: 'Upgrade your subscription to keep going.';
-		if (usageNoticeDetail.resetsAt === null) return keepGoing;
-		return `Your limit resets in ${formatCountdownDuration(usageNoticeDetail.resetsAt - now)}. ${keepGoing}`;
+		if (usageQuery.data.resetsAt === null) return keepGoing;
+		return `Your limit resets in ${formatCountdownDuration(usageQuery.data.resetsAt - now)}. ${keepGoing}`;
 	});
 	const hasMessageContent = $derived(Boolean(prompt.trim()) || attachments.length > 0);
 	const selectedModelSupportsImages = $derived(selectedCatalogModel?.supportsImages === true);
