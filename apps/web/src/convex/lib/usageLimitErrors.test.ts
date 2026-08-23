@@ -1,42 +1,45 @@
 import { describe, expect, it } from 'vitest';
 import {
-	extractUsageLimitExceededMessage,
 	pickExhaustedUsageWindow,
+	parseUsageLimitExceeded,
 	usageLimitExhaustedMessage,
+	usageLimitExhaustedSentence,
 	USAGE_LIMIT_EXCEEDED_PREFIX
 } from '@convex/lib/usageLimitErrors';
 
 describe('usage limit exhausted messages', () => {
-	it('builds a readable sentence with period, meter, and reset time', () => {
-		expect(
-			usageLimitExhaustedMessage({ meterId: 'modelUsage', period: 'weekly', resetsIn: '5d 3h' })
-		).toBe(
-			`${USAGE_LIMIT_EXCEEDED_PREFIX}You've used all of your weekly model usage. Your limit resets in 5d 3h.`
-		);
-	});
-
-	it('is detected inside executor-wrapped failure messages', () => {
+	it('round-trips structured detail through the sentinel message', () => {
 		const message = usageLimitExhaustedMessage({
 			meterId: 'modelUsage',
-			period: 'monthly',
-			resetsIn: '2h'
+			period: 'weekly',
+			resetsAt: 1_750_000_000_000
 		});
-		expect(extractUsageLimitExceededMessage(`Provider error: ${message}`)).toBe(
-			"You've used all of your monthly model usage. Your limit resets in 2h."
+		expect(message.startsWith(USAGE_LIMIT_EXCEEDED_PREFIX)).toBe(true);
+		expect(parseUsageLimitExceeded(`Provider error: ${message}`)).toEqual({
+			meterId: 'modelUsage',
+			period: 'weekly',
+			resetsAt: 1_750_000_000_000
+		});
+	});
+
+	it('renders a readable sentence with period, meter, and reset countdown', () => {
+		expect(
+			usageLimitExhaustedSentence({ meterId: 'modelUsage', period: 'weekly', resetsIn: '5d 3h' })
+		).toBe("You've used all of your weekly model usage. Your limit resets in 5d 3h.");
+		expect(usageLimitExhaustedSentence({ meterId: 'modelUsage', period: 'monthly' })).toBe(
+			"You've used all of your monthly model usage."
 		);
 	});
 
-	it('keeps only the first line when failure text carries trailing context', () => {
+	it('rejects malformed payloads and unrelated failures', () => {
 		expect(
-			extractUsageLimitExceededMessage(
-				`${USAGE_LIMIT_EXCEEDED_PREFIX}You've used all of your weekly model usage.\nCaused by: boom`
+			parseUsageLimitExceeded(
+				`${USAGE_LIMIT_EXCEEDED_PREFIX}{"meterId":"modelUsage","period":"fortnightly","resetsAt":1}`
 			)
-		).toBe("You've used all of your weekly model usage.");
-	});
-
-	it('ignores unrelated failures', () => {
-		expect(extractUsageLimitExceededMessage('Run is cancelled.')).toBeNull();
-		expect(extractUsageLimitExceededMessage('[Request ID] Server Error')).toBeNull();
+		).toBeNull();
+		expect(parseUsageLimitExceeded(USAGE_LIMIT_EXCEEDED_PREFIX + 'not json')).toBeNull();
+		expect(parseUsageLimitExceeded('Run is cancelled.')).toBeNull();
+		expect(parseUsageLimitExceeded('[Request ID] Server Error')).toBeNull();
 	});
 
 	it('picks the exhausted window that resets last', () => {

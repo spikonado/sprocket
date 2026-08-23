@@ -63,7 +63,7 @@
 		type CatalogModelId
 	} from '$lib/chat/model-catalog';
 	import { isClaimedRunStatus } from '$convex/lib/runLease';
-	import { extractUsageLimitExceededMessage } from '$convex/lib/usageLimitErrors';
+	import { parseUsageLimitExceeded } from '$convex/lib/usageLimitErrors';
 	import {
 		beginPendingAgentLaunch,
 		clearPendingAgentLaunch,
@@ -580,11 +580,11 @@
 	);
 
 	const runState = $derived(currentLatestRunData?.run ?? null);
-	const usageLimitNotice = $derived(
-		runState?.lastError ? extractUsageLimitExceededMessage(runState.lastError) : null
+	const usageLimitDetail = $derived(
+		runState?.lastError ? parseUsageLimitExceeded(runState.lastError) : null
 	);
 	const transcriptRunError = $derived(
-		usageLimitNotice === null ? (runState?.lastError ?? null) : null
+		usageLimitDetail === null ? (runState?.lastError ?? null) : null
 	);
 	const visibleActions = $derived((currentLatestRunData?.jobs ?? []).slice(-60));
 	const threadArtifacts = $derived(
@@ -2135,7 +2135,7 @@
 						bind:selectedServiceTier
 						pendingQuestion={pendingAgentQuestion}
 						bind:selectedQuestionOptionId
-						{usageLimitNotice}
+						{usageLimitDetail}
 						{canSend}
 						isSubmitting={isSubmittingPrompt || hasPendingAgentLaunch || answeringAgentQuestion}
 						isStarting={hasPendingAgentLaunch}

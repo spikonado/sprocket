@@ -9,7 +9,7 @@
 	import { shouldSubmitComposerFromKeydown } from '$lib/chat/composer';
 	import { applySkillSelection, filterSkills, getActiveDollarQuery } from '$lib/chat/dollar-skills';
 	import type { SkillSummary } from '$lib/types/sprocket';
-	import { formatRemainingDuration } from '$lib/format';
+	import { formatCountdownDuration } from '$lib/format';
 	import {
 		AGENT_DECIDE_OPTION_ID,
 		canSubmitQuestionAnswer,
@@ -39,7 +39,8 @@
 	} from '$lib/chat/attachments';
 	import {
 		pickExhaustedUsageWindow,
-		usageLimitExhaustedSentence
+		usageLimitExhaustedSentence,
+		type UsageLimitExceededDetail
 	} from '$convex/lib/usageLimitErrors';
 
 	export type PendingAgentQuestion = {
@@ -59,8 +60,8 @@
 		selectedServiceTier?: SupportedServiceTier;
 		pendingQuestion?: PendingAgentQuestion | null;
 		selectedQuestionOptionId?: string | null;
-		/** Readable exhausted-usage copy; shown at the top of the composer while set. */
-		usageLimitNotice?: string | null;
+		/** Exhausted-usage failure from the thread's last run, if any. */
+		usageLimitDetail?: UsageLimitExceededDetail | null;
 		canSend: boolean;
 		isSubmitting: boolean;
 		isStarting: boolean;
@@ -92,7 +93,7 @@
 		selectedServiceTier = $bindable<SupportedServiceTier>(defaultServiceTier),
 		pendingQuestion = null,
 		selectedQuestionOptionId = $bindable<string | null>(null),
-		usageLimitNotice = null,
+		usageLimitDetail = null,
 		canSend,
 		isSubmitting,
 		isStarting,
@@ -158,7 +159,7 @@
 	$effect(() => {
 		const interval = setInterval(() => {
 			now = Date.now();
-		}, 30_000);
+		}, 1_000);
 		return () => {
 			clearInterval(interval);
 		};
@@ -179,15 +180,31 @@
 		);
 		return option?.label ?? null;
 	});
-	const proactiveUsageNotice = $derived.by(() => {
-		if (exhaustedUsageWindow === null || selectedModelUnmetered) return null;
+	// A live window from the usage query wins; the last run's failure detail is
+	// the fallback (e.g. while the query loads or after selecting an unmetered
+	// model). Expired reset times hide stale failure notices.
+	const reactiveUsageDetail = $derived.by(() => {
+		if (
+			usageLimitDetail === null ||
+			(usageLimitDetail.resetsAt !== null && usageLimitDetail.resetsAt <= now)
+		) {
+			return null;
+		}
+		return usageLimitDetail;
+	});
+	const usageNoticeDetail = $derived.by(() => {
+		if (exhaustedUsageWindow !== null && !selectedModelUnmetered) return exhaustedUsageWindow;
+		return reactiveUsageDetail;
+	});
+	const composerNotice = $derived.by(() => {
+		if (usageNoticeDetail === null) return null;
 		const resetsIn =
-			exhaustedUsageWindow.resetsAt === null
+			usageNoticeDetail.resetsAt === null
 				? undefined
-				: formatRemainingDuration(exhaustedUsageWindow.resetsAt - now);
+				: formatCountdownDuration(usageNoticeDetail.resetsAt - now);
 		let notice = usageLimitExhaustedSentence({
-			meterId: exhaustedUsageWindow.meterId,
-			period: exhaustedUsageWindow.period,
+			meterId: usageNoticeDetail.meterId,
+			period: usageNoticeDetail.period,
 			resetsIn
 		});
 		if (unlimitedAlternativeLabel !== null) {
@@ -195,7 +212,6 @@
 		}
 		return notice;
 	});
-	const composerNotice = $derived(proactiveUsageNotice ?? usageLimitNotice);
 	const hasMessageContent = $derived(Boolean(prompt.trim()) || attachments.length > 0);
 	const selectedModelSupportsImages = $derived(selectedCatalogModel?.supportsImages === true);
 	const hasUnsupportedAttachments = $derived(

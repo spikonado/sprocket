@@ -1,9 +1,6 @@
 import {
 	DAY,
-	HOUR,
-	MINUTE,
 	RateLimiter,
-	SECOND,
 	WEEK,
 	calculateRateLimit,
 	type RateLimitConfig,
@@ -49,23 +46,6 @@ function meterLimitConfig(
 	return { kind: 'fixed window', period: periodDurations[period], rate: limits[meterId][period] };
 }
 
-function formatRetryAfter(milliseconds: number): string {
-	let remaining = Math.max(SECOND, Math.ceil(milliseconds / SECOND) * SECOND);
-	const parts: string[] = [];
-	for (const [suffix, size] of [
-		['d', DAY],
-		['h', HOUR],
-		['m', MINUTE]
-	] as const) {
-		const value = Math.floor(remaining / size);
-		remaining %= size;
-		if (value > 0) parts.push(`${value}${suffix}`);
-	}
-	const seconds = remaining / SECOND;
-	if (seconds > 0 || parts.length === 0) parts.push(`${seconds}s`);
-	return parts.join(' ');
-}
-
 async function checkMeterLimits(
 	ctx: RunMutationCtx,
 	meterId: UsageMeterId,
@@ -91,7 +71,7 @@ async function checkMeterLimits(
 			usageLimitExhaustedMessage({
 				meterId,
 				period: blocked.period,
-				resetsIn: formatRetryAfter(blocked.status.retryAfter)
+				resetsAt: Date.now() + blocked.status.retryAfter
 			})
 		);
 	}

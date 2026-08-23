@@ -23,3 +23,16 @@ export function formatRemainingDuration(remainingMs: number): string {
 	}
 	return `${Math.max(1, Math.ceil(milliseconds / 60_000))}m`;
 }
+
+/** Ticking-countdown precision: seconds show below a minute, minutes below an hour. */
+export function formatCountdownDuration(remainingMs: number): string {
+	const totalSeconds = Math.max(0, Math.floor(remainingMs / 1_000));
+	const days = Math.floor(totalSeconds / 86_400);
+	const hours = Math.floor((totalSeconds % 86_400) / 3_600);
+	const minutes = Math.floor((totalSeconds % 3_600) / 60);
+	const seconds = totalSeconds % 60;
+	if (days > 0) return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
+	if (hours > 0) return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+	if (minutes > 0) return `${minutes}m ${seconds}s`;
+	return `${seconds}s`;
+}

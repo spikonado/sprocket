@@ -3,8 +3,41 @@ import { usageMeters, type UsageMeterId, type UsagePeriod } from '@convex/lib/us
 /**
  * Executor error wrapping can add text around run failure messages, so clients
  * detect exhausted-usage failures by this prefix instead of exact equality.
+ * The payload after the prefix carries the absolute reset time so UIs can count
+ * down locally without re-fetching.
  */
 export const USAGE_LIMIT_EXCEEDED_PREFIX = 'Usage limit exceeded: ';
+
+export type UsageLimitExceededDetail = {
+	meterId: UsageMeterId;
+	period: UsagePeriod;
+	resetsAt: number | null;
+};
+
+export function usageLimitExhaustedMessage(detail: UsageLimitExceededDetail): string {
+	return USAGE_LIMIT_EXCEEDED_PREFIX + JSON.stringify(detail);
+}
+
+export function parseUsageLimitExceeded(message: string): UsageLimitExceededDetail | null {
+	const startIndex = message.indexOf(USAGE_LIMIT_EXCEEDED_PREFIX);
+	if (startIndex === -1) return null;
+	try {
+		const detail = JSON.parse(message.slice(startIndex + USAGE_LIMIT_EXCEEDED_PREFIX.length));
+		return isUsageLimitExceededDetail(detail) ? detail : null;
+	} catch {
+		return null;
+	}
+}
+
+function isUsageLimitExceededDetail(value: unknown): value is UsageLimitExceededDetail {
+	if (typeof value !== 'object' || value === null) return false;
+	const { meterId, period, resetsAt } = value as Partial<UsageLimitExceededDetail>;
+	return (
+		usageMeters.some((meter) => meter.id === meterId) &&
+		(period === 'weekly' || period === 'monthly') &&
+		(resetsAt === null || typeof resetsAt === 'number')
+	);
+}
 
 export type UsageWindowStatus = {
 	period: UsagePeriod;
@@ -18,14 +51,6 @@ export type UsageMeterStatus = {
 	windows: UsageWindowStatus[];
 };
 
-export function usageLimitExhaustedMessage(args: {
-	meterId: UsageMeterId;
-	period: UsagePeriod;
-	resetsIn: string;
-}): string {
-	return USAGE_LIMIT_EXCEEDED_PREFIX + usageLimitExhaustedSentence(args);
-}
-
 export function usageLimitExhaustedSentence(args: {
 	meterId: UsageMeterId;
 	period: UsagePeriod;
@@ -36,15 +61,6 @@ export function usageLimitExhaustedSentence(args: {
 	const periodLabel = args.period === 'weekly' ? 'weekly' : 'monthly';
 	const resetSuffix = args.resetsIn ? ` Your limit resets in ${args.resetsIn}.` : '';
 	return `You've used all of your ${periodLabel} ${meter.noun}.${resetSuffix}`;
-}
-
-/** Readable sentence after the prefix, or null when the failure is not a usage limit. */
-export function extractUsageLimitExceededMessage(message: string): string | null {
-	const startIndex = message.indexOf(USAGE_LIMIT_EXCEEDED_PREFIX);
-	if (startIndex === -1) return null;
-	const detail = message.slice(startIndex + USAGE_LIMIT_EXCEEDED_PREFIX.length);
-	const lineBreak = detail.indexOf('\n');
-	return lineBreak === -1 ? detail : detail.slice(0, lineBreak);
 }
 
 /**
