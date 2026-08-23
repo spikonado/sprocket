@@ -11,8 +11,9 @@ import {
 	tierAllowedModels,
 	tierAllowedServiceTiers
 } from '@convex/lib/tiers';
+import { v } from 'convex/values';
 import { vModelCatalog } from '@convex/lib/docs';
-import type { ModelCatalog } from '@convex/lib/uiModelCatalog';
+import type { CatalogModelWithUsagePolicy } from '@convex/lib/uiModelCatalog';
 import { query } from './_generated/server';
 
 /**
@@ -21,9 +22,9 @@ import { query } from './_generated/server';
  * Entitlements are enforced server-side on send/usage paths.
  */
 export const get = query({
-	args: {},
+	args: { includeUsagePolicy: v.optional(v.boolean()) },
 	returns: vModelCatalog,
-	handler: async () => {
+	handler: async (_ctx, args) => {
 		const catalog = {
 			defaultModelId,
 			defaultReasoningEffort,
@@ -32,13 +33,13 @@ export const get = query({
 			models: modelDefinitions.map((definition: ModelDefinition) => {
 				const { inferenceProvider, usagePolicy, usageWeights, ...model } = definition;
 				void inferenceProvider;
-				void usagePolicy;
 				void usageWeights;
 				return {
 					...model,
 					reasoningEfforts: [...model.reasoningEfforts],
-					serviceTiers: [...model.serviceTiers]
-				};
+					serviceTiers: [...model.serviceTiers],
+					...(args.includeUsagePolicy && usagePolicy ? { usagePolicy } : {})
+				} satisfies CatalogModelWithUsagePolicy;
 			}),
 			tierAllowedModels: {
 				free: [...tierAllowedModels.free],
@@ -52,7 +53,7 @@ export const get = query({
 			},
 			modelLockUpgradeMessage,
 			serviceTierLockUpgradeMessage
-		} satisfies ModelCatalog;
+		};
 		return catalog;
 	}
 });

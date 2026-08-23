@@ -13,7 +13,7 @@ import {
 import { components, internal } from '@convex/_generated/api';
 import { internalMutation, type ActionCtx } from '@convex/_generated/server';
 import { getFunctionName, type FunctionArgs, type FunctionReference } from 'convex/server';
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import {
 	completionUsageUnits,
 	isModelUsageMetered,
@@ -49,7 +49,7 @@ function meterLimitConfig(
 }
 
 function meterLimitLabel(meterId: UsageMeterId, period: UsagePeriod): string {
-	const meter = usageMeters.find(({ id }) => id === meterId);
+	const meter = usageMeters.find((candidate) => candidate.id === meterId);
 	if (!meter) throw new Error(`Unknown usage meter: ${meterId}`);
 	return `${period === 'weekly' ? 'Weekly' : 'Monthly'} ${meter.noun} limit`;
 }
@@ -71,10 +71,6 @@ function formatRetryAfter(milliseconds: number): string {
 	return parts.join(' ');
 }
 
-function rateLimitError(label: string, retryAfter: number, cause?: unknown): Error {
-	return new Error(`${label} reached. Try again in ${formatRetryAfter(retryAfter)}.`, { cause });
-}
-
 async function checkMeterLimits(
 	ctx: RunMutationCtx,
 	meterId: UsageMeterId,
@@ -94,7 +90,11 @@ async function checkMeterLimits(
 		.filter(({ status }) => !status.ok)
 		.sort((a, b) => (b.status.retryAfter ?? 0) - (a.status.retryAfter ?? 0))[0];
 	if (blocked && !blocked.status.ok) {
-		throw rateLimitError(meterLimitLabel(meterId, blocked.period), blocked.status.retryAfter);
+		// A ConvexError keeps its message through production error masking, and
+		// the executor only retries masked server failures.
+		throw new ConvexError(
+			`${meterLimitLabel(meterId, blocked.period)} reached. Try again in ${formatRetryAfter(blocked.status.retryAfter)}.`
+		);
 	}
 }
 

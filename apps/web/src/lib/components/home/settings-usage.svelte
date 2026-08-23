@@ -3,6 +3,7 @@
 	import { api } from '$convex/_generated/api';
 	import { usageMeters, usagePeriods } from '$convex/lib/usageMeters';
 	import { tierLabels } from '$convex/lib/tiers';
+	import { formatRemainingDuration } from '$lib/format';
 
 	const convexAuth = useAuth();
 	const usageQuery = useQuery(api.usage.getMyUsage, () =>
@@ -26,20 +27,6 @@
 	});
 
 	const periodLabels = { weekly: 'Weekly', monthly: 'Monthly' } as const;
-
-	function formatResetsIn(resetsAt: number) {
-		const remainingMs = Math.max(0, resetsAt - now);
-		const hours = Math.ceil(remainingMs / 3_600_000);
-		if (hours >= 24) {
-			const days = Math.floor(hours / 24);
-			const restHours = hours % 24;
-			return restHours > 0 ? `${days}d ${restHours}h` : `${days}d`;
-		}
-		if (remainingMs >= 3_600_000) {
-			return `${hours}h`;
-		}
-		return `${Math.max(1, Math.ceil(remainingMs / 60_000))}m`;
-	}
 
 	function fillClass(atLimit: boolean, nearLimit: boolean) {
 		if (atLimit) {
@@ -138,7 +125,7 @@
 									</div>
 									{#if meterWindow.resetsAt !== null}
 										<p class="text-muted-foreground mt-1.5 text-[12px]">
-											Resets in {formatResetsIn(meterWindow.resetsAt)}
+											Resets in {formatRemainingDuration(meterWindow.resetsAt - now)}
 										</p>
 									{/if}
 								</div>

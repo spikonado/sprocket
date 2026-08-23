@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ArrowUp, ImagePlus, Square, X } from '@lucide/svelte';
+	import { ArrowUp, CircleAlert, ImagePlus, Square, X } from '@lucide/svelte';
 	import { useAuth, useQuery } from 'convex-svelte';
 	import { api } from '$convex/_generated/api';
 	import type { Id } from '$convex/_generated/dataModel';
@@ -9,6 +9,7 @@
 	import { shouldSubmitComposerFromKeydown } from '$lib/chat/composer';
 	import { applySkillSelection, filterSkills, getActiveDollarQuery } from '$lib/chat/dollar-skills';
 	import type { SkillSummary } from '$lib/types/sprocket';
+	import { formatCountdownDuration } from '$lib/format';
 	import {
 		AGENT_DECIDE_OPTION_ID,
 		canSubmitQuestionAnswer,
@@ -36,7 +37,6 @@
 		SUPPORTED_IMAGE_MEDIA_TYPES,
 		type ComposerAttachment
 	} from '$lib/chat/attachments';
-
 	export type PendingAgentQuestion = {
 		questionId: Id<'agentQuestions'>;
 		question: string;
@@ -100,6 +100,9 @@
 	const subscriptionQuery = useQuery(api.billing.getMySubscription, () =>
 		convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip'
 	);
+	const usageQuery = useQuery(api.usage.getMyUsage, () =>
+		convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip'
+	);
 	const subscriptionTier = $derived(subscriptionQuery.data?.tier);
 	const subscriptionFailed = $derived(Boolean(subscriptionQuery.error));
 	// Until the tier is known, render the free allowlist so locked models are never selectable.
@@ -142,6 +145,44 @@
 
 	const answeringQuestion = $derived(pendingQuestion != null);
 	const composerLocked = $derived((isRunning && !answeringQuestion) || isSubmitting);
+	let now = $state(Date.now());
+
+	$effect(() => {
+		const interval = setInterval(() => {
+			now = Date.now();
+		}, 1_000);
+		return () => {
+			clearInterval(interval);
+		};
+	});
+
+	// Unknown policies count as metered, matching backend enforcement.
+	const selectedModelUnmetered = $derived(selectedCatalogModel?.usagePolicy === 'unlimited');
+	// The cached result can outlive its own reset time because the query only
+	// re-runs when the limiter document changes, so expire it on the local clock.
+	const usageBlocked = $derived(
+		usageQuery.data?.exhausted === true &&
+			(usageQuery.data.resetsAt === null || usageQuery.data.resetsAt > now) &&
+			!selectedModelUnmetered
+	);
+	const unlimitedAlternativeLabel = $derived.by(() => {
+		if (!modelCatalog) return null;
+		const option = tierModelOptions.find(
+			(candidate) =>
+				!candidate.locked &&
+				getCatalogModel(modelCatalog, candidate.id)?.usagePolicy === 'unlimited'
+		);
+		return option?.label ?? null;
+	});
+	const composerNotice = $derived.by(() => {
+		if (!usageBlocked || usageQuery.data === undefined) return null;
+		const keepGoing =
+			unlimitedAlternativeLabel !== null
+				? `Switch to ${unlimitedAlternativeLabel} or upgrade your subscription to keep going.`
+				: 'Upgrade your subscription to keep going.';
+		if (usageQuery.data.resetsAt === null) return keepGoing;
+		return `Your limit resets in ${formatCountdownDuration(usageQuery.data.resetsAt - now)}. ${keepGoing}`;
+	});
 	const hasMessageContent = $derived(Boolean(prompt.trim()) || attachments.length > 0);
 	const selectedModelSupportsImages = $derived(selectedCatalogModel?.supportsImages === true);
 	const hasUnsupportedAttachments = $derived(
@@ -361,6 +402,7 @@
 		if (
 			!canSend ||
 			(!answeringQuestion && !canSubmitWithModel) ||
+			(!answeringQuestion && usageBlocked) ||
 			isSubmitting ||
 			composerLocked ||
 			!canSubmitContent ||
@@ -496,6 +538,25 @@
 		<div class={composerShellClass}>
 			<div class={composerInnerClass}>
 				<div class="relative flex min-h-33 flex-col px-4 pt-4 pb-2.5">
+					{#if composerNotice}
+						<div
+							class="mb-3 flex items-start gap-2.5 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3.5 py-3"
+							role="alert"
+						>
+							<CircleAlert
+								class="mt-0.5 size-4 shrink-0 text-amber-800 dark:text-amber-200"
+								aria-hidden="true"
+							/>
+							<div class="min-w-0">
+								<p class="text-[13px] leading-5 font-medium text-amber-800 dark:text-amber-200">
+									You're out of usage
+								</p>
+								<p class="text-[12.5px] leading-5 text-amber-800/90 dark:text-amber-200/90">
+									{composerNotice}
+								</p>
+							</div>
+						</div>
+					{/if}
 					{#if pendingQuestion}
 						<div class="mb-3" role="group" aria-label="Agent question">
 							<p class="text-foreground text-[14px] leading-6 font-medium">
@@ -789,6 +850,7 @@
 									onclick={onSubmit}
 									disabled={!canSend ||
 										(!answeringQuestion && !canSubmitWithModel) ||
+										(!answeringQuestion && usageBlocked) ||
 										isSubmitting ||
 										!canSubmitContent ||
 										(!answeringQuestion && (attachmentsPending || hasUnsupportedAttachments))}

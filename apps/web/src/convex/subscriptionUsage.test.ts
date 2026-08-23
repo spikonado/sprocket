@@ -19,6 +19,8 @@ describe('subscription and usage backend', () => {
 		const model = usage.meters.find((meter) => meter.id === 'modelUsage');
 		const weekly = model?.windows.find((window) => window.period === 'weekly');
 		expect(weekly && weekly.used > weekly.limit).toBe(true);
+		expect(usage.exhausted).toBe(true);
+		expect(usage.resetsAt).not.toBeNull();
 		await expect(
 			t.mutation(internal.lib.rateLimits.checkModelUsageLimits, {
 				userId,
@@ -261,6 +263,6 @@ describe('subscription and usage backend', () => {
 			.find((meter) => meter.id === 'modelUsage')
 			?.windows.find((window) => window.period === 'weekly');
 		expect(weekly && weekly.used > weekly.limit).toBe(true);
-		expect(usage).toEqual(usageBeforeUnlimitedCharge);
+		expect(usage.meters).toEqual(usageBeforeUnlimitedCharge.meters);
 	});
 });

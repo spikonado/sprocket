@@ -401,7 +401,8 @@ export const vCatalogModel = v.object({
 	autoCompactTokenLimit: v.number(),
 	reasoningEfforts: v.array(vReasoningEffort),
 	defaultReasoningEffort: vReasoningEffort,
-	serviceTiers: v.array(vServiceTier)
+	serviceTiers: v.array(vServiceTier),
+	usagePolicy: v.optional(v.literal('unlimited'))
 });
 
 export const vModelCatalog = v.object({
@@ -432,6 +433,8 @@ export const vUsageMeterWindow = v.object({
 
 export const vMyUsage = v.object({
 	tier: vSubscriptionTier,
+	exhausted: v.boolean(),
+	resetsAt: v.union(v.number(), v.null()),
 	meters: v.array(
 		v.object({
 			id: v.literal('modelUsage'),
