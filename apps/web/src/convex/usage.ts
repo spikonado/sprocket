@@ -43,7 +43,6 @@ export const getMyUsage = query({
 			.sort((a, b) => (b.resetsAt ?? Infinity) - (a.resetsAt ?? Infinity))[0];
 		return {
 			tier,
-			serverNow: Date.now(),
 			exhausted: blockedWindow !== undefined,
 			resetsAt: blockedWindow?.resetsAt ?? null,
 			meters

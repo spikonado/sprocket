@@ -145,30 +145,11 @@
 
 	const answeringQuestion = $derived(pendingQuestion != null);
 	const composerLocked = $derived((isRunning && !answeringQuestion) || isSubmitting);
-	let localNow = $state(Date.now());
-
-	// Server-minus-local offset sampled from the usage read; resetsAt shares
-	// that clock, so expiry comparisons stay skew-free even on draft composers.
-	let usageServerNow = $state<number | null>(null);
-	let usageClockObservedAt = $state<number | null>(null);
-	$effect(() => {
-		const serverNow = usageQuery.data?.serverNow;
-		if (serverNow === undefined) {
-			return;
-		}
-		usageServerNow = serverNow;
-		usageClockObservedAt = Date.now();
-	});
-	const now = $derived(
-		localNow +
-			(usageServerNow !== null && usageClockObservedAt !== null
-				? usageServerNow - usageClockObservedAt
-				: 0)
-	);
+	let now = $state(Date.now());
 
 	$effect(() => {
 		const interval = setInterval(() => {
-			localNow = Date.now();
+			now = Date.now();
 		}, 1_000);
 		return () => {
 			clearInterval(interval);
