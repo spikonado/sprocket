@@ -173,19 +173,7 @@
 	});
 	// Unknown policies count as metered, matching backend enforcement.
 	const selectedModelUnmetered = $derived(selectedCatalogModel?.usagePolicy === 'unlimited');
-	const usageBlocked = $derived(exhaustedUsageWindow !== null && !selectedModelUnmetered);
-	const unlimitedAlternativeLabel = $derived.by(() => {
-		if (!modelCatalog) return null;
-		const option = tierModelOptions.find(
-			(candidate) =>
-				!candidate.locked &&
-				getCatalogModel(modelCatalog, candidate.id)?.usagePolicy === 'unlimited'
-		);
-		return option?.label ?? null;
-	});
-	// A live window from the usage query wins; the last run's failure detail is
-	// the fallback (e.g. while the query loads). Notices are hidden entirely for
-	// unmetered selections, where the failure no longer applies.
+	// Last run's failure covers query gaps; expired reset times hide stale ones.
 	const reactiveUsageDetail = $derived.by(() => {
 		if (
 			usageLimitDetail === null ||
@@ -195,6 +183,22 @@
 		}
 		return usageLimitDetail;
 	});
+	// An unexpired failure means the same fixed window still rejects metered
+	// sends, so the fallback blocks like live data does.
+	const usageBlocked = $derived(
+		(exhaustedUsageWindow !== null || reactiveUsageDetail !== null) && !selectedModelUnmetered
+	);
+	const unlimitedAlternativeLabel = $derived.by(() => {
+		if (!modelCatalog) return null;
+		const option = tierModelOptions.find(
+			(candidate) =>
+				!candidate.locked &&
+				getCatalogModel(modelCatalog, candidate.id)?.usagePolicy === 'unlimited'
+		);
+		return option?.label ?? null;
+	});
+	// Notices are hidden entirely for unmetered selections, where the failure no
+	// longer applies.
 	const usageNoticeDetail = $derived.by(() => {
 		if (selectedModelUnmetered) return null;
 		if (exhaustedUsageWindow !== null) return exhaustedUsageWindow;
