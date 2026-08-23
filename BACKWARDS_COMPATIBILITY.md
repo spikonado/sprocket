@@ -70,6 +70,8 @@ This one recurs. Every catalog refresh leaves retired IDs behind unless the refr
 
 Moving token counters off `threadRecords` (#170) shipped with lazy on-access migration, an hourly cron sweep, and response-shape merging for old clients. #174 later removed all of it in one PR after verifying prod directly: 46 threads, zero legacy fields remaining, 46 matching usage rows. That is the template. Verify counts against prod, then delete validators, mutations, cron entries, and their tests together.
 
+A prod count is a snapshot, not a guarantee. Rows can surface later through backup restores or older deployments, and once fallbacks are gone, opening one silently reports zeroed usage instead of failing loudly. #174 accepted that trade-off knowingly. Re-check the same dashboard query for a few days after a removal like this, and state in the removal PR what late-arriving unmigrated rows will degrade to.
+
 ## Explicitly no compat shipped
 
 So nobody goes hunting for shims that do not exist:
