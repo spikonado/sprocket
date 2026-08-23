@@ -262,6 +262,6 @@ describe('subscription and usage backend', () => {
 			.find((meter) => meter.id === 'modelUsage')
 			?.windows.find((window) => window.period === 'weekly');
 		expect(weekly && weekly.used > weekly.limit).toBe(true);
-		expect(usage).toEqual(usageBeforeUnlimitedCharge);
+		expect(usage.meters).toEqual(usageBeforeUnlimitedCharge.meters);
 	});
 });

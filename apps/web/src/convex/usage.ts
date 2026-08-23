@@ -13,6 +13,7 @@ export const getMyUsage = query({
 		const limits = tierLimits[tier];
 		return {
 			tier,
+			serverNow: Date.now(),
 			meters: await Promise.all(
 				usageMeters.map(async (meter) => ({
 					id: meter.id,

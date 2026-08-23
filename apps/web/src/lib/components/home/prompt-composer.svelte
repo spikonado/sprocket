@@ -59,8 +59,6 @@
 		selectedServiceTier?: SupportedServiceTier;
 		pendingQuestion?: PendingAgentQuestion | null;
 		selectedQuestionOptionId?: string | null;
-		/** Server clock minus local clock; keeps expiry and countdowns skew-free. */
-		clockOffsetMs?: number | null;
 		/** Exhausted-usage failure from the thread's last run, if any. */
 		usageLimitDetail?: UsageLimitExceededDetail | null;
 		canSend: boolean;
@@ -94,7 +92,6 @@
 		selectedServiceTier = $bindable<SupportedServiceTier>(defaultServiceTier),
 		pendingQuestion = null,
 		selectedQuestionOptionId = $bindable<string | null>(null),
-		clockOffsetMs = null,
 		usageLimitDetail = null,
 		canSend,
 		isSubmitting,
@@ -157,7 +154,25 @@
 	const answeringQuestion = $derived(pendingQuestion != null);
 	const composerLocked = $derived((isRunning && !answeringQuestion) || isSubmitting);
 	let localNow = $state(Date.now());
-	const now = $derived(localNow + (clockOffsetMs ?? 0));
+
+	// Server-minus-local offset sampled from the usage read; resetsAt shares
+	// that clock, so expiry comparisons stay skew-free even on draft composers.
+	let usageServerNow = $state<number | null>(null);
+	let usageClockObservedAt = $state<number | null>(null);
+	$effect(() => {
+		const serverNow = usageQuery.data?.serverNow;
+		if (serverNow === undefined) {
+			return;
+		}
+		usageServerNow = serverNow;
+		usageClockObservedAt = Date.now();
+	});
+	const now = $derived(
+		localNow +
+			(usageServerNow !== null && usageClockObservedAt !== null
+				? usageServerNow - usageClockObservedAt
+				: 0)
+	);
 
 	$effect(() => {
 		const interval = setInterval(() => {
