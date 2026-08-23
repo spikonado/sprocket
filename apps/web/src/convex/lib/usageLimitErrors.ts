@@ -51,18 +51,6 @@ export type UsageMeterStatus = {
 	windows: UsageWindowStatus[];
 };
 
-export function usageLimitExhaustedSentence(args: {
-	meterId: UsageMeterId;
-	period: UsagePeriod;
-	resetsIn?: string;
-}): string {
-	const meter = usageMeters.find((candidate) => candidate.id === args.meterId);
-	if (!meter) throw new Error(`Unknown usage meter: ${args.meterId}`);
-	const periodLabel = args.period === 'weekly' ? 'weekly' : 'monthly';
-	const resetSuffix = args.resetsIn ? ` Your limit resets in ${args.resetsIn}.` : '';
-	return `You've used all of your ${periodLabel} ${meter.noun}.${resetSuffix}`;
-}
-
 /**
  * The exhausted window that unlocks last, mirroring checkMeterLimits picking
  * the blocked period with the longest retryAfter. Zero limits (disabled meters)

@@ -39,7 +39,6 @@
 	} from '$lib/chat/attachments';
 	import {
 		pickExhaustedUsageWindow,
-		usageLimitExhaustedSentence,
 		type UsageLimitExceededDetail
 	} from '$convex/lib/usageLimitErrors';
 
@@ -198,19 +197,12 @@
 	});
 	const composerNotice = $derived.by(() => {
 		if (usageNoticeDetail === null) return null;
-		const resetsIn =
-			usageNoticeDetail.resetsAt === null
-				? undefined
-				: formatCountdownDuration(usageNoticeDetail.resetsAt - now);
-		let notice = usageLimitExhaustedSentence({
-			meterId: usageNoticeDetail.meterId,
-			period: usageNoticeDetail.period,
-			resetsIn
-		});
-		if (unlimitedAlternativeLabel !== null) {
-			notice += ` Switch to ${unlimitedAlternativeLabel} to keep going.`;
-		}
-		return notice;
+		const keepGoing =
+			unlimitedAlternativeLabel !== null
+				? `Switch to ${unlimitedAlternativeLabel} or upgrade your subscription to keep going.`
+				: 'Upgrade your subscription to keep going.';
+		if (usageNoticeDetail.resetsAt === null) return keepGoing;
+		return `Your limit resets in ${formatCountdownDuration(usageNoticeDetail.resetsAt - now)}. ${keepGoing}`;
 	});
 	const hasMessageContent = $derived(Boolean(prompt.trim()) || attachments.length > 0);
 	const selectedModelSupportsImages = $derived(selectedCatalogModel?.supportsImages === true);

@@ -3,7 +3,6 @@ import {
 	pickExhaustedUsageWindow,
 	parseUsageLimitExceeded,
 	usageLimitExhaustedMessage,
-	usageLimitExhaustedSentence,
 	USAGE_LIMIT_EXCEEDED_PREFIX
 } from '@convex/lib/usageLimitErrors';
 
@@ -20,15 +19,6 @@ describe('usage limit exhausted messages', () => {
 			period: 'weekly',
 			resetsAt: 1_750_000_000_000
 		});
-	});
-
-	it('renders a readable sentence with period, meter, and reset countdown', () => {
-		expect(
-			usageLimitExhaustedSentence({ meterId: 'modelUsage', period: 'weekly', resetsIn: '5d 3h' })
-		).toBe("You've used all of your weekly model usage. Your limit resets in 5d 3h.");
-		expect(usageLimitExhaustedSentence({ meterId: 'modelUsage', period: 'monthly' })).toBe(
-			"You've used all of your monthly model usage."
-		);
 	});
 
 	it('rejects malformed payloads and unrelated failures', () => {
