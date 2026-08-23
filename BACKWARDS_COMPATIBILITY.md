@@ -1,0 +1,89 @@
+# Backwards compatibility removal plan
+
+We ship breaking changes ahead of our users' installed clients and keep the old behavior working until those clients age out. That debt is easy to accumulate and easier to forget. This file lists every backwards-compatibility layer we currently ship, what it protects, how to remove it, and the signal that says removal is safe. When a removal PR merges, tick its entry with the PR link.
+
+Current as of v0.3.2 (2026-08-22).
+
+## How clients age out
+
+Three client populations talk to the cloud backend:
+
+- The served web app ships with the backend and updates on every deploy. It never needs compat.
+- Installed desktop apps (AppImage/DMG/NSIS, shipped since v0.2.2) bundle their own web assets.
+- The `@spikonado/sprocket` npm CLI and the Rust agent binaries it launches.
+
+Compat shims only exist for the second and third groups. Every shim listed here protects clients older than v0.3.2 (2026-08-22), the first release carrying the client halves of #187, #191, and #192. There is no client telemetry, so age-out signals are npm download counts per version plus the per-entry database checks below.
+
+## 1. Executor liveness split out of `projects`
+
+Source: #187, merged 2026-08-18. Heartbeat state moved from fields on `projects` to the `projectConnections` table, project ordering moved to creation order, and session restore stopped using `lastThreadId`. Clients up to v0.3.1 still use all three old behaviors, so four shims remain.
+
+### 1a. `uiPreferences.setLastThread` and `lastThreadId`
+
+`convex/uiPreferences.ts` keeps a deprecated `setLastThread` mutation because clients up to v0.3.1 call it on every thread switch and read `lastThreadId` for restore. The current client does neither; restore uses `pickThreadToRestore`.
+
+Remove by deleting the mutation and dropping `lastThreadId` from `uiPreferencesFields` in `convex/lib/docs.ts`. The field is optional, so existing rows keep validating after removal; sweep leftover values afterwards if you want the rows clean.
+
+Safe when no `uiPreferences` row has received a `lastThreadId` write for a trailing two-week window. Check directly against prod the way #174 did.
+
+### 1b. `projects.listMine` `includeExecutorStatus` argument
+
+Clients up to v0.3.1 omit the argument, so `listMine` still computes a live `executorStatus` per project and returns `vProjectListItem` instead of plain project documents. Current callers pass `false`, which skips that work entirely.
+
+Remove by dropping the argument and the executor-status branch in `convex/projects.ts`, returning `v.array(vProjectDoc)` directly, deleting `vProjectListItem` from `convex/lib/docs.ts`, and removing `executorStatus`, `lastHeartbeatAt`, and `connectedClientId` from the `Project` type in `apps/web/src/lib/types/sprocket.ts`.
+
+Safe when `listMine` traffic without the argument stops, which in practice means npm downloads for versions below v0.3.2 have flattened.
+
+### 1c. Legacy liveness fields on `projects`
+
+`lastHeartbeatAt` and `connectedClientId` stay optional in `projectFields` (`convex/lib/docs.ts`) so pre-split rows validate, and `legacyConnectionFromProject` in `convex/lib/projectConnection.ts` reads them until a project's first heartbeat creates its connection row. Their only consumer is the executor-status branch removed by 1b.
+
+Remove immediately after 1b: run a one-off backfill unsetting both fields on existing projects, then delete them from `projectFields` along with `legacyConnectionFromProject`, and drop `getEffectiveExecutorStatus` too if nothing else consumes it by then.
+
+Safe when the backfill reports zero projects carrying either field.
+
+### 1d. `projects.lastSeenAt`
+
+Still written on every project open by `upsertSelected` purely so old clients can order their sidebar by it. The current UI orders projects by creation. The field is required today, so stopping the writes needs a validator change first.
+
+Remove in two steps: make the field optional while deleting both writes, then backfill the stale values unset and drop the field plus its entry in the `Project` type.
+
+Same gate as 1a: no recent writes once the trailing window passes.
+
+## 2. Retired model IDs on stored selections
+
+Sources: #191 and #192, both merged 2026-08-21. The catalog dropped `gpt-5.6-terra`, `gpt-5.6-luna`, and `grok-4.5`, and renamed the DeepSeek IDs to `deepseek-v4-pro-0813` / `deepseek-v4-flash-0731`. The old IDs survive in `threadRecords.selectedModel` and `runs.selectedModel`.
+
+Today's compat: `retiredModelIds` widens `vPersistedModelId` (`convex/lib/validators.ts`) so stored rows still validate, `coercePersistedModelId` maps each retired ID onto its replacement at read time with `defaultModelId` as the last resort, and `coercePersistedSelection` clamps service tiers the replacement no longer offers ('fast' is now Opus-only). Call sites: `agentRuntime.getContext`, stale-run recovery, and thread open in `+page.svelte`.
+
+Remove by:
+
+1. Running a batched internal mutation that rewrites `threadRecords.selectedModel` from retired IDs onto their replacements and clamps `serviceTier` where needed. Model it on the `migrateLegacyUsageBatch` cron from #170, whose scaffolding #174 deleted once prod showed zero unmigrated rows.
+2. Rewriting `runs.selectedModel` in the same pass. Runs are historical records, but we are pre-GA, usage metering already changed under them, and keeping a second coercion path just for runs costs more than the fidelity is worth.
+3. Shrinking both validators back to `vModelId`, then deleting `retiredModelIds`, `retiredModelReplacements`, `coercePersistedModelId`, and the model half of `coercePersistedSelection`, along with the tests pinning retirement behavior.
+
+Safe when the migration sweep reports zero rows with retired IDs, verified against prod.
+
+This one recurs. Every catalog refresh leaves retired IDs behind unless the refresh PR includes its own rewrite migration, so fold that migration into future refreshes and this section stays empty.
+
+## Completed removals, kept as precedent
+
+Moving token counters off `threadRecords` (#170) shipped with lazy on-access migration, an hourly cron sweep, and response-shape merging for old clients. #174 later removed all of it in one PR after verifying prod directly: 46 threads, zero legacy fields remaining, 46 matching usage rows. That is the template. Verify counts against prod, then delete validators, mutations, cron entries, and their tests together.
+
+## Explicitly no compat shipped
+
+So nobody goes hunting for shims that do not exist:
+
+- Stream states are required for all runs. #108 rejected a legacy message-cursor fallback on purpose.
+- #137 tightened schema optionality with an out-of-band dev-deployment backfill before prod existed.
+- The light-mode default flip (#171) is additive. Explicit stored preferences are untouched.
+- Accepting Begin Patch envelopes alongside unified diffs (#66) is a permanent feature, not compat.
+- Dropping orphaned OpenAI item references (#188) must stay forever. Compaction can drop reasoning items from any history, not just pre-fix ones.
+
+## Removal checklist
+
+1. Confirm the entry's gate with real numbers and paste them into the PR description.
+2. Land any data migration or backfill before shrinking validators.
+3. Remove the server shim, validator changes, and client-side types in one PR.
+4. Delete tests that pin compat behavior. Keep coverage for behavior that survives.
+5. Tick the entry here with the PR link.
