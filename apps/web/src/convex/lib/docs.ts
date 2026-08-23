@@ -401,7 +401,8 @@ export const vCatalogModel = v.object({
 	autoCompactTokenLimit: v.number(),
 	reasoningEfforts: v.array(vReasoningEffort),
 	defaultReasoningEffort: vReasoningEffort,
-	serviceTiers: v.array(vServiceTier)
+	serviceTiers: v.array(vServiceTier),
+	usagePolicy: v.optional(v.literal('unlimited'))
 });
 
 export const vModelCatalog = v.object({

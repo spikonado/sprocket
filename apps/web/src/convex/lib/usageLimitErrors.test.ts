@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	extractUsageLimitExceededMessage,
+	pickExhaustedUsageWindow,
 	usageLimitExhaustedMessage,
 	USAGE_LIMIT_EXCEEDED_PREFIX
 } from '@convex/lib/usageLimitErrors';
@@ -36,5 +37,38 @@ describe('usage limit exhausted messages', () => {
 	it('ignores unrelated failures', () => {
 		expect(extractUsageLimitExceededMessage('Run is cancelled.')).toBeNull();
 		expect(extractUsageLimitExceededMessage('[Request ID] Server Error')).toBeNull();
+	});
+
+	it('picks the exhausted window that resets last', () => {
+		expect(
+			pickExhaustedUsageWindow([
+				{
+					id: 'modelUsage',
+					windows: [
+						{ period: 'weekly', used: 4_999, limit: 5_000, resetsAt: 1_000 },
+						{ period: 'monthly', used: 15_000, limit: 15_000, resetsAt: 9_000 }
+					]
+				}
+			])
+		).toEqual({ meterId: 'modelUsage', period: 'monthly', resetsAt: 9_000 });
+		expect(
+			pickExhaustedUsageWindow([
+				{ id: 'modelUsage', windows: [{ period: 'weekly', used: 0, limit: 5_000, resetsAt: null }] }
+			])
+		).toBeNull();
+	});
+
+	it('never blocks zero-limit windows and prefers known reset times', () => {
+		expect(
+			pickExhaustedUsageWindow([
+				{
+					id: 'modelUsage',
+					windows: [
+						{ period: 'weekly', used: 5_000, limit: 0, resetsAt: null },
+						{ period: 'monthly', used: 15_000, limit: 15_000, resetsAt: 7_000 }
+					]
+				}
+			])
+		).toEqual({ meterId: 'modelUsage', period: 'monthly', resetsAt: 7_000 });
 	});
 });

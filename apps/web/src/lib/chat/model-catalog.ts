@@ -1,8 +1,13 @@
 import type { ModelProvider, SupportedModelId, SupportedServiceTier } from '$convex/lib/models';
 import type { SubscriptionTier } from '$convex/lib/tiers';
-import type { CatalogModel, ModelCatalog } from '$convex/lib/uiModelCatalog';
+import type {
+	CatalogModel,
+	CatalogModelWithUsagePolicy,
+	ModelCatalog
+} from '$convex/lib/uiModelCatalog';
 
 export type { CatalogModel, ModelCatalog };
+export type { CatalogModelWithUsagePolicy };
 export type CatalogModelId = CatalogModel['id'];
 
 /** Narrow a runtime catalog id for Convex args; server validators remain authoritative. */
@@ -28,7 +33,7 @@ export type ServiceTierSelectorOption = {
 export function getCatalogModel(
 	catalog: ModelCatalog,
 	modelId: CatalogModelId
-): CatalogModel | undefined {
+): CatalogModelWithUsagePolicy | undefined {
 	return catalog.models.find((model) => model.id === modelId);
 }
 

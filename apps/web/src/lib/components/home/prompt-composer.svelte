@@ -9,6 +9,7 @@
 	import { shouldSubmitComposerFromKeydown } from '$lib/chat/composer';
 	import { applySkillSelection, filterSkills, getActiveDollarQuery } from '$lib/chat/dollar-skills';
 	import type { SkillSummary } from '$lib/types/sprocket';
+	import { formatRemainingDuration } from '$lib/format';
 	import {
 		AGENT_DECIDE_OPTION_ID,
 		canSubmitQuestionAnswer,
@@ -36,6 +37,10 @@
 		SUPPORTED_IMAGE_MEDIA_TYPES,
 		type ComposerAttachment
 	} from '$lib/chat/attachments';
+	import {
+		pickExhaustedUsageWindow,
+		usageLimitExhaustedSentence
+	} from '$convex/lib/usageLimitErrors';
 
 	export type PendingAgentQuestion = {
 		questionId: Id<'agentQuestions'>;
@@ -103,6 +108,9 @@
 	const subscriptionQuery = useQuery(api.billing.getMySubscription, () =>
 		convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip'
 	);
+	const usageQuery = useQuery(api.usage.getMyUsage, () =>
+		convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip'
+	);
 	const subscriptionTier = $derived(subscriptionQuery.data?.tier);
 	const subscriptionFailed = $derived(Boolean(subscriptionQuery.error));
 	// Until the tier is known, render the free allowlist so locked models are never selectable.
@@ -145,6 +153,49 @@
 
 	const answeringQuestion = $derived(pendingQuestion != null);
 	const composerLocked = $derived((isRunning && !answeringQuestion) || isSubmitting);
+	let now = $state(Date.now());
+
+	$effect(() => {
+		const interval = setInterval(() => {
+			now = Date.now();
+		}, 30_000);
+		return () => {
+			clearInterval(interval);
+		};
+	});
+
+	const exhaustedUsageWindow = $derived(
+		usageQuery.data ? pickExhaustedUsageWindow(usageQuery.data.meters) : null
+	);
+	// Unknown policies count as metered, matching backend enforcement.
+	const selectedModelUnmetered = $derived(selectedCatalogModel?.usagePolicy === 'unlimited');
+	const usageBlocked = $derived(exhaustedUsageWindow !== null && !selectedModelUnmetered);
+	const unlimitedAlternativeLabel = $derived.by(() => {
+		if (!modelCatalog) return null;
+		const option = tierModelOptions.find(
+			(candidate) =>
+				!candidate.locked &&
+				getCatalogModel(modelCatalog, candidate.id)?.usagePolicy === 'unlimited'
+		);
+		return option?.label ?? null;
+	});
+	const proactiveUsageNotice = $derived.by(() => {
+		if (exhaustedUsageWindow === null || selectedModelUnmetered) return null;
+		const resetsIn =
+			exhaustedUsageWindow.resetsAt === null
+				? undefined
+				: formatRemainingDuration(exhaustedUsageWindow.resetsAt - now);
+		let notice = usageLimitExhaustedSentence({
+			meterId: exhaustedUsageWindow.meterId,
+			period: exhaustedUsageWindow.period,
+			resetsIn
+		});
+		if (unlimitedAlternativeLabel !== null) {
+			notice += ` Switch to ${unlimitedAlternativeLabel} to keep going.`;
+		}
+		return notice;
+	});
+	const composerNotice = $derived(proactiveUsageNotice ?? usageLimitNotice);
 	const hasMessageContent = $derived(Boolean(prompt.trim()) || attachments.length > 0);
 	const selectedModelSupportsImages = $derived(selectedCatalogModel?.supportsImages === true);
 	const hasUnsupportedAttachments = $derived(
@@ -364,6 +415,7 @@
 		if (
 			!canSend ||
 			(!answeringQuestion && !canSubmitWithModel) ||
+			(!answeringQuestion && usageBlocked) ||
 			isSubmitting ||
 			composerLocked ||
 			!canSubmitContent ||
@@ -499,7 +551,7 @@
 		<div class={composerShellClass}>
 			<div class={composerInnerClass}>
 				<div class="relative flex min-h-33 flex-col px-4 pt-4 pb-2.5">
-					{#if usageLimitNotice}
+					{#if composerNotice}
 						<div
 							class="mb-3 flex items-start gap-2.5 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3.5 py-3"
 							role="alert"
@@ -513,7 +565,7 @@
 									You're out of usage
 								</p>
 								<p class="text-[12.5px] leading-5 text-amber-800/90 dark:text-amber-200/90">
-									{usageLimitNotice}
+									{composerNotice}
 								</p>
 							</div>
 						</div>
@@ -811,6 +863,7 @@
 									onclick={onSubmit}
 									disabled={!canSend ||
 										(!answeringQuestion && !canSubmitWithModel) ||
+										(!answeringQuestion && usageBlocked) ||
 										isSubmitting ||
 										!canSubmitContent ||
 										(!answeringQuestion && (attachmentsPending || hasUnsupportedAttachments))}

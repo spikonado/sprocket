@@ -148,7 +148,7 @@
 	const discardImageUpload = useMutation(api.imageUploads.discard);
 	const heartbeatAttached = useMutation(api.projects.heartbeatAttached);
 	const ensureMySubscription = useMutation(api.billing.ensureMySubscription);
-	const modelCatalogQuery = useQuery(api.modelCatalog.get, () => ({}));
+	const modelCatalogQuery = useQuery(api.modelCatalog.get, () => ({ includeUsagePolicy: true }));
 	const modelCatalog = $derived(modelCatalogQuery.data);
 	let ensureSubscriptionAttemptedFor: string | null = null;
 

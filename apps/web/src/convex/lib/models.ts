@@ -63,6 +63,8 @@ export type CatalogModel = Omit<
 	'inferenceProvider' | 'usagePolicy' | 'usageWeights'
 >;
 
+export type UsagePolicy = NonNullable<ModelDefinition['usagePolicy']>;
+
 const millionTokenContext = {
 	contextWindowTokens: 1_000_000,
 	autoCompactTokenLimit: 967_000
