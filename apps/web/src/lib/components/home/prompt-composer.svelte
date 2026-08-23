@@ -59,6 +59,8 @@
 		selectedServiceTier?: SupportedServiceTier;
 		pendingQuestion?: PendingAgentQuestion | null;
 		selectedQuestionOptionId?: string | null;
+		/** Server clock minus local clock; keeps expiry and countdowns skew-free. */
+		clockOffsetMs?: number | null;
 		/** Exhausted-usage failure from the thread's last run, if any. */
 		usageLimitDetail?: UsageLimitExceededDetail | null;
 		canSend: boolean;
@@ -92,6 +94,7 @@
 		selectedServiceTier = $bindable<SupportedServiceTier>(defaultServiceTier),
 		pendingQuestion = null,
 		selectedQuestionOptionId = $bindable<string | null>(null),
+		clockOffsetMs = null,
 		usageLimitDetail = null,
 		canSend,
 		isSubmitting,
@@ -153,11 +156,12 @@
 
 	const answeringQuestion = $derived(pendingQuestion != null);
 	const composerLocked = $derived((isRunning && !answeringQuestion) || isSubmitting);
-	let now = $state(Date.now());
+	let localNow = $state(Date.now());
+	const now = $derived(localNow + (clockOffsetMs ?? 0));
 
 	$effect(() => {
 		const interval = setInterval(() => {
-			now = Date.now();
+			localNow = Date.now();
 		}, 1_000);
 		return () => {
 			clearInterval(interval);

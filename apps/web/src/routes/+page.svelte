@@ -699,6 +699,7 @@
 					Math.max(0, leaseClockNow - latestRunServerClock.localObservedAt)
 			: (currentLatestRunData?.serverNow ?? Date.now())
 	);
+	const serverClockOffsetMs = $derived(estimatedServerNow - Date.now());
 	const currentRecoveredSubmission = $derived.by(() => {
 		const userId = getCurrentUserId();
 		if (!userId || !currentComposerScope) return undefined;
@@ -2135,6 +2136,7 @@
 						bind:selectedServiceTier
 						pendingQuestion={pendingAgentQuestion}
 						bind:selectedQuestionOptionId
+						clockOffsetMs={serverClockOffsetMs}
 						{usageLimitDetail}
 						{canSend}
 						isSubmitting={isSubmittingPrompt || hasPendingAgentLaunch || answeringAgentQuestion}
