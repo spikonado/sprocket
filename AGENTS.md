@@ -31,6 +31,8 @@ All of these are core priorities; try your best to achieve all of them without h
 
 - Don't be afraid to completely refactor existing code to improve on any of the priorities.
 - Make sure that changes are made in all the layers of the app when needed.
+- Ship breaking changes with backwards compatibility for already-released clients and stored data, and record every shim in `BACKWARDS_COMPATIBILITY.md` with its removal gate.
+- Remove compat only once that gate passes (clients age out, or a migration rewrites the data), and fold data migrations into the PR that introduces the breaking change instead of leaving debt behind.
 
 ## Writing Code
 
