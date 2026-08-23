@@ -81,6 +81,8 @@ So nobody goes hunting for shims that do not exist:
 - The light-mode default flip (#171) is additive. Explicit stored preferences are untouched.
 - Accepting Begin Patch envelopes alongside unified diffs (#66) is a permanent feature, not compat.
 - Dropping orphaned OpenAI item references (#188) must stay forever. Compaction can drop reasoning items from any history, not just pre-fix ones.
+- `modelCatalog.get` gained an opt-in `includeUsagePolicy` argument (#200) so the composer can tell metered models from unlimited ones. Omitting it returns the exact v0.3.2 response shape (`usagePolicy` stays absent from every model), so there is nothing for older clients to break on.
+- Usage-limit run errors write `Usage limit exceeded: {json payload}` into `runs.lastError` (#200) instead of masked server errors or plain text, letting the composer count down to reset without refetching. Clients released before #200 render the raw prefixed string in their transcript banner. It is display-only text that clears on the next run, so no compat layer ships.
 
 ## Removal checklist
 
