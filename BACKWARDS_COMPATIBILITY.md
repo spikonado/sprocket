@@ -66,6 +66,14 @@ Safe when the migration sweep reports zero rows with retired IDs, verified again
 
 This one recurs. Every catalog refresh leaves retired IDs behind unless the refresh PR includes its own rewrite migration, so fold that migration into future refreshes and this section stays empty.
 
+## 3. Opt-in `usagePolicy` on the catalog
+
+Source: #200. `modelCatalog.get` gained an optional `includeUsagePolicy` argument so the composer can tell metered models from unlimited ones without changing the response for clients that never ask. Every client released before #200 omits the argument, and the query returns the exact v0.3.2 shape (`usagePolicy` absent from every model); current callers pass `true`, which attaches `usagePolicy: 'unlimited'` to unlimited models only.
+
+Remove by dropping the argument and attaching `usagePolicy` unconditionally in `convex/modelCatalog.ts`, folding `CatalogModelWithUsagePolicy` back into `CatalogModel` (remove `usagePolicy` from the `Omit` in `convex/lib/models.ts`) and out of `convex/lib/uiModelCatalog.ts`, simplifying the `{ includeUsagePolicy: true }` call in `+page.svelte`, and collapsing `convex/modelCatalog.test.ts` to pin unconditional inclusion instead of the opt-in contract.
+
+Safe when npm downloads for versions predating the release carrying #200 have flattened.
+
 ## Completed removals, kept as precedent
 
 Moving token counters off `threadRecords` (#170) shipped with lazy on-access migration, an hourly cron sweep, and response-shape merging for old clients. #174 later removed all of it in one PR after verifying prod directly: 46 threads, zero legacy fields remaining, 46 matching usage rows. That is the template. Verify counts against prod, then delete validators, mutations, cron entries, and their tests together.
@@ -81,7 +89,6 @@ So nobody goes hunting for shims that do not exist:
 - The light-mode default flip (#171) is additive. Explicit stored preferences are untouched.
 - Accepting Begin Patch envelopes alongside unified diffs (#66) is a permanent feature, not compat.
 - Dropping orphaned OpenAI item references (#188) must stay forever. Compaction can drop reasoning items from any history, not just pre-fix ones.
-- `modelCatalog.get` gained an opt-in `includeUsagePolicy` argument (#200) so the composer can tell metered models from unlimited ones. Omitting it returns the exact v0.3.2 response shape (`usagePolicy` stays absent from every model), so there is nothing for older clients to break on.
 - Usage-limit run errors write `Usage limit exceeded: {json payload}` into `runs.lastError` (#200) instead of masked server errors or plain text, letting the composer count down to reset without refetching. Clients released before #200 render the raw prefixed string in their transcript banner. It is display-only text that clears on the next run, so no compat layer ships.
 
 ## Removal checklist
