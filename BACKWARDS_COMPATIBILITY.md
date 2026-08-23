@@ -88,4 +88,4 @@ So nobody goes hunting for shims that do not exist:
 2. Land any data migration or backfill before shrinking validators.
 3. Remove the server shim, validator changes, and client-side types in one PR.
 4. Delete tests that pin compat behavior. Keep coverage for behavior that survives.
-5. Tick the entry here with the PR link.
+5. Remove the entry from this document.
