@@ -164,9 +164,13 @@
 		};
 	});
 
-	const exhaustedUsageWindow = $derived(
-		usageQuery.data ? pickExhaustedUsageWindow(usageQuery.data.meters) : null
-	);
+	// The usage query only re-runs when the limiter document changes, so a reset
+	// time that has passed means the backend admits again even without new data.
+	const exhaustedUsageWindow = $derived.by(() => {
+		const exhausted = usageQuery.data ? pickExhaustedUsageWindow(usageQuery.data.meters) : null;
+		if (exhausted === null || exhausted.resetsAt === null) return exhausted;
+		return exhausted.resetsAt <= now ? null : exhausted;
+	});
 	// Unknown policies count as metered, matching backend enforcement.
 	const selectedModelUnmetered = $derived(selectedCatalogModel?.usagePolicy === 'unlimited');
 	const usageBlocked = $derived(exhaustedUsageWindow !== null && !selectedModelUnmetered);
@@ -180,8 +184,8 @@
 		return option?.label ?? null;
 	});
 	// A live window from the usage query wins; the last run's failure detail is
-	// the fallback (e.g. while the query loads or after selecting an unmetered
-	// model). Expired reset times hide stale failure notices.
+	// the fallback (e.g. while the query loads). Notices are hidden entirely for
+	// unmetered selections, where the failure no longer applies.
 	const reactiveUsageDetail = $derived.by(() => {
 		if (
 			usageLimitDetail === null ||
@@ -192,7 +196,8 @@
 		return usageLimitDetail;
 	});
 	const usageNoticeDetail = $derived.by(() => {
-		if (exhaustedUsageWindow !== null && !selectedModelUnmetered) return exhaustedUsageWindow;
+		if (selectedModelUnmetered) return null;
+		if (exhaustedUsageWindow !== null) return exhaustedUsageWindow;
 		return reactiveUsageDetail;
 	});
 	const composerNotice = $derived.by(() => {
