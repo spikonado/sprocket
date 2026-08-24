@@ -1,3 +1,10 @@
+# AI Agents
+
+.agents
+.claude
+.codex
+.sprocket-dev
+
 # Dependencies
 .bun-cache
 .pnp
@@ -25,9 +32,8 @@ coverage
 .turbo
 turbo-cache-key.json
 
-.claude
-.codex
-.sprocket-dev
+# Misc
+
 .worktrees
 dist
 ref-repos
