@@ -39,7 +39,7 @@ async function completeRun(
 	await asUser.mutation(api.agentRuntime.finalizeRun, finalizeArgs);
 	if (args.startedAt !== undefined) {
 		await t.run(async (ctx) => {
-			await ctx.db.patch(args.runId, { startedAt: args.startedAt });
+			await ctx.db.patch('runs', args.runId, { startedAt: args.startedAt });
 		});
 	}
 }
@@ -89,11 +89,11 @@ describe('messages transcript queries', () => {
 		await asUser.mutation(api.agentRuntime.beginAssistantMessage, { runId, executionSecret });
 
 		const responseMessageId = await t.run(async (ctx) => {
-			const run = await ctx.db.get(runId);
+			const run = await ctx.db.get('runs', runId);
 			if (!run?.responseMessageId) {
 				throw new Error('Expected response message');
 			}
-			await ctx.db.patch(run.responseMessageId, {
+			await ctx.db.patch('threadMessages', run.responseMessageId, {
 				text: 'partial answer',
 				parts: [{ type: 'text', id: 't1', text: 'partial answer', turnId: 'turn-1' }]
 			});

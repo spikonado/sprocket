@@ -95,7 +95,7 @@ export const upsertForThread = internalMutation({
 				startedAt: Date.now()
 			};
 			if (args.liveViewUrl || rotated) patch.liveViewUrl = args.liveViewUrl;
-			await ctx.db.patch(existing._id, patch);
+			await ctx.db.patch('browserSessions', existing._id, patch);
 			return existing._id;
 		}
 		return await ctx.db.insert('browserSessions', {
@@ -118,7 +118,7 @@ export const touchForThread = internalMutation({
 			.withIndex('by_thread', (query) => query.eq('threadId', args.threadId))
 			.first();
 		if (existing && existing.lastUsedRunId !== args.runId) {
-			await ctx.db.patch(existing._id, { lastUsedRunId: args.runId });
+			await ctx.db.patch('browserSessions', existing._id, { lastUsedRunId: args.runId });
 		}
 		return null;
 	}
@@ -147,7 +147,7 @@ export const setLiveViewUrl = internalMutation({
 			existing.browserbaseSessionId === args.browserbaseSessionId &&
 			!existing.liveViewUrl
 		) {
-			await ctx.db.patch(existing._id, { liveViewUrl: args.liveViewUrl });
+			await ctx.db.patch('browserSessions', existing._id, { liveViewUrl: args.liveViewUrl });
 		}
 		return null;
 	}

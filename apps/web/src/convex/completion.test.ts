@@ -173,7 +173,7 @@ describe('completion.complete', () => {
 			const { asUser, threadId } = await seedOwnedThread(t);
 			const { runId, executionSecret } = await startClaimedRun(t, asUser, threadId);
 			await t.run(async (ctx) => {
-				await ctx.db.patch(runId, { completionAttemptSeq: 9 });
+				await ctx.db.patch('runs', runId, { completionAttemptSeq: 9 });
 			});
 
 			// registerCompletionAttempt throws before the model is called.
@@ -198,7 +198,7 @@ describe('completion.complete', () => {
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const { runId, executionSecret } = await startClaimedRun(t, asUser, threadId);
 		await t.run(async (ctx) => {
-			await ctx.db.patch(runId, { status: 'cancelled' });
+			await ctx.db.patch('runs', runId, { status: 'cancelled' });
 		});
 
 		const failure = await t

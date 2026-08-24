@@ -100,7 +100,7 @@ async function getCompletionStreamState(
 	if (!run.completionStreamStateId) {
 		throw new Error('Run does not contain completion stream state.');
 	}
-	const state = await ctx.db.get(run.completionStreamStateId);
+	const state = await ctx.db.get('completionStreamStates', run.completionStreamStateId);
 	if (!state || state.runId !== run._id || state.userId !== run.userId) {
 		throw new Error('Completion stream state is invalid.');
 	}
@@ -142,7 +142,7 @@ async function finalizeRunRecord(
 	for (const [index, job] of jobs.entries()) {
 		const finalizedJob = finalizedJobs[index];
 		if (finalizedJob === job) continue;
-		await ctx.db.patch(job._id, {
+		await ctx.db.patch('executorJobs', job._id, {
 			status: finalizedJob.status,
 			error: finalizedJob.error,
 			completedAt: finalizedJob.completedAt
@@ -154,7 +154,7 @@ async function finalizeRunRecord(
 		.collect();
 	for (const question of pendingQuestions) {
 		if (question.status === 'pending') {
-			await ctx.db.patch(question._id, {
+			await ctx.db.patch('agentQuestions', question._id, {
 				status: 'cancelled',
 				answeredAt: completedAt
 			});
@@ -162,7 +162,7 @@ async function finalizeRunRecord(
 	}
 	if (alreadyFinal) {
 		if (run.activeJobId) {
-			await ctx.db.patch(run._id, { activeJobId: undefined });
+			await ctx.db.patch('runs', run._id, { activeJobId: undefined });
 		}
 		return true;
 	}
@@ -186,11 +186,11 @@ async function finalizeRunRecord(
 		toPersistableExecutorToolJobs(finalizedJobs)
 	);
 	const streamedText: string = joinAssistantTextParts(nextParts);
-	await ctx.db.patch(responseMessageId, {
+	await ctx.db.patch('threadMessages', responseMessageId, {
 		text: streamedText || args.text,
 		parts: nextParts
 	});
-	await ctx.db.patch(run._id, {
+	await ctx.db.patch('runs', run._id, {
 		status: finalStatus,
 		claimExpiresAt: undefined,
 		lastError: args.lastError,
@@ -255,7 +255,7 @@ export const createRun = mutation({
 					// launch's startup cleanup recognizes it and stands down.
 					throw new ConvexError('Submission belongs to a different active executor.');
 				}
-				await ctx.db.patch(existingRun._id, { executionSecretHash: secretHash });
+				await ctx.db.patch('runs', existingRun._id, { executionSecretHash: secretHash });
 			}
 			if (
 				existingRun.threadId !== args.threadId ||
@@ -267,7 +267,7 @@ export const createRun = mutation({
 			) {
 				throw new ConvexError('Submission belongs to a different or incomplete run.');
 			}
-			const existingPrompt = await ctx.db.get(existingRun.promptMessageId);
+			const existingPrompt = await ctx.db.get('threadMessages', existingRun.promptMessageId);
 			if (
 				!existingPrompt ||
 				existingPrompt.text !== prompt ||
@@ -328,11 +328,11 @@ export const createRun = mutation({
 			imageUploadIds: args.imageUploadIds
 		});
 		await attachImageUploads(ctx, imageUploads, promptMessageId);
-		await ctx.db.patch(runId, {
+		await ctx.db.patch('runs', runId, {
 			promptMessageId,
 			completionStreamStateId
 		});
-		await ctx.db.patch(threadRecord._id, {
+		await ctx.db.patch('threadRecords', threadRecord._id, {
 			title: threadRecord.title ?? (prompt || imageUploads[0]?.name || 'New thread').slice(0, 72),
 			selectedModel: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
@@ -380,7 +380,7 @@ export const start = mutation({
 				if (isFinal) {
 					continue;
 				}
-				await ctx.db.patch(job._id, {
+				await ctx.db.patch('executorJobs', job._id, {
 					hidden: true,
 					status: 'cancelled',
 					error: 'The agent worker claim expired.',
@@ -388,13 +388,13 @@ export const start = mutation({
 				});
 			}
 			if (run.responseMessageId) {
-				await ctx.db.patch(run.responseMessageId, {
+				await ctx.db.patch('threadMessages', run.responseMessageId, {
 					text: '',
 					parts: []
 				});
 			}
 			const streamState = await getCompletionStreamState(ctx, run);
-			await ctx.db.patch(streamState._id, {
+			await ctx.db.patch('completionStreamStates', streamState._id, {
 				sequence: 0,
 				streamAttemptId: undefined
 			});
@@ -410,7 +410,7 @@ export const start = mutation({
 		};
 		if (!isSameClaimRenewal) claimPatch.completionAttemptSeq = 0;
 		if (isTakeover) claimPatch.activeJobId = undefined;
-		await ctx.db.patch(args.runId, claimPatch);
+		await ctx.db.patch('runs', args.runId, claimPatch);
 
 		return { claimed: true, claimExpiresAt: nextClaimExpiresAt };
 	}
@@ -434,7 +434,7 @@ export const renewClaim = mutation({
 		}
 
 		const nextClaimExpiresAt = claimExpiresAt(Date.now());
-		await ctx.db.patch(run._id, { claimExpiresAt: nextClaimExpiresAt });
+		await ctx.db.patch('runs', run._id, { claimExpiresAt: nextClaimExpiresAt });
 		return { renewed: true, claimExpiresAt: nextClaimExpiresAt };
 	}
 });
@@ -453,7 +453,7 @@ export const getContext = query({
 		const messages = await buildThreadTranscript(ctx, run.threadId);
 		let historyRunIds: Set<Id<'runs'>> | undefined;
 		if (threadRecord.contextSummaryThroughRunId) {
-			const cutoff = await ctx.db.get(threadRecord.contextSummaryThroughRunId);
+			const cutoff = await ctx.db.get('runs', threadRecord.contextSummaryThroughRunId);
 			if (cutoff && cutoff.threadId === run.threadId) {
 				const laterRuns = await ctx.db
 					.query('runs')
@@ -626,7 +626,7 @@ export const saveContextCompaction = mutation({
 			}
 		}
 		if (durableSummary) {
-			await ctx.db.patch(thread._id, durableSummary);
+			await ctx.db.patch('threadRecords', thread._id, durableSummary);
 		}
 		return true;
 	}
@@ -671,7 +671,7 @@ export const registerCompletionAttempt = mutation({
 		if (!canRegisterCompletionAttempt(run, args.claimId, args.attemptSeq)) {
 			throw new ConvexError(COMPLETION_STREAM_SUPERSEDED);
 		}
-		await ctx.db.patch(args.runId, { completionAttemptSeq: args.attemptSeq });
+		await ctx.db.patch('runs', args.runId, { completionAttemptSeq: args.attemptSeq });
 		// Completion turns stamp parts with turnId = streamId, so a retry can
 		// drop the partial parts its prior attempts persisted.
 		const supersededStreamIds = args.supersededStreamIds ?? [];
@@ -682,7 +682,7 @@ export const registerCompletionAttempt = mutation({
 				(part) => !('turnId' in part && part.turnId && superseded.has(part.turnId))
 			);
 			if (parts.length !== message.parts.length) {
-				await ctx.db.patch(run.responseMessageId, {
+				await ctx.db.patch('threadMessages', run.responseMessageId, {
 					text: joinAssistantTextParts(parts),
 					parts
 				});
@@ -715,7 +715,7 @@ export const beginAssistantMessage = mutation({
 			type: 'response',
 			text: ''
 		});
-		await ctx.db.patch(args.runId, {
+		await ctx.db.patch('runs', args.runId, {
 			responseMessageId: messageId
 		});
 	}
@@ -833,11 +833,11 @@ export const mergeAssistantStreamEvents = mutation({
 			}
 		}
 
-		await ctx.db.patch(run.responseMessageId, {
+		await ctx.db.patch('threadMessages', run.responseMessageId, {
 			text: joinAssistantTextParts(parts),
 			parts
 		});
-		await ctx.db.patch(streamState._id, {
+		await ctx.db.patch('completionStreamStates', streamState._id, {
 			sequence: args.sequence,
 			streamAttemptId: args.streamId
 		});
@@ -943,7 +943,7 @@ export const finalizeFailedStart = mutation({
 		) {
 			return 'standDown';
 		}
-		const promptMessage = await ctx.db.get(run.promptMessageId);
+		const promptMessage = await ctx.db.get('threadMessages', run.promptMessageId);
 		if (
 			!promptMessage ||
 			promptMessage.text !== args.prompt.trim() ||
@@ -1007,7 +1007,7 @@ export const beginToolJob = mutation({
 		const project = await getOwnedProject(ctx.db, userId, run.projectId);
 
 		const nextSequence = project.nextExecutorSequence;
-		await ctx.db.patch(project._id, {
+		await ctx.db.patch('projects', project._id, {
 			nextExecutorSequence: nextSequence + 1
 		});
 
@@ -1026,7 +1026,7 @@ export const beginToolJob = mutation({
 		if (args.callId) job.callId = args.callId;
 		const jobId = await ctx.db.insert('executorJobs', job);
 
-		await ctx.db.patch(args.runId, {
+		await ctx.db.patch('runs', args.runId, {
 			status: 'awaiting_executor',
 			activeJobId: jobId
 		});

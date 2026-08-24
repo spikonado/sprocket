@@ -96,7 +96,7 @@ async function expireOverduePendingQuestions(
 		if (question.timeoutAt > now) {
 			continue;
 		}
-		await ctx.db.patch(question._id, {
+		await ctx.db.patch('agentQuestions', question._id, {
 			status: 'timedOut',
 			answeredAt: now
 		});
@@ -178,7 +178,7 @@ export const answer = mutation({
 		const now = Date.now();
 		await expireOverduePendingQuestions(ctx, args.threadId, now);
 
-		const question = await ctx.db.get(args.questionId);
+		const question = await ctx.db.get('agentQuestions', args.questionId);
 		if (!question || question.threadId !== args.threadId) {
 			throw new Error('Question not found.');
 		}
@@ -196,7 +196,7 @@ export const answer = mutation({
 			optionId: args.optionId,
 			text: args.text
 		});
-		await ctx.db.patch(question._id, {
+		await ctx.db.patch('agentQuestions', question._id, {
 			status: 'answered',
 			answer,
 			answeredAt: now
@@ -217,11 +217,11 @@ export const timeout = internalMutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const question = await ctx.db.get(args.questionId);
+		const question = await ctx.db.get('agentQuestions', args.questionId);
 		if (!question || question.status !== 'pending') {
 			return null;
 		}
-		await ctx.db.patch(question._id, {
+		await ctx.db.patch('agentQuestions', question._id, {
 			status: 'timedOut',
 			answeredAt: Date.now()
 		});
@@ -238,7 +238,7 @@ export const getForExecutor = query({
 	returns: v.union(vAgentQuestionSnapshot, v.null()),
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		const question = await ctx.db.get(args.questionId);
+		const question = await ctx.db.get('agentQuestions', args.questionId);
 		if (!question || question.runId !== run._id) {
 			return null;
 		}

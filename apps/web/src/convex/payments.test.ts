@@ -160,7 +160,7 @@ describe('payments mandates', () => {
 				merchant_scope: 'listed'
 			}
 		});
-		const stored = await t.run(async (ctx) => ctx.db.get(result.mandateId));
+		const stored = await t.run(async (ctx) => ctx.db.get('mandates', result.mandateId));
 		expect(stored).toMatchObject({
 			userId: 'user_alice',
 			status: 'pending',
@@ -223,7 +223,7 @@ describe('payments mandates', () => {
 		const chargeBody = JSON.parse(String(fetchMock.mock.calls.at(-1)![1]?.body));
 		expect(chargeBody).toEqual({ amount: '40.00', reference: 'order-8842' });
 
-		const stored = await t.run(async (ctx) => ctx.db.get(charge.chargeId));
+		const stored = await t.run(async (ctx) => ctx.db.get('mandateCharges', charge.chargeId));
 		expect(stored).toMatchObject({
 			userId: 'user_alice',
 			pravaTransactionId: 'txn_9',
@@ -327,7 +327,7 @@ describe('payments mandates', () => {
 		// Even after the claim is long stale, do not reclaim for a second POST.
 		await t.run(async (ctx) => {
 			if (!afterLoss) throw new Error('missing charge');
-			await ctx.db.patch(afterLoss._id, {
+			await ctx.db.patch('mandateCharges', afterLoss._id, {
 				chargingStartedAt: Date.now() - 120_000
 			});
 		});
@@ -507,7 +507,10 @@ describe('payments mandates', () => {
 		// an old reportingStartedAt with no reportedAt.
 		const stale = Date.now() - 120_000;
 		await t.run(async (ctx) =>
-			ctx.db.patch(charge.chargeId, { reportingStartedAt: stale, reportOutcome: 'approved' })
+			ctx.db.patch('mandateCharges', charge.chargeId, {
+				reportingStartedAt: stale,
+				reportOutcome: 'approved'
+			})
 		);
 		fetchMock.mockClear();
 		fetchMock.mockResolvedValueOnce(jsonResponse({ status: 'completed', mandateStatus: 'active' }));
@@ -528,7 +531,7 @@ describe('payments mandates', () => {
 			txn_status: 'APPROVED',
 			txn_type: 'PURCHASE'
 		});
-		const stored = await t.run(async (ctx) => ctx.db.get(charge.chargeId));
+		const stored = await t.run(async (ctx) => ctx.db.get('mandateCharges', charge.chargeId));
 		expect(stored).toMatchObject({ status: 'completed', reportedAt: expect.any(Number) });
 	});
 
@@ -557,7 +560,10 @@ describe('payments mandates', () => {
 		// overwrite it and send the opposite terminal outcome.
 		const stale = Date.now() - 120_000;
 		await t.run(async (ctx) =>
-			ctx.db.patch(charge.chargeId, { reportingStartedAt: stale, reportOutcome: 'approved' })
+			ctx.db.patch('mandateCharges', charge.chargeId, {
+				reportingStartedAt: stale,
+				reportOutcome: 'approved'
+			})
 		);
 		fetchMock.mockClear();
 
@@ -569,7 +575,7 @@ describe('payments mandates', () => {
 			})
 		).rejects.toThrow(/approved report in progress/);
 		expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/report'))).toBe(false);
-		const stored = await t.run(async (ctx) => ctx.db.get(charge.chargeId));
+		const stored = await t.run(async (ctx) => ctx.db.get('mandateCharges', charge.chargeId));
 		expect(stored).toMatchObject({ reportOutcome: 'approved' });
 		expect(stored?.reportedAt).toBeUndefined();
 	});
@@ -604,7 +610,7 @@ describe('payments mandates', () => {
 			})
 		).rejects.toThrow(/network lost after commit/);
 
-		const afterLoss = await t.run(async (ctx) => ctx.db.get(charge.chargeId));
+		const afterLoss = await t.run(async (ctx) => ctx.db.get('mandateCharges', charge.chargeId));
 		expect(afterLoss).toMatchObject({ reportOutcome: 'approved' });
 		expect(afterLoss?.reportingStartedAt).toBeUndefined();
 		expect(afterLoss?.reportedAt).toBeUndefined();
@@ -654,7 +660,10 @@ describe('payments mandates', () => {
 
 		// A fresh (non-stale) claim held by a competing caller, no report completed.
 		await t.run(async (ctx) =>
-			ctx.db.patch(charge.chargeId, { reportingStartedAt: Date.now(), reportOutcome: 'approved' })
+			ctx.db.patch('mandateCharges', charge.chargeId, {
+				reportingStartedAt: Date.now(),
+				reportOutcome: 'approved'
+			})
 		);
 		fetchMock.mockClear();
 
@@ -667,7 +676,7 @@ describe('payments mandates', () => {
 		expect(result).toEqual({ reported: false, inFlight: true });
 		// No report request issued, and the charge stays unreported.
 		expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/report'))).toBe(false);
-		const stored = await t.run(async (ctx) => ctx.db.get(charge.chargeId));
+		const stored = await t.run(async (ctx) => ctx.db.get('mandateCharges', charge.chargeId));
 		expect(stored?.reportedAt).toBeUndefined();
 	});
 
@@ -730,7 +739,7 @@ describe('payments mandates', () => {
 		});
 
 		expect(status).toMatchObject({ status: 'active', pravaMandateId: 'mdt_live' });
-		const stored = await t.run(async (ctx) => await ctx.db.get(setup.mandateId));
+		const stored = await t.run(async (ctx) => await ctx.db.get('mandates', setup.mandateId));
 		expect(stored).toMatchObject({ status: 'active', pravaMandateId: 'mdt_live' });
 	});
 
@@ -806,8 +815,8 @@ describe('payments mandates', () => {
 
 		expect(result.mandates).toHaveLength(1);
 		expect(result.mandates[0].mandateId).toBeUndefined();
-		const storedFirst = await t.run(async (ctx) => await ctx.db.get(first.mandateId));
-		const storedSecond = await t.run(async (ctx) => await ctx.db.get(second.mandateId));
+		const storedFirst = await t.run(async (ctx) => await ctx.db.get('mandates', first.mandateId));
+		const storedSecond = await t.run(async (ctx) => await ctx.db.get('mandates', second.mandateId));
 		expect(storedFirst?.pravaMandateId).toBeUndefined();
 		expect(storedSecond?.pravaMandateId).toBeUndefined();
 	});
@@ -856,7 +865,7 @@ describe('payments mandates', () => {
 			status: 'active',
 			description: 'Monthly budget'
 		});
-		const stored = await t.run(async (ctx) => await ctx.db.get(setup.mandateId));
+		const stored = await t.run(async (ctx) => await ctx.db.get('mandates', setup.mandateId));
 		expect(stored).toMatchObject({
 			pravaMandateId: 'mdt_1',
 			status: 'active',

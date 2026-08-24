@@ -51,7 +51,7 @@ async function seedRunWithJob(
 			enqueuedAt: Date.now(),
 			sequence: 1
 		});
-		await ctx.db.patch(created.runId, {
+		await ctx.db.patch('runs', created.runId, {
 			status: options.runStatus ?? 'awaiting_executor',
 			claimId,
 			claimExpiresAt: options.claimExpiresAt ?? Date.now() + 60_000,
@@ -94,8 +94,8 @@ describe('executor', () => {
 		).resolves.toBe(true);
 
 		const state = await t.run(async (ctx) => ({
-			job: await ctx.db.get(jobId),
-			run: await ctx.db.get(runId)
+			job: await ctx.db.get('executorJobs', jobId),
+			run: await ctx.db.get('runs', runId)
 		}));
 		expect(state.job).toMatchObject({
 			status: 'completed',
@@ -152,7 +152,7 @@ describe('executor', () => {
 			executionSecret: 'executor-idempotent-secret'
 		});
 		await t.run(async (ctx) => {
-			await ctx.db.patch(jobId, { result: commandResult, completedAt: 1 });
+			await ctx.db.patch('executorJobs', jobId, { result: commandResult, completedAt: 1 });
 		});
 
 		await expect(
@@ -184,8 +184,10 @@ describe('executor', () => {
 				executionSecret: terminalSecret
 			})
 		).resolves.toBe(false);
-		expect(await t.run(async (ctx) => (await ctx.db.get(terminalRunId))?.status)).toBe('completed');
-		expect(await t.run(async (ctx) => (await ctx.db.get(runId))?.status)).toBe('running');
+		expect(await t.run(async (ctx) => (await ctx.db.get('runs', terminalRunId))?.status)).toBe(
+			'completed'
+		);
+		expect(await t.run(async (ctx) => (await ctx.db.get('runs', runId))?.status)).toBe('running');
 	});
 
 	it('fails a job and clears activeJobId only when it matches', async () => {
@@ -205,22 +207,23 @@ describe('executor', () => {
 		).resolves.toBe(true);
 		expect(
 			await t.run(async (ctx) => ({
-				job: await ctx.db.get(matching.jobId),
-				run: await ctx.db.get(matching.runId)
+				job: await ctx.db.get('executorJobs', matching.jobId),
+				run: await ctx.db.get('runs', matching.runId)
 			}))
 		).toMatchObject({
 			job: { status: 'failed', error: 'boom' },
 			run: { status: 'running' }
 		});
 		expect(
-			(await t.run(async (ctx) => (await ctx.db.get(matching.runId))?.activeJobId)) ?? undefined
+			(await t.run(async (ctx) => (await ctx.db.get('runs', matching.runId))?.activeJobId)) ??
+				undefined
 		).toBeUndefined();
 
 		const mismatched = await seedRunWithJob(t, {
 			activeJobMatches: false,
 			executionSecret: 'executor-fail-mismatch-secret'
 		});
-		const before = await t.run(async (ctx) => ctx.db.get(mismatched.runId));
+		const before = await t.run(async (ctx) => ctx.db.get('runs', mismatched.runId));
 		await expect(
 			mismatched.asUser.mutation(api.executor.fail, {
 				jobId: mismatched.jobId,
@@ -230,10 +233,12 @@ describe('executor', () => {
 				executionSecret: mismatched.executionSecret
 			})
 		).resolves.toBe(true);
-		const after = await t.run(async (ctx) => ctx.db.get(mismatched.runId));
+		const after = await t.run(async (ctx) => ctx.db.get('runs', mismatched.runId));
 		expect(after?.status).toBe(before?.status);
 		expect(after?.activeJobId).toBe(before?.activeJobId);
-		expect(await t.run(async (ctx) => (await ctx.db.get(mismatched.jobId))?.status)).toBe('failed');
+		expect(
+			await t.run(async (ctx) => (await ctx.db.get('executorJobs', mismatched.jobId))?.status)
+		).toBe('failed');
 	});
 
 	it('rejects tool completion and failure after the claim lease expires', async () => {
@@ -253,8 +258,8 @@ describe('executor', () => {
 		).resolves.toBe(false);
 		expect(
 			await t.run(async (ctx) => ({
-				jobStatus: (await ctx.db.get(completeCase.jobId))?.status,
-				activeJobId: (await ctx.db.get(completeCase.runId))?.activeJobId
+				jobStatus: (await ctx.db.get('executorJobs', completeCase.jobId))?.status,
+				activeJobId: (await ctx.db.get('runs', completeCase.runId))?.activeJobId
 			}))
 		).toEqual({ jobStatus: 'claimed', activeJobId: completeCase.jobId });
 
@@ -273,8 +278,8 @@ describe('executor', () => {
 		).resolves.toBe(false);
 		expect(
 			await t.run(async (ctx) => ({
-				jobStatus: (await ctx.db.get(failCase.jobId))?.status,
-				activeJobId: (await ctx.db.get(failCase.runId))?.activeJobId
+				jobStatus: (await ctx.db.get('executorJobs', failCase.jobId))?.status,
+				activeJobId: (await ctx.db.get('runs', failCase.runId))?.activeJobId
 			}))
 		).toEqual({ jobStatus: 'claimed', activeJobId: failCase.jobId });
 	});

@@ -75,7 +75,7 @@ describe('agentRuntime.createRun', () => {
 			promptMessageId: created.promptMessageId
 		});
 
-		const run = await t.run(async (ctx) => ctx.db.get(created.runId));
+		const run = await t.run(async (ctx) => ctx.db.get('runs', created.runId));
 		expect(run).toMatchObject({
 			status: 'queued',
 			submissionId: 'sub-1',
@@ -114,12 +114,12 @@ describe('agentRuntime.createRun', () => {
 			})
 		).resolves.toMatchObject({ claimed: true });
 		expect(
-			await t.run(async (ctx) => (await ctx.db.get(created.runId))?.executionSecretHash)
+			await t.run(async (ctx) => (await ctx.db.get('runs', created.runId))?.executionSecretHash)
 		).not.toBe(executionSecret);
 
 		const expiredAt = await t.run(async (ctx) => {
 			const claimExpiresAt = Date.now() - 1;
-			await ctx.db.patch(created.runId, { claimExpiresAt });
+			await ctx.db.patch('runs', created.runId, { claimExpiresAt });
 			return claimExpiresAt;
 		});
 		await expect(
@@ -129,9 +129,9 @@ describe('agentRuntime.createRun', () => {
 				executionSecret
 			})
 		).resolves.toMatchObject({ renewed: false });
-		expect(await t.run(async (ctx) => (await ctx.db.get(created.runId))?.claimExpiresAt)).toBe(
-			expiredAt
-		);
+		expect(
+			await t.run(async (ctx) => (await ctx.db.get('runs', created.runId))?.claimExpiresAt)
+		).toBe(expiredAt);
 	});
 
 	it('rebinds a queued submission when its original local executor was lost', async () => {
@@ -192,7 +192,9 @@ describe('agentRuntime.createRun', () => {
 				lastError: 'startup timed out'
 			})
 		).resolves.toBe('finalized');
-		expect(await t.run(async (ctx) => (await ctx.db.get(created.runId))?.status)).toBe('failed');
+		expect(await t.run(async (ctx) => (await ctx.db.get('runs', created.runId))?.status)).toBe(
+			'failed'
+		);
 	});
 
 	it('reports pending while the submission has no run yet', async () => {
@@ -279,7 +281,9 @@ describe('agentRuntime.createRun', () => {
 				lastError: 'lost the launch race'
 			})
 		).resolves.toBe('standDown');
-		expect(await t.run(async (ctx) => (await ctx.db.get(created.runId))?.status)).toBe('queued');
+		expect(await t.run(async (ctx) => (await ctx.db.get('runs', created.runId))?.status)).toBe(
+			'queued'
+		);
 	});
 
 	it('leaves a claimed run to its executor', async () => {
@@ -313,7 +317,9 @@ describe('agentRuntime.createRun', () => {
 				lastError: 'late cleanup'
 			})
 		).resolves.toBe('standDown');
-		expect(await t.run(async (ctx) => (await ctx.db.get(created.runId))?.status)).toBe('running');
+		expect(await t.run(async (ctx) => (await ctx.db.get('runs', created.runId))?.status)).toBe(
+			'running'
+		);
 	});
 
 	it('keeps the submission conflict message readable for the losing launch', async () => {
@@ -382,7 +388,7 @@ describe('agentRuntime.createRun', () => {
 			executionSecret
 		});
 		await t.run(async (ctx) => {
-			await ctx.db.patch(abandoned.runId, { claimExpiresAt: Date.now() - 1 });
+			await ctx.db.patch('runs', abandoned.runId, { claimExpiresAt: Date.now() - 1 });
 		});
 
 		const next = await asUser.mutation(api.agentRuntime.createRun, {
@@ -398,13 +404,15 @@ describe('agentRuntime.createRun', () => {
 		expect(next.created).toBe(true);
 		expect(next.runId).not.toBe(abandoned.runId);
 
-		const abandonedRun = await t.run(async (ctx) => ctx.db.get(abandoned.runId));
+		const abandonedRun = await t.run(async (ctx) => ctx.db.get('runs', abandoned.runId));
 		expect(abandonedRun).toMatchObject({
 			status: 'failed',
 			lastError: 'The local agent stopped responding before this run finished.'
 		});
 		const abandonedResponse = await t.run(async (ctx) =>
-			abandonedRun?.responseMessageId ? ctx.db.get(abandonedRun.responseMessageId) : null
+			abandonedRun?.responseMessageId
+				? ctx.db.get('threadMessages', abandonedRun.responseMessageId)
+				: null
 		);
 		expect(abandonedResponse?.text).toBe(
 			'Run aborted: The local agent stopped responding before this run finished.'
@@ -451,7 +459,7 @@ describe('agentRuntime.createRun', () => {
 			executionSecret: 'completed-first-secret'
 		});
 		await t.run(async (ctx) => {
-			await ctx.db.patch(first.runId, { status: 'completed', completedAt: Date.now() });
+			await ctx.db.patch('runs', first.runId, { status: 'completed', completedAt: Date.now() });
 		});
 
 		const second = await asUser.mutation(api.agentRuntime.createRun, {

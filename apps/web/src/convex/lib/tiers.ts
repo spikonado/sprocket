@@ -170,7 +170,7 @@ export async function getSubscriptionDocExclusive(
 	const keep = pickSubscription(rows);
 	if (!keep) return null;
 	for (const row of rows) {
-		if (row._id !== keep._id) await ctx.db.delete(row._id);
+		if (row._id !== keep._id) await ctx.db.delete('subscriptions', row._id);
 	}
 	return keep;
 }

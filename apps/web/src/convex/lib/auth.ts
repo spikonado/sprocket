@@ -59,7 +59,7 @@ export async function ensureCurrentUser(ctx: GenericMutationCtx<DataModel>): Pro
 		// A first-login race can insert two rows for one subject; converge on
 		// the earliest instead of poisoning later unique reads.
 		for (const extra of rows) {
-			if (extra._id !== primary._id) await ctx.db.delete(extra._id);
+			if (extra._id !== primary._id) await ctx.db.delete('users', extra._id);
 		}
 		return primary;
 	}
@@ -68,7 +68,7 @@ export async function ensureCurrentUser(ctx: GenericMutationCtx<DataModel>): Pro
 		tokenIdentifier: identity.tokenIdentifier,
 		createdAt: Date.now()
 	});
-	const created = await ctx.db.get(id);
+	const created = await ctx.db.get('users', id);
 	if (!created) throw new Error('Failed to create the user record.');
 	return created;
 }
@@ -115,7 +115,7 @@ export async function getExecutionRun(
 	runId: Id<'runs'>,
 	executionSecret: string
 ): Promise<Doc<'runs'>> {
-	const run = await ctx.db.get(runId);
+	const run = await ctx.db.get('runs', runId);
 	if (!run) throw new Error('Run not found.');
 	const candidateHash = await hashExecutionSecret(executionSecret);
 	if (!constantTimeEqual(candidateHash, run.executionSecretHash)) throw new Error('Run not found.');

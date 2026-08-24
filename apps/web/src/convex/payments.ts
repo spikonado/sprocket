@@ -285,7 +285,7 @@ async function ownedCharge(
 	chargeId: Id<'mandateCharges'>,
 	userId: string
 ): Promise<Doc<'mandateCharges'>> {
-	const charge = await ctx.db.get(chargeId);
+	const charge = await ctx.db.get('mandateCharges', chargeId);
 	if (!charge || charge.userId !== userId) {
 		throw new Error('Charge not found.');
 	}
@@ -405,7 +405,7 @@ export const getOwnedMandate = internalQuery({
 	args: { mandateId: v.id('mandates'), userId: v.string() },
 	returns: v.union(mandateDoc, v.null()),
 	handler: async (ctx, args) => {
-		const mandate = await ctx.db.get(args.mandateId);
+		const mandate = await ctx.db.get('mandates', args.mandateId);
 		return mandate?.userId === args.userId ? mandate : null;
 	}
 });
@@ -433,7 +433,7 @@ export const syncMandate = internalMutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const mandate = await ctx.db.get(args.mandateId);
+		const mandate = await ctx.db.get('mandates', args.mandateId);
 		if (!mandate || mandate.userId !== args.userId) {
 			throw new Error('Mandate not found.');
 		}
@@ -449,7 +449,7 @@ export const syncMandate = internalMutation({
 		if (args.remaining !== undefined) patch.remaining = args.remaining;
 		if (args.validUntil !== undefined) patch.validUntil = args.validUntil;
 		if (args.renewsAt !== undefined) patch.renewsAt = args.renewsAt;
-		await ctx.db.patch(args.mandateId, patch);
+		await ctx.db.patch('mandates', args.mandateId, patch);
 		return null;
 	}
 });
@@ -521,7 +521,7 @@ export const reserveCharge = internalMutation({
 					);
 				}
 				if (existing.status === 'failed') {
-					await ctx.db.patch(existing._id, {
+					await ctx.db.patch('mandateCharges', existing._id, {
 						runId: args.runId,
 						description: args.description,
 						status: 'awaiting_result',
@@ -539,7 +539,7 @@ export const reserveCharge = internalMutation({
 					return { kind: 'inFlight' as const };
 				}
 				// Abandoned reservation that never reached Prava: reclaim.
-				await ctx.db.patch(existing._id, {
+				await ctx.db.patch('mandateCharges', existing._id, {
 					runId: args.runId,
 					description: args.description,
 					status: 'awaiting_result',
@@ -572,7 +572,7 @@ export const markChargeProviderRequested = internalMutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		await ownedCharge(ctx, args.chargeId, args.userId);
-		await ctx.db.patch(args.chargeId, {
+		await ctx.db.patch('mandateCharges', args.chargeId, {
 			providerRequestedAt: Date.now(),
 			updatedAt: Date.now()
 		});
@@ -589,7 +589,7 @@ export const completeCharge = internalMutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const charge = await ownedCharge(ctx, args.chargeId, args.userId);
-		await ctx.db.patch(args.chargeId, {
+		await ctx.db.patch('mandateCharges', args.chargeId, {
 			pravaTransactionId: args.pravaTransactionId,
 			status: charge.status === 'failed' ? 'failed' : 'awaiting_result',
 			chargingStartedAt: undefined,
@@ -607,7 +607,7 @@ export const releaseChargeReservation = internalMutation({
 		if (!charge.pravaTransactionId) {
 			// Drop the live claim so callers aren't stuck in inFlight, but keep
 			// providerRequestedAt, since an ambiguous POST must not be reclaimed.
-			await ctx.db.patch(args.chargeId, {
+			await ctx.db.patch('mandateCharges', args.chargeId, {
 				chargingStartedAt: undefined,
 				updatedAt: Date.now()
 			});
@@ -620,7 +620,7 @@ export const getOwnedCharge = internalQuery({
 	args: { chargeId: v.id('mandateCharges'), userId: v.string() },
 	returns: v.union(chargeDoc, v.null()),
 	handler: async (ctx, args) => {
-		const charge = await ctx.db.get(args.chargeId);
+		const charge = await ctx.db.get('mandateCharges', args.chargeId);
 		return charge?.userId === args.userId ? charge : null;
 	}
 });
@@ -643,7 +643,7 @@ export const updateChargeStatus = internalMutation({
 			// Definitive provider failure (or local fail); allow a later
 			// same-reference retry to reclaim the row.
 			if (args.status === 'failed') chargePatch.providerRequestedAt = undefined;
-			await ctx.db.patch(args.chargeId, chargePatch);
+			await ctx.db.patch('mandateCharges', args.chargeId, chargePatch);
 		}
 		return null;
 	}
@@ -682,7 +682,7 @@ export const claimChargeReport = internalMutation({
 				return 'inFlight';
 			}
 		}
-		await ctx.db.patch(args.chargeId, {
+		await ctx.db.patch('mandateCharges', args.chargeId, {
 			reportingStartedAt: Date.now(),
 			reportOutcome: args.outcome,
 			updatedAt: Date.now()
@@ -709,7 +709,7 @@ export const releaseChargeReport = internalMutation({
 				updatedAt: Date.now()
 			};
 			if (args.clearOutcome) reportPatch.reportOutcome = undefined;
-			await ctx.db.patch(args.chargeId, reportPatch);
+			await ctx.db.patch('mandateCharges', args.chargeId, reportPatch);
 		}
 		return null;
 	}
@@ -726,7 +726,7 @@ export const finishChargeReport = internalMutation({
 		const charge = await ownedCharge(ctx, args.chargeId, args.userId);
 		if (!charge.reportedAt) {
 			const now = Date.now();
-			await ctx.db.patch(args.chargeId, {
+			await ctx.db.patch('mandateCharges', args.chargeId, {
 				status: args.status,
 				reportingStartedAt: undefined,
 				reportOutcome: undefined,

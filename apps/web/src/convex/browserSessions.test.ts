@@ -195,7 +195,7 @@ describe('browserSessions', () => {
 
 		// A later run in the same thread reuses the session; touching it moves
 		// lastUsedRunId without disturbing the session row.
-		await t.run(async (ctx) => await ctx.db.patch(first.runId, { status: 'completed' }));
+		await t.run(async (ctx) => await ctx.db.patch('runs', first.runId, { status: 'completed' }));
 		const secondRun = await first.asUser.mutation(api.agentRuntime.createRun, {
 			submissionId: `sub-${Math.random()}`,
 			threadId: first.threadId,

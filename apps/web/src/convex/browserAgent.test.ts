@@ -134,7 +134,7 @@ describe('browserAgent', () => {
 		);
 
 		// A later run in the same thread resumes the same Browserbase session.
-		await t.run(async (ctx) => await ctx.db.patch(run.runId, { status: 'completed' }));
+		await t.run(async (ctx) => await ctx.db.patch('runs', run.runId, { status: 'completed' }));
 		const secondRun = await startRun(t, asUser, threadId);
 		await t.action(api.browserAgent.act, {
 			instruction: 'continue on the same page',
@@ -197,7 +197,7 @@ describe('browserAgent', () => {
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
 		const run = await startRun(t, asUser, threadId);
 		await t.run(async (ctx) => {
-			const thread = await ctx.db.get(threadId);
+			const thread = await ctx.db.get('threadRecords', threadId);
 			await ctx.db.insert('browserSessions', {
 				threadId,
 				runId: run.runId,

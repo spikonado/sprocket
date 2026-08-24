@@ -41,7 +41,7 @@ export const latestRunForThread = query({
 			.order('desc')
 			.take(60);
 		const promptMessage = latestRun.promptMessageId
-			? await ctx.db.get(latestRun.promptMessageId)
+			? await ctx.db.get('threadMessages', latestRun.promptMessageId)
 			: null;
 
 		const latest: Infer<typeof vLatestRunForThread> = {

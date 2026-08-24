@@ -1,5 +1,6 @@
 import { DodoPayments } from '@dodopayments/convex';
 import type { ComponentApi } from '@dodopayments/convex/_generated/component';
+import { components, internal } from '@convex/_generated/api';
 import { v } from 'convex/values';
 import {
 	action,
@@ -8,9 +9,8 @@ import {
 	mutation,
 	query
 } from '@convex/_generated/server';
-import { components, internal } from '@convex/_generated/api';
 import { ensureCurrentUser, getUserId } from '@convex/lib/auth';
-import { vBillingCustomerDoc, vCheckoutResponse, vCustomerPortalResponse } from '@convex/lib/docs';
+import { vCheckoutResponse, vCustomerPortalResponse } from '@convex/lib/docs';
 import {
 	ensureSubscription,
 	getSubscriptionDocExclusive,
@@ -18,10 +18,11 @@ import {
 	tierProductIds
 } from '@convex/lib/tiers';
 import { vSubscriptionStatus, vSubscriptionTier } from '@convex/lib/validators';
+import schema from '@convex/schema';
 
 export const getBillingCustomer = internalQuery({
 	args: { userId: v.string() },
-	returns: v.union(vBillingCustomerDoc, v.null()),
+	returns: v.union(schema.doc('billingCustomers'), v.null()),
 	handler: async (ctx, { userId }) =>
 		ctx.db
 			.query('billingCustomers')
@@ -116,7 +117,10 @@ export const upsertSubscription = internalMutation({
 				.query('billingCustomers')
 				.withIndex('by_userId', (q) => q.eq('userId', args.userId))
 				.unique();
-			if (customer) await ctx.db.patch(customer._id, { dodoCustomerId: args.dodoCustomerId });
+			if (customer)
+				await ctx.db.patch('billingCustomers', customer._id, {
+					dodoCustomerId: args.dodoCustomerId
+				});
 			else
 				await ctx.db.insert('billingCustomers', {
 					userId: args.userId,
@@ -150,7 +154,7 @@ export const upsertSubscription = internalMutation({
 			status: args.status,
 			eventAt: args.eventAt
 		};
-		if (existing) await ctx.db.replace(existing._id, subscription);
+		if (existing) await ctx.db.replace('subscriptions', existing._id, subscription);
 		else await ctx.db.insert('subscriptions', subscription);
 		await syncBillingCustomer();
 		return null;

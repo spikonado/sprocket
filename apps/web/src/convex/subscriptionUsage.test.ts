@@ -116,7 +116,7 @@ describe('subscription and usage backend', () => {
 
 		await t.run(async (ctx) => {
 			if (!created) throw new Error('Expected subscription row');
-			await ctx.db.patch(created._id, { tier: 'admin', eventAt: 5_000 });
+			await ctx.db.patch('subscriptions', created._id, { tier: 'admin', eventAt: 5_000 });
 		});
 		await asUser.mutation(api.billing.ensureMySubscription, {});
 		expect(await readSubscription()).toMatchObject({
@@ -213,7 +213,7 @@ describe('subscription and usage backend', () => {
 				.withIndex('by_userId', (query) => query.eq('userId', userId))
 				.unique();
 			if (!existing) throw new Error('Expected subscription row');
-			await ctx.db.patch(existing._id, { tier: 'admin' });
+			await ctx.db.patch('subscriptions', existing._id, { tier: 'admin' });
 		});
 
 		await t.mutation(internal.lib.rateLimits.checkModelUsageLimits, {

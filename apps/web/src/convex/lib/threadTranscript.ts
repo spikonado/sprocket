@@ -40,7 +40,7 @@ async function hydrateMessageAttachments(
 	return (
 		await Promise.all(
 			(message.imageUploadIds ?? []).map(async (imageUploadId) => {
-				const upload = await ctx.db.get(imageUploadId);
+				const upload = await ctx.db.get('imageUploads', imageUploadId);
 				if (
 					!upload ||
 					upload.userId !== message.userId ||
@@ -89,7 +89,7 @@ export async function hydrateTranscriptMessages(
 			if (!messageId) {
 				continue;
 			}
-			const message = await ctx.db.get(messageId);
+			const message = await ctx.db.get('threadMessages', messageId);
 			if (!message) {
 				continue;
 			}

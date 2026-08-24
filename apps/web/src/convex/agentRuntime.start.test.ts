@@ -18,7 +18,7 @@ describe('agentRuntime.start', () => {
 		expect(claimed.claimed).toBe(true);
 		expect(claimed.claimExpiresAt).toBeTypeOf('number');
 
-		const run = await t.run(async (ctx) => ctx.db.get(runId));
+		const run = await t.run(async (ctx) => ctx.db.get('runs', runId));
 		expect(run).toMatchObject({
 			status: 'running',
 			claimId: 'claim-a',
@@ -32,7 +32,9 @@ describe('agentRuntime.start', () => {
 		});
 		expect(renewed.claimed).toBe(true);
 		expect(renewed.claimExpiresAt).toBeGreaterThanOrEqual(claimed.claimExpiresAt ?? 0);
-		expect(await t.run(async (ctx) => (await ctx.db.get(runId))?.completionAttemptSeq)).toBe(0);
+		expect(
+			await t.run(async (ctx) => (await ctx.db.get('runs', runId))?.completionAttemptSeq)
+		).toBe(0);
 	});
 
 	it('refuses a different claim while the lease is active', async () => {
@@ -63,7 +65,7 @@ describe('agentRuntime.start', () => {
 			executionSecret
 		});
 		await t.run(async (ctx) => {
-			await ctx.db.patch(runId, { claimExpiresAt: Date.now() - 1 });
+			await ctx.db.patch('runs', runId, { claimExpiresAt: Date.now() - 1 });
 		});
 
 		await expect(
@@ -92,7 +94,7 @@ describe('agentRuntime.start', () => {
 				executionSecret
 			})
 		).resolves.toBe(true);
-		expect(await t.run(async (ctx) => (await ctx.db.get(runId))?.status)).toBe('failed');
+		expect(await t.run(async (ctx) => (await ctx.db.get('runs', runId))?.status)).toBe('failed');
 	});
 
 	it('takes over an expired claim, hides in-flight jobs, and clears partial response', async () => {
@@ -104,11 +106,11 @@ describe('agentRuntime.start', () => {
 		await asUser.mutation(api.agentRuntime.start, { claimId: 'claim-a', runId, executionSecret });
 
 		const seeded = await t.run(async (ctx) => {
-			const run = await ctx.db.get(runId);
+			const run = await ctx.db.get('runs', runId);
 			if (!run?.completionStreamStateId) {
 				throw new Error('Expected completion stream state');
 			}
-			await ctx.db.patch(run.completionStreamStateId, {
+			await ctx.db.patch('completionStreamStates', run.completionStreamStateId, {
 				sequence: 3,
 				streamAttemptId: 'attempt-a'
 			});
@@ -155,7 +157,7 @@ describe('agentRuntime.start', () => {
 				},
 				sequence: 1
 			});
-			await ctx.db.patch(runId, {
+			await ctx.db.patch('runs', runId, {
 				responseMessageId,
 				activeJobId: pendingJobId,
 				completionAttemptSeq: 4,
@@ -178,11 +180,11 @@ describe('agentRuntime.start', () => {
 		expect(takeover.claimExpiresAt).toBeGreaterThan(Date.now());
 
 		const state = await t.run(async (ctx) => {
-			const run = await ctx.db.get(runId);
-			const response = await ctx.db.get(seeded.responseMessageId);
-			const stream = await ctx.db.get(seeded.streamStateId);
-			const pending = await ctx.db.get(seeded.pendingJobId);
-			const completed = await ctx.db.get(seeded.completedJobId);
+			const run = await ctx.db.get('runs', runId);
+			const response = await ctx.db.get('threadMessages', seeded.responseMessageId);
+			const stream = await ctx.db.get('completionStreamStates', seeded.streamStateId);
+			const pending = await ctx.db.get('executorJobs', seeded.pendingJobId);
+			const completed = await ctx.db.get('executorJobs', seeded.completedJobId);
 			return { run, response, stream, pending, completed };
 		});
 
@@ -226,7 +228,7 @@ describe('agentRuntime.start', () => {
 			executionSecret
 		});
 		await t.run(async (ctx) => {
-			await ctx.db.patch(runId, {
+			await ctx.db.patch('runs', runId, {
 				completionAttemptSeq: 2,
 				claimExpiresAt: Date.now() - 1
 			});
@@ -240,7 +242,7 @@ describe('agentRuntime.start', () => {
 		expect(reclaimed.claimed).toBe(true);
 		expect(reclaimed.claimExpiresAt).toBeGreaterThan(Date.now());
 
-		const run = await t.run(async (ctx) => ctx.db.get(runId));
+		const run = await t.run(async (ctx) => ctx.db.get('runs', runId));
 		// Same-claim re-start keeps run state; takeover cleanup is only for a
 		// different claim.
 		expect(run).toMatchObject({

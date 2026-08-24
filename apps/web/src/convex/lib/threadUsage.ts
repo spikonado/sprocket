@@ -63,7 +63,7 @@ export async function recordThreadUsage(
 		)
 	};
 	if (usageRow) {
-		await ctx.db.patch(usageRow._id, next);
+		await ctx.db.patch('threadUsage', usageRow._id, next);
 	} else {
 		await ctx.db.insert('threadUsage', {
 			threadId: thread._id,

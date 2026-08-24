@@ -21,7 +21,7 @@ async function patchOwnedThread(
 ) {
 	const userId = await getUserId(ctx);
 	await getOwnedThreadRecord(ctx.db, userId, threadId);
-	await ctx.db.patch(threadId, patch);
+	await ctx.db.patch('threadRecords', threadId, patch);
 }
 
 export const create = mutation({
@@ -61,7 +61,7 @@ export const create = mutation({
 			}
 
 			if (existingRecord.archivedAt !== undefined) {
-				await ctx.db.patch(existingRecord._id, { archivedAt: undefined });
+				await ctx.db.patch('threadRecords', existingRecord._id, { archivedAt: undefined });
 			}
 
 			const submissionRun = await ctx.db
@@ -187,7 +187,7 @@ export const archive = mutation({
 			}
 		}
 
-		await ctx.db.patch(args.threadId, { archivedAt: Date.now() });
+		await ctx.db.patch('threadRecords', args.threadId, { archivedAt: Date.now() });
 	}
 });
 
