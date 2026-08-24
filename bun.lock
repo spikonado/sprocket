@@ -59,7 +59,7 @@
         "@tailwindcss/vite": "^4.2.4",
         "@types/node": "^26.0.0",
         "@typescript/native": "npm:typescript@7.0.2",
-        "convex-test": "^0.0.55",
+        "convex-test": "^0.0.56",
         "eslint": "^10.0.0",
         "svelte": "^5.55.5",
         "svelte-check": "^4.7.4",
@@ -691,7 +691,7 @@
 
     "convex-svelte": ["convex-svelte@0.14.0", "", { "dependencies": { "esm-env": "^1.2.2", "runed": "^0.37.1" }, "peerDependencies": { "convex": "^1.30.0", "svelte": "^5.19.0" } }, "sha512-eCaId++XnczQvEGc0sQi30BHkSEQ5AZjdDWaAqSlva2h9zKezGz8enp6MdFN7MIIMIlYZF3dKdzQ/LQ0d59KhQ=="],
 
-    "convex-test": ["convex-test@0.0.55", "", { "peerDependencies": { "convex": "^1.43.0" } }, "sha512-ablJ6vR3WUpyTaYrrRQf8yxInGrhHyqBEQsCFzloda3G0MDEu2RMKNGUkvlBXYWPiiEP0UIKPS7gZuLbqGnvQw=="],
+    "convex-test": ["convex-test@0.0.56", "", { "peerDependencies": { "convex": "^1.43.0" } }, "sha512-dLYXlQjKFoGqvjAmPzyLgb2HsYI7iLo1iuNTU2DZmSrMRLWosYk94erjSU67GG5ovfP6+MjX8RJO+ebhmL6QYA=="],
 
     "cookie": ["cookie@0.6.0", "", {}, "sha512-U71cyTamuh1CRNCfpGY6to28lxvNwPG4Guz/EVjgf3Jmzv0vlDp1atT9eS5dDjMYHucpHbWns6Lwf3BKz6svdw=="],
 
