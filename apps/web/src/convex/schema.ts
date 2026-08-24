@@ -25,6 +25,12 @@ import {
 } from '@convex/lib/validators';
 
 export default defineSchema({
+	users: defineTable({
+		// WorkOS JWT subject; every owned table stores this value as `userId`.
+		subject: v.string(),
+		tokenIdentifier: v.string(),
+		createdAt: v.number()
+	}).index('by_subject', ['subject']),
 	billingCustomers: defineTable(billingCustomerFields).index('by_userId', ['userId']),
 	subscriptions: defineTable(subscriptionFields).index('by_userId', ['userId']),
 	uiPreferences: defineTable(uiPreferencesFields).index('by_userId', ['userId']),

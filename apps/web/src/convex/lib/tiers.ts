@@ -13,11 +13,11 @@ import {
 export const subscriptionTierIds = ['free', 'pro', 'admin'] as const;
 export type SubscriptionTier = (typeof subscriptionTierIds)[number];
 
-export const tierLabels: Record<SubscriptionTier, string> = {
+export const tierLabels = {
 	free: 'Free',
 	pro: 'Pro',
 	admin: 'Admin'
-};
+} as const satisfies Record<SubscriptionTier, string>;
 
 export type TierLimits = {
 	modelUsage: { weekly: number; monthly: number };
@@ -36,32 +36,36 @@ const proLimits: TierLimits = {
 
 const adminQuota = 1_000_000_000;
 
-export const tierLimits: Record<SubscriptionTier, TierLimits> = {
+export const tierLimits = {
 	free: freeLimits,
 	pro: proLimits,
 	admin: {
 		modelUsage: { weekly: adminQuota, monthly: adminQuota }
 	}
-};
+} as const satisfies Record<SubscriptionTier, TierLimits>;
 
-export const tierAllowedModels: Record<SubscriptionTier, readonly SupportedModelId[]> = {
+export const tierAllowedModels = {
 	free: ['stealth/ox-alpha', 'deepseek-v4-pro-0813', 'deepseek-v4-flash-0731'],
 	pro: modelIds,
 	admin: modelIds
-};
+} as const satisfies Record<SubscriptionTier, readonly SupportedModelId[]>;
 
-export const tierAllowedServiceTiers: Record<SubscriptionTier, readonly SupportedServiceTier[]> = {
+export const tierAllowedServiceTiers = {
 	free: ['standard'],
 	pro: serviceTierIds,
 	admin: serviceTierIds
-};
+} as const satisfies Record<SubscriptionTier, readonly SupportedServiceTier[]>;
 
 export const modelLockUpgradeMessage = 'Upgrade to a higher tier to unlock this model' as const;
 export const serviceTierLockUpgradeMessage =
 	'Upgrade to a higher tier to unlock this service tier' as const;
 
+function includesAllowed<T>(allowed: readonly T[], value: T): boolean {
+	return allowed.includes(value);
+}
+
 export function isModelAllowedForTier(tier: SubscriptionTier, modelId: SupportedModelId): boolean {
-	return tierAllowedModels[tier].includes(modelId);
+	return includesAllowed<SupportedModelId>(tierAllowedModels[tier], modelId);
 }
 
 export function assertModelAllowedForTier(tier: SubscriptionTier, modelId: SupportedModelId): void {
@@ -83,7 +87,7 @@ export function isServiceTierAllowedForTier(
 	tier: SubscriptionTier,
 	serviceTier: SupportedServiceTier
 ): boolean {
-	return tierAllowedServiceTiers[tier].includes(serviceTier);
+	return includesAllowed<SupportedServiceTier>(tierAllowedServiceTiers[tier], serviceTier);
 }
 
 export function assertServiceTierAllowedForTier(

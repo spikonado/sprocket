@@ -1,5 +1,40 @@
 import type { Id } from '$convex/_generated/dataModel';
+import { coercePersistedModelId } from '$convex/lib/models';
 import type { Project, ThreadSummary, ProjectThreadGroup } from '$lib/types/sprocket';
+
+export type ThreadSummaryRow = {
+	threadId: ThreadSummary['threadId'];
+	projectId: ThreadSummary['projectId'];
+	title: string;
+	selectedModel: string;
+	reasoningEffort: ThreadSummary['reasoningEffort'];
+	serviceTier: ThreadSummary['serviceTier'];
+	lastMessageAt: number;
+	threadStatus: ThreadSummary['threadStatus'];
+	latestRunStatus: ThreadSummary['latestRunStatus'];
+	latestRunId: ThreadSummary['latestRunId'];
+	latestRunStartedAt?: number;
+	latestRunClaimExpiresAt?: number;
+	hasActiveRun: boolean;
+};
+
+export function toThreadSummary(row: ThreadSummaryRow): ThreadSummary {
+	return {
+		threadId: row.threadId,
+		projectId: row.projectId,
+		title: row.title,
+		selectedModel: coercePersistedModelId(row.selectedModel),
+		reasoningEffort: row.reasoningEffort,
+		serviceTier: row.serviceTier,
+		lastMessageAt: row.lastMessageAt,
+		threadStatus: row.threadStatus,
+		latestRunStatus: row.latestRunStatus,
+		latestRunId: row.latestRunId,
+		latestRunStartedAt: row.latestRunStartedAt,
+		latestRunClaimExpiresAt: row.latestRunClaimExpiresAt,
+		hasActiveRun: row.hasActiveRun
+	};
+}
 
 export function findProjectByRepositoryKey<T extends Pick<Project, 'repositoryKey'>>(
 	projects: T[],
@@ -109,7 +144,7 @@ export function findThreadById(
 
 /**
  * Session-restore target: the non-archived thread the user most recently
- * prompted or got a response in. Deliberately ignores run state — a
+ * prompted or got a response in. Deliberately ignores run state. A
  * background run in another project should not hijack the session on load.
  */
 export function pickThreadToRestore(threads: ThreadSummary[]): ThreadSummary | null {
@@ -175,15 +210,15 @@ export function beginPendingAgentLaunch(
 	pendingLaunches: PendingAgentLaunches,
 	threadId: Id<'threadRecords'>,
 	launch: PendingAgentLaunch
-): PendingAgentLaunches {
-	return { ...pendingLaunches, [threadId]: launch };
+) {
+	return { ...pendingLaunches, [threadId]: launch } satisfies PendingAgentLaunches;
 }
 
 export function clearPendingAgentLaunch(
 	pendingLaunches: PendingAgentLaunches,
 	threadId: Id<'threadRecords'>,
 	launchId?: number
-): PendingAgentLaunches {
+) {
 	const pendingLaunch = pendingLaunches[threadId];
 	if (!pendingLaunch || (launchId !== undefined && pendingLaunch.launchId !== launchId)) {
 		return pendingLaunches;
@@ -191,7 +226,7 @@ export function clearPendingAgentLaunch(
 
 	const nextPendingLaunches = { ...pendingLaunches };
 	delete nextPendingLaunches[threadId];
-	return nextPendingLaunches;
+	return nextPendingLaunches satisfies PendingAgentLaunches;
 }
 
 function hasAgentLaunchProgressed(
@@ -241,6 +276,11 @@ export function resolvePendingAgentLaunchesFromThreads(
 	return nextPendingLaunches;
 }
 
+export type ExpiredAgentLaunchResolution = {
+	pendingLaunches: PendingAgentLaunches;
+	shouldRecover: boolean;
+};
+
 export function resolveExpiredAgentLaunch(
 	pendingLaunches: PendingAgentLaunches,
 	threadId: Id<'threadRecords'>,
@@ -248,7 +288,7 @@ export function resolveExpiredAgentLaunch(
 	now: number,
 	latestRunId: Id<'runs'> | null,
 	latestClaimExpiresAt?: number
-): { pendingLaunches: PendingAgentLaunches; shouldRecover: boolean } {
+): ExpiredAgentLaunchResolution {
 	const pendingLaunch = pendingLaunches[threadId];
 	if (!pendingLaunch || pendingLaunch.launchId !== launchId || pendingLaunch.expiresAt > now) {
 		return { pendingLaunches, shouldRecover: false };

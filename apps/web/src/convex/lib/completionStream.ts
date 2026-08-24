@@ -34,7 +34,7 @@ export const COMPLETION_STREAM_SUPERSEDED = 'SPROCKET_COMPLETION_STREAM_SUPERSED
 
 export type CompletionStreamBatchClassification = 'append' | 'duplicate' | 'superseded';
 
-export function isCompletionStreamSuperseded(error: unknown): boolean {
+export function isCompletionStreamSuperseded(error: Error | string): boolean {
 	return String(error).includes(COMPLETION_STREAM_SUPERSEDED);
 }
 

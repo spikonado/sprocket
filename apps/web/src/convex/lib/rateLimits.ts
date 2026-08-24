@@ -34,7 +34,10 @@ export { usageMeters, usagePeriods, type UsageMeterId, type UsagePeriod };
 const MONTH = 30 * DAY;
 export const rateLimiter = new RateLimiter(components.rateLimiter, {});
 
-const periodDurations: Record<UsagePeriod, number> = { weekly: WEEK, monthly: MONTH };
+const periodDurations = { weekly: WEEK, monthly: MONTH } as const satisfies Record<
+	UsagePeriod,
+	number
+>;
 
 function meterLimitName(meterId: UsageMeterId, period: UsagePeriod): string {
 	return `${meterId}${period === 'weekly' ? 'Weekly' : 'Monthly'}`;
@@ -120,7 +123,8 @@ export async function getMeterWindow(
 	meterId: UsageMeterId,
 	period: UsagePeriod,
 	userId: string,
-	limits: TierLimits
+	limits: TierLimits,
+	now: number = Date.now()
 ): Promise<{ used: number; limit: number; resetsAt: number | null }> {
 	const config = meterLimitConfig(meterId, period, limits);
 	const stored = await rateLimiter.getValue(ctx, meterLimitName(meterId, period), {
@@ -129,7 +133,7 @@ export async function getMeterWindow(
 	});
 	// A fixed window starts on first use; ts === 0 means it never has.
 	if (stored.ts === 0) return { used: 0, limit: config.rate, resetsAt: null };
-	const current = calculateRateLimit({ value: stored.value, ts: stored.ts }, config, Date.now());
+	const current = calculateRateLimit({ value: stored.value, ts: stored.ts }, config, now);
 	return {
 		used: Math.max(0, config.rate - current.value),
 		limit: config.rate,
@@ -139,11 +143,13 @@ export async function getMeterWindow(
 
 export const checkModelUsageLimits = internalMutation({
 	args: { userId: v.string(), modelId: vModelId },
+	returns: v.null(),
 	handler: async (ctx, { userId, modelId }) => {
-		if (!isModelUsageMetered(modelId)) return;
+		if (!isModelUsageMetered(modelId)) return null;
 		const tier = await ensureSubscription(ctx, userId);
-		if (tier === 'admin') return;
+		if (tier === 'admin') return null;
 		await checkMeterLimits(ctx, 'modelUsage', userId, tierLimits[tier]);
+		return null;
 	}
 });
 
@@ -159,12 +165,14 @@ export const chargeModelUsageLimits = internalMutation({
 			output: v.number()
 		})
 	},
+	returns: v.null(),
 	handler: async (ctx, args) => {
-		if (!isModelUsageMetered(args.modelId)) return;
+		if (!isModelUsageMetered(args.modelId)) return null;
 		const tier = await ensureSubscription(ctx, args.userId);
-		if (tier === 'admin') return;
+		if (tier === 'admin') return null;
 		const count = completionUsageUnits(args.modelId, args.serviceTier, args.tokens);
 		await chargeMeterLimits(ctx, 'modelUsage', args.userId, tierLimits[tier], count);
+		return null;
 	}
 });
 

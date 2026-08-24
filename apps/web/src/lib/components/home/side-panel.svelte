@@ -42,11 +42,11 @@
 
 	const selected = $derived(artifacts.find((artifact) => artifact.key === selectedKey) ?? null);
 
-	const TYPE_ICONS: Record<ArtifactType, typeof FileCode> = {
+	const TYPE_ICONS = {
 		markdown: FileText,
 		html: Globe,
 		react: FileCode
-	};
+	} as const satisfies Record<ArtifactType, typeof FileCode>;
 
 	const TABS: { id: SidePanelTab; label: string }[] = [
 		{ id: 'artifacts', label: 'Artifacts' },

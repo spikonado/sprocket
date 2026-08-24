@@ -117,7 +117,7 @@
 			return;
 		}
 
-		// Don't pass noopener in features — browsers then return null even on success.
+		// Don't pass noopener in features; browsers then return null even on success.
 		const opened = window.open(signInUrl, '_blank');
 		if (!opened) {
 			return;

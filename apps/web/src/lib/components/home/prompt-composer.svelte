@@ -223,7 +223,7 @@
 			? `${selectedCatalogModel.label} does not support image input`
 			: `Attach images (up to ${MAX_IMAGE_ATTACHMENTS})`
 	);
-	const supportsFieldSizing = typeof CSS !== 'undefined' && CSS.supports('field-sizing', 'content');
+	const supportsFieldSizing = Boolean(globalThis.CSS?.supports('field-sizing', 'content'));
 	const contextPercent = $derived(
 		contextUsage.contextWindowTokens > 0
 			? Math.min(
@@ -312,7 +312,10 @@
 	}
 
 	function handleAttachmentInputChange(event: Event) {
-		const input = event.currentTarget as HTMLInputElement;
+		const input = event.currentTarget;
+		if (!(input instanceof HTMLInputElement)) {
+			return;
+		}
 		const files = Array.from(input.files ?? []);
 		input.value = '';
 		if (files.length > 0) {

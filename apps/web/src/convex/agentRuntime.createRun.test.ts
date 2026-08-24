@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { api } from '@convex/_generated/api';
-import type { Id } from '@convex/_generated/dataModel';
 import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 
 describe('agentRuntime.createRun', () => {
@@ -59,7 +58,7 @@ describe('agentRuntime.createRun', () => {
 			submissionId: 'sub-1',
 			threadId,
 			prompt: 'Hello',
-			imageUploadIds: [] as Id<'imageUploads'>[],
+			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol' as const,
 			reasoningEffort: 'medium' as const,
 			serviceTier: 'standard' as const,
@@ -142,7 +141,7 @@ describe('agentRuntime.createRun', () => {
 			submissionId: 'sub-rebind',
 			threadId,
 			prompt: 'Recover this launch',
-			imageUploadIds: [] as Id<'imageUploads'>[],
+			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol' as const,
 			reasoningEffort: 'medium' as const,
 			serviceTier: 'standard' as const
@@ -175,7 +174,7 @@ describe('agentRuntime.createRun', () => {
 			submissionId: 'sub-capability-cleanup',
 			threadId,
 			prompt: 'Reconcile me',
-			imageUploadIds: [] as Id<'imageUploads'>[],
+			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol' as const,
 			reasoningEffort: 'medium' as const,
 			serviceTier: 'standard' as const
@@ -223,7 +222,7 @@ describe('agentRuntime.createRun', () => {
 			submissionId: 'sub-rebound-anonymous',
 			threadId,
 			prompt: 'Two launches, one submission',
-			imageUploadIds: [] as Id<'imageUploads'>[],
+			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol' as const,
 			reasoningEffort: 'medium' as const,
 			serviceTier: 'standard' as const
@@ -257,7 +256,7 @@ describe('agentRuntime.createRun', () => {
 			submissionId: 'sub-raced',
 			threadId,
 			prompt: 'Two launches, one submission',
-			imageUploadIds: [] as Id<'imageUploads'>[],
+			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol' as const,
 			reasoningEffort: 'medium' as const,
 			serviceTier: 'standard' as const
@@ -291,7 +290,7 @@ describe('agentRuntime.createRun', () => {
 			submissionId: 'sub-claimed',
 			threadId,
 			prompt: 'Already running',
-			imageUploadIds: [] as Id<'imageUploads'>[],
+			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol' as const,
 			reasoningEffort: 'medium' as const,
 			serviceTier: 'standard' as const

@@ -28,7 +28,12 @@ const DEFAULT_PRAVA_BACKEND_URL = 'https://sandbox.api.prava.space';
 const REPORT_CLAIM_STALE_MS = 60_000;
 const CHARGE_CLAIM_STALE_MS = 60_000;
 
-function pravaConfig(): { baseUrl: string; secretKey: string } {
+type PravaConfig = {
+	baseUrl: string;
+	secretKey: string;
+};
+
+function pravaConfig(): PravaConfig {
 	const secretKey = process.env.PRAVA_SECRET_KEY?.trim();
 	if (!secretKey) {
 		throw new Error('PRAVA_SECRET_KEY is not configured.');
@@ -44,27 +49,27 @@ function pravaConfig(): { baseUrl: string; secretKey: string } {
 
 async function pravaRequest<T>(path: string, init?: RequestInit): Promise<T> {
 	const { baseUrl, secretKey } = pravaConfig();
+	const headers = new Headers(init?.headers);
+	headers.set('Authorization', `Bearer ${secretKey}`);
+	if (init?.body) headers.set('Content-Type', 'application/json');
 	const response = await fetch(`${baseUrl}${path}`, {
 		...init,
-		headers: {
-			Authorization: `Bearer ${secretKey}`,
-			...(init?.body ? { 'Content-Type': 'application/json' } : {}),
-			...init?.headers
-		}
+		headers
 	});
 	if (!response.ok) {
 		const details = await response.text();
 		throw new Error(`Prava request failed (${response.status})${details ? `: ${details}` : '.'}`);
 	}
 	const body = await response.text();
+	// SAFETY: unchecked decode of the trusted Prava API response into its documented contract T.
 	return (body ? JSON.parse(body) : undefined) as T;
 }
 
 /** A first-time customer has no Prava customer record yet, so listing their
- * mandates 404s with CUSTOMER_NOT_FOUND — treat that as "no mandates yet"
+ * mandates 404s with CUSTOMER_NOT_FOUND; treat that as "no mandates yet"
  * rather than an error. */
-function isPravaCustomerNotFound(error: unknown): boolean {
-	return error instanceof Error && error.message.includes('CUSTOMER_NOT_FOUND');
+function isPravaCustomerNotFound(error: Error): boolean {
+	return error.message.includes('CUSTOMER_NOT_FOUND');
 }
 
 /** List a customer's mandates from Prava, treating a first-time customer's
@@ -76,7 +81,7 @@ async function listPravaMandates(userId: string, standingOnly: boolean): Promise
 		);
 		return list.mandates ?? [];
 	} catch (error) {
-		if (isPravaCustomerNotFound(error)) {
+		if (error instanceof Error && isPravaCustomerNotFound(error)) {
 			return [];
 		}
 		throw error;
@@ -85,8 +90,8 @@ async function listPravaMandates(userId: string, standingOnly: boolean): Promise
 
 /** Only these mandate states can be charged or should be surfaced to the
  * agent/user. Cancelled/expired/consumed approvals must not match a local
- * setup during resolution — a stale same-merchant+amount approval otherwise
- * poisons the unique-match check forever. */
+ * setup during resolution. A stale same-merchant+amount approval would
+ * otherwise poison the unique-match check forever. */
 const LIVE_MANDATE_STATUSES = new Set(['pending', 'active', 'paused']);
 
 async function activeActor(
@@ -167,6 +172,47 @@ const chargeDoc = v.object({
 	updatedAt: v.number()
 });
 
+type MandateSyncPatch = {
+	updatedAt: number;
+	pravaMandateId?: string;
+	status?: Infer<typeof vMandateStatus>;
+	remaining?: number;
+	validUntil?: string;
+	renewsAt?: string;
+};
+
+type ChargeStatusPatch = {
+	status: 'completed' | 'declined' | 'failed';
+	chargingStartedAt: undefined;
+	updatedAt: number;
+	providerRequestedAt?: undefined;
+};
+
+type ChargeReportReleasePatch = {
+	reportingStartedAt: undefined;
+	updatedAt: number;
+	reportOutcome?: undefined;
+};
+
+type MandateSetupRequest = {
+	intent: 'mandate_setup';
+	recurring_frequency: Infer<typeof vMandateFrequency>;
+	merchant_scope: Infer<typeof vMandateScope>;
+	max_charges?: number;
+	valid_until?: string;
+};
+
+type MandateChargeRequest = {
+	amount: string;
+	reference?: string;
+};
+
+type MandateReportRequest = {
+	txn_status: 'APPROVED' | 'DECLINED';
+	txn_type: 'PURCHASE';
+	amount_paid?: string;
+};
+
 type PravaMandate = {
 	id?: string;
 	status?: string;
@@ -209,7 +255,7 @@ function formatMoneyMinor(minor: number): string {
 }
 
 /** Fail fast on a charge the mandate obviously can't authorize. Prava is
- * still the authoritative limit enforcer at the card network — these checks
+ * still the authoritative limit enforcer at the card network. These checks
  * only stop clearly wrong requests from producing misleading local records. */
 function assertChargeable(
 	mandate: Doc<'mandates'>,
@@ -391,7 +437,7 @@ export const syncMandate = internalMutation({
 		if (!mandate || mandate.userId !== args.userId) {
 			throw new Error('Mandate not found.');
 		}
-		const patch: Record<string, unknown> = { updatedAt: Date.now() };
+		const patch: MandateSyncPatch = { updatedAt: Date.now() };
 		if (args.pravaMandateId !== undefined && !mandate.pravaMandateId) {
 			patch.pravaMandateId = args.pravaMandateId;
 		}
@@ -469,7 +515,7 @@ export const reserveCharge = internalMutation({
 				}
 				if (existing.providerRequestedAt !== undefined) {
 					// Ambiguous delivery: the provider POST may have committed.
-					// Never reclaim for another charge — that would double-bill.
+					// Never reclaim for another charge. That would double-bill.
 					throw new Error(
 						'A previous charge attempt for this reference may have already been submitted to Prava; refusing to charge again.'
 					);
@@ -560,7 +606,7 @@ export const releaseChargeReservation = internalMutation({
 		const charge = await ownedCharge(ctx, args.chargeId, args.userId);
 		if (!charge.pravaTransactionId) {
 			// Drop the live claim so callers aren't stuck in inFlight, but keep
-			// providerRequestedAt — an ambiguous POST must not be reclaimed.
+			// providerRequestedAt, since an ambiguous POST must not be reclaimed.
 			await ctx.db.patch(args.chargeId, {
 				chargingStartedAt: undefined,
 				updatedAt: Date.now()
@@ -589,14 +635,15 @@ export const updateChargeStatus = internalMutation({
 	handler: async (ctx, args) => {
 		const charge = await ownedCharge(ctx, args.chargeId, args.userId);
 		if (!charge.reportedAt) {
-			await ctx.db.patch(args.chargeId, {
+			const chargePatch: ChargeStatusPatch = {
 				status: args.status,
 				chargingStartedAt: undefined,
-				// Definitive provider failure (or local fail) — allow a later
-				// same-reference retry to reclaim the row.
-				...(args.status === 'failed' ? { providerRequestedAt: undefined } : {}),
 				updatedAt: Date.now()
-			});
+			};
+			// Definitive provider failure (or local fail); allow a later
+			// same-reference retry to reclaim the row.
+			if (args.status === 'failed') chargePatch.providerRequestedAt = undefined;
+			await ctx.db.patch(args.chargeId, chargePatch);
 		}
 		return null;
 	}
@@ -618,7 +665,7 @@ export const claimChargeReport = internalMutation({
 			return 'already';
 		}
 		// The first-claimed outcome is immutable. A conflicting report must
-		// never be sent — a crash between the provider POST and the local
+		// never be sent. A crash between the provider POST and the local
 		// finalize would otherwise let a retry overwrite the outcome and POST
 		// the opposite terminal state to the card network.
 		if (charge.reportOutcome && charge.reportOutcome !== args.outcome) {
@@ -628,7 +675,7 @@ export const claimChargeReport = internalMutation({
 		}
 		if (charge.reportingStartedAt) {
 			// A claim newer than the report window belongs to a live concurrent
-			// caller and has not completed — say so rather than claim success. An
+			// caller and has not completed, so say so rather than claim success. An
 			// older one is abandoned (its caller died), so reclaim it and re-send;
 			// the provider report is idempotent on the transaction id.
 			if (Date.now() - charge.reportingStartedAt <= REPORT_CLAIM_STALE_MS) {
@@ -657,11 +704,12 @@ export const releaseChargeReport = internalMutation({
 	handler: async (ctx, args) => {
 		const charge = await ownedCharge(ctx, args.chargeId, args.userId);
 		if (!charge.reportedAt) {
-			await ctx.db.patch(args.chargeId, {
+			const reportPatch: ChargeReportReleasePatch = {
 				reportingStartedAt: undefined,
-				...(args.clearOutcome ? { reportOutcome: undefined } : {}),
 				updatedAt: Date.now()
-			});
+			};
+			if (args.clearOutcome) reportPatch.reportOutcome = undefined;
+			await ctx.db.patch(args.chargeId, reportPatch);
 		}
 		return null;
 	}
@@ -723,7 +771,8 @@ async function createMandateSetup(
 
 	// Generic (any-scope) mandates are one-time only; Prava still needs a
 	// purchase_context entry, so name a placeholder merchant for it.
-	let merchantDetails: { name: string; url: string; country_code_iso2: string };
+	type MerchantDetails = { name: string; url: string; country_code_iso2: string };
+	let merchantDetails: MerchantDetails;
 	if (args.scope === 'listed') {
 		if (!args.merchantName || !args.merchantUrl || !args.countryCode) {
 			throw new Error('Listed-scope mandates require merchant name, URL, and country.');
@@ -762,13 +811,16 @@ async function createMandateSetup(
 					]
 				}
 			],
-			mandate_setup: {
-				intent: 'mandate_setup',
-				recurring_frequency: args.frequency,
-				merchant_scope: args.scope,
-				...(args.maxCharges !== undefined ? { max_charges: args.maxCharges } : {}),
-				...(args.validUntil !== undefined ? { valid_until: args.validUntil } : {})
-			}
+			mandate_setup: (() => {
+				const setup: MandateSetupRequest = {
+					intent: 'mandate_setup',
+					recurring_frequency: args.frequency,
+					merchant_scope: args.scope
+				};
+				if (args.maxCharges !== undefined) setup.max_charges = args.maxCharges;
+				if (args.validUntil !== undefined) setup.valid_until = args.validUntil;
+				return setup;
+			})()
 		})
 	});
 
@@ -812,7 +864,7 @@ export const mandateSetup = action({
 function isMatchingLivePravaMandate(mandate: Doc<'mandates'>, prava: PravaMandate): boolean {
 	if (!prava.id) return false;
 	if (!LIVE_MANDATE_STATUSES.has(prava.status ?? '')) return false;
-	// A mandate approved in another currency is a different authorization —
+	// A mandate approved in another currency is a different authorization;
 	// never resolve (and later charge) it for this setup.
 	if ((prava.currency ?? '').toUpperCase() !== mandate.currency.toUpperCase()) return false;
 	const approvedMinor = prava.approvedAmount ? parseMoneyMinor(prava.approvedAmount) : undefined;
@@ -856,7 +908,8 @@ function uniquelyAttributablePravaMandate(
 	const claimed = new Set(
 		allLocal
 			.filter((row) => row.pravaMandateId && row._id !== mandate._id)
-			.map((row) => row.pravaMandateId as string)
+			.map((row) => row.pravaMandateId)
+			.filter((id): id is string => id !== undefined)
 	);
 	const matches = matchingLivePravaMandates(mandate, list, claimed);
 	if (matches.length === 0) return { kind: 'none' };
@@ -889,7 +942,7 @@ async function resolvePravaMandate(
 	const list = await listPravaMandates(userId, false);
 	const local = await ctx.runQuery(internal.payments.listLocalMandates, { userId });
 	const match = uniquelyAttributablePravaMandate(mandate, list, local);
-	// Require a unique live match — charging an arbitrary same-merchant+amount
+	// Require a unique live match. Charging an arbitrary same-merchant+amount
 	// approval could settle against the wrong authorization. Prava mandates
 	// don't carry their setup session id, so there is no stronger link to
 	// prefer on.
@@ -911,7 +964,7 @@ async function resolvePravaMandate(
 
 /** Join Prava's live mandates to local rows. After new-tab approval the local
  * row still lacks pravaMandateId, so uniquely match unresolved locals against
- * the live list and persist the link — otherwise settings can't pause/cancel. */
+ * the live list and persist the link; otherwise settings can't pause/cancel. */
 async function linkLocalMandates(
 	ctx: ActionCtx,
 	userId: string,
@@ -923,7 +976,9 @@ async function linkLocalMandates(
 	const local = await ctx.runQuery(internal.payments.listLocalMandates, { userId });
 	const localById = new Map(local.map((m) => [m._id, m]));
 	const localByPravaId = new Map(
-		local.filter((m) => m.pravaMandateId).map((m) => [m.pravaMandateId as string, m._id])
+		local
+			.filter((m): m is typeof m & { pravaMandateId: string } => m.pravaMandateId !== undefined)
+			.map((m) => [m.pravaMandateId, m._id])
 	);
 	for (const mandate of local.filter(isUnresolvedLocal)) {
 		const match = uniquelyAttributablePravaMandate(mandate, list, local);
@@ -995,7 +1050,7 @@ export const mandateStatus = action({
 				await ctx.runMutation(internal.payments.syncMandate, sync);
 				synced = withMandateSync(mandate, sync);
 			} catch {
-				// Still awaiting the owner's passkey approval — keep the stored status.
+				// Still awaiting the owner's passkey approval, so keep the stored status.
 			}
 		}
 		return mandateStatusResult(synced);
@@ -1050,7 +1105,7 @@ export const mandateCharge = action({
 			reference
 		});
 		if (reservation.kind === 'existing') {
-			// Credentials are never persisted — only the non-sensitive handle.
+			// Credentials are never persisted, only the non-sensitive handle.
 			return {
 				chargeId: reservation.chargeId,
 				transactionId: reservation.transactionId
@@ -1088,10 +1143,15 @@ export const mandateCharge = action({
 		try {
 			result = await pravaRequest(`/v1/mandates/${encodeURIComponent(prava.id)}/charge`, {
 				method: 'POST',
-				body: JSON.stringify({
-					amount: args.amount,
-					...(reference !== undefined ? { reference } : {})
-				})
+				body: JSON.stringify(
+					(() => {
+						const chargeBody: MandateChargeRequest = {
+							amount: args.amount
+						};
+						if (reference !== undefined) chargeBody.reference = reference;
+						return chargeBody;
+					})()
+				)
 			});
 		} catch (error) {
 			await ctx.runMutation(internal.payments.releaseChargeReservation, {
@@ -1115,7 +1175,7 @@ export const mandateCharge = action({
 			userId: actor.userId,
 			pravaTransactionId: transactionId
 		});
-		// Return only validated credential fields — Prava may include extras
+		// Return only validated credential fields. Prava may include extras
 		// (e.g. dynamicDataType) that must not leak into the action result.
 		return {
 			chargeId: reservation.chargeId,
@@ -1160,7 +1220,7 @@ export const mandateReport = action({
 			return { reported: true, alreadyReported: true };
 		}
 		if (claim === 'inFlight') {
-			// Another caller is mid-report. Not yet delivered — don't claim success.
+			// Another caller is mid-report. Not yet delivered, so don't claim success.
 			return { reported: false, inFlight: true };
 		}
 
@@ -1192,11 +1252,16 @@ export const mandateReport = action({
 				`/v1/mandates/${encodeURIComponent(mandate.pravaMandateId)}/charges/${encodeURIComponent(charge.pravaTransactionId)}/report`,
 				{
 					method: 'POST',
-					body: JSON.stringify({
-						txn_status: outcome === 'approved' ? 'APPROVED' : 'DECLINED',
-						txn_type: 'PURCHASE',
-						...(args.amountPaid !== undefined ? { amount_paid: args.amountPaid } : {})
-					})
+					body: JSON.stringify(
+						(() => {
+							const reportBody: MandateReportRequest = {
+								txn_status: outcome === 'approved' ? 'APPROVED' : 'DECLINED',
+								txn_type: 'PURCHASE'
+							};
+							if (args.amountPaid !== undefined) reportBody.amount_paid = args.amountPaid;
+							return reportBody;
+						})()
+					)
 				}
 			);
 		} catch (error) {
@@ -1220,7 +1285,7 @@ export const mandateReport = action({
 });
 
 // ---------------------------------------------------------------------------
-// User-facing actions (settings screen — authenticated user, no agent run).
+// User-facing actions (settings screen; authenticated user, no agent run).
 // These resolve the same identity.subject as the executor tools, so mandate
 // ownership checks are identical on both paths.
 // ---------------------------------------------------------------------------

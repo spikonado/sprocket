@@ -4,7 +4,7 @@ import { DEFAULT_THEME, applyTheme, forceEntryTheme, isSprocketTheme, resolveThe
 function stubDocument(theme: string | undefined = undefined) {
 	const dataset: Record<string, string> = {};
 	if (theme) dataset.theme = theme;
-	const style: { colorScheme: string } = { colorScheme: '' };
+	const style = { colorScheme: '' };
 	vi.stubGlobal('document', {
 		documentElement: { dataset, style }
 	});

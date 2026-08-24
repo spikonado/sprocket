@@ -175,12 +175,16 @@ export const archive = mutation({
 		const userId = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 
-		const runs = await ctx.db
-			.query('runs')
-			.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', args.threadId))
-			.collect();
-		if (runs.some((run) => !isRunFinalStatus(run.status))) {
-			throw new Error('Cannot archive a thread while a run is active.');
+		for (const status of ['queued', 'running', 'awaiting_executor'] as const) {
+			const activeRun = await ctx.db
+				.query('runs')
+				.withIndex('by_threadId_status_startedAt', (query) =>
+					query.eq('threadId', args.threadId).eq('status', status)
+				)
+				.first();
+			if (activeRun) {
+				throw new Error('Cannot archive a thread while a run is active.');
+			}
 		}
 
 		await ctx.db.patch(args.threadId, { archivedAt: Date.now() });

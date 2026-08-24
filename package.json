@@ -7,10 +7,13 @@
 		"build:release": "node ./scripts/create-turbo-cache-key.js && bunx turbo run build:release",
 		"dev": "bun --env-file=apps/web/.env.local scripts/run-dev.mjs",
 		"dev:desktop": "bun --env-file=apps/web/.env.local scripts/run-dev.mjs --desktop",
-		"test": "turbo run test && node --test npm/sprocket/test/*.test.js"
+		"test": "turbo run test && node --test npm/sprocket/test/*.test.js",
+		"lint:oxlint": "oxlint"
 	},
 	"devDependencies": {
+		"@oxlint/plugins": "1.79.0",
 		"concurrently": "^10.0.0",
+		"oxlint": "1.79.0",
 		"prettier": "^3.8.3",
 		"prettier-plugin-svelte": "^4.0.0",
 		"prettier-plugin-tailwindcss": "^0.8.0",

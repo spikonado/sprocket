@@ -81,6 +81,8 @@
 		resolvePendingCreatedThreadId,
 		resolveProjectThreadSelection,
 		shouldForkProjectForRemoteChange,
+		toThreadSummary,
+		type PendingAgentLaunch,
 		type PendingAgentLaunches
 	} from '$lib/project/threads';
 	import { mergeThreadTranscriptMessages } from '$lib/project/transcript';
@@ -95,7 +97,6 @@
 		DesktopApi,
 		ThreadMessage,
 		ThreadSummary,
-		Project,
 		ProjectAttachment,
 		ProjectThreadGroup
 	} from '$lib/types/sprocket';
@@ -490,7 +491,7 @@
 		return null;
 	});
 	const projects = $derived.by<ProjectState[]>(() =>
-		((projectsQuery.data ?? []) as Project[]).map((project) => {
+		(projectsQuery.data ?? []).map((project) => {
 			const desktopAttachment = desktopProjectAttachmentsById[project._id];
 			return {
 				...project,
@@ -502,7 +503,7 @@
 			};
 		})
 	);
-	const threads = $derived((threadsQuery.data ?? []) as ThreadSummary[]);
+	const threads = $derived((threadsQuery.data ?? []).map(toThreadSummary));
 	const currentActiveThread = $derived(dataForThread(activeThreadQuery.data, currentThreadId));
 	const contextUsage = $derived.by(() => {
 		const model = modelCatalog
@@ -524,16 +525,16 @@
 		dataForThread(historyMessagesQuery.data, currentThreadId)
 	);
 	const currentLiveMessagesData = $derived(dataForThread(liveMessagesQuery.data, currentThreadId));
-	// Pure derived merge only — no $effect/$state hold. Convex delivers history+live in one
+	// Pure derived merge only, no $effect/$state hold. Convex delivers history+live in one
 	// client transition; a held-live effect previously infinite-looped and froze all UI updates
 	// (messages, run timer, working state) until hard reload.
-	const visibleMessages = $derived.by(() => {
+	const visibleMessages = $derived.by((): ThreadMessage[] => {
 		if (!currentHistoryMessagesData || !currentLiveMessagesData) {
-			return [] as ThreadMessage[];
+			return [];
 		}
 		return mergeThreadTranscriptMessages({
-			historyMessages: currentHistoryMessagesData.messages as ThreadMessage[],
-			liveMessages: currentLiveMessagesData.messages as ThreadMessage[]
+			historyMessages: currentHistoryMessagesData.messages,
+			liveMessages: currentLiveMessagesData.messages
 		});
 	});
 
@@ -582,7 +583,7 @@
 	const visibleActions = $derived((currentLatestRunData?.jobs ?? []).slice(-60));
 	const threadArtifacts = $derived(
 		(artifactsQuery.data ?? []).map((entry) => ({
-			key: entry.artifact._id as string,
+			key: entry.artifact._id,
 			title: entry.artifact.title,
 			artifactType: entry.artifact.type,
 			content: entry.currentContent
@@ -632,7 +633,7 @@
 		if (data === undefined) return;
 
 		const current: ArtifactRevision[] = data.map((entry) => ({
-			id: entry.artifact._id as string,
+			id: entry.artifact._id,
 			currentVersion: entry.artifact.currentVersion,
 			updatedAt: entry.artifact.updatedAt
 		}));
@@ -732,9 +733,6 @@
 			Object.values(desktopProjectAttachmentsById),
 			projects.map((project) => project._id)
 		)
-	);
-	const desiredAttachedProjectIdsKey = $derived.by(() =>
-		[...desiredAttachedProjectIds].sort().join('\0')
 	);
 	const recentProjectDirectories = $derived.by(() => {
 		const seen = new SvelteSet<string>();
@@ -1149,12 +1147,13 @@
 		prompt = '';
 		selectedQuestionOptionId = null;
 		try {
-			await answerAgentQuestion({
+			const answer = {
 				threadId,
 				questionId: question.questionId,
-				...(submittedOptionId ? { optionId: submittedOptionId } : {}),
-				...(answerText ? { text: answerText } : {})
-			});
+				optionId: submittedOptionId ?? undefined,
+				text: answerText || undefined
+			};
+			await answerAgentQuestion(answer);
 		} catch (error) {
 			if (
 				currentThreadId === threadId &&
@@ -1420,12 +1419,15 @@
 			clearSubmissionDelay();
 			const launchId = ++nextAgentLaunchId;
 			agentLaunchId = launchId;
-			pendingAgentLaunches = beginPendingAgentLaunch(pendingAgentLaunches, threadId, {
+			const launch: PendingAgentLaunch = {
 				expiresAt: Date.now() + agentLaunchTimeoutMs,
 				launchId,
-				...(runState?.claimExpiresAt ? { previousClaimExpiresAt: runState.claimExpiresAt } : {}),
 				previousRunId
-			});
+			};
+			if (runState?.claimExpiresAt) {
+				launch.previousClaimExpiresAt = runState.claimExpiresAt;
+			}
+			pendingAgentLaunches = beginPendingAgentLaunch(pendingAgentLaunches, threadId, launch);
 			window.setTimeout(() => {
 				const threadLatestRunId =
 					threads.find((thread) => thread.threadId === threadId)?.latestRunId ?? null;
@@ -1896,7 +1898,6 @@
 
 	$effect(() => {
 		const clientId = executorClientId;
-		const projectIdsKey = desiredAttachedProjectIdsKey;
 		if (
 			!clientId ||
 			!desktopApi ||
@@ -1908,7 +1909,7 @@
 		}
 		const request = {
 			clientId,
-			projectIds: projectIdsKey ? (projectIdsKey.split('\0') as Id<'projects'>[]) : []
+			projectIds: desiredAttachedProjectIds
 		};
 
 		// Hidden tabs stop beating; the server TTL outlasts background periods.

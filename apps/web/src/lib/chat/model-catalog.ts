@@ -12,7 +12,7 @@ export type CatalogModelId = CatalogModel['id'];
 
 /** Narrow a runtime catalog id for Convex args; server validators remain authoritative. */
 export function asSupportedModelId(modelId: CatalogModelId): SupportedModelId {
-	return modelId as SupportedModelId;
+	return modelId;
 }
 
 export type ModelSelectorOption = {
@@ -114,25 +114,33 @@ export function modelOptionsForTier(
 	return [...unlocked, ...locked];
 }
 
-const reasoningEffortLabels: Record<string, string> = {
-	none: 'None',
-	low: 'Low',
-	medium: 'Medium',
-	high: 'High',
-	xhigh: 'Extra High',
-	max: 'Max'
-};
-
-const serviceTierLabels: Record<string, string> = {
-	standard: 'Standard',
-	fast: 'Fast'
-};
-
 /** Prefer a known label; fall back to the raw id so newer catalog values still render. */
 export function reasoningEffortLabel(effort: string): string {
-	return reasoningEffortLabels[effort] ?? effort;
+	switch (effort) {
+		case 'none':
+			return 'None';
+		case 'low':
+			return 'Low';
+		case 'medium':
+			return 'Medium';
+		case 'high':
+			return 'High';
+		case 'xhigh':
+			return 'Extra High';
+		case 'max':
+			return 'Max';
+		default:
+			return effort;
+	}
 }
 
 export function serviceTierLabel(tier: string): string {
-	return serviceTierLabels[tier] ?? tier;
+	switch (tier) {
+		case 'standard':
+			return 'Standard';
+		case 'fast':
+			return 'Fast';
+		default:
+			return tier;
+	}
 }

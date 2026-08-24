@@ -140,7 +140,7 @@
 
 	$effect(() => {
 		const viewport = scrollViewport;
-		if (!viewport || typeof ResizeObserver === 'undefined') {
+		if (!viewport || !globalThis.ResizeObserver) {
 			return;
 		}
 

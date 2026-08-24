@@ -3,6 +3,13 @@ import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 
+type FinalizeRunTestArgs = {
+	runId: Id<'runs'>;
+	text: string;
+	status: 'completed' | 'failed' | 'cancelled';
+	lastError?: string;
+};
+
 async function completeRun(
 	t: ReturnType<typeof initConvexTest>,
 	asUser: ReturnType<ReturnType<typeof initConvexTest>['withIdentity']>,
@@ -23,12 +30,13 @@ async function completeRun(
 		runId: args.runId,
 		executionSecret: args.executionSecret
 	});
-	await asUser.mutation(api.agentRuntime.finalizeRun, {
+	const finalizeArgs: FinalizeRunTestArgs = {
 		runId: args.runId,
 		text: args.responseText ?? `Response for ${args.runId}`,
-		status: args.status,
-		...(args.status === 'failed' ? { lastError: 'failed' } : {})
-	});
+		status: args.status
+	};
+	if (args.status === 'failed') finalizeArgs.lastError = 'failed';
+	await asUser.mutation(api.agentRuntime.finalizeRun, finalizeArgs);
 	if (args.startedAt !== undefined) {
 		await t.run(async (ctx) => {
 			await ctx.db.patch(args.runId, { startedAt: args.startedAt });

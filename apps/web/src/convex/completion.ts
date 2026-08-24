@@ -5,7 +5,7 @@ import { ConvexError, v } from 'convex/values';
 import { action, type ActionCtx } from '@convex/_generated/server';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
-import type { JsonValue } from '@convex/lib/json';
+import { isJsonObject, isJsonString, isJsonValue, type JsonValue } from '@convex/lib/json';
 import { resolveLanguageModel, resolveProviderOptions } from '@convex/lib/modelRegistry';
 import {
 	RUN_NO_LONGER_ACTIVE,
@@ -66,6 +66,67 @@ const COMPLETION_STREAM_FLUSH_INTERVAL_MS = 500;
 // Allow a longer recovery window for short provider rate-limit bursts.
 const MODEL_PROVIDER_MAX_RETRIES = 5;
 
+type StreamTextFn = typeof streamText;
+type GenerateTextFn = typeof generateText;
+type CompletionModelFnSlot = typeof globalThis & {
+	__sprocketStreamText?: StreamTextFn;
+	__sprocketGenerateText?: GenerateTextFn;
+};
+type CompletionAttemptRegistration = {
+	runId: Id<'runs'>;
+	claimId: string;
+	attemptSeq: number;
+	executionSecret: string;
+	supersededStreamIds?: string[];
+};
+type CompletionToolCallResult = {
+	id: string;
+	name: string;
+	arguments: JsonValue;
+	provider_metadata?: JsonValue;
+};
+
+// SAFETY: only test suites assign __sprocket* on globalThis; production never writes this slot.
+const completionModelFns = globalThis as CompletionModelFnSlot;
+
+function streamTextImpl(...args: Parameters<StreamTextFn>): ReturnType<StreamTextFn> {
+	return (completionModelFns.__sprocketStreamText ?? streamText)(...args);
+}
+
+function generateTextImpl(...args: Parameters<GenerateTextFn>): ReturnType<GenerateTextFn> {
+	return (completionModelFns.__sprocketGenerateText ?? generateText)(...args);
+}
+
+export function bindCompletionModelFns(bindings: {
+	streamText?: StreamTextFn;
+	generateText?: GenerateTextFn;
+}): () => void {
+	const previousStreamText = completionModelFns.__sprocketStreamText;
+	const previousGenerateText = completionModelFns.__sprocketGenerateText;
+	if ('streamText' in bindings) {
+		completionModelFns.__sprocketStreamText = bindings.streamText;
+	}
+	if ('generateText' in bindings) {
+		completionModelFns.__sprocketGenerateText = bindings.generateText;
+	}
+	return () => {
+		completionModelFns.__sprocketStreamText = previousStreamText;
+		completionModelFns.__sprocketGenerateText = previousGenerateText;
+	};
+}
+
+function toJsonValue<T>(value: T): JsonValue | undefined {
+	if (value === undefined) return undefined;
+	try {
+		const serialized = JSON.stringify(value);
+		if (serialized === undefined) return undefined;
+		const parsed = JSON.parse(serialized);
+		return isJsonValue(parsed) ? parsed : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 export const complete = action({
 	args: {
 		modelId: vModelId,
@@ -95,15 +156,16 @@ export const complete = action({
 	handler: async (ctx, args) => {
 		// Register before any model work so a reconnect-replayed orphan dies
 		// on the monotonic (claimId, attemptSeq) fence instead of racing the live attempt.
-		await ctx.runMutation(api.agentRuntime.registerCompletionAttempt, {
+		const registration: CompletionAttemptRegistration = {
 			runId: args.streamRunId,
 			claimId: args.claimId,
 			attemptSeq: args.attemptSeq,
-			executionSecret: args.executionSecret,
-			...(args.supersededStreamIds !== undefined
-				? { supersededStreamIds: args.supersededStreamIds }
-				: {})
-		});
+			executionSecret: args.executionSecret
+		};
+		if (args.supersededStreamIds !== undefined) {
+			registration.supersededStreamIds = args.supersededStreamIds;
+		}
+		await ctx.runMutation(api.agentRuntime.registerCompletionAttempt, registration);
 		const modelId = args.modelId;
 		const serviceTier = args.serviceTier ?? defaultServiceTier;
 		if (args.reasoningEffort !== undefined || args.serviceTier !== undefined) {
@@ -159,7 +221,7 @@ export const complete = action({
 		try {
 			result = await collectStreamingCompletion(
 				ctx,
-				streamText({ ...request, abortSignal: abortController.signal }),
+				streamTextImpl({ ...request, abortSignal: abortController.signal }),
 				{
 					runId: args.streamRunId,
 					claimId: args.claimId,
@@ -172,7 +234,10 @@ export const complete = action({
 			);
 		} catch (error) {
 			abortController.abort(error);
-			throw toModelCompletionConvexError(error, modelId);
+			throw toModelCompletionConvexError(
+				error instanceof Error ? error : new Error(String(error)),
+				modelId
+			);
 		}
 		await chargeModelUsage(ctx, {
 			userId: completionContext.userId,
@@ -185,14 +250,16 @@ export const complete = action({
 			text: result.text,
 			usage: result.usage,
 			message_id: result.response?.id,
-			tool_calls: (result.toolCalls ?? []).map((toolCall: (typeof result.toolCalls)[number]) => ({
-				id: toolCall.toolCallId,
-				name: toolCall.toolName,
-				arguments: toolCall.input as JsonValue,
-				...(toolCall.providerMetadata
-					? { provider_metadata: toolCall.providerMetadata as JsonValue }
-					: {})
-			})),
+			tool_calls: (result.toolCalls ?? []).map((toolCall: (typeof result.toolCalls)[number]) => {
+				const mapped: CompletionToolCallResult = {
+					id: toolCall.toolCallId,
+					name: toolCall.toolName,
+					arguments: toJsonValue(toolCall.input) ?? {}
+				};
+				const providerMetadata = toJsonValue(toolCall.providerMetadata);
+				if (providerMetadata !== undefined) mapped.provider_metadata = providerMetadata;
+				return mapped;
+			}),
 			stream_events: result.streamEvents
 		};
 	}
@@ -256,7 +323,7 @@ export const summarize = action({
 		try {
 			result = await waitForCompletionWithAcceptance(
 				ctx,
-				generateText({
+				generateTextImpl({
 					...sharedArgs,
 					messages,
 					maxOutputTokens: COMPACTION_MAX_OUTPUT_TOKENS,
@@ -266,7 +333,10 @@ export const summarize = action({
 				abortController
 			);
 		} catch (error) {
-			throw toModelCompletionConvexError(error, modelId);
+			throw toModelCompletionConvexError(
+				error instanceof Error ? error : new Error(String(error)),
+				modelId
+			);
 		}
 		const summary = result.text.trim();
 		if (!summary) throw new Error('The model returned an empty context summary.');
@@ -335,7 +405,9 @@ async function collectStreamingCompletion(
 				nextBatchSequence += 1;
 				return;
 			} catch (error) {
-				if (isCompletionStreamSuperseded(error)) throw error;
+				if (isCompletionStreamSuperseded(error instanceof Error ? error : String(error))) {
+					throw error;
+				}
 				lastError = error;
 				if (flushAttempt === 0) await delay(100);
 			}
@@ -358,9 +430,9 @@ async function collectStreamingCompletion(
 			type: 'text',
 			id: `${streamId}:text:${id}`,
 			text,
-			turnId: streamId,
-			...(providerMetadata !== undefined ? { providerMetadata } : {})
+			turnId: streamId
 		};
+		if (providerMetadata !== undefined) event.providerMetadata = providerMetadata;
 		queuePersisted(event);
 		upsertCompletionTextEvent(streamEvents, event);
 	};
@@ -370,14 +442,15 @@ async function collectStreamingCompletion(
 		state.providerMetadata = providerMetadata ?? state.providerMetadata;
 		state.finalized = true;
 		const reasoningId = providerReasoningId(state.providerMetadata);
-		upsertCompletionReasoningEvent(streamEvents, {
+		const finalized: Extract<CompletionStreamEvent, { type: 'reasoning' }> = {
 			type: 'reasoning',
 			id: state.partId,
 			text: '',
-			turnId: streamId,
-			...(reasoningId ? { providerReasoningId: reasoningId } : {}),
-			...(state.providerMetadata ? { providerMetadata: state.providerMetadata } : {})
-		});
+			turnId: streamId
+		};
+		if (reasoningId) finalized.providerReasoningId = reasoningId;
+		if (state.providerMetadata) finalized.providerMetadata = state.providerMetadata;
+		upsertCompletionReasoningEvent(streamEvents, finalized);
 	};
 
 	const iterator = result.stream[Symbol.asyncIterator]();
@@ -446,34 +519,30 @@ async function collectStreamingCompletion(
 			const part = next.value.value;
 			nextPart = iterator.next();
 			lastStreamPartAt = Date.now();
+			const partMetadata =
+				'providerMetadata' in part ? toJsonValue(part.providerMetadata) : undefined;
 			switch (part.type) {
 				case 'text-start':
-					updateText(part.id, '', part.providerMetadata as JsonValue | undefined);
+					updateText(part.id, '', partMetadata);
 					break;
 				case 'text-delta':
-					updateText(part.id, part.text, part.providerMetadata as JsonValue | undefined);
+					updateText(part.id, part.text, partMetadata);
 					break;
 				case 'reasoning-start': {
-					const providerMetadata = part.providerMetadata as JsonValue | undefined;
 					reasoning.set(part.id, {
 						partId: `${streamId}:reasoning:${part.id}`,
-						providerMetadata,
+						providerMetadata: partMetadata,
 						finalized: false
 					});
-					upsertCompletionReasoningEvent(streamEvents, {
+					const started: Extract<CompletionStreamEvent, { type: 'reasoning' }> = {
 						type: 'reasoning',
 						id: `${streamId}:reasoning:${part.id}`,
 						text: '',
-						turnId: streamId,
-						...(providerMetadata ? { providerMetadata } : {})
-					});
-					queuePersisted({
-						type: 'reasoning',
-						id: `${streamId}:reasoning:${part.id}`,
-						text: '',
-						turnId: streamId,
-						...(providerMetadata ? { providerMetadata } : {})
-					});
+						turnId: streamId
+					};
+					if (partMetadata) started.providerMetadata = partMetadata;
+					upsertCompletionReasoningEvent(streamEvents, started);
+					queuePersisted(started);
 					break;
 				}
 				case 'reasoning-delta':
@@ -503,11 +572,10 @@ async function collectStreamingCompletion(
 					});
 					break;
 				case 'reasoning-end': {
-					const providerMetadata = part.providerMetadata as JsonValue | undefined;
 					if (!reasoning.has(part.id)) {
 						reasoning.set(part.id, {
 							partId: `${streamId}:reasoning:${part.id}`,
-							providerMetadata,
+							providerMetadata: partMetadata,
 							finalized: false
 						});
 						upsertCompletionReasoningEvent(streamEvents, {
@@ -517,58 +585,49 @@ async function collectStreamingCompletion(
 							turnId: streamId
 						});
 					}
-					queuePersisted({
+					const ended: Extract<CompletionStreamEvent, { type: 'reasoning' }> = {
 						type: 'reasoning',
 						id: `${streamId}:reasoning:${part.id}`,
 						text: '',
-						turnId: streamId,
-						...(providerMetadata ? { providerMetadata } : {})
-					});
-					finalizeReasoning(part.id, providerMetadata);
+						turnId: streamId
+					};
+					if (partMetadata) ended.providerMetadata = partMetadata;
+					queuePersisted(ended);
+					finalizeReasoning(part.id, partMetadata);
 					await flush();
 					break;
 				}
-				case 'tool-input-start':
-					queuePersisted({
+				case 'tool-input-start': {
+					const startedCall: Extract<CompletionStreamEvent, { type: 'toolCall' }> = {
 						type: 'toolCall',
 						partId: toolPartId(streamId, part.id),
 						callId: part.id,
 						name: part.toolName,
 						input: {},
-						turnId: streamId,
-						...(part.providerMetadata
-							? { providerMetadata: part.providerMetadata as JsonValue }
-							: {})
-					});
+						turnId: streamId
+					};
+					if (partMetadata) startedCall.providerMetadata = partMetadata;
+					queuePersisted(startedCall);
 					await flush();
 					break;
-				case 'tool-call':
-					queuePersisted({
+				}
+				case 'tool-call': {
+					const toolCall: Extract<CompletionStreamEvent, { type: 'toolCall' }> = {
 						type: 'toolCall',
 						partId: toolPartId(streamId, part.toolCallId),
 						callId: part.toolCallId,
 						name: part.toolName,
-						input: part.input as JsonValue,
-						turnId: streamId,
-						...(part.providerMetadata
-							? { providerMetadata: part.providerMetadata as JsonValue }
-							: {})
-					});
-					appendCompletionStreamEvent(streamEvents, {
-						type: 'toolCall',
-						partId: toolPartId(streamId, part.toolCallId),
-						callId: part.toolCallId,
-						name: part.toolName,
-						input: part.input as JsonValue,
-						turnId: streamId,
-						...(part.providerMetadata
-							? { providerMetadata: part.providerMetadata as JsonValue }
-							: {})
-					});
+						input: toJsonValue(part.input) ?? {},
+						turnId: streamId
+					};
+					if (partMetadata) toolCall.providerMetadata = partMetadata;
+					queuePersisted(toolCall);
+					appendCompletionStreamEvent(streamEvents, toolCall);
 					await flush();
 					break;
+				}
 				case 'text-end':
-					updateText(part.id, '', part.providerMetadata as JsonValue | undefined);
+					updateText(part.id, '', partMetadata);
 					await flush();
 					break;
 				case 'tool-input-end':
@@ -611,7 +670,7 @@ async function collectStreamingCompletion(
 		} catch {
 			// Preserve the terminal stream error if iterator cleanup also fails.
 		}
-		if (isCompletionStreamSuperseded(error)) throw error;
+		if (isCompletionStreamSuperseded(error instanceof Error ? error : String(error))) throw error;
 		try {
 			await flush();
 		} catch {
@@ -685,10 +744,8 @@ function toolPartId(streamId: string, toolCallId: string): string {
 }
 
 function providerReasoningId(metadata: JsonValue | undefined): string | undefined {
-	if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return undefined;
-	const openai = metadata.openai;
-	if (!openai || typeof openai !== 'object' || Array.isArray(openai)) return undefined;
-	return typeof openai.itemId === 'string' ? openai.itemId : undefined;
+	if (!isJsonObject(metadata) || !isJsonObject(metadata.openai)) return undefined;
+	return isJsonString(metadata.openai.itemId) ? metadata.openai.itemId : undefined;
 }
 
 function delay(milliseconds: number): Promise<void> {
@@ -727,12 +784,9 @@ function buildSharedCompletionRequest(
 	promptCacheKey: string
 ): SharedCompletionRequest {
 	const serviceTier = args.serviceTier ?? defaultServiceTier;
-	return {
+	const request: SharedCompletionRequest = {
 		model: resolveLanguageModel(args.modelId, serviceTier),
 		maxRetries: MODEL_PROVIDER_MAX_RETRIES,
-		...(args.instructions !== undefined ? { instructions: args.instructions } : {}),
-		...(args.tools?.length ? { tools } : {}),
-		...(toolChoice !== undefined ? { toolChoice } : {}),
 		providerOptions: resolveProviderOptions(
 			args.modelId,
 			args.reasoningEffort,
@@ -740,6 +794,10 @@ function buildSharedCompletionRequest(
 			promptCacheKey
 		)
 	};
+	if (args.instructions !== undefined) request.instructions = args.instructions;
+	if (args.tools?.length) request.tools = tools;
+	if (toolChoice !== undefined) request.toolChoice = toolChoice;
+	return request;
 }
 
 function buildCompletionRequest(
@@ -768,6 +826,7 @@ function buildCompletionRequest(
 
 function parseJson<T>(json: string, fieldName: string): T {
 	try {
+		// SAFETY: arguments arrive as JSON strings written by our own client; T is the documented contract and is not re-validated here.
 		return JSON.parse(json) as T;
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
@@ -775,28 +834,27 @@ function parseJson<T>(json: string, fieldName: string): T {
 	}
 }
 
+type SerializedImagePart = {
+	type: string;
+	image?: string;
+};
+
 type SerializedModelMessage = Omit<ModelMessage, 'content'> & {
-	content:
-		| ModelMessage['content']
-		| Array<{
-				type: string;
-				image?: unknown;
-				[key: string]: unknown;
-		  }>;
+	content: ModelMessage['content'] | SerializedImagePart[];
 };
 
 function reviveImageUrls(messages: SerializedModelMessage[]): ModelMessage[] {
 	return messages.map((message) => {
 		if (message.role !== 'user' || !Array.isArray(message.content)) {
+			// SAFETY: non-user or non-array content is already a ModelMessage shape from parseJson.
 			return message as ModelMessage;
 		}
-		return {
-			...message,
-			content: message.content.map((part) =>
-				part.type === 'image' && typeof part.image === 'string'
-					? { ...part, image: new URL(part.image) }
-					: part
-			)
-		} as ModelMessage;
+		const content = message.content.map((part) =>
+			part.type === 'image' && isJsonString(part.image)
+				? { ...part, image: new URL(part.image) }
+				: part
+		);
+		// SAFETY: replacing image strings with URL objects keeps the user-message ModelMessage contract.
+		return { ...message, content } as ModelMessage;
 	});
 }

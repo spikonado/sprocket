@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { Id } from '$convex/_generated/dataModel';
 import {
 	createLatestTaskQueue,
 	getDesiredAttachedProjectIds,
@@ -9,9 +10,28 @@ import {
 } from '$lib/home/desktop';
 import type { DesktopApi, RunState, ProjectAttachment } from '$lib/types/sprocket';
 
+function imageUploadId(value: string): Id<'imageUploads'> {
+	// SAFETY: fixture strings are only compared as opaque Convex document ids.
+	return value as Id<'imageUploads'>;
+}
+
+function threadRecordId(value: string): Id<'threadRecords'> {
+	// SAFETY: fixture strings are only compared as opaque Convex document ids.
+	return value as Id<'threadRecords'>;
+}
+
+function projectId(value: string): Id<'projects'> {
+	// SAFETY: fixture strings are only compared as opaque Convex document ids.
+	return value as Id<'projects'>;
+}
+
+function unusedDesktopCall(): Promise<never> {
+	return Promise.reject(new Error('unused desktop API method'));
+}
+
 const recoveredSubmission = {
 	prompt: 'Inspect the robot',
-	imageUploadIds: ['image-1' as never],
+	imageUploadIds: [imageUploadId('image-1')],
 	reasoningEffort: 'medium' as const,
 	serviceTier: 'standard' as const,
 	selectedModel: 'gpt-5.6-sol' as const,
@@ -20,13 +40,13 @@ const recoveredSubmission = {
 
 function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 	return {
-		browseFilesystem: vi.fn(),
-		listWorkspaceSkills: vi.fn(),
-		resolveWorkspacePath: vi.fn(),
-		listProjectAttachments: vi.fn(),
-		attachProject: vi.fn(),
+		browseFilesystem: unusedDesktopCall,
+		listWorkspaceSkills: unusedDesktopCall,
+		resolveWorkspacePath: unusedDesktopCall,
+		listProjectAttachments: unusedDesktopCall,
+		attachProject: unusedDesktopCall,
 		runAgent
-	} as unknown as DesktopApi;
+	};
 }
 
 function launchArgs(
@@ -37,14 +57,14 @@ function launchArgs(
 		authToken: 'token-1',
 		onError: vi.fn(),
 		onStarted: vi.fn(),
-		threadId: 'thread-1' as never,
+		threadId: threadRecordId('thread-1'),
 		prompt: 'Inspect src/lib.rs',
-		imageUploadIds: ['image-1' as never],
+		imageUploadIds: [imageUploadId('image-1')],
 		selectedModel: 'gpt-5.6-sol',
 		reasoningEffort: 'medium',
 		serviceTier: 'standard',
 		submissionId: 'submission-1',
-		projectId: 'workspace-1' as never,
+		projectId: projectId('workspace-1'),
 		...overrides
 	};
 }
@@ -67,7 +87,7 @@ function resolveRecoveredSubmission(
 
 function deferred<T = void>() {
 	let resolve!: (value: T) => void;
-	let reject!: (reason?: unknown) => void;
+	let reject!: (reason?: Error) => void;
 	const promise = new Promise<T>((settle, fail) => {
 		resolve = settle;
 		reject = fail;
@@ -122,10 +142,12 @@ describe('resolveSubmissionId', () => {
 
 	it('reuses a submission only when its image attachments are unchanged', () => {
 		expect(resolveRecoveredSubmission({ imageUploadIds: [] })).toBe('new-id');
-		expect(resolveRecoveredSubmission({ imageUploadIds: ['image-2' as never] })).toBe('new-id');
+		expect(resolveRecoveredSubmission({ imageUploadIds: [imageUploadId('image-2')] })).toBe(
+			'new-id'
+		);
 		expect(
 			resolveRecoveredSubmission({
-				imageUploadIds: ['image-1' as never, 'image-2' as never]
+				imageUploadIds: [imageUploadId('image-1'), imageUploadId('image-2')]
 			})
 		).toBe('new-id');
 	});
@@ -182,10 +204,13 @@ describe('isRunBlockingAgentLaunch', () => {
 		const run = (
 			status: RunState['status'],
 			claimExpiresAt?: number
-		): Pick<RunState, 'status' | 'claimExpiresAt'> => ({
-			status,
-			...(claimExpiresAt === undefined ? {} : { claimExpiresAt })
-		});
+		): Pick<RunState, 'status' | 'claimExpiresAt'> => {
+			const next: Pick<RunState, 'status' | 'claimExpiresAt'> = { status };
+			if (claimExpiresAt !== undefined) {
+				next.claimExpiresAt = claimExpiresAt;
+			}
+			return next;
+		};
 
 		expect(isRunBlockingAgentLaunch(run('queued'), 100)).toBe(true);
 		expect(isRunBlockingAgentLaunch(run('running', 101), 100)).toBe(true);
@@ -274,11 +299,11 @@ describe('createLatestTaskQueue', () => {
 describe('getDesiredAttachedProjectIds', () => {
 	it('includes only locally available attachments belonging to the current viewer', () => {
 		const location = (
-			projectId: string,
+			id: string,
 			availability: ProjectAttachment['availability'] = 'available'
 		): ProjectAttachment => ({
-			projectId: projectId as never,
-			workspacePath: `/workspaces/${projectId}`,
+			projectId: projectId(id),
+			workspacePath: `/workspaces/${id}`,
 			availability,
 			lastValidatedAt: 1,
 			lastUsedAt: 1
@@ -287,7 +312,7 @@ describe('getDesiredAttachedProjectIds', () => {
 		expect(
 			getDesiredAttachedProjectIds(
 				[location('local'), location('old-viewer'), location('confirmed', 'unavailable')],
-				['local' as never, 'confirmed' as never]
+				[projectId('local'), projectId('confirmed')]
 			)
 		).toEqual(['local']);
 	});

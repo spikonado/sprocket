@@ -138,7 +138,10 @@ describe('Amazon Bedrock fallback routing', () => {
 			modelId: 'glm-5.3'
 		});
 
-		const shouldRetry = (openaiFallback as FallbackModel).settings.shouldRetryThisError!;
+		if (!(openaiFallback instanceof FallbackModel)) {
+			throw new Error('expected FallbackModel');
+		}
+		const shouldRetry = openaiFallback.settings.shouldRetryThisError!;
 		expect(shouldRetry(Object.assign(new Error('auth'), { statusCode: 401 }))).toBe(false);
 		expect(
 			shouldRetry(Object.assign(new Error('auth'), { cause: { response: { status: 403 } } }))

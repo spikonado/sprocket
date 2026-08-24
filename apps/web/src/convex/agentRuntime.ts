@@ -49,6 +49,7 @@ import {
 } from '@convex/lib/completionStream';
 import {
 	isRunFinalStatus,
+	runFinalStatus,
 	vExecutorJobKind,
 	vExecutorJobPayload,
 	vModelId,
@@ -57,6 +58,29 @@ import {
 	vRunFinalStatus,
 	vRunStatus
 } from '@convex/lib/validators';
+
+type RunClaimPatch = {
+	claimId: string;
+	claimExpiresAt: number;
+	status: Doc<'runs'>['status'];
+	lastError: undefined;
+	completionAttemptSeq?: number;
+	activeJobId?: undefined;
+};
+
+type EnqueuedExecutorJob = {
+	projectId: Id<'projects'>;
+	threadId: Id<'threadRecords'>;
+	runId: Id<'runs'>;
+	kind: Infer<typeof vExecutorJobKind>;
+	payload: Infer<typeof vExecutorJobPayload>;
+	hidden: boolean;
+	status: 'claimed';
+	enqueuedAt: number;
+	claimedAt: number;
+	sequence: number;
+	callId?: string;
+};
 
 type FinalizeRunArgs = {
 	text: string;
@@ -193,7 +217,7 @@ export const createRun = mutation({
 		runId: v.id('runs'),
 		promptMessageId: v.id('threadMessages')
 	}),
-	// Also terminalizes a previous claimed run whose lease lapsed — it was
+	// Also terminalizes a previous claimed run whose lease lapsed; it was
 	// abandoned by its executor and would block every later submission.
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
@@ -378,14 +402,15 @@ export const start = mutation({
 
 		const nextClaimExpiresAt = claimExpiresAt(now);
 
-		await ctx.db.patch(args.runId, {
+		const claimPatch: RunClaimPatch = {
 			claimId: args.claimId,
 			claimExpiresAt: nextClaimExpiresAt,
 			status: isSameClaimRenewal ? run.status : 'running',
-			lastError: undefined,
-			...(isSameClaimRenewal ? {} : { completionAttemptSeq: 0 }),
-			...(isTakeover ? { activeJobId: undefined } : {})
-		});
+			lastError: undefined
+		};
+		if (!isSameClaimRenewal) claimPatch.completionAttemptSeq = 0;
+		if (isTakeover) claimPatch.activeJobId = undefined;
+		await ctx.db.patch(args.runId, claimPatch);
 
 		return { claimed: true, claimExpiresAt: nextClaimExpiresAt };
 	}
@@ -426,24 +451,40 @@ export const getContext = query({
 		const threadRecord = await getOwnedThreadRecord(ctx.db, userId, run.threadId);
 		const project = await getOwnedProject(ctx.db, userId, run.projectId);
 		const messages = await buildThreadTranscript(ctx, run.threadId);
-		const jobs = await ctx.db
-			.query('executorJobs')
-			.withIndex('by_threadId_sequence', (query) => query.eq('threadId', run.threadId))
-			.collect();
 		let historyRunIds: Set<Id<'runs'>> | undefined;
 		if (threadRecord.contextSummaryThroughRunId) {
-			const runs = await ctx.db
-				.query('runs')
-				.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', run.threadId))
-				.collect();
-			const ordered = runs.sort(compareRunStartedAt);
-			const cutoffIndex = ordered.findIndex(
-				(candidate) => candidate._id === threadRecord.contextSummaryThroughRunId
-			);
-			if (cutoffIndex >= 0) {
-				historyRunIds = new Set(ordered.slice(cutoffIndex + 1).map((candidate) => candidate._id));
+			const cutoff = await ctx.db.get(threadRecord.contextSummaryThroughRunId);
+			if (cutoff && cutoff.threadId === run.threadId) {
+				const laterRuns = await ctx.db
+					.query('runs')
+					.withIndex('by_threadId_startedAt', (query) =>
+						query.eq('threadId', run.threadId).gte('startedAt', cutoff.startedAt)
+					)
+					.collect();
+				const ordered = laterRuns.sort(compareRunStartedAt);
+				const cutoffIndex = ordered.findIndex((candidate) => candidate._id === cutoff._id);
+				if (cutoffIndex >= 0) {
+					historyRunIds = new Set(ordered.slice(cutoffIndex + 1).map((candidate) => candidate._id));
+				}
 			}
 		}
+		const jobs = historyRunIds
+			? (
+					await Promise.all(
+						[...historyRunIds]
+							.filter((historyRunId) => historyRunId !== run._id)
+							.map((historyRunId) =>
+								ctx.db
+									.query('executorJobs')
+									.withIndex('by_runId_sequence', (query) => query.eq('runId', historyRunId))
+									.collect()
+							)
+					)
+				).flat()
+			: await ctx.db
+					.query('executorJobs')
+					.withIndex('by_threadId_sequence', (query) => query.eq('threadId', run.threadId))
+					.collect();
 		const includeInHistory = (candidateRunId: Id<'runs'>) =>
 			candidateRunId !== run._id && (!historyRunIds || historyRunIds.has(candidateRunId));
 		const summaryHistory = threadRecord.contextSummary
@@ -521,16 +562,17 @@ export const completionActor = query({
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		const userId = run.userId;
 		const streamState = await getCompletionStreamState(ctx, run);
-		return {
+		const actor: Infer<typeof vCompletionActor> = {
 			userId,
 			threadId: run.threadId,
 			status: run.status,
-			...(run.claimId ? { claimId: run.claimId } : {}),
-			...(run.claimExpiresAt ? { claimExpiresAt: run.claimExpiresAt } : {}),
 			completionAttemptSeq: run.completionAttemptSeq,
-			streamSequence: streamState.sequence,
-			...(streamState.streamAttemptId ? { streamAttemptId: streamState.streamAttemptId } : {})
+			streamSequence: streamState.sequence
 		};
+		if (run.claimId) actor.claimId = run.claimId;
+		if (run.claimExpiresAt) actor.claimExpiresAt = run.claimExpiresAt;
+		if (streamState.streamAttemptId) actor.streamAttemptId = streamState.streamAttemptId;
+		return actor;
 	}
 });
 
@@ -555,15 +597,24 @@ export const saveContextCompaction = mutation({
 		let durableSummary:
 			{ contextSummary: string; contextSummaryThroughRunId: Id<'runs'> } | undefined;
 		if (args.persistForFutureRuns) {
-			const runs = await ctx.db
-				.query('runs')
-				.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', run.threadId))
-				.collect();
-			const previousRun = runs
-				.filter(
-					(candidate) =>
-						isRunFinalStatus(candidate.status) && compareRunStartedAt(candidate, run) < 0
+			const previousRun = (
+				await Promise.all(
+					runFinalStatus.map((status) =>
+						ctx.db
+							.query('runs')
+							.withIndex('by_threadId_status_startedAt', (query) =>
+								query
+									.eq('threadId', run.threadId)
+									.eq('status', status)
+									.lte('startedAt', run.startedAt)
+							)
+							.order('desc')
+							.take(4)
+					)
 				)
+			)
+				.flat()
+				.filter((candidate) => compareRunStartedAt(candidate, run) < 0)
 				.sort((left, right) => compareRunStartedAt(right, left))[0];
 			// Require a real cutoff run so getContext never serves a summary
 			// without filtering the covered history.
@@ -725,24 +776,30 @@ export const mergeAssistantStreamEvents = mutation({
 				if (index === undefined) {
 					const nextPart: AssistantPart =
 						event.type === 'reasoning'
-							? {
-									type: 'reasoning',
-									id: event.id,
-									text: event.text,
-									...(event.turnId ? { turnId: event.turnId } : {}),
-									...(event.providerMetadata !== undefined
-										? { providerMetadata: event.providerMetadata }
-										: {})
-								}
-							: {
-									type: 'text',
-									id: event.id,
-									text: event.text,
-									...(event.turnId ? { turnId: event.turnId } : {}),
-									...(event.providerMetadata !== undefined
-										? { providerMetadata: event.providerMetadata }
-										: {})
-								};
+							? (() => {
+									const part: Extract<AssistantPart, { type: 'reasoning' }> = {
+										type: 'reasoning',
+										id: event.id,
+										text: event.text
+									};
+									if (event.turnId) part.turnId = event.turnId;
+									if (event.providerMetadata !== undefined) {
+										part.providerMetadata = event.providerMetadata;
+									}
+									return part;
+								})()
+							: (() => {
+									const part: Extract<AssistantPart, { type: 'text' }> = {
+										type: 'text',
+										id: event.id,
+										text: event.text
+									};
+									if (event.turnId) part.turnId = event.turnId;
+									if (event.providerMetadata !== undefined) {
+										part.providerMetadata = event.providerMetadata;
+									}
+									return part;
+								})();
 					textIndexById.set(key, parts.push(nextPart) - 1);
 					continue;
 				}
@@ -758,17 +815,17 @@ export const mergeAssistantStreamEvents = mutation({
 			}
 
 			const index = toolIndexByCallId.get(event.partId);
-			const toolPart: AssistantPart = {
+			const toolPart: Extract<AssistantPart, { type: 'tool-call' }> = {
 				type: 'tool-call',
 				partId: event.partId,
 				callId: event.callId,
 				name: event.name,
-				input: event.input,
-				...(event.turnId ? { turnId: event.turnId } : {}),
-				...(event.providerMetadata !== undefined
-					? { providerMetadata: event.providerMetadata }
-					: {})
+				input: event.input
 			};
+			if (event.turnId) toolPart.turnId = event.turnId;
+			if (event.providerMetadata !== undefined) {
+				toolPart.providerMetadata = event.providerMetadata;
+			}
 			if (index === undefined) {
 				toolIndexByCallId.set(event.partId, parts.push(toolPart) - 1);
 			} else {
@@ -954,19 +1011,20 @@ export const beginToolJob = mutation({
 			nextExecutorSequence: nextSequence + 1
 		});
 
-		const jobId = await ctx.db.insert('executorJobs', {
+		const job: EnqueuedExecutorJob = {
 			projectId: run.projectId,
 			threadId: run.threadId,
 			runId: args.runId,
 			kind: args.kind,
-			...(args.callId ? { callId: args.callId } : {}),
 			payload: args.payload,
 			hidden: args.hidden ?? false,
 			status: 'claimed',
 			enqueuedAt: Date.now(),
 			claimedAt: Date.now(),
 			sequence: nextSequence
-		});
+		};
+		if (args.callId) job.callId = args.callId;
+		const jobId = await ctx.db.insert('executorJobs', job);
 
 		await ctx.db.patch(args.runId, {
 			status: 'awaiting_executor',

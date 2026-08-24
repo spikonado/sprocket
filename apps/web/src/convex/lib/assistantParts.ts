@@ -1,5 +1,5 @@
 import type { Infer } from 'convex/values';
-import { isJsonObject, type JsonValue } from '@convex/lib/json';
+import { isJsonObject, isJsonString, type JsonValue } from '@convex/lib/json';
 import type {
 	AssistantMessagePart,
 	AssistantReasoningPart,
@@ -26,7 +26,7 @@ export type { AssistantToolResultErrorOutput, AssistantToolResultErrorStatus };
 export function parseAssistantToolResultError(
 	output: JsonValue | undefined
 ): AssistantToolResultErrorOutput | undefined {
-	if (!isJsonObject(output) || typeof output.error !== 'string') {
+	if (!isJsonObject(output) || !isJsonString(output.error)) {
 		return undefined;
 	}
 	if (output.status !== 'cancelled' && output.status !== 'failed') {
@@ -77,15 +77,18 @@ export function toPersistableExecutorToolJobs(
 	return jobs
 		.filter((job) => !job.hidden)
 		.sort((left, right) => left.sequence - right.sequence)
-		.map((job) => ({
-			id: job._id,
-			kind: job.kind,
-			...(job.callId ? { callId: job.callId } : {}),
-			payload: job.payload,
-			status: job.status,
-			result: job.result,
-			error: job.error
-		}));
+		.map((job) => {
+			const persistable: PersistableExecutorToolJob = {
+				id: job._id,
+				kind: job.kind,
+				payload: job.payload,
+				status: job.status,
+				result: job.result,
+				error: job.error
+			};
+			if (job.callId) persistable.callId = job.callId;
+			return persistable;
+		});
 }
 
 function cloneAssistantToolPayload<T>(value: T): T {
@@ -178,7 +181,7 @@ function assistantToolPayloadsEqual(left: JsonValue, right: JsonValue): boolean 
 			left.every((value, index) => assistantToolPayloadsEqual(value, right[index]))
 		);
 	}
-	if (left === null || right === null || typeof left !== 'object' || typeof right !== 'object') {
+	if (!isJsonObject(left) || !isJsonObject(right)) {
 		return false;
 	}
 	const leftKeys = Object.keys(left);
@@ -234,9 +237,9 @@ export function ensureAssistantToolPartsFromJobs(
 					type: 'tool-call',
 					callId,
 					name: job.kind,
-					input: cloneAssistantToolPayload(job.payload),
-					...(anchor.turnId ? { turnId: anchor.turnId } : {})
+					input: cloneAssistantToolPayload(job.payload)
 				};
+				if (anchor.turnId) replacement.turnId = anchor.turnId;
 				nextParts[anchorIndex] = replacement;
 				streamedCall = replacement;
 			}

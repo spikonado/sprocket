@@ -105,7 +105,8 @@ export const discard = mutation({
 
 export const cleanupOrphans = internalMutation({
 	args: {},
-	handler: async (ctx): Promise<number> => {
+	returns: v.number(),
+	handler: async (ctx) => {
 		const uploads = await ctx.db
 			.query('imageUploads')
 			.withIndex('by_attached', (query) =>

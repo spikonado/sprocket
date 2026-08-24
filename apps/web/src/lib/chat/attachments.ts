@@ -21,8 +21,10 @@ export type ComposerAttachment = {
 	error?: string;
 };
 
+const SUPPORTED_IMAGE_MEDIA_TYPE_SET = new Set<string>(SUPPORTED_IMAGE_MEDIA_TYPES);
+
 export function isSupportedImageMediaType(mediaType: string) {
-	return (SUPPORTED_IMAGE_MEDIA_TYPES as readonly string[]).includes(mediaType);
+	return SUPPORTED_IMAGE_MEDIA_TYPE_SET.has(mediaType);
 }
 
 /** Returns an error message when the file cannot be attached, or null when it can. */

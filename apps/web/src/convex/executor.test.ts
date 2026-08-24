@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { api } from '@convex/_generated/api';
-import type { Id } from '@convex/_generated/dataModel';
 import { initConvexTest, seedOwnedThread, type ConvexTestInstance } from './test.setup';
 
 async function seedRunWithJob(
@@ -56,7 +55,7 @@ async function seedRunWithJob(
 			status: options.runStatus ?? 'awaiting_executor',
 			claimId,
 			claimExpiresAt: options.claimExpiresAt ?? Date.now() + 60_000,
-			activeJobId: options.activeJobMatches === false ? otherJobId : (jobId as Id<'executorJobs'>)
+			activeJobId: options.activeJobMatches === false ? otherJobId : jobId
 		});
 		return jobId;
 	});

@@ -30,14 +30,14 @@ describe('model configuration', () => {
 	});
 
 	it('keeps retired models out of the offered catalog', () => {
-		const offered = modelIds as readonly string[];
+		const offered = [...modelIds];
 		expect(offered).not.toContain('gpt-5.6-luna');
 		expect(offered).not.toContain('gpt-5.6-terra');
 		expect(offered).not.toContain('grok-4.5');
 		expect(offered).not.toContain('deepseek-v4-pro');
 		expect(offered).not.toContain('deepseek-v4-flash');
 		expect(modelDefinitions.map((model) => model.id)).toEqual([...modelIds]);
-		expect(persistedModelIds as readonly string[]).toEqual(
+		expect([...persistedModelIds]).toEqual(
 			expect.arrayContaining([
 				'gpt-5.6-terra',
 				'gpt-5.6-luna',

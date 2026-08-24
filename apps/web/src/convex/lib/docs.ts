@@ -242,11 +242,29 @@ export const vImageUploadDoc = v.object({
 	...imageUploadFields
 });
 
+export const vBillingCustomerDoc = v.object({
+	_id: v.id('billingCustomers'),
+	_creationTime: v.number(),
+	...billingCustomerFields
+});
+
+export const vArtifactDoc = v.object({
+	_id: v.id('artifacts'),
+	_creationTime: v.number(),
+	...artifactFields
+});
+
+export const vArtifactVersionDoc = v.object({
+	_id: v.id('artifactVersions'),
+	_creationTime: v.number(),
+	...artifactVersionFields
+});
+
 export const vProjectListItem = v.object({
 	_id: v.id('projects'),
 	_creationTime: v.number(),
 	...projectFields,
-	// Absent for `listMine({ includeExecutorStatus: false })` callers.
+	// Absent when the caller skips live status or omits `now`.
 	executorStatus: v.optional(vExecutorStatus)
 });
 

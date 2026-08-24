@@ -3,7 +3,7 @@ import type { Doc, Id } from '@convex/_generated/dataModel';
 // Heartbeats write `projectConnections` rows, which no hot list subscription
 // reads, so cadence is no longer expensive there. The TTL exceeds two
 // throttle intervals so a skipped beat never flaps status; staleness is safe
-// because nothing consumes executor status yet — revisit before surfacing a
+// because nothing consumes executor status yet; revisit before surfacing a
 // connection badge.
 export const EXECUTOR_HEARTBEAT_TTL_MS = 300_000;
 export const EXECUTOR_HEARTBEAT_WRITE_THROTTLE_MS = 90_000;
@@ -22,7 +22,7 @@ export function legacyConnectionFromProject(
 
 export function getEffectiveExecutorStatus(
 	connection: Pick<ProjectConnectionDoc, 'lastHeartbeatAt'> | null | undefined,
-	now: number = Date.now()
+	now: number
 ) {
 	return connection && now - connection.lastHeartbeatAt <= EXECUTOR_HEARTBEAT_TTL_MS
 		? ('connected' as const)
@@ -43,7 +43,7 @@ export function getDetachedConnections(
 export function shouldRefreshProjectHeartbeat(
 	connection: Pick<ProjectConnectionDoc, 'clientId' | 'lastHeartbeatAt'> | null | undefined,
 	clientId: string,
-	now: number = Date.now()
+	now: number
 ) {
 	if (!connection) {
 		return true;

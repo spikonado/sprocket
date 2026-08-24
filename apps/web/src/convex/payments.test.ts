@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { api } from '@convex/_generated/api';
+import type { JsonObject, JsonValue } from '@convex/lib/json';
 import {
 	createQueuedRun,
 	initConvexTest,
@@ -32,7 +33,7 @@ async function startRun(t: ConvexTestInstance, subject: string) {
 	};
 }
 
-function jsonResponse(value: unknown, status = 200) {
+function jsonResponse(value: JsonValue, status = 200) {
 	return new Response(JSON.stringify(value), {
 		status,
 		headers: { 'Content-Type': 'application/json' }
@@ -58,8 +59,21 @@ function setupArgs(run: Awaited<ReturnType<typeof startRun>>) {
 	};
 }
 
-function liveListedMandate(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-	return {
+type PravaMandateFixture = {
+	id?: string;
+	status?: string;
+	merchantName?: string | null;
+	merchantUrl?: string;
+	countryCode?: string;
+	approvedAmount?: string;
+	remaining?: string | null;
+	currency?: string;
+	validUntil?: string | null;
+	renewsAt?: string | null;
+};
+
+function liveListedMandate(overrides: PravaMandateFixture = {}): JsonObject {
+	const mandate: JsonObject = {
 		id: 'mdt_1',
 		status: 'active',
 		merchantName: 'Example Shop',
@@ -69,15 +83,22 @@ function liveListedMandate(overrides: Record<string, unknown> = {}): Record<stri
 		remaining: '120.00',
 		currency: 'USD',
 		validUntil: '2027-08-01T00:00:00Z',
-		renewsAt: '2026-09-01T00:00:00Z',
-		...overrides
+		renewsAt: '2026-09-01T00:00:00Z'
 	};
+	for (const [key, value] of Object.entries(overrides)) {
+		if (value === undefined) {
+			delete mandate[key];
+			continue;
+		}
+		mandate[key] = value;
+	}
+	return mandate;
 }
 
 async function createApprovedMandate(
 	t: ConvexTestInstance,
 	run: Awaited<ReturnType<typeof startRun>>,
-	mandates: unknown[] = [liveListedMandate()]
+	mandates: JsonValue[] = [liveListedMandate()]
 ) {
 	const fetchMock = vi
 		.fn()

@@ -1,6 +1,7 @@
 import { createDodoWebhookHandler, type Subscription } from '@dodopayments/convex';
 import { httpRouter, type GenericActionCtx, type GenericDataModel } from 'convex/server';
 import type { Infer } from 'convex/values';
+import { z } from 'zod';
 import { internal } from '@convex/_generated/api';
 import { tierForProductId } from '@convex/lib/tiers';
 import { vSubscriptionStatus } from '@convex/lib/validators';
@@ -24,7 +25,8 @@ async function persistSubscription(
 	status: Infer<typeof vSubscriptionStatus>,
 	timestamp: Date | string | undefined
 ): Promise<void> {
-	const userId = typeof data.metadata?.userId === 'string' ? data.metadata.userId : undefined;
+	const userIdResult = z.string().safeParse(data.metadata?.userId);
+	const userId = userIdResult.success ? userIdResult.data : undefined;
 	if (!userId) {
 		console.error(
 			'Skipping Dodo subscription webhook without Sprocket userId.',

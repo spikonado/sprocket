@@ -15,6 +15,7 @@ import {
 	resolvePendingCreatedThreadId,
 	resolveProjectThreadSelection,
 	shouldForkProjectForRemoteChange,
+	toThreadSummary,
 	type PendingAgentLaunch,
 	type PendingAgentLaunches
 } from '$lib/project/threads';
@@ -23,16 +24,31 @@ import type { ThreadSummary, Project } from '$lib/types/sprocket';
 
 type RunId = NonNullable<ThreadSummary['latestRunId']>;
 
-const threadA = 'thread-record-a' as ThreadSummary['threadId'];
-const threadB = 'thread-record-b' as ThreadSummary['threadId'];
-const runA1 = 'run-a-1' as RunId;
-const runA2 = 'run-a-2' as RunId;
-const runB1 = 'run-b-1' as RunId;
-const runB2 = 'run-b-2' as RunId;
+function threadId(value: string): ThreadSummary['threadId'] {
+	// SAFETY: fixture strings are only compared as opaque Convex document ids.
+	return value as ThreadSummary['threadId'];
+}
+
+function projectId(value: string): Project['_id'] {
+	// SAFETY: fixture strings are only compared as opaque Convex document ids.
+	return value as Project['_id'];
+}
+
+function runId(value: string): RunId {
+	// SAFETY: fixture strings are only compared as opaque Convex document ids.
+	return value as RunId;
+}
+
+const threadA = threadId('thread-record-a');
+const threadB = threadId('thread-record-b');
+const runA1 = runId('run-a-1');
+const runA2 = runId('run-a-2');
+const runB1 = runId('run-b-1');
+const runB2 = runId('run-b-2');
 
 function makeProject(overrides: Partial<Project> = {}): Project {
 	return {
-		_id: (overrides._id ?? 'ws-1') as Project['_id'],
+		_id: overrides._id ?? projectId('ws-1'),
 		userId: 'user-1',
 		repositoryKey: overrides.repositoryKey ?? overrides.displayName ?? 'Project',
 		displayName: 'Project',
@@ -42,8 +58,8 @@ function makeProject(overrides: Partial<Project> = {}): Project {
 
 function makeThreadSummary(overrides: Partial<ThreadSummary> = {}): ThreadSummary {
 	return {
-		threadId: (overrides.threadId ?? 'thread-record-1') as ThreadSummary['threadId'],
-		projectId: (overrides.projectId ?? 'ws-1') as ThreadSummary['projectId'],
+		threadId: overrides.threadId ?? threadId('thread-record-1'),
+		projectId: overrides.projectId ?? projectId('ws-1'),
 		title: 'Thread',
 		selectedModel: overrides.selectedModel ?? defaultModelId,
 		reasoningEffort: overrides.reasoningEffort ?? defaultReasoningEffort,
@@ -79,29 +95,29 @@ describe('project thread helpers', () => {
 		const groups = getProjectThreadGroups(
 			[
 				makeProject({
-					_id: 'ws-current' as Project['_id'],
+					_id: projectId('ws-current'),
 					repositoryKey: 'github.com/spikonado/sprocket',
 					displayName: 'sprocket'
 				}),
 				makeProject({
-					_id: 'ws-other' as Project['_id'],
+					_id: projectId('ws-other'),
 					repositoryKey: 'local-sprocket',
 					displayName: 'sprocket'
 				})
 			],
 			[
 				makeThreadSummary({
-					projectId: 'ws-current' as ThreadSummary['projectId'],
+					projectId: projectId('ws-current'),
 					lastMessageAt: 10
 				}),
 				makeThreadSummary({
-					threadId: 'thread-record-2' as ThreadSummary['threadId'],
-					projectId: 'ws-stale' as ThreadSummary['projectId'],
+					threadId: threadId('thread-record-2'),
+					projectId: projectId('ws-stale'),
 					lastMessageAt: 20
 				}),
 				makeThreadSummary({
-					threadId: 'thread-record-3' as ThreadSummary['threadId'],
-					projectId: 'ws-other' as ThreadSummary['projectId'],
+					threadId: threadId('thread-record-3'),
+					projectId: projectId('ws-other'),
 					lastMessageAt: 30
 				})
 			]
@@ -118,17 +134,17 @@ describe('project thread helpers', () => {
 	it('keeps projects in their given order regardless of thread activity', () => {
 		const groups = getProjectThreadGroups(
 			[
-				makeProject({ _id: 'ws-older' as Project['_id'], displayName: 'older' }),
-				makeProject({ _id: 'ws-newer' as Project['_id'], displayName: 'newer' })
+				makeProject({ _id: projectId('ws-older'), displayName: 'older' }),
+				makeProject({ _id: projectId('ws-newer'), displayName: 'newer' })
 			],
 			[
 				// Heavy recent activity on the older project must not reorder it.
 				makeThreadSummary({
-					projectId: 'ws-older' as ThreadSummary['projectId'],
+					projectId: projectId('ws-older'),
 					lastMessageAt: 100
 				}),
 				makeThreadSummary({
-					projectId: 'ws-newer' as ThreadSummary['projectId'],
+					projectId: projectId('ws-newer'),
 					lastMessageAt: 1
 				})
 			]
@@ -139,16 +155,16 @@ describe('project thread helpers', () => {
 
 	it('restores the most recently active thread, ignoring run state', () => {
 		const runningOlder = makeThreadSummary({
-			threadId: 'thread-record-running' as ThreadSummary['threadId'],
+			threadId: threadId('thread-record-running'),
 			lastMessageAt: 10,
 			hasActiveRun: true
 		});
 		const idleNewer = makeThreadSummary({
-			threadId: 'thread-record-idle' as ThreadSummary['threadId'],
+			threadId: threadId('thread-record-idle'),
 			lastMessageAt: 20
 		});
 		const archivedNewest = makeThreadSummary({
-			threadId: 'thread-record-archived' as ThreadSummary['threadId'],
+			threadId: threadId('thread-record-archived'),
 			lastMessageAt: 30,
 			threadStatus: 'archived'
 		});
@@ -163,12 +179,12 @@ describe('project thread helpers', () => {
 
 	it('excludes archived threads from project groups', () => {
 		const active = makeThreadSummary({
-			projectId: 'ws-current' as ThreadSummary['projectId'],
+			projectId: projectId('ws-current'),
 			lastMessageAt: 10
 		});
 		const archived = makeThreadSummary({
-			threadId: 'thread-record-2' as ThreadSummary['threadId'],
-			projectId: 'ws-current' as ThreadSummary['projectId'],
+			threadId: threadId('thread-record-2'),
+			projectId: projectId('ws-current'),
 			lastMessageAt: 20,
 			threadStatus: 'archived'
 		});
@@ -179,7 +195,7 @@ describe('project thread helpers', () => {
 		const groups = getProjectThreadGroups(
 			[
 				makeProject({
-					_id: 'ws-current' as Project['_id'],
+					_id: projectId('ws-current'),
 					repositoryKey: 'sprocket',
 					displayName: 'sprocket'
 				})
@@ -197,16 +213,16 @@ describe('project thread helpers', () => {
 			[],
 			[
 				makeThreadSummary({
-					threadId: 'thread-record-completed-newer' as ThreadSummary['threadId'],
+					threadId: threadId('thread-record-completed-newer'),
 					lastMessageAt: 30
 				}),
 				makeThreadSummary({
-					threadId: 'thread-record-running-older' as ThreadSummary['threadId'],
+					threadId: threadId('thread-record-running-older'),
 					lastMessageAt: 10,
 					hasActiveRun: true
 				}),
 				makeThreadSummary({
-					threadId: 'thread-record-running-newer' as ThreadSummary['threadId'],
+					threadId: threadId('thread-record-running-newer'),
 					lastMessageAt: 20,
 					hasActiveRun: true
 				})
@@ -222,14 +238,14 @@ describe('project thread helpers', () => {
 
 	it('finds a project by repository key', () => {
 		const match = makeProject({
-			_id: 'ws-1' as Project['_id'],
+			_id: projectId('ws-1'),
 			repositoryKey: 'github.com/spikonado/sprocket',
 			displayName: 'sprocket'
 		});
 		const projects = [
 			match,
 			makeProject({
-				_id: 'ws-2' as Project['_id'],
+				_id: projectId('ws-2'),
 				repositoryKey: 'local-sprocket',
 				displayName: 'sprocket'
 			})
@@ -239,9 +255,43 @@ describe('project thread helpers', () => {
 		expect(findProjectByRepositoryKey(projects, 'sprocket')).toBeNull();
 	});
 
+	it('maps a persisted thread row onto ThreadSummary fields', () => {
+		const row = {
+			threadId: threadA,
+			projectId: projectId('ws-1'),
+			title: 'Checkout',
+			selectedModel: 'gpt-5.6-luna',
+			reasoningEffort: defaultReasoningEffort,
+			serviceTier: defaultServiceTier,
+			lastMessageAt: 42,
+			threadStatus: 'active' as const,
+			latestRunStatus: null,
+			latestRunId: runA1,
+			latestRunStartedAt: 10,
+			latestRunClaimExpiresAt: 20,
+			hasActiveRun: true
+		};
+
+		expect(toThreadSummary(row)).toEqual({
+			threadId: threadA,
+			projectId: projectId('ws-1'),
+			title: 'Checkout',
+			selectedModel: 'gpt-5.6-sol',
+			reasoningEffort: defaultReasoningEffort,
+			serviceTier: defaultServiceTier,
+			lastMessageAt: 42,
+			threadStatus: 'active',
+			latestRunStatus: null,
+			latestRunId: runA1,
+			latestRunStartedAt: 10,
+			latestRunClaimExpiresAt: 20,
+			hasActiveRun: true
+		});
+	});
+
 	it('keeps project fields on the group rather than copying them', () => {
 		const project = makeProject({
-			_id: 'ws-current' as Project['_id'],
+			_id: projectId('ws-current'),
 			repositoryKey: 'github.com/spikonado/sprocket',
 			displayName: 'sprocket-checkout'
 		});
@@ -249,7 +299,7 @@ describe('project thread helpers', () => {
 			[project],
 			[
 				makeThreadSummary({
-					projectId: 'ws-current' as ThreadSummary['projectId'],
+					projectId: projectId('ws-current'),
 					lastMessageAt: 10
 				})
 			]
@@ -273,10 +323,10 @@ describe('project thread helpers', () => {
 
 	it('preserves a newly created thread id before the reactive list includes it', () => {
 		const existing = makeThreadSummary({
-			threadId: 'thread-record-old' as ThreadSummary['threadId'],
+			threadId: threadId('thread-record-old'),
 			lastMessageAt: 20
 		});
-		const pendingThreadId = 'thread-record-new' as ThreadSummary['threadId'];
+		const pendingThreadId = threadId('thread-record-new');
 
 		expect(
 			resolveProjectThreadSelection({
@@ -291,14 +341,14 @@ describe('project thread helpers', () => {
 
 	it('falls back when an established thread disappears from the list', () => {
 		const newest = makeThreadSummary({
-			threadId: 'thread-record-newest' as ThreadSummary['threadId'],
+			threadId: threadId('thread-record-newest'),
 			lastMessageAt: 30
 		});
 
 		expect(
 			resolveProjectThreadSelection({
 				threads: [newest],
-				currentThreadId: 'thread-record-vanished' as ThreadSummary['threadId'],
+				currentThreadId: threadId('thread-record-vanished'),
 				currentRepositoryKey: 'Project',
 				draftRepositoryKey: null,
 				pendingCreatedThreadId: null
@@ -308,7 +358,7 @@ describe('project thread helpers', () => {
 
 	it('falls back to the newest thread only after the current id is cleared', () => {
 		const newest = makeThreadSummary({
-			threadId: 'thread-record-newest' as ThreadSummary['threadId'],
+			threadId: threadId('thread-record-newest'),
 			lastMessageAt: 30
 		});
 
@@ -324,14 +374,14 @@ describe('project thread helpers', () => {
 
 	it('keeps a created id pinned through unrelated list updates until the thread appears', () => {
 		const existing = makeThreadSummary({
-			threadId: 'thread-record-old' as ThreadSummary['threadId']
+			threadId: threadId('thread-record-old')
 		});
-		const pendingThreadId = 'thread-record-new' as ThreadSummary['threadId'];
+		const pendingThreadId = threadId('thread-record-new');
 		const created = makeThreadSummary({
 			threadId: pendingThreadId
 		});
 		const unrelated = makeThreadSummary({
-			threadId: 'thread-record-unrelated' as ThreadSummary['threadId'],
+			threadId: threadId('thread-record-unrelated'),
 			lastMessageAt: 10
 		});
 
@@ -461,7 +511,7 @@ describe('project thread helpers', () => {
 
 		expect(dataForThread(thread, thread.threadId)).toBe(thread);
 		expect(dataForThread(activeThreadRecord, thread.threadId)).toBe(activeThreadRecord);
-		expect(dataForThread(thread, 'thread-record-2' as ThreadSummary['threadId'])).toBeNull();
+		expect(dataForThread(thread, threadId('thread-record-2'))).toBeNull();
 		expect(dataForThread(undefined, thread.threadId)).toBeNull();
 	});
 

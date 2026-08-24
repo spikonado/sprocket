@@ -5,6 +5,7 @@ import { action, type ActionCtx } from '@convex/_generated/server';
 import { api, internal } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
 import { Stagehand } from '@browserbasehq/stagehand';
+import { z } from 'zod';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
 import {
 	vBrowserObservedAction,
@@ -16,7 +17,7 @@ import {
 const DEFAULT_MODEL = 'openai/gpt-5.6-sol';
 // Bounds text returned to the main agent so a runaway page can't flood the transcript.
 const MAX_RESULT_CHARS = 8_000;
-// Bound the structured actions array itself, not just its text mirror — a
+// Bound the structured actions array itself, not just its text mirror. A
 // hostile or complex page can make Stagehand return thousands of actions.
 const MAX_OBSERVE_ACTIONS = 50;
 
@@ -51,7 +52,12 @@ async function activeActor(
 	return actor;
 }
 
-function clip(text: string): { text: string; truncated: boolean } {
+type ClippedText = {
+	text: string;
+	truncated: boolean;
+};
+
+function clip(text: string): ClippedText {
 	if (text.length <= MAX_RESULT_CHARS) return { text, truncated: false };
 	return { text: `${text.slice(0, MAX_RESULT_CHARS)}\n[... truncated ...]`, truncated: true };
 }
@@ -59,7 +65,12 @@ function clip(text: string): { text: string; truncated: boolean } {
 /** Trim observed actions to a count and serialized-size budget so the result
  * can't flood the executor/model transcript. truncated is set whenever any
  * action is dropped. */
-function boundActions<T>(actions: T[]): { actions: T[]; truncated: boolean } {
+type BoundedActions<T> = {
+	actions: T[];
+	truncated: boolean;
+};
+
+function boundActions<T>(actions: T[]): BoundedActions<T> {
 	const kept: T[] = [];
 	let size = 0;
 	for (const action of actions) {
@@ -81,6 +92,45 @@ const SESSION_TIMEOUT_SECONDS = 3600;
 const SESSION_REUSE_MS = 55 * 60 * 1000;
 
 type StagehandConfig = ReturnType<typeof config>;
+type StagehandOptions = ConstructorParameters<typeof Stagehand>[0];
+type StagehandInstance = InstanceType<typeof Stagehand>;
+type StagehandClient = Pick<
+	StagehandInstance,
+	'init' | 'close' | 'act' | 'observe' | 'extract' | 'browserbaseSessionId'
+> & {
+	context: { pages: () => Array<{ goto: (url: string) => Promise<void> }> };
+};
+type StagehandHandle = StagehandClient | StagehandInstance;
+type StagehandFactory = (options: StagehandOptions) => StagehandHandle;
+
+type StagehandFactorySlot = typeof globalThis & {
+	__sprocketCreateStagehand?: StagehandFactory;
+};
+
+type BrowserSessionUpsert = {
+	threadId: Doc<'threadRecords'>['_id'];
+	runId: Doc<'runs'>['_id'];
+	userId: string;
+	browserbaseSessionId: string;
+	liveViewUrl?: string;
+};
+
+// SAFETY: only test suites assign __sprocketCreateStagehand on globalThis; production never writes this slot.
+const stagehandFactorySlot = globalThis as StagehandFactorySlot;
+
+function createStagehand(options: StagehandOptions): StagehandHandle {
+	const bound = stagehandFactorySlot.__sprocketCreateStagehand;
+	if (bound) return bound(options);
+	return new Stagehand(options);
+}
+
+export function bindStagehandFactory(factory: StagehandFactory | undefined): () => void {
+	const previous = stagehandFactorySlot.__sprocketCreateStagehand;
+	stagehandFactorySlot.__sprocketCreateStagehand = factory;
+	return () => {
+		stagehandFactorySlot.__sprocketCreateStagehand = previous;
+	};
+}
 
 /** Fetch the embeddable live view URL for a running session. Best effort:
  * the browser tool call must not fail because observability did; a missing
@@ -93,8 +143,8 @@ async function fetchLiveViewUrl(apiKey: string, sessionId: string): Promise<stri
 			signal: AbortSignal.timeout(5_000)
 		});
 		if (!response.ok) return null;
-		const urls: { debuggerFullscreenUrl?: unknown } = await response.json();
-		return typeof urls.debuggerFullscreenUrl === 'string' ? urls.debuggerFullscreenUrl : null;
+		const parsed = z.object({ debuggerFullscreenUrl: z.string() }).safeParse(await response.json());
+		return parsed.success ? parsed.data.debuggerFullscreenUrl : null;
 	} catch {
 		return null;
 	}
@@ -106,8 +156,8 @@ async function fetchLiveViewUrl(apiKey: string, sessionId: string): Promise<stri
 async function startStagehand(
 	{ apiKey, projectId, model }: StagehandConfig,
 	browserbaseSessionID?: string
-): Promise<Stagehand | null> {
-	const stagehand = new Stagehand({
+): Promise<StagehandHandle | null> {
+	const options: StagehandOptions = {
 		env: 'BROWSERBASE',
 		apiKey,
 		projectId,
@@ -115,12 +165,13 @@ async function startStagehand(
 		selfHeal: true,
 		keepAlive: true,
 		// Convex actions can't spawn pino's transport worker, which the
-		// default pretty-printing logger needs — it fails to resolve
+		// default pretty-printing logger needs; it fails to resolve
 		// pino-pretty and crashes Stagehand construction.
 		disablePino: true,
-		browserbaseSessionCreateParams: { keepAlive: true, timeout: SESSION_TIMEOUT_SECONDS },
-		...(browserbaseSessionID ? { browserbaseSessionID } : {})
-	});
+		browserbaseSessionCreateParams: { keepAlive: true, timeout: SESSION_TIMEOUT_SECONDS }
+	};
+	if (browserbaseSessionID) options.browserbaseSessionID = browserbaseSessionID;
+	const stagehand = createStagehand(options);
 	try {
 		await stagehand.init();
 		return stagehand;
@@ -139,7 +190,7 @@ async function attachStagehand(
 	userId: string,
 	runId: Doc<'runs'>['_id'],
 	threadId: Doc<'threadRecords'>['_id']
-): Promise<Stagehand> {
+): Promise<StagehandHandle> {
 	const cfg = config();
 	const existing = await ctx.runQuery(internal.browserSessions.getForThread, {
 		threadId,
@@ -160,13 +211,14 @@ async function attachStagehand(
 	}
 	if (browserbaseSessionId !== reusable?.browserbaseSessionId) {
 		const liveViewUrl = await fetchLiveViewUrl(cfg.apiKey, browserbaseSessionId);
-		await ctx.runMutation(internal.browserSessions.upsertForThread, {
+		const session: BrowserSessionUpsert = {
 			threadId,
 			runId,
 			userId,
-			browserbaseSessionId,
-			...(liveViewUrl ? { liveViewUrl } : {})
-		});
+			browserbaseSessionId
+		};
+		if (liveViewUrl) session.liveViewUrl = liveViewUrl;
+		await ctx.runMutation(internal.browserSessions.upsertForThread, session);
 	} else if (existing) {
 		if (!existing.liveViewUrl) {
 			const liveViewUrl = await fetchLiveViewUrl(cfg.apiKey, browserbaseSessionId);
@@ -186,7 +238,7 @@ async function attachStagehand(
 	return stagehand;
 }
 
-async function gotoIfProvided(stagehand: Stagehand, startUrl?: string): Promise<void> {
+async function gotoIfProvided(stagehand: StagehandHandle, startUrl?: string): Promise<void> {
 	if (startUrl) {
 		await stagehand.context.pages()[0]?.goto(startUrl);
 	}

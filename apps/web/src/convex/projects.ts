@@ -114,7 +114,10 @@ export const listMine = query({
 		// `executorStatus`. Callers passing `false` skip the `projectConnections`
 		// read entirely, so heartbeats never re-run their subscription. Once old
 		// clients age out, drop the arg and the `executorStatus` field.
-		includeExecutorStatus: v.optional(v.boolean())
+		includeExecutorStatus: v.optional(v.boolean()),
+		// Required to compute `executorStatus` without reading the clock in the
+		// query. Omitted `now` skips status so the subscription stays reactive.
+		now: v.optional(v.number())
 	},
 	returns: v.array(vProjectListItem),
 	handler: async (ctx, args): Promise<Infer<typeof vProjectListItem>[]> => {
@@ -127,10 +130,10 @@ export const listMine = query({
 			.withIndex('by_userId', (query) => query.eq('userId', userId))
 			.order('desc')
 			.collect();
-		if (args.includeExecutorStatus === false) {
+		const now = args.now;
+		if (args.includeExecutorStatus === false || now === undefined) {
 			return projects;
 		}
-		const now = Date.now();
 		const connectionByProjectId = await getConnectionsForUser(ctx, userId);
 		return projects.map((project) => ({
 			...project,

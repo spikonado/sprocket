@@ -3,12 +3,27 @@ import type { Id } from '$convex/_generated/dataModel';
 import type { ThreadMessage } from '$lib/types/sprocket';
 import { mergeThreadTranscriptMessages } from '$lib/project/transcript';
 
+function threadRecordId(value: string): Id<'threadRecords'> {
+	// SAFETY: fixture strings are only compared as opaque Convex document ids.
+	return value as Id<'threadRecords'>;
+}
+
+function runId(value: string): Id<'runs'> {
+	// SAFETY: fixture strings are only compared as opaque Convex document ids.
+	return value as Id<'runs'>;
+}
+
+function threadMessageId(value: string): Id<'threadMessages'> {
+	// SAFETY: fixture strings are only compared as opaque Convex document ids.
+	return value as Id<'threadMessages'>;
+}
+
 function message(
 	overrides: Partial<ThreadMessage> & Pick<ThreadMessage, '_id' | 'type'>
 ): ThreadMessage {
 	return {
-		threadId: 'thread-1' as Id<'threadRecords'>,
-		runId: 'run-1' as Id<'runs'>,
+		threadId: threadRecordId('thread-1'),
+		runId: runId('run-1'),
 		userId: 'user_1',
 		text: '',
 		attachments: [],
@@ -23,14 +38,14 @@ describe('mergeThreadTranscriptMessages', () => {
 	it('merges history and live in chronological order with live winning duplicates', () => {
 		const history = [
 			message({
-				_id: 'm1' as Id<'threadMessages'>,
+				_id: threadMessageId('m1'),
 				type: 'prompt',
 				runStartedAt: 10,
 				text: 'stale',
 				runStatus: 'completed'
 			}),
 			message({
-				_id: 'm2' as Id<'threadMessages'>,
+				_id: threadMessageId('m2'),
 				type: 'response',
 				runStartedAt: 10,
 				_creationTime: 2,
@@ -39,14 +54,14 @@ describe('mergeThreadTranscriptMessages', () => {
 		];
 		const live = [
 			message({
-				_id: 'm1' as Id<'threadMessages'>,
+				_id: threadMessageId('m1'),
 				type: 'prompt',
 				runStartedAt: 10,
 				text: 'fresh',
 				runStatus: 'running'
 			}),
 			message({
-				_id: 'm3' as Id<'threadMessages'>,
+				_id: threadMessageId('m3'),
 				type: 'prompt',
 				runStartedAt: 20,
 				runStatus: 'running',
@@ -62,18 +77,18 @@ describe('mergeThreadTranscriptMessages', () => {
 	it('drops whole oldest runs instead of orphaning a response when live exceeds the window', () => {
 		const history = Array.from({ length: 40 }, (_, index) =>
 			message({
-				_id: `h${index}` as Id<'threadMessages'>,
+				_id: threadMessageId(`h${index}`),
 				type: index % 2 === 0 ? 'prompt' : 'response',
-				runId: `run-${Math.floor(index / 2)}` as Id<'runs'>,
+				runId: runId(`run-${Math.floor(index / 2)}`),
 				runStartedAt: Math.floor(index / 2),
 				text: `h${index}`
 			})
 		);
 		const live = [
 			message({
-				_id: 'live-prompt' as Id<'threadMessages'>,
+				_id: threadMessageId('live-prompt'),
 				type: 'prompt',
-				runId: 'run-live' as Id<'runs'>,
+				runId: runId('run-live'),
 				runStartedAt: 100,
 				runStatus: 'queued',
 				text: 'new'

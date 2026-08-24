@@ -1,17 +1,21 @@
 import { query } from '@convex/_generated/server';
-import { v } from 'convex/values';
+import { v, type Infer } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
 import { vLatestRunForThread } from '@convex/lib/docs';
 
 export const latestRunForThread = query({
 	args: {
-		threadId: v.id('threadRecords')
+		threadId: v.id('threadRecords'),
+		// Callers that can refresh should pass wall-clock time. Omitted `now`
+		// keeps the Svelte page (which only sends threadId) working.
+		now: v.optional(v.number())
 	},
 	returns: vLatestRunForThread,
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+		const serverNow = args.now ?? Date.now();
 
 		const latestRun = await ctx.db
 			.query('runs')
@@ -25,7 +29,7 @@ export const latestRunForThread = query({
 				jobs: [],
 				prompt: undefined,
 				imageUploadIds: undefined,
-				serverNow: Date.now()
+				serverNow
 			};
 		}
 
@@ -40,17 +44,16 @@ export const latestRunForThread = query({
 			? await ctx.db.get(latestRun.promptMessageId)
 			: null;
 
-		return {
+		const latest: Infer<typeof vLatestRunForThread> = {
 			threadId: args.threadId,
 			run: latestRun,
 			jobs: jobs.reverse(),
-			...(promptMessage?.type === 'prompt'
-				? {
-						prompt: promptMessage.text,
-						imageUploadIds: promptMessage.imageUploadIds ?? []
-					}
-				: {}),
-			serverNow: Date.now()
+			serverNow
 		};
+		if (promptMessage?.type === 'prompt') {
+			latest.prompt = promptMessage.text;
+			latest.imageUploadIds = promptMessage.imageUploadIds ?? [];
+		}
+		return latest;
 	}
 });

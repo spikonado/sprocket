@@ -8,6 +8,16 @@ import {
 	shouldRefreshProjectHeartbeat
 } from '@convex/lib/projectConnection';
 
+function asProjectId(value: string): Id<'projects'> {
+	// SAFETY: test fixtures use string ids; helpers only compare identity.
+	return value as Id<'projects'>;
+}
+
+function asConnectionId(value: string): Id<'projectConnections'> {
+	// SAFETY: test fixtures use string ids; helpers only compare identity.
+	return value as Id<'projectConnections'>;
+}
+
 function makeConnection(
 	overrides: Partial<{
 		projectId: Id<'projects'>;
@@ -16,9 +26,9 @@ function makeConnection(
 	}> = {}
 ) {
 	return {
-		_id: 'conn-1' as Id<'projectConnections'>,
+		_id: asConnectionId('conn-1'),
 		_creationTime: 0,
-		projectId: overrides.projectId ?? ('project-1' as Id<'projects'>),
+		projectId: overrides.projectId ?? asProjectId('project-1'),
 		userId: 'user-1',
 		clientId: overrides.clientId ?? 'client-1',
 		lastHeartbeatAt: overrides.lastHeartbeatAt ?? 0
@@ -44,20 +54,20 @@ describe('projectConnection helpers', () => {
 		const detached = getDetachedConnections(
 			[
 				makeConnection({
-					projectId: 'project-1' as Id<'projects'>,
+					projectId: asProjectId('project-1'),
 					clientId: 'client-1'
 				}),
 				makeConnection({
-					projectId: 'project-2' as Id<'projects'>,
+					projectId: asProjectId('project-2'),
 					clientId: 'client-1'
 				}),
 				makeConnection({
-					projectId: 'project-3' as Id<'projects'>,
+					projectId: asProjectId('project-3'),
 					clientId: 'client-2'
 				})
 			],
 			'client-1',
-			['project-2' as Id<'projects'>]
+			[asProjectId('project-2')]
 		);
 
 		expect(detached.map((connection) => connection.projectId)).toEqual(['project-1']);

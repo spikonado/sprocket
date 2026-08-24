@@ -9,6 +9,7 @@ import {
 import { subscriptionTierIds } from '@convex/lib/tiers';
 
 function literals<const TValues extends readonly string[]>(values: TValues) {
+	// SAFETY: map emits one v.literal per input string, matching TValues by index.
 	return values.map((value) => v.literal(value)) as {
 		[K in keyof TValues]: ReturnType<typeof v.literal<TValues[K]>>;
 	};
@@ -117,7 +118,7 @@ export const vMandateStatus = v.union(...literals(mandateStatuses));
 export function isMandateStatus(
 	status: string | undefined
 ): status is Infer<typeof vMandateStatus> {
-	return status !== undefined && (mandateStatuses as readonly string[]).includes(status);
+	return status !== undefined && mandateStatuses.some((allowed) => allowed === status);
 }
 
 export const vMandateChargeStatus = v.union(
@@ -289,7 +290,7 @@ export const vMandateListResult = v.object({
 export const vMandateChargeResult = v.object({
 	chargeId: v.id('mandateCharges'),
 	transactionId: v.string(),
-	/** Present only on a freshly issued charge — never persisted or replayed. */
+	/** Present only on a freshly issued charge, never persisted or replayed. */
 	token: v.optional(v.string()),
 	dynamicCvv: v.optional(v.string()),
 	expiryMonth: v.optional(v.string()),
@@ -387,7 +388,7 @@ export const vRunFinalStatus = v.union(...literals(runFinalStatus));
 export function isRunFinalStatus(
 	status: Infer<typeof vRunStatus>
 ): status is Infer<typeof vRunFinalStatus> {
-	return (runFinalStatus as readonly string[]).includes(status);
+	return runFinalStatus.some((allowed) => allowed === status);
 }
 
 export const vExecutorJobKind = v.union(

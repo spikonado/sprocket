@@ -3,6 +3,7 @@ import { mutation, query, type MutationCtx, type QueryCtx } from '@convex/_gener
 import { v } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getExecutionRun, getUserId } from '@convex/lib/auth';
+import { vArtifactDoc, vArtifactVersionDoc } from '@convex/lib/docs';
 import { vArtifactType } from '@convex/lib/validators';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
 import { RUN_NO_LONGER_ACTIVE } from '@convex/lib/agentErrors';
@@ -186,15 +187,13 @@ export const getArtifact = query({
 	args: {
 		artifactId: v.id('artifacts')
 	},
-	handler: async (
-		ctx,
-		args
-	): Promise<{
-		artifact: Doc<'artifacts'>;
-		versions: Doc<'artifactVersions'>[];
-	}> => {
-		const userId: string = await getUserId(ctx);
-		const artifact: Doc<'artifacts'> | null = await ctx.db.get(args.artifactId);
+	returns: v.object({
+		artifact: vArtifactDoc,
+		versions: v.array(vArtifactVersionDoc)
+	}),
+	handler: async (ctx, args) => {
+		const userId = await getUserId(ctx);
+		const artifact = await ctx.db.get(args.artifactId);
 		if (!artifact || artifact.userId !== userId) {
 			throw new Error('Artifact not found.');
 		}
@@ -214,16 +213,14 @@ export const listArtifactsForThread = query({
 	args: {
 		threadId: v.id('threadRecords')
 	},
-	handler: async (
-		ctx,
-		args
-	): Promise<
-		{
-			artifact: Doc<'artifacts'>;
-			currentContent: string;
-		}[]
-	> => {
-		const userId: string = await getUserId(ctx);
+	returns: v.array(
+		v.object({
+			artifact: vArtifactDoc,
+			currentContent: v.string()
+		})
+	),
+	handler: async (ctx, args) => {
+		const userId = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 
 		const artifacts = await ctx.db

@@ -265,4 +265,20 @@ describe('subscription and usage backend', () => {
 		expect(weekly && weekly.used > weekly.limit).toBe(true);
 		expect(usage.meters).toEqual(usageBeforeUnlimitedCharge.meters);
 	});
+
+	it('materializes exactly one users row per subject across repeated page loads', async () => {
+		const t = initConvexTest();
+		const userId = 'user_users_row';
+		const asUser = t.withIdentity({ subject: userId });
+		await asUser.mutation(api.billing.ensureMySubscription, {});
+		await asUser.mutation(api.billing.ensureMySubscription, {});
+		const rows = await t.run(async (ctx) =>
+			ctx.db
+				.query('users')
+				.withIndex('by_subject', (query) => query.eq('subject', userId))
+				.collect()
+		);
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).toMatchObject({ subject: userId });
+	});
 });

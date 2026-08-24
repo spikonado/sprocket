@@ -9,8 +9,8 @@ import {
 	query
 } from '@convex/_generated/server';
 import { components, internal } from '@convex/_generated/api';
-import { getUserId } from '@convex/lib/auth';
-import { vCheckoutResponse, vCustomerPortalResponse } from '@convex/lib/docs';
+import { ensureCurrentUser, getUserId } from '@convex/lib/auth';
+import { vBillingCustomerDoc, vCheckoutResponse, vCustomerPortalResponse } from '@convex/lib/docs';
 import {
 	ensureSubscription,
 	getSubscriptionDocExclusive,
@@ -21,6 +21,7 @@ import { vSubscriptionStatus, vSubscriptionTier } from '@convex/lib/validators';
 
 export const getBillingCustomer = internalQuery({
 	args: { userId: v.string() },
+	returns: v.union(vBillingCustomerDoc, v.null()),
 	handler: async (ctx, { userId }) =>
 		ctx.db
 			.query('billingCustomers')
@@ -28,15 +29,22 @@ export const getBillingCustomer = internalQuery({
 			.unique()
 });
 
-const dodo: DodoPayments = new DodoPayments(components.dodopayments as ComponentApi, {
-	identify: async (ctx): Promise<{ dodoCustomerId: string } | null> => {
-		const userId = await getUserId(ctx);
-		const customer = await ctx.runQuery(internal.billing.getBillingCustomer, { userId });
-		return customer ? { dodoCustomerId: customer.dodoCustomerId } : null;
-	},
-	apiKey: process.env.DODO_PAYMENTS_API_KEY!,
-	environment: (process.env.DODO_PAYMENTS_ENVIRONMENT as 'test_mode' | 'live_mode') ?? 'test_mode'
-});
+const dodoPaymentsEnvironment =
+	process.env.DODO_PAYMENTS_ENVIRONMENT === 'live_mode' ? 'live_mode' : 'test_mode';
+
+const dodo: DodoPayments = new DodoPayments(
+	// SAFETY: the generated dodopayments component handle is the ComponentApi the SDK constructs.
+	components.dodopayments as ComponentApi,
+	{
+		identify: async (ctx): Promise<{ dodoCustomerId: string } | null> => {
+			const userId = await getUserId(ctx);
+			const customer = await ctx.runQuery(internal.billing.getBillingCustomer, { userId });
+			return customer ? { dodoCustomerId: customer.dodoCustomerId } : null;
+		},
+		apiKey: process.env.DODO_PAYMENTS_API_KEY!,
+		environment: dodoPaymentsEnvironment
+	}
+);
 const payments: ReturnType<DodoPayments['api']> = dodo.api();
 
 function assertPaymentsConfigured(): void {
@@ -57,6 +65,7 @@ export const ensureMySubscription = mutation({
 	returns: v.null(),
 	handler: async (ctx) => {
 		const userId = await getUserId(ctx);
+		await ensureCurrentUser(ctx);
 		await ensureSubscription(ctx, userId);
 	}
 });
@@ -98,6 +107,7 @@ export const upsertSubscription = internalMutation({
 		status: vSubscriptionStatus,
 		eventAt: v.number()
 	},
+	returns: v.null(),
 	handler: async (ctx, args) => {
 		const existing = await getSubscriptionDocExclusive(ctx, args.userId);
 
@@ -117,10 +127,10 @@ export const upsertSubscription = internalMutation({
 		// Manual admin grants must not be clobbered by Dodo lifecycle events.
 		if (existing?.status === 'active' && existing.tier === 'admin' && args.tier !== 'admin') {
 			if (args.eventAt >= existing.eventAt) await syncBillingCustomer();
-			return;
+			return null;
 		}
 		// Ignore out-of-order webhook events; retries (equal eventAt) still apply.
-		if (existing && args.eventAt < existing.eventAt) return;
+		if (existing && args.eventAt < existing.eventAt) return null;
 		// A non-active event for a different subscription than the stored one is
 		// about a defunct subscription (e.g. a cancellation racing its
 		// replacement) and must not downgrade the current one.
@@ -130,7 +140,7 @@ export const upsertSubscription = internalMutation({
 			(existing.dodoSubscriptionId === '' ||
 				existing.dodoSubscriptionId !== args.dodoSubscriptionId)
 		) {
-			return;
+			return null;
 		}
 		const subscription = {
 			userId: args.userId,
@@ -143,5 +153,6 @@ export const upsertSubscription = internalMutation({
 		if (existing) await ctx.db.replace(existing._id, subscription);
 		else await ctx.db.insert('subscriptions', subscription);
 		await syncBillingCustomer();
+		return null;
 	}
 });

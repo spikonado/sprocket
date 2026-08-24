@@ -162,7 +162,7 @@ describe('browserSessions', () => {
 			userId
 		});
 		expect(backfilled?.liveViewUrl).toBe('https://live.browserbase.test/new');
-		// Backfill does not refresh startedAt — it is not new agent activity.
+		// Backfill does not refresh startedAt; it is not new agent activity.
 		expect(backfilled?.startedAt).toBe(session?.startedAt);
 
 		// An existing URL is never overwritten by the backfill path.

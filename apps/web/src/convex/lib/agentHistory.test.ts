@@ -185,15 +185,13 @@ describe('canonical agent history', () => {
 		const history = buildCanonicalAgentHistory({
 			messages: [
 				{
-					_id: 'message-1',
 					runId: 'run-1',
 					runStatus: 'failed',
 					type: 'response',
 					text: '',
-					parts: [],
-					attachments: []
+					parts: []
 				}
-			] as unknown as Parameters<typeof buildCanonicalAgentHistory>[0]['messages'],
+			],
 			jobs: [
 				{
 					_id: 'job-1',
@@ -204,7 +202,7 @@ describe('canonical agent history', () => {
 					payload: { cmd: 'sleep 60' },
 					status: 'claimed'
 				}
-			] as unknown as Parameters<typeof buildCanonicalAgentHistory>[0]['jobs']
+			]
 		});
 
 		expect(history.map((message) => message.role)).toEqual(['assistant', 'user']);
@@ -341,7 +339,7 @@ describe('canonical agent history', () => {
 							}
 						]
 					}
-				] as unknown as Parameters<typeof buildCanonicalAgentHistory>[0]['messages'],
+				],
 				jobs: [
 					{
 						_id: `${runStatus}-job`,
@@ -352,7 +350,7 @@ describe('canonical agent history', () => {
 						status: runStatus,
 						sequence: 0
 					}
-				] as unknown as Parameters<typeof buildCanonicalAgentHistory>[0]['jobs']
+				]
 			});
 
 			expect(history.map((message) => message.role)).toEqual(['assistant', 'user', 'assistant']);
@@ -392,7 +390,7 @@ describe('canonical agent history', () => {
 						}
 					]
 				}
-			] as unknown as Parameters<typeof buildCanonicalAgentHistory>[0]['messages'],
+			],
 			jobs: []
 		});
 

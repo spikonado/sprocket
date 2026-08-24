@@ -12,7 +12,7 @@ export type { CatalogModel };
 /** Catalog model extended with usage policy when the query asks for it. */
 export type CatalogModelWithUsagePolicy = CatalogModel & { usagePolicy?: UsagePolicy };
 
-/** Shape returned by `modelCatalog.get` — shared by Convex and the web client. */
+/** Shape returned by `modelCatalog.get`, shared by Convex and the web client. */
 export type ModelCatalog = {
 	defaultModelId: SupportedModelId;
 	defaultReasoningEffort: SupportedReasoningEffort;
