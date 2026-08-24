@@ -1,11 +1,11 @@
 ---
 name: ucp-shopping
-description: Shop at online stores that speak the Universal Commerce Protocol (UCP) — run discovery, cart, and checkout over UCP's REST API and pay with Prava mandate credentials. Use when the user asks to buy, order, or purchase something online, wants to track an order, or mentions UCP or agentic checkout.
+description: Shop at online stores that speak the Universal Commerce Protocol (UCP); run discovery, cart, and checkout over UCP's REST API and pay with Prava mandate credentials. Use when the user asks to buy, order, or purchase something online, wants to track an order, or mentions UCP or agentic checkout.
 ---
 
 # Shopping via UCP
 
-UCP lets an agent run the whole purchase with a store that publishes a profile at `/.well-known/ucp` — product discovery, cart building, checkout, and order tracking all happen over its REST API.
+UCP lets an agent run the whole purchase with a store that publishes a profile at `/.well-known/ucp`. Product discovery, cart building, checkout, and order tracking all happen over its REST API.
 Prefer UCP for every step the store supports, pay with a Prava mandate credential, and only fall back to the browser for a step you can't finish using UCP.
 This skill is the UCP protocol and the order to wire the tools together; the tool descriptions cover what each tool does.
 
@@ -18,10 +18,10 @@ All UCP money amounts are in minor units (cents); convert to major units in ever
 curl -s https://<store-domain>/.well-known/ucp | jq .
 ```
 
-From `ucp.services["dev.ucp.shopping"]` pick the entry with `"transport": "rest"` and note its `endpoint` — every call below is `{endpoint}<path>`.
+From `ucp.services["dev.ucp.shopping"]` pick the entry with `"transport": "rest"` and note its `endpoint`. Every call below is `{endpoint}<path>`.
 Note `ucp.capabilities` (checkout, catalog.search, fulfillment, discount, order, …).
 Extensions are self-describing: to use one, fetch its `schema` URL from the profile.
-A 404 means the store doesn't speak UCP — fall back to its normal website.
+A 404 means the store doesn't speak UCP. Fall back to its normal website.
 
 ## 2. Find products
 
@@ -65,9 +65,9 @@ For fulfillment, send the address under `fulfillment.methods[].destinations`, th
 
 `messages[].severity` tells you how hard to push:
 
-- `recoverable` — fix the field at `path`, update, retry.
-- `requires_buyer_input` / `requires_buyer_review` — hand off.
-- `unrecoverable` — stop; start a new session or hand off.
+- `recoverable`: fix the field at `path`, update, retry.
+- `requires_buyer_input` / `requires_buyer_review`: hand off.
+- `unrecoverable`: stop; start a new session or hand off.
 
 Codes worth naming to the user: `out_of_stock`, `item_unavailable`, `address_undeliverable`, `payment_failed`.
 
@@ -95,7 +95,7 @@ curl -s -X POST "{endpoint}/checkout-sessions/{id}/complete" \
 
 The credential fields come straight from the `mandate_charge` result (camelCase there, snake_case here).
 Match `handler_id`/`type` to a negotiated payment handler that accepts network tokens.
-Retry failed calls with the **same** Idempotency-Key — retrying complete with a fresh key can place the order twice; a 409 means the key was reused with a different payload.
+Retry failed calls with the **same** Idempotency-Key. Retrying complete with a fresh key can place the order twice; a 409 means the key was reused with a different payload.
 
 ## 7. Report and track
 
@@ -105,6 +105,6 @@ Retry failed calls with the **same** Idempotency-Key — retrying complete with 
   `GET {endpoint}/orders/{id}`: `fulfillment.events` carry tracking numbers,
   `adjustments` carry refunds.
 
-## Switching to Browser Tools
+## Switching to browser tools
 
 If doing something with UCP doesn't work well, you can always switch to using your browser tools to complete the checkout. It's recommended to use the UCP `continue_url`.

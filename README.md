@@ -27,7 +27,7 @@ npx @spikonado/sprocket
 
 The above runs Sprocket through your browser unless you have the desktop app installed.
 
-### Desktop App
+### Desktop app
 
 Install it for your OS from the latest [GitHub Release Artifacts](https://github.com/spikonado/sprocket/releases) and run it.
 
@@ -101,7 +101,7 @@ Start the browser development environment:
 bun dev
 ```
 
-After creating a convex deployment and configuring authkit following the instructions, configure the Convex deployment with the API key for each model provider you want to enable.
+After creating a Convex deployment and configuring AuthKit, give the deployment an API key for each model provider you want to enable.
 
 This runs Vite at `http://localhost:5173` and the Rust API at `http://127.0.0.1:7731`, with development state kept in `.sprocket-dev` inside the repository.
 To develop against Electron instead, run:

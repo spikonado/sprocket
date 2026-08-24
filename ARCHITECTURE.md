@@ -1,4 +1,4 @@
-# Sprocket Architecture
+# Sprocket architecture
 
 Sprocket is an agentic platform for streamlining hardware and software
 development. Its web interface and durable conversation state are
@@ -11,8 +11,8 @@ the READMEs under [`crates/`](crates/).
 
 ## Design principles
 
-- **Local execution:** source files, patches, and shell processes are handled by
-  a local Rust process, not by the cloud backend.
+- **Local execution:** a local Rust process handles source files, patches, and
+  shell processes, not the cloud backend.
 - **Durable coordination:** conversations and agent-run state survive browser,
   process, and network interruptions.
 - **Explicit ownership:** authenticated cloud records belong to a user, and
@@ -91,8 +91,8 @@ The server hosts both the static application and its machine-facing API.
 ### Development
 
 Vite serves the web app while the Rust process serves only the local API.
-Requests to the API are proxied during development so the application code uses
-the same paths in every runtime mode.
+Vite proxies API requests during development so the application code uses the
+same paths in every runtime mode.
 
 ## State ownership
 
@@ -148,8 +148,8 @@ Tool operations are recorded before and after local execution. This gives the
 UI a durable audit trail and lets terminal run state cancel work still running
 on the machine.
 
-Model output is persisted incrementally by Convex. Stream attempt and ordering
-metadata prevent a delayed completion attempt from replacing a newer one.
+Convex persists model output incrementally. Stream attempt and ordering metadata
+prevent a delayed completion attempt from replacing a newer one.
 
 ## Authentication and trust boundaries
 
@@ -163,7 +163,7 @@ Cloud and local authorization solve different problems:
   the run. Convex then binds a random, run-scoped capability to that run, and
   the local executor uses it without depending on the browser session.
 - **Desktop trust:** Electron isolates the renderer, validates its origin, and
-  exposes only a constrained IPC surface.
+  exposes only a small set of IPC calls to the renderer.
 
 The local server binds to loopback by default. Exposing it on another interface
 changes the trust model and should be treated as a security-sensitive

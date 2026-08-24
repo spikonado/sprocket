@@ -198,7 +198,7 @@ fn is_file_header(line: &str) -> bool {
         || line.starts_with(COPY_FILE)
 }
 
-/// `@@ -n,m +p,q @@` / `@@ -n +p @@` (optional function suffix) — not Begin Patch anchors.
+/// `@@ -n,m +p,q @@` / `@@ -n +p @@` (optional function suffix), not Begin Patch anchors.
 fn is_unified_style_hunk_header(line: &str) -> bool {
     let Some(rest) = line.strip_prefix("@@ ") else {
         return false;

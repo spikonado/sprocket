@@ -202,7 +202,7 @@ fn tool_result_name<'a>(
     result: &'a rig::message::ToolResult,
 ) -> &'a str {
     // The call-id map wins so a result's name always matches the name its
-    // tool call is replayed with — Convex history restores results with an
+    // tool call is replayed with. Convex history restores results with an
     // empty name, and a repaired call keeps its originally persisted name.
     tool_names_by_call_id
         .get(result.wire_call_id())
