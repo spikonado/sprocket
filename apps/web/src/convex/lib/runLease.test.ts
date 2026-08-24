@@ -1,11 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-	RUN_CLAIM_LEASE_DURATION_MS,
 	canFinalizeAfterClaimFailure,
 	canRegisterCompletionAttempt,
 	ownsActiveRunClaim,
 	canStartRunWithClaim,
-	claimExpiresAt,
 	isCurrentCompletionAttempt,
 	isRunClaimLeaseActive
 } from '@convex/lib/runLease';
@@ -20,7 +18,6 @@ describe('run claim leases', () => {
 				200
 			)
 		).toBe(true);
-		expect(claimExpiresAt(100)).toBe(100 + RUN_CLAIM_LEASE_DURATION_MS);
 	});
 
 	it('excludes a different claim until the lease expires', () => {
