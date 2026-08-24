@@ -27,8 +27,5 @@
 	"workspaces": [
 		"apps/*",
 		"packages/*"
-	],
-	"patchedDependencies": {
-		"@exalabs/convex-exa@0.1.0": "patches/@exalabs%2Fconvex-exa@0.1.0.patch"
-	}
+	]
 }

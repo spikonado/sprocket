@@ -34,8 +34,8 @@
         "@browserbasehq/stagehand": "^3.7.1",
         "@context-dot-dev/convex": "^1.0.1",
         "@convex-dev/rate-limiter": "^0.3.2",
-        "@dodopayments/convex": "^0.2.12",
-        "@exalabs/convex-exa": "^0.1.0",
+        "@dodopayments/convex": "^0.2.15",
+        "@exalabs/convex-exa": "^0.1.1",
         "@fontsource-variable/ibm-plex-sans": "^5.2.8",
         "@fontsource/dm-sans": "^5.2.8",
         "@fontsource/ibm-plex-mono": "^5.3.0",
@@ -44,7 +44,7 @@
         "ai": "^7.0.40",
         "ai-fallback": "^3.0.0",
         "clsx": "^2.1.1",
-        "convex": "^1.37.0",
+        "convex": "^1.45.0",
         "convex-svelte": "^0.14.0",
         "isomorphic-dompurify": "^3.12.0",
         "marked": "^18.0.3",
@@ -155,7 +155,7 @@
 
     "@csstools/css-tokenizer": ["@csstools/css-tokenizer@4.0.0", "", {}, "sha512-QxULHAm7cNu72w97JUNCBFODFaXpbDg+dP8b/oWFAZ2MTRppA3U00Y2L1HqaS4J6yBqxwa/Y3nMBaxVKbB/NsA=="],
 
-    "@dodopayments/convex": ["@dodopayments/convex@0.2.14", "", { "dependencies": { "@dodopayments/core": "^0.3.14" }, "peerDependencies": { "convex": "^1.26.0", "zod": "^3.25.0 || ^4.0.0" } }, "sha512-5TyapC1v/KNF4fhRWsaONCQB8YtHKUxB9nDMJmsvyPHLk0GLJrqWTI3i6Ex6L+gTLfYYLpgWqwxVFLDwH2KXiw=="],
+    "@dodopayments/convex": ["@dodopayments/convex@0.2.15", "", { "dependencies": { "@dodopayments/core": "^0.3.14" }, "peerDependencies": { "convex": "^1.26.0", "zod": "^3.25.0 || ^4.0.0" } }, "sha512-sVJEcTKmx9qCgyKhm3Qh+aWB043UFfBjC9T9V7ROxNoS+tDAZls6JnjR9nUpbrebJ7xedtFzjQyRk8gUp52GLw=="],
 
     "@dodopayments/core": ["@dodopayments/core@0.3.14", "", { "dependencies": { "dodopayments": "^2.46.0", "standardwebhooks": "^1.0.0" }, "peerDependencies": { "zod": "^3.25.0 || ^4.0.0" } }, "sha512-x7gC2d3cY2PkPWHYDU2AKCZk5xgKDMJG5A0dj8m+9+3B7gLtprE3eoDnvPz2zVSccQVvvCd2nQfARjY3EIfwBQ=="],
 
@@ -729,7 +729,7 @@
 
     "convert-source-map": ["convert-source-map@2.0.0", "", {}, "sha512-Kvp459HrV2FEJ1CAsi1Ku+MY3kasH19TFykTz2xWmMeq6bk2NU3XXvfJ+Q61m0xktWwt+1HSYf3JZsTms3aRJg=="],
 
-    "convex": ["convex@1.44.0", "", { "dependencies": { "esbuild": "0.27.0", "prettier": "^3.0.0", "ws": "8.21.0" }, "peerDependencies": { "@auth0/auth0-react": "^2.0.1", "@clerk/clerk-react": "^4.12.8 || ^5.0.0", "@clerk/react": "^6.4.3", "react": "^18.0.0 || ^19.0.0-0 || ^19.0.0" }, "optionalPeers": ["@auth0/auth0-react", "@clerk/clerk-react", "@clerk/react", "react"], "bin": { "convex": "bin/main.js" } }, "sha512-84bBa1ufSX4qohXdycXuQl2c2kAmfVpTCpypcmIgxpS5rUBgv5qjhArYugTkJVbljMs5SH2mW30bjJo+SQwe1w=="],
+    "convex": ["convex@1.45.0", "", { "dependencies": { "esbuild": "0.27.0", "prettier": "^3.0.0", "ws": "8.21.0" }, "peerDependencies": { "@auth0/auth0-react": "^2.0.1", "@clerk/clerk-react": "^4.12.8 || ^5.0.0", "@clerk/react": "^6.4.3", "react": "^18.0.0 || ^19.0.0-0 || ^19.0.0" }, "optionalPeers": ["@auth0/auth0-react", "@clerk/clerk-react", "@clerk/react", "react"], "bin": { "convex": "bin/main.js" } }, "sha512-AV3B56Ptu/14d76g3urBJ50dwpiZa6uJaLT84OWox5aCwZIJiuAamdjv3lLHDzs8vv5kC31anEZohhUe3qJ2bA=="],
 
     "convex-svelte": ["convex-svelte@0.14.0", "", { "dependencies": { "esm-env": "^1.2.2", "runed": "^0.37.1" }, "peerDependencies": { "convex": "^1.30.0", "svelte": "^5.19.0" } }, "sha512-eCaId++XnczQvEGc0sQi30BHkSEQ5AZjdDWaAqSlva2h9zKezGz8enp6MdFN7MIIMIlYZF3dKdzQ/LQ0d59KhQ=="],
 
