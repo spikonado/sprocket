@@ -22,10 +22,15 @@ repos:
       - id: check-symlinks
       - id: check-yaml
       - id: check-xml
+      # Vendored skills stay byte-identical to upstream; never auto-fix them.
       - id: end-of-file-fixer
+        exclude: ^crates/sprocket-workspace/(\.agents/|skills-lock\.json$)
       - id: fix-byte-order-marker
+        exclude: ^crates/sprocket-workspace/(\.agents/|skills-lock\.json$)
       - id: mixed-line-ending
+        exclude: ^crates/sprocket-workspace/(\.agents/|skills-lock\.json$)
       - id: trailing-whitespace
+        exclude: ^crates/sprocket-workspace/(\.agents/|skills-lock\.json$)
 
   - repo: https://github.com/codespell-project/codespell
     rev: v2.4.3

@@ -6,3 +6,7 @@ bun.lock
 
 # Nix
 flake*
+
+# Vendored skills stay byte-identical to upstream (hash-checked in cargo test)
+crates/sprocket-workspace/.agents/
+crates/sprocket-workspace/skills-lock.json

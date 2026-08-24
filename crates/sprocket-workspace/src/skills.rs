@@ -2,12 +2,12 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::project_root::find_project_root;
+use crate::skill_limits::MAX_SKILL_CONTENT_BYTES;
 use crate::skill_name::validate_skill_name;
 
 const MAX_SKILLS: usize = 64;
 const MAX_FRONTMATTER_BYTES: usize = 8 * 1024;
 const MAX_DESCRIPTION_CHARS: usize = 1024;
-const MAX_SKILL_CONTENT_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct WorkspaceSkill {
@@ -35,16 +35,23 @@ pub(crate) struct ParsedSkill {
     pub body: String,
 }
 
-/// User skill dirs in precedence order: `~/.sprocket/skills`, then `~/.agents/skills`.
+/// User skill dirs in precedence order: `~/.sprocket/skills`, `~/.agents/skills`,
+/// then `~/.config/agents/skills` (the `skills` CLI's universal global target).
 pub fn default_user_skills_dirs() -> Vec<PathBuf> {
     let Some(home) = crate::paths::home_dir() else {
         return Vec::new();
     };
 
-    vec![home.join(".sprocket/skills"), home.join(".agents/skills")]
+    vec![
+        home.join(".sprocket/skills"),
+        home.join(".agents/skills"),
+        home.join(".config/agents/skills"),
+    ]
 }
 
-/// Load skills with precedence: project, then `user_skills_dirs`, then `builtin`.
+/// Load skills with precedence: project `.sprocket/skills`, project
+/// `.agents/skills` (the `skills` CLI's universal project target), then
+/// `user_skills_dirs`, then `builtin`.
 pub fn load_workspace_skills(
     cwd: &Path,
     user_skills_dirs: &[PathBuf],
@@ -70,6 +77,12 @@ pub fn load_workspace_skills(
 
     scan_skills_dir(
         &project_root.join(".sprocket/skills"),
+        "project",
+        &mut by_name,
+        &mut warnings,
+    );
+    scan_skills_dir(
+        &project_root.join(".agents/skills"),
         "project",
         &mut by_name,
         &mut warnings,
@@ -420,17 +433,32 @@ mod tests {
     fn discovers_across_sources_with_precedence_and_sorts() {
         let root = temp_workspace();
         let project_skills = root.join(".sprocket/skills");
+        let project_agents_skills = root.join(".agents/skills");
         let sprocket_user = temp_workspace();
         let agents_user = temp_workspace();
+        let config_user = temp_workspace();
         gix::init(&root).expect("git repository");
         fs::create_dir_all(&project_skills).expect("project skills");
 
         write_skill(&project_skills, "alpha", "from project", "project body");
         write_skill(&project_skills, "shared", "project wins", "project shared");
+        write_skill(
+            &project_agents_skills,
+            "shared",
+            "project agents loses",
+            "agents shared",
+        );
+        write_skill(
+            &project_agents_skills,
+            "epsilon",
+            "from project agents",
+            "agents body",
+        );
         write_skill(&sprocket_user, "shared", "sprocket user", "sprocket shared");
         write_skill(&sprocket_user, "bravo", "from sprocket", "sprocket body");
         write_skill(&agents_user, "shared", "agents user", "agents shared");
         write_skill(&agents_user, "charlie", "from agents", "agents body");
+        write_skill(&config_user, "foxtrot", "from config", "config body");
 
         let builtin = [
             (
@@ -445,7 +473,11 @@ mod tests {
 
         let loaded = load_workspace_skills(
             &root,
-            &[sprocket_user.clone(), agents_user.clone()],
+            &[
+                sprocket_user.clone(),
+                agents_user.clone(),
+                config_user.clone(),
+            ],
             &builtin,
         );
 
@@ -454,7 +486,12 @@ mod tests {
             .iter()
             .map(|skill| skill.name.as_str())
             .collect();
-        assert_eq!(names, vec!["alpha", "bravo", "charlie", "delta", "shared"]);
+        assert_eq!(
+            names,
+            vec![
+                "alpha", "bravo", "charlie", "delta", "epsilon", "foxtrot", "shared"
+            ]
+        );
 
         let shared = loaded
             .skills
@@ -474,6 +511,7 @@ mod tests {
         fs::remove_dir_all(root).ok();
         fs::remove_dir_all(sprocket_user).ok();
         fs::remove_dir_all(agents_user).ok();
+        fs::remove_dir_all(config_user).ok();
     }
 
     #[test]

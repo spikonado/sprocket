@@ -7,6 +7,8 @@
 		"build:release": "node ./scripts/create-turbo-cache-key.js && bunx turbo run build:release",
 		"dev": "bun --env-file=apps/web/.env.local scripts/run-dev.mjs",
 		"dev:desktop": "bun --env-file=apps/web/.env.local scripts/run-dev.mjs --desktop",
+		"skills:add": "node scripts/skills.mjs add",
+		"skills:update": "node scripts/skills.mjs update",
 		"test": "turbo run test && node --test npm/sprocket/test/*.test.js"
 	},
 	"devDependencies": {
