@@ -12,7 +12,7 @@ Three client populations talk to the cloud backend:
 - Installed desktop apps (AppImage/DMG/NSIS, shipped since v0.2.2) bundle their own web assets.
 - The `@spikonado/sprocket` npm CLI and the Rust agent binaries it launches.
 
-Compat shims only exist for the second and third groups. Every shim listed here protects clients older than v0.3.2 (2026-08-22), the first release carrying the client halves of #187, #191, and #192. There is no client telemetry, so age-out signals are npm download counts per version plus the per-entry database checks below.
+Compat shims only exist for the second and third groups. Every shim in sections 1–3 protects clients older than v0.3.2 (2026-08-22), the first release carrying the client halves of #187, #191, and #192; section 4 landed after v0.3.2 and protects clients up to and including v0.3.2. There is no client telemetry, so age-out signals are npm download counts per version plus the per-entry database checks below.
 
 ## 1. Executor liveness split out of `projects`
 
@@ -73,6 +73,16 @@ Source: #200. `modelCatalog.get` gained an optional `includeUsagePolicy` argumen
 Remove by dropping the argument and attaching `usagePolicy` unconditionally in `convex/modelCatalog.ts`, folding `CatalogModelWithUsagePolicy` back into `CatalogModel` (remove `usagePolicy` from the `Omit` in `convex/lib/models.ts`) and out of `convex/lib/uiModelCatalog.ts`, simplifying the `{ includeUsagePolicy: true }` call in `+page.svelte`, and collapsing `convex/modelCatalog.test.ts` to pin unconditional inclusion instead of the opt-in contract.
 
 Safe when npm downloads for versions predating the release carrying #200 have flattened.
+
+## 4. Mandate setup ignores the stored payments email
+
+Up to v0.3.2, mandate setup resolved the customer email from the caller (`userEmail` tool argument or settings-screen input) with a fallback to `uiPreferences.paymentsEmail`, and the settings screen saved that email via `uiPreferences.setPaymentsEmail`. Setup now always uses the email on the caller's WorkOS identity instead.
+
+Today's compat: `mandateSetupArgs` (`convex/payments.ts`) still accepts an optional `userEmail` and ignores it, so pre-#204-era agents and settings screens keep passing theirs. `vMandateSetupPayload.userEmail` (`convex/lib/validators.ts`) stays accepted because stored `executorJobs.payload` rows written by those agents carry it. `uiPreferences.setPaymentsEmail` still writes the field for old settings screens, and `uiPreferences.paymentsEmail` stays optional in the schema so their rows keep validating.
+
+Remove by dropping `userEmail` from `mandateSetupArgs` and `vMandateSetupPayload` (sweep stored `executorJobs.payload` rows first if any still carry it), deleting `uiPreferences.setPaymentsEmail`, unsetting `paymentsEmail` on existing `uiPreferences` rows, and dropping the field from the schema — all in one PR.
+
+Safe when npm downloads for versions at or below v0.3.2 have flattened and a prod check shows no recent `paymentsEmail` writes (the way #174 verified).
 
 ## Completed removals, kept as precedent
 

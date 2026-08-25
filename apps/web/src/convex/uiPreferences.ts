@@ -76,6 +76,10 @@ export const setTheme = mutation({
 });
 
 export const setPaymentsEmail = mutation({
+	// Deprecated: no current caller; kept because released clients still save a
+	// payments email here. Mandate setup ignores it and uses the WorkOS
+	// identity email instead. Remove with the schema field once those clients
+	// age out (see BACKWARDS_COMPATIBILITY.md).
 	args: { email: v.string() },
 	returns: v.null(),
 	handler: async (ctx, args) => {

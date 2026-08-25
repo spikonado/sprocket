@@ -9,7 +9,7 @@ import {
 } from '@convex/_generated/server';
 import { api, internal } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
-import { getUserId } from '@convex/lib/auth';
+import { getUserId, requireIdentity } from '@convex/lib/auth';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
 import {
 	isMandateStatus,
@@ -55,7 +55,19 @@ async function pravaRequest<T>(path: string, init?: RequestInit): Promise<T> {
 	});
 	if (!response.ok) {
 		const details = await response.text();
-		throw new Error(`Prava request failed (${response.status})${details ? `: ${details}` : '.'}`);
+		let message = details;
+		try {
+			// SAFETY: Prava errors share one documented envelope
+			// ({error:{code,message,details}}); both fields are optional-checked
+			// before use and anything else keeps the raw body as the message.
+			const parsed = JSON.parse(details) as { error?: { code?: string; message?: string } };
+			if (parsed.error?.code || parsed.error?.message) {
+				message = [parsed.error.code, parsed.error.message].filter(Boolean).join(' - ');
+			}
+		} catch {
+			// Not JSON; surface the raw body.
+		}
+		throw new Error(`Prava request failed (${response.status})${message ? `: ${message}` : '.'}`);
 	}
 	const body = await response.text();
 	// SAFETY: unchecked decode of the trusted Prava API response into its documented contract T.
@@ -103,14 +115,6 @@ async function activeActor(
 		throw new Error('Run is no longer active.');
 	}
 	return actor;
-}
-
-function requiredUserEmail(userEmail: string): string {
-	const email = userEmail.trim();
-	if (!email) {
-		throw new Error('EMAIL_REQUIRED');
-	}
-	return email;
 }
 
 /** Any-scope (generic) mandates are one-time only. Prava rejects a recurring
@@ -213,6 +217,8 @@ type MandateReportRequest = {
 type PravaMandate = {
 	id?: string;
 	status?: string;
+	recurringFrequency?: string;
+	merchantScope?: string;
 	remaining?: string | null;
 	approvedAmount?: string;
 	currency?: string;
@@ -345,18 +351,6 @@ function mandateStatusResult(mandate: Doc<'mandates'>): Infer<typeof vMandateSta
 // ---------------------------------------------------------------------------
 // Internal queries / mutations
 // ---------------------------------------------------------------------------
-
-export const getPaymentsEmail = internalQuery({
-	args: { userId: v.string() },
-	returns: v.union(v.string(), v.null()),
-	handler: async (ctx, args) => {
-		const prefs = await ctx.db
-			.query('uiPreferences')
-			.withIndex('by_userId', (query) => query.eq('userId', args.userId))
-			.unique();
-		return prefs?.paymentsEmail ?? null;
-	}
-});
 
 export const insertMandate = internalMutation({
 	args: {
@@ -740,6 +734,8 @@ export const finishChargeReport = internalMutation({
 // ---------------------------------------------------------------------------
 
 const mandateSetupArgs = {
+	// Accepted-and-ignored for released clients that still send it; the email
+	// always comes from the caller's WorkOS identity.
 	userEmail: v.optional(v.string()),
 	merchantName: v.optional(v.string()),
 	merchantUrl: v.optional(v.string()),
@@ -760,10 +756,12 @@ async function createMandateSetup(
 	userId: string,
 	args: ObjectType<typeof mandateSetupArgs>
 ): Promise<Infer<typeof vMandateSetupResult>> {
-	const storedEmail: string | null = await ctx.runQuery(internal.payments.getPaymentsEmail, {
-		userId
-	});
-	const userEmail = requiredUserEmail(args.userEmail ?? storedEmail ?? '');
+	// Prava requires a customer email on merchant sessions; the signed-in
+	// WorkOS identity is the single source of truth for it.
+	const userEmail = (await requireIdentity(ctx)).email?.trim();
+	if (!userEmail) {
+		throw new Error('Your account has no email address to use for payment mandates.');
+	}
 	assertMandateFrequencyAllowed(args);
 
 	// Generic (any-scope) mandates are one-time only; Prava still needs a
@@ -800,14 +798,16 @@ async function createMandateSetup(
 			total_amount: args.amountCap,
 			currency: args.currency,
 			description: args.description,
-			purchase_context: [
-				{
-					merchant_details: merchantDetails,
-					product_details: [
-						{ description: args.description, unit_price: args.amountCap, quantity: 1 }
-					]
-				}
-			],
+			purchase_context: {
+				custom: [
+					{
+						merchant_details: merchantDetails,
+						product_details: [
+							{ description: args.description, unit_price: args.amountCap, quantity: 1 }
+						]
+					}
+				]
+			},
 			mandate_setup: (() => {
 				const setup: MandateSetupRequest = {
 					intent: 'mandate_setup',
@@ -861,6 +861,12 @@ export const mandateSetup = action({
 function isMatchingLivePravaMandate(mandate: Doc<'mandates'>, prava: PravaMandate): boolean {
 	if (!prava.id) return false;
 	if (!LIVE_MANDATE_STATUSES.has(prava.status ?? '')) return false;
+	// A different scope or cadence is a different authorization even when the
+	// merchant name and cap coincide.
+	if (prava.merchantScope !== undefined && prava.merchantScope !== mandate.scope) return false;
+	if (prava.recurringFrequency !== undefined && prava.recurringFrequency !== mandate.frequency) {
+		return false;
+	}
 	// A mandate approved in another currency is a different authorization;
 	// never resolve (and later charge) it for this setup.
 	if ((prava.currency ?? '').toUpperCase() !== mandate.currency.toUpperCase()) return false;
@@ -1123,6 +1129,7 @@ export const mandateCharge = action({
 		let result: {
 			transactionId?: string;
 			status?: string;
+			errorCode?: string;
 			credentials?: {
 				token: string;
 				dynamicCvv: string;
@@ -1165,7 +1172,7 @@ export const mandateCharge = action({
 				userId: actor.userId,
 				status: 'failed'
 			});
-			throw new Error(result.errorMessage ?? 'Mandate charge failed.');
+			throw new Error(result.errorMessage ?? result.errorCode ?? 'Mandate charge failed.');
 		}
 		await ctx.runMutation(internal.payments.completeCharge, {
 			chargeId: reservation.chargeId,

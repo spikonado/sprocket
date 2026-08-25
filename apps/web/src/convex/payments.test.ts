@@ -26,7 +26,6 @@ async function startRun(t: ConvexTestInstance, subject: string) {
 	});
 	return {
 		asUser: t.withIdentity({ subject, email: `${subject}@example.com` }),
-		userEmail: `${subject}@example.com`,
 		runId: created.runId,
 		claimId,
 		executionSecret
@@ -54,7 +53,6 @@ function setupArgs(run: Awaited<ReturnType<typeof startRun>>) {
 		frequency: 'monthly' as const,
 		scope: 'listed' as const,
 		description: 'Monthly budget',
-		userEmail: run.userEmail,
 		...auth(run)
 	};
 }
@@ -62,6 +60,8 @@ function setupArgs(run: Awaited<ReturnType<typeof startRun>>) {
 type PravaMandateFixture = {
 	id?: string;
 	status?: string;
+	merchantScope?: string;
+	recurringFrequency?: string;
 	merchantName?: string | null;
 	merchantUrl?: string;
 	countryCode?: string;
@@ -76,6 +76,10 @@ function liveListedMandate(overrides: PravaMandateFixture = {}): JsonObject {
 	const mandate: JsonObject = {
 		id: 'mdt_1',
 		status: 'active',
+		// Populated per Prava's current List Mandates response so the
+		// scope/cadence comparisons in resolution are exercised.
+		merchantScope: 'listed',
+		recurringFrequency: 'monthly',
 		merchantName: 'Example Shop',
 		merchantUrl: 'https://shop.example',
 		countryCode: 'US',
@@ -156,8 +160,21 @@ describe('payments mandates', () => {
 		const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
 		expect(body).toMatchObject({
 			user_id: 'user_alice',
+			// The email comes from the caller's WorkOS identity, not tool args.
 			user_email: 'user_alice@example.com',
 			total_amount: '120.00',
+			purchase_context: {
+				custom: [
+					{
+						merchant_details: {
+							name: 'Example Shop',
+							url: 'https://shop.example',
+							country_code_iso2: 'US'
+						},
+						product_details: [{ description: 'Monthly budget', unit_price: '120.00', quantity: 1 }]
+					}
+				]
+			},
 			mandate_setup: {
 				intent: 'mandate_setup',
 				recurring_frequency: 'monthly',
@@ -173,6 +190,19 @@ describe('payments mandates', () => {
 			approvalUrl: 'https://pay.prava.space/approve/1'
 		});
 		expect(stored).not.toHaveProperty('session_token');
+	});
+
+	it('rejects mandate setup when the WorkOS identity has no email', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+
+		await expect(
+			t.withIdentity({ subject: 'user_alice' }).action(api.payments.mandateSetup, setupArgs(run))
+		).rejects.toThrow(/no email address/);
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
 	it('syncs a pending mandate to active once the owner approves', async () => {
@@ -415,6 +445,41 @@ describe('payments mandates', () => {
 		await expect(
 			run.asUser.action(api.payments.mandateCharge, {
 				mandateId: setup.mandateId,
+				amount: '40.00',
+				currency: 'USD',
+				description: 'Order 8842',
+				...auth(run)
+			})
+		).rejects.toThrow(/not yet approved/);
+	});
+
+	it('does not resolve an approval whose scope or cadence differs', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+		// Same merchant + cap + currency, but approved as any-merchant.
+		const { setup } = await createApprovedMandate(t, run, [
+			liveListedMandate({ id: 'mdt_any', merchantScope: 'any' })
+		]);
+
+		await expect(
+			run.asUser.action(api.payments.mandateCharge, {
+				mandateId: setup.mandateId,
+				amount: '40.00',
+				currency: 'USD',
+				description: 'Order 8842',
+				...auth(run)
+			})
+		).rejects.toThrow(/not yet approved/);
+
+		// Same again, but approved with a weekly cadence instead of monthly.
+		const { setup: weeklySetup } = await createApprovedMandate(t, run, [
+			liveListedMandate({ id: 'mdt_weekly', recurringFrequency: 'weekly' })
+		]);
+
+		await expect(
+			run.asUser.action(api.payments.mandateCharge, {
+				mandateId: weeklySetup.mandateId,
 				amount: '40.00',
 				currency: 'USD',
 				description: 'Order 8842',
@@ -696,7 +761,6 @@ describe('payments mandates', () => {
 				amountCap: '200.00',
 				currency: 'USD',
 				description: 'Weekly groceries',
-				userEmail: run.userEmail,
 				...auth(run)
 			})
 		).rejects.toThrow(/one-time/);
@@ -803,8 +867,7 @@ describe('payments mandates', () => {
 			amountCap: '120.00',
 			currency: 'USD',
 			frequency: 'monthly' as const,
-			scope: 'listed' as const,
-			userEmail: alice.userEmail
+			scope: 'listed' as const
 		};
 		const first = await alice.asUser.action(api.payments.setupMyMandate, {
 			...setupArgs,
@@ -856,8 +919,7 @@ describe('payments mandates', () => {
 			currency: 'USD',
 			frequency: 'monthly' as const,
 			scope: 'listed' as const,
-			description: 'Monthly budget',
-			userEmail: alice.userEmail
+			description: 'Monthly budget'
 		});
 
 		const result = await alice.asUser.action(api.payments.listMyMandates, {});

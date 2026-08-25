@@ -131,6 +131,8 @@ export const vMandateChargeStatus = v.union(
 export const vMandateReportOutcome = v.union(v.literal('approved'), v.literal('declined'));
 
 export const vMandateSetupPayload = v.object({
+	// Accepted-and-ignored: stored executorJobs payloads from released agents
+	// may still carry it. Mandate setup now reads the WorkOS identity email.
 	userEmail: v.optional(v.string()),
 	merchantName: v.optional(v.string()),
 	merchantUrl: v.optional(v.string()),

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
-	import { useAction, useAuth, useMutation, useQuery } from 'convex-svelte';
+	import { useAction, useAuth } from 'convex-svelte';
 	import type { Id } from '$convex/_generated/dataModel';
 	import { api } from '$convex/_generated/api';
 	import type { MandateApproval } from '$lib/chat/mandate';
@@ -25,10 +25,6 @@
 	};
 
 	const convexAuth = useAuth();
-	const prefsQuery = useQuery(api.uiPreferences.getMine, () =>
-		convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip'
-	);
-	const setPaymentsEmail = useMutation(api.uiPreferences.setPaymentsEmail);
 	const listMyMandates = useAction(api.payments.listMyMandates);
 	const setupMyMandate = useAction(api.payments.setupMyMandate);
 	const setMyMandateLifecycle = useAction(api.payments.setMyMandateLifecycle);
@@ -49,12 +45,6 @@
 	const labelClass = 'text-muted-foreground text-[12px]';
 	const actionLinkClass =
 		'text-muted-foreground hover:text-foreground text-[12px] transition disabled:pointer-events-none disabled:opacity-40';
-
-	let paymentsEmail = $state('');
-	let emailHydrated = $state(false);
-	let emailSaving = $state(false);
-	let emailSaved = $state(false);
-	let emailError = $state<string | null>(null);
 
 	let merchantName = $state('');
 	let merchantUrl = $state('');
@@ -86,15 +76,6 @@
 		if (scope === 'any' && frequency !== 'one_time') {
 			frequency = 'one_time';
 		}
-	});
-
-	$effect(() => {
-		const data = prefsQuery.data;
-		if (data === undefined || emailHydrated) {
-			return;
-		}
-		paymentsEmail = data?.paymentsEmail ?? '';
-		emailHydrated = true;
 	});
 
 	$effect(() => {
@@ -148,26 +129,8 @@
 		}
 	}
 
-	async function savePaymentsEmail() {
-		emailSaving = true;
-		emailError = null;
-		emailSaved = false;
-		try {
-			await setPaymentsEmail({ email: paymentsEmail.trim() });
-			emailSaved = true;
-		} catch (error) {
-			emailError = catchMessage(error, 'Couldn’t save email.');
-		} finally {
-			emailSaving = false;
-		}
-	}
-
 	async function submitMandateSetup(event: Event) {
 		event.preventDefault();
-		if (!paymentsEmail.trim()) {
-			setupError = 'Save your payments email above first — it’s required to set up a mandate.';
-			return;
-		}
 		setupSubmitting = true;
 		setupError = null;
 		pendingApproval = null;
@@ -183,8 +146,7 @@
 				currency: currency.trim(),
 				frequency,
 				scope,
-				description: description.trim(),
-				userEmail: paymentsEmail.trim()
+				description: description.trim()
 			});
 			pendingApproval = {
 				mandateId: result.mandateId,
@@ -226,46 +188,6 @@
 
 	<div class="min-h-0 flex-1 overflow-y-auto px-6 py-8">
 		<div class="max-w-xl space-y-10">
-			<div>
-				<p class="text-muted-foreground font-mono text-[11px] tracking-[0.18em] uppercase">
-					Payments email
-				</p>
-				<p class="text-muted-foreground mt-2 text-sm leading-6">
-					Used when setting up spending mandates. Saved to your account preferences.
-				</p>
-				<form
-					class="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end"
-					onsubmit={(event) => {
-						event.preventDefault();
-						void savePaymentsEmail();
-					}}
-				>
-					<label class="block min-w-0 flex-1 space-y-1.5">
-						<span class={labelClass}>Email</span>
-						<input
-							class={fieldClass}
-							type="email"
-							autocomplete="email"
-							bind:value={paymentsEmail}
-							placeholder="you@example.com"
-							disabled={emailSaving || prefsQuery.isLoading}
-							oninput={() => {
-								emailSaved = false;
-								emailError = null;
-							}}
-						/>
-					</label>
-					<Button type="submit" variant="outline" disabled={emailSaving || !paymentsEmail.trim()}>
-						{emailSaving ? 'Saving…' : 'Save'}
-					</Button>
-				</form>
-				{#if emailError}
-					<p class="text-destructive mt-2 text-sm">{emailError}</p>
-				{:else if emailSaved}
-					<p class="text-muted-foreground mt-2 text-sm" role="status">Saved.</p>
-				{/if}
-			</div>
-
 			<div>
 				<p class="text-muted-foreground font-mono text-[11px] tracking-[0.18em] uppercase">
 					Set up a spending mandate
