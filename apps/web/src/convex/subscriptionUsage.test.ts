@@ -69,7 +69,7 @@ describe('subscription and usage backend', () => {
 	it('dedupes to the newest event so a cancellation beats an older active row', async () => {
 		const t = initConvexTest();
 		const userId = 'user_dedup';
-		const asUser = t.withIdentity({ subject: userId });
+		const asUser = t.withIdentity({ subject: userId, email: `${userId}@example.com` });
 		const shared = {
 			userId,
 			tier: 'pro',
@@ -98,7 +98,7 @@ describe('subscription and usage backend', () => {
 	it('ensures a free subscription row and leaves existing grants alone', async () => {
 		const t = initConvexTest();
 		const userId = 'user_ensure_free';
-		const asUser = t.withIdentity({ subject: userId });
+		const asUser = t.withIdentity({ subject: userId, email: `${userId}@example.com` });
 		const readSubscription = () =>
 			t.run(async (ctx) =>
 				ctx.db
@@ -130,7 +130,7 @@ describe('subscription and usage backend', () => {
 	it('lets paid webhooks replace a bootstrap free row', async () => {
 		const t = initConvexTest();
 		const userId = 'user_bootstrap_upgrade';
-		const asUser = t.withIdentity({ subject: userId });
+		const asUser = t.withIdentity({ subject: userId, email: `${userId}@example.com` });
 		await asUser.mutation(api.billing.ensureMySubscription, {});
 
 		await t.mutation(internal.billing.upsertSubscription, {
@@ -269,7 +269,7 @@ describe('subscription and usage backend', () => {
 	it('materializes exactly one users row per subject across repeated page loads', async () => {
 		const t = initConvexTest();
 		const userId = 'user_users_row';
-		const asUser = t.withIdentity({ subject: userId });
+		const asUser = t.withIdentity({ subject: userId, email: `${userId}@example.com` });
 		await asUser.mutation(api.billing.ensureMySubscription, {});
 		await asUser.mutation(api.billing.ensureMySubscription, {});
 		const rows = await t.run(async (ctx) =>

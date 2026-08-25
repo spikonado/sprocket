@@ -31,7 +31,7 @@ export default defineSchema({
 		// WorkOS JWT subject; every owned table stores this value as `userId`.
 		subject: v.string(),
 		tokenIdentifier: v.string(),
-		email: v.optional(v.string()),
+		email: v.string(),
 		createdAt: v.number()
 	}).index('by_subject', ['subject']),
 	billingCustomers: defineTable({

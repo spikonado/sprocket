@@ -407,13 +407,15 @@ export const getOwnedMandate = internalQuery({
  * it from here instead of ctx.auth. */
 export const getUserEmail = internalQuery({
 	args: { userId: v.string() },
-	returns: v.union(v.string(), v.null()),
+	returns: v.string(),
 	handler: async (ctx, args) => {
 		const rows = await ctx.db
 			.query('users')
 			.withIndex('by_subject', (query) => query.eq('subject', args.userId))
 			.collect();
-		return pickPrimaryUser(rows)?.email ?? null;
+		const primary = pickPrimaryUser(rows);
+		if (!primary) throw new Error(`No user record for ${args.userId}.`);
+		return primary.email;
 	}
 });
 
@@ -775,10 +777,7 @@ async function createMandateSetup(
 	// Prava requires a customer email on merchant sessions. Executor actions
 	// carry no caller identity, so read the WorkOS email that ensureCurrentUser
 	// keeps on the users row instead of ctx.auth.
-	const userEmail = (await ctx.runQuery(internal.payments.getUserEmail, { userId }))?.trim();
-	if (!userEmail) {
-		throw new Error('Your account has no synced email yet. Reload Sprocket once, then try again.');
-	}
+	const userEmail = await ctx.runQuery(internal.payments.getUserEmail, { userId });
 	assertMandateFrequencyAllowed(args);
 
 	// Generic (any-scope) mandates are one-time only; Prava still needs a

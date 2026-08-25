@@ -50,7 +50,7 @@ export async function getCurrentUser(
  * first sight. */
 export async function ensureCurrentUser(ctx: GenericMutationCtx<DataModel>): Promise<Doc<'users'>> {
 	const identity = await requireIdentity(ctx);
-	const email = identity.email?.trim() || undefined;
+	const email = identity.email!;
 	const rows = await ctx.db
 		.query('users')
 		.withIndex('by_subject', (query) => query.eq('subject', identity.subject))
@@ -63,7 +63,7 @@ export async function ensureCurrentUser(ctx: GenericMutationCtx<DataModel>): Pro
 		for (const extra of rows) {
 			if (extra._id !== primary._id) await ctx.db.delete('users', extra._id);
 		}
-		if (email && email !== primary.email) {
+		if (email !== primary.email) {
 			await ctx.db.patch('users', primary._id, { email });
 			primary = { ...primary, email };
 		}
