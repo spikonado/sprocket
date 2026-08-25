@@ -15,7 +15,7 @@ import {
 	validateQuestionText
 } from '@convex/lib/agentQuestions';
 import { getExecutionRun, getUserId } from '@convex/lib/auth';
-import { assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
+import { assertRunAcceptsModelCompletion, toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { vAgentQuestionSnapshot } from '@convex/lib/docs';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
 import { vAskQuestionOption } from '@convex/lib/validators';
@@ -120,46 +120,50 @@ export const create = mutation({
 		sequence: v.number()
 	}),
 	handler: async (ctx, args) => {
-		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		assertRunAcceptsModelCompletion(run.status);
-		if (run.claimId !== args.claimId || !isRunClaimLeaseActive(run, Date.now())) {
-			throw new Error('Run is no longer active.');
+		try {
+			const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+			assertRunAcceptsModelCompletion(run.status);
+			if (run.claimId !== args.claimId || !isRunClaimLeaseActive(run, Date.now())) {
+				throw new Error('Run is no longer active.');
+			}
+			if (!run.activeJobId) {
+				throw new Error('Ask question requires an active tool job.');
+			}
+
+			const question = validateQuestionText(args.question);
+			const options = finalizeQuestionOptions(args.options);
+			const timeoutMs = Math.min(
+				MAX_QUESTION_TIMEOUT_MS,
+				Math.max(MIN_QUESTION_TIMEOUT_MS, Math.floor(args.timeoutMs ?? DEFAULT_QUESTION_TIMEOUT_MS))
+			);
+			const createdAt = Date.now();
+			const timeoutAt = createdAt + timeoutMs;
+			const sequence = await nextThreadSequence(ctx, run.threadId);
+
+			const questionId = await ctx.db.insert('agentQuestions', {
+				threadId: run.threadId,
+				runId: run._id,
+				jobId: run.activeJobId,
+				question,
+				options,
+				status: 'pending',
+				createdAt,
+				timeoutAt,
+				sequence
+			});
+
+			await ctx.scheduler.runAfter(timeoutMs, internal.agentQuestions.timeout, { questionId });
+
+			return {
+				questionId,
+				question,
+				options,
+				timeoutAt,
+				sequence
+			};
+		} catch (error) {
+			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
-		if (!run.activeJobId) {
-			throw new Error('Ask question requires an active tool job.');
-		}
-
-		const question = validateQuestionText(args.question);
-		const options = finalizeQuestionOptions(args.options);
-		const timeoutMs = Math.min(
-			MAX_QUESTION_TIMEOUT_MS,
-			Math.max(MIN_QUESTION_TIMEOUT_MS, Math.floor(args.timeoutMs ?? DEFAULT_QUESTION_TIMEOUT_MS))
-		);
-		const createdAt = Date.now();
-		const timeoutAt = createdAt + timeoutMs;
-		const sequence = await nextThreadSequence(ctx, run.threadId);
-
-		const questionId = await ctx.db.insert('agentQuestions', {
-			threadId: run.threadId,
-			runId: run._id,
-			jobId: run.activeJobId,
-			question,
-			options,
-			status: 'pending',
-			createdAt,
-			timeoutAt,
-			sequence
-		});
-
-		await ctx.scheduler.runAfter(timeoutMs, internal.agentQuestions.timeout, { questionId });
-
-		return {
-			questionId,
-			question,
-			options,
-			timeoutAt,
-			sequence
-		};
 	}
 });
 
@@ -237,12 +241,16 @@ export const getForExecutor = query({
 	},
 	returns: v.union(vAgentQuestionSnapshot, v.null()),
 	handler: async (ctx, args) => {
-		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		const question = await ctx.db.get('agentQuestions', args.questionId);
-		if (!question || question.runId !== run._id) {
-			return null;
+		try {
+			const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+			const question = await ctx.db.get('agentQuestions', args.questionId);
+			if (!question || question.runId !== run._id) {
+				return null;
+			}
+			return toSnapshot(question);
+		} catch (error) {
+			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
-		return toSnapshot(question);
 	}
 });
 

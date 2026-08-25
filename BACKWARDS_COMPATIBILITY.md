@@ -100,6 +100,7 @@ So nobody goes hunting for shims that do not exist:
 - Accepting Begin Patch envelopes alongside unified diffs (#66) is a permanent feature, not compat.
 - Dropping orphaned OpenAI item references (#188) must stay forever. Compaction can drop reasoning items from any history, not just pre-fix ones.
 - Usage-limit run errors (#200) now throw ConvexErrors, so `runs.lastError` carries a readable sentence where production used to mask them to `[Request ID] Server Error` strings. Clients released before #200 render that sentence in their transcript banner. It is display-only text that clears on the next run, so no compat layer ships.
+- Tool-call failures (#206) now throw ConvexErrors through the executor-facing functions and surface authored messages to the model via rig's `map_error`, so `executorJobs.error` and the model's tool result carry the real failure text where production used to mask it to `[Request ID] Server Error` strings (and rig used to redact it to "the tool failed"). Both audiences render plain display text, so no compat layer ships.
 
 ## Removal checklist
 

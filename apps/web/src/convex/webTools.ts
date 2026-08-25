@@ -7,6 +7,7 @@ import { action } from '@convex/_generated/server';
 import { api, components } from '@convex/_generated/api';
 import { vScrapeUrlResult, vWebSearchResult } from '@convex/lib/validators';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
+import { toAgentToolConvexError } from '@convex/lib/agentErrors';
 
 const contextDev = new ContextDev(components.contextDev);
 const exa = new ExaClient(components.exa);
@@ -68,41 +69,45 @@ export const scrapeUrl = action({
 	},
 	returns: vScrapeUrlResult,
 	handler: async (ctx, args) => {
-		const actor = await ctx.runQuery(api.agentRuntime.completionActor, {
-			runId: args.runId,
-			executionSecret: args.executionSecret
-		});
-		if (actor.claimId !== args.claimId || !isRunClaimLeaseActive(actor, Date.now())) {
-			throw new Error('Run is no longer active.');
-		}
-		let url: URL;
 		try {
-			url = new URL(args.url.trim());
-		} catch {
-			throw new Error(`Invalid URL: ${args.url}`);
-		}
-		if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-			throw new Error('Only http(s) URLs can be scraped.');
-		}
+			const actor = await ctx.runQuery(api.agentRuntime.completionActor, {
+				runId: args.runId,
+				executionSecret: args.executionSecret
+			});
+			if (actor.claimId !== args.claimId || !isRunClaimLeaseActive(actor, Date.now())) {
+				throw new Error('Run is no longer active.');
+			}
+			let url: URL;
+			try {
+				url = new URL(args.url.trim());
+			} catch {
+				throw new Error(`Invalid URL: ${args.url}`);
+			}
+			if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+				throw new Error('Only http(s) URLs can be scraped.');
+			}
 
-		const response = await callComponent('Context.dev scrape', SCRAPE_TIMEOUT_MS, () =>
-			contextDev.scrapeMarkdown(ctx, {
-				params: {
-					url: url.toString(),
-					useMainContentOnly: true,
-					timeoutMS: SCRAPE_TIMEOUT_MS
-				}
-			})
-		);
+			const response = await callComponent('Context.dev scrape', SCRAPE_TIMEOUT_MS, () =>
+				contextDev.scrapeMarkdown(ctx, {
+					params: {
+						url: url.toString(),
+						useMainContentOnly: true,
+						timeoutMS: SCRAPE_TIMEOUT_MS
+					}
+				})
+			);
 
-		const truncated = response.markdown.length > SCRAPE_MARKDOWN_MAX_CHARS;
-		return {
-			url: response.url,
-			markdown: truncated
-				? response.markdown.slice(0, SCRAPE_MARKDOWN_MAX_CHARS)
-				: response.markdown,
-			truncated
-		};
+			const truncated = response.markdown.length > SCRAPE_MARKDOWN_MAX_CHARS;
+			return {
+				url: response.url,
+				markdown: truncated
+					? response.markdown.slice(0, SCRAPE_MARKDOWN_MAX_CHARS)
+					: response.markdown,
+				truncated
+			};
+		} catch (error) {
+			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
+		}
 	}
 });
 
@@ -116,46 +121,50 @@ export const webSearch = action({
 	},
 	returns: vWebSearchResult,
 	handler: async (ctx, args) => {
-		const actor = await ctx.runQuery(api.agentRuntime.completionActor, {
-			runId: args.runId,
-			executionSecret: args.executionSecret
-		});
-		if (actor.claimId !== args.claimId || !isRunClaimLeaseActive(actor, Date.now())) {
-			throw new Error('Run is no longer active.');
-		}
-		const query = args.query.trim();
-		if (!query) {
-			throw new Error('Search query cannot be empty.');
-		}
-		const requested =
-			args.numResults !== undefined && Number.isFinite(args.numResults)
-				? Math.floor(args.numResults)
-				: DEFAULT_SEARCH_RESULTS;
-		const numResults = Math.min(Math.max(requested, 1), MAX_SEARCH_RESULTS);
+		try {
+			const actor = await ctx.runQuery(api.agentRuntime.completionActor, {
+				runId: args.runId,
+				executionSecret: args.executionSecret
+			});
+			if (actor.claimId !== args.claimId || !isRunClaimLeaseActive(actor, Date.now())) {
+				throw new Error('Run is no longer active.');
+			}
+			const query = args.query.trim();
+			if (!query) {
+				throw new Error('Search query cannot be empty.');
+			}
+			const requested =
+				args.numResults !== undefined && Number.isFinite(args.numResults)
+					? Math.floor(args.numResults)
+					: DEFAULT_SEARCH_RESULTS;
+			const numResults = Math.min(Math.max(requested, 1), MAX_SEARCH_RESULTS);
 
-		const response = await callComponent('Exa search', SEARCH_TIMEOUT_MS, () =>
-			exa.search(ctx, {
-				query,
-				type: 'auto',
-				numResults,
-				contents: { text: { maxCharacters: SEARCH_RESULT_TEXT_MAX_CHARS } }
-			})
-		);
+			const response = await callComponent('Exa search', SEARCH_TIMEOUT_MS, () =>
+				exa.search(ctx, {
+					query,
+					type: 'auto',
+					numResults,
+					contents: { text: { maxCharacters: SEARCH_RESULT_TEXT_MAX_CHARS } }
+				})
+			);
 
-		return {
-			results: response.results.flatMap((result) => {
-				if (!result.url) {
-					return [];
-				}
-				const item: Infer<typeof vWebSearchResult>['results'][number] = {
-					url: result.url
-				};
-				if (result.title) item.title = result.title;
-				if (result.publishedDate) item.publishedDate = result.publishedDate;
-				if (result.author) item.author = result.author;
-				if (result.text) item.text = result.text;
-				return [item];
-			})
-		};
+			return {
+				results: response.results.flatMap((result) => {
+					if (!result.url) {
+						return [];
+					}
+					const item: Infer<typeof vWebSearchResult>['results'][number] = {
+						url: result.url
+					};
+					if (result.title) item.title = result.title;
+					if (result.publishedDate) item.publishedDate = result.publishedDate;
+					if (result.author) item.author = result.author;
+					if (result.text) item.text = result.text;
+					return [item];
+				})
+			};
+		} catch (error) {
+			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
+		}
 	}
 });

@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use convex::Value;
 use futures::StreamExt;
+use rig::tool::ToolExecutionError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -39,6 +40,19 @@ pub(crate) enum AgentToolError {
     Cancelled,
     #[error("{0}")]
     Message(String),
+}
+
+impl From<AgentToolError> for ToolExecutionError {
+    // rig's default redaction would show models only "the tool failed"; these
+    // messages are authored for display and already land in job.error.
+    fn from(error: AgentToolError) -> Self {
+        match error {
+            AgentToolError::Cancelled => {
+                ToolExecutionError::cancelled("Tool execution was cancelled.")
+            }
+            AgentToolError::Message(message) => ToolExecutionError::other(message),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -645,6 +659,10 @@ impl rig::tool::Tool for ExecCommandTool {
         exec_command_parameters()
     }
 
+    fn map_error(&self, error: Self::Error) -> ToolExecutionError {
+        error.into()
+    }
+
     async fn call(
         &self,
         _context: &mut rig::tool::ToolContext,
@@ -694,6 +712,10 @@ impl rig::tool::Tool for WriteStdinTool {
         write_stdin_parameters()
     }
 
+    fn map_error(&self, error: Self::Error) -> ToolExecutionError {
+        error.into()
+    }
+
     async fn call(
         &self,
         _context: &mut rig::tool::ToolContext,
@@ -740,6 +762,10 @@ impl rig::tool::Tool for AskQuestionTool {
 
     fn parameters(&self) -> serde_json::Value {
         ask_question_parameters()
+    }
+
+    fn map_error(&self, error: Self::Error) -> ToolExecutionError {
+        error.into()
     }
 
     async fn call(
@@ -800,6 +826,10 @@ impl rig::tool::Tool for AwaitQuestionTool {
 
     fn parameters(&self) -> serde_json::Value {
         await_question_parameters()
+    }
+
+    fn map_error(&self, error: Self::Error) -> ToolExecutionError {
+        error.into()
     }
 
     async fn call(
@@ -867,6 +897,10 @@ impl rig::tool::Tool for ApplyPatchTool {
         json!(schemars::schema_for!(ApplyPatchArgs))
     }
 
+    fn map_error(&self, error: Self::Error) -> ToolExecutionError {
+        error.into()
+    }
+
     async fn call(
         &self,
         _context: &mut rig::tool::ToolContext,
@@ -904,6 +938,10 @@ impl rig::tool::Tool for WebSearchTool {
 
     fn parameters(&self) -> serde_json::Value {
         web_search_parameters()
+    }
+
+    fn map_error(&self, error: Self::Error) -> ToolExecutionError {
+        error.into()
     }
 
     async fn call(
@@ -958,6 +996,10 @@ impl rig::tool::Tool for ScrapeUrlTool {
         json!(schemars::schema_for!(ScrapeUrlArgs))
     }
 
+    fn map_error(&self, error: Self::Error) -> ToolExecutionError {
+        error.into()
+    }
+
     async fn call(
         &self,
         _context: &mut rig::tool::ToolContext,
@@ -1000,6 +1042,10 @@ impl rig::tool::Tool for CreateArtifactTool {
 
     fn parameters(&self) -> serde_json::Value {
         json!(schemars::schema_for!(CreateArtifactArgs))
+    }
+
+    fn map_error(&self, error: Self::Error) -> ToolExecutionError {
+        error.into()
     }
 
     async fn call(
@@ -1045,6 +1091,10 @@ impl rig::tool::Tool for UpdateArtifactTool {
         json!(schemars::schema_for!(UpdateArtifactArgs))
     }
 
+    fn map_error(&self, error: Self::Error) -> ToolExecutionError {
+        error.into()
+    }
+
     async fn call(
         &self,
         _context: &mut rig::tool::ToolContext,
@@ -1086,6 +1136,10 @@ impl rig::tool::Tool for BrowserObserveTool {
 
     fn parameters(&self) -> serde_json::Value {
         json!(schemars::schema_for!(BrowserObserveArgs))
+    }
+
+    fn map_error(&self, error: Self::Error) -> ToolExecutionError {
+        error.into()
     }
 
     async fn call(
@@ -1133,6 +1187,10 @@ impl rig::tool::Tool for BrowserActTool {
 
     fn parameters(&self) -> serde_json::Value {
         json!(schemars::schema_for!(BrowserActToolArgs))
+    }
+
+    fn map_error(&self, error: Self::Error) -> ToolExecutionError {
+        error.into()
     }
 
     async fn call(
@@ -1200,6 +1258,10 @@ impl rig::tool::Tool for BrowserExtractTool {
         json!(schemars::schema_for!(BrowserExtractArgs))
     }
 
+    fn map_error(&self, error: Self::Error) -> ToolExecutionError {
+        error.into()
+    }
+
     async fn call(
         &self,
         _context: &mut rig::tool::ToolContext,
@@ -1248,6 +1310,10 @@ impl rig::tool::Tool for MandateSetupTool {
         json!(schemars::schema_for!(MandateSetupArgs))
     }
 
+    fn map_error(&self, error: Self::Error) -> ToolExecutionError {
+        error.into()
+    }
+
     async fn call(
         &self,
         _context: &mut rig::tool::ToolContext,
@@ -1276,6 +1342,10 @@ impl rig::tool::Tool for MandateStatusTool {
 
     fn parameters(&self) -> serde_json::Value {
         json!(schemars::schema_for!(MandateIdArgs))
+    }
+
+    fn map_error(&self, error: Self::Error) -> ToolExecutionError {
+        error.into()
     }
 
     async fn call(
@@ -1308,6 +1378,10 @@ impl rig::tool::Tool for MandateListTool {
         json!({ "type": "object", "properties": {}, "additionalProperties": false })
     }
 
+    fn map_error(&self, error: Self::Error) -> ToolExecutionError {
+        error.into()
+    }
+
     async fn call(
         &self,
         _context: &mut rig::tool::ToolContext,
@@ -1330,6 +1404,10 @@ impl rig::tool::Tool for MandateChargeTool {
 
     fn parameters(&self) -> serde_json::Value {
         json!(schemars::schema_for!(MandateChargeArgs))
+    }
+
+    fn map_error(&self, error: Self::Error) -> ToolExecutionError {
+        error.into()
     }
 
     async fn call(
@@ -1362,6 +1440,10 @@ impl rig::tool::Tool for MandateReportTool {
         json!(schemars::schema_for!(MandateReportArgs))
     }
 
+    fn map_error(&self, error: Self::Error) -> ToolExecutionError {
+        error.into()
+    }
+
     async fn call(
         &self,
         _context: &mut rig::tool::ToolContext,
@@ -1390,6 +1472,10 @@ impl rig::tool::Tool for ReadSkillTool {
 
     fn parameters(&self) -> serde_json::Value {
         json!(schemars::schema_for!(ReadSkillArgs))
+    }
+
+    fn map_error(&self, error: Self::Error) -> ToolExecutionError {
+        error.into()
     }
 
     async fn call(
@@ -1921,6 +2007,20 @@ mod tests {
     use sprocket_workspace::{SkillSource, WorkspaceSkill};
 
     use super::*;
+
+    #[test]
+    fn agent_tool_errors_map_to_model_visible_execution_errors() {
+        let mapped: ToolExecutionError =
+            AgentToolError::Message("failed to parse Begin Patch input".to_string()).into();
+        assert_eq!(
+            mapped.model_feedback(),
+            Some("failed to parse Begin Patch input")
+        );
+        assert_eq!(mapped.kind(), rig::tool::ToolErrorKind::Other);
+
+        let cancelled: ToolExecutionError = AgentToolError::Cancelled.into();
+        assert_eq!(cancelled.kind(), rig::tool::ToolErrorKind::Cancelled);
+    }
 
     #[test]
     fn tool_error_includes_anyhow_context_chain() {

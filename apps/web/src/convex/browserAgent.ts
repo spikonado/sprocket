@@ -12,6 +12,7 @@ import {
 	vBrowserObserveResult,
 	vBrowserTaskResult
 } from '@convex/lib/validators';
+import { toAgentToolConvexError } from '@convex/lib/agentErrors';
 
 // The browsing sub-agent's model. Uses the same OpenAI key as the main agent.
 const DEFAULT_MODEL = 'openai/gpt-5.6-sol';
@@ -255,19 +256,23 @@ export const act = action({
 	},
 	returns: vBrowserTaskResult,
 	handler: async (ctx, args): Promise<Infer<typeof vBrowserTaskResult>> => {
-		const actor = await activeActor(ctx, args);
-		const stagehand = await attachStagehand(ctx, actor.userId, args.runId, actor.threadId);
 		try {
-			await gotoIfProvided(stagehand, args.startUrl);
-			if (!args.instruction && !args.action) {
-				throw new Error('browser_act needs an instruction or an action.');
+			const actor = await activeActor(ctx, args);
+			const stagehand = await attachStagehand(ctx, actor.userId, args.runId, actor.threadId);
+			try {
+				await gotoIfProvided(stagehand, args.startUrl);
+				if (!args.instruction && !args.action) {
+					throw new Error('browser_act needs an instruction or an action.');
+				}
+				const result = args.action
+					? await stagehand.act(args.action)
+					: await stagehand.act(args.instruction!);
+				return clip(`success: ${result.success}\n${result.message}`.trim());
+			} finally {
+				await stagehand.close().catch(() => {});
 			}
-			const result = args.action
-				? await stagehand.act(args.action)
-				: await stagehand.act(args.instruction!);
-			return clip(`success: ${result.success}\n${result.message}`.trim());
-		} finally {
-			await stagehand.close().catch(() => {});
+		} catch (error) {
+			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
 	}
 });
@@ -282,20 +287,24 @@ export const observe = action({
 	},
 	returns: vBrowserObserveResult,
 	handler: async (ctx, args) => {
-		const actor = await activeActor(ctx, args);
-		const stagehand = await attachStagehand(ctx, actor.userId, args.runId, actor.threadId);
 		try {
-			await gotoIfProvided(stagehand, args.startUrl);
-			const actions = await stagehand.observe(args.instruction);
-			const bounded = boundActions(actions);
-			const clipped = clip(JSON.stringify(bounded.actions));
-			return {
-				actions: bounded.actions,
-				text: clipped.text,
-				truncated: bounded.truncated || clipped.truncated
-			};
-		} finally {
-			await stagehand.close().catch(() => {});
+			const actor = await activeActor(ctx, args);
+			const stagehand = await attachStagehand(ctx, actor.userId, args.runId, actor.threadId);
+			try {
+				await gotoIfProvided(stagehand, args.startUrl);
+				const actions = await stagehand.observe(args.instruction);
+				const bounded = boundActions(actions);
+				const clipped = clip(JSON.stringify(bounded.actions));
+				return {
+					actions: bounded.actions,
+					text: clipped.text,
+					truncated: bounded.truncated || clipped.truncated
+				};
+			} finally {
+				await stagehand.close().catch(() => {});
+			}
+		} catch (error) {
+			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
 	}
 });
@@ -310,14 +319,18 @@ export const extract = action({
 	},
 	returns: vBrowserTaskResult,
 	handler: async (ctx, args): Promise<Infer<typeof vBrowserTaskResult>> => {
-		const actor = await activeActor(ctx, args);
-		const stagehand = await attachStagehand(ctx, actor.userId, args.runId, actor.threadId);
 		try {
-			await gotoIfProvided(stagehand, args.startUrl);
-			const result = await stagehand.extract(args.instruction);
-			return clip(JSON.stringify(result));
-		} finally {
-			await stagehand.close().catch(() => {});
+			const actor = await activeActor(ctx, args);
+			const stagehand = await attachStagehand(ctx, actor.userId, args.runId, actor.threadId);
+			try {
+				await gotoIfProvided(stagehand, args.startUrl);
+				const result = await stagehand.extract(args.instruction);
+				return clip(JSON.stringify(result));
+			} finally {
+				await stagehand.close().catch(() => {});
+			}
+		} catch (error) {
+			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
 	}
 });
