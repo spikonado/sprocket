@@ -209,3 +209,14 @@ export function toModelCompletionConvexError(error: Error, modelId: string): Err
 	}
 	return new ConvexError(`The model provider failed: ${detail}`);
 }
+
+/**
+ * Converts failures caught in executor-facing tool functions into ConvexErrors
+ * so their text reaches the executor client and `job.error`; uncaught Errors
+ * are masked to "[Request ID] Server Error" for both audiences in production.
+ */
+export function toAgentToolConvexError(error: Error): Error {
+	if (error instanceof ConvexError) return error;
+	const message = stripUncaughtPrefix(error.message) || error.name;
+	return new ConvexError(message);
+}

@@ -6,7 +6,7 @@ import { getExecutionRun, getUserId } from '@convex/lib/auth';
 import { vArtifactType } from '@convex/lib/validators';
 import schema from '@convex/schema';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
-import { RUN_NO_LONGER_ACTIVE } from '@convex/lib/agentErrors';
+import { RUN_NO_LONGER_ACTIVE, toAgentToolConvexError } from '@convex/lib/agentErrors';
 
 const MAX_TITLE_LENGTH = 200;
 // Content also lives in the executor job payload; stay well under Convex's 1 MiB document cap.
@@ -105,53 +105,57 @@ export const createArtifact = mutation({
 	},
 	returns: vArtifactMutationResult,
 	handler: async (ctx, args) => {
-		const run = await requireActiveRun(ctx, args.runId, args.claimId, args.executionSecret);
-		const userId = run.userId;
-		const threadId = run.threadId;
-		await getOwnedThreadRecord(ctx.db, userId, threadId);
+		try {
+			const run = await requireActiveRun(ctx, args.runId, args.claimId, args.executionSecret);
+			const userId = run.userId;
+			const threadId = run.threadId;
+			await getOwnedThreadRecord(ctx.db, userId, threadId);
 
-		const title = args.title.trim();
-		validateArtifactTitle(title);
-		validateArtifactContent(args.content);
+			const title = args.title.trim();
+			validateArtifactTitle(title);
+			validateArtifactContent(args.content);
 
-		// A repeated title in the same thread updates the existing artifact
-		// instead of silently dropping the new content.
-		const existing = await ctx.db
-			.query('artifacts')
-			.withIndex('by_threadId_title', (q) => q.eq('threadId', threadId).eq('title', title))
-			.first();
+			// A repeated title in the same thread updates the existing artifact
+			// instead of silently dropping the new content.
+			const existing = await ctx.db
+				.query('artifacts')
+				.withIndex('by_threadId_title', (q) => q.eq('threadId', threadId).eq('title', title))
+				.first();
 
-		if (existing) {
-			const latest = await latestArtifactVersion(ctx, existing._id);
-			const version =
-				latest?.content === args.content
-					? existing.currentVersion
-					: await insertNextVersion(ctx, existing, userId, latest, args.content);
+			if (existing) {
+				const latest = await latestArtifactVersion(ctx, existing._id);
+				const version =
+					latest?.content === args.content
+						? existing.currentVersion
+						: await insertNextVersion(ctx, existing, userId, latest, args.content);
 
-			return mutationResult(existing, version);
+				return mutationResult(existing, version);
+			}
+
+			const now = Date.now();
+			const artifactId = await ctx.db.insert('artifacts', {
+				threadId,
+				userId,
+				title,
+				type: args.contentType,
+				currentVersion: 1,
+				createdById: run._id,
+				createdAt: now,
+				updatedAt: now
+			});
+
+			await ctx.db.insert('artifactVersions', {
+				artifactId,
+				userId,
+				version: 1,
+				content: args.content,
+				createdAt: now
+			});
+
+			return { artifactId, version: 1, title, contentType: args.contentType };
+		} catch (error) {
+			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
-
-		const now = Date.now();
-		const artifactId = await ctx.db.insert('artifacts', {
-			threadId,
-			userId,
-			title,
-			type: args.contentType,
-			currentVersion: 1,
-			createdById: run._id,
-			createdAt: now,
-			updatedAt: now
-		});
-
-		await ctx.db.insert('artifactVersions', {
-			artifactId,
-			userId,
-			version: 1,
-			content: args.content,
-			createdAt: now
-		});
-
-		return { artifactId, version: 1, title, contentType: args.contentType };
 	}
 });
 
@@ -165,21 +169,25 @@ export const appendArtifactVersion = mutation({
 	},
 	returns: vArtifactMutationResult,
 	handler: async (ctx, args) => {
-		const run = await requireActiveRun(ctx, args.runId, args.claimId, args.executionSecret);
-		const userId = run.userId;
+		try {
+			const run = await requireActiveRun(ctx, args.runId, args.claimId, args.executionSecret);
+			const userId = run.userId;
 
-		const artifact: Doc<'artifacts'> | null = await ctx.db.get('artifacts', args.artifactId);
-		if (!artifact || artifact.userId !== userId || artifact.threadId !== run.threadId) {
-			throw new Error('Artifact not found.');
+			const artifact: Doc<'artifacts'> | null = await ctx.db.get('artifacts', args.artifactId);
+			if (!artifact || artifact.userId !== userId || artifact.threadId !== run.threadId) {
+				throw new Error('Artifact not found.');
+			}
+			await getOwnedThreadRecord(ctx.db, userId, artifact.threadId);
+
+			validateArtifactContent(args.content);
+
+			const latest = await latestArtifactVersion(ctx, args.artifactId);
+			const version = await insertNextVersion(ctx, artifact, userId, latest, args.content);
+
+			return mutationResult(artifact, version);
+		} catch (error) {
+			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
-		await getOwnedThreadRecord(ctx.db, userId, artifact.threadId);
-
-		validateArtifactContent(args.content);
-
-		const latest = await latestArtifactVersion(ctx, args.artifactId);
-		const version = await insertNextVersion(ctx, artifact, userId, latest, args.content);
-
-		return mutationResult(artifact, version);
 	}
 });
 
