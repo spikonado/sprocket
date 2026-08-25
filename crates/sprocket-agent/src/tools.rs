@@ -462,9 +462,6 @@ pub(crate) enum MandateScope {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MandateSetupArgs {
-    /// Email the user uses for purchase approvals; optional when one is already on file.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    user_email: Option<String>,
     /// Merchant to lock this mandate to (required for `listed` scope).
     #[serde(skip_serializing_if = "Option::is_none")]
     merchant_name: Option<String>,

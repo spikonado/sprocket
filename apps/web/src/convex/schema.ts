@@ -52,6 +52,9 @@ export default defineSchema({
 		// Remove once those clients age out.
 		lastThreadId: v.optional(v.id('threadRecords')),
 		theme: v.optional(v.union(v.literal('light'), v.literal('dark'))),
+		// Deprecated: mandate setup now uses the WorkOS identity email. Kept so
+		// rows written by older clients still validate; see
+		// BACKWARDS_COMPATIBILITY.md before removing.
 		paymentsEmail: v.optional(v.string())
 	}).index('by_userId', ['userId']),
 	projects: defineTable({
