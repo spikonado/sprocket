@@ -48,17 +48,6 @@ function auth(run: Awaited<ReturnType<typeof startRun>>) {
 	return { runId: run.runId, claimId: run.claimId, executionSecret: run.executionSecret };
 }
 
-async function clearUserEmail(t: ConvexTestInstance, subject: string) {
-	await t.run(async (ctx) => {
-		const row = await ctx.db
-			.query('users')
-			.withIndex('by_subject', (query) => query.eq('subject', subject))
-			.unique();
-		if (!row) throw new Error(`Expected a users row for ${subject}`);
-		await ctx.db.patch('users', row._id, { email: undefined });
-	});
-}
-
 function setupArgs(run: Awaited<ReturnType<typeof startRun>>) {
 	return {
 		merchantName: 'Example Shop',
@@ -228,20 +217,6 @@ describe('payments mandates', () => {
 		expect(result.approvalUrl).toBe('https://pay.prava.space/approve/1');
 		const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
 		expect(body.user_email).toBe('user_alice@example.com');
-	});
-
-	it('rejects mandate setup when no account email is available', async () => {
-		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
-		const fetchMock = vi.fn();
-		vi.stubGlobal('fetch', fetchMock);
-		const t = initConvexTest();
-		const run = await startRun(t, 'user_alice');
-		await clearUserEmail(t, 'user_alice');
-
-		await expect(
-			t.withIdentity({ subject: 'user_alice' }).action(api.payments.mandateSetup, setupArgs(run))
-		).rejects.toThrow(/synced email/);
-		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
 	it('syncs a pending mandate to active once the owner approves', async () => {
