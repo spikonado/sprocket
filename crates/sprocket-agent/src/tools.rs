@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use convex::Value;
 use futures::StreamExt;
+use rig::tool::{ToolErrorKind, ToolExecutionError};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -33,12 +34,15 @@ const GET_QUESTION_FUNCTION: &str = "agentQuestions:getForExecutor";
 use crate::convex::RuntimeClient;
 use crate::hooks::ToolCallTracker;
 
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum AgentToolError {
-    #[error("Run is no longer active.")]
-    Cancelled,
-    #[error("{0}")]
-    Message(String),
+/// Builds the model-visible failure for an agent tool. Constructing rig's
+/// canonical error directly means its default `map_error` downcast preserves
+/// the message instead of redacting it to "the tool failed".
+fn tool_failure(message: impl Into<String>) -> ToolExecutionError {
+    ToolExecutionError::other(message.into())
+}
+
+fn cancelled_error() -> ToolExecutionError {
+    ToolExecutionError::cancelled("Tool execution was cancelled.")
 }
 
 #[derive(Clone)]
@@ -632,7 +636,7 @@ struct CreateQuestionResponse {
 
 impl rig::tool::Tool for ExecCommandTool {
     const NAME: &'static str = "exec_command";
-    type Error = AgentToolError;
+    type Error = ToolExecutionError;
     type Args = ExecCommandArgs;
     type Output = serde_json::Value;
 
@@ -681,7 +685,7 @@ impl rig::tool::Tool for ExecCommandTool {
 
 impl rig::tool::Tool for WriteStdinTool {
     const NAME: &'static str = "write_stdin";
-    type Error = AgentToolError;
+    type Error = ToolExecutionError;
     type Args = WriteStdinArgs;
     type Output = serde_json::Value;
 
@@ -728,7 +732,7 @@ impl rig::tool::Tool for WriteStdinTool {
 
 impl rig::tool::Tool for AskQuestionTool {
     const NAME: &'static str = "ask_question";
-    type Error = AgentToolError;
+    type Error = ToolExecutionError;
     type Args = AskQuestionArgs;
     type Output = serde_json::Value;
 
@@ -789,7 +793,7 @@ impl rig::tool::Tool for AskQuestionTool {
 
 impl rig::tool::Tool for AwaitQuestionTool {
     const NAME: &'static str = "await_question";
-    type Error = AgentToolError;
+    type Error = ToolExecutionError;
     type Args = AwaitQuestionArgs;
     type Output = serde_json::Value;
 
@@ -808,9 +812,7 @@ impl rig::tool::Tool for AwaitQuestionTool {
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
         if args.question_id.trim().is_empty() {
-            return Err(AgentToolError::Message(
-                "questionId cannot be empty".to_string(),
-            ));
+            return Err(tool_failure("questionId cannot be empty"));
         }
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         execute_tool_job(
@@ -827,9 +829,7 @@ impl rig::tool::Tool for AwaitQuestionTool {
                 async move {
                     let snapshot = fetch_question_snapshot(&runtime, &run_id, &question_id).await?;
                     let Some(snapshot) = snapshot else {
-                        return Err(AgentToolError::Message(format!(
-                            "Unknown questionId '{question_id}'"
-                        )));
+                        return Err(tool_failure(format!("Unknown questionId '{question_id}'")));
                     };
                     // Avoid racing the yield deadline against a slow first subscription
                     // update when the question is already terminal.
@@ -855,7 +855,7 @@ impl rig::tool::Tool for AwaitQuestionTool {
 
 impl rig::tool::Tool for ApplyPatchTool {
     const NAME: &'static str = "apply_patch";
-    type Error = AgentToolError;
+    type Error = ToolExecutionError;
     type Args = ApplyPatchArgs;
     type Output = serde_json::Value;
 
@@ -893,7 +893,7 @@ impl rig::tool::Tool for ApplyPatchTool {
 
 impl rig::tool::Tool for WebSearchTool {
     const NAME: &'static str = "web_search";
-    type Error = AgentToolError;
+    type Error = ToolExecutionError;
     type Args = WebSearchArgs;
     type Output = serde_json::Value;
 
@@ -945,7 +945,7 @@ impl rig::tool::Tool for WebSearchTool {
 
 impl rig::tool::Tool for ScrapeUrlTool {
     const NAME: &'static str = "scrape_url";
-    type Error = AgentToolError;
+    type Error = ToolExecutionError;
     type Args = ScrapeUrlArgs;
     type Output = serde_json::Value;
 
@@ -990,7 +990,7 @@ impl rig::tool::Tool for ScrapeUrlTool {
 
 impl rig::tool::Tool for CreateArtifactTool {
     const NAME: &'static str = "create_artifact";
-    type Error = AgentToolError;
+    type Error = ToolExecutionError;
     type Args = CreateArtifactArgs;
     type Output = serde_json::Value;
 
@@ -1033,7 +1033,7 @@ impl rig::tool::Tool for CreateArtifactTool {
 
 impl rig::tool::Tool for UpdateArtifactTool {
     const NAME: &'static str = "update_artifact";
-    type Error = AgentToolError;
+    type Error = ToolExecutionError;
     type Args = UpdateArtifactArgs;
     type Output = serde_json::Value;
 
@@ -1076,7 +1076,7 @@ impl rig::tool::Tool for UpdateArtifactTool {
 
 impl rig::tool::Tool for BrowserObserveTool {
     const NAME: &'static str = "browser_observe";
-    type Error = AgentToolError;
+    type Error = ToolExecutionError;
     type Args = BrowserObserveArgs;
     type Output = serde_json::Value;
 
@@ -1123,7 +1123,7 @@ impl rig::tool::Tool for BrowserObserveTool {
 
 impl rig::tool::Tool for BrowserActTool {
     const NAME: &'static str = "browser_act";
-    type Error = AgentToolError;
+    type Error = ToolExecutionError;
     type Args = BrowserActToolArgs;
     type Output = serde_json::Value;
 
@@ -1142,7 +1142,7 @@ impl rig::tool::Tool for BrowserActTool {
     ) -> Result<Self::Output, Self::Error> {
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         if args.instruction.is_none() && args.action.is_none() {
-            return Err(AgentToolError::Message(
+            return Err(tool_failure(
                 "browser_act needs an instruction or an action".to_string(),
             ));
         }
@@ -1187,7 +1187,7 @@ impl rig::tool::Tool for BrowserActTool {
 
 impl rig::tool::Tool for BrowserExtractTool {
     const NAME: &'static str = "browser_extract";
-    type Error = AgentToolError;
+    type Error = ToolExecutionError;
     type Args = BrowserExtractArgs;
     type Output = serde_json::Value;
 
@@ -1235,7 +1235,7 @@ impl rig::tool::Tool for BrowserExtractTool {
 
 impl rig::tool::Tool for MandateSetupTool {
     const NAME: &'static str = "mandate_setup";
-    type Error = AgentToolError;
+    type Error = ToolExecutionError;
     type Args = MandateSetupArgs;
     type Output = serde_json::Value;
 
@@ -1265,7 +1265,7 @@ impl rig::tool::Tool for MandateSetupTool {
 
 impl rig::tool::Tool for MandateStatusTool {
     const NAME: &'static str = "mandate_status";
-    type Error = AgentToolError;
+    type Error = ToolExecutionError;
     type Args = MandateIdArgs;
     type Output = serde_json::Value;
 
@@ -1295,7 +1295,7 @@ impl rig::tool::Tool for MandateStatusTool {
 
 impl rig::tool::Tool for MandateListTool {
     const NAME: &'static str = "mandate_list";
-    type Error = AgentToolError;
+    type Error = ToolExecutionError;
     type Args = serde_json::Value;
     type Output = serde_json::Value;
 
@@ -1319,7 +1319,7 @@ impl rig::tool::Tool for MandateListTool {
 
 impl rig::tool::Tool for MandateChargeTool {
     const NAME: &'static str = "mandate_charge";
-    type Error = AgentToolError;
+    type Error = ToolExecutionError;
     type Args = MandateChargeArgs;
     type Output = serde_json::Value;
 
@@ -1349,7 +1349,7 @@ impl rig::tool::Tool for MandateChargeTool {
 
 impl rig::tool::Tool for MandateReportTool {
     const NAME: &'static str = "mandate_report";
-    type Error = AgentToolError;
+    type Error = ToolExecutionError;
     type Args = MandateReportArgs;
     type Output = serde_json::Value;
 
@@ -1379,7 +1379,7 @@ impl rig::tool::Tool for MandateReportTool {
 
 impl rig::tool::Tool for ReadSkillTool {
     const NAME: &'static str = "read_skill";
-    type Error = AgentToolError;
+    type Error = ToolExecutionError;
     type Args = ReadSkillArgs;
     type Output = serde_json::Value;
 
@@ -1418,7 +1418,7 @@ impl rig::tool::Tool for ReadSkillTool {
 pub(crate) fn resolve_read_skill(
     skills: &[WorkspaceSkill],
     name: &str,
-) -> Result<serde_json::Value, AgentToolError> {
+) -> Result<serde_json::Value, ToolExecutionError> {
     let Some(skill) = skills.iter().find(|skill| skill.name == name) else {
         let available = if skills.is_empty() {
             "(none)".to_string()
@@ -1429,7 +1429,7 @@ pub(crate) fn resolve_read_skill(
                 .collect::<Vec<_>>()
                 .join(", ")
         };
-        return Err(AgentToolError::Message(format!(
+        return Err(tool_failure(format!(
             "Unknown skill '{name}'. Available skills: {available}"
         )));
     };
@@ -1455,20 +1455,18 @@ struct PreparedAskQuestion {
     options: Vec<AskQuestionOption>,
 }
 
-fn prepare_ask_question(args: &AskQuestionArgs) -> Result<PreparedAskQuestion, AgentToolError> {
+fn prepare_ask_question(args: &AskQuestionArgs) -> Result<PreparedAskQuestion, ToolExecutionError> {
     let question = args.question.trim();
     if question.is_empty() {
-        return Err(AgentToolError::Message(
-            "Question cannot be empty.".to_string(),
-        ));
+        return Err(tool_failure("Question cannot be empty."));
     }
     if question.chars().count() > MAX_QUESTION_CHARS {
-        return Err(AgentToolError::Message(format!(
+        return Err(tool_failure(format!(
             "Question cannot exceed {MAX_QUESTION_CHARS} characters."
         )));
     }
     if args.options.len() < MIN_AGENT_OPTIONS || args.options.len() > MAX_AGENT_OPTIONS {
-        return Err(AgentToolError::Message(format!(
+        return Err(tool_failure(format!(
             "Provide between {MIN_AGENT_OPTIONS} and {MAX_AGENT_OPTIONS} options (the agent-decide option is added automatically)."
         )));
     }
@@ -1479,34 +1477,28 @@ fn prepare_ask_question(args: &AskQuestionArgs) -> Result<PreparedAskQuestion, A
         let id = option.id.trim();
         let label = option.label.trim();
         if id.is_empty() {
-            return Err(AgentToolError::Message(
-                "Option id cannot be empty.".to_string(),
-            ));
+            return Err(tool_failure("Option id cannot be empty."));
         }
         if label.is_empty() {
-            return Err(AgentToolError::Message(
-                "Option label cannot be empty.".to_string(),
-            ));
+            return Err(tool_failure("Option label cannot be empty."));
         }
         if id.chars().count() > MAX_OPTION_ID_CHARS {
-            return Err(AgentToolError::Message(format!(
+            return Err(tool_failure(format!(
                 "Option id cannot exceed {MAX_OPTION_ID_CHARS} characters."
             )));
         }
         if label.chars().count() > MAX_OPTION_LABEL_CHARS {
-            return Err(AgentToolError::Message(format!(
+            return Err(tool_failure(format!(
                 "Option label cannot exceed {MAX_OPTION_LABEL_CHARS} characters."
             )));
         }
         if id == AGENT_DECIDE_OPTION_ID {
-            return Err(AgentToolError::Message(format!(
+            return Err(tool_failure(format!(
                 "Option id '{AGENT_DECIDE_OPTION_ID}' is reserved."
             )));
         }
         if !seen.insert(id.to_string()) {
-            return Err(AgentToolError::Message(format!(
-                "Duplicate option id '{id}'."
-            )));
+            return Err(tool_failure(format!("Duplicate option id '{id}'.")));
         }
         options.push(AskQuestionOption {
             id: id.to_string(),
@@ -1527,7 +1519,7 @@ async fn create_agent_question(
     question: &str,
     options: &[AskQuestionOption],
     timeout_ms: u64,
-) -> Result<CreateQuestionResponse, AgentToolError> {
+) -> Result<CreateQuestionResponse, ToolExecutionError> {
     let mut args = BTreeMap::new();
     args.insert("runId".to_string(), run_id.to_string().into());
     args.insert("claimId".to_string(), claim_id.to_string().into());
@@ -1548,7 +1540,7 @@ async fn fetch_question_snapshot(
     runtime: &RuntimeClient,
     run_id: &str,
     question_id: &str,
-) -> Result<Option<QuestionSnapshot>, AgentToolError> {
+) -> Result<Option<QuestionSnapshot>, ToolExecutionError> {
     let mut args = BTreeMap::new();
     args.insert("runId".to_string(), run_id.to_string().into());
     args.insert("questionId".to_string(), question_id.to_string().into());
@@ -1574,7 +1566,7 @@ fn pending_question_result(
 
 fn question_result_from_snapshot(
     snapshot: &QuestionSnapshot,
-) -> Result<serde_json::Value, AgentToolError> {
+) -> Result<serde_json::Value, ToolExecutionError> {
     match snapshot.status.as_str() {
         "pending" => Ok(pending_question_result(
             &snapshot.question_id,
@@ -1596,8 +1588,8 @@ fn question_result_from_snapshot(
             "pending": false,
             "timedOut": true,
         })),
-        "cancelled" => Err(AgentToolError::Cancelled),
-        other => Err(AgentToolError::Message(format!(
+        "cancelled" => Err(cancelled_error()),
+        other => Err(tool_failure(format!(
             "Unexpected question status '{other}'"
         ))),
     }
@@ -1608,7 +1600,7 @@ async fn mandate_action_job(
     kind: &str,
     function: &'static str,
     payload: serde_json::Value,
-) -> Result<serde_json::Value, AgentToolError> {
+) -> Result<serde_json::Value, ToolExecutionError> {
     execute_tool_job(
         &context.runtime,
         &context.run_id,
@@ -1633,7 +1625,7 @@ async fn observe_question(
     options: &[AskQuestionOption],
     yield_time_ms: u64,
     cancellation: WorkspaceCancellation,
-) -> Result<serde_json::Value, AgentToolError> {
+) -> Result<serde_json::Value, ToolExecutionError> {
     let mut args = BTreeMap::new();
     args.insert("runId".to_string(), run_id.to_string().into());
     args.insert("questionId".to_string(), question_id.to_string().into());
@@ -1650,12 +1642,12 @@ async fn observe_question(
 
     loop {
         if cancellation.is_cancelled() {
-            return Err(AgentToolError::Cancelled);
+            return Err(cancelled_error());
         }
 
         let update = tokio::select! {
             biased;
-            _ = cancellation.cancelled() => return Err(AgentToolError::Cancelled),
+            _ = cancellation.cancelled() => return Err(cancelled_error()),
             // Prefer subscription updates over the yield deadline so an answer/timeout
             // that arrives in the same tick is not reported as still pending.
             update = updates.next() => update,
@@ -1680,17 +1672,13 @@ async fn observe_question(
         };
 
         let Some(update) = update else {
-            return Err(AgentToolError::Message(
-                "question subscription closed".to_string(),
-            ));
+            return Err(tool_failure("question subscription closed"));
         };
         let snapshot: Option<QuestionSnapshot> =
             RuntimeClient::decode_subscription_update(update, GET_QUESTION_FUNCTION)
                 .map_err(tool_error)?;
         let Some(snapshot) = snapshot else {
-            return Err(AgentToolError::Message(format!(
-                "Unknown questionId '{question_id}'"
-            )));
+            return Err(tool_failure(format!("Unknown questionId '{question_id}'")));
         };
         if snapshot.status != "pending" {
             return question_result_from_snapshot(&snapshot);
@@ -1709,10 +1697,10 @@ async fn run_convex_tool_action(
     cancellation: WorkspaceCancellation,
     function: &str,
     args: BTreeMap<String, Value>,
-) -> Result<serde_json::Value, AgentToolError> {
+) -> Result<serde_json::Value, ToolExecutionError> {
     tokio::select! {
         biased;
-        _ = cancellation.cancelled() => Err(AgentToolError::Cancelled),
+        _ = cancellation.cancelled() => Err(cancelled_error()),
         result = runtime.action_json::<serde_json::Value>(function, args) => {
             result.map_err(tool_error)
         }
@@ -1726,10 +1714,10 @@ async fn run_convex_tool_mutation(
     cancellation: WorkspaceCancellation,
     function: &str,
     args: BTreeMap<String, Value>,
-) -> Result<serde_json::Value, AgentToolError> {
+) -> Result<serde_json::Value, ToolExecutionError> {
     tokio::select! {
         biased;
-        _ = cancellation.cancelled() => Err(AgentToolError::Cancelled),
+        _ = cancellation.cancelled() => Err(cancelled_error()),
         result = runtime.mutation_json::<serde_json::Value>(function, args) => {
             result.map_err(tool_error)
         }
@@ -1741,14 +1729,12 @@ fn mutation_args_from_payload(
     run_id: &str,
     claim_id: &str,
     payload: &serde_json::Value,
-) -> Result<BTreeMap<String, Value>, AgentToolError> {
+) -> Result<BTreeMap<String, Value>, ToolExecutionError> {
     let mut mutation_args = BTreeMap::new();
     mutation_args.insert("runId".to_string(), run_id.to_string().into());
     mutation_args.insert("claimId".to_string(), claim_id.to_string().into());
     let Some(fields) = payload.as_object() else {
-        return Err(AgentToolError::Message(
-            "artifact tool payload must be an object".to_string(),
-        ));
+        return Err(tool_failure("artifact tool payload must be an object"));
     };
     for (key, value) in fields {
         mutation_args.insert(
@@ -1763,13 +1749,13 @@ fn action_args_from_payload(
     run_id: &str,
     claim_id: &str,
     payload: &serde_json::Value,
-) -> Result<BTreeMap<String, Value>, AgentToolError> {
+) -> Result<BTreeMap<String, Value>, ToolExecutionError> {
     let mut args = BTreeMap::new();
     args.insert("runId".to_string(), run_id.to_string().into());
     args.insert("claimId".to_string(), claim_id.to_string().into());
     let fields = payload
         .as_object()
-        .ok_or_else(|| AgentToolError::Message("tool payload must be an object".to_string()))?;
+        .ok_or_else(|| tool_failure("tool payload must be an object"))?;
     for (key, value) in fields {
         args.insert(
             key.clone(),
@@ -1787,10 +1773,10 @@ async fn execute_tool_job<F, Fut>(
     tool_call_tracker: &ToolCallTracker,
     payload: serde_json::Value,
     operation: F,
-) -> Result<serde_json::Value, AgentToolError>
+) -> Result<serde_json::Value, ToolExecutionError>
 where
     F: FnOnce(WorkspaceCancellation) -> Fut,
-    Fut: std::future::Future<Output = Result<serde_json::Value, AgentToolError>>,
+    Fut: std::future::Future<Output = Result<serde_json::Value, ToolExecutionError>>,
 {
     eprintln!("sprocket-agent: starting tool {} for run {}", kind, run_id);
     let mut run_updates = runtime
@@ -1800,11 +1786,11 @@ where
     let initial_update = run_updates
         .next()
         .await
-        .ok_or_else(|| AgentToolError::Message("run status subscription closed".to_string()))?;
+        .ok_or_else(|| tool_failure("run status subscription closed"))?;
     let initial_run_finished =
         RuntimeClient::decode_run_finished_update(initial_update).map_err(tool_error)?;
     if initial_run_finished {
-        return Err(AgentToolError::Cancelled);
+        return Err(cancelled_error());
     }
 
     let mut begin_args = BTreeMap::new();
@@ -1825,7 +1811,7 @@ where
     let job_id = begin_result
         .get("jobId")
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| AgentToolError::Message("beginToolJob did not return a jobId".to_string()))?
+        .ok_or_else(|| tool_failure("beginToolJob did not return a jobId"))?
         .to_string();
 
     let cancellation = WorkspaceCancellation::new();
@@ -1838,7 +1824,7 @@ where
                 let Some(update) = update else {
                     cancellation.cancel();
                     let _ = operation.await;
-                    break Err(AgentToolError::Message("run status subscription closed".to_string()));
+                    break Err(tool_failure("run status subscription closed"));
                 };
                 match RuntimeClient::decode_run_finished_update(update) {
                     Ok(false) => {}
@@ -1846,7 +1832,7 @@ where
                         cancellation.cancel();
                         let _ = operation.await;
                         eprintln!("sprocket-agent: cancelled tool {} for run {}", kind, run_id);
-                        return Err(AgentToolError::Cancelled);
+                        return Err(cancelled_error());
                     }
                     Err(error) => {
                         cancellation.cancel();
@@ -1877,7 +1863,7 @@ where
             if accepted {
                 Ok(output)
             } else {
-                Err(AgentToolError::Cancelled)
+                Err(cancelled_error())
             }
         }
         Err(error) => {
@@ -1887,8 +1873,8 @@ where
             );
             // Terminal runs already cancel claimed jobs via
             // cancelExecutorJobsForTerminalRun in finalizeRunRecord.
-            if matches!(error, AgentToolError::Cancelled) {
-                return Err(AgentToolError::Cancelled);
+            if error.kind() == ToolErrorKind::Cancelled {
+                return Err(error);
             }
             let mut fail_args = BTreeMap::new();
             fail_args.insert("jobId".to_string(), job_id.into());
@@ -1902,17 +1888,17 @@ where
             if accepted {
                 Err(error)
             } else {
-                Err(AgentToolError::Cancelled)
+                Err(cancelled_error())
             }
         }
     }
 }
 
-fn tool_error(error: anyhow::Error) -> AgentToolError {
+fn tool_error(error: anyhow::Error) -> ToolExecutionError {
     if error.is::<WorkspaceOperationCancelled>() {
-        AgentToolError::Cancelled
+        cancelled_error()
     } else {
-        AgentToolError::Message(format!("{error:#}"))
+        tool_failure(format!("{error:#}"))
     }
 }
 
@@ -1926,19 +1912,22 @@ mod tests {
     fn tool_error_includes_anyhow_context_chain() {
         let error =
             anyhow::anyhow!("invalid add-file line").context("failed to parse Begin Patch input");
-        match tool_error(error) {
-            AgentToolError::Message(message) => {
-                assert!(
-                    message.contains("failed to parse Begin Patch input"),
-                    "missing outer context: {message}"
-                );
-                assert!(
-                    message.contains("invalid add-file line"),
-                    "missing root cause: {message}"
-                );
-            }
-            AgentToolError::Cancelled => panic!("expected message error"),
-        }
+        let mapped = tool_error(error);
+        let message = mapped.model_feedback().expect("model feedback");
+        assert!(
+            message.contains("failed to parse Begin Patch input"),
+            "missing outer context: {message}"
+        );
+        assert!(
+            message.contains("invalid add-file line"),
+            "missing root cause: {message}"
+        );
+    }
+
+    #[test]
+    fn tool_error_maps_workspace_cancellation_to_cancelled_kind() {
+        let mapped = tool_error(anyhow::Error::new(WorkspaceOperationCancelled));
+        assert_eq!(mapped.kind(), ToolErrorKind::Cancelled);
     }
 
     #[test]

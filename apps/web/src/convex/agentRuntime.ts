@@ -20,7 +20,11 @@ import {
 	getOwnedImageUploads
 } from '@convex/lib/imageUploads';
 import { buildThreadTranscript } from '@convex/lib/threadTranscript';
-import { RUN_NO_LONGER_ACTIVE, assertRunAcceptsModelCompletion } from '@convex/lib/agentErrors';
+import {
+	RUN_NO_LONGER_ACTIVE,
+	assertRunAcceptsModelCompletion,
+	toAgentToolConvexError
+} from '@convex/lib/agentErrors';
 import {
 	assertThreadCanStartRun,
 	cancelExecutorJobsForTerminalRun,
@@ -998,42 +1002,46 @@ export const beginToolJob = mutation({
 		sequence: v.number()
 	}),
 	handler: async (ctx, args) => {
-		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		const userId = run.userId;
-		assertRunAcceptsModelCompletion(run.status);
-		if (run.claimId !== args.claimId || !isRunClaimLeaseActive(run, Date.now())) {
-			throw new ConvexError(RUN_NO_LONGER_ACTIVE);
+		try {
+			const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+			const userId = run.userId;
+			assertRunAcceptsModelCompletion(run.status);
+			if (run.claimId !== args.claimId || !isRunClaimLeaseActive(run, Date.now())) {
+				throw new ConvexError(RUN_NO_LONGER_ACTIVE);
+			}
+			const project = await getOwnedProject(ctx.db, userId, run.projectId);
+
+			const nextSequence = project.nextExecutorSequence;
+			await ctx.db.patch('projects', project._id, {
+				nextExecutorSequence: nextSequence + 1
+			});
+
+			const job: EnqueuedExecutorJob = {
+				projectId: run.projectId,
+				threadId: run.threadId,
+				runId: args.runId,
+				kind: args.kind,
+				payload: args.payload,
+				hidden: args.hidden ?? false,
+				status: 'claimed',
+				enqueuedAt: Date.now(),
+				claimedAt: Date.now(),
+				sequence: nextSequence
+			};
+			if (args.callId) job.callId = args.callId;
+			const jobId = await ctx.db.insert('executorJobs', job);
+
+			await ctx.db.patch('runs', args.runId, {
+				status: 'awaiting_executor',
+				activeJobId: jobId
+			});
+
+			return {
+				jobId,
+				sequence: nextSequence
+			};
+		} catch (error) {
+			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
-		const project = await getOwnedProject(ctx.db, userId, run.projectId);
-
-		const nextSequence = project.nextExecutorSequence;
-		await ctx.db.patch('projects', project._id, {
-			nextExecutorSequence: nextSequence + 1
-		});
-
-		const job: EnqueuedExecutorJob = {
-			projectId: run.projectId,
-			threadId: run.threadId,
-			runId: args.runId,
-			kind: args.kind,
-			payload: args.payload,
-			hidden: args.hidden ?? false,
-			status: 'claimed',
-			enqueuedAt: Date.now(),
-			claimedAt: Date.now(),
-			sequence: nextSequence
-		};
-		if (args.callId) job.callId = args.callId;
-		const jobId = await ctx.db.insert('executorJobs', job);
-
-		await ctx.db.patch('runs', args.runId, {
-			status: 'awaiting_executor',
-			activeJobId: jobId
-		});
-
-		return {
-			jobId,
-			sequence: nextSequence
-		};
 	}
 });

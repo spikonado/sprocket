@@ -4,6 +4,7 @@ import { getExecutionRun } from '@convex/lib/auth';
 import { executorFailureRunPatch } from '@convex/lib/runs';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
 import { isRunFinalStatus, vExecutorJobResult } from '@convex/lib/validators';
+import { toAgentToolConvexError } from '@convex/lib/agentErrors';
 
 export const complete = mutation({
 	args: {
@@ -15,34 +16,38 @@ export const complete = mutation({
 	},
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
-		const job = await ctx.db.get('executorJobs', args.jobId);
-		if (!job || job.runId !== args.runId) throw new Error('Executor job not found.');
-		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		if (job.status === 'cancelled' || job.status === 'failed') {
-			return false;
-		}
-		if (job.status === 'completed') {
-			return true;
-		}
-		if (isRunFinalStatus(run.status)) {
-			return false;
-		}
-		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) {
-			return false;
-		}
+		try {
+			const job = await ctx.db.get('executorJobs', args.jobId);
+			if (!job || job.runId !== args.runId) throw new Error('Executor job not found.');
+			const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+			if (job.status === 'cancelled' || job.status === 'failed') {
+				return false;
+			}
+			if (job.status === 'completed') {
+				return true;
+			}
+			if (isRunFinalStatus(run.status)) {
+				return false;
+			}
+			if (!ownsActiveRunClaim(run, args.claimId, Date.now())) {
+				return false;
+			}
 
-		await ctx.db.patch('executorJobs', args.jobId, {
-			status: 'completed',
-			result: args.result,
-			completedAt: Date.now()
-		});
-		if (run.activeJobId === args.jobId) {
-			await ctx.db.patch('runs', run._id, {
-				status: 'running',
-				activeJobId: undefined
+			await ctx.db.patch('executorJobs', args.jobId, {
+				status: 'completed',
+				result: args.result,
+				completedAt: Date.now()
 			});
+			if (run.activeJobId === args.jobId) {
+				await ctx.db.patch('runs', run._id, {
+					status: 'running',
+					activeJobId: undefined
+				});
+			}
+			return true;
+		} catch (error) {
+			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
-		return true;
 	}
 });
 
@@ -56,30 +61,34 @@ export const fail = mutation({
 	},
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
-		const job = await ctx.db.get('executorJobs', args.jobId);
-		if (!job || job.runId !== args.runId) throw new Error('Executor job not found.');
-		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		if (job.status === 'cancelled' || job.status === 'completed' || job.status === 'failed') {
-			return false;
-		}
-		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) {
-			return false;
-		}
+		try {
+			const job = await ctx.db.get('executorJobs', args.jobId);
+			if (!job || job.runId !== args.runId) throw new Error('Executor job not found.');
+			const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+			if (job.status === 'cancelled' || job.status === 'completed' || job.status === 'failed') {
+				return false;
+			}
+			if (!ownsActiveRunClaim(run, args.claimId, Date.now())) {
+				return false;
+			}
 
-		const completedAt = Date.now();
-		await ctx.db.patch('executorJobs', args.jobId, {
-			status: 'failed',
-			error: args.error,
-			completedAt
-		});
-		const runPatch = executorFailureRunPatch({
-			runStatus: run.status,
-			activeJobId: run.activeJobId,
-			failedJobId: args.jobId
-		});
-		if (runPatch) {
-			await ctx.db.patch('runs', job.runId, runPatch);
+			const completedAt = Date.now();
+			await ctx.db.patch('executorJobs', args.jobId, {
+				status: 'failed',
+				error: args.error,
+				completedAt
+			});
+			const runPatch = executorFailureRunPatch({
+				runStatus: run.status,
+				activeJobId: run.activeJobId,
+				failedJobId: args.jobId
+			});
+			if (runPatch) {
+				await ctx.db.patch('runs', job.runId, runPatch);
+			}
+			return true;
+		} catch (error) {
+			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
-		return true;
 	}
 });
