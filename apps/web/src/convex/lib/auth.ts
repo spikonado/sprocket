@@ -27,7 +27,8 @@ export async function requireIdentity(
 	return identity;
 }
 
-function pickPrimaryUser(rows: Array<Doc<'users'>>): Doc<'users'> | null {
+/** Earliest row wins so first-login duplicates converge deterministically. */
+export function pickPrimaryUser(rows: Array<Doc<'users'>>): Doc<'users'> | null {
 	if (rows.length === 0) return null;
 	return [...rows].sort((a, b) => a.createdAt - b.createdAt || a._id.localeCompare(b._id))[0];
 }
@@ -49,25 +50,32 @@ export async function getCurrentUser(
  * first sight. */
 export async function ensureCurrentUser(ctx: GenericMutationCtx<DataModel>): Promise<Doc<'users'>> {
 	const identity = await requireIdentity(ctx);
+	const email = identity.email?.trim() || undefined;
 	const rows = await ctx.db
 		.query('users')
 		.withIndex('by_subject', (query) => query.eq('subject', identity.subject))
 		.collect();
 	if (rows.length > 0) {
-		const primary = pickPrimaryUser(rows);
+		let primary = pickPrimaryUser(rows);
 		if (!primary) throw new Error('Failed to resolve the user record.');
 		// A first-login race can insert two rows for one subject; converge on
 		// the earliest instead of poisoning later unique reads.
 		for (const extra of rows) {
 			if (extra._id !== primary._id) await ctx.db.delete('users', extra._id);
 		}
+		if (email && email !== primary.email) {
+			await ctx.db.patch('users', primary._id, { email });
+			primary = { ...primary, email };
+		}
 		return primary;
 	}
-	const id = await ctx.db.insert('users', {
+	const newUser = {
 		subject: identity.subject,
 		tokenIdentifier: identity.tokenIdentifier,
-		createdAt: Date.now()
-	});
+		createdAt: Date.now(),
+		email
+	};
+	const id = await ctx.db.insert('users', newUser);
 	const created = await ctx.db.get('users', id);
 	if (!created) throw new Error('Failed to create the user record.');
 	return created;

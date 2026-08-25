@@ -76,7 +76,7 @@ Safe when npm downloads for versions predating the release carrying #200 have fl
 
 ## 4. Mandate setup ignores the stored payments email
 
-Up to v0.3.2, mandate setup resolved the customer email from the caller (`userEmail` tool argument or settings-screen input) with a fallback to `uiPreferences.paymentsEmail`, and the settings screen saved that email via `uiPreferences.setPaymentsEmail`. Setup now always uses the email on the caller's WorkOS identity instead.
+Up to v0.3.2, mandate setup resolved the customer email from the caller (`userEmail` tool argument or settings-screen input) with a fallback to `uiPreferences.paymentsEmail`, and the settings screen saved that email via `uiPreferences.setPaymentsEmail`. Setup now reads the WorkOS email that `ensureCurrentUser` syncs onto the caller's `users` row (executor actions have no usable caller identity — the run's auth token is a launch-time snapshot).
 
 Today's compat: `mandateSetupArgs` (`convex/payments.ts`) still accepts an optional `userEmail` and ignores it, so pre-#204-era agents and settings screens keep passing theirs. `vMandateSetupPayload.userEmail` (`convex/lib/validators.ts`) stays accepted because stored `executorJobs.payload` rows written by those agents carry it. `uiPreferences.setPaymentsEmail` still writes the field for old settings screens, and `uiPreferences.paymentsEmail` stays optional in the schema so their rows keep validating.
 
