@@ -1,6 +1,7 @@
 import { v, type Infer, type ObjectType } from 'convex/values';
 import {
 	action,
+	env,
 	internalMutation,
 	internalQuery,
 	type ActionCtx,
@@ -24,7 +25,6 @@ import {
 	vMandateReportResult
 } from '@convex/lib/validators';
 
-const DEFAULT_PRAVA_BACKEND_URL = 'https://sandbox.api.prava.space';
 const REPORT_CLAIM_STALE_MS = 60_000;
 const CHARGE_CLAIM_STALE_MS = 60_000;
 
@@ -34,15 +34,12 @@ type PravaConfig = {
 };
 
 function pravaConfig(): PravaConfig {
-	const secretKey = process.env.PRAVA_SECRET_KEY?.trim();
+	const secretKey = env.PRAVA_SECRET_KEY?.trim();
 	if (!secretKey) {
 		throw new Error('PRAVA_SECRET_KEY is not configured.');
 	}
 	return {
-		baseUrl: (process.env.PRAVA_BACKEND_URL?.trim() || DEFAULT_PRAVA_BACKEND_URL).replace(
-			/\/+$/,
-			''
-		),
+		baseUrl: env.PRAVA_BACKEND_URL,
 		secretKey
 	};
 }

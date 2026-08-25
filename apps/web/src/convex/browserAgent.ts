@@ -1,7 +1,7 @@
 'use node';
 
 import { v, type Infer } from 'convex/values';
-import { action, type ActionCtx } from '@convex/_generated/server';
+import { action, env, type ActionCtx } from '@convex/_generated/server';
 import { api, internal } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
 import { Stagehand } from '@browserbasehq/stagehand';
@@ -22,17 +22,17 @@ const MAX_RESULT_CHARS = 8_000;
 const MAX_OBSERVE_ACTIONS = 50;
 
 function config() {
-	const apiKey = process.env.BROWSERBASE_API_KEY?.trim();
+	const apiKey = env.BROWSERBASE_API_KEY?.trim();
 	if (!apiKey) throw new Error('BROWSERBASE_API_KEY is not configured.');
-	const projectId = process.env.BROWSERBASE_PROJECT_ID?.trim();
+	const projectId = env.BROWSERBASE_PROJECT_ID?.trim();
 	if (!projectId) throw new Error('BROWSERBASE_PROJECT_ID is not configured.');
-	const openaiApiKey = process.env.OPENAI_API_KEY?.trim();
+	const openaiApiKey = env.OPENAI_API_KEY?.trim();
 	if (!openaiApiKey) throw new Error('OPENAI_API_KEY is not configured.');
 	return {
 		apiKey,
 		projectId,
 		model: {
-			modelName: process.env.BROWSER_TASK_MODEL?.trim() || DEFAULT_MODEL,
+			modelName: env.BROWSER_TASK_MODEL?.trim() || DEFAULT_MODEL,
 			apiKey: openaiApiKey
 		}
 	};

@@ -4,6 +4,7 @@ import { components, internal } from '@convex/_generated/api';
 import { v } from 'convex/values';
 import {
 	action,
+	env,
 	internalMutation,
 	internalQuery,
 	mutation,
@@ -30,9 +31,6 @@ export const getBillingCustomer = internalQuery({
 			.unique()
 });
 
-const dodoPaymentsEnvironment =
-	process.env.DODO_PAYMENTS_ENVIRONMENT === 'live_mode' ? 'live_mode' : 'test_mode';
-
 const dodo: DodoPayments = new DodoPayments(
 	// SAFETY: the generated dodopayments component handle is the ComponentApi the SDK constructs.
 	components.dodopayments as ComponentApi,
@@ -42,14 +40,14 @@ const dodo: DodoPayments = new DodoPayments(
 			const customer = await ctx.runQuery(internal.billing.getBillingCustomer, { userId });
 			return customer ? { dodoCustomerId: customer.dodoCustomerId } : null;
 		},
-		apiKey: process.env.DODO_PAYMENTS_API_KEY!,
-		environment: dodoPaymentsEnvironment
+		apiKey: env.DODO_PAYMENTS_API_KEY ?? '',
+		environment: env.DODO_PAYMENTS_ENVIRONMENT ?? 'test_mode'
 	}
 );
 const payments: ReturnType<DodoPayments['api']> = dodo.api();
 
 function assertPaymentsConfigured(): void {
-	if (!process.env.DODO_PAYMENTS_API_KEY) throw new Error('Payments are not configured.');
+	if (!env.DODO_PAYMENTS_API_KEY) throw new Error('Payments are not configured.');
 }
 
 export const getMySubscription = query({

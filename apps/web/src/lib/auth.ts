@@ -35,14 +35,14 @@ type AuthBootstrapClient = {
 	query: (
 		query: typeof api.authBootstrap.getClientConfig,
 		args: Record<string, never>
-	) => Promise<{ workosClientId: string | null }>;
+	) => Promise<{ workosClientId: string }>;
 };
 
 const DESKTOP_LOGIN_POLL_INTERVAL_MS = 1_500;
 const DESKTOP_LOGIN_TIMEOUT_MS = 5 * 60 * 1_000;
 
 let authClientPromise: Promise<AuthClient | null> | null = null;
-let authConfigPromise: Promise<{ workosClientId: string | null }> | null = null;
+let authConfigPromise: Promise<{ workosClientId: string }> | null = null;
 let bootstrapClient: AuthBootstrapClient | null = null;
 let isSigningOut = false;
 type DesktopSignInAttempt = {

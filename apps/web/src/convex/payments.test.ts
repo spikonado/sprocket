@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { api } from '@convex/_generated/api';
 import type { JsonObject, JsonValue } from '@convex/lib/json';
@@ -118,6 +118,10 @@ async function createApprovedMandate(
 	const setup = await run.asUser.action(api.payments.mandateSetup, setupArgs(run));
 	return { setup, fetchMock };
 }
+
+beforeEach(() => {
+	process.env.PRAVA_BACKEND_URL = 'https://sandbox.api.prava.space';
+});
 
 afterEach(() => {
 	vi.unstubAllGlobals();

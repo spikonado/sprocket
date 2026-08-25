@@ -6,6 +6,7 @@ import { createAnthropic, type AnthropicProvider } from '@ai-sdk/anthropic';
 import { createFireworks, type FireworksProvider } from '@ai-sdk/fireworks';
 import { createOpenAI, type OpenAIProvider } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import { env } from '@convex/_generated/server';
 import {
 	getModelDefinition,
 	type SupportedModelId,
@@ -56,36 +57,42 @@ export function createProviderFetch(
 }
 
 const openai: OpenAIProvider = createOpenAI({
-	apiKey: process.env.OPENAI_API_KEY
+	apiKey: env.OPENAI_API_KEY
 });
 const anthropic: AnthropicProvider = createAnthropic({
-	apiKey: process.env.ANTHROPIC_API_KEY,
+	apiKey: env.ANTHROPIC_API_KEY,
 	fetch: createProviderFetch({ serviceTier: 'standard_only' })
 });
 const anthropicFast: AnthropicProvider = createAnthropic({
-	apiKey: process.env.ANTHROPIC_API_KEY,
+	apiKey: env.ANTHROPIC_API_KEY,
 	fetch: createProviderFetch({ serviceTier: 'auto' })
 });
 const fireworks: FireworksProvider = createFireworks({
-	apiKey: process.env.FIREWORKS_API_KEY
+	apiKey: env.FIREWORKS_API_KEY
 });
 const zai = createOpenAICompatible({
 	name: 'zai',
 	baseURL: 'https://api.z.ai/api/paas/v4',
-	apiKey: process.env.ZAI_API_KEY,
+	apiKey: env.ZAI_API_KEY,
 	// GLM 5.3 rejects thinking.type=disabled; thinking is always on.
 	transformRequestBody: (args) => ({ ...args, thinking: { type: 'enabled' } })
 });
 const openrouter = createOpenAICompatible({
 	name: 'openrouter',
 	baseURL: 'https://openrouter.ai/api/v1',
-	apiKey: process.env.OPENROUTER_API_KEY,
+	apiKey: env.OPENROUTER_API_KEY,
 	includeUsage: true
 });
 
-export function hasBedrockCredentials(env: NodeJS.ProcessEnv = process.env): boolean {
-	if (env.AWS_BEARER_TOKEN_BEDROCK?.trim()) return true;
-	return Boolean(env.AWS_ACCESS_KEY_ID?.trim() && env.AWS_SECRET_ACCESS_KEY?.trim());
+type BedrockCredentialEnv = {
+	AWS_BEARER_TOKEN_BEDROCK?: string;
+	AWS_ACCESS_KEY_ID?: string;
+	AWS_SECRET_ACCESS_KEY?: string;
+};
+
+export function hasBedrockCredentials(source: BedrockCredentialEnv = env): boolean {
+	if (source.AWS_BEARER_TOKEN_BEDROCK?.trim()) return true;
+	return Boolean(source.AWS_ACCESS_KEY_ID?.trim() && source.AWS_SECRET_ACCESS_KEY?.trim());
 }
 
 const errorStatusSchema = z
@@ -167,7 +174,7 @@ function resolveBedrockFallbackModel(
 	provider: 'openai' | 'anthropic',
 	modelId: SupportedModelId
 ): LanguageModel {
-	const region = process.env.AWS_REGION?.trim() || 'us-east-1';
+	const region = env.AWS_REGION?.trim() || 'us-east-1';
 	if (provider === 'anthropic') {
 		return createBedrockAnthropic({ region })(`us.anthropic.${modelId}`);
 	}
