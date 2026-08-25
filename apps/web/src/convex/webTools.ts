@@ -23,6 +23,15 @@ const SEARCH_TIMEOUT_MS = 30_000;
 
 class WebToolTimeout extends Error {}
 
+// Context.dev validates its scrape result against a bounded-depth JSON schema,
+// so pages whose metadata nests deeper than the bound fail inside the component
+// before any content reaches us (#208).
+export function isUnparseablePageFailure(error: Error): boolean {
+	return error.message.includes('ReturnsValidationError');
+}
+
+const UNPARSEABLE_PAGE_ERROR = 'The webpage is too complex and failed to parse as markdown.';
+
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -53,6 +62,10 @@ async function callComponent<T>(
 		return await withTimeout(label, timeoutMs, run());
 	} catch (error) {
 		if (error instanceof WebToolTimeout) {
+			throw error;
+		}
+		if (error instanceof Error && isUnparseablePageFailure(error)) {
+			// The same page fails validation on every attempt.
 			throw error;
 		}
 		await sleep(RETRY_DELAY_MS);
@@ -87,15 +100,23 @@ export const scrapeUrl = action({
 				throw new Error('Only http(s) URLs can be scraped.');
 			}
 
-			const response = await callComponent('Context.dev scrape', SCRAPE_TIMEOUT_MS, () =>
-				contextDev.scrapeMarkdown(ctx, {
-					params: {
-						url: url.toString(),
-						useMainContentOnly: true,
-						timeoutMS: SCRAPE_TIMEOUT_MS
-					}
-				})
-			);
+			let response: Awaited<ReturnType<typeof contextDev.scrapeMarkdown>>;
+			try {
+				response = await callComponent('Context.dev scrape', SCRAPE_TIMEOUT_MS, () =>
+					contextDev.scrapeMarkdown(ctx, {
+						params: {
+							url: url.toString(),
+							useMainContentOnly: true,
+							timeoutMS: SCRAPE_TIMEOUT_MS
+						}
+					})
+				);
+			} catch (error) {
+				if (error instanceof Error && isUnparseablePageFailure(error)) {
+					throw new Error(UNPARSEABLE_PAGE_ERROR, { cause: error });
+				}
+				throw error;
+			}
 
 			const truncated = response.markdown.length > SCRAPE_MARKDOWN_MAX_CHARS;
 			return {
