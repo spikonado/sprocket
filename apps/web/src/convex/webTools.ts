@@ -30,7 +30,7 @@ export function isUnparseablePageFailure(error: Error): boolean {
 	return error.message.includes('ReturnsValidationError');
 }
 
-const UNPARSEABLE_PAGE_ERROR = 'The webpage is too complex and failed to parse as markdown.';
+const UNPARSEABLE_PAGE_ERROR = 'The webpage is too complex and could not be parsed as Markdown.';
 
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
