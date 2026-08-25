@@ -26,16 +26,24 @@
 	let copiedTimeout: number | null = null;
 	let viewerGeneration = 0;
 
-	const extensionByMediaType: Record<string, string> = {
-		'image/jpeg': 'jpg',
-		'image/png': 'png',
-		'image/gif': 'gif',
-		'image/webp': 'webp'
-	};
+	function extensionForMediaType(mediaType: string): string | undefined {
+		switch (mediaType) {
+			case 'image/jpeg':
+				return 'jpg';
+			case 'image/png':
+				return 'png';
+			case 'image/gif':
+				return 'gif';
+			case 'image/webp':
+				return 'webp';
+			default:
+				return undefined;
+		}
+	}
 
 	function downloadFilename(current: ViewerImage) {
 		const name = current.name.trim() || 'image';
-		const extension = extensionByMediaType[current.mediaType];
+		const extension = extensionForMediaType(current.mediaType);
 		if (!extension) {
 			return name;
 		}
@@ -172,7 +180,7 @@
 		copyError = null;
 		downloadError = null;
 		try {
-			if (typeof ClipboardItem === 'undefined') {
+			if (!globalThis.ClipboardItem) {
 				throw new Error('Clipboard images unsupported');
 			}
 			const png = fetchImageBlob(current).then(toPngBlob);

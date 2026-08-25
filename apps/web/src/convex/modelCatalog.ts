@@ -34,12 +34,15 @@ export const get = query({
 				const { inferenceProvider, usagePolicy, usageWeights, ...model } = definition;
 				void inferenceProvider;
 				void usageWeights;
-				return {
+				const entry = {
 					...model,
 					reasoningEfforts: [...model.reasoningEfforts],
-					serviceTiers: [...model.serviceTiers],
-					...(args.includeUsagePolicy && usagePolicy ? { usagePolicy } : {})
+					serviceTiers: [...model.serviceTiers]
 				} satisfies CatalogModelWithUsagePolicy;
+				return {
+					...entry,
+					usagePolicy: args.includeUsagePolicy ? usagePolicy : undefined
+				};
 			}),
 			tierAllowedModels: {
 				free: [...tierAllowedModels.free],

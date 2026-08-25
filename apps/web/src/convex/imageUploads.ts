@@ -79,7 +79,7 @@ export const register = mutation({
 		const url = await ctx.storage.getUrl(args.storageId);
 		if (!url) {
 			await ctx.storage.delete(args.storageId);
-			await ctx.db.delete(imageUploadId);
+			await ctx.db.delete('imageUploads', imageUploadId);
 			return { error: 'Uploaded image is unavailable.' };
 		}
 		return { imageUploadId, name, mediaType, size: metadata.size, url };
@@ -93,19 +93,20 @@ export const discard = mutation({
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
-		const upload = await ctx.db.get(args.imageUploadId);
+		const upload = await ctx.db.get('imageUploads', args.imageUploadId);
 		if (!upload || upload.userId !== userId || upload.attached) {
 			return false;
 		}
 		await ctx.storage.delete(upload.storageId);
-		await ctx.db.delete(upload._id);
+		await ctx.db.delete('imageUploads', upload._id);
 		return true;
 	}
 });
 
 export const cleanupOrphans = internalMutation({
 	args: {},
-	handler: async (ctx): Promise<number> => {
+	returns: v.number(),
+	handler: async (ctx) => {
 		const uploads = await ctx.db
 			.query('imageUploads')
 			.withIndex('by_attached', (query) =>
@@ -114,7 +115,7 @@ export const cleanupOrphans = internalMutation({
 			.take(ORPHAN_CLEANUP_BATCH_SIZE);
 		for (const upload of uploads) {
 			await ctx.storage.delete(upload.storageId);
-			await ctx.db.delete(upload._id);
+			await ctx.db.delete('imageUploads', upload._id);
 		}
 		return uploads.length;
 	}

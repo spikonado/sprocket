@@ -1,7 +1,15 @@
 import { isRunFinalStatus, type vRunStatus } from '@convex/lib/validators';
 import { COMPLETION_STREAM_SUPERSEDED } from '@convex/lib/completionStream';
+import {
+	isJsonNumber,
+	isJsonObject,
+	isJsonString,
+	isJsonValue,
+	type JsonValue
+} from '@convex/lib/json';
 import { ConvexError } from 'convex/values';
 import type { Infer } from 'convex/values';
+import { z } from 'zod';
 
 /** Recognized by sprocket-agent (`provider.rs`) for clean run cancellation. */
 export const RUN_CANCELLED_BY_USER = 'Run is cancelled.';
@@ -22,17 +30,43 @@ export function assertRunAcceptsModelCompletion(status: Infer<typeof vRunStatus>
 	}
 }
 
+const errorCarrierSchema = z
+	.object({
+		cause: z.any().optional(),
+		lastError: z.any().optional(),
+		statusCode: z.unknown().optional(),
+		status: z.unknown().optional(),
+		response: z.unknown().optional(),
+		responseBody: z.unknown().optional(),
+		data: z.unknown().optional(),
+		message: z.unknown().optional()
+	})
+	.loose();
+
+type ErrorCarrier = z.infer<typeof errorCarrierSchema>;
+
+function isErrorCarrier(value: ErrorCarrier['cause']): value is ErrorCarrier {
+	return errorCarrierSchema.safeParse(value).success;
+}
+
 /** Follows `cause`, then the AI SDK RetryError's `lastError`. */
-function errorChain(error: unknown): Record<string, unknown>[] {
-	const chain: Record<string, unknown>[] = [];
-	let current: unknown = error;
-	while (current && typeof current === 'object') {
-		const value = current as Record<string, unknown>;
-		if (chain.includes(value)) break;
-		chain.push(value);
-		current = value.cause ?? value.lastError;
+function errorChain(error: Error): Array<Error | ErrorCarrier> {
+	const chain: Array<Error | ErrorCarrier> = [];
+	let current: Error | ErrorCarrier | undefined = error;
+	while (current !== undefined) {
+		if (chain.includes(current)) break;
+		chain.push(current);
+		const parsed = errorCarrierSchema.safeParse(current);
+		if (!parsed.success) break;
+		const next = parsed.data.cause ?? parsed.data.lastError;
+		current = next instanceof Error || isErrorCarrier(next) ? next : undefined;
 	}
 	return chain;
+}
+
+function carrierFields(value: Error | ErrorCarrier): ErrorCarrier {
+	const parsed = errorCarrierSchema.safeParse(value);
+	return parsed.success ? parsed.data : {};
 }
 
 function stripUncaughtPrefix(message: string): string {
@@ -42,70 +76,79 @@ function stripUncaughtPrefix(message: string): string {
 	return newline === -1 ? stripped : stripped.slice(0, newline);
 }
 
-function providerErrorFromBody(body: unknown): { code?: string; message?: string } | undefined {
-	if (typeof body !== 'string') return undefined;
+type ProviderErrorFields = {
+	code?: string;
+	message?: string;
+};
+
+function readJsonString<T>(value: T): string | undefined {
+	return isJsonValue(value) && isJsonString(value) ? value : undefined;
+}
+
+function readJsonNumber<T>(value: T): number | undefined {
+	return isJsonValue(value) && isJsonNumber(value) ? value : undefined;
+}
+
+function providerErrorFromData<T>(data: T): ProviderErrorFields | undefined {
+	if (!isJsonValue(data)) return undefined;
+	return providerErrorFromObject(data);
+}
+
+function providerErrorFromObject(data: JsonValue): ProviderErrorFields | undefined {
+	if (!isJsonObject(data) || !isJsonObject(data.error)) return undefined;
+	const code = data.error.code ?? data.error.type;
+	const fields: ProviderErrorFields = {};
+	if (isJsonString(code)) fields.code = code;
+	if (isJsonString(data.error.message)) fields.message = data.error.message;
+	return fields;
+}
+
+function providerErrorFromBody<T>(body: T): ProviderErrorFields | undefined {
+	if (!isJsonString(body)) return undefined;
+	let parsed: JsonValue;
 	try {
-		const parsed: unknown = JSON.parse(body);
-		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
-		const providerError = (parsed as Record<string, unknown>).error;
-		if (!providerError || typeof providerError !== 'object' || Array.isArray(providerError)) {
-			return undefined;
-		}
-		const record = providerError as Record<string, unknown>;
-		const code = record.code ?? record.type;
-		return {
-			...(typeof code === 'string' ? { code } : {}),
-			...(typeof record.message === 'string' ? { message: record.message } : {})
-		};
+		parsed = JSON.parse(body);
 	} catch {
 		// The provider body is only parsed for a friendlier message.
 		return undefined;
 	}
+	return providerErrorFromData(parsed);
 }
 
-function statusCodeFromError(error: unknown): number | undefined {
+function statusCodeFromError(error: Error): number | undefined {
 	for (const candidate of errorChain(error)) {
-		if (typeof candidate.statusCode === 'number') return candidate.statusCode;
-		if (typeof candidate.status === 'number') return candidate.status;
+		const fields = carrierFields(candidate);
+		const statusCode = readJsonNumber(fields.statusCode);
+		if (statusCode !== undefined) return statusCode;
+		const status = readJsonNumber(fields.status);
+		if (status !== undefined) return status;
 	}
 	return undefined;
 }
 
-function providerMessageFromError(error: unknown): string | undefined {
+function providerMessageFromError(error: Error): string | undefined {
 	for (const candidate of errorChain(error)) {
-		const message = providerErrorFromBody(candidate.responseBody)?.message;
-		if (message) return message;
-		const data = candidate.data;
-		if (data && typeof data === 'object' && !Array.isArray(data)) {
-			const providerError = (data as Record<string, unknown>).error;
-			if (providerError && typeof providerError === 'object' && !Array.isArray(providerError)) {
-				const dataMessage = (providerError as Record<string, unknown>).message;
-				if (typeof dataMessage === 'string') return dataMessage;
-			}
-		}
+		const fields = carrierFields(candidate);
+		const bodyMessage = providerErrorFromBody(fields.responseBody)?.message;
+		if (bodyMessage) return bodyMessage;
+		const dataMessage = providerErrorFromData(fields.data)?.message;
+		if (dataMessage) return dataMessage;
 	}
 	return undefined;
 }
 
-function looksLikeProviderBillingError(error: unknown): boolean {
+function looksLikeProviderBillingError(error: Error): boolean {
 	for (const candidate of errorChain(error)) {
-		if (providerErrorFromBody(candidate.responseBody)?.code === 'insufficient_quota') {
+		const fields = carrierFields(candidate);
+		if (providerErrorFromBody(fields.responseBody)?.code === 'insufficient_quota') {
 			return true;
 		}
-		const data = candidate.data;
-		if (data && typeof data === 'object' && !Array.isArray(data)) {
-			const providerError = (data as Record<string, unknown>).error;
-			if (
-				providerError &&
-				typeof providerError === 'object' &&
-				!Array.isArray(providerError) &&
-				(providerError as Record<string, unknown>).code === 'insufficient_quota'
-			) {
-				return true;
-			}
+		if (providerErrorFromData(fields.data)?.code === 'insufficient_quota') {
+			return true;
 		}
-		if (typeof candidate.message !== 'string') continue;
-		const message = candidate.message.toLowerCase();
+		const messageText = readJsonString(fields.message);
+		if (messageText === undefined) continue;
+		const message = messageText.toLowerCase();
 		if (
 			message.includes('insufficient_quota') ||
 			message.includes('insufficient quota') ||
@@ -119,7 +162,7 @@ function looksLikeProviderBillingError(error: unknown): boolean {
 	return false;
 }
 
-function innermostMessage(error: unknown): string | undefined {
+function innermostMessage(error: Error): string | undefined {
 	const chain = errorChain(error);
 	for (let index = chain.length - 1; index >= 0; index -= 1) {
 		const candidate = chain[index];
@@ -136,10 +179,7 @@ function innermostMessage(error: unknown): string | undefined {
  * Control-flow errors (cancellation, lease loss, stream supersede) pass through
  * unchanged. They must stay plain Errors so callers can detect them by message.
  */
-export function toModelCompletionConvexError(error: unknown, modelId: string): Error {
-	if (!(error instanceof Error)) {
-		return new ConvexError(`The model provider failed: ${String(error)}`);
-	}
+export function toModelCompletionConvexError(error: Error, modelId: string): Error {
 	if (error instanceof ConvexError) return error;
 	const message = stripUncaughtPrefix(error.message);
 	if (

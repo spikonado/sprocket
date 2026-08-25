@@ -4,6 +4,7 @@ import { v } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getExecutionRun, getUserId } from '@convex/lib/auth';
 import { vArtifactType } from '@convex/lib/validators';
+import schema from '@convex/schema';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
 import { RUN_NO_LONGER_ACTIVE } from '@convex/lib/agentErrors';
 
@@ -76,7 +77,7 @@ async function insertNextVersion(
 		createdAt: now
 	});
 
-	await ctx.db.patch(artifact._id, {
+	await ctx.db.patch('artifacts', artifact._id, {
 		currentVersion: version,
 		updatedAt: now
 	});
@@ -167,7 +168,7 @@ export const appendArtifactVersion = mutation({
 		const run = await requireActiveRun(ctx, args.runId, args.claimId, args.executionSecret);
 		const userId = run.userId;
 
-		const artifact: Doc<'artifacts'> | null = await ctx.db.get(args.artifactId);
+		const artifact: Doc<'artifacts'> | null = await ctx.db.get('artifacts', args.artifactId);
 		if (!artifact || artifact.userId !== userId || artifact.threadId !== run.threadId) {
 			throw new Error('Artifact not found.');
 		}
@@ -186,15 +187,13 @@ export const getArtifact = query({
 	args: {
 		artifactId: v.id('artifacts')
 	},
-	handler: async (
-		ctx,
-		args
-	): Promise<{
-		artifact: Doc<'artifacts'>;
-		versions: Doc<'artifactVersions'>[];
-	}> => {
-		const userId: string = await getUserId(ctx);
-		const artifact: Doc<'artifacts'> | null = await ctx.db.get(args.artifactId);
+	returns: v.object({
+		artifact: schema.doc('artifacts'),
+		versions: v.array(schema.doc('artifactVersions'))
+	}),
+	handler: async (ctx, args) => {
+		const userId = await getUserId(ctx);
+		const artifact = await ctx.db.get('artifacts', args.artifactId);
 		if (!artifact || artifact.userId !== userId) {
 			throw new Error('Artifact not found.');
 		}
@@ -214,16 +213,14 @@ export const listArtifactsForThread = query({
 	args: {
 		threadId: v.id('threadRecords')
 	},
-	handler: async (
-		ctx,
-		args
-	): Promise<
-		{
-			artifact: Doc<'artifacts'>;
-			currentContent: string;
-		}[]
-	> => {
-		const userId: string = await getUserId(ctx);
+	returns: v.array(
+		v.object({
+			artifact: schema.doc('artifacts'),
+			currentContent: v.string()
+		})
+	),
+	handler: async (ctx, args) => {
+		const userId = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 
 		const artifacts = await ctx.db

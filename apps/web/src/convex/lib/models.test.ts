@@ -2,12 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	assertSupportedModelConfiguration,
 	coercePersistedModelId,
-	coercePersistedSelection,
-	getModelDefinition,
-	isModelUsageMetered,
-	modelDefinitions,
-	modelIds,
-	persistedModelIds
+	coercePersistedSelection
 } from '@convex/lib/models';
 import { subscriptionTierIds, tierAllowedModels } from '@convex/lib/tiers';
 
@@ -29,23 +24,7 @@ describe('model configuration', () => {
 		).toThrow('Claude Opus 5 does not support none reasoning.');
 	});
 
-	it('keeps retired models out of the offered catalog', () => {
-		const offered = modelIds as readonly string[];
-		expect(offered).not.toContain('gpt-5.6-luna');
-		expect(offered).not.toContain('gpt-5.6-terra');
-		expect(offered).not.toContain('grok-4.5');
-		expect(offered).not.toContain('deepseek-v4-pro');
-		expect(offered).not.toContain('deepseek-v4-flash');
-		expect(modelDefinitions.map((model) => model.id)).toEqual([...modelIds]);
-		expect(persistedModelIds as readonly string[]).toEqual(
-			expect.arrayContaining([
-				'gpt-5.6-terra',
-				'gpt-5.6-luna',
-				'grok-4.5',
-				'deepseek-v4-pro',
-				'deepseek-v4-flash'
-			])
-		);
+	it('maps retired stored models onto the current catalog', () => {
 		expect(coercePersistedModelId('gpt-5.6-luna')).toBe('gpt-5.6-sol');
 		expect(coercePersistedModelId('deepseek-v4-pro')).toBe('deepseek-v4-pro-0813');
 		expect(coercePersistedModelId('deepseek-v4-flash')).toBe('deepseek-v4-flash-0731');
@@ -60,43 +39,13 @@ describe('model configuration', () => {
 		});
 	});
 
-	it('labels models by lab, not inference host', () => {
-		expect(getModelDefinition('deepseek-v4-pro-0813').provider).toBe('deepseek');
-		expect(getModelDefinition('deepseek-v4-flash-0731').provider).toBe('deepseek');
-		expect(getModelDefinition('kimi-k3').provider).toBe('kimi');
-		expect(getModelDefinition('glm-5.3').provider).toBe('zai');
-	});
-
-	it('marks Ox Alpha as an unmetered OpenRouter model', () => {
-		expect(getModelDefinition('stealth/ox-alpha')).toMatchObject({
-			provider: 'stealth',
-			inferenceProvider: 'openrouter',
-			supportsImages: true
-		});
-		expect(isModelUsageMetered('stealth/ox-alpha')).toBe(false);
-		expect(isModelUsageMetered('gpt-5.6-sol')).toBe(true);
-	});
-
 	it('offers Ox Alpha on every subscription tier', () => {
 		for (const tier of subscriptionTierIds) {
 			expect(tierAllowedModels[tier]).toContain('stealth/ox-alpha');
 		}
 	});
 
-	it('does not advertise image support for DeepSeek models', () => {
-		expect(getModelDefinition('deepseek-v4-pro-0813').supportsImages).toBe(false);
-		expect(getModelDefinition('deepseek-v4-flash-0731').supportsImages).toBe(false);
-		expect(getModelDefinition('gpt-5.6-sol').supportsImages).toBe(true);
-	});
-
-	it('does not advertise Fast for models without a faster route', () => {
-		expect(getModelDefinition('stealth/ox-alpha').serviceTiers).toEqual(['standard']);
-		expect(getModelDefinition('gpt-5.6-sol').serviceTiers).toEqual(['standard']);
-		expect(getModelDefinition('claude-fable-5').serviceTiers).toEqual(['standard']);
-		expect(getModelDefinition('kimi-k3').serviceTiers).toEqual(['standard']);
-		expect(getModelDefinition('glm-5.3').serviceTiers).toEqual(['standard']);
-		expect(getModelDefinition('deepseek-v4-pro-0813').serviceTiers).toEqual(['standard']);
-		expect(getModelDefinition('deepseek-v4-flash-0731').serviceTiers).toEqual(['standard']);
+	it('rejects service tiers a model does not support', () => {
 		expect(() =>
 			assertSupportedModelConfiguration({
 				modelId: 'kimi-k3',

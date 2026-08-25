@@ -231,37 +231,51 @@ export function isModelUsageMetered(modelId: SupportedModelId): boolean {
 	return getModelDefinition(modelId).usagePolicy !== 'unlimited';
 }
 
+function isSupportedModelId(modelId: string): modelId is SupportedModelId {
+	return modelIds.some((id) => id === modelId);
+}
+
+function retiredReplacement(modelId: string): SupportedModelId | undefined {
+	for (const [retiredId, replacement] of Object.entries(retiredModelReplacements)) {
+		if (retiredId === modelId) return replacement;
+	}
+	return undefined;
+}
+
 /** Map a stored (possibly retired) model id onto the current catalog. */
 export function coercePersistedModelId(modelId: string): SupportedModelId {
-	if ((modelIds as readonly string[]).includes(modelId)) {
-		return modelId as SupportedModelId;
-	}
-	return (
-		retiredModelReplacements[modelId as keyof typeof retiredModelReplacements] ?? defaultModelId
-	);
+	if (isSupportedModelId(modelId)) return modelId;
+	return retiredReplacement(modelId) ?? defaultModelId;
 }
+
+export type PersistedModelSelection = {
+	modelId: SupportedModelId;
+	serviceTier: SupportedServiceTier;
+};
 
 /** Retired ids and dropped Fast offerings still stored on old runs. */
 export function coercePersistedSelection(
 	modelId: string,
 	serviceTier: SupportedServiceTier
-): { modelId: SupportedModelId; serviceTier: SupportedServiceTier } {
+): PersistedModelSelection {
 	const coercedModelId = coercePersistedModelId(modelId);
 	const model = getModelDefinition(coercedModelId);
 	return {
 		modelId: coercedModelId,
-		serviceTier: (model.serviceTiers as readonly SupportedServiceTier[]).includes(serviceTier)
+		serviceTier: model.serviceTiers.some((tier) => tier === serviceTier)
 			? serviceTier
 			: model.serviceTiers[0]
 	};
 }
 
-export function normalizeCompletionUsage(usage: LanguageModelUsage): {
+export type NormalizedCompletionUsage = {
 	input: number;
 	cacheRead: number;
 	cacheWrite: number;
 	output: number;
-} {
+};
+
+export function normalizeCompletionUsage(usage: LanguageModelUsage): NormalizedCompletionUsage {
 	const details = usage.inputTokenDetails;
 	const cacheRead = details.cacheReadTokens ?? 0;
 	const cacheWrite = details.cacheWriteTokens ?? 0;
@@ -297,11 +311,11 @@ export function assertSupportedModelConfiguration(args: {
 	const model = getModelDefinition(args.modelId);
 	if (
 		args.reasoningEffort !== undefined &&
-		!(model.reasoningEfforts as readonly SupportedReasoningEffort[]).includes(args.reasoningEffort)
+		!model.reasoningEfforts.some((effort) => effort === args.reasoningEffort)
 	) {
 		throw new Error(`${model.label} does not support ${args.reasoningEffort} reasoning.`);
 	}
-	if (!(model.serviceTiers as readonly SupportedServiceTier[]).includes(args.serviceTier)) {
+	if (!model.serviceTiers.some((tier) => tier === args.serviceTier)) {
 		throw new Error(`${model.label} does not support the ${args.serviceTier} service tier.`);
 	}
 }

@@ -35,10 +35,13 @@
 
 	/** Convex action errors arrive wrapped in request-id/stack noise; show just
 	 * the meaningful message. */
-	function friendlyError(error: unknown, fallback: string): string {
-		if (!(error instanceof Error)) return fallback;
+	function friendlyError(error: Error, fallback: string): string {
 		const match = error.message.match(/Uncaught Error: ([^(\n]+)/);
 		return (match?.[1] ?? error.message).trim() || fallback;
+	}
+
+	function catchMessage<T>(error: T, fallback: string): string {
+		return error instanceof Error ? friendlyError(error, fallback) : fallback;
 	}
 
 	const fieldClass =
@@ -71,11 +74,11 @@
 	let lifecycleBusyId = $state<string | null>(null);
 	let lifecycleBusyAction = $state<LifecycleAction | null>(null);
 
-	const lifecycleLabels: Record<LifecycleAction, { idle: string; busy: string }> = {
+	const lifecycleLabels = {
 		pause: { idle: 'Pause', busy: 'Pausing…' },
 		resume: { idle: 'Resume', busy: 'Resuming…' },
 		cancel: { idle: 'Cancel', busy: 'Cancelling…' }
-	};
+	} as const satisfies Record<LifecycleAction, { idle: string; busy: string }>;
 
 	// Prava rejects recurring any-merchant mandates; keep the form from
 	// offering an invalid combination.
@@ -139,7 +142,7 @@
 				pendingApproval = null;
 			}
 		} catch (error) {
-			mandatesError = friendlyError(error, 'Couldn’t load mandates.');
+			mandatesError = catchMessage(error, 'Couldn’t load mandates.');
 		} finally {
 			mandatesLoading = false;
 		}
@@ -153,7 +156,7 @@
 			await setPaymentsEmail({ email: paymentsEmail.trim() });
 			emailSaved = true;
 		} catch (error) {
-			emailError = friendlyError(error, 'Couldn’t save email.');
+			emailError = catchMessage(error, 'Couldn’t save email.');
 		} finally {
 			emailSaving = false;
 		}
@@ -190,7 +193,7 @@
 			};
 			await refreshMandates();
 		} catch (error) {
-			setupError = friendlyError(error, 'Couldn’t set up mandate.');
+			setupError = catchMessage(error, 'Couldn’t set up mandate.');
 		} finally {
 			setupSubmitting = false;
 		}
@@ -208,7 +211,7 @@
 			});
 			await refreshMandates();
 		} catch (error) {
-			mandatesError = friendlyError(error, `Couldn’t ${action} mandate.`);
+			mandatesError = catchMessage(error, `Couldn’t ${action} mandate.`);
 		} finally {
 			lifecycleBusyId = null;
 			lifecycleBusyAction = null;

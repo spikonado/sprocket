@@ -5,6 +5,7 @@ import {
 	type AssistantToolCallPart
 } from '$convex/lib/assistantParts';
 import { isJsonObject, type JsonValue } from '$convex/lib/json';
+import { jsonBoolean, jsonObjectString } from '$lib/chat/json-fields';
 import type { ExecutorJob } from '$lib/types/sprocket';
 
 export type AssistantTimelineTool = {
@@ -149,10 +150,14 @@ export function workSectionJobCompletedAtMs(
  * Precompute work-section indexes and prior-completion anchors so the transcript
  * can resolve timing without O(n²) slice/filter per section.
  */
-export function workSectionTimingIndexes(sections: AssistantTimelineSection[]): {
+export type WorkSectionTimingIndexes = {
 	workIndexBySectionIndex: Array<number | undefined>;
 	priorCompletedAtByWorkIndex: Array<number | undefined>;
-} {
+};
+
+export function workSectionTimingIndexes(
+	sections: AssistantTimelineSection[]
+): WorkSectionTimingIndexes {
 	const workIndexBySectionIndex: Array<number | undefined> = [];
 	const priorCompletedAtByWorkIndex: Array<number | undefined> = [];
 	let workIndex = 0;
@@ -232,16 +237,12 @@ export function isAssistantTimelineToolRunning(
 	return isStreaming && isAssistantTimelineToolUnresolved(tool);
 }
 
-function jsonStringProp(value: JsonValue | undefined, key: string): string | undefined {
-	return isJsonObject(value) && typeof value[key] === 'string' ? value[key] : undefined;
-}
-
 /** Session id from command tool output, else input/payload (write_stdin completion omits it). */
 function commandSessionIdFromTool(tool: AssistantTimelineTool): string | undefined {
 	return (
-		jsonStringProp(tool.output, 'sessionId') ??
-		jsonStringProp(tool.input, 'sessionId') ??
-		jsonStringProp(tool.job?.payload, 'sessionId')
+		jsonObjectString(tool.output, 'sessionId') ??
+		jsonObjectString(tool.input, 'sessionId') ??
+		jsonObjectString(tool.job?.payload, 'sessionId')
 	);
 }
 
@@ -258,9 +259,9 @@ export function buildCommandSessionCommandMap(
 		}
 
 		const cmd =
-			jsonStringProp(tool.output, 'command') ??
+			jsonObjectString(tool.output, 'command') ??
 			(assistantTimelineToolKey(tool) === 'exec_command'
-				? (jsonStringProp(tool.input, 'cmd') ?? jsonStringProp(tool.job?.payload, 'cmd'))
+				? (jsonObjectString(tool.input, 'cmd') ?? jsonObjectString(tool.job?.payload, 'cmd'))
 				: undefined);
 		if (cmd) {
 			sessionCommands.set(sessionId, cmd);
@@ -277,7 +278,7 @@ export function resolveCommandSessionLabel(
 ): string | undefined {
 	const sessionId = commandSessionIdFromTool(tool);
 	return (
-		jsonStringProp(tool.output, 'command') ??
+		jsonObjectString(tool.output, 'command') ??
 		(sessionId ? sessionCommands.get(sessionId) : undefined)
 	);
 }
@@ -307,8 +308,9 @@ export function buildOpenExecCommandSessions(
 		if (assistantTimelineToolKey(tool) === 'exec_command') {
 			execSessions.add(sessionId);
 		}
-		if (isJsonObject(tool.output) && typeof tool.output.running === 'boolean') {
-			sessionRunning.set(sessionId, tool.output.running);
+		const running = isJsonObject(tool.output) ? jsonBoolean(tool.output.running) : undefined;
+		if (running !== undefined) {
+			sessionRunning.set(sessionId, running);
 		}
 	}
 
@@ -323,14 +325,16 @@ export function buildOpenExecCommandSessions(
  * monitor reports running:false. Prefer message-wide `openSessions` so text-separated
  * sections share the same session lifecycle.
  */
+export type PartitionedWorkSectionTools = {
+	settledBlocks: AssistantTimelineWorkBlock[];
+	runningTools: AssistantTimelineTool[];
+};
+
 export function partitionWorkSectionTools(
 	blocks: AssistantTimelineWorkBlock[],
 	isStreaming: boolean,
 	openSessions: ReadonlySet<string>
-): {
-	settledBlocks: AssistantTimelineWorkBlock[];
-	runningTools: AssistantTimelineTool[];
-} {
+): PartitionedWorkSectionTools {
 	const settledBlocks: AssistantTimelineWorkBlock[] = [];
 	const runningTools: AssistantTimelineTool[] = [];
 
@@ -437,7 +441,7 @@ export function buildAssistantTimeline(
 		jobs.map((job) => ({
 			id: job._id,
 			kind: job.kind,
-			...(job.callId ? { callId: job.callId } : {}),
+			callId: job.callId,
 			payload: job.payload
 		}))
 	);
@@ -459,30 +463,36 @@ export function buildAssistantTimeline(
 		const result = resultsByCallId.get(part.callId);
 		const job = jobsByCallId.get(part.callId);
 		if (job) usedJobIds.add(job._id);
-		timeline.push({
+		const item: AssistantTimelineTool = {
 			type: 'tool',
 			callId: part.callId,
 			name: part.name,
-			input: part.input,
-			...(result
-				? { output: result.output }
-				: job?.result !== undefined
-					? { output: job.result }
-					: {}),
-			...(job ? { job } : {})
-		});
+			input: part.input
+		};
+		if (result) {
+			item.output = result.output;
+		} else if (job?.result !== undefined) {
+			item.output = job.result;
+		}
+		if (job) {
+			item.job = job;
+		}
+		timeline.push(item);
 	}
 
 	for (const job of jobs) {
 		if (usedJobIds.has(job._id)) continue;
-		timeline.push({
+		const item: AssistantTimelineTool = {
 			type: 'tool',
 			callId: job.callId ?? `executor-job:${job._id}`,
 			name: job.kind,
 			input: job.payload,
-			...(job.result !== undefined ? { output: job.result } : {}),
 			job
-		});
+		};
+		if (job.result !== undefined) {
+			item.output = job.result;
+		}
+		timeline.push(item);
 	}
 
 	return timeline;

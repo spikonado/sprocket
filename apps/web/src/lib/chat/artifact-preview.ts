@@ -1,12 +1,11 @@
 import type { ArtifactType } from '$convex/lib/validators';
+import { z } from 'zod';
 
-const ARTIFACT_TYPES = new Set<ArtifactType>(['markdown', 'html', 'react']);
+const artifactTypeSchema = z.enum(['markdown', 'html', 'react']);
 
-export function parseArtifactType(value: unknown): ArtifactType {
-	if (typeof value === 'string' && ARTIFACT_TYPES.has(value as ArtifactType)) {
-		return value as ArtifactType;
-	}
-	return 'markdown';
+export function parseArtifactType(value: string): ArtifactType {
+	const parsed = artifactTypeSchema.safeParse(value);
+	return parsed.success ? parsed.data : 'markdown';
 }
 
 /** Escape sequences that would break out of the inline <script> holding the react source. */

@@ -1,12 +1,19 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { api } from '@convex/_generated/api';
+import { bindStagehandFactory } from '@convex/browserAgent';
 import {
 	createQueuedRun,
 	initConvexTest,
 	seedOwnedThread,
 	type ConvexTestInstance
 } from '@convex/test.setup';
+
+type StagehandInitOptions = {
+	keepAlive?: boolean;
+	browserbaseSessionCreateParams?: { keepAlive?: boolean; timeout?: number };
+	browserbaseSessionID?: string;
+};
 
 const act = vi.fn().mockResolvedValue({
 	success: true,
@@ -23,21 +30,7 @@ const extract = vi.fn().mockResolvedValue({ total: '₹1,240', items: 2 });
 const init = vi.fn().mockResolvedValue(undefined);
 const close = vi.fn().mockResolvedValue(undefined);
 const goto = vi.fn().mockResolvedValue(undefined);
-const stagehandOptions: Record<string, unknown>[] = [];
-vi.mock('@browserbasehq/stagehand', () => ({
-	Stagehand: class {
-		constructor(options: Record<string, unknown>) {
-			stagehandOptions.push(options);
-		}
-		init = init;
-		close = close;
-		act = act;
-		observe = observe;
-		extract = extract;
-		browserbaseSessionId = 'bb-session-task';
-		context = { pages: () => [{ goto }] };
-	}
-}));
+const stagehandOptions: StagehandInitOptions[] = [];
 
 const LIVE_VIEW_URL = 'https://live.browserbase.test/fullscreen/bb-session-task';
 const fetchMock = vi.fn().mockResolvedValue({
@@ -67,9 +60,27 @@ async function startRun(
 	return { runId: created.runId, claimId, executionSecret };
 }
 
+let restoreStagehandFactory: () => void;
+
+beforeEach(() => {
+	restoreStagehandFactory = bindStagehandFactory((options) => {
+		stagehandOptions.push(options);
+		return {
+			init,
+			close,
+			act,
+			observe,
+			extract,
+			browserbaseSessionId: 'bb-session-task',
+			context: { pages: () => [{ goto }] }
+		};
+	});
+});
+
 afterEach(() => {
 	vi.clearAllMocks();
 	stagehandOptions.length = 0;
+	restoreStagehandFactory();
 	delete process.env.BROWSERBASE_API_KEY;
 	delete process.env.BROWSERBASE_PROJECT_ID;
 	delete process.env.OPENAI_API_KEY;
@@ -97,7 +108,7 @@ describe('browserAgent', () => {
 		expect(act).toHaveBeenCalledWith('add the part to cart and stop at the payment form');
 		expect(close).toHaveBeenCalled();
 		expect(out).toMatchObject({ truncated: false });
-		expect(String((out as { text: string }).text)).toContain('Action performed');
+		expect(out.text).toContain('Action performed');
 
 		// First call in a thread creates a long-lived keep-alive session.
 		expect(stagehandOptions.at(-1)).toMatchObject({
@@ -123,7 +134,7 @@ describe('browserAgent', () => {
 		);
 
 		// A later run in the same thread resumes the same Browserbase session.
-		await t.run(async (ctx) => await ctx.db.patch(run.runId, { status: 'completed' }));
+		await t.run(async (ctx) => await ctx.db.patch('runs', run.runId, { status: 'completed' }));
 		const secondRun = await startRun(t, asUser, threadId);
 		await t.action(api.browserAgent.act, {
 			instruction: 'continue on the same page',
@@ -163,7 +174,7 @@ describe('browserAgent', () => {
 			claimId: run.claimId,
 			executionSecret: run.executionSecret
 		});
-		expect(String((out as { text: string }).text)).toContain('Action performed');
+		expect(out.text).toContain('Action performed');
 
 		const stored = await t.run(async (ctx) =>
 			ctx.db
@@ -186,7 +197,7 @@ describe('browserAgent', () => {
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
 		const run = await startRun(t, asUser, threadId);
 		await t.run(async (ctx) => {
-			const thread = await ctx.db.get(threadId);
+			const thread = await ctx.db.get('threadRecords', threadId);
 			await ctx.db.insert('browserSessions', {
 				threadId,
 				runId: run.runId,
@@ -245,14 +256,14 @@ describe('browserAgent', () => {
 			method: 'click',
 			arguments: []
 		});
-		expect(String((acted as { text: string }).text)).toContain('Action performed');
+		expect(acted.text).toContain('Action performed');
 
 		const extracted = await t.action(api.browserAgent.extract, {
 			instruction: 'read the order total',
 			...auth
 		});
 		expect(extract).toHaveBeenCalledWith('read the order total');
-		expect(String((extracted as { text: string }).text)).toContain('1,240');
+		expect(extracted.text).toContain('1,240');
 	});
 
 	it('bounds the actions payload and marks it truncated for a hostile page', async () => {

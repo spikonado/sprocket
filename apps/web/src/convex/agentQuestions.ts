@@ -27,18 +27,19 @@ const MAX_QUESTION_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 export type AgentQuestionSnapshot = Infer<typeof vAgentQuestionSnapshot>;
 
 function toSnapshot(question: Doc<'agentQuestions'>): AgentQuestionSnapshot {
-	return {
+	const snapshot: AgentQuestionSnapshot = {
 		threadId: question.threadId,
 		questionId: question._id,
 		question: question.question,
 		options: question.options,
 		status: question.status,
-		...(question.answer ? { answer: question.answer } : {}),
 		sequence: question.sequence,
 		createdAt: question.createdAt,
-		timeoutAt: question.timeoutAt,
-		...(question.answeredAt !== undefined ? { answeredAt: question.answeredAt } : {})
+		timeoutAt: question.timeoutAt
 	};
+	if (question.answer) snapshot.answer = question.answer;
+	if (question.answeredAt !== undefined) snapshot.answeredAt = question.answeredAt;
+	return snapshot;
 }
 
 async function nextThreadSequence(
@@ -95,7 +96,7 @@ async function expireOverduePendingQuestions(
 		if (question.timeoutAt > now) {
 			continue;
 		}
-		await ctx.db.patch(question._id, {
+		await ctx.db.patch('agentQuestions', question._id, {
 			status: 'timedOut',
 			answeredAt: now
 		});
@@ -177,7 +178,7 @@ export const answer = mutation({
 		const now = Date.now();
 		await expireOverduePendingQuestions(ctx, args.threadId, now);
 
-		const question = await ctx.db.get(args.questionId);
+		const question = await ctx.db.get('agentQuestions', args.questionId);
 		if (!question || question.threadId !== args.threadId) {
 			throw new Error('Question not found.');
 		}
@@ -195,7 +196,7 @@ export const answer = mutation({
 			optionId: args.optionId,
 			text: args.text
 		});
-		await ctx.db.patch(question._id, {
+		await ctx.db.patch('agentQuestions', question._id, {
 			status: 'answered',
 			answer,
 			answeredAt: now
@@ -214,15 +215,17 @@ export const timeout = internalMutation({
 	args: {
 		questionId: v.id('agentQuestions')
 	},
-	handler: async (ctx, args): Promise<void> => {
-		const question = await ctx.db.get(args.questionId);
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const question = await ctx.db.get('agentQuestions', args.questionId);
 		if (!question || question.status !== 'pending') {
-			return;
+			return null;
 		}
-		await ctx.db.patch(question._id, {
+		await ctx.db.patch('agentQuestions', question._id, {
 			status: 'timedOut',
 			answeredAt: Date.now()
 		});
+		return null;
 	}
 });
 
@@ -235,7 +238,7 @@ export const getForExecutor = query({
 	returns: v.union(vAgentQuestionSnapshot, v.null()),
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		const question = await ctx.db.get(args.questionId);
+		const question = await ctx.db.get('agentQuestions', args.questionId);
 		if (!question || question.runId !== run._id) {
 			return null;
 		}
@@ -245,13 +248,16 @@ export const getForExecutor = query({
 
 export const headPendingForThread = query({
 	args: {
-		threadId: v.id('threadRecords')
+		threadId: v.id('threadRecords'),
+		// Callers that can refresh should pass wall-clock time; omitted `now`
+		// falls back so older clients and tests keep the overdue-skip behavior.
+		now: v.optional(v.number())
 	},
 	returns: v.union(vAgentQuestionSnapshot, v.null()),
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
-		const head = await headLivePendingQuestion(ctx, args.threadId, Date.now());
+		const head = await headLivePendingQuestion(ctx, args.threadId, args.now ?? Date.now());
 		return head ? toSnapshot(head) : null;
 	}
 });

@@ -1,5 +1,6 @@
 import { isJsonObject, type JsonValue } from '$convex/lib/json';
 import type { AssistantTimelineTool } from '$lib/chat/assistant-timeline';
+import { jsonString } from '$lib/chat/json-fields';
 
 export type MandateApproval = {
 	mandateId: string;
@@ -21,8 +22,9 @@ function mandateApprovalFromTool(
 	if (!isJsonObject(output)) {
 		return undefined;
 	}
-	const { mandateId, approvalUrl } = output;
-	if (typeof mandateId !== 'string' || typeof approvalUrl !== 'string') {
+	const mandateId = jsonString(output.mandateId);
+	const approvalUrl = jsonString(output.approvalUrl);
+	if (!mandateId || !approvalUrl) {
 		return undefined;
 	}
 	return { mandateId, approvalUrl };
@@ -31,11 +33,13 @@ function mandateApprovalFromTool(
 function mandateSetupLabel(tool: AssistantTimelineTool): string | undefined {
 	const input: JsonValue | undefined = tool.job?.payload ?? tool.input;
 	if (!isJsonObject(input)) return undefined;
-	if (typeof input.description === 'string' && input.description.trim()) {
-		return input.description.trim();
+	const description = jsonString(input.description)?.trim();
+	if (description) {
+		return description;
 	}
-	if (typeof input.merchantName === 'string' && input.merchantName.trim()) {
-		return input.merchantName.trim();
+	const merchantName = jsonString(input.merchantName)?.trim();
+	if (merchantName) {
+		return merchantName;
 	}
 	return undefined;
 }

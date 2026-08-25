@@ -7,9 +7,6 @@ type ExecutorJobState = {
 	completedAt?: number;
 };
 
-type FinalizedExecutorJob<T extends ExecutorJobState> = Omit<T, keyof ExecutorJobState> &
-	ExecutorJobState;
-
 export function compareRunStartedAt(
 	left: { startedAt: number; _creationTime: number },
 	right: { startedAt: number; _creationTime: number }
@@ -44,9 +41,9 @@ export function cancelExecutorJobsForTerminalRun<T extends ExecutorJobState>(arg
 	runStatus: Infer<typeof vRunStatus>;
 	lastError?: string;
 	completedAt: number;
-}): FinalizedExecutorJob<T>[] {
+}): T[] {
 	if (!isRunFinalStatus(args.runStatus)) {
-		return args.jobs.map((job) => job as FinalizedExecutorJob<T>);
+		return [...args.jobs];
 	}
 	const error =
 		args.lastError ??
@@ -57,13 +54,13 @@ export function cancelExecutorJobsForTerminalRun<T extends ExecutorJobState>(arg
 				: 'Run completed before executor job completed.');
 	return args.jobs.map((job) => {
 		if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
-			return job as FinalizedExecutorJob<T>;
+			return job;
 		}
 		return {
 			...job,
 			status: 'cancelled',
 			error,
 			completedAt: args.completedAt
-		} as FinalizedExecutorJob<T>;
+		};
 	});
 }

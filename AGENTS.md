@@ -1,12 +1,12 @@
 # AGENTS.md
 
-## Project Overview
+## Project overview
 
 - Sprocket is an agentic platform that streamlines hardware and software development.
 - The goal is to make the world's best platform for agents and humans to develop apps, robots, devices, and the systems that glue them together.
-- Sprocket should work seamlessly across different hardware platforms, operating systems, and Sprocket's own cloud for hardware and software development.
+- Sprocket should work across different hardware platforms, operating systems, and Sprocket's own cloud for hardware and software development.
 
-## Available Testing Commands
+## Available testing commands
 
 - `bun run build`
 - `bun run test`
@@ -15,11 +15,11 @@
 
 If you are a subagent, don't run any of these.
 
-### Nix Environment
+### Nix environment
 
 It provides all dependencies/tools you may need. Use it through `nix develop -c <command>`.
 
-## Priorities in Order
+## Priorities in order
 
 1. Reliability of code -> Behavior should be predictable under load and during failures -> This includes our servers and the user's system
 2. Maintainability of code
@@ -27,21 +27,21 @@ It provides all dependencies/tools you may need. Use it through `nix develop -c 
 
 All of these are core priorities; try your best to achieve all of them without having to make trade-offs.
 
-## Maintaining Code
+## Maintaining code
 
 - Don't be afraid to completely refactor existing code to improve on any of the priorities.
 - Make sure that changes are made in all the layers of the app when needed.
 - Ship breaking changes with backwards compatibility for already-released clients and stored data, and record every shim in `BACKWARDS_COMPATIBILITY.md` with its removal gate.
 - Remove compat only once that gate passes (clients age out, or a migration rewrites the data), and fold data migrations into the PR that introduces the breaking change instead of leaving debt behind.
 
-## Writing Code
+## Writing code
 
 - Deleting code often fixes more problems than writing code does. Sometimes writing too much code introduces problems.
 - Specifically for gpt-5.6-sol: You often end up writing more code than needed, especially tests. Please don't do this.
 
 ## Subagents
 
-### Working on Stuff - Only for Main Agents
+### Working on stuff, main agents only
 
 - Feel free to commit, branch, and spin up worktrees as you please. Don't push before asking.
 - Do the deep dives and figure out what needs to be done, and delegate the rest accordingly and as needed to subagents.
@@ -64,7 +64,7 @@ All of these are core priorities; try your best to achieve all of them without h
 5. Loop on 2-4 till there are no more issues to fix.
 6. Clean up any worktrees and branches you created for this PR when you are done.
 
-### Subagent Prompting
+### Subagent prompting
 
 To main agents:
 

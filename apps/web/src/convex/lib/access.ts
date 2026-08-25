@@ -3,13 +3,11 @@ import type { DatabaseReader } from '@convex/_generated/server';
 
 type OwnerScopedTable = 'projects' | 'threadRecords' | 'runs';
 
-async function getOwnedRecord<TableName extends OwnerScopedTable>(
-	db: DatabaseReader,
+async function assertOwned<TableName extends OwnerScopedTable>(
+	record: Doc<TableName> | null,
 	userId: string,
-	id: Id<TableName>,
 	errorMessage: string
 ): Promise<Doc<TableName>> {
-	const record: Doc<TableName> | null = await db.get(id);
 	if (!record || record.userId !== userId) {
 		throw new Error(errorMessage);
 	}
@@ -21,7 +19,11 @@ export async function getOwnedProject(
 	userId: string,
 	projectId: Id<'projects'>
 ): Promise<Doc<'projects'>> {
-	return await getOwnedRecord<'projects'>(db, userId, projectId, 'Project not found.');
+	return await assertOwned<'projects'>(
+		await db.get('projects', projectId),
+		userId,
+		'Project not found.'
+	);
 }
 
 export async function getOwnedThreadRecord(
@@ -29,7 +31,11 @@ export async function getOwnedThreadRecord(
 	userId: string,
 	threadRecordId: Id<'threadRecords'>
 ): Promise<Doc<'threadRecords'>> {
-	return await getOwnedRecord<'threadRecords'>(db, userId, threadRecordId, 'Thread not found.');
+	return await assertOwned<'threadRecords'>(
+		await db.get('threadRecords', threadRecordId),
+		userId,
+		'Thread not found.'
+	);
 }
 
 export async function getOwnedRun(
@@ -37,5 +43,5 @@ export async function getOwnedRun(
 	userId: string,
 	runId: Id<'runs'>
 ): Promise<Doc<'runs'>> {
-	return await getOwnedRecord<'runs'>(db, userId, runId, 'Run not found.');
+	return await assertOwned<'runs'>(await db.get('runs', runId), userId, 'Run not found.');
 }

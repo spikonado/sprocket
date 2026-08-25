@@ -15,7 +15,7 @@ Should be created as `$artifacts` and project files.
 
 1. **BOM** - Markdown
 2. **Pin map (per MCU, if using any)** - Markdown
-3. **Schematic sheet** — React artifact
+3. **Schematic sheet** - React artifact
 4. **Assembly notes** - Markdown
 
 One schematic change means checking all four. Net names are the glue: the same
@@ -32,13 +32,13 @@ Try to find parts from local suppliers that are from the user's state/country. E
 Before deciding to go with a particular supplier, always read online reviews for that supplier from other buyers to ensure the store isn't fraudulent.
 Always go through relevant supplier descriptions, datasheet, and other specs before deciding on a part.
 
-## Creating the Pin Map
+## Creating the pin map
 
 Should be a markdown table.
 One row per net; gotcha rows for input-only and boot-strapping pins of the specific MCU.
 Net names should be consistent across them.
 
-## Creating the Schematic
+## Creating the schematic
 
 The artifact is a React component (App) whose output is a single <svg viewBox="0 0 1500 720"> element containing all the schematic geometry.
 Start from the below sample schematic. It's a verified, collision-checked artifact that implements every convention below; copy its structure and scale it.
@@ -424,10 +424,10 @@ These are what make the sheet read like a CAD schematic rather than a diagram.
 - **Label-based wiring.** Connect blocks with matched net labels on short stubs; the only long routed wires are tight physical runs (driver → motor terminals). Power rails are labeled taps (`VM`, `+5V`), never drawn end-to-end. Ground is a ground symbol, one per pin, all common.
 - **Real-hardware fills.** Components take the colour of the physical part.
 - **Two label colours.** Near-white (`#edf1f5`) for pin names on dark boxes; dark slate (`#5f6b78`) for labels on the light sheet background. A single "bright" colour fails one of the two.
-- **Zone the sheet** left-to-right in signal order (e.g. power entry → regulation → MCU → drivers → actuators), generous gutters, dotted grid, small legend, soft page background. No title blocks, no rotated text for pin groups — a pin group too cramped on its edge means the box is too small; grow the box and give the group an internal section caption.
+- **Zone the sheet** left-to-right in signal order (e.g. power entry → regulation → MCU → drivers → actuators), generous gutters, dotted grid, small legend, soft page background. No title blocks, no rotated text for pin groups. If a pin group would be cramped on its edge, the box is too small; grow the box and give the group an internal section caption.
 - **Sheet height fits content.** After a layout change, re-check that the last pin sits inside its box and labels clear neighbouring boxes. The two bugs this catches (pin overflow, label collision) are invisible without running the numbers.
 
-### Verifying Geometry
+### Verifying geometry
 
 Don't eyeball coordinates:
 
@@ -435,7 +435,7 @@ Don't eyeball coordinates:
 - If a browser is available, render a screenshot and inspect it. Fix and re-check until zero collisions.
 - Completion criterion: the collision script reports zero, not "looks right".
 
-## Creating the Assembly Notes
+## Creating the assembly notes
 
 Include the following, if needed:
 
@@ -443,7 +443,7 @@ Include the following, if needed:
 - Wiring tips
 - Uploading code
 
-## Final Response to User
+## Final response to the user
 
 In your response don't include the nitty-gritty details of how you made the artifacts, etc.
 Tell the user more about the project and design decisions.

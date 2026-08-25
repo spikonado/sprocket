@@ -18,12 +18,17 @@ export type ArtifactRevision = {
 
 /**
  * Diffs the latest artifact revisions against a prior snapshot.
- * When `previous` is null (first observation for a thread), only seeds — never reports a change.
+ * When `previous` is null (first observation for a thread), only seeds; never reports a change.
  */
+export type ArtifactRevisionWatch = {
+	revisions: Map<string, ArtifactRevision>;
+	changedId: string | null;
+};
+
 export function nextArtifactRevisionWatch(
 	previous: ReadonlyMap<string, ArtifactRevision> | null,
 	current: readonly ArtifactRevision[]
-): { revisions: Map<string, ArtifactRevision>; changedId: string | null } {
+): ArtifactRevisionWatch {
 	const revisions = new Map<string, ArtifactRevision>(
 		current.map((artifact) => [artifact.id, artifact])
 	);

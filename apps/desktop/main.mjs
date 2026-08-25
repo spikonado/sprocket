@@ -38,6 +38,56 @@ if (!hasSingleInstanceLock) {
 	app.quit();
 }
 
+function isPlainObject(value) {
+	return value !== null && !Array.isArray(value) && value === Object(value);
+}
+
+function parseNonEmptyString(value) {
+	// Accepts only primitive non-empty strings (no boxed strings/arrays/objects).
+	if (value === null || value === undefined || Array.isArray(value) || value === Object(value)) {
+		return null;
+	}
+	if (value !== `${value}`) {
+		return null;
+	}
+	const trimmed = value.trim();
+	return trimmed.length > 0 ? trimmed : null;
+}
+
+function parsePairingProof(value) {
+	if (!isPlainObject(value)) {
+		return null;
+	}
+	const httpBaseUrl = parseNonEmptyString(value.httpBaseUrl);
+	if (
+		httpBaseUrl === null ||
+		(value.webUiEnabled !== true && value.webUiEnabled !== false) ||
+		!Array.isArray(value.proof)
+	) {
+		return null;
+	}
+	return {
+		httpBaseUrl,
+		webUiEnabled: value.webUiEnabled,
+		proof: value.proof
+	};
+}
+
+function parseDesktopBootstrap(value) {
+	if (!isPlainObject(value)) {
+		return null;
+	}
+	const pairingCredential = parseNonEmptyString(value.pairingCredential);
+	if (pairingCredential === null) {
+		return null;
+	}
+	return {
+		pairingCredential,
+		httpBaseUrl: parseNonEmptyString(value.httpBaseUrl),
+		desktopLoginCallbackUrl: parseNonEmptyString(value.desktopLoginCallbackUrl)
+	};
+}
+
 function reportFatalError(title, error) {
 	const message = error instanceof Error ? error.message : String(error);
 	console.error(title, error);
@@ -131,12 +181,8 @@ async function attachToRunningServer(baseUrl, dataDir) {
 		throw new Error(`Port ${serverPort} is already used by another service.`);
 	}
 
-	const pairingProof = await response.json();
-	if (
-		pairingProof?.httpBaseUrl !== baseUrl ||
-		typeof pairingProof.webUiEnabled !== 'boolean' ||
-		!Array.isArray(pairingProof.proof)
-	) {
+	const pairingProof = parsePairingProof(await response.json());
+	if (pairingProof === null || pairingProof.httpBaseUrl !== baseUrl) {
 		throw new Error(`The service at ${baseUrl} is not a compatible Sprocket server.`);
 	}
 	if (!isDevelopment && !pairingProof.webUiEnabled) {
@@ -204,15 +250,19 @@ async function startLocalServer() {
 		...(staticDir ? ['--static-dir', staticDir] : [])
 	];
 
+	const serverEnv = {
+		...process.env,
+		SPROCKET_HOST: host,
+		SPROCKET_PORT: String(port),
+		SPROCKET_DATA_DIR: dataDir,
+		SPROCKET_DESKTOP_BOOTSTRAP_TOKEN: desktopBootstrapToken
+	};
+	if (staticDir) {
+		serverEnv.SPROCKET_STATIC_DIR = staticDir;
+	}
+
 	serverProcess = spawn(serverBinary, args, {
-		env: {
-			...process.env,
-			SPROCKET_HOST: host,
-			SPROCKET_PORT: String(port),
-			SPROCKET_DATA_DIR: dataDir,
-			SPROCKET_DESKTOP_BOOTSTRAP_TOKEN: desktopBootstrapToken,
-			...(staticDir ? { SPROCKET_STATIC_DIR: staticDir } : {})
-		},
+		env: serverEnv,
 		stdio: ['ignore', 'pipe', 'inherit']
 	});
 	serverProcess.once('error', (error) => {
@@ -263,14 +313,13 @@ async function startLocalServer() {
 		throw new Error('Failed to load desktop bootstrap details from the local server.');
 	}
 
-	const bootstrap = await bootstrapResponse.json();
+	const bootstrap = parseDesktopBootstrap(await bootstrapResponse.json());
+	if (bootstrap === null) {
+		throw new Error('Failed to load desktop bootstrap details from the local server.');
+	}
 	serverPairingCredential = bootstrap.pairingCredential;
 	serverBaseUrl = bootstrap.httpBaseUrl ?? serverBaseUrl;
-	serverDesktopLoginCallbackUrl =
-		typeof bootstrap.desktopLoginCallbackUrl === 'string' &&
-		bootstrap.desktopLoginCallbackUrl.trim().length > 0
-			? bootstrap.desktopLoginCallbackUrl.trim()
-			: desktopLoginCallbackUrl;
+	serverDesktopLoginCallbackUrl = bootstrap.desktopLoginCallbackUrl ?? desktopLoginCallbackUrl;
 
 	return serverBaseUrl;
 }
@@ -285,11 +334,12 @@ function stopLocalServer() {
 }
 
 function queueWorkspaceLaunch(workspacePath) {
-	if (typeof workspacePath !== 'string' || !workspacePath.trim()) {
+	const parsed = parseNonEmptyString(workspacePath);
+	if (parsed === null) {
 		return;
 	}
 
-	pendingWorkspaceLaunches.push(workspacePath.trim());
+	pendingWorkspaceLaunches.push(parsed);
 	notifyWorkspaceLaunch();
 }
 
@@ -464,13 +514,14 @@ function openWithXdgOpen(url) {
 }
 
 function parseExternalHttpsUrl(url) {
-	if (typeof url !== 'string' || url.trim().length === 0) {
+	const raw = parseNonEmptyString(url);
+	if (raw === null) {
 		throw new Error('A URL is required.');
 	}
 
 	let parsed;
 	try {
-		parsed = new URL(url);
+		parsed = new URL(raw);
 	} catch {
 		throw new Error('Invalid URL.');
 	}

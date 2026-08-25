@@ -97,11 +97,12 @@ export function normalizeQuestionAnswer(args: {
 		throw new Error(`Unknown option id '${optionId}'.`);
 	}
 
-	return {
+	const answer: AgentQuestionAnswer = {
 		optionId: option.id,
-		optionLabel: option.label,
-		...(text ? { text } : {})
+		optionLabel: option.label
 	};
+	if (text) answer.text = text;
+	return answer;
 }
 
 export function canSubmitQuestionAnswer(args: {

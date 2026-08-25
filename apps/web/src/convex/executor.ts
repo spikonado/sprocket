@@ -15,7 +15,7 @@ export const complete = mutation({
 	},
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
-		const job = await ctx.db.get(args.jobId);
+		const job = await ctx.db.get('executorJobs', args.jobId);
 		if (!job || job.runId !== args.runId) throw new Error('Executor job not found.');
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		if (job.status === 'cancelled' || job.status === 'failed') {
@@ -31,13 +31,13 @@ export const complete = mutation({
 			return false;
 		}
 
-		await ctx.db.patch(args.jobId, {
+		await ctx.db.patch('executorJobs', args.jobId, {
 			status: 'completed',
 			result: args.result,
 			completedAt: Date.now()
 		});
 		if (run.activeJobId === args.jobId) {
-			await ctx.db.patch(run._id, {
+			await ctx.db.patch('runs', run._id, {
 				status: 'running',
 				activeJobId: undefined
 			});
@@ -56,7 +56,7 @@ export const fail = mutation({
 	},
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
-		const job = await ctx.db.get(args.jobId);
+		const job = await ctx.db.get('executorJobs', args.jobId);
 		if (!job || job.runId !== args.runId) throw new Error('Executor job not found.');
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		if (job.status === 'cancelled' || job.status === 'completed' || job.status === 'failed') {
@@ -67,7 +67,7 @@ export const fail = mutation({
 		}
 
 		const completedAt = Date.now();
-		await ctx.db.patch(args.jobId, {
+		await ctx.db.patch('executorJobs', args.jobId, {
 			status: 'failed',
 			error: args.error,
 			completedAt
@@ -78,7 +78,7 @@ export const fail = mutation({
 			failedJobId: args.jobId
 		});
 		if (runPatch) {
-			await ctx.db.patch(job.runId, runPatch);
+			await ctx.db.patch('runs', job.runId, runPatch);
 		}
 		return true;
 	}

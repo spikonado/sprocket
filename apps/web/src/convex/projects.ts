@@ -1,7 +1,7 @@
 import { mutation, query, type MutationCtx, type QueryCtx } from '@convex/_generated/server';
 import { v, type Infer } from 'convex/values';
 import { getUserId } from '@convex/lib/auth';
-import { vProjectDoc, vProjectListItem } from '@convex/lib/docs';
+import { vProjectListItem } from '@convex/lib/docs';
 import {
 	getDetachedConnections,
 	getEffectiveExecutorStatus,
@@ -9,6 +9,7 @@ import {
 	shouldRefreshProjectHeartbeat
 } from '@convex/lib/projectConnection';
 import type { Doc, Id } from '@convex/_generated/dataModel';
+import schema from '@convex/schema';
 
 async function findProjectForRepository(
 	ctx: MutationCtx,
@@ -39,7 +40,7 @@ async function upsertConnection(
 ) {
 	const existing = await getConnectionForProject(ctx, args.projectId);
 	if (existing) {
-		await ctx.db.patch(existing._id, {
+		await ctx.db.patch('projectConnections', existing._id, {
 			clientId: args.clientId,
 			lastHeartbeatAt: args.now
 		});
@@ -70,7 +71,7 @@ export const upsertSelected = mutation({
 		displayName: v.string(),
 		connectedClientId: v.string()
 	},
-	returns: v.union(vProjectDoc, v.null()),
+	returns: v.union(schema.doc('projects'), v.null()),
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		const repositoryKey = args.repositoryKey.trim();
@@ -86,14 +87,14 @@ export const upsertSelected = mutation({
 		const project = await findProjectForRepository(ctx, userId, repositoryKey);
 
 		if (project) {
-			await ctx.db.patch(project._id, { repositoryKey, displayName, lastSeenAt: now });
+			await ctx.db.patch('projects', project._id, { repositoryKey, displayName, lastSeenAt: now });
 			await upsertConnection(ctx, {
 				projectId: project._id,
 				userId,
 				clientId: args.connectedClientId,
 				now
 			});
-			return await ctx.db.get(project._id);
+			return await ctx.db.get('projects', project._id);
 		}
 
 		const id = await ctx.db.insert('projects', {
@@ -104,7 +105,7 @@ export const upsertSelected = mutation({
 			lastSeenAt: now
 		});
 		await upsertConnection(ctx, { projectId: id, userId, clientId: args.connectedClientId, now });
-		return await ctx.db.get(id);
+		return await ctx.db.get('projects', id);
 	}
 });
 
@@ -114,7 +115,10 @@ export const listMine = query({
 		// `executorStatus`. Callers passing `false` skip the `projectConnections`
 		// read entirely, so heartbeats never re-run their subscription. Once old
 		// clients age out, drop the arg and the `executorStatus` field.
-		includeExecutorStatus: v.optional(v.boolean())
+		includeExecutorStatus: v.optional(v.boolean()),
+		// Required to compute `executorStatus` without reading the clock in the
+		// query. Omitted `now` skips status so the subscription stays reactive.
+		now: v.optional(v.number())
 	},
 	returns: v.array(vProjectListItem),
 	handler: async (ctx, args): Promise<Infer<typeof vProjectListItem>[]> => {
@@ -127,10 +131,10 @@ export const listMine = query({
 			.withIndex('by_userId', (query) => query.eq('userId', userId))
 			.order('desc')
 			.collect();
-		if (args.includeExecutorStatus === false) {
+		const now = args.now;
+		if (args.includeExecutorStatus === false || now === undefined) {
 			return projects;
 		}
-		const now = Date.now();
 		const connectionByProjectId = await getConnectionsForUser(ctx, userId);
 		return projects.map((project) => ({
 			...project,
@@ -156,7 +160,7 @@ export const heartbeatAttached = mutation({
 		// ownership per id instead of scanning every project the user has.
 		await Promise.all(
 			[...requestedIds].map(async (projectId) => {
-				const project = await ctx.db.get(projectId);
+				const project = await ctx.db.get('projects', projectId);
 				if (!project || project.userId !== userId) {
 					throw new Error('Project not found.');
 				}
@@ -177,7 +181,9 @@ export const heartbeatAttached = mutation({
 					await upsertConnection(ctx, { projectId, userId, clientId: args.clientId, now });
 				}
 			}),
-			...detachedConnections.map((connection) => ctx.db.delete(connection._id))
+			...detachedConnections.map((connection) =>
+				ctx.db.delete('projectConnections', connection._id)
+			)
 		]);
 
 		return true;

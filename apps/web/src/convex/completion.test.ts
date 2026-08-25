@@ -1,19 +1,15 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { APICallError } from 'ai';
 import { ConvexError } from 'convex/values';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { COMPLETION_STREAM_SUPERSEDED } from '@convex/lib/completionStream';
 import { toModelCompletionConvexError } from '@convex/lib/agentErrors';
+import { bindCompletionModelFns } from './completion';
 import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 
-const streamTextMock = vi.hoisted(() => vi.fn());
-const generateTextMock = vi.hoisted(() => vi.fn());
-
-vi.mock('ai', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('ai')>();
-	return { ...actual, streamText: streamTextMock, generateText: generateTextMock };
-});
+const streamTextMock = vi.fn();
+const generateTextMock = vi.fn();
 
 function emptyCompletionStream() {
 	return (async function* () {})();
@@ -24,7 +20,7 @@ function rejected<T>(promise: Promise<T>): Promise<T> {
 	return promise;
 }
 
-function streamTextFailure(error: unknown) {
+function streamTextFailure(error: Error) {
 	const rejection = rejected(Promise.reject(error));
 	return {
 		stream: emptyCompletionStream(),
@@ -63,8 +59,19 @@ function completeArgs(runId: Id<'runs'>, executionSecret: string) {
 }
 
 describe('completion.complete', () => {
+	let restoreCompletionModelFns: () => void;
+
 	beforeEach(() => {
 		streamTextMock.mockReset();
+		generateTextMock.mockReset();
+		restoreCompletionModelFns = bindCompletionModelFns({
+			streamText: streamTextMock,
+			generateText: generateTextMock
+		});
+	});
+
+	afterEach(() => {
+		restoreCompletionModelFns();
 	});
 
 	it(
@@ -99,10 +106,11 @@ describe('completion.complete', () => {
 					() => {
 						throw new Error('expected the completion action to fail');
 					},
-					(error: unknown) => error
+					(error) => error
 				);
 			expect(failure).toBeInstanceOf(ConvexError);
-			expect((failure as Error).message).toContain('exceeded your current quota');
+			if (!(failure instanceof Error)) throw new Error('expected Error');
+			expect(failure.message).toContain('exceeded your current quota');
 		}
 	);
 
@@ -127,11 +135,14 @@ describe('completion.complete', () => {
 				() => {
 					throw new Error('expected the completion action to fail');
 				},
-				(error: unknown) => error
+				(error) => {
+					if (!(error instanceof Error)) throw new Error('expected Error');
+					return error;
+				}
 			);
 		expect(failure).toBeInstanceOf(ConvexError);
-		expect((failure as Error).message).toContain('HTTP 502');
-		expect((failure as Error).message).toContain('Bad Gateway');
+		expect(failure.message).toContain('HTTP 502');
+		expect(failure.message).toContain('Bad Gateway');
 	});
 
 	it('keeps control-flow errors readable for the executor', { timeout: 15_000 }, async () => {
@@ -146,9 +157,12 @@ describe('completion.complete', () => {
 				() => {
 					throw new Error('expected the completion action to fail');
 				},
-				(error: unknown) => error
+				(error) => {
+					if (!(error instanceof Error)) throw new Error('expected Error');
+					return error;
+				}
 			);
-		expect((failure as Error).message).toContain(COMPLETION_STREAM_SUPERSEDED);
+		expect(failure.message).toContain(COMPLETION_STREAM_SUPERSEDED);
 	});
 
 	it(
@@ -159,7 +173,7 @@ describe('completion.complete', () => {
 			const { asUser, threadId } = await seedOwnedThread(t);
 			const { runId, executionSecret } = await startClaimedRun(t, asUser, threadId);
 			await t.run(async (ctx) => {
-				await ctx.db.patch(runId, { completionAttemptSeq: 9 });
+				await ctx.db.patch('runs', runId, { completionAttemptSeq: 9 });
 			});
 
 			// registerCompletionAttempt throws before the model is called.
@@ -169,10 +183,13 @@ describe('completion.complete', () => {
 					() => {
 						throw new Error('expected the completion action to fail');
 					},
-					(error: unknown) => error
+					(error) => {
+						if (!(error instanceof Error)) throw new Error('expected Error');
+						return error;
+					}
 				);
 			expect(failure).toBeInstanceOf(ConvexError);
-			expect((failure as Error).message).toBe(COMPLETION_STREAM_SUPERSEDED);
+			expect(failure.message).toBe(COMPLETION_STREAM_SUPERSEDED);
 		}
 	);
 
@@ -181,7 +198,7 @@ describe('completion.complete', () => {
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const { runId, executionSecret } = await startClaimedRun(t, asUser, threadId);
 		await t.run(async (ctx) => {
-			await ctx.db.patch(runId, { status: 'cancelled' });
+			await ctx.db.patch('runs', runId, { status: 'cancelled' });
 		});
 
 		const failure = await t
@@ -190,16 +207,29 @@ describe('completion.complete', () => {
 				() => {
 					throw new Error('expected the completion action to fail');
 				},
-				(error: unknown) => error
+				(error) => {
+					if (!(error instanceof Error)) throw new Error('expected Error');
+					return error;
+				}
 			);
 		expect(failure).toBeInstanceOf(ConvexError);
-		expect((failure as Error).message).toBe('Run is cancelled.');
+		expect(failure.message).toBe('Run is cancelled.');
 	});
 });
 
 describe('completion.summarize', () => {
+	let restoreCompletionModelFns: () => void;
+
 	beforeEach(() => {
 		generateTextMock.mockReset();
+		restoreCompletionModelFns = bindCompletionModelFns({
+			streamText: streamTextMock,
+			generateText: generateTextMock
+		});
+	});
+
+	afterEach(() => {
+		restoreCompletionModelFns();
 	});
 
 	it('surfaces provider billing errors from context compaction', { timeout: 15_000 }, async () => {
@@ -234,10 +264,13 @@ describe('completion.summarize', () => {
 				() => {
 					throw new Error('expected the summarize action to fail');
 				},
-				(error: unknown) => error
+				(error) => {
+					if (!(error instanceof Error)) throw new Error('expected Error');
+					return error;
+				}
 			);
 		expect(failure).toBeInstanceOf(ConvexError);
-		expect((failure as Error).message).toContain('exceeded your current quota');
+		expect(failure.message).toContain('exceeded your current quota');
 	});
 });
 

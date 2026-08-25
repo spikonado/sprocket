@@ -30,8 +30,25 @@ import type { DataModel } from "./dataModel.js";
 type Env = {
   readonly CONVEX_CLOUD_URL: string;
   readonly CONVEX_SITE_URL: string;
+  readonly ANTHROPIC_API_KEY: string | undefined;
+  readonly AWS_ACCESS_KEY_ID: string | undefined;
+  readonly AWS_BEARER_TOKEN_BEDROCK: string | undefined;
+  readonly AWS_REGION: string | undefined;
+  readonly AWS_SECRET_ACCESS_KEY: string | undefined;
+  readonly BROWSERBASE_API_KEY: string | undefined;
+  readonly BROWSERBASE_PROJECT_ID: string | undefined;
+  readonly BROWSER_TASK_MODEL: string | undefined;
   readonly CONTEXT_DEV_API_KEY: string;
+  readonly DODO_PAYMENTS_API_KEY: string | undefined;
+  readonly DODO_PAYMENTS_ENVIRONMENT: "live_mode" | "test_mode" | undefined;
   readonly EXA_API_KEY: string;
+  readonly FIREWORKS_API_KEY: string | undefined;
+  readonly OPENAI_API_KEY: string | undefined;
+  readonly OPENROUTER_API_KEY: string | undefined;
+  readonly PRAVA_BACKEND_URL: "https://sandbox.api.prava.space" | "https://api.prava.space";
+  readonly PRAVA_SECRET_KEY: string | undefined;
+  readonly WORKOS_CLIENT_ID: string;
+  readonly ZAI_API_KEY: string | undefined;
 };
 
 /**

@@ -70,7 +70,7 @@
 		});
 
 		// Parent requests fullscreen in the user-gesture click handler. If that
-		// failed or was skipped, expose a dismiss control — do not re-request here
+		// failed or was skipped, expose a dismiss control; do not re-request here
 		// (Firefox will deny it outside the gesture and can bounce the session).
 		const fallbackTimer = window.setTimeout(() => {
 			if (!active || document.fullscreenElement) return;

@@ -28,7 +28,8 @@ type AuthenticatedTest = ReturnType<ConvexTestInstance['withIdentity']>;
 /** Fresh mock backend with our schema, functions, and registered components. */
 export function initConvexTest(): ConvexTestInstance {
 	const t = convexTest(schema, modules);
-	// Component `/test` helpers disagree on `registerComponent` parameter variance.
+	// SAFETY: each component test helper types registerComponent against its own
+	// TestConvex variance; the convex-test backend object is the same instance.
 	const backend = t as never;
 	rateLimiterTest.register(backend);
 	contextDevTest.register(backend);

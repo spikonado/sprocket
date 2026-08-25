@@ -2,7 +2,7 @@ export type SprocketTheme = 'light' | 'dark';
 
 export const DEFAULT_THEME: SprocketTheme = 'light';
 
-export function isSprocketTheme(value: unknown): value is SprocketTheme {
+export function isSprocketTheme(value: string | null | undefined): value is SprocketTheme {
 	return value === 'light' || value === 'dark';
 }
 
@@ -19,7 +19,7 @@ function writeTheme(theme: SprocketTheme): void {
 }
 
 export function applyTheme(theme: SprocketTheme): void {
-	if (typeof document === 'undefined') {
+	if (!globalThis.document) {
 		return;
 	}
 
@@ -34,7 +34,7 @@ export function applyTheme(theme: SprocketTheme): void {
 
 /** Force light theme for entry shells; restores the previous theme when the last shell unmounts. */
 export function forceEntryTheme(): () => void {
-	if (typeof document === 'undefined') {
+	if (!globalThis.document) {
 		return () => {};
 	}
 

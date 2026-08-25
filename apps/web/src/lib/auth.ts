@@ -1,5 +1,6 @@
 import { browser, dev } from '$app/environment';
-import { createClient, type LoginRequiredError, type User } from '@workos-inc/authkit-js';
+import { createClient, type User } from '@workos-inc/authkit-js';
+import { z } from 'zod';
 import { api } from '$convex/_generated/api';
 import { usesLoopbackBrowserAuth } from '../../../desktop/local-config.mjs';
 import { get, writable } from 'svelte/store';
@@ -34,14 +35,14 @@ type AuthBootstrapClient = {
 	query: (
 		query: typeof api.authBootstrap.getClientConfig,
 		args: Record<string, never>
-	) => Promise<{ workosClientId: string | null }>;
+	) => Promise<{ workosClientId: string }>;
 };
 
 const DESKTOP_LOGIN_POLL_INTERVAL_MS = 1_500;
 const DESKTOP_LOGIN_TIMEOUT_MS = 5 * 60 * 1_000;
 
 let authClientPromise: Promise<AuthClient | null> | null = null;
-let authConfigPromise: Promise<{ workosClientId: string | null }> | null = null;
+let authConfigPromise: Promise<{ workosClientId: string }> | null = null;
 let bootstrapClient: AuthBootstrapClient | null = null;
 let isSigningOut = false;
 type DesktopSignInAttempt = {
@@ -205,15 +206,33 @@ export async function initializeAuth(convexClient: AuthBootstrapClient) {
 	}
 }
 
+const desktopNonceStateSchema = z.object({ nonce: z.string() });
+const errorMessagePayloadSchema = z.object({ error: z.string().optional() });
+const desktopLoginResultSchema = z.discriminatedUnion('status', [
+	z.object({ status: z.literal('pending') }),
+	z.object({ status: z.literal('complete'), code: z.string(), state: z.string() }),
+	z.object({ status: z.literal('failed'), error: z.string() })
+]);
+
 function extractNonceFromState(state: string): string | null {
 	try {
-		const parsed = JSON.parse(state) as { nonce?: unknown };
-		return typeof parsed.nonce === 'string' && parsed.nonce.trim().length > 0
-			? parsed.nonce.trim()
-			: null;
+		const parsed = desktopNonceStateSchema.safeParse(JSON.parse(state));
+		if (!parsed.success) {
+			return null;
+		}
+		const nonce = parsed.data.nonce.trim();
+		return nonce.length > 0 ? nonce : null;
 	} catch {
 		return state.trim() || null;
 	}
+}
+
+async function errorMessageFromFailedResponse(
+	response: Response,
+	fallback: string
+): Promise<string> {
+	const parsed = errorMessagePayloadSchema.safeParse(await response.json().catch(() => null));
+	return parsed.success ? (parsed.data.error ?? fallback) : fallback;
 }
 
 async function startDesktopLogin(nonce: string): Promise<void> {
@@ -227,8 +246,9 @@ async function startDesktopLogin(nonce: string): Promise<void> {
 	});
 
 	if (!response.ok) {
-		const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-		throw new Error(payload?.error ?? 'Failed to start desktop sign-in.');
+		throw new Error(
+			await errorMessageFromFailedResponse(response, 'Failed to start desktop sign-in.')
+		);
 	}
 }
 
@@ -300,25 +320,27 @@ async function pollDesktopLoginResult(
 		});
 
 		if (!response.ok) {
-			const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-			throw new Error(payload?.error ?? 'Failed to check desktop sign-in status.');
+			throw new Error(
+				await errorMessageFromFailedResponse(response, 'Failed to check desktop sign-in status.')
+			);
 		}
 
-		const payload = (await response.json()) as
-			| { status: 'pending' }
-			| { status: 'complete'; code: string; state: string }
-			| { status: 'failed'; error: string };
+		const payload = desktopLoginResultSchema.safeParse(await response.json());
+		if (!payload.success) {
+			throw new Error('Failed to check desktop sign-in status.');
+		}
+		const result = payload.data;
 
-		if (payload.status === 'failed') {
-			throw new Error(payload.error || 'Desktop sign-in failed.');
+		if (result.status === 'failed') {
+			throw new Error(result.error || 'Desktop sign-in failed.');
 		}
 
-		if (payload.status === 'complete') {
-			const returnedNonce = extractNonceFromState(payload.state);
+		if (result.status === 'complete') {
+			const returnedNonce = extractNonceFromState(result.state);
 			if (returnedNonce !== nonce) {
 				throw new Error('Desktop sign-in state mismatch.');
 			}
-			return { code: payload.code, state: payload.state };
+			return { code: result.code, state: result.state };
 		}
 
 		await new Promise<void>((resolve, reject) => {
@@ -588,8 +610,7 @@ export async function getAccessToken({
 	try {
 		return await client.getAccessToken({ forceRefresh: forceRefreshToken });
 	} catch (error) {
-		const maybeLoginRequired = error as LoginRequiredError | Error;
-		if (maybeLoginRequired.name === 'LoginRequiredError') {
+		if (error instanceof Error && error.name === 'LoginRequiredError') {
 			authState.update((current) => ({ ...current, user: null }));
 			return null;
 		}
@@ -598,12 +619,17 @@ export async function getAccessToken({
 	}
 }
 
+export type ConvexAuthRetryAdvance = {
+	clearPending: boolean;
+	sawLoadingDuringRetry: boolean;
+};
+
 export function advanceConvexAuthRetryPending(args: {
 	retryPending: boolean;
 	isAuthenticated: boolean;
 	isLoading: boolean;
 	sawLoadingDuringRetry: boolean;
-}): { clearPending: boolean; sawLoadingDuringRetry: boolean } {
+}): ConvexAuthRetryAdvance {
 	if (!args.retryPending) {
 		return { clearPending: false, sawLoadingDuringRetry: false };
 	}

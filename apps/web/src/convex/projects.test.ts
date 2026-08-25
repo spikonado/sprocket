@@ -151,14 +151,14 @@ describe('projects.heartbeatAttached', () => {
 			connectedClientId: 'client-1'
 		});
 
-		const before = await t.run(async (ctx) => ctx.db.get(project!._id));
+		const before = await t.run(async (ctx) => ctx.db.get('projects', project!._id));
 
 		await asUser.mutation(api.projects.heartbeatAttached, {
 			clientId: 'client-1',
 			projectIds: [project!._id]
 		});
 
-		const after = await t.run(async (ctx) => ctx.db.get(project!._id));
+		const after = await t.run(async (ctx) => ctx.db.get('projects', project!._id));
 		expect(after).toEqual(before);
 
 		const connection = await t.run(async (ctx) =>

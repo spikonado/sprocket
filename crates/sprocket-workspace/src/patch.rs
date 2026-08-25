@@ -479,8 +479,9 @@ fn strip_surrounding_markdown_fence(patch: &str) -> &str {
         return patch;
     }
     let body = &after_open[newline + 1..];
-    // Closing fence on its own line (optional indent). Avoid `trim()` on the body — that
-    // would strip intentional trailing spaces/tabs from the final hunk line.
+    // Closing fence on its own line (optional indent). Avoid `trim()` on the
+    // body; that would strip intentional trailing spaces/tabs from the final
+    // hunk line.
     if let Some((content, fence_line)) = body.rsplit_once('\n') {
         if fence_line.trim() == "```" {
             return content.strip_suffix('\r').unwrap_or(content);
@@ -567,7 +568,7 @@ fn normalize_unified_diff_hunk_counts(patch: &str) -> Result<String> {
     Ok(normalized)
 }
 
-/// Returns `(old_start, new_start, suffix)` — declared lengths are ignored (recounted from the body).
+/// Returns `(old_start, new_start, suffix)`; declared lengths are ignored (recounted from the body).
 fn parse_unified_hunk_header(line: &str) -> Option<(usize, usize, &str)> {
     let rest = line.strip_prefix("@@ ")?;
     let (ranges, after) = rest.split_once(" @@")?;
@@ -1302,7 +1303,7 @@ mod tests {
     #[tokio::test]
     async fn applies_all_lines_when_hunk_count_under_declared() {
         let root = temp_workspace();
-        // Declares 2 added lines but body has 3 — previously truncated silently.
+        // Declares 2 added lines but body has 3. Previously truncated silently.
         let patch = "diff --git a/file.txt b/file.txt\n\
             new file mode 100644\n\
             --- /dev/null\n\
@@ -1458,7 +1459,7 @@ mod tests {
     #[tokio::test]
     async fn preserves_trailing_whitespace_in_fenced_unified_diff() {
         let root = temp_workspace();
-        // Last hunk line ends with two spaces and a tab — must survive fence stripping.
+        // Last hunk line ends with two spaces and a tab; it must survive fence stripping.
         let patch = "```diff\n\
             --- /dev/null\n\
             +++ spaced.txt\n\

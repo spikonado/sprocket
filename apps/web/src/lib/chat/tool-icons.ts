@@ -19,29 +19,46 @@ import {
 	type LucideIcon
 } from '@lucide/svelte';
 
-const TOOL_KIND_ICONS: Record<string, LucideIcon> = {
-	apply_patch: FileDiff,
-	ask_question: CircleQuestionMark,
-	await_question: Hourglass,
-	check_docs: BookOpen,
-	create_artifact: FileCode,
-	exec_command: Terminal,
-	get_workspace_instructions: ScrollText,
-	mandate_charge: CircleDollarSign,
-	mandate_list: ListChecks,
-	mandate_report: Wallet,
-	mandate_setup: CreditCard,
-	mandate_status: ListChecks,
-	read_skill: NotebookPen,
-	scrape_url: Globe,
-	update_artifact: FileText,
-	web_search: Search,
-	write_stdin: SquareTerminal
-};
-
 /** Small lucide icon for a tool kind / tool-group key. */
 export function toolKindIcon(kind: string): LucideIcon {
-	return TOOL_KIND_ICONS[kind] ?? Wrench;
+	switch (kind) {
+		case 'apply_patch':
+			return FileDiff;
+		case 'ask_question':
+			return CircleQuestionMark;
+		case 'await_question':
+			return Hourglass;
+		case 'check_docs':
+			return BookOpen;
+		case 'create_artifact':
+			return FileCode;
+		case 'exec_command':
+			return Terminal;
+		case 'get_workspace_instructions':
+			return ScrollText;
+		case 'mandate_charge':
+			return CircleDollarSign;
+		case 'mandate_list':
+			return ListChecks;
+		case 'mandate_report':
+			return Wallet;
+		case 'mandate_setup':
+			return CreditCard;
+		case 'mandate_status':
+			return ListChecks;
+		case 'read_skill':
+			return NotebookPen;
+		case 'scrape_url':
+			return Globe;
+		case 'update_artifact':
+			return FileText;
+		case 'web_search':
+			return Search;
+		case 'write_stdin':
+			return SquareTerminal;
+		default:
+			return Wrench;
+	}
 }
 
 /** Icon for a timeline tool row (prefers job kind when present). */

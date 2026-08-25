@@ -70,7 +70,7 @@ Keep the fields eeschema emits on instances: `body_style`, `in_pos_files`,
 property `show_name` / `do_not_autoplace`, quoted uuids, `(hide yes)`
 placement after `(at …)`.
 
-#### Instance Reference/Value visibility (hard rules)
+#### Instance reference/value visibility (hard rules)
 
 - **`#PWR…` References of power symbols are always hidden**: `(hide yes)`
   on every one. A visible `#PWR01` on the sheet is a defect; eeschema never
@@ -157,7 +157,7 @@ kicad-cli sch erc board.kicad_sch       # review findings
 kicad-cli sch export netlist board.kicad_sch
 ```
 
-Check the netlist, not just ERC: confirm every intended net (each module pin,
+Run ERC, then still read the netlist: confirm every intended net (each module pin,
 each header pin, each rail) actually carries the nodes you meant. Geometry
 check: no shared origins, no intersecting bodies.
 

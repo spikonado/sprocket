@@ -43,13 +43,13 @@ describe('agentRuntime completion stream state', () => {
 		).resolves.toBe('merged');
 
 		const stored = await t.run(async (ctx) => {
-			const run = await ctx.db.get(runId);
+			const run = await ctx.db.get('runs', runId);
 			if (!run?.responseMessageId || !run.completionStreamStateId) {
 				throw new Error('Expected response and stream state records');
 			}
 			return {
-				message: await ctx.db.get(run.responseMessageId),
-				state: await ctx.db.get(run.completionStreamStateId)
+				message: await ctx.db.get('threadMessages', run.responseMessageId),
+				state: await ctx.db.get('completionStreamStates', run.completionStreamStateId)
 			};
 		});
 		expect(stored.message).toMatchObject({ text: 'Hello' });

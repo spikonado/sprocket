@@ -1,10 +1,7 @@
-import type {
-	AgentRunStart,
-	DesktopApi,
-	FilesystemBrowseResult,
-	WorkspacePathResolution,
-	WorkspaceSkillsResult
-} from '$lib/types/sprocket';
+import type { DataModel, Id } from '$convex/_generated/dataModel';
+import type { DesktopApi, ProjectAttachment } from '$lib/types/sprocket';
+import type { TableNamesInDataModel } from 'convex/server';
+import { z } from 'zod';
 
 export type LocalBootstrap = {
 	httpBaseUrl: string;
@@ -12,27 +9,75 @@ export type LocalBootstrap = {
 	pairingCredential: string;
 };
 
+const errorPayloadSchema = z.object({ error: z.string().optional() });
+const sessionSchema = z.object({ authenticated: z.boolean().optional() });
+const localBootstrapSchema = z.object({
+	httpBaseUrl: z.string(),
+	desktopLoginCallbackUrl: z.string().optional(),
+	pairingCredential: z.string()
+});
+const filesystemBrowseResultSchema = z.object({
+	parentPath: z.string(),
+	entries: z.array(z.object({ name: z.string(), fullPath: z.string() }))
+});
+const workspaceSkillsResultSchema = z.object({
+	skills: z.array(z.object({ name: z.string(), description: z.string() })),
+	warnings: z.array(z.string())
+});
+const workspacePathResolutionSchema = z.object({
+	workspacePath: z.string(),
+	displayName: z.string(),
+	repositoryKey: z.string()
+});
+const projectAttachmentSchema = z.object({
+	projectId: z.string(),
+	workspacePath: z.string(),
+	availability: z.enum(['available', 'unavailable']),
+	lastValidatedAt: z.number(),
+	lastUsedAt: z.number(),
+	unavailableReason: z.string().optional()
+});
+const agentRunStartSchema = z.object({
+	runId: z.string()
+});
+
+function asConvexId<TableName extends TableNamesInDataModel<DataModel>>(
+	value: string
+): Id<TableName> {
+	// SAFETY: the local API returns Convex document ids; branding is compile-time only.
+	return value as Id<TableName>;
+}
+
+function parseProjectAttachment(
+	attachment: z.infer<typeof projectAttachmentSchema>
+): ProjectAttachment {
+	return {
+		...attachment,
+		projectId: asConvexId(attachment.projectId)
+	};
+}
+
 export function resolveLocalApiBaseUrl(): string | null {
 	const configured = import.meta.env.VITE_LOCAL_API_URL?.trim();
 	if (configured) {
 		return configured.replace(/\/$/, '');
 	}
 
-	if (typeof window !== 'undefined') {
-		return window.location.origin;
+	if (globalThis.window) {
+		return globalThis.window.location.origin;
 	}
 
 	return null;
 }
 
 function readLaunchHashParameter(name: string): string | null {
-	if (typeof window === 'undefined') {
+	if (!globalThis.window) {
 		return null;
 	}
 
-	const hash = window.location.hash.startsWith('#')
-		? window.location.hash.slice(1)
-		: window.location.hash;
+	const hash = globalThis.window.location.hash.startsWith('#')
+		? globalThis.window.location.hash.slice(1)
+		: globalThis.window.location.hash;
 
 	return new URLSearchParams(hash).get(name);
 }
@@ -50,13 +95,13 @@ export function workspaceLaunchHash(workspacePath: string): `#${string}` {
 }
 
 export function clearLaunchHash() {
-	if (typeof window === 'undefined') {
+	if (!globalThis.window) {
 		return;
 	}
 
-	const url = new URL(window.location.href);
+	const url = new URL(globalThis.window.location.href);
 	url.hash = '';
-	window.history.replaceState(null, '', `${url.pathname}${url.search}`);
+	globalThis.window.history.replaceState(null, '', `${url.pathname}${url.search}`);
 }
 
 export async function bootstrapLocalSession(
@@ -73,8 +118,12 @@ export async function bootstrapLocalSession(
 	});
 
 	if (!response.ok) {
-		const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-		throw new Error(payload?.error ?? 'Failed to authenticate with the Sprocket server.');
+		const payload = errorPayloadSchema.safeParse(await response.json().catch(() => null));
+		throw new Error(
+			payload.success
+				? (payload.data.error ?? 'Failed to authenticate with the Sprocket server.')
+				: 'Failed to authenticate with the Sprocket server.'
+		);
 	}
 }
 
@@ -87,8 +136,8 @@ export async function hasLocalSession(baseUrl: string): Promise<boolean> {
 		return false;
 	}
 
-	const session = (await sessionResponse.json()) as { authenticated?: boolean };
-	return Boolean(session.authenticated);
+	const session = sessionSchema.safeParse(await sessionResponse.json());
+	return session.success ? Boolean(session.data.authenticated) : false;
 }
 
 export async function ensureLocalSession(baseUrl: string, bootstrap?: LocalBootstrap | null) {
@@ -124,21 +173,22 @@ export async function fetchLocalBootstrap(baseUrl: string): Promise<LocalBootstr
 			return null;
 		}
 
-		return (await response.json()) as LocalBootstrap;
+		const parsed = localBootstrapSchema.safeParse(await response.json());
+		return parsed.success ? parsed.data : null;
 	} catch {
 		return null;
 	}
 }
 
 export async function readDesktopBootstrap(baseUrl: string): Promise<LocalBootstrap | null> {
-	if (typeof window !== 'undefined' && window.sprocketDesktopBridge?.getLocalBootstrap) {
-		return await window.sprocketDesktopBridge.getLocalBootstrap();
+	if (globalThis.window?.sprocketDesktopBridge?.getLocalBootstrap) {
+		return await globalThis.window.sprocketDesktopBridge.getLocalBootstrap();
 	}
 
 	return await fetchLocalBootstrap(baseUrl);
 }
 
-async function parseJsonResponse<T>(response: Response): Promise<T> {
+async function parseJsonResponse<T>(response: Response, schema: z.ZodType<T>): Promise<T> {
 	const contentType = response.headers.get('content-type') ?? '';
 	const body = await response.text();
 
@@ -160,11 +210,19 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
 		);
 	}
 
-	return JSON.parse(body) as T;
+	const parsed = schema.safeParse(JSON.parse(body));
+	if (!parsed.success) {
+		throw new Error('Local API returned an unexpected response.');
+	}
+	return parsed.data;
 }
 
 export function createLocalClient(baseUrl: string): DesktopApi {
-	async function request<T>(pathname: string, init?: RequestInit): Promise<T> {
+	async function request<T>(
+		pathname: string,
+		schema: z.ZodType<T>,
+		init?: RequestInit
+	): Promise<T> {
 		const response = await fetch(`${baseUrl}${pathname}`, {
 			...init,
 			credentials: 'include',
@@ -176,7 +234,7 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 
 		if (!response.ok) {
 			try {
-				const payload = await parseJsonResponse<{ error?: string }>(response);
+				const payload = await parseJsonResponse(response, errorPayloadSchema);
 				throw new Error(payload.error ?? `Local request failed (${response.status}).`);
 			} catch (error) {
 				if (
@@ -191,47 +249,56 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 		}
 
 		if (response.status === 204) {
-			return undefined as T;
+			throw new Error('Local API returned an empty response.');
 		}
 
-		return await parseJsonResponse<T>(response);
+		return await parseJsonResponse(response, schema);
 	}
 
 	return {
-		browseFilesystem: (input) =>
-			request<FilesystemBrowseResult>('/api/workspace/browse', {
+		browseFilesystem: (input) => {
+			const body = input.cwd
+				? { partialPath: input.partialPath, cwd: input.cwd }
+				: { partialPath: input.partialPath };
+			return request('/api/workspace/browse', filesystemBrowseResultSchema, {
 				method: 'POST',
-				body: JSON.stringify({
-					partialPath: input.partialPath,
-					...(input.cwd ? { cwd: input.cwd } : {})
-				})
-			}),
+				body: JSON.stringify(body)
+			});
+		},
 		listWorkspaceSkills: (input) =>
-			request<WorkspaceSkillsResult>('/api/workspace/skills', {
+			request('/api/workspace/skills', workspaceSkillsResultSchema, {
 				method: 'POST',
 				body: JSON.stringify({
 					workspacePath: input.workspacePath
 				})
 			}),
-		resolveWorkspacePath: (input) =>
-			request<WorkspacePathResolution>('/api/workspace/resolve', {
+		resolveWorkspacePath: (input) => {
+			const body = input.createIfMissing
+				? { workspacePath: input.workspacePath, createIfMissing: true }
+				: { workspacePath: input.workspacePath };
+			return request('/api/workspace/resolve', workspacePathResolutionSchema, {
 				method: 'POST',
-				body: JSON.stringify({
-					workspacePath: input.workspacePath,
-					...(input.createIfMissing ? { createIfMissing: true } : {})
+				body: JSON.stringify(body)
+			});
+		},
+		listProjectAttachments: async () =>
+			(await request('/api/workspace/projects', z.array(projectAttachmentSchema))).map(
+				parseProjectAttachment
+			),
+		attachProject: async (attachment) =>
+			parseProjectAttachment(
+				await request('/api/workspace/projects', projectAttachmentSchema, {
+					method: 'POST',
+					body: JSON.stringify(attachment)
 				})
-			}),
-		listProjectAttachments: () => request('/api/workspace/projects'),
-		attachProject: (attachment) =>
-			request('/api/workspace/projects', {
-				method: 'POST',
-				body: JSON.stringify(attachment)
-			}),
-		runAgent: (requestBody) =>
-			request<AgentRunStart>('/api/agent/run', {
+			),
+		runAgent: async (requestBody) => {
+			const result = await request('/api/agent/run', agentRunStartSchema, {
 				method: 'POST',
 				body: JSON.stringify(requestBody)
-			})
+			});
+			return { runId: asConvexId(result.runId) };
+		}
 	};
 }
 

@@ -25,7 +25,7 @@ export async function getOwnedImageUploads(
 
 	return await Promise.all(
 		imageUploadIds.map(async (imageUploadId) => {
-			const upload = await ctx.db.get(imageUploadId);
+			const upload = await ctx.db.get('imageUploads', imageUploadId);
 			if (!upload || upload.userId !== userId) {
 				throw new Error('Image attachment was not found.');
 			}
@@ -41,7 +41,7 @@ export async function attachImageUploads(
 ): Promise<void> {
 	for (const upload of uploads) {
 		if (!upload.messageIds.includes(messageId)) {
-			await ctx.db.patch(upload._id, {
+			await ctx.db.patch('imageUploads', upload._id, {
 				messageIds: [...upload.messageIds, messageId],
 				attached: true
 			});

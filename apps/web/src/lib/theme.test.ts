@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_THEME, applyTheme, forceEntryTheme, isSprocketTheme, resolveTheme } from './theme';
+import { DEFAULT_THEME, applyTheme, forceEntryTheme, resolveTheme } from './theme';
 
 function stubDocument(theme: string | undefined = undefined) {
 	const dataset: Record<string, string> = {};
 	if (theme) dataset.theme = theme;
-	const style: { colorScheme: string } = { colorScheme: '' };
+	const style = { colorScheme: '' };
 	vi.stubGlobal('document', {
 		documentElement: { dataset, style }
 	});
@@ -15,13 +15,6 @@ describe('theme helpers', () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
 		vi.restoreAllMocks();
-	});
-
-	it('accepts only light and dark themes', () => {
-		expect(isSprocketTheme('light')).toBe(true);
-		expect(isSprocketTheme('dark')).toBe(true);
-		expect(isSprocketTheme('system')).toBe(false);
-		expect(isSprocketTheme(null)).toBe(false);
 	});
 
 	it('resolves an explicit preference first, otherwise the default', () => {

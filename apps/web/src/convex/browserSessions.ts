@@ -1,7 +1,17 @@
 import { v } from 'convex/values';
+import type { Id } from '@convex/_generated/dataModel';
 import { internalMutation, internalQuery, query } from '@convex/_generated/server';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
+
+type BrowserSessionUpsertPatch = {
+	runId: Id<'runs'>;
+	lastUsedRunId: Id<'runs'>;
+	userId: string;
+	browserbaseSessionId: string;
+	startedAt: number;
+	liveViewUrl?: string;
+};
 
 const browserSessionDoc = v.object({
 	_id: v.id('browserSessions'),
@@ -77,14 +87,15 @@ export const upsertForThread = internalMutation({
 			// A rotated session must not keep the dead session's URL when its own
 			// live view URL is not known yet: patching undefined clears the field.
 			const rotated = existing.browserbaseSessionId !== args.browserbaseSessionId;
-			await ctx.db.patch(existing._id, {
+			const patch: BrowserSessionUpsertPatch = {
 				runId: args.runId,
 				lastUsedRunId: args.runId,
 				userId: args.userId,
 				browserbaseSessionId: args.browserbaseSessionId,
-				...(args.liveViewUrl || rotated ? { liveViewUrl: args.liveViewUrl } : {}),
 				startedAt: Date.now()
-			});
+			};
+			if (args.liveViewUrl || rotated) patch.liveViewUrl = args.liveViewUrl;
+			await ctx.db.patch('browserSessions', existing._id, patch);
 			return existing._id;
 		}
 		return await ctx.db.insert('browserSessions', {
@@ -96,7 +107,7 @@ export const upsertForThread = internalMutation({
 });
 
 /** Record that `runId` used the thread's browser session. Unlike the session
- * (re)create signal, this fires on reuse too — it's how the client learns the
+ * (re)create signal, this fires on reuse too. It's how the client learns the
  * agent started browsing in a run that kept the previous session. */
 export const touchForThread = internalMutation({
 	args: { threadId: v.id('threadRecords'), runId: v.id('runs') },
@@ -107,14 +118,14 @@ export const touchForThread = internalMutation({
 			.withIndex('by_thread', (query) => query.eq('threadId', args.threadId))
 			.first();
 		if (existing && existing.lastUsedRunId !== args.runId) {
-			await ctx.db.patch(existing._id, { lastUsedRunId: args.runId });
+			await ctx.db.patch('browserSessions', existing._id, { lastUsedRunId: args.runId });
 		}
 		return null;
 	}
 });
 
 /** Backfill the live view URL for the thread's current session without
- * touching startedAt — a new session signals fresh agent activity (the side
+ * touching startedAt. A new session signals fresh agent activity (the side
  * panel auto-opens); a backfilled URL for the same session must not. */
 export const setLiveViewUrl = internalMutation({
 	args: {
@@ -136,7 +147,7 @@ export const setLiveViewUrl = internalMutation({
 			existing.browserbaseSessionId === args.browserbaseSessionId &&
 			!existing.liveViewUrl
 		) {
-			await ctx.db.patch(existing._id, { liveViewUrl: args.liveViewUrl });
+			await ctx.db.patch('browserSessions', existing._id, { liveViewUrl: args.liveViewUrl });
 		}
 		return null;
 	}

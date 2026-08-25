@@ -116,7 +116,7 @@ describe('subscription and usage backend', () => {
 
 		await t.run(async (ctx) => {
 			if (!created) throw new Error('Expected subscription row');
-			await ctx.db.patch(created._id, { tier: 'admin', eventAt: 5_000 });
+			await ctx.db.patch('subscriptions', created._id, { tier: 'admin', eventAt: 5_000 });
 		});
 		await asUser.mutation(api.billing.ensureMySubscription, {});
 		expect(await readSubscription()).toMatchObject({
@@ -213,7 +213,7 @@ describe('subscription and usage backend', () => {
 				.withIndex('by_userId', (query) => query.eq('userId', userId))
 				.unique();
 			if (!existing) throw new Error('Expected subscription row');
-			await ctx.db.patch(existing._id, { tier: 'admin' });
+			await ctx.db.patch('subscriptions', existing._id, { tier: 'admin' });
 		});
 
 		await t.mutation(internal.lib.rateLimits.checkModelUsageLimits, {
@@ -264,5 +264,21 @@ describe('subscription and usage backend', () => {
 			?.windows.find((window) => window.period === 'weekly');
 		expect(weekly && weekly.used > weekly.limit).toBe(true);
 		expect(usage.meters).toEqual(usageBeforeUnlimitedCharge.meters);
+	});
+
+	it('materializes exactly one users row per subject across repeated page loads', async () => {
+		const t = initConvexTest();
+		const userId = 'user_users_row';
+		const asUser = t.withIdentity({ subject: userId });
+		await asUser.mutation(api.billing.ensureMySubscription, {});
+		await asUser.mutation(api.billing.ensureMySubscription, {});
+		const rows = await t.run(async (ctx) =>
+			ctx.db
+				.query('users')
+				.withIndex('by_subject', (query) => query.eq('subject', userId))
+				.collect()
+		);
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).toMatchObject({ subject: userId });
 	});
 });

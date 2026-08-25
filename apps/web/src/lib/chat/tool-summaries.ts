@@ -5,6 +5,7 @@ import {
 	resolveCommandSessionLabel,
 	type AssistantTimelineTool
 } from '$lib/chat/assistant-timeline';
+import { jsonString } from '$lib/chat/json-fields';
 
 function titleizeSnakeCase(value: string) {
 	return value
@@ -60,18 +61,15 @@ function describeExecCommandOptions(input: JsonValue | undefined) {
 	}
 
 	const details: string[] = [];
-	if (
-		typeof input.workdir === 'string' &&
-		input.workdir.trim().length > 0 &&
-		input.workdir !== '.'
-	) {
-		details.push(`cwd ${input.workdir}`);
+	const workdir = jsonString(input.workdir);
+	if (workdir && workdir.trim().length > 0 && workdir !== '.') {
+		details.push(`cwd ${workdir}`);
 	}
 
 	return details.length > 0 ? ` (${details.join(', ')})` : '';
 }
 
-/** Detail line for a tool row — no type prefix (that lives on the dropdown label). */
+/** Detail line for a tool row; no type prefix (that lives on the dropdown label). */
 function summarizeTool(name: string, input: JsonValue | undefined) {
 	const fields = isJsonObject(input) ? input : undefined;
 
@@ -79,21 +77,17 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 		case 'apply_patch':
 			return summarizePatchInput(input) ?? 'Patch';
 		case 'ask_question':
-			return typeof fields?.question === 'string' ? fields.question : 'Question';
+			return jsonString(fields?.question) ?? 'Question';
 		case 'await_question':
 			return 'Waiting for answer';
 		case 'check_docs':
-			return typeof fields?.query === 'string'
-				? fields.query
-				: typeof fields?.path === 'string'
-					? fields.path
-					: 'Docs';
+			return jsonString(fields?.query) ?? jsonString(fields?.path) ?? 'Docs';
 		case 'create_artifact':
-			return typeof fields?.title === 'string' ? fields.title : 'Artifact';
-		case 'exec_command':
-			return typeof fields?.cmd === 'string'
-				? `${fields.cmd}${describeExecCommandOptions(input)}`
-				: 'Command';
+			return jsonString(fields?.title) ?? 'Artifact';
+		case 'exec_command': {
+			const cmd = jsonString(fields?.cmd);
+			return cmd ? `${cmd}${describeExecCommandOptions(input)}` : 'Command';
+		}
 		case 'get_workspace_instructions':
 			return 'Workspace instructions';
 		case 'mandate_charge':
@@ -106,18 +100,20 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 			return summarizeMandateSetup(fields);
 		case 'mandate_status':
 			return 'Mandate status';
-		case 'read_skill':
-			return typeof fields?.name === 'string' ? `$${fields.name}` : 'Skill';
+		case 'read_skill': {
+			const name = jsonString(fields?.name);
+			return name ? `$${name}` : 'Skill';
+		}
 		case 'scrape_url':
-			return typeof fields?.url === 'string' ? fields.url : 'Web page';
+			return jsonString(fields?.url) ?? 'Web page';
 		case 'update_artifact':
 			return 'Updated artifact';
 		case 'web_search':
-			return typeof fields?.query === 'string' ? fields.query : 'Web search';
-		case 'write_stdin':
-			return typeof fields?.sessionId === 'string'
-				? `Session ${fields.sessionId}`
-				: 'Command session';
+			return jsonString(fields?.query) ?? 'Web search';
+		case 'write_stdin': {
+			const sessionId = jsonString(fields?.sessionId);
+			return sessionId ? `Session ${sessionId}` : 'Command session';
+		}
 		default:
 			return titleizeSnakeCase(name);
 	}
@@ -132,10 +128,10 @@ export function toolSummaryClass(toolLog: AssistantTimelineTool) {
 
 /** "Merchant · 120.00 USD monthly" from a mandate setup payload. */
 function summarizeMandateSetup(fields: Record<string, JsonValue> | undefined) {
-	const merchant = typeof fields?.merchantName === 'string' ? fields.merchantName : 'Any merchant';
-	const cap = typeof fields?.amountCap === 'string' ? fields.amountCap : undefined;
-	const currency = typeof fields?.currency === 'string' ? fields.currency : '';
-	const frequency = typeof fields?.frequency === 'string' ? fields.frequency : '';
+	const merchant = jsonString(fields?.merchantName) ?? 'Any merchant';
+	const cap = jsonString(fields?.amountCap);
+	const currency = jsonString(fields?.currency) ?? '';
+	const frequency = jsonString(fields?.frequency) ?? '';
 	const amount = cap ? ` · ${cap} ${currency}`.trimEnd() : '';
 	const cycle = frequency && frequency !== 'one_time' ? ` ${frequency}` : '';
 	return `${merchant}${amount}${cycle}`;
@@ -143,9 +139,9 @@ function summarizeMandateSetup(fields: Record<string, JsonValue> | undefined) {
 
 /** "Merchant charge · 40.00 USD" from a mandate charge payload. */
 function summarizeMandateCharge(fields: Record<string, JsonValue> | undefined) {
-	const description = typeof fields?.description === 'string' ? fields.description : 'Charge';
-	const amount = typeof fields?.amount === 'string' ? fields.amount : undefined;
-	const currency = typeof fields?.currency === 'string' ? fields.currency : '';
+	const description = jsonString(fields?.description) ?? 'Charge';
+	const amount = jsonString(fields?.amount);
+	const currency = jsonString(fields?.currency) ?? '';
 	return amount ? `${description} · ${amount} ${currency}`.trimEnd() : description;
 }
 
@@ -169,12 +165,13 @@ function gitDiffPath(line: string) {
 }
 
 function summarizePatchInput(input: JsonValue | undefined) {
-	if (!isJsonObject(input) || typeof input.patch !== 'string') {
+	const patch = isJsonObject(input) ? jsonString(input.patch) : undefined;
+	if (!patch) {
 		return null;
 	}
 
 	const paths: string[] = [];
-	for (const line of input.patch.split('\n')) {
+	for (const line of patch.split('\n')) {
 		if (line.startsWith('diff --git ')) {
 			const path = gitDiffPath(line);
 			if (path !== null) {
@@ -204,9 +201,13 @@ function summarizePatchResult(result: JsonValue | undefined) {
 		return null;
 	}
 
-	const paths = result.changes.flatMap((change) =>
-		isJsonObject(change) && typeof change.path === 'string' ? [change.path] : []
-	);
+	const paths = result.changes.flatMap((change) => {
+		if (!isJsonObject(change)) {
+			return [];
+		}
+		const path = jsonString(change.path);
+		return path ? [path] : [];
+	});
 	if (paths.length === 0) {
 		return null;
 	}

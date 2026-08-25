@@ -1,5 +1,6 @@
 import { browser, dev } from '$app/environment';
 import { canonicalDevWebUrl } from '../../../desktop/local-config.mjs';
+import { z } from 'zod';
 
 export const prerender = true;
 export const ssr = false;
@@ -7,6 +8,10 @@ export const ssr = false;
 export type RuntimeConfig = {
 	env: Record<string, string>;
 };
+
+const runtimeConfigSchema = z.object({
+	env: z.record(z.string(), z.string())
+});
 
 export async function load({ fetch }): Promise<RuntimeConfig> {
 	if (!browser) {
@@ -26,5 +31,9 @@ export async function load({ fetch }): Promise<RuntimeConfig> {
 		throw new Error('Failed to load Sprocket runtime config.');
 	}
 
-	return (await response.json()) as RuntimeConfig;
+	const parsed = runtimeConfigSchema.safeParse(await response.json());
+	if (!parsed.success) {
+		throw new Error('Failed to load Sprocket runtime config.');
+	}
+	return parsed.data;
 }

@@ -62,7 +62,7 @@ describe('agentRuntime context accounting', () => {
 		});
 
 		await t.run(async (ctx) => {
-			await ctx.db.patch(runId, { claimExpiresAt: Date.now() - 1 });
+			await ctx.db.patch('runs', runId, { claimExpiresAt: Date.now() - 1 });
 		});
 		await asUser.mutation(api.agentRuntime.start, {
 			runId,
@@ -89,7 +89,9 @@ describe('agentRuntime context accounting', () => {
 			})
 		).resolves.toBe(false);
 		expect((await readThreadUsage(t, threadId))?.contextTokens).toBe(8_000);
-		expect(await t.run(async (ctx) => (await ctx.db.get(threadId))?.contextSummary)).toBeFalsy();
+		expect(
+			await t.run(async (ctx) => (await ctx.db.get('threadRecords', threadId))?.contextSummary)
+		).toBeFalsy();
 	});
 
 	it('rejects invalid token accounting values', async () => {
@@ -213,7 +215,9 @@ describe('agentRuntime context accounting', () => {
 			persistForFutureRuns: true
 		});
 		expect(
-			await t.run(async (ctx) => (await ctx.db.get(threadId))?.contextSummaryThroughRunId)
+			await t.run(
+				async (ctx) => (await ctx.db.get('threadRecords', threadId))?.contextSummaryThroughRunId
+			)
 		).toBe(first.runId);
 		await asUser.mutation(api.agentRuntime.finalizeRun, {
 			runId: second.runId,
@@ -262,7 +266,7 @@ describe('agentRuntime context accounting', () => {
 			executionSecret
 		});
 		await t.run(async (ctx) => {
-			await ctx.db.patch(runId, { selectedModel: 'grok-4.5', serviceTier: 'fast' });
+			await ctx.db.patch('runs', runId, { selectedModel: 'grok-4.5', serviceTier: 'fast' });
 		});
 		const context = await asUser.query(api.agentRuntime.getContext, {
 			runId,

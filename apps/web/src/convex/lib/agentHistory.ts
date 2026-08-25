@@ -1,13 +1,31 @@
-import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { ThreadTranscriptMessage } from '@convex/lib/threadTranscript';
 import type { AgentHistoryMessage } from '@convex/lib/validators';
 import { isRunFinalStatus } from '@convex/lib/validators';
+import { isJsonObject, isJsonString, type JsonObject, type JsonValue } from '@convex/lib/json';
 import {
 	ensureAssistantToolPartsFromJobs,
 	toPersistableExecutorToolJobs,
 	type AssistantPart,
 	type PersistableExecutorToolJob
 } from '@convex/lib/assistantParts';
+
+export type CanonicalHistoryMessage =
+	| {
+			type: 'prompt';
+			text: string;
+			attachments: Array<{ mediaType: string; url: string }>;
+	  }
+	| {
+			type: 'response';
+			runId: string;
+			runStatus: ThreadTranscriptMessage['runStatus'];
+			text: string;
+			parts: AssistantPart[];
+	  };
+
+export type CanonicalHistoryJob = Parameters<typeof toPersistableExecutorToolJobs>[0][number] & {
+	runId: string;
+};
 
 export function buildAgentHistoryFromAssistantParts(args: {
 	parts: AssistantPart[];
@@ -77,11 +95,11 @@ export function buildAgentHistoryFromAssistantParts(args: {
 			flushTurn();
 		}
 		turn ??= {
-			...(partTurnId !== undefined ? { id: partTurnId } : {}),
 			assistant: [],
 			results: [],
 			hasOpenAiReasoningReference: false
 		};
+		if (partTurnId !== undefined) turn.id = partTurnId;
 
 		if (part.type === 'text') {
 			const text = part.text.trim();
@@ -93,13 +111,14 @@ export function buildAgentHistoryFromAssistantParts(args: {
 				part.providerMetadata,
 				args.stripProviderItemReferences || !turn.hasOpenAiReasoningReference
 			);
-			turn.assistant.push({
+			const textContent: Extract<AgentHistoryMessage['contents'][number], { type: 'text' }> = {
 				type: 'text',
-				text: part.text,
-				...(providerMetadata !== undefined
-					? { additionalParamsJson: JSON.stringify(providerMetadata) }
-					: {})
-			});
+				text: part.text
+			};
+			if (providerMetadata !== undefined) {
+				textContent.additionalParamsJson = JSON.stringify(providerMetadata);
+			}
+			turn.assistant.push(textContent);
 			continue;
 		}
 
@@ -109,20 +128,22 @@ export function buildAgentHistoryFromAssistantParts(args: {
 				args.stripProviderItemReferences
 			);
 			const openai = openAiMetadata(providerMetadata);
-			const itemId = typeof openai?.itemId === 'string' ? openai.itemId : undefined;
-			const blocks: unknown[] = [];
+			const itemId =
+				openai !== undefined && isJsonString(openai.itemId) ? openai.itemId : undefined;
+			const blocks: Array<{ type: string; content: string | { text: string } }> = [];
 			if (part.text.length > 0) {
 				blocks.push({ type: 'text', content: { text: part.text } });
 			}
-			if (typeof openai?.reasoningEncryptedContent === 'string') {
+			if (openai !== undefined && isJsonString(openai.reasoningEncryptedContent)) {
 				blocks.push({ type: 'encrypted', content: openai.reasoningEncryptedContent });
 			}
 			if (blocks.length > 0 || itemId !== undefined) {
-				turn.assistant.push({
+				const reasoning: Extract<AgentHistoryMessage['contents'][number], { type: 'reasoning' }> = {
 					type: 'reasoning',
-					...(itemId !== undefined ? { id: itemId } : {}),
 					blocksJson: JSON.stringify(blocks)
-				});
+				};
+				if (itemId !== undefined) reasoning.id = itemId;
+				turn.assistant.push(reasoning);
 				if (itemId?.startsWith('rs_')) turn.hasOpenAiReasoningReference = true;
 			}
 			continue;
@@ -133,16 +154,17 @@ export function buildAgentHistoryFromAssistantParts(args: {
 				part.providerMetadata,
 				args.stripProviderItemReferences || !turn.hasOpenAiReasoningReference
 			);
-			turn.assistant.push({
+			const toolCall: Extract<AgentHistoryMessage['contents'][number], { type: 'toolCall' }> = {
 				type: 'toolCall',
 				id: part.callId,
 				callId: part.callId,
 				name: part.name,
-				argumentsJson: JSON.stringify(part.input),
-				...(providerMetadata !== undefined
-					? { additionalParamsJson: JSON.stringify(providerMetadata) }
-					: {})
-			});
+				argumentsJson: JSON.stringify(part.input)
+			};
+			if (providerMetadata !== undefined) {
+				toolCall.additionalParamsJson = JSON.stringify(providerMetadata);
+			}
+			turn.assistant.push(toolCall);
 			continue;
 		}
 	}
@@ -172,8 +194,8 @@ export function buildAgentHistoryFromAssistantParts(args: {
 }
 
 function buildAgentHistoryFromAssistantMessage(args: {
-	message: ThreadTranscriptMessage;
-	jobs: Doc<'executorJobs'>[];
+	message: Extract<CanonicalHistoryMessage, { type: 'response' }>;
+	jobs: CanonicalHistoryJob[];
 }): AgentHistoryMessage[] {
 	const persistedParts = args.message.parts;
 	return buildAgentHistoryFromAssistantParts({
@@ -185,21 +207,19 @@ function buildAgentHistoryFromAssistantMessage(args: {
 }
 
 function providerMetadataForReplay(
-	value: unknown,
+	value: JsonValue | undefined,
 	stripProviderItemReferences: boolean | undefined
-): unknown | undefined {
-	if (!stripProviderItemReferences || !value || typeof value !== 'object') {
+): JsonValue | undefined {
+	if (!stripProviderItemReferences || !isJsonObject(value)) {
 		return value;
 	}
-	if (Array.isArray(value)) return value;
 
-	const metadata = value as Record<string, unknown>;
-	const openai = openAiMetadata(metadata);
+	const openai = openAiMetadata(value);
 	if (!openai || !Object.hasOwn(openai, 'itemId')) return value;
 
 	const replayableOpenAi = { ...openai };
 	delete replayableOpenAi.itemId;
-	const replayableMetadata = { ...metadata };
+	const replayableMetadata = { ...value };
 	if (Object.keys(replayableOpenAi).length > 0) {
 		replayableMetadata.openai = replayableOpenAi;
 	} else {
@@ -208,19 +228,16 @@ function providerMetadataForReplay(
 	return Object.keys(replayableMetadata).length > 0 ? replayableMetadata : undefined;
 }
 
-function openAiMetadata(value: unknown): Record<string, unknown> | undefined {
-	if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-	const openai = (value as Record<string, unknown>).openai;
-	return openai && typeof openai === 'object' && !Array.isArray(openai)
-		? (openai as Record<string, unknown>)
-		: undefined;
+function openAiMetadata(value: JsonValue | undefined): JsonObject | undefined {
+	if (!isJsonObject(value)) return undefined;
+	return isJsonObject(value.openai) ? value.openai : undefined;
 }
 
 export function buildCanonicalAgentHistory(args: {
-	messages: ThreadTranscriptMessage[];
-	jobs: Doc<'executorJobs'>[];
+	messages: readonly CanonicalHistoryMessage[];
+	jobs: readonly CanonicalHistoryJob[];
 }): AgentHistoryMessage[] {
-	const jobsByRunId = new Map<Id<'runs'>, Doc<'executorJobs'>[]>();
+	const jobsByRunId = new Map<string, CanonicalHistoryJob[]>();
 	for (const job of args.jobs) {
 		const runJobs = jobsByRunId.get(job.runId) ?? [];
 		runJobs.push(job);

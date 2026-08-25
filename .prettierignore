@@ -6,3 +6,6 @@ bun.lock
 
 # Nix
 flake*
+
+# Vendored Oxlint plugin
+tools/oxlint/anti-slop/

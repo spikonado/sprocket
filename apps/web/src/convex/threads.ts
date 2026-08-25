@@ -21,7 +21,7 @@ async function patchOwnedThread(
 ) {
 	const userId = await getUserId(ctx);
 	await getOwnedThreadRecord(ctx.db, userId, threadId);
-	await ctx.db.patch(threadId, patch);
+	await ctx.db.patch('threadRecords', threadId, patch);
 }
 
 export const create = mutation({
@@ -61,7 +61,7 @@ export const create = mutation({
 			}
 
 			if (existingRecord.archivedAt !== undefined) {
-				await ctx.db.patch(existingRecord._id, { archivedAt: undefined });
+				await ctx.db.patch('threadRecords', existingRecord._id, { archivedAt: undefined });
 			}
 
 			const submissionRun = await ctx.db
@@ -175,15 +175,19 @@ export const archive = mutation({
 		const userId = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 
-		const runs = await ctx.db
-			.query('runs')
-			.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', args.threadId))
-			.collect();
-		if (runs.some((run) => !isRunFinalStatus(run.status))) {
-			throw new Error('Cannot archive a thread while a run is active.');
+		for (const status of ['queued', 'running', 'awaiting_executor'] as const) {
+			const activeRun = await ctx.db
+				.query('runs')
+				.withIndex('by_threadId_status_startedAt', (query) =>
+					query.eq('threadId', args.threadId).eq('status', status)
+				)
+				.first();
+			if (activeRun) {
+				throw new Error('Cannot archive a thread while a run is active.');
+			}
 		}
 
-		await ctx.db.patch(args.threadId, { archivedAt: Date.now() });
+		await ctx.db.patch('threadRecords', args.threadId, { archivedAt: Date.now() });
 	}
 });
 

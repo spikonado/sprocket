@@ -74,7 +74,7 @@ export function isRunBlockingAgentLaunch(
 export function launchAgentRun(args: {
 	authToken: string;
 	desktopApi: DesktopApi;
-	onError: (error: unknown) => void;
+	onError: (error: Error) => void;
 	onStarted: (runId: Id<'runs'>) => void;
 	threadId: Id<'threadRecords'>;
 	prompt: string;
@@ -101,8 +101,9 @@ export function launchAgentRun(args: {
 			args.onStarted(runId);
 		})
 		.catch((error) => {
-			console.error('Failed to run agent', error);
-			args.onError(error);
+			const failure = error instanceof Error ? error : new Error(String(error));
+			console.error('Failed to run agent', failure);
+			args.onError(failure);
 		});
 }
 
@@ -150,7 +151,7 @@ type PendingLatestTask<T> = {
 	value: T;
 	promise: Promise<void>;
 	resolve: () => void;
-	reject: (error: unknown) => void;
+	reject: (error: Error) => void;
 };
 
 class LatestTaskQueueCancelledError extends Error {
@@ -178,7 +179,7 @@ export function createLatestTaskQueue<T>(run: (value: T) => Promise<void>) {
 					await run(task.value);
 					task.resolve();
 				} catch (error) {
-					task.reject(error);
+					task.reject(error instanceof Error ? error : new Error('Pending task failed.'));
 				}
 			}
 		} finally {
@@ -197,7 +198,7 @@ export function createLatestTaskQueue<T>(run: (value: T) => Promise<void>) {
 			}
 
 			let resolveTask!: () => void;
-			let rejectTask!: (error: unknown) => void;
+			let rejectTask!: (error: Error) => void;
 			const promise = new Promise<void>((resolve, reject) => {
 				resolveTask = resolve;
 				rejectTask = reject;

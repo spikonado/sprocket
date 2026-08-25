@@ -8,7 +8,7 @@ export async function getThreadMessage(
 	ctx: MutationCtx | QueryCtx,
 	messageId: Id<'threadMessages'>
 ): Promise<Doc<'threadMessages'>> {
-	const message = await ctx.db.get(messageId);
+	const message = await ctx.db.get('threadMessages', messageId);
 	if (!message) {
 		throw new ConvexError('Message not found.');
 	}
@@ -42,7 +42,7 @@ export async function appendThreadMessage(
 		imageUploadIds: args.imageUploadIds,
 		parts: args.parts ?? []
 	});
-	await ctx.db.patch(threadRecord._id, {
+	await ctx.db.patch('threadRecords', threadRecord._id, {
 		lastMessageAt: Date.now()
 	});
 

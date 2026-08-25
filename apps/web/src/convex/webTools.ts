@@ -1,6 +1,6 @@
 'use node';
 
-import { v } from 'convex/values';
+import { v, type Infer } from 'convex/values';
 import { ContextDev } from '@context-dot-dev/convex';
 import { ExaClient } from '@exalabs/convex-exa';
 import { action } from '@convex/_generated/server';
@@ -127,9 +127,10 @@ export const webSearch = action({
 		if (!query) {
 			throw new Error('Search query cannot be empty.');
 		}
-		const requested = Number.isFinite(args.numResults)
-			? Math.floor(args.numResults as number)
-			: DEFAULT_SEARCH_RESULTS;
+		const requested =
+			args.numResults !== undefined && Number.isFinite(args.numResults)
+				? Math.floor(args.numResults)
+				: DEFAULT_SEARCH_RESULTS;
 		const numResults = Math.min(Math.max(requested, 1), MAX_SEARCH_RESULTS);
 
 		const response = await callComponent('Exa search', SEARCH_TIMEOUT_MS, () =>
@@ -146,15 +147,14 @@ export const webSearch = action({
 				if (!result.url) {
 					return [];
 				}
-				return [
-					{
-						url: result.url,
-						...(result.title ? { title: result.title } : {}),
-						...(result.publishedDate ? { publishedDate: result.publishedDate } : {}),
-						...(result.author ? { author: result.author } : {}),
-						...(result.text ? { text: result.text } : {})
-					}
-				];
+				const item: Infer<typeof vWebSearchResult>['results'][number] = {
+					url: result.url
+				};
+				if (result.title) item.title = result.title;
+				if (result.publishedDate) item.publishedDate = result.publishedDate;
+				if (result.author) item.author = result.author;
+				if (result.text) item.text = result.text;
+				return [item];
 			})
 		};
 	}
