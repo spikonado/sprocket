@@ -9,7 +9,7 @@ import {
 } from '@convex/_generated/server';
 import { api, internal } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
-import { getUserId, requireIdentity } from '@convex/lib/auth';
+import { getUserId, pickPrimaryUser } from '@convex/lib/auth';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
 import {
 	isMandateStatus,
@@ -401,6 +401,22 @@ export const getOwnedMandate = internalQuery({
 	}
 });
 
+/** The user's WorkOS email, synced onto their users row by
+ * ensureCurrentUser. Executor actions carry no usable caller identity (the
+ * run's auth token is a launch-time snapshot), so capability-gated code reads
+ * it from here instead of ctx.auth. */
+export const getUserEmail = internalQuery({
+	args: { userId: v.string() },
+	returns: v.union(v.string(), v.null()),
+	handler: async (ctx, args) => {
+		const rows = await ctx.db
+			.query('users')
+			.withIndex('by_subject', (query) => query.eq('subject', args.userId))
+			.collect();
+		return pickPrimaryUser(rows)?.email ?? null;
+	}
+});
+
 export const listLocalMandates = internalQuery({
 	args: { userId: v.string() },
 	returns: v.array(mandateDoc),
@@ -756,11 +772,12 @@ async function createMandateSetup(
 	userId: string,
 	args: ObjectType<typeof mandateSetupArgs>
 ): Promise<Infer<typeof vMandateSetupResult>> {
-	// Prava requires a customer email on merchant sessions; the signed-in
-	// WorkOS identity is the single source of truth for it.
-	const userEmail = (await requireIdentity(ctx)).email?.trim();
+	// Prava requires a customer email on merchant sessions. Executor actions
+	// carry no caller identity, so read the WorkOS email that ensureCurrentUser
+	// keeps on the users row instead of ctx.auth.
+	const userEmail = (await ctx.runQuery(internal.payments.getUserEmail, { userId }))?.trim();
 	if (!userEmail) {
-		throw new Error('Your account has no email address to use for payment mandates.');
+		throw new Error('Your account has no synced email yet. Reload Sprocket once, then try again.');
 	}
 	assertMandateFrequencyAllowed(args);
 

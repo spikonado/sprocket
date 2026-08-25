@@ -45,7 +45,8 @@ type Env = {
   readonly FIREWORKS_API_KEY: string | undefined;
   readonly OPENAI_API_KEY: string | undefined;
   readonly OPENROUTER_API_KEY: string | undefined;
-  readonly PRAVA_BACKEND_URL: "https://sandbox.api.prava.space" | "https://api.prava.space";
+  readonly PRAVA_BACKEND_URL:
+    "https://sandbox.api.prava.space" | "https://api.prava.space";
   readonly PRAVA_SECRET_KEY: string | undefined;
   readonly WORKOS_CLIENT_ID: string;
   readonly ZAI_API_KEY: string | undefined;

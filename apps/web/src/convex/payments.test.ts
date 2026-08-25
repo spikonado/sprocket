@@ -11,6 +11,11 @@ import {
 
 async function startRun(t: ConvexTestInstance, subject: string) {
 	const { asUser, threadId } = await seedOwnedThread(t, subject);
+	// What the client's page-load bootstrap leaves behind: a users row whose
+	// email ensureCurrentUser synced from the WorkOS identity.
+	await t
+		.withIdentity({ subject, email: `${subject}@example.com` })
+		.mutation(api.billing.ensureMySubscription, {});
 	const executionSecret = `mandate-secret-${subject}`;
 	const created = await createQueuedRun(
 		asUser,
@@ -41,6 +46,17 @@ function jsonResponse(value: JsonValue, status = 200) {
 
 function auth(run: Awaited<ReturnType<typeof startRun>>) {
 	return { runId: run.runId, claimId: run.claimId, executionSecret: run.executionSecret };
+}
+
+async function clearUserEmail(t: ConvexTestInstance, subject: string) {
+	await t.run(async (ctx) => {
+		const row = await ctx.db
+			.query('users')
+			.withIndex('by_subject', (query) => query.eq('subject', subject))
+			.unique();
+		if (!row) throw new Error(`Expected a users row for ${subject}`);
+		await ctx.db.patch('users', row._id, { email: undefined });
+	});
 }
 
 function setupArgs(run: Awaited<ReturnType<typeof startRun>>) {
@@ -192,16 +208,39 @@ describe('payments mandates', () => {
 		expect(stored).not.toHaveProperty('session_token');
 	});
 
-	it('rejects mandate setup when the WorkOS identity has no email', async () => {
+	it('resolves the synced account email without a caller identity', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const fetchMock = vi.fn().mockResolvedValue(
+			jsonResponse({
+				session_id: 'prava-session-1',
+				iframe_url: 'https://pay.prava.space/approve/1',
+				session_token: 'session-token-1',
+				expires_at: '2026-08-01T10:15:00Z'
+			})
+		);
+		vi.stubGlobal('fetch', fetchMock);
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+
+		// Executor actions run under the execution secret with no user JWT;
+		// this is exactly how the agent calls the tool action.
+		const result = await t.action(api.payments.mandateSetup, setupArgs(run));
+		expect(result.approvalUrl).toBe('https://pay.prava.space/approve/1');
+		const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+		expect(body.user_email).toBe('user_alice@example.com');
+	});
+
+	it('rejects mandate setup when no account email is available', async () => {
 		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
 		const fetchMock = vi.fn();
 		vi.stubGlobal('fetch', fetchMock);
 		const t = initConvexTest();
 		const run = await startRun(t, 'user_alice');
+		await clearUserEmail(t, 'user_alice');
 
 		await expect(
 			t.withIdentity({ subject: 'user_alice' }).action(api.payments.mandateSetup, setupArgs(run))
-		).rejects.toThrow(/no email address/);
+		).rejects.toThrow(/synced email/);
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
