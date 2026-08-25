@@ -60,6 +60,8 @@ function setupArgs(run: Awaited<ReturnType<typeof startRun>>) {
 type PravaMandateFixture = {
 	id?: string;
 	status?: string;
+	merchantScope?: string;
+	recurringFrequency?: string;
 	merchantName?: string | null;
 	merchantUrl?: string;
 	countryCode?: string;
@@ -74,6 +76,10 @@ function liveListedMandate(overrides: PravaMandateFixture = {}): JsonObject {
 	const mandate: JsonObject = {
 		id: 'mdt_1',
 		status: 'active',
+		// Populated per Prava's current List Mandates response so the
+		// scope/cadence comparisons in resolution are exercised.
+		merchantScope: 'listed',
+		recurringFrequency: 'monthly',
 		merchantName: 'Example Shop',
 		merchantUrl: 'https://shop.example',
 		countryCode: 'US',
@@ -439,6 +445,41 @@ describe('payments mandates', () => {
 		await expect(
 			run.asUser.action(api.payments.mandateCharge, {
 				mandateId: setup.mandateId,
+				amount: '40.00',
+				currency: 'USD',
+				description: 'Order 8842',
+				...auth(run)
+			})
+		).rejects.toThrow(/not yet approved/);
+	});
+
+	it('does not resolve an approval whose scope or cadence differs', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+		// Same merchant + cap + currency, but approved as any-merchant.
+		const { setup } = await createApprovedMandate(t, run, [
+			liveListedMandate({ id: 'mdt_any', merchantScope: 'any' })
+		]);
+
+		await expect(
+			run.asUser.action(api.payments.mandateCharge, {
+				mandateId: setup.mandateId,
+				amount: '40.00',
+				currency: 'USD',
+				description: 'Order 8842',
+				...auth(run)
+			})
+		).rejects.toThrow(/not yet approved/);
+
+		// Same again, but approved with a weekly cadence instead of monthly.
+		const { setup: weeklySetup } = await createApprovedMandate(t, run, [
+			liveListedMandate({ id: 'mdt_weekly', recurringFrequency: 'weekly' })
+		]);
+
+		await expect(
+			run.asUser.action(api.payments.mandateCharge, {
+				mandateId: weeklySetup.mandateId,
 				amount: '40.00',
 				currency: 'USD',
 				description: 'Order 8842',
