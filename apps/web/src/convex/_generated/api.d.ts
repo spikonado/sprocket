@@ -46,6 +46,7 @@ import type * as lib_uiModelCatalog from "../lib/uiModelCatalog.js";
 import type * as lib_usageMeters from "../lib/usageMeters.js";
 import type * as lib_validators from "../lib/validators.js";
 import type * as messages from "../messages.js";
+import type * as migrations from "../migrations.js";
 import type * as modelCatalog from "../modelCatalog.js";
 import type * as payments from "../payments.js";
 import type * as projects from "../projects.js";
@@ -99,6 +100,7 @@ declare const fullApi: ApiFromModules<{
   "lib/usageMeters": typeof lib_usageMeters;
   "lib/validators": typeof lib_validators;
   messages: typeof messages;
+  migrations: typeof migrations;
   modelCatalog: typeof modelCatalog;
   payments: typeof payments;
   projects: typeof projects;

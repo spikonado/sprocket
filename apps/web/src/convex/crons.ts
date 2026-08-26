@@ -9,4 +9,10 @@ crons.interval(
 	internal.imageUploads.cleanupOrphans
 );
 
+crons.interval(
+	'rewrite dropped max reasoning efforts onto supported defaults',
+	{ hours: 1 },
+	internal.migrations.rewriteDroppedMaxReasoning
+);
+
 export default crons;

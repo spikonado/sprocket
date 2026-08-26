@@ -88,11 +88,11 @@ Safe when npm downloads for versions at or below v0.3.2 have flattened and a pro
 
 Source: the catalog change that removed `max` from Ox Alpha, GPT-5.6 Sol, Claude Opus 5, and Claude Fable 5. Stored `threadRecords.reasoningEffort` and `runs.reasoningEffort` rows can still say `max` for those models, and desktop clients released before the drop still submit it.
 
-Today's compat: `coercePersistedReasoningEffort` (`convex/lib/models.ts`) clamps an unsupported stored or submitted effort onto that model's `defaultReasoningEffort`. It runs in `threads.create`, `agentRuntime.createRun`, and the executor-facing `completion.complete`/`summarize` actions (idempotency comparisons normalize both sides so retries of pre-drop submissions stay deduplicated), plus stale-run recovery and thread open in `+page.svelte`. The composer's reasoning selector already self-corrects against catalog efforts, so the web UI never sends a dropped value.
+Today's compat has two halves. Stored rows: the hourly cron `migrations.rewriteDroppedMaxReasoning` (`convex/migrations.ts`) sweeps `threadRecords.reasoningEffort` and `runs.reasoningEffort` and clamps any effort its model no longer supports onto that model's default; it shipped in the same PR as the drop and exits without writes once every row is valid. Requests: `coercePersistedReasoningEffort` (`convex/lib/models.ts`) clamps an unsupported submitted effort in `threads.create`, `agentRuntime.createRun`, and the executor-facing `completion.complete`/`summarize` actions (idempotency comparisons normalize both sides so retries of pre-drop submissions stay deduplicated), plus stale-run recovery and thread open in `+page.svelte`. The composer's reasoning selector also self-corrects against catalog efforts, so a current web UI never sends a dropped value; the request half exists for desktop clients whose bundled web assets predate the drop.
 
-Remove by running a batched internal mutation rewriting `threadRecords.reasoningEffort` and `runs.reasoningEffort` where they are unsupported for their model, then deleting `coercePersistedReasoningEffort` and unwrapping its call sites.
+Remove by deleting the cron entry from `convex/crons.ts`, then `convex/migrations.ts`, then `coercePersistedReasoningEffort` and its call sites — all in one PR.
 
-Safe when the migration sweep reports zero rows with unsupported efforts and npm downloads for versions predating the drop have flattened.
+Safe when npm downloads for versions predating the drop have flattened; verify the sweep rewrote everything with a prod check that zero unsupported rows remain.
 
 ## Completed removals, kept as precedent
 
