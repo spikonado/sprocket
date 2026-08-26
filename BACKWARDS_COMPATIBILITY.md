@@ -84,13 +84,15 @@ Remove by dropping `userEmail` from `mandateSetupArgs` and `vMandateSetupPayload
 
 Safe when npm downloads for versions at or below v0.3.2 have flattened and a prod check shows no recent `paymentsEmail` writes (the way #174 verified).
 
-## 5. Dropped `max` reasoning effort on closed-source models
+## 5. Stored reasoning efforts dropped from the catalog
 
-Source: the catalog change that removed `max` from Ox Alpha, GPT-5.6 Sol, Claude Opus 5, and Claude Fable 5. Stored `threadRecords.reasoningEffort` and `runs.reasoningEffort` rows can still say `max` for those models, and desktop clients released before the drop still submit it.
+Source: the catalog change that removed `max` from Ox Alpha, GPT-5.6 Sol, Claude Opus 5, and Claude Fable 5. Stored `threadRecords.reasoningEffort` and `runs.reasoningEffort` rows can still say `max` for those models.
 
-Today's compat has two halves. Stored rows: the hourly cron `migrations.rewriteDroppedMaxReasoning` (`convex/migrations.ts`) sweeps `threadRecords.reasoningEffort` and `runs.reasoningEffort` and clamps any effort its model no longer supports onto that model's default; it shipped in the same PR as the drop and exits without writes once every row is valid. Requests: `coercePersistedReasoningEffort` (`convex/lib/models.ts`) clamps an unsupported submitted effort in `threads.create`, `agentRuntime.createRun`, and the executor-facing `completion.complete`/`summarize` actions (idempotency comparisons normalize both sides so retries of pre-drop submissions stay deduplicated), plus stale-run recovery and thread open in `+page.svelte`. The composer's reasoning selector also self-corrects against catalog efforts, so a current web UI never sends a dropped value; the request half exists for desktop clients whose bundled web assets predate the drop.
+Today's compat: the hourly cron `migrations.rewriteDroppedMaxReasoning` (`convex/migrations.ts`, registered in `convex/crons.ts`) sweeps both tables and clamps any effort its model no longer supports onto that model's default, following the #170 template. It shipped in the same PR as the drop, is idempotent, and exits without writes once every row is valid.
 
-Remove by deleting the cron entry from `convex/crons.ts`, then `convex/migrations.ts`, then `coercePersistedReasoningEffort` and its call sites — all in one PR.
+No request-path compat ships. A client that submits a dropped effort gets a readable "… does not support max reasoning." error and recovers by picking a supported effort; the composer self-corrects against catalog efforts anyway.
+
+Remove by verifying against prod that zero rows carry an unsupported effort, then deleting the cron entry from `convex/crons.ts` and `convex/migrations.ts` together.
 
 Safe when npm downloads for versions predating the drop have flattened; verify the sweep rewrote everything with a prod check that zero unsupported rows remain.
 
@@ -111,6 +113,7 @@ So nobody goes hunting for shims that do not exist:
 - Dropping orphaned OpenAI item references (#188) must stay forever. Compaction can drop reasoning items from any history, not just pre-fix ones.
 - Usage-limit run errors (#200) now throw ConvexErrors, so `runs.lastError` carries a readable sentence where production used to mask them to `[Request ID] Server Error` strings. Clients released before #200 render that sentence in their transcript banner. It is display-only text that clears on the next run, so no compat layer ships.
 - Tool-call failures (#206) now throw ConvexErrors through the executor-facing functions and surface authored messages to the model via rig's `map_error`, so `executorJobs.error` and the model's tool result carry the real failure text where production used to mask it to `[Request ID] Server Error` strings (and rig used to redact it to "the tool failed"). Both audiences render plain display text, so no compat layer ships.
+- Submitting a reasoning effort a model no longer supports throws a readable validation error instead of coercing to a default. The error is actionable and clears on the next send with any supported effort, so no compat layer ships.
 
 ## Removal checklist
 

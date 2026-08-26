@@ -1,4 +1,8 @@
-import { coercePersistedModelId, coercePersistedReasoningEffort } from '@convex/lib/models';
+import {
+	coercePersistedModelId,
+	getModelDefinition,
+	type SupportedReasoningEffort
+} from '@convex/lib/models';
 import { v } from 'convex/values';
 import { internalMutation, type MutationCtx } from './_generated/server';
 
@@ -23,10 +27,7 @@ export const rewriteDroppedMaxReasoning = internalMutation({
 
 async function sweepThreadRecords(ctx: MutationCtx, totals: SweepTotals) {
 	for (const row of await ctx.db.query('threadRecords').collect()) {
-		const effort = coercePersistedReasoningEffort(
-			coercePersistedModelId(row.selectedModel),
-			row.reasoningEffort
-		);
+		const effort = clampEffort(row.selectedModel, row.reasoningEffort);
 		totals.scanned += 1;
 		if (effort !== undefined && effort !== row.reasoningEffort) {
 			await ctx.db.patch(row._id, { reasoningEffort: effort });
@@ -37,14 +38,21 @@ async function sweepThreadRecords(ctx: MutationCtx, totals: SweepTotals) {
 
 async function sweepRuns(ctx: MutationCtx, totals: SweepTotals) {
 	for (const row of await ctx.db.query('runs').collect()) {
-		const effort = coercePersistedReasoningEffort(
-			coercePersistedModelId(row.selectedModel),
-			row.reasoningEffort
-		);
+		const effort = clampEffort(row.selectedModel, row.reasoningEffort);
 		totals.scanned += 1;
 		if (effort !== undefined && effort !== row.reasoningEffort) {
 			await ctx.db.patch(row._id, { reasoningEffort: effort });
 			totals.rewritten += 1;
 		}
 	}
+}
+
+function clampEffort(
+	selectedModel: string,
+	reasoningEffort: SupportedReasoningEffort
+): SupportedReasoningEffort | undefined {
+	const model = getModelDefinition(coercePersistedModelId(selectedModel));
+	return model.reasoningEfforts.some((effort) => effort === reasoningEffort)
+		? reasoningEffort
+		: model.defaultReasoningEffort;
 }

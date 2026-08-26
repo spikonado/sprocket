@@ -270,26 +270,6 @@ export function coercePersistedSelection(
 	};
 }
 
-/** Efforts dropped from a model can still sit on old thread/run rows and old clients. */
-export function coercePersistedReasoningEffort(
-	modelId: SupportedModelId,
-	reasoningEffort: SupportedReasoningEffort
-): SupportedReasoningEffort;
-export function coercePersistedReasoningEffort(
-	modelId: SupportedModelId,
-	reasoningEffort: SupportedReasoningEffort | undefined
-): SupportedReasoningEffort | undefined;
-export function coercePersistedReasoningEffort(
-	modelId: SupportedModelId,
-	reasoningEffort: SupportedReasoningEffort | undefined
-): SupportedReasoningEffort | undefined {
-	if (reasoningEffort === undefined) return undefined;
-	const model = getModelDefinition(modelId);
-	return model.reasoningEfforts.some((effort) => effort === reasoningEffort)
-		? reasoningEffort
-		: model.defaultReasoningEffort;
-}
-
 export type NormalizedCompletionUsage = {
 	input: number;
 	cacheRead: number;

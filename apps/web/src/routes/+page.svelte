@@ -50,7 +50,6 @@
 	import { formatElapsedDuration } from '$lib/format';
 	import { validateImageAttachmentAddition, type ComposerAttachment } from '$lib/chat/attachments';
 	import {
-		coercePersistedReasoningEffort,
 		coercePersistedSelection,
 		defaultModelId,
 		defaultReasoningEffort,
@@ -1625,10 +1624,7 @@
 			prompt: stalePrompt,
 			attachments: recoveredAttachments,
 			imageUploadIds: staleImageUploadIds,
-			reasoningEffort: coercePersistedReasoningEffort(
-				recoveredSelection.modelId,
-				staleRun.reasoningEffort
-			),
+			reasoningEffort: staleRun.reasoningEffort,
 			serviceTier: recoveredSelection.serviceTier,
 			selectedModel: recoveredSelection.modelId,
 			submissionId: staleRun.submissionId
@@ -1709,10 +1705,7 @@
 		if (!thread) return;
 		const selection = coercePersistedSelection(thread.selectedModel, thread.serviceTier);
 		selectedModel = selection.modelId;
-		selectedReasoningEffort =
-			coercePersistedReasoningEffort(selection.modelId, thread.reasoningEffort) ??
-			modelCatalog?.defaultReasoningEffort ??
-			defaultReasoningEffort;
+		selectedReasoningEffort = thread.reasoningEffort;
 		selectedServiceTier = selection.serviceTier;
 	});
 

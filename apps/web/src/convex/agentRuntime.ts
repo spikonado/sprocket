@@ -3,11 +3,7 @@ import { mutation, query, type MutationCtx, type QueryCtx } from '@convex/_gener
 import { ConvexError, v, type Infer } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord, getOwnedProject } from '@convex/lib/access';
 import { executionSecretHash, getExecutionRun, getUserId } from '@convex/lib/auth';
-import {
-	coercePersistedReasoningEffort,
-	coercePersistedSelection,
-	getModelDefinition
-} from '@convex/lib/models';
+import { coercePersistedSelection, getModelDefinition } from '@convex/lib/models';
 import { assertModelConfigurationAllowedForUser } from '@convex/lib/tiers';
 import { buildCanonicalAgentHistory } from '@convex/lib/agentHistory';
 import { contextSummaryText } from '@convex/lib/contextCompaction';
@@ -229,13 +225,9 @@ export const createRun = mutation({
 	// abandoned by its executor and would block every later submission.
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
-		const reasoningEffort = coercePersistedReasoningEffort(
-			args.selectedModel,
-			args.reasoningEffort
-		);
 		await assertModelConfigurationAllowedForUser(ctx, userId, {
 			modelId: args.selectedModel,
-			reasoningEffort,
+			reasoningEffort: args.reasoningEffort,
 			serviceTier: args.serviceTier
 		});
 		const model = getModelDefinition(args.selectedModel);
@@ -272,8 +264,7 @@ export const createRun = mutation({
 			if (
 				existingRun.threadId !== args.threadId ||
 				existingRun.selectedModel !== args.selectedModel ||
-				coercePersistedReasoningEffort(args.selectedModel, existingRun.reasoningEffort) !==
-					reasoningEffort ||
+				existingRun.reasoningEffort !== args.reasoningEffort ||
 				existingRun.serviceTier !== args.serviceTier ||
 				!existingRun.promptMessageId ||
 				!existingRun.completionStreamStateId
@@ -323,7 +314,7 @@ export const createRun = mutation({
 			executionSecretHash: secretHash,
 			completionAttemptSeq: 0,
 			selectedModel: args.selectedModel,
-			reasoningEffort,
+			reasoningEffort: args.reasoningEffort,
 			serviceTier: args.serviceTier,
 			startedAt: Date.now()
 		});
@@ -348,7 +339,7 @@ export const createRun = mutation({
 		await ctx.db.patch('threadRecords', threadRecord._id, {
 			title: threadRecord.title ?? (prompt || imageUploads[0]?.name || 'New thread').slice(0, 72),
 			selectedModel: args.selectedModel,
-			reasoningEffort,
+			reasoningEffort: args.reasoningEffort,
 			serviceTier: args.serviceTier
 		});
 

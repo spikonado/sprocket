@@ -5,7 +5,6 @@ import { getOwnedThreadRecord, getOwnedProject } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
 import { vThreadSummary, vThreadWithUsageDoc } from '@convex/lib/docs';
 import { getThreadUsageValues } from '@convex/lib/threadUsage';
-import { coercePersistedReasoningEffort } from '@convex/lib/models';
 import { assertModelConfigurationAllowedForUser } from '@convex/lib/tiers';
 import {
 	isRunFinalStatus,
@@ -39,13 +38,9 @@ export const create = mutation({
 	}),
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
-		const reasoningEffort = coercePersistedReasoningEffort(
-			args.selectedModel,
-			args.reasoningEffort
-		);
 		await assertModelConfigurationAllowedForUser(ctx, userId, {
 			modelId: args.selectedModel,
-			reasoningEffort,
+			reasoningEffort: args.reasoningEffort,
 			serviceTier: args.serviceTier
 		});
 		await getOwnedProject(ctx.db, userId, args.projectId);
@@ -59,8 +54,7 @@ export const create = mutation({
 			if (
 				existingRecord.projectId !== args.projectId ||
 				existingRecord.selectedModel !== args.selectedModel ||
-				coercePersistedReasoningEffort(args.selectedModel, existingRecord.reasoningEffort) !==
-					reasoningEffort ||
+				existingRecord.reasoningEffort !== args.reasoningEffort ||
 				existingRecord.serviceTier !== args.serviceTier
 			) {
 				throw new Error('Submission settings do not match the existing thread.');
@@ -89,7 +83,7 @@ export const create = mutation({
 			submissionId: args.submissionId,
 			projectId: args.projectId,
 			selectedModel: args.selectedModel,
-			reasoningEffort,
+			reasoningEffort: args.reasoningEffort,
 			serviceTier: args.serviceTier,
 			lastMessageAt: now
 		});
