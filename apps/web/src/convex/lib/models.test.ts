@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	assertSupportedModelConfiguration,
+	coercePersistedReasoningEffort,
 	coercePersistedModelId,
 	coercePersistedSelection
 } from '@convex/lib/models';
@@ -22,6 +23,31 @@ describe('model configuration', () => {
 				serviceTier: 'standard'
 			})
 		).toThrow('Claude Opus 5 does not support none reasoning.');
+	});
+
+	it('rejects max reasoning on closed-source models', () => {
+		for (const modelId of [
+			'stealth/ox-alpha',
+			'gpt-5.6-sol',
+			'claude-opus-5',
+			'claude-fable-5'
+		] as const) {
+			expect(() =>
+				assertSupportedModelConfiguration({
+					modelId,
+					reasoningEffort: 'max',
+					serviceTier: 'standard'
+				})
+			).toThrow('does not support max reasoning.');
+		}
+	});
+
+	it('coerces dropped reasoning efforts onto the model default', () => {
+		expect(coercePersistedReasoningEffort('stealth/ox-alpha', 'max')).toBe('high');
+		expect(coercePersistedReasoningEffort('gpt-5.6-sol', 'max')).toBe('medium');
+		expect(coercePersistedReasoningEffort('claude-fable-5', 'max')).toBe('high');
+		expect(coercePersistedReasoningEffort('kimi-k3', 'max')).toBe('max');
+		expect(coercePersistedReasoningEffort('gpt-5.6-sol', undefined)).toBeUndefined();
 	});
 
 	it('maps retired stored models onto the current catalog', () => {

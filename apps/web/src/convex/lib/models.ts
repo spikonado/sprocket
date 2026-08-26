@@ -71,6 +71,8 @@ const millionTokenContext = {
 } as const;
 
 const lowHighMaxReasoningEfforts = ['low', 'high', 'max'] as const;
+const lowToXHighReasoningEfforts = ['low', 'medium', 'high', 'xhigh'] as const;
+const nonMaxReasoningEffortIds = ['none', 'low', 'medium', 'high', 'xhigh'] as const;
 
 export const modelDefinitions = [
 	{
@@ -81,8 +83,8 @@ export const modelDefinitions = [
 		supportsImages: true,
 		contextWindowTokens: 1_048_576,
 		autoCompactTokenLimit: 1_015_576,
-		reasoningEfforts: lowHighMaxReasoningEfforts,
-		defaultReasoningEffort: 'max',
+		reasoningEfforts: ['low', 'high'],
+		defaultReasoningEffort: 'high',
 		serviceTiers: ['standard'],
 		usagePolicy: 'unlimited',
 		usageWeights: {
@@ -101,7 +103,7 @@ export const modelDefinitions = [
 		// OpenAI bills the whole request at 1M rates once input exceeds 272k.
 		contextWindowTokens: 272_000,
 		autoCompactTokenLimit: 258_000,
-		reasoningEfforts: reasoningEffortIds,
+		reasoningEfforts: nonMaxReasoningEffortIds,
 		defaultReasoningEffort: 'medium',
 		serviceTiers: ['standard'],
 		usageWeights: {
@@ -118,7 +120,7 @@ export const modelDefinitions = [
 		provider: 'anthropic',
 		supportsImages: true,
 		...millionTokenContext,
-		reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+		reasoningEfforts: lowToXHighReasoningEfforts,
 		defaultReasoningEffort: 'high',
 		serviceTiers: serviceTierIds,
 		usageWeights: {
@@ -135,7 +137,7 @@ export const modelDefinitions = [
 		provider: 'anthropic',
 		supportsImages: true,
 		...millionTokenContext,
-		reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+		reasoningEfforts: lowToXHighReasoningEfforts,
 		defaultReasoningEffort: 'high',
 		serviceTiers: ['standard'],
 		usageWeights: {
@@ -266,6 +268,26 @@ export function coercePersistedSelection(
 			? serviceTier
 			: model.serviceTiers[0]
 	};
+}
+
+/** Efforts dropped from a model can still sit on old thread/run rows and old clients. */
+export function coercePersistedReasoningEffort(
+	modelId: SupportedModelId,
+	reasoningEffort: SupportedReasoningEffort
+): SupportedReasoningEffort;
+export function coercePersistedReasoningEffort(
+	modelId: SupportedModelId,
+	reasoningEffort: SupportedReasoningEffort | undefined
+): SupportedReasoningEffort | undefined;
+export function coercePersistedReasoningEffort(
+	modelId: SupportedModelId,
+	reasoningEffort: SupportedReasoningEffort | undefined
+): SupportedReasoningEffort | undefined {
+	if (reasoningEffort === undefined) return undefined;
+	const model = getModelDefinition(modelId);
+	return model.reasoningEfforts.some((effort) => effort === reasoningEffort)
+		? reasoningEffort
+		: model.defaultReasoningEffort;
 }
 
 export type NormalizedCompletionUsage = {

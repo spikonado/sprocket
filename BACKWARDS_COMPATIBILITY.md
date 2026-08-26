@@ -84,6 +84,16 @@ Remove by dropping `userEmail` from `mandateSetupArgs` and `vMandateSetupPayload
 
 Safe when npm downloads for versions at or below v0.3.2 have flattened and a prod check shows no recent `paymentsEmail` writes (the way #174 verified).
 
+## 5. Dropped `max` reasoning effort on closed-source models
+
+Source: the catalog change that removed `max` from Ox Alpha, GPT-5.6 Sol, Claude Opus 5, and Claude Fable 5. Stored `threadRecords.reasoningEffort` and `runs.reasoningEffort` rows can still say `max` for those models, and desktop clients released before the drop still submit it.
+
+Today's compat: `coercePersistedReasoningEffort` (`convex/lib/models.ts`) clamps an unsupported stored or submitted effort onto that model's `defaultReasoningEffort`. It runs in `threads.create`, `agentRuntime.createRun`, and the executor-facing `completion.complete`/`summarize` actions (idempotency comparisons normalize both sides so retries of pre-drop submissions stay deduplicated), plus stale-run recovery and thread open in `+page.svelte`. The composer's reasoning selector already self-corrects against catalog efforts, so the web UI never sends a dropped value.
+
+Remove by running a batched internal mutation rewriting `threadRecords.reasoningEffort` and `runs.reasoningEffort` where they are unsupported for their model, then deleting `coercePersistedReasoningEffort` and unwrapping its call sites.
+
+Safe when the migration sweep reports zero rows with unsupported efforts and npm downloads for versions predating the drop have flattened.
+
 ## Completed removals, kept as precedent
 
 Moving token counters off `threadRecords` (#170) shipped with lazy on-access migration, an hourly cron sweep, and response-shape merging for old clients. #174 later removed all of it in one PR after verifying prod directly: 46 threads, zero legacy fields remaining, 46 matching usage rows. That is the template. Verify counts against prod, then delete validators, mutations, cron entries, and their tests together.

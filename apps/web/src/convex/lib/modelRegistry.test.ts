@@ -39,8 +39,8 @@ describe('model provider request configuration', () => {
 		expect(resolveProviderOptions('glm-5.3', 'max', 'standard', 'thread:abc')).toEqual({
 			zai: { reasoningEffort: 'max' }
 		});
-		expect(resolveProviderOptions('stealth/ox-alpha', 'max', 'standard', 'thread:abc')).toEqual({
-			openrouter: { reasoningEffort: 'max' }
+		expect(resolveProviderOptions('stealth/ox-alpha', 'high', 'standard', 'thread:abc')).toEqual({
+			openrouter: { reasoningEffort: 'high' }
 		});
 	});
 

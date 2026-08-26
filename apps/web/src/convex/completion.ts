@@ -22,6 +22,7 @@ import { vCompleteActionResult, vSummarizeActionResult } from '@convex/lib/docs'
 import { vModelId, vReasoningEffort, vServiceTier } from '@convex/lib/validators';
 import {
 	assertSupportedModelConfiguration,
+	coercePersistedReasoningEffort,
 	defaultServiceTier,
 	normalizeCompletionUsage,
 	type SupportedModelId,
@@ -167,11 +168,12 @@ export const complete = action({
 		}
 		await ctx.runMutation(api.agentRuntime.registerCompletionAttempt, registration);
 		const modelId = args.modelId;
+		const reasoningEffort = coercePersistedReasoningEffort(modelId, args.reasoningEffort);
 		const serviceTier = args.serviceTier ?? defaultServiceTier;
-		if (args.reasoningEffort !== undefined || args.serviceTier !== undefined) {
+		if (reasoningEffort !== undefined || args.serviceTier !== undefined) {
 			assertSupportedModelConfiguration({
 				modelId,
-				reasoningEffort: args.reasoningEffort,
+				reasoningEffort,
 				serviceTier
 			});
 		}
@@ -202,7 +204,7 @@ export const complete = action({
 			modelId
 		);
 		const sharedArgs = buildSharedCompletionRequest(
-			{ ...args, modelId, serviceTier },
+			{ ...args, modelId, serviceTier, reasoningEffort },
 			tools,
 			toolChoice,
 			completionContext.promptCacheKey
@@ -284,11 +286,12 @@ export const summarize = action({
 	returns: vSummarizeActionResult,
 	handler: async (ctx, args) => {
 		const modelId = args.modelId;
+		const reasoningEffort = coercePersistedReasoningEffort(modelId, args.reasoningEffort);
 		const serviceTier = args.serviceTier ?? defaultServiceTier;
-		if (args.reasoningEffort !== undefined || args.serviceTier !== undefined) {
+		if (reasoningEffort !== undefined || args.serviceTier !== undefined) {
 			assertSupportedModelConfiguration({
 				modelId,
-				reasoningEffort: args.reasoningEffort,
+				reasoningEffort,
 				serviceTier
 			});
 		}
@@ -310,7 +313,7 @@ export const summarize = action({
 		const sharedArgs = buildSharedCompletionRequest(
 			{
 				modelId,
-				reasoningEffort: args.reasoningEffort,
+				reasoningEffort,
 				serviceTier,
 				instructions: CONTEXT_COMPACTION_INSTRUCTIONS
 			},
