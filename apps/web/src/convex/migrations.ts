@@ -103,15 +103,17 @@ export const rewriteRetiredRunModels = migrations.define({
 export const backfillThreadRepositoryKeys = migrations.define({
 	table: 'threadRecords',
 	migrateOne: async (ctx, thread) => {
-		if (!thread.repositoryKey && thread.projectId) {
-			const project = await ctx.db.get('projects', thread.projectId);
-			if (project) {
-				return { repositoryKey: project.repositoryKey, projectId: undefined };
-			}
+		if (thread.projectId === undefined) {
+			return;
 		}
-		if (thread.projectId !== undefined) {
+		if (thread.repositoryKey) {
 			return { projectId: undefined };
 		}
+		const project = await ctx.db.get('projects', thread.projectId);
+		if (!project) {
+			return;
+		}
+		return { repositoryKey: project.repositoryKey, projectId: undefined };
 	}
 });
 

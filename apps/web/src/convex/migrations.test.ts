@@ -113,4 +113,30 @@ describe('projectId rewrite', () => {
 		expect(rewritten.run?.projectId).toBeUndefined();
 		expect(rewritten.job?.projectId).toBeUndefined();
 	});
+
+	it('keeps projectId when the referenced project row is gone', async () => {
+		const t = initConvexTest();
+		const { subject, threadId } = await seedOwnedThread(t);
+		const projectId = await t.run(async (ctx) => {
+			const projectId = await ctx.db.insert('projects', {
+				userId: subject,
+				repositoryKey: 'github.com/spikonado/missing',
+				displayName: 'missing',
+				nextExecutorSequence: 0,
+				lastSeenAt: Date.now()
+			});
+			await ctx.db.patch('threadRecords', threadId, {
+				repositoryKey: undefined,
+				projectId
+			});
+			await ctx.db.delete('projects', projectId);
+			return projectId;
+		});
+
+		await t.mutation(internal.migrations.backfillThreadRepositoryKeys, {});
+
+		const thread = await t.run(async (ctx) => ctx.db.get('threadRecords', threadId));
+		expect(thread?.repositoryKey).toBeUndefined();
+		expect(thread?.projectId).toBe(projectId);
+	});
 });
