@@ -28,7 +28,8 @@ const localBootstrapSchema = z.object({
 });
 const filesystemBrowseResultSchema = z.object({
 	parentPath: z.string(),
-	entries: z.array(z.object({ name: z.string(), fullPath: z.string() }))
+	entries: z.array(z.object({ name: z.string(), fullPath: z.string() })),
+	volumeList: z.boolean().optional()
 });
 const workspaceSkillsResultSchema = z.object({
 	skills: z.array(z.object({ name: z.string(), description: z.string() })),

@@ -5,9 +5,10 @@ export function isFilesystemBrowseQuery(value: string): boolean {
 		value.startsWith('.\\') ||
 		value.startsWith('..\\') ||
 		value.startsWith('/') ||
+		value.startsWith('\\') ||
 		value.startsWith('~/') ||
 		value === '~' ||
-		/^[a-zA-Z]:[\\/]/.test(value)
+		/^[a-zA-Z]:([\\/]|$)/.test(value)
 	);
 }
 
@@ -32,10 +33,27 @@ export function getBrowseLeafPathSegment(currentPath: string): string {
 	return currentPath.slice(directoryPath.length);
 }
 
-export function appendBrowsePathSegment(currentPath: string, segment: string): string {
-	const separator = currentPath.includes('\\') ? '\\' : '/';
-	const directoryPath = getBrowseDirectoryPath(currentPath);
-	return `${directoryPath}${segment}${separator}`;
+export function withTrailingPathSeparator(path: string): string {
+	if (!path || hasTrailingPathSeparator(path)) {
+		return path;
+	}
+
+	return `${path}${pathSeparator(path)}`;
+}
+
+/** True while the Windows drive list should keep filtering locally instead of browsing. */
+export function isWindowsVolumeListQuery(value: string): boolean {
+	const trimmed = value.trim();
+	return (
+		trimmed === '/' ||
+		trimmed === '\\' ||
+		/^[a-zA-Z]:?$/.test(trimmed) ||
+		/^[\\/][a-zA-Z]:?$/.test(trimmed)
+	);
+}
+
+function pathSeparator(path: string): string {
+	return path.includes('\\') || /^[a-zA-Z]:$/.test(path) ? '\\' : '/';
 }
 
 function hasTrailingPathSeparator(value: string): boolean {
