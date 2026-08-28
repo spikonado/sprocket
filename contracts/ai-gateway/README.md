@@ -34,8 +34,9 @@ are no Sprocket protocol fields on the completion request.
 
 OpenAI list envelope plus a `sprocket` object. See `fixtures/catalog.json`.
 
-Convex actions fetch this document for UI and entitlements at run creation.
-Usage weights stay in the gateway; Convex does not charge from them.
+The UI loads this document from `GET /api/v1/models`. Usage weights stay in
+the gateway; Convex does not charge from them. The gateway checks the user's
+plan via `gateway:checkQuota` before serving a completion.
 
 ## Convex quota (token-authenticated)
 

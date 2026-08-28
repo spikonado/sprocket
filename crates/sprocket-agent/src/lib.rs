@@ -1,3 +1,4 @@
+mod catalog;
 mod compaction;
 mod convex;
 mod history_json;

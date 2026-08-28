@@ -320,8 +320,8 @@ describe('agentRuntime context accounting', () => {
 		});
 		expect(context.agentHistory).toEqual([]);
 		expect(context.contextBudget).toEqual({
-			contextWindowTokens: 272_000,
-			autoCompactTokenLimit: 258_000
+			contextWindowTokens: 0,
+			autoCompactTokenLimit: 0
 		});
 	});
 

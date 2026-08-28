@@ -1,6 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { api } from '@convex/_generated/api';
-import catalogFixture from '../../../../contracts/ai-gateway/fixtures/catalog.json';
 import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 
 const gatewayUrl = 'https://preview.gateway.example';
@@ -10,14 +9,9 @@ describe('gateway quota', () => {
 	beforeEach(() => {
 		process.env.MODEL_GATEWAY_URL = gatewayUrl;
 		process.env.MODEL_GATEWAY_TOKEN_SECRET = tokenSecret;
-		vi.stubGlobal(
-			'fetch',
-			vi.fn(async () => new Response(JSON.stringify(catalogFixture), { status: 200 }))
-		);
 	});
 
 	afterEach(() => {
-		vi.unstubAllGlobals();
 		delete process.env.MODEL_GATEWAY_URL;
 		delete process.env.MODEL_GATEWAY_TOKEN_SECRET;
 	});
@@ -39,8 +33,6 @@ describe('gateway quota', () => {
 		});
 		expect(created.gatewayUrl).toBe(gatewayUrl);
 		expect(created.protocolVersion).toBe(1);
-		expect(created.catalogVersion).toBe('1');
-		expect(created.contextBudget.contextWindowTokens).toBe(272000);
 
 		await asUser.mutation(api.agentRuntime.start, {
 			runId: created.runId,
@@ -69,30 +61,6 @@ describe('gateway quota', () => {
 		expect(created.created).toBe(true);
 		const run = await t.run(async (ctx) => ctx.db.get('runs', created.runId));
 		expect(run?.completionTransport).toBe('gateway');
-		expect(run?.catalogVersion).toBe('1');
-		expect(run?.contextWindowTokens).toBe(272_000);
-	});
-
-	it('rejects createGatewayRun when the live catalog is unavailable', async () => {
-		vi.stubGlobal(
-			'fetch',
-			vi.fn(async () => {
-				throw new Error('connect failed');
-			})
-		);
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
-		await expect(
-			asUser.action(api.agentRuntime.createGatewayRun, {
-				submissionId: 'unavailable-run',
-				threadId,
-				prompt: 'Ship it',
-				imageUploadIds: [],
-				selectedModel: 'gpt-5.6-sol',
-				reasoningEffort: 'medium',
-				serviceTier: 'standard',
-				executionSecret: 'gateway-secret'
-			})
-		).rejects.toThrow('Model catalog is unavailable.');
+		expect(run?.gatewayProtocolVersion).toBe(1);
 	});
 });

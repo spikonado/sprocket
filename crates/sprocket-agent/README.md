@@ -49,6 +49,7 @@ flow back through the executor job. Released agents that still call the public
 ## Main areas
 
 - `run.rs`: ownership, preparation, and finalization.
+- `catalog.rs`: context window and auto-compact limits from `GET /api/v1/models`.
 - `provider.rs`: gateway completion loop, transcript sink, and provider outcomes.
 - `compaction.rs`: in-loop context compaction via a normal Responses call.
 - `history_json.rs`: Rig history JSON for the compaction summarizer.

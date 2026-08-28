@@ -15,7 +15,7 @@ export type CatalogModel = {
 	usagePolicy?: UsagePolicy;
 };
 
-/** Shape returned by `modelCatalog.fetch`. */
+/** Shape of `sprocket` from `GET /api/v1/models`. */
 export type ModelCatalog = {
 	defaultModelId: string;
 	defaultReasoningEffort: string;

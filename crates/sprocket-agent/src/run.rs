@@ -11,6 +11,7 @@ use std::time::Duration;
 use tokio::time::{Instant, sleep, sleep_until, timeout};
 use uuid::Uuid;
 
+use crate::catalog::context_budget_for_model;
 use crate::convex::{FailedStartCleanup, RuntimeClient};
 use crate::live::LiveCompletionHub;
 use crate::provider::{AgentProvider, AgentProviderRequest, AgentProviderResult};
@@ -753,7 +754,10 @@ pub async fn run_agent(run: AgentRun, live: Arc<LiveCompletionHub>) -> anyhow::R
     let model = context.run.selected_model.clone();
     let reasoning_effort = context.run.reasoning_effort.clone();
     let service_tier = context.run.service_tier.clone();
-    let context_budget = context.context_budget.clone();
+    let context_budget = match context_budget_for_model(&gateway_url, &model).await {
+        Ok(budget) => budget,
+        Err(error) => return abort_before_start(&runtime, &run_id, error).await,
+    };
 
     let prepared = (|| {
         let workspace_instructions = load_workspace_instructions(&workspace_root)?;

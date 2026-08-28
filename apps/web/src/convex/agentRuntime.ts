@@ -12,15 +12,7 @@ import { getOwnedRun, getOwnedThreadRecord } from '@convex/lib/access';
 import { executionSecretHash, getExecutionRun, getUserId } from '@convex/lib/auth';
 import { coercePersistedReasoningEffort, coercePersistedSelection } from '@convex/lib/models';
 import { GATEWAY_PROTOCOL_VERSION } from '@convex/lib/gatewayProtocol';
-import {
-	assertGatewayEntitlements,
-	assertGatewayModelConfiguration
-} from '@convex/lib/gatewayCatalog';
-import {
-	fetchGatewayCatalog,
-	modelGatewayTokenSecret,
-	modelGatewayUrl
-} from '@convex/lib/gatewayFetch';
+import { modelGatewayTokenSecret, modelGatewayUrl } from '@convex/lib/gatewayFetch';
 import { gatewayTokenExpiresAt, mintGatewayToken } from '@convex/lib/gatewayToken';
 import { vCompletionActor, vGetContextResult } from '@convex/lib/docs';
 import { appendThreadMessage } from '@convex/lib/threadMessages';
@@ -107,19 +99,13 @@ type QueuedRunRequest = {
 	reasoningEffort: Infer<typeof vReasoningEffort>;
 	serviceTier: Infer<typeof vServiceTier>;
 	executionSecret: string;
-	catalogVersion: string;
 	protocolVersion: number;
 	agentVersion?: string;
-	contextWindowTokens: number;
-	autoCompactTokenLimit: number;
 };
 
 type GatewayRunTelemetry = {
-	catalogVersion: string;
 	completionTransport: 'gateway';
 	gatewayProtocolVersion: number;
-	contextWindowTokens: number;
-	autoCompactTokenLimit: number;
 	agentVersion?: string;
 };
 
@@ -202,11 +188,8 @@ async function createQueuedRunRecord(
 	}
 
 	const gatewayFields: GatewayRunTelemetry = {
-		catalogVersion: args.catalogVersion,
 		completionTransport: 'gateway',
-		gatewayProtocolVersion: args.protocolVersion,
-		contextWindowTokens: args.contextWindowTokens,
-		autoCompactTokenLimit: args.autoCompactTokenLimit
+		gatewayProtocolVersion: args.protocolVersion
 	};
 	if (args.agentVersion) {
 		gatewayFields.agentVersion = args.agentVersion;
@@ -289,12 +272,7 @@ const vCreateGatewayRunResult = v.object({
 	runId: v.id('runs'),
 	promptMessageId: v.id('threadMessages'),
 	gatewayUrl: v.string(),
-	protocolVersion: v.number(),
-	catalogVersion: v.string(),
-	contextBudget: v.object({
-		contextWindowTokens: v.number(),
-		autoCompactTokenLimit: v.number()
-	})
+	protocolVersion: v.number()
 });
 
 export const insertGatewayRun = internalMutation({
@@ -308,11 +286,8 @@ export const insertGatewayRun = internalMutation({
 		reasoningEffort: vReasoningEffort,
 		serviceTier: vServiceTier,
 		executionSecret: v.string(),
-		catalogVersion: v.string(),
 		protocolVersion: v.number(),
-		agentVersion: v.optional(v.string()),
-		contextWindowTokens: v.number(),
-		autoCompactTokenLimit: v.number()
+		agentVersion: v.optional(v.string())
 	},
 	returns: v.object({
 		created: v.boolean(),
@@ -340,20 +315,6 @@ export const createGatewayRun = action({
 	handler: async (ctx, args): Promise<Infer<typeof vCreateGatewayRunResult>> => {
 		const userId = await getUserId(ctx);
 		const gatewayUrl = modelGatewayUrl();
-		const catalog = await fetchGatewayCatalog(gatewayUrl);
-		const model = assertGatewayModelConfiguration(catalog, {
-			modelId: args.selectedModel,
-			reasoningEffort: args.reasoningEffort,
-			serviceTier: args.serviceTier,
-			hasImages: args.imageUploadIds.length > 0
-		});
-		const subscriptionTier = await ctx.runQuery(internal.gateway.subscriptionTierForUser, {
-			userId
-		});
-		assertGatewayEntitlements(catalog, subscriptionTier, {
-			modelId: args.selectedModel,
-			serviceTier: args.serviceTier
-		});
 		const created = await ctx.runMutation(internal.agentRuntime.insertGatewayRun, {
 			userId,
 			submissionId: args.submissionId,
@@ -364,21 +325,13 @@ export const createGatewayRun = action({
 			reasoningEffort: args.reasoningEffort,
 			serviceTier: args.serviceTier,
 			executionSecret: args.executionSecret,
-			catalogVersion: catalog.catalogVersion,
 			protocolVersion: GATEWAY_PROTOCOL_VERSION,
-			agentVersion: args.agentVersion,
-			contextWindowTokens: model.contextWindowTokens,
-			autoCompactTokenLimit: model.autoCompactTokenLimit
+			agentVersion: args.agentVersion
 		});
 		return {
 			...created,
 			gatewayUrl,
-			protocolVersion: GATEWAY_PROTOCOL_VERSION,
-			catalogVersion: catalog.catalogVersion,
-			contextBudget: {
-				contextWindowTokens: model.contextWindowTokens,
-				autoCompactTokenLimit: model.autoCompactTokenLimit
-			}
+			protocolVersion: GATEWAY_PROTOCOL_VERSION
 		};
 	}
 });
@@ -504,12 +457,9 @@ export const getContext = query({
 
 		const prompt = promptMessage.text;
 		const selection = coercePersistedSelection(run.selectedModel, run.serviceTier);
-		if (run.contextWindowTokens === undefined || run.autoCompactTokenLimit === undefined) {
-			throw new Error('Run is missing snapshotted context budget.');
-		}
 		const contextBudget = {
-			contextWindowTokens: run.contextWindowTokens,
-			autoCompactTokenLimit: run.autoCompactTokenLimit
+			contextWindowTokens: run.contextWindowTokens ?? 0,
+			autoCompactTokenLimit: run.autoCompactTokenLimit ?? 0
 		};
 
 		return {

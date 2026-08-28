@@ -36,8 +36,6 @@ pub struct CreateRunResponse {
     pub gateway_url: String,
     #[serde(deserialize_with = "deserialize_convex_u64")]
     pub protocol_version: u64,
-    pub catalog_version: String,
-    pub context_budget: ContextBudget,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -496,32 +494,19 @@ mod tests {
 
     #[test]
     fn deserializes_create_run_response_gateway_fields_from_convex_numbers() {
-        use super::{ContextBudget, CreateRunResponse};
+        use super::CreateRunResponse;
 
         let created: CreateRunResponse = serde_json::from_value(serde_json::json!({
             "created": true,
             "runId": "jd7run",
             "promptMessageId": "jd7msg",
             "gatewayUrl": "https://preview.gateway.example",
-            "protocolVersion": 1.0,
-            "catalogVersion": "1",
-            "contextBudget": {
-                "contextWindowTokens": 272000.0,
-                "autoCompactTokenLimit": 258000.0
-            }
+            "protocolVersion": 1.0
         }))
         .expect("create run response");
 
         assert_eq!(created.gateway_url, "https://preview.gateway.example");
         assert_eq!(created.protocol_version, 1);
-        assert_eq!(created.catalog_version, "1");
-        assert_eq!(
-            created.context_budget,
-            ContextBudget {
-                context_window_tokens: 272_000,
-                auto_compact_token_limit: 258_000
-            }
-        );
     }
 
     #[test]

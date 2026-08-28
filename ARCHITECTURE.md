@@ -34,7 +34,7 @@ flowchart LR
     Web <--> Local
     Web <--> Convex[Convex backend]
     Local <--> Convex
-    Convex -->|"catalog action"| Gateway[AI gateway]
+    Web -->|"GET /api/v1/models"| Gateway[AI gateway]
     Local -->|"POST /api/v1/responses"| Gateway
     Gateway --> Providers[Model providers]
     Gateway -->|"quota check, consume units"| Convex
@@ -127,12 +127,13 @@ sequenceDiagram
     participant M as Model provider
     participant W as Workspace
 
-    UI->>C: Fetch live catalog via gateway
+    UI->>G: GET /api/v1/models
     UI->>C: Create or recover thread
     UI->>S: Start run with user token and workspace identity
     S->>A: Prepare local run
     A->>C: Create gateway run and bind execution capability
     A->>C: Claim run, load context, mint user gateway token
+    A->>G: GET /api/v1/models
     loop Model and tool turns
         A->>G: POST /api/v1/responses
         G->>C: Check remaining quota

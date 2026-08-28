@@ -32,7 +32,6 @@ import type * as lib_completionStream from "../lib/completionStream.js";
 import type * as lib_contextCompaction from "../lib/contextCompaction.js";
 import type * as lib_docs from "../lib/docs.js";
 import type * as lib_executorJobs from "../lib/executorJobs.js";
-import type * as lib_gatewayCatalog from "../lib/gatewayCatalog.js";
 import type * as lib_gatewayFetch from "../lib/gatewayFetch.js";
 import type * as lib_gatewayProtocol from "../lib/gatewayProtocol.js";
 import type * as lib_gatewayToken from "../lib/gatewayToken.js";
@@ -99,7 +98,6 @@ declare const fullApi: ApiFromModules<{
   "lib/contextCompaction": typeof lib_contextCompaction;
   "lib/docs": typeof lib_docs;
   "lib/executorJobs": typeof lib_executorJobs;
-  "lib/gatewayCatalog": typeof lib_gatewayCatalog;
   "lib/gatewayFetch": typeof lib_gatewayFetch;
   "lib/gatewayProtocol": typeof lib_gatewayProtocol;
   "lib/gatewayToken": typeof lib_gatewayToken;

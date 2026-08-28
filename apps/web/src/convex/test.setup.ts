@@ -109,10 +109,7 @@ export async function insertQueuedRun(
 		reasoningEffort: args.reasoningEffort ?? 'medium',
 		serviceTier: args.serviceTier ?? 'standard',
 		executionSecret: args.executionSecret,
-		catalogVersion: '1',
-		protocolVersion: 1,
-		contextWindowTokens: 272_000,
-		autoCompactTokenLimit: 258_000
+		protocolVersion: 1
 	});
 }
 

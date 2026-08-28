@@ -1,17 +1,8 @@
 import { v, ConvexError, type Infer } from 'convex/values';
-import { internalQuery, mutation } from '@convex/_generated/server';
-import { getSubscriptionTier } from '@convex/lib/tiers';
+import { mutation } from '@convex/_generated/server';
 import { modelGatewayTokenSecret } from '@convex/lib/gatewayFetch';
 import { verifyGatewayToken } from '@convex/lib/gatewayToken';
 import { applyGatewayUsageCharge, gatewayQuotaStatus } from '@convex/lib/rateLimits';
-
-export const subscriptionTierForUser = internalQuery({
-	args: { userId: v.string() },
-	returns: v.union(v.literal('free'), v.literal('pro'), v.literal('admin')),
-	handler: async (ctx, args) => {
-		return await getSubscriptionTier(ctx, args.userId);
-	}
-});
 
 const vQuota = v.object({
 	userId: v.string(),

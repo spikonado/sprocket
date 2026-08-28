@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
+	import { page } from '$app/state';
 	import { PanelRight } from '@lucide/svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-	import { useAuth, useMutation, useQuery, useAction } from 'convex-svelte';
+	import { useAuth, useMutation, useQuery } from 'convex-svelte';
 	import type { Id } from '$convex/_generated/dataModel';
 	import { api } from '$convex/_generated/api';
 	import {
@@ -58,8 +59,13 @@
 		type SupportedReasoningEffort,
 		type SupportedServiceTier
 	} from '$convex/lib/models';
-	import { CATALOG_UNAVAILABLE_MESSAGE } from '$convex/lib/gatewayProtocol';
-	import { getCatalogModel, type CatalogModelId, type ModelCatalog } from '$lib/chat/model-catalog';
+	import {
+		CATALOG_UNAVAILABLE_MESSAGE,
+		fetchGatewayModelCatalog,
+		getCatalogModel,
+		type CatalogModelId,
+		type ModelCatalog
+	} from '$lib/chat/model-catalog';
 	import { isClaimedRunStatus } from '$convex/lib/runLease';
 	import {
 		beginPendingAgentLaunch,
@@ -147,7 +153,6 @@
 	const registerImageUpload = useMutation(api.imageUploads.register);
 	const discardImageUpload = useMutation(api.imageUploads.discard);
 	const ensureMySubscription = useMutation(api.billing.ensureMySubscription);
-	const fetchModelCatalog = useAction(api.modelCatalog.fetch);
 	let modelCatalog = $state<ModelCatalog | undefined>(undefined);
 	let catalogError = $state<string | null>(null);
 	let catalogLoading = $state(true);
@@ -155,7 +160,8 @@
 	async function loadModelCatalog() {
 		catalogLoading = true;
 		try {
-			modelCatalog = await fetchModelCatalog({});
+			const origin = page.data.env.PUBLIC_MODEL_GATEWAY_URL?.trim() ?? '';
+			modelCatalog = await fetchGatewayModelCatalog(origin);
 			catalogError = null;
 		} catch {
 			catalogError = CATALOG_UNAVAILABLE_MESSAGE;

@@ -110,6 +110,16 @@ field stays optional so those rows validate.
 Remove the `convex-action` union member after a rewrite or a prod check shows
 none remain.
 
+### 8. Catalog snapshot fields on `runs`
+
+Earlier gateway work stored `catalogVersion`, `contextWindowTokens`, and
+`autoCompactTokenLimit` on new runs. Current inserts leave those unset. The
+agent reads context budget from `GET /api/v1/models`; `getContext` returns
+`0` when the snapshot is missing.
+
+Keep the optional fields so rows that still have them validate. Unset them in
+a later rewrite, then drop them from the schema.
+
 ## Client APIs
 
 Released desktop/CLI builds that still call retired Convex functions get a

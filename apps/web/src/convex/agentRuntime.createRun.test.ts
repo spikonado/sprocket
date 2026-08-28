@@ -1,6 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { api } from '@convex/_generated/api';
-import catalogFixture from '../../../../contracts/ai-gateway/fixtures/catalog.json';
 import { createQueuedRun, initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
 
 describe('agentRuntime.insertGatewayRun', () => {
@@ -20,46 +19,6 @@ describe('agentRuntime.insertGatewayRun', () => {
 				executionSecret: 'empty-prompt-secret'
 			})
 		).rejects.toThrow('Message cannot be empty.');
-	});
-
-	it('rejects image attachments for models without image support', async () => {
-		process.env.MODEL_GATEWAY_URL = 'https://preview.gateway.example';
-		vi.stubGlobal(
-			'fetch',
-			vi.fn(async () => new Response(JSON.stringify(catalogFixture), { status: 200 }))
-		);
-		try {
-			const t = initConvexTest();
-			const { asUser, subject, threadId } = await seedOwnedThread(t);
-			const imageUploadId = await t.run(async (ctx) => {
-				const storageId = await ctx.storage.store(new Blob(['image'], { type: 'image/png' }));
-				return await ctx.db.insert('imageUploads', {
-					userId: subject,
-					storageId,
-					name: 'diagram.png',
-					mediaType: 'image/png',
-					size: 5,
-					messageIds: [],
-					attached: false
-				});
-			});
-
-			await expect(
-				asUser.action(api.agentRuntime.createGatewayRun, {
-					submissionId: 'sub-deepseek-image',
-					threadId,
-					prompt: 'Describe this image',
-					imageUploadIds: [imageUploadId],
-					selectedModel: 'deepseek-v4-pro-0813',
-					reasoningEffort: 'max',
-					serviceTier: 'standard',
-					executionSecret: 'deepseek-image-secret'
-				})
-			).rejects.toThrow('DeepSeek V4 Pro does not support image attachments.');
-		} finally {
-			vi.unstubAllGlobals();
-			delete process.env.MODEL_GATEWAY_URL;
-		}
 	});
 
 	it('creates a queued run and is idempotent for the same submission', async () => {

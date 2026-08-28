@@ -77,6 +77,7 @@ Common Sprocket server overrides are available as environment variables:
 | `SPROCKET_HOST`               | Bind host; defaults to `127.0.0.1`.                                 |
 | `SPROCKET_DESKTOP_EXECUTABLE` | Full path to the desktop executable to be used by the Sprocket CLI. |
 | `PUBLIC_CONVEX_URL`           | Convex deployment used by the agent runtime.                        |
+| `PUBLIC_MODEL_GATEWAY_URL`    | Public AI gateway origin for the UI catalog (`GET /api/v1/models`). |
 | `SPROCKET_STATIC_DIR`         | Web build to serve instead of the bundled build.                    |
 
 ## Development
