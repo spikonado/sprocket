@@ -3,17 +3,10 @@ import { api } from '@convex/_generated/api';
 import { initConvexTest } from './test.setup';
 
 describe('model catalog', () => {
-	it('omits usage policy unless requested', async () => {
+	it('rejects the retired static catalog query', async () => {
 		const t = initConvexTest();
-		const catalog = await t.query(api.modelCatalog.get, {});
-		expect(catalog.models.every((model) => model.usagePolicy === undefined)).toBe(true);
-
-		const withPolicy = await t.query(api.modelCatalog.get, { includeUsagePolicy: true });
-		expect(withPolicy.models.find((model) => model.id === 'stealth/ox-alpha')?.usagePolicy).toBe(
-			'unlimited'
+		await expect(t.query(api.modelCatalog.get, {})).rejects.toThrow(
+			'This Sprocket version is no longer supported. Update to the latest Sprocket release.'
 		);
-		expect(
-			withPolicy.models.find((model) => model.id === 'gpt-5.6-sol')?.usagePolicy
-		).toBeUndefined();
 	});
 });

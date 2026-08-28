@@ -8,23 +8,24 @@
 	import { isAgentLaunchPending, type PendingAgentLaunches } from '$lib/project/threads';
 
 	type Props = {
-		currentRepositoryKey: string | null;
+		currentWorkspacePath: string | null;
 		currentThreadId: Id<'threadRecords'> | null;
 		groups: ProjectThreadGroup[];
 		pendingAgentLaunches?: PendingAgentLaunches;
 		theme: SprocketTheme;
 		onThemeChange: (theme: SprocketTheme) => void;
 		onAddProject: () => void;
-		onReconnectProject: (projectId: Id<'projects'>) => void;
+		onReconnectProject: (workspacePath: string) => void;
 		onOpenSettings: () => void;
-		onStartThreadDraft: (repositoryKey: string) => void;
-		onSelectThread: (thread: ThreadSummary) => void;
+		onStartThreadDraft: (workspacePath: string) => void;
+		onSelectProject: (workspacePath: string) => void;
+		onSelectThread: (thread: ThreadSummary, workspacePath: string) => void;
 		onRenameThread: (threadId: Id<'threadRecords'>, title: string) => void;
 		onArchiveThread: (threadId: Id<'threadRecords'>) => void;
 	};
 
 	let {
-		currentRepositoryKey,
+		currentWorkspacePath,
 		currentThreadId,
 		groups,
 		pendingAgentLaunches = {},
@@ -34,6 +35,7 @@
 		onReconnectProject,
 		onOpenSettings,
 		onStartThreadDraft,
+		onSelectProject,
 		onSelectThread,
 		onRenameThread,
 		onArchiveThread
@@ -141,10 +143,6 @@
 			return 'Missing';
 		}
 
-		if (group.project.localAttachmentAvailability === 'unlinked') {
-			return 'Link';
-		}
-
 		return null;
 	}
 
@@ -217,30 +215,38 @@
 				</div>
 			{:else}
 				<div class="space-y-4">
-					{#each groups as group (group.project._id)}
+					{#each groups as group (group.project.workspacePath)}
 						{@const project = group.project}
 						{@const statusLabel = projectStatusLabel(group)}
 						<section class="space-y-1.5">
 							<div class="group relative flex items-center px-2">
 								<button
 									type="button"
-									class={`flex min-w-0 flex-1 items-center gap-2 rounded-xl px-2 py-1 pr-8 text-left transition ${
-										project.repositoryKey === currentRepositoryKey
-											? 'text-foreground'
-											: 'text-muted-foreground hover:text-foreground'
-									}`}
+									class="text-muted-foreground hover:text-foreground inline-flex h-8 w-7 shrink-0 items-center justify-center rounded-md"
 									onclick={() => {
-										toggleProjectCollapsed(project.repositoryKey);
+										toggleProjectCollapsed(project.workspacePath);
 									}}
-									aria-label={isProjectCollapsed(project.repositoryKey)
+									aria-label={isProjectCollapsed(project.workspacePath)
 										? `Expand ${project.displayName} threads`
 										: `Collapse ${project.displayName} threads`}
 								>
 									<ChevronRight
-										class={`text-muted-foreground size-3 shrink-0 transition-transform ${
-											isProjectCollapsed(project.repositoryKey) ? '' : 'rotate-90'
+										class={`size-3 shrink-0 transition-transform ${
+											isProjectCollapsed(project.workspacePath) ? '' : 'rotate-90'
 										}`}
 									/>
+								</button>
+								<button
+									type="button"
+									class={`flex min-w-0 flex-1 items-center gap-2 rounded-xl px-2 py-1 pr-8 text-left transition ${
+										project.workspacePath === currentWorkspacePath
+											? 'text-foreground'
+											: 'text-muted-foreground hover:text-foreground'
+									}`}
+									onclick={() => {
+										onSelectProject(project.workspacePath);
+									}}
+								>
 									<Folder class="text-muted-foreground size-4 shrink-0" />
 									<div class="min-w-0 flex-1">
 										<p class="truncate text-[0.88rem] font-medium tracking-[-0.02em]">
@@ -248,17 +254,13 @@
 										</p>
 										{#if project.repositoryKey !== project.displayName}
 											<p class="text-muted-foreground truncate text-[10px] tracking-[-0.01em]">
-												{project.workspacePath ?? project.repositoryKey}
+												{project.workspacePath}
 											</p>
 										{/if}
 									</div>
 									{#if statusLabel}
 										<span
-											class={`rounded-full px-1.5 py-0.5 text-[10px] ${
-												project.localAttachmentAvailability === 'unavailable'
-													? 'border border-amber-500/25 bg-amber-500/10 text-amber-800 dark:text-amber-200'
-													: 'border border-sky-500/25 bg-sky-500/10 text-sky-800 dark:text-sky-200'
-											}`}
+											class="rounded-full border border-amber-500/25 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-800 dark:text-amber-200"
 										>
 											{statusLabel}
 										</span>
@@ -277,11 +279,11 @@
 									class="text-muted-foreground hover:text-foreground hover:bg-hover-fill absolute top-0.5 right-1 inline-flex h-6 w-6 items-center justify-center rounded-md opacity-0 transition group-hover:opacity-100 focus-visible:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
 									onclick={() => {
 										if (project.localAttachmentAvailability === 'available') {
-											onStartThreadDraft(project.repositoryKey);
+											onStartThreadDraft(project.workspacePath);
 											return;
 										}
 
-										onReconnectProject(project._id);
+										onReconnectProject(project.workspacePath);
 									}}
 									aria-label={project.localAttachmentAvailability === 'available'
 										? `Create thread in ${project.displayName}`
@@ -295,20 +297,17 @@
 								</button>
 							</div>
 
-							{#if !isProjectCollapsed(project.repositoryKey)}
+							{#if !isProjectCollapsed(project.workspacePath)}
 								<div class="ml-5 border-l border-[var(--hairline)] pl-3">
-									{#if project.localAttachmentAvailability === 'unavailable' || project.localAttachmentAvailability === 'unlinked'}
+									{#if project.localAttachmentAvailability === 'unavailable'}
 										<p class="text-muted-foreground pb-2 text-[12px] leading-5">
-											{project.localAttachmentError ??
-												(project.localAttachmentAvailability === 'unlinked'
-													? 'This project needs a local directory attached before you can use it.'
-													: 'This project needs to be reconnected.')}
+											{project.localAttachmentError ?? 'This project needs to be reconnected.'}
 										</p>
 									{/if}
 									{#if group.threads.length === 0}
 										<p class="text-muted-foreground py-1.5 text-[12px]">No threads yet</p>
 									{:else}
-										{@const projectExpanded = isProjectExpanded(project.repositoryKey)}
+										{@const projectExpanded = isProjectExpanded(project.workspacePath)}
 										{@const visibleThreads = projectExpanded
 											? group.threads
 											: group.threads.slice(0, DEFAULT_VISIBLE_THREAD_COUNT)}
@@ -367,7 +366,7 @@
 																openContextMenu(event, thread);
 															}}
 															onclick={() => {
-																onSelectThread(thread);
+																onSelectThread(thread, project.workspacePath);
 															}}
 														>
 															{#if isStartingAgent}
@@ -408,7 +407,7 @@
 													type="button"
 													class="text-muted-foreground hover:text-muted-foreground px-2 py-1 text-[12px] transition"
 													onclick={() => {
-														toggleProjectExpanded(project.repositoryKey);
+														toggleProjectExpanded(project.workspacePath);
 													}}
 												>
 													{projectExpanded ? 'Show less' : 'Show more'}

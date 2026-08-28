@@ -22,6 +22,12 @@ export function assertThreadCanStartRun(status: Infer<typeof vRunStatus> | null 
 	throw new Error('Finish or cancel the active run before sending another message.');
 }
 
+export function isSettledExecutorJobStatus(
+	status: Infer<typeof vExecutorJobStatus>
+): status is 'completed' | 'failed' | 'cancelled' {
+	return status === 'completed' || status === 'failed' || status === 'cancelled';
+}
+
 export function executorFailureRunPatch(args: {
 	runStatus: Infer<typeof vRunStatus>;
 	activeJobId?: string;
@@ -53,7 +59,7 @@ export function cancelExecutorJobsForTerminalRun<T extends ExecutorJobState>(arg
 				? 'Run failed before executor job completed.'
 				: 'Run completed before executor job completed.');
 	return args.jobs.map((job) => {
-		if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
+		if (isSettledExecutorJobStatus(job.status)) {
 			return job;
 		}
 		return {

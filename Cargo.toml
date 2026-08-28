@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "crates/sprocket-convex-provider",
+    "crates/sprocket-convex",
     "crates/sprocket-workspace",
     "crates/sprocket-agent",
     "crates/sprocket-server",

@@ -18,6 +18,7 @@ async function startRun(t: ConvexTestInstance, subject: string) {
 		.mutation(api.billing.ensureMySubscription, {});
 	const executionSecret = `mandate-secret-${subject}`;
 	const created = await createQueuedRun(
+		t,
 		asUser,
 		threadId,
 		`mandate-${subject}-${Math.random()}`,
@@ -46,6 +47,36 @@ function jsonResponse(value: JsonValue, status = 200) {
 
 function auth(run: Awaited<ReturnType<typeof startRun>>) {
 	return { runId: run.runId, claimId: run.claimId, executionSecret: run.executionSecret };
+}
+
+async function settleMandateReport(
+	t: ConvexTestInstance,
+	run: Awaited<ReturnType<typeof startRun>>,
+	args: {
+		chargeId: import('@convex/_generated/dataModel').Id<'mandateCharges'>;
+		outcome: 'approved' | 'declined';
+	}
+) {
+	const startedFake = !vi.isFakeTimers();
+	if (startedFake) vi.useFakeTimers();
+	try {
+		let result = await run.asUser.action(api.payments.mandateReport, {
+			...args,
+			...auth(run)
+		});
+		for (let attempt = 0; attempt < 12 && result.inFlight; attempt += 1) {
+			await t.finishAllScheduledFunctions(() => {
+				vi.advanceTimersByTime(25);
+			});
+			result = await run.asUser.action(api.payments.mandateReport, {
+				...args,
+				...auth(run)
+			});
+		}
+		return result;
+	} finally {
+		if (startedFake) vi.useRealTimers();
+	}
 }
 
 function setupArgs(run: Awaited<ReturnType<typeof startRun>>) {
@@ -522,19 +553,17 @@ describe('payments mandates', () => {
 			...auth(run)
 		});
 
-		fetchMock.mockResolvedValueOnce(jsonResponse({ status: 'completed', mandateStatus: 'active' }));
-		const first = await run.asUser.action(api.payments.mandateReport, {
+		fetchMock.mockResolvedValue(jsonResponse({ status: 'completed', mandateStatus: 'active' }));
+		const first = await settleMandateReport(t, run, {
 			chargeId: charge.chargeId,
-			outcome: 'approved',
-			...auth(run)
+			outcome: 'approved'
 		});
-		const second = await run.asUser.action(api.payments.mandateReport, {
+		const second = await settleMandateReport(t, run, {
 			chargeId: charge.chargeId,
-			outcome: 'approved',
-			...auth(run)
+			outcome: 'approved'
 		});
 
-		expect(first).toEqual({ reported: true });
+		expect(first).toMatchObject({ reported: true });
 		expect(second).toEqual({ reported: true, alreadyReported: true });
 		const reportCall = fetchMock.mock.calls.at(-1)!;
 		expect(String(reportCall[0])).toBe(
@@ -596,15 +625,14 @@ describe('payments mandates', () => {
 			})
 		);
 		fetchMock.mockClear();
-		fetchMock.mockResolvedValueOnce(jsonResponse({ status: 'completed', mandateStatus: 'active' }));
+		fetchMock.mockResolvedValue(jsonResponse({ status: 'completed', mandateStatus: 'active' }));
 
-		const result = await run.asUser.action(api.payments.mandateReport, {
+		const result = await settleMandateReport(t, run, {
 			chargeId: charge.chargeId,
-			outcome: 'approved',
-			...auth(run)
+			outcome: 'approved'
 		});
 
-		expect(result).toEqual({ reported: true });
+		expect(result).toMatchObject({ reported: true });
 		// The retry must actually deliver the outcome to Prava, not just finalize locally.
 		const reportCall = fetchMock.mock.calls.at(-1)!;
 		expect(String(reportCall[0])).toBe(
@@ -684,41 +712,46 @@ describe('payments mandates', () => {
 		});
 
 		// Prava may have accepted APPROVED even though the client saw a transport error.
-		fetchMock.mockRejectedValueOnce(new Error('network lost after commit'));
-		await expect(
-			run.asUser.action(api.payments.mandateReport, {
+		fetchMock.mockRejectedValue(new Error('network lost after commit'));
+		vi.useFakeTimers();
+		try {
+			const first = await run.asUser.action(api.payments.mandateReport, {
 				chargeId: charge.chargeId,
 				outcome: 'approved',
 				...auth(run)
-			})
-		).rejects.toThrow(/network lost after commit/);
+			});
+			expect(first).toEqual({ reported: false, inFlight: true });
+			await t.finishAllScheduledFunctions(() => {
+				vi.advanceTimersByTime(25);
+			});
 
-		const afterLoss = await t.run(async (ctx) => ctx.db.get('mandateCharges', charge.chargeId));
-		expect(afterLoss).toMatchObject({ reportOutcome: 'approved' });
-		expect(afterLoss?.reportingStartedAt).toBeUndefined();
-		expect(afterLoss?.reportedAt).toBeUndefined();
+			const afterLoss = await t.run(async (ctx) => ctx.db.get('mandateCharges', charge.chargeId));
+			expect(afterLoss).toMatchObject({ reportOutcome: 'approved' });
+			expect(afterLoss?.reportedAt).toBeUndefined();
 
-		fetchMock.mockClear();
-		await expect(
-			run.asUser.action(api.payments.mandateReport, {
+			fetchMock.mockClear();
+			await expect(
+				run.asUser.action(api.payments.mandateReport, {
+					chargeId: charge.chargeId,
+					outcome: 'declined',
+					...auth(run)
+				})
+			).rejects.toThrow(/approved report in progress/);
+			expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/report'))).toBe(false);
+
+			// Same-outcome retry can still re-send (Prava is idempotent on txn id).
+			fetchMock.mockResolvedValue(jsonResponse({ status: 'completed', mandateStatus: 'active' }));
+			const retry = await settleMandateReport(t, run, {
 				chargeId: charge.chargeId,
-				outcome: 'declined',
-				...auth(run)
-			})
-		).rejects.toThrow(/approved report in progress/);
-		expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/report'))).toBe(false);
-
-		// Same-outcome retry can still re-send (Prava is idempotent on txn id).
-		fetchMock.mockResolvedValueOnce(jsonResponse({ status: 'completed', mandateStatus: 'active' }));
-		const retry = await run.asUser.action(api.payments.mandateReport, {
-			chargeId: charge.chargeId,
-			outcome: 'approved',
-			...auth(run)
-		});
-		expect(retry).toEqual({ reported: true });
-		expect(JSON.parse(String(fetchMock.mock.calls.at(-1)![1]?.body))).toMatchObject({
-			txn_status: 'APPROVED'
-		});
+				outcome: 'approved'
+			});
+			expect(retry).toMatchObject({ reported: true });
+			expect(JSON.parse(String(fetchMock.mock.calls.at(-1)![1]?.body))).toMatchObject({
+				txn_status: 'APPROVED'
+			});
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it('reports an in-flight claim as not-yet-reported instead of claiming success', async () => {

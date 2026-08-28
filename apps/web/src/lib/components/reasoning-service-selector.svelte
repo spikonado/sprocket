@@ -1,11 +1,6 @@
 <script lang="ts">
 	import { Check, ChevronDown, Lock, Zap } from '@lucide/svelte';
-	import {
-		defaultReasoningEffort,
-		defaultServiceTier,
-		type SupportedReasoningEffort,
-		type SupportedServiceTier
-	} from '$convex/lib/models';
+	import { defaultReasoningEffort, defaultServiceTier } from '$convex/lib/models';
 	import {
 		type CatalogModel,
 		type ServiceTierSelectorOption,
@@ -21,8 +16,8 @@
 		model: CatalogModel;
 		/** When set, shows every model service tier with paid ones locked (like the model picker). */
 		serviceTierOptions?: readonly ServiceTierSelectorOption[];
-		reasoningEffort?: SupportedReasoningEffort;
-		serviceTier?: SupportedServiceTier;
+		reasoningEffort?: string;
+		serviceTier?: string;
 		disabled?: boolean;
 		className?: string;
 	};
@@ -30,8 +25,8 @@
 	let {
 		model,
 		serviceTierOptions,
-		reasoningEffort = $bindable<SupportedReasoningEffort>(defaultReasoningEffort),
-		serviceTier = $bindable<SupportedServiceTier>(defaultServiceTier),
+		reasoningEffort = $bindable<string>(defaultReasoningEffort),
+		serviceTier = $bindable<string>(defaultServiceTier),
 		disabled = false,
 		className = ''
 	}: Props = $props();
@@ -52,11 +47,11 @@
 	let triggerElement = $state<HTMLButtonElement | null>(null);
 	const lockTooltipState = createLockTooltip();
 
-	function selectReasoning(next: SupportedReasoningEffort) {
+	function selectReasoning(next: string) {
 		reasoningEffort = next;
 	}
 
-	function selectServiceTier(next: SupportedServiceTier, event?: MouseEvent) {
+	function selectServiceTier(next: string, event?: MouseEvent) {
 		const option = tierOptions.find((entry) => entry.id === next);
 		if (!option) return;
 		if (option.locked) {

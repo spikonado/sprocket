@@ -1,13 +1,10 @@
 import type { Id } from '$convex/_generated/dataModel';
 import type { AssistantPart } from '$convex/lib/assistantParts';
+import type { JsonValue } from '$convex/lib/json';
 import type { Infer } from 'convex/values';
 import {
 	vExecutorJobKind,
 	vExecutorJobStatus,
-	vExecutorStatus,
-	vModelId,
-	vReasoningEffort,
-	vServiceTier,
 	vRunStatus,
 	vThreadMessageType,
 	type ExecutorJobPayload,
@@ -15,41 +12,27 @@ import {
 	type WorkspaceInstruction
 } from '$convex/lib/validators';
 
-export type LocalAttachmentAvailability = 'available' | 'unavailable' | 'unlinked';
+export type LocalAttachmentAvailability = 'available' | 'unavailable';
 
 export type { WorkspaceInstruction, ExecutorJobPayload, ExecutorJobResult };
 
 export type AgentToolName = Infer<typeof vExecutorJobKind>;
 
 export type Project = {
-	_id: Id<'projects'>;
-	_creationTime?: number;
-	userId: string;
 	repositoryKey: string;
 	displayName: string;
-	workspacePath?: string;
-	// Deprecated: only returned by `projects.listMine` for older clients that
-	// don't pass `includeExecutorStatus: false`. Nothing in the current UI
-	// consumes it.
-	executorStatus?: Infer<typeof vExecutorStatus>;
-	// Deprecated: executor liveness moved to `projectConnections`; only present
-	// on pre-migration project rows. Nothing in the current UI consumes them.
-	lastHeartbeatAt?: number;
-	connectedClientId?: string;
-	// Still bumped on every project open; older released clients use it to
-	// order their sidebar. The current UI orders projects by creation instead.
-	lastSeenAt?: number;
+	workspacePath: string;
 	localAttachmentAvailability?: LocalAttachmentAvailability;
 	localAttachmentError?: string;
 };
 
 export type ThreadSummary = {
 	threadId: Id<'threadRecords'>;
-	projectId: Id<'projects'>;
+	repositoryKey: string;
 	title: string;
-	selectedModel: Infer<typeof vModelId>;
-	reasoningEffort: Infer<typeof vReasoningEffort>;
-	serviceTier: Infer<typeof vServiceTier>;
+	selectedModel: string;
+	reasoningEffort: string;
+	serviceTier: string;
 	lastMessageAt: number;
 	threadStatus: 'active' | 'archived';
 	latestRunStatus: RunState['status'] | null;
@@ -67,7 +50,6 @@ export type ProjectThreadGroup = {
 
 export type ExecutorJob = {
 	_id: Id<'executorJobs'>;
-	projectId: Id<'projects'>;
 	threadId: Id<'threadRecords'>;
 	runId: Id<'runs'>;
 	kind: AgentToolName;
@@ -87,13 +69,12 @@ export type RunState = {
 	_id: Id<'runs'>;
 	threadId: Id<'threadRecords'>;
 	userId: string;
-	projectId: Id<'projects'>;
 	status: Infer<typeof vRunStatus>;
 	submissionId: string;
 	claimExpiresAt?: number;
-	selectedModel: Infer<typeof vModelId>;
-	reasoningEffort: Infer<typeof vReasoningEffort>;
-	serviceTier: Infer<typeof vServiceTier>;
+	selectedModel: string;
+	reasoningEffort: string;
+	serviceTier: string;
 	startedAt: number;
 	completedAt?: number;
 	lastError?: string;
@@ -131,14 +112,87 @@ export type AgentRunRequest = {
 	threadId: Id<'threadRecords'>;
 	prompt: string;
 	imageUploadIds: Id<'imageUploads'>[];
-	selectedModel: Infer<typeof vModelId>;
-	reasoningEffort: Infer<typeof vReasoningEffort>;
-	serviceTier: Infer<typeof vServiceTier>;
-	projectId: Id<'projects'>;
+	selectedModel: string;
+	reasoningEffort: string;
+	serviceTier: string;
+	workspacePath: string;
 };
 
 export type AgentRunStart = {
 	runId: Id<'runs'>;
+};
+
+export type LocalTranscriptAttachment = {
+	imageUploadId: Id<'imageUploads'>;
+	name: string;
+	mediaType: string;
+	size: number;
+	storageId: string;
+	url?: string;
+};
+
+export type LocalTranscriptPart = {
+	number: number;
+	sourceKey: string;
+	kind: 'prompt' | 'completion' | 'tool';
+	runId: Id<'runs'>;
+	prompt?: {
+		text: string;
+		imageUploads: LocalTranscriptAttachment[];
+	};
+	completion?: {
+		streamId?: string;
+		items: AssistantPart[];
+	};
+	tool?: {
+		jobId?: Id<'executorJobs'>;
+		callId: string;
+		name: string;
+		output: JsonValue;
+		status: 'completed' | 'failed' | 'cancelled';
+	};
+};
+
+export type LocalTranscriptPage = {
+	threadId: Id<'threadRecords'>;
+	totalParts: number;
+	historyFromNumber: number;
+	stale: boolean;
+	parts: LocalTranscriptPart[];
+	nextBefore?: number;
+	contextSummary?: string;
+};
+
+export type LiveCompletionOverlay = {
+	threadId: Id<'threadRecords'>;
+	runId: Id<'runs'>;
+	runStatus: Infer<typeof vRunStatus>;
+	streamId?: string;
+	text: string;
+	parts: AssistantPart[];
+	runStartedAt: number;
+};
+
+export type TranscriptWatchEvent = {
+	eventType: string;
+	totalParts?: number;
+	stale: boolean;
+};
+
+export type LiveCompletionWatchEvent =
+	{ eventType: 'updated'; live: LiveCompletionOverlay } | { eventType: 'cleared' };
+
+export type TranscriptScopeRequest = {
+	authToken: string;
+	userId: string;
+	threadId: Id<'threadRecords'>;
+};
+
+export type TranscriptPageRequest = {
+	userId: string;
+	threadId: Id<'threadRecords'>;
+	before?: number;
+	limit?: number;
 };
 
 export type FilesystemBrowseEntry = {
@@ -174,6 +228,25 @@ export type DesktopApi = {
 	listProjectAttachments: () => Promise<ProjectAttachment[]>;
 	attachProject: (attachment: ProjectAttachmentRequest) => Promise<ProjectAttachment>;
 	runAgent: (request: AgentRunRequest) => Promise<AgentRunStart>;
+	fetchTranscriptPage: (request: TranscriptPageRequest) => Promise<LocalTranscriptPage>;
+	watchTranscript: (
+		request: TranscriptScopeRequest,
+		handlers: {
+			onEvent: (event: TranscriptWatchEvent) => void;
+			signal: AbortSignal;
+		}
+	) => Promise<void>;
+	watchLiveCompletion: (
+		request: TranscriptScopeRequest,
+		handlers: {
+			onEvent: (event: LiveCompletionWatchEvent) => void;
+			signal: AbortSignal;
+		}
+	) => Promise<void>;
+	clearTranscriptReplica: (request: TranscriptScopeRequest) => Promise<void>;
+	fetchTranscriptAttachment: (
+		request: TranscriptScopeRequest & { imageUploadId: Id<'imageUploads'> }
+	) => Promise<Blob | null>;
 };
 
 export type WorkspacePathResolution = {
@@ -183,15 +256,17 @@ export type WorkspacePathResolution = {
 };
 
 export type ProjectAttachmentRequest = {
-	projectId: Id<'projects'>;
 	workspacePath: string;
+	replaceWorkspacePath?: string;
 };
 
 export type ProjectAttachment = {
-	projectId: Id<'projects'>;
 	workspacePath: string;
-	availability: Exclude<LocalAttachmentAvailability, 'unlinked'>;
+	repositoryKey: string;
+	displayName: string;
+	availability: LocalAttachmentAvailability;
 	lastValidatedAt: number;
 	lastUsedAt: number;
 	unavailableReason?: string;
+	previousRepositoryKey?: string;
 };

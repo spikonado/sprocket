@@ -1,6 +1,7 @@
 // Every renewal re-runs thread/run subscriptions, so fewer is cheaper; the
 // trade is a longer wait before a dead executor's run can be taken over.
 export const RUN_CLAIM_LEASE_DURATION_MS = 120_000;
+export const RUN_QUEUED_STARTUP_DEADLINE_MS = 45_000;
 
 type ClaimableRun = {
 	status: string;

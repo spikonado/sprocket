@@ -16,13 +16,35 @@ const MAX_PERSISTED_PROJECT_ATTACHMENTS: usize = 200;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectAttachmentRecord {
-    pub project_id: String,
     pub workspace_path: String,
+    pub repository_key: String,
+    pub display_name: String,
     pub availability: WorkspaceAvailability,
     pub last_validated_at: u64,
     pub last_used_at: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unavailable_reason: Option<String>,
+    /// Last persisted key when git identity changed, until the client rekeys threads.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_repository_key: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredProjectAttachment {
+    #[serde(default)]
+    workspace_path: String,
+    #[serde(default)]
+    repository_key: Option<String>,
+    #[serde(default)]
+    display_name: Option<String>,
+    availability: WorkspaceAvailability,
+    last_validated_at: u64,
+    last_used_at: u64,
+    #[serde(default)]
+    unavailable_reason: Option<String>,
+    #[serde(default)]
+    previous_repository_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -35,8 +57,9 @@ pub enum WorkspaceAvailability {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AttachProjectRequest {
-    pub project_id: String,
     pub workspace_path: String,
+    #[serde(default)]
+    pub replace_workspace_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -70,19 +93,23 @@ impl ProjectAttachmentStore {
         self.ensure_loaded().await?;
         self.refresh_all().await?;
         let sessions = self.attachments.read().await;
-        Ok(sessions.values().cloned().collect())
+        let mut listed: Vec<ProjectAttachmentRecord> = sessions.values().cloned().collect();
+        listed.sort_by_key(|session| std::cmp::Reverse(session.last_used_at));
+        Ok(listed)
     }
 
     pub async fn attach(&self, request: AttachProjectRequest) -> Result<ProjectAttachmentRecord> {
         self.ensure_loaded().await?;
         let now = crate::now_ms();
         let validated = validate_session_async(ProjectAttachmentRecord {
-            project_id: request.project_id,
             workspace_path: request.workspace_path,
+            repository_key: String::new(),
+            display_name: String::new(),
             availability: WorkspaceAvailability::Available,
             last_validated_at: now,
             last_used_at: now,
             unavailable_reason: None,
+            previous_repository_key: None,
         })
         .await?;
 
@@ -93,17 +120,25 @@ impl ProjectAttachmentStore {
             anyhow::bail!("workspace path is unavailable");
         }
 
-        self.attachments
-            .write()
-            .await
-            .insert(validated.project_id.clone(), validated.clone());
+        {
+            let mut sessions = self.attachments.write().await;
+            sessions.insert(validated.workspace_path.clone(), validated.clone());
+            if let Some(previous_path) = request
+                .replace_workspace_path
+                .as_deref()
+                .map(str::trim)
+                .filter(|path| !path.is_empty() && *path != validated.workspace_path)
+            {
+                sessions.remove(previous_path);
+            }
+        }
         self.save_to_disk().await?;
         Ok(validated)
     }
 
-    pub async fn workspace_path(&self, project_id: &str) -> Result<String> {
+    pub async fn workspace_path(&self, workspace_path: &str) -> Result<String> {
         self.ensure_loaded().await?;
-        let session = self.get_or_error(project_id).await?;
+        let session = self.get_or_error(workspace_path).await?;
         let validated = validate_session_async(session).await?;
         if validated.availability != WorkspaceAvailability::Available {
             anyhow::bail!(
@@ -115,9 +150,9 @@ impl ProjectAttachmentStore {
         Ok(validated.workspace_path)
     }
 
-    async fn get_or_error(&self, project_id: &str) -> Result<ProjectAttachmentRecord> {
-        let sessions = self.attachments.read().await;
-        sessions.get(project_id).cloned().ok_or_else(|| {
+    async fn get_or_error(&self, workspace_path: &str) -> Result<ProjectAttachmentRecord> {
+        let attachments = self.attachments.read().await;
+        attachments.get(workspace_path).cloned().ok_or_else(|| {
             anyhow::anyhow!("Project path is unavailable. Re-open this project in the desktop app.")
         })
     }
@@ -134,11 +169,15 @@ impl ProjectAttachmentStore {
             let contents = tokio::fs::read_to_string(&store_path)
                 .await
                 .with_context(|| format!("failed to read {}", store_path.display()))?;
-            let stored: Vec<ProjectAttachmentRecord> = serde_json::from_str(&contents)
+            let stored: Vec<StoredProjectAttachment> = serde_json::from_str(&contents)
                 .with_context(|| "failed to parse project attachments")?;
             let mut sessions = self.attachments.write().await;
             for entry in stored {
-                sessions.insert(entry.project_id.clone(), entry);
+                if entry.workspace_path.trim().is_empty() {
+                    continue;
+                }
+                let record = hydrate_stored_attachment(entry);
+                sessions.insert(record.workspace_path.clone(), record);
             }
         }
 
@@ -153,14 +192,14 @@ impl ProjectAttachmentStore {
             .read()
             .await
             .iter()
-            .map(|(id, session)| (id.clone(), session.clone()))
+            .map(|(workspace_path, attachment)| (workspace_path.clone(), attachment.clone()))
             .collect();
         let validated = tokio::task::spawn_blocking(move || {
             snapshot
                 .into_iter()
-                .map(|(id, original)| {
+                .map(|(previous_key, original)| {
                     let refreshed = validate_session_path(original.clone());
-                    (id, original, refreshed)
+                    (previous_key, original, refreshed)
                 })
                 .collect::<Vec<_>>()
         })
@@ -169,15 +208,18 @@ impl ProjectAttachmentStore {
 
         let mut changed = false;
         let mut sessions = self.attachments.write().await;
-        for (project_id, original, refreshed) in validated {
-            if sessions.get(&project_id) != Some(&original) {
+        for (previous_key, original, refreshed) in validated {
+            if sessions.get(&previous_key) != Some(&original) {
                 continue;
             }
 
-            if session_availability_changed(&original, &refreshed) {
+            if session_record_changed(&original, &refreshed) {
                 changed = true;
             }
-            sessions.insert(project_id, refreshed);
+            if previous_key != refreshed.workspace_path {
+                sessions.remove(&previous_key);
+            }
+            sessions.insert(refreshed.workspace_path.clone(), refreshed);
         }
         drop(sessions);
 
@@ -217,48 +259,103 @@ impl ProjectAttachmentStore {
 
         store.clear();
         for session in sessions {
-            store.insert(session.project_id.clone(), session);
+            store.insert(session.workspace_path.clone(), session);
         }
     }
 }
 
+fn hydrate_stored_attachment(stored: StoredProjectAttachment) -> ProjectAttachmentRecord {
+    let fallback_name = directory_name(&stored.workspace_path);
+    validate_session_path(ProjectAttachmentRecord {
+        workspace_path: stored.workspace_path,
+        repository_key: stored.repository_key.unwrap_or_default(),
+        display_name: stored.display_name.unwrap_or(fallback_name),
+        availability: stored.availability,
+        last_validated_at: stored.last_validated_at,
+        last_used_at: stored.last_used_at,
+        unavailable_reason: stored.unavailable_reason,
+        previous_repository_key: stored.previous_repository_key,
+    })
+}
+
+fn directory_name(workspace_path: &str) -> String {
+    std::path::Path::new(workspace_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("workspace")
+        .to_string()
+}
+
 fn mark_available(
     session: ProjectAttachmentRecord,
-    workspace_path: String,
+    resolution: WorkspacePathResolution,
 ) -> ProjectAttachmentRecord {
     ProjectAttachmentRecord {
-        workspace_path,
+        workspace_path: resolution.workspace_path,
+        previous_repository_key: previous_repository_key_after_resolve(
+            &session,
+            &resolution.repository_key,
+        ),
+        repository_key: resolution.repository_key,
+        display_name: resolution.display_name,
         availability: WorkspaceAvailability::Available,
         last_validated_at: crate::now_ms(),
         unavailable_reason: None,
-        ..session
+        last_used_at: session.last_used_at,
     }
+}
+
+fn previous_repository_key_after_resolve(
+    session: &ProjectAttachmentRecord,
+    new_key: &str,
+) -> Option<String> {
+    let candidate = if !session.repository_key.is_empty() && session.repository_key != new_key {
+        Some(session.repository_key.clone())
+    } else {
+        session.previous_repository_key.clone()
+    };
+    candidate.filter(|key| !key.is_empty() && key != new_key)
 }
 
 fn mark_unavailable(
     session: ProjectAttachmentRecord,
     error: &anyhow::Error,
 ) -> ProjectAttachmentRecord {
+    let fallback_name = directory_name(&session.workspace_path);
     ProjectAttachmentRecord {
         availability: WorkspaceAvailability::Unavailable,
         last_validated_at: crate::now_ms(),
         unavailable_reason: Some(error.to_string()),
+        repository_key: if session.repository_key.is_empty() {
+            fallback_name.clone()
+        } else {
+            session.repository_key
+        },
+        display_name: if session.display_name.is_empty() {
+            fallback_name
+        } else {
+            session.display_name
+        },
         ..session
     }
 }
 
 fn validate_session_path(session: ProjectAttachmentRecord) -> ProjectAttachmentRecord {
     match resolve_workspace_path(&session.workspace_path, false) {
-        Ok(resolution) => mark_available(session, resolution.workspace_path),
+        Ok(resolution) => mark_available(session, resolution),
         Err(error) => mark_unavailable(session, &error),
     }
 }
 
-fn session_availability_changed(
+fn session_record_changed(
     previous: &ProjectAttachmentRecord,
     current: &ProjectAttachmentRecord,
 ) -> bool {
     previous.workspace_path != current.workspace_path
+        || previous.repository_key != current.repository_key
+        || previous.previous_repository_key != current.previous_repository_key
+        || previous.display_name != current.display_name
         || previous.availability != current.availability
         || previous.unavailable_reason != current.unavailable_reason
 }
@@ -307,15 +404,17 @@ mod tests {
 
         let session = store
             .attach(AttachProjectRequest {
-                project_id: "project-1".to_string(),
                 workspace_path: env!("CARGO_MANIFEST_DIR").to_string(),
+                replace_workspace_path: None,
             })
             .await
             .expect("attach");
 
         assert_eq!(session.availability, WorkspaceAvailability::Available);
+        assert!(!session.repository_key.is_empty());
         let listed = store.list().await.expect("list");
         assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].workspace_path, session.workspace_path);
 
         let _ = fs::remove_dir_all(temp_root);
     }
@@ -361,6 +460,121 @@ mod tests {
             resolve_workspace_path(&project.to_string_lossy(), false).expect("resolve project");
         assert_eq!(resolved.display_name, "sprocket");
         assert_eq!(resolved.repository_key, "github.com/spikonado/sprocket");
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[tokio::test]
+    async fn attach_replaces_the_previous_workspace_path() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "sprocket-project-attachments-replace-{}",
+            crate::now_ms()
+        ));
+        fs::create_dir_all(&temp_root).expect("temp dir");
+        let store = ProjectAttachmentStore::new(temp_root.clone());
+        let first = temp_root.join("first");
+        let second = temp_root.join("second");
+        fs::create_dir_all(&first).expect("first dir");
+        fs::create_dir_all(&second).expect("second dir");
+
+        let attached_first = store
+            .attach(AttachProjectRequest {
+                workspace_path: first.to_string_lossy().to_string(),
+                replace_workspace_path: None,
+            })
+            .await
+            .expect("attach first");
+        let attached_second = store
+            .attach(AttachProjectRequest {
+                workspace_path: second.to_string_lossy().to_string(),
+                replace_workspace_path: Some(attached_first.workspace_path.clone()),
+            })
+            .await
+            .expect("attach second");
+
+        let listed = store.list().await.expect("list");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].workspace_path, attached_second.workspace_path);
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[tokio::test]
+    async fn load_rewrites_legacy_project_id_rows() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "sprocket-project-attachments-legacy-{}",
+            crate::now_ms()
+        ));
+        fs::create_dir_all(&temp_root).expect("temp dir");
+        let workspace = temp_root.join("checkout");
+        fs::create_dir_all(&workspace).expect("workspace dir");
+        let store_path = temp_root.join(PROJECT_ATTACHMENTS_FILE);
+        fs::write(
+            store_path,
+            serde_json::json!([{
+                "projectId": "obsolete-convex-id",
+                "workspacePath": workspace.to_string_lossy(),
+                "availability": "available",
+                "lastValidatedAt": 1,
+                "lastUsedAt": 2
+            }])
+            .to_string(),
+        )
+        .expect("write legacy attachments");
+
+        let listed = ProjectAttachmentStore::new(temp_root.clone())
+            .list()
+            .await
+            .expect("list");
+        let expected =
+            resolve_workspace_path(&workspace.to_string_lossy(), false).expect("resolve");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].workspace_path, expected.workspace_path);
+        assert_eq!(listed[0].repository_key, expected.repository_key);
+        assert_eq!(listed[0].display_name, expected.display_name);
+
+        let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[tokio::test]
+    async fn list_keeps_the_previous_repository_key_when_git_identity_changes() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "sprocket-project-attachments-rekey-{}",
+            crate::now_ms()
+        ));
+        fs::create_dir_all(&temp_root).expect("temp dir");
+        let workspace = temp_root.join("checkout");
+        fs::create_dir_all(&workspace).expect("workspace dir");
+        gix::init(&workspace).expect("gix init");
+        let config_path = workspace.join(".git/config");
+        let mut config = fs::read_to_string(&config_path).expect("read config");
+        config
+            .push_str("\n[remote \"origin\"]\n\turl = https://github.com/spikonado/sprocket.git\n");
+        fs::write(config_path, config).expect("write config");
+        fs::write(
+            temp_root.join(PROJECT_ATTACHMENTS_FILE),
+            serde_json::json!([{
+                "workspacePath": workspace.to_string_lossy(),
+                "repositoryKey": "legacy-key",
+                "displayName": "checkout",
+                "availability": "available",
+                "lastValidatedAt": 1,
+                "lastUsedAt": 2
+            }])
+            .to_string(),
+        )
+        .expect("write attachments");
+
+        let listed = ProjectAttachmentStore::new(temp_root.clone())
+            .list()
+            .await
+            .expect("list");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].repository_key, "github.com/spikonado/sprocket");
+        assert_eq!(
+            listed[0].previous_repository_key.as_deref(),
+            Some("legacy-key")
+        );
 
         let _ = fs::remove_dir_all(temp_root);
     }

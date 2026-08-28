@@ -8,13 +8,24 @@ import type {
 	ProjectAttachmentRequest,
 	RunState
 } from '$lib/types/sprocket';
-import { isRunClaimLeaseActive } from '$convex/lib/runLease';
+import { isClaimedRunStatus, isRunClaimLeaseActive } from '$convex/lib/runLease';
+import { RUN_ABANDONED_BY_AGENT } from '$convex/lib/agentErrors';
 import { isRunFinalStatus } from '$convex/lib/validators';
 import { areImageUploadIdsEqual } from '$lib/chat/attachments';
 
 export type ProjectState = Project & {
 	localAttachmentAvailability: LocalAttachmentAvailability;
 };
+
+export function projectFromAttachment(attachment: ProjectAttachment): ProjectState {
+	return {
+		repositoryKey: attachment.repositoryKey,
+		displayName: attachment.displayName,
+		workspacePath: attachment.workspacePath,
+		localAttachmentAvailability: attachment.availability,
+		localAttachmentError: attachment.unavailableReason
+	};
+}
 
 export function resolveSubmissionId(args: {
 	newSubmissionId: string;
@@ -71,6 +82,23 @@ export function isRunBlockingAgentLaunch(
 	return isRunClaimLeaseActive(run, now);
 }
 
+export type RunResumeKind = 'crash' | 'failed' | 'cancelled';
+
+export function runResumeKind(
+	run: Pick<RunState, 'status' | 'claimExpiresAt' | 'lastError'> | null,
+	now: number
+): RunResumeKind | null {
+	if (!run) return null;
+	if (run.status === 'cancelled') return 'cancelled';
+	if (run.status === 'failed') {
+		return run.lastError === RUN_ABANDONED_BY_AGENT ? 'crash' : 'failed';
+	}
+	if (isClaimedRunStatus(run.status) && !isRunClaimLeaseActive(run, now)) {
+		return 'crash';
+	}
+	return null;
+}
+
 export function launchAgentRun(args: {
 	authToken: string;
 	desktopApi: DesktopApi;
@@ -83,7 +111,7 @@ export function launchAgentRun(args: {
 	reasoningEffort: AgentRunRequest['reasoningEffort'];
 	serviceTier: AgentRunRequest['serviceTier'];
 	submissionId: string;
-	projectId: Id<'projects'>;
+	workspacePath: string;
 }) {
 	void args.desktopApi
 		.runAgent({
@@ -95,7 +123,7 @@ export function launchAgentRun(args: {
 			reasoningEffort: args.reasoningEffort,
 			serviceTier: args.serviceTier,
 			submissionId: args.submissionId,
-			projectId: args.projectId
+			workspacePath: args.workspacePath
 		})
 		.then(({ runId }) => {
 			args.onStarted(runId);
@@ -107,11 +135,11 @@ export function launchAgentRun(args: {
 		});
 }
 
-function buildDesktopProjectAttachmentsById(
+function buildDesktopProjectAttachmentsByPath(
 	desktopProjectAttachments: ProjectAttachment[]
 ): Record<string, ProjectAttachment> {
 	return Object.fromEntries(
-		desktopProjectAttachments.map((attachment) => [attachment.projectId, attachment])
+		desktopProjectAttachments.map((attachment) => [attachment.workspacePath, attachment])
 	);
 }
 
@@ -120,109 +148,27 @@ export async function refreshDesktopProjectAttachments(desktopApi: DesktopApi | 
 		return {};
 	}
 
-	return buildDesktopProjectAttachmentsById(await desktopApi.listProjectAttachments());
+	return buildDesktopProjectAttachmentsByPath(await desktopApi.listProjectAttachments());
 }
 
 export async function attachLocalProject(args: {
 	desktopApi: DesktopApi;
-	projectId: Id<'projects'>;
 	workspacePath: string;
+	replaceWorkspacePath?: string;
 }) {
-	return await args.desktopApi.attachProject({
-		projectId: args.projectId,
+	const request: ProjectAttachmentRequest = {
 		workspacePath: args.workspacePath
-	} satisfies ProjectAttachmentRequest);
-}
-
-export function getDesiredAttachedProjectIds(
-	desktopProjectAttachments: ProjectAttachment[],
-	backendProjectIds: Id<'projects'>[]
-): Id<'projects'>[] {
-	const backendProjectIdSet = new Set(backendProjectIds);
-	return desktopProjectAttachments
-		.filter(
-			(attachment) =>
-				attachment.availability === 'available' && backendProjectIdSet.has(attachment.projectId)
-		)
-		.map((attachment) => attachment.projectId);
-}
-
-type PendingLatestTask<T> = {
-	value: T;
-	promise: Promise<void>;
-	resolve: () => void;
-	reject: (error: Error) => void;
-};
-
-class LatestTaskQueueCancelledError extends Error {
-	constructor() {
-		super('Pending task was canceled.');
-		this.name = 'LatestTaskQueueCancelledError';
-	}
-}
-
-export function createLatestTaskQueue<T>(run: (value: T) => Promise<void>) {
-	let pending: PendingLatestTask<T> | null = null;
-	let isRunning = false;
-
-	async function drain() {
-		if (isRunning) {
-			return;
-		}
-
-		isRunning = true;
-		try {
-			while (pending) {
-				const task = pending;
-				pending = null;
-				try {
-					await run(task.value);
-					task.resolve();
-				} catch (error) {
-					task.reject(error instanceof Error ? error : new Error('Pending task failed.'));
-				}
-			}
-		} finally {
-			isRunning = false;
-			if (pending) {
-				void drain();
-			}
-		}
-	}
-
-	return {
-		enqueue(value: T): Promise<void> {
-			if (pending) {
-				pending.value = value;
-				return pending.promise;
-			}
-
-			let resolveTask!: () => void;
-			let rejectTask!: (error: Error) => void;
-			const promise = new Promise<void>((resolve, reject) => {
-				resolveTask = resolve;
-				rejectTask = reject;
-			});
-			pending = { value, promise, resolve: resolveTask, reject: rejectTask };
-			void drain();
-			return promise;
-		},
-		cancelPending() {
-			if (!pending) {
-				return;
-			}
-
-			const task = pending;
-			pending = null;
-			task.reject(new LatestTaskQueueCancelledError());
-		}
 	};
+	if (args.replaceWorkspacePath) {
+		request.replaceWorkspacePath = args.replaceWorkspacePath;
+	}
+	return await args.desktopApi.attachProject(request);
 }
 
 export async function verifyProjectAttachment(args: {
 	desktopApi: DesktopApi | null;
 	refreshDesktopProjectAttachments: () => Promise<void>;
-	projectId: Id<'projects'>;
+	workspacePath: string;
 }) {
 	if (!args.desktopApi) {
 		return;
@@ -230,7 +176,7 @@ export async function verifyProjectAttachment(args: {
 
 	try {
 		const attachment = (await args.desktopApi.listProjectAttachments()).find(
-			(candidate) => candidate.projectId === args.projectId
+			(candidate) => candidate.workspacePath === args.workspacePath
 		);
 		if (!attachment || attachment.availability !== 'available') {
 			throw new Error(attachment?.unavailableReason ?? 'Workspace path is unavailable.');

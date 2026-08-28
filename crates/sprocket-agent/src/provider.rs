@@ -1,19 +1,25 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::anyhow;
 use futures::StreamExt;
 use rig::client::{AgentClientExt, CompletionClient};
 use rig::completion::Message;
+use rig::providers::openai;
 use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
-use sprocket_convex_provider::{Client as ConvexProviderClient, is_completion_stream_superseded};
 use sprocket_workspace::{CommandSessionManager, WorkspaceSkill};
+use tokio::time::sleep;
 
 use crate::compaction::ContextCompactionHook;
 use crate::convex::RuntimeClient;
-use crate::hooks::{AgentPromptHook, ToolCallTracker};
+use crate::hooks::{AgentPromptHook, GatewayRequestHook, ToolCallTracker};
+use crate::live::{
+    LiveAssistantPart, LiveCompletionHub, LiveCompletionOverlay, join_assistant_text_parts,
+};
 use crate::tools::agent_tools;
-use crate::types::{ContextBudget, RunContextResponse};
+use crate::types::{ContextBudget, RunContextResponse, gateway_api_v1_url};
 
 const AGENT_MAX_TURNS: usize = 1_000;
 const MAX_INVALID_TOOL_CALL_RETRIES: usize = 3;
@@ -31,38 +37,27 @@ enum ProviderErrorDisposition {
 }
 
 fn classify_provider_error(error: &(impl std::fmt::Display + ?Sized)) -> ProviderErrorDisposition {
-    if is_completion_stream_superseded(error) {
+    let error_text = error.to_string();
+    if error_text.contains("SPROCKET_COMPLETION_STREAM_SUPERSEDED") {
         return ProviderErrorDisposition::Superseded;
     }
-    let error_text = error.to_string();
     if error_text.contains(RUN_CANCELLED_BY_USER) || error_text.contains(RUN_NO_LONGER_ACTIVE) {
         return ProviderErrorDisposition::Cancelled;
     }
     ProviderErrorDisposition::Failed
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ProviderKind {
-    ConvexCompletion,
-}
-
-impl ProviderKind {
-    pub(crate) const DEFAULT: Self = Self::ConvexCompletion;
-
-    pub(crate) fn as_str(self) -> &'static str {
-        "convex-completion"
-    }
-}
-
 pub(crate) struct AgentProvider {
-    kind: ProviderKind,
-    completion: ConvexProviderClient,
+    gateway_url: String,
     model: String,
 }
 
 pub(crate) struct AgentProviderRequest {
     pub(crate) run_id: String,
     pub(crate) claim_id: String,
+    pub(crate) thread_id: String,
+    pub(crate) run_started_at: u64,
+    pub(crate) live: Arc<LiveCompletionHub>,
     pub(crate) prompt: Message,
     pub(crate) preamble: String,
     pub(crate) prior_history: Vec<Message>,
@@ -82,26 +77,11 @@ pub(crate) enum AgentProviderResult {
 }
 
 impl AgentProvider {
-    pub(crate) fn default_for_run(
-        runtime: &RuntimeClient,
-        context: &RunContextResponse,
-        run_id: &str,
-        claim_id: &str,
-    ) -> Self {
+    pub(crate) fn default_for_run(context: &RunContextResponse, gateway_url: &str) -> Self {
         Self {
-            kind: ProviderKind::DEFAULT,
-            completion: runtime
-                .completion_client()
-                .clone()
-                .with_reasoning_effort(context.run.reasoning_effort.clone())
-                .with_service_tier(context.run.service_tier.clone())
-                .with_completion_scope(run_id.to_string(), claim_id.to_string()),
+            gateway_url: gateway_url.to_string(),
             model: context.run.selected_model.clone(),
         }
-    }
-
-    pub(crate) fn kind(&self) -> ProviderKind {
-        self.kind
     }
 
     pub(crate) async fn run(
@@ -109,7 +89,40 @@ impl AgentProvider {
         runtime: RuntimeClient,
         request: AgentProviderRequest,
     ) -> AgentProviderResult {
-        run_with_completion_client(self.completion, self.model, runtime, request).await
+        let credential = match runtime
+            .issue_gateway_credential(&request.run_id, &request.claim_id)
+            .await
+        {
+            Ok(credential) => credential,
+            Err(error) => {
+                return AgentProviderResult::Failed {
+                    text: String::new(),
+                    error,
+                };
+            }
+        };
+        let base_url = gateway_api_v1_url(&self.gateway_url);
+        let completion_client = match openai::Client::builder()
+            .api_key(credential.token)
+            .base_url(&base_url)
+            .build()
+        {
+            Ok(client) => client,
+            Err(error) => {
+                return AgentProviderResult::Failed {
+                    text: String::new(),
+                    error: anyhow!(error),
+                };
+            }
+        };
+        run_with_completion_client(
+            completion_client,
+            self.model,
+            runtime,
+            request,
+            self.gateway_url,
+        )
+        .await
     }
 }
 
@@ -118,9 +131,10 @@ async fn run_with_completion_client<C>(
     model: String,
     runtime: RuntimeClient,
     request: AgentProviderRequest,
+    gateway_url: String,
 ) -> AgentProviderResult
 where
-    C: CompletionClient,
+    C: CompletionClient + AgentClientExt,
     C::CompletionModel: 'static,
 {
     let tool_call_tracker = ToolCallTracker::default();
@@ -159,10 +173,41 @@ where
     eprintln!("sprocket-agent: built agent {}", request.run_id);
     eprintln!("sprocket-agent: prompting model {}", request.run_id);
 
+    let mut transcript = match TranscriptSink::start(
+        runtime.clone(),
+        request.live.clone(),
+        request.run_id.clone(),
+        request.claim_id.clone(),
+        request.thread_id.clone(),
+        request.run_started_at,
+    )
+    .await
+    {
+        Ok(sink) => sink,
+        Err(error) => {
+            session_shutdown.finish().await;
+            let result = match classify_provider_error(&error) {
+                ProviderErrorDisposition::Superseded => AgentProviderResult::Superseded { error },
+                ProviderErrorDisposition::Cancelled => AgentProviderResult::Cancelled {
+                    text: String::new(),
+                },
+                ProviderErrorDisposition::Failed => AgentProviderResult::Failed {
+                    text: String::new(),
+                    error,
+                },
+            };
+            return result;
+        }
+    };
+
     let prompt_hook = AgentPromptHook::new(tool_call_tracker);
     let prior_history_len = request.prior_history.len();
+    let gateway_hook = GatewayRequestHook::new(
+        request.reasoning_effort.clone(),
+        request.service_tier.clone(),
+    );
     let compaction_hook = ContextCompactionHook::new(
-        runtime,
+        runtime.clone(),
         request.run_id.clone(),
         request.claim_id.clone(),
         request.model,
@@ -170,13 +215,26 @@ where
         request.service_tier,
         request.context_budget,
         prior_history_len,
+        gateway_url,
     );
+
+    let mut finished = match runtime.run_finished_subscription(&request.run_id).await {
+        Ok(subscription) => subscription,
+        Err(error) => {
+            session_shutdown.finish().await;
+            return AgentProviderResult::Failed {
+                text: String::new(),
+                error,
+            };
+        }
+    };
 
     let mut stream = agent
         .stream_prompt(request.prompt)
         .history(request.prior_history)
         .max_turns(AGENT_MAX_TURNS)
         .add_hook(prompt_hook)
+        .add_hook(gateway_hook)
         .add_hook(compaction_hook)
         .max_invalid_tool_call_retries(MAX_INVALID_TOOL_CALL_RETRIES)
         .await;
@@ -184,62 +242,385 @@ where
     let mut streamed_text = String::new();
 
     let result = 'agent_run: {
-        while let Some(item) = stream.next().await {
-            match item {
-                Ok(rig::agent::MultiTurnStreamItem::FinalResponse(response)) => {
-                    final_text = response.output().to_string();
+        loop {
+            tokio::select! {
+                biased;
+                _ = sleep(transcript.publish_delay()), if transcript.has_unpublished() => {
+                    transcript.publish_if_needed(true);
                 }
-                Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
-                    StreamedAssistantContent::Text(text),
-                )) => {
-                    streamed_text.push_str(&text.text);
-                }
-                // Model tool calls are persisted by the Convex completion action. Tool execution
-                // and results are persisted by executor jobs and correlated during finalization.
-                Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
-                    StreamedAssistantContent::ToolCall { .. }
-                    | StreamedAssistantContent::ToolCallDelta { .. }
-                    | StreamedAssistantContent::Reasoning { .. }
-                    | StreamedAssistantContent::ReasoningDelta { .. }
-                    | StreamedAssistantContent::Final(_)
-                    | StreamedAssistantContent::Unknown(_),
-                ))
-                | Ok(rig::agent::MultiTurnStreamItem::ToolExecutionCommitted { .. })
-                | Ok(rig::agent::MultiTurnStreamItem::ModelTurnRetried { .. })
-                | Ok(rig::agent::MultiTurnStreamItem::StreamUserItem(_))
-                | Ok(rig::agent::MultiTurnStreamItem::CompletionCall(_)) => {}
-                Err(error) => {
-                    let text = if final_text.is_empty() {
-                        streamed_text
-                    } else {
-                        final_text
-                    };
-                    let result = match classify_provider_error(&error) {
-                        ProviderErrorDisposition::Superseded => AgentProviderResult::Superseded {
-                            error: anyhow!(error),
-                        },
-                        ProviderErrorDisposition::Cancelled => {
-                            AgentProviderResult::Cancelled { text }
+                update = finished.next() => {
+                    match update {
+                        Some(result) => {
+                            match RuntimeClient::decode_run_finished_update(result) {
+                                Ok(true) => {
+                                    let text = if final_text.is_empty() {
+                                        streamed_text
+                                    } else {
+                                        final_text
+                                    };
+                                    break 'agent_run AgentProviderResult::Cancelled { text };
+                                }
+                                Ok(false) => {}
+                                Err(error) => {
+                                    break 'agent_run AgentProviderResult::Failed {
+                                        text: if final_text.is_empty() {
+                                            streamed_text
+                                        } else {
+                                            final_text
+                                        },
+                                        error,
+                                    };
+                                }
+                            }
                         }
-                        ProviderErrorDisposition::Failed => AgentProviderResult::Failed {
-                            text,
-                            error: anyhow!(error),
-                        },
-                    };
-                    break 'agent_run result;
+                        None => {}
+                    }
+                }
+                item = stream.next() => {
+                    match item {
+                        Some(Ok(rig::agent::MultiTurnStreamItem::FinalResponse(response))) => {
+                            final_text = response.output().to_string();
+                        }
+                        Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
+                            StreamedAssistantContent::Text(text),
+                        ))) => {
+                            streamed_text.push_str(&text.text);
+                            transcript.push_text(&text.text);
+                        }
+                        Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
+                            StreamedAssistantContent::ReasoningDelta { id, reasoning, .. },
+                        ))) => {
+                            transcript.push_reasoning(&id, &reasoning);
+                        }
+                        Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
+                            StreamedAssistantContent::ToolCall { tool_call, internal_call_id },
+                        ))) => {
+                            transcript.push_tool_call(
+                                Some(internal_call_id.to_string()),
+                                tool_call.wire_call_id().to_string(),
+                                tool_call.function.name,
+                                tool_call.function.arguments,
+                            );
+                        }
+                        Some(Ok(rig::agent::MultiTurnStreamItem::ToolExecutionCommitted { .. })) => {
+                            if let Err(error) = transcript.begin_next_turn_if_streamed().await {
+                                break 'agent_run transcript_error(error, &final_text, &streamed_text);
+                            }
+                        }
+                        Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
+                            StreamedAssistantContent::ToolCallDelta { .. }
+                            | StreamedAssistantContent::Reasoning { .. }
+                            | StreamedAssistantContent::Final(_)
+                            | StreamedAssistantContent::Unknown(_),
+                        )))
+                        | Some(Ok(rig::agent::MultiTurnStreamItem::ModelTurnRetried { .. }))
+                        | Some(Ok(rig::agent::MultiTurnStreamItem::StreamUserItem(_)))
+                        | Some(Ok(rig::agent::MultiTurnStreamItem::CompletionCall(_))) => {}
+                        Some(Err(error)) => {
+                            let text = if final_text.is_empty() {
+                                streamed_text
+                            } else {
+                                final_text
+                            };
+                            let result = match classify_provider_error(&error) {
+                                ProviderErrorDisposition::Superseded => AgentProviderResult::Superseded {
+                                    error: anyhow!(error),
+                                },
+                                ProviderErrorDisposition::Cancelled => {
+                                    AgentProviderResult::Cancelled { text }
+                                }
+                                ProviderErrorDisposition::Failed => AgentProviderResult::Failed {
+                                    text,
+                                    error: anyhow!(error),
+                                },
+                            };
+                            break 'agent_run result;
+                        }
+                        None => {
+                            if let Err(error) = transcript.finalize_turn().await {
+                                break 'agent_run transcript_error(
+                                    error,
+                                    &final_text,
+                                    &streamed_text,
+                                );
+                            }
+                            if final_text.is_empty() {
+                                final_text = streamed_text;
+                            }
+                            break 'agent_run AgentProviderResult::Completed { text: final_text };
+                        }
+                    }
                 }
             }
         }
-
-        if final_text.is_empty() {
-            final_text = streamed_text;
-        }
-
-        AgentProviderResult::Completed { text: final_text }
     };
 
     session_shutdown.finish().await;
     result
+}
+
+const TRANSCRIPT_FLUSH_INTERVAL: Duration = Duration::from_millis(500);
+
+fn transcript_error(
+    error: anyhow::Error,
+    final_text: &str,
+    streamed_text: &str,
+) -> AgentProviderResult {
+    let text = if final_text.is_empty() {
+        streamed_text.to_string()
+    } else {
+        final_text.to_string()
+    };
+    match classify_provider_error(&error) {
+        ProviderErrorDisposition::Superseded => AgentProviderResult::Superseded { error },
+        ProviderErrorDisposition::Cancelled => AgentProviderResult::Cancelled { text },
+        ProviderErrorDisposition::Failed => AgentProviderResult::Failed { text, error },
+    }
+}
+
+struct TranscriptSink {
+    runtime: RuntimeClient,
+    live: Arc<LiveCompletionHub>,
+    run_id: String,
+    claim_id: String,
+    thread_id: String,
+    run_started_at: u64,
+    stream_id: String,
+    attempt_seq: u64,
+    parts: Vec<LiveAssistantPart>,
+    text_index: HashMap<String, usize>,
+    tool_index: HashMap<String, usize>,
+    last_publish: Instant,
+    unpublished: usize,
+    streamed: bool,
+}
+
+impl TranscriptSink {
+    async fn start(
+        runtime: RuntimeClient,
+        live: Arc<LiveCompletionHub>,
+        run_id: String,
+        claim_id: String,
+        thread_id: String,
+        run_started_at: u64,
+    ) -> anyhow::Result<Self> {
+        runtime
+            .register_completion_attempt(&run_id, &claim_id, 1)
+            .await?;
+        Ok(Self {
+            stream_id: format!("agent:{run_id}:{claim_id}:1"),
+            runtime,
+            live,
+            run_id,
+            claim_id,
+            thread_id,
+            run_started_at,
+            attempt_seq: 1,
+            parts: Vec::new(),
+            text_index: HashMap::new(),
+            tool_index: HashMap::new(),
+            last_publish: Instant::now(),
+            unpublished: 0,
+            streamed: false,
+        })
+    }
+
+    fn push_text(&mut self, text: &str) {
+        let id = format!("{}:text", self.stream_id);
+        let turn_id = Some(self.stream_id.clone());
+        self.apply_text_delta("text", id, text, turn_id);
+        self.publish_if_needed(false);
+    }
+
+    fn push_reasoning(&mut self, id: &str, text: &str) {
+        let part_id = format!("{}:{id}", self.stream_id);
+        let turn_id = Some(self.stream_id.clone());
+        self.apply_text_delta("reasoning", part_id, text, turn_id);
+        self.publish_if_needed(false);
+    }
+
+    fn push_tool_call(
+        &mut self,
+        part_id: Option<String>,
+        call_id: String,
+        name: String,
+        input: serde_json::Value,
+    ) {
+        let turn_id = Some(self.stream_id.clone());
+        self.apply_tool_call(part_id, call_id, name, input, turn_id);
+        self.publish_if_needed(true);
+    }
+
+    fn reset_parts(&mut self) {
+        self.parts.clear();
+        self.text_index.clear();
+        self.tool_index.clear();
+        self.unpublished = 0;
+        self.streamed = false;
+    }
+
+    async fn finalize_turn(&mut self) -> anyhow::Result<()> {
+        self.publish_if_needed(true);
+        self.runtime
+            .finalize_completion_call(
+                &self.run_id,
+                &self.claim_id,
+                self.attempt_seq,
+                &self.stream_id,
+                self.items_json(),
+            )
+            .await?;
+        self.streamed = false;
+        Ok(())
+    }
+
+    async fn begin_next_turn(&mut self) -> anyhow::Result<()> {
+        self.finalize_turn().await?;
+        self.reset_parts();
+        self.attempt_seq += 1;
+        self.stream_id = format!(
+            "agent:{}:{}:{}",
+            self.run_id, self.claim_id, self.attempt_seq
+        );
+        self.runtime
+            .register_completion_attempt(&self.run_id, &self.claim_id, self.attempt_seq)
+            .await
+    }
+
+    async fn begin_next_turn_if_streamed(&mut self) -> anyhow::Result<()> {
+        if !self.streamed {
+            return Ok(());
+        }
+        self.begin_next_turn().await
+    }
+
+    fn items_json(&self) -> Vec<serde_json::Value> {
+        self.parts
+            .iter()
+            .map(|part| serde_json::to_value(part).expect("live assistant parts always serialize"))
+            .collect()
+    }
+
+    fn has_unpublished(&self) -> bool {
+        self.unpublished > 0
+    }
+
+    fn publish_delay(&self) -> Duration {
+        TRANSCRIPT_FLUSH_INTERVAL.saturating_sub(self.last_publish.elapsed())
+    }
+
+    fn publish_if_needed(&mut self, force: bool) {
+        if self.unpublished == 0 {
+            return;
+        }
+        if !force
+            && self.unpublished < 24
+            && self.last_publish.elapsed() < TRANSCRIPT_FLUSH_INTERVAL
+        {
+            return;
+        }
+        self.publish();
+    }
+
+    fn publish(&mut self) {
+        self.unpublished = 0;
+        self.last_publish = Instant::now();
+        self.live.publish(LiveCompletionOverlay {
+            thread_id: self.thread_id.clone(),
+            run_id: self.run_id.clone(),
+            run_status: "running".to_string(),
+            stream_id: Some(self.stream_id.clone()),
+            text: join_assistant_text_parts(&self.parts),
+            parts: self.parts.clone(),
+            run_started_at: self.run_started_at,
+        });
+    }
+
+    fn apply_text_delta(
+        &mut self,
+        event_type: &str,
+        id: String,
+        delta: &str,
+        turn_id: Option<String>,
+    ) {
+        self.streamed = true;
+        self.unpublished += 1;
+        let key = format!("{event_type}:{id}");
+        if let Some(&index) = self.text_index.get(&key) {
+            match &mut self.parts[index] {
+                LiveAssistantPart::Text {
+                    text,
+                    turn_id: existing,
+                    ..
+                } if event_type == "text" => {
+                    text.push_str(delta);
+                    if turn_id.is_some() {
+                        *existing = turn_id;
+                    }
+                }
+                LiveAssistantPart::Reasoning {
+                    text,
+                    turn_id: existing,
+                    ..
+                } if event_type == "reasoning" => {
+                    text.push_str(delta);
+                    if turn_id.is_some() {
+                        *existing = turn_id;
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+        let part = if event_type == "reasoning" {
+            LiveAssistantPart::Reasoning {
+                id,
+                text: delta.to_string(),
+                turn_id,
+            }
+        } else {
+            LiveAssistantPart::Text {
+                id,
+                text: delta.to_string(),
+                turn_id,
+            }
+        };
+        self.text_index.insert(key, self.parts.len());
+        self.parts.push(part);
+    }
+
+    fn apply_tool_call(
+        &mut self,
+        part_id: Option<String>,
+        call_id: String,
+        name: String,
+        input: serde_json::Value,
+        turn_id: Option<String>,
+    ) {
+        self.streamed = true;
+        self.unpublished += 1;
+        let key = part_id.clone().unwrap_or_else(|| call_id.clone());
+        let part = LiveAssistantPart::ToolCall {
+            part_id,
+            call_id,
+            name,
+            input,
+            turn_id,
+        };
+        if let Some(&index) = self.tool_index.get(&key) {
+            self.parts[index] = part;
+        } else {
+            self.tool_index.insert(key, self.parts.len());
+            self.parts.push(part);
+        }
+    }
+}
+
+impl Drop for TranscriptSink {
+    fn drop(&mut self) {
+        self.publish_if_needed(true);
+        self.live.clear(&self.thread_id);
+    }
 }
 
 /// Stops persistent command sessions on the normal path and if this future is
@@ -266,8 +647,6 @@ impl CommandSessionShutdown {
 impl Drop for CommandSessionShutdown {
     fn drop(&mut self) {
         if let Some(sessions) = self.sessions.take() {
-            // Drop cannot await the async drain in stop_all; terminate is enough
-            // to stop leaked persistent command sessions after lease loss.
             sessions.terminate_all();
         }
     }
@@ -276,11 +655,11 @@ impl Drop for CommandSessionShutdown {
 #[cfg(test)]
 mod tests {
     use super::{ProviderErrorDisposition, RUN_NO_LONGER_ACTIVE, classify_provider_error};
-    use sprocket_convex_provider::COMPLETION_STREAM_SUPERSEDED;
 
     #[test]
     fn classifies_superseded_completion_without_treating_it_as_failure() {
-        let error = anyhow::anyhow!("completion provider failed: {COMPLETION_STREAM_SUPERSEDED}");
+        let error =
+            anyhow::anyhow!("completion provider failed: SPROCKET_COMPLETION_STREAM_SUPERSEDED");
 
         assert_eq!(
             classify_provider_error(&error),

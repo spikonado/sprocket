@@ -1,0 +1,74 @@
+{
+	"object": "list",
+	"data": [
+		{
+			"id": "deepseek-v4-pro-0813",
+			"object": "model",
+			"created": 0,
+			"owned_by": "deepseek"
+		},
+		{
+			"id": "gpt-5.6-sol",
+			"object": "model",
+			"created": 0,
+			"owned_by": "openai"
+		}
+	],
+	"sprocket": {
+		"protocolVersion": 1,
+		"catalogVersion": "1",
+		"defaultModelId": "deepseek-v4-pro-0813",
+		"defaultReasoningEffort": "max",
+		"defaultServiceTier": "standard",
+		"models": [
+			{
+				"id": "deepseek-v4-pro-0813",
+				"label": "DeepSeek V4 Pro",
+				"provider": "deepseek",
+				"supportsImages": false,
+				"contextWindowTokens": 1000000,
+				"autoCompactTokenLimit": 967000,
+				"reasoningEfforts": ["low", "high", "max"],
+				"defaultReasoningEffort": "max",
+				"serviceTiers": ["standard"],
+				"usageWeights": {
+					"input": 0.00066,
+					"cacheRead": 0.00002,
+					"cacheWrite": 0,
+					"output": 0.00198,
+					"fastMultiplier": 1
+				}
+			},
+			{
+				"id": "gpt-5.6-sol",
+				"label": "GPT-5.6 Sol",
+				"provider": "openai",
+				"supportsImages": true,
+				"contextWindowTokens": 272000,
+				"autoCompactTokenLimit": 258000,
+				"reasoningEfforts": ["none", "low", "medium", "high", "xhigh"],
+				"defaultReasoningEffort": "medium",
+				"serviceTiers": ["standard"],
+				"usageWeights": {
+					"input": 0.005,
+					"cacheRead": 0.0005,
+					"cacheWrite": 0.00625,
+					"output": 0.03,
+					"fastMultiplier": 2
+				}
+			}
+		],
+		"tierAllowedModels": {
+			"free": ["deepseek-v4-pro-0813"],
+			"pro": ["deepseek-v4-pro-0813", "gpt-5.6-sol"],
+			"admin": ["deepseek-v4-pro-0813", "gpt-5.6-sol"]
+		},
+		"tierAllowedServiceTiers": {
+			"free": ["standard"],
+			"pro": ["standard", "fast"],
+			"admin": ["standard", "fast"]
+		},
+		"modelLockUpgradeMessage": "Upgrade to a higher tier to unlock this model",
+		"serviceTierLockUpgradeMessage": "Upgrade to a higher tier to unlock this service tier"
+	}
+}

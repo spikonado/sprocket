@@ -4,7 +4,7 @@ import type { Project, ThreadSummary, ProjectThreadGroup } from '$lib/types/spro
 
 export type ThreadSummaryRow = {
 	threadId: ThreadSummary['threadId'];
-	projectId: ThreadSummary['projectId'];
+	repositoryKey: ThreadSummary['repositoryKey'];
 	title: string;
 	selectedModel: string;
 	reasoningEffort: ThreadSummary['reasoningEffort'];
@@ -21,7 +21,7 @@ export type ThreadSummaryRow = {
 export function toThreadSummary(row: ThreadSummaryRow): ThreadSummary {
 	return {
 		threadId: row.threadId,
-		projectId: row.projectId,
+		repositoryKey: row.repositoryKey ?? '',
 		title: row.title,
 		selectedModel: coercePersistedModelId(row.selectedModel),
 		reasoningEffort: row.reasoningEffort,
@@ -38,45 +38,26 @@ export function toThreadSummary(row: ThreadSummaryRow): ThreadSummary {
 
 export function findProjectByRepositoryKey<T extends Pick<Project, 'repositoryKey'>>(
 	projects: T[],
-	repositoryKey: string
+	repositoryKey: string | null | undefined
 ): T | null {
+	if (!repositoryKey) {
+		return null;
+	}
 	return projects.find((project) => project.repositoryKey === repositoryKey) ?? null;
 }
 
-export function findProjectById<T extends Pick<Project, '_id'>>(
+export function findProjectByWorkspacePath<T extends Pick<Project, 'workspacePath'>>(
 	projects: T[],
-	projectId: Id<'projects'> | null | undefined
+	workspacePath: string | null | undefined
 ): T | null {
-	if (!projectId) {
+	if (!workspacePath) {
 		return null;
 	}
-	return projects.find((project) => project._id === projectId) ?? null;
-}
-
-/** True when a draft send should land on a new project because the path's git remote changed. */
-export function shouldForkProjectForRemoteChange(
-	selectedRepositoryKey: string,
-	resolvedRepositoryKey: string
-) {
-	return (
-		selectedRepositoryKey.trim().length > 0 &&
-		resolvedRepositoryKey.trim().length > 0 &&
-		selectedRepositoryKey !== resolvedRepositoryKey
-	);
+	return projects.find((project) => project.workspacePath === workspacePath) ?? null;
 }
 
 export function isActiveThread(thread: Pick<ThreadSummary, 'threadStatus'>) {
 	return thread.threadStatus !== 'archived';
-}
-
-function unknownProject(projectId: Id<'projects'>): Project {
-	return {
-		_id: projectId,
-		userId: '',
-		repositoryKey: 'unknown',
-		displayName: 'Unknown project',
-		localAttachmentAvailability: 'unlinked'
-	};
 }
 
 function buildProjectThreadGroup(project: Project, threads: ThreadSummary[]): ProjectThreadGroup {
@@ -89,32 +70,20 @@ function buildProjectThreadGroup(project: Project, threads: ThreadSummary[]): Pr
 }
 
 export function getProjectThreadGroups(projects: Project[], threads: ThreadSummary[]) {
-	const threadsByProjectId = new Map<Id<'projects'>, ThreadSummary[]>();
+	const threadsByRepositoryKey = new Map<string, ThreadSummary[]>();
 
 	for (const thread of threads.filter(isActiveThread)) {
-		const existing = threadsByProjectId.get(thread.projectId);
+		const existing = threadsByRepositoryKey.get(thread.repositoryKey);
 		if (existing) {
 			existing.push(thread);
 			continue;
 		}
-		threadsByProjectId.set(thread.projectId, [thread]);
+		threadsByRepositoryKey.set(thread.repositoryKey, [thread]);
 	}
 
-	const groups: ProjectThreadGroup[] = [];
-
-	for (const project of projects) {
-		groups.push(buildProjectThreadGroup(project, threadsByProjectId.get(project._id) ?? []));
-		threadsByProjectId.delete(project._id);
-	}
-
-	for (const [projectId, projectThreads] of threadsByProjectId) {
-		groups.push(buildProjectThreadGroup(unknownProject(projectId), projectThreads));
-	}
-
-	// Preserve the project order supplied by `projects.listMine` (creation,
-	// newest first). Thread activity reorders threads within a project, never
-	// the projects themselves.
-	return groups;
+	return projects.map((project) =>
+		buildProjectThreadGroup(project, threadsByRepositoryKey.get(project.repositoryKey) ?? [])
+	);
 }
 
 function sortThreadsRunningFirst(threads: ThreadSummary[]) {
@@ -237,7 +206,8 @@ function hasAgentLaunchProgressed(
 	return Boolean(
 		observedRunId &&
 		(observedRunId !== pendingLaunch.previousRunId ||
-			observedClaimExpiresAt !== pendingLaunch.previousClaimExpiresAt)
+			(observedClaimExpiresAt != null &&
+				observedClaimExpiresAt !== pendingLaunch.previousClaimExpiresAt))
 	);
 }
 
@@ -303,19 +273,19 @@ export function resolveExpiredAgentLaunch(
 export function resolveProjectThreadSelection(args: {
 	threads: ThreadSummary[];
 	currentThreadId: Id<'threadRecords'> | null;
-	currentRepositoryKey: string | null;
-	draftRepositoryKey: string | null;
+	currentWorkspacePath: string | null;
+	draftWorkspacePath: string | null;
 	pendingCreatedThreadId?: Id<'threadRecords'> | null;
 }) {
 	const {
 		threads,
 		currentThreadId,
-		currentRepositoryKey,
-		draftRepositoryKey,
+		currentWorkspacePath,
+		draftWorkspacePath,
 		pendingCreatedThreadId = null
 	} = args;
 
-	if (currentRepositoryKey && draftRepositoryKey === currentRepositoryKey) {
+	if (currentWorkspacePath && draftWorkspacePath === currentWorkspacePath) {
 		return null;
 	}
 

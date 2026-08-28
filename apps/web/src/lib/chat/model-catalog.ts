@@ -1,30 +1,26 @@
-import type { ModelProvider, SupportedModelId, SupportedServiceTier } from '$convex/lib/models';
 import type { SubscriptionTier } from '$convex/lib/tiers';
-import type {
-	CatalogModel,
-	CatalogModelWithUsagePolicy,
-	ModelCatalog
-} from '$convex/lib/uiModelCatalog';
+import type { CatalogModel, ModelCatalog } from '$convex/lib/uiModelCatalog';
+import {
+	CATALOG_UNAVAILABLE_MESSAGE,
+	GATEWAY_API_PREFIX,
+	GATEWAY_PROTOCOL_VERSION
+} from '$convex/lib/gatewayProtocol';
+import { z } from 'zod';
 
 export type { CatalogModel, ModelCatalog };
-export type { CatalogModelWithUsagePolicy };
 export type CatalogModelId = CatalogModel['id'];
-
-/** Narrow a runtime catalog id for Convex args; server validators remain authoritative. */
-export function asSupportedModelId(modelId: CatalogModelId): SupportedModelId {
-	return modelId;
-}
+export { CATALOG_UNAVAILABLE_MESSAGE };
 
 export type ModelSelectorOption = {
 	id: CatalogModelId;
 	label: string;
-	provider: ModelProvider | string;
+	provider: string;
 	locked?: boolean;
 	lockTooltip?: string;
 };
 
 export type ServiceTierSelectorOption = {
-	id: SupportedServiceTier;
+	id: string;
 	label: string;
 	locked?: boolean;
 	lockTooltip?: string;
@@ -33,7 +29,7 @@ export type ServiceTierSelectorOption = {
 export function getCatalogModel(
 	catalog: ModelCatalog,
 	modelId: CatalogModelId
-): CatalogModelWithUsagePolicy | undefined {
+): CatalogModel | undefined {
 	return catalog.models.find((model) => model.id === modelId);
 }
 
@@ -57,23 +53,21 @@ export function resolveModelForTier(
 export function isServiceTierAllowedForTier(
 	catalog: ModelCatalog,
 	tier: SubscriptionTier,
-	serviceTier: SupportedServiceTier
+	serviceTier: string
 ): boolean {
 	return (catalog.tierAllowedServiceTiers[tier] ?? []).includes(serviceTier);
 }
 
-/** Unlocked service tiers for a model on a subscription (used to coerce selections). */
 export function serviceTiersForModelAndTier(
 	catalog: ModelCatalog,
 	tier: SubscriptionTier,
 	model: CatalogModel
-): readonly SupportedServiceTier[] {
+): readonly string[] {
 	return model.serviceTiers.filter((serviceTier) =>
 		isServiceTierAllowedForTier(catalog, tier, serviceTier)
 	);
 }
 
-/** All model service tiers, with paid-only ones marked locked (mirrors modelOptionsForTier). */
 export function serviceTierOptionsForModelAndTier(
 	catalog: ModelCatalog,
 	tier: SubscriptionTier,
@@ -143,4 +137,95 @@ export function serviceTierLabel(tier: string): string {
 		default:
 			return tier;
 	}
+}
+
+const gatewayModelSchema = z
+	.object({
+		id: z.string().min(1),
+		label: z.string().min(1),
+		provider: z.string().min(1),
+		supportsImages: z.boolean(),
+		contextWindowTokens: z.number().finite(),
+		autoCompactTokenLimit: z.number().finite(),
+		reasoningEfforts: z.array(z.string()).min(1),
+		defaultReasoningEffort: z.string().min(1),
+		serviceTiers: z.array(z.string()).min(1),
+		usagePolicy: z.literal('unlimited').optional()
+	})
+	.passthrough();
+
+const gatewayModelsResponseSchema = z.object({
+	sprocket: z.object({
+		protocolVersion: z.number().finite(),
+		catalogVersion: z.string().min(1),
+		defaultModelId: z.string().min(1),
+		defaultReasoningEffort: z.string().min(1),
+		defaultServiceTier: z.string().min(1),
+		models: z.array(gatewayModelSchema).min(1),
+		tierAllowedModels: z.object({
+			free: z.array(z.string()),
+			pro: z.array(z.string()),
+			admin: z.array(z.string())
+		}),
+		tierAllowedServiceTiers: z.object({
+			free: z.array(z.string()),
+			pro: z.array(z.string()),
+			admin: z.array(z.string())
+		}),
+		modelLockUpgradeMessage: z.string().min(1),
+		serviceTierLockUpgradeMessage: z.string().min(1)
+	})
+});
+
+function catalogFromGatewayPayload(
+	payload: z.infer<typeof gatewayModelsResponseSchema>
+): ModelCatalog {
+	const sprocket = payload.sprocket;
+	if (sprocket.protocolVersion !== GATEWAY_PROTOCOL_VERSION) {
+		throw new Error(
+			`${CATALOG_UNAVAILABLE_MESSAGE} Unsupported protocol version ${sprocket.protocolVersion}.`
+		);
+	}
+	return {
+		protocolVersion: sprocket.protocolVersion,
+		catalogVersion: sprocket.catalogVersion,
+		defaultModelId: sprocket.defaultModelId,
+		defaultReasoningEffort: sprocket.defaultReasoningEffort,
+		defaultServiceTier: sprocket.defaultServiceTier,
+		models: sprocket.models.map((model) => ({
+			id: model.id,
+			label: model.label,
+			provider: model.provider,
+			supportsImages: model.supportsImages,
+			contextWindowTokens: model.contextWindowTokens,
+			autoCompactTokenLimit: model.autoCompactTokenLimit,
+			reasoningEfforts: model.reasoningEfforts,
+			defaultReasoningEffort: model.defaultReasoningEffort,
+			serviceTiers: model.serviceTiers,
+			usagePolicy: model.usagePolicy
+		})),
+		tierAllowedModels: sprocket.tierAllowedModels,
+		tierAllowedServiceTiers: sprocket.tierAllowedServiceTiers,
+		modelLockUpgradeMessage: sprocket.modelLockUpgradeMessage,
+		serviceTierLockUpgradeMessage: sprocket.serviceTierLockUpgradeMessage
+	};
+}
+
+/** Live catalog from `GET {origin}/api/v1/models`. */
+export async function fetchGatewayModelCatalog(gatewayOrigin: string): Promise<ModelCatalog> {
+	const origin = gatewayOrigin.replace(/\/+$/, '');
+	if (!origin) {
+		throw new Error(CATALOG_UNAVAILABLE_MESSAGE);
+	}
+	const response = await fetch(`${origin}${GATEWAY_API_PREFIX}/v1/models`, {
+		headers: { accept: 'application/json' }
+	});
+	if (!response.ok) {
+		throw new Error(CATALOG_UNAVAILABLE_MESSAGE);
+	}
+	const parsed = gatewayModelsResponseSchema.safeParse(await response.json());
+	if (!parsed.success) {
+		throw new Error(CATALOG_UNAVAILABLE_MESSAGE);
+	}
+	return catalogFromGatewayPayload(parsed.data);
 }

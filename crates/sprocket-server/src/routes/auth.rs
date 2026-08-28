@@ -342,6 +342,7 @@ fn html_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::sync::Arc;
 
     use axum::body::Body;
     use axum::extract::ConnectInfo;
@@ -360,10 +361,20 @@ mod tests {
         let credential = auth.pairing_credential().to_string();
         let (_, session_token) = auth.bootstrap(&credential).await.expect("bootstrap");
 
+        let project_attachments = ProjectAttachmentStore::new(temp_dir.clone());
+        let transcript = sprocket_agent::TranscriptStore::new(temp_dir.join("transcripts"));
+        let transcript_watchers = crate::transcript_watch::TranscriptWatchers::new(
+            "https://example.convex.cloud".to_string(),
+            transcript.clone(),
+        );
+
         let state = AppState {
             auth,
             desktop_login: DesktopLoginStore::new(),
-            project_attachments: ProjectAttachmentStore::new(temp_dir),
+            project_attachments,
+            transcript,
+            transcript_watchers,
+            live_completions: Arc::new(sprocket_agent::LiveCompletionHub::new()),
             http_base_url: "http://127.0.0.1:7731".to_string(),
             desktop_login_callback_url: auth::desktop_login_callback_url(7731),
             loopback_desktop_login_supported: loopback_supported,

@@ -6,6 +6,7 @@
 	import type { MandateApproval } from '$lib/chat/mandate';
 	import MandateApprovalForm from '$lib/components/home/mandate-approval-form.svelte';
 	import Button from '$lib/components/ui/button/button.svelte';
+	import { convexClientErrorMessage } from '$lib/convex-error';
 
 	type MandateFrequency = 'one_time' | 'weekly' | 'monthly' | 'yearly';
 	type MandateScope = 'listed' | 'any';
@@ -29,11 +30,8 @@
 	const setupMyMandate = useAction(api.payments.setupMyMandate);
 	const setMyMandateLifecycle = useAction(api.payments.setMyMandateLifecycle);
 
-	/** Convex action errors arrive wrapped in request-id/stack noise; show just
-	 * the meaningful message. */
 	function friendlyError(error: Error, fallback: string): string {
-		const match = error.message.match(/Uncaught Error: ([^(\n]+)/);
-		return (match?.[1] ?? error.message).trim() || fallback;
+		return convexClientErrorMessage(error) || fallback;
 	}
 
 	function catchMessage<T>(error: T, fallback: string): string {

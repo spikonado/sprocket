@@ -1,5 +1,15 @@
+import type { AssistantPart } from '$convex/lib/assistantParts';
 import type { DataModel, Id } from '$convex/_generated/dataModel';
-import type { DesktopApi, ProjectAttachment } from '$lib/types/sprocket';
+import type { JsonValue } from '$convex/lib/json';
+import type {
+	DesktopApi,
+	LiveCompletionOverlay,
+	LiveCompletionWatchEvent,
+	LocalTranscriptPage,
+	LocalTranscriptPart,
+	ProjectAttachment,
+	TranscriptScopeRequest
+} from '$lib/types/sprocket';
 import type { TableNamesInDataModel } from 'convex/server';
 import { z } from 'zod';
 
@@ -30,16 +40,80 @@ const workspacePathResolutionSchema = z.object({
 	repositoryKey: z.string()
 });
 const projectAttachmentSchema = z.object({
-	projectId: z.string(),
 	workspacePath: z.string(),
+	repositoryKey: z.string(),
+	displayName: z.string(),
 	availability: z.enum(['available', 'unavailable']),
 	lastValidatedAt: z.number(),
 	lastUsedAt: z.number(),
-	unavailableReason: z.string().optional()
+	unavailableReason: z.string().optional(),
+	previousRepositoryKey: z.string().optional()
 });
 const agentRunStartSchema = z.object({
 	runId: z.string()
 });
+const localTranscriptAttachmentSchema = z.object({
+	imageUploadId: z.string(),
+	name: z.string(),
+	mediaType: z.string(),
+	size: z.number(),
+	storageId: z.string(),
+	url: z.string().optional()
+});
+const localTranscriptPartSchema = z.object({
+	number: z.number(),
+	sourceKey: z.string(),
+	kind: z.enum(['prompt', 'completion', 'tool']),
+	runId: z.string(),
+	prompt: z
+		.object({
+			text: z.string(),
+			imageUploads: z.array(localTranscriptAttachmentSchema)
+		})
+		.optional(),
+	completion: z
+		.object({
+			streamId: z.string().optional(),
+			items: z.array(z.unknown())
+		})
+		.optional(),
+	tool: z
+		.object({
+			jobId: z.string().optional(),
+			callId: z.string(),
+			name: z.string(),
+			output: z.unknown(),
+			status: z.enum(['completed', 'failed', 'cancelled'])
+		})
+		.optional()
+});
+const localTranscriptPageSchema = z.object({
+	threadId: z.string(),
+	totalParts: z.number(),
+	historyFromNumber: z.number(),
+	stale: z.boolean(),
+	parts: z.array(localTranscriptPartSchema),
+	nextBefore: z.number().optional(),
+	contextSummary: z.string().optional()
+});
+const transcriptWatchEventSchema = z.object({
+	eventType: z.string(),
+	totalParts: z.number().optional(),
+	stale: z.boolean()
+});
+const liveCompletionOverlaySchema = z.object({
+	threadId: z.string(),
+	runId: z.string(),
+	runStatus: z.enum(['queued', 'running', 'awaiting_executor', 'completed', 'failed', 'cancelled']),
+	streamId: z.string().optional(),
+	text: z.string(),
+	parts: z.array(z.unknown()),
+	runStartedAt: z.number()
+});
+const liveCompletionWatchEventSchema = z.discriminatedUnion('eventType', [
+	z.object({ eventType: z.literal('updated'), live: liveCompletionOverlaySchema }),
+	z.object({ eventType: z.literal('cleared') })
+]);
 
 function asConvexId<TableName extends TableNamesInDataModel<DataModel>>(
 	value: string
@@ -51,10 +125,154 @@ function asConvexId<TableName extends TableNamesInDataModel<DataModel>>(
 function parseProjectAttachment(
 	attachment: z.infer<typeof projectAttachmentSchema>
 ): ProjectAttachment {
+	return attachment;
+}
+
+function parseLocalTranscriptPage(
+	page: z.infer<typeof localTranscriptPageSchema>
+): LocalTranscriptPage {
 	return {
-		...attachment,
-		projectId: asConvexId(attachment.projectId)
+		threadId: asConvexId(page.threadId),
+		totalParts: page.totalParts,
+		historyFromNumber: page.historyFromNumber,
+		stale: page.stale,
+		nextBefore: page.nextBefore,
+		contextSummary: page.contextSummary,
+		parts: page.parts.map(parseLocalTranscriptPart)
 	};
+}
+
+function parseLocalTranscriptPart(
+	part: z.infer<typeof localTranscriptPartSchema>
+): LocalTranscriptPart {
+	return {
+		number: part.number,
+		sourceKey: part.sourceKey,
+		kind: part.kind,
+		runId: asConvexId(part.runId),
+		prompt: part.prompt
+			? {
+					text: part.prompt.text,
+					imageUploads: part.prompt.imageUploads.map((upload) => ({
+						...upload,
+						imageUploadId: asConvexId(upload.imageUploadId)
+					}))
+				}
+			: undefined,
+		completion: part.completion
+			? {
+					streamId: part.completion.streamId,
+					// SAFETY: Convex completion items are assistant parts; the page API
+					// already validated the surrounding replica payload.
+					items: part.completion.items as AssistantPart[]
+				}
+			: undefined,
+		tool: part.tool
+			? {
+					...part.tool,
+					jobId: part.tool.jobId ? asConvexId(part.tool.jobId) : undefined,
+					// SAFETY: JSONL replica tool output is Convex JSON.
+					output: part.tool.output as JsonValue
+				}
+			: undefined
+	};
+}
+
+function parseLiveCompletionOverlay(
+	live: z.infer<typeof liveCompletionOverlaySchema>
+): LiveCompletionOverlay {
+	return {
+		threadId: asConvexId(live.threadId),
+		runId: asConvexId(live.runId),
+		runStatus: live.runStatus,
+		streamId: live.streamId,
+		text: live.text,
+		// SAFETY: overlay parts match AssistantPart; the local SSE payload is produced by the hub.
+		parts: live.parts as AssistantPart[],
+		runStartedAt: live.runStartedAt
+	};
+}
+
+function parseLiveCompletionWatchEvent(
+	event: z.infer<typeof liveCompletionWatchEventSchema>
+): LiveCompletionWatchEvent {
+	if (event.eventType === 'updated') {
+		return { eventType: 'updated', live: parseLiveCompletionOverlay(event.live) };
+	}
+	return { eventType: 'cleared' };
+}
+
+async function readSseEvents(
+	response: Response,
+	signal: AbortSignal,
+	onData: (data: string) => void
+) {
+	if (!response.body) {
+		return;
+	}
+	const reader = response.body.getReader();
+	const decoder = new TextDecoder();
+	let buffer = '';
+	try {
+		while (!signal.aborted) {
+			const { done, value } = await reader.read();
+			if (done) {
+				break;
+			}
+			buffer += decoder.decode(value, { stream: true });
+			let separator = buffer.indexOf('\n\n');
+			while (separator >= 0) {
+				const chunk = buffer.slice(0, separator);
+				buffer = buffer.slice(separator + 2);
+				const dataLines = chunk
+					.split('\n')
+					.filter((line) => line.startsWith('data:'))
+					.map((line) => line.slice(5).trimStart());
+				if (dataLines.length > 0 && !signal.aborted) {
+					onData(dataLines.join('\n'));
+				}
+				separator = buffer.indexOf('\n\n');
+			}
+		}
+	} catch (error) {
+		if (signal.aborted) {
+			return;
+		}
+		throw error;
+	} finally {
+		reader.releaseLock();
+	}
+}
+
+function localRequestError(
+	status: number,
+	payload: z.infer<typeof errorPayloadSchema> | undefined
+): Error {
+	return new Error(payload?.error ?? `Local request failed (${status}).`);
+}
+
+async function errorFromFailedResponse(response: Response): Promise<Error> {
+	const parsed = errorPayloadSchema.safeParse(await response.json().catch(() => null));
+	return localRequestError(response.status, parsed.success ? parsed.data : undefined);
+}
+
+async function postSse(
+	url: string,
+	requestBody: TranscriptScopeRequest,
+	signal: AbortSignal,
+	onData: (data: string) => void
+) {
+	const response = await fetch(url, {
+		method: 'POST',
+		credentials: 'include',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify(requestBody),
+		signal
+	});
+	if (!response.ok) {
+		throw await errorFromFailedResponse(response);
+	}
+	await readSseEvents(response, signal, onData);
 }
 
 export function resolveLocalApiBaseUrl(): string | null {
@@ -228,7 +446,7 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 			credentials: 'include',
 			headers: {
 				'content-type': 'application/json',
-				...(init?.headers ?? {})
+				...init?.headers
 			}
 		});
 
@@ -298,6 +516,55 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				body: JSON.stringify(requestBody)
 			});
 			return { runId: asConvexId(result.runId) };
+		},
+		fetchTranscriptPage: async (requestBody) => {
+			const page = await request('/api/transcript/page', localTranscriptPageSchema, {
+				method: 'POST',
+				body: JSON.stringify(requestBody)
+			});
+			return parseLocalTranscriptPage(page);
+		},
+		watchTranscript: async (requestBody, handlers) => {
+			await postSse(`${baseUrl}/api/transcript/watch`, requestBody, handlers.signal, (data) => {
+				const parsed = transcriptWatchEventSchema.safeParse(JSON.parse(data));
+				if (parsed.success) {
+					handlers.onEvent(parsed.data);
+				}
+			});
+		},
+		watchLiveCompletion: async (requestBody, handlers) => {
+			await postSse(`${baseUrl}/api/agent/live`, requestBody, handlers.signal, (data) => {
+				const parsed = liveCompletionWatchEventSchema.safeParse(JSON.parse(data));
+				if (parsed.success) {
+					handlers.onEvent(parseLiveCompletionWatchEvent(parsed.data));
+				}
+			});
+		},
+		clearTranscriptReplica: async (requestBody) => {
+			const response = await fetch(`${baseUrl}/api/transcript/clear`, {
+				method: 'POST',
+				credentials: 'include',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify(requestBody)
+			});
+			if (!response.ok) {
+				throw await errorFromFailedResponse(response);
+			}
+		},
+		fetchTranscriptAttachment: async (requestBody) => {
+			const response = await fetch(`${baseUrl}/api/transcript/attachment`, {
+				method: 'POST',
+				credentials: 'include',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify(requestBody)
+			});
+			if (response.status === 404) {
+				return null;
+			}
+			if (!response.ok) {
+				return null;
+			}
+			return await response.blob();
 		}
 	};
 }

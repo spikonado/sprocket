@@ -1,13 +1,14 @@
 use anyhow::{Context, anyhow};
 use convex::{FunctionResult, QuerySubscription, Value};
 use serde::Deserialize;
-use sprocket_convex_provider::{Client as ConvexProviderClient, Usage as CompletionUsage};
+use sprocket_convex::Client as ConvexRpcClient;
 use std::collections::BTreeMap;
 use std::time::Duration;
 use tokio::time::sleep;
 
 use crate::types::{
-    CreateRunResponse, RenewClaimResponse, RunAgentRequest, RunContextResponse, StartRunResponse,
+    CreateRunResponse, GatewayCredential, RenewClaimResponse, RunAgentRequest, RunContextResponse,
+    StartRunResponse,
 };
 
 const CREATE_RUN_MAX_ATTEMPTS: usize = 3;
@@ -23,7 +24,8 @@ pub(crate) enum FailedStartCleanup {
 
 #[derive(Clone)]
 pub(crate) struct RuntimeClient {
-    pub(crate) client: ConvexProviderClient,
+    pub(crate) client: ConvexRpcClient,
+    execution_secret: String,
 }
 
 impl RuntimeClient {
@@ -32,9 +34,7 @@ impl RuntimeClient {
             "sprocket-agent: initializing Convex client for thread {}",
             request.thread_id
         );
-        let client = ConvexProviderClient::new(&request.deployment_url, "completion:complete")
-            .await?
-            .with_execution_secret(request.execution_secret.clone());
+        let client = ConvexRpcClient::new(&request.deployment_url).await?;
         client
             .set_auth_token_fetcher(request.auth_token_fetcher.clone())
             .await;
@@ -42,11 +42,10 @@ impl RuntimeClient {
             "sprocket-agent: Convex client ready for thread {}",
             request.thread_id
         );
-        Ok(Self { client })
-    }
-
-    pub(crate) fn completion_client(&self) -> &ConvexProviderClient {
-        &self.client
+        Ok(Self {
+            client,
+            execution_secret: request.execution_secret.clone(),
+        })
     }
 
     pub(crate) async fn query_json<T: for<'de> Deserialize<'de>>(
@@ -99,6 +98,33 @@ impl RuntimeClient {
             .await
     }
 
+    pub(crate) async fn transcript_state_for_run(
+        &self,
+        run_id: &str,
+    ) -> anyhow::Result<crate::transcript::RemoteTranscriptState> {
+        self.query_json("transcript:getStateForRun", self.run_args(run_id))
+            .await
+    }
+
+    pub(crate) async fn transcript_parts_for_run(
+        &self,
+        run_id: &str,
+        numbers: &[u32],
+    ) -> anyhow::Result<Vec<crate::transcript::TranscriptPart>> {
+        let mut args = self.run_args(run_id);
+        args.insert(
+            "numbers".to_string(),
+            Value::Array(
+                numbers
+                    .iter()
+                    .map(|number| Value::Float64(*number as f64))
+                    .collect(),
+            ),
+        );
+        let value: serde_json::Value = self.query_json("transcript:getPartsForRun", args).await?;
+        crate::transcript::parse_remote_parts(value)
+    }
+
     pub(crate) async fn create_run(
         &self,
         request: &RunAgentRequest,
@@ -133,6 +159,10 @@ impl RuntimeClient {
             "serviceTier".to_string(),
             request.service_tier.clone().into(),
         );
+        args.insert(
+            "agentVersion".to_string(),
+            env!("CARGO_PKG_VERSION").to_string().into(),
+        );
         self.add_execution_secret(&mut args);
 
         let mut retry_delay = CREATE_RUN_INITIAL_RETRY_DELAY;
@@ -140,13 +170,16 @@ impl RuntimeClient {
         for attempt in 1..=CREATE_RUN_MAX_ATTEMPTS {
             match self
                 .client
-                .mutation("agentRuntime:createRun", args.clone())
+                .action("agentRuntime:createGatewayRun", args.clone())
                 .await
             {
-                Ok(result) => return decode_function_result(result, "agentRuntime:createRun"),
+                Ok(result) => {
+                    return decode_function_result(result, "agentRuntime:createGatewayRun");
+                }
                 Err(error) if attempt < CREATE_RUN_MAX_ATTEMPTS => {
                     eprintln!(
-                        "sprocket-agent: createRun transport attempt {attempt} failed; reconciling with request {}: {error:#}",
+                        "sprocket-agent: createGatewayRun transport attempt {attempt} failed; \
+                         reconciling with request {}: {error:#}",
                         request.submission_id
                     );
                     sleep(retry_delay).await;
@@ -156,9 +189,13 @@ impl RuntimeClient {
             }
         }
 
-        Err(last_error.expect("createRun retry loop records a final error")).with_context(|| {
-            format!("agentRuntime:createRun failed after {CREATE_RUN_MAX_ATTEMPTS} attempts")
-        })
+        Err(last_error.expect("createGatewayRun retry loop records a final error")).with_context(
+            || {
+                format!(
+                    "agentRuntime:createGatewayRun failed after {CREATE_RUN_MAX_ATTEMPTS} attempts"
+                )
+            },
+        )
     }
 
     pub(crate) async fn start_run(
@@ -171,6 +208,51 @@ impl RuntimeClient {
             self.run_args_with_claim(run_id, claim_id),
         )
         .await
+    }
+
+    pub(crate) async fn issue_gateway_credential(
+        &self,
+        run_id: &str,
+        claim_id: &str,
+    ) -> anyhow::Result<GatewayCredential> {
+        self.mutation_json(
+            "agentRuntime:issueGatewayCredential",
+            self.run_args_with_claim(run_id, claim_id),
+        )
+        .await
+    }
+
+    pub(crate) async fn register_completion_attempt(
+        &self,
+        run_id: &str,
+        claim_id: &str,
+        attempt_seq: u64,
+    ) -> anyhow::Result<()> {
+        let mut args = self.run_args_with_claim(run_id, claim_id);
+        args.insert("attemptSeq".to_string(), Value::Float64(attempt_seq as f64));
+        self.mutation_unit("agentRuntime:registerCompletionAttempt", args)
+            .await
+    }
+
+    pub(crate) async fn finalize_completion_call(
+        &self,
+        run_id: &str,
+        claim_id: &str,
+        attempt_seq: u64,
+        stream_id: &str,
+        items: Vec<serde_json::Value>,
+    ) -> anyhow::Result<()> {
+        let mut args = self.run_args_with_claim(run_id, claim_id);
+        args.insert("attemptSeq".to_string(), Value::Float64(attempt_seq as f64));
+        args.insert("streamId".to_string(), stream_id.to_string().into());
+        args.insert(
+            "items".to_string(),
+            Value::try_from(serde_json::Value::Array(items))?,
+        );
+        let _: serde_json::Value = self
+            .mutation_json("agentRuntime:finalizeCompletionCall", args)
+            .await?;
+        Ok(())
     }
 
     pub(crate) async fn finalize_failed_start(
@@ -283,26 +365,6 @@ impl RuntimeClient {
             .await
     }
 
-    pub(crate) async fn summarize(
-        &self,
-        run_id: &str,
-        claim_id: &str,
-        model_id: &str,
-        reasoning_effort: &str,
-        service_tier: &str,
-        messages_json: &str,
-    ) -> anyhow::Result<SummarizeResponse> {
-        let mut args = self.run_args_with_claim(run_id, claim_id);
-        args.insert("modelId".to_string(), model_id.to_string().into());
-        args.insert(
-            "reasoningEffort".to_string(),
-            reasoning_effort.to_string().into(),
-        );
-        args.insert("serviceTier".to_string(), service_tier.to_string().into());
-        args.insert("messagesJson".to_string(), messages_json.to_string().into());
-        self.action_json("completion:summarize", args).await
-    }
-
     pub(crate) async fn begin_assistant_message(&self, run_id: &str) -> anyhow::Result<()> {
         self.mutation_unit("agentRuntime:beginAssistantMessage", self.run_args(run_id))
             .await
@@ -405,11 +467,7 @@ impl RuntimeClient {
     fn add_execution_secret(&self, args: &mut BTreeMap<String, Value>) {
         args.insert(
             "executionSecret".to_string(),
-            self.client
-                .execution_secret()
-                .expect("runtime client has an execution secret")
-                .to_string()
-                .into(),
+            self.execution_secret.clone().into(),
         );
     }
 
@@ -417,30 +475,6 @@ impl RuntimeClient {
         let mut args = self.run_args(run_id);
         args.insert("claimId".to_string(), claim_id.to_string().into());
         args
-    }
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct SummarizeResponse {
-    pub(crate) summary: String,
-    pub(crate) usage: CompletionUsage,
-}
-
-impl SummarizeResponse {
-    pub(crate) fn processed_tokens(&self) -> u64 {
-        // Prefer `input_tokens` when it already includes cache details; otherwise add them.
-        let cache_tokens = self
-            .usage
-            .input_token_details
-            .cache_read_tokens
-            .saturating_add(self.usage.input_token_details.cache_write_tokens);
-        let input = if self.usage.input_tokens >= cache_tokens {
-            self.usage.input_tokens
-        } else {
-            self.usage.input_tokens.saturating_add(cache_tokens)
-        };
-        input.saturating_add(self.usage.output_tokens)
     }
 }
 
@@ -523,7 +557,11 @@ mod tests {
 
     #[test]
     fn cleans_masking_lines_prefixes_and_stack_frames() {
-        let raw = "[Request ID: 84f5068c0836218d] Server Error\nUncaught ConvexError: The webpage is too complex and could not be parsed as Markdown.\n    at handler (../src/convex/webTools.ts:130:2)";
+        let raw = concat!(
+            "[Request ID: 84f5068c0836218d] Server Error\n",
+            "Uncaught ConvexError: The webpage is too complex and could not be parsed as Markdown.\n",
+            "    at handler (../src/convex/webTools.ts:130:2)"
+        );
         assert_eq!(
             clean_function_error_message(raw),
             "The webpage is too complex and could not be parsed as Markdown."

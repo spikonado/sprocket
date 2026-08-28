@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { api } from '@convex/_generated/api';
-import { initConvexTest, seedOwnedThread } from './test.setup';
+import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 
 async function seedActiveRun(
 	executionSecret: string,
@@ -9,16 +9,14 @@ async function seedActiveRun(
 	const t = existingT ?? initConvexTest();
 	const { asUser, threadId } = await seedOwnedThread(t);
 	const claimId = `claim-${Math.random()}`;
-	const created = await asUser.mutation(api.agentRuntime.createRun, {
-		submissionId: `sub-artifact-${Math.random()}`,
+	const created = await createQueuedRun(
+		t,
+		asUser,
 		threadId,
-		prompt: 'Create an artifact',
-		imageUploadIds: [],
-		selectedModel: 'gpt-5.6-sol',
-		reasoningEffort: 'medium',
-		serviceTier: 'standard',
-		executionSecret
-	});
+		`sub-artifact-${Math.random()}`,
+		executionSecret,
+		'Create an artifact'
+	);
 	await asUser.mutation(api.agentRuntime.start, {
 		claimId,
 		runId: created.runId,

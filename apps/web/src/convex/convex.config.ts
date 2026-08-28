@@ -4,6 +4,11 @@ import contextDev from '@context-dot-dev/convex/convex.config';
 import rateLimiter from '@convex-dev/rate-limiter/convex.config';
 import dodopayments from '@dodopayments/convex/convex.config';
 import exa from '@exalabs/convex-exa/convex.config';
+import migrations from '@convex-dev/migrations/convex.config';
+import aggregate from '@convex-dev/aggregate/convex.config';
+import workflow from '@convex-dev/workflow/convex.config';
+import actionRetrier from '@convex-dev/action-retrier/convex.config';
+import workpool from '@convex-dev/workpool/convex.config';
 
 const app = defineApp({
 	env: {
@@ -11,14 +16,6 @@ const app = defineApp({
 		EXA_API_KEY: v.string(),
 		WORKOS_CLIENT_ID: v.string(),
 		OPENAI_API_KEY: v.optional(v.string()),
-		ANTHROPIC_API_KEY: v.optional(v.string()),
-		FIREWORKS_API_KEY: v.optional(v.string()),
-		ZAI_API_KEY: v.optional(v.string()),
-		OPENROUTER_API_KEY: v.optional(v.string()),
-		AWS_REGION: v.optional(v.string()),
-		AWS_BEARER_TOKEN_BEDROCK: v.optional(v.string()),
-		AWS_ACCESS_KEY_ID: v.optional(v.string()),
-		AWS_SECRET_ACCESS_KEY: v.optional(v.string()),
 		BROWSERBASE_API_KEY: v.optional(v.string()),
 		BROWSERBASE_PROJECT_ID: v.optional(v.string()),
 		BROWSER_TASK_MODEL: v.optional(v.string()),
@@ -28,7 +25,9 @@ const app = defineApp({
 			v.literal('https://api.prava.space')
 		),
 		DODO_PAYMENTS_API_KEY: v.optional(v.string()),
-		DODO_PAYMENTS_ENVIRONMENT: v.optional(v.union(v.literal('live_mode'), v.literal('test_mode')))
+		DODO_PAYMENTS_ENVIRONMENT: v.optional(v.union(v.literal('live_mode'), v.literal('test_mode'))),
+		MODEL_GATEWAY_URL: v.optional(v.string()),
+		MODEL_GATEWAY_TOKEN_SECRET: v.optional(v.string())
 	}
 });
 
@@ -36,5 +35,10 @@ app.use(contextDev, { env: { CONTEXT_DEV_API_KEY: app.env.CONTEXT_DEV_API_KEY } 
 app.use(exa, { env: { EXA_API_KEY: app.env.EXA_API_KEY } });
 app.use(rateLimiter);
 app.use(dodopayments);
+app.use(migrations);
+app.use(aggregate);
+app.use(workflow);
+app.use(actionRetrier);
+app.use(workpool, { name: 'webToolWorkpool' });
 
 export default app;

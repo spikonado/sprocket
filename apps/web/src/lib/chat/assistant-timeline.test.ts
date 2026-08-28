@@ -23,11 +23,6 @@ function executorJobId(value: string): ExecutorJob['_id'] {
 	return value as ExecutorJob['_id'];
 }
 
-function executorProjectId(value: string): ExecutorJob['projectId'] {
-	// SAFETY: fixture strings are only compared as opaque Convex document ids.
-	return value as ExecutorJob['projectId'];
-}
-
 function executorThreadId(value: string): ExecutorJob['threadId'] {
 	// SAFETY: fixture strings are only compared as opaque Convex document ids.
 	return value as ExecutorJob['threadId'];
@@ -45,7 +40,6 @@ function executorJob(
 ): ExecutorJob {
 	return {
 		_id: executorJobId(id),
-		projectId: executorProjectId('workspace'),
 		threadId: executorThreadId('thread'),
 		runId: executorRunId('run'),
 		kind: 'exec_command',

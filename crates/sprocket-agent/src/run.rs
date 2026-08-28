@@ -11,10 +11,15 @@ use std::time::Duration;
 use tokio::time::{Instant, sleep, sleep_until, timeout};
 use uuid::Uuid;
 
-use crate::RunContextResponse;
+use crate::catalog::context_budget_for_model;
 use crate::convex::{FailedStartCleanup, RuntimeClient};
+use crate::live::LiveCompletionHub;
 use crate::provider::{AgentProvider, AgentProviderRequest, AgentProviderResult};
-use crate::types::{RunAgentRequest, deserialize_agent_history};
+use crate::transcript::{
+    TranscriptStore, agent_history_from_parts, apply_remote_state, current_run_has_finished_turns,
+    fetch_missing_parts, fetch_parts_by_numbers,
+};
+use crate::types::{RunAgentRequest, RunContextResponse, deserialize_agent_history};
 
 // Keep RUN_CLAIM_LEASE_DURATION synchronized with
 // apps/web/src/convex/lib/runLease.ts (RUN_CLAIM_LEASE_DURATION_MS).
@@ -29,9 +34,10 @@ const START_FAILURE_CLEANUP_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(2_
 const START_FAILURE_RECONCILE_TIMEOUT: Duration = Duration::from_secs(10);
 const FAILURE_CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(250);
 
-/// Must match the createRun conflict ConvexErrors in
+/// Must match the createGatewayRun conflict ConvexErrors in
 /// apps/web/src/convex/agentRuntime.ts ("Submission belongs to a different ...").
 const SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR: &str = "Submission belongs to a different";
+const CONTINUE_FROM_FINISHED_TURNS: &str = "Continue from the last finished turn.";
 
 fn submission_owned_by_another_executor(error: &str) -> bool {
     error.contains(SUBMISSION_OWNED_BY_ANOTHER_EXECUTOR)
@@ -43,6 +49,7 @@ pub struct AgentRun {
     run_id: String,
     claim_id: String,
     workspace_root: std::path::PathBuf,
+    gateway_url: String,
 }
 
 impl AgentRun {
@@ -579,7 +586,7 @@ pub async fn start_agent_run(request: RunAgentRequest) -> anyhow::Result<AgentRu
     // The browser token is only needed to create and bind the run. Every later
     // operation uses the run-scoped capability, so browser lifetime and token
     // refresh can no longer interrupt an active local executor.
-    runtime.completion_client().clear_auth().await;
+    runtime.client.clear_auth().await;
     if created_run.created {
         eprintln!("sprocket-agent: created run {}", created_run.run_id);
     } else {
@@ -595,6 +602,7 @@ pub async fn start_agent_run(request: RunAgentRequest) -> anyhow::Result<AgentRu
         run_id,
         claim_id,
         workspace_root,
+        gateway_url: created_run.gateway_url,
     })
 }
 
@@ -602,8 +610,8 @@ pub async fn finalize_failed_start(
     request: RunAgentRequest,
     startup_error: String,
 ) -> anyhow::Result<()> {
-    // createRun rejected the duplicate submission: a racing launch owns the
-    // run, so this executor's cleanup has nothing to terminalize.
+    // createGatewayRun rejected the duplicate submission: a racing launch owns
+    // the run, so this executor's cleanup has nothing to terminalize.
     if submission_owned_by_another_executor(&startup_error) {
         eprintln!(
             "sprocket-agent: submission {} already belongs to an active run; standing down",
@@ -612,7 +620,7 @@ pub async fn finalize_failed_start(
         return Ok(());
     }
     let runtime = RuntimeClient::from_request(&request).await?;
-    runtime.completion_client().clear_auth().await;
+    runtime.client.clear_auth().await;
     let text = format!("Run failed before the model started: {startup_error}");
     let deadline = Instant::now() + START_FAILURE_RECONCILE_TIMEOUT;
     loop {
@@ -659,13 +667,82 @@ pub async fn finalize_failed_start(
     }
 }
 
-pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
+struct PriorHistory {
+    messages: Vec<Message>,
+    continue_from_finished_turns: bool,
+}
+
+async fn load_prior_history(
+    runtime: &RuntimeClient,
+    store: &TranscriptStore,
+    context: &RunContextResponse,
+    run_id: &str,
+) -> anyhow::Result<PriorHistory> {
+    let user_id = &context.run.user_id;
+    let thread_id = &context.run.thread_id;
+    let remote = runtime.transcript_state_for_run(run_id).await?;
+    apply_remote_state(store, user_id, thread_id, &remote, false).await?;
+    fetch_missing_parts(
+        store,
+        user_id,
+        thread_id,
+        remote.history_from_number,
+        remote.total_parts,
+        |numbers| {
+            let runtime = runtime.clone();
+            let run_id = run_id.to_string();
+            async move { runtime.transcript_parts_for_run(&run_id, &numbers).await }
+        },
+    )
+    .await?;
+    let state = store.load_state(user_id, thread_id).await?;
+    let numbers: Vec<u32> = (state.history_from_number..state.remote_total_parts).collect();
+    let local_parts = store.read_parts(user_id, thread_id, &numbers).await?;
+    let missing = numbers
+        .iter()
+        .filter(|number| !local_parts.iter().any(|part| part.number == **number))
+        .copied()
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        anyhow::bail!(
+            "required transcript parts {:?} are missing locally after sync",
+            missing
+        );
+    }
+    let parts = match fetch_parts_by_numbers(&numbers, |batch| {
+        let runtime = runtime.clone();
+        let run_id = run_id.to_string();
+        async move { runtime.transcript_parts_for_run(&run_id, &batch).await }
+    })
+    .await
+    {
+        Ok(hydrated)
+            if numbers
+                .iter()
+                .all(|number| hydrated.iter().any(|part| part.number == *number)) =>
+        {
+            hydrated
+        }
+        Ok(_) | Err(_) => local_parts,
+    };
+    Ok(PriorHistory {
+        messages: deserialize_agent_history(agent_history_from_parts(
+            &state,
+            &parts,
+            Some(run_id),
+        ))?,
+        continue_from_finished_turns: current_run_has_finished_turns(&parts, run_id),
+    })
+}
+
+pub async fn run_agent(run: AgentRun, live: Arc<LiveCompletionHub>) -> anyhow::Result<()> {
     let AgentRun {
         request,
         runtime,
         run_id,
         claim_id,
         workspace_root,
+        gateway_url,
     } = run;
 
     let context: RunContextResponse = match runtime.run_context(&run_id).await {
@@ -677,7 +754,10 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
     let model = context.run.selected_model.clone();
     let reasoning_effort = context.run.reasoning_effort.clone();
     let service_tier = context.run.service_tier.clone();
-    let context_budget = context.context_budget.clone();
+    let context_budget = match context_budget_for_model(&gateway_url, &model).await {
+        Ok(budget) => budget,
+        Err(error) => return abort_before_start(&runtime, &run_id, error).await,
+    };
 
     let prepared = (|| {
         let workspace_instructions = load_workspace_instructions(&workspace_root)?;
@@ -705,16 +785,27 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
         let prompt = Message::User {
             content: prompt_contents,
         };
-        let provider = AgentProvider::default_for_run(&runtime, &context, &run_id, &claim_id);
-        let prior_history = deserialize_agent_history(context.agent_history)?;
+        let provider = AgentProvider::default_for_run(&context, &gateway_url);
         let preamble =
             build_workspace_preamble(&request.workspace_path, &workspace_instructions, &skills);
-        Ok((prompt, provider, prior_history, preamble, skills))
+        Ok((prompt, provider, preamble, skills))
     })();
 
-    let (prompt, provider, prior_history, preamble, skills) = match prepared {
+    let (prompt, provider, preamble, skills) = match prepared {
         Ok(values) => values,
         Err(error) => return abort_before_start(&runtime, &run_id, error).await,
+    };
+    let store = TranscriptStore::new(request.transcript_root.clone());
+    let prior_history = match load_prior_history(&runtime, &store, &context, &run_id).await {
+        Ok(history) => history,
+        Err(error) => return abort_before_start(&runtime, &run_id, error).await,
+    };
+    let prompt = if prior_history.continue_from_finished_turns {
+        Message::User {
+            content: vec![UserContent::text(CONTINUE_FROM_FINISHED_TURNS)],
+        }
+    } else {
+        prompt
     };
 
     if let Err(error) = runtime.begin_assistant_message(&run_id).await {
@@ -726,11 +817,7 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
         return Ok(());
     };
 
-    eprintln!(
-        "sprocket-agent: selected provider {} for run {}",
-        provider.kind().as_str(),
-        run_id
-    );
+    eprintln!("sprocket-agent: selected provider gateway for run {run_id}");
 
     match timeout(RUN_CLAIM_ATTEMPT_TIMEOUT, runtime.run_finished(&run_id)).await {
         Ok(Ok(false)) => {}
@@ -754,9 +841,12 @@ pub async fn run_agent(run: AgentRun) -> anyhow::Result<()> {
                 AgentProviderRequest {
                     run_id: run_id.clone(),
                     claim_id: claim_id.clone(),
+                    thread_id: request.thread_id.clone(),
+                    run_started_at: context.run.started_at,
+                    live: live.clone(),
                     prompt,
                     preamble,
-                    prior_history,
+                    prior_history: prior_history.messages,
                     workspace_root,
                     skills,
                     model,
@@ -806,7 +896,7 @@ mod tests {
     #[test]
     fn submission_conflict_errors_match_the_convex_sentinel() {
         assert!(submission_owned_by_another_executor(
-            "agentRuntime:createRun failed: Submission belongs to a different active executor."
+            "agentRuntime:createGatewayRun failed: Submission belongs to a different active executor."
         ));
         assert!(submission_owned_by_another_executor(
             "Submission belongs to a different or incomplete run."

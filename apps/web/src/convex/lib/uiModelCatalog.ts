@@ -1,25 +1,30 @@
-import type {
-	CatalogModel,
-	UsagePolicy,
-	SupportedModelId,
-	SupportedReasoningEffort,
-	SupportedServiceTier
-} from '@convex/lib/models';
+import type { UsagePolicy } from '@convex/lib/models';
 import type { SubscriptionTier } from '@convex/lib/tiers';
 
-export type { CatalogModel };
+/** Ids are opaque so gateway catalogs can add models. */
+export type CatalogModel = {
+	id: string;
+	label: string;
+	provider: string;
+	supportsImages: boolean;
+	contextWindowTokens: number;
+	autoCompactTokenLimit: number;
+	reasoningEfforts: readonly string[];
+	defaultReasoningEffort: string;
+	serviceTiers: readonly string[];
+	usagePolicy?: UsagePolicy;
+};
 
-/** Catalog model extended with usage policy when the query asks for it. */
-export type CatalogModelWithUsagePolicy = CatalogModel & { usagePolicy?: UsagePolicy };
-
-/** Shape returned by `modelCatalog.get`, shared by Convex and the web client. */
+/** Shape of `sprocket` from `GET /api/v1/models`. */
 export type ModelCatalog = {
-	defaultModelId: SupportedModelId;
-	defaultReasoningEffort: SupportedReasoningEffort;
-	defaultServiceTier: SupportedServiceTier;
-	models: readonly CatalogModelWithUsagePolicy[];
-	tierAllowedModels: Readonly<Record<SubscriptionTier, readonly SupportedModelId[]>>;
-	tierAllowedServiceTiers: Readonly<Record<SubscriptionTier, readonly SupportedServiceTier[]>>;
+	defaultModelId: string;
+	defaultReasoningEffort: string;
+	defaultServiceTier: string;
+	models: readonly CatalogModel[];
+	tierAllowedModels: Readonly<Record<SubscriptionTier, readonly string[]>>;
+	tierAllowedServiceTiers: Readonly<Record<SubscriptionTier, readonly string[]>>;
 	modelLockUpgradeMessage: string;
 	serviceTierLockUpgradeMessage: string;
+	protocolVersion?: number;
+	catalogVersion?: string;
 };

@@ -26,7 +26,16 @@ export default defineConfig({
 		// Component `/test` entrypoints use `import.meta.glob`; Vite must transform them.
 		server: {
 			deps: {
-				inline: ['@context-dot-dev/convex', '@convex-dev/rate-limiter', '@exalabs/convex-exa']
+				inline: [
+					'@context-dot-dev/convex',
+					'@convex-dev/rate-limiter',
+					'@exalabs/convex-exa',
+					'@convex-dev/migrations',
+					'@convex-dev/aggregate',
+					'@convex-dev/workflow',
+					'@convex-dev/action-retrier',
+					'@convex-dev/workpool'
+				]
 			}
 		},
 		projects: [

@@ -34,7 +34,10 @@ flowchart LR
     Web <--> Local
     Web <--> Convex[Convex backend]
     Local <--> Convex
-    Convex <--> Models[Model providers]
+    Web -->|"GET /api/v1/models"| Gateway[AI gateway]
+    Local -->|"POST /api/v1/responses"| Gateway
+    Gateway --> Providers[Model providers]
+    Gateway -->|"quota check, consume units"| Convex
     Web <--> Auth[WorkOS]
     Local --> Workspace[Local workspace and processes]
 ```
@@ -45,29 +48,30 @@ The system has three main planes:
    the CLI launches clients and the local server.
 2. **Local execution plane:** the Rust server authenticates local requests,
    resolves workspace attachments, starts agent runs, and executes tools.
-3. **Cloud coordination plane:** Convex stores durable application state,
-   coordinates run ownership, streams responses, and calls model providers.
+3. **Cloud coordination plane:** Convex stores durable application state and
+   coordinates run ownership. Completions go through the AI gateway.
 
 WorkOS establishes cloud user identity. A separate local pairing mechanism
 authorizes the browser or Electron renderer to access the machine-facing API.
 
 ## Component boundaries
 
-| Component               | Owns                                                             | Does not own                          |
-| ----------------------- | ---------------------------------------------------------------- | ------------------------------------- |
-| Svelte app              | User interaction, reactive views, submission recovery            | Filesystem access or provider secrets |
-| Electron shell          | Desktop lifecycle, trusted renderer bridge, local server process | Conversation or agent state           |
-| CLI                     | Process launch and server-mode selection                         | Agent implementation                  |
-| Local server            | Local authorization, workspace attachment, agent task lifetime   | Durable conversation state            |
-| Agent runtime           | Run claim, model/tool loop, cancellation, finalization           | HTTP presentation or cloud schema     |
-| Workspace crate         | Paths, commands, patches, workspace instructions                 | Authentication or networking          |
-| Convex provider adapter | Rig-to-Convex completion translation                             | Model selection policy                |
-| Convex backend          | User data, run coordination, transcript, model access            | Local paths and process execution     |
+| Component         | Owns                                                             | Does not own                           |
+| ----------------- | ---------------------------------------------------------------- | -------------------------------------- |
+| Svelte app        | User interaction, reactive views, submission recovery            | Filesystem access or provider secrets  |
+| Electron shell    | Desktop lifecycle, trusted renderer bridge, local server process | Conversation or agent state            |
+| CLI               | Process launch and server-mode selection                         | Agent implementation                   |
+| Local server      | Local authorization, workspace attachment, agent task lifetime   | Durable conversation state             |
+| Agent runtime     | Run claim, model/tool loop, cancellation, finalization           | HTTP presentation or cloud schema      |
+| Workspace crate   | Paths, commands, patches, workspace instructions                 | Authentication or networking           |
+| Convex RPC client | Generic Convex query/mutation/action/subscribe                   | Completion translation                 |
+| AI gateway        | Provider routing, OpenAI API, catalog, usage rates               | Subscription limits or remaining quota |
+| Convex backend    | User data, run coordination, transcript, remaining quota         | Local paths, process execution, rates  |
 
 The Rust dependency direction follows these boundaries:
 
 ```text
-sprocket-cli -> sprocket-server -> sprocket-agent -> sprocket-convex-provider
+sprocket-cli -> sprocket-server -> sprocket-agent -> sprocket-convex
        |              |                |
        +--------------+----------------+-> sprocket-workspace
 ```
@@ -100,15 +104,16 @@ Sprocket deliberately separates cloud and machine-local state.
 
 | State                                                                | Owner                |
 | -------------------------------------------------------------------- | -------------------- |
-| Users, projects, threads, messages, runs, and tool-job records       | Convex               |
-| Project identity to local path mapping                               | Local server         |
+| Users, threads, messages, runs, and tool-job records                 | Convex               |
+| Local folder list (`workspacePath` + `repositoryKey`)                | Local server         |
 | Pairing credential and local browser sessions                        | Local server         |
 | Active commands, cancellation tokens, and run execution capabilities | Local process memory |
 | Source files and build artifacts                                     | User workspace       |
 | Model and authentication provider secrets                            | Cloud deployment     |
 
-A cloud project identity never needs to expose its machine path. The web app
-joins cloud project metadata with the local server's attachment state.
+The local server owns this machine’s folder list. Convex threads store a
+`repositoryKey`; the web app groups those threads onto local folders whose key
+matches. Folders that are not attached here stay hidden until they are added.
 
 ## Agent run flow
 
@@ -116,20 +121,26 @@ joins cloud project metadata with the local server's attachment state.
 sequenceDiagram
     participant UI as Web app
     participant C as Convex
+    participant G as AI gateway
     participant S as Local server
     participant A as Rust agent
     participant M as Model provider
     participant W as Workspace
 
+    UI->>G: GET /api/v1/models
     UI->>C: Create or recover thread
     UI->>S: Start run with user token and workspace identity
     S->>A: Prepare local run
-    A->>C: Create or recover durable run and bind execution capability
-    A->>C: Claim run and load context
+    A->>C: Create gateway run and bind execution capability
+    A->>C: Claim run, load context, mint user gateway token
+    A->>G: GET /api/v1/models
     loop Model and tool turns
-        A->>C: Request completion
-        C->>M: Call selected model
-        M-->>C: Stream response
+        A->>G: POST /api/v1/responses
+        G->>C: Check remaining quota
+        G->>M: Call selected model
+        M-->>G: Stream response
+        G-->>A: OpenAI SSE
+        A->>C: Persist stream events
         C-->>UI: Publish durable transcript updates
         opt Model requests a tool
             A->>C: Record tool job
@@ -137,6 +148,7 @@ sequenceDiagram
             A->>C: Record result
         end
     end
+    G->>C: Consume quota units
     A->>C: Finalize run
 ```
 
@@ -148,8 +160,9 @@ Tool operations are recorded before and after local execution. This gives the
 UI a durable audit trail and lets terminal run state cancel work still running
 on the machine.
 
-Convex persists model output incrementally. Stream attempt and ordering metadata
-prevent a delayed completion attempt from replacing a newer one.
+The agent persists model output incrementally to Convex. Stream attempt and
+ordering metadata prevent a delayed completion attempt from replacing a newer
+one.
 
 ## Authentication and trust boundaries
 
@@ -192,16 +205,20 @@ in the Rust agent and Convex backend together.
 
 ## Repository layout
 
-| Path                               | Responsibility                        |
-| ---------------------------------- | ------------------------------------- |
-| `apps/web/`                        | Svelte application and Convex backend |
-| `apps/desktop/`                    | Electron shell and packaging          |
-| `crates/sprocket-cli/`             | User-facing launcher                  |
-| `crates/sprocket-server/`          | Local HTTP and process boundary       |
-| `crates/sprocket-agent/`           | Agent run lifecycle and tools         |
-| `crates/sprocket-convex-provider/` | Rig completion adapter                |
-| `crates/sprocket-workspace/`       | Local workspace primitives            |
-| `packages/`                        | Shared JavaScript configuration       |
+| Path                         | Responsibility                        |
+| ---------------------------- | ------------------------------------- |
+| `apps/web/`                  | Svelte application and Convex backend |
+| `apps/desktop/`              | Electron shell and packaging          |
+| `crates/sprocket-cli/`       | User-facing launcher                  |
+| `crates/sprocket-server/`    | Local HTTP and process boundary       |
+| `crates/sprocket-agent/`     | Agent run lifecycle and tools         |
+| `crates/sprocket-convex/`    | Neutral Convex RPC/auth client        |
+| `crates/sprocket-workspace/` | Local workspace primitives            |
+| `packages/`                  | Shared JavaScript configuration       |
+
+The AI gateway (`spikonado/ai-gateway`) is a separate private repository. Its
+public origin is `https://ai-gateway.spikonado.com`, with OpenAI-compatible
+routes under `/api/`.
 
 ## Build and deployment
 
@@ -210,5 +227,6 @@ in the Rust agent and Convex backend together.
 - **`sprocket-desktop`** (GitHub Releases): Electron app that embeds the static web UI and a native `sprocket` server binary. Users get `.AppImage`/`.dmg`/`.exe` installers.
 - **`sprocket` CLI** (npm `@spikonado/sprocket`): the same native binary plus the static web UI for `sprocket --web`. No Electron.
 
-The local executable receives only public runtime configuration. WorkOS and
-model-provider secrets remain in the Convex deployment.
+The local executable receives only public runtime configuration. WorkOS secrets
+remain in the Convex deployment. Model-provider secrets live in the gateway
+deployment; Convex still keeps `OPENAI_API_KEY` for browser automation.

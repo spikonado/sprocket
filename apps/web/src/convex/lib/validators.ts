@@ -1,11 +1,6 @@
 import { v, type Infer } from 'convex/values';
 import { vJsonValue } from '@convex/lib/json';
-import {
-	modelIds,
-	persistedModelIds,
-	reasoningEffortIds,
-	serviceTierIds
-} from '@convex/lib/models';
+import { reasoningEffortIds, serviceTierIds } from '@convex/lib/models';
 import { subscriptionTierIds } from '@convex/lib/tiers';
 
 function literals<const TValues extends readonly string[]>(values: TValues) {
@@ -18,11 +13,6 @@ function literals<const TValues extends readonly string[]>(values: TValues) {
 export const vReasoningEffort = v.union(...literals(reasoningEffortIds));
 
 export const vServiceTier = v.union(...literals(serviceTierIds));
-
-export const vModelId = v.union(...literals(modelIds));
-
-/** Catalog plus retired ids still stored on thread/run documents. */
-export const vPersistedModelId = v.union(...literals(persistedModelIds));
 
 export const vSubscriptionTier = v.union(...literals(subscriptionTierIds));
 
@@ -131,8 +121,7 @@ export const vMandateChargeStatus = v.union(
 export const vMandateReportOutcome = v.union(v.literal('approved'), v.literal('declined'));
 
 export const vMandateSetupPayload = v.object({
-	// Accepted-and-ignored: stored executorJobs payloads from released agents
-	// may still carry it. Mandate setup now reads the WorkOS identity email.
+	// Stored executorJobs payloads from older agents may still carry it.
 	userEmail: v.optional(v.string()),
 	merchantName: v.optional(v.string()),
 	merchantUrl: v.optional(v.string()),
@@ -372,8 +361,6 @@ export const vExecutorJobResult = v.union(
 	vMandateReportResult
 );
 
-export const vExecutorStatus = v.union(v.literal('disconnected'), v.literal('connected'));
-
 export const vRunStatus = v.union(
 	v.literal('queued'),
 	v.literal('running'),
@@ -502,6 +489,56 @@ export type AssistantReasoningPart = Infer<typeof vAssistantReasoningPart>;
 export type AssistantToolCallPart = Infer<typeof vAssistantToolCallPart>;
 export type AssistantToolResultPart = Infer<typeof vAssistantToolResultPart>;
 export type AssistantMessagePart = Infer<typeof vAssistantMessagePart>;
+
+export const vTranscriptPartKind = v.union(
+	v.literal('prompt'),
+	v.literal('completion'),
+	v.literal('tool')
+);
+
+export const vTranscriptAttachmentMeta = v.object({
+	imageUploadId: v.id('imageUploads'),
+	name: v.string(),
+	mediaType: v.string(),
+	size: v.number(),
+	storageId: v.id('_storage'),
+	url: v.optional(v.string())
+});
+
+export const vTranscriptCompletionItem = v.union(
+	vAssistantTextPart,
+	vAssistantReasoningPart,
+	vAssistantToolCallPart
+);
+
+export const vTranscriptPromptBody = v.object({
+	text: v.string(),
+	imageUploads: v.array(vTranscriptAttachmentMeta)
+});
+
+export const vTranscriptCompletionBody = v.object({
+	streamId: v.optional(v.string()),
+	items: v.array(vTranscriptCompletionItem)
+});
+
+export const vTranscriptToolStatus = v.union(
+	v.literal('completed'),
+	v.literal('failed'),
+	v.literal('cancelled')
+);
+
+export const vTranscriptToolBody = v.object({
+	jobId: v.optional(v.id('executorJobs')),
+	callId: v.string(),
+	name: v.string(),
+	output: vJsonValue,
+	status: vTranscriptToolStatus
+});
+
+export type TranscriptCompletionItem = Infer<typeof vTranscriptCompletionItem>;
+export type TranscriptPromptBody = Infer<typeof vTranscriptPromptBody>;
+export type TranscriptCompletionBody = Infer<typeof vTranscriptCompletionBody>;
+export type TranscriptToolBody = Infer<typeof vTranscriptToolBody>;
 
 export const vAgentHistoryRole = v.union(
 	v.literal('system'),

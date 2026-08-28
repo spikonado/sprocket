@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Check, Copy, LoaderCircle } from '@lucide/svelte';
-	import { tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import {
 		assistantTimelineToolError,
 		assistantTimelineToolFailureKind,
@@ -25,13 +25,14 @@
 	} from '$lib/chat/tool-summaries';
 	import ChatMarkdown from '$lib/components/chat-markdown.svelte';
 	import ImageViewer, { type ViewerImage } from '$lib/components/image-viewer.svelte';
+	import TranscriptAttachment from '$lib/components/home/transcript-attachment.svelte';
 	import MandateApprovalForm from '$lib/components/home/mandate-approval-form.svelte';
 	import ReasoningDisclosure from '$lib/components/home/reasoning-disclosure.svelte';
 	import ToolCallsDisclosure from '$lib/components/home/tool-calls-disclosure.svelte';
 	import WorkDisclosure from '$lib/components/home/work-disclosure.svelte';
 	import { mandateApprovals } from '$lib/chat/mandate';
 	import { formatElapsedDuration } from '$lib/format';
-	import type { ExecutorJob, ThreadMessage, Project } from '$lib/types/sprocket';
+	import type { ExecutorJob, ThreadMessage, Project, MessageAttachment } from '$lib/types/sprocket';
 
 	type Props = {
 		currentError: string | null;
@@ -43,6 +44,12 @@
 		remoteChangeNotice?: string | null;
 		onDismissRemoteChangeNotice?: () => void;
 		emptyStateMessage?: string;
+		stale?: boolean;
+		contextSummary?: string | null;
+		loadingOlder?: boolean;
+		hasOlder?: boolean;
+		onLoadOlder?: () => void;
+		loadAttachment?: (imageUploadId: MessageAttachment['imageUploadId']) => Promise<string | null>;
 	};
 
 	let {
@@ -56,21 +63,38 @@
 		onDismissRemoteChangeNotice,
 		emptyStateMessage = project
 			? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
-			: 'Add a project to begin.'
+			: 'Add a project to begin.',
+		stale = false,
+		contextSummary = null,
+		loadingOlder = false,
+		hasOlder = false,
+		onLoadOlder,
+		loadAttachment
 	}: Props = $props();
 	const firstPromptMessageId = $derived(messages.find((message) => message.type === 'prompt')?._id);
 	let scrollViewport = $state<HTMLDivElement | null>(null);
 	let stickToBottom = $state(true);
+	let restoringOlderScroll = $state(false);
+	let previousScrollHeight = 0;
 
 	const SCROLL_EPSILON_PX = 28;
+	const LOAD_OLDER_THRESHOLD_PX = 96;
 
 	function updateStickToBottom() {
 		const viewport = scrollViewport;
 		if (!viewport) {
 			return;
 		}
+		if (restoringOlderScroll) {
+			return;
+		}
 		const distanceToBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
 		stickToBottom = distanceToBottom <= SCROLL_EPSILON_PX;
+		if (hasOlder && !loadingOlder && onLoadOlder && viewport.scrollTop <= LOAD_OLDER_THRESHOLD_PX) {
+			previousScrollHeight = viewport.scrollHeight;
+			restoringOlderScroll = true;
+			onLoadOlder();
+		}
 	}
 
 	function isArtifactToolGroup(
@@ -131,11 +155,28 @@
 	$effect(() => {
 		void messages;
 		void actions;
+		const viewport = scrollViewport;
+		if (untrack(() => restoringOlderScroll) && viewport) {
+			viewport.scrollTop += Math.max(0, viewport.scrollHeight - previousScrollHeight);
+			restoringOlderScroll = false;
+			return;
+		}
 		if (!stickToBottom) {
 			return;
 		}
 
 		void tick().then(scrollToBottom);
+	});
+
+	$effect(() => {
+		if (loadingOlder) {
+			return;
+		}
+		void tick().then(() => {
+			if (!loadingOlder) {
+				restoringOlderScroll = false;
+			}
+		});
 	});
 
 	$effect(() => {
@@ -179,6 +220,28 @@
 				</div>
 			{/if}
 
+			{#if stale}
+				<div
+					role="status"
+					class="mb-6 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200"
+				>
+					Showing a local copy while Sprocket reconnects to history.
+				</div>
+			{/if}
+
+			{#if contextSummary}
+				<details class="text-muted-foreground mb-6 rounded-2xl border px-4 py-3 text-sm">
+					<summary class="text-foreground cursor-pointer"
+						>Earlier conversation was summarized</summary
+					>
+					<p class="mt-2 whitespace-pre-wrap">{contextSummary}</p>
+				</details>
+			{/if}
+
+			{#if loadingOlder}
+				<div class="text-muted-foreground mb-4 text-center text-xs">Loading earlier messages…</div>
+			{/if}
+
 			{#if messages.length === 0}
 				<div class="flex flex-1 items-center justify-center">
 					<div class="max-w-2xl text-center">
@@ -197,30 +260,13 @@
 									>
 										{#each message.attachments as attachment (attachment.imageUploadId)}
 											<li>
-												{#if attachment.url}
-													{@const url = attachment.url}
-													<button
-														type="button"
-														class="border-border hover:border-border focus-visible:ring-ring/40 block size-14 cursor-zoom-in overflow-hidden rounded-xl border transition focus-visible:ring-2 focus-visible:outline-none"
-														aria-label="View {attachment.name}"
-														title={attachment.name}
-														onclick={() => {
-															viewerImage = {
-																url,
-																name: attachment.name,
-																mediaType: attachment.mediaType
-															};
-														}}
-													>
-														<img src={url} alt="" loading="lazy" class="size-full object-cover" />
-													</button>
-												{:else}
-													<span
-														class="text-muted-foreground border-hairline bg-hover-fill inline-flex items-center rounded-xl border px-3 py-2 text-xs"
-													>
-														{attachment.name} (unavailable)
-													</span>
-												{/if}
+												<TranscriptAttachment
+													{attachment}
+													{loadAttachment}
+													onOpen={(image) => {
+														viewerImage = image;
+													}}
+												/>
 											</li>
 										{/each}
 									</ul>
