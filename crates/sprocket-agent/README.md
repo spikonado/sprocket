@@ -51,6 +51,7 @@ flow back through the executor job. Released agents that still call the public
 - `run.rs`: ownership, preparation, and finalization.
 - `provider.rs`: gateway completion loop, transcript sink, and provider outcomes.
 - `compaction.rs`: in-loop context compaction via a normal Responses call.
+- `history_json.rs`: Rig history JSON for the compaction summarizer.
 - `tools.rs`: model tools and durable job coordination.
 - `convex.rs`: run-control communication.
 - `types.rs`: history and context wire types.

@@ -72,8 +72,7 @@ The Rust dependency direction follows these boundaries:
 
 ```text
 sprocket-cli -> sprocket-server -> sprocket-agent -> sprocket-convex
-       |              |                |                 |
-       |              |                +-> sprocket-convex-provider
+       |              |                |
        +--------------+----------------+-> sprocket-workspace
 ```
 
@@ -205,17 +204,16 @@ in the Rust agent and Convex backend together.
 
 ## Repository layout
 
-| Path                               | Responsibility                          |
-| ---------------------------------- | --------------------------------------- |
-| `apps/web/`                        | Svelte application and Convex backend   |
-| `apps/desktop/`                    | Electron shell and packaging            |
-| `crates/sprocket-cli/`             | User-facing launcher                    |
-| `crates/sprocket-server/`          | Local HTTP and process boundary         |
-| `crates/sprocket-agent/`           | Agent run lifecycle and tools           |
-| `crates/sprocket-convex/`          | Neutral Convex RPC/auth client          |
-| `crates/sprocket-convex-provider/` | Rig history JSON for gateway compaction |
-| `crates/sprocket-workspace/`       | Local workspace primitives              |
-| `packages/`                        | Shared JavaScript configuration         |
+| Path                         | Responsibility                        |
+| ---------------------------- | ------------------------------------- |
+| `apps/web/`                  | Svelte application and Convex backend |
+| `apps/desktop/`              | Electron shell and packaging          |
+| `crates/sprocket-cli/`       | User-facing launcher                  |
+| `crates/sprocket-server/`    | Local HTTP and process boundary       |
+| `crates/sprocket-agent/`     | Agent run lifecycle and tools         |
+| `crates/sprocket-convex/`    | Neutral Convex RPC/auth client        |
+| `crates/sprocket-workspace/` | Local workspace primitives            |
+| `packages/`                  | Shared JavaScript configuration       |
 
 The AI gateway (`spikonado/ai-gateway`) is a separate private repository. Its
 public origin is `https://ai-gateway.spikonado.com`, with OpenAI-compatible

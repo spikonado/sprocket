@@ -8,7 +8,7 @@ use rig::message::{
 
 /// Serializes Rig messages into JSON the gateway-path agent dumps as
 /// summarizer user content during context compaction.
-pub fn completion_messages_json<'a>(
+pub(crate) fn completion_messages_json<'a>(
     history: impl IntoIterator<Item = &'a Message>,
 ) -> Result<serde_json::Value, CompletionError> {
     let mut messages: Vec<serde_json::Value> = Vec::new();

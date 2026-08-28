@@ -7153,7 +7153,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sprocket-convex",
- "sprocket-convex-provider",
  "sprocket-workspace",
  "thiserror",
  "tokio",
@@ -7183,14 +7182,6 @@ dependencies = [
  "convex",
  "rustls",
  "tokio",
-]
-
-[[package]]
-name = "sprocket-convex-provider"
-version = "0.3.2"
-dependencies = [
- "rig-core",
- "serde_json",
 ]
 
 [[package]]

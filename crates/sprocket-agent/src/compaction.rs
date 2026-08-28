@@ -1,13 +1,13 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::history_json::completion_messages_json;
 use rig::agent::{
     AgentHook, CompletionCallAction, CompletionCallEvent, HookContext, ModelTurnAction,
     ModelTurnFinished, RequestPatch, StepEventKind,
 };
 use rig::completion::{Message, Usage};
 use rig::message::{AssistantContent, UserContent};
-use sprocket_convex_provider::completion_messages_json;
 use tokio::time::timeout;
 
 use crate::convex::RuntimeClient;
