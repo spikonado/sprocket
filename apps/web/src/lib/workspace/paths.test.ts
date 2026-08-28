@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-	appendBrowsePathSegment,
 	getBrowseLeafPathSegment,
 	isFilesystemBrowseQuery,
+	isWindowsVolumeListQuery,
 	resolveWorkspacePathFromBrowse,
+	withTrailingPathSeparator,
 	workspacePathRequiresCreation
 } from '$lib/workspace/paths';
 
@@ -11,6 +12,9 @@ describe('workspace paths', () => {
 	it('detects filesystem browse queries', () => {
 		expect(isFilesystemBrowseQuery('~/projects')).toBe(true);
 		expect(isFilesystemBrowseQuery('C:\\dev')).toBe(true);
+		expect(isFilesystemBrowseQuery('D:')).toBe(true);
+		expect(isFilesystemBrowseQuery('\\\\server\\share')).toBe(true);
+		expect(isFilesystemBrowseQuery('\\')).toBe(true);
 		expect(isFilesystemBrowseQuery('my-project')).toBe(false);
 	});
 
@@ -19,8 +23,22 @@ describe('workspace paths', () => {
 		expect(getBrowseLeafPathSegment('~/projects/demo')).toBe('demo');
 	});
 
-	it('appends browse segments with separators', () => {
-		expect(appendBrowsePathSegment('~/projects/', 'demo')).toBe('~/projects/demo/');
+	it('adds a trailing separator without rewriting drive roots', () => {
+		expect(withTrailingPathSeparator('/home/me/robot')).toBe('/home/me/robot/');
+		expect(withTrailingPathSeparator('D:\\code')).toBe('D:\\code\\');
+		expect(withTrailingPathSeparator('D:')).toBe('D:\\');
+		expect(withTrailingPathSeparator('D:\\')).toBe('D:\\');
+		expect(withTrailingPathSeparator('/')).toBe('/');
+	});
+
+	it('keeps Windows drive-list queries from being treated as concrete paths', () => {
+		expect(isWindowsVolumeListQuery('\\')).toBe(true);
+		expect(isWindowsVolumeListQuery('/')).toBe(true);
+		expect(isWindowsVolumeListQuery('D')).toBe(true);
+		expect(isWindowsVolumeListQuery('D:')).toBe(true);
+		expect(isWindowsVolumeListQuery('\\D')).toBe(true);
+		expect(isWindowsVolumeListQuery('D:\\code')).toBe(false);
+		expect(isWindowsVolumeListQuery('\\\\server\\share')).toBe(false);
 	});
 
 	it('resolves a typed directory path when browse is inside that directory', () => {

@@ -15,33 +15,34 @@ pub struct FilesystemBrowseEntry {
 pub struct FilesystemBrowseResult {
     pub parent_path: String,
     pub entries: Vec<FilesystemBrowseEntry>,
+    #[serde(default)]
+    pub volume_list: bool,
 }
 
 pub fn browse_filesystem(partial_path: &str, cwd: Option<&str>) -> Result<FilesystemBrowseResult> {
+    #[cfg(windows)]
+    if is_windows_volume_list_query(partial_path.trim()) {
+        return list_windows_volumes();
+    }
+
     let directory = resolve_browse_directory(partial_path, cwd)?;
-    let parent_path = directory.to_string_lossy().to_string();
+    let parent_path = display_path(&directory);
     let mut entries = list_directory_entries(&directory)?;
 
-    if let Some(parent) = directory.parent() {
-        if parent != directory {
-            entries.insert(
-                0,
-                FilesystemBrowseEntry {
-                    name: "..".to_string(),
-                    full_path: parent.to_string_lossy().to_string(),
-                },
-            );
-        }
+    if let Some(parent_entry) = parent_browse_entry(&directory) {
+        entries.insert(0, parent_entry);
     }
 
     Ok(FilesystemBrowseResult {
         parent_path,
         entries,
+        volume_list: false,
     })
 }
 
 pub fn resolve_or_create_workspace_root(path: &str) -> Result<PathBuf> {
-    let expanded = crate::paths::expand_home(path.trim());
+    let expanded =
+        crate::paths::expand_home(&crate::paths::normalize_windows_drive_root(path.trim()));
     let candidate = PathBuf::from(&expanded);
 
     if candidate.exists() {
@@ -54,15 +55,15 @@ pub fn resolve_or_create_workspace_root(path: &str) -> Result<PathBuf> {
 }
 
 fn resolve_browse_directory(partial_path: &str, cwd: Option<&str>) -> Result<PathBuf> {
-    let trimmed = partial_path.trim();
+    let trimmed = crate::paths::normalize_windows_drive_root(partial_path.trim());
     if trimmed.is_empty() {
         return default_browse_directory();
     }
 
-    let expanded = crate::paths::expand_home(trimmed);
+    let expanded = crate::paths::expand_home(&trimmed);
     let mut candidate = PathBuf::from(expanded);
 
-    if is_relative_path(trimmed) {
+    if is_relative_path(&trimmed) {
         let Some(cwd_path) = cwd.map(PathBuf::from) else {
             bail!("relative paths require a current directory");
         };
@@ -111,35 +112,90 @@ fn resolve_browse_directory(partial_path: &str, cwd: Option<&str>) -> Result<Pat
 }
 
 fn list_directory_entries(directory: &Path) -> Result<Vec<FilesystemBrowseEntry>> {
-    let mut entries = Vec::new();
-
-    for entry in std::fs::read_dir(directory)
+    let mut entries: Vec<_> = std::fs::read_dir(directory)
         .with_context(|| format!("failed to read directory {}", directory.display()))?
-    {
-        let entry =
-            entry.with_context(|| format!("failed to read entry in {}", directory.display()))?;
-        let file_type = entry
-            .file_type()
-            .with_context(|| format!("failed to read type for {}", entry.path().display()))?;
-
-        if !file_type.is_dir() {
-            continue;
-        }
-
-        let canonical = entry
-            .path()
-            .canonicalize()
-            .with_context(|| format!("failed to resolve {}", entry.path().display()))?;
-        let name = entry.file_name().to_string_lossy().to_string();
-
-        entries.push(FilesystemBrowseEntry {
-            name,
-            full_path: canonical.to_string_lossy().to_string(),
-        });
-    }
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let file_type = entry.file_type().ok()?;
+            if !file_type.is_dir() && !file_type.is_symlink() {
+                return None;
+            }
+            let canonical = entry.path().canonicalize().ok()?;
+            if !canonical.is_dir() {
+                return None;
+            }
+            Some(FilesystemBrowseEntry {
+                name: entry.file_name().to_string_lossy().into_owned(),
+                full_path: display_path(&canonical),
+            })
+        })
+        .collect();
 
     entries.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
     Ok(entries)
+}
+
+fn parent_browse_entry(directory: &Path) -> Option<FilesystemBrowseEntry> {
+    let full_path = match directory.parent() {
+        Some(parent) if parent != directory => display_path(parent),
+        #[cfg(windows)]
+        _ => "\\".to_string(),
+        #[cfg(not(windows))]
+        _ => return None,
+    };
+
+    Some(FilesystemBrowseEntry {
+        name: "..".to_string(),
+        full_path,
+    })
+}
+
+fn display_path(path: &Path) -> String {
+    crate::paths::simplified_path(path)
+        .to_string_lossy()
+        .into_owned()
+}
+
+#[cfg(any(windows, test))]
+fn is_windows_volume_list_query(path: &str) -> bool {
+    path == "/" || path == "\\"
+}
+
+#[cfg(any(windows, test))]
+fn drive_letters_from_mask(mask: u32) -> Vec<char> {
+    (b'A'..=b'Z')
+        .enumerate()
+        .filter(|(index, _)| mask & (1 << *index) != 0)
+        .map(|(_, letter)| char::from(letter))
+        .collect()
+}
+
+#[cfg(windows)]
+fn list_windows_volumes() -> Result<FilesystemBrowseResult> {
+    let entries = drive_letters_from_mask(logical_drive_mask())
+        .into_iter()
+        .map(|letter| FilesystemBrowseEntry {
+            name: format!("{letter}:\\"),
+            full_path: format!("{letter}:\\"),
+        })
+        .collect();
+
+    Ok(FilesystemBrowseResult {
+        parent_path: "\\".to_string(),
+        entries,
+        volume_list: true,
+    })
+}
+
+#[cfg(windows)]
+fn logical_drive_mask() -> u32 {
+    // SAFETY: GetLogicalDrives is a parameterless Win32 query.
+    unsafe { GetLogicalDrives() }
+}
+
+#[cfg(windows)]
+unsafe extern "system" {
+    fn GetLogicalDrives() -> u32;
 }
 
 fn default_browse_directory() -> Result<PathBuf> {
@@ -237,5 +293,49 @@ mod tests {
         assert_eq!(result.parent_path, root.to_string_lossy());
 
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn listing_succeeds_when_a_child_cannot_be_resolved() {
+        let root = temp_dir("sprocket-browse-mixed");
+        fs::create_dir(root.join("visible")).expect("visible dir");
+        fs::write(root.join("notes.txt"), "hi").expect("file");
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("missing", root.join("broken")).expect("dangling symlink");
+
+        let result = browse_filesystem(&root.to_string_lossy(), None).expect("browse");
+        let names: Vec<&str> = result
+            .entries
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect();
+
+        assert!(names.contains(&"visible"));
+        assert!(!names.contains(&"notes.txt"));
+        #[cfg(unix)]
+        assert!(!names.contains(&"broken"));
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn filesystem_root_can_be_browsed() {
+        let result = browse_filesystem("/", None).expect("browse root");
+        assert!(!result.entries.is_empty());
+        assert!(!result.entries.iter().any(|entry| entry.name == ".."));
+    }
+
+    #[test]
+    fn parses_windows_logical_drive_mask() {
+        assert_eq!(drive_letters_from_mask(0b1101), vec!['A', 'C', 'D']);
+    }
+
+    #[test]
+    fn detects_windows_volume_list_query() {
+        assert!(is_windows_volume_list_query("/"));
+        assert!(is_windows_volume_list_query("\\"));
+        assert!(!is_windows_volume_list_query("//server/share"));
+        assert!(!is_windows_volume_list_query(r"D:\"));
     }
 }

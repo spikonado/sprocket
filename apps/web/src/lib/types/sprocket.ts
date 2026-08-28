@@ -203,6 +203,7 @@ export type FilesystemBrowseEntry = {
 export type FilesystemBrowseResult = {
 	parentPath: string;
 	entries: FilesystemBrowseEntry[];
+	volumeList?: boolean;
 };
 
 export type SkillSummary = {

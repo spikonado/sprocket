@@ -2,10 +2,11 @@
 	import { CornerLeftUp, Folder, FolderPlus, LoaderCircle } from '@lucide/svelte';
 	import type { DesktopApi, FilesystemBrowseEntry } from '$lib/types/sprocket';
 	import {
-		appendBrowsePathSegment,
 		getBrowseLeafPathSegment,
 		isFilesystemBrowseQuery,
+		isWindowsVolumeListQuery,
 		resolveWorkspacePathFromBrowse,
+		withTrailingPathSeparator,
 		workspacePathRequiresCreation
 	} from '$lib/workspace/paths';
 
@@ -43,6 +44,7 @@
 	let query = $state('~/');
 	let browseEntries = $state<FilesystemBrowseEntry[]>([]);
 	let browseParentPath = $state('');
+	let volumeList = $state(false);
 	let highlightedPath = $state<string | null>(null);
 	let isLoadingBrowse = $state(false);
 	let isSubmitting = $state(false);
@@ -52,12 +54,29 @@
 
 	const browseFilterQuery = $derived(getBrowseLeafPathSegment(query).toLowerCase());
 	const filteredEntries = $derived.by(() => {
+		if (volumeList) {
+			const needle = query
+				.trim()
+				.replace(/^[\\/]+/, '')
+				.toLowerCase();
+			return browseEntries.filter(
+				(entry) =>
+					entry.name.toLowerCase().startsWith(needle) ||
+					entry.fullPath.toLowerCase().startsWith(needle)
+			);
+		}
+
 		const showHidden = browseFilterQuery.startsWith('.');
-		return browseEntries.filter(
-			(entry) =>
+		return browseEntries.filter((entry) => {
+			if (entry.name === '..') {
+				return browseFilterQuery.length === 0;
+			}
+
+			return (
 				entry.name.toLowerCase().startsWith(browseFilterQuery) &&
 				(showHidden || !entry.name.startsWith('.'))
-		);
+			);
+		});
 	});
 	const selectedPath = $derived(query.trim());
 	const resolvedWorkspacePath = $derived(
@@ -75,7 +94,8 @@
 		})
 	);
 	const canSubmit = $derived(
-		resolvedWorkspacePath.length > 0 &&
+		!volumeList &&
+			resolvedWorkspacePath.length > 0 &&
 			(isFilesystemBrowseQuery(selectedPath) || browseParentPath.length > 0)
 	);
 	const submitLabel = $derived(
@@ -101,15 +121,17 @@
 	const emptyListMessage = $derived(
 		isLoadingBrowse
 			? 'Loading directories…'
-			: resolvedWorkspacePath.length > 0 && !willCreateDirectory
-				? mode === 'reconnect'
-					? 'Press Enter to reconnect this directory.'
-					: 'Press Enter to add this directory.'
-				: willCreateDirectory
+			: volumeList
+				? 'Select a drive.'
+				: resolvedWorkspacePath.length > 0 && !willCreateDirectory
 					? mode === 'reconnect'
-						? 'Press Enter to create and reconnect this directory.'
-						: 'Press Enter to create and add this directory.'
-					: 'No matching directories in this path.'
+						? 'Press Enter to reconnect this directory.'
+						: 'Press Enter to add this directory.'
+					: willCreateDirectory
+						? mode === 'reconnect'
+							? 'Press Enter to create and reconnect this directory.'
+							: 'Press Enter to create and add this directory.'
+						: 'No matching directories in this path.'
 	);
 
 	$effect(() => {
@@ -126,6 +148,7 @@
 		query = '~/';
 		highlightedPath = null;
 		errorMessage = null;
+		volumeList = false;
 		void loadBrowse(query);
 	});
 
@@ -136,6 +159,10 @@
 
 		const nextQuery = query;
 		const timeout = window.setTimeout(() => {
+			if (volumeList && isWindowsVolumeListQuery(nextQuery)) {
+				return;
+			}
+
 			void loadBrowse(nextQuery);
 		}, 180);
 
@@ -159,6 +186,7 @@
 
 			browseParentPath = result.parentPath;
 			browseEntries = result.entries;
+			volumeList = result.volumeList === true;
 			errorMessage = null;
 		} catch (error) {
 			if (requestId !== browseRequestId) {
@@ -174,27 +202,20 @@
 	}
 
 	function selectEntry(entry: FilesystemBrowseEntry) {
-		if (entry.name === '..') {
-			query = `${entry.fullPath}/`;
-			highlightedPath = entry.fullPath;
-			return;
-		}
-
-		query = appendBrowsePathSegment(
-			browseParentPath.endsWith('/') || browseParentPath.endsWith('\\')
-				? browseParentPath
-				: `${browseParentPath}/`,
-			entry.name
-		);
+		query = withTrailingPathSeparator(entry.fullPath);
 		highlightedPath = entry.fullPath;
 	}
 
 	function selectRecentProjectPath(recent: RecentProjectPath) {
-		query = `${recent.workspacePath}/`;
+		query = withTrailingPathSeparator(recent.workspacePath);
 		highlightedPath = recent.workspacePath;
 	}
 
 	async function confirmSelection() {
+		if (volumeList) {
+			return;
+		}
+
 		const workspacePath = resolvedWorkspacePath;
 		if (!workspacePath) {
 			errorMessage = 'Enter a project directory path.';
