@@ -3,8 +3,13 @@
 import contextDevTest from '@context-dot-dev/convex/test';
 import rateLimiterTest from '@convex-dev/rate-limiter/test';
 import exaTest from '@exalabs/convex-exa/test';
+import migrationsTest from '@convex-dev/migrations/test';
+import aggregateTest from '@convex-dev/aggregate/test';
+import workflowTest from '@convex-dev/workflow/test';
+import actionRetrierTest from '@convex-dev/action-retrier/test';
+import workpoolTest from '@convex-dev/workpool/test';
 import { convexTest, type TestConvex } from 'convex-test';
-import { api } from '@convex/_generated/api';
+import { api, internal } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import schema from './schema';
 
@@ -34,6 +39,11 @@ export function initConvexTest(): ConvexTestInstance {
 	rateLimiterTest.register(backend);
 	contextDevTest.register(backend);
 	exaTest.register(backend);
+	migrationsTest.register(backend);
+	aggregateTest.register(backend);
+	workflowTest.register(backend);
+	actionRetrierTest.register(backend);
+	workpoolTest.register(backend, 'webToolWorkpool');
 	return t;
 }
 
@@ -43,7 +53,7 @@ export async function seedOwnedThread(
 ): Promise<{
 	asUser: AuthenticatedTest;
 	subject: string;
-	projectId: Id<'projects'>;
+	repositoryKey: string;
 	threadId: Id<'threadRecords'>;
 }> {
 	const asUser = t.withIdentity({ subject });
@@ -58,17 +68,10 @@ export async function seedOwnedThread(
 			eventAt: 1
 		});
 	});
-	const project = await asUser.mutation(api.projects.upsertSelected, {
-		repositoryKey: 'alpha',
-		displayName: 'alpha',
-		connectedClientId: 'client-1'
-	});
-	if (!project) {
-		throw new Error('Expected project');
-	}
+	const repositoryKey = 'alpha';
 	const created = await asUser.mutation(api.threads.create, {
 		submissionId: `thread-${subject}-${Date.now()}-${Math.random()}`,
-		projectId: project._id,
+		repositoryKey,
 		selectedModel: 'gpt-5.6-sol',
 		reasoningEffort: 'medium',
 		serviceTier: 'standard'
@@ -76,26 +79,55 @@ export async function seedOwnedThread(
 	return {
 		asUser,
 		subject,
-		projectId: project._id,
+		repositoryKey,
 		threadId: created.threadId
 	};
 }
 
+export async function insertQueuedRun(
+	t: ConvexTestInstance,
+	asUser: AuthenticatedTest,
+	args: {
+		threadId: Id<'threadRecords'>;
+		submissionId: string;
+		executionSecret: string;
+		prompt: string;
+		imageUploadIds?: Id<'imageUploads'>[];
+		selectedModel?: string;
+		reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+		serviceTier?: 'standard' | 'fast';
+	}
+) {
+	const thread = await asUser.query(api.threads.getByThreadId, { threadId: args.threadId });
+	return await t.mutation(internal.agentRuntime.insertGatewayRun, {
+		userId: thread.userId,
+		submissionId: args.submissionId,
+		threadId: args.threadId,
+		prompt: args.prompt,
+		imageUploadIds: args.imageUploadIds ?? [],
+		selectedModel: args.selectedModel ?? 'gpt-5.6-sol',
+		reasoningEffort: args.reasoningEffort ?? 'medium',
+		serviceTier: args.serviceTier ?? 'standard',
+		executionSecret: args.executionSecret,
+		catalogVersion: '1',
+		protocolVersion: 1,
+		contextWindowTokens: 272_000,
+		autoCompactTokenLimit: 258_000
+	});
+}
+
 export async function createQueuedRun(
+	t: ConvexTestInstance,
 	asUser: AuthenticatedTest,
 	threadId: Id<'threadRecords'>,
 	submissionId: string,
 	executionSecret: string,
 	prompt = 'Do the thing'
 ) {
-	return await asUser.mutation(api.agentRuntime.createRun, {
-		submissionId,
+	return await insertQueuedRun(t, asUser, {
 		threadId,
-		prompt,
-		imageUploadIds: [],
-		selectedModel: 'gpt-5.6-sol',
-		reasoningEffort: 'medium',
-		serviceTier: 'standard',
-		executionSecret
+		submissionId,
+		executionSecret,
+		prompt
 	});
 }

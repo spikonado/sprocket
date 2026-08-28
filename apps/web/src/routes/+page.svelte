@@ -2,10 +2,9 @@
 	import { onMount, untrack } from 'svelte';
 	import { PanelRight } from '@lucide/svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-	import { useAuth, useMutation, useQuery } from 'convex-svelte';
+	import { useAuth, useMutation, useQuery, useAction } from 'convex-svelte';
 	import type { Id } from '$convex/_generated/dataModel';
 	import { api } from '$convex/_generated/api';
-	import { EXECUTOR_HEARTBEAT_WRITE_THROTTLE_MS } from '$convex/lib/projectConnection';
 	import {
 		advanceConvexAuthRetryPending,
 		authState,
@@ -37,19 +36,21 @@
 	import Button from '$lib/components/ui/button/button.svelte';
 	import {
 		attachLocalProject as attachLocalProjectForPath,
-		createLatestTaskQueue,
-		getDesiredAttachedProjectIds,
 		isRunBlockingAgentLaunch,
 		launchAgentRun,
+		runResumeKind,
 		refreshDesktopProjectAttachments as refreshDesktopProjectAttachmentsFromDesktop,
+		projectFromAttachment,
 		resolveDraftRunSubmissionId,
 		resolveSubmissionId,
 		verifyProjectAttachment as verifyProjectAttachmentForExecution,
 		type ProjectState
 	} from '$lib/home/desktop';
 	import { formatElapsedDuration } from '$lib/format';
+	import { convexClientErrorMessage } from '$lib/convex-error';
 	import { validateImageAttachmentAddition, type ComposerAttachment } from '$lib/chat/attachments';
 	import {
+		coercePersistedReasoningEffort,
 		coercePersistedSelection,
 		defaultModelId,
 		defaultReasoningEffort,
@@ -57,19 +58,16 @@
 		type SupportedReasoningEffort,
 		type SupportedServiceTier
 	} from '$convex/lib/models';
-	import {
-		asSupportedModelId,
-		getCatalogModel,
-		type CatalogModelId
-	} from '$lib/chat/model-catalog';
+	import { CATALOG_UNAVAILABLE_MESSAGE } from '$convex/lib/gatewayProtocol';
+	import { getCatalogModel, type CatalogModelId, type ModelCatalog } from '$lib/chat/model-catalog';
 	import { isClaimedRunStatus } from '$convex/lib/runLease';
 	import {
 		beginPendingAgentLaunch,
 		clearPendingAgentLaunch,
 		dataForThread,
 		findThreadById,
-		findProjectById,
 		findProjectByRepositoryKey,
+		findProjectByWorkspacePath,
 		getProjectThreadGroups,
 		isActiveThread,
 		isAgentLaunchPending,
@@ -80,12 +78,11 @@
 		resolvePendingAgentLaunchesFromThreads,
 		resolvePendingCreatedThreadId,
 		resolveProjectThreadSelection,
-		shouldForkProjectForRemoteChange,
 		toThreadSummary,
 		type PendingAgentLaunch,
 		type PendingAgentLaunches
 	} from '$lib/project/threads';
-	import { mergeThreadTranscriptMessages } from '$lib/project/transcript';
+	import { mergePagedTranscriptWithLive, mergeTranscriptParts } from '$lib/project/transcript';
 	import {
 		clearLaunchHash,
 		readWorkspaceLaunchFromHash,
@@ -95,6 +92,8 @@
 	import { applyTheme, resolveTheme, type SprocketTheme } from '$lib/theme';
 	import type {
 		DesktopApi,
+		LiveCompletionOverlay,
+		LocalTranscriptPart,
 		ThreadMessage,
 		ThreadSummary,
 		ProjectAttachment,
@@ -135,21 +134,36 @@
 			convexAuthRetryPending.set(false);
 		}
 	});
-	const upsertProject = useMutation(api.projects.upsertSelected);
 	const createThreadMutation = useMutation(api.threads.create);
+	const rekeyRepository = useMutation(api.threads.rekeyRepository);
 	const renameThreadMutation = useMutation(api.threads.rename);
 	const archiveThreadMutation = useMutation(api.threads.archive);
 	const restoreThreadMutation = useMutation(api.threads.restore);
 	const finalizeRun = useMutation(api.agentRuntime.finalizeRun);
+	const reopenRun = useMutation(api.agentRuntime.reopenRun);
 	const answerAgentQuestion = useMutation(api.agentQuestions.answer);
 	const setThemePreference = useMutation(api.uiPreferences.setTheme);
 	const generateImageUploadUrl = useMutation(api.imageUploads.generateUploadUrl);
 	const registerImageUpload = useMutation(api.imageUploads.register);
 	const discardImageUpload = useMutation(api.imageUploads.discard);
-	const heartbeatAttached = useMutation(api.projects.heartbeatAttached);
 	const ensureMySubscription = useMutation(api.billing.ensureMySubscription);
-	const modelCatalogQuery = useQuery(api.modelCatalog.get, () => ({ includeUsagePolicy: true }));
-	const modelCatalog = $derived(modelCatalogQuery.data);
+	const fetchModelCatalog = useAction(api.modelCatalog.fetch);
+	let modelCatalog = $state<ModelCatalog | undefined>(undefined);
+	let catalogError = $state<string | null>(null);
+	let catalogLoading = $state(true);
+
+	async function loadModelCatalog() {
+		catalogLoading = true;
+		try {
+			modelCatalog = await fetchModelCatalog({});
+			catalogError = null;
+		} catch {
+			catalogError = CATALOG_UNAVAILABLE_MESSAGE;
+			modelCatalog = undefined;
+		} finally {
+			catalogLoading = false;
+		}
+	}
 	let ensureSubscriptionAttemptedFor: string | null = null;
 
 	$effect(() => {
@@ -171,35 +185,26 @@
 		prompt: string;
 		attachments?: ComposerAttachment[];
 		imageUploadIds?: Id<'imageUploads'>[];
-		reasoningEffort?: SupportedReasoningEffort;
-		serviceTier?: SupportedServiceTier;
+		reasoningEffort?: string;
+		serviceTier?: string;
 		selectedModel?: CatalogModelId;
 		submissionId?: string;
 	};
-	const projectAttachmentHeartbeatQueue = createLatestTaskQueue(
-		async (request: { clientId: string; projectIds: Id<'projects'>[] }) => {
-			await heartbeatAttached({
-				clientId: request.clientId,
-				projectIds: request.projectIds
-			});
-		}
-	);
-
 	let desktopApi = $state<DesktopApi | null>(null);
 	let desktopApiResolved = $state(false);
+	let currentWorkspacePath = $state<string | null>(null);
 	let currentRepositoryKey = $state<string | null>(null);
 	let currentThreadId = $state<Id<'threadRecords'> | null>(null);
-	let draftRepositoryKey = $state<string | null>(null);
+	let draftWorkspacePath = $state<string | null>(null);
 	// Seed from compiled defaults; composer effects adopt live catalog defaults once loaded.
 	let selectedModel = $state<CatalogModelId>(defaultModelId);
-	let selectedReasoningEffort = $state<SupportedReasoningEffort>(defaultReasoningEffort);
-	let selectedServiceTier = $state<SupportedServiceTier>(defaultServiceTier);
+	let selectedReasoningEffort = $state<string>(defaultReasoningEffort);
+	let selectedServiceTier = $state<string>(defaultServiceTier);
 	let prompt = $state('');
 	let selectedQuestionOptionId = $state<string | null>(null);
 	let answeringAgentQuestion = $state(false);
 	let composerAttachments = $state<ComposerAttachment[]>([]);
 	let currentError = $state<string | null>(null);
-	let executorClientId = $state<string | null>(null);
 	let elapsedSeconds = $state(0);
 	const submittingPromptScopes = new SvelteMap<string, number>();
 	const composerRecoveries = new SvelteMap<string, ComposerRecovery>();
@@ -208,8 +213,8 @@
 		{
 			prompt: string;
 			imageUploadIds: Id<'imageUploads'>[];
-			reasoningEffort: SupportedReasoningEffort;
-			serviceTier: SupportedServiceTier;
+			reasoningEffort: string;
+			serviceTier: string;
 			selectedModel: CatalogModelId;
 			submissionId: string;
 		}
@@ -226,18 +231,18 @@
 	let nextAgentLaunchId = 0;
 	let nextSubmissionSequence = 0;
 	let hasResolvedInitialSelection = $state(false);
-	let restoredProjectIdToAttach = $state<Id<'projects'> | null>(null);
+	let restoredWorkspacePathToAttach = $state<string | null>(null);
 	let lastSyncedComposerThreadId: Id<'threadRecords'> | null = null;
 	let projectSelectionGeneration = $state(0);
 	let pendingCreatedThreadId = $state<Id<'threadRecords'> | null>(null);
-	let desktopProjectAttachmentsById = $state<Record<string, ProjectAttachment>>({});
+	let desktopProjectAttachmentsByPath = $state<Record<string, ProjectAttachment>>({});
 	let hasLoadedDesktopProjectAttachments = $state(false);
 	let desktopProjectAttachmentsGeneration = 0;
 	let selectionUserId = $state<string | null>(null);
 	let projectPickerOpen = $state(false);
 	let projectPickerMode = $state<'add' | 'reconnect'>('add');
 	let projectPickerExpectedDisplayName = $state<string | undefined>(undefined);
-	let projectPickerReconnectProjectId = $state<Id<'projects'> | null>(null);
+	let projectPickerReconnectWorkspacePath = $state<string | null>(null);
 	let settingsOpen = $state(false);
 	let settingsPage = $state<SettingsPage>('account');
 	let pendingProjectLaunches = $state<string[]>([]);
@@ -246,7 +251,7 @@
 	const remoteChangeNotices = new SvelteMap<Id<'threadRecords'>, string>();
 	let artifactFullscreenKey = $state<string | null>(null);
 	const REMOTE_CHANGE_NOTICE =
-		'A new project was created because this directory’s git remote changed. Earlier threads stay on the previous project.';
+		'This directory’s git remote changed. Existing threads now follow the new repository.';
 	function getCurrentUserId() {
 		return $authState.user?.id ?? null;
 	}
@@ -346,11 +351,8 @@
 		composerAttachments = [];
 	}
 
-	function getComposerScope(
-		threadId: Id<'threadRecords'> | null,
-		projectId: Id<'projects'> | null
-	) {
-		return threadId ? `thread:${threadId}` : projectId ? `draft:${projectId}` : null;
+	function getComposerScope(threadId: Id<'threadRecords'> | null, workspacePath: string | null) {
+		return threadId ? `thread:${threadId}` : workspacePath ? `draft:${workspacePath}` : null;
 	}
 
 	function clearSubmittingPrompt(scope: string, submissionSequence: number) {
@@ -377,9 +379,6 @@
 		return $authState.user && convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip';
 	}
 
-	const projectsQuery = useQuery(api.projects.listMine, () =>
-		getAuthenticatedQueryArgs() === 'skip' ? 'skip' : { includeExecutorStatus: false }
-	);
 	const threadsQuery = useQuery(api.threads.listMine, getAuthenticatedQueryArgs);
 	const uiPreferencesQuery = useQuery(api.uiPreferences.getMine, getAuthenticatedQueryArgs);
 	let workspaceTheme = $state<SprocketTheme>(resolveTheme(null));
@@ -452,11 +451,6 @@
 			? { threadId: currentThreadId }
 			: 'skip';
 	const activeThreadQuery = useQuery(api.threads.getByThreadId, authenticatedThreadQueryArgs);
-	const historyMessagesQuery = useQuery(
-		api.messages.listHistoryForThread,
-		authenticatedThreadQueryArgs
-	);
-	const liveMessagesQuery = useQuery(api.messages.listLiveForThread, authenticatedThreadQueryArgs);
 	const latestRunQuery = useQuery(api.chat.latestRunForThread, authenticatedThreadQueryArgs);
 	const artifactsQuery = useQuery(
 		api.artifacts.listArtifactsForThread,
@@ -472,13 +466,9 @@
 	);
 	const queryError = $derived.by(() => {
 		for (const query of [
-			modelCatalogQuery,
-			projectsQuery,
 			threadsQuery,
 			uiPreferencesQuery,
 			activeThreadQuery,
-			historyMessagesQuery,
-			liveMessagesQuery,
 			latestRunQuery,
 			browserLiveViewQuery,
 			pendingAgentQuestionQuery
@@ -491,17 +481,9 @@
 		return null;
 	});
 	const projects = $derived.by<ProjectState[]>(() =>
-		(projectsQuery.data ?? []).map((project) => {
-			const desktopAttachment = desktopProjectAttachmentsById[project._id];
-			return {
-				...project,
-				workspacePath: desktopAttachment?.workspacePath,
-				localAttachmentAvailability: desktopAttachment
-					? desktopAttachment.availability
-					: ('unlinked' as const),
-				localAttachmentError: desktopAttachment?.unavailableReason
-			};
-		})
+		Object.values(desktopProjectAttachmentsByPath)
+			.sort((left, right) => right.lastUsedAt - left.lastUsedAt)
+			.map(projectFromAttachment)
 	);
 	const threads = $derived((threadsQuery.data ?? []).map(toThreadSummary));
 	const currentActiveThread = $derived(dataForThread(activeThreadQuery.data, currentThreadId));
@@ -521,32 +503,248 @@
 	const pendingAgentQuestion = $derived(
 		dataForThread(pendingAgentQuestionQuery.data, currentThreadId)
 	);
-	const currentHistoryMessagesData = $derived(
-		dataForThread(historyMessagesQuery.data, currentThreadId)
-	);
-	const currentLiveMessagesData = $derived(dataForThread(liveMessagesQuery.data, currentThreadId));
-	// Pure derived merge only, no $effect/$state hold. Convex delivers history+live in one
-	// client transition; a held-live effect previously infinite-looped and froze all UI updates
-	// (messages, run timer, working state) until hard reload.
+	let replicaParts = $state<LocalTranscriptPart[]>([]);
+	let replicaNextBefore = $state<number | null>(null);
+	let replicaStale = $state(false);
+	let replicaThreadId = $state<Id<'threadRecords'> | null>(null);
+	let replicaReachedHistoryStart = $state(false);
+	let replicaLoading = $state(false);
+	let replicaContextSummary = $state<string | null>(null);
+	let replicaError = $state<string | null>(null);
+	let loadingOlderTranscript = $state(false);
+	let liveCompletion = $state<LiveCompletionOverlay | null>(null);
+	const replicaCache = new SvelteMap<
+		Id<'threadRecords'>,
+		{
+			parts: LocalTranscriptPart[];
+			nextBefore: number | null;
+			stale: boolean;
+			reachedHistoryStart: boolean;
+			contextSummary: string | null;
+		}
+	>();
+
+	function applyOlderPageCursor(nextBefore: number | undefined) {
+		replicaReachedHistoryStart = nextBefore == null;
+		replicaNextBefore = nextBefore ?? null;
+	}
+
+	function rememberReplica(threadId: Id<'threadRecords'>) {
+		replicaCache.set(threadId, {
+			parts: replicaParts.slice(),
+			nextBefore: replicaNextBefore,
+			stale: replicaStale,
+			reachedHistoryStart: replicaReachedHistoryStart,
+			contextSummary: replicaContextSummary
+		});
+	}
+
+	function showReplicaForThread(threadId: Id<'threadRecords'> | null) {
+		if (replicaThreadId && replicaThreadId !== threadId) {
+			rememberReplica(replicaThreadId);
+		}
+		replicaThreadId = threadId;
+		liveCompletion = null;
+		replicaError = null;
+		if (!threadId) {
+			replicaParts = [];
+			replicaNextBefore = null;
+			replicaStale = false;
+			replicaReachedHistoryStart = false;
+			replicaLoading = false;
+			replicaContextSummary = null;
+			return;
+		}
+		const cached = replicaCache.get(threadId);
+		if (cached) {
+			replicaParts = cached.parts.slice();
+			replicaNextBefore = cached.nextBefore;
+			replicaStale = cached.stale;
+			replicaReachedHistoryStart = cached.reachedHistoryStart;
+			replicaLoading = false;
+			replicaContextSummary = cached.contextSummary;
+			return;
+		}
+		replicaParts = [];
+		replicaNextBefore = null;
+		replicaStale = false;
+		replicaReachedHistoryStart = false;
+		replicaLoading = true;
+		replicaContextSummary = null;
+	}
+
+	$effect.pre(() => {
+		const threadId = currentThreadId;
+		if (replicaThreadId === threadId) {
+			return;
+		}
+		untrack(() => showReplicaForThread(threadId));
+	});
+
+	$effect(() => {
+		const threadId = currentThreadId;
+		const api = desktopApi;
+		if (!threadId || !api || !isSignedIn) {
+			return;
+		}
+		const userId = untrack(() => $authState.user?.id ?? null);
+		if (!userId) {
+			return;
+		}
+		const ac = new AbortController();
+		const watchedThreadId = threadId;
+		void (async () => {
+			try {
+				const page = await api.fetchTranscriptPage({
+					userId,
+					threadId: watchedThreadId
+				});
+				if (ac.signal.aborted || currentThreadId !== watchedThreadId) {
+					return;
+				}
+				replicaParts = page.parts;
+				replicaStale = page.stale;
+				replicaLoading = false;
+				replicaError = null;
+				replicaContextSummary = page.contextSummary ?? null;
+				applyOlderPageCursor(page.nextBefore);
+				rememberReplica(watchedThreadId);
+			} catch {
+				if (!ac.signal.aborted) {
+					replicaLoading = false;
+					if (replicaParts.length === 0) {
+						replicaError = 'Could not load conversation history.';
+					} else {
+						replicaStale = true;
+					}
+				}
+			}
+			try {
+				const authToken = await getAccessToken();
+				if (!authToken || ac.signal.aborted || currentThreadId !== watchedThreadId) {
+					return;
+				}
+				await api.watchTranscript(
+					{ authToken, userId, threadId: watchedThreadId },
+					{
+						signal: ac.signal,
+						onEvent: (event) => {
+							replicaStale = event.stale;
+							void refreshNewestTranscriptPage(watchedThreadId, userId);
+						}
+					}
+				);
+			} catch {
+				if (!ac.signal.aborted) {
+					replicaStale = true;
+				}
+			}
+		})();
+		return () => {
+			ac.abort();
+		};
+	});
+
+	$effect(() => {
+		const threadId = currentThreadId;
+		const api = desktopApi;
+		if (!threadId || !api || !isSignedIn) {
+			return;
+		}
+		const userId = untrack(() => $authState.user?.id ?? null);
+		if (!userId) {
+			return;
+		}
+		const ac = new AbortController();
+		const watchedThreadId = threadId;
+		void (async () => {
+			while (!ac.signal.aborted) {
+				try {
+					const authToken = await getAccessToken();
+					if (ac.signal.aborted) {
+						return;
+					}
+					if (authToken) {
+						await api.watchLiveCompletion(
+							{ authToken, userId, threadId: watchedThreadId },
+							{
+								signal: ac.signal,
+								onEvent: (event) => {
+									if (ac.signal.aborted || currentThreadId !== watchedThreadId) {
+										return;
+									}
+									if (event.eventType === 'updated') {
+										liveCompletion = event.live;
+									} else {
+										liveCompletion = null;
+									}
+								}
+							}
+						);
+					}
+				} catch {
+					if (ac.signal.aborted) {
+						return;
+					}
+				}
+				if (ac.signal.aborted) {
+					return;
+				}
+				await new Promise<void>((resolve) => {
+					const timer = setTimeout(resolve, 400);
+					ac.signal.addEventListener(
+						'abort',
+						() => {
+							clearTimeout(timer);
+							resolve();
+						},
+						{ once: true }
+					);
+				});
+			}
+		})();
+		return () => {
+			ac.abort();
+		};
+	});
+
 	const visibleMessages = $derived.by((): ThreadMessage[] => {
-		if (!currentHistoryMessagesData || !currentLiveMessagesData) {
+		const userId = getCurrentUserId();
+		if (!currentThreadId || !userId || replicaThreadId !== currentThreadId) {
 			return [];
 		}
-		return mergeThreadTranscriptMessages({
-			historyMessages: currentHistoryMessagesData.messages,
-			liveMessages: currentLiveMessagesData.messages
+		if (replicaLoading && replicaParts.length === 0) {
+			return [];
+		}
+		const live = latestRunResumeKind ? null : liveCompletion;
+		const latestRun = currentLatestRunData?.run ?? null;
+		return mergePagedTranscriptWithLive({
+			parts: replicaParts,
+			live,
+			latestRun,
+			latestPrompt:
+				latestRun && currentLatestRunData?.prompt
+					? {
+							text: currentLatestRunData.prompt,
+							imageUploadIds: currentLatestRunData.imageUploadIds ?? []
+						}
+					: undefined,
+			userId,
+			threadId: currentThreadId
 		});
 	});
 
 	const currentProject = $derived.by<ProjectState | null>(() => {
+		if (currentWorkspacePath) {
+			return findProjectByWorkspacePath(projects, currentWorkspacePath);
+		}
 		if (!currentRepositoryKey) {
 			return null;
 		}
-
 		return findProjectByRepositoryKey(projects, currentRepositoryKey);
 	});
 
-	const currentProjectId = $derived(currentProject?._id ?? null);
+	const currentProjectPath = $derived(currentProject?.workspacePath ?? currentWorkspacePath);
 	const composerProjectSkills = $derived.by(() => {
 		const workspacePath = currentProject?.workspacePath ?? null;
 		const api = desktopApi;
@@ -566,12 +764,14 @@
 	});
 
 	const currentProjectThreads = $derived.by<ThreadSummary[]>(() => {
-		if (!currentProjectId) {
+		if (!currentProject?.repositoryKey) {
 			return [];
 		}
 
 		return threads
-			.filter((thread) => thread.projectId === currentProjectId && isActiveThread(thread))
+			.filter(
+				(thread) => thread.repositoryKey === currentProject.repositoryKey && isActiveThread(thread)
+			)
 			.sort((left, right) => right.lastMessageAt - left.lastMessageAt);
 	});
 
@@ -580,7 +780,16 @@
 	);
 
 	const runState = $derived(currentLatestRunData?.run ?? null);
-	const visibleActions = $derived((currentLatestRunData?.jobs ?? []).slice(-60));
+	const visibleActions = $derived.by(() =>
+		(latestRunResumeKind
+			? (currentLatestRunData?.jobs ?? []).filter(
+					(job) =>
+						!job.hidden &&
+						(job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled')
+				)
+			: (currentLatestRunData?.jobs ?? [])
+		).slice(-60)
+	);
 	const threadArtifacts = $derived(
 		(artifactsQuery.data ?? []).map((entry) => ({
 			key: entry.artifact._id,
@@ -686,7 +895,7 @@
 	const fullscreenArtifact = $derived(
 		threadArtifacts.find((artifact) => artifact.key === artifactFullscreenKey) ?? null
 	);
-	const currentComposerScope = $derived(getComposerScope(currentThreadId, currentProjectId));
+	const currentComposerScope = $derived(getComposerScope(currentThreadId, currentProjectPath));
 	const estimatedServerNow = $derived(
 		latestRunServerClock && latestRunServerClock.runId === (runState?._id ?? null)
 			? latestRunServerClock.serverNow +
@@ -708,6 +917,9 @@
 	const hasPendingAgentLaunch = $derived(
 		isAgentLaunchPending(pendingAgentLaunches, currentThreadId)
 	);
+	const latestRunResumeKind = $derived(
+		hasPendingAgentLaunch || isRunning ? null : runResumeKind(runState, estimatedServerNow)
+	);
 	const isLatestRunReady = $derived(
 		isLatestRunReadyForThread({
 			threadId: currentThreadId,
@@ -720,7 +932,7 @@
 	);
 	const canSend = $derived(
 		Boolean(
-			currentProjectId &&
+			currentProjectPath &&
 			currentProject?.localAttachmentAvailability === 'available' &&
 			!isSubmittingPrompt &&
 			!answeringAgentQuestion &&
@@ -728,17 +940,11 @@
 			((!isRunning && isLatestRunReady) || pendingAgentQuestion)
 		)
 	);
-	const desiredAttachedProjectIds = $derived.by<Id<'projects'>[]>(() =>
-		getDesiredAttachedProjectIds(
-			Object.values(desktopProjectAttachmentsById),
-			projects.map((project) => project._id)
-		)
-	);
 	const recentProjectDirectories = $derived.by(() => {
 		const seen = new SvelteSet<string>();
 		const recents: Array<{ workspacePath: string; displayName: string }> = [];
 
-		for (const attachment of Object.values(desktopProjectAttachmentsById)) {
+		for (const attachment of Object.values(desktopProjectAttachmentsByPath)) {
 			if (attachment.availability !== 'available' || seen.has(attachment.workspacePath)) {
 				continue;
 			}
@@ -762,25 +968,52 @@
 			return;
 		}
 
-		desktopProjectAttachmentsById = nextAttachments;
+		desktopProjectAttachmentsByPath = nextAttachments;
 		hasLoadedDesktopProjectAttachments = true;
+		await rekeyChangedLocalRepositories(nextAttachments);
+	}
+
+	async function rekeyChangedLocalRepositories(next: Record<string, ProjectAttachment>) {
+		if (getAuthenticatedQueryArgs() === 'skip') {
+			return;
+		}
+		for (const attachment of Object.values(next)) {
+			const previousKey = attachment.previousRepositoryKey;
+			if (!previousKey || previousKey === attachment.repositoryKey) {
+				continue;
+			}
+			const siblingStillHasPreviousKey = Object.values(next).some(
+				(candidate) =>
+					candidate.workspacePath !== attachment.workspacePath &&
+					candidate.repositoryKey === previousKey
+			);
+			if (!siblingStillHasPreviousKey && getAuthenticatedQueryArgs() !== 'skip') {
+				await rekeyRepository({ from: previousKey, to: attachment.repositoryKey });
+			}
+			if (currentWorkspacePath === attachment.workspacePath) {
+				currentRepositoryKey = attachment.repositoryKey;
+			}
+			await attachLocalProject(attachment.workspacePath);
+		}
 	}
 
 	function applyProjectSelection(
-		repositoryKey: string,
+		workspacePath: string,
 		threadId: Id<'threadRecords'> | null = null,
 		draft: boolean = false
 	) {
-		currentRepositoryKey = repositoryKey;
+		const project = findProjectByWorkspacePath(projects, workspacePath);
+		currentWorkspacePath = workspacePath;
+		currentRepositoryKey = project?.repositoryKey ?? null;
 		currentThreadId = threadId;
-		draftRepositoryKey = draft ? repositoryKey : null;
+		draftWorkspacePath = draft ? workspacePath : null;
 		if (threadId !== pendingCreatedThreadId) {
 			pendingCreatedThreadId = null;
 		}
 	}
 
 	function setProjectSelection(
-		repositoryKey: string,
+		workspacePath: string,
 		threadId: Id<'threadRecords'> | null = null,
 		draft: boolean = false,
 		preserveError: boolean = false
@@ -789,41 +1022,45 @@
 		if (!preserveError) {
 			currentError = null;
 		}
-		applyProjectSelection(repositoryKey, threadId, draft);
+		applyProjectSelection(workspacePath, threadId, draft);
 	}
 
-	async function attachLocalProject(projectId: Id<'projects'>, workspacePath: string) {
+	async function attachLocalProject(workspacePath: string, replaceWorkspacePath?: string) {
 		if (!desktopApi) {
 			throw new Error(localServerRequiredMessage);
 		}
 
 		const attachment = await attachLocalProjectForPath({
 			desktopApi,
-			projectId,
-			workspacePath
+			workspacePath,
+			replaceWorkspacePath
 		});
 		desktopProjectAttachmentsGeneration += 1;
-		desktopProjectAttachmentsById = {
-			...desktopProjectAttachmentsById,
-			[attachment.projectId]: attachment
+		const nextAttachments = {
+			...desktopProjectAttachmentsByPath,
+			[attachment.workspacePath]: attachment
 		};
+		if (replaceWorkspacePath && replaceWorkspacePath !== attachment.workspacePath) {
+			delete nextAttachments[replaceWorkspacePath];
+		}
+		desktopProjectAttachmentsByPath = nextAttachments;
 		hasLoadedDesktopProjectAttachments = true;
 		return attachment;
 	}
 
 	function openProject(
-		repositoryKey: string,
+		workspacePath: string,
 		selection: { threadId?: Id<'threadRecords'> | null; draft?: boolean } = {}
 	) {
-		const project = findProjectByRepositoryKey(projects, repositoryKey);
+		const project = findProjectByWorkspacePath(projects, workspacePath);
 		if (!project) {
 			currentError = 'Choose a project first.';
 			return;
 		}
 
-		setProjectSelection(repositoryKey, selection.threadId, selection.draft);
+		setProjectSelection(workspacePath, selection.threadId, selection.draft);
 		const selectionGeneration = projectSelectionGeneration;
-		void verifyProject(project._id).catch((error) => {
+		void verifyProject(project.workspacePath).catch((error) => {
 			if (selectionGeneration === projectSelectionGeneration) {
 				currentError = error instanceof Error ? error.message : 'Failed to attach project.';
 			}
@@ -832,18 +1069,18 @@
 
 	function openProjectPicker(
 		mode: 'add' | 'reconnect' = 'add',
-		projectId: Id<'projects'> | null = null
+		workspacePath: string | null = null
 	) {
-		if (!desktopApi || !executorClientId) {
+		if (!desktopApi) {
 			currentError = localServerRequiredMessage;
 			return;
 		}
 
 		projectPickerMode = mode;
-		projectPickerReconnectProjectId = projectId;
+		projectPickerReconnectWorkspacePath = workspacePath;
 		const reconnectProject =
-			mode === 'reconnect' && projectId
-				? projects.find((project) => project._id === projectId)
+			mode === 'reconnect' && workspacePath
+				? findProjectByWorkspacePath(projects, workspacePath)
 				: undefined;
 		projectPickerExpectedDisplayName = reconnectProject?.displayName;
 		projectPickerOpen = true;
@@ -851,29 +1088,27 @@
 	}
 
 	async function handleProjectSelected(selection: ProjectSelection) {
-		if (!desktopApi || !executorClientId) {
+		if (!desktopApi) {
 			currentError = localServerRequiredMessage;
 			return;
 		}
 		const pickerUserId = getCurrentUserId();
-		const pickerClientId = executorClientId;
 		if (!pickerUserId) {
 			currentError = 'User session is not ready.';
 			return;
 		}
 
 		try {
-			if (projectPickerMode === 'reconnect' && projectPickerReconnectProjectId) {
+			if (projectPickerMode === 'reconnect' && projectPickerReconnectWorkspacePath) {
 				await reconnectProjectSelection(
 					selection,
-					projectPickerReconnectProjectId,
-					pickerUserId,
-					pickerClientId
+					projectPickerReconnectWorkspacePath,
+					pickerUserId
 				);
 				return;
 			}
 
-			await addProjectSelection(selection, pickerUserId, pickerClientId);
+			await addProjectSelection(selection, pickerUserId);
 		} catch (error) {
 			if (getCurrentUserId() !== pickerUserId) {
 				return;
@@ -883,55 +1118,46 @@
 		}
 	}
 
-	async function upsertCloudProject(selection: ProjectSelection, connectedClientId: string) {
-		const project = await upsertProject({
-			repositoryKey: selection.repositoryKey,
-			displayName: selection.displayName,
-			connectedClientId
-		});
-		if (!project) {
-			throw new Error('Failed to create or update the project.');
-		}
-		return project;
-	}
-
-	async function addProjectSelection(
-		selection: ProjectSelection,
-		expectedUserId: string,
-		connectedClientId: string
-	) {
-		const project = await upsertCloudProject(selection, connectedClientId);
+	async function addProjectSelection(selection: ProjectSelection, expectedUserId: string) {
+		await attachLocalProject(selection.workspacePath);
 		if (getCurrentUserId() !== expectedUserId) {
 			return;
 		}
-
-		await attachLocalProject(project._id, selection.workspacePath);
-		if (getCurrentUserId() !== expectedUserId) {
-			return;
-		}
-		setProjectSelection(selection.repositoryKey, null, true);
+		setProjectSelection(selection.workspacePath, null, true);
 		currentError = null;
 	}
 
 	async function reconnectProjectSelection(
 		selection: ProjectSelection,
-		reconnectProjectId: Id<'projects'>,
-		expectedUserId: string,
-		connectedClientId: string
+		previousWorkspacePath: string,
+		expectedUserId: string
 	) {
-		const previousProject = projects.find((project) => project._id === reconnectProjectId);
-		const project = await upsertCloudProject(selection, connectedClientId);
+		const previousProject = findProjectByWorkspacePath(projects, previousWorkspacePath);
+		await attachLocalProject(
+			selection.workspacePath,
+			previousWorkspacePath === selection.workspacePath ? undefined : previousWorkspacePath
+		);
 		if (getCurrentUserId() !== expectedUserId) {
 			return;
 		}
-
-		await attachLocalProject(project._id, selection.workspacePath);
-		if (getCurrentUserId() !== expectedUserId) {
-			return;
+		if (
+			previousProject &&
+			previousProject.repositoryKey !== selection.repositoryKey &&
+			getAuthenticatedQueryArgs() !== 'skip' &&
+			!projects.some(
+				(project) =>
+					project.workspacePath !== selection.workspacePath &&
+					project.repositoryKey === previousProject.repositoryKey
+			)
+		) {
+			await rekeyRepository({
+				from: previousProject.repositoryKey,
+				to: selection.repositoryKey
+			});
 		}
 		const keepThread =
 			previousProject?.repositoryKey === selection.repositoryKey ? currentThreadId : null;
-		setProjectSelection(selection.repositoryKey, keepThread);
+		setProjectSelection(selection.workspacePath, keepThread);
 		currentError = null;
 	}
 
@@ -959,58 +1185,53 @@
 		}
 	}
 
-	async function openLaunchedProject(
-		workspacePath: string,
-		client: DesktopApi,
-		userId: string,
-		clientId: string
-	) {
+	async function openLaunchedProject(workspacePath: string, client: DesktopApi, userId: string) {
 		const selection = await client.resolveWorkspacePath({ workspacePath });
 		if (getCurrentUserId() !== userId) {
 			return;
 		}
-		await addProjectSelection(selection, userId, clientId);
+		await addProjectSelection(selection, userId);
 	}
 
-	async function verifyProject(projectId: Id<'projects'>) {
+	async function verifyProject(workspacePath: string) {
 		await verifyProjectAttachmentForExecution({
 			desktopApi,
 			refreshDesktopProjectAttachments,
-			projectId
+			workspacePath
 		});
 	}
 
-	function reconnectProject(projectId: Id<'projects'>) {
-		openProjectPicker('reconnect', projectId);
+	function reconnectProject(workspacePath: string) {
+		openProjectPicker('reconnect', workspacePath);
 	}
 
 	function schedulePendingCreatedThreadExpiration(args: {
 		prompt: string;
 		attachments: ComposerAttachment[];
 		imageUploadIds: Id<'imageUploads'>[];
-		reasoningEffort: SupportedReasoningEffort;
-		serviceTier: SupportedServiceTier;
+		reasoningEffort: string;
+		serviceTier: string;
 		selectedModel: CatalogModelId;
 		submissionId: string;
 		threadId: Id<'threadRecords'>;
 		userId: string;
 		repositoryKey: string;
-		projectId: Id<'projects'>;
+		workspacePath: string;
 	}) {
 		window.setTimeout(() => {
 			if (
 				getCurrentUserId() !== args.userId ||
 				pendingCreatedThreadId !== args.threadId ||
 				currentThreadId !== args.threadId ||
-				currentRepositoryKey !== args.repositoryKey ||
+				currentWorkspacePath !== args.workspacePath ||
 				threads.some((thread) => thread.threadId === args.threadId)
 			) {
 				return;
 			}
 
 			pendingCreatedThreadId = null;
-			setProjectSelection(args.repositoryKey, null, true);
-			const recoveryScope = getComposerScope(null, args.projectId);
+			setProjectSelection(args.workspacePath, null, true);
+			const recoveryScope = getComposerScope(null, args.workspacePath);
 			if (recoveryScope) {
 				storeComposerRecovery(args.userId, recoveryScope, {
 					message: 'The new thread did not appear. Review your prompt and try sending it again.',
@@ -1033,19 +1254,21 @@
 		imageUploadIds: Id<'imageUploads'>[];
 		selectionGeneration: number;
 		selectedModel: CatalogModelId;
-		selectedReasoningEffort: SupportedReasoningEffort;
-		selectedServiceTier: SupportedServiceTier;
+		selectedReasoningEffort: string;
+		selectedServiceTier: string;
 		submissionId: string;
 		userId: string;
 		repositoryKey: string;
-		projectId: Id<'projects'>;
+		workspacePath: string;
 	}) {
 		const result = await createThreadMutation({
 			submissionId: args.submissionId,
-			projectId: args.projectId,
-			selectedModel: asSupportedModelId(args.selectedModel),
-			reasoningEffort: args.selectedReasoningEffort,
-			serviceTier: args.selectedServiceTier
+			repositoryKey: args.repositoryKey,
+			selectedModel: args.selectedModel,
+			// SAFETY: threads.create validates this against the reasoning-effort union.
+			reasoningEffort: args.selectedReasoningEffort as SupportedReasoningEffort,
+			// SAFETY: threads.create validates this against the service-tier union.
+			serviceTier: args.selectedServiceTier as SupportedServiceTier
 		});
 		if (!args.isSubmissionCurrent()) {
 			return null;
@@ -1058,7 +1281,7 @@
 			pendingCreatedThreadId = result.threadId;
 			projectSelectionGeneration += 1;
 			currentThreadId = result.threadId;
-			draftRepositoryKey = null;
+			draftWorkspacePath = null;
 			schedulePendingCreatedThreadExpiration({
 				prompt: args.prompt,
 				attachments: args.attachments,
@@ -1070,24 +1293,19 @@
 				threadId: result.threadId,
 				userId: args.userId,
 				repositoryKey: args.repositoryKey,
-				projectId: args.projectId
+				workspacePath: args.workspacePath
 			});
 		}
 
 		return result;
 	}
 
-	function startThreadDraftForProject(repositoryKey: string) {
-		openProject(repositoryKey, { draft: true });
+	function startThreadDraftForProject(workspacePath: string) {
+		openProject(workspacePath, { draft: true });
 	}
 
-	function selectThread(thread: ThreadSummary) {
-		const project = findProjectById(projects, thread.projectId);
-		if (!project) {
-			currentError = 'Choose a project first.';
-			return;
-		}
-		openProject(project.repositoryKey, { threadId: thread.threadId });
+	function selectThread(thread: ThreadSummary, workspacePath: string) {
+		openProject(workspacePath, { threadId: thread.threadId });
 	}
 
 	async function renameThread(threadId: Id<'threadRecords'>, title: string) {
@@ -1098,12 +1316,84 @@
 		}
 	}
 
+	async function refreshNewestTranscriptPage(threadId: Id<'threadRecords'>, userId: string) {
+		const api = desktopApi;
+		if (!api || currentThreadId !== threadId) {
+			return;
+		}
+		const page = await api.fetchTranscriptPage({ userId, threadId });
+		if (currentThreadId !== threadId) {
+			return;
+		}
+		replicaParts = mergeTranscriptParts(replicaParts, page.parts);
+		replicaStale = page.stale;
+		replicaContextSummary = page.contextSummary ?? replicaContextSummary;
+		rememberReplica(threadId);
+	}
+
+	async function loadOlderTranscript() {
+		const api = desktopApi;
+		const threadId = currentThreadId;
+		const userId = getCurrentUserId();
+		if (!api || !threadId || !userId || replicaNextBefore == null || loadingOlderTranscript) {
+			return;
+		}
+		loadingOlderTranscript = true;
+		try {
+			const page = await api.fetchTranscriptPage({
+				userId,
+				threadId,
+				before: replicaNextBefore
+			});
+			if (currentThreadId !== threadId) {
+				return;
+			}
+			replicaParts = mergeTranscriptParts(replicaParts, page.parts);
+			replicaStale = page.stale;
+			applyOlderPageCursor(page.nextBefore);
+			rememberReplica(threadId);
+		} catch {
+			replicaStale = true;
+		} finally {
+			loadingOlderTranscript = false;
+		}
+	}
+
+	async function loadTranscriptAttachment(imageUploadId: Id<'imageUploads'>) {
+		const api = desktopApi;
+		const threadId = currentThreadId;
+		const userId = getCurrentUserId();
+		if (!api || !threadId || !userId) {
+			return null;
+		}
+		const authToken = await getAccessToken();
+		if (!authToken) {
+			return null;
+		}
+		const blob = await api.fetchTranscriptAttachment({
+			authToken,
+			userId,
+			threadId,
+			imageUploadId
+		});
+		return blob ? URL.createObjectURL(blob) : null;
+	}
+
 	async function archiveThread(threadId: Id<'threadRecords'>) {
 		const archiveUserId = getCurrentUserId();
 		try {
 			await archiveThreadMutation({ threadId });
 			if (archiveUserId) {
 				clearComposerRecovery(archiveUserId, `thread:${threadId}`);
+				const api = desktopApi;
+				const authToken = await getAccessToken();
+				if (api && authToken) {
+					await api.clearTranscriptReplica({
+						authToken,
+						userId: archiveUserId,
+						threadId
+					});
+				}
 			}
 			if (getCurrentUserId() === archiveUserId) {
 				if (currentThreadId === threadId) {
@@ -1187,8 +1477,8 @@
 			return;
 		}
 
-		const projectId = currentProjectId;
-		if (!projectId) {
+		const workspacePath = currentProjectPath;
+		if (!workspacePath) {
 			currentError = 'Choose a project first.';
 			return;
 		}
@@ -1222,8 +1512,7 @@
 			currentError = 'Choose a project first.';
 			return;
 		}
-		let targetProjectId = projectId;
-		let forkedForRemoteChange = false;
+		let repositoryKeyChanged = false;
 		const submittedUserId = getCurrentUserId();
 		if (!submittedUserId) {
 			currentError = 'User session is not ready.';
@@ -1239,7 +1528,9 @@
 		const submittedReasoningEffort = selectedReasoningEffort;
 		const submittedServiceTier = selectedServiceTier;
 		const previousRunId = selectedThreadId ? (runState?._id ?? null) : null;
-		let submissionScope = selectedThreadId ? `thread:${selectedThreadId}` : `draft:${projectId}`;
+		let submissionScope = selectedThreadId
+			? `thread:${selectedThreadId}`
+			: `draft:${workspacePath}`;
 		const originatingRecoveryScope = submissionScope;
 		let recoveryScope = originatingRecoveryScope;
 		const originatingRecoveryKey = getComposerRecoveryKey(
@@ -1258,10 +1549,10 @@
 			recoveredSubmission: recoveredSubmission
 				? {
 						...recoveredSubmission,
-						selectedModel: asSupportedModelId(recoveredSubmission.selectedModel)
+						selectedModel: recoveredSubmission.selectedModel
 					}
 				: undefined,
-			selectedModel: asSupportedModelId(submittedModel)
+			selectedModel: submittedModel
 		});
 		let runSubmissionId = threadSubmissionId;
 		clearComposerRecovery(submittedUserId, originatingRecoveryScope);
@@ -1315,39 +1606,32 @@
 
 		try {
 			if (!selectedThreadId) {
-				const workspacePath = currentProject?.workspacePath;
-				if (!workspacePath) {
-					throw new Error('This project needs to be attached before sending.');
-				}
 				const resolution = await desktopApi.resolveWorkspacePath({ workspacePath });
 				if (!isSubmissionCurrent()) {
 					return;
 				}
-				if (shouldForkProjectForRemoteChange(submittedRepositoryKey, resolution.repositoryKey)) {
-					if (!executorClientId) {
-						throw new Error(localServerRequiredMessage);
+				if (resolution.repositoryKey !== submittedRepositoryKey) {
+					await attachLocalProject(resolution.workspacePath);
+					if (!isSubmissionCurrent()) {
+						return;
 					}
-					const forkedProject = await upsertCloudProject(
-						{
-							workspacePath: resolution.workspacePath,
-							displayName: resolution.displayName,
-							repositoryKey: resolution.repositoryKey
-						},
-						executorClientId
+					const siblingStillHasPreviousKey = projects.some(
+						(project) =>
+							project.workspacePath !== resolution.workspacePath &&
+							project.repositoryKey === submittedRepositoryKey
 					);
+					if (!siblingStillHasPreviousKey && getAuthenticatedQueryArgs() !== 'skip') {
+						await rekeyRepository({
+							from: submittedRepositoryKey,
+							to: resolution.repositoryKey
+						});
+					}
 					if (!isSubmissionCurrent()) {
 						return;
 					}
-					await attachLocalProject(forkedProject._id, resolution.workspacePath);
-					if (!isSubmissionCurrent()) {
-						return;
-					}
-					targetProjectId = forkedProject._id;
 					submittedRepositoryKey = resolution.repositoryKey;
-					forkedForRemoteChange = true;
-					clearSubmittingPrompt(submissionScope, submissionSequence);
-					submissionScope = `draft:${targetProjectId}`;
-					submittingPromptScopes.set(submissionScope, submissionSequence);
+					currentRepositoryKey = resolution.repositoryKey;
+					repositoryKeyChanged = true;
 				}
 			}
 
@@ -1365,7 +1649,7 @@
 						submissionId: threadSubmissionId,
 						userId: submittedUserId,
 						repositoryKey: submittedRepositoryKey,
-						projectId: targetProjectId
+						workspacePath
 					});
 			const threadId = selectedThreadId ?? threadCreation?.threadId ?? null;
 			if (!threadId || !isSubmissionCurrent()) {
@@ -1396,8 +1680,8 @@
 				recoveryScope = `thread:${threadId}`;
 				submissionTrackingKey = getComposerRecoveryKey(submittedUserId, recoveryScope);
 				latestSubmissionSequencesByRecoveryScope.set(submissionTrackingKey, submissionSequence);
-				if (forkedForRemoteChange) {
-					setProjectSelection(submittedRepositoryKey, threadId);
+				if (repositoryKeyChanged) {
+					setProjectSelection(workspacePath, threadId);
 					remoteChangeNotices.set(threadId, REMOTE_CHANGE_NOTICE);
 				}
 			}
@@ -1484,11 +1768,11 @@
 				threadId,
 				prompt: submittedPrompt,
 				imageUploadIds: submittedImageUploadIds,
-				selectedModel: asSupportedModelId(submittedModel),
+				selectedModel: submittedModel,
 				submissionId: runSubmissionId,
 				reasoningEffort: submittedReasoningEffort,
 				serviceTier: submittedServiceTier,
-				projectId: targetProjectId
+				workspacePath
 			});
 		} catch (error) {
 			if (launchedThreadId && agentLaunchId !== null) {
@@ -1535,6 +1819,80 @@
 		}
 	}
 
+	async function continueWorking() {
+		if (
+			!latestRunResumeKind ||
+			!runState ||
+			!currentThreadId ||
+			!currentProjectPath ||
+			hasPendingAgentLaunch ||
+			isSubmittingPrompt
+		) {
+			return;
+		}
+		if (!desktopApi) {
+			currentError = localServerRequiredMessage;
+			return;
+		}
+		const promptText = currentLatestRunData?.prompt ?? '';
+		const imageUploadIds = currentLatestRunData?.imageUploadIds ?? [];
+		if (!promptText && imageUploadIds.length === 0) {
+			currentError = 'This run has no prompt to continue.';
+			return;
+		}
+		const threadId = currentThreadId;
+		const workspacePath = currentProjectPath;
+		if (!workspacePath) {
+			return;
+		}
+		const previousRunId = runState._id;
+		const previousClaimExpiresAt = runState.claimExpiresAt;
+		const launchId = ++nextAgentLaunchId;
+		const launch: PendingAgentLaunch = {
+			expiresAt: Date.now() + agentLaunchTimeoutMs,
+			launchId,
+			previousRunId
+		};
+		if (previousClaimExpiresAt) {
+			launch.previousClaimExpiresAt = previousClaimExpiresAt;
+		}
+		pendingAgentLaunches = beginPendingAgentLaunch(pendingAgentLaunches, threadId, launch);
+		try {
+			await reopenRun({ runId: runState._id });
+			const authToken = await getAccessToken({ forceRefreshToken: true });
+			if (!authToken) {
+				throw new Error('User session is not ready.');
+			}
+			launchAgentRun({
+				authToken,
+				desktopApi,
+				onError: (error) => {
+					pendingAgentLaunches = clearPendingAgentLaunch(pendingAgentLaunches, threadId, launchId);
+					currentError = error.message;
+				},
+				onStarted: (runId) => {
+					pendingAgentLaunches = resolvePendingAgentLaunch(
+						pendingAgentLaunches,
+						threadId,
+						runId,
+						Date.now()
+					);
+				},
+				threadId,
+				prompt: promptText,
+				imageUploadIds,
+				selectedModel: runState.selectedModel,
+				reasoningEffort: runState.reasoningEffort,
+				serviceTier: runState.serviceTier,
+				submissionId: runState.submissionId,
+				workspacePath
+			});
+		} catch (error) {
+			pendingAgentLaunches = clearPendingAgentLaunch(pendingAgentLaunches, threadId, launchId);
+			currentError = error instanceof Error ? error.message : 'Failed to continue the run.';
+		}
+	}
+
 	$effect(() => {
 		const data = currentLatestRunData;
 		if (!data) {
@@ -1568,7 +1926,7 @@
 
 	$effect(() => {
 		const userId = getCurrentUserId();
-		const recoveryScope = getComposerScope(currentThreadId, currentProjectId);
+		const recoveryScope = getComposerScope(currentThreadId, currentProjectPath);
 		const staleRun = runState;
 		if (
 			!userId ||
@@ -1578,6 +1936,7 @@
 			isRunning ||
 			isSubmittingPrompt ||
 			hasPendingAgentLaunch ||
+			latestRunResumeKind ||
 			prompt !== '' ||
 			composerAttachments.length > 0 ||
 			!currentLatestRunData ||
@@ -1639,12 +1998,13 @@
 
 		selectionUserId = userId;
 		hasResolvedInitialSelection = false;
+		currentWorkspacePath = null;
 		currentRepositoryKey = null;
 		currentThreadId = null;
-		draftRepositoryKey = null;
+		draftWorkspacePath = null;
 		pendingCreatedThreadId = null;
 		pendingAgentLaunches = {};
-		restoredProjectIdToAttach = null;
+		restoredWorkspacePathToAttach = null;
 		ensureSubscriptionAttemptedFor = null;
 		lastSyncedComposerThreadId = null;
 		projectSelectionGeneration += 1;
@@ -1656,7 +2016,7 @@
 		selectedReasoningEffort = modelCatalog?.defaultReasoningEffort ?? defaultReasoningEffort;
 		selectedServiceTier = modelCatalog?.defaultServiceTier ?? defaultServiceTier;
 		projectPickerOpen = false;
-		projectPickerReconnectProjectId = null;
+		projectPickerReconnectWorkspacePath = null;
 		projectPickerExpectedDisplayName = undefined;
 	});
 
@@ -1664,15 +2024,13 @@
 		const workspacePath = pendingProjectLaunches[0];
 		const client = desktopApi;
 		const userId = getCurrentUserId();
-		const clientId = executorClientId;
 		if (
 			!workspacePath ||
 			projectLaunchInFlight ||
 			!authReady ||
 			!client ||
 			!userId ||
-			!clientId ||
-			projectsQuery.data === undefined
+			!hasLoadedDesktopProjectAttachments
 		) {
 			return;
 		}
@@ -1680,11 +2038,11 @@
 		pendingProjectLaunches = pendingProjectLaunches.slice(1);
 		projectLaunchInFlight = true;
 		hasResolvedInitialSelection = true;
-		restoredProjectIdToAttach = null;
+		restoredWorkspacePathToAttach = null;
 		projectPickerOpen = false;
 		settingsOpen = false;
 		currentError = null;
-		void openLaunchedProject(workspacePath, client, userId, clientId)
+		void openLaunchedProject(workspacePath, client, userId)
 			.catch((error) => {
 				if (getCurrentUserId() === userId) {
 					hasResolvedInitialSelection = false;
@@ -1705,13 +2063,16 @@
 		if (!thread) return;
 		const selection = coercePersistedSelection(thread.selectedModel, thread.serviceTier);
 		selectedModel = selection.modelId;
-		selectedReasoningEffort = thread.reasoningEffort;
+		selectedReasoningEffort = coercePersistedReasoningEffort(
+			selection.modelId,
+			thread.reasoningEffort
+		);
 		selectedServiceTier = selection.serviceTier;
 	});
 
 	$effect(() => {
 		const userId = getCurrentUserId();
-		const recoveryScope = getComposerScope(currentThreadId, currentProjectId);
+		const recoveryScope = getComposerScope(currentThreadId, currentProjectPath);
 		if (!userId || !recoveryScope) {
 			return;
 		}
@@ -1780,42 +2141,45 @@
 			return;
 		}
 
-		if (!projectsQuery.data || !threadsQuery.data) {
+		if (!hasLoadedDesktopProjectAttachments || !threadsQuery.data) {
 			return;
 		}
 
 		hasResolvedInitialSelection = true;
-		const restoredThread = pickThreadToRestore(threads);
+		const localRepositoryKeys = new Set(projects.map((project) => project.repositoryKey));
+		const restoredThread = pickThreadToRestore(
+			threads.filter((thread) => localRepositoryKeys.has(thread.repositoryKey))
+		);
 		if (restoredThread) {
-			const restoredProject = findProjectById(projects, restoredThread.projectId);
+			const restoredProject = findProjectByRepositoryKey(projects, restoredThread.repositoryKey);
 			if (restoredProject) {
-				setProjectSelection(restoredProject.repositoryKey, restoredThread.threadId, false, true);
-				restoredProjectIdToAttach = restoredProject._id;
+				setProjectSelection(restoredProject.workspacePath, restoredThread.threadId, false, true);
+				restoredWorkspacePathToAttach = restoredProject.workspacePath;
 				return;
 			}
 		}
 
 		if (projects[0]) {
-			setProjectSelection(projects[0].repositoryKey, null, false, true);
-			restoredProjectIdToAttach = projects[0]._id;
+			setProjectSelection(projects[0].workspacePath, null, false, true);
+			restoredWorkspacePathToAttach = projects[0].workspacePath;
 		}
 	});
 
 	$effect(() => {
-		const projectId = restoredProjectIdToAttach;
-		if (!projectId || !desktopApi || !hasLoadedDesktopProjectAttachments) {
+		const workspacePath = restoredWorkspacePathToAttach;
+		if (!workspacePath || !desktopApi || !hasLoadedDesktopProjectAttachments) {
 			return;
 		}
 
-		const project = projects.find((candidate) => candidate._id === projectId);
+		const project = findProjectByWorkspacePath(projects, workspacePath);
 		if (!project) {
-			restoredProjectIdToAttach = null;
+			restoredWorkspacePathToAttach = null;
 			return;
 		}
 
-		restoredProjectIdToAttach = null;
+		restoredWorkspacePathToAttach = null;
 		const selectionGeneration = projectSelectionGeneration;
-		void verifyProject(projectId).catch((error) => {
+		void verifyProject(workspacePath).catch((error) => {
 			if (selectionGeneration === projectSelectionGeneration) {
 				currentError = error instanceof Error ? error.message : 'Failed to attach project.';
 			}
@@ -1824,27 +2188,30 @@
 
 	$effect(() => {
 		const activeThreadSummary = currentThreadId ? findThreadById(threads, currentThreadId) : null;
-		const threadProject = findProjectById(projects, activeThreadSummary?.projectId);
-		if (threadProject && threadProject.repositoryKey !== currentRepositoryKey) {
+		const threadProject =
+			currentProject?.repositoryKey === activeThreadSummary?.repositoryKey
+				? currentProject
+				: findProjectByRepositoryKey(projects, activeThreadSummary?.repositoryKey);
+		if (threadProject && threadProject.workspacePath !== currentWorkspacePath) {
 			setProjectSelection(
-				threadProject.repositoryKey,
+				threadProject.workspacePath,
 				currentThreadId,
-				draftRepositoryKey === threadProject.repositoryKey
+				draftWorkspacePath === threadProject.workspacePath
 			);
 		}
 	});
 
 	$effect(() => {
 		const threads = currentProjectThreads;
-		if (!hasResolvedInitialSelection || !currentRepositoryKey) {
+		if (!hasResolvedInitialSelection || !currentWorkspacePath) {
 			return;
 		}
 
 		const nextThreadId = resolveProjectThreadSelection({
 			threads,
 			currentThreadId,
-			currentRepositoryKey,
-			draftRepositoryKey,
+			currentWorkspacePath,
+			draftWorkspacePath,
 			pendingCreatedThreadId
 		});
 		if (nextThreadId === currentThreadId) {
@@ -1852,9 +2219,9 @@
 		}
 
 		setProjectSelection(
-			currentRepositoryKey,
+			currentWorkspacePath,
 			nextThreadId,
-			draftRepositoryKey === currentRepositoryKey,
+			draftWorkspacePath === currentWorkspacePath,
 			true
 		);
 	});
@@ -1896,44 +2263,8 @@
 		};
 	});
 
-	$effect(() => {
-		const clientId = executorClientId;
-		if (
-			!clientId ||
-			!desktopApi ||
-			!hasLoadedDesktopProjectAttachments ||
-			projectsQuery.data === undefined ||
-			getAuthenticatedQueryArgs() === 'skip'
-		) {
-			return;
-		}
-		const request = {
-			clientId,
-			projectIds: desiredAttachedProjectIds
-		};
-
-		// Hidden tabs stop beating; the server TTL outlasts background periods.
-		const enqueueHeartbeat = () => {
-			if (document.visibilityState === 'hidden') return;
-			void projectAttachmentHeartbeatQueue.enqueue(request).catch(() => {});
-		};
-		const handleVisibilityChange = () => {
-			if (document.visibilityState === 'visible') enqueueHeartbeat();
-		};
-
-		enqueueHeartbeat();
-		const intervalId = window.setInterval(enqueueHeartbeat, EXECUTOR_HEARTBEAT_WRITE_THROTTLE_MS);
-		document.addEventListener('visibilitychange', handleVisibilityChange);
-
-		return () => {
-			window.clearInterval(intervalId);
-			document.removeEventListener('visibilitychange', handleVisibilityChange);
-			projectAttachmentHeartbeatQueue.cancelPending();
-		};
-	});
-
 	onMount(() => {
-		executorClientId = crypto.randomUUID();
+		void loadModelCatalog();
 		const bridge = window.sprocketDesktopBridge;
 		const unsubscribeWorkspaceLaunch = bridge?.onWorkspaceLaunch
 			? bridge.onWorkspaceLaunch(() => {
@@ -2044,7 +2375,7 @@
 				/>
 			{:else}
 				<ProjectSidebar
-					{currentRepositoryKey}
+					{currentWorkspacePath}
 					{currentThreadId}
 					groups={groupedProjectThreads}
 					{pendingAgentLaunches}
@@ -2053,8 +2384,8 @@
 					onAddProject={() => {
 						openProjectPicker('add');
 					}}
-					onReconnectProject={(projectId) => {
-						void reconnectProject(projectId);
+					onReconnectProject={(workspacePath) => {
+						void reconnectProject(workspacePath);
 					}}
 					onOpenSettings={() => {
 						settingsPage = 'account';
@@ -2062,6 +2393,9 @@
 					}}
 					onStartThreadDraft={startThreadDraftForProject}
 					onSelectThread={selectThread}
+					onSelectProject={(workspacePath) => {
+						openProject(workspacePath);
+					}}
 					onRenameThread={(threadId, title) => {
 						void renameThread(threadId, title);
 					}}
@@ -2102,8 +2436,12 @@
 					{/if}
 				{:else}
 					<ThreadTranscript
-						currentError={currentError ?? $authState.error ?? queryError?.message ?? null}
-						runError={runState?.lastError ?? null}
+						currentError={replicaError ??
+							currentError ??
+							$authState.error ??
+							(queryError instanceof Error ? convexClientErrorMessage(queryError) : null) ??
+							null}
+						runError={latestRunResumeKind ? null : (runState?.lastError ?? null)}
 						messages={visibleMessages}
 						actions={visibleActions}
 						activeRunId={isRunning ? (runState?._id ?? null) : null}
@@ -2116,7 +2454,42 @@
 								remoteChangeNotices.delete(currentThreadId);
 							}
 						}}
+						stale={replicaStale}
+						contextSummary={replicaContextSummary}
+						loadingOlder={loadingOlderTranscript}
+						hasOlder={replicaNextBefore != null}
+						emptyStateMessage={currentThreadId &&
+						(replicaLoading || replicaThreadId !== currentThreadId)
+							? 'Loading conversation…'
+							: currentProject
+								? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
+								: 'Add a project to begin.'}
+						onLoadOlder={() => {
+							void loadOlderTranscript();
+						}}
+						loadAttachment={loadTranscriptAttachment}
 					/>
+
+					{#if catalogError}
+						<div
+							role="alert"
+							class="text-destructive mb-3 flex items-center justify-between gap-3 rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-sm"
+						>
+							<span>{CATALOG_UNAVAILABLE_MESSAGE}</span>
+							<Button
+								variant="outline"
+								className="h-8 px-3"
+								disabled={catalogLoading}
+								onclick={() => {
+									void loadModelCatalog();
+								}}
+							>
+								{catalogLoading ? 'Retrying…' : 'Retry'}
+							</Button>
+						</div>
+					{:else if catalogLoading && !modelCatalog}
+						<div class="text-muted-foreground mb-3 text-sm">Loading models…</div>
+					{/if}
 
 					<PromptComposer
 						bind:prompt
@@ -2128,6 +2501,10 @@
 						bind:selectedReasoningEffort
 						bind:selectedServiceTier
 						pendingQuestion={pendingAgentQuestion}
+						showContinueWorking={latestRunResumeKind != null}
+						onContinueWorking={() => {
+							void continueWorking();
+						}}
 						bind:selectedQuestionOptionId
 						{canSend}
 						isSubmitting={isSubmittingPrompt || hasPendingAgentLaunch || answeringAgentQuestion}
@@ -2207,7 +2584,7 @@
 				recentProjectPaths={recentProjectDirectories}
 				onClose={() => {
 					projectPickerOpen = false;
-					projectPickerReconnectProjectId = null;
+					projectPickerReconnectWorkspacePath = null;
 					projectPickerExpectedDisplayName = undefined;
 				}}
 				onSelect={async (selection) => {

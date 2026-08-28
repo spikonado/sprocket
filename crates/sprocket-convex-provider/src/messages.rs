@@ -1,19 +1,13 @@
 use std::collections::BTreeMap;
 
-use rig::completion::{CompletionError, CompletionRequest, Message};
+use rig::completion::{CompletionError, Message};
 use rig::message::{
     AssistantContent, DocumentSourceKind, Image, MimeType, ReasoningContent, ToolResultContent,
     UserContent,
 };
 
-pub(crate) fn build_model_messages(
-    request: &CompletionRequest,
-) -> Result<serde_json::Value, CompletionError> {
-    completion_messages_json(request.chat_history.iter())
-}
-
-/// Serializes Rig messages into the AI SDK model-message JSON accepted by the
-/// Convex completion actions.
+/// Serializes Rig messages into JSON the gateway-path agent dumps as
+/// summarizer user content during context compaction.
 pub fn completion_messages_json<'a>(
     history: impl IntoIterator<Item = &'a Message>,
 ) -> Result<serde_json::Value, CompletionError> {
@@ -61,7 +55,7 @@ pub fn completion_messages_json<'a>(
                         }
                         _ => {
                             return Err(CompletionError::ProviderError(
-                                "Convex-backed Rig provider only supports text, images, and tool results in user messages."
+                                "History JSON serialization only supports text, images, and tool results in user messages."
                                     .to_string(),
                             ));
                         }
@@ -137,11 +131,13 @@ pub fn completion_messages_json<'a>(
                             let tool_call_id = tool_call.wire_call_id().to_string();
                             tool_names_by_call_id
                                 .insert(tool_call_id.clone(), tool_call.function.name.clone());
+                            let mut input = tool_call.function.arguments.clone();
+                            normalize_convex_json_numbers(&mut input);
                             let mut part = serde_json::json!({
                                 "type": "tool-call",
                                 "toolCallId": tool_call_id,
                                 "toolName": tool_call.function.name.clone(),
-                                "input": tool_call.function.arguments.clone()
+                                "input": input
                             });
                             if let Some(provider_options) = &tool_call.additional_params {
                                 part["providerOptions"] = provider_options.clone();
@@ -153,7 +149,7 @@ pub fn completion_messages_json<'a>(
                         }
                         _ => {
                             return Err(CompletionError::ProviderError(
-                                "Convex-backed Rig provider only supports text and tool-call assistant content."
+                                "History JSON serialization only supports text and tool-call assistant content."
                                     .to_string(),
                             ));
                         }
@@ -227,7 +223,7 @@ fn image_url(image: &Image) -> Result<String, CompletionError> {
             Ok(format!("data:{};base64,{data}", media_type.to_mime_type()))
         }
         other => Err(CompletionError::ProviderError(format!(
-            "Convex-backed Rig provider only supports URL or base64 images, got {other:?}"
+            "History JSON serialization only supports URL or base64 images, got {other:?}"
         ))),
     }
 }
@@ -272,44 +268,18 @@ pub(crate) fn normalize_convex_json_numbers(value: &mut serde_json::Value) {
     }
 }
 
-pub(crate) fn instructions_text(request: &CompletionRequest) -> Option<String> {
-    request
-        .chat_history
-        .iter()
-        .find_map(|message| match message {
-            Message::System { content } => Some(content.clone()),
-            _ => None,
-        })
-}
-
 #[cfg(test)]
 mod tests {
-    use rig::completion::{CompletionRequest, Message};
+    use rig::completion::Message;
     use rig::message::{
         AdditionalParams, AssistantContent, ImageMediaType, Reasoning, ReasoningContent, Text,
         UserContent,
     };
 
-    use super::{build_model_messages, instructions_text, normalize_convex_json_numbers};
-
-    fn completion_request(chat_history: Vec<Message>) -> CompletionRequest {
-        CompletionRequest {
-            model: None,
-            preamble: None,
-            chat_history,
-            documents: vec![],
-            tools: vec![],
-            temperature: None,
-            max_tokens: None,
-            tool_choice: None,
-            additional_params: None,
-            output_schema: None,
-            record_telemetry_content: false,
-        }
-    }
+    use super::{completion_messages_json, normalize_convex_json_numbers};
 
     #[test]
-    fn builds_structured_messages_and_extracts_instructions() {
+    fn builds_structured_messages() {
         let messages = vec![
             Message::System {
                 content: "You are precise.".to_string(),
@@ -319,7 +289,7 @@ mod tests {
         ];
 
         let structured: serde_json::Value =
-            build_model_messages(&completion_request(messages.clone())).expect("structured");
+            completion_messages_json(messages.iter()).expect("structured");
         let array = structured.as_array().expect("array");
         assert_eq!(array.len(), 2);
         assert_eq!(array[0]["role"], "user");
@@ -330,10 +300,6 @@ mod tests {
         assert_eq!(
             array[1]["content"][0]["text"],
             "I found the relevant module."
-        );
-        assert_eq!(
-            instructions_text(&completion_request(messages)),
-            Some("You are precise.".to_string())
         );
     }
 
@@ -350,7 +316,7 @@ mod tests {
             ],
         }];
 
-        let structured = build_model_messages(&completion_request(messages)).expect("structured");
+        let structured = completion_messages_json(messages.iter()).expect("structured");
 
         assert_eq!(structured[0]["content"][0]["type"], "text");
         assert_eq!(structured[0]["content"][1]["type"], "image");
@@ -386,7 +352,7 @@ mod tests {
         ];
 
         let structured: serde_json::Value =
-            build_model_messages(&completion_request(messages)).expect("structured");
+            completion_messages_json(messages.iter()).expect("structured");
 
         let array: &Vec<serde_json::Value> = structured.as_array().expect("array");
         assert_eq!(array.len(), 3);
@@ -419,7 +385,7 @@ mod tests {
             })],
         }];
 
-        let structured = build_model_messages(&completion_request(messages)).expect("structured");
+        let structured = completion_messages_json(messages.iter()).expect("structured");
 
         assert_eq!(
             structured[0]["content"][0]["providerOptions"],
@@ -449,7 +415,7 @@ mod tests {
             ],
         }];
 
-        let structured = build_model_messages(&completion_request(messages)).expect("structured");
+        let structured = completion_messages_json(messages.iter()).expect("structured");
 
         assert_eq!(
             structured[0]["content"],

@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Id } from '$convex/_generated/dataModel';
 import {
-	createLatestTaskQueue,
-	getDesiredAttachedProjectIds,
 	isRunBlockingAgentLaunch,
 	launchAgentRun,
 	resolveDraftRunSubmissionId,
-	resolveSubmissionId
+	resolveSubmissionId,
+	runResumeKind
 } from '$lib/home/desktop';
-import type { DesktopApi, RunState, ProjectAttachment } from '$lib/types/sprocket';
+import { RUN_ABANDONED_BY_AGENT } from '$convex/lib/agentErrors';
+import type { DesktopApi, RunState } from '$lib/types/sprocket';
 
 function imageUploadId(value: string): Id<'imageUploads'> {
 	// SAFETY: fixture strings are only compared as opaque Convex document ids.
@@ -18,11 +18,6 @@ function imageUploadId(value: string): Id<'imageUploads'> {
 function threadRecordId(value: string): Id<'threadRecords'> {
 	// SAFETY: fixture strings are only compared as opaque Convex document ids.
 	return value as Id<'threadRecords'>;
-}
-
-function projectId(value: string): Id<'projects'> {
-	// SAFETY: fixture strings are only compared as opaque Convex document ids.
-	return value as Id<'projects'>;
 }
 
 function unusedDesktopCall(): Promise<never> {
@@ -45,7 +40,12 @@ function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 		resolveWorkspacePath: unusedDesktopCall,
 		listProjectAttachments: unusedDesktopCall,
 		attachProject: unusedDesktopCall,
-		runAgent
+		runAgent,
+		fetchTranscriptPage: unusedDesktopCall,
+		watchTranscript: unusedDesktopCall,
+		watchLiveCompletion: unusedDesktopCall,
+		clearTranscriptReplica: unusedDesktopCall,
+		fetchTranscriptAttachment: unusedDesktopCall
 	};
 }
 
@@ -64,7 +64,7 @@ function launchArgs(
 		reasoningEffort: 'medium',
 		serviceTier: 'standard',
 		submissionId: 'submission-1',
-		projectId: projectId('workspace-1'),
+		workspacePath: '/workspaces/workspace-1',
 		...overrides
 	};
 }
@@ -85,16 +85,6 @@ function resolveRecoveredSubmission(
 	});
 }
 
-function deferred<T = void>() {
-	let resolve!: (value: T) => void;
-	let reject!: (reason?: Error) => void;
-	const promise = new Promise<T>((settle, fail) => {
-		resolve = settle;
-		reject = fail;
-	});
-	return { promise, reject, resolve };
-}
-
 describe('launchAgentRun', () => {
 	it('acknowledges a durably created desktop run', async () => {
 		const runAgent = vi.fn().mockResolvedValue({ runId: 'run-1' });
@@ -112,7 +102,7 @@ describe('launchAgentRun', () => {
 			submissionId: 'submission-1',
 			reasoningEffort: 'medium',
 			serviceTier: 'standard',
-			projectId: 'workspace-1'
+			workspacePath: '/workspaces/workspace-1'
 		});
 		await vi.waitFor(() => {
 			expect(onStarted).toHaveBeenCalledWith('run-1');
@@ -218,102 +208,21 @@ describe('isRunBlockingAgentLaunch', () => {
 	});
 });
 
-describe('createLatestTaskQueue', () => {
-	it('settles coalesced requests with the retained latest write', async () => {
-		const releases: Array<() => void> = [];
-		const values: string[] = [];
-		const queue = createLatestTaskQueue(async (value: string) => {
-			values.push(value);
-			await new Promise<void>((resolve) => releases.push(resolve));
-		});
-
-		const first = queue.enqueue('old-viewer');
-		const superseded = queue.enqueue('superseded');
-		const latest = queue.enqueue('new-viewer');
-		expect(superseded).toBe(latest);
-		let coalescedSettled = false;
-		void superseded.then(() => {
-			coalescedSettled = true;
-		});
-
-		expect(values).toEqual(['old-viewer']);
-		releases.shift()?.();
-		await first;
-		expect(values).toEqual(['old-viewer', 'new-viewer']);
-		expect(coalescedSettled).toBe(false);
-		releases.shift()?.();
-		await Promise.all([superseded, latest]);
-		expect(coalescedSettled).toBe(true);
-	});
-
-	it('rejects every coalesced request when the retained latest write fails', async () => {
-		const firstGate = deferred();
-		const writeError = new Error('offline');
-		const values: string[] = [];
-		const queue = createLatestTaskQueue(async (value: string) => {
-			values.push(value);
-			if (value === 'first') {
-				await firstGate.promise;
-				return;
-			}
-
-			throw writeError;
-		});
-		const first = queue.enqueue('first');
-		const superseded = queue.enqueue('superseded');
-		const latest = queue.enqueue('latest');
-		const supersededFailure = expect(superseded).rejects.toBe(writeError);
-		const latestFailure = expect(latest).rejects.toBe(writeError);
-
-		firstGate.resolve();
-		await first;
-		await Promise.all([supersededFailure, latestFailure]);
-		expect(values).toEqual(['first', 'latest']);
-	});
-
-	it('cancels pending requests without affecting an in-flight write', async () => {
-		const firstGate = deferred();
-		const values: string[] = [];
-		const queue = createLatestTaskQueue(async (value: string) => {
-			values.push(value);
-			if (value === 'first') {
-				await firstGate.promise;
-			}
-		});
-		const first = queue.enqueue('first');
-		const superseded = queue.enqueue('superseded');
-		const latest = queue.enqueue('latest');
-		const supersededCancellation = expect(superseded).rejects.toThrow('Pending task was canceled.');
-		const latestCancellation = expect(latest).rejects.toThrow('Pending task was canceled.');
-
-		queue.cancelPending();
-		await Promise.all([supersededCancellation, latestCancellation]);
-		expect(values).toEqual(['first']);
-		const replacement = queue.enqueue('replacement');
-		firstGate.resolve();
-		await Promise.all([first, replacement]);
-		expect(values).toEqual(['first', 'replacement']);
-	});
-});
-
-describe('getDesiredAttachedProjectIds', () => {
-	it('includes only locally available attachments belonging to the current viewer', () => {
-		const location = (
-			id: string,
-			availability: ProjectAttachment['availability'] = 'available'
-		): ProjectAttachment => ({
-			projectId: projectId(id),
-			workspacePath: `/workspaces/${id}`,
-			availability,
-			lastValidatedAt: 1,
-			lastUsedAt: 1
-		});
-
+describe('runResumeKind', () => {
+	it('classifies crashed, failed, and cancelled latest runs', () => {
+		expect(runResumeKind({ status: 'running', claimExpiresAt: 50 }, 100)).toBe('crash');
 		expect(
-			getDesiredAttachedProjectIds(
-				[location('local'), location('old-viewer'), location('confirmed', 'unavailable')],
-				[projectId('local'), projectId('confirmed')]
+			runResumeKind(
+				{
+					status: 'failed',
+					lastError: RUN_ABANDONED_BY_AGENT
+				},
+				100
 			)
-		).toEqual(['local']);
+		).toBe('crash');
+		expect(runResumeKind({ status: 'failed', lastError: 'boom' }, 100)).toBe('failed');
+		expect(runResumeKind({ status: 'cancelled' }, 100)).toBe('cancelled');
+		expect(runResumeKind({ status: 'completed' }, 100)).toBeNull();
+		expect(runResumeKind({ status: 'running', claimExpiresAt: 150 }, 100)).toBeNull();
 	});
 });

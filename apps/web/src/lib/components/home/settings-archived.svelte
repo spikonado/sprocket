@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { Id } from '$convex/_generated/dataModel';
 	import type { Project, ThreadSummary } from '$lib/types/sprocket';
-	import { findProjectById, isActiveThread } from '$lib/project/threads';
+	import { findProjectByRepositoryKey, isActiveThread } from '$lib/project/threads';
 
 	type Props = {
 		threads: ThreadSummary[];
@@ -32,7 +32,7 @@
 		{:else}
 			<ul class="max-w-xl space-y-1">
 				{#each archivedThreads as thread (thread.threadId)}
-					{@const project = findProjectById(projects, thread.projectId)}
+					{@const project = findProjectByRepositoryKey(projects, thread.repositoryKey)}
 					<li class="group flex items-center gap-3 py-2">
 						<div class="min-w-0 flex-1">
 							<p class="text-foreground truncate text-[14px]">{thread.title}</p>

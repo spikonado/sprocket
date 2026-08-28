@@ -1,14 +1,12 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { mutation, query, type MutationCtx } from '@convex/_generated/server';
 import { v } from 'convex/values';
-import { getOwnedThreadRecord, getOwnedProject } from '@convex/lib/access';
+import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
 import { vThreadSummary, vThreadWithUsageDoc } from '@convex/lib/docs';
 import { getThreadUsageValues } from '@convex/lib/threadUsage';
-import { assertModelConfigurationAllowedForUser } from '@convex/lib/tiers';
 import {
 	isRunFinalStatus,
-	vModelId,
 	vReasoningEffort,
 	vRunStatus,
 	vServiceTier
@@ -27,8 +25,8 @@ async function patchOwnedThread(
 export const create = mutation({
 	args: {
 		submissionId: v.string(),
-		projectId: v.id('projects'),
-		selectedModel: vModelId,
+		repositoryKey: v.string(),
+		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
 		serviceTier: vServiceTier
 	},
@@ -38,12 +36,10 @@ export const create = mutation({
 	}),
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
-		await assertModelConfigurationAllowedForUser(ctx, userId, {
-			modelId: args.selectedModel,
-			reasoningEffort: args.reasoningEffort,
-			serviceTier: args.serviceTier
-		});
-		await getOwnedProject(ctx.db, userId, args.projectId);
+		const repositoryKey = args.repositoryKey.trim();
+		if (repositoryKey.length === 0) {
+			throw new Error('Repository key is required.');
+		}
 		const existingRecord = await ctx.db
 			.query('threadRecords')
 			.withIndex('by_userId_submissionId', (query) =>
@@ -52,7 +48,7 @@ export const create = mutation({
 			.unique();
 		if (existingRecord) {
 			if (
-				existingRecord.projectId !== args.projectId ||
+				existingRecord.repositoryKey !== repositoryKey ||
 				existingRecord.selectedModel !== args.selectedModel ||
 				existingRecord.reasoningEffort !== args.reasoningEffort ||
 				existingRecord.serviceTier !== args.serviceTier
@@ -81,7 +77,7 @@ export const create = mutation({
 		const recordId = await ctx.db.insert('threadRecords', {
 			userId: userId,
 			submissionId: args.submissionId,
-			projectId: args.projectId,
+			repositoryKey,
 			selectedModel: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
 			serviceTier: args.serviceTier,
@@ -120,6 +116,7 @@ export const listMine = query({
 				return {
 					...record,
 					threadId: record._id,
+					repositoryKey: record.repositoryKey ?? '',
 					title: record.title?.trim() || 'New thread',
 					threadStatus:
 						record.archivedAt !== undefined ? ('archived' as const) : ('active' as const),
@@ -146,7 +143,7 @@ export const getByThreadId = query({
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		const thread = await getOwnedThreadRecord(ctx.db, userId, args.threadId);
-		const usage = await getThreadUsageValues(ctx.db, thread);
+		const usage = await getThreadUsageValues(ctx, thread);
 		return { ...thread, ...usage };
 	}
 });
@@ -198,5 +195,35 @@ export const restore = mutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		await patchOwnedThread(ctx, args.threadId, { archivedAt: undefined });
+	}
+});
+
+export const rekeyRepository = mutation({
+	args: {
+		from: v.string(),
+		to: v.string()
+	},
+	returns: v.number(),
+	handler: async (ctx, args) => {
+		const userId = await getUserId(ctx);
+		const from = args.from.trim();
+		const to = args.to.trim();
+		if (from.length === 0 || to.length === 0) {
+			throw new Error('Repository key is required.');
+		}
+		if (from === to) {
+			return 0;
+		}
+
+		const threads = await ctx.db
+			.query('threadRecords')
+			.withIndex('by_userId_repositoryKey', (query) =>
+				query.eq('userId', userId).eq('repositoryKey', from)
+			)
+			.collect();
+		for (const thread of threads) {
+			await ctx.db.patch('threadRecords', thread._id, { repositoryKey: to });
+		}
+		return threads.length;
 	}
 });

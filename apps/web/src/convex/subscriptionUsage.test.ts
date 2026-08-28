@@ -3,15 +3,13 @@ import { api, internal } from '@convex/_generated/api';
 import { initConvexTest } from './test.setup';
 
 describe('subscription and usage backend', () => {
-	it('reports weighted model usage and preserves overdraft', async () => {
+	it('reports usage overdraft and preserves it', async () => {
 		const t = initConvexTest();
 		const userId = 'user_usage';
 		const asUser = t.withIdentity({ subject: userId });
-		await t.mutation(internal.lib.rateLimits.chargeModelUsageLimits, {
+		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
 			userId,
-			modelId: 'gpt-5.6-sol',
-			serviceTier: 'standard',
-			tokens: { input: 1_000_000, cacheRead: 0, cacheWrite: 0, output: 2_000_000 }
+			count: 20_000
 		});
 
 		const usage = await asUser.query(api.usage.getMyUsage, {});
@@ -22,11 +20,10 @@ describe('subscription and usage backend', () => {
 		expect(usage.exhausted).toBe(true);
 		expect(usage.resetsAt).not.toBeNull();
 		await expect(
-			t.mutation(internal.lib.rateLimits.checkModelUsageLimits, {
-				userId,
-				modelId: 'gpt-5.6-sol'
+			t.mutation(internal.lib.rateLimits.checkUsageLimits, {
+				userId
 			})
-		).rejects.toThrow('Monthly model usage limit reached');
+		).rejects.toThrow(/model usage limit reached/);
 	});
 
 	it('uses only active subscriptions and ignores stale webhook events', async () => {
@@ -194,18 +191,15 @@ describe('subscription and usage backend', () => {
 		const t = initConvexTest();
 		const userId = 'user_admin_bypass';
 		const asUser = t.withIdentity({ subject: userId });
-		await t.mutation(internal.lib.rateLimits.chargeModelUsageLimits, {
+		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
 			userId,
-			modelId: 'gpt-5.6-sol',
-			serviceTier: 'standard',
-			tokens: { input: 1_000_000, cacheRead: 0, cacheWrite: 0, output: 2_000_000 }
+			count: 20_000
 		});
 		await expect(
-			t.mutation(internal.lib.rateLimits.checkModelUsageLimits, {
-				userId,
-				modelId: 'gpt-5.6-sol'
+			t.mutation(internal.lib.rateLimits.checkUsageLimits, {
+				userId
 			})
-		).rejects.toThrow('Monthly model usage limit reached');
+		).rejects.toThrow(/model usage limit reached/);
 
 		await t.run(async (ctx) => {
 			const existing = await ctx.db
@@ -216,15 +210,12 @@ describe('subscription and usage backend', () => {
 			await ctx.db.patch('subscriptions', existing._id, { tier: 'admin' });
 		});
 
-		await t.mutation(internal.lib.rateLimits.checkModelUsageLimits, {
-			userId,
-			modelId: 'gpt-5.6-sol'
+		await t.mutation(internal.lib.rateLimits.checkUsageLimits, {
+			userId
 		});
-		await t.mutation(internal.lib.rateLimits.chargeModelUsageLimits, {
+		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
 			userId,
-			modelId: 'gpt-5.6-sol',
-			serviceTier: 'standard',
-			tokens: { input: 1_000_000, cacheRead: 0, cacheWrite: 0, output: 2_000_000 }
+			count: 20_000
 		});
 		const usage = await asUser.query(api.usage.getMyUsage, {});
 		expect(usage.tier).toBe('admin');
@@ -232,38 +223,6 @@ describe('subscription and usage backend', () => {
 			.find((meter) => meter.id === 'modelUsage')
 			?.windows.find((window) => window.period === 'weekly');
 		expect(weekly).toMatchObject({ used: 0 });
-	});
-
-	it('does not meter unlimited model usage or block it after overdraft', async () => {
-		const t = initConvexTest();
-		const userId = 'user_unlimited_model';
-		const asUser = t.withIdentity({ subject: userId });
-		const tokens = { input: 1_000_000, cacheRead: 0, cacheWrite: 0, output: 2_000_000 };
-
-		await t.mutation(internal.lib.rateLimits.chargeModelUsageLimits, {
-			userId,
-			modelId: 'gpt-5.6-sol',
-			serviceTier: 'standard',
-			tokens
-		});
-		await t.mutation(internal.lib.rateLimits.checkModelUsageLimits, {
-			userId,
-			modelId: 'stealth/ox-alpha'
-		});
-		const usageBeforeUnlimitedCharge = await asUser.query(api.usage.getMyUsage, {});
-		await t.mutation(internal.lib.rateLimits.chargeModelUsageLimits, {
-			userId,
-			modelId: 'stealth/ox-alpha',
-			serviceTier: 'standard',
-			tokens
-		});
-
-		const usage = await asUser.query(api.usage.getMyUsage, {});
-		const weekly = usage.meters
-			.find((meter) => meter.id === 'modelUsage')
-			?.windows.find((window) => window.period === 'weekly');
-		expect(weekly && weekly.used > weekly.limit).toBe(true);
-		expect(usage.meters).toEqual(usageBeforeUnlimitedCharge.meters);
 	});
 
 	it('materializes exactly one users row per subject across repeated page loads', async () => {

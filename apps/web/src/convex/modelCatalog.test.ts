@@ -1,19 +1,35 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
+import catalogFixture from '../../../../contracts/ai-gateway/fixtures/catalog.json';
 import { initConvexTest } from './test.setup';
 
 describe('model catalog', () => {
-	it('omits usage policy unless requested', async () => {
-		const t = initConvexTest();
-		const catalog = await t.query(api.modelCatalog.get, {});
-		expect(catalog.models.every((model) => model.usagePolicy === undefined)).toBe(true);
-
-		const withPolicy = await t.query(api.modelCatalog.get, { includeUsagePolicy: true });
-		expect(withPolicy.models.find((model) => model.id === 'stealth/ox-alpha')?.usagePolicy).toBe(
-			'unlimited'
+	beforeEach(() => {
+		process.env.MODEL_GATEWAY_URL = 'https://preview.gateway.example';
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => new Response(JSON.stringify(catalogFixture), { status: 200 }))
 		);
-		expect(
-			withPolicy.models.find((model) => model.id === 'gpt-5.6-sol')?.usagePolicy
-		).toBeUndefined();
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		delete process.env.MODEL_GATEWAY_URL;
+	});
+
+	it('returns the live catalog', async () => {
+		const t = initConvexTest();
+		const catalog = await t.action(api.modelCatalog.fetch, {});
+		expect(catalog.models.map((model) => model.id)).toEqual([
+			'deepseek-v4-pro-0813',
+			'gpt-5.6-sol'
+		]);
+	});
+
+	it('rejects the retired static catalog query', async () => {
+		const t = initConvexTest();
+		await expect(t.query(api.modelCatalog.get, {})).rejects.toThrow(
+			'This Sprocket version is no longer supported. Update to the latest Sprocket release.'
+		);
 	});
 });

@@ -1,19 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
-import { initConvexTest, seedOwnedThread, type ConvexTestInstance } from './test.setup';
+import {
+	createQueuedRun,
+	initConvexTest,
+	seedOwnedThread,
+	type ConvexTestInstance
+} from './test.setup';
 
 async function seedRun(t: ConvexTestInstance, subject: string) {
 	const { asUser, threadId } = await seedOwnedThread(t, subject);
-	const created = await asUser.mutation(api.agentRuntime.createRun, {
-		submissionId: `sub-${Math.random()}`,
+	const created = await createQueuedRun(
+		t,
+		asUser,
 		threadId,
-		prompt: 'Browse',
-		imageUploadIds: [],
-		selectedModel: 'gpt-5.6-sol',
-		reasoningEffort: 'medium',
-		serviceTier: 'standard',
-		executionSecret: `secret-${Math.random()}`
-	});
+		`sub-${Math.random()}`,
+		`secret-${Math.random()}`,
+		'Browse'
+	);
 	return { asUser, threadId, runId: created.runId, userId: subject };
 }
 
@@ -196,16 +199,14 @@ describe('browserSessions', () => {
 		// A later run in the same thread reuses the session; touching it moves
 		// lastUsedRunId without disturbing the session row.
 		await t.run(async (ctx) => await ctx.db.patch('runs', first.runId, { status: 'completed' }));
-		const secondRun = await first.asUser.mutation(api.agentRuntime.createRun, {
-			submissionId: `sub-${Math.random()}`,
-			threadId: first.threadId,
-			prompt: 'Browse more',
-			imageUploadIds: [],
-			selectedModel: 'gpt-5.6-sol',
-			reasoningEffort: 'medium',
-			serviceTier: 'standard',
-			executionSecret: `secret-${Math.random()}`
-		});
+		const secondRun = await createQueuedRun(
+			t,
+			first.asUser,
+			first.threadId,
+			`sub-${Math.random()}`,
+			`secret-${Math.random()}`,
+			'Browse more'
+		);
 		await t.mutation(internal.browserSessions.touchForThread, {
 			threadId: first.threadId,
 			runId: secondRun.runId

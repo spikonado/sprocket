@@ -8,7 +8,7 @@ describe('agentRuntime.start', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'start-claim-secret';
-		const { runId } = await createQueuedRun(asUser, threadId, 'sub-claim', executionSecret);
+		const { runId } = await createQueuedRun(t, asUser, threadId, 'sub-claim', executionSecret);
 
 		const claimed = await asUser.mutation(api.agentRuntime.start, {
 			claimId: 'claim-a',
@@ -41,7 +41,7 @@ describe('agentRuntime.start', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'start-busy-secret';
-		const { runId } = await createQueuedRun(asUser, threadId, 'sub-busy', executionSecret);
+		const { runId } = await createQueuedRun(t, asUser, threadId, 'sub-busy', executionSecret);
 
 		await asUser.mutation(api.agentRuntime.start, { claimId: 'claim-a', runId, executionSecret });
 		await expect(
@@ -54,6 +54,7 @@ describe('agentRuntime.start', () => {
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'start-expired-writes-secret';
 		const { runId } = await createQueuedRun(
+			t,
 			asUser,
 			threadId,
 			'sub-expired-writes',
@@ -99,9 +100,9 @@ describe('agentRuntime.start', () => {
 
 	it('takes over an expired claim, hides in-flight jobs, and clears partial response', async () => {
 		const t = initConvexTest();
-		const { asUser, threadId, projectId } = await seedOwnedThread(t);
+		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'start-takeover-secret';
-		const { runId } = await createQueuedRun(asUser, threadId, 'sub-takeover', executionSecret);
+		const { runId } = await createQueuedRun(t, asUser, threadId, 'sub-takeover', executionSecret);
 
 		await asUser.mutation(api.agentRuntime.start, { claimId: 'claim-a', runId, executionSecret });
 
@@ -123,7 +124,6 @@ describe('agentRuntime.start', () => {
 				parts: [{ type: 'text', id: 'text-1', text: 'partial', turnId: 'turn-1' }]
 			});
 			const pendingJobId = await ctx.db.insert('executorJobs', {
-				projectId,
 				threadId,
 				runId,
 				kind: 'exec_command',
@@ -134,7 +134,6 @@ describe('agentRuntime.start', () => {
 				sequence: 0
 			});
 			const completedJobId = await ctx.db.insert('executorJobs', {
-				projectId,
 				threadId,
 				runId,
 				kind: 'exec_command',
@@ -221,7 +220,7 @@ describe('agentRuntime.start', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'start-reclaim-secret';
-		const { runId } = await createQueuedRun(asUser, threadId, 'sub-reclaim', executionSecret);
+		const { runId } = await createQueuedRun(t, asUser, threadId, 'sub-reclaim', executionSecret);
 		await asUser.mutation(api.agentRuntime.start, {
 			claimId: 'claim-a',
 			runId,

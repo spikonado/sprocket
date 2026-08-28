@@ -1,10 +1,11 @@
 # sprocket-agent
 
 `sprocket-agent` owns the local lifecycle of an agent run. It coordinates
-durable run state in Convex, drives Rig, and exposes local workspace tools.
+durable run state in Convex, streams completions through the AI gateway, and
+exposes local workspace tools.
 
 It is used by `sprocket-server` and depends on
-[`sprocket-convex-provider`](../sprocket-convex-provider/README.md) and
+[`sprocket-convex`](../sprocket-convex) and
 [`sprocket-workspace`](../sprocket-workspace/README.md).
 
 See [ARCHITECTURE.md](../../ARCHITECTURE.md) for the distributed run protocol.
@@ -17,7 +18,7 @@ An agent run:
 2. resolves the workspace and loads applicable instructions;
 3. reconstructs prior model history;
 4. acquires and renews ownership of the run;
-5. alternates between model completions and local tools; and
+5. posts OpenAI Responses completions to the AI gateway and runs local tools; and
 6. records a terminal result.
 
 Creation is retryable through the submission identifier. The run claim prevents
@@ -39,19 +40,21 @@ tool call is wrapped in a durable executor-job record and observes run
 cancellation while work is active.
 
 Command execution and patch operations both run with the local Sprocket
-process's permissions. Web search and scraping run as Convex actions
-(`webTools`) built on the Exa and Context.dev Convex components, keyed by
-deployment-side environment variables (`EXA_API_KEY`, `CONTEXT_DEV_API_KEY`);
-only the results flow back through the executor job.
+process's permissions. Web search and scraping enqueue a Convex Workpool job
+(`webToolPool`) that runs Exa and Context.dev actions, keyed by deployment-side
+environment variables (`EXA_API_KEY`, `CONTEXT_DEV_API_KEY`); only the results
+flow back through the executor job. Released agents that still call the public
+`webTools` actions wait on that same job.
 
 ## Main areas
 
 - `run.rs`: ownership, preparation, and finalization.
-- `provider.rs`: Rig agent loop and provider outcomes.
+- `provider.rs`: gateway completion loop, transcript sink, and provider outcomes.
+- `compaction.rs`: in-loop context compaction via a normal Responses call.
 - `tools.rs`: model tools and durable job coordination.
 - `convex.rs`: run-control communication.
 - `types.rs`: history and context wire types.
-- `hooks.rs`: tool-call correlation and invalid-call handling.
+- `hooks.rs`: tool-call correlation, invalid-call handling, and OpenAI additional params.
 
 Changes to run state, history, cancellation, or tool shapes usually require a
 matching Convex change.

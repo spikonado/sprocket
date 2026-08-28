@@ -15,13 +15,7 @@
 		canSubmitQuestionAnswer,
 		type AgentQuestionOption
 	} from '$convex/lib/agentQuestions';
-	import {
-		defaultModelId,
-		defaultReasoningEffort,
-		defaultServiceTier,
-		type SupportedReasoningEffort,
-		type SupportedServiceTier
-	} from '$convex/lib/models';
+	import { defaultModelId, defaultReasoningEffort, defaultServiceTier } from '$convex/lib/models';
 	import {
 		getCatalogModel,
 		isModelAllowedForTier,
@@ -50,9 +44,11 @@
 		onRemoveAttachment: (localId: string) => void;
 		modelCatalog?: ModelCatalog;
 		selectedModel?: CatalogModelId;
-		selectedReasoningEffort?: SupportedReasoningEffort;
-		selectedServiceTier?: SupportedServiceTier;
+		selectedReasoningEffort?: string;
+		selectedServiceTier?: string;
 		pendingQuestion?: PendingAgentQuestion | null;
+		showContinueWorking?: boolean;
+		onContinueWorking?: () => void;
 		selectedQuestionOptionId?: string | null;
 		canSend: boolean;
 		isSubmitting: boolean;
@@ -81,9 +77,11 @@
 		onRemoveAttachment,
 		modelCatalog,
 		selectedModel = $bindable(defaultModelId),
-		selectedReasoningEffort = $bindable<SupportedReasoningEffort>(defaultReasoningEffort),
-		selectedServiceTier = $bindable<SupportedServiceTier>(defaultServiceTier),
+		selectedReasoningEffort = $bindable<string>(defaultReasoningEffort),
+		selectedServiceTier = $bindable<string>(defaultServiceTier),
 		pendingQuestion = null,
+		showContinueWorking = false,
+		onContinueWorking,
 		selectedQuestionOptionId = $bindable<string | null>(null),
 		canSend,
 		isSubmitting,
@@ -535,6 +533,19 @@
 			>
 				<span class="bg-foreground/28 size-1.5 animate-pulse rounded-full"></span>
 				<span>{isStarting ? 'Starting agent…' : 'Sending request…'}</span>
+			</div>
+		{/if}
+
+		{#if showContinueWorking && onContinueWorking}
+			<div class="mb-3 px-4">
+				<button
+					type="button"
+					class="border-border bg-surface/80 text-foreground hover:bg-hover-fill rounded-full border px-3 py-1.5 text-[13px] font-medium transition"
+					onclick={onContinueWorking}
+					disabled={isSubmitting}
+				>
+					Continue working
+				</button>
 			</div>
 		{/if}
 

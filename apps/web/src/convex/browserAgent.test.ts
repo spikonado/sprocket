@@ -46,6 +46,7 @@ async function startRun(
 ) {
 	const executionSecret = `browser-task-secret-${Math.random()}`;
 	const created = await createQueuedRun(
+		t,
 		asUser,
 		threadId,
 		`browser-task-${Math.random()}`,

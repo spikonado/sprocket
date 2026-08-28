@@ -11,7 +11,7 @@ use sprocket_convex_provider::completion_messages_json;
 use tokio::time::timeout;
 
 use crate::convex::RuntimeClient;
-use crate::types::ContextBudget;
+use crate::types::{ContextBudget, gateway_api_v1_url};
 
 const CONTEXT_USAGE_TIMEOUT: Duration = Duration::from_secs(5);
 const SUMMARIZE_RETRY_DELAY: Duration = Duration::from_millis(250);
@@ -20,6 +20,10 @@ const RECENT_TAIL_MESSAGES: usize = 6;
 /// Must match `COMPACTION_MAX_OUTPUT_TOKENS` in
 /// `apps/web/src/convex/lib/contextCompaction.ts`.
 const COMPACTION_MAX_OUTPUT_TOKENS: u64 = 12_000;
+
+/// Must match `CONTEXT_COMPACTION_INSTRUCTIONS` in
+/// `apps/web/src/convex/lib/contextCompaction.ts`.
+const CONTEXT_COMPACTION_INSTRUCTIONS: &str = "Summarize the supplied engineering agent conversation so another agent can continue without the original messages.\n\nPreserve:\n- every user request and the current objective\n- decisions, constraints, plans, and unresolved questions\n- files inspected or changed and the important technical details\n- tool results, errors, tests, and commands that still matter\n- completed work and the exact next steps\n\nBe dense and factual. Do not address the user, continue the task, call tools, or add commentary. Output only the summary.";
 
 // Keep the preamble and <conversation_summary> wrapper in sync with
 // `contextSummaryText` in apps/web/src/convex/lib/contextCompaction.ts.
@@ -47,6 +51,7 @@ pub(crate) struct ContextCompactionHook {
     service_tier: String,
     context_budget: ContextBudget,
     prior_history_len: usize,
+    gateway_url: String,
     state: Arc<Mutex<CompactionState>>,
 }
 
@@ -60,6 +65,7 @@ impl ContextCompactionHook {
         service_tier: String,
         context_budget: ContextBudget,
         prior_history_len: usize,
+        gateway_url: String,
     ) -> Self {
         Self {
             runtime,
@@ -70,6 +76,7 @@ impl ContextCompactionHook {
             service_tier,
             context_budget,
             prior_history_len,
+            gateway_url,
             state: Arc::new(Mutex::new(CompactionState::default())),
         }
     }
@@ -198,8 +205,8 @@ impl ContextCompactionHook {
             }
         };
 
-        let processed_tokens = summary.processed_tokens();
-        let summary_text = summary.summary;
+        let processed_tokens = estimate_context_tokens(prefix);
+        let summary_text = summary;
         let compacted_summary = context_summary_text(&summary_text);
         let replaced_prefix_len =
             next_replaced_prefix_len(active_summary.as_ref(), history.len(), split);
@@ -244,34 +251,12 @@ impl ContextCompactionHook {
         CompletionCallAction::patch(RequestPatch::new().history(compacted))
     }
 
-    async fn summarize_with_retry(
-        &self,
-        messages_json: &str,
-    ) -> anyhow::Result<crate::convex::SummarizeResponse> {
-        match self
-            .runtime
-            .summarize(
-                &self.run_id,
-                &self.claim_id,
-                &self.model,
-                &self.reasoning_effort,
-                &self.service_tier,
-                messages_json,
-            )
-            .await
-        {
-            Ok(response) => Ok(response),
+    async fn summarize_with_retry(&self, messages_json: &str) -> anyhow::Result<String> {
+        match self.compact_via_gateway(messages_json).await {
+            Ok(summary) => Ok(summary),
             Err(first_error) => {
                 tokio::time::sleep(SUMMARIZE_RETRY_DELAY).await;
-                self.runtime
-                    .summarize(
-                        &self.run_id,
-                        &self.claim_id,
-                        &self.model,
-                        &self.reasoning_effort,
-                        &self.service_tier,
-                        messages_json,
-                    )
+                self.compact_via_gateway(messages_json)
                     .await
                     .map_err(|retry_error| {
                         anyhow::anyhow!(
@@ -280,6 +265,37 @@ impl ContextCompactionHook {
                     })
             }
         }
+    }
+
+    async fn compact_via_gateway(&self, messages_json: &str) -> anyhow::Result<String> {
+        let credential = self
+            .runtime
+            .issue_gateway_credential(&self.run_id, &self.claim_id)
+            .await?;
+        let url = format!("{}/responses", gateway_api_v1_url(&self.gateway_url));
+        let body = serde_json::json!({
+            "model": self.model,
+            "instructions": CONTEXT_COMPACTION_INSTRUCTIONS,
+            "input": [{ "role": "user", "content": messages_json }],
+            "max_output_tokens": COMPACTION_MAX_OUTPUT_TOKENS,
+            "stream": false,
+            "reasoning": { "effort": self.reasoning_effort },
+            "service_tier": if self.service_tier == "fast" { "priority" } else { "standard" }
+        });
+        let response = reqwest::Client::new()
+            .post(url)
+            .bearer_auth(&credential.token)
+            .json(&body)
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            anyhow::bail!("gateway compaction failed: {status} {text}");
+        }
+        let payload: serde_json::Value = response.json().await?;
+        extract_response_text(&payload)
+            .ok_or_else(|| anyhow::anyhow!("gateway compaction response had no text"))
     }
 
     fn compaction_failure_flow(
@@ -348,6 +364,35 @@ fn next_replaced_prefix_len(
                 .saturating_add(advanced)
                 .min(raw_history_len)
         }
+    }
+}
+
+fn extract_response_text(payload: &serde_json::Value) -> Option<String> {
+    if let Some(text) = payload.get("output_text").and_then(|value| value.as_str()) {
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    let mut pieces = Vec::new();
+    let output = payload.get("output")?.as_array()?;
+    for item in output {
+        let content = item.get("content").and_then(|value| value.as_array());
+        if let Some(content) = content {
+            for part in content {
+                if part.get("type").and_then(|value| value.as_str()) == Some("output_text") {
+                    if let Some(text) = part.get("text").and_then(|value| value.as_str()) {
+                        pieces.push(text.to_string());
+                    }
+                }
+            }
+        }
+    }
+    let joined = pieces.join("").trim().to_string();
+    if joined.is_empty() {
+        None
+    } else {
+        Some(joined)
     }
 }
 

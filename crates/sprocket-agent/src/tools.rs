@@ -30,6 +30,7 @@ const MIN_AGENT_OPTIONS: usize = 1;
 const MAX_AGENT_OPTIONS: usize = 4;
 const AGENT_DECIDE_OPTION_ID: &str = "agent_decide";
 const GET_QUESTION_FUNCTION: &str = "agentQuestions:getForExecutor";
+const GET_JOB_FUNCTION: &str = "executor:getJob";
 
 use crate::convex::RuntimeClient;
 use crate::hooks::ToolCallTracker;
@@ -912,32 +913,13 @@ impl rig::tool::Tool for WebSearchTool {
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
-        execute_tool_job(
+        execute_cloud_tool_job(
             &self.0.runtime,
             &self.0.run_id,
             &self.0.claim_id,
             Self::NAME,
             &self.0.tool_call_tracker,
             payload,
-            |cancellation| {
-                let mut action_args = BTreeMap::new();
-                action_args.insert("runId".to_string(), self.0.run_id.clone().into());
-                action_args.insert("claimId".to_string(), self.0.claim_id.clone().into());
-                action_args.insert("query".to_string(), args.query.clone().into());
-                // Omitted at the default so the Convex action owns the default value.
-                if !is_default_web_search_results(&args.num_results) {
-                    action_args.insert(
-                        "numResults".to_string(),
-                        Value::Float64(f64::from(args.num_results)),
-                    );
-                }
-                run_convex_tool_action(
-                    &self.0.runtime,
-                    cancellation,
-                    "webTools:webSearch",
-                    action_args,
-                )
-            },
         )
         .await
     }
@@ -964,25 +946,13 @@ impl rig::tool::Tool for ScrapeUrlTool {
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
-        execute_tool_job(
+        execute_cloud_tool_job(
             &self.0.runtime,
             &self.0.run_id,
             &self.0.claim_id,
             Self::NAME,
             &self.0.tool_call_tracker,
             payload,
-            |cancellation| {
-                let mut action_args = BTreeMap::new();
-                action_args.insert("runId".to_string(), self.0.run_id.clone().into());
-                action_args.insert("claimId".to_string(), self.0.claim_id.clone().into());
-                action_args.insert("url".to_string(), args.url.clone().into());
-                run_convex_tool_action(
-                    &self.0.runtime,
-                    cancellation,
-                    "webTools:scrapeUrl",
-                    action_args,
-                )
-            },
         )
         .await
     }
@@ -1601,6 +1571,9 @@ async fn mandate_action_job(
     function: &'static str,
     payload: serde_json::Value,
 ) -> Result<serde_json::Value, ToolExecutionError> {
+    let runtime = context.runtime.clone();
+    let run_id = context.run_id.clone();
+    let claim_id = context.claim_id.clone();
     execute_tool_job(
         &context.runtime,
         &context.run_id,
@@ -1608,10 +1581,32 @@ async fn mandate_action_job(
         kind,
         &context.tool_call_tracker,
         payload.clone(),
-        |cancellation| async {
-            let action_args =
-                action_args_from_payload(&context.run_id, &context.claim_id, &payload)?;
-            run_convex_tool_action(&context.runtime, cancellation, function, action_args).await
+        |cancellation| async move {
+            let action_args = action_args_from_payload(&run_id, &claim_id, &payload)?;
+            loop {
+                if cancellation.is_cancelled() {
+                    return Err(cancelled_error());
+                }
+                let result = run_convex_tool_action(
+                    &runtime,
+                    cancellation.clone(),
+                    function,
+                    action_args.clone(),
+                )
+                .await?;
+                let in_flight = result
+                    .get("inFlight")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+                if !in_flight {
+                    return Ok(result);
+                }
+                tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled() => return Err(cancelled_error()),
+                    _ = sleep(Duration::from_millis(250)) => {}
+                }
+            }
         },
     )
     .await
@@ -1765,6 +1760,126 @@ fn action_args_from_payload(
     Ok(args)
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExecutorJobSnapshot {
+    status: String,
+    result: Option<serde_json::Value>,
+    error: Option<String>,
+}
+
+async fn begin_executor_job(
+    runtime: &RuntimeClient,
+    run_id: &str,
+    claim_id: &str,
+    kind: &str,
+    tool_call_tracker: &ToolCallTracker,
+    payload: &serde_json::Value,
+) -> Result<String, ToolExecutionError> {
+    let mut begin_args = BTreeMap::new();
+    begin_args.insert("runId".to_string(), run_id.to_string().into());
+    begin_args.insert("claimId".to_string(), claim_id.to_string().into());
+    begin_args.insert("kind".to_string(), kind.to_string().into());
+    if let Some(call_id) = tool_call_tracker.claim(kind, payload) {
+        begin_args.insert("callId".to_string(), call_id.into());
+    }
+    begin_args.insert(
+        "payload".to_string(),
+        Value::try_from(payload.clone()).map_err(tool_error)?,
+    );
+    let begin_result: serde_json::Value = runtime
+        .mutation_json("agentRuntime:beginToolJob", begin_args)
+        .await
+        .map_err(tool_error)?;
+    begin_result
+        .get("jobId")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| tool_failure("beginToolJob did not return a jobId"))
+        .map(str::to_string)
+}
+
+async fn execute_cloud_tool_job(
+    runtime: &RuntimeClient,
+    run_id: &str,
+    claim_id: &str,
+    kind: &str,
+    tool_call_tracker: &ToolCallTracker,
+    payload: serde_json::Value,
+) -> Result<serde_json::Value, ToolExecutionError> {
+    eprintln!(
+        "sprocket-agent: starting cloud tool {} for run {}",
+        kind, run_id
+    );
+    let mut run_updates = runtime
+        .run_finished_subscription(run_id)
+        .await
+        .map_err(tool_error)?;
+    let initial_update = run_updates
+        .next()
+        .await
+        .ok_or_else(|| tool_failure("run status subscription closed"))?;
+    if RuntimeClient::decode_run_finished_update(initial_update).map_err(tool_error)? {
+        return Err(cancelled_error());
+    }
+
+    let job_id =
+        begin_executor_job(runtime, run_id, claim_id, kind, tool_call_tracker, &payload).await?;
+    let mut job_args = BTreeMap::new();
+    job_args.insert("runId".to_string(), run_id.to_string().into());
+    job_args.insert("jobId".to_string(), job_id.clone().into());
+    let mut job_updates = runtime
+        .subscribe(GET_JOB_FUNCTION, job_args)
+        .await
+        .map_err(tool_error)?;
+
+    loop {
+        tokio::select! {
+            biased;
+            update = run_updates.next() => {
+                let Some(update) = update else {
+                    return Err(tool_failure("run status subscription closed"));
+                };
+                match RuntimeClient::decode_run_finished_update(update) {
+                    Ok(false) => {}
+                    Ok(true) => {
+                        eprintln!("sprocket-agent: cancelled cloud tool {} for run {}", kind, run_id);
+                        return Err(cancelled_error());
+                    }
+                    Err(error) => {
+                        return Err(tool_error(anyhow::anyhow!("run status subscription failed: {error}")));
+                    }
+                }
+            }
+            update = job_updates.next() => {
+                let Some(update) = update else {
+                    return Err(tool_failure("executor job subscription closed"));
+                };
+                let snapshot: Option<ExecutorJobSnapshot> =
+                    RuntimeClient::decode_subscription_update(update, GET_JOB_FUNCTION)
+                        .map_err(tool_error)?;
+                let Some(snapshot) = snapshot else {
+                    return Err(tool_failure("executor job not found"));
+                };
+                match snapshot.status.as_str() {
+                    "completed" => {
+                        eprintln!("sprocket-agent: completed cloud tool {} for run {}", kind, run_id);
+                        return snapshot.result.ok_or_else(|| {
+                            tool_failure("completed executor job did not include a result")
+                        });
+                    }
+                    "failed" => {
+                        return Err(tool_failure(
+                            snapshot.error.unwrap_or_else(|| "Executor job failed.".to_string()),
+                        ));
+                    }
+                    "cancelled" => return Err(cancelled_error()),
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
 async fn execute_tool_job<F, Fut>(
     runtime: &RuntimeClient,
     run_id: &str,
@@ -1793,26 +1908,8 @@ where
         return Err(cancelled_error());
     }
 
-    let mut begin_args = BTreeMap::new();
-    begin_args.insert("runId".to_string(), run_id.to_string().into());
-    begin_args.insert("claimId".to_string(), claim_id.to_string().into());
-    begin_args.insert("kind".to_string(), kind.to_string().into());
-    if let Some(call_id) = tool_call_tracker.claim(kind, &payload) {
-        begin_args.insert("callId".to_string(), call_id.into());
-    }
-    begin_args.insert(
-        "payload".to_string(),
-        Value::try_from(payload.clone()).map_err(tool_error)?,
-    );
-    let begin_result: serde_json::Value = runtime
-        .mutation_json("agentRuntime:beginToolJob", begin_args)
-        .await
-        .map_err(tool_error)?;
-    let job_id = begin_result
-        .get("jobId")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| tool_failure("beginToolJob did not return a jobId"))?
-        .to_string();
+    let job_id =
+        begin_executor_job(runtime, run_id, claim_id, kind, tool_call_tracker, &payload).await?;
 
     let cancellation = WorkspaceCancellation::new();
     let operation = operation(cancellation.clone());
@@ -1872,7 +1969,8 @@ where
                 kind, run_id, error
             );
             // Terminal runs already cancel claimed jobs via
-            // cancelExecutorJobsForTerminalRun in finalizeRunRecord.
+            // cancelExecutorJobsForTerminalRun and Workpool cancel in
+            // finalizeRunRecord.
             if error.kind() == ToolErrorKind::Cancelled {
                 return Err(error);
             }

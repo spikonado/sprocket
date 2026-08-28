@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { api } from '@convex/_generated/api';
-import { initConvexTest, seedOwnedThread, type ConvexTestInstance } from './test.setup';
+import {
+	createQueuedRun,
+	initConvexTest,
+	seedOwnedThread,
+	type ConvexTestInstance
+} from './test.setup';
 
 async function seedRunWithJob(
 	t: ConvexTestInstance,
@@ -15,21 +20,18 @@ async function seedRunWithJob(
 ) {
 	const executionSecret = options.executionSecret;
 	const claimId = options.claimId ?? `claim-${Math.random()}`;
-	const { asUser, threadId, projectId, subject } = await seedOwnedThread(t);
-	const created = await asUser.mutation(api.agentRuntime.createRun, {
-		submissionId: `sub-job-${Math.random()}`,
+	const { asUser, threadId, subject } = await seedOwnedThread(t);
+	const created = await createQueuedRun(
+		t,
+		asUser,
 		threadId,
-		prompt: 'Use a tool',
-		imageUploadIds: [],
-		selectedModel: 'gpt-5.6-sol',
-		reasoningEffort: 'medium',
-		serviceTier: 'standard',
-		executionSecret
-	});
+		`sub-job-${Math.random()}`,
+		executionSecret,
+		'Use a tool'
+	);
 
 	const jobId = await t.run(async (ctx) => {
 		const jobId = await ctx.db.insert('executorJobs', {
-			projectId,
 			threadId,
 			runId: created.runId,
 			kind: 'exec_command',
@@ -41,7 +43,6 @@ async function seedRunWithJob(
 			sequence: 0
 		});
 		const otherJobId = await ctx.db.insert('executorJobs', {
-			projectId,
 			threadId,
 			runId: created.runId,
 			kind: 'exec_command',

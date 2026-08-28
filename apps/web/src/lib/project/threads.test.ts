@@ -14,7 +14,6 @@ import {
 	resolvePendingAgentLaunchesFromThreads,
 	resolvePendingCreatedThreadId,
 	resolveProjectThreadSelection,
-	shouldForkProjectForRemoteChange,
 	toThreadSummary,
 	type PendingAgentLaunch,
 	type PendingAgentLaunches
@@ -27,11 +26,6 @@ type RunId = NonNullable<ThreadSummary['latestRunId']>;
 function threadId(value: string): ThreadSummary['threadId'] {
 	// SAFETY: fixture strings are only compared as opaque Convex document ids.
 	return value as ThreadSummary['threadId'];
-}
-
-function projectId(value: string): Project['_id'] {
-	// SAFETY: fixture strings are only compared as opaque Convex document ids.
-	return value as Project['_id'];
 }
 
 function runId(value: string): RunId {
@@ -47,11 +41,11 @@ const runB1 = runId('run-b-1');
 const runB2 = runId('run-b-2');
 
 function makeProject(overrides: Partial<Project> = {}): Project {
+	const repositoryKey = overrides.repositoryKey ?? overrides.displayName ?? 'ws-1';
 	return {
-		_id: overrides._id ?? projectId('ws-1'),
-		userId: 'user-1',
-		repositoryKey: overrides.repositoryKey ?? overrides.displayName ?? 'Project',
+		repositoryKey,
 		displayName: 'Project',
+		workspacePath: `/workspaces/${repositoryKey}`,
 		...overrides
 	};
 }
@@ -59,7 +53,7 @@ function makeProject(overrides: Partial<Project> = {}): Project {
 function makeThreadSummary(overrides: Partial<ThreadSummary> = {}): ThreadSummary {
 	return {
 		threadId: overrides.threadId ?? threadId('thread-record-1'),
-		projectId: overrides.projectId ?? projectId('ws-1'),
+		repositoryKey: overrides.repositoryKey ?? 'ws-1',
 		title: 'Thread',
 		selectedModel: overrides.selectedModel ?? defaultModelId,
 		reasoningEffort: overrides.reasoningEffort ?? defaultReasoningEffort,
@@ -91,66 +85,66 @@ function beginLaunch(
 }
 
 describe('project thread helpers', () => {
-	it('groups threads by project id', () => {
+	it('groups threads by repository key and hides keys that are not local', () => {
 		const groups = getProjectThreadGroups(
 			[
 				makeProject({
-					_id: projectId('ws-current'),
 					repositoryKey: 'github.com/spikonado/sprocket',
-					displayName: 'sprocket'
+					displayName: 'sprocket',
+					workspacePath: '/workspaces/sprocket'
 				}),
 				makeProject({
-					_id: projectId('ws-other'),
 					repositoryKey: 'local-sprocket',
-					displayName: 'sprocket'
+					displayName: 'sprocket',
+					workspacePath: '/workspaces/local'
 				})
 			],
 			[
 				makeThreadSummary({
-					projectId: projectId('ws-current'),
+					repositoryKey: 'github.com/spikonado/sprocket',
 					lastMessageAt: 10
 				}),
 				makeThreadSummary({
 					threadId: threadId('thread-record-2'),
-					projectId: projectId('ws-stale'),
+					repositoryKey: 'stale',
 					lastMessageAt: 20
 				}),
 				makeThreadSummary({
 					threadId: threadId('thread-record-3'),
-					projectId: projectId('ws-other'),
+					repositoryKey: 'local-sprocket',
 					lastMessageAt: 30
 				})
 			]
 		);
 
-		expect(groups).toHaveLength(3);
-		expect(groups.find((group) => group.project._id === 'ws-current')?.threads).toHaveLength(1);
-		expect(groups.find((group) => group.project._id === 'ws-other')?.threads).toHaveLength(1);
-		expect(groups.find((group) => group.project._id === 'ws-stale')?.project.displayName).toBe(
-			'Unknown project'
-		);
+		expect(groups).toHaveLength(2);
+		expect(
+			groups.find((group) => group.project.workspacePath === '/workspaces/sprocket')?.threads
+		).toHaveLength(1);
+		expect(
+			groups.find((group) => group.project.workspacePath === '/workspaces/local')?.threads
+		).toHaveLength(1);
 	});
 
 	it('keeps projects in their given order regardless of thread activity', () => {
 		const groups = getProjectThreadGroups(
 			[
-				makeProject({ _id: projectId('ws-older'), displayName: 'older' }),
-				makeProject({ _id: projectId('ws-newer'), displayName: 'newer' })
+				makeProject({ repositoryKey: 'ws-older', displayName: 'older' }),
+				makeProject({ repositoryKey: 'ws-newer', displayName: 'newer' })
 			],
 			[
-				// Heavy recent activity on the older project must not reorder it.
 				makeThreadSummary({
-					projectId: projectId('ws-older'),
+					repositoryKey: 'ws-older',
 					lastMessageAt: 100
 				}),
 				makeThreadSummary({
-					projectId: projectId('ws-newer'),
+					repositoryKey: 'ws-newer',
 					lastMessageAt: 1
 				})
 			]
 		);
 
-		expect(groups.map((group) => group.project._id)).toEqual(['ws-older', 'ws-newer']);
+		expect(groups.map((group) => group.project.repositoryKey)).toEqual(['ws-older', 'ws-newer']);
 	});
 
 	it('restores the most recently active thread, ignoring run state', () => {
@@ -179,12 +173,12 @@ describe('project thread helpers', () => {
 
 	it('excludes archived threads from project groups', () => {
 		const active = makeThreadSummary({
-			projectId: projectId('ws-current'),
+			repositoryKey: 'sprocket',
 			lastMessageAt: 10
 		});
 		const archived = makeThreadSummary({
 			threadId: threadId('thread-record-2'),
-			projectId: projectId('ws-current'),
+			repositoryKey: 'sprocket',
 			lastMessageAt: 20,
 			threadStatus: 'archived'
 		});
@@ -195,7 +189,6 @@ describe('project thread helpers', () => {
 		const groups = getProjectThreadGroups(
 			[
 				makeProject({
-					_id: projectId('ws-current'),
 					repositoryKey: 'sprocket',
 					displayName: 'sprocket'
 				})
@@ -210,7 +203,7 @@ describe('project thread helpers', () => {
 
 	it('lists running threads before newer completed threads in each project', () => {
 		const groups = getProjectThreadGroups(
-			[],
+			[makeProject({ repositoryKey: 'ws-1' })],
 			[
 				makeThreadSummary({
 					threadId: threadId('thread-record-completed-newer'),
@@ -238,14 +231,12 @@ describe('project thread helpers', () => {
 
 	it('finds a project by repository key', () => {
 		const match = makeProject({
-			_id: projectId('ws-1'),
 			repositoryKey: 'github.com/spikonado/sprocket',
 			displayName: 'sprocket'
 		});
 		const projects = [
 			match,
 			makeProject({
-				_id: projectId('ws-2'),
 				repositoryKey: 'local-sprocket',
 				displayName: 'sprocket'
 			})
@@ -258,7 +249,7 @@ describe('project thread helpers', () => {
 	it('maps a persisted thread row onto ThreadSummary fields', () => {
 		const row = {
 			threadId: threadA,
-			projectId: projectId('ws-1'),
+			repositoryKey: 'ws-1',
 			title: 'Checkout',
 			selectedModel: 'gpt-5.6-luna',
 			reasoningEffort: defaultReasoningEffort,
@@ -274,7 +265,7 @@ describe('project thread helpers', () => {
 
 		expect(toThreadSummary(row)).toEqual({
 			threadId: threadA,
-			projectId: projectId('ws-1'),
+			repositoryKey: 'ws-1',
 			title: 'Checkout',
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: defaultReasoningEffort,
@@ -291,7 +282,6 @@ describe('project thread helpers', () => {
 
 	it('keeps project fields on the group rather than copying them', () => {
 		const project = makeProject({
-			_id: projectId('ws-current'),
 			repositoryKey: 'github.com/spikonado/sprocket',
 			displayName: 'sprocket-checkout'
 		});
@@ -299,7 +289,7 @@ describe('project thread helpers', () => {
 			[project],
 			[
 				makeThreadSummary({
-					projectId: projectId('ws-current'),
+					repositoryKey: 'github.com/spikonado/sprocket',
 					lastMessageAt: 10
 				})
 			]
@@ -315,8 +305,8 @@ describe('project thread helpers', () => {
 			resolveProjectThreadSelection({
 				threads: [makeThreadSummary()],
 				currentThreadId: null,
-				currentRepositoryKey: 'Project',
-				draftRepositoryKey: 'Project'
+				currentWorkspacePath: '/workspaces/ws-1',
+				draftWorkspacePath: '/workspaces/ws-1'
 			})
 		).toBeNull();
 	});
@@ -332,8 +322,8 @@ describe('project thread helpers', () => {
 			resolveProjectThreadSelection({
 				threads: [existing],
 				currentThreadId: pendingThreadId,
-				currentRepositoryKey: 'Project',
-				draftRepositoryKey: null,
+				currentWorkspacePath: '/workspaces/ws-1',
+				draftWorkspacePath: null,
 				pendingCreatedThreadId: pendingThreadId
 			})
 		).toBe(pendingThreadId);
@@ -349,8 +339,8 @@ describe('project thread helpers', () => {
 			resolveProjectThreadSelection({
 				threads: [newest],
 				currentThreadId: threadId('thread-record-vanished'),
-				currentRepositoryKey: 'Project',
-				draftRepositoryKey: null,
+				currentWorkspacePath: '/workspaces/ws-1',
+				draftWorkspacePath: null,
 				pendingCreatedThreadId: null
 			})
 		).toBe(newest.threadId);
@@ -366,8 +356,8 @@ describe('project thread helpers', () => {
 			resolveProjectThreadSelection({
 				threads: [newest],
 				currentThreadId: null,
-				currentRepositoryKey: 'Project',
-				draftRepositoryKey: null
+				currentWorkspacePath: '/workspaces/ws-1',
+				draftWorkspacePath: null
 			})
 		).toBe(newest.threadId);
 	});
@@ -461,6 +451,7 @@ describe('project thread helpers', () => {
 		});
 
 		expect(resolvePendingAgentLaunch(pendingLaunches, threadA, runA1, 50)).toBe(pendingLaunches);
+		expect(resolvePendingAgentLaunch(pendingLaunches, threadA, runA1)).toBe(pendingLaunches);
 		expect(
 			isAgentLaunchPending(resolvePendingAgentLaunch(pendingLaunches, threadA, runA1, 150), threadA)
 		).toBe(false);
@@ -513,19 +504,5 @@ describe('project thread helpers', () => {
 		expect(dataForThread(activeThreadRecord, thread.threadId)).toBe(activeThreadRecord);
 		expect(dataForThread(thread, threadId('thread-record-2'))).toBeNull();
 		expect(dataForThread(undefined, thread.threadId)).toBeNull();
-	});
-
-	it('forks when selected and resolved repository keys differ', () => {
-		expect(
-			shouldForkProjectForRemoteChange('github.com/spikonado/old', 'github.com/spikonado/sprocket')
-		).toBe(true);
-		expect(
-			shouldForkProjectForRemoteChange(
-				'github.com/spikonado/sprocket',
-				'github.com/spikonado/sprocket'
-			)
-		).toBe(false);
-		expect(shouldForkProjectForRemoteChange('', 'github.com/spikonado/sprocket')).toBe(false);
-		expect(shouldForkProjectForRemoteChange('github.com/spikonado/sprocket', '')).toBe(false);
 	});
 });

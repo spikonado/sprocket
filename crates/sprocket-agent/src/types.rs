@@ -5,7 +5,11 @@ use rig::message::{
     ToolCallId, ToolFunction, ToolResult, ToolResultContent, UserContent,
 };
 use serde::{Deserialize, Deserializer, Serialize};
-use sprocket_convex_provider::AuthTokenFetcher;
+use sprocket_convex::AuthTokenFetcher;
+
+pub(crate) fn gateway_api_v1_url(gateway_url: &str) -> String {
+    format!("{}/api/v1", gateway_url.trim_end_matches('/'))
+}
 
 #[derive(Clone)]
 pub struct RunAgentRequest {
@@ -20,6 +24,7 @@ pub struct RunAgentRequest {
     pub reasoning_effort: String,
     pub service_tier: String,
     pub workspace_path: String,
+    pub transcript_root: std::path::PathBuf,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -28,6 +33,19 @@ pub struct CreateRunResponse {
     pub created: bool,
     pub run_id: String,
     pub prompt_message_id: String,
+    pub gateway_url: String,
+    #[serde(deserialize_with = "deserialize_convex_u64")]
+    pub protocol_version: u64,
+    pub catalog_version: String,
+    pub context_budget: ContextBudget,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GatewayCredential {
+    pub token: String,
+    #[serde(deserialize_with = "deserialize_convex_u64")]
+    pub expires_at: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -50,11 +68,10 @@ pub struct RunContextResponse {
     pub prompt: String,
     pub prompt_attachments: Vec<ResolvedImageAttachment>,
     pub agent_history: Vec<AgentHistoryMessage>,
-    pub project: ProjectSnapshot,
     pub context_budget: ContextBudget,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextBudget {
     #[serde(deserialize_with = "deserialize_convex_u64")]
@@ -165,10 +182,12 @@ pub struct RunSnapshot {
     #[serde(rename = "_id")]
     pub id: String,
     pub thread_id: String,
-    pub project_id: String,
+    pub user_id: String,
     pub selected_model: String,
     pub reasoning_effort: String,
     pub service_tier: String,
+    #[serde(deserialize_with = "deserialize_convex_u64")]
+    pub started_at: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -176,16 +195,9 @@ pub struct RunSnapshot {
 pub struct ThreadRecordSnapshot {
     #[serde(rename = "_id")]
     pub id: String,
-    pub project_id: String,
+    #[serde(default)]
+    pub repository_key: String,
     pub title: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProjectSnapshot {
-    #[serde(rename = "_id")]
-    pub id: String,
-    pub display_name: String,
 }
 
 fn require_non_empty<T>(items: Vec<T>, what: &str) -> anyhow::Result<Vec<T>> {
@@ -375,23 +387,8 @@ mod tests {
 
     use super::{
         AgentHistoryContent, AgentHistoryMessage, AgentHistoryRole, AgentHistoryToolResultItem,
-        ResolvedImageAttachment, deserialize_agent_history,
+        deserialize_agent_history,
     };
-
-    #[test]
-    fn deserializes_runtime_attachment_with_convex_number_metadata() {
-        let attachment: ResolvedImageAttachment = serde_json::from_value(serde_json::json!({
-            "imageUploadId": "image_123",
-            "mediaType": "image/png",
-            "name": "robot.png",
-            "size": 96404.0,
-            "url": "https://example.com/robot.png"
-        }))
-        .expect("runtime attachment");
-
-        assert_eq!(attachment.media_type, "image/png");
-        assert_eq!(attachment.url, "https://example.com/robot.png");
-    }
 
     #[test]
     fn deserializes_tool_history_into_rig_messages_with_matching_ids() {
@@ -495,6 +492,44 @@ mod tests {
             },
             other => panic!("expected assistant message, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn deserializes_create_run_response_gateway_fields_from_convex_numbers() {
+        use super::{ContextBudget, CreateRunResponse};
+
+        let created: CreateRunResponse = serde_json::from_value(serde_json::json!({
+            "created": true,
+            "runId": "jd7run",
+            "promptMessageId": "jd7msg",
+            "gatewayUrl": "https://preview.gateway.example",
+            "protocolVersion": 1.0,
+            "catalogVersion": "1",
+            "contextBudget": {
+                "contextWindowTokens": 272000.0,
+                "autoCompactTokenLimit": 258000.0
+            }
+        }))
+        .expect("create run response");
+
+        assert_eq!(created.gateway_url, "https://preview.gateway.example");
+        assert_eq!(created.protocol_version, 1);
+        assert_eq!(created.catalog_version, "1");
+        assert_eq!(
+            created.context_budget,
+            ContextBudget {
+                context_window_tokens: 272_000,
+                auto_compact_token_limit: 258_000
+            }
+        );
+    }
+
+    #[test]
+    fn gateway_api_v1_url_uses_the_public_api_prefix() {
+        assert_eq!(
+            super::gateway_api_v1_url("https://ai-gateway.spikonado.com/"),
+            "https://ai-gateway.spikonado.com/api/v1"
+        );
     }
 
     #[test]

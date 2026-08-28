@@ -1,30 +1,19 @@
-import type { ModelProvider, SupportedModelId, SupportedServiceTier } from '$convex/lib/models';
 import type { SubscriptionTier } from '$convex/lib/tiers';
-import type {
-	CatalogModel,
-	CatalogModelWithUsagePolicy,
-	ModelCatalog
-} from '$convex/lib/uiModelCatalog';
+import type { CatalogModel, ModelCatalog } from '$convex/lib/uiModelCatalog';
 
 export type { CatalogModel, ModelCatalog };
-export type { CatalogModelWithUsagePolicy };
 export type CatalogModelId = CatalogModel['id'];
-
-/** Narrow a runtime catalog id for Convex args; server validators remain authoritative. */
-export function asSupportedModelId(modelId: CatalogModelId): SupportedModelId {
-	return modelId;
-}
 
 export type ModelSelectorOption = {
 	id: CatalogModelId;
 	label: string;
-	provider: ModelProvider | string;
+	provider: string;
 	locked?: boolean;
 	lockTooltip?: string;
 };
 
 export type ServiceTierSelectorOption = {
-	id: SupportedServiceTier;
+	id: string;
 	label: string;
 	locked?: boolean;
 	lockTooltip?: string;
@@ -33,7 +22,7 @@ export type ServiceTierSelectorOption = {
 export function getCatalogModel(
 	catalog: ModelCatalog,
 	modelId: CatalogModelId
-): CatalogModelWithUsagePolicy | undefined {
+): CatalogModel | undefined {
 	return catalog.models.find((model) => model.id === modelId);
 }
 
@@ -57,23 +46,21 @@ export function resolveModelForTier(
 export function isServiceTierAllowedForTier(
 	catalog: ModelCatalog,
 	tier: SubscriptionTier,
-	serviceTier: SupportedServiceTier
+	serviceTier: string
 ): boolean {
 	return (catalog.tierAllowedServiceTiers[tier] ?? []).includes(serviceTier);
 }
 
-/** Unlocked service tiers for a model on a subscription (used to coerce selections). */
 export function serviceTiersForModelAndTier(
 	catalog: ModelCatalog,
 	tier: SubscriptionTier,
 	model: CatalogModel
-): readonly SupportedServiceTier[] {
+): readonly string[] {
 	return model.serviceTiers.filter((serviceTier) =>
 		isServiceTierAllowedForTier(catalog, tier, serviceTier)
 	);
 }
 
-/** All model service tiers, with paid-only ones marked locked (mirrors modelOptionsForTier). */
 export function serviceTierOptionsForModelAndTier(
 	catalog: ModelCatalog,
 	tier: SubscriptionTier,

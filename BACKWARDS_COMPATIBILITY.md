@@ -1,111 +1,153 @@
-# Backwards compatibility removal plan
+# Backwards compatibility
 
-We ship breaking changes ahead of our users' installed clients and keep the old behavior working until those clients age out. That debt is easy to accumulate and easier to forget. This file lists every backwards-compatibility layer we currently ship, what it protects, how to remove it, and the signal that says removal is safe. When a removal PR merges, remove its entry from this document.
+This file lists shims we still ship. When a removal PR merges, delete its
+entry. Age-out is a prod check for stored rows, or an explicit decision that
+a retired function name can disappear.
 
-Current as of v0.3.2 (2026-08-22).
+Current as of 2026-08-27.
 
-## How clients age out
+## Stored schema
 
-Three client populations talk to the cloud backend:
+Optional fields, dual-writes, and `@convex-dev/migrations` jobs that keep
+documents written under an older schema valid. Current clients do not depend
+on these shims. Fold a rewrite into the PR that introduces the next breaking
+schema change instead of leaving a coerce path behind.
 
-- The served web app ships with the backend and updates on every deploy. It never needs compat.
-- Installed desktop apps (AppImage/DMG/NSIS, shipped since v0.2.2) bundle their own web assets.
-- The `@spikonado/sprocket` npm CLI and the Rust agent binaries it launches.
+The component runner is `internal.migrations.runSeries` (every 10 minutes).
 
-Compat shims only exist for the second and third groups. Every shim in sections 1–3 protects clients older than v0.3.2 (2026-08-22), the first release carrying the client halves of #187, #191, and #192; section 4 landed after v0.3.2 and protects clients up to and including v0.3.2. There is no client telemetry, so age-out signals are npm download counts per version plus the per-entry database checks below.
+### 1. Legacy fields on `uiPreferences`
 
-## 1. Executor liveness split out of `projects`
+Source: #187, plus later catalog/payments work.
 
-Source: #187, merged 2026-08-18. Heartbeat state moved from fields on `projects` to the `projectConnections` table, project ordering moved to creation order, and session restore stopped using `lastThreadId`. Clients up to v0.3.1 still use all three old behaviors, so four shims remain.
+Optional fields kept so existing rows validate. Nothing current writes them:
 
-### 1a. `uiPreferences.setLastThread` and `lastThreadId`
+- `uiPreferences.lastThreadId` — restore uses `pickThreadToRestore`
+- `uiPreferences.paymentsEmail` — mandate setup uses the WorkOS identity email
 
-`convex/uiPreferences.ts` keeps a deprecated `setLastThread` mutation because clients up to v0.3.1 call it on every thread switch and read `lastThreadId` for restore. The current client does neither; restore uses `pickThreadToRestore`.
+The `projects` and `projectConnections` tables stay in the schema so existing
+rows and leftover `projectId` fields validate. Threads now store
+`repositoryKey` (optional until `backfillThreadRepositoryKeys` copies it from
+`projects`). `projectId` on `threadRecords` / `runs` / `executorJobs` is
+optional and unset by `unsetRunProjectIds` / `unsetExecutorJobProjectIds`.
+Local `project-attachments.json` rows that still have `projectId` are
+rewritten on load to `workspacePath` + `repositoryKey`. Older clients that
+still call `projects.listMine` / `upsertSelected` / `heartbeatAttached` get
+the unsupported-client update error.
 
-Remove by deleting the mutation and dropping `lastThreadId` from `uiPreferencesFields` in `convex/lib/docs.ts`. The field is optional, so existing rows keep validating after removal; sweep leftover values afterwards if you want the rows clean.
+Remove the leftover tables and `projectId` fields after those migrations
+report zero remaining rows, then drop `repositoryKey` optionality.
 
-Safe when no `uiPreferences` row has received a `lastThreadId` write for a trailing two-week window. Check directly against prod the way #174 did.
+Remove the remaining `uiPreferences` fields by unsetting each in a one-off
+backfill, then dropping them from `convex/schema.ts`.
 
-### 1b. `projects.listMine` `includeExecutorStatus` argument
+Safe when a prod check shows zero rows carrying the field.
 
-Clients up to v0.3.1 omit the argument, so `listMine` still computes a live `executorStatus` per project and returns `vProjectListItem` instead of plain project documents. Current callers pass `false`, which skips that work entirely.
+### 2. Retired model IDs on stored selections
 
-Remove by dropping the argument and the executor-status branch in `convex/projects.ts`, returning `v.array(vProjectDoc)` directly, deleting `vProjectListItem` from `convex/lib/docs.ts`, and removing `executorStatus`, `lastHeartbeatAt`, and `connectedClientId` from the `Project` type in `apps/web/src/lib/types/sprocket.ts`.
+Sources: #191, #192, and later catalog drops. Retired ids:
+`gpt-5.6-terra`, `gpt-5.6-luna`, `grok-4.5`, `stealth/ox-alpha`,
+`deepseek-v4-pro`, `deepseek-v4-flash`. They survive on
+`threadRecords.selectedModel` and `runs.selectedModel`.
 
-Safe when `listMine` traffic without the argument stops, which in practice means npm downloads for versions below v0.3.2 have flattened.
+`coercePersistedModelId` / `coercePersistedSelection` map known ids at read
+time (`agentRuntime.getContext`, stale-run recovery, thread open).
+`rewriteRetiredThreadModels` and `rewriteRetiredRunModels` are the durable
+cleanup.
 
-### 1c. Legacy liveness fields on `projects`
+Remove the coerce helpers, `retiredModelIds`, and `retiredModelReplacements`
+once the rewrite passes report zero remaining rows. Keep `selectedModel` as
+`v.string()`.
 
-`lastHeartbeatAt` and `connectedClientId` stay optional in `projectFields` (`convex/lib/docs.ts`) so pre-split rows validate, and `legacyConnectionFromProject` in `convex/lib/projectConnection.ts` reads them until a project's first heartbeat creates its connection row. Their only consumer is the executor-status branch removed by 1b.
+Every later catalog drop should ship its own rewrite in the same PR.
 
-Remove immediately after 1b: run a one-off backfill unsetting both fields on existing projects, then delete them from `projectFields` along with `legacyConnectionFromProject`, and drop `getEffectiveExecutorStatus` too if nothing else consumes it by then.
+### 3. Mandate job payloads still accept `userEmail`
 
-Safe when the backfill reports zero projects carrying either field.
+Up to v0.3.2, mandate setup stored the caller email on
+`executorJobs.payload`. `vMandateSetupPayload.userEmail` stays optional so
+those rows validate. Live callers that still send `userEmail` are rejected as
+an unsupported client (see below).
 
-### 1d. `projects.lastSeenAt`
+Remove by dropping the field after a prod sweep shows no stored mandate-setup
+jobs carrying it.
 
-Still written on every project open by `upsertSelected` purely so old clients can order their sidebar by it. The current UI orders projects by creation. The field is required today, so stopping the writes needs a validator change first.
+### 4. Numbered transcript parts backfill
 
-Remove in two steps: make the field optional while deleting both writes, then backfill the stale values unset and drop the field plus its entry in the `Project` type.
+Durable history is `threadTranscriptParts` plus
+`threadTranscriptStates.totalParts`. `transcript.ensureMigrated` plus
+`migrateLegacyRunTranscriptParts` and `verifyThreadTranscriptReplicas` backfill
+threads that only have `threadMessages` rows.
 
-Same gate as 1a: no recent writes once the trailing window passes.
+Remove `ensureMigrated` and the message-table read in those migrations once
+every `threadRecords` row has `threadTranscriptStates.migratedAt` and the
+component reports both passes done.
 
-## 2. Retired model IDs on stored selections
+### 5. Aggregate usage ledger dual-write
 
-Sources: #191 and #192, both merged 2026-08-21. The catalog dropped `gpt-5.6-terra`, `gpt-5.6-luna`, and `grok-4.5`, and renamed the DeepSeek IDs to `deepseek-v4-pro-0813` / `deepseek-v4-flash-0731`. The old IDs survive in `threadRecords.selectedModel` and `runs.selectedModel`.
+Processed-token totals moved to `threadUsageEvents` plus a namespaced
+Aggregate. `recordThreadUsageEvent` still dual-writes
+`threadUsage.totalTokensProcessed`. `getThreadUsageValues` reads that field
+until `usageLedgerMigratedAt` is set, then prefers the Aggregate sum.
+`backfillThreadUsageLedger` inserts one baseline event per existing field
+total.
 
-Today's compat: `retiredModelIds` widens `vPersistedModelId` (`convex/lib/validators.ts`) so stored rows still validate, `coercePersistedModelId` maps each retired ID onto its replacement at read time with `defaultModelId` as the last resort, and `coercePersistedSelection` clamps service tiers the replacement no longer offers ('fast' is now Opus-only). Call sites: `agentRuntime.getContext`, stale-run recovery, and thread open in `+page.svelte`.
+Remove the field, the dual-write, and the pre-migration read once the
+component reports that pass done and every `threadUsage` row has
+`usageLedgerMigratedAt`.
 
-Remove by:
+### 6. Runs missing a lifecycle workflow
 
-1. Running a batched internal mutation that rewrites `threadRecords.selectedModel` from retired IDs onto their replacements and clamps `serviceTier` where needed. Model it on the `migrateLegacyUsageBatch` cron from #170, whose scaffolding #174 deleted once prod showed zero unmigrated rows.
-2. Rewriting `runs.selectedModel` in the same pass. Runs are historical records, but we are pre-GA, usage metering already changed under them, and keeping a second coercion path just for runs costs more than the fidelity is worth.
-3. Shrinking both validators back to `vModelId`, then deleting `retiredModelIds`, `retiredModelReplacements`, `coercePersistedModelId`, and the model half of `coercePersistedSelection`, along with the tests pinning retirement behavior.
+`startMissingRunLifecycles` starts the watcher on active runs that have no
+`lifecycleWorkflowId` (rows from before run lifecycle lived on Convex).
 
-Safe when the migration sweep reports zero rows with retired IDs, verified against prod.
+Remove the migration once a prod check shows no non-terminal run without a
+workflow id.
 
-This one recurs. Every catalog refresh leaves retired IDs behind unless the refresh PR includes its own rewrite migration, so fold that migration into future refreshes and this section stays empty.
+### 7. Historical `runs.completionTransport`
 
-## 3. Opt-in `usagePolicy` on the catalog
+Stored runs may still say `convex-action`. New inserts are `gateway`. The
+field stays optional so those rows validate.
 
-Source: #200. `modelCatalog.get` gained an optional `includeUsagePolicy` argument so the composer can tell metered models from unlimited ones without changing the response for clients that never ask. Every client released before #200 omits the argument, and the query returns the exact v0.3.2 shape (`usagePolicy` absent from every model); current callers pass `true`, which attaches `usagePolicy: 'unlimited'` to unlimited models only.
+Remove the `convex-action` union member after a rewrite or a prod check shows
+none remain.
 
-Remove by dropping the argument and attaching `usagePolicy` unconditionally in `convex/modelCatalog.ts`, folding `CatalogModelWithUsagePolicy` back into `CatalogModel` (remove `usagePolicy` from the `Omit` in `convex/lib/models.ts`) and out of `convex/lib/uiModelCatalog.ts`, simplifying the `{ includeUsagePolicy: true }` call in `+page.svelte`, and collapsing `convex/modelCatalog.test.ts` to pin unconditional inclusion instead of the opt-in contract.
+## Client APIs
 
-Safe when npm downloads for versions predating the release carrying #200 have flattened.
+Released desktop/CLI builds that still call retired Convex functions get a
+`ConvexError`: "This Sprocket version is no longer supported. Update to the
+latest Sprocket release." Production does not mask that text.
 
-## 4. Mandate setup ignores the stored payments email
+How that sentence reaches the user:
 
-Up to v0.3.2, mandate setup resolved the customer email from the caller (`userEmail` tool argument or settings-screen input) with a fallback to `uiPreferences.paymentsEmail`, and the settings screen saved that email via `uiPreferences.setPaymentsEmail`. Setup now reads the WorkOS email that `ensureCurrentUser` syncs onto the caller's `users` row (executor actions have no usable caller identity — the run's auth token is a launch-time snapshot).
+- Installed desktop UI already surfaces Convex query failures in the
+  transcript banner. Retired queries such as `messages.listHistoryForThread`
+  fail as soon as an old UI opens a thread.
+- Current UI prefers ConvexError `.data` (`convexClientErrorMessage`) so the
+  banner is just that sentence.
+- Local agent/CLI prints it on stderr (`sprocket-server: agent run failed`)
+  and stores it on `runs.lastError` when a run already exists.
 
-Today's compat: `mandateSetupArgs` (`convex/payments.ts`) still accepts an optional `userEmail` and ignores it, so pre-#204-era agents and settings screens keep passing theirs. `vMandateSetupPayload.userEmail` (`convex/lib/validators.ts`) stays accepted because stored `executorJobs.payload` rows written by those agents carry it. `uiPreferences.setPaymentsEmail` still writes the field for old settings screens, and `uiPreferences.paymentsEmail` stays optional in the schema so their rows keep validating.
+There is no behavior shim for those clients. The functions below exist only
+to deliver the update sentence; current code never calls them.
 
-Remove by dropping `userEmail` from `mandateSetupArgs` and `vMandateSetupPayload` (sweep stored `executorJobs.payload` rows first if any still carry it), deleting `uiPreferences.setPaymentsEmail`, unsetting `paymentsEmail` on existing `uiPreferences` rows, and dropping the field from the schema — all in one PR.
+| Function                                                       | Old caller                                                |
+| -------------------------------------------------------------- | --------------------------------------------------------- |
+| `agentRuntime.createRun`                                       | Agent run creation before the gateway path                |
+| `agentRuntime.mergeAssistantStreamEvents`                      | Agents that streamed tokens onto `threadMessages`         |
+| `completion.complete` / `completion.summarize`                 | Convex-hosted model calls                                 |
+| `messages.listHistoryForThread` / `messages.listLiveForThread` | UI transcript from Convex                                 |
+| `modelCatalog.get`                                             | Static bundled catalog                                    |
+| `uiPreferences.setLastThread` / `setPaymentsEmail`             | Session restore and mandate email writes                  |
+| `webTools.scrapeUrl` / `webTools.webSearch`                    | Direct tool actions; current agents enqueue executor jobs |
+| `payments` mandate setup with `userEmail`                      | Agents that sent the customer email themselves            |
 
-Safe when npm downloads for versions at or below v0.3.2 have flattened and a prod check shows no recent `paymentsEmail` writes (the way #174 verified).
-
-## Completed removals, kept as precedent
-
-Moving token counters off `threadRecords` (#170) shipped with lazy on-access migration, an hourly cron sweep, and response-shape merging for old clients. #174 later removed all of it in one PR after verifying prod directly: 46 threads, zero legacy fields remaining, 46 matching usage rows. That is the template. Verify counts against prod, then delete validators, mutations, cron entries, and their tests together.
-
-A prod count is a snapshot, not a guarantee. Rows can surface later through backup restores or older deployments, and once fallbacks are gone, opening one silently reports zeroed usage instead of failing loudly. #174 accepted that trade-off knowingly. Re-check the same dashboard query for a few days after a removal like this, and state in the removal PR what late-arriving unmigrated rows will degrade to.
-
-## Explicitly no compat shipped
-
-So nobody goes hunting for shims that do not exist:
-
-- Stream states are required for all runs. #108 rejected a legacy message-cursor fallback on purpose.
-- #137 tightened schema optionality with an out-of-band dev-deployment backfill before prod existed.
-- The light-mode default flip (#171) is additive. Explicit stored preferences are untouched.
-- Accepting Begin Patch envelopes alongside unified diffs (#66) is a permanent feature, not compat.
-- Dropping orphaned OpenAI item references (#188) must stay forever. Compaction can drop reasoning items from any history, not just pre-fix ones.
-- Usage-limit run errors (#200) now throw ConvexErrors, so `runs.lastError` carries a readable sentence where production used to mask them to `[Request ID] Server Error` strings. Clients released before #200 render that sentence in their transcript banner. It is display-only text that clears on the next run, so no compat layer ships.
-- Tool-call failures (#206) now throw ConvexErrors through the executor-facing functions and surface authored messages to the model via rig's `map_error`, so `executorJobs.error` and the model's tool result carry the real failure text where production used to mask it to `[Request ID] Server Error` strings (and rig used to redact it to "the tool failed"). Both audiences render plain display text, so no compat layer ships.
+Remove a stub when we are willing to let that function name disappear (old
+installs then see a missing-function error instead of the update sentence).
 
 ## Removal checklist
 
-1. Confirm the entry's gate with real numbers and paste them into the PR description.
-2. Land any data migration or backfill before shrinking validators.
-3. Remove the server shim, validator changes, and client-side types in one PR.
-4. Delete tests that pin compat behavior. Keep coverage for behavior that survives.
-5. Remove the entry from this document.
+1. Confirm the gate with prod numbers (schema) or an explicit decision that
+   the function name can vanish (clients).
+2. Land any data rewrite before shrinking validators.
+3. Delete the shim, validator changes, and tests that only pin compat
+   behavior, in one PR.
+4. Remove the entry from this document.

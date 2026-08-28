@@ -10,24 +10,23 @@ import {
 	type RunMutationCtx,
 	type RunQueryCtx
 } from '@convex-dev/rate-limiter';
-import { components, internal } from '@convex/_generated/api';
-import { internalMutation, type ActionCtx } from '@convex/_generated/server';
-import { getFunctionName, type FunctionArgs, type FunctionReference } from 'convex/server';
+import { components } from '@convex/_generated/api';
+import type { DataModel } from '@convex/_generated/dataModel';
+import { internalMutation } from '@convex/_generated/server';
+import { type GenericMutationCtx } from 'convex/server';
 import { ConvexError, v } from 'convex/values';
 import {
-	completionUsageUnits,
-	isModelUsageMetered,
-	type SupportedModelId,
-	type SupportedServiceTier
-} from '@convex/lib/models';
-import { ensureSubscription, tierLimits, type TierLimits } from '@convex/lib/tiers';
+	ensureSubscription,
+	tierLimits,
+	type SubscriptionTier,
+	type TierLimits
+} from '@convex/lib/tiers';
 import {
 	usageMeters,
 	usagePeriods,
 	type UsageMeterId,
 	type UsagePeriod
 } from '@convex/lib/usageMeters';
-import { vModelId, vServiceTier } from '@convex/lib/validators';
 
 export { usageMeters, usagePeriods, type UsageMeterId, type UsagePeriod };
 
@@ -74,12 +73,12 @@ function formatRetryAfter(milliseconds: number): string {
 	return parts.join(' ');
 }
 
-async function checkMeterLimits(
+async function blockedMeterLimit(
 	ctx: RunMutationCtx,
 	meterId: UsageMeterId,
 	key: string,
 	limits: TierLimits
-): Promise<void> {
+): Promise<{ period: UsagePeriod; retryAfter: number } | undefined> {
 	const statuses = await Promise.all(
 		usagePeriods.map(async (period) => ({
 			period,
@@ -93,12 +92,39 @@ async function checkMeterLimits(
 		.filter(({ status }) => !status.ok)
 		.sort((a, b) => (b.status.retryAfter ?? 0) - (a.status.retryAfter ?? 0))[0];
 	if (blocked && !blocked.status.ok) {
-		// A ConvexError keeps its message through production error masking, and
-		// the executor only retries masked server failures.
-		throw new ConvexError(
-			`${meterLimitLabel(meterId, blocked.period)} reached. Try again in ${formatRetryAfter(blocked.status.retryAfter)}.`
-		);
+		return { period: blocked.period, retryAfter: blocked.status.retryAfter ?? 0 };
 	}
+	return undefined;
+}
+
+async function checkMeterLimits(
+	ctx: RunMutationCtx,
+	meterId: UsageMeterId,
+	key: string,
+	limits: TierLimits
+): Promise<void> {
+	const blocked = await blockedMeterLimit(ctx, meterId, key, limits);
+	if (!blocked) return;
+	// A ConvexError keeps its message through production error masking, and
+	// the executor only retries masked server failures.
+	throw new ConvexError(
+		`${meterLimitLabel(meterId, blocked.period)} reached. Try again in ${formatRetryAfter(blocked.retryAfter)}.`
+	);
+}
+
+export async function gatewayQuotaStatus(
+	ctx: GenericMutationCtx<DataModel>,
+	userId: string
+): Promise<{ tier: SubscriptionTier; exhausted: boolean; message?: string }> {
+	const tier = await ensureSubscription(ctx, userId);
+	if (tier === 'admin') return { tier, exhausted: false };
+	const blocked = await blockedMeterLimit(ctx, 'modelUsage', userId, tierLimits[tier]);
+	if (!blocked) return { tier, exhausted: false };
+	return {
+		tier,
+		exhausted: true,
+		message: `${meterLimitLabel('modelUsage', blocked.period)} reached. Try again in ${formatRetryAfter(blocked.retryAfter)}.`
+	};
 }
 
 async function chargeMeterLimits(
@@ -141,11 +167,21 @@ export async function getMeterWindow(
 	};
 }
 
-export const checkModelUsageLimits = internalMutation({
-	args: { userId: v.string(), modelId: vModelId },
+export async function applyGatewayUsageCharge(
+	ctx: GenericMutationCtx<DataModel>,
+	userId: string,
+	count: number
+): Promise<void> {
+	if (count <= 0) return;
+	const tier = await ensureSubscription(ctx, userId);
+	if (tier === 'admin') return;
+	await chargeMeterLimits(ctx, 'modelUsage', userId, tierLimits[tier], count);
+}
+
+export const checkUsageLimits = internalMutation({
+	args: { userId: v.string() },
 	returns: v.null(),
-	handler: async (ctx, { userId, modelId }) => {
-		if (!isModelUsageMetered(modelId)) return null;
+	handler: async (ctx, { userId }) => {
 		const tier = await ensureSubscription(ctx, userId);
 		if (tier === 'admin') return null;
 		await checkMeterLimits(ctx, 'modelUsage', userId, tierLimits[tier]);
@@ -153,68 +189,14 @@ export const checkModelUsageLimits = internalMutation({
 	}
 });
 
-export const chargeModelUsageLimits = internalMutation({
+export const chargeUsageUnits = internalMutation({
 	args: {
 		userId: v.string(),
-		modelId: vModelId,
-		serviceTier: vServiceTier,
-		tokens: v.object({
-			input: v.number(),
-			cacheRead: v.number(),
-			cacheWrite: v.number(),
-			output: v.number()
-		})
+		count: v.number()
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		if (!isModelUsageMetered(args.modelId)) return null;
-		const tier = await ensureSubscription(ctx, args.userId);
-		if (tier === 'admin') return null;
-		const count = completionUsageUnits(args.modelId, args.serviceTier, args.tokens);
-		await chargeMeterLimits(ctx, 'modelUsage', args.userId, tierLimits[tier], count);
+		await applyGatewayUsageCharge(ctx, args.userId, args.count);
 		return null;
 	}
 });
-
-// Usage was already provided when these run, so accounting must not fail the
-// caller: fall back to a durable scheduled charge, and as a last resort log.
-async function chargeUsageDurably<Mutation extends FunctionReference<'mutation', 'internal'>>(
-	ctx: ActionCtx,
-	mutation: Mutation,
-	args: FunctionArgs<Mutation>
-): Promise<void> {
-	try {
-		await ctx.runMutation(mutation, args);
-	} catch (chargeError) {
-		try {
-			await ctx.scheduler.runAfter(0, mutation, args);
-		} catch (scheduleError) {
-			console.error(
-				`Failed to charge usage (${getFunctionName(mutation)}).`,
-				args,
-				chargeError,
-				scheduleError
-			);
-		}
-	}
-}
-
-export async function checkModelUsageLimit(
-	ctx: ActionCtx,
-	userId: string,
-	modelId: SupportedModelId
-): Promise<void> {
-	await ctx.runMutation(internal.lib.rateLimits.checkModelUsageLimits, { userId, modelId });
-}
-
-export async function chargeModelUsage(
-	ctx: ActionCtx,
-	args: {
-		userId: string;
-		modelId: SupportedModelId;
-		serviceTier: SupportedServiceTier;
-		tokens: { input: number; cacheRead: number; cacheWrite: number; output: number };
-	}
-): Promise<void> {
-	await chargeUsageDurably(ctx, internal.lib.rateLimits.chargeModelUsageLimits, args);
-}

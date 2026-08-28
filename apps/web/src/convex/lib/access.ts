@@ -1,7 +1,7 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { DatabaseReader } from '@convex/_generated/server';
 
-type OwnerScopedTable = 'projects' | 'threadRecords' | 'runs';
+type OwnerScopedTable = 'threadRecords' | 'runs';
 
 async function assertOwned<TableName extends OwnerScopedTable>(
 	record: Doc<TableName> | null,
@@ -12,18 +12,6 @@ async function assertOwned<TableName extends OwnerScopedTable>(
 		throw new Error(errorMessage);
 	}
 	return record;
-}
-
-export async function getOwnedProject(
-	db: DatabaseReader,
-	userId: string,
-	projectId: Id<'projects'>
-): Promise<Doc<'projects'>> {
-	return await assertOwned<'projects'>(
-		await db.get('projects', projectId),
-		userId,
-		'Project not found.'
-	);
 }
 
 export async function getOwnedThreadRecord(

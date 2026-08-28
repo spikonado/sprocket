@@ -2,8 +2,8 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use rig::agent::{
-    AgentHook, HookContext, InvalidToolCallAction, InvalidToolCallContext, StepEventKind,
-    ToolCallAction,
+    AgentHook, CompletionCallAction, CompletionCallEvent, HookContext, InvalidToolCallAction,
+    InvalidToolCallContext, RequestPatch, StepEventKind, ToolCallAction,
 };
 
 pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
@@ -221,6 +221,48 @@ fn levenshtein(left: &str, right: &str) -> usize {
     previous[right_chars.len()]
 }
 
+pub(crate) struct GatewayRequestHook {
+    reasoning_effort: String,
+    service_tier: String,
+}
+
+impl GatewayRequestHook {
+    pub(crate) fn new(reasoning_effort: String, service_tier: String) -> Self {
+        Self {
+            reasoning_effort,
+            service_tier,
+        }
+    }
+}
+
+/// Rig 0.42 OpenAI Responses keeps typed additional_params:
+/// `reasoning` and `service_tier`.
+pub(crate) fn gateway_additional_params(
+    reasoning_effort: &str,
+    service_tier: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "reasoning": { "effort": reasoning_effort },
+        "service_tier": if service_tier == "fast" { "priority" } else { "standard" }
+    })
+}
+
+impl AgentHook for GatewayRequestHook {
+    async fn on_completion_call(
+        &self,
+        _context: &HookContext,
+        _event: CompletionCallEvent<'_>,
+    ) -> CompletionCallAction {
+        CompletionCallAction::patch(RequestPatch::new().additional_params(
+            gateway_additional_params(&self.reasoning_effort, &self.service_tier),
+        ))
+    }
+
+    fn observes(&self, kind: StepEventKind) -> bool {
+        matches!(kind, StepEventKind::CompletionCall)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,6 +333,21 @@ mod tests {
         assert_eq!(
             tracker.claim("exec_command", &serde_json::json!({ "cmd": "ls" })),
             Some("call-2".to_string())
+        );
+    }
+
+    #[test]
+    fn gateway_additional_params_use_typed_openai_fields() {
+        assert_eq!(
+            gateway_additional_params("high", "fast"),
+            serde_json::json!({
+                "reasoning": { "effort": "high" },
+                "service_tier": "priority"
+            })
+        );
+        assert_eq!(
+            gateway_additional_params("medium", "standard")["service_tier"],
+            "standard"
         );
     }
 

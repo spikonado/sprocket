@@ -1,3 +1,4 @@
+use std::convert::Infallible;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
@@ -6,12 +7,17 @@ use anyhow::{Context, anyhow};
 use axum::Json;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::post;
 use axum_extra::extract::CookieJar;
+use futures::StreamExt;
+use futures::stream::{self, unfold};
 use serde::Deserialize;
 use sprocket_agent::{
-    AuthTokenFetcher, RunAgentRequest, finalize_failed_start, run_agent, start_agent_run,
+    AuthTokenFetcher, LiveCompletionHub, LiveCompletionWatchEvent, RunAgentRequest,
+    finalize_failed_start, run_agent, start_agent_run,
 };
+use tokio::sync::broadcast;
 use tokio::sync::oneshot;
 use tokio::time::timeout;
 use uuid::Uuid;
@@ -34,7 +40,7 @@ struct RunAgentApiRequest {
     selected_model: String,
     reasoning_effort: String,
     service_tier: String,
-    project_id: String,
+    workspace_path: String,
 }
 
 #[derive(serde::Serialize)]
@@ -56,7 +62,9 @@ fn static_auth_token_fetcher(token: String) -> AuthTokenFetcher {
 }
 
 pub fn routes() -> axum::Router<AppState> {
-    axum::Router::new().route("/agent/run", post(run_agent_handler))
+    axum::Router::new()
+        .route("/agent/run", post(run_agent_handler))
+        .route("/agent/live", post(live_handler))
 }
 
 async fn run_agent_handler(
@@ -71,7 +79,7 @@ async fn run_agent_handler(
 
     let workspace_path = state
         .project_attachments
-        .workspace_path(&payload.project_id)
+        .workspace_path(&payload.workspace_path)
         .await
         .map_err(ApiError::bad_request)?;
 
@@ -88,9 +96,11 @@ async fn run_agent_handler(
         reasoning_effort: payload.reasoning_effort,
         service_tier: payload.service_tier,
         workspace_path,
+        transcript_root: state.transcript.root(),
     };
 
     let cleanup_request = request.clone();
+    let live = Arc::clone(&state.live_completions);
     let (start_result_sender, start_result_receiver) = oneshot::channel();
 
     // Detach the complete launch before waiting for its acknowledgement. Hyper
@@ -113,7 +123,7 @@ async fn run_agent_handler(
             Ok(run) => {
                 let run_id = run.run_id().to_string();
                 let _ = start_result_sender.send(Ok(run_id));
-                if let Err(error) = run_agent(run).await {
+                if let Err(error) = run_agent(run, live).await {
                     eprintln!("sprocket-server: agent run failed: {error:#}");
                 }
             }
@@ -136,6 +146,76 @@ async fn run_agent_handler(
         })?
         .map_err(|error| ApiError::internal_with("failed to start agent run", anyhow!(error)))?;
     Ok((StatusCode::ACCEPTED, Json(RunAgentStartResponse { run_id })))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LiveCompletionWatchRequest {
+    thread_id: String,
+}
+
+struct LiveSseStream {
+    receiver: broadcast::Receiver<LiveCompletionWatchEvent>,
+    hub: Arc<LiveCompletionHub>,
+    thread_id: String,
+}
+
+async fn live_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(payload): Json<LiveCompletionWatchRequest>,
+) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, ApiError> {
+    require_session(&state.auth, &headers, &jar)
+        .await
+        .map_err(ApiError::unauthorized)?;
+    let hub = Arc::clone(&state.live_completions);
+    let subscription = hub.subscribe(&payload.thread_id);
+    let snapshot = subscription
+        .snapshot
+        .and_then(|live| encode_live_event(LiveCompletionWatchEvent::Updated { live }));
+    let rest = unfold(
+        LiveSseStream {
+            receiver: subscription.receiver,
+            hub,
+            thread_id: payload.thread_id,
+        },
+        |state| async move { next_live_event(state).await },
+    );
+    let stream = stream::iter(snapshot).chain(rest);
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+}
+
+async fn next_live_event(
+    mut state: LiveSseStream,
+) -> Option<(Result<Event, Infallible>, LiveSseStream)> {
+    loop {
+        match state.receiver.recv().await {
+            Ok(event) => {
+                if let Some(encoded) = encode_live_event(event) {
+                    return Some((encoded, state));
+                }
+            }
+            Err(broadcast::error::RecvError::Lagged(_)) => {
+                // Resubscribe so buffered events older than the snapshot
+                // (including a prior Cleared) are not replayed after catch-up.
+                let subscription = state.hub.subscribe(&state.thread_id);
+                state.receiver = subscription.receiver;
+                let event = match subscription.snapshot {
+                    Some(live) => LiveCompletionWatchEvent::Updated { live },
+                    None => LiveCompletionWatchEvent::Cleared,
+                };
+                if let Some(encoded) = encode_live_event(event) {
+                    return Some((encoded, state));
+                }
+            }
+            Err(broadcast::error::RecvError::Closed) => return None,
+        }
+    }
+}
+
+fn encode_live_event(event: LiveCompletionWatchEvent) -> Option<Result<Event, Infallible>> {
+    Event::default().json_data(event).ok().map(Ok)
 }
 
 async fn await_agent_start<F, T, C, CF>(

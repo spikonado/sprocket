@@ -1,14 +1,5 @@
 import type { GenericMutationCtx, GenericQueryCtx } from 'convex/server';
 import type { DataModel, Doc } from '@convex/_generated/dataModel';
-import {
-	assertSupportedModelConfiguration,
-	getModelDefinition,
-	modelIds,
-	serviceTierIds,
-	type SupportedModelId,
-	type SupportedReasoningEffort,
-	type SupportedServiceTier
-} from '@convex/lib/models';
 
 export const subscriptionTierIds = ['free', 'pro', 'admin'] as const;
 export type SubscriptionTier = (typeof subscriptionTierIds)[number];
@@ -43,78 +34,6 @@ export const tierLimits = {
 		modelUsage: { weekly: adminQuota, monthly: adminQuota }
 	}
 } as const satisfies Record<SubscriptionTier, TierLimits>;
-
-export const tierAllowedModels = {
-	free: ['stealth/ox-alpha', 'deepseek-v4-pro-0813', 'deepseek-v4-flash-0731'],
-	pro: modelIds,
-	admin: modelIds
-} as const satisfies Record<SubscriptionTier, readonly SupportedModelId[]>;
-
-export const tierAllowedServiceTiers = {
-	free: ['standard'],
-	pro: serviceTierIds,
-	admin: serviceTierIds
-} as const satisfies Record<SubscriptionTier, readonly SupportedServiceTier[]>;
-
-export const modelLockUpgradeMessage = 'Upgrade to a higher tier to unlock this model' as const;
-export const serviceTierLockUpgradeMessage =
-	'Upgrade to a higher tier to unlock this service tier' as const;
-
-function includesAllowed<T>(allowed: readonly T[], value: T): boolean {
-	return allowed.includes(value);
-}
-
-export function isModelAllowedForTier(tier: SubscriptionTier, modelId: SupportedModelId): boolean {
-	return includesAllowed<SupportedModelId>(tierAllowedModels[tier], modelId);
-}
-
-export function assertModelAllowedForTier(tier: SubscriptionTier, modelId: SupportedModelId): void {
-	if (isModelAllowedForTier(tier, modelId)) return;
-	throw new Error(
-		`${getModelDefinition(modelId).label} is not available on the ${tierLabels[tier]} plan. Upgrade to a higher tier to unlock this model.`
-	);
-}
-
-export function resolveModelForTier(
-	tier: SubscriptionTier,
-	modelId: SupportedModelId
-): SupportedModelId {
-	if (isModelAllowedForTier(tier, modelId)) return modelId;
-	return tierAllowedModels[tier][0];
-}
-
-export function isServiceTierAllowedForTier(
-	tier: SubscriptionTier,
-	serviceTier: SupportedServiceTier
-): boolean {
-	return includesAllowed<SupportedServiceTier>(tierAllowedServiceTiers[tier], serviceTier);
-}
-
-export function assertServiceTierAllowedForTier(
-	tier: SubscriptionTier,
-	serviceTier: SupportedServiceTier
-): void {
-	if (isServiceTierAllowedForTier(tier, serviceTier)) return;
-	throw new Error(
-		`The ${serviceTier} service tier is not available on the ${tierLabels[tier]} plan. Upgrade to a higher tier to unlock it.`
-	);
-}
-
-export async function assertModelConfigurationAllowedForUser(
-	ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>,
-	userId: string,
-	args: {
-		modelId: SupportedModelId;
-		reasoningEffort?: SupportedReasoningEffort;
-		serviceTier: SupportedServiceTier;
-	}
-): Promise<SubscriptionTier> {
-	assertSupportedModelConfiguration(args);
-	const subscriptionTier = await getSubscriptionTier(ctx, userId);
-	assertModelAllowedForTier(subscriptionTier, args.modelId);
-	assertServiceTierAllowedForTier(subscriptionTier, args.serviceTier);
-	return subscriptionTier;
-}
 
 /** Dodo product id per paid tier; 'free' and 'admin' never have one. */
 export const tierProductIds: Partial<Record<SubscriptionTier, string>> = {};

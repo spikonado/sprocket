@@ -1,0 +1,11 @@
+[package]
+name = "sprocket-convex"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = "1.0.102"
+convex = { version = "0.10.4", default-features = false, features = ["rustls-tls-native-roots"] }
+rustls = { version = "0.23.40", features = ["ring"] }
+tokio = { version = "1.52.1", features = ["sync", "time"] }

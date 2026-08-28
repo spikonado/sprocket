@@ -1,17 +1,20 @@
+import { ActionRetrier, onCompleteValidator, type RunId } from '@convex-dev/action-retrier';
 import { v, type Infer, type ObjectType } from 'convex/values';
 import {
 	action,
 	env,
+	internalAction,
 	internalMutation,
 	internalQuery,
 	type ActionCtx,
 	type MutationCtx
 } from '@convex/_generated/server';
-import { api, internal } from '@convex/_generated/api';
+import { api, components, internal } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { getUserId, pickPrimaryUser } from '@convex/lib/auth';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
 import { toAgentToolConvexError } from '@convex/lib/agentErrors';
+import { unsupportedClient } from '@convex/lib/unsupportedClient';
 import {
 	isMandateStatus,
 	vMandateChargeStatus,
@@ -28,6 +31,12 @@ import {
 
 const REPORT_CLAIM_STALE_MS = 60_000;
 const CHARGE_CLAIM_STALE_MS = 60_000;
+
+const reportRetrier = new ActionRetrier(components.actionRetrier, {
+	initialBackoffMs: 250,
+	base: 2,
+	maxFailures: 4
+});
 
 type PravaConfig = {
 	baseUrl: string;
@@ -170,6 +179,7 @@ const chargeDoc = v.object({
 	reportingStartedAt: v.optional(v.number()),
 	chargingStartedAt: v.optional(v.number()),
 	providerRequestedAt: v.optional(v.number()),
+	reportRetrierRunId: v.optional(v.string()),
 	createdAt: v.number(),
 	updatedAt: v.number()
 });
@@ -190,10 +200,18 @@ type ChargeStatusPatch = {
 	providerRequestedAt?: undefined;
 };
 
+type ChargeReportPostArgs = {
+	chargeId: Id<'mandateCharges'>;
+	userId: string;
+	outcome: Infer<typeof vMandateReportOutcome>;
+	amountPaid?: string;
+};
+
 type ChargeReportReleasePatch = {
 	reportingStartedAt: undefined;
 	updatedAt: number;
 	reportOutcome?: undefined;
+	reportRetrierRunId?: undefined;
 };
 
 type MandateSetupRequest = {
@@ -766,13 +784,118 @@ export const finishChargeReport = internalMutation({
 	}
 });
 
+export const startChargeReportRetrier = internalMutation({
+	args: {
+		chargeId: v.id('mandateCharges'),
+		userId: v.string(),
+		outcome: vMandateReportOutcome,
+		amountPaid: v.optional(v.string())
+	},
+	returns: v.string(),
+	handler: async (ctx, args): Promise<string> => {
+		const charge = await ownedCharge(ctx, args.chargeId, args.userId);
+		const postArgs: ChargeReportPostArgs = {
+			chargeId: charge._id,
+			userId: args.userId,
+			outcome: args.outcome
+		};
+		if (args.amountPaid !== undefined) postArgs.amountPaid = args.amountPaid;
+		const retrierRunId = await reportRetrier.run(
+			ctx,
+			internal.payments.postChargeReport,
+			postArgs,
+			{ onComplete: internal.payments.completeRetriedChargeReport }
+		);
+		await ctx.db.patch('mandateCharges', charge._id, {
+			reportRetrierRunId: retrierRunId,
+			updatedAt: Date.now()
+		});
+		return retrierRunId;
+	}
+});
+
+export const postChargeReport = internalAction({
+	args: {
+		chargeId: v.id('mandateCharges'),
+		userId: v.string(),
+		outcome: vMandateReportOutcome,
+		amountPaid: v.optional(v.string())
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const charge = await ctx.runQuery(internal.payments.getOwnedCharge, {
+			chargeId: args.chargeId,
+			userId: args.userId
+		});
+		if (!charge || charge.reportedAt) {
+			return null;
+		}
+		if (!charge.pravaTransactionId) {
+			throw new Error('Prava transaction id is unavailable.');
+		}
+		const mandate = await ctx.runQuery(internal.payments.getOwnedMandate, {
+			mandateId: charge.mandateId,
+			userId: args.userId
+		});
+		if (!mandate?.pravaMandateId) {
+			throw new Error('Prava mandate id is unavailable.');
+		}
+		const reportBody: MandateReportRequest = {
+			txn_status: args.outcome === 'approved' ? 'APPROVED' : 'DECLINED',
+			txn_type: 'PURCHASE'
+		};
+		if (args.amountPaid !== undefined) reportBody.amount_paid = args.amountPaid;
+		await pravaRequest(
+			`/v1/mandates/${encodeURIComponent(mandate.pravaMandateId)}/charges/${encodeURIComponent(charge.pravaTransactionId)}/report`,
+			{
+				method: 'POST',
+				body: JSON.stringify(reportBody)
+			}
+		);
+		return null;
+	}
+});
+
+export const completeRetriedChargeReport = internalMutation({
+	args: onCompleteValidator,
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const retrierRunId = args.runId;
+		const charge = await ctx.db
+			.query('mandateCharges')
+			.withIndex('by_reportRetrierRunId', (query) => query.eq('reportRetrierRunId', retrierRunId))
+			.unique();
+		if (!charge) {
+			return null;
+		}
+		if (args.result.type === 'success' && charge.reportOutcome) {
+			await ctx.db.patch('mandateCharges', charge._id, {
+				status: statusForOutcome(charge.reportOutcome),
+				reportingStartedAt: undefined,
+				reportOutcome: undefined,
+				reportedAt: charge.reportedAt ?? Date.now(),
+				updatedAt: Date.now()
+			});
+			return null;
+		}
+		if (!charge.reportedAt) {
+			const reportPatch: ChargeReportReleasePatch = {
+				reportingStartedAt: undefined,
+				reportRetrierRunId: undefined,
+				updatedAt: Date.now()
+			};
+			await ctx.db.patch('mandateCharges', charge._id, reportPatch);
+		}
+		return null;
+	}
+});
+
 // ---------------------------------------------------------------------------
 // Public actions (called by the executor's tools)
 // ---------------------------------------------------------------------------
 
 const mandateSetupArgs = {
-	// Accepted-and-ignored for released clients that still send it; the email
-	// always comes from the caller's WorkOS identity.
+	// Older agents still send this; current agents do not.
 	userEmail: v.optional(v.string()),
 	merchantName: v.optional(v.string()),
 	merchantUrl: v.optional(v.string()),
@@ -793,6 +916,9 @@ async function createMandateSetup(
 	userId: string,
 	args: ObjectType<typeof mandateSetupArgs>
 ): Promise<Infer<typeof vMandateSetupResult>> {
+	if (args.userEmail !== undefined) {
+		unsupportedClient();
+	}
 	// Prava requires a customer email on merchant sessions. Executor actions
 	// carry no caller identity, so read the WorkOS email that ensureCurrentUser
 	// keeps on the users row instead of ctx.auth.
@@ -1264,9 +1390,30 @@ export const mandateReport = action({
 			if (charge.reportedAt) {
 				return { reported: true, alreadyReported: true };
 			}
+			if (charge.reportOutcome && charge.reportOutcome !== args.outcome) {
+				throw new Error(
+					`Charge already has a ${charge.reportOutcome} report in progress; the outcome cannot be changed.`
+				);
+			}
 
-			// claimChargeReport atomically reserves this report (reclaiming an
-			// abandoned stale claim), so only one caller reaches Prava per attempt.
+			if (charge.reportRetrierRunId) {
+				// SAFETY: persisted ids are Action Retrier RunIds from reportRetrier.run().
+				const status = await reportRetrier.status(ctx, charge.reportRetrierRunId as RunId);
+				if (status.type === 'inProgress') {
+					return { reported: false, inFlight: true };
+				}
+				if (status.type === 'completed' && status.result.type === 'success') {
+					if (!charge.reportedAt && charge.reportOutcome) {
+						await ctx.runMutation(internal.payments.finishChargeReport, {
+							chargeId: charge._id,
+							userId: actor.userId,
+							status: statusForOutcome(charge.reportOutcome)
+						});
+					}
+					return { reported: true, alreadyReported: true };
+				}
+			}
+
 			const claim = await ctx.runMutation(internal.payments.claimChargeReport, {
 				chargeId: charge._id,
 				userId: actor.userId,
@@ -1276,7 +1423,6 @@ export const mandateReport = action({
 				return { reported: true, alreadyReported: true };
 			}
 			if (claim === 'inFlight') {
-				// Another caller is mid-report. Not yet delivered, so don't claim success.
 				return { reported: false, inFlight: true };
 			}
 
@@ -1300,43 +1446,15 @@ export const mandateReport = action({
 				});
 				throw new Error('Prava mandate id is unavailable.');
 			}
-			// claimChargeReport rejects a conflicting outcome, so args.outcome is
-			// the bound terminal state for this charge.
-			const outcome = args.outcome;
-			try {
-				await pravaRequest(
-					`/v1/mandates/${encodeURIComponent(mandate.pravaMandateId)}/charges/${encodeURIComponent(charge.pravaTransactionId)}/report`,
-					{
-						method: 'POST',
-						body: JSON.stringify(
-							(() => {
-								const reportBody: MandateReportRequest = {
-									txn_status: outcome === 'approved' ? 'APPROVED' : 'DECLINED',
-									txn_type: 'PURCHASE'
-								};
-								if (args.amountPaid !== undefined) reportBody.amount_paid = args.amountPaid;
-								return reportBody;
-							})()
-						)
-					}
-				);
-			} catch (error) {
-				// Ambiguous delivery: the POST may have committed remotely. Drop the
-				// in-flight claim so a same-outcome retry can re-send (idempotent on
-				// transaction id), but keep reportOutcome so the opposite result
-				// cannot be reserved later.
-				await ctx.runMutation(internal.payments.releaseChargeReport, {
-					chargeId: charge._id,
-					userId: actor.userId
-				});
-				throw error;
-			}
-			await ctx.runMutation(internal.payments.finishChargeReport, {
+
+			const startArgs: ChargeReportPostArgs = {
 				chargeId: charge._id,
 				userId: actor.userId,
-				status: statusForOutcome(outcome)
-			});
-			return { reported: true };
+				outcome: args.outcome
+			};
+			if (args.amountPaid !== undefined) startArgs.amountPaid = args.amountPaid;
+			await ctx.runMutation(internal.payments.startChargeReportRetrier, startArgs);
+			return { reported: false, inFlight: true };
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}

@@ -17,13 +17,16 @@ import {
 	vExecutorJobPayload,
 	vExecutorJobResult,
 	vExecutorJobStatus,
-	vPersistedModelId,
 	vReasoningEffort,
 	vRunStatus,
 	vServiceTier,
 	vSubscriptionStatus,
 	vSubscriptionTier,
-	vThreadMessageType
+	vThreadMessageType,
+	vTranscriptCompletionBody,
+	vTranscriptPartKind,
+	vTranscriptPromptBody,
+	vTranscriptToolBody
 } from '@convex/lib/validators';
 
 export default defineSchema({
@@ -48,22 +51,21 @@ export default defineSchema({
 	}).index('by_userId', ['userId']),
 	uiPreferences: defineTable({
 		userId: v.string(),
-		// Deprecated: only older released clients still write/read this via
-		// setLastThread. New clients resume the latest active thread instead.
-		// Remove once those clients age out.
+		// Deprecated: only present on rows written by older clients. New clients
+		// resume the latest active thread instead.
 		lastThreadId: v.optional(v.id('threadRecords')),
 		theme: v.optional(v.union(v.literal('light'), v.literal('dark'))),
-		// Deprecated: mandate setup now uses the WorkOS identity email. Kept so
-		// rows written by older clients still validate; see
-		// BACKWARDS_COMPATIBILITY.md before removing.
+		// Deprecated: mandate setup uses the WorkOS identity email. Kept so
+		// rows written by older clients still validate.
 		paymentsEmail: v.optional(v.string())
 	}).index('by_userId', ['userId']),
+	// Stored-only. New clients do not write these tables. Kept so existing
+	// documents and leftover `projectId` fields validate until the rewrite
+	// unsets them. See BACKWARDS_COMPATIBILITY.md.
 	projects: defineTable({
 		userId: v.string(),
 		repositoryKey: v.string(),
 		displayName: v.string(),
-		// Deprecated: executor liveness moved to `projectConnections`. No longer
-		// written; kept optional so pre-migration rows still validate.
 		lastHeartbeatAt: v.optional(v.number()),
 		connectedClientId: v.optional(v.string()),
 		nextExecutorSequence: v.number(),
@@ -71,8 +73,6 @@ export default defineSchema({
 	})
 		.index('by_userId', ['userId'])
 		.index('by_user_repositoryKey', ['userId', 'repositoryKey']),
-	// Executor liveness lives apart from `projects` so heartbeats don't
-	// invalidate `projects.listMine` subscriptions.
 	projectConnections: defineTable({
 		projectId: v.id('projects'),
 		userId: v.string(),
@@ -84,9 +84,12 @@ export default defineSchema({
 	threadRecords: defineTable({
 		userId: v.string(),
 		submissionId: v.string(),
-		projectId: v.id('projects'),
+		// Optional until `backfillThreadRepositoryKeys` copies it from `projects`.
+		repositoryKey: v.optional(v.string()),
+		// Deprecated: present on rows written before threads stored repositoryKey.
+		projectId: v.optional(v.id('projects')),
 		title: v.optional(v.string()),
-		selectedModel: vPersistedModelId,
+		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
 		serviceTier: vServiceTier,
 		contextSummary: v.optional(v.string()),
@@ -95,34 +98,54 @@ export default defineSchema({
 		archivedAt: v.optional(v.number())
 	})
 		.index('by_userId_lastMessageAt', ['userId', 'lastMessageAt'])
-		.index('by_userId_submissionId', ['userId', 'submissionId']),
+		.index('by_userId_submissionId', ['userId', 'submissionId'])
+		.index('by_userId_repositoryKey', ['userId', 'repositoryKey']),
 	threadUsage: defineTable({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
 		contextTokens: v.optional(v.number()),
-		totalTokensProcessed: v.number()
+		// Dual-written with threadUsageEvents until the Aggregate ledger is
+		// verified. See BACKWARDS_COMPATIBILITY.md (stored schema, usage ledger).
+		totalTokensProcessed: v.number(),
+		usageLedgerMigratedAt: v.optional(v.number())
 	}).index('by_threadId', ['threadId']),
+	threadUsageEvents: defineTable({
+		threadId: v.id('threadRecords'),
+		userId: v.string(),
+		eventId: v.string(),
+		processedTokens: v.number(),
+		createdAt: v.number()
+	}).index('by_threadId_eventId', ['threadId', 'eventId']),
 	runs: defineTable({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
 		submissionId: v.string(),
-		projectId: v.id('projects'),
+		// Deprecated: leftover on rows written when runs belonged to a cloud project.
+		projectId: v.optional(v.id('projects')),
 		status: vRunStatus,
 		// Hash of the bearer capability held only by the local executor.
 		executionSecretHash: v.string(),
 		claimId: v.optional(v.string()),
 		claimExpiresAt: v.optional(v.number()),
 		completionAttemptSeq: v.number(),
-		selectedModel: vPersistedModelId,
+		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
 		serviceTier: vServiceTier,
+		catalogVersion: v.optional(v.string()),
+		// Stored historical rows may still say `convex-action`; new inserts are `gateway`.
+		completionTransport: v.optional(v.union(v.literal('convex-action'), v.literal('gateway'))),
+		gatewayProtocolVersion: v.optional(v.number()),
+		agentVersion: v.optional(v.string()),
+		contextWindowTokens: v.optional(v.number()),
+		autoCompactTokenLimit: v.optional(v.number()),
 		startedAt: v.number(),
 		completedAt: v.optional(v.number()),
 		lastError: v.optional(v.string()),
 		activeJobId: v.optional(v.id('executorJobs')),
 		promptMessageId: v.optional(v.id('threadMessages')),
 		responseMessageId: v.optional(v.id('threadMessages')),
-		completionStreamStateId: v.optional(v.id('completionStreamStates'))
+		completionStreamStateId: v.optional(v.id('completionStreamStates')),
+		lifecycleWorkflowId: v.optional(v.string())
 	})
 		.index('by_threadId_startedAt', ['threadId', 'startedAt'])
 		.index('by_threadId_status_startedAt', ['threadId', 'status', 'startedAt'])
@@ -137,6 +160,28 @@ export default defineSchema({
 		imageUploadIds: v.optional(v.array(v.id('imageUploads'))),
 		parts: v.array(vAssistantMessagePart)
 	}),
+	// Durable numbered transcript replica source. Kept off threadRecords so
+	// appends do not invalidate the thread list subscription.
+	threadTranscriptStates: defineTable({
+		threadId: v.id('threadRecords'),
+		userId: v.string(),
+		totalParts: v.number(),
+		migratedAt: v.optional(v.number())
+	}).index('by_threadId', ['threadId']),
+	threadTranscriptParts: defineTable({
+		threadId: v.id('threadRecords'),
+		userId: v.string(),
+		number: v.number(),
+		sourceKey: v.string(),
+		kind: vTranscriptPartKind,
+		runId: v.id('runs'),
+		prompt: v.optional(vTranscriptPromptBody),
+		completion: v.optional(vTranscriptCompletionBody),
+		tool: v.optional(vTranscriptToolBody)
+	})
+		.index('by_threadId_and_number', ['threadId', 'number'])
+		.index('by_threadId_and_sourceKey', ['threadId', 'sourceKey'])
+		.index('by_threadId_and_runId_and_number', ['threadId', 'runId', 'number']),
 	completionStreamStates: defineTable({
 		runId: v.id('runs'),
 		userId: v.string(),
@@ -156,9 +201,10 @@ export default defineSchema({
 		.index('by_storageId', ['storageId'])
 		.index('by_attached', ['attached']),
 	executorJobs: defineTable({
-		projectId: v.id('projects'),
 		threadId: v.id('threadRecords'),
 		runId: v.id('runs'),
+		// Deprecated: leftover on rows written when jobs belonged to a cloud project.
+		projectId: v.optional(v.id('projects')),
 		kind: vExecutorJobKind,
 		callId: v.optional(v.string()),
 		payload: vExecutorJobPayload,
@@ -169,9 +215,9 @@ export default defineSchema({
 		completedAt: v.optional(v.number()),
 		result: v.optional(vExecutorJobResult),
 		error: v.optional(v.string()),
-		sequence: v.number()
+		sequence: v.number(),
+		cloudWorkId: v.optional(v.string())
 	})
-		.index('by_projectId_sequence', ['projectId', 'sequence'])
 		.index('by_threadId_sequence', ['threadId', 'sequence'])
 		.index('by_runId_sequence', ['runId', 'sequence'])
 		.index('by_runId_hidden_sequence', ['runId', 'hidden', 'sequence']),
@@ -253,9 +299,12 @@ export default defineSchema({
 		// may have committed, so a row with this set and no transaction id must
 		// not be reclaimed for another provider request.
 		providerRequestedAt: v.optional(v.number()),
+		reportRetrierRunId: v.optional(v.string()),
 		createdAt: v.number(),
 		updatedAt: v.number()
-	}).index('by_mandate_reference', ['mandateId', 'reference']),
+	})
+		.index('by_mandate_reference', ['mandateId', 'reference'])
+		.index('by_reportRetrierRunId', ['reportRetrierRunId']),
 	browserSessions: defineTable({
 		threadId: v.id('threadRecords'),
 		runId: v.id('runs'),

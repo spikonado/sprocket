@@ -1,0 +1,10 @@
+{
+	"args": {
+		"token": "sgt1.payload.signature"
+	},
+	"result": {
+		"userId": "user_alice",
+		"tier": "pro",
+		"exhausted": false
+	}
+}

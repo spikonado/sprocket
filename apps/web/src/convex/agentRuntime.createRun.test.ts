@@ -1,14 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
-import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
+import catalogFixture from '../../../../contracts/ai-gateway/fixtures/catalog.json';
+import { createQueuedRun, initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
 
-describe('agentRuntime.createRun', () => {
+describe('agentRuntime.insertGatewayRun', () => {
 	it('rejects an empty prompt with no images', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 
 		await expect(
-			asUser.mutation(api.agentRuntime.createRun, {
+			insertQueuedRun(t, asUser, {
 				submissionId: 'sub-empty',
 				threadId,
 				prompt: '   ',
@@ -22,33 +23,43 @@ describe('agentRuntime.createRun', () => {
 	});
 
 	it('rejects image attachments for models without image support', async () => {
-		const t = initConvexTest();
-		const { asUser, subject, threadId } = await seedOwnedThread(t);
-		const imageUploadId = await t.run(async (ctx) => {
-			const storageId = await ctx.storage.store(new Blob(['image'], { type: 'image/png' }));
-			return await ctx.db.insert('imageUploads', {
-				userId: subject,
-				storageId,
-				name: 'diagram.png',
-				mediaType: 'image/png',
-				size: 5,
-				messageIds: [],
-				attached: false
+		process.env.MODEL_GATEWAY_URL = 'https://preview.gateway.example';
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => new Response(JSON.stringify(catalogFixture), { status: 200 }))
+		);
+		try {
+			const t = initConvexTest();
+			const { asUser, subject, threadId } = await seedOwnedThread(t);
+			const imageUploadId = await t.run(async (ctx) => {
+				const storageId = await ctx.storage.store(new Blob(['image'], { type: 'image/png' }));
+				return await ctx.db.insert('imageUploads', {
+					userId: subject,
+					storageId,
+					name: 'diagram.png',
+					mediaType: 'image/png',
+					size: 5,
+					messageIds: [],
+					attached: false
+				});
 			});
-		});
 
-		await expect(
-			asUser.mutation(api.agentRuntime.createRun, {
-				submissionId: 'sub-deepseek-image',
-				threadId,
-				prompt: 'Describe this image',
-				imageUploadIds: [imageUploadId],
-				selectedModel: 'deepseek-v4-pro-0813',
-				reasoningEffort: 'max',
-				serviceTier: 'standard',
-				executionSecret: 'deepseek-image-secret'
-			})
-		).rejects.toThrow('DeepSeek V4 Pro does not support image attachments.');
+			await expect(
+				asUser.action(api.agentRuntime.createGatewayRun, {
+					submissionId: 'sub-deepseek-image',
+					threadId,
+					prompt: 'Describe this image',
+					imageUploadIds: [imageUploadId],
+					selectedModel: 'deepseek-v4-pro-0813',
+					reasoningEffort: 'max',
+					serviceTier: 'standard',
+					executionSecret: 'deepseek-image-secret'
+				})
+			).rejects.toThrow('DeepSeek V4 Pro does not support image attachments.');
+		} finally {
+			vi.unstubAllGlobals();
+			delete process.env.MODEL_GATEWAY_URL;
+		}
 	});
 
 	it('creates a queued run and is idempotent for the same submission', async () => {
@@ -65,10 +76,10 @@ describe('agentRuntime.createRun', () => {
 			executionSecret: 'idempotent-secret'
 		};
 
-		const created = await asUser.mutation(api.agentRuntime.createRun, args);
+		const created = await insertQueuedRun(t, asUser, args);
 		expect(created).toMatchObject({ created: true });
 
-		const again = await asUser.mutation(api.agentRuntime.createRun, args);
+		const again = await insertQueuedRun(t, asUser, args);
 		expect(again).toEqual({
 			created: false,
 			runId: created.runId,
@@ -79,7 +90,8 @@ describe('agentRuntime.createRun', () => {
 		expect(run).toMatchObject({
 			status: 'queued',
 			submissionId: 'sub-1',
-			promptMessageId: created.promptMessageId
+			promptMessageId: created.promptMessageId,
+			completionTransport: 'gateway'
 		});
 	});
 
@@ -87,7 +99,7 @@ describe('agentRuntime.createRun', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'executor-secret';
-		const created = await asUser.mutation(api.agentRuntime.createRun, {
+		const created = await insertQueuedRun(t, asUser, {
 			submissionId: 'sub-capability',
 			threadId,
 			prompt: 'Keep going after the tab closes',
@@ -146,13 +158,13 @@ describe('agentRuntime.createRun', () => {
 			reasoningEffort: 'medium' as const,
 			serviceTier: 'standard' as const
 		};
-		const created = await asUser.mutation(api.agentRuntime.createRun, {
+		const created = await insertQueuedRun(t, asUser, {
 			...args,
 			executionSecret: 'lost-secret'
 		});
 
 		await expect(
-			asUser.mutation(api.agentRuntime.createRun, {
+			insertQueuedRun(t, asUser, {
 				...args,
 				executionSecret: 'replacement-secret'
 			})
@@ -179,7 +191,7 @@ describe('agentRuntime.createRun', () => {
 			reasoningEffort: 'medium' as const,
 			serviceTier: 'standard' as const
 		};
-		const created = await asUser.mutation(api.agentRuntime.createRun, {
+		const created = await insertQueuedRun(t, asUser, {
 			...args,
 			executionSecret
 		});
@@ -229,18 +241,18 @@ describe('agentRuntime.createRun', () => {
 			reasoningEffort: 'medium' as const,
 			serviceTier: 'standard' as const
 		};
-		await asUser.mutation(api.agentRuntime.createRun, {
+		await insertQueuedRun(t, asUser, {
 			...args,
 			executionSecret: 'loser-secret'
 		});
-		await asUser.mutation(api.agentRuntime.createRun, {
+		await insertQueuedRun(t, asUser, {
 			...args,
 			executionSecret: 'winner-secret'
 		});
 
 		// Without an identity the mutation cannot tell a rebound run from a
 		// missing one. The executor avoids this path by standing down on the
-		// createRun conflict error instead.
+		// insertGatewayRun conflict error instead.
 		await expect(
 			t.mutation(api.agentRuntime.finalizeFailedStart, {
 				...args,
@@ -263,12 +275,12 @@ describe('agentRuntime.createRun', () => {
 			reasoningEffort: 'medium' as const,
 			serviceTier: 'standard' as const
 		};
-		const created = await asUser.mutation(api.agentRuntime.createRun, {
+		const created = await insertQueuedRun(t, asUser, {
 			...args,
 			executionSecret: 'loser-secret'
 		});
 		// The winning launch resumes the submission and rebinds its capability.
-		await asUser.mutation(api.agentRuntime.createRun, {
+		await insertQueuedRun(t, asUser, {
 			...args,
 			executionSecret: 'winner-secret'
 		});
@@ -299,7 +311,7 @@ describe('agentRuntime.createRun', () => {
 			reasoningEffort: 'medium' as const,
 			serviceTier: 'standard' as const
 		};
-		const created = await asUser.mutation(api.agentRuntime.createRun, {
+		const created = await insertQueuedRun(t, asUser, {
 			...args,
 			executionSecret
 		});
@@ -325,7 +337,7 @@ describe('agentRuntime.createRun', () => {
 	it('keeps the submission conflict message readable for the losing launch', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		const created = await createQueuedRun(asUser, threadId, 'sub-owned', 'owner-secret');
+		const created = await createQueuedRun(t, asUser, threadId, 'sub-owned', 'owner-secret');
 		await asUser.mutation(api.agentRuntime.start, {
 			claimId: 'claim-owner',
 			runId: created.runId,
@@ -335,7 +347,7 @@ describe('agentRuntime.createRun', () => {
 		// The executor matches on this exact text when standing down a racing
 		// launch, so it must survive production error masking.
 		await expect(
-			asUser.mutation(api.agentRuntime.createRun, {
+			insertQueuedRun(t, asUser, {
 				submissionId: 'sub-owned',
 				threadId,
 				prompt: 'Do the thing',
@@ -352,7 +364,7 @@ describe('agentRuntime.createRun', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 
-		await asUser.mutation(api.agentRuntime.createRun, {
+		await insertQueuedRun(t, asUser, {
 			submissionId: 'sub-active',
 			threadId,
 			prompt: 'First',
@@ -364,7 +376,7 @@ describe('agentRuntime.createRun', () => {
 		});
 
 		await expect(
-			asUser.mutation(api.agentRuntime.createRun, {
+			insertQueuedRun(t, asUser, {
 				submissionId: 'sub-next',
 				threadId,
 				prompt: 'Second',
@@ -381,7 +393,7 @@ describe('agentRuntime.createRun', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'abandoned-secret';
-		const abandoned = await createQueuedRun(asUser, threadId, 'sub-abandoned', executionSecret);
+		const abandoned = await createQueuedRun(t, asUser, threadId, 'sub-abandoned', executionSecret);
 		await asUser.mutation(api.agentRuntime.start, {
 			claimId: 'claim-abandoned',
 			runId: abandoned.runId,
@@ -391,7 +403,7 @@ describe('agentRuntime.createRun', () => {
 			await ctx.db.patch('runs', abandoned.runId, { claimExpiresAt: Date.now() - 1 });
 		});
 
-		const next = await asUser.mutation(api.agentRuntime.createRun, {
+		const next = await insertQueuedRun(t, asUser, {
 			submissionId: 'sub-after-abandoned',
 			threadId,
 			prompt: 'Second',
@@ -423,7 +435,13 @@ describe('agentRuntime.createRun', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'active-claim-secret';
-		const { runId } = await createQueuedRun(asUser, threadId, 'sub-active-claim', executionSecret);
+		const { runId } = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			'sub-active-claim',
+			executionSecret
+		);
 		await asUser.mutation(api.agentRuntime.start, {
 			claimId: 'claim-active',
 			runId,
@@ -431,7 +449,7 @@ describe('agentRuntime.createRun', () => {
 		});
 
 		await expect(
-			asUser.mutation(api.agentRuntime.createRun, {
+			insertQueuedRun(t, asUser, {
 				submissionId: 'sub-during-active-claim',
 				threadId,
 				prompt: 'Second',
@@ -448,7 +466,7 @@ describe('agentRuntime.createRun', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 
-		const first = await asUser.mutation(api.agentRuntime.createRun, {
+		const first = await insertQueuedRun(t, asUser, {
 			submissionId: 'sub-done',
 			threadId,
 			prompt: 'First',
@@ -462,7 +480,7 @@ describe('agentRuntime.createRun', () => {
 			await ctx.db.patch('runs', first.runId, { status: 'completed', completedAt: Date.now() });
 		});
 
-		const second = await asUser.mutation(api.agentRuntime.createRun, {
+		const second = await insertQueuedRun(t, asUser, {
 			submissionId: 'sub-after',
 			threadId,
 			prompt: 'Second',

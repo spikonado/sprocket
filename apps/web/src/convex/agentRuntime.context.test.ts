@@ -24,6 +24,7 @@ describe('agentRuntime context accounting', () => {
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'context-run-secret';
 		const { runId } = await createQueuedRun(
+			t,
 			asUser,
 			threadId,
 			'context-run',
@@ -94,11 +95,86 @@ describe('agentRuntime context accounting', () => {
 		).toBeFalsy();
 	});
 
+	it('does not double-count retried usage for the same model turn', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'idempotent-usage-secret';
+		const { runId } = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			'idempotent-usage',
+			executionSecret,
+			'Continue'
+		);
+		await asUser.mutation(api.agentRuntime.start, {
+			runId,
+			claimId: 'claim-a',
+			executionSecret
+		});
+		const args = {
+			runId,
+			claimId: 'claim-a',
+			executionSecret,
+			contextTokens: 8_000,
+			processedTokens: 9_000
+		};
+		await asUser.mutation(api.agentRuntime.recordContextUsage, args);
+		await asUser.mutation(api.agentRuntime.recordContextUsage, args);
+		expect(await readThreadUsage(t, threadId)).toMatchObject({
+			contextTokens: 8_000,
+			totalTokensProcessed: 9_000
+		});
+	});
+
+	it('backfills a baseline usage event without double-counting live events', async () => {
+		const t = initConvexTest();
+		const { threadId } = await seedOwnedThread(t);
+		await t.run(async (ctx) => {
+			const usage = await ctx.db
+				.query('threadUsage')
+				.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
+				.unique();
+			if (!usage) throw new Error('missing usage');
+			await ctx.db.patch('threadUsage', usage._id, { totalTokensProcessed: 40_000 });
+		});
+		const { backfillUsageLedgerBaseline } = await import('@convex/lib/threadUsage');
+		await t.run(async (ctx) => {
+			const usage = await ctx.db
+				.query('threadUsage')
+				.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
+				.unique();
+			if (!usage) throw new Error('missing usage');
+			await backfillUsageLedgerBaseline(ctx, usage);
+		});
+		expect(await readThreadUsage(t, threadId)).toMatchObject({
+			totalTokensProcessed: 40_000,
+			usageLedgerMigratedAt: expect.any(Number)
+		});
+		await t.run(async (ctx) => {
+			const usage = await ctx.db
+				.query('threadUsage')
+				.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
+				.unique();
+			if (!usage) throw new Error('missing usage');
+			await backfillUsageLedgerBaseline(ctx, usage);
+		});
+		const events = await t.run(async (ctx) =>
+			ctx.db
+				.query('threadUsageEvents')
+				.withIndex('by_threadId_eventId', (query) => query.eq('threadId', threadId))
+				.collect()
+		);
+		expect(events).toHaveLength(1);
+		expect(events[0]?.processedTokens).toBe(40_000);
+	});
+
 	it('rejects invalid token accounting values', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'invalid-context-usage-secret';
 		const { runId } = await createQueuedRun(
+			t,
 			asUser,
 			threadId,
 			'invalid-context-usage',
@@ -128,6 +204,7 @@ describe('agentRuntime context accounting', () => {
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'merged-shape-secret';
 		const { runId } = await createQueuedRun(
+			t,
 			asUser,
 			threadId,
 			'merged-shape',
@@ -155,9 +232,10 @@ describe('agentRuntime context accounting', () => {
 
 	it('carries a compacted prefix into later runs without replaying covered history', async () => {
 		const t = initConvexTest();
-		const { asUser, threadId, projectId } = await seedOwnedThread(t);
+		const { asUser, threadId } = await seedOwnedThread(t);
 		const firstSecret = 'context-first-secret';
 		const first = await createQueuedRun(
+			t,
 			asUser,
 			threadId,
 			'context-first',
@@ -179,6 +257,7 @@ describe('agentRuntime context accounting', () => {
 
 		const secondSecret = 'context-second-secret';
 		const second = await createQueuedRun(
+			t,
 			asUser,
 			threadId,
 			'context-second',
@@ -195,7 +274,6 @@ describe('agentRuntime context accounting', () => {
 				threadId,
 				userId: 'user_alice',
 				submissionId: 'context-concurrent-later',
-				projectId,
 				status: 'completed',
 				executionSecretHash: await executionSecretHash('context-concurrent-later-secret'),
 				completionAttemptSeq: 0,
@@ -229,6 +307,7 @@ describe('agentRuntime context accounting', () => {
 
 		const thirdSecret = 'context-third-secret';
 		const third = await createQueuedRun(
+			t,
 			asUser,
 			threadId,
 			'context-third',
@@ -239,10 +318,7 @@ describe('agentRuntime context accounting', () => {
 			runId: third.runId,
 			executionSecret: thirdSecret
 		});
-		const serialized = JSON.stringify(context.agentHistory);
-		expect(serialized).toContain('The old work is complete.');
-		expect(serialized).not.toContain('Old prompt that should be covered');
-		expect(serialized).toContain('New prompt');
+		expect(context.agentHistory).toEqual([]);
 		expect(context.contextBudget).toEqual({
 			contextWindowTokens: 272_000,
 			autoCompactTokenLimit: 258_000
@@ -254,6 +330,7 @@ describe('agentRuntime context accounting', () => {
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'context-retired-secret';
 		const { runId } = await createQueuedRun(
+			t,
 			asUser,
 			threadId,
 			'context-retired',
@@ -273,6 +350,6 @@ describe('agentRuntime context accounting', () => {
 			executionSecret
 		});
 		expect(context.run.selectedModel).toBe('gpt-5.6-sol');
-		expect(context.run.serviceTier).toBe('standard');
+		expect(context.run.serviceTier).toBe('fast');
 	});
 });

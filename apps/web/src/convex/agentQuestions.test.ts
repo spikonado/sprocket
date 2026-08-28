@@ -3,21 +3,19 @@ import { describe, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { AGENT_DECIDE_OPTION_ID } from '@convex/lib/agentQuestions';
-import { initConvexTest, seedOwnedThread } from '@convex/test.setup';
+import { createQueuedRun, initConvexTest, seedOwnedThread } from '@convex/test.setup';
 
 async function startRun(t: ReturnType<typeof initConvexTest>, threadId: Id<'threadRecords'>) {
 	const asUser = t.withIdentity({ subject: 'user_alice' });
 	const executionSecret = 'question-secret';
-	const created = await asUser.mutation(api.agentRuntime.createRun, {
-		submissionId: `sub-question-${Math.random()}`,
+	const created = await createQueuedRun(
+		t,
+		asUser,
 		threadId,
-		prompt: 'Need a choice',
-		imageUploadIds: [],
-		selectedModel: 'gpt-5.6-sol',
-		reasoningEffort: 'medium',
-		serviceTier: 'standard',
-		executionSecret
-	});
+		`sub-question-${Math.random()}`,
+		executionSecret,
+		'Need a choice'
+	);
 	const claimId = 'claim-question';
 	await t.mutation(api.agentRuntime.start, {
 		runId: created.runId,

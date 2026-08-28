@@ -5,6 +5,8 @@ pub mod repo_env;
 mod routes;
 mod static_dir;
 mod static_files;
+mod transcript_client;
+mod transcript_watch;
 
 pub use config::{DEFAULT_DEV_WEB_URL, DEFAULT_PORT, SESSION_COOKIE_NAME, ServerConfig};
 use static_dir::is_valid_static_dir;
@@ -20,8 +22,11 @@ use axum::Json;
 use axum::Router;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
+use sprocket_agent::{LiveCompletionHub, TranscriptStore};
 use tokio::sync::Mutex;
 use tokio::time::{Duration, sleep};
+
+use crate::transcript_watch::TranscriptWatchers;
 
 pub(crate) fn now_ms() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -75,6 +80,9 @@ pub struct AppState {
     pub auth: Arc<auth::AuthState>,
     pub desktop_login: Arc<auth::DesktopLoginStore>,
     pub project_attachments: Arc<project_attachments::ProjectAttachmentStore>,
+    pub transcript: Arc<TranscriptStore>,
+    pub transcript_watchers: Arc<TranscriptWatchers>,
+    pub live_completions: Arc<LiveCompletionHub>,
     pub http_base_url: String,
     pub desktop_login_callback_url: String,
     pub loopback_desktop_login_supported: bool,
@@ -90,6 +98,7 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .merge(routes::auth::routes())
         .merge(routes::workspace::routes())
         .merge(routes::agent::routes())
+        .merge(routes::transcript::routes())
         .fallback(api_not_found)
         .with_state(state);
 
@@ -105,6 +114,9 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
     let auth = auth::AuthState::load(&data_dir)?;
     let pairing_credential = auth.pairing_credential().to_string();
     let project_attachments = project_attachments::ProjectAttachmentStore::new(data_dir.clone());
+    let transcript = TranscriptStore::new(data_dir.join("transcripts"));
+    let transcript_watchers =
+        TranscriptWatchers::new(convex_deployment_url.clone(), Arc::clone(&transcript));
     let http_base_url = config.listen_url();
     let web_ui_enabled = config
         .resolve_static_dir()
@@ -121,6 +133,9 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         auth,
         desktop_login: auth::DesktopLoginStore::new(),
         project_attachments,
+        transcript,
+        transcript_watchers,
+        live_completions: Arc::new(LiveCompletionHub::new()),
         http_base_url: http_base_url.clone(),
         desktop_login_callback_url: auth::desktop_login_callback_url(config.port),
         loopback_desktop_login_supported: auth::host_supports_loopback_desktop_login(&config.host),
