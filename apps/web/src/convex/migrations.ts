@@ -19,14 +19,14 @@ export const run = migrations.runner([internal.migrations.clearResponseMessagePa
  * row is rewritable this way, `runs.responseMessageId` and
  * `threadMessages.parts` can be dropped from the schema. Run via:
  *   npx convex run migrations:clearResponseMessageParts '{ dryRun: true }'
+ *
+ * Scoped to `type === 'response'` rows so prompts are not re-read on every
+ * cron tick while the compatibility gate is still open.
  */
 export const clearResponseMessageParts = migrations.define({
 	table: 'threadMessages',
-	customRange: (query) => query.withIndex('by_type_runId'),
+	customRange: (query) => query.withIndex('by_type_runId', (range) => range.eq('type', 'response')),
 	migrateOne: async (ctx, message) => {
-		if (message.type !== 'response') {
-			return;
-		}
 		if (message.text === '' && message.parts.length === 0) {
 			return;
 		}
