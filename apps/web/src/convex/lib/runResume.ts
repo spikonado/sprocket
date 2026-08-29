@@ -50,12 +50,6 @@ export async function clearInFlightWork(
 			completedAt: now
 		});
 	}
-	if (run.responseMessageId) {
-		await ctx.db.patch('threadMessages', run.responseMessageId, {
-			text: '',
-			parts: []
-		});
-	}
 	if (run.completionStreamStateId) {
 		const streamState = await getCompletionStreamState(ctx, run);
 		await ctx.db.patch('completionStreamStates', streamState._id, {

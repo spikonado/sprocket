@@ -9,4 +9,6 @@ crons.interval(
 	internal.imageUploads.cleanupOrphans
 );
 
+crons.interval('run convex component migrations', { minutes: 10 }, internal.migrations.run, {});
+
 export default crons;

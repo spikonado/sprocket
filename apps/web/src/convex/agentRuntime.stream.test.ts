@@ -3,7 +3,7 @@ import { api } from '@convex/_generated/api';
 import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 
 describe('agentRuntime completion stream state', () => {
-	it('creates a response message without writing live tokens on Convex', async () => {
+	it('tracks completion attempts without writing live tokens on Convex', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'stream-state-secret';
@@ -21,7 +21,6 @@ describe('agentRuntime completion stream state', () => {
 			runId,
 			executionSecret
 		});
-		await asUser.mutation(api.agentRuntime.beginAssistantMessage, { runId, executionSecret });
 		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, {
 			runId,
 			claimId: 'claim-stream',
@@ -31,15 +30,20 @@ describe('agentRuntime completion stream state', () => {
 
 		const stored = await t.run(async (ctx) => {
 			const run = await ctx.db.get('runs', runId);
-			if (!run?.responseMessageId || !run.completionStreamStateId) {
-				throw new Error('Expected response and stream state records');
+			if (!run?.completionStreamStateId) {
+				throw new Error('Expected stream state record');
 			}
 			return {
-				message: await ctx.db.get('threadMessages', run.responseMessageId),
 				state: await ctx.db.get('completionStreamStates', run.completionStreamStateId)
 			};
 		});
-		expect(stored.message).toMatchObject({ text: '' });
+		expect(
+			(await t.run(async (ctx) => (await ctx.db.get('runs', runId))?.responseMessageId)) ??
+				undefined
+		).toBeUndefined();
+		expect(
+			await t.run(async (ctx) => (await ctx.db.get('runs', runId))?.completionAttemptSeq)
+		).toBe(1);
 		expect(stored.state).toMatchObject({
 			runId,
 			sequence: 0

@@ -17,7 +17,6 @@ import { gatewayTokenExpiresAt, mintGatewayToken } from '@convex/lib/gatewayToke
 import { vCompletionActor, vGetContextResult } from '@convex/lib/docs';
 import { appendThreadMessage } from '@convex/lib/threadMessages';
 import {
-	beginAssistantMessageForRun,
 	getCompletionStreamState,
 	registerCompletionAttemptForRun
 } from '@convex/lib/assistantStreamWrites';
@@ -178,7 +177,7 @@ async function createQueuedRunRecord(
 		isClaimedRunStatus(latestRun.status) &&
 		!isRunClaimLeaseActive(latestRun, Date.now())
 	) {
-		await finalizeRunRecord(ctx, args.userId, latestRun, {
+		await finalizeRunRecord(ctx, latestRun, {
 			text: `Run aborted: ${RUN_ABANDONED_BY_AGENT}`,
 			status: 'failed',
 			lastError: RUN_ABANDONED_BY_AGENT
@@ -612,14 +611,7 @@ export const registerCompletionAttempt = mutation({
 		if (!canRegisterCompletionAttempt(run, args.claimId, args.attemptSeq)) {
 			throw new ConvexError(COMPLETION_STREAM_SUPERSEDED);
 		}
-		// Completion turns stamp parts with turnId = streamId, so a retry can
-		// drop the partial parts its prior attempts persisted.
-		await registerCompletionAttemptForRun(
-			ctx,
-			run,
-			args.attemptSeq,
-			args.supersededStreamIds ?? []
-		);
+		await registerCompletionAttemptForRun(ctx, run, args.attemptSeq);
 	}
 });
 
@@ -630,12 +622,10 @@ export const beginAssistantMessage = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		if (isRunFinalStatus(run.status)) {
-			return;
-		}
-		await getCompletionStreamState(ctx, run);
-		await beginAssistantMessageForRun(ctx, run);
+		// Retired: agent responses no longer maintain a `threadMessages` row.
+		// Kept for the pre-backfill agent contract so old clients fail fast.
+		await getExecutionRun(ctx, args.runId, args.executionSecret);
+		return null;
 	}
 });
 
@@ -675,7 +665,6 @@ export const finalizeCompletionCall = mutation({
 		if (!isCurrentCompletionAttempt(run, args.claimId, args.attemptSeq)) {
 			return null;
 		}
-		await beginAssistantMessageForRun(ctx, run);
 		const number = await recordCompletionTranscript(ctx, {
 			threadId: run.threadId,
 			userId: run.userId,
@@ -708,7 +697,7 @@ export const finalizeRun = mutation({
 		if (!matchesFinalizeExpectations(run, args)) {
 			return false;
 		}
-		return finalizeRunRecord(ctx, userId, run, args);
+		return finalizeRunRecord(ctx, run, args);
 	}
 });
 
@@ -741,7 +730,7 @@ export const finalizeExecutorRun = mutation({
 		if (!matchesFinalizeExpectations(run, args)) {
 			return false;
 		}
-		return finalizeRunRecord(ctx, run.userId, run, args);
+		return finalizeRunRecord(ctx, run, args);
 	}
 });
 
@@ -811,7 +800,7 @@ export const finalizeFailedStart = mutation({
 		) {
 			return 'standDown';
 		}
-		await finalizeRunRecord(ctx, run.userId, run, {
+		await finalizeRunRecord(ctx, run, {
 			text: args.text,
 			status: 'failed',
 			lastError: args.lastError
@@ -831,11 +820,10 @@ export const finalizeClaimFailure = mutation({
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		const userId = run.userId;
 		if (!canFinalizeAfterClaimFailure(run, args.claimId)) {
 			return false;
 		}
-		return finalizeRunRecord(ctx, userId, run, {
+		return finalizeRunRecord(ctx, run, {
 			text: args.text,
 			status: 'failed',
 			lastError: args.lastError
