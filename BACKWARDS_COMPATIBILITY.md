@@ -4,16 +4,17 @@ This file lists shims we still ship. When a removal PR merges, delete its
 entry. Age-out is a prod check for stored rows, or an explicit decision that
 a retired function name can disappear.
 
-Current as of 2026-08-27.
+Current as of 2026-08-29.
 
 ## Stored schema
 
-Optional fields, dual-writes, and `@convex-dev/migrations` jobs that keep
-documents written under an older schema valid. Current clients do not depend
-on these shims. Fold a rewrite into the PR that introduces the next breaking
-schema change instead of leaving a coerce path behind.
+Optional fields, dual-writes, and leftover tables that keep documents written
+under an older schema valid. Current clients do not depend on these shims.
+Fold a rewrite into the PR that introduces the next breaking schema change
+instead of leaving a coerce path behind.
 
-The component runner is `internal.migrations.runSeries` (every 10 minutes).
+`@convex-dev/migrations` stays mounted so future one-off jobs can use
+`migrations.runner()`. Completed series members are gone.
 
 ### 1. Legacy fields on `uiPreferences`
 
@@ -25,17 +26,17 @@ Optional fields kept so existing rows validate. Nothing current writes them:
 - `uiPreferences.paymentsEmail` — mandate setup uses the WorkOS identity email
 
 The `projects` and `projectConnections` tables stay in the schema so existing
-rows and leftover `projectId` fields validate. Threads now store
-`repositoryKey` (optional until `backfillThreadRepositoryKeys` copies it from
-`projects`). `projectId` on `threadRecords` / `runs` / `executorJobs` is
-optional and unset by `unsetRunProjectIds` / `unsetExecutorJobProjectIds`.
-Local `project-attachments.json` rows that still have `projectId` are
-rewritten on load to `workspacePath` + `repositoryKey`. Older clients that
-still call `projects.listMine` / `upsertSelected` / `heartbeatAttached` get
-the unsupported-client update error.
+rows and leftover `projectId` fields validate. Threads store `repositoryKey`
+(still optional in the validator). `projectId` on `threadRecords` / `runs` /
+`executorJobs` is optional leftover. Local `project-attachments.json` rows
+that still have `projectId` are rewritten on load to `workspacePath` +
+`repositoryKey`. Older clients that still call `projects.listMine` /
+`upsertSelected` / `heartbeatAttached` get the unsupported-client update
+error.
 
-Remove the leftover tables and `projectId` fields after those migrations
-report zero remaining rows, then drop `repositoryKey` optionality.
+The repository-key backfill and `projectId` unset passes are done. Remove the
+leftover tables and `projectId` fields after a later unset rewrite, then drop
+`repositoryKey` optionality.
 
 Remove the remaining `uiPreferences` fields by unsetting each in a one-off
 backfill, then dropping them from `convex/schema.ts`.
@@ -50,13 +51,11 @@ Sources: #191, #192, and later catalog drops. Retired ids:
 `threadRecords.selectedModel` and `runs.selectedModel`.
 
 `coercePersistedModelId` / `coercePersistedSelection` map known ids at read
-time (`agentRuntime.getContext`, stale-run recovery, thread open).
-`rewriteRetiredThreadModels` and `rewriteRetiredRunModels` are the durable
-cleanup.
+time (`agentRuntime.getContext`, stale-run recovery, thread open). The
+rewrite passes that copied those replacements onto stored rows are done.
 
 Remove the coerce helpers, `retiredModelIds`, and `retiredModelReplacements`
-once the rewrite passes report zero remaining rows. Keep `selectedModel` as
-`v.string()`.
+once we drop this known-id map. Keep `selectedModel` as `v.string()`.
 
 Every later catalog drop should ship its own rewrite in the same PR.
 
@@ -70,39 +69,19 @@ an unsupported client (see below).
 Remove by dropping the field after a prod sweep shows no stored mandate-setup
 jobs carrying it.
 
-### 4. Numbered transcript parts backfill
+### 4. Aggregate usage ledger leftovers
 
-Durable history is `threadTranscriptParts` plus
-`threadTranscriptStates.totalParts`. `transcript.ensureMigrated` plus
-`migrateLegacyRunTranscriptParts` and `verifyThreadTranscriptReplicas` backfill
-threads that only have `threadMessages` rows.
+Processed-token totals live in `threadUsageEvents` plus a namespaced
+Aggregate. `getThreadUsageValues` reads that sum. `recordThreadUsageEvent`
+still dual-writes `threadUsage.totalTokensProcessed` as a denormalized cache.
 
-Remove `ensureMigrated` and the message-table read in those migrations once
-every `threadRecords` row has `threadTranscriptStates.migratedAt` and the
-component reports both passes done.
+`usageLedgerMigratedAt` is unused leftover after the backfill. It is not a
+read gate.
 
-### 5. Aggregate usage ledger dual-write
+Remove the dual-write (and then the required field) after an unset rewrite.
+Drop `usageLedgerMigratedAt` after a separate unset, or in the same rewrite.
 
-Processed-token totals moved to `threadUsageEvents` plus a namespaced
-Aggregate. `recordThreadUsageEvent` still dual-writes
-`threadUsage.totalTokensProcessed`. `getThreadUsageValues` reads that field
-until `usageLedgerMigratedAt` is set, then prefers the Aggregate sum.
-`backfillThreadUsageLedger` inserts one baseline event per existing field
-total.
-
-Remove the field, the dual-write, and the pre-migration read once the
-component reports that pass done and every `threadUsage` row has
-`usageLedgerMigratedAt`.
-
-### 6. Runs missing a lifecycle workflow
-
-`startMissingRunLifecycles` starts the watcher on active runs that have no
-`lifecycleWorkflowId` (rows from before run lifecycle lived on Convex).
-
-Remove the migration once a prod check shows no non-terminal run without a
-workflow id.
-
-### 7. Historical `runs.completionTransport`
+### 5. Historical `runs.completionTransport`
 
 Stored runs may still say `convex-action`. New inserts are `gateway`. The
 field stays optional so those rows validate.
@@ -110,7 +89,7 @@ field stays optional so those rows validate.
 Remove the `convex-action` union member after a rewrite or a prod check shows
 none remain.
 
-### 8. Catalog snapshot fields on `runs`
+### 6. Catalog snapshot fields on `runs`
 
 Earlier gateway work stored `catalogVersion`, `contextWindowTokens`, and
 `autoCompactTokenLimit` on new runs. Current inserts leave those unset. The
@@ -119,6 +98,13 @@ agent reads context budget from `GET /api/v1/models`; `getContext` returns
 
 Keep the optional fields so rows that still have them validate. Unset them in
 a later rewrite, then drop them from the schema.
+
+### 7. Numbered transcript `migratedAt`
+
+`threadTranscriptStates.migratedAt` is leftover after the numbered-transcript
+backfill. Current writes do not set it.
+
+Remove after an unset rewrite, then drop it from the schema.
 
 ## Client APIs
 
@@ -152,6 +138,14 @@ to deliver the update sentence; current code never calls them.
 
 Remove a stub when we are willing to let that function name disappear (old
 installs then see a missing-function error instead of the update sentence).
+
+### Live leftover name: `transcript.ensureMigrated`
+
+Current desktop/server still call this (`transcript_client.rs` /
+`transcript_watch.rs`). It only ensures `threadTranscriptStates` exists. It
+does not read `threadMessages` and is not an unsupported-client stub.
+
+Remove after rust/desktop stop calling it, then delete the Convex export.
 
 ## Removal checklist
 

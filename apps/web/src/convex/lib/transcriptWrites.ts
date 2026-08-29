@@ -1,10 +1,10 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
-import { ensureThreadTranscriptMigrated } from '@convex/lib/transcriptMigrate';
 import {
 	appendTranscriptPart,
 	attachmentMetaForUploads,
 	completionSourceKey,
+	getOrCreateTranscriptState,
 	promptSourceKey,
 	toolSourceKey
 } from '@convex/lib/transcriptParts';
@@ -23,10 +23,6 @@ export async function recordPromptTranscript(
 		imageUploadIds?: Id<'imageUploads'>[];
 	}
 ): Promise<void> {
-	await ensureThreadTranscriptMigrated(ctx, {
-		threadId: args.threadId,
-		userId: args.userId
-	});
 	await appendTranscriptPart(ctx, {
 		threadId: args.threadId,
 		userId: args.userId,
@@ -53,10 +49,6 @@ export async function recordCompletionTranscript(
 	if (args.items.length === 0) {
 		return null;
 	}
-	await ensureThreadTranscriptMigrated(ctx, {
-		threadId: args.threadId,
-		userId: args.userId
-	});
 	const result = await appendTranscriptPart(ctx, {
 		threadId: args.threadId,
 		userId: args.userId,
@@ -94,10 +86,6 @@ export async function recordToolTranscript(
 	) {
 		return;
 	}
-	await ensureThreadTranscriptMigrated(ctx, {
-		threadId: args.threadId,
-		userId: args.userId
-	});
 	await appendTranscriptPart(ctx, {
 		threadId: args.threadId,
 		userId: args.userId,
@@ -142,7 +130,7 @@ export async function recordSettledToolTranscripts(
 	// stay roughly constant in the run's history: page jobs and parts, skip
 	// jobs whose part already exists, and insert the rest from one in-memory
 	// number counter instead of per-job lookups.
-	const state = await ensureThreadTranscriptMigrated(ctx, {
+	const state = await getOrCreateTranscriptState(ctx, {
 		threadId: args.threadId,
 		userId: args.userId
 	});

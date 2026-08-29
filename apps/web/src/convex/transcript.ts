@@ -8,8 +8,8 @@ import {
 	vTranscriptPartsResult,
 	vTranscriptStateResult
 } from '@convex/lib/docs';
-import { ensureThreadTranscriptMigrated } from '@convex/lib/transcriptMigrate';
 import {
+	getOrCreateTranscriptState,
 	getTranscriptState,
 	hydrateTranscriptPartUrls,
 	loadTranscriptPartsByNumbers
@@ -59,6 +59,7 @@ async function requireOwnedThread(ctx: QueryCtx, threadId: Id<'threadRecords'>) 
 	await getOwnedThreadRecord(ctx.db, await getUserId(ctx), threadId);
 }
 
+/** Name is frozen for current desktop/server callers. Creates transcript state only. */
 export const ensureMigrated = mutation({
 	args: {
 		threadId: v.id('threadRecords')
@@ -67,7 +68,7 @@ export const ensureMigrated = mutation({
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
-		await ensureThreadTranscriptMigrated(ctx, {
+		await getOrCreateTranscriptState(ctx, {
 			threadId: args.threadId,
 			userId
 		});

@@ -1,18 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { api } from '@convex/_generated/api';
 import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
-import { groupLegacyResponseIntoRecords } from '@convex/lib/transcriptParts';
-import type { Id } from '@convex/_generated/dataModel';
-
-function runId(value: string): Id<'runs'> {
-	// SAFETY: fixture strings are only compared as opaque Convex document ids.
-	return value as Id<'runs'>;
-}
-
-function messageId(value: string): Id<'threadMessages'> {
-	// SAFETY: fixture strings are only compared as opaque Convex document ids.
-	return value as Id<'threadMessages'>;
-}
 
 describe('numbered transcript parts', () => {
 	it('assigns contiguous zero-based numbers to prompts and is idempotent on retry', async () => {
@@ -331,172 +319,16 @@ describe('numbered transcript parts', () => {
 		).rejects.toThrow(/at most 100/);
 	});
 
-	it('migrates legacy responses by grouping turnId and splitting tool results', async () => {
+	it('ensures transcript state exists on a thread with no parts', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		const executionSecret = 'transcript-migrate-secret';
-		const created = await createQueuedRun(
-			t,
-			asUser,
-			threadId,
-			'sub-migrate',
-			executionSecret,
-			'Old prompt'
-		);
-		await asUser.mutation(api.agentRuntime.start, {
-			claimId: 'claim-migrate',
-			runId: created.runId,
-			executionSecret
+		expect(await asUser.query(api.transcript.getState, { threadId })).toMatchObject({
+			totalParts: 0
 		});
-		await asUser.mutation(api.agentRuntime.beginAssistantMessage, {
-			runId: created.runId,
-			executionSecret
+		const ensured = await asUser.mutation(api.transcript.ensureMigrated, { threadId });
+		expect(ensured.totalParts).toBe(0);
+		expect(await asUser.query(api.transcript.getState, { threadId })).toMatchObject({
+			totalParts: 0
 		});
-		await t.run(async (ctx) => {
-			const run = await ctx.db.get('runs', created.runId);
-			if (!run?.responseMessageId) throw new Error('missing response');
-			await ctx.db.patch('threadMessages', run.responseMessageId, {
-				text: 'done',
-				parts: [
-					{ type: 'text', id: 't1', text: 'first', turnId: 'turn-a' },
-					{
-						type: 'tool-call',
-						callId: 'c1',
-						name: 'exec_command',
-						input: { cmd: 'ls' },
-						turnId: 'turn-a'
-					},
-					{ type: 'tool-result', callId: 'c1', name: 'exec_command', output: 'ok' },
-					{ type: 'text', id: 't2', text: 'second', turnId: 'turn-b' }
-				]
-			});
-			await ctx.db.patch('runs', created.runId, {
-				status: 'completed',
-				completedAt: Date.now()
-			});
-			const states = await ctx.db
-				.query('threadTranscriptStates')
-				.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
-				.unique();
-			if (states) {
-				const parts = await ctx.db
-					.query('threadTranscriptParts')
-					.withIndex('by_threadId_and_number', (query) => query.eq('threadId', threadId))
-					.collect();
-				for (const part of parts) {
-					await ctx.db.delete('threadTranscriptParts', part._id);
-				}
-				await ctx.db.patch('threadTranscriptStates', states._id, {
-					totalParts: 0,
-					migratedAt: undefined
-				});
-			}
-		});
-
-		const migrated = await asUser.mutation(api.transcript.ensureMigrated, { threadId });
-		expect(migrated.totalParts).toBe(4);
-		const parts = await asUser.query(api.transcript.getParts, {
-			threadId,
-			numbers: [0, 1, 2, 3]
-		});
-		expect(parts.parts.map((part) => part.kind)).toEqual([
-			'prompt',
-			'completion',
-			'tool',
-			'completion'
-		]);
-	});
-
-	it('skips failed legacy completions during migration', async () => {
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
-		const executionSecret = 'transcript-migrate-failed-secret';
-		const created = await createQueuedRun(
-			t,
-			asUser,
-			threadId,
-			'sub-migrate-failed',
-			executionSecret,
-			'Old prompt'
-		);
-		await asUser.mutation(api.agentRuntime.start, {
-			claimId: 'claim-migrate-failed',
-			runId: created.runId,
-			executionSecret
-		});
-		await asUser.mutation(api.agentRuntime.beginAssistantMessage, {
-			runId: created.runId,
-			executionSecret
-		});
-		await asUser.mutation(api.agentRuntime.finalizeRun, {
-			runId: created.runId,
-			text: 'partial',
-			status: 'failed',
-			lastError: 'boom'
-		});
-		await t.run(async (ctx) => {
-			const run = await ctx.db.get('runs', created.runId);
-			if (!run?.responseMessageId) throw new Error('missing response');
-			await ctx.db.patch('threadMessages', run.responseMessageId, {
-				text: 'partial',
-				parts: [{ type: 'text', id: 't1', text: 'partial', turnId: 'turn-a' }]
-			});
-			const states = await ctx.db
-				.query('threadTranscriptStates')
-				.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
-				.unique();
-			if (states) {
-				const parts = await ctx.db
-					.query('threadTranscriptParts')
-					.withIndex('by_threadId_and_number', (query) => query.eq('threadId', threadId))
-					.collect();
-				for (const part of parts) {
-					await ctx.db.delete('threadTranscriptParts', part._id);
-				}
-				await ctx.db.patch('threadTranscriptStates', states._id, {
-					totalParts: 0,
-					migratedAt: undefined
-				});
-			}
-		});
-
-		const migrated = await asUser.mutation(api.transcript.ensureMigrated, { threadId });
-		expect(migrated.totalParts).toBe(1);
-		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0] });
-		expect(parts.parts.map((part) => part.kind)).toEqual(['prompt']);
-	});
-});
-
-describe('groupLegacyResponseIntoRecords', () => {
-	it('groups by turnId and emits tool records separately', () => {
-		const records = groupLegacyResponseIntoRecords({
-			runId: runId('run'),
-			messageId: messageId('msg'),
-			parts: [
-				{ type: 'text', id: 't1', text: 'a', turnId: 'turn-1' },
-				{ type: 'text', id: 't2', text: 'b', turnId: 'turn-1' },
-				{ type: 'tool-result', callId: 'c1', name: 'exec_command', output: 'ok' },
-				{ type: 'text', id: 't3', text: 'c', turnId: 'turn-2' }
-			]
-		});
-		expect(records.map((record) => record.kind)).toEqual(['completion', 'tool', 'completion']);
-	});
-
-	it('emits a completion from text-only legacy responses with empty parts', () => {
-		const records = groupLegacyResponseIntoRecords({
-			runId: runId('run'),
-			messageId: messageId('msg'),
-			parts: [],
-			text: 'Just words'
-		});
-		expect(records).toEqual([
-			{
-				kind: 'completion',
-				sourceKey: 'completion:run:legacy:0',
-				completion: {
-					items: [{ type: 'text', id: 'legacy:msg:text', text: 'Just words' }]
-				}
-			}
-		]);
 	});
 });

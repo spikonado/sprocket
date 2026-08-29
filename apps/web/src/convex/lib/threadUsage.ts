@@ -39,10 +39,6 @@ export function usageEventId(
 	return `${kind}:${runId}:${claimId}:${seq}`;
 }
 
-function usageBaselineEventId(threadId: Id<'threadRecords'>) {
-	return `baseline:${threadId}`;
-}
-
 function assertValidTokenCount(value: number): void {
 	if (!Number.isSafeInteger(value) || value < 0) {
 		throw new Error('Invalid token count.');
@@ -78,23 +74,17 @@ async function aggregatedProcessedTokens(
 	}
 }
 
-/** Current counters for a thread. Prefers the Aggregate ledger after backfill. */
+/** Current counters for a thread. Reads the Aggregate ledger. */
 export async function getThreadUsageValues(
 	ctx: QueryCtx | MutationCtx,
 	thread: Doc<'threadRecords'>
 ): Promise<ThreadUsageValues> {
 	const usageRow = await getUsageRow(ctx.db, thread._id);
 	const fieldTotal = usageRow?.totalTokensProcessed ?? 0;
-	if (usageRow?.usageLedgerMigratedAt !== undefined) {
-		const aggregated = await aggregatedProcessedTokens(ctx, thread._id);
-		return {
-			contextTokens: usageRow.contextTokens,
-			totalTokensProcessed: aggregated ?? fieldTotal
-		};
-	}
+	const aggregated = await aggregatedProcessedTokens(ctx, thread._id);
 	return {
 		contextTokens: usageRow?.contextTokens,
-		totalTokensProcessed: fieldTotal
+		totalTokensProcessed: aggregated ?? fieldTotal
 	};
 }
 
@@ -153,39 +143,4 @@ export async function recordThreadUsageEvent(
 		});
 	}
 	return true;
-}
-
-export async function backfillUsageLedgerBaseline(
-	ctx: MutationCtx,
-	usageRow: Doc<'threadUsage'>
-): Promise<void> {
-	if (usageRow.usageLedgerMigratedAt !== undefined) {
-		return;
-	}
-	const alreadyRecorded = (await aggregatedProcessedTokens(ctx, usageRow.threadId)) ?? 0;
-	const baseline = Math.max(0, usageRow.totalTokensProcessed - alreadyRecorded);
-	if (baseline > 0) {
-		const eventId = usageBaselineEventId(usageRow.threadId);
-		const existing = await ctx.db
-			.query('threadUsageEvents')
-			.withIndex('by_threadId_eventId', (query) =>
-				query.eq('threadId', usageRow.threadId).eq('eventId', eventId)
-			)
-			.unique();
-		if (!existing) {
-			const event: UsageEventInsert = {
-				threadId: usageRow.threadId,
-				userId: usageRow.userId,
-				eventId,
-				processedTokens: baseline,
-				createdAt: Date.now()
-			};
-			const insertedId = await ctx.db.insert('threadUsageEvents', event);
-			const inserted = await ctx.db.get('threadUsageEvents', insertedId);
-			if (inserted) {
-				await threadProcessedTokens.insertIfDoesNotExist(ctx, inserted);
-			}
-		}
-	}
-	await ctx.db.patch('threadUsage', usageRow._id, { usageLedgerMigratedAt: Date.now() });
 }

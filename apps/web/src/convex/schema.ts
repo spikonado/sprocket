@@ -84,7 +84,8 @@ export default defineSchema({
 	threadRecords: defineTable({
 		userId: v.string(),
 		submissionId: v.string(),
-		// Optional until `backfillThreadRepositoryKeys` copies it from `projects`.
+		// Leftover optionality after the repository-key backfill. Current
+		// inserts always write it.
 		repositoryKey: v.optional(v.string()),
 		// Deprecated: present on rows written before threads stored repositoryKey.
 		projectId: v.optional(v.id('projects')),
@@ -104,9 +105,10 @@ export default defineSchema({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
 		contextTokens: v.optional(v.number()),
-		// Dual-written with threadUsageEvents until the Aggregate ledger is
-		// verified. See BACKWARDS_COMPATIBILITY.md (stored schema, usage ledger).
+		// Denormalized cache of the Aggregate ledger. See
+		// BACKWARDS_COMPATIBILITY.md (stored schema, usage ledger).
 		totalTokensProcessed: v.number(),
+		// Leftover after the usage-ledger backfill.
 		usageLedgerMigratedAt: v.optional(v.number())
 	}).index('by_threadId', ['threadId']),
 	threadUsageEvents: defineTable({
@@ -166,6 +168,7 @@ export default defineSchema({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
 		totalParts: v.number(),
+		// Leftover after the numbered-transcript backfill.
 		migratedAt: v.optional(v.number())
 	}).index('by_threadId', ['threadId']),
 	threadTranscriptParts: defineTable({
