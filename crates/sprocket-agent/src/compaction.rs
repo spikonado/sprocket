@@ -255,9 +255,13 @@ impl ContextCompactionHook {
         match self.compact_via_gateway(messages_json).await {
             Ok(summary) => Ok(summary),
             Err(first_error) => {
+                let first_billed = billed_tokens_of_failure(&first_error);
                 tokio::time::sleep(SUMMARIZE_RETRY_DELAY).await;
                 self.compact_via_gateway(messages_json)
                     .await
+                    .map(|(summary, retry_billed)| {
+                        (summary, first_billed.saturating_add(retry_billed))
+                    })
                     .map_err(|retry_error| {
                         anyhow::anyhow!(
                             "{retry_error:#}; initial summarization failed: {first_error:#}"
@@ -294,9 +298,14 @@ impl ContextCompactionHook {
             anyhow::bail!("gateway compaction failed: {status} {text}");
         }
         let payload: serde_json::Value = response.json().await?;
-        let summary = extract_response_text(&payload)
-            .ok_or_else(|| anyhow::anyhow!("gateway compaction response had no text"))?;
-        Ok((summary, extract_response_usage(&payload)?))
+        let billed_tokens = extract_response_usage(&payload);
+        let Some(summary) = extract_response_text(&payload) else {
+            return Err(anyhow::Error::from(CompactionValidationError {
+                message: "gateway compaction response had no text".to_string(),
+                billed_tokens: billed_tokens.unwrap_or(0),
+            }));
+        };
+        Ok((summary, billed_tokens?))
     }
 
     fn compaction_failure_flow(
@@ -413,6 +422,29 @@ fn extract_response_usage(payload: &serde_json::Value) -> anyhow::Result<u64> {
             .and_then(serde_json::Value::as_u64)
             .unwrap_or(0),
     ))
+}
+
+/// A validation failure on a decoded gateway response, carrying the billed
+/// usage that response reported so a retry can still account for it.
+#[derive(Debug)]
+struct CompactionValidationError {
+    message: String,
+    billed_tokens: u64,
+}
+
+impl std::fmt::Display for CompactionValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for CompactionValidationError {}
+
+fn billed_tokens_of_failure(error: &anyhow::Error) -> u64 {
+    error
+        .downcast_ref::<CompactionValidationError>()
+        .map(|failure| failure.billed_tokens)
+        .unwrap_or(0)
 }
 
 fn should_compact(
@@ -696,6 +728,24 @@ mod tests {
         assert!(
             extract_response_usage(&serde_json::json!({ "usage": {} })).is_err(),
             "missing input_tokens must not fabricate a billed count"
+        );
+    }
+
+    #[test]
+    fn preserves_billed_usage_across_a_text_validation_retry() {
+        let first_failure = anyhow::Error::from(CompactionValidationError {
+            message: "gateway compaction response had no text".to_string(),
+            billed_tokens: 120,
+        });
+        assert_eq!(billed_tokens_of_failure(&first_failure), 120);
+        assert_eq!(
+            billed_tokens_of_failure(&anyhow::anyhow!("plain failure")),
+            0
+        );
+        assert_eq!(
+            billed_tokens_of_failure(&first_failure).saturating_add(80),
+            200,
+            "the retry total must fold in the first attempt's billed usage"
         );
     }
 }
