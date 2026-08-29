@@ -38,6 +38,8 @@ if (envFile) {
 
 if (dataDir) {
 	childEnv.SPROCKET_DATA_DIR = path.resolve(repositoryRoot, dataDir);
+} else {
+	delete childEnv.SPROCKET_DATA_DIR;
 }
 
 const desktop = mode === '--desktop';
