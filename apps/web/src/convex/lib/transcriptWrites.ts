@@ -13,6 +13,26 @@ import type { TranscriptCompletionItem, TranscriptToolBody } from '@convex/lib/v
 
 const SETTLED_TOOL_TRANSCRIPTS_PAGE_SIZE = 32;
 
+// Leave enough read budget for the caller's own writes after the sweep.
+const SETTLED_TOOL_READ_RESERVE_DOCS = 64;
+const SETTLED_TOOL_READ_RESERVE_BYTES = 512 * 1024;
+
+function isReadBudgetError(error: Error): boolean {
+	return /too many .{0,40}read/i.test(error.message);
+}
+
+async function transactionNearReadLimit(ctx: MutationCtx): Promise<boolean> {
+	try {
+		const metrics = await ctx.meta.getTransactionMetrics();
+		return (
+			metrics.documentsRead.remaining < SETTLED_TOOL_READ_RESERVE_DOCS ||
+			metrics.bytesRead.remaining < SETTLED_TOOL_READ_RESERVE_BYTES
+		);
+	} catch {
+		return false;
+	}
+}
+
 export async function recordPromptTranscript(
 	ctx: MutationCtx,
 	args: {
@@ -127,26 +147,50 @@ export async function recordSettledToolTranscripts(
 	}
 ): Promise<void> {
 	// finalizeCompletionCall runs this after every completion, so the scan must
-	// stay roughly constant in the run's history: page jobs and parts, skip
-	// jobs whose part already exists, and insert the rest from one in-memory
-	// number counter instead of per-job lookups.
+	// stay cheap: read parts and jobs in bounded chunks, skip jobs whose part
+	// already exists, and insert the rest from one in-memory number counter
+	// instead of per-job lookups. If the run's history is large enough to
+	// exhaust the read budget, bail out — terminal cleanup records any
+	// deferred jobs when the run finishes.
 	const state = await getOrCreateTranscriptState(ctx, {
 		threadId: args.threadId,
 		userId: args.userId
 	});
-	let nextNumber = state.totalParts;
+	try {
+		await recordSettledToolTranscriptsWithinBudget(ctx, args, state._id, state.totalParts);
+	} catch (error) {
+		if (error instanceof Error && isReadBudgetError(error)) {
+			return;
+		}
+		throw error;
+	}
+}
+
+async function recordSettledToolTranscriptsWithinBudget(
+	ctx: MutationCtx,
+	args: { threadId: Id<'threadRecords'>; userId: string; runId: Id<'runs'> },
+	stateId: Id<'threadTranscriptStates'>,
+	initialNumber: number
+): Promise<void> {
+	let nextNumber = initialNumber;
 
 	const recordedSourceKeys = new Set<string>();
 	const completedCallIds = new Set<string>();
-	let partsCursor: string | null = null;
+	// Parts are numbered contiguously per thread, so number is a stable cursor.
+	// (.paginate would be cleaner, but Convex allows only one paginated query
+	// per function execution.)
+	let afterNumber = -1;
 	for (;;) {
-		const page = await ctx.db
+		if (await transactionNearReadLimit(ctx)) {
+			return;
+		}
+		const parts = await ctx.db
 			.query('threadTranscriptParts')
 			.withIndex('by_threadId_and_runId_and_number', (query) =>
-				query.eq('threadId', args.threadId).eq('runId', args.runId)
+				query.eq('threadId', args.threadId).eq('runId', args.runId).gt('number', afterNumber)
 			)
-			.paginate({ numItems: SETTLED_TOOL_TRANSCRIPTS_PAGE_SIZE, cursor: partsCursor });
-		for (const part of page.page) {
+			.take(SETTLED_TOOL_TRANSCRIPTS_PAGE_SIZE);
+		for (const part of parts) {
 			recordedSourceKeys.add(part.sourceKey);
 			if (part.kind !== 'completion') {
 				continue;
@@ -157,14 +201,17 @@ export async function recordSettledToolTranscripts(
 				}
 			}
 		}
-		if (page.isDone) {
+		if (parts.length < SETTLED_TOOL_TRANSCRIPTS_PAGE_SIZE) {
 			break;
 		}
-		partsCursor = page.continueCursor;
+		afterNumber = parts.at(-1)?.number ?? afterNumber;
 	}
 
 	let afterSequence = -1;
 	for (;;) {
+		if (await transactionNearReadLimit(ctx)) {
+			break;
+		}
 		const jobs = await ctx.db
 			.query('executorJobs')
 			.withIndex('by_runId_hidden_sequence', (query) =>
@@ -200,8 +247,8 @@ export async function recordSettledToolTranscripts(
 		afterSequence = jobs.at(-1)?.sequence ?? afterSequence;
 	}
 
-	if (nextNumber !== state.totalParts) {
-		await ctx.db.patch('threadTranscriptStates', state._id, { totalParts: nextNumber });
+	if (nextNumber !== initialNumber) {
+		await ctx.db.patch('threadTranscriptStates', stateId, { totalParts: nextNumber });
 	}
 }
 
