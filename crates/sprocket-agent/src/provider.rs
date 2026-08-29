@@ -359,6 +359,12 @@ where
                             break 'agent_run result;
                         }
                         None => {
+                            if let Some(error) = completion_error {
+                                break 'agent_run AgentProviderResult::Failed {
+                                    text: String::new(),
+                                    error,
+                                };
+                            }
                             if let Err(error) = transcript.finalize_turn().await {
                                 break 'agent_run transcript_error(
                                     error,
@@ -368,12 +374,6 @@ where
                             }
                             if final_text.is_empty() {
                                 final_text = streamed_text;
-                            }
-                            if let Some(error) = completion_error {
-                                break 'agent_run AgentProviderResult::Failed {
-                                    text: final_text,
-                                    error,
-                                };
                             }
                             break 'agent_run AgentProviderResult::Completed { text: final_text };
                         }
