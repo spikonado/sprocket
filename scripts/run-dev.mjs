@@ -1,12 +1,48 @@
 import { spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseEnv } from 'node:util';
 
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url));
-const [mode, ...unexpectedArguments] = process.argv.slice(2);
+const args = process.argv.slice(2);
+let dataDir = null;
+let envFile = null;
+let mode = null;
+const unexpectedArguments = [];
 
-if (unexpectedArguments.length > 0 || (mode !== undefined && mode !== '--desktop')) {
-	console.error('Usage: bun scripts/run-dev.mjs [--desktop]');
+for (const arg of args) {
+	if (arg === '--desktop') {
+		mode = '--desktop';
+	} else if (arg.startsWith('--data-dir=')) {
+		dataDir = arg.slice('--data-dir='.length);
+	} else if (arg.startsWith('--env-file=')) {
+		envFile = arg.slice('--env-file='.length);
+	} else {
+		unexpectedArguments.push(arg);
+	}
+}
+
+if (unexpectedArguments.length > 0) {
+	console.error(
+		'Usage: bun scripts/run-dev.mjs [--desktop] [--data-dir=<path>] [--env-file=<path>]'
+	);
 	process.exit(1);
+}
+
+const childEnv = { ...process.env };
+if (envFile) {
+	const filePath = path.resolve(repositoryRoot, envFile);
+	Object.assign(childEnv, parseEnv(readFileSync(filePath, 'utf8')));
+}
+
+if (dataDir) {
+	childEnv.SPROCKET_DATA_DIR = path.resolve(repositoryRoot, dataDir);
+} else if (mode === '--desktop') {
+	childEnv.SPROCKET_DATA_DIR = path.join(homedir(), '.sprocket');
+} else {
+	delete childEnv.SPROCKET_DATA_DIR;
 }
 
 const desktop = mode === '--desktop';
@@ -18,7 +54,7 @@ const commands = desktop
 			'bun run --cwd apps/desktop dev'
 		]
 	: [
-			'cargo run -p sprocket-cli -- serve --port 7731 --data-dir .sprocket-dev --api-only',
+			'cargo run -p sprocket-cli -- serve --port 7731 --api-only',
 			'node scripts/wait-for-api.mjs && bun run --cwd apps/web dev'
 		];
 
@@ -27,6 +63,7 @@ const child = spawn(
 	['x', 'concurrently', '-k', '-n', names, '-c', colors, ...commands],
 	{
 		cwd: repositoryRoot,
+		env: childEnv,
 		stdio: 'inherit'
 	}
 );

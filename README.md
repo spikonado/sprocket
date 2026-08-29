@@ -105,11 +105,20 @@ bun dev
 After creating a Convex deployment and configuring AuthKit, give the deployment an API key for each model provider you want to enable.
 
 This runs Vite at `http://localhost:5173` and the Rust API at `http://127.0.0.1:7731`, with development state kept in `.sprocket-dev` inside the repository.
+It targets the dev Convex deployment. To run against the production Convex
+deployment with `~/.sprocket` state instead:
+
+```sh
+bun dev:prod
+```
+
 To develop against Electron instead, run:
 
 ```sh
 bun dev:desktop
 ```
+
+The `dev:prod` / `dev:prod:desktop` variants use the production Convex deployment and `~/.sprocket`.
 
 ### Building and testing
 
