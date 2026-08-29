@@ -194,7 +194,7 @@ impl ContextCompactionHook {
             }
         };
 
-        let summary = match self.summarize_with_retry(&messages_json).await {
+        let (summary, billed_tokens) = match self.summarize_with_retry(&messages_json).await {
             Ok(summary) => summary,
             Err(error) => {
                 eprintln!(
@@ -205,7 +205,7 @@ impl ContextCompactionHook {
             }
         };
 
-        let processed_tokens = estimate_context_tokens(prefix);
+        let processed_tokens = billed_tokens;
         let summary_text = summary;
         let compacted_summary = context_summary_text(&summary_text);
         let replaced_prefix_len =
@@ -251,13 +251,17 @@ impl ContextCompactionHook {
         CompletionCallAction::patch(RequestPatch::new().history(compacted))
     }
 
-    async fn summarize_with_retry(&self, messages_json: &str) -> anyhow::Result<String> {
+    async fn summarize_with_retry(&self, messages_json: &str) -> anyhow::Result<(String, u64)> {
         match self.compact_via_gateway(messages_json).await {
             Ok(summary) => Ok(summary),
             Err(first_error) => {
+                let first_billed = billed_tokens_of_failure(&first_error);
                 tokio::time::sleep(SUMMARIZE_RETRY_DELAY).await;
                 self.compact_via_gateway(messages_json)
                     .await
+                    .map(|(summary, retry_billed)| {
+                        (summary, first_billed.saturating_add(retry_billed))
+                    })
                     .map_err(|retry_error| {
                         anyhow::anyhow!(
                             "{retry_error:#}; initial summarization failed: {first_error:#}"
@@ -267,7 +271,7 @@ impl ContextCompactionHook {
         }
     }
 
-    async fn compact_via_gateway(&self, messages_json: &str) -> anyhow::Result<String> {
+    async fn compact_via_gateway(&self, messages_json: &str) -> anyhow::Result<(String, u64)> {
         let credential = self
             .runtime
             .issue_gateway_credential(&self.run_id, &self.claim_id)
@@ -294,8 +298,14 @@ impl ContextCompactionHook {
             anyhow::bail!("gateway compaction failed: {status} {text}");
         }
         let payload: serde_json::Value = response.json().await?;
-        extract_response_text(&payload)
-            .ok_or_else(|| anyhow::anyhow!("gateway compaction response had no text"))
+        let billed_tokens = extract_response_usage(&payload);
+        let Some(summary) = extract_response_text(&payload) else {
+            return Err(anyhow::Error::from(CompactionValidationError {
+                message: "gateway compaction response had no text".to_string(),
+                billed_tokens: billed_tokens.unwrap_or(0),
+            }));
+        };
+        Ok((summary, billed_tokens?))
     }
 
     fn compaction_failure_flow(
@@ -394,6 +404,47 @@ fn extract_response_text(payload: &serde_json::Value) -> Option<String> {
     } else {
         Some(joined)
     }
+}
+
+/// Input + output tokens actually billed for the compaction call. The gateway
+/// always returns `usage`, so a response without it is a protocol violation.
+fn extract_response_usage(payload: &serde_json::Value) -> anyhow::Result<u64> {
+    let usage = payload
+        .get("usage")
+        .ok_or_else(|| anyhow::anyhow!("gateway compaction response had no usage"))?;
+    let input_tokens = usage
+        .get("input_tokens")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| anyhow::anyhow!("gateway compaction usage had no input_tokens"))?;
+    Ok(input_tokens.saturating_add(
+        usage
+            .get("output_tokens")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0),
+    ))
+}
+
+/// A validation failure on a decoded gateway response, carrying the billed
+/// usage that response reported so a retry can still account for it.
+#[derive(Debug)]
+struct CompactionValidationError {
+    message: String,
+    billed_tokens: u64,
+}
+
+impl std::fmt::Display for CompactionValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for CompactionValidationError {}
+
+fn billed_tokens_of_failure(error: &anyhow::Error) -> u64 {
+    error
+        .downcast_ref::<CompactionValidationError>()
+        .map(|failure| failure.billed_tokens)
+        .unwrap_or(0)
 }
 
 fn should_compact(
@@ -655,5 +706,46 @@ mod tests {
         assert!(!should_persist_for_future_runs(6, 4));
         assert!(should_persist_for_future_runs(6, 6));
         assert!(should_persist_for_future_runs(6, 8));
+    }
+
+    #[test]
+    fn extracts_billed_usage_from_gateway_compaction_response() {
+        let payload = serde_json::json!({
+            "output_text": "summary",
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 30,
+                "total_tokens": 130
+            }
+        });
+        assert_eq!(extract_response_usage(&payload).unwrap_or(0), 130);
+        assert!(extract_response_text(&payload).is_some());
+    }
+
+    #[test]
+    fn rejects_gateway_compaction_responses_without_billed_usage() {
+        assert!(extract_response_usage(&serde_json::json!({ "output_text": "summary" })).is_err());
+        assert!(
+            extract_response_usage(&serde_json::json!({ "usage": {} })).is_err(),
+            "missing input_tokens must not fabricate a billed count"
+        );
+    }
+
+    #[test]
+    fn preserves_billed_usage_across_a_text_validation_retry() {
+        let first_failure = anyhow::Error::from(CompactionValidationError {
+            message: "gateway compaction response had no text".to_string(),
+            billed_tokens: 120,
+        });
+        assert_eq!(billed_tokens_of_failure(&first_failure), 120);
+        assert_eq!(
+            billed_tokens_of_failure(&anyhow::anyhow!("plain failure")),
+            0
+        );
+        assert_eq!(
+            billed_tokens_of_failure(&first_failure).saturating_add(80),
+            200,
+            "the retry total must fold in the first attempt's billed usage"
+        );
     }
 }
