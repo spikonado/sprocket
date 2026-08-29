@@ -106,6 +106,40 @@ backfill. Current writes do not set it.
 
 Remove after an unset rewrite, then drop it from the schema.
 
+### 8. Response-half of `threadMessages`
+
+Runs used to keep a response `threadMessages` row: started by the executor,
+scrubbed on superseded attempts, backfilled with the merged transcript parts
+when the run terminalized. The per-completion and terminal-cleanup code paths
+already record every completed model call and settled tool into the numbered
+transcript (`threadTranscriptParts`), the agent replays history from
+transcripts and jobs, and the UI builds its thread from transcripts alone.
+The backfill could also exceed the 1 MiB document limit with enough tool
+output, failing `agentRuntime:finalizeRun`.
+
+New runs no longer create the row: `finalizeRunRecord` writes nothing to
+`threadMessages`, `beginAssistantMessage` is a no-op kept for the agent
+contract, and `runs.responseMessageId` stays unset. Abstracted terminal text
+is deliberately not preserved anywhere; an incomplete completion call stays
+incomplete in the transcript.
+
+`clearResponseMessageParts` (the live `migrations` entry, driven by the
+migrations cron) rewrites every remaining response row to `{ text: "", parts:
+[] }` and doubles as the read/write gate for the future schema change. Once
+its status in prod is `success` with zero remaining rows, `runs` gets an
+unset rewrite for `responseMessageId` and then, only after all released
+agents/desktops have dropped `agentRuntime.beginAssistantMessage` calls:
+
+1. Delete `agentRuntime.beginAssistantMessage` (or convert it to the
+   unsupported-client stub like the other retired function names).
+2. Drop `runs.responseMessageId` and `threadMessages.parts`, and the
+   `by_type_runId` index, from `convex/schema.ts` and regenerate.
+3. Delete `migrations.clearResponseMessageParts` and its `run` pin.
+
+The prompt-half of `threadMessages` (text, attachments, retention bookkeeping)
+stays: it is the run-capability source of the user prompt and image
+attachments for `agentRuntime.getContext` and dedups repeated submissions.
+
 ## Client APIs
 
 Released desktop/CLI builds that still call retired Convex functions get a

@@ -98,7 +98,7 @@ describe('agentRuntime.start', () => {
 		expect(await t.run(async (ctx) => (await ctx.db.get('runs', runId))?.status)).toBe('failed');
 	});
 
-	it('takes over an expired claim, hides in-flight jobs, and clears partial response', async () => {
+	it('takes over an expired claim and hides in-flight jobs', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'start-takeover-secret';
@@ -114,14 +114,6 @@ describe('agentRuntime.start', () => {
 			await ctx.db.patch('completionStreamStates', run.completionStreamStateId, {
 				sequence: 3,
 				streamAttemptId: 'attempt-a'
-			});
-			const responseMessageId = await ctx.db.insert('threadMessages', {
-				threadId,
-				runId,
-				userId: 'user_alice',
-				type: 'response',
-				text: 'partial',
-				parts: [{ type: 'text', id: 'text-1', text: 'partial', turnId: 'turn-1' }]
 			});
 			const pendingJobId = await ctx.db.insert('executorJobs', {
 				threadId,
@@ -157,13 +149,11 @@ describe('agentRuntime.start', () => {
 				sequence: 1
 			});
 			await ctx.db.patch('runs', runId, {
-				responseMessageId,
 				activeJobId: pendingJobId,
 				completionAttemptSeq: 4,
 				claimExpiresAt: Date.now() - 1
 			});
 			return {
-				responseMessageId,
 				streamStateId: run.completionStreamStateId,
 				pendingJobId,
 				completedJobId
@@ -180,11 +170,10 @@ describe('agentRuntime.start', () => {
 
 		const state = await t.run(async (ctx) => {
 			const run = await ctx.db.get('runs', runId);
-			const response = await ctx.db.get('threadMessages', seeded.responseMessageId);
 			const stream = await ctx.db.get('completionStreamStates', seeded.streamStateId);
 			const pending = await ctx.db.get('executorJobs', seeded.pendingJobId);
 			const completed = await ctx.db.get('executorJobs', seeded.completedJobId);
-			return { run, response, stream, pending, completed };
+			return { run, stream, pending, completed };
 		});
 
 		expect(state.run).toMatchObject({
@@ -194,10 +183,6 @@ describe('agentRuntime.start', () => {
 		});
 		expect(state.run?.activeJobId ?? undefined).toBeUndefined();
 		expect(state.run?.claimExpiresAt).toBe(takeover.claimExpiresAt);
-		expect(state.response).toMatchObject({
-			text: '',
-			parts: []
-		});
 		expect(state.stream).toMatchObject({
 			sequence: 0
 		});

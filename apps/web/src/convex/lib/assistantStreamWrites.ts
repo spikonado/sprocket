@@ -1,7 +1,5 @@
 import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
 import type { Doc } from '@convex/_generated/dataModel';
-import { joinAssistantTextParts } from '@convex/lib/assistantParts';
-import { appendThreadMessage, getThreadMessage } from '@convex/lib/threadMessages';
 
 export async function getCompletionStreamState(
 	ctx: MutationCtx | QueryCtx,
@@ -17,38 +15,13 @@ export async function getCompletionStreamState(
 	return state;
 }
 
-export async function beginAssistantMessageForRun(
-	ctx: MutationCtx,
-	run: Doc<'runs'>
-): Promise<void> {
-	if (run.responseMessageId) return;
-	const messageId = await appendThreadMessage(ctx, {
-		threadId: run.threadId,
-		runId: run._id,
-		userId: run.userId,
-		type: 'response',
-		text: ''
-	});
-	await ctx.db.patch('runs', run._id, { responseMessageId: messageId });
-}
-
 export async function registerCompletionAttemptForRun(
 	ctx: MutationCtx,
 	run: Doc<'runs'>,
-	attemptSeq: number,
-	supersededStreamIds: string[]
+	attemptSeq: number
 ): Promise<void> {
+	// The response `threadMessages` document is no longer maintained (see
+	// BACKWARDS_COMPATIBILITY.md). Superseded-attempt scrubbing retires with it:
+	// partial turns are discarded on the agent side, not in Convex.
 	await ctx.db.patch('runs', run._id, { completionAttemptSeq: attemptSeq });
-	if (supersededStreamIds.length === 0 || !run.responseMessageId) return;
-	const superseded = new Set(supersededStreamIds);
-	const message = await getThreadMessage(ctx, run.responseMessageId);
-	const parts = message.parts.filter(
-		(part) => !('turnId' in part && part.turnId && superseded.has(part.turnId))
-	);
-	if (parts.length !== message.parts.length) {
-		await ctx.db.patch('threadMessages', run.responseMessageId, {
-			text: joinAssistantTextParts(parts),
-			parts
-		});
-	}
 }

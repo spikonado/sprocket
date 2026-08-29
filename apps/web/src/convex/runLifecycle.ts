@@ -89,7 +89,7 @@ export const abandonExpiredRun = internalMutation({
 		if (state.kind !== 'abandon') {
 			return false;
 		}
-		return await finalizeRunRecord(ctx, run.userId, run, {
+		return await finalizeRunRecord(ctx, run, {
 			text: RUN_ABANDONED_BY_AGENT,
 			status: 'failed',
 			lastError: RUN_ABANDONED_BY_AGENT
