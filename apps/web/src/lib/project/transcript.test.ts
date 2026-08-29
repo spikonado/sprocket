@@ -111,6 +111,20 @@ describe('mergePagedTranscriptWithLive', () => {
 			threadId: threadRecordId('thread-a')
 		});
 		expect(pendingLatestRun).toEqual([]);
+		const completedLatestRun = mergePagedTranscriptWithLive({
+			parts: [],
+			live: null,
+			latestRun: {
+				_id: runId('run-1'),
+				status: 'completed',
+				startedAt: 200_000,
+				completedAt: 210_000
+			},
+			liveRestore: { threadId: threadRecordId('thread-a'), overlay: initial },
+			userId: 'user_1',
+			threadId: threadRecordId('thread-a')
+		});
+		expect(completedLatestRun).toEqual([]);
 
 		const kept = mergePagedTranscriptWithLive({
 			parts: [

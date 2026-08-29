@@ -220,7 +220,12 @@ function resolveLiveOverlay(args: {
 		return null;
 	}
 	const latestRun = args.latestRun;
-	if (latestRun?._id === restore.overlay.runId) {
+	if (
+		latestRun?._id === restore.overlay.runId &&
+		(latestRun.status === 'queued' ||
+			latestRun.status === 'running' ||
+			latestRun.status === 'awaiting_executor')
+	) {
 		return restore.overlay;
 	}
 	return null;
