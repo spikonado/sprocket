@@ -194,7 +194,7 @@ impl ContextCompactionHook {
             }
         };
 
-        let summary = match self.summarize_with_retry(&messages_json).await {
+        let (summary, billed_tokens) = match self.summarize_with_retry(&messages_json).await {
             Ok(summary) => summary,
             Err(error) => {
                 eprintln!(
@@ -205,7 +205,7 @@ impl ContextCompactionHook {
             }
         };
 
-        let processed_tokens = estimate_context_tokens(prefix);
+        let processed_tokens = billed_tokens;
         let summary_text = summary;
         let compacted_summary = context_summary_text(&summary_text);
         let replaced_prefix_len =
@@ -251,7 +251,7 @@ impl ContextCompactionHook {
         CompletionCallAction::patch(RequestPatch::new().history(compacted))
     }
 
-    async fn summarize_with_retry(&self, messages_json: &str) -> anyhow::Result<String> {
+    async fn summarize_with_retry(&self, messages_json: &str) -> anyhow::Result<(String, u64)> {
         match self.compact_via_gateway(messages_json).await {
             Ok(summary) => Ok(summary),
             Err(first_error) => {
@@ -267,7 +267,7 @@ impl ContextCompactionHook {
         }
     }
 
-    async fn compact_via_gateway(&self, messages_json: &str) -> anyhow::Result<String> {
+    async fn compact_via_gateway(&self, messages_json: &str) -> anyhow::Result<(String, u64)> {
         let credential = self
             .runtime
             .issue_gateway_credential(&self.run_id, &self.claim_id)
@@ -294,8 +294,9 @@ impl ContextCompactionHook {
             anyhow::bail!("gateway compaction failed: {status} {text}");
         }
         let payload: serde_json::Value = response.json().await?;
-        extract_response_text(&payload)
-            .ok_or_else(|| anyhow::anyhow!("gateway compaction response had no text"))
+        let summary = extract_response_text(&payload)
+            .ok_or_else(|| anyhow::anyhow!("gateway compaction response had no text"))?;
+        Ok((summary, extract_response_usage(&payload)?))
     }
 
     fn compaction_failure_flow(
@@ -394,6 +395,24 @@ fn extract_response_text(payload: &serde_json::Value) -> Option<String> {
     } else {
         Some(joined)
     }
+}
+
+/// Input + output tokens actually billed for the compaction call. The gateway
+/// always returns `usage`, so a response without it is a protocol violation.
+fn extract_response_usage(payload: &serde_json::Value) -> anyhow::Result<u64> {
+    let usage = payload
+        .get("usage")
+        .ok_or_else(|| anyhow::anyhow!("gateway compaction response had no usage"))?;
+    let input_tokens = usage
+        .get("input_tokens")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| anyhow::anyhow!("gateway compaction usage had no input_tokens"))?;
+    Ok(input_tokens.saturating_add(
+        usage
+            .get("output_tokens")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0),
+    ))
 }
 
 fn should_compact(
@@ -655,5 +674,28 @@ mod tests {
         assert!(!should_persist_for_future_runs(6, 4));
         assert!(should_persist_for_future_runs(6, 6));
         assert!(should_persist_for_future_runs(6, 8));
+    }
+
+    #[test]
+    fn extracts_billed_usage_from_gateway_compaction_response() {
+        let payload = serde_json::json!({
+            "output_text": "summary",
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 30,
+                "total_tokens": 130
+            }
+        });
+        assert_eq!(extract_response_usage(&payload).unwrap_or(0), 130);
+        assert!(extract_response_text(&payload).is_some());
+    }
+
+    #[test]
+    fn rejects_gateway_compaction_responses_without_billed_usage() {
+        assert!(extract_response_usage(&serde_json::json!({ "output_text": "summary" })).is_err());
+        assert!(
+            extract_response_usage(&serde_json::json!({ "usage": {} })).is_err(),
+            "missing input_tokens must not fabricate a billed count"
+        );
     }
 }
