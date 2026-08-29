@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseEnv } from 'node:util';
@@ -38,6 +39,8 @@ if (envFile) {
 
 if (dataDir) {
 	childEnv.SPROCKET_DATA_DIR = path.resolve(repositoryRoot, dataDir);
+} else if (mode === '--desktop') {
+	childEnv.SPROCKET_DATA_DIR = path.join(homedir(), '.sprocket');
 } else {
 	delete childEnv.SPROCKET_DATA_DIR;
 }
