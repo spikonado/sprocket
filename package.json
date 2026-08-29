@@ -5,8 +5,10 @@
 	"scripts": {
 		"build": "node ./scripts/create-turbo-cache-key.js && bunx turbo run build",
 		"build:release": "node ./scripts/create-turbo-cache-key.js && bunx turbo run build:release",
-		"dev": "bun --env-file=apps/web/.env.local scripts/run-dev.mjs",
-		"dev:desktop": "bun --env-file=apps/web/.env.local scripts/run-dev.mjs --desktop",
+		"dev": "bun scripts/run-dev.mjs --env-file=apps/web/.env.local --data-dir=.sprocket-dev",
+		"dev:prod": "bun scripts/run-dev.mjs --env-file=apps/web/.env.prod",
+		"dev:desktop": "bun scripts/run-dev.mjs --env-file=apps/web/.env.local --desktop --data-dir=.sprocket-dev",
+		"dev:prod:desktop": "bun scripts/run-dev.mjs --env-file=apps/web/.env.prod --desktop",
 		"test": "turbo run test && node --test npm/sprocket/test/*.test.js",
 		"lint:oxlint": "oxlint"
 	},
