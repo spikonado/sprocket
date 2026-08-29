@@ -81,7 +81,7 @@ describe('messagesFromTranscriptParts', () => {
 });
 
 describe('mergePagedTranscriptWithLive', () => {
-	it('keeps the live completion while reconnecting after a thread switch', () => {
+	it('does not leak or prematurely restore a live completion after a thread switch', () => {
 		const initial = lastLive({
 			threadId: threadRecordId('thread-a'),
 			override: {
@@ -102,6 +102,15 @@ describe('mergePagedTranscriptWithLive', () => {
 			threadId: threadRecordId('thread-b')
 		});
 		expect(restored).toEqual([]);
+		const pendingLatestRun = mergePagedTranscriptWithLive({
+			parts: [],
+			live: null,
+			latestRun: null,
+			liveRestore: { threadId: threadRecordId('thread-a'), overlay: initial },
+			userId: 'user_1',
+			threadId: threadRecordId('thread-a')
+		});
+		expect(pendingLatestRun).toEqual([]);
 
 		const kept = mergePagedTranscriptWithLive({
 			parts: [
@@ -119,7 +128,11 @@ describe('mergePagedTranscriptWithLive', () => {
 				})
 			],
 			live: null,
-			latestRun: null,
+			latestRun: {
+				_id: runId('run-1'),
+				status: 'running',
+				startedAt: 200_000
+			},
 			liveRestore: {
 				threadId: threadRecordId('thread-a'),
 				overlay: initial

@@ -220,7 +220,7 @@ function resolveLiveOverlay(args: {
 		return null;
 	}
 	const latestRun = args.latestRun;
-	if (!latestRun || latestRun._id === restore.overlay.runId) {
+	if (latestRun?._id === restore.overlay.runId) {
 		return restore.overlay;
 	}
 	return null;
