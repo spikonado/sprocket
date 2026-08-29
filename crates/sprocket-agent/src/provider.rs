@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use anyhow::anyhow;
 use futures::StreamExt;
 use rig::client::{AgentClientExt, CompletionClient};
-use rig::completion::Message;
+use rig::completion::{FinishReason, Message};
 use rig::providers::openai;
 use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
 use sprocket_workspace::{CommandSessionManager, WorkspaceSkill};
@@ -45,6 +45,21 @@ fn classify_provider_error(error: &(impl std::fmt::Display + ?Sized)) -> Provide
         return ProviderErrorDisposition::Cancelled;
     }
     ProviderErrorDisposition::Failed
+}
+
+fn incomplete_completion_error(reason: Option<&FinishReason>) -> Option<anyhow::Error> {
+    match reason {
+        Some(FinishReason::Length) => Some(anyhow!(
+            "The model response was cut off because it reached its output token limit."
+        )),
+        Some(FinishReason::ContentFilter) => Some(anyhow!(
+            "The model response was blocked by a content filter."
+        )),
+        Some(FinishReason::Other(reason)) => {
+            Some(anyhow!("The model stopped unexpectedly: {reason}"))
+        }
+        Some(FinishReason::Stop | FinishReason::ToolCalls) | None => None,
+    }
 }
 
 pub(crate) struct AgentProvider {
@@ -240,6 +255,7 @@ where
         .await;
     let mut final_text = String::new();
     let mut streamed_text = String::new();
+    let mut completion_error = None;
 
     let result = 'agent_run: {
         loop {
@@ -280,6 +296,12 @@ where
                     match item {
                         Some(Ok(rig::agent::MultiTurnStreamItem::FinalResponse(response))) => {
                             final_text = response.output().to_string();
+                            completion_error = incomplete_completion_error(
+                                response
+                                    .completion_calls
+                                    .last()
+                                    .and_then(|call| call.finish_reason.as_ref()),
+                            );
                         }
                         Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
                             StreamedAssistantContent::Text(text),
@@ -337,6 +359,12 @@ where
                             break 'agent_run result;
                         }
                         None => {
+                            if let Some(error) = completion_error {
+                                break 'agent_run AgentProviderResult::Failed {
+                                    text: String::new(),
+                                    error,
+                                };
+                            }
                             if let Err(error) = transcript.finalize_turn().await {
                                 break 'agent_run transcript_error(
                                     error,
@@ -654,7 +682,12 @@ impl Drop for CommandSessionShutdown {
 
 #[cfg(test)]
 mod tests {
-    use super::{ProviderErrorDisposition, RUN_NO_LONGER_ACTIVE, classify_provider_error};
+    use rig::completion::FinishReason;
+
+    use super::{
+        ProviderErrorDisposition, RUN_NO_LONGER_ACTIVE, classify_provider_error,
+        incomplete_completion_error,
+    };
 
     #[test]
     fn classifies_superseded_completion_without_treating_it_as_failure() {
@@ -675,5 +708,14 @@ mod tests {
             classify_provider_error(&error),
             ProviderErrorDisposition::Cancelled
         );
+    }
+
+    #[test]
+    fn rejects_output_truncated_at_the_token_limit() {
+        let error = incomplete_completion_error(Some(&FinishReason::Length))
+            .expect("length must be treated as incomplete");
+
+        assert!(error.to_string().contains("output token limit"));
+        assert!(incomplete_completion_error(Some(&FinishReason::Stop)).is_none());
     }
 }
