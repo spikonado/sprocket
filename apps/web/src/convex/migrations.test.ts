@@ -1,6 +1,56 @@
 import { describe, expect, it } from 'vitest';
 import { internal } from '@convex/_generated/api';
-import { initConvexTest, seedOwnedThread } from './test.setup';
+import type { Id } from '@convex/_generated/dataModel';
+import {
+	TRANSCRIPT_NUMBERING_VERIFY_BATCH,
+	verifyThreadTranscriptNumbering
+} from '@convex/lib/transcriptMigrate';
+import { getTranscriptState } from '@convex/lib/transcriptParts';
+import { initConvexTest, seedOwnedThread, type ConvexTestInstance } from './test.setup';
+
+async function seedUnmigratedTranscript(
+	t: ConvexTestInstance,
+	args: {
+		threadId: Id<'threadRecords'>;
+		userId: string;
+		totalParts: number;
+		submissionId: string;
+		numbers?: number[];
+	}
+) {
+	const numbers = args.numbers ?? Array.from({ length: args.totalParts }, (_, number) => number);
+	await t.run(async (ctx) => {
+		const runId = await ctx.db.insert('runs', {
+			threadId: args.threadId,
+			userId: args.userId,
+			submissionId: args.submissionId,
+			status: 'completed',
+			executionSecretHash: 'hash',
+			completionAttemptSeq: 0,
+			selectedModel: 'gpt-5.6-sol',
+			reasoningEffort: 'medium',
+			serviceTier: 'standard',
+			startedAt: 1,
+			completedAt: 2
+		});
+		await ctx.db.insert('threadTranscriptStates', {
+			threadId: args.threadId,
+			userId: args.userId,
+			totalParts: args.totalParts
+		});
+		for (const number of numbers) {
+			await ctx.db.insert('threadTranscriptParts', {
+				threadId: args.threadId,
+				userId: args.userId,
+				number,
+				sourceKey: `part:${number}`,
+				kind: 'prompt',
+				runId,
+				prompt: { text: `p${number}`, imageUploads: [] }
+			});
+		}
+	});
+}
 
 describe('retired model migrations', () => {
 	it('rewrites retired thread and run model ids', async () => {
@@ -138,5 +188,45 @@ describe('projectId rewrite', () => {
 		const thread = await t.run(async (ctx) => ctx.db.get('threadRecords', threadId));
 		expect(thread?.repositoryKey).toBeUndefined();
 		expect(thread?.projectId).toBe(projectId);
+	});
+});
+
+describe('transcript numbering verification', () => {
+	it('pages past the per-transaction part cap and still sets migratedAt', async () => {
+		const t = initConvexTest();
+		const { subject, threadId } = await seedOwnedThread(t);
+		const totalParts = TRANSCRIPT_NUMBERING_VERIFY_BATCH + 8;
+		await seedUnmigratedTranscript(t, {
+			threadId,
+			userId: subject,
+			totalParts,
+			submissionId: 'verify-many-parts'
+		});
+
+		await t.mutation(internal.migrations.verifyThreadTranscriptReplicas, {});
+		await t.finishAllScheduledFunctions(() => {});
+
+		const state = await t.run(async (ctx) => getTranscriptState(ctx, threadId));
+		expect(state?.migratedAt).toEqual(expect.any(Number));
+		expect(state?.totalParts).toBe(totalParts);
+	});
+
+	it('does not mark a gapped transcript as migrated', async () => {
+		const t = initConvexTest();
+		const { subject, threadId } = await seedOwnedThread(t);
+		await seedUnmigratedTranscript(t, {
+			threadId,
+			userId: subject,
+			totalParts: 3,
+			numbers: [0, 2],
+			submissionId: 'verify-gap'
+		});
+
+		await expect(
+			t.run(async (ctx) => verifyThreadTranscriptNumbering(ctx, threadId, subject))
+		).resolves.toEqual({ status: 'incomplete' });
+
+		const state = await t.run(async (ctx) => getTranscriptState(ctx, threadId));
+		expect(state?.migratedAt).toBeUndefined();
 	});
 });

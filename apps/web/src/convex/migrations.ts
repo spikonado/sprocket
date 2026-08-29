@@ -1,9 +1,12 @@
 import { Migrations } from '@convex-dev/migrations';
+import { v } from 'convex/values';
 import { components, internal } from '@convex/_generated/api';
-import { internalMutation } from '@convex/_generated/server';
+import type { Id } from '@convex/_generated/dataModel';
+import { internalMutation, type MutationCtx } from '@convex/_generated/server';
 import schema from '@convex/schema';
 import { coercePersistedSelection, retiredModelIds } from '@convex/lib/models';
 import {
+	isReadBudgetError,
 	migrateLegacyRunTranscript,
 	verifyThreadTranscriptNumbering
 } from '@convex/lib/transcriptMigrate';
@@ -20,6 +23,31 @@ export const run = migrations.runner();
 
 function isTransientMigrationError(error: Error): boolean {
 	return /conflict|optimistic|try again|too much contention/i.test(error.message);
+}
+
+const TRANSCRIPT_NUMBERING_INCOMPLETE = 'Transcript numbering incomplete';
+
+async function verifyTranscriptNumberingOrContinue(
+	ctx: MutationCtx,
+	threadId: Id<'threadRecords'>,
+	userId: string,
+	fromNumber = 0
+): Promise<void> {
+	const result = await verifyThreadTranscriptNumbering(ctx, threadId, userId, fromNumber);
+	if (result.status === 'complete') {
+		return;
+	}
+	if (result.status === 'incomplete') {
+		throw new Error(`${TRANSCRIPT_NUMBERING_INCOMPLETE} for thread ${threadId}`);
+	}
+	if (fromNumber > 0 && result.nextNumber <= fromNumber) {
+		throw new Error(`Transcript numbering verify made no progress for thread ${threadId}`);
+	}
+	await ctx.scheduler.runAfter(0, internal.migrations.continueVerifyThreadTranscriptReplicas, {
+		threadId,
+		userId,
+		fromNumber: result.nextNumber
+	});
 }
 
 function rewriteSelection(modelId: string, serviceTier: string) {
@@ -61,19 +89,47 @@ export const migrateLegacyRunTranscriptParts = migrations.define({
 
 export const verifyThreadTranscriptReplicas = migrations.define({
 	table: 'threadRecords',
+	// One function execution verifies many threads; keep this small so part
+	// scans stay under Convex's per-transaction read budget.
+	batchSize: 20,
 	migrateOne: async (ctx, thread) => {
 		try {
-			const complete = await verifyThreadTranscriptNumbering(ctx, thread._id, thread.userId);
-			if (!complete) {
-				throw new Error(`Transcript numbering incomplete for thread ${thread._id}`);
-			}
+			await verifyTranscriptNumberingOrContinue(ctx, thread._id, thread.userId);
 		} catch (error) {
 			if (!(error instanceof Error)) throw error;
-			if (isTransientMigrationError(error) || error.message.includes('numbering incomplete')) {
+			if (
+				isTransientMigrationError(error) ||
+				error.message.includes(TRANSCRIPT_NUMBERING_INCOMPLETE)
+			) {
 				throw error;
+			}
+			if (isReadBudgetError(error)) {
+				await ctx.scheduler.runAfter(
+					0,
+					internal.migrations.continueVerifyThreadTranscriptReplicas,
+					{
+						threadId: thread._id,
+						userId: thread.userId,
+						fromNumber: 0
+					}
+				);
+				return;
 			}
 			console.error(`Skipping poison transcript thread ${thread._id}:`, error);
 		}
+	}
+});
+
+export const continueVerifyThreadTranscriptReplicas = internalMutation({
+	args: {
+		threadId: v.id('threadRecords'),
+		userId: v.string(),
+		fromNumber: v.number()
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		await verifyTranscriptNumberingOrContinue(ctx, args.threadId, args.userId, args.fromNumber);
+		return null;
 	}
 });
 

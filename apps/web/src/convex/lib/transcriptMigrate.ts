@@ -10,6 +10,39 @@ import {
 	promptSourceKey
 } from '@convex/lib/transcriptParts';
 
+export const TRANSCRIPT_NUMBERING_VERIFY_BATCH = 64;
+
+const VERIFY_READ_RESERVE_DOCS = 64;
+const VERIFY_READ_RESERVE_BYTES = 256 * 1024;
+const VERIFY_QUERY_RESERVE = 8;
+
+export type TranscriptNumberingResult =
+	{ status: 'complete' } | { status: 'continue'; nextNumber: number } | { status: 'incomplete' };
+
+export function isReadBudgetError(error: Error): boolean {
+	return /too many .{0,40}read/i.test(error.message);
+}
+
+async function markTranscriptMigrated(
+	ctx: MutationCtx,
+	stateId: Id<'threadTranscriptStates'>
+): Promise<void> {
+	await ctx.db.patch('threadTranscriptStates', stateId, { migratedAt: Date.now() });
+}
+
+async function isTransactionNearLimit(ctx: MutationCtx): Promise<boolean> {
+	try {
+		const metrics = await ctx.meta.getTransactionMetrics();
+		return (
+			metrics.documentsRead.remaining < VERIFY_READ_RESERVE_DOCS ||
+			metrics.bytesRead.remaining < VERIFY_READ_RESERVE_BYTES ||
+			metrics.databaseQueries.remaining < VERIFY_QUERY_RESERVE
+		);
+	} catch {
+		return false;
+	}
+}
+
 export async function ensureThreadTranscriptMigrated(
 	ctx: MutationCtx,
 	args: { threadId: Id<'threadRecords'>; userId: string }
@@ -87,25 +120,52 @@ export async function migrateLegacyRunTranscript(
 export async function verifyThreadTranscriptNumbering(
 	ctx: MutationCtx,
 	threadId: Id<'threadRecords'>,
-	userId: string
-): Promise<boolean> {
-	const state = await getOrCreateTranscriptState(ctx, { threadId, userId });
-	if (state.migratedAt !== undefined) {
-		return true;
-	}
-	for (let number = 0; number < state.totalParts; number += 1) {
-		const part = await ctx.db
+	userId: string,
+	fromNumber = 0
+): Promise<TranscriptNumberingResult> {
+	const start = Number.isInteger(fromNumber) && fromNumber > 0 ? fromNumber : 0;
+	let expected = start;
+	try {
+		const state = await getOrCreateTranscriptState(ctx, { threadId, userId });
+		if (state.migratedAt !== undefined) {
+			return { status: 'complete' };
+		}
+		if (start >= state.totalParts) {
+			await markTranscriptMigrated(ctx, state._id);
+			return { status: 'complete' };
+		}
+		if (await isTransactionNearLimit(ctx)) {
+			return { status: 'continue', nextNumber: start };
+		}
+
+		const parts = ctx.db
 			.query('threadTranscriptParts')
 			.withIndex('by_threadId_and_number', (query) =>
-				query.eq('threadId', threadId).eq('number', number)
-			)
-			.unique();
-		if (!part) {
-			return false;
+				query.eq('threadId', threadId).gte('number', start).lt('number', state.totalParts)
+			);
+		for await (const part of parts) {
+			if (part.number !== expected) {
+				return { status: 'incomplete' };
+			}
+			expected += 1;
+			if (expected >= state.totalParts) {
+				await markTranscriptMigrated(ctx, state._id);
+				return { status: 'complete' };
+			}
+			if (
+				expected - start >= TRANSCRIPT_NUMBERING_VERIFY_BATCH ||
+				(await isTransactionNearLimit(ctx))
+			) {
+				return { status: 'continue', nextNumber: expected };
+			}
 		}
+		return { status: 'incomplete' };
+	} catch (error) {
+		if (error instanceof Error && isReadBudgetError(error)) {
+			return { status: 'continue', nextNumber: expected };
+		}
+		throw error;
 	}
-	await ctx.db.patch('threadTranscriptStates', state._id, { migratedAt: Date.now() });
-	return true;
 }
 
 export async function migrateLegacyThreadTranscript(
