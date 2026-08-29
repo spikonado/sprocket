@@ -47,7 +47,6 @@ import type * as lib_runs from "../lib/runs.js";
 import type * as lib_threadMessages from "../lib/threadMessages.js";
 import type * as lib_threadUsage from "../lib/threadUsage.js";
 import type * as lib_tiers from "../lib/tiers.js";
-import type * as lib_transcriptMigrate from "../lib/transcriptMigrate.js";
 import type * as lib_transcriptParts from "../lib/transcriptParts.js";
 import type * as lib_transcriptWrites from "../lib/transcriptWrites.js";
 import type * as lib_uiModelCatalog from "../lib/uiModelCatalog.js";
@@ -113,7 +112,6 @@ declare const fullApi: ApiFromModules<{
   "lib/threadMessages": typeof lib_threadMessages;
   "lib/threadUsage": typeof lib_threadUsage;
   "lib/tiers": typeof lib_tiers;
-  "lib/transcriptMigrate": typeof lib_transcriptMigrate;
   "lib/transcriptParts": typeof lib_transcriptParts;
   "lib/transcriptWrites": typeof lib_transcriptWrites;
   "lib/uiModelCatalog": typeof lib_uiModelCatalog;

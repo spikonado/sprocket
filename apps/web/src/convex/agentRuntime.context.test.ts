@@ -127,48 +127,6 @@ describe('agentRuntime context accounting', () => {
 		});
 	});
 
-	it('backfills a baseline usage event without double-counting live events', async () => {
-		const t = initConvexTest();
-		const { threadId } = await seedOwnedThread(t);
-		await t.run(async (ctx) => {
-			const usage = await ctx.db
-				.query('threadUsage')
-				.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
-				.unique();
-			if (!usage) throw new Error('missing usage');
-			await ctx.db.patch('threadUsage', usage._id, { totalTokensProcessed: 40_000 });
-		});
-		const { backfillUsageLedgerBaseline } = await import('@convex/lib/threadUsage');
-		await t.run(async (ctx) => {
-			const usage = await ctx.db
-				.query('threadUsage')
-				.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
-				.unique();
-			if (!usage) throw new Error('missing usage');
-			await backfillUsageLedgerBaseline(ctx, usage);
-		});
-		expect(await readThreadUsage(t, threadId)).toMatchObject({
-			totalTokensProcessed: 40_000,
-			usageLedgerMigratedAt: expect.any(Number)
-		});
-		await t.run(async (ctx) => {
-			const usage = await ctx.db
-				.query('threadUsage')
-				.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
-				.unique();
-			if (!usage) throw new Error('missing usage');
-			await backfillUsageLedgerBaseline(ctx, usage);
-		});
-		const events = await t.run(async (ctx) =>
-			ctx.db
-				.query('threadUsageEvents')
-				.withIndex('by_threadId_eventId', (query) => query.eq('threadId', threadId))
-				.collect()
-		);
-		expect(events).toHaveLength(1);
-		expect(events[0]?.processedTokens).toBe(40_000);
-	});
-
 	it('rejects invalid token accounting values', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);

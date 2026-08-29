@@ -1,10 +1,7 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
-import { isJsonObject } from '@convex/lib/json';
 import type {
-	AssistantMessagePart,
 	TranscriptCompletionBody,
-	TranscriptCompletionItem,
 	TranscriptPromptBody,
 	TranscriptToolBody
 } from '@convex/lib/validators';
@@ -21,14 +18,6 @@ export function completionSourceKey(runId: Id<'runs'>, streamId: string): string
 
 export function toolSourceKey(jobId: Id<'executorJobs'>): string {
 	return `tool:${jobId}`;
-}
-
-function migratedToolSourceKey(messageId: Id<'threadMessages'>, callId: string): string {
-	return `migrated-tool:${messageId}:${callId}`;
-}
-
-function migratedCompletionSourceKey(runId: Id<'runs'>, index: number): string {
-	return `completion:${runId}:legacy:${index}`;
 }
 
 export async function getTranscriptState(
@@ -146,95 +135,6 @@ export async function loadTranscriptPartsByNumbers(
 		const part = byNumber.get(number);
 		return part ? [part] : [];
 	});
-}
-
-type LegacyResponseRecord =
-	| { kind: 'completion'; sourceKey: string; completion: TranscriptCompletionBody }
-	| { kind: 'tool'; sourceKey: string; tool: TranscriptToolBody };
-
-export function groupLegacyResponseIntoRecords(args: {
-	runId: Id<'runs'>;
-	messageId: Id<'threadMessages'>;
-	parts: AssistantMessagePart[];
-	text?: string;
-}): LegacyResponseRecord[] {
-	const records: LegacyResponseRecord[] = [];
-	let completionItems: TranscriptCompletionItem[] = [];
-	let currentTurnId: string | undefined;
-	let completionIndex = 0;
-
-	const flushCompletion = () => {
-		if (completionItems.length === 0) {
-			return;
-		}
-		const streamId = currentTurnId;
-		records.push({
-			kind: 'completion',
-			sourceKey: streamId
-				? completionSourceKey(args.runId, streamId)
-				: migratedCompletionSourceKey(args.runId, completionIndex),
-			completion: streamId ? { streamId, items: completionItems } : { items: completionItems }
-		});
-		completionIndex += 1;
-		completionItems = [];
-		currentTurnId = undefined;
-	};
-
-	for (const part of args.parts) {
-		if (part.type === 'tool-result') {
-			flushCompletion();
-			records.push({
-				kind: 'tool',
-				sourceKey: migratedToolSourceKey(args.messageId, part.callId),
-				tool: {
-					callId: part.callId,
-					name: part.name ?? 'tool',
-					output: part.output,
-					status: toolStatusFromOutput(part.output)
-				}
-			});
-			continue;
-		}
-
-		const turnId = 'turnId' in part ? part.turnId : undefined;
-		if (
-			completionItems.length > 0 &&
-			turnId !== undefined &&
-			currentTurnId !== undefined &&
-			turnId !== currentTurnId
-		) {
-			flushCompletion();
-		}
-		if (turnId !== undefined) {
-			currentTurnId = turnId;
-		}
-		completionItems.push(part);
-	}
-	flushCompletion();
-	const legacyText = args.text?.trim();
-	if (records.length === 0 && legacyText) {
-		records.push({
-			kind: 'completion',
-			sourceKey: migratedCompletionSourceKey(args.runId, 0),
-			completion: {
-				items: [
-					{
-						type: 'text',
-						id: `legacy:${args.messageId}:text`,
-						text: legacyText
-					}
-				]
-			}
-		});
-	}
-	return records;
-}
-
-function toolStatusFromOutput(output: TranscriptToolBody['output']): TranscriptToolBody['status'] {
-	if (isJsonObject(output) && (output.status === 'failed' || output.status === 'cancelled')) {
-		return output.status;
-	}
-	return 'completed';
 }
 
 export async function attachmentMetaForUploads(

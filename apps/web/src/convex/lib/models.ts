@@ -10,8 +10,8 @@ export const defaultModelId = 'deepseek-v4-pro-0813' as const;
 export const defaultReasoningEffort: SupportedReasoningEffort = 'max';
 export const defaultServiceTier: SupportedServiceTier = 'standard';
 
-/** Removed from the catalog; rewrite these at read time until the migration finishes. */
-export const retiredModelIds = [
+/** Removed from the catalog; coerce these at read time. */
+const retiredModelIds = [
 	'stealth/ox-alpha',
 	'gpt-5.6-terra',
 	'gpt-5.6-luna',
@@ -38,8 +38,10 @@ function isSupportedServiceTier(value: string): value is SupportedServiceTier {
 }
 
 function retiredReplacement(modelId: string): string | undefined {
-	for (const [retiredId, replacement] of Object.entries(retiredModelReplacements)) {
-		if (retiredId === modelId) return replacement;
+	for (const retiredId of retiredModelIds) {
+		if (retiredId === modelId) {
+			return retiredModelReplacements[retiredId];
+		}
 	}
 	return undefined;
 }
