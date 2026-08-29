@@ -9,19 +9,38 @@ import type {
 import type { Infer } from 'convex/values';
 import { vRunStatus } from '$convex/lib/validators';
 
-function compareMessagesChronologically(left: ThreadMessage, right: ThreadMessage): number {
+function messageTypeRank(message: ThreadMessage): number {
+	return message.type === 'prompt' ? 0 : 1;
+}
+
+function compareMessagesByOrder(left: ThreadMessage, right: ThreadMessage): number {
+	// Latest-run messages carry their wall-clock startedAt as their order so they
+	// always sort after the other runs' transcript parts. Within a run the
+	// prompt and its response share that value, so the type rank keeps the
+	// prompt above the response.
+	if (left.order !== right.order) {
+		if (left.order === undefined) {
+			return 1;
+		}
+		if (right.order === undefined) {
+			return -1;
+		}
+		return left.order - right.order;
+	}
 	if (left.runStartedAt !== right.runStartedAt) {
 		return left.runStartedAt - right.runStartedAt;
+	}
+	const leftRank = messageTypeRank(left);
+	const rightRank = messageTypeRank(right);
+	if (leftRank !== rightRank) {
+		return leftRank - rightRank;
 	}
 	const leftCreated = left._creationTime ?? 0;
 	const rightCreated = right._creationTime ?? 0;
 	if (leftCreated !== rightCreated) {
 		return leftCreated - rightCreated;
 	}
-	if (left.type !== right.type) {
-		return left.type === 'prompt' ? -1 : 1;
-	}
-	return left._id.localeCompare(right._id);
+	return String(left._id).localeCompare(String(right._id));
 }
 
 function promptMessageId(runId: Id<'runs'>): Id<'threadMessages'> {
@@ -87,6 +106,7 @@ export function messagesFromTranscriptParts(args: {
 			messages.push({
 				_id: promptMessageId(part.runId),
 				_creationTime: part.number,
+				order: part.number,
 				threadId: args.threadId,
 				runId: part.runId,
 				userId: args.userId,
@@ -114,6 +134,7 @@ export function messagesFromTranscriptParts(args: {
 			pendingResponse = {
 				_id: responseMessageId(part.runId),
 				_creationTime: part.number,
+				order: part.number,
 				threadId: args.threadId,
 				runId: part.runId,
 				userId: args.userId,
@@ -139,6 +160,7 @@ export function messagesFromTranscriptParts(args: {
 					pendingResponse = {
 						_id: responseMessageId(part.runId),
 						_creationTime: part.number,
+						order: part.number,
 						threadId: args.threadId,
 						runId: part.runId,
 						userId: args.userId,
@@ -175,9 +197,39 @@ function historyHasLiveCompletion(
 	});
 }
 
+function resolveLiveOverlay(args: {
+	threadId: Id<'threadRecords'>;
+	live: LiveCompletionOverlay | null;
+	latestRun: {
+		_id: Id<'runs'>;
+		status: Infer<typeof vRunStatus>;
+		startedAt: number;
+		completedAt?: number;
+	} | null;
+	liveRestore?: { threadId: Id<'threadRecords'>; overlay: LiveCompletionOverlay | null };
+}): LiveCompletionOverlay | null {
+	if (args.live) {
+		if (args.live.threadId !== args.threadId) {
+			// The stream belongs to a different thread; never leak it into this view.
+			return null;
+		}
+		return args.live;
+	}
+	const restore = args.liveRestore;
+	if (!restore || restore.threadId !== args.threadId || !restore.overlay) {
+		return null;
+	}
+	const latestRun = args.latestRun;
+	if (!latestRun || latestRun._id === restore.overlay.runId) {
+		return restore.overlay;
+	}
+	return null;
+}
+
 export function mergePagedTranscriptWithLive(args: {
 	parts: LocalTranscriptPart[];
 	live: LiveCompletionOverlay | null;
+	liveRestore?: { threadId: Id<'threadRecords'>; overlay: LiveCompletionOverlay | null };
 	latestRun: {
 		_id: Id<'runs'>;
 		status: Infer<typeof vRunStatus>;
@@ -203,6 +255,7 @@ export function mergePagedTranscriptWithLive(args: {
 			}
 			message.runStatus = latestRun.status;
 			message.runStartedAt = latestRun.startedAt;
+			message.order = latestRun.startedAt;
 			if (latestRun.completedAt !== undefined) {
 				message.runCompletedAt = latestRun.completedAt;
 			}
@@ -217,6 +270,7 @@ export function mergePagedTranscriptWithLive(args: {
 		messages.push({
 			_id: promptMessageId(latestRun._id),
 			_creationTime: latestRun.startedAt,
+			order: latestRun.startedAt,
 			threadId: args.threadId,
 			runId: latestRun._id,
 			userId: args.userId,
@@ -236,7 +290,12 @@ export function mergePagedTranscriptWithLive(args: {
 		});
 	}
 
-	const live = args.live;
+	const live = resolveLiveOverlay({
+		threadId: args.threadId,
+		live: args.live,
+		latestRun: args.latestRun,
+		liveRestore: args.liveRestore
+	});
 	if (live && !historyHasLiveCompletion(args.parts, live)) {
 		const existingIndex = messages.findIndex(
 			(message) => message.type === 'response' && message.runId === live.runId
@@ -262,6 +321,7 @@ export function mergePagedTranscriptWithLive(args: {
 		const overlay: ThreadMessage = {
 			_id: existing?._id ?? responseMessageId(live.runId),
 			_creationTime: live.runStartedAt,
+			order: live.runStartedAt,
 			threadId: args.threadId,
 			runId: live.runId,
 			userId: args.userId,
@@ -279,7 +339,7 @@ export function mergePagedTranscriptWithLive(args: {
 		}
 	}
 
-	return messages.sort(compareMessagesChronologically);
+	return messages.sort(compareMessagesByOrder);
 }
 
 export function mergeTranscriptParts(

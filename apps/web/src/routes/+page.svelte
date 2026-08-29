@@ -519,6 +519,12 @@
 	let replicaError = $state<string | null>(null);
 	let loadingOlderTranscript = $state(false);
 	let liveCompletion = $state<LiveCompletionOverlay | null>(null);
+	let liveRestore = $state<{
+		threadId: Id<'threadRecords'>;
+		overlay: LiveCompletionOverlay | null;
+	} | null>(null);
+	const lastLiveByThread = new SvelteMap<Id<'threadRecords'>, LiveCompletionOverlay>();
+	let liveWatchGenerationForThread = 0;
 	const replicaCache = new SvelteMap<
 		Id<'threadRecords'>,
 		{
@@ -548,6 +554,11 @@
 	function showReplicaForThread(threadId: Id<'threadRecords'> | null) {
 		if (replicaThreadId && replicaThreadId !== threadId) {
 			rememberReplica(replicaThreadId);
+		}
+		if (threadId) {
+			liveRestore = { threadId, overlay: lastLiveByThread.get(threadId) ?? null };
+		} else {
+			liveRestore = null;
 		}
 		replicaThreadId = threadId;
 		liveCompletion = null;
@@ -663,6 +674,11 @@
 		}
 		const ac = new AbortController();
 		const watchedThreadId = threadId;
+		const watchGeneration = ++liveWatchGenerationForThread;
+		const restoredOverlay = untrack(() => lastLiveByThread.get(watchedThreadId));
+		if (restoredOverlay) {
+			liveRestore = { threadId: watchedThreadId, overlay: restoredOverlay };
+		}
 		void (async () => {
 			while (!ac.signal.aborted) {
 				try {
@@ -679,10 +695,17 @@
 									if (ac.signal.aborted || currentThreadId !== watchedThreadId) {
 										return;
 									}
+									if (watchGeneration !== liveWatchGenerationForThread) {
+										return;
+									}
 									if (event.eventType === 'updated') {
+										lastLiveByThread.set(watchedThreadId, event.live);
 										liveCompletion = event.live;
+										liveRestore = null;
 									} else {
+										lastLiveByThread.delete(watchedThreadId);
 										liveCompletion = null;
+										liveRestore = { threadId: watchedThreadId, overlay: null };
 									}
 								}
 							}
@@ -723,10 +746,12 @@
 			return [];
 		}
 		const live = latestRunResumeKind ? null : liveCompletion;
+		const liveRestoreForThread = latestRunResumeKind ? null : liveRestore;
 		const latestRun = currentLatestRunData?.run ?? null;
 		return mergePagedTranscriptWithLive({
 			parts: replicaParts,
 			live,
+			liveRestore: liveRestoreForThread ?? undefined,
 			latestRun,
 			latestPrompt:
 				latestRun && currentLatestRunData?.prompt

@@ -27,6 +27,13 @@ function part(
 	};
 }
 
+function lastLive(args: {
+	threadId: Id<'threadRecords'>;
+	override: Omit<LiveCompletionOverlay, 'threadId'>;
+}): LiveCompletionOverlay {
+	return { threadId: args.threadId, ...args.override };
+}
+
 describe('messagesFromTranscriptParts', () => {
 	it('orders prompts, completions, and tools into chat messages', () => {
 		const messages = messagesFromTranscriptParts({
@@ -74,6 +81,128 @@ describe('messagesFromTranscriptParts', () => {
 });
 
 describe('mergePagedTranscriptWithLive', () => {
+	it('keeps the live completion while reconnecting after a thread switch', () => {
+		const initial = lastLive({
+			threadId: threadRecordId('thread-a'),
+			override: {
+				runId: runId('run-1'),
+				runStatus: 'running',
+				streamId: 's1',
+				text: 'working',
+				parts: [{ type: 'text', id: 't', text: 'working', turnId: 's1' }],
+				runStartedAt: 200_000
+			}
+		});
+		const restored = mergePagedTranscriptWithLive({
+			parts: [],
+			live: initial,
+			latestRun: null,
+			liveRestore: { threadId: threadRecordId('thread-b'), overlay: null },
+			userId: 'user_1',
+			threadId: threadRecordId('thread-b')
+		});
+		expect(restored).toEqual([]);
+
+		const kept = mergePagedTranscriptWithLive({
+			parts: [
+				part({
+					number: 0,
+					kind: 'prompt',
+					runId: runId('run-0'),
+					prompt: { text: 'Hi', imageUploads: [] }
+				}),
+				part({
+					number: 1,
+					kind: 'completion',
+					runId: runId('run-0'),
+					completion: { items: [{ type: 'text', id: 't', text: 'Hello', turnId: 's0' }] }
+				})
+			],
+			live: null,
+			latestRun: null,
+			liveRestore: {
+				threadId: threadRecordId('thread-a'),
+				overlay: initial
+			},
+			userId: 'user_1',
+			threadId: threadRecordId('thread-a')
+		});
+		expect(kept).toHaveLength(3);
+		expect(kept.map((message) => message.type)).toEqual(['prompt', 'response', 'response']);
+	});
+
+	it('keeps the live overlay while the same thread reconnects', () => {
+		const live = lastLive({
+			threadId: threadRecordId('thread-1'),
+			override: {
+				runId: runId('run-1'),
+				runStatus: 'running',
+				streamId: 's1',
+				text: 'working',
+				parts: [{ type: 'text', id: 't', text: 'working', turnId: 's1' }],
+				runStartedAt: 200_000
+			}
+		});
+		const result = mergePagedTranscriptWithLive({
+			parts: [
+				part({
+					number: 0,
+					kind: 'prompt',
+					runId: runId('run-1'),
+					prompt: { text: 'Do it', imageUploads: [] }
+				}),
+				part({
+					number: 1,
+					kind: 'tool',
+					runId: runId('run-1'),
+					tool: {
+						callId: 'c1',
+						name: 'exec_command',
+						output: 'ok',
+						status: 'completed'
+					}
+				})
+			],
+			live: null,
+			latestRun: {
+				_id: runId('run-1'),
+				status: 'running',
+				startedAt: 200_000
+			},
+			liveRestore: { threadId: threadRecordId('thread-1'), overlay: live },
+			userId: 'user_1',
+			threadId: threadRecordId('thread-1')
+		});
+		expect(result.map((message) => message.type)).toEqual(['prompt', 'response']);
+		expect(result.at(-1)?.text).toBe('working');
+	});
+
+	it('never places the live run prompt below its own response', () => {
+		const messages = mergePagedTranscriptWithLive({
+			parts: [
+				part({
+					number: 0,
+					kind: 'completion',
+					runId: runId('run-1'),
+					completion: { items: [{ type: 'text', id: 't', text: 'working', turnId: 's1' }] }
+				})
+			],
+			live: null,
+			latestRun: {
+				_id: runId('run-1'),
+				status: 'running',
+				startedAt: 200_000
+			},
+			latestPrompt: { text: 'Do it', imageUploadIds: [] },
+			userId: 'user_1',
+			threadId: threadRecordId('thread-1')
+		});
+		expect(messages.map((message) => message.type)).toEqual(['prompt', 'response']);
+		expect(messages[0]?.text).toBe('Do it');
+		expect(messages[0]?.runStatus).toBe('running');
+		expect(messages[1]?.text).toBe('working');
+	});
+
 	it('keeps the live completion until the matching finalized record is present', () => {
 		const live: LiveCompletionOverlay = {
 			threadId: threadRecordId('thread-1'),
@@ -127,6 +256,7 @@ describe('mergePagedTranscriptWithLive', () => {
 		});
 		expect(withFinal.at(-1)?.text).toBe('done');
 		expect(withoutFinal.at(-1)?._id).toBe(withFinal.at(-1)?._id);
+		expect(withoutFinal.at(-1)?.order).toBe(10);
 	});
 
 	it('keeps replica tool results while the live overlay is still streaming', () => {
