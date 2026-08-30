@@ -169,12 +169,12 @@ pub async fn matching_session_credential(
 }
 
 /// True when `user_id` is this access token's subject or Convex
-/// `tokenIdentifier` (`iss|sub`). Empty tokens have no identity to conflict
-/// with, so they match.
+/// `tokenIdentifier` (`iss|sub`). An empty token is not an identity, so it
+/// never matches the process-wide credential.
 pub fn token_matches_owner(token: &str, user_id: &str) -> bool {
     let token = token.trim();
     if token.is_empty() {
-        return true;
+        return false;
     }
     let Some(claims) = access_token_claims(token) else {
         return false;
@@ -351,7 +351,7 @@ mod tests {
         assert!(!token_matches_owner(&token, "bob"));
         let issued = unsigned_jwt_with_claims(300, Some("alice"), Some("https://issuer.example"));
         assert!(token_matches_owner(&issued, "https://issuer.example|alice"));
-        assert!(token_matches_owner("", "anyone"));
+        assert!(!token_matches_owner("", "anyone"));
     }
 
     #[tokio::test]
