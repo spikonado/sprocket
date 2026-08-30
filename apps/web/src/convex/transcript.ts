@@ -2,7 +2,12 @@ import { mutation, query, type MutationCtx, type QueryCtx } from '@convex/_gener
 import { v } from 'convex/values';
 import type { Id } from '@convex/_generated/dataModel';
 import { getOwnedThreadRecord } from '@convex/lib/access';
-import { getExecutionRun, ownerKeysFromIdentity, type OwnerKeys } from '@convex/lib/auth';
+import {
+	getExecutionRun,
+	matchesOwner,
+	ownerKeysFromIdentity,
+	type OwnerKeys
+} from '@convex/lib/auth';
 import {
 	vSessionCredentialProof,
 	authorizeBySessionCredential,
@@ -68,17 +73,20 @@ async function resolveCallerKeys(
 	ticket?: SessionCredentialProof
 ): Promise<OwnerKeys> {
 	const identity = await ctx.auth.getUserIdentity();
-	if (identity) {
-		return ownerKeysFromIdentity(identity);
-	}
-	if (!ticket) {
+	const ticketOwner = ticket ? await authorizeBySessionCredential(ctx, ticket) : null;
+	if (ticket && !ticketOwner) {
 		throw new Error('Authentication required.');
 	}
-	const owner = await authorizeBySessionCredential(ctx, ticket);
-	if (!owner) {
-		throw new Error('Authentication required.');
+	if (identity && ticketOwner) {
+		const keys = ownerKeysFromIdentity(identity);
+		if (!matchesOwner(ticketOwner.userId, keys) && !matchesOwner(ticketOwner.subject, keys)) {
+			throw new Error('Authentication required.');
+		}
+		return keys;
 	}
-	return owner;
+	if (identity) return ownerKeysFromIdentity(identity);
+	if (ticketOwner) return ticketOwner;
+	throw new Error('Authentication required.');
 }
 
 /** Name is frozen for current desktop/server callers. Creates transcript state only. */

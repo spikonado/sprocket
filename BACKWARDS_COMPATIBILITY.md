@@ -161,9 +161,10 @@ Dual-read shims kept until the rewrites are confirmed in prod:
 - subscription tier and usage-meter reads union the legacy subject's rows
   (`lib/tiers.ts`, `lib/rateLimits.ts`); charges keep writing the key that
   already has the open window, preferring an active monthly window so a
-  weekly reset cannot split the month across keys. Rate-limiter component
-  keys are not rewritten by the owner migrations and last until those
-  windows roll.
+  weekly reset cannot split the month across keys. Quota checks and the
+  usage view add both keys' current used so an already-split month still
+  blocks. Rate-limiter component keys are not rewritten by the owner
+  migrations and last until those windows roll.
 - Prava customer ids stay on each mandate row's original key;
   `payments.getUserEmail` accepts either key form
 

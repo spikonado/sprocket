@@ -18,7 +18,9 @@ import {
 	executionSecretHash,
 	getExecutionRun,
 	getOwnerKeys,
-	getUserId
+	getUserId,
+	matchesOwner,
+	ownerKeysFromIdentity
 } from '@convex/lib/auth';
 import {
 	authorizeBySessionCredential,
@@ -338,14 +340,26 @@ export const createGatewayRun = action({
 	handler: async (ctx, args): Promise<Infer<typeof vCreateGatewayRunResult>> => {
 		// New local executors send a session ticket (fail-closed if present
 		// but invalid). Released executors omit it and keep using the WorkOS
-		// identity.
-		const userId = args.sessionTicket
-			? (
-					await ctx.runQuery(internal.sessionCredentials.resolveOwner, {
-						ticket: args.sessionTicket
-					})
-				).userId
-			: await getUserId(ctx);
+		// identity. When both arrive they must name the same owner so a
+		// process-wide ticket from another local sign-in cannot win.
+		const identity = await ctx.auth.getUserIdentity();
+		let userId: string;
+		if (args.sessionTicket) {
+			const ticketOwner = await ctx.runQuery(internal.sessionCredentials.resolveOwner, {
+				ticket: args.sessionTicket
+			});
+			if (identity) {
+				const keys = ownerKeysFromIdentity(identity);
+				if (!matchesOwner(ticketOwner.userId, keys) && !matchesOwner(ticketOwner.subject, keys)) {
+					throw new Error('Invalid session credential.');
+				}
+				userId = keys.userId;
+			} else {
+				userId = ticketOwner.userId;
+			}
+		} else {
+			userId = await getUserId(ctx);
+		}
 		const createArgs: Parameters<typeof createQueuedRunRecord>[1] = {
 			userId,
 			submissionId: args.submissionId,

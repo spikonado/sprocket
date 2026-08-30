@@ -79,114 +79,6 @@ type MeterWindow = {
 	config: RateLimitConfig;
 };
 
-/**
- * Writes always go to the canonical tokenIdentifier; rows charged before the
- * migration live under the legacy subject, so readers fold both into one
- * window. Without the legacy read a pre-migration overage would silently
- * become a fresh free window.
- */
-async function readMeterWindow(
-	ctx: RunQueryCtx,
-	userId: string,
-	name: string,
-	config: RateLimitConfig
-): Promise<MeterWindow> {
-	const subject = await ctx.runQuery(internal.lib.auth.storedOwnerSubject, { userId });
-	const canonical = await ctx.runQuery(components.rateLimiter.lib.getValue, {
-		name,
-		key: userId,
-		config
-	});
-	const canonicalWindow: MeterWindow = {
-		value: canonical.value,
-		ts: canonical.ts,
-		shard: canonical.shard,
-		config
-	};
-	if (!subject || subject === userId) return canonicalWindow;
-	const legacy = await ctx.runQuery(components.rateLimiter.lib.getValue, {
-		name,
-		key: subject,
-		config
-	});
-	return largestMeterWindow(canonicalWindow, {
-		value: legacy.value,
-		ts: legacy.ts,
-		shard: legacy.shard,
-		config
-	});
-}
-
-/** The original whose window reports more usage (or the only one started). */
-function largestMeterWindow(left: MeterWindow, right: MeterWindow): MeterWindow {
-	if (left.ts === 0) return right;
-	if (right.ts === 0) return left;
-	// Fixed-window shards keep usage as (rate - value); older windows have
-	// decayed further, so the larger user-visible used amount is the tighter
-	// bound for both blocking and display.
-	const leftUsed = Math.max(0, left.config.rate - left.value);
-	const rightUsed = Math.max(0, right.config.rate - right.value);
-	// Shard zero holds the full window; nonzero shards are partial chunks.
-	if (left.shard === 0 && right.shard !== 0) return left;
-	if (right.shard === 0 && left.shard !== 0) return right;
-	return leftUsed >= rightUsed ? left : right;
-}
-
-async function blockedForKey(
-	ctx: RunQueryCtx,
-	meterId: UsageMeterId,
-	key: string,
-	limits: TierLimits
-): Promise<{ period: UsagePeriod; retryAfter: number } | undefined> {
-	const statuses = await Promise.all(
-		usagePeriods.map(async (period) => ({
-			period,
-			status: await ctx.runQuery(components.rateLimiter.lib.checkRateLimit, {
-				name: meterLimitName(meterId, period),
-				key,
-				config: meterLimitConfig(meterId, period, limits)
-			})
-		}))
-	);
-	const blocked = statuses
-		.filter(({ status }) => !status.ok)
-		.sort((a, b) => (b.status.retryAfter ?? 0) - (a.status.retryAfter ?? 0))[0];
-	if (blocked && !blocked.status.ok) {
-		return { period: blocked.period, retryAfter: blocked.status.retryAfter ?? 0 };
-	}
-	return undefined;
-}
-
-async function blockedMeterLimit(
-	ctx: RunMutationCtx,
-	meterId: UsageMeterId,
-	key: string,
-	limits: TierLimits
-): Promise<{ period: UsagePeriod; retryAfter: number } | undefined> {
-	const canonical = await blockedForKey(ctx, meterId, key, limits);
-	const subject = await ctx.runQuery(internal.lib.auth.storedOwnerSubject, { userId: key });
-	if (!subject || subject === key) return canonical;
-	const legacy = await blockedForKey(ctx, meterId, subject, limits);
-	if (!canonical) return legacy;
-	if (!legacy) return canonical;
-	return legacy.retryAfter > canonical.retryAfter ? legacy : canonical;
-}
-
-async function checkMeterLimits(
-	ctx: RunMutationCtx,
-	meterId: UsageMeterId,
-	key: string,
-	limits: TierLimits
-): Promise<void> {
-	const blocked = await blockedMeterLimit(ctx, meterId, key, limits);
-	if (!blocked) return;
-	// A ConvexError keeps its message through production error masking, and
-	// the executor only retries masked server failures.
-	throw new ConvexError(
-		`${meterLimitLabel(meterId, blocked.period)} reached. Try again in ${formatRetryAfter(blocked.retryAfter)}.`
-	);
-}
-
 async function meterWindowForKey(
 	ctx: RunQueryCtx,
 	key: string,
@@ -204,6 +96,98 @@ async function meterWindowForKey(
 		shard: stored.shard,
 		config
 	};
+}
+
+/** Canonical plus legacy-subject windows. Charge writes one key; a weekly
+ * reset can still leave usage on both until those windows roll, so readers
+ * add them. */
+async function ownerMeterWindows(
+	ctx: RunQueryCtx,
+	userId: string,
+	name: string,
+	config: RateLimitConfig
+): Promise<MeterWindow[]> {
+	const canonical = await meterWindowForKey(ctx, userId, name, config);
+	const subject = await ctx.runQuery(internal.lib.auth.storedOwnerSubject, { userId });
+	if (!subject || subject === userId) return [canonical];
+	return [canonical, await meterWindowForKey(ctx, subject, name, config)];
+}
+
+function windowUsed(window: MeterWindow, now: number): number {
+	if (window.ts === 0) return 0;
+	const current = calculateRateLimit({ value: window.value, ts: window.ts }, window.config, now);
+	return Math.max(0, window.config.rate - current.value);
+}
+
+/** How long until combined used falls back under `limit` as windows reset. */
+function combinedRetryAfter(windows: MeterWindow[], limit: number, now: number): number {
+	const active = windows
+		.map((window) => ({
+			used: windowUsed(window, now),
+			resetAt: window.ts + window.config.period
+		}))
+		.filter((window) => window.used > 0)
+		.sort((left, right) => left.resetAt - right.resetAt);
+	let remaining = active.reduce((sum, window) => sum + window.used, 0);
+	for (const window of active) {
+		remaining -= window.used;
+		if (remaining < limit) return Math.max(SECOND, window.resetAt - now);
+	}
+	const last = active.at(-1);
+	return last ? Math.max(SECOND, last.resetAt - now) : 0;
+}
+
+/** The original whose window reports more usage (or the only one started). */
+function largestMeterWindow(left: MeterWindow, right: MeterWindow): MeterWindow {
+	if (left.ts === 0) return right;
+	if (right.ts === 0) return left;
+	// Fixed-window shards keep usage as (rate - value); older windows have
+	// decayed further, so the larger user-visible used amount is the tighter
+	// bound for charge-key selection.
+	const leftUsed = Math.max(0, left.config.rate - left.value);
+	const rightUsed = Math.max(0, right.config.rate - right.value);
+	// Shard zero holds the full window; nonzero shards are partial chunks.
+	if (left.shard === 0 && right.shard !== 0) return left;
+	if (right.shard === 0 && left.shard !== 0) return right;
+	return leftUsed >= rightUsed ? left : right;
+}
+
+async function blockedMeterLimit(
+	ctx: RunMutationCtx,
+	meterId: UsageMeterId,
+	key: string,
+	limits: TierLimits,
+	now: number = Date.now()
+): Promise<{ period: UsagePeriod; retryAfter: number } | undefined> {
+	const blocked = (
+		await Promise.all(
+			usagePeriods.map(async (period) => {
+				const config = meterLimitConfig(meterId, period, limits);
+				const windows = await ownerMeterWindows(ctx, key, meterLimitName(meterId, period), config);
+				const used = windows.reduce((sum, window) => sum + windowUsed(window, now), 0);
+				if (used < config.rate) return undefined;
+				return { period, retryAfter: combinedRetryAfter(windows, config.rate, now) };
+			})
+		)
+	)
+		.filter((entry) => entry !== undefined)
+		.sort((left, right) => right.retryAfter - left.retryAfter)[0];
+	return blocked;
+}
+
+async function checkMeterLimits(
+	ctx: RunMutationCtx,
+	meterId: UsageMeterId,
+	key: string,
+	limits: TierLimits
+): Promise<void> {
+	const blocked = await blockedMeterLimit(ctx, meterId, key, limits);
+	if (!blocked) return;
+	// A ConvexError keeps its message through production error masking, and
+	// the executor only retries masked server failures.
+	throw new ConvexError(
+		`${meterLimitLabel(meterId, blocked.period)} reached. Try again in ${formatRetryAfter(blocked.retryAfter)}.`
+	);
 }
 
 /** Prefer the key that already has an open window so a weekly reset cannot
@@ -286,15 +270,15 @@ export async function getMeterWindow(
 	now: number = Date.now()
 ): Promise<{ used: number; limit: number; resetsAt: number | null }> {
 	const config = meterLimitConfig(meterId, period, limits);
-	const stored = await readMeterWindow(ctx, userId, meterLimitName(meterId, period), config);
-	// A fixed window starts on first use; ts === 0 means it never has.
-	if (stored.ts === 0) return { used: 0, limit: config.rate, resetsAt: null };
-	const current = calculateRateLimit({ value: stored.value, ts: stored.ts }, stored.config, now);
-	return {
-		used: Math.max(0, stored.config.rate - current.value),
-		limit: config.rate,
-		resetsAt: current.ts + stored.config.period
-	};
+	const windows = await ownerMeterWindows(ctx, userId, meterLimitName(meterId, period), config);
+	const used = windows.reduce((sum, window) => sum + windowUsed(window, now), 0);
+	if (used === 0) return { used: 0, limit: config.rate, resetsAt: null };
+	const resetsAt = Math.min(
+		...windows
+			.filter((window) => windowUsed(window, now) > 0)
+			.map((window) => window.ts + window.config.period)
+	);
+	return { used, limit: config.rate, resetsAt };
 }
 
 export async function applyGatewayUsageCharge(

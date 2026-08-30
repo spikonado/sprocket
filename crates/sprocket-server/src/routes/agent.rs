@@ -75,7 +75,11 @@ async fn run_agent_handler(
     let auth_token_fetcher = state
         .convex_tokens
         .fetcher_for_token("agent", &payload.auth_token);
-    let session_credential = state.session_credentials.lock().await.clone();
+    let session_credential = crate::matching_session_credential(
+        state.session_credentials.lock().await.clone(),
+        &payload.auth_token,
+    )
+    .await;
     let request = RunAgentRequest {
         deployment_url: state.convex_deployment_url.clone(),
         auth_token_fetcher: auth_token_fetcher.clone(),

@@ -129,7 +129,11 @@ impl TranscriptWatchers {
             };
         }
         let (events, rx) = broadcast::channel(16);
-        let session_credential = self.session_credentials.lock().await.clone();
+        let session_credential = crate::matching_session_credential(
+            self.session_credentials.lock().await.clone(),
+            &auth_token,
+        )
+        .await;
         let task = (self.start)(WatchStart {
             deployment_url: self.deployment_url.clone(),
             store: Arc::clone(&self.store),

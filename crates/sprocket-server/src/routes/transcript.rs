@@ -160,11 +160,16 @@ async fn attachment_handler(
         return Ok(blob_response(blob.media_type, blob.bytes));
     }
 
+    let auth_token = payload.auth_token;
     let client = UserConvexClient::connect(
         &state.convex_deployment_url,
-        payload.auth_token,
+        auth_token.clone(),
         state.convex_tokens.clone(),
-        state.session_credentials.lock().await.clone(),
+        crate::matching_session_credential(
+            state.session_credentials.lock().await.clone(),
+            &auth_token,
+        )
+        .await,
     )
     .await
     .map_err(|error| ApiError::internal_with("failed to connect to Convex", error))?;

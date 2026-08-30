@@ -245,6 +245,31 @@ describe('sessionCredentials', () => {
 			expect(run?.executionSecretHash).toBeTruthy();
 		});
 
+		it('rejects a credential that does not match the caller identity', async () => {
+			const t = initConvexTest();
+			const alice = await seedOwnedThread(t);
+			const bob = await seedOwnedThread(t, 'user_bob');
+			const issued = await bob.asUser.mutation(api.sessionCredentials.issue, {});
+
+			await expect(
+				alice.asUser.action(api.agentRuntime.createGatewayRun, {
+					submissionId: 'mismatched-credential-run',
+					threadId: alice.threadId,
+					prompt: 'Run with another user’s credential',
+					imageUploadIds: [],
+					selectedModel: 'gpt-5.6-sol',
+					reasoningEffort: 'medium',
+					serviceTier: 'standard',
+					executionSecret: 'mismatched-secret',
+					sessionTicket: {
+						sessionId: issued.sessionId,
+						userId: issued.userId,
+						current: issued.current
+					}
+				})
+			).rejects.toThrow(/Invalid session credential/);
+		});
+
 		it('does not bind a credential to another user’s thread', async () => {
 			const t = initConvexTest();
 			const alice = await seedOwnedThread(t);

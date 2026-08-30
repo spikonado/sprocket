@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use anyhow::anyhow;
 use tokio::sync::Mutex;
 
-use sprocket_convex::AuthTokenFetcher;
+use sprocket_convex::{AuthTokenFetcher, SessionCredentialProvider};
 
 // WorkOS access tokens live ~5 minutes. Treat a token as stale a minute
 // before its real expiry so an in-flight request never rides a dying token.
@@ -159,6 +159,40 @@ fn access_token_subject(token: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+pub async fn matching_session_credential(
+    session: Option<SessionCredentialProvider>,
+    token: &str,
+) -> Option<SessionCredentialProvider> {
+    let provider = session?;
+    let user_id = provider.current_ticket().await.user_id;
+    token_matches_owner(token, &user_id).then_some(provider)
+}
+
+/// True when `user_id` is this access token's subject or Convex
+/// `tokenIdentifier` (`iss|sub`). Empty tokens have no identity to conflict
+/// with, so they match.
+pub fn token_matches_owner(token: &str, user_id: &str) -> bool {
+    let token = token.trim();
+    if token.is_empty() {
+        return true;
+    }
+    let Some(claims) = access_token_claims(token) else {
+        return false;
+    };
+    let Some(subject) = claims.get("sub").and_then(|value| value.as_str()) else {
+        return false;
+    };
+    if user_id == subject {
+        return true;
+    }
+    if let Some(issuer) = claims.get("iss").and_then(|value| value.as_str())
+        && user_id == format!("{issuer}|{subject}")
+    {
+        return true;
+    }
+    user_id.ends_with(&format!("|{subject}"))
+}
+
 fn access_token_expiry(token: &str) -> Option<Instant> {
     let claims = access_token_claims(token)?;
     let exp_secs = claims.get("exp")?.as_u64()?;
@@ -235,15 +269,27 @@ mod tests {
     }
 
     fn unsigned_jwt_with_subject(exp_offset_secs: i64, subject: Option<&str>) -> String {
+        unsigned_jwt_with_claims(exp_offset_secs, subject, None)
+    }
+
+    fn unsigned_jwt_with_claims(
+        exp_offset_secs: i64,
+        subject: Option<&str>,
+        issuer: Option<&str>,
+    ) -> String {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64;
         let exp = now + exp_offset_secs;
-        let payload = match subject {
-            Some(subject) => format!(r#"{{"exp":{exp},"sub":"{subject}"}}"#),
-            None => format!(r#"{{"exp":{exp}}}"#),
-        };
+        let mut payload = format!(r#"{{"exp":{exp}"#);
+        if let Some(subject) = subject {
+            payload.push_str(&format!(r#","sub":"{subject}""#));
+        }
+        if let Some(issuer) = issuer {
+            payload.push_str(&format!(r#","iss":"{issuer}""#));
+        }
+        payload.push('}');
         let header = base64_url_encode(br#"{"alg":"none"}"#);
         format!("{header}.{}.sig", base64_url_encode(payload.as_bytes()))
     }
@@ -296,6 +342,16 @@ mod tests {
         let provider = ConvexTokenProvider::new();
         let fetcher = provider.fetcher("test");
         assert!(fetcher(false).await.is_err());
+    }
+
+    #[test]
+    fn token_matches_owner_accepts_subject_and_token_identifier() {
+        let token = unsigned_jwt_with_subject(300, Some("alice"));
+        assert!(token_matches_owner(&token, "alice"));
+        assert!(!token_matches_owner(&token, "bob"));
+        let issued = unsigned_jwt_with_claims(300, Some("alice"), Some("https://issuer.example"));
+        assert!(token_matches_owner(&issued, "https://issuer.example|alice"));
+        assert!(token_matches_owner("", "anyone"));
     }
 
     #[tokio::test]

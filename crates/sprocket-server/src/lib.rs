@@ -29,7 +29,7 @@ use tokio::sync::Mutex;
 use tokio::time::{Duration, sleep};
 
 use crate::transcript_watch::TranscriptWatchers;
-pub use convex_auth::ConvexTokenProvider;
+pub use convex_auth::{ConvexTokenProvider, matching_session_credential};
 
 pub(crate) fn now_ms() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
