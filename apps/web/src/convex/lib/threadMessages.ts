@@ -2,7 +2,7 @@ import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
 import { ConvexError } from 'convex/values';
 import type { ThreadMessageType } from '@convex/lib/validators';
-import { getOwnedThreadRecord } from './access';
+import { getOwnedThreadRecordForStoredUserId } from './access';
 
 export async function getThreadMessage(
 	ctx: MutationCtx | QueryCtx,
@@ -27,7 +27,7 @@ export async function appendThreadMessage(
 		parts?: Doc<'threadMessages'>['parts'];
 	}
 ): Promise<Id<'threadMessages'>> {
-	const threadRecord: Doc<'threadRecords'> = await getOwnedThreadRecord(
+	const threadRecord: Doc<'threadRecords'> = await getOwnedThreadRecordForStoredUserId(
 		ctx.db,
 		args.userId,
 		args.threadId

@@ -45,7 +45,9 @@ function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 		watchTranscript: unusedDesktopCall,
 		watchLiveCompletion: unusedDesktopCall,
 		clearTranscriptReplica: unusedDesktopCall,
-		fetchTranscriptAttachment: unusedDesktopCall
+		fetchTranscriptAttachment: unusedDesktopCall,
+		pushConvexToken: unusedDesktopCall,
+		pushSessionCredential: unusedDesktopCall
 	};
 }
 

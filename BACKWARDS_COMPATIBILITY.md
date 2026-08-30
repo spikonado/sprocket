@@ -4,7 +4,7 @@ This file lists shims we still ship. When a removal PR merges, delete its
 entry. Age-out is a prod check for stored rows, or an explicit decision that
 a retired function name can disappear.
 
-Current as of 2026-08-29.
+Current as of 2026-08-30.
 
 ## Stored schema
 
@@ -139,6 +139,52 @@ agents/desktops have dropped `agentRuntime.beginAssistantMessage` calls:
 The prompt-half of `threadMessages` (text, attachments, retention bookkeeping)
 stays: it is the run-capability source of the user prompt and image
 attachments for `agentRuntime.getContext` and dedups repeated submissions.
+
+### 9. Pre-migration `userId` rows (subject vs. tokenIdentifier)
+
+Owned tables used to store `identity.subject` in their `userId` column. New
+writes store `identity.tokenIdentifier` (`getUserId`). `users` rows carry
+both keys (`subject` + `tokenIdentifier`), and the per-table owner-rewrite
+migrations in `migrations.ts` rewrite stored `userId`s into the canonical
+tokenIdentifier.
+
+Dual-read shims kept until the rewrites are confirmed in prod:
+
+- `users.by_subject` index plus by-subject/by-tokenIdentifier fallbacks in
+  `ensureCurrentUser` / `resolveStoredOwnerSubject`
+- `getOwnerKeys` plus the ownership gates in `lib/access.ts` accept a stored
+  `userId` of either form
+- `lib/access.ts` `resolveStoredOwnerKeys` validates a stored key against
+  both forms
+- `threads.listMine` / `threads.create` and run submission lookups union
+  both keys so the sidebar and idempotency survive until rewrite
+- subscription tier and usage-meter reads union the legacy subject's rows
+  (`lib/tiers.ts`, `lib/rateLimits.ts`); charges keep writing the key that
+  already has the open window. Rate-limiter component keys are not rewritten
+  by the owner migrations and last until those windows roll.
+- Prava customer ids stay on each mandate row's original key;
+  `payments.getUserEmail` accepts either key form
+
+Remove after the owner-rewrite migrations have run in production and a prod
+check shows no owned rows (besides `users.subject`) still carrying a
+subject-shaped `userId`.
+
+### 10. Browser-forwarded WorkOS tokens for local Rust clients
+
+Current web clients issue a rotating session credential through authenticated
+Convex, deliver it to the paired local server once, and let Rust renew it every
+five minutes. Identity-sensitive Rust calls send that credential; run-scoped
+calls retain their existing execution secret. A chain remains valid for ten
+minutes after its last successful renewal. Each browser/local-server pairing
+has its own session ID, so one user's local servers rotate independently.
+
+Released clients may still authenticate Rust's Convex connection with a
+browser-forwarded WorkOS JWT. Keep `/auth/convex-token`, the Rust token
+provider, and the identity fallback on `agentRuntime.createGatewayRun` and the
+identity-based transcript functions until all supported clients seed rotating
+credentials and production telemetry shows no legacy calls. Sign-out does not
+actively revoke a credential yet; its remaining authority is bounded by the
+ten-minute renewal window.
 
 ## Client APIs
 

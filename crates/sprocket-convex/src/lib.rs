@@ -15,6 +15,12 @@ const CONVEX_RPC_TIMEOUT: Duration = Duration::from_secs(20 * 60);
 pub type AuthTokenFetcher =
     Arc<dyn Fn(bool) -> Pin<Box<dyn Future<Output = anyhow::Result<String>> + Send>> + Send + Sync>;
 
+pub mod session;
+pub use session::{
+    SessionCredentialProvider, SessionSnapshot, SessionTicket, session_proof_value,
+    session_ticket_value,
+};
+
 #[derive(Clone)]
 pub struct Client {
     inner: Arc<Mutex<ConvexClient>>,

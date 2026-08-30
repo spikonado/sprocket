@@ -14,7 +14,7 @@ import {
 	normalizeQuestionAnswer,
 	validateQuestionText
 } from '@convex/lib/agentQuestions';
-import { getExecutionRun, getUserId } from '@convex/lib/auth';
+import { getExecutionRun, getOwnerKeys } from '@convex/lib/auth';
 import { assertRunAcceptsModelCompletion, toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { vAgentQuestionSnapshot } from '@convex/lib/docs';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
@@ -176,8 +176,8 @@ export const answer = mutation({
 	},
 	returns: vAgentQuestionSnapshot,
 	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+		const keys = await getOwnerKeys(ctx);
+		await getOwnedThreadRecord(ctx.db, keys, args.threadId);
 
 		const now = Date.now();
 		await expireOverduePendingQuestions(ctx, args.threadId, now);
@@ -263,8 +263,8 @@ export const headPendingForThread = query({
 	},
 	returns: v.union(vAgentQuestionSnapshot, v.null()),
 	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+		const keys = await getOwnerKeys(ctx);
+		await getOwnedThreadRecord(ctx.db, keys, args.threadId);
 		const head = await headLivePendingQuestion(ctx, args.threadId, args.now ?? Date.now());
 		return head ? toSnapshot(head) : null;
 	}

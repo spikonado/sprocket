@@ -89,11 +89,8 @@
 		type PendingAgentLaunches
 	} from '$lib/project/threads';
 	import { mergePagedTranscriptWithLive, mergeTranscriptParts } from '$lib/project/transcript';
-	import {
-		clearLaunchHash,
-		readWorkspaceLaunchFromHash,
-		resolveDesktopApi
-	} from '$lib/local/client';
+	import { clearLaunchHash, readWorkspaceLaunchFromHash } from '$lib/local/client';
+	import { getDesktopApi } from '$lib/authTokenPush';
 	import { resolve } from '$app/paths';
 	import { applyTheme, resolveTheme, type SprocketTheme } from '$lib/theme';
 	import type {
@@ -2290,7 +2287,7 @@
 			initialProjectLaunchResolved = true;
 		}
 
-		void resolveDesktopApi()
+		void getDesktopApi()
 			.then((client) => {
 				desktopApi = client;
 				desktopApiResolved = true;

@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{ConnectInfo, Query, State};
@@ -39,6 +40,21 @@ struct DesktopLoginCancelRequest {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ConvexTokenPushRequest {
+    token: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionCredentialRequest {
+    session_id: String,
+    user_id: String,
+    current: String,
+    next: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct DesktopLoginCallbackQuery {
     code: Option<String>,
     state: Option<String>,
@@ -56,6 +72,65 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/auth/desktop-login/callback", get(desktop_login_callback))
         .route("/auth/desktop-login/result", get(desktop_login_result))
         .route("/auth/desktop-login/cancel", post(desktop_login_cancel))
+        .route("/auth/convex-token", post(push_convex_token))
+        .route("/auth/session-credential", post(push_session_credential))
+}
+
+async fn push_convex_token(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(payload): Json<ConvexTokenPushRequest>,
+) -> Result<StatusCode, ApiError> {
+    require_session(&state.auth, &headers, &jar)
+        .await
+        .map_err(ApiError::unauthorized)?;
+    state.convex_tokens.update(payload.token).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn push_session_credential(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(payload): Json<SessionCredentialRequest>,
+) -> Result<StatusCode, ApiError> {
+    require_session(&state.auth, &headers, &jar)
+        .await
+        .map_err(ApiError::unauthorized)?;
+    let data_dir = state.auth.data_dir();
+    let credential_path = data_dir.join("session-credential.json");
+    let snapshot = sprocket_convex::SessionSnapshot {
+        session_id: payload.session_id,
+        user_id: payload.user_id,
+        current: payload.current,
+        next: payload.next,
+    };
+    let mut active = state.session_credentials.lock().await;
+    if let Some(provider) = active.as_ref() {
+        provider
+            .replace(snapshot)
+            .await
+            .map_err(|error| ApiError::internal_with("failed to save session credential", error))?;
+    } else {
+        let client = sprocket_convex::Client::new(&state.convex_deployment_url)
+            .await
+            .map_err(|error| ApiError::internal_with("failed to connect to Convex", error))?;
+        let provider = sprocket_convex::SessionCredentialProvider::from_snapshot(
+            Arc::new(client),
+            snapshot,
+            Some(credential_path),
+        );
+        provider
+            .persist_now()
+            .await
+            .map_err(|error| ApiError::internal_with("failed to save session credential", error))?;
+        *active = Some(provider.clone());
+        tokio::spawn(async move {
+            let _ = provider.run_rotator().await;
+        });
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn session(
@@ -366,6 +441,10 @@ mod tests {
         let transcript_watchers = crate::transcript_watch::TranscriptWatchers::new(
             "https://example.convex.cloud".to_string(),
             transcript.clone(),
+            crate::ConvexTokenProvider::new(),
+            Arc::new(tokio::sync::Mutex::new(
+                None::<sprocket_convex::SessionCredentialProvider>,
+            )),
         );
 
         let state = AppState {
@@ -379,6 +458,8 @@ mod tests {
             desktop_login_callback_url: auth::desktop_login_callback_url(7731),
             loopback_desktop_login_supported: loopback_supported,
             convex_deployment_url: "https://example.convex.cloud".to_string(),
+            convex_tokens: crate::ConvexTokenProvider::new(),
+            session_credentials: Arc::new(tokio::sync::Mutex::new(None)),
             web_ui_enabled: true,
             desktop_bootstrap_token: None,
         };

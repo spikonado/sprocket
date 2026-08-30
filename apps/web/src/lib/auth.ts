@@ -1,8 +1,9 @@
 import { browser, dev } from '$app/environment';
-import { createClient, type User } from '@workos-inc/authkit-js';
+import { LoginRequiredError, RefreshError, createClient, type User } from '@workos-inc/authkit-js';
 import { z } from 'zod';
 import { api } from '$convex/_generated/api';
 import { usesLoopbackBrowserAuth } from '../../../desktop/local-config.mjs';
+import { pushConvexToken, pushSessionCredential } from '$lib/authTokenPush';
 import { get, writable } from 'svelte/store';
 
 type AuthStatus = {
@@ -31,11 +32,25 @@ export const convexAuthRetryVersion = writable(0);
 export const convexAuthRetryPending = writable(false);
 
 type AuthClient = Awaited<ReturnType<typeof createClient>>;
+type SessionCredentialIssue = {
+	sessionId: string;
+	userId: string;
+	subject: string;
+	current: string;
+	next: string;
+	expiresAt: number;
+	refreshAfterMs: number;
+};
+
 type AuthBootstrapClient = {
 	query: (
 		query: typeof api.authBootstrap.getClientConfig,
 		args: Record<string, never>
 	) => Promise<{ workosClientId: string }>;
+	mutation: (
+		mutation: typeof api.sessionCredentials.issue,
+		args: Record<string, never>
+	) => Promise<SessionCredentialIssue>;
 };
 
 const DESKTOP_LOGIN_POLL_INTERVAL_MS = 1_500;
@@ -44,6 +59,8 @@ const DESKTOP_LOGIN_TIMEOUT_MS = 5 * 60 * 1_000;
 let authClientPromise: Promise<AuthClient | null> | null = null;
 let authConfigPromise: Promise<{ workosClientId: string }> | null = null;
 let bootstrapClient: AuthBootstrapClient | null = null;
+let sessionCredentialIssued = false;
+let sessionCredentialIssuePromise: Promise<void> | null = null;
 let isSigningOut = false;
 type DesktopSignInAttempt = {
 	nonce: string;
@@ -130,7 +147,8 @@ async function getAuthClient() {
 				onRedirectCallback: () => {
 					window.location.replace('/');
 				},
-				onRefresh: () => {
+				onRefresh: ({ accessToken }) => {
+					void pushConvexToken(accessToken);
 					authState.update((current) => ({
 						...current,
 						user: client?.getUser() ?? null,
@@ -143,7 +161,11 @@ async function getAuthClient() {
 						user: null,
 						error: current.user && !isSigningOut ? 'Session refresh failed. Sign in again.' : null
 					}));
-				}
+				},
+				// Keep refreshing in background tabs so the in-memory 5-minute
+				// access token is current when the user refocuses, instead of
+				// forcing a refresh exactly at window/network churn time.
+				onBeforeAutoRefresh: () => true
 			});
 
 			authState.set({
@@ -193,6 +215,12 @@ export async function initializeAuth(convexClient: AuthBootstrapClient) {
 				error: null
 			};
 		});
+		if (client?.getUser() && !sessionCredentialIssued && !sessionCredentialIssuePromise) {
+			sessionCredentialIssuePromise = issueAndDeliverSessionCredential().finally(() => {
+				sessionCredentialIssuePromise = null;
+			});
+			void sessionCredentialIssuePromise;
+		}
 	} catch (error) {
 		authState.update((current) => ({
 			...current,
@@ -203,6 +231,29 @@ export async function initializeAuth(convexClient: AuthBootstrapClient) {
 			user: null,
 			error: error instanceof Error ? error.message : 'Failed to initialize authentication.'
 		}));
+	}
+}
+
+async function issueAndDeliverSessionCredential(): Promise<void> {
+	const retryDelays = [200, 500, 1_000, 2_000, 4_000];
+	let attempt = 0;
+	let credential: SessionCredentialIssue | null = null;
+	while (get(authState).user) {
+		try {
+			credential ??= await getAuthBootstrapClient().mutation(api.sessionCredentials.issue, {});
+			await pushSessionCredential({
+				sessionId: credential.sessionId,
+				userId: credential.userId,
+				current: credential.current,
+				next: credential.next
+			});
+			sessionCredentialIssued = true;
+			return;
+		} catch {
+			const delay = retryDelays[Math.min(attempt, retryDelays.length - 1)];
+			attempt += 1;
+			await new Promise((resolve) => window.setTimeout(resolve, delay));
+		}
 	}
 }
 
@@ -579,6 +630,7 @@ export async function signOut() {
 			returnTo: window.location.origin
 		});
 		convexAuthRetryPending.set(false);
+		sessionCredentialIssued = false;
 		authState.set({
 			isLoading: false,
 			isReady: true,
@@ -608,15 +660,81 @@ export async function getAccessToken({
 	}
 
 	try {
-		return await client.getAccessToken({ forceRefresh: forceRefreshToken });
+		const token = await client.getAccessToken({ forceRefresh: forceRefreshToken });
+		lastAccessToken = token;
+		return token;
 	} catch (error) {
-		if (error instanceof Error && error.name === 'LoginRequiredError') {
+		if (error instanceof LoginRequiredError) {
 			authState.update((current) => ({ ...current, user: null }));
+			lastAccessToken = null;
 			return null;
+		}
+
+		if (isTransientAuthError(error)) {
+			// Transient refresh failures (network blips, refresh-lock races,
+			// 408/429/5xx from WorkOS) keep the session alive. Without a forced
+			// refresh we hand Convex the last accepted token, so it retains its
+			// auth instead of tearing down to a sticky signed-out state. A
+			// forced refresh means Convex already rejected that token, so we
+			// must mint a new one.
+			if (!forceRefreshToken && lastAccessToken) {
+				return lastAccessToken;
+			}
+			const retried = await retryTransientAccessToken(client, forceRefreshToken);
+			if (retried) {
+				lastAccessToken = retried;
+				return retried;
+			}
+			throw error;
 		}
 
 		throw error;
 	}
+}
+
+/** The most recent token that authkit accepted; the candidate we retry with
+ * while WorkOS is unreachable but the session hasn't died yet. */
+let lastAccessToken: string | null = null;
+
+// Disabled: `error` is genuinely opaque here (authkit-js rethrows whatever its
+// raw fetch rejected with). Classifying the shape is the point of the
+// function; widening can't be moved to an I/O boundary.
+// oxlint-disable-next-line anti-slop/no-unknown-parameters
+function isTransientAuthError(error: unknown): boolean {
+	if (error instanceof RefreshError) {
+		// RefreshTimeoutError and 408/429/5xx responses carry isTransient.
+		return error.isTransient;
+	}
+	// authkit-js uses raw fetch, so network failures surface as plain
+	// TypeErrors while the session is still alive.
+	return isCurrentSessionAlive();
+}
+
+function isCurrentSessionAlive(): boolean {
+	return get(authState).user !== null;
+}
+
+async function retryTransientAccessToken(
+	client: AuthClient,
+	forceRefreshToken: boolean
+): Promise<string | null> {
+	const holdups = [200, 500, 1000];
+	for (const holdMs of holdups) {
+		await new Promise((resolve) => setTimeout(resolve, holdMs));
+		try {
+			return await client.getAccessToken({ forceRefresh: forceRefreshToken });
+		} catch (retryError) {
+			if (retryError instanceof LoginRequiredError) {
+				authState.update((current) => ({ ...current, user: null }));
+				lastAccessToken = null;
+				return null;
+			}
+			if (!isTransientAuthError(retryError)) {
+				throw retryError;
+			}
+		}
+	}
+	return null;
 }
 
 export type ConvexAuthRetryAdvance = {

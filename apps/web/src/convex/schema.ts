@@ -31,12 +31,15 @@ import {
 
 export default defineSchema({
 	users: defineTable({
-		// WorkOS JWT subject; every owned table stores this value as `userId`.
+		// The WorkOS JWT subject. Legacy owner rows store it in their `userId`;
+		// post-tokenIdentifier rows store the canonical identity key instead.
 		subject: v.string(),
 		tokenIdentifier: v.string(),
 		email: v.string(),
 		createdAt: v.number()
-	}).index('by_subject', ['subject']),
+	})
+		.index('by_subject', ['subject'])
+		.index('by_tokenIdentifier', ['tokenIdentifier']),
 	billingCustomers: defineTable({
 		userId: v.string(),
 		dodoCustomerId: v.string()
@@ -323,5 +326,16 @@ export default defineSchema({
 		browserbaseSessionId: v.string(),
 		liveViewUrl: v.optional(v.string()),
 		startedAt: v.number()
-	}).index('by_thread', ['threadId'])
+	}).index('by_thread', ['threadId']),
+	sessionCredentials: defineTable({
+		sessionId: v.string(),
+		userId: v.string(),
+		subject: v.string(),
+		currentHash: v.string(),
+		previousHash: v.string(),
+		lastRefreshTime: v.number(),
+		createdAt: v.number()
+	})
+		.index('by_sessionId', ['sessionId'])
+		.index('by_userId', ['userId'])
 });

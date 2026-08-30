@@ -2,6 +2,7 @@ use anyhow::{Context, anyhow};
 use convex::{FunctionResult, QuerySubscription, Value};
 use serde::Deserialize;
 use sprocket_convex::Client as ConvexRpcClient;
+use sprocket_convex::{SessionCredentialProvider, session_proof_value};
 use std::collections::BTreeMap;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -26,6 +27,7 @@ pub(crate) enum FailedStartCleanup {
 pub(crate) struct RuntimeClient {
     pub(crate) client: ConvexRpcClient,
     execution_secret: String,
+    session_credential: Option<SessionCredentialProvider>,
 }
 
 impl RuntimeClient {
@@ -45,6 +47,7 @@ impl RuntimeClient {
         Ok(Self {
             client,
             execution_secret: request.execution_secret.clone(),
+            session_credential: request.session_credential.clone(),
         })
     }
 
@@ -164,6 +167,7 @@ impl RuntimeClient {
             env!("CARGO_PKG_VERSION").to_string().into(),
         );
         self.add_execution_secret(&mut args);
+        self.add_session_ticket(&mut args).await;
 
         let mut retry_delay = CREATE_RUN_INITIAL_RETRY_DELAY;
         let mut last_error = None;
@@ -293,6 +297,7 @@ impl RuntimeClient {
         );
         args.insert("text".to_string(), text.to_string().into());
         args.insert("lastError".to_string(), last_error.to_string().into());
+        self.add_session_ticket(&mut args).await;
         self.mutation_json("agentRuntime:finalizeFailedStart", args)
             .await
     }
@@ -469,6 +474,15 @@ impl RuntimeClient {
             "executionSecret".to_string(),
             self.execution_secret.clone().into(),
         );
+    }
+
+    async fn add_session_ticket(&self, args: &mut BTreeMap<String, Value>) {
+        if let Some(session) = &self.session_credential {
+            args.insert(
+                "sessionTicket".to_string(),
+                session_proof_value(&session.current_ticket().await),
+            );
+        }
     }
 
     fn run_args_with_claim(&self, run_id: &str, claim_id: &str) -> BTreeMap<String, Value> {

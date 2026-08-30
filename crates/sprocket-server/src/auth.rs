@@ -368,6 +368,10 @@ pub fn verify_pairing_proof(credential: &str, message: &str, proof: &[u8]) -> bo
 }
 
 impl AuthState {
+    pub fn data_dir(&self) -> &Path {
+        &self.data_dir
+    }
+
     pub async fn session_state(&self, session_token: Option<&str>) -> AuthSessionResponse {
         let Some(session_token) = session_token else {
             return AuthSessionResponse {

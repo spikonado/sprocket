@@ -1,5 +1,6 @@
 mod auth;
 mod config;
+mod convex_auth;
 mod project_attachments;
 pub mod repo_env;
 mod routes;
@@ -9,6 +10,7 @@ mod transcript_client;
 mod transcript_watch;
 
 pub use config::{DEFAULT_DEV_WEB_URL, DEFAULT_PORT, SESSION_COOKIE_NAME, ServerConfig};
+use sprocket_convex::SessionCredentialProvider;
 use static_dir::is_valid_static_dir;
 pub use static_dir::{INSTALLED_WEB_DIR, resolve_static_dir};
 
@@ -27,6 +29,7 @@ use tokio::sync::Mutex;
 use tokio::time::{Duration, sleep};
 
 use crate::transcript_watch::TranscriptWatchers;
+pub use convex_auth::ConvexTokenProvider;
 
 pub(crate) fn now_ms() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -87,6 +90,8 @@ pub struct AppState {
     pub desktop_login_callback_url: String,
     pub loopback_desktop_login_supported: bool,
     pub convex_deployment_url: String,
+    pub convex_tokens: ConvexTokenProvider,
+    pub session_credentials: Arc<Mutex<Option<SessionCredentialProvider>>>,
     pub web_ui_enabled: bool,
     pub desktop_bootstrap_token: Option<Arc<Mutex<Option<String>>>>,
 }
@@ -115,8 +120,33 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
     let pairing_credential = auth.pairing_credential().to_string();
     let project_attachments = project_attachments::ProjectAttachmentStore::new(data_dir.clone());
     let transcript = TranscriptStore::new(data_dir.join("transcripts"));
-    let transcript_watchers =
-        TranscriptWatchers::new(convex_deployment_url.clone(), Arc::clone(&transcript));
+    let convex_tokens = ConvexTokenProvider::new();
+    let session_credentials = Arc::new(Mutex::new(None::<SessionCredentialProvider>));
+    let credential_path = data_dir.join("session-credential.json");
+    if let Some(snapshot) = SessionCredentialProvider::load_persist(&credential_path).await {
+        match sprocket_convex::Client::new(&convex_deployment_url).await {
+            Ok(client) => {
+                let provider = SessionCredentialProvider::from_snapshot(
+                    Arc::new(client),
+                    snapshot,
+                    Some(credential_path),
+                );
+                *session_credentials.lock().await = Some(provider.clone());
+                tokio::spawn(async move {
+                    let _ = provider.run_rotator().await;
+                });
+            }
+            Err(error) => {
+                tracing::warn!("failed to resume the session credential: {error:#}");
+            }
+        }
+    }
+    let transcript_watchers = TranscriptWatchers::new(
+        convex_deployment_url.clone(),
+        Arc::clone(&transcript),
+        convex_tokens.clone(),
+        session_credentials.clone(),
+    );
     let http_base_url = config.listen_url();
     let web_ui_enabled = config
         .resolve_static_dir()
@@ -140,6 +170,8 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         desktop_login_callback_url: auth::desktop_login_callback_url(config.port),
         loopback_desktop_login_supported: auth::host_supports_loopback_desktop_login(&config.host),
         convex_deployment_url,
+        convex_tokens,
+        session_credentials,
         web_ui_enabled,
         desktop_bootstrap_token,
     };

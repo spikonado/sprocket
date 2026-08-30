@@ -10,7 +10,7 @@ import {
 	mutation,
 	query
 } from '@convex/_generated/server';
-import { ensureCurrentUser, getUserId } from '@convex/lib/auth';
+import { ensureCurrentUser, getUserId, resolveStoredOwnerSubject } from '@convex/lib/auth';
 import { vCheckoutResponse, vCustomerPortalResponse } from '@convex/lib/docs';
 import {
 	ensureSubscription,
@@ -24,11 +24,21 @@ import schema from '@convex/schema';
 export const getBillingCustomer = internalQuery({
 	args: { userId: v.string() },
 	returns: v.union(schema.doc('billingCustomers'), v.null()),
-	handler: async (ctx, { userId }) =>
-		ctx.db
+	handler: async (ctx, { userId }) => {
+		const customer = await ctx.db
 			.query('billingCustomers')
 			.withIndex('by_userId', (q) => q.eq('userId', userId))
-			.unique()
+			.unique();
+		if (customer) return customer;
+		// Owner rows written before the tokenIdentifier switch still carry the
+		// caller's subject; resolve it through the users table.
+		const subject = await resolveStoredOwnerSubject(ctx, userId);
+		if (!subject) return null;
+		return await ctx.db
+			.query('billingCustomers')
+			.withIndex('by_userId', (q) => q.eq('userId', subject))
+			.unique();
+	}
 });
 
 const dodo: DodoPayments = new DodoPayments(
@@ -111,10 +121,9 @@ export const upsertSubscription = internalMutation({
 		const existing = await getSubscriptionDocExclusive(ctx, args.userId);
 
 		const syncBillingCustomer = async () => {
-			const customer = await ctx.db
-				.query('billingCustomers')
-				.withIndex('by_userId', (q) => q.eq('userId', args.userId))
-				.unique();
+			const customer = await ctx.runQuery(internal.billing.getBillingCustomer, {
+				userId: args.userId
+			});
 			if (customer)
 				await ctx.db.patch('billingCustomers', customer._id, {
 					dodoCustomerId: args.dodoCustomerId

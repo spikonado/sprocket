@@ -1,12 +1,27 @@
 import { describe, expect, it } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
-import { initConvexTest } from './test.setup';
+import { initConvexTest, subjectTokenIdentifier } from './test.setup';
+
+/** Seed the canonical owner's users row and return the tokenIdentifier. */
+async function seedUser(t: ReturnType<typeof initConvexTest>, subject: string): Promise<string> {
+	const userId = subjectTokenIdentifier(subject);
+	await t.run(async (ctx) => {
+		await ctx.db.insert('users', {
+			subject,
+			tokenIdentifier: userId,
+			email: `${subject}@example.com`,
+			createdAt: 1
+		});
+	});
+	return userId;
+}
 
 describe('subscription and usage backend', () => {
 	it('reports usage overdraft and preserves it', async () => {
 		const t = initConvexTest();
-		const userId = 'user_usage';
-		const asUser = t.withIdentity({ subject: userId });
+		const subject = 'user_usage';
+		const userId = await seedUser(t, subject);
+		const asUser = t.withIdentity({ subject, email: `${subject}@example.com` });
 		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
 			userId,
 			count: 20_000
@@ -28,8 +43,9 @@ describe('subscription and usage backend', () => {
 
 	it('uses only active subscriptions and ignores stale webhook events', async () => {
 		const t = initConvexTest();
-		const userId = 'user_billing';
-		const asUser = t.withIdentity({ subject: userId });
+		const subject = 'user_billing';
+		const userId = await seedUser(t, subject);
+		const asUser = t.withIdentity({ subject });
 		const currentTier = async () => (await asUser.query(api.usage.getMyUsage, {})).tier;
 		const subscription = {
 			userId,
@@ -65,8 +81,9 @@ describe('subscription and usage backend', () => {
 
 	it('dedupes to the newest event so a cancellation beats an older active row', async () => {
 		const t = initConvexTest();
-		const userId = 'user_dedup';
-		const asUser = t.withIdentity({ subject: userId, email: `${userId}@example.com` });
+		const subject = 'user_dedup';
+		const userId = await seedUser(t, subject);
+		const asUser = t.withIdentity({ subject, email: `${subject}@example.com` });
 		const shared = {
 			userId,
 			tier: 'pro',
@@ -94,8 +111,9 @@ describe('subscription and usage backend', () => {
 
 	it('ensures a free subscription row and leaves existing grants alone', async () => {
 		const t = initConvexTest();
-		const userId = 'user_ensure_free';
-		const asUser = t.withIdentity({ subject: userId, email: `${userId}@example.com` });
+		const subject = 'user_ensure_free';
+		const userId = await seedUser(t, subject);
+		const asUser = t.withIdentity({ subject, email: `${subject}@example.com` });
 		const readSubscription = () =>
 			t.run(async (ctx) =>
 				ctx.db
@@ -126,8 +144,9 @@ describe('subscription and usage backend', () => {
 
 	it('lets paid webhooks replace a bootstrap free row', async () => {
 		const t = initConvexTest();
-		const userId = 'user_bootstrap_upgrade';
-		const asUser = t.withIdentity({ subject: userId, email: `${userId}@example.com` });
+		const subject = 'user_bootstrap_upgrade';
+		const userId = await seedUser(t, subject);
+		const asUser = t.withIdentity({ subject, email: `${subject}@example.com` });
 		await asUser.mutation(api.billing.ensureMySubscription, {});
 
 		await t.mutation(internal.billing.upsertSubscription, {
@@ -144,8 +163,9 @@ describe('subscription and usage backend', () => {
 
 	it('keeps admin grants above Dodo webhook upserts', async () => {
 		const t = initConvexTest();
-		const userId = 'user_admin_grant';
-		const asUser = t.withIdentity({ subject: userId });
+		const subject = 'user_admin_grant';
+		const userId = await seedUser(t, subject);
+		const asUser = t.withIdentity({ subject });
 		const currentTier = async () => (await asUser.query(api.usage.getMyUsage, {})).tier;
 		await t.run(async (ctx) => {
 			await ctx.db.insert('subscriptions', {
@@ -189,8 +209,9 @@ describe('subscription and usage backend', () => {
 
 	it('lets admin bypass meters after free overdraft', async () => {
 		const t = initConvexTest();
-		const userId = 'user_admin_bypass';
-		const asUser = t.withIdentity({ subject: userId });
+		const subject = 'user_admin_bypass';
+		const userId = await seedUser(t, subject);
+		const asUser = t.withIdentity({ subject });
 		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
 			userId,
 			count: 20_000
@@ -239,5 +260,57 @@ describe('subscription and usage backend', () => {
 		);
 		expect(rows).toHaveLength(1);
 		expect(rows[0]).toMatchObject({ subject: userId });
+	});
+
+	// Backwards-compat shim: rows written before the tokenIdentifier migration
+	// still carry the subject in userId and must stay visible until the
+	// owner-rewrite migration runs.
+	it('honors legacy subject-keyed subscription and meter rows until the rewrite', async () => {
+		const t = initConvexTest();
+		const subject = 'user_legacy';
+		// startRun-style legacy fixture: users row already adopted the
+		// canonical key, but the subscription and meter rows predate the switch.
+		await seedUser(t, subject);
+		const asUser = t.withIdentity({ subject, email: `${subject}@example.com` });
+		await t.run(async (ctx) => {
+			await ctx.db.insert('subscriptions', {
+				userId: subject,
+				tier: 'free',
+				dodoSubscriptionId: '',
+				dodoProductId: '',
+				status: 'active',
+				eventAt: 1
+			});
+		});
+
+		// ensure sees the legacy grant and does not create a second row.
+		expect((await asUser.query(api.usage.getMyUsage, {})).tier).toBe('free');
+		await asUser.mutation(api.billing.ensureMySubscription, {});
+		const rows = await t.run(async (ctx) =>
+			ctx.db
+				.query('subscriptions')
+				.withIndex('by_userId', (query) => query.eq('userId', subject))
+				.collect()
+		);
+		expect(rows).toHaveLength(1);
+
+		// Meter rows charged under the legacy subject still block the caller
+		// under their canonical key, and the usage view shows that overdraft.
+		await t.mutation(internal.lib.rateLimits.chargeUsageUnits, {
+			userId: subject,
+			count: 20_000
+		});
+		const canonicalUserId = subjectTokenIdentifier(subject);
+		await expect(
+			t.mutation(internal.lib.rateLimits.checkUsageLimits, {
+				userId: canonicalUserId
+			})
+		).rejects.toThrow(/model usage limit reached/);
+		const usage = await asUser.query(api.usage.getMyUsage, {});
+		expect(usage.exhausted).toBe(true);
+		const weekly = usage.meters
+			.find((meter) => meter.id === 'modelUsage')
+			?.windows.find((window) => window.period === 'weekly');
+		expect(weekly && weekly.used > weekly.limit).toBe(true);
 	});
 });

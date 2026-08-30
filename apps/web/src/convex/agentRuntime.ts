@@ -8,8 +8,22 @@ import {
 } from '@convex/_generated/server';
 import { internal } from '@convex/_generated/api';
 import { ConvexError, v, type Infer } from 'convex/values';
-import { getOwnedRun, getOwnedThreadRecord } from '@convex/lib/access';
-import { executionSecretHash, getExecutionRun, getUserId } from '@convex/lib/auth';
+import {
+	getOwnedRun,
+	getOwnedThreadRecordForStoredUserId,
+	resolveStoredOwnerKeys
+} from '@convex/lib/access';
+import {
+	distinctOwnerKeys,
+	executionSecretHash,
+	getExecutionRun,
+	getOwnerKeys,
+	getUserId
+} from '@convex/lib/auth';
+import {
+	authorizeBySessionCredential,
+	vSessionCredentialProof
+} from '@convex/lib/sessionCredentials';
 import { coercePersistedReasoningEffort, coercePersistedSelection } from '@convex/lib/models';
 import { GATEWAY_PROTOCOL_VERSION } from '@convex/lib/gatewayProtocol';
 import { modelGatewayTokenSecret, modelGatewayUrl } from '@convex/lib/gatewayFetch';
@@ -113,19 +127,28 @@ async function createQueuedRunRecord(
 	args: QueuedRunRequest
 ): Promise<{ created: boolean; runId: Id<'runs'>; promptMessageId: Id<'threadMessages'> }> {
 	const secretHash = await executionSecretHash(args.executionSecret);
-	const threadRecord = await getOwnedThreadRecord(ctx.db, args.userId, args.threadId);
+	const threadRecord = await getOwnedThreadRecordForStoredUserId(
+		ctx.db,
+		args.userId,
+		args.threadId
+	);
 	const prompt = args.prompt.trim();
 	if (!prompt && args.imageUploadIds.length === 0) {
 		throw new Error('Message cannot be empty.');
 	}
 	const imageUploads = await getOwnedImageUploads(ctx, args.userId, args.imageUploadIds);
 
-	const existingRun = await ctx.db
-		.query('runs')
-		.withIndex('by_userId_submissionId', (query) =>
-			query.eq('userId', args.userId).eq('submissionId', args.submissionId)
-		)
-		.unique();
+	const ownerKeys = await resolveStoredOwnerKeys(ctx.db, args.userId);
+	let existingRun = null;
+	for (const key of distinctOwnerKeys(ownerKeys)) {
+		existingRun = await ctx.db
+			.query('runs')
+			.withIndex('by_userId_submissionId', (query) =>
+				query.eq('userId', key).eq('submissionId', args.submissionId)
+			)
+			.unique();
+		if (existingRun) break;
+	}
 	if (existingRun) {
 		if (existingRun.executionSecretHash !== secretHash) {
 			const canRecoverExecutor =
@@ -308,13 +331,22 @@ export const createGatewayRun = action({
 		reasoningEffort: vReasoningEffort,
 		serviceTier: vServiceTier,
 		executionSecret: v.string(),
+		sessionTicket: v.optional(vSessionCredentialProof),
 		agentVersion: v.optional(v.string())
 	},
 	returns: vCreateGatewayRunResult,
 	handler: async (ctx, args): Promise<Infer<typeof vCreateGatewayRunResult>> => {
-		const userId = await getUserId(ctx);
-		const gatewayUrl = modelGatewayUrl();
-		const created = await ctx.runMutation(internal.agentRuntime.insertGatewayRun, {
+		// New local executors send a session ticket (fail-closed if present
+		// but invalid). Released executors omit it and keep using the WorkOS
+		// identity.
+		const userId = args.sessionTicket
+			? (
+					await ctx.runQuery(internal.sessionCredentials.resolveOwner, {
+						ticket: args.sessionTicket
+					})
+				).userId
+			: await getUserId(ctx);
+		const createArgs: Parameters<typeof createQueuedRunRecord>[1] = {
 			userId,
 			submissionId: args.submissionId,
 			threadId: args.threadId,
@@ -326,6 +358,10 @@ export const createGatewayRun = action({
 			executionSecret: args.executionSecret,
 			protocolVersion: GATEWAY_PROTOCOL_VERSION,
 			agentVersion: args.agentVersion
+		};
+		const gatewayUrl = modelGatewayUrl();
+		const created = await ctx.runMutation(internal.agentRuntime.insertGatewayRun, {
+			...createArgs
 		});
 		return {
 			...created,
@@ -431,7 +467,7 @@ export const getContext = query({
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		const userId = run.userId;
-		const threadRecord = await getOwnedThreadRecord(ctx.db, userId, run.threadId);
+		const threadRecord = await getOwnedThreadRecordForStoredUserId(ctx.db, userId, run.threadId);
 		const promptMessageId = run.promptMessageId;
 		if (!promptMessageId) {
 			throw new Error('Run does not contain a user prompt.');
@@ -529,7 +565,7 @@ export const saveContextCompaction = mutation({
 		if (!args.summary.trim()) {
 			throw new Error('Invalid context compaction.');
 		}
-		const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
+		const thread = await getOwnedThreadRecordForStoredUserId(ctx.db, run.userId, run.threadId);
 		await recordThreadUsageEvent(ctx, thread, {
 			eventId: usageEventId('compaction', run._id, args.claimId, run.completionAttemptSeq),
 			processedTokens: args.processedTokens
@@ -583,7 +619,7 @@ export const recordContextUsage = mutation({
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) return false;
-		const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
+		const thread = await getOwnedThreadRecordForStoredUserId(ctx.db, run.userId, run.threadId);
 		await recordThreadUsageEvent(ctx, thread, {
 			eventId: usageEventId('usage', run._id, args.claimId, run.completionAttemptSeq),
 			contextTokens: args.contextTokens,
@@ -692,8 +728,8 @@ export const finalizeRun = mutation({
 	},
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-		const run = await getOwnedRun(ctx.db, userId, args.runId);
+		const keys = await getOwnerKeys(ctx);
+		const run = await getOwnedRun(ctx.db, keys, args.runId);
 		if (!matchesFinalizeExpectations(run, args)) {
 			return false;
 		}
@@ -707,8 +743,8 @@ export const reopenRun = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-		const run = await getOwnedRun(ctx.db, userId, args.runId);
+		const keys = await getOwnerKeys(ctx);
+		const run = await getOwnedRun(ctx.db, keys, args.runId);
 		await reopenRunRecord(ctx, run);
 		return null;
 	}
@@ -745,7 +781,8 @@ export const finalizeFailedStart = mutation({
 		serviceTier: vServiceTier,
 		text: v.string(),
 		lastError: v.string(),
-		executionSecret: v.string()
+		executionSecret: v.string(),
+		sessionTicket: v.optional(vSessionCredentialProof)
 	},
 	// `finalized`: the queued run was terminalized. `pending`: nothing is
 	// visible for the capability; either createGatewayRun is still in flight or, when
@@ -769,15 +806,24 @@ export const finalizeFailedStart = mutation({
 			// secret; when the caller is still authenticated, tell the loser to
 			// stand down instead of retrying until its deadline.
 			const identity = await ctx.auth.getUserIdentity();
-			if (identity !== null) {
-				const submittedRun = await ctx.db
-					.query('runs')
-					.withIndex('by_userId_submissionId', (query) =>
-						query.eq('userId', identity.subject).eq('submissionId', args.submissionId)
-					)
-					.unique();
-				if (submittedRun) {
-					return 'standDown';
+			const sessionOwner =
+				!identity && args.sessionTicket
+					? await authorizeBySessionCredential(ctx, args.sessionTicket)
+					: null;
+			const ownerKeys = identity
+				? { userId: identity.tokenIdentifier, subject: identity.subject }
+				: sessionOwner;
+			if (ownerKeys) {
+				for (const key of distinctOwnerKeys(ownerKeys)) {
+					const submittedRun = await ctx.db
+						.query('runs')
+						.withIndex('by_userId_submissionId', (query) =>
+							query.eq('userId', key).eq('submissionId', args.submissionId)
+						)
+						.unique();
+					if (submittedRun) {
+						return 'standDown';
+					}
 				}
 			}
 			return 'pending';

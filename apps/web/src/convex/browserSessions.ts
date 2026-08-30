@@ -1,8 +1,8 @@
 import { v } from 'convex/values';
 import type { Id } from '@convex/_generated/dataModel';
 import { internalMutation, internalQuery, query } from '@convex/_generated/server';
-import { getOwnedThreadRecord } from '@convex/lib/access';
-import { getUserId } from '@convex/lib/auth';
+import { getOwnedThreadRecord, resolveStoredOwnerKeys } from '@convex/lib/access';
+import { getOwnerKeys, matchesOwner } from '@convex/lib/auth';
 
 type BrowserSessionUpsertPatch = {
 	runId: Id<'runs'>;
@@ -33,7 +33,9 @@ export const getForThread = internalQuery({
 			.query('browserSessions')
 			.withIndex('by_thread', (query) => query.eq('threadId', args.threadId))
 			.first();
-		return session?.userId === args.userId ? session : null;
+		if (!session) return null;
+		const keys = await resolveStoredOwnerKeys(ctx.db, args.userId);
+		return matchesOwner(session.userId, keys) ? session : null;
 	}
 });
 
@@ -51,8 +53,8 @@ export const liveViewForThread = query({
 		v.null()
 	),
 	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+		const keys = await getOwnerKeys(ctx);
+		await getOwnedThreadRecord(ctx.db, keys, args.threadId);
 		const session = await ctx.db
 			.query('browserSessions')
 			.withIndex('by_thread', (query) => query.eq('threadId', args.threadId))

@@ -59,6 +59,7 @@ import type * as modelCatalog from "../modelCatalog.js";
 import type * as payments from "../payments.js";
 import type * as projects from "../projects.js";
 import type * as runLifecycle from "../runLifecycle.js";
+import type * as sessionCredentials from "../sessionCredentials.js";
 import type * as threads from "../threads.js";
 import type * as transcript from "../transcript.js";
 import type * as uiPreferences from "../uiPreferences.js";
@@ -124,6 +125,7 @@ declare const fullApi: ApiFromModules<{
   payments: typeof payments;
   projects: typeof projects;
   runLifecycle: typeof runLifecycle;
+  sessionCredentials: typeof sessionCredentials;
   threads: typeof threads;
   transcript: typeof transcript;
   uiPreferences: typeof uiPreferences;

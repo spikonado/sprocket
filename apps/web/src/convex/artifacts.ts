@@ -1,8 +1,12 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { mutation, query, type MutationCtx, type QueryCtx } from '@convex/_generated/server';
 import { v } from 'convex/values';
-import { getOwnedThreadRecord } from '@convex/lib/access';
-import { getExecutionRun, getUserId } from '@convex/lib/auth';
+import {
+	getOwnedThreadRecord,
+	getOwnedThreadRecordForStoredUserId,
+	resolveStoredOwnerKeys
+} from '@convex/lib/access';
+import { getExecutionRun, getOwnerKeys, matchesOwner } from '@convex/lib/auth';
 import { vArtifactType } from '@convex/lib/validators';
 import schema from '@convex/schema';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
@@ -109,7 +113,7 @@ export const createArtifact = mutation({
 			const run = await requireActiveRun(ctx, args.runId, args.claimId, args.executionSecret);
 			const userId = run.userId;
 			const threadId = run.threadId;
-			await getOwnedThreadRecord(ctx.db, userId, threadId);
+			await getOwnedThreadRecordForStoredUserId(ctx.db, userId, threadId);
 
 			const title = args.title.trim();
 			validateArtifactTitle(title);
@@ -174,10 +178,11 @@ export const appendArtifactVersion = mutation({
 			const userId = run.userId;
 
 			const artifact: Doc<'artifacts'> | null = await ctx.db.get('artifacts', args.artifactId);
-			if (!artifact || artifact.userId !== userId || artifact.threadId !== run.threadId) {
+			const keys = await resolveStoredOwnerKeys(ctx.db, userId);
+			if (!artifact || !matchesOwner(artifact.userId, keys) || artifact.threadId !== run.threadId) {
 				throw new Error('Artifact not found.');
 			}
-			await getOwnedThreadRecord(ctx.db, userId, artifact.threadId);
+			await getOwnedThreadRecordForStoredUserId(ctx.db, userId, artifact.threadId);
 
 			validateArtifactContent(args.content);
 
@@ -200,12 +205,12 @@ export const getArtifact = query({
 		versions: v.array(schema.doc('artifactVersions'))
 	}),
 	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
+		const keys = await getOwnerKeys(ctx);
 		const artifact = await ctx.db.get('artifacts', args.artifactId);
-		if (!artifact || artifact.userId !== userId) {
+		if (!artifact || (artifact.userId !== keys.userId && artifact.userId !== keys.subject)) {
 			throw new Error('Artifact not found.');
 		}
-		await getOwnedThreadRecord(ctx.db, userId, artifact.threadId);
+		await getOwnedThreadRecord(ctx.db, keys, artifact.threadId);
 
 		const versions = await ctx.db
 			.query('artifactVersions')
@@ -228,8 +233,8 @@ export const listArtifactsForThread = query({
 		})
 	),
 	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+		const keys = await getOwnerKeys(ctx);
+		await getOwnedThreadRecord(ctx.db, keys, args.threadId);
 
 		const artifacts = await ctx.db
 			.query('artifacts')

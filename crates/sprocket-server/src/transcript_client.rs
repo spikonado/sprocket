@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, anyhow};
@@ -7,25 +6,41 @@ use convex::{FunctionResult, QuerySubscription, Value};
 use sprocket_agent::{
     RemoteTranscriptState, TranscriptPart, TranscriptStore, fetch_missing_parts, parse_remote_parts,
 };
-use sprocket_convex::{AuthTokenFetcher, Client as ConvexClient};
+use sprocket_convex::{Client as ConvexClient, SessionCredentialProvider, session_proof_value};
 use tokio::time::sleep;
+
+use crate::convex_auth::ConvexTokenProvider;
 
 #[derive(Clone)]
 pub struct UserConvexClient {
     client: ConvexClient,
+    session_credential: Option<SessionCredentialProvider>,
 }
 
 impl UserConvexClient {
-    pub async fn connect(deployment_url: &str, auth_token: String) -> anyhow::Result<Self> {
+    pub async fn connect(
+        deployment_url: &str,
+        auth_token: String,
+        tokens: ConvexTokenProvider,
+        session_credential: Option<SessionCredentialProvider>,
+    ) -> anyhow::Result<Self> {
         let client = ConvexClient::new(deployment_url).await?;
-        let fetcher = static_token_fetcher(auth_token);
-        client.set_auth_token_fetcher(fetcher).await;
-        Ok(Self { client })
+        // Keep the JWT fetcher even when a session credential is present so
+        // an expired on-disk ticket can still fall back to a live access token.
+        tokens.update(auth_token).await;
+        client
+            .set_auth_token_fetcher(tokens.fetcher("transcript"))
+            .await;
+        Ok(Self {
+            client,
+            session_credential,
+        })
     }
 
     pub async fn ensure_migrated(&self, thread_id: &str) -> anyhow::Result<RemoteTranscriptState> {
-        self.mutation_json("transcript:ensureMigrated", thread_id_args(thread_id))
-            .await
+        let mut args = thread_id_args(thread_id);
+        self.add_session_ticket(&mut args).await;
+        self.mutation_json("transcript:ensureMigrated", args).await
     }
 
     pub async fn transcript_parts(
@@ -43,14 +58,15 @@ impl UserConvexClient {
                     .collect(),
             ),
         );
+        self.add_session_ticket(&mut args).await;
         let value: serde_json::Value = self.query_json("transcript:getParts", args).await?;
         parse_remote_parts(value)
     }
 
     pub async fn subscribe_state(&self, thread_id: &str) -> anyhow::Result<QuerySubscription> {
-        self.client
-            .subscribe("transcript:getState", thread_id_args(thread_id))
-            .await
+        let mut args = thread_id_args(thread_id);
+        self.add_session_ticket(&mut args).await;
+        self.client.subscribe("transcript:getState", args).await
     }
 
     pub async fn attachment_download(
@@ -62,6 +78,7 @@ impl UserConvexClient {
             "imageUploadId".to_string(),
             image_upload_id.to_string().into(),
         );
+        self.add_session_ticket(&mut args).await;
         self.query_json("transcript:attachmentDownload", args).await
     }
 
@@ -80,6 +97,15 @@ impl UserConvexClient {
     ) -> anyhow::Result<T> {
         decode_function_result(self.client.mutation(function, args).await?, function)
     }
+
+    async fn add_session_ticket(&self, args: &mut BTreeMap<String, Value>) {
+        if let Some(session) = &self.session_credential {
+            args.insert(
+                "sessionTicket".to_string(),
+                session_proof_value(&session.current_ticket().await),
+            );
+        }
+    }
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -89,18 +115,6 @@ pub struct RemoteAttachmentDownload {
     pub media_type: String,
     pub storage_id: String,
     pub url: String,
-}
-
-fn static_token_fetcher(token: String) -> AuthTokenFetcher {
-    Arc::new(move |_force_refresh| {
-        let token = token.clone();
-        Box::pin(async move {
-            if token.trim().is_empty() {
-                return Err(anyhow!("transcript auth token is empty"));
-            }
-            Ok(token)
-        })
-    })
 }
 
 fn thread_id_args(thread_id: &str) -> BTreeMap<String, Value> {

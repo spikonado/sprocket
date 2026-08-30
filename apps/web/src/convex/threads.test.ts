@@ -85,3 +85,26 @@ describe('threads.rekeyRepository', () => {
 		);
 	});
 });
+
+describe('threads owner-key dual-read', () => {
+	it('lists and reuses a pre-migration subject-keyed thread', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId, repositoryKey } = await seedOwnedThread(t, 'user_legacy_thread');
+		await t.run(async (ctx) => {
+			await ctx.db.patch('threadRecords', threadId, { userId: 'user_legacy_thread' });
+		});
+
+		const listed = await asUser.query(api.threads.listMine, {});
+		const seeded = listed.find((thread) => thread.threadId === threadId);
+		expect(seeded).toBeDefined();
+
+		const created = await asUser.mutation(api.threads.create, {
+			submissionId: seeded?.submissionId ?? '',
+			repositoryKey,
+			selectedModel: 'gpt-5.6-sol',
+			reasoningEffort: 'medium',
+			serviceTier: 'standard'
+		});
+		expect(created.threadId).toBe(threadId);
+	});
+});

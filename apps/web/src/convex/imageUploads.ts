@@ -1,7 +1,7 @@
 import type { Doc } from '@convex/_generated/dataModel';
 import { internalMutation, mutation, type MutationCtx } from '@convex/_generated/server';
 import { v, type Infer } from 'convex/values';
-import { getUserId } from '@convex/lib/auth';
+import { getOwnerKeys, getUserId } from '@convex/lib/auth';
 import { vRegisterImageUploadResult } from '@convex/lib/docs';
 import {
 	MAX_IMAGE_ATTACHMENT_BYTES,
@@ -32,13 +32,13 @@ export const register = mutation({
 	},
 	returns: vRegisterImageUploadResult,
 	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
+		const ownerKeys = await getOwnerKeys(ctx);
 		const existing = await ctx.db
 			.query('imageUploads')
 			.withIndex('by_storageId', (query) => query.eq('storageId', args.storageId))
 			.unique();
 		if (existing) {
-			if (existing.userId !== userId) {
+			if (existing.userId !== ownerKeys.userId && existing.userId !== ownerKeys.subject) {
 				throw new Error('Uploaded image belongs to another user.');
 			}
 			return await uploadResult(ctx, existing);
@@ -68,7 +68,7 @@ export const register = mutation({
 		}
 
 		const imageUploadId = await ctx.db.insert('imageUploads', {
-			userId,
+			userId: ownerKeys.userId,
 			storageId: args.storageId,
 			name,
 			mediaType,
@@ -92,9 +92,13 @@ export const discard = mutation({
 	},
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
+		const keys = await getOwnerKeys(ctx);
 		const upload = await ctx.db.get('imageUploads', args.imageUploadId);
-		if (!upload || upload.userId !== userId || upload.attached) {
+		if (
+			!upload ||
+			(upload.userId !== keys.userId && upload.userId !== keys.subject) ||
+			upload.attached
+		) {
 			return false;
 		}
 		await ctx.storage.delete(upload.storageId);

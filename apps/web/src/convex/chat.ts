@@ -1,7 +1,7 @@
 import { query } from '@convex/_generated/server';
 import { v, type Infer } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
-import { getUserId } from '@convex/lib/auth';
+import { getOwnerKeys } from '@convex/lib/auth';
 import { vLatestRunForThread } from '@convex/lib/docs';
 
 export const latestRunForThread = query({
@@ -13,8 +13,8 @@ export const latestRunForThread = query({
 	},
 	returns: vLatestRunForThread,
 	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+		const keys = await getOwnerKeys(ctx);
+		await getOwnedThreadRecord(ctx.db, keys, args.threadId);
 		const serverNow = args.now ?? Date.now();
 
 		const latestRun = await ctx.db

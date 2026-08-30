@@ -1,5 +1,6 @@
 import type { GenericMutationCtx, GenericQueryCtx } from 'convex/server';
 import type { DataModel, Doc } from '@convex/_generated/dataModel';
+import { resolveStoredOwnerSubject } from './auth';
 
 export const subscriptionTierIds = ['free', 'pro', 'admin'] as const;
 export type SubscriptionTier = (typeof subscriptionTierIds)[number];
@@ -67,10 +68,19 @@ async function listSubscriptions(
 	ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>,
 	userId: string
 ): Promise<Doc<'subscriptions'>[]> {
-	return await ctx.db
+	const canonical = await ctx.db
 		.query('subscriptions')
 		.withIndex('by_userId', (query) => query.eq('userId', userId))
 		.collect();
+	const subject = await resolveStoredOwnerSubject(ctx, userId);
+	if (!subject || subject === userId) return canonical;
+	const legacy = await ctx.db
+		.query('subscriptions')
+		.withIndex('by_userId', (query) => query.eq('userId', subject))
+		.collect();
+	// Fold both keys so pending rows under either original participate in
+	// collapse/pick decisions until the owner-rewrite migration runs.
+	return [...canonical, ...legacy];
 }
 
 export async function getSubscriptionDoc(

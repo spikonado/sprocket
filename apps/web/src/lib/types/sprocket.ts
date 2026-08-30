@@ -118,6 +118,15 @@ export type AgentRunRequest = {
 	workspacePath: string;
 };
 
+export type SessionCredentialTicket = {
+	sessionId: string;
+	userId: string;
+	current: string;
+	next: string;
+};
+
+export type SessionCredentialSeed = SessionCredentialTicket;
+
 export type AgentRunStart = {
 	runId: Id<'runs'>;
 };
@@ -248,6 +257,8 @@ export type DesktopApi = {
 	fetchTranscriptAttachment: (
 		request: TranscriptScopeRequest & { imageUploadId: Id<'imageUploads'> }
 	) => Promise<Blob | null>;
+	pushConvexToken: (token: string) => Promise<void>;
+	pushSessionCredential: (credential: SessionCredentialSeed) => Promise<void>;
 };
 
 export type WorkspacePathResolution = {

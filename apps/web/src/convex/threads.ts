@@ -2,7 +2,7 @@ import type { Doc, Id } from '@convex/_generated/dataModel';
 import { mutation, query, type MutationCtx } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
-import { getUserId } from '@convex/lib/auth';
+import { distinctOwnerKeys, getOwnerKeys } from '@convex/lib/auth';
 import { vThreadSummary, vThreadWithUsageDoc } from '@convex/lib/docs';
 import { getThreadUsageValues } from '@convex/lib/threadUsage';
 import {
@@ -17,8 +17,8 @@ async function patchOwnedThread(
 	threadId: Id<'threadRecords'>,
 	patch: Partial<Doc<'threadRecords'>>
 ) {
-	const userId = await getUserId(ctx);
-	await getOwnedThreadRecord(ctx.db, userId, threadId);
+	const keys = await getOwnerKeys(ctx);
+	await getOwnedThreadRecord(ctx.db, keys, threadId);
 	await ctx.db.patch('threadRecords', threadId, patch);
 }
 
@@ -35,17 +35,22 @@ export const create = mutation({
 		submissionRunStatus: v.union(vRunStatus, v.null())
 	}),
 	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
+		const keys = await getOwnerKeys(ctx);
+		const userId = keys.userId;
 		const repositoryKey = args.repositoryKey.trim();
 		if (repositoryKey.length === 0) {
 			throw new Error('Repository key is required.');
 		}
-		const existingRecord = await ctx.db
-			.query('threadRecords')
-			.withIndex('by_userId_submissionId', (query) =>
-				query.eq('userId', userId).eq('submissionId', args.submissionId)
-			)
-			.unique();
+		let existingRecord = null;
+		for (const key of distinctOwnerKeys(keys)) {
+			existingRecord = await ctx.db
+				.query('threadRecords')
+				.withIndex('by_userId_submissionId', (query) =>
+					query.eq('userId', key).eq('submissionId', args.submissionId)
+				)
+				.unique();
+			if (existingRecord) break;
+		}
 		if (existingRecord) {
 			if (
 				existingRecord.repositoryKey !== repositoryKey ||
@@ -60,12 +65,16 @@ export const create = mutation({
 				await ctx.db.patch('threadRecords', existingRecord._id, { archivedAt: undefined });
 			}
 
-			const submissionRun = await ctx.db
-				.query('runs')
-				.withIndex('by_userId_submissionId', (query) =>
-					query.eq('userId', userId).eq('submissionId', args.submissionId)
-				)
-				.unique();
+			let submissionRun = null;
+			for (const key of distinctOwnerKeys(keys)) {
+				submissionRun = await ctx.db
+					.query('runs')
+					.withIndex('by_userId_submissionId', (query) =>
+						query.eq('userId', key).eq('submissionId', args.submissionId)
+					)
+					.unique();
+				if (submissionRun) break;
+			}
 
 			return {
 				threadId: existingRecord._id,
@@ -75,7 +84,7 @@ export const create = mutation({
 
 		const now = Date.now();
 		const recordId = await ctx.db.insert('threadRecords', {
-			userId: userId,
+			userId,
 			submissionId: args.submissionId,
 			repositoryKey,
 			selectedModel: args.selectedModel,
@@ -100,12 +109,18 @@ export const listMine = query({
 	args: {},
 	returns: v.array(vThreadSummary),
 	handler: async (ctx) => {
-		const userId = await getUserId(ctx);
-		const records = await ctx.db
-			.query('threadRecords')
-			.withIndex('by_userId_lastMessageAt', (query) => query.eq('userId', userId))
-			.order('desc')
-			.collect();
+		const keys = await getOwnerKeys(ctx);
+		const records = (
+			await Promise.all(
+				distinctOwnerKeys(keys).map((key) =>
+					ctx.db
+						.query('threadRecords')
+						.withIndex('by_userId_lastMessageAt', (query) => query.eq('userId', key))
+						.order('desc')
+						.collect()
+				)
+			)
+		).flat();
 		const summaries = await Promise.all(
 			records.map(async (record) => {
 				const latestRun = await ctx.db
@@ -131,7 +146,11 @@ export const listMine = query({
 		// Running threads first, then most recently active. The index already
 		// returns lastMessageAt-desc, so the comparator only needs to promote
 		// active runs while staying stable for the rest.
-		return summaries.sort((left, right) => Number(right.hasActiveRun) - Number(left.hasActiveRun));
+		return summaries.sort((left, right) => {
+			const active = Number(right.hasActiveRun) - Number(left.hasActiveRun);
+			if (active !== 0) return active;
+			return right.lastMessageAt - left.lastMessageAt;
+		});
 	}
 });
 
@@ -141,8 +160,8 @@ export const getByThreadId = query({
 	},
 	returns: vThreadWithUsageDoc,
 	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-		const thread = await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+		const keys = await getOwnerKeys(ctx);
+		const thread = await getOwnedThreadRecord(ctx.db, keys, args.threadId);
 		const usage = await getThreadUsageValues(ctx, thread);
 		return { ...thread, ...usage };
 	}
@@ -169,8 +188,8 @@ export const archive = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+		const keys = await getOwnerKeys(ctx);
+		await getOwnedThreadRecord(ctx.db, keys, args.threadId);
 
 		for (const status of ['queued', 'running', 'awaiting_executor'] as const) {
 			const activeRun = await ctx.db
@@ -205,7 +224,6 @@ export const rekeyRepository = mutation({
 	},
 	returns: v.number(),
 	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
 		const from = args.from.trim();
 		const to = args.to.trim();
 		if (from.length === 0 || to.length === 0) {
@@ -215,12 +233,21 @@ export const rekeyRepository = mutation({
 			return 0;
 		}
 
-		const threads = await ctx.db
-			.query('threadRecords')
-			.withIndex('by_userId_repositoryKey', (query) =>
-				query.eq('userId', userId).eq('repositoryKey', from)
+		const keys = await getOwnerKeys(ctx);
+		const threads = (
+			await Promise.all(
+				[keys.userId, keys.subject]
+					.filter((key, index, all) => all.indexOf(key) === index)
+					.map((key) =>
+						ctx.db
+							.query('threadRecords')
+							.withIndex('by_userId_repositoryKey', (query) =>
+								query.eq('userId', key).eq('repositoryKey', from)
+							)
+							.collect()
+					)
 			)
-			.collect();
+		).flat();
 		for (const thread of threads) {
 			await ctx.db.patch('threadRecords', thread._id, { repositoryKey: to });
 		}

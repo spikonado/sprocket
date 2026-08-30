@@ -11,7 +11,8 @@ import {
 } from '@convex/_generated/server';
 import { api, components, internal } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
-import { getUserId, pickPrimaryUser } from '@convex/lib/auth';
+import { distinctOwnerKeys, getUserId, matchesOwner, pickPrimaryUser } from '@convex/lib/auth';
+import { resolveStoredOwnerKeys } from '@convex/lib/access';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
 import { toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { unsupportedClient } from '@convex/lib/unsupportedClient';
@@ -308,7 +309,8 @@ async function ownedCharge(
 	userId: string
 ): Promise<Doc<'mandateCharges'>> {
 	const charge = await ctx.db.get('mandateCharges', chargeId);
-	if (!charge || charge.userId !== userId) {
+	const keys = await resolveStoredOwnerKeys(ctx.db, userId);
+	if (!charge || !matchesOwner(charge.userId, keys)) {
 		throw new Error('Charge not found.');
 	}
 	return charge;
@@ -420,25 +422,36 @@ export const getOwnedMandate = internalQuery({
 	returns: v.union(mandateDoc, v.null()),
 	handler: async (ctx, args) => {
 		const mandate = await ctx.db.get('mandates', args.mandateId);
-		return mandate?.userId === args.userId ? mandate : null;
+		if (!mandate) return null;
+		const keys = await resolveStoredOwnerKeys(ctx.db, args.userId);
+		return matchesOwner(mandate.userId, keys) ? mandate : null;
 	}
 });
 
 /** The user's WorkOS email, synced onto their users row by
- * ensureCurrentUser. Executor actions carry no usable caller identity (the
- * run's auth token is a launch-time snapshot), so capability-gated code reads
- * it from here instead of ctx.auth. */
+ * ensureCurrentUser. Executor actions have no WorkOS identity, so
+ * capability-gated code reads the email from here instead of ctx.auth. */
 export const getUserEmail = internalQuery({
 	args: { userId: v.string() },
 	returns: v.string(),
 	handler: async (ctx, args) => {
+		// Executor userIds are stored rows that may hold the legacy subject or
+		// the canonical tokenIdentifier, so match against both columns.
 		const rows = await ctx.db
 			.query('users')
 			.withIndex('by_subject', (query) => query.eq('subject', args.userId))
 			.collect();
-		const primary = pickPrimaryUser(rows);
-		if (!primary) throw new Error(`No user record for ${args.userId}.`);
-		return primary.email;
+		if (rows[0]) {
+			return pickPrimaryUser(rows)!.email;
+		}
+		const byToken = await ctx.db
+			.query('users')
+			.withIndex('by_tokenIdentifier', (query) => query.eq('tokenIdentifier', args.userId))
+			.unique();
+		if (byToken) {
+			return byToken.email;
+		}
+		throw new Error(`No user record for ${args.userId}.`);
 	}
 });
 
@@ -446,10 +459,17 @@ export const listLocalMandates = internalQuery({
 	args: { userId: v.string() },
 	returns: v.array(mandateDoc),
 	handler: async (ctx, args) => {
-		return await ctx.db
-			.query('mandates')
-			.withIndex('by_user', (query) => query.eq('userId', args.userId))
-			.collect();
+		const keys = await resolveStoredOwnerKeys(ctx.db, args.userId);
+		return (
+			await Promise.all(
+				distinctOwnerKeys(keys).map((key) =>
+					ctx.db
+						.query('mandates')
+						.withIndex('by_user', (query) => query.eq('userId', key))
+						.collect()
+				)
+			)
+		).flat();
 	}
 });
 
@@ -467,7 +487,8 @@ export const syncMandate = internalMutation({
 	handler: async (ctx, args) => {
 		try {
 			const mandate = await ctx.db.get('mandates', args.mandateId);
-			if (!mandate || mandate.userId !== args.userId) {
+			const keys = await resolveStoredOwnerKeys(ctx.db, args.userId);
+			if (!mandate || !matchesOwner(mandate.userId, keys)) {
 				throw new Error('Mandate not found.');
 			}
 			const patch: MandateSyncPatch = { updatedAt: Date.now() };
@@ -537,7 +558,8 @@ export const reserveCharge = internalMutation({
 				}
 				const existing = matches[0];
 				if (existing) {
-					if (existing.userId !== args.userId) {
+					const keys = await resolveStoredOwnerKeys(ctx.db, args.userId);
+					if (!matchesOwner(existing.userId, keys)) {
 						throw new Error('Charge not found.');
 					}
 					if (existing.amount !== amount || existing.currency !== args.currency) {
@@ -663,7 +685,9 @@ export const getOwnedCharge = internalQuery({
 	returns: v.union(chargeDoc, v.null()),
 	handler: async (ctx, args) => {
 		const charge = await ctx.db.get('mandateCharges', args.chargeId);
-		return charge?.userId === args.userId ? charge : null;
+		if (!charge) return null;
+		const keys = await resolveStoredOwnerKeys(ctx.db, args.userId);
+		return matchesOwner(charge.userId, keys) ? charge : null;
 	}
 });
 
@@ -919,10 +943,13 @@ async function createMandateSetup(
 	if (args.userEmail !== undefined) {
 		unsupportedClient();
 	}
-	// Prava requires a customer email on merchant sessions. Executor actions
-	// carry no caller identity, so read the WorkOS email that ensureCurrentUser
-	// keeps on the users row instead of ctx.auth.
+	// Executor actions carry no caller identity, so the Prava customer key is
+	// the same stored userId the mandate rows keep (its legacy subject, when
+	// this run was written before the tokenIdentifier migration) and the
+	// email is what ensureCurrentUser synced onto the users row.
 	const userEmail = await ctx.runQuery(internal.payments.getUserEmail, { userId });
+	const pravaUserId =
+		(await ctx.runQuery(internal.lib.auth.storedOwnerSubject, { userId })) ?? userId;
 	assertMandateFrequencyAllowed(args);
 
 	// Generic (any-scope) mandates are one-time only; Prava still needs a
@@ -954,7 +981,7 @@ async function createMandateSetup(
 		method: 'POST',
 		body: JSON.stringify({
 			integration_type: 'embedding',
-			user_id: userId,
+			user_id: pravaUserId,
 			user_email: userEmail,
 			total_amount: args.amountCap,
 			currency: args.currency,
@@ -1101,13 +1128,17 @@ async function resolvePravaMandate(
 	userId: string,
 	mandate: Doc<'mandates'>
 ): Promise<PravaMandate & { id: string }> {
+	// List under the original Prava customer key: pre-migration rows carry
+	// the subject while the caller now hands us the tokenIdentifier.
+	const pravaUserId =
+		(await ctx.runQuery(internal.lib.auth.storedOwnerSubject, { userId })) ?? userId;
 	if (mandate.pravaMandateId) {
 		const found = await pravaRequest<PravaMandate>(
 			`/v1/mandates/${encodeURIComponent(mandate.pravaMandateId)}`
 		);
 		return { ...found, id: mandate.pravaMandateId };
 	}
-	const list = await listPravaMandates(userId, false);
+	const list = await listPravaMandates(pravaUserId, false);
 	const local = await ctx.runQuery(internal.payments.listLocalMandates, { userId });
 	const match = uniquelyAttributablePravaMandate(mandate, list, local);
 	// Require a unique live match. Charging an arbitrary same-merchant+amount
@@ -1170,7 +1201,9 @@ async function listLinkedMandates(
 	ctx: ActionCtx,
 	userId: string
 ): Promise<Infer<typeof vMandateListResult>> {
-	const list = (await listPravaMandates(userId, false)).filter((m) =>
+	const pravaUserId =
+		(await ctx.runQuery(internal.lib.auth.storedOwnerSubject, { userId })) ?? userId;
+	const list = (await listPravaMandates(pravaUserId, false)).filter((m) =>
 		LIVE_MANDATE_STATUSES.has(m.status ?? '')
 	);
 	const { localByPravaId, localById } = await linkLocalMandates(ctx, userId, list);
@@ -1463,8 +1496,8 @@ export const mandateReport = action({
 
 // ---------------------------------------------------------------------------
 // User-facing actions (settings screen; authenticated user, no agent run).
-// These resolve the same identity.subject as the executor tools, so mandate
-// ownership checks are identical on both paths.
+// These resolve the same owner key as the executor tools (the caller's stored
+// userId), so mandate ownership checks are identical on both paths.
 // ---------------------------------------------------------------------------
 
 export const listMyMandates = action({

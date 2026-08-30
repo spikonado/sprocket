@@ -160,9 +160,14 @@ async fn attachment_handler(
         return Ok(blob_response(blob.media_type, blob.bytes));
     }
 
-    let client = UserConvexClient::connect(&state.convex_deployment_url, payload.auth_token)
-        .await
-        .map_err(|error| ApiError::internal_with("failed to connect to Convex", error))?;
+    let client = UserConvexClient::connect(
+        &state.convex_deployment_url,
+        payload.auth_token,
+        state.convex_tokens.clone(),
+        state.session_credentials.lock().await.clone(),
+    )
+    .await
+    .map_err(|error| ApiError::internal_with("failed to connect to Convex", error))?;
     let Some(remote) = client
         .attachment_download(&payload.image_upload_id)
         .await

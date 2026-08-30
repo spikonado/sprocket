@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { api } from '@convex/_generated/api';
-import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
+import {
+	createQueuedRun,
+	initConvexTest,
+	seedOwnedThread,
+	subjectTokenIdentifier
+} from './test.setup';
 
 const gatewayUrl = 'https://preview.gateway.example';
 const tokenSecret = 'test-gateway-token-secret';
@@ -45,7 +50,11 @@ describe('gateway quota', () => {
 			executionSecret
 		});
 		const quota = await t.mutation(api.gateway.checkQuota, { token: credential.token });
-		expect(quota).toMatchObject({ userId: subject, tier: 'admin', exhausted: false });
+		expect(quota).toMatchObject({
+			userId: subjectTokenIdentifier(subject),
+			tier: 'admin',
+			exhausted: false
+		});
 		await expect(
 			t.mutation(api.gateway.consumeQuota, { token: credential.token, units: 12 })
 		).resolves.toBeNull();

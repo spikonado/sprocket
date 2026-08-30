@@ -1,6 +1,6 @@
 import { mutation, query } from '@convex/_generated/server';
 import { v } from 'convex/values';
-import { getUserId } from '@convex/lib/auth';
+import { getOwnerKeys, resolveStoredOwnerSubject } from '@convex/lib/auth';
 import { unsupportedClient } from '@convex/lib/unsupportedClient';
 import schema from '@convex/schema';
 
@@ -10,10 +10,21 @@ export const getMine = query({
 	args: {},
 	returns: v.union(schema.doc('uiPreferences'), v.null()),
 	handler: async (ctx) => {
-		const userId = await getUserId(ctx);
+		const keys = await getOwnerKeys(ctx);
+		const canonical = await ctx.db
+			.query('uiPreferences')
+			.withIndex('by_userId', (query) => query.eq('userId', keys.userId))
+			.unique();
+		if (canonical) {
+			return canonical;
+		}
+		const subject = await resolveStoredOwnerSubject(ctx, keys.userId);
+		if (!subject || subject === keys.userId) {
+			return null;
+		}
 		return await ctx.db
 			.query('uiPreferences')
-			.withIndex('by_userId', (query) => query.eq('userId', userId))
+			.withIndex('by_userId', (query) => query.eq('userId', subject))
 			.unique();
 	}
 });
@@ -35,11 +46,27 @@ export const setTheme = mutation({
 	},
 	returns: v.union(schema.doc('uiPreferences'), v.null()),
 	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-		const existing = await ctx.db
+		const keys = await getOwnerKeys(ctx);
+		let existing = await ctx.db
 			.query('uiPreferences')
-			.withIndex('by_userId', (query) => query.eq('userId', userId))
+			.withIndex('by_userId', (query) => query.eq('userId', keys.userId))
 			.unique();
+		if (!existing) {
+			const subject = await resolveStoredOwnerSubject(ctx, keys.userId);
+			if (subject) {
+				existing = await ctx.db
+					.query('uiPreferences')
+					.withIndex('by_userId', (query) => query.eq('userId', subject))
+					.unique();
+				if (existing) {
+					await ctx.db.patch('uiPreferences', existing._id, {
+						userId: keys.userId,
+						theme: args.theme
+					});
+					return await ctx.db.get('uiPreferences', existing._id);
+				}
+			}
+		}
 
 		if (existing) {
 			await ctx.db.patch('uiPreferences', existing._id, {
@@ -49,7 +76,7 @@ export const setTheme = mutation({
 		}
 
 		const id = await ctx.db.insert('uiPreferences', {
-			userId,
+			userId: keys.userId,
 			theme: args.theme
 		});
 		return await ctx.db.get('uiPreferences', id);

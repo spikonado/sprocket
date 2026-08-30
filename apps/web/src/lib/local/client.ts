@@ -566,6 +566,28 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				return null;
 			}
 			return await response.blob();
+		},
+		pushConvexToken: async (token) => {
+			const response = await fetch(`${baseUrl}/api/auth/convex-token`, {
+				method: 'POST',
+				credentials: 'include',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ token })
+			});
+			if (!response.ok) {
+				throw await errorFromFailedResponse(response);
+			}
+		},
+		pushSessionCredential: async (credential) => {
+			const response = await fetch(`${baseUrl}/api/auth/session-credential`, {
+				method: 'POST',
+				credentials: 'include',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify(credential)
+			});
+			if (!response.ok) {
+				throw await errorFromFailedResponse(response);
+			}
 		}
 	};
 }

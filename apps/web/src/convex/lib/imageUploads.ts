@@ -1,5 +1,7 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
+import { resolveStoredOwnerKeys } from '@convex/lib/access';
+import { matchesOwner } from '@convex/lib/auth';
 import { MAX_IMAGE_ATTACHMENTS } from '@convex/lib/validators';
 
 export function areImageUploadIdsEqual(
@@ -23,10 +25,11 @@ export async function getOwnedImageUploads(
 		throw new Error('The same image cannot be attached more than once.');
 	}
 
+	const keys = await resolveStoredOwnerKeys(ctx.db, userId);
 	return await Promise.all(
 		imageUploadIds.map(async (imageUploadId) => {
 			const upload = await ctx.db.get('imageUploads', imageUploadId);
-			if (!upload || upload.userId !== userId) {
+			if (!upload || !matchesOwner(upload.userId, keys)) {
 				throw new Error('Image attachment was not found.');
 			}
 			return upload;

@@ -2,7 +2,12 @@ import { mutation, query, type MutationCtx, type QueryCtx } from '@convex/_gener
 import { v } from 'convex/values';
 import type { Id } from '@convex/_generated/dataModel';
 import { getOwnedThreadRecord } from '@convex/lib/access';
-import { getExecutionRun, getUserId } from '@convex/lib/auth';
+import { getExecutionRun, ownerKeysFromIdentity, type OwnerKeys } from '@convex/lib/auth';
+import {
+	vSessionCredentialProof,
+	authorizeBySessionCredential,
+	type SessionCredentialProof
+} from '@convex/lib/sessionCredentials';
 import {
 	vAttachmentDownloadResult,
 	vTranscriptPartsResult,
@@ -55,22 +60,40 @@ async function transcriptStateResult(
 	};
 }
 
-async function requireOwnedThread(ctx: QueryCtx, threadId: Id<'threadRecords'>) {
-	await getOwnedThreadRecord(ctx.db, await getUserId(ctx), threadId);
+/** Resolves owner keys from the WorkOS identity when present, otherwise from
+ * an executor's session credential. Lets released server binaries keep using
+ * their JWTs while new ones authenticate with the rotating credential. */
+async function resolveCallerKeys(
+	ctx: QueryCtx | MutationCtx,
+	ticket?: SessionCredentialProof
+): Promise<OwnerKeys> {
+	const identity = await ctx.auth.getUserIdentity();
+	if (identity) {
+		return ownerKeysFromIdentity(identity);
+	}
+	if (!ticket) {
+		throw new Error('Authentication required.');
+	}
+	const owner = await authorizeBySessionCredential(ctx, ticket);
+	if (!owner) {
+		throw new Error('Authentication required.');
+	}
+	return owner;
 }
 
 /** Name is frozen for current desktop/server callers. Creates transcript state only. */
 export const ensureMigrated = mutation({
 	args: {
-		threadId: v.id('threadRecords')
+		threadId: v.id('threadRecords'),
+		sessionTicket: v.optional(vSessionCredentialProof)
 	},
 	returns: vTranscriptStateResult,
 	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+		const keys = await resolveCallerKeys(ctx, args.sessionTicket);
+		await getOwnedThreadRecord(ctx.db, keys, args.threadId);
 		await getOrCreateTranscriptState(ctx, {
 			threadId: args.threadId,
-			userId
+			userId: keys.userId
 		});
 		return await transcriptStateResult(ctx, args.threadId);
 	}
@@ -78,11 +101,16 @@ export const ensureMigrated = mutation({
 
 export const getState = query({
 	args: {
-		threadId: v.id('threadRecords')
+		threadId: v.id('threadRecords'),
+		sessionTicket: v.optional(vSessionCredentialProof)
 	},
 	returns: vTranscriptStateResult,
 	handler: async (ctx, args) => {
-		await requireOwnedThread(ctx, args.threadId);
+		await getOwnedThreadRecord(
+			ctx.db,
+			await resolveCallerKeys(ctx, args.sessionTicket),
+			args.threadId
+		);
 		return await transcriptStateResult(ctx, args.threadId);
 	}
 });
@@ -90,11 +118,16 @@ export const getState = query({
 export const getParts = query({
 	args: {
 		threadId: v.id('threadRecords'),
-		numbers: v.array(v.number())
+		numbers: v.array(v.number()),
+		sessionTicket: v.optional(vSessionCredentialProof)
 	},
 	returns: vTranscriptPartsResult,
 	handler: async (ctx, args) => {
-		await requireOwnedThread(ctx, args.threadId);
+		await getOwnedThreadRecord(
+			ctx.db,
+			await resolveCallerKeys(ctx, args.sessionTicket),
+			args.threadId
+		);
 		const parts = await hydrateTranscriptPartUrls(
 			ctx,
 			await loadTranscriptPartsByNumbers(ctx, args.threadId, args.numbers)
@@ -134,13 +167,14 @@ export const getPartsForRun = query({
 
 export const attachmentDownload = query({
 	args: {
-		imageUploadId: v.id('imageUploads')
+		imageUploadId: v.id('imageUploads'),
+		sessionTicket: v.optional(vSessionCredentialProof)
 	},
 	returns: vAttachmentDownloadResult,
 	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
+		const keys = await resolveCallerKeys(ctx, args.sessionTicket);
 		const upload = await ctx.db.get('imageUploads', args.imageUploadId);
-		if (!upload || upload.userId !== userId) {
+		if (!upload || (upload.userId !== keys.userId && upload.userId !== keys.subject)) {
 			return null;
 		}
 		const url = await ctx.storage.getUrl(upload.storageId);

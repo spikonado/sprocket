@@ -6,6 +6,7 @@ import {
 	createQueuedRun,
 	initConvexTest,
 	seedOwnedThread,
+	subjectTokenIdentifier,
 	type ConvexTestInstance
 } from '@convex/test.setup';
 
@@ -195,6 +196,8 @@ describe('payments mandates', () => {
 		});
 		const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
 		expect(body).toMatchObject({
+			// Prava customer keys stay on the pre-migration subject; the local
+			// row's userId now holds the canonical tokenIdentifier.
 			user_id: 'user_alice',
 			// The email comes from the caller's WorkOS identity, not tool args.
 			user_email: 'user_alice@example.com',
@@ -219,7 +222,7 @@ describe('payments mandates', () => {
 		});
 		const stored = await t.run(async (ctx) => ctx.db.get('mandates', result.mandateId));
 		expect(stored).toMatchObject({
-			userId: 'user_alice',
+			userId: subjectTokenIdentifier('user_alice'),
 			status: 'pending',
 			amountCap: 12_000,
 			description: 'Monthly budget',
@@ -304,7 +307,7 @@ describe('payments mandates', () => {
 
 		const stored = await t.run(async (ctx) => ctx.db.get('mandateCharges', charge.chargeId));
 		expect(stored).toMatchObject({
-			userId: 'user_alice',
+			userId: subjectTokenIdentifier('user_alice'),
 			pravaTransactionId: 'txn_9',
 			amount: 4_000,
 			status: 'awaiting_result'

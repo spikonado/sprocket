@@ -2,7 +2,6 @@ import {
 	DAY,
 	HOUR,
 	MINUTE,
-	RateLimiter,
 	SECOND,
 	WEEK,
 	calculateRateLimit,
@@ -10,10 +9,10 @@ import {
 	type RunMutationCtx,
 	type RunQueryCtx
 } from '@convex-dev/rate-limiter';
-import { components } from '@convex/_generated/api';
+import { components, internal } from '@convex/_generated/api';
 import type { DataModel } from '@convex/_generated/dataModel';
 import { internalMutation } from '@convex/_generated/server';
-import { type GenericMutationCtx } from 'convex/server';
+import type { GenericMutationCtx } from 'convex/server';
 import { ConvexError, v } from 'convex/values';
 import {
 	ensureSubscription,
@@ -31,7 +30,6 @@ import {
 export { usageMeters, usagePeriods, type UsageMeterId, type UsagePeriod };
 
 const MONTH = 30 * DAY;
-export const rateLimiter = new RateLimiter(components.rateLimiter, {});
 
 const periodDurations = { weekly: WEEK, monthly: MONTH } as const satisfies Record<
 	UsagePeriod,
@@ -73,8 +71,69 @@ function formatRetryAfter(milliseconds: number): string {
 	return parts.join(' ');
 }
 
-async function blockedMeterLimit(
-	ctx: RunMutationCtx,
+/** A meter window read straight from the rate-limiter component. */
+type MeterWindow = {
+	value: number;
+	ts: number;
+	shard: number;
+	config: RateLimitConfig;
+};
+
+/**
+ * Writes always go to the canonical tokenIdentifier; rows charged before the
+ * migration live under the legacy subject, so readers fold both into one
+ * window. Without the legacy read a pre-migration overage would silently
+ * become a fresh free window.
+ */
+async function readMeterWindow(
+	ctx: RunQueryCtx,
+	userId: string,
+	name: string,
+	config: RateLimitConfig
+): Promise<MeterWindow> {
+	const subject = await ctx.runQuery(internal.lib.auth.storedOwnerSubject, { userId });
+	const canonical = await ctx.runQuery(components.rateLimiter.lib.getValue, {
+		name,
+		key: userId,
+		config
+	});
+	const canonicalWindow: MeterWindow = {
+		value: canonical.value,
+		ts: canonical.ts,
+		shard: canonical.shard,
+		config
+	};
+	if (!subject || subject === userId) return canonicalWindow;
+	const legacy = await ctx.runQuery(components.rateLimiter.lib.getValue, {
+		name,
+		key: subject,
+		config
+	});
+	return largestMeterWindow(canonicalWindow, {
+		value: legacy.value,
+		ts: legacy.ts,
+		shard: legacy.shard,
+		config
+	});
+}
+
+/** The original whose window reports more usage (or the only one started). */
+function largestMeterWindow(left: MeterWindow, right: MeterWindow): MeterWindow {
+	if (left.ts === 0) return right;
+	if (right.ts === 0) return left;
+	// Fixed-window shards keep usage as (rate - value); older windows have
+	// decayed further, so the larger user-visible used amount is the tighter
+	// bound for both blocking and display.
+	const leftUsed = Math.max(0, left.config.rate - left.value);
+	const rightUsed = Math.max(0, right.config.rate - right.value);
+	// Shard zero holds the full window; nonzero shards are partial chunks.
+	if (left.shard === 0 && right.shard !== 0) return left;
+	if (right.shard === 0 && left.shard !== 0) return right;
+	return leftUsed >= rightUsed ? left : right;
+}
+
+async function blockedForKey(
+	ctx: RunQueryCtx,
 	meterId: UsageMeterId,
 	key: string,
 	limits: TierLimits
@@ -82,7 +141,8 @@ async function blockedMeterLimit(
 	const statuses = await Promise.all(
 		usagePeriods.map(async (period) => ({
 			period,
-			status: await rateLimiter.check(ctx, meterLimitName(meterId, period), {
+			status: await ctx.runQuery(components.rateLimiter.lib.checkRateLimit, {
+				name: meterLimitName(meterId, period),
 				key,
 				config: meterLimitConfig(meterId, period, limits)
 			})
@@ -95,6 +155,21 @@ async function blockedMeterLimit(
 		return { period: blocked.period, retryAfter: blocked.status.retryAfter ?? 0 };
 	}
 	return undefined;
+}
+
+async function blockedMeterLimit(
+	ctx: RunMutationCtx,
+	meterId: UsageMeterId,
+	key: string,
+	limits: TierLimits
+): Promise<{ period: UsagePeriod; retryAfter: number } | undefined> {
+	const canonical = await blockedForKey(ctx, meterId, key, limits);
+	const subject = await ctx.runQuery(internal.lib.auth.storedOwnerSubject, { userId: key });
+	if (!subject || subject === key) return canonical;
+	const legacy = await blockedForKey(ctx, meterId, subject, limits);
+	if (!canonical) return legacy;
+	if (!legacy) return canonical;
+	return legacy.retryAfter > canonical.retryAfter ? legacy : canonical;
 }
 
 async function checkMeterLimits(
@@ -112,6 +187,62 @@ async function checkMeterLimits(
 	);
 }
 
+async function chargeOwnerKey(
+	ctx: RunQueryCtx,
+	userId: string,
+	meterId: UsageMeterId,
+	limits: TierLimits
+): Promise<string> {
+	const subject = await ctx.runQuery(internal.lib.auth.storedOwnerSubject, { userId });
+	if (!subject || subject === userId) return userId;
+	const config = meterLimitConfig(meterId, 'weekly', limits);
+	const name = meterLimitName(meterId, 'weekly');
+	const canonical = await ctx.runQuery(components.rateLimiter.lib.getValue, {
+		name,
+		key: userId,
+		config
+	});
+	const legacy = await ctx.runQuery(components.rateLimiter.lib.getValue, {
+		name,
+		key: subject,
+		config
+	});
+	if (legacy.ts === 0) return userId;
+	if (canonical.ts === 0) return subject;
+	const left: MeterWindow = {
+		value: canonical.value,
+		ts: canonical.ts,
+		shard: canonical.shard,
+		config
+	};
+	const right: MeterWindow = {
+		value: legacy.value,
+		ts: legacy.ts,
+		shard: legacy.shard,
+		config
+	};
+	return largestMeterWindow(left, right) === left ? userId : subject;
+}
+
+async function chargeMeterLimits(
+	ctx: RunMutationCtx,
+	meterId: UsageMeterId,
+	key: string,
+	limits: TierLimits,
+	count: number
+): Promise<void> {
+	const chargeKey = await chargeOwnerKey(ctx, key, meterId, limits);
+	for (const period of usagePeriods) {
+		await ctx.runMutation(components.rateLimiter.lib.rateLimit, {
+			name: meterLimitName(meterId, period),
+			key: chargeKey,
+			config: meterLimitConfig(meterId, period, limits),
+			count,
+			reserve: true
+		});
+	}
+}
+
 export async function gatewayQuotaStatus(
 	ctx: GenericMutationCtx<DataModel>,
 	userId: string
@@ -127,23 +258,6 @@ export async function gatewayQuotaStatus(
 	};
 }
 
-async function chargeMeterLimits(
-	ctx: RunMutationCtx,
-	meterId: UsageMeterId,
-	key: string,
-	limits: TierLimits,
-	count: number
-): Promise<void> {
-	for (const period of usagePeriods) {
-		await rateLimiter.limit(ctx, meterLimitName(meterId, period), {
-			key,
-			config: meterLimitConfig(meterId, period, limits),
-			count,
-			reserve: true
-		});
-	}
-}
-
 export async function getMeterWindow(
 	ctx: RunQueryCtx,
 	meterId: UsageMeterId,
@@ -153,17 +267,14 @@ export async function getMeterWindow(
 	now: number = Date.now()
 ): Promise<{ used: number; limit: number; resetsAt: number | null }> {
 	const config = meterLimitConfig(meterId, period, limits);
-	const stored = await rateLimiter.getValue(ctx, meterLimitName(meterId, period), {
-		key: userId,
-		config
-	});
+	const stored = await readMeterWindow(ctx, userId, meterLimitName(meterId, period), config);
 	// A fixed window starts on first use; ts === 0 means it never has.
 	if (stored.ts === 0) return { used: 0, limit: config.rate, resetsAt: null };
-	const current = calculateRateLimit({ value: stored.value, ts: stored.ts }, config, now);
+	const current = calculateRateLimit({ value: stored.value, ts: stored.ts }, stored.config, now);
 	return {
-		used: Math.max(0, config.rate - current.value),
+		used: Math.max(0, stored.config.rate - current.value),
 		limit: config.rate,
-		resetsAt: current.ts + config.period
+		resetsAt: current.ts + stored.config.period
 	};
 }
 

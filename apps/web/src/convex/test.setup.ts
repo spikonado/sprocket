@@ -30,6 +30,15 @@ export type ConvexTestInstance = TestConvex<typeof schema>;
 
 type AuthenticatedTest = ReturnType<ConvexTestInstance['withIdentity']>;
 
+const identitySubjectPlaceholder = 'https://convex.test';
+
+/** The canonical owner key (identity.tokenIdentifier) for a test subject:
+ * APIs write `userId` with it and every backfill/rewrite migrates rows onto
+ * it. Subjects alone still exercise legacy rows. */
+export function subjectTokenIdentifier(subject: string): string {
+	return `${identitySubjectPlaceholder}|${subject}`;
+}
+
 /** Fresh mock backend with our schema, functions, and registered components. */
 export function initConvexTest(): ConvexTestInstance {
 	const t = convexTest(schema, modules);
@@ -57,10 +66,23 @@ export async function seedOwnedThread(
 	threadId: Id<'threadRecords'>;
 }> {
 	const asUser = t.withIdentity({ subject });
+	const userId = subjectTokenIdentifier(subject);
 	// Integration fixtures exercise every model; grant admin so free-tier allowlists do not block them.
 	await t.run(async (ctx) => {
+		const existingUser = await ctx.db
+			.query('users')
+			.withIndex('by_subject', (query) => query.eq('subject', subject))
+			.unique();
+		if (!existingUser) {
+			await ctx.db.insert('users', {
+				subject,
+				tokenIdentifier: userId,
+				email: `${subject}@example.com`,
+				createdAt: 1
+			});
+		}
 		await ctx.db.insert('subscriptions', {
-			userId: subject,
+			userId,
 			tier: 'admin',
 			dodoSubscriptionId: '',
 			dodoProductId: '',

@@ -6,6 +6,7 @@ use sprocket_agent::{TRANSCRIPT_PAGE_SIZE, TranscriptStore, apply_remote_state};
 use tokio::sync::{Mutex, broadcast};
 use tokio::task::JoinHandle;
 
+use crate::convex_auth::ConvexTokenProvider;
 use crate::transcript_client::{
     UserConvexClient, decode_state_update, retry_after_failure, sync_range,
 };
@@ -39,12 +40,17 @@ struct WatchStart {
     user_id: String,
     thread_id: String,
     auth_token: String,
+    tokens: ConvexTokenProvider,
+    session_credential: Option<sprocket_convex::SessionCredentialProvider>,
     events: broadcast::Sender<TranscriptWatchEvent>,
 }
 
 pub struct TranscriptWatchers {
     deployment_url: String,
     store: Arc<TranscriptStore>,
+    tokens: ConvexTokenProvider,
+    session_credentials:
+        Arc<tokio::sync::Mutex<Option<sprocket_convex::SessionCredentialProvider>>>,
     inner: Mutex<HashMap<WatchKey, WatchSlot>>,
     start: WatchStarter,
 }
@@ -56,18 +62,37 @@ pub struct TranscriptWatchSession {
 }
 
 impl TranscriptWatchers {
-    pub fn new(deployment_url: String, store: Arc<TranscriptStore>) -> Arc<Self> {
-        Self::with_starter(deployment_url, store, Arc::new(spawn_convex_watch))
+    pub fn new(
+        deployment_url: String,
+        store: Arc<TranscriptStore>,
+        tokens: ConvexTokenProvider,
+        session_credentials: Arc<
+            tokio::sync::Mutex<Option<sprocket_convex::SessionCredentialProvider>>,
+        >,
+    ) -> Arc<Self> {
+        Self::with_starter(
+            deployment_url,
+            store,
+            tokens,
+            session_credentials,
+            Arc::new(spawn_convex_watch),
+        )
     }
 
     fn with_starter(
         deployment_url: String,
         store: Arc<TranscriptStore>,
+        tokens: ConvexTokenProvider,
+        session_credentials: Arc<
+            tokio::sync::Mutex<Option<sprocket_convex::SessionCredentialProvider>>,
+        >,
         start: WatchStarter,
     ) -> Arc<Self> {
         Arc::new(Self {
             deployment_url,
             store,
+            tokens,
+            session_credentials,
             inner: Mutex::new(HashMap::new()),
             start,
         })
@@ -104,12 +129,15 @@ impl TranscriptWatchers {
             };
         }
         let (events, rx) = broadcast::channel(16);
+        let session_credential = self.session_credentials.lock().await.clone();
         let task = (self.start)(WatchStart {
             deployment_url: self.deployment_url.clone(),
             store: Arc::clone(&self.store),
             user_id: user_id.to_string(),
             thread_id: thread_id.to_string(),
             auth_token,
+            tokens: self.tokens.clone(),
+            session_credential,
             events: events.clone(),
         });
         inner.insert(
@@ -198,7 +226,13 @@ fn spawn_convex_watch(start: WatchStart) -> JoinHandle<()> {
 }
 
 async fn run_watch_loop(start: &WatchStart) -> anyhow::Result<()> {
-    let client = UserConvexClient::connect(&start.deployment_url, start.auth_token.clone()).await?;
+    let client = UserConvexClient::connect(
+        &start.deployment_url,
+        start.auth_token.clone(),
+        start.tokens.clone(),
+        start.session_credential.clone(),
+    )
+    .await?;
     let remote = client.ensure_migrated(&start.thread_id).await?;
     apply_remote_state(
         &start.store,
@@ -271,6 +305,10 @@ mod tests {
         let watchers = TranscriptWatchers::with_starter(
             "https://example.convex.cloud".into(),
             store,
+            ConvexTokenProvider::new(),
+            Arc::new(tokio::sync::Mutex::new(
+                None::<sprocket_convex::SessionCredentialProvider>,
+            )),
             Arc::new(move |_start| {
                 let live_task = live_task.clone();
                 live_task.fetch_add(1, Ordering::SeqCst);

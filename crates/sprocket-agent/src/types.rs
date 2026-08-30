@@ -5,7 +5,7 @@ use rig::message::{
     ToolCallId, ToolFunction, ToolResult, ToolResultContent, UserContent,
 };
 use serde::{Deserialize, Deserializer, Serialize};
-use sprocket_convex::AuthTokenFetcher;
+use sprocket_convex::{AuthTokenFetcher, SessionCredentialProvider};
 
 pub(crate) fn gateway_api_v1_url(gateway_url: &str) -> String {
     format!("{}/api/v1", gateway_url.trim_end_matches('/'))
@@ -15,6 +15,9 @@ pub(crate) fn gateway_api_v1_url(gateway_url: &str) -> String {
 pub struct RunAgentRequest {
     pub deployment_url: String,
     pub auth_token_fetcher: AuthTokenFetcher,
+    /// When set, the local server authenticates Convex calls with the
+    /// rotating session credential instead of a forwarded WorkOS token.
+    pub session_credential: Option<SessionCredentialProvider>,
     pub execution_secret: String,
     pub submission_id: String,
     pub thread_id: String,
