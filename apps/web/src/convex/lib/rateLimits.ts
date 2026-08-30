@@ -187,6 +187,40 @@ async function checkMeterLimits(
 	);
 }
 
+async function meterWindowForKey(
+	ctx: RunQueryCtx,
+	key: string,
+	name: string,
+	config: RateLimitConfig
+): Promise<MeterWindow> {
+	const stored = await ctx.runQuery(components.rateLimiter.lib.getValue, {
+		name,
+		key,
+		config
+	});
+	return {
+		value: stored.value,
+		ts: stored.ts,
+		shard: stored.shard,
+		config
+	};
+}
+
+/** Prefer the key that already has an open window so a weekly reset cannot
+ *  open a fresh monthly window on the other key. Monthly is checked first
+ *  because it outlives the weekly meter. */
+function chargeKeyForWindows(
+	userId: string,
+	subject: string,
+	canonical: MeterWindow,
+	legacy: MeterWindow
+): string | undefined {
+	if (legacy.ts === 0 && canonical.ts === 0) return undefined;
+	if (legacy.ts === 0) return userId;
+	if (canonical.ts === 0) return subject;
+	return largestMeterWindow(canonical, legacy) === canonical ? userId : subject;
+}
+
 async function chargeOwnerKey(
 	ctx: RunQueryCtx,
 	userId: string,
@@ -195,33 +229,18 @@ async function chargeOwnerKey(
 ): Promise<string> {
 	const subject = await ctx.runQuery(internal.lib.auth.storedOwnerSubject, { userId });
 	if (!subject || subject === userId) return userId;
-	const config = meterLimitConfig(meterId, 'weekly', limits);
-	const name = meterLimitName(meterId, 'weekly');
-	const canonical = await ctx.runQuery(components.rateLimiter.lib.getValue, {
-		name,
-		key: userId,
-		config
-	});
-	const legacy = await ctx.runQuery(components.rateLimiter.lib.getValue, {
-		name,
-		key: subject,
-		config
-	});
-	if (legacy.ts === 0) return userId;
-	if (canonical.ts === 0) return subject;
-	const left: MeterWindow = {
-		value: canonical.value,
-		ts: canonical.ts,
-		shard: canonical.shard,
-		config
-	};
-	const right: MeterWindow = {
-		value: legacy.value,
-		ts: legacy.ts,
-		shard: legacy.shard,
-		config
-	};
-	return largestMeterWindow(left, right) === left ? userId : subject;
+	for (const period of ['monthly', 'weekly'] as const) {
+		const config = meterLimitConfig(meterId, period, limits);
+		const name = meterLimitName(meterId, period);
+		const chargeKey = chargeKeyForWindows(
+			userId,
+			subject,
+			await meterWindowForKey(ctx, userId, name, config),
+			await meterWindowForKey(ctx, subject, name, config)
+		);
+		if (chargeKey) return chargeKey;
+	}
+	return userId;
 }
 
 async function chargeMeterLimits(

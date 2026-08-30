@@ -71,8 +71,10 @@ async fn run_agent_handler(
         .await
         .map_err(ApiError::bad_request)?;
 
-    state.convex_tokens.update(payload.auth_token).await;
-    let auth_token_fetcher = state.convex_tokens.fetcher("agent");
+    state.convex_tokens.update(payload.auth_token.clone()).await;
+    let auth_token_fetcher = state
+        .convex_tokens
+        .fetcher_for_token("agent", &payload.auth_token);
     let session_credential = state.session_credentials.lock().await.clone();
     let request = RunAgentRequest {
         deployment_url: state.convex_deployment_url.clone(),

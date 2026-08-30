@@ -27,9 +27,9 @@ impl UserConvexClient {
         let client = ConvexClient::new(deployment_url).await?;
         // Keep the JWT fetcher even when a session credential is present so
         // an expired on-disk ticket can still fall back to a live access token.
-        tokens.update(auth_token).await;
+        tokens.update(auth_token.clone()).await;
         client
-            .set_auth_token_fetcher(tokens.fetcher("transcript"))
+            .set_auth_token_fetcher(tokens.fetcher_for_token("transcript", &auth_token))
             .await;
         Ok(Self {
             client,

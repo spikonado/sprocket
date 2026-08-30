@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -19,19 +20,28 @@ struct CachedToken {
     refresh_after: Option<Instant>,
 }
 
+#[derive(Default)]
+struct TokenStore {
+    by_subject: HashMap<String, CachedToken>,
+    last_subject: Option<String>,
+}
+
 /// Holds the caller's Convex JWT and hands fresh copies to the Convex client.
 ///
 /// The browser owns the WorkOS session, so it pushes renewed access tokens to
-/// the server (`POST /api/auth/convex-token`), which calls [`update`]. The
-/// Convex client pulls via [`Self::fetcher`]. On `force_refresh` we wait
-/// briefly for a pushed token that is fresher than the one Convex just
-/// rejected, instead of replaying a token the backend already refused.
+/// the server (`POST /api/auth/convex-token`), which calls [`update`]. Tokens
+/// are stored by JWT `sub` so a long-lived agent or transcript client keeps
+/// using the account it started with after another local session updates the
+/// process-wide cache. The Convex client pulls via [`Self::fetcher_for_token`].
+/// On `force_refresh` we wait briefly for a pushed token that is fresher than
+/// the one Convex just rejected, instead of replaying a token the backend
+/// already refused.
 ///
 /// [`update`]: ConvexTokenProvider::update
-/// [`Self::fetcher`]: ConvexTokenProvider::fetcher
+/// [`Self::fetcher_for_token`]: ConvexTokenProvider::fetcher_for_token
 #[derive(Clone, Default)]
 pub struct ConvexTokenProvider {
-    inner: Arc<Mutex<Option<CachedToken>>>,
+    inner: Arc<Mutex<TokenStore>>,
 }
 
 impl ConvexTokenProvider {
@@ -52,23 +62,39 @@ impl ConvexTokenProvider {
         if token.is_empty() {
             return;
         }
+        let subject = access_token_subject(&token).unwrap_or_default();
         let refresh_after =
             access_token_expiry(&token).and_then(|expiry| expiry.checked_sub(EXPIRY_BUFFER));
-        *self.inner.lock().await = Some(CachedToken {
-            token,
-            refresh_after,
-        });
+        let mut store = self.inner.lock().await;
+        store.by_subject.insert(
+            subject.clone(),
+            CachedToken {
+                token,
+                refresh_after,
+            },
+        );
+        store.last_subject = Some(subject);
     }
 
     pub fn fetcher(&self, label: &'static str) -> AuthTokenFetcher {
+        self.bound_fetcher(label, None)
+    }
+
+    /// Fetcher that only returns tokens for `token`'s JWT subject.
+    pub fn fetcher_for_token(&self, label: &'static str, token: &str) -> AuthTokenFetcher {
+        self.bound_fetcher(label, Some(access_token_subject(token).unwrap_or_default()))
+    }
+
+    fn bound_fetcher(&self, label: &'static str, subject: Option<String>) -> AuthTokenFetcher {
         let provider = self.clone();
         Arc::new(move |force_refresh| {
             let provider = provider.clone();
+            let subject = subject.clone();
             Box::pin(async move {
                 let token = if force_refresh {
-                    provider.wait_for_fresh().await
+                    provider.wait_for_fresh(subject.as_deref()).await
                 } else {
-                    provider.current().await
+                    provider.current(subject.as_deref()).await
                 };
                 match token {
                     Some(token) if !token.trim().is_empty() => Ok(token),
@@ -78,30 +104,29 @@ impl ConvexTokenProvider {
         })
     }
 
-    async fn current(&self) -> Option<String> {
-        self.inner
-            .lock()
-            .await
-            .as_ref()
-            .map(|cached| cached.token.clone())
+    async fn current(&self, subject: Option<&str>) -> Option<String> {
+        let store = self.inner.lock().await;
+        let key = subject.or(store.last_subject.as_deref())?;
+        store.by_subject.get(key).map(|cached| cached.token.clone())
     }
 
     /// Returns the cached token once it is fresh, waiting for a push. Falls
     /// back to the freshest cached copy after [`FORCE_REFRESH_WAIT`] so a dead
     /// browser degrades to the old behavior instead of hanging the client.
-    async fn wait_for_fresh(&self) -> Option<String> {
+    async fn wait_for_fresh(&self, subject: Option<&str>) -> Option<String> {
         let deadline = Instant::now() + FORCE_REFRESH_WAIT;
         loop {
             {
-                let guard = self.inner.lock().await;
-                if let Some(cached) = guard.as_ref() {
-                    if cached.is_fresh() {
-                        return Some(cached.token.clone());
-                    }
+                let store = self.inner.lock().await;
+                if let Some(key) = subject.or(store.last_subject.as_deref())
+                    && let Some(cached) = store.by_subject.get(key)
+                    && cached.is_fresh()
+                {
+                    return Some(cached.token.clone());
                 }
             }
             if Instant::now() >= deadline {
-                return self.current().await;
+                return self.current(subject).await;
             }
             tokio::time::sleep(FORCE_REFRESH_POLL).await;
         }
@@ -118,13 +143,24 @@ impl CachedToken {
     }
 }
 
-/// Reads the `exp` claim without verifying the signature. The server never
-/// trusts this token for its own authorization — it only forwards it to
-/// Convex — so decoding (not verifying) is the correct operation here.
-fn access_token_expiry(token: &str) -> Option<Instant> {
+/// Reads JWT claims without verifying the signature. The server never trusts
+/// this token for its own authorization — it only forwards it to Convex — so
+/// decoding (not verifying) is the correct operation here.
+fn access_token_claims(token: &str) -> Option<serde_json::Value> {
     let payload = token.split('.').nth(1)?;
     let decoded = base64_url_decode(payload)?;
-    let claims: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
+    serde_json::from_slice(&decoded).ok()
+}
+
+fn access_token_subject(token: &str) -> Option<String> {
+    access_token_claims(token)?
+        .get("sub")?
+        .as_str()
+        .map(str::to_string)
+}
+
+fn access_token_expiry(token: &str) -> Option<Instant> {
+    let claims = access_token_claims(token)?;
     let exp_secs = claims.get("exp")?.as_u64()?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -195,14 +231,21 @@ mod tests {
     }
 
     fn unsigned_jwt(exp_offset_secs: i64) -> String {
+        unsigned_jwt_with_subject(exp_offset_secs, None)
+    }
+
+    fn unsigned_jwt_with_subject(exp_offset_secs: i64, subject: Option<&str>) -> String {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64;
         let exp = now + exp_offset_secs;
+        let payload = match subject {
+            Some(subject) => format!(r#"{{"exp":{exp},"sub":"{subject}"}}"#),
+            None => format!(r#"{{"exp":{exp}}}"#),
+        };
         let header = base64_url_encode(br#"{"alg":"none"}"#);
-        let payload = base64_url_encode(format!(r#"{{"exp":{exp}}}"#).as_bytes());
-        format!("{header}.{payload}.sig")
+        format!("{header}.{}.sig", base64_url_encode(payload.as_bytes()))
     }
 
     #[test]
@@ -253,5 +296,17 @@ mod tests {
         let provider = ConvexTokenProvider::new();
         let fetcher = provider.fetcher("test");
         assert!(fetcher(false).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn fetcher_stays_on_original_subject_after_another_account_updates() {
+        let provider = ConvexTokenProvider::new();
+        let alice = unsigned_jwt_with_subject(300, Some("alice"));
+        let bob = unsigned_jwt_with_subject(300, Some("bob"));
+        provider.update(alice.clone()).await;
+        let fetcher = provider.fetcher_for_token("test", &alice);
+        provider.update(bob).await;
+        let token = fetcher(false).await.expect("alice token");
+        assert_eq!(token, alice);
     }
 }

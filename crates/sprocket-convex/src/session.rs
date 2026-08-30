@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, bail};
@@ -33,6 +34,7 @@ struct CredentialState {
 pub struct SessionCredentialProvider {
     state: Arc<Mutex<CredentialState>>,
     persist_path: Option<Arc<PathBuf>>,
+    persist_enabled: Arc<AtomicBool>,
     client: Arc<Client>,
 }
 
@@ -48,6 +50,7 @@ impl SessionCredentialProvider {
                 generation: 0,
             })),
             persist_path: persist_path.map(Arc::new),
+            persist_enabled: Arc::new(AtomicBool::new(true)),
             client,
         }
     }
@@ -66,7 +69,17 @@ impl SessionCredentialProvider {
         self.persist_now().await
     }
 
+    /// Stops writing this provider's ticket to disk so a later account can
+    /// take over `session-credential.json` without an in-flight rotator
+    /// clobbering it.
+    pub fn disable_persist(&self) {
+        self.persist_enabled.store(false, Ordering::Release);
+    }
+
     pub async fn persist_now(&self) -> anyhow::Result<()> {
+        if !self.persist_enabled.load(Ordering::Acquire) {
+            return Ok(());
+        }
         let Some(path) = &self.persist_path else {
             return Ok(());
         };

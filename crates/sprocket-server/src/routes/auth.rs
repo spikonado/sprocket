@@ -107,29 +107,34 @@ async fn push_session_credential(
         next: payload.next,
     };
     let mut active = state.session_credentials.lock().await;
-    if let Some(provider) = active.as_ref() {
+    if let Some(provider) = active.as_ref()
+        && provider.current_ticket().await.user_id == snapshot.user_id
+    {
         provider
             .replace(snapshot)
             .await
             .map_err(|error| ApiError::internal_with("failed to save session credential", error))?;
-    } else {
-        let client = sprocket_convex::Client::new(&state.convex_deployment_url)
-            .await
-            .map_err(|error| ApiError::internal_with("failed to connect to Convex", error))?;
-        let provider = sprocket_convex::SessionCredentialProvider::from_snapshot(
-            Arc::new(client),
-            snapshot,
-            Some(credential_path),
-        );
-        provider
-            .persist_now()
-            .await
-            .map_err(|error| ApiError::internal_with("failed to save session credential", error))?;
-        *active = Some(provider.clone());
-        tokio::spawn(async move {
-            let _ = provider.run_rotator().await;
-        });
+        return Ok(StatusCode::NO_CONTENT);
     }
+    if let Some(previous) = active.as_ref() {
+        previous.disable_persist();
+    }
+    let client = sprocket_convex::Client::new(&state.convex_deployment_url)
+        .await
+        .map_err(|error| ApiError::internal_with("failed to connect to Convex", error))?;
+    let provider = sprocket_convex::SessionCredentialProvider::from_snapshot(
+        Arc::new(client),
+        snapshot,
+        Some(credential_path),
+    );
+    provider
+        .persist_now()
+        .await
+        .map_err(|error| ApiError::internal_with("failed to save session credential", error))?;
+    *active = Some(provider.clone());
+    tokio::spawn(async move {
+        let _ = provider.run_rotator().await;
+    });
     Ok(StatusCode::NO_CONTENT)
 }
 
