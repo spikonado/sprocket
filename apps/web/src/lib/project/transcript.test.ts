@@ -7,7 +7,9 @@ import {
 	messagesFromTranscriptParts
 } from '$lib/project/transcript';
 
+// SAFETY: Tests use stable opaque strings where only ID equality matters.
 const threadId = (value = 'thread-1') => value as Id<'threadRecords'>;
+// SAFETY: Tests use stable opaque strings where only ID equality matters.
 const runId = (value = 'run-1') => value as Id<'runs'>;
 
 function part(

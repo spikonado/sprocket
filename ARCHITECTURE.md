@@ -56,17 +56,17 @@ authorizes the browser or Electron renderer to access the machine-facing API.
 
 ## Component boundaries
 
-| Component         | Owns                                                             | Does not own                           |
-| ----------------- | ---------------------------------------------------------------- | -------------------------------------- |
-| Svelte app        | User interaction, reactive views, submission recovery            | Transcript synchronization, filesystem access, or provider secrets |
-| Electron shell    | Desktop lifecycle, trusted renderer bridge, local server process | Conversation or agent state            |
-| CLI               | Process launch and server-mode selection                         | Agent implementation                   |
-| Local server      | Local authorization, transcript replica and live stream, agent task lifetime | Durable conversation source of truth |
-| Agent runtime     | Run claim, model/tool loop, cancellation, finalization           | HTTP presentation or cloud schema      |
-| Workspace crate   | Paths, commands, patches, workspace instructions                 | Authentication or networking           |
-| Convex RPC client | Generic Convex query/mutation/action/subscribe                   | Completion translation                 |
-| AI gateway        | Provider routing, OpenAI API, catalog, usage rates               | Subscription limits or remaining quota |
-| Convex backend    | User data, run coordination, transcript, remaining quota         | Local paths, process execution, rates  |
+| Component         | Owns                                                                         | Does not own                                                       |
+| ----------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Svelte app        | User interaction, reactive views, submission recovery                        | Transcript synchronization, filesystem access, or provider secrets |
+| Electron shell    | Desktop lifecycle, trusted renderer bridge, local server process             | Conversation or agent state                                        |
+| CLI               | Process launch and server-mode selection                                     | Agent implementation                                               |
+| Local server      | Local authorization, transcript replica and live stream, agent task lifetime | Durable conversation source of truth                               |
+| Agent runtime     | Run claim, model/tool loop, cancellation, finalization                       | HTTP presentation or cloud schema                                  |
+| Workspace crate   | Paths, commands, patches, workspace instructions                             | Authentication or networking                                       |
+| Convex RPC client | Generic Convex query/mutation/action/subscribe                               | Completion translation                                             |
+| AI gateway        | Provider routing, OpenAI API, catalog, usage rates                           | Subscription limits or remaining quota                             |
+| Convex backend    | User data, run coordination, transcript, remaining quota                     | Local paths, process execution, rates                              |
 
 The Rust dependency direction follows these boundaries:
 
@@ -105,8 +105,8 @@ Sprocket deliberately separates cloud and machine-local state.
 | State                                                                | Owner                |
 | -------------------------------------------------------------------- | -------------------- |
 | Users, threads, durable transcript parts, runs, and tool-job records | Convex               |
-| Local transcript replica                                            | Local server         |
-| Current assistant stream                                            | Local process memory |
+| Local transcript replica                                             | Local server         |
+| Current assistant stream                                             | Local process memory |
 | Local folder list (`workspacePath` + `repositoryKey`)                | Local server         |
 | Pairing credential and local browser sessions                        | Local server         |
 | Active commands, cancellation tokens, and run execution capabilities | Local process memory |
