@@ -17,7 +17,7 @@ use crate::live::LiveCompletionHub;
 use crate::provider::{AgentProvider, AgentProviderRequest, AgentProviderResult};
 use crate::transcript::{
     TranscriptStore, agent_history_from_parts, apply_remote_state, current_run_has_finished_turns,
-    fetch_missing_parts, fetch_parts_by_numbers,
+    fetch_missing_parts, fetch_parts_by_numbers, parse_remote_parts,
 };
 use crate::types::{RunAgentRequest, RunContextResponse, deserialize_agent_history};
 
@@ -47,6 +47,8 @@ pub struct AgentRun {
     request: RunAgentRequest,
     runtime: RuntimeClient,
     run_id: String,
+    user_id: String,
+    prompt_part: crate::transcript::TranscriptPart,
     claim_id: String,
     workspace_root: std::path::PathBuf,
     gateway_url: String,
@@ -55,6 +57,14 @@ pub struct AgentRun {
 impl AgentRun {
     pub fn run_id(&self) -> &str {
         &self.run_id
+    }
+
+    pub fn user_id(&self) -> &str {
+        &self.user_id
+    }
+
+    pub fn prompt_part(&self) -> &crate::transcript::TranscriptPart {
+        &self.prompt_part
     }
 }
 
@@ -595,11 +605,19 @@ pub async fn start_agent_run(request: RunAgentRequest) -> anyhow::Result<AgentRu
             request.submission_id, created_run.run_id
         );
     }
+    let mut prompt_parts = parse_remote_parts(serde_json::json!({
+        "parts": [created_run.prompt_part]
+    }))?;
+    let prompt_part = prompt_parts
+        .pop()
+        .ok_or_else(|| anyhow!("create run response omitted the prompt transcript part"))?;
     let run_id = created_run.run_id;
     Ok(AgentRun {
         request,
         runtime,
         run_id,
+        user_id: created_run.user_id,
+        prompt_part,
         claim_id,
         workspace_root,
         gateway_url: created_run.gateway_url,
@@ -743,6 +761,7 @@ pub async fn run_agent(run: AgentRun, live: Arc<LiveCompletionHub>) -> anyhow::R
         claim_id,
         workspace_root,
         gateway_url,
+        ..
     } = run;
 
     let context: RunContextResponse = match runtime.run_context(&run_id).await {

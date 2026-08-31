@@ -76,7 +76,7 @@ type TranscriptPartInsert = {
 export async function appendTranscriptPart(
 	ctx: MutationCtx,
 	args: AppendTranscriptPartArgs
-): Promise<{ number: number; inserted: boolean }> {
+): Promise<{ part: Doc<'threadTranscriptParts'>; inserted: boolean }> {
 	const existing = await ctx.db
 		.query('threadTranscriptParts')
 		.withIndex('by_threadId_and_sourceKey', (query) =>
@@ -84,7 +84,7 @@ export async function appendTranscriptPart(
 		)
 		.unique();
 	if (existing) {
-		return { number: existing.number, inserted: false };
+		return { part: existing, inserted: false };
 	}
 
 	const state = await getOrCreateTranscriptState(ctx, {
@@ -103,9 +103,13 @@ export async function appendTranscriptPart(
 	if (args.prompt) part.prompt = args.prompt;
 	if (args.completion) part.completion = args.completion;
 	if (args.tool) part.tool = args.tool;
-	await ctx.db.insert('threadTranscriptParts', part);
+	const partId = await ctx.db.insert('threadTranscriptParts', part);
 	await ctx.db.patch('threadTranscriptStates', state._id, { totalParts: number + 1 });
-	return { number, inserted: true };
+	const inserted = await ctx.db.get('threadTranscriptParts', partId);
+	if (!inserted) {
+		throw new Error('Failed to create transcript part.');
+	}
+	return { part: inserted, inserted: true };
 }
 
 export async function loadTranscriptPartsByNumbers(

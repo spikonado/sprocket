@@ -23,12 +23,24 @@ describe('agentRuntime.insertGatewayRun', () => {
 
 	it('creates a queued run and is idempotent for the same submission', async () => {
 		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
+		const { asUser, subject, threadId } = await seedOwnedThread(t);
+		const imageUploadId = await t.run(async (ctx) => {
+			const storageId = await ctx.storage.store(new Blob(['image'], { type: 'image/png' }));
+			return await ctx.db.insert('imageUploads', {
+				userId: subject,
+				storageId,
+				name: 'robot.png',
+				mediaType: 'image/png',
+				size: 5,
+				messageIds: [],
+				attached: false
+			});
+		});
 		const args = {
 			submissionId: 'sub-1',
 			threadId,
 			prompt: 'Hello',
-			imageUploadIds: [],
+			imageUploadIds: [imageUploadId],
 			selectedModel: 'gpt-5.6-sol' as const,
 			reasoningEffort: 'medium' as const,
 			serviceTier: 'standard' as const,
@@ -42,7 +54,27 @@ describe('agentRuntime.insertGatewayRun', () => {
 		expect(again).toEqual({
 			created: false,
 			runId: created.runId,
-			promptMessageId: created.promptMessageId
+			promptMessageId: created.promptMessageId,
+			userId: created.userId,
+			promptPart: created.promptPart
+		});
+		expect(created.promptPart).toMatchObject({
+			number: 0,
+			sourceKey: `prompt:${created.runId}`,
+			kind: 'prompt',
+			runId: created.runId,
+			prompt: {
+				text: 'Hello',
+				imageUploads: [
+					{
+						imageUploadId,
+						name: 'robot.png',
+						mediaType: 'image/png',
+						size: 5,
+						storageId: expect.any(String)
+					}
+				]
+			}
 		});
 
 		const run = await t.run(async (ctx) => ctx.db.get('runs', created.runId));

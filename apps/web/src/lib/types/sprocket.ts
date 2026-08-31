@@ -94,9 +94,6 @@ export type MessageAttachment = {
 export type ThreadMessage = {
 	_id: Id<'threadMessages'>;
 	_creationTime?: number;
-	// Monotonic transcript position (part number for history, wall-clock for the
-	// latest run) used to order messages coming from different replica viewers.
-	order?: number;
 	threadId: Id<'threadRecords'>;
 	runId: Id<'runs'>;
 	userId: string;
