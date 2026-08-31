@@ -100,7 +100,16 @@ describe('executor', () => {
 		}));
 		expect(state.job).toMatchObject({
 			status: 'completed',
-			result: commandResult
+			result: {
+				command: 'echo hi',
+				cwd: '/',
+				exitCode: 0,
+				success: true,
+				running: false,
+				timedOut: false,
+				output: 'hi',
+				truncated: false
+			}
 		});
 		expect(state.job?.completedAt).toBeTypeOf('number');
 		expect(state.run?.status).toBe('running');

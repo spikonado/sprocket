@@ -340,8 +340,6 @@ impl CommandSession {
             success: completion.success,
             running,
             timed_out: completion.timed_out,
-            stdout,
-            stderr,
             output,
             truncated: stdout_truncated || stderr_truncated || limit_truncated,
             error: completion.error,
@@ -650,8 +648,6 @@ pub struct CommandExecOutput {
     pub success: bool,
     pub running: bool,
     pub timed_out: bool,
-    pub stdout: String,
-    pub stderr: String,
     pub output: String,
     pub truncated: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -684,7 +680,7 @@ mod tests {
             .expect("command should succeed");
 
         assert!(output.success);
-        assert!(output.stdout.contains(root.to_string_lossy().as_ref()));
+        assert!(output.output.contains(root.to_string_lossy().as_ref()));
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -742,7 +738,7 @@ mod tests {
 
         assert!(!finished.running);
         assert!(finished.success);
-        assert_eq!(format!("{}{}", started.stdout, finished.stdout), "startend");
+        assert_eq!(format!("{}{}", started.output, finished.output), "startend");
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -775,7 +771,7 @@ mod tests {
             .expect("input should be delivered");
 
         assert!(finished.success);
-        assert_eq!(finished.stdout, "got:hello");
+        assert_eq!(finished.output, "got:hello");
         fs::remove_dir_all(root).unwrap();
     }
 
