@@ -7,6 +7,7 @@ import {
 	type MutationCtx
 } from '@convex/_generated/server';
 import { internal } from '@convex/_generated/api';
+import schema from '@convex/schema';
 import { ConvexError, v, type Infer } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord } from '@convex/lib/access';
 import { executionSecretHash, getExecutionRun, getUserId } from '@convex/lib/auth';
@@ -111,7 +112,13 @@ type GatewayRunTelemetry = {
 async function createQueuedRunRecord(
 	ctx: MutationCtx,
 	args: QueuedRunRequest
-): Promise<{ created: boolean; runId: Id<'runs'>; promptMessageId: Id<'threadMessages'> }> {
+): Promise<{
+	created: boolean;
+	runId: Id<'runs'>;
+	promptMessageId: Id<'threadMessages'>;
+	userId: string;
+	promptPart: Doc<'threadTranscriptParts'>;
+}> {
 	const secretHash = await executionSecretHash(args.executionSecret);
 	const threadRecord = await getOwnedThreadRecord(ctx.db, args.userId, args.threadId);
 	const prompt = args.prompt.trim();
@@ -160,11 +167,20 @@ async function createQueuedRunRecord(
 			const lifecycleWorkflowId = await startRunLifecycle(ctx, existingRun._id);
 			await ctx.db.patch('runs', existingRun._id, { lifecycleWorkflowId });
 		}
+		const promptPart = await recordPromptTranscript(ctx, {
+			threadId: args.threadId,
+			userId: args.userId,
+			runId: existingRun._id,
+			text: prompt,
+			imageUploadIds: args.imageUploadIds
+		});
 
 		return {
 			created: false,
 			runId: existingRun._id,
-			promptMessageId: existingRun.promptMessageId
+			promptMessageId: existingRun.promptMessageId,
+			userId: args.userId,
+			promptPart
 		};
 	}
 	const latestRun = await ctx.db
@@ -224,7 +240,7 @@ async function createQueuedRunRecord(
 		promptMessageId,
 		completionStreamStateId
 	});
-	await recordPromptTranscript(ctx, {
+	const promptPart = await recordPromptTranscript(ctx, {
 		threadId: args.threadId,
 		userId: args.userId,
 		runId,
@@ -243,7 +259,9 @@ async function createQueuedRunRecord(
 	return {
 		created: true,
 		runId,
-		promptMessageId
+		promptMessageId,
+		userId: args.userId,
+		promptPart
 	};
 }
 
@@ -270,6 +288,8 @@ const vCreateGatewayRunResult = v.object({
 	created: v.boolean(),
 	runId: v.id('runs'),
 	promptMessageId: v.id('threadMessages'),
+	userId: v.string(),
+	promptPart: schema.doc('threadTranscriptParts'),
 	gatewayUrl: v.string(),
 	protocolVersion: v.number()
 });
@@ -291,7 +311,9 @@ export const insertGatewayRun = internalMutation({
 	returns: v.object({
 		created: v.boolean(),
 		runId: v.id('runs'),
-		promptMessageId: v.id('threadMessages')
+		promptMessageId: v.id('threadMessages'),
+		userId: v.string(),
+		promptPart: schema.doc('threadTranscriptParts')
 	}),
 	handler: async (ctx, args) => {
 		return await createQueuedRunRecord(ctx, args);

@@ -33,6 +33,8 @@ pub struct CreateRunResponse {
     pub created: bool,
     pub run_id: String,
     pub prompt_message_id: String,
+    pub user_id: String,
+    pub prompt_part: serde_json::Value,
     pub gateway_url: String,
     #[serde(deserialize_with = "deserialize_convex_u64")]
     pub protocol_version: u64,
@@ -500,6 +502,24 @@ mod tests {
             "created": true,
             "runId": "jd7run",
             "promptMessageId": "jd7msg",
+            "userId": "user_1",
+            "promptPart": {
+                "number": 0.0,
+                "sourceKey": "prompt:jd7run",
+                "kind": "prompt",
+                "runId": "jd7run",
+                "prompt": {
+                    "text": "hello",
+                    "imageUploads": [{
+                        "imageUploadId": "image_1",
+                        "name": "robot.png",
+                        "mediaType": "image/png",
+                        "size": 42.0,
+                        "storageId": "storage_1",
+                        "url": "https://example.com/robot.png"
+                    }]
+                }
+            },
             "gatewayUrl": "https://preview.gateway.example",
             "protocolVersion": 1.0
         }))
@@ -507,6 +527,15 @@ mod tests {
 
         assert_eq!(created.gateway_url, "https://preview.gateway.example");
         assert_eq!(created.protocol_version, 1);
+        let parts = crate::transcript::parse_remote_parts(serde_json::json!({
+            "parts": [created.prompt_part]
+        }))
+        .expect("prompt transcript part");
+        assert_eq!(parts[0].number, 0);
+        let attachment = &parts[0].prompt.as_ref().expect("prompt body").image_uploads[0];
+        assert_eq!(attachment.name, "robot.png");
+        assert_eq!(attachment.size, 42);
+        assert_eq!(attachment.storage_id, "storage_1");
     }
 
     #[test]

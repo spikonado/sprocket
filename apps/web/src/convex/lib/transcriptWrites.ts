@@ -42,8 +42,8 @@ export async function recordPromptTranscript(
 		text: string;
 		imageUploadIds?: Id<'imageUploads'>[];
 	}
-): Promise<void> {
-	await appendTranscriptPart(ctx, {
+): Promise<Doc<'threadTranscriptParts'>> {
+	const result = await appendTranscriptPart(ctx, {
 		threadId: args.threadId,
 		userId: args.userId,
 		sourceKey: promptSourceKey(args.runId),
@@ -54,6 +54,7 @@ export async function recordPromptTranscript(
 			imageUploads: await attachmentMetaForUploads(ctx, args.imageUploadIds)
 		}
 	});
+	return result.part;
 }
 
 export async function recordCompletionTranscript(
@@ -77,7 +78,7 @@ export async function recordCompletionTranscript(
 		runId: args.runId,
 		completion: { streamId: args.streamId, items: args.items }
 	});
-	return result.number;
+	return result.part.number;
 }
 
 export async function recordToolTranscript(

@@ -101,6 +101,9 @@ async fn run_agent_handler(
 
     let cleanup_request = request.clone();
     let live = Arc::clone(&state.live_completions);
+    let transcript = Arc::clone(&state.transcript);
+    let transcript_watchers = Arc::clone(&state.transcript_watchers);
+    let thread_id = request.thread_id.clone();
     let (start_result_sender, start_result_receiver) = oneshot::channel();
 
     // Detach the complete launch before waiting for its acknowledgement. Hyper
@@ -122,6 +125,28 @@ async fn run_agent_handler(
         match run {
             Ok(run) => {
                 let run_id = run.run_id().to_string();
+                let user_id = run.user_id().to_string();
+                let prompt_part = run.prompt_part().clone();
+                match transcript
+                    .append_parts(&user_id, &thread_id, std::slice::from_ref(&prompt_part))
+                    .await
+                {
+                    Ok(state) => {
+                        transcript_watchers
+                            .notify_local_update(
+                                &user_id,
+                                &thread_id,
+                                prompt_part.number + 1,
+                                state.stale,
+                            )
+                            .await;
+                    }
+                    Err(error) => {
+                        eprintln!(
+                            "sprocket-server: failed to update local transcript for run {run_id}: {error:#}"
+                        );
+                    }
+                }
                 let _ = start_result_sender.send(Ok(run_id));
                 if let Err(error) = run_agent(run, live).await {
                     eprintln!("sprocket-server: agent run failed: {error:#}");
@@ -171,9 +196,10 @@ async fn live_handler(
         .map_err(ApiError::unauthorized)?;
     let hub = Arc::clone(&state.live_completions);
     let subscription = hub.subscribe(&payload.thread_id);
-    let snapshot = subscription
-        .snapshot
-        .and_then(|live| encode_live_event(LiveCompletionWatchEvent::Updated { live }));
+    let snapshot = encode_live_event(match subscription.snapshot {
+        Some(live) => LiveCompletionWatchEvent::Updated { live },
+        None => LiveCompletionWatchEvent::Cleared,
+    });
     let rest = unfold(
         LiveSseStream {
             receiver: subscription.receiver,

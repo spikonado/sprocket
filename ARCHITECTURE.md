@@ -56,17 +56,17 @@ authorizes the browser or Electron renderer to access the machine-facing API.
 
 ## Component boundaries
 
-| Component         | Owns                                                             | Does not own                           |
-| ----------------- | ---------------------------------------------------------------- | -------------------------------------- |
-| Svelte app        | User interaction, reactive views, submission recovery            | Filesystem access or provider secrets  |
-| Electron shell    | Desktop lifecycle, trusted renderer bridge, local server process | Conversation or agent state            |
-| CLI               | Process launch and server-mode selection                         | Agent implementation                   |
-| Local server      | Local authorization, workspace attachment, agent task lifetime   | Durable conversation state             |
-| Agent runtime     | Run claim, model/tool loop, cancellation, finalization           | HTTP presentation or cloud schema      |
-| Workspace crate   | Paths, commands, patches, workspace instructions                 | Authentication or networking           |
-| Convex RPC client | Generic Convex query/mutation/action/subscribe                   | Completion translation                 |
-| AI gateway        | Provider routing, OpenAI API, catalog, usage rates               | Subscription limits or remaining quota |
-| Convex backend    | User data, run coordination, transcript, remaining quota         | Local paths, process execution, rates  |
+| Component         | Owns                                                                         | Does not own                                                       |
+| ----------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Svelte app        | User interaction, reactive views, submission recovery                        | Transcript synchronization, filesystem access, or provider secrets |
+| Electron shell    | Desktop lifecycle, trusted renderer bridge, local server process             | Conversation or agent state                                        |
+| CLI               | Process launch and server-mode selection                                     | Agent implementation                                               |
+| Local server      | Local authorization, transcript replica and live stream, agent task lifetime | Durable conversation source of truth                               |
+| Agent runtime     | Run claim, model/tool loop, cancellation, finalization                       | HTTP presentation or cloud schema                                  |
+| Workspace crate   | Paths, commands, patches, workspace instructions                             | Authentication or networking                                       |
+| Convex RPC client | Generic Convex query/mutation/action/subscribe                               | Completion translation                                             |
+| AI gateway        | Provider routing, OpenAI API, catalog, usage rates                           | Subscription limits or remaining quota                             |
+| Convex backend    | User data, run coordination, transcript, remaining quota                     | Local paths, process execution, rates                              |
 
 The Rust dependency direction follows these boundaries:
 
@@ -104,7 +104,9 @@ Sprocket deliberately separates cloud and machine-local state.
 
 | State                                                                | Owner                |
 | -------------------------------------------------------------------- | -------------------- |
-| Users, threads, messages, runs, and tool-job records                 | Convex               |
+| Users, threads, durable transcript parts, runs, and tool-job records | Convex               |
+| Local transcript replica                                             | Local server         |
+| Current assistant stream                                             | Local process memory |
 | Local folder list (`workspacePath` + `repositoryKey`)                | Local server         |
 | Pairing credential and local browser sessions                        | Local server         |
 | Active commands, cancellation tokens, and run execution capabilities | Local process memory |
@@ -132,6 +134,9 @@ sequenceDiagram
     UI->>S: Start run with user token and workspace identity
     S->>A: Prepare local run
     A->>C: Create gateway run and bind execution capability
+    C-->>A: Return authoritative numbered prompt part
+    A-->>S: Add prompt to local transcript replica
+    S-->>UI: Notify transcript update and refetch local page
     A->>C: Claim run, load context, mint user gateway token
     A->>G: GET /api/v1/models
     loop Model and tool turns
@@ -140,8 +145,12 @@ sequenceDiagram
         G->>M: Call selected model
         M-->>G: Stream response
         G-->>A: OpenAI SSE
+        A-->>S: Publish live completion snapshot
+        S-->>UI: Stream live completion over SSE
         A->>C: Persist stream events
-        C-->>UI: Publish durable transcript updates
+        C-->>S: Publish durable transcript state
+        S->>C: Fetch missing numbered parts
+        S-->>UI: Notify transcript update and refetch local page
         opt Model requests a tool
             A->>C: Record tool job
             A->>W: Execute locally
@@ -163,6 +172,11 @@ on the machine.
 The agent persists model output incrementally to Convex. Stream attempt and
 ordering metadata prevent a delayed completion attempt from replacing a newer
 one.
+
+The transcript renderer never reads transcript content from Convex. It pages
+durable parts from the Rust replica and overlays the current Rust
+live-completion stream. Convex assigns durable part numbers; Svelte renders
+that order and keeps no cross-thread transcript cache.
 
 ## Authentication and trust boundaries
 

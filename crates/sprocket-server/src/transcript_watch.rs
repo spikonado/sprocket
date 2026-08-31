@@ -84,6 +84,26 @@ impl TranscriptWatchers {
         }
     }
 
+    pub async fn notify_local_update(
+        &self,
+        user_id: &str,
+        thread_id: &str,
+        total_parts: u32,
+        stale: bool,
+    ) {
+        let key = WatchKey {
+            user_id: user_id.to_string(),
+            thread_id: thread_id.to_string(),
+        };
+        if let Some(slot) = self.inner.lock().await.get(&key) {
+            let _ = slot.events.send(TranscriptWatchEvent {
+                event_type: "updated",
+                total_parts: Some(total_parts),
+                stale,
+            });
+        }
+    }
+
     pub async fn open(
         self: &Arc<Self>,
         user_id: &str,
@@ -298,6 +318,28 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(40)).await;
         assert_eq!(watchers.active_count().await, 0);
         assert_eq!(live.load(Ordering::SeqCst), 0);
+        let _ = tokio::fs::remove_dir_all(dir).await;
+    }
+
+    #[tokio::test]
+    async fn local_updates_are_sent_to_open_sessions() {
+        let dir = std::env::temp_dir().join(format!("sprocket-watch-{}", uuid::Uuid::new_v4()));
+        let store = TranscriptStore::new(dir.clone());
+        let watchers = TranscriptWatchers::with_starter(
+            "https://example.convex.cloud".into(),
+            store,
+            Arc::new(|_start| tokio::spawn(std::future::pending())),
+        );
+        let mut session = watchers.open("user", "thread", "token".into()).await;
+
+        watchers
+            .notify_local_update("user", "thread", 4, true)
+            .await;
+
+        let event = session.receiver().recv().await.expect("local update");
+        assert_eq!(event.total_parts, Some(4));
+        assert!(event.stale);
+        drop(session);
         let _ = tokio::fs::remove_dir_all(dir).await;
     }
 }

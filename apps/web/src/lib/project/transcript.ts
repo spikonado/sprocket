@@ -6,23 +6,6 @@ import type {
 	MessageAttachment,
 	ThreadMessage
 } from '$lib/types/sprocket';
-import type { Infer } from 'convex/values';
-import { vRunStatus } from '$convex/lib/validators';
-
-function compareMessagesChronologically(left: ThreadMessage, right: ThreadMessage): number {
-	if (left.runStartedAt !== right.runStartedAt) {
-		return left.runStartedAt - right.runStartedAt;
-	}
-	const leftCreated = left._creationTime ?? 0;
-	const rightCreated = right._creationTime ?? 0;
-	if (leftCreated !== rightCreated) {
-		return leftCreated - rightCreated;
-	}
-	if (left.type !== right.type) {
-		return left.type === 'prompt' ? -1 : 1;
-	}
-	return left._id.localeCompare(right._id);
-}
 
 function promptMessageId(runId: Id<'runs'>): Id<'threadMessages'> {
 	// SAFETY: local replica rows are not Convex threadMessages documents.
@@ -178,13 +161,6 @@ function historyHasLiveCompletion(
 export function mergePagedTranscriptWithLive(args: {
 	parts: LocalTranscriptPart[];
 	live: LiveCompletionOverlay | null;
-	latestRun: {
-		_id: Id<'runs'>;
-		status: Infer<typeof vRunStatus>;
-		startedAt: number;
-		completedAt?: number;
-	} | null;
-	latestPrompt?: { text: string; imageUploadIds: Id<'imageUploads'>[] };
 	userId: string;
 	threadId: Id<'threadRecords'>;
 	attachmentUrls?: Map<string, string>;
@@ -195,48 +171,7 @@ export function mergePagedTranscriptWithLive(args: {
 		threadId: args.threadId,
 		attachmentUrls: args.attachmentUrls
 	});
-	const latestRun = args.latestRun;
-	if (latestRun) {
-		for (const message of messages) {
-			if (message.runId !== latestRun._id) {
-				continue;
-			}
-			message.runStatus = latestRun.status;
-			message.runStartedAt = latestRun.startedAt;
-			if (latestRun.completedAt !== undefined) {
-				message.runCompletedAt = latestRun.completedAt;
-			}
-		}
-	}
-
-	if (
-		latestRun &&
-		args.latestPrompt &&
-		!messages.some((message) => message.type === 'prompt' && message.runId === latestRun._id)
-	) {
-		messages.push({
-			_id: promptMessageId(latestRun._id),
-			_creationTime: latestRun.startedAt,
-			threadId: args.threadId,
-			runId: latestRun._id,
-			userId: args.userId,
-			type: 'prompt',
-			text: args.latestPrompt.text,
-			attachments: args.latestPrompt.imageUploadIds.map((imageUploadId) => ({
-				imageUploadId,
-				name: 'attachment',
-				mediaType: 'application/octet-stream',
-				size: 0,
-				url: args.attachmentUrls?.get(imageUploadId) ?? null
-			})),
-			parts: [],
-			runStatus: latestRun.status,
-			runStartedAt: latestRun.startedAt,
-			runCompletedAt: latestRun.completedAt
-		});
-	}
-
-	const live = args.live;
+	const live = args.live?.threadId === args.threadId ? args.live : null;
 	if (live && !historyHasLiveCompletion(args.parts, live)) {
 		const existingIndex = messages.findIndex(
 			(message) => message.type === 'response' && message.runId === live.runId
@@ -269,7 +204,7 @@ export function mergePagedTranscriptWithLive(args: {
 			text: joinAssistantTextParts(parts),
 			attachments: [],
 			parts,
-			runStatus: latestRun && latestRun._id === live.runId ? latestRun.status : live.runStatus,
+			runStatus: live.runStatus,
 			runStartedAt: live.runStartedAt
 		};
 		if (existingIndex >= 0) {
@@ -279,7 +214,7 @@ export function mergePagedTranscriptWithLive(args: {
 		}
 	}
 
-	return messages.sort(compareMessagesChronologically);
+	return messages;
 }
 
 export function mergeTranscriptParts(

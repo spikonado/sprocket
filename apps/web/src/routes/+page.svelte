@@ -513,69 +513,24 @@
 	let replicaNextBefore = $state<number | null>(null);
 	let replicaStale = $state(false);
 	let replicaThreadId = $state<Id<'threadRecords'> | null>(null);
-	let replicaReachedHistoryStart = $state(false);
 	let replicaLoading = $state(false);
 	let replicaContextSummary = $state<string | null>(null);
 	let replicaError = $state<string | null>(null);
 	let loadingOlderTranscript = $state(false);
 	let liveCompletion = $state<LiveCompletionOverlay | null>(null);
-	const replicaCache = new SvelteMap<
-		Id<'threadRecords'>,
-		{
-			parts: LocalTranscriptPart[];
-			nextBefore: number | null;
-			stale: boolean;
-			reachedHistoryStart: boolean;
-			contextSummary: string | null;
-		}
-	>();
 
 	function applyOlderPageCursor(nextBefore: number | undefined) {
-		replicaReachedHistoryStart = nextBefore == null;
 		replicaNextBefore = nextBefore ?? null;
 	}
 
-	function rememberReplica(threadId: Id<'threadRecords'>) {
-		replicaCache.set(threadId, {
-			parts: replicaParts.slice(),
-			nextBefore: replicaNextBefore,
-			stale: replicaStale,
-			reachedHistoryStart: replicaReachedHistoryStart,
-			contextSummary: replicaContextSummary
-		});
-	}
-
 	function showReplicaForThread(threadId: Id<'threadRecords'> | null) {
-		if (replicaThreadId && replicaThreadId !== threadId) {
-			rememberReplica(replicaThreadId);
-		}
 		replicaThreadId = threadId;
 		liveCompletion = null;
 		replicaError = null;
-		if (!threadId) {
-			replicaParts = [];
-			replicaNextBefore = null;
-			replicaStale = false;
-			replicaReachedHistoryStart = false;
-			replicaLoading = false;
-			replicaContextSummary = null;
-			return;
-		}
-		const cached = replicaCache.get(threadId);
-		if (cached) {
-			replicaParts = cached.parts.slice();
-			replicaNextBefore = cached.nextBefore;
-			replicaStale = cached.stale;
-			replicaReachedHistoryStart = cached.reachedHistoryStart;
-			replicaLoading = false;
-			replicaContextSummary = cached.contextSummary;
-			return;
-		}
 		replicaParts = [];
 		replicaNextBefore = null;
 		replicaStale = false;
-		replicaReachedHistoryStart = false;
-		replicaLoading = true;
+		replicaLoading = threadId !== null;
 		replicaContextSummary = null;
 	}
 
@@ -614,7 +569,6 @@
 				replicaError = null;
 				replicaContextSummary = page.contextSummary ?? null;
 				applyOlderPageCursor(page.nextBefore);
-				rememberReplica(watchedThreadId);
 			} catch {
 				if (!ac.signal.aborted) {
 					replicaLoading = false;
@@ -635,6 +589,9 @@
 					{
 						signal: ac.signal,
 						onEvent: (event) => {
+							if (ac.signal.aborted || currentThreadId !== watchedThreadId) {
+								return;
+							}
 							replicaStale = event.stale;
 							void refreshNewestTranscriptPage(watchedThreadId, userId);
 						}
@@ -723,18 +680,9 @@
 			return [];
 		}
 		const live = latestRunResumeKind ? null : liveCompletion;
-		const latestRun = currentLatestRunData?.run ?? null;
 		return mergePagedTranscriptWithLive({
 			parts: replicaParts,
 			live,
-			latestRun,
-			latestPrompt:
-				latestRun && currentLatestRunData?.prompt
-					? {
-							text: currentLatestRunData.prompt,
-							imageUploadIds: currentLatestRunData.imageUploadIds ?? []
-						}
-					: undefined,
 			userId,
 			threadId: currentThreadId
 		});
@@ -1334,7 +1282,6 @@
 		replicaParts = mergeTranscriptParts(replicaParts, page.parts);
 		replicaStale = page.stale;
 		replicaContextSummary = page.contextSummary ?? replicaContextSummary;
-		rememberReplica(threadId);
 	}
 
 	async function loadOlderTranscript() {
@@ -1357,7 +1304,6 @@
 			replicaParts = mergeTranscriptParts(replicaParts, page.parts);
 			replicaStale = page.stale;
 			applyOlderPageCursor(page.nextBefore);
-			rememberReplica(threadId);
 		} catch {
 			replicaStale = true;
 		} finally {
