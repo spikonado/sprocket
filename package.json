@@ -13,9 +13,9 @@
 		"lint:oxlint": "oxlint"
 	},
 	"devDependencies": {
-		"@oxlint/plugins": "1.79.0",
+		"@oxlint/plugins": "1.80.0",
 		"concurrently": "^10.0.0",
-		"oxlint": "1.79.0",
+		"oxlint": "1.80.0",
 		"prettier": "^3.8.3",
 		"prettier-plugin-svelte": "^4.0.0",
 		"prettier-plugin-tailwindcss": "^0.8.0",
