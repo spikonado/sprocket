@@ -196,9 +196,10 @@ async fn live_handler(
         .map_err(ApiError::unauthorized)?;
     let hub = Arc::clone(&state.live_completions);
     let subscription = hub.subscribe(&payload.thread_id);
-    let snapshot = subscription
-        .snapshot
-        .and_then(|live| encode_live_event(LiveCompletionWatchEvent::Updated { live }));
+    let snapshot = encode_live_event(match subscription.snapshot {
+        Some(live) => LiveCompletionWatchEvent::Updated { live },
+        None => LiveCompletionWatchEvent::Cleared,
+    });
     let rest = unfold(
         LiveSseStream {
             receiver: subscription.receiver,
