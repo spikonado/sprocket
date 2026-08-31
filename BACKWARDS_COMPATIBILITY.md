@@ -140,6 +140,33 @@ The prompt-half of `threadMessages` (text, attachments, retention bookkeeping)
 stays: it is the run-capability source of the user prompt and image
 attachments for `agentRuntime.getContext` and dedups repeated submissions.
 
+### 9. Duplicate command output streams
+
+Older `exec_command` and `write_stdin` results contain `stdout` and `stderr` in
+addition to the combined, bounded `output`. The same result may exist in both
+`executorJobs.result` and `threadTranscriptParts.tool.output`.
+
+`removeExecutorJobCommandStreams` removes the duplicate fields from stored job
+results and `removeTranscriptCommandStreams` does the same for transcript
+copies. Both are pinned in `migrations.run`, which the migrations cron invokes
+every ten minutes. They can also be inspected before deployment with:
+
+```sh
+npx convex run migrations:removeExecutorJobCommandStreams '{ dryRun: true }'
+npx convex run migrations:removeTranscriptCommandStreams '{ dryRun: true }'
+```
+
+`applyExecutorJobSuccess` removes those fields before writing a result, so
+released executors that still return the old wire shape cannot reintroduce
+them after the sweep. The executor input validator temporarily accepts both
+command shapes so deployment can precede the online rewrites.
+
+Removal gate: both migration statuses are `success`, a production scan finds
+no `stdout` or `stderr` keys on command results in either table, and all
+supported agents emit the current `CommandExecOutput` schema. Then remove the
+legacy command validator and both migration definitions/pins; keep the
+write-boundary normalization until old executor clients are unsupported.
+
 ## Client APIs
 
 Released desktop/CLI builds that still call retired Convex functions get a

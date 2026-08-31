@@ -2,6 +2,7 @@ import { Migrations } from '@convex-dev/migrations';
 import { components, internal } from '@convex/_generated/api';
 import { internalMutation } from '@convex/_generated/server';
 import schema from '@convex/schema';
+import { normalizeExecutorJobResult, removeLegacyCommandStreams } from '@convex/lib/commandResults';
 
 export const migrations = new Migrations(components.migrations, {
 	schema,
@@ -11,7 +12,31 @@ export const migrations = new Migrations(components.migrations, {
 // `run` targets the currently live migration(s). Each deploy's cron calls it
 // with no args; the runner picks up the pinned migration refs itself. Swap in
 // the next migration when a future cleanup lands.
-export const run = migrations.runner([internal.migrations.clearResponseMessageParts]);
+export const run = migrations.runner([
+	internal.migrations.clearResponseMessageParts,
+	internal.migrations.removeExecutorJobCommandStreams,
+	internal.migrations.removeTranscriptCommandStreams
+]);
+
+export const removeExecutorJobCommandStreams = migrations.define({
+	table: 'executorJobs',
+	migrateOne: (_ctx, job) => {
+		if (job.result === undefined) return;
+		const result = normalizeExecutorJobResult(job.kind, job.result);
+		if (result === job.result) return;
+		return { result };
+	}
+});
+
+export const removeTranscriptCommandStreams = migrations.define({
+	table: 'threadTranscriptParts',
+	migrateOne: (_ctx, part) => {
+		if (part.kind !== 'tool' || !part.tool) return;
+		const output = removeLegacyCommandStreams(part.tool.name, part.tool.output);
+		if (output === part.tool.output) return;
+		return { tool: { ...part.tool, output } };
+	}
+});
 
 /**
  * Clears the response-half payloads (`text`, `parts`) that runs wrote to
