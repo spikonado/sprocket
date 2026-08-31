@@ -136,7 +136,7 @@ sequenceDiagram
     A->>C: Create gateway run and bind execution capability
     C-->>A: Return authoritative numbered prompt part
     A-->>S: Add prompt to local transcript replica
-    S-->>UI: Notify transcript update; UI refetches local page
+    S-->>UI: Notify transcript update and refetch local page
     A->>C: Claim run, load context, mint user gateway token
     A->>G: GET /api/v1/models
     loop Model and tool turns
@@ -150,7 +150,7 @@ sequenceDiagram
         A->>C: Persist stream events
         C-->>S: Publish durable transcript state
         S->>C: Fetch missing numbered parts
-        S-->>UI: Notify transcript update; UI refetches local page
+        S-->>UI: Notify transcript update and refetch local page
         opt Model requests a tool
             A->>C: Record tool job
             A->>W: Execute locally
