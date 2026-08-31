@@ -85,3 +85,9 @@ repos:
         language: system
         entry: bun prettier --write .
         pass_filenames: false
+
+      - id: mermaid
+        name: mermaid
+        language: system
+        entry: bun run lint:mermaid
+        pass_filenames: false

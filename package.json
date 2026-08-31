@@ -10,9 +10,11 @@
 		"dev:desktop": "bun scripts/run-dev.mjs --env-file=apps/web/.env.local --desktop --data-dir=.sprocket-dev",
 		"dev:prod:desktop": "bun scripts/run-dev.mjs --env-file=apps/web/.env.prod --desktop",
 		"test": "turbo run test && node --test npm/sprocket/test/*.test.js",
-		"lint:oxlint": "oxlint"
+		"lint:oxlint": "oxlint",
+		"lint:mermaid": "mermaid-lint --quiet"
 	},
 	"devDependencies": {
+		"@mermaid-lint/cli": "0.53.1",
 		"@oxlint/plugins": "1.80.0",
 		"concurrently": "^10.0.0",
 		"oxlint": "1.80.0",
