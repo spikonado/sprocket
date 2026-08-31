@@ -1,5 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { isUnparseablePageFailure } from '@convex/webTools';
+import { isUnparseablePageFailure, scrapeHttpErrorStatus } from '@convex/webTools';
+
+describe('scrape HTTP failures', () => {
+	it('turns a Context.dev HTTP error into a readable message', () => {
+		const error = new Error(
+			'Uncaught ConvexError: Uncaught ConvexError: {"message":"Target page returned a 404","status":404,"response":{"error_code":"NOT_FOUND"}}\n    at contextRequest (http.js:24:12)'
+		);
+		expect(scrapeHttpErrorStatus(error)).toBe(404);
+	});
+
+	it('ignores non-HTTP and malformed errors', () => {
+		expect(scrapeHttpErrorStatus(new Error('{"status":200}'))).toBeUndefined();
+		expect(scrapeHttpErrorStatus(new Error('Context.dev scrape failed.'))).toBeUndefined();
+	});
+});
 
 describe('unparseable page failures', () => {
 	it('recognizes component return-validation failures', () => {

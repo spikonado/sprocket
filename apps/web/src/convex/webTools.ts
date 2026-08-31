@@ -1,6 +1,7 @@
 'use node';
 
-import { v, type Infer } from 'convex/values';
+import { ConvexError, v, type Infer } from 'convex/values';
+import { z } from 'zod';
 import { ContextDev } from '@context-dot-dev/convex';
 import { ExaClient } from '@exalabs/convex-exa';
 import { action, internalAction, type ActionCtx } from '@convex/_generated/server';
@@ -34,6 +35,24 @@ export function isUnparseablePageFailure(error: Error): boolean {
 }
 
 const UNPARSEABLE_PAGE_ERROR = 'The webpage is too complex and could not be parsed as Markdown.';
+const UNCAUGHT_CONVEX_ERROR_PREFIX = 'Uncaught ConvexError: ';
+const scrapeHttpErrorSchema = z.object({ status: z.number().int().min(400).max(599) });
+
+export function scrapeHttpErrorStatus(error: Error): number | undefined {
+	let message = error.message.split('\n', 1)[0] ?? '';
+	while (message.startsWith(UNCAUGHT_CONVEX_ERROR_PREFIX)) {
+		message = message.slice(UNCAUGHT_CONVEX_ERROR_PREFIX.length);
+	}
+
+	let payload: unknown;
+	try {
+		payload = JSON.parse(message);
+	} catch {
+		return undefined;
+	}
+	const result = scrapeHttpErrorSchema.safeParse(payload);
+	return result.success ? result.data.status : undefined;
+}
 
 async function withTimeout<T>(label: string, timeoutMs: number, promise: Promise<T>): Promise<T> {
 	let timer: ReturnType<typeof setTimeout> | undefined;
@@ -97,8 +116,18 @@ async function runScrape(
 			})
 		);
 	} catch (error) {
-		if (error instanceof Error && isUnparseablePageFailure(error)) {
-			throw new NonRetryableError(UNPARSEABLE_PAGE_ERROR, { cause: error });
+		if (error instanceof Error) {
+			const status = scrapeHttpErrorStatus(error);
+			if (status !== undefined) {
+				const message = `This webpage returned a ${status} error.`;
+				if (status === 408 || status === 429 || status >= 500) {
+					throw new ConvexError(message);
+				}
+				throw new NonRetryableError(message, { cause: error });
+			}
+			if (isUnparseablePageFailure(error)) {
+				throw new NonRetryableError(UNPARSEABLE_PAGE_ERROR, { cause: error });
+			}
 		}
 		throw error;
 	}
