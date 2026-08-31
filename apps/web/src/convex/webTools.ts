@@ -34,6 +34,33 @@ export function isUnparseablePageFailure(error: Error): boolean {
 }
 
 const UNPARSEABLE_PAGE_ERROR = 'The webpage is too complex and could not be parsed as Markdown.';
+const UNCAUGHT_CONVEX_ERROR_PREFIX = 'Uncaught ConvexError: ';
+
+export function scrapeHttpErrorMessage(error: Error): string | undefined {
+	let message = error.message.split('\n', 1)[0] ?? '';
+	while (message.startsWith(UNCAUGHT_CONVEX_ERROR_PREFIX)) {
+		message = message.slice(UNCAUGHT_CONVEX_ERROR_PREFIX.length);
+	}
+
+	let payload: unknown;
+	try {
+		payload = JSON.parse(message);
+	} catch {
+		return undefined;
+	}
+	if (
+		typeof payload !== 'object' ||
+		payload === null ||
+		!('status' in payload) ||
+		typeof payload.status !== 'number' ||
+		!Number.isInteger(payload.status) ||
+		payload.status < 400 ||
+		payload.status > 599
+	) {
+		return undefined;
+	}
+	return `This webpage returned a ${payload.status} error.`;
+}
 
 async function withTimeout<T>(label: string, timeoutMs: number, promise: Promise<T>): Promise<T> {
 	let timer: ReturnType<typeof setTimeout> | undefined;
@@ -97,8 +124,14 @@ async function runScrape(
 			})
 		);
 	} catch (error) {
-		if (error instanceof Error && isUnparseablePageFailure(error)) {
-			throw new NonRetryableError(UNPARSEABLE_PAGE_ERROR, { cause: error });
+		if (error instanceof Error) {
+			const httpErrorMessage = scrapeHttpErrorMessage(error);
+			if (httpErrorMessage) {
+				throw new NonRetryableError(httpErrorMessage, { cause: error });
+			}
+			if (isUnparseablePageFailure(error)) {
+				throw new NonRetryableError(UNPARSEABLE_PAGE_ERROR, { cause: error });
+			}
 		}
 		throw error;
 	}
