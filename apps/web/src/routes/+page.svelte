@@ -37,9 +37,8 @@
 	import Button from '$lib/components/ui/button/button.svelte';
 	import {
 		attachLocalProject as attachLocalProjectForPath,
-		isRunBlockingAgentLaunch,
 		launchAgentRun,
-		runResumeKind,
+		lifecycleResumeKind,
 		refreshDesktopProjectAttachments as refreshDesktopProjectAttachmentsFromDesktop,
 		projectFromAttachment,
 		resolveDraftRunSubmissionId,
@@ -66,7 +65,7 @@
 		type CatalogModelId,
 		type ModelCatalog
 	} from '$lib/chat/model-catalog';
-	import { isClaimedRunStatus } from '$convex/lib/runLease';
+	import { isLifecycleInProgress } from '$convex/lib/runCancellation';
 	import {
 		beginPendingAgentLaunch,
 		clearPendingAgentLaunch,
@@ -98,8 +97,10 @@
 	import { applyTheme, resolveTheme, type SprocketTheme } from '$lib/theme';
 	import type {
 		DesktopApi,
+		ExecutorJob,
 		LiveCompletionOverlay,
 		LocalTranscriptPart,
+		ThreadCacheStatus,
 		ThreadMessage,
 		ThreadSummary,
 		ProjectAttachment,
@@ -145,7 +146,8 @@
 	const renameThreadMutation = useMutation(api.threads.rename);
 	const archiveThreadMutation = useMutation(api.threads.archive);
 	const restoreThreadMutation = useMutation(api.threads.restore);
-	const finalizeRun = useMutation(api.agentRuntime.finalizeRun);
+	const requestCancellation = useMutation(api.agentRuntime.requestCancellation);
+	const reopenRun = useMutation(api.agentRuntime.reopenRun);
 	const answerAgentQuestion = useMutation(api.agentQuestions.answer);
 	const setThemePreference = useMutation(api.uiPreferences.setTheme);
 	const generateImageUploadUrl = useMutation(api.imageUploads.generateUploadUrl);
@@ -225,14 +227,7 @@
 		}
 	>();
 	const latestSubmissionSequencesByRecoveryScope = new SvelteMap<string, number>();
-	const recoveredStaleClaims = new SvelteSet<string>();
 	let pendingAgentLaunches = $state<PendingAgentLaunches>({});
-	let leaseClockNow = $state(0);
-	let latestRunServerClock = $state<{
-		localObservedAt: number;
-		runId: Id<'runs'> | null;
-		serverNow: number;
-	} | null>(null);
 	let nextAgentLaunchId = 0;
 	let nextSubmissionSequence = 0;
 	let hasResolvedInitialSelection = $state(false);
@@ -243,6 +238,12 @@
 	let desktopProjectAttachmentsByPath = $state<Record<string, ProjectAttachment>>({});
 	let hasLoadedDesktopProjectAttachments = $state(false);
 	let desktopProjectAttachmentsGeneration = 0;
+	let threadSnapshotReady = $state(false);
+	let threadCacheStatus = $state<ThreadCacheStatus>('loading');
+	let threadCacheLastSyncedAt = $state<number | null>(null);
+	let threadSnapshotThreads = $state<ThreadSummary[]>([]);
+	let threadCacheGeneration = 0;
+	let archivedSyncGeneration = 0;
 	let selectionUserId = $state<string | null>(null);
 	let projectPickerOpen = $state(false);
 	let projectPickerMode = $state<'add' | 'reconnect'>('add');
@@ -384,7 +385,6 @@
 		return $authState.user && convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip';
 	}
 
-	const threadsQuery = useQuery(api.threads.listMine, getAuthenticatedQueryArgs);
 	const uiPreferencesQuery = useQuery(api.uiPreferences.getMine, getAuthenticatedQueryArgs);
 	let workspaceTheme = $state<SprocketTheme>(resolveTheme(null));
 	let hasHydratedTheme = false;
@@ -456,7 +456,7 @@
 			? { threadId: currentThreadId }
 			: 'skip';
 	const activeThreadQuery = useQuery(api.threads.getByThreadId, authenticatedThreadQueryArgs);
-	const latestRunQuery = useQuery(api.chat.latestRunForThread, authenticatedThreadQueryArgs);
+	const lifecycleQuery = useQuery(api.chat.selectedThreadLifecycle, authenticatedThreadQueryArgs);
 	const artifactsQuery = useQuery(
 		api.artifacts.listArtifactsForThread,
 		authenticatedThreadQueryArgs
@@ -471,10 +471,9 @@
 	);
 	const queryError = $derived.by(() => {
 		for (const query of [
-			threadsQuery,
 			uiPreferencesQuery,
 			activeThreadQuery,
-			latestRunQuery,
+			lifecycleQuery,
 			browserLiveViewQuery,
 			pendingAgentQuestionQuery
 		]) {
@@ -490,7 +489,7 @@
 			.sort((left, right) => right.lastUsedAt - left.lastUsedAt)
 			.map(projectFromAttachment)
 	);
-	const threads = $derived((threadsQuery.data ?? []).map(toThreadSummary));
+	const threads = $derived(threadSnapshotThreads.map(toThreadSummary));
 	const currentActiveThread = $derived(dataForThread(activeThreadQuery.data, currentThreadId));
 	const contextUsage = $derived.by(() => {
 		const model = modelCatalog
@@ -504,7 +503,7 @@
 			autoCompactTokenLimit: model?.autoCompactTokenLimit ?? 0
 		};
 	});
-	const currentLatestRunData = $derived(dataForThread(latestRunQuery.data, currentThreadId));
+	const currentLifecycle = $derived(dataForThread(lifecycleQuery.data, currentThreadId));
 	const pendingAgentQuestion = $derived(
 		dataForThread(pendingAgentQuestionQuery.data, currentThreadId)
 	);
@@ -732,10 +731,8 @@
 		getProjectThreadGroups(projects, threads)
 	);
 
-	const runState = $derived(currentLatestRunData?.run ?? null);
-	const visibleActions = $derived(
-		currentLatestRunData?.activeJob ? [currentLatestRunData.activeJob] : []
-	);
+	const runState = $derived(currentLifecycle?.run ?? null);
+	const visibleActions: ExecutorJob[] = [];
 	const threadArtifacts = $derived(
 		(artifactsQuery.data ?? []).map((entry) => ({
 			key: entry.artifact._id,
@@ -817,7 +814,7 @@
 	$effect(() => {
 		const threadId = currentThreadId;
 		const data = browserLiveViewQuery.data;
-		const activeRunId = isRunning ? (runState?._id ?? null) : null;
+		const activeRunId = isRunning ? (runState?.runId ?? null) : null;
 		if (!threadId) {
 			browserLiveViewWatch = null;
 			return;
@@ -842,35 +839,32 @@
 		threadArtifacts.find((artifact) => artifact.key === artifactFullscreenKey) ?? null
 	);
 	const currentComposerScope = $derived(getComposerScope(currentThreadId, currentProjectPath));
-	const estimatedServerNow = $derived(
-		latestRunServerClock && latestRunServerClock.runId === (runState?._id ?? null)
-			? latestRunServerClock.serverNow +
-					Math.max(0, leaseClockNow - latestRunServerClock.localObservedAt)
-			: (currentLatestRunData?.serverNow ?? Date.now())
-	);
 	const currentRecoveredSubmission = $derived.by(() => {
 		const userId = getCurrentUserId();
 		if (!userId || !currentComposerScope) return undefined;
 		return recoveredSubmissionIds.get(getComposerRecoveryKey(userId, currentComposerScope));
 	});
 	const isRetryableQueuedRun = $derived(
-		runState?.status === 'queued' &&
-			currentRecoveredSubmission?.submissionId === runState.submissionId
+		currentLifecycle?.phase === 'queued' && currentRecoveredSubmission != null
 	);
 	const isRunning = $derived(
-		isRunBlockingAgentLaunch(runState, estimatedServerNow) && !isRetryableQueuedRun
+		currentLifecycle != null &&
+			isLifecycleInProgress(currentLifecycle.phase) &&
+			!isRetryableQueuedRun
 	);
 	const hasPendingAgentLaunch = $derived(
 		isAgentLaunchPending(pendingAgentLaunches, currentThreadId)
 	);
 	const latestRunResumeKind = $derived(
-		hasPendingAgentLaunch || isRunning ? null : runResumeKind(runState, estimatedServerNow)
+		hasPendingAgentLaunch || isRunning
+			? null
+			: lifecycleResumeKind(currentLifecycle?.phase ?? 'idle', currentLifecycle?.run?.lastError)
 	);
 	const isLatestRunReady = $derived(
 		isLatestRunReadyForThread({
 			threadId: currentThreadId,
 			pendingCreatedThreadId,
-			hasLatestRunData: Boolean(currentLatestRunData)
+			hasLatestRunData: Boolean(currentLifecycle)
 		})
 	);
 	const isSubmittingPrompt = $derived(
@@ -917,6 +911,7 @@
 		desktopProjectAttachmentsByPath = nextAttachments;
 		hasLoadedDesktopProjectAttachments = true;
 		await rekeyChangedLocalRepositories(nextAttachments);
+		await registerThreadCacheForCurrentUser();
 	}
 
 	async function rekeyChangedLocalRepositories(next: Record<string, ProjectAttachment>) {
@@ -942,6 +937,116 @@
 			await attachLocalProject(attachment.workspacePath);
 		}
 	}
+
+	function applyThreadCacheEvent(event: {
+		status: ThreadCacheStatus;
+		lastSyncedAt: number | null;
+	}) {
+		threadCacheStatus = event.status;
+		threadCacheLastSyncedAt = event.lastSyncedAt;
+		if (event.status !== 'loading') {
+			threadSnapshotReady = true;
+		}
+	}
+
+	async function pullThreadSnapshot(userId: string) {
+		const api = desktopApi;
+		if (!api) {
+			return;
+		}
+		const snapshot = await api.fetchThreadSnapshot({ userId });
+		if (getCurrentUserId() !== userId) {
+			return;
+		}
+		threadSnapshotThreads = snapshot.threads;
+		applyThreadCacheEvent(snapshot);
+	}
+
+	async function registerThreadCacheForCurrentUser() {
+		const api = desktopApi;
+		const userId = getCurrentUserId();
+		if (!api || !userId || !authReady) {
+			return;
+		}
+		const authToken = await getAccessToken();
+		if (!authToken || getCurrentUserId() !== userId) {
+			return;
+		}
+		const event = await api.registerThreadCache({ userId, authToken });
+		if (getCurrentUserId() !== userId) {
+			return;
+		}
+		applyThreadCacheEvent(event);
+		await pullThreadSnapshot(userId);
+	}
+
+	$effect(() => {
+		const api = desktopApi;
+		const userId = getCurrentUserId();
+		if (!api || !userId || !authReady) {
+			return;
+		}
+		const generation = ++threadCacheGeneration;
+		const ac = new AbortController();
+		void (async () => {
+			try {
+				await registerThreadCacheForCurrentUser();
+				if (generation !== threadCacheGeneration || ac.signal.aborted) {
+					return;
+				}
+				await api.watchThreadCache(
+					{ userId },
+					{
+						signal: ac.signal,
+						onEvent: (event) => {
+							if (generation !== threadCacheGeneration || getCurrentUserId() !== userId) {
+								return;
+							}
+							applyThreadCacheEvent(event);
+							if (event.status === 'live' || event.status === 'reconnecting') {
+								void pullThreadSnapshot(userId);
+							}
+						}
+					}
+				);
+			} catch (error) {
+				if (generation !== threadCacheGeneration || getCurrentUserId() !== userId) {
+					return;
+				}
+				threadCacheStatus = 'error';
+				threadSnapshotReady = true;
+				currentError = error instanceof Error ? error.message : 'Could not sync threads.';
+			}
+		})();
+		return () => {
+			ac.abort();
+		};
+	});
+
+	$effect(() => {
+		const api = desktopApi;
+		const userId = getCurrentUserId();
+		if (!api || !userId || !authReady || !settingsOpen || settingsPage !== 'archived') {
+			return;
+		}
+		const generation = ++archivedSyncGeneration;
+		void api
+			.syncArchivedThreads({ userId })
+			.then(async (event) => {
+				if (generation !== archivedSyncGeneration || getCurrentUserId() !== userId) {
+					return;
+				}
+				applyThreadCacheEvent(event);
+				await pullThreadSnapshot(userId);
+			})
+			.catch((error) => {
+				if (generation !== archivedSyncGeneration || getCurrentUserId() !== userId) {
+					return;
+				}
+				currentError = error instanceof Error ? error.message : 'Could not sync archived threads.';
+			});
+	});
+
 
 	function applyProjectSelection(
 		workspacePath: string,
@@ -1471,7 +1576,7 @@
 		const submittedModel = selectedModel;
 		const submittedReasoningEffort = selectedReasoningEffort;
 		const submittedServiceTier = selectedServiceTier;
-		const previousRunId = selectedThreadId ? (runState?._id ?? null) : null;
+		const previousRunId = selectedThreadId ? (runState?.runId ?? null) : null;
 		let submissionScope = selectedThreadId
 			? `thread:${selectedThreadId}`
 			: `draft:${workspacePath}`;
@@ -1484,7 +1589,13 @@
 		const recoveredSubmission = recoveredSubmissionIds.get(originatingRecoveryKey);
 		const freshSubmissionId = crypto.randomUUID();
 		const threadSubmissionId = resolveSubmissionId({
-			latestRun: selectedThreadId ? runState : null,
+			latestRun:
+				!selectedThreadId || !currentLifecycle || currentLifecycle.phase === 'idle'
+					? null
+					: {
+							status: isLifecycleInProgress(currentLifecycle.phase) ? 'queued' : 'completed',
+							submissionId: currentRecoveredSubmission?.submissionId ?? ''
+						},
 			newSubmissionId: freshSubmissionId,
 			prompt: submittedPrompt,
 			imageUploadIds: submittedImageUploadIds,
@@ -1652,29 +1763,30 @@
 				launchId,
 				previousRunId
 			};
-			if (runState?.claimExpiresAt) {
-				launch.previousClaimExpiresAt = runState.claimExpiresAt;
+			if (runState?.startedAt) {
+				launch.previousStartedAt = runState.startedAt;
 			}
 			pendingAgentLaunches = beginPendingAgentLaunch(pendingAgentLaunches, threadId, launch);
 			window.setTimeout(() => {
 				const threadLatestRunId =
 					threads.find((thread) => thread.threadId === threadId)?.latestRunId ?? null;
-				const selectedRunId = currentThreadId === threadId ? (runState?._id ?? null) : null;
+				const selectedRunId = currentThreadId === threadId ? (runState?.runId ?? null) : null;
 				const latestRunId =
 					[threadLatestRunId, selectedRunId].find((runId) => runId && runId !== previousRunId) ??
 					threadLatestRunId ??
 					selectedRunId;
-				const latestClaimExpiresAt =
-					currentThreadId === threadId && runState?._id === latestRunId
-						? runState.claimExpiresAt
-						: threads.find((thread) => thread.threadId === threadId)?.latestRunClaimExpiresAt;
+				const latestStartedAt =
+					currentThreadId === threadId && runState?.runId === latestRunId
+						? runState.startedAt
+						: undefined;
 				const recovery = resolveExpiredAgentLaunch(
 					pendingAgentLaunches,
 					threadId,
 					launchId,
 					Date.now(),
 					latestRunId,
-					latestClaimExpiresAt
+					undefined,
+					latestStartedAt
 				);
 				if (recovery.pendingLaunches === pendingAgentLaunches) {
 					return;
@@ -1748,15 +1860,13 @@
 	}
 
 	async function cancelRun() {
-		if (!runState?._id || !isRunning) {
+		if (!runState?.runId || !isRunning) {
 			return;
 		}
 
 		try {
-			await finalizeRun({
-				runId: runState._id,
-				text: '',
-				status: 'cancelled'
+			await requestCancellation({
+				runId: runState.runId
 			});
 		} catch (error) {
 			currentError = error instanceof Error ? error.message : 'Failed to cancel run.';
@@ -1783,17 +1893,15 @@
 		if (!workspacePath) {
 			return;
 		}
-		const previousRunId = runState._id;
-		const previousClaimExpiresAt = runState.claimExpiresAt;
+		const previousRunId = runState.runId;
+		const previousStartedAt = runState.startedAt;
 		const launchId = ++nextAgentLaunchId;
 		const launch: PendingAgentLaunch = {
 			expiresAt: Date.now() + agentLaunchTimeoutMs,
 			launchId,
-			previousRunId
+			previousRunId,
+			previousStartedAt
 		};
-		if (previousClaimExpiresAt) {
-			launch.previousClaimExpiresAt = previousClaimExpiresAt;
-		}
 		pendingAgentLaunches = beginPendingAgentLaunch(pendingAgentLaunches, threadId, launch);
 		try {
 			const authToken = await getAccessToken({ forceRefreshToken: true });
@@ -1812,6 +1920,7 @@
 						pendingAgentLaunches,
 						threadId,
 						runId,
+						undefined,
 						Date.now()
 					);
 				},
@@ -1832,103 +1941,6 @@
 	}
 
 	$effect(() => {
-		const data = currentLatestRunData;
-		if (!data) {
-			latestRunServerClock = null;
-			return;
-		}
-		if (
-			latestRunServerClock?.serverNow === data.serverNow &&
-			latestRunServerClock.runId === (data.run?._id ?? null)
-		) {
-			return;
-		}
-		latestRunServerClock = {
-			localObservedAt: window.performance.now(),
-			runId: data.run?._id ?? null,
-			serverNow: data.serverNow
-		};
-	});
-
-	$effect(() => {
-		if (!runState || !isClaimedRunStatus(runState.status)) {
-			return;
-		}
-		const updateClock = () => {
-			leaseClockNow = window.performance.now();
-		};
-		updateClock();
-		const intervalId = window.setInterval(updateClock, 1_000);
-		return () => window.clearInterval(intervalId);
-	});
-
-	$effect(() => {
-		const userId = getCurrentUserId();
-		const recoveryScope = getComposerScope(currentThreadId, currentProjectPath);
-		const staleRun = runState;
-		if (
-			!userId ||
-			!recoveryScope ||
-			!staleRun ||
-			!isClaimedRunStatus(staleRun.status) ||
-			isRunning ||
-			isSubmittingPrompt ||
-			hasPendingAgentLaunch ||
-			latestRunResumeKind ||
-			prompt !== '' ||
-			composerAttachments.length > 0 ||
-			!currentLatestRunData ||
-			(!currentLatestRunData.prompt && !currentLatestRunData.imageUploadIds?.length)
-		) {
-			return;
-		}
-		const staleImageUploadIds = currentLatestRunData.imageUploadIds ?? [];
-		const stalePrompt = currentLatestRunData.prompt ?? '';
-		const stalePromptMessage = visibleMessages.find(
-			(message) => message.runId === staleRun._id && message.type === 'prompt'
-		);
-		const staleAttachments = staleImageUploadIds.flatMap((imageUploadId) => {
-			const attachment = stalePromptMessage?.attachments.find(
-				(candidate) => candidate.imageUploadId === imageUploadId
-			);
-			return attachment?.url ? [attachment] : [];
-		});
-		const missingAttachmentCount = staleImageUploadIds.length - staleAttachments.length;
-
-		const staleClaimKey = `${userId}\0${staleRun._id}\0${staleRun.claimExpiresAt ?? 'none'}`;
-		if (recoveredStaleClaims.has(staleClaimKey)) {
-			return;
-		}
-		recoveredStaleClaims.add(staleClaimKey);
-		const recoveredAttachments: ComposerAttachment[] = staleAttachments.map((attachment) => ({
-			localId: attachment.imageUploadId,
-			name: attachment.name,
-			mediaType: attachment.mediaType,
-			size: attachment.size,
-			previewUrl: attachment.url!,
-			status: 'ready',
-			imageUploadId: attachment.imageUploadId
-		}));
-		const recoveredSelection = coercePersistedSelection(
-			staleRun.selectedModel,
-			staleRun.serviceTier
-		);
-		storeComposerRecovery(userId, recoveryScope, {
-			message:
-				missingAttachmentCount > 0
-					? `The previous agent stopped responding. ${missingAttachmentCount} image attachment${missingAttachmentCount === 1 ? ' is' : 's are'} unavailable; review and retry this submission.`
-					: 'The previous agent stopped responding. Retry to continue this submission.',
-			prompt: stalePrompt,
-			attachments: recoveredAttachments,
-			imageUploadIds: staleImageUploadIds,
-			reasoningEffort: staleRun.reasoningEffort,
-			serviceTier: recoveredSelection.serviceTier,
-			selectedModel: recoveredSelection.modelId,
-			submissionId: staleRun.submissionId
-		});
-	});
-
-	$effect(() => {
 		const userId = getCurrentUserId();
 		if (selectionUserId === userId) {
 			return;
@@ -1945,6 +1957,11 @@
 		restoredWorkspacePathToAttach = null;
 		ensureSubscriptionAttemptedFor = null;
 		lastSyncedComposerThreadId = null;
+		threadSnapshotReady = false;
+		threadCacheStatus = 'loading';
+		threadCacheLastSyncedAt = null;
+		threadSnapshotThreads = [];
+		threadCacheGeneration += 1;
 		projectSelectionGeneration += 1;
 		prompt = '';
 		clearComposerAttachments({ discard: true });
@@ -2079,7 +2096,7 @@
 			return;
 		}
 
-		if (!hasLoadedDesktopProjectAttachments || !threadsQuery.data) {
+		if (!hasLoadedDesktopProjectAttachments || !threadSnapshotReady) {
 			return;
 		}
 
@@ -2169,12 +2186,13 @@
 			pendingAgentLaunches,
 			threads
 		);
-		if (currentThreadId && runState?._id) {
+		if (currentThreadId && runState?.runId) {
 			nextPendingAgentLaunches = resolvePendingAgentLaunch(
 				nextPendingAgentLaunches,
 				currentThreadId,
-				runState._id,
-				runState.claimExpiresAt
+				runState.runId,
+				undefined,
+				runState.startedAt
 			);
 		}
 		if (nextPendingAgentLaunches !== pendingAgentLaunches) {
@@ -2378,11 +2396,13 @@
 							currentError ??
 							$authState.error ??
 							(queryError instanceof Error ? convexClientErrorMessage(queryError) : null) ??
+							(threadCacheStatus === 'error' ? 'Could not sync threads.' : null) ??
+							(threadCacheStatus === 'offline' ? 'Thread sync is offline.' : null) ??
 							null}
 						runError={latestRunResumeKind ? null : (runState?.lastError ?? null)}
 						messages={visibleMessages}
 						actions={visibleActions}
-						activeRunId={isRunning ? (runState?._id ?? null) : null}
+						activeRunId={isRunning ? (runState?.runId ?? null) : null}
 						project={currentProject}
 						remoteChangeNotice={currentThreadId
 							? (remoteChangeNotices.get(currentThreadId) ?? null)
@@ -2474,7 +2494,7 @@
 					selectedKey={sidePanel.selectedKey}
 					tab={sidePanel.tab}
 					liveView={browserLiveViewQuery.data}
-					liveActive={isRunning && browserLiveViewQuery.data?.lastUsedRunId === runState?._id}
+					liveActive={isRunning && browserLiveViewQuery.data?.lastUsedRunId === runState?.runId}
 					expanded={sidePanel.expanded}
 					onSelect={(key) => {
 						sidePanel = { ...sidePanel, selectedKey: key };
