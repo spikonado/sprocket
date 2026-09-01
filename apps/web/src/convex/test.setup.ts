@@ -98,6 +98,7 @@ export async function insertQueuedRun(
 		serviceTier?: 'standard' | 'fast';
 		installationId?: string;
 		executorSessionId?: Id<'machineSessions'>;
+		continuationOfRunId?: Id<'runs'>;
 	}
 ) {
 	const thread = await asUser.query(api.threads.getByThreadId, { threadId: args.threadId });
@@ -113,7 +114,8 @@ export async function insertQueuedRun(
 		executionSecret: args.executionSecret,
 		protocolVersion: 1,
 		installationId: args.installationId,
-		executorSessionId: args.executorSessionId
+		executorSessionId: args.executorSessionId,
+		...(args.continuationOfRunId ? { continuationOfRunId: args.continuationOfRunId } : {})
 	});
 }
 

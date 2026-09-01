@@ -183,6 +183,12 @@ impl RuntimeClient {
             request.installation_id.clone().into(),
         );
         args.insert("executorSessionId".to_string(), session.session_id.into());
+        if let Some(continuation_of_run_id) = &request.continuation_of_run_id {
+            args.insert(
+                "continuationOfRunId".to_string(),
+                continuation_of_run_id.clone().into(),
+            );
+        }
         self.add_execution_secret(&mut args);
 
         let mut retry_delay = CREATE_RUN_INITIAL_RETRY_DELAY;

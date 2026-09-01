@@ -297,7 +297,7 @@ describe('numbered transcript parts', () => {
 		expect(parts.parts[0]?.kind).toBe('prompt');
 	});
 
-	it('keeps numbered completions when a failed run is reopened', async () => {
+	it('keeps numbered completions when a failed run is reopened in place', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'transcript-reopen-secret';

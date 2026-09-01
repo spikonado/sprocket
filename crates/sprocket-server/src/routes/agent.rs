@@ -41,6 +41,8 @@ struct RunAgentApiRequest {
     reasoning_effort: String,
     service_tier: String,
     workspace_path: String,
+    #[serde(default)]
+    continuation_of_run_id: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -104,6 +106,7 @@ async fn run_agent_handler(
         machine_friendly_name: state.machine_identity.friendly_name.clone(),
         machine_platform: state.machine_identity.platform.clone(),
         machine_architecture: state.machine_identity.architecture.clone(),
+        continuation_of_run_id: payload.continuation_of_run_id,
     };
 
     let cleanup_request = request.clone();
@@ -133,25 +136,26 @@ async fn run_agent_handler(
             Ok(run) => {
                 let run_id = run.run_id().to_string();
                 let user_id = run.user_id().to_string();
-                let prompt_part = run.prompt_part().clone();
-                match transcript
-                    .append_parts(&user_id, &thread_id, std::slice::from_ref(&prompt_part))
-                    .await
-                {
-                    Ok(state) => {
-                        transcript_watchers
-                            .notify_local_update(
-                                &user_id,
-                                &thread_id,
-                                prompt_part.number + 1,
-                                state.stale,
-                            )
-                            .await;
-                    }
-                    Err(error) => {
-                        eprintln!(
-                            "sprocket-server: failed to update local transcript for run {run_id}: {error:#}"
-                        );
+                if let Some(prompt_part) = run.prompt_part().cloned() {
+                    match transcript
+                        .append_parts(&user_id, &thread_id, std::slice::from_ref(&prompt_part))
+                        .await
+                    {
+                        Ok(state) => {
+                            transcript_watchers
+                                .notify_local_update(
+                                    &user_id,
+                                    &thread_id,
+                                    prompt_part.number + 1,
+                                    state.stale,
+                                )
+                                .await;
+                        }
+                        Err(error) => {
+                            eprintln!(
+                                "sprocket-server: failed to update local transcript for run {run_id}: {error:#}"
+                            );
+                        }
                     }
                 }
                 let _ = start_result_sender.send(Ok(run_id));

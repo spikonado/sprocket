@@ -116,6 +116,7 @@ export type AgentRunRequest = {
 	reasoningEffort: string;
 	serviceTier: string;
 	workspacePath: string;
+	continuationOfRunId?: Id<'runs'>;
 };
 
 export type AgentRunStart = {

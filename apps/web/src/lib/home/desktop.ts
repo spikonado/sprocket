@@ -124,19 +124,24 @@ export function launchAgentRun(args: {
 	serviceTier: AgentRunRequest['serviceTier'];
 	submissionId: string;
 	workspacePath: string;
+	continuationOfRunId?: Id<'runs'>;
 }) {
+	const request: AgentRunRequest = {
+		authToken: args.authToken,
+		threadId: args.threadId,
+		prompt: args.prompt,
+		imageUploadIds: args.imageUploadIds,
+		selectedModel: args.selectedModel,
+		reasoningEffort: args.reasoningEffort,
+		serviceTier: args.serviceTier,
+		submissionId: args.submissionId,
+		workspacePath: args.workspacePath
+	};
+	if (args.continuationOfRunId) {
+		request.continuationOfRunId = args.continuationOfRunId;
+	}
 	void args.desktopApi
-		.runAgent({
-			authToken: args.authToken,
-			threadId: args.threadId,
-			prompt: args.prompt,
-			imageUploadIds: args.imageUploadIds,
-			selectedModel: args.selectedModel,
-			reasoningEffort: args.reasoningEffort,
-			serviceTier: args.serviceTier,
-			submissionId: args.submissionId,
-			workspacePath: args.workspacePath
-		})
+		.runAgent(request)
 		.then(({ runId }) => {
 			args.onStarted(runId);
 		})

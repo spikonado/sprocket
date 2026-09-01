@@ -266,6 +266,38 @@ mod tests {
     }
 
     #[test]
+    fn reconstructs_parent_transcript_for_a_continuation_run_without_a_prompt() {
+        let mut state = TranscriptState::new("user".into(), "thread".into());
+        state.history_from_number = 0;
+        let history = agent_history_from_parts(
+            &state,
+            &[
+                prompt(0, "parent", "original task"),
+                TranscriptPart {
+                    number: 1,
+                    source_key: "completion:parent".into(),
+                    kind: TranscriptPartKind::Completion,
+                    run_id: "parent".into(),
+                    prompt: None,
+                    completion: Some(TranscriptCompletionBody {
+                        stream_id: Some("s".into()),
+                        items: vec![serde_json::json!({ "type": "text", "text": "partial work" })],
+                    }),
+                    tool: None,
+                },
+            ],
+            Some("continuation"),
+        );
+        let serialized = format!("{history:?}");
+        assert!(serialized.contains("original task"));
+        assert!(serialized.contains("partial work"));
+        assert!(!current_run_has_finished_turns(
+            &[prompt(0, "parent", "original task")],
+            "continuation"
+        ));
+    }
+
+    #[test]
     fn skips_tool_parts_without_a_matching_completion_call() {
         let state = TranscriptState::new("user".into(), "thread".into());
         let history = agent_history_from_parts(

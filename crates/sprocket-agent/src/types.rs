@@ -32,6 +32,7 @@ pub struct RunAgentRequest {
     pub machine_friendly_name: String,
     pub machine_platform: String,
     pub machine_architecture: String,
+    pub continuation_of_run_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -39,9 +40,11 @@ pub struct RunAgentRequest {
 pub struct CreateRunResponse {
     pub created: bool,
     pub run_id: String,
-    pub prompt_message_id: String,
+    #[serde(default)]
+    pub prompt_message_id: Option<String>,
     pub user_id: String,
-    pub prompt_part: serde_json::Value,
+    #[serde(default)]
+    pub prompt_part: Option<serde_json::Value>,
     pub gateway_url: String,
     #[serde(deserialize_with = "deserialize_convex_u64")]
     pub protocol_version: u64,
@@ -195,6 +198,8 @@ pub struct RunSnapshot {
     pub service_tier: String,
     #[serde(deserialize_with = "deserialize_convex_u64")]
     pub started_at: u64,
+    #[serde(default)]
+    pub continuation_of_run_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -534,8 +539,9 @@ mod tests {
 
         assert_eq!(created.gateway_url, "https://preview.gateway.example");
         assert_eq!(created.protocol_version, 1);
+        let prompt_part = created.prompt_part.expect("prompt transcript part");
         let parts = crate::transcript::parse_remote_parts(serde_json::json!({
-            "parts": [created.prompt_part]
+            "parts": [prompt_part]
         }))
         .expect("prompt transcript part");
         assert_eq!(parts[0].number, 0);
@@ -543,6 +549,24 @@ mod tests {
         assert_eq!(attachment.name, "robot.png");
         assert_eq!(attachment.size, 42);
         assert_eq!(attachment.storage_id, "storage_1");
+    }
+
+    #[test]
+    fn deserializes_a_continuation_create_run_response_without_a_prompt() {
+        use super::CreateRunResponse;
+
+        let created: CreateRunResponse = serde_json::from_value(serde_json::json!({
+            "created": true,
+            "runId": "jd7cont",
+            "userId": "user_1",
+            "gatewayUrl": "https://preview.gateway.example",
+            "protocolVersion": 1.0
+        }))
+        .expect("continuation create run response");
+
+        assert_eq!(created.run_id, "jd7cont");
+        assert!(created.prompt_message_id.is_none());
+        assert!(created.prompt_part.is_none());
     }
 
     #[test]

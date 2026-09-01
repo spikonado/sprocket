@@ -21,6 +21,11 @@ function threadRecordId(value: string): Id<'threadRecords'> {
 	return value as Id<'threadRecords'>;
 }
 
+function runId(value: string): Id<'runs'> {
+	// SAFETY: fixture strings are only compared as opaque Convex document ids.
+	return value as Id<'runs'>;
+}
+
 function unusedDesktopCall(): Promise<never> {
 	return Promise.reject(new Error('unused desktop API method'));
 }
@@ -111,6 +116,33 @@ describe('launchAgentRun', () => {
 		});
 		await vi.waitFor(() => {
 			expect(onStarted).toHaveBeenCalledWith('run-1');
+		});
+	});
+
+	it('forwards continuationOfRunId without a duplicated prompt', async () => {
+		const runAgent = vi.fn().mockResolvedValue({ runId: 'run-2' });
+		const desktopApi = createDesktopApi(runAgent);
+
+		launchAgentRun(
+			launchArgs({
+				desktopApi,
+				prompt: '',
+				imageUploadIds: [],
+				continuationOfRunId: runId('run-1')
+			})
+		);
+
+		expect(runAgent).toHaveBeenCalledWith({
+			authToken: 'token-1',
+			threadId: 'thread-1',
+			prompt: '',
+			imageUploadIds: [],
+			selectedModel: 'gpt-5.6-sol',
+			submissionId: 'submission-1',
+			reasoningEffort: 'medium',
+			serviceTier: 'standard',
+			workspacePath: '/workspaces/workspace-1',
+			continuationOfRunId: 'run-1'
 		});
 	});
 

@@ -49,7 +49,7 @@ pub struct AgentRun {
     runtime: RuntimeClient,
     run_id: String,
     user_id: String,
-    prompt_part: crate::transcript::TranscriptPart,
+    prompt_part: Option<crate::transcript::TranscriptPart>,
     claim_id: String,
     workspace_root: std::path::PathBuf,
     gateway_url: String,
@@ -64,8 +64,8 @@ impl AgentRun {
         &self.user_id
     }
 
-    pub fn prompt_part(&self) -> &crate::transcript::TranscriptPart {
-        &self.prompt_part
+    pub fn prompt_part(&self) -> Option<&crate::transcript::TranscriptPart> {
+        self.prompt_part.as_ref()
     }
 }
 
@@ -608,12 +608,18 @@ pub async fn start_agent_run(request: RunAgentRequest) -> anyhow::Result<AgentRu
             request.submission_id, created_run.run_id
         );
     }
-    let mut prompt_parts = parse_remote_parts(serde_json::json!({
-        "parts": [created_run.prompt_part]
-    }))?;
-    let prompt_part = prompt_parts
-        .pop()
-        .ok_or_else(|| anyhow!("create run response omitted the prompt transcript part"))?;
+    let prompt_part =
+        match created_run.prompt_part {
+            Some(part) => {
+                let mut prompt_parts = parse_remote_parts(serde_json::json!({
+                    "parts": [part]
+                }))?;
+                Some(prompt_parts.pop().ok_or_else(|| {
+                    anyhow!("create run response omitted the prompt transcript part")
+                })?)
+            }
+            None => None,
+        };
     let run_id = created_run.run_id;
     Ok(AgentRun {
         request,
@@ -752,7 +758,8 @@ async fn load_prior_history(
             &parts,
             Some(run_id),
         ))?,
-        continue_from_finished_turns: current_run_has_finished_turns(&parts, run_id),
+        continue_from_finished_turns: context.run.continuation_of_run_id.is_some()
+            || current_run_has_finished_turns(&parts, run_id),
     })
 }
 
@@ -789,8 +796,10 @@ pub async fn run_agent(run: AgentRun, live: Arc<LiveCompletionHub>) -> anyhow::R
             eprintln!("sprocket-agent: {warning}");
         }
         let skills: Arc<[WorkspaceSkill]> = workspace_skills.skills.into();
+        let is_continuation = context.run.continuation_of_run_id.is_some()
+            || request.continuation_of_run_id.is_some();
         let prompt_text = context.prompt.trim();
-        if prompt_text.is_empty() && context.prompt_attachments.is_empty() {
+        if prompt_text.is_empty() && context.prompt_attachments.is_empty() && !is_continuation {
             return Err(anyhow!("run does not contain a user prompt"));
         }
         let mut prompt_contents = Vec::new();
@@ -822,13 +831,14 @@ pub async fn run_agent(run: AgentRun, live: Arc<LiveCompletionHub>) -> anyhow::R
         Ok(history) => history,
         Err(error) => return abort_before_start(&runtime, &run_id, error).await,
     };
-    let prompt = if prior_history.continue_from_finished_turns {
-        Message::User {
-            content: vec![UserContent::text(CONTINUE_FROM_FINISHED_TURNS)],
-        }
-    } else {
-        prompt
-    };
+    let prompt =
+        if prior_history.continue_from_finished_turns || request.continuation_of_run_id.is_some() {
+            Message::User {
+                content: vec![UserContent::text(CONTINUE_FROM_FINISHED_TURNS)],
+            }
+        } else {
+            prompt
+        };
 
     if let Err(error) = runtime.begin_assistant_message(&run_id).await {
         return abort_before_start(&runtime, &run_id, error).await;
