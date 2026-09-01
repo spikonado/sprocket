@@ -230,7 +230,11 @@ export default defineSchema({
 	})
 		.index('by_threadId_sequence', ['threadId', 'sequence'])
 		.index('by_runId_sequence', ['runId', 'sequence'])
-		.index('by_runId_hidden_sequence', ['runId', 'hidden', 'sequence']),
+		.index('by_runId_hidden_sequence', ['runId', 'hidden', 'sequence'])
+		.index('by_runId_and_callId_and_hidden', {
+			fields: ['runId', 'callId', 'hidden'],
+			staged: true
+		}),
 	agentQuestions: defineTable({
 		threadId: v.id('threadRecords'),
 		runId: v.id('runs'),
