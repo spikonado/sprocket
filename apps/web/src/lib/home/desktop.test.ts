@@ -60,7 +60,8 @@ function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 		archiveThread: unusedDesktopCall,
 		restoreThread: unusedDesktopCall,
 		rekeyRepository: unusedDesktopCall,
-		requestRunCancellation: unusedDesktopCall
+		requestRunCancellation: unusedDesktopCall,
+		endAccountSession: unusedDesktopCall
 	};
 }
 

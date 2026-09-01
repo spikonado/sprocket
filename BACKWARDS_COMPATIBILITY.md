@@ -197,6 +197,22 @@ optionality after a production scan finds no jobs without `toolInvocationId`.
 
 Safe when a prod check shows zero transcript tool parts carrying `jobId`.
 
+### 12. Legacy installation identity and machine metadata
+
+Local servers now persist a versioned `installation.json`. On first launch
+after upgrade they preserve the UUID from the legacy plain-text
+`installation-id` file and write the JSON identity. The old file is left in
+place for rollback safety but is no longer read once the JSON file exists.
+
+`installations.platformVersion` and `installations.hostname` are optional so
+rows and released agents without the expanded normalized machine metadata
+remain valid. Remove their optionality after all supported agents send both
+fields and a production scan finds no installation rows missing either one.
+
+Delete legacy `installation-id` files only after all supported installations
+have launched a JSON-aware server and rollback to an older release is no
+longer supported.
+
 ## Client APIs
 
 Released desktop/CLI builds that still call retired Convex functions get a
@@ -251,6 +267,18 @@ working. It is not an unsupported-client stub.
 Remove after all supported desktop/CLI builds have shipped new-run
 continuation and no longer call `reopenRun`. Then delete the Convex export
 and `reopenRunRecord`.
+
+### Live leftover thread and cancellation APIs
+
+Current UI sends rename, archive, restore, repository-rekey, and cancellation
+commands through the authenticated local Rust API. The public Convex
+mutations remain live for released browser bundles. Remove direct public
+access only after all supported desktop bundles use the local routes.
+
+`threads.listMine` and `chat.latestRunForThread` remain available for released
+UIs. Current thread navigation reads the Rust-owned summary cache and current
+lifecycle UI reads `chat.selectedThreadLifecycle`. Remove the old queries
+after supported desktop versions no longer call them.
 
 ## Removal checklist
 

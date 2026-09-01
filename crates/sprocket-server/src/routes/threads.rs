@@ -85,6 +85,10 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/threads/rekey", post(rekey_handler))
         .route("/threads/lifecycle", post(lifecycle_handler))
         .route("/threads/cancel", post(cancel_handler))
+        .route(
+            "/threads/account-session/end",
+            post(end_account_session_handler),
+        )
 }
 
 async fn client(state: &AppState, token: String) -> Result<UserConvexClient, ApiError> {
@@ -113,7 +117,7 @@ async fn run_thread_command(
         .map_err(ApiError::bad_request)?;
     state
         .thread_cache
-        .register(&payload.user_id, payload.auth_token)
+        .register(&payload.user_id, payload.auth_token.clone())
         .await
         .map_err(ApiError::bad_request)?;
     Ok(Json(result))
@@ -215,6 +219,23 @@ async fn cancel_handler(
     Ok(Json(result))
 }
 
+async fn end_account_session_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(payload): Json<ThreadCacheUserRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_session(&state.auth, &headers, &jar)
+        .await
+        .map_err(ApiError::unauthorized)?;
+    state
+        .machine_sessions
+        .end(&payload.user_id)
+        .await
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(serde_json::Value::Null))
+}
+
 async fn register_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -226,6 +247,11 @@ async fn register_handler(
         .map_err(ApiError::unauthorized)?;
     state
         .thread_cache
+        .register(&payload.user_id, payload.auth_token.clone())
+        .await
+        .map_err(ApiError::bad_request)?;
+    state
+        .machine_sessions
         .register(&payload.user_id, payload.auth_token)
         .await
         .map_err(ApiError::bad_request)?;

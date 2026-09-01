@@ -15,7 +15,7 @@
 		getAccessToken,
 		retryConvexAuthentication,
 		signIn,
-		signOut,
+		signOut as authSignOut,
 		signUp
 	} from '$lib/auth';
 	import AuthGate from '$lib/components/home/auth-gate.svelte';
@@ -939,6 +939,15 @@
 			throw new Error('The local Sprocket service is not ready.');
 		}
 		return { api, userId, authToken };
+	}
+
+	async function signOut() {
+		const api = desktopApi;
+		const userId = getCurrentUserId();
+		if (api && userId) {
+			await api.endAccountSession({ userId }).catch(() => {});
+		}
+		await authSignOut();
 	}
 
 	async function rekeyLocalRepository(from: string, to: string) {

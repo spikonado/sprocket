@@ -67,8 +67,8 @@ fn load_or_create_installation_identity(
     }
 
     let legacy_path = data_dir.join(INSTALLATION_ID_FILE);
-    let installation_id = read_installation_id(&legacy_path)?
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let installation_id =
+        read_installation_id(&legacy_path)?.unwrap_or_else(|| Uuid::new_v4().to_string());
     let identity = StoredInstallationIdentity {
         version: INSTALLATION_IDENTITY_VERSION,
         installation_id,
@@ -107,7 +107,9 @@ fn read_installation_identity(path: &Path) -> anyhow::Result<Option<StoredInstal
     let value = match fs::read(path) {
         Ok(value) => value,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error).with_context(|| format!("failed to read {}", path.display())),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to read {}", path.display()));
+        }
     };
     let identity: StoredInstallationIdentity = match serde_json::from_slice(&value) {
         Ok(identity) => identity,
@@ -128,7 +130,11 @@ fn read_installation_identity(path: &Path) -> anyhow::Result<Option<StoredInstal
 fn hostname() -> String {
     ["HOSTNAME", "COMPUTERNAME"]
         .into_iter()
-        .find_map(|name| std::env::var(name).ok().filter(|value| !value.trim().is_empty()))
+        .find_map(|name| {
+            std::env::var(name)
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
         .unwrap_or_else(|| "Sprocket machine".to_string())
 }
 
@@ -143,7 +149,9 @@ fn normalized_platform() -> &'static str {
 
 fn platform_version() -> String {
     #[cfg(target_os = "windows")]
-    let output = std::process::Command::new("cmd").args(["/C", "ver"]).output();
+    let output = std::process::Command::new("cmd")
+        .args(["/C", "ver"])
+        .output();
     #[cfg(not(target_os = "windows"))]
     let output = std::process::Command::new("uname").arg("-r").output();
     output
@@ -220,7 +228,10 @@ mod tests {
         };
         fs::write(identity_path(&dir), serde_json::to_vec(&identity).unwrap()).unwrap();
 
-        assert_eq!(MachineIdentity::load(&dir).unwrap().friendly_name, "Workbench");
+        assert_eq!(
+            MachineIdentity::load(&dir).unwrap().friendly_name,
+            "Workbench"
+        );
         fs::remove_dir_all(dir).unwrap();
     }
 

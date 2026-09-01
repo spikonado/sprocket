@@ -700,6 +700,12 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				method: 'POST',
 				body: JSON.stringify(requestBody)
 			});
+		},
+		endAccountSession: async (requestBody) => {
+			await request('/api/threads/account-session/end', z.null(), {
+				method: 'POST',
+				body: JSON.stringify(requestBody)
+			});
 		}
 	};
 }

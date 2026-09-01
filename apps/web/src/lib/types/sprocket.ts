@@ -286,6 +286,7 @@ export type DesktopApi = {
 		request: ThreadCacheRegisterRequest & { from: string; to: string }
 	) => Promise<number>;
 	requestRunCancellation: (request: { authToken: string; runId: Id<'runs'> }) => Promise<void>;
+	endAccountSession: (request: ThreadCacheUserRequest) => Promise<void>;
 };
 
 export type ThreadCommandRequest = ThreadCacheRegisterRequest & {
