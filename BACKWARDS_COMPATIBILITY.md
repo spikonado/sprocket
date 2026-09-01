@@ -275,10 +275,25 @@ commands through the authenticated local Rust API. The public Convex
 mutations remain live for released browser bundles. Remove direct public
 access only after all supported desktop bundles use the local routes.
 
+The local command routes call `threads.renameForLocalCache`,
+`archiveForLocalCache`, `restoreForLocalCache`, and
+`rekeyRepositoryForLocalCache`. These variants return the authenticated user
+and affected repository/category metadata so Rust can refresh the cache before
+acknowledging a command. Keep the older mutation names and return shapes for
+released bundles. Remove the older names after all supported bundles use the
+local routes; remove the `ForLocalCache` variants only when Rust no longer
+needs synchronous cache-refresh metadata from Convex.
+
 `threads.listMine` and `chat.latestRunForThread` remain available for released
 UIs. Current thread navigation reads the Rust-owned summary cache and current
 lifecycle UI reads `chat.selectedThreadLifecycle`. Remove the old queries
 after supported desktop versions no longer call them.
+
+The local-server boundary owns thread commands and the summary cache. The
+reactive lifecycle view intentionally remains a direct authenticated Convex
+subscription: the local `/threads/lifecycle` route is a one-shot command-time
+relay, not a replacement subscription. Move lifecycle reads behind Rust only
+if Rust gains an equivalent ordered reactive stream.
 
 ## Removal checklist
 

@@ -32,6 +32,7 @@ const AGENT_START_CLEANUP_TIMEOUT: Duration = Duration::from_secs(12);
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RunAgentApiRequest {
+    user_id: String,
     auth_token: String,
     submission_id: String,
     thread_id: String,
@@ -85,7 +86,13 @@ async fn run_agent_handler(
         .await
         .map_err(ApiError::bad_request)?;
 
-    let auth_token_fetcher = static_auth_token_fetcher(payload.auth_token);
+    let auth_token = payload.auth_token;
+    let executor_session_id = state
+        .machine_sessions
+        .register(&payload.user_id, auth_token.clone())
+        .await
+        .map_err(ApiError::bad_request)?;
+    let auth_token_fetcher = static_auth_token_fetcher(auth_token);
     let request = RunAgentRequest {
         deployment_url: state.convex_deployment_url.clone(),
         auth_token_fetcher: auth_token_fetcher.clone(),
@@ -100,14 +107,7 @@ async fn run_agent_handler(
         workspace_path,
         transcript_root: state.transcript.root(),
         installation_id: state.machine_identity.installation_id.clone(),
-        process_session_id: state.machine_identity.process_session_id.clone(),
-        machine_credential: state.machine_identity.credential.clone(),
-        machine_credential_hash: state.machine_identity.credential_hash.clone(),
-        machine_friendly_name: state.machine_identity.friendly_name.clone(),
-        machine_platform: state.machine_identity.platform.clone(),
-        machine_platform_version: state.machine_identity.platform_version.clone(),
-        machine_architecture: state.machine_identity.architecture.clone(),
-        machine_hostname: state.machine_identity.hostname.clone(),
+        executor_session_id,
         continuation_of_run_id: payload.continuation_of_run_id,
     };
 

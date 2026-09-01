@@ -143,17 +143,21 @@ impl ThreadCacheSync {
             anyhow::bail!("auth token is required");
         }
         let last_synced_at = self.store.latest_synced_at(user_id).await?;
+        let mut emit_loading = false;
         {
             let mut inner = self.inner.lock().await;
             if inner.user_id.as_deref() != Some(user_id) {
                 abort_tasks(&mut inner);
+                inner.status = ThreadCacheStatus::Loading;
+                emit_loading = true;
             }
             inner.user_id = Some(user_id.to_string());
             inner.auth_token = Some(auth_token.to_string());
-            inner.status = ThreadCacheStatus::Loading;
             inner.last_synced_at = last_synced_at.or(inner.last_synced_at);
         }
-        self.emit().await;
+        if emit_loading {
+            self.emit().await;
+        }
         self.reconcile_watches(ThreadSnapshotCategory::Active)
             .await?;
         Ok(())
@@ -175,6 +179,33 @@ impl ThreadCacheSync {
         }
         self.reconcile_watches(ThreadSnapshotCategory::Archived)
             .await?;
+        Ok(())
+    }
+
+    pub async fn refresh_repository(
+        self: &Arc<Self>,
+        user_id: &str,
+        auth_token: String,
+        repository_key: &str,
+        categories: &[ThreadSnapshotCategory],
+    ) -> anyhow::Result<()> {
+        self.register(user_id, auth_token.clone()).await?;
+        if repository_key.is_empty() {
+            return Ok(());
+        }
+        let client = UserConvexClient::connect(&self.deployment_url, auth_token).await?;
+        for &category in categories {
+            let start = WatchStart {
+                deployment_url: self.deployment_url.clone(),
+                store: Arc::clone(&self.store),
+                sync: Arc::clone(self),
+                user_id: user_id.to_string(),
+                repository_key: repository_key.to_string(),
+                category,
+                auth_token: String::new(),
+            };
+            download_consistent_snapshot(&start, &client).await?;
+        }
         Ok(())
     }
 
@@ -344,20 +375,16 @@ fn classify_watch_error(error: &anyhow::Error) -> ThreadCacheStatus {
 
 async fn run_watch(start: &WatchStart) -> anyhow::Result<()> {
     let client = UserConvexClient::connect(&start.deployment_url, start.auth_token.clone()).await?;
-    download_consistent_snapshot(start, &client).await?;
     let mut subscription = client
         .subscribe_snapshot_revision(&start.repository_key, start.category.as_str())
         .await?;
-    let mut seen = client
-        .snapshot_revision(&start.repository_key, start.category.as_str())
-        .await?;
+    let mut seen = download_consistent_snapshot(start, &client).await?;
     while let Some(update) = subscription.next().await {
         let revision = decode_revision_update(update)?;
         if revision == seen {
             continue;
         }
-        download_consistent_snapshot(start, &client).await?;
-        seen = revision;
+        seen = download_consistent_snapshot(start, &client).await?;
     }
     anyhow::bail!("thread snapshot subscription ended")
 }
@@ -365,7 +392,7 @@ async fn run_watch(start: &WatchStart) -> anyhow::Result<()> {
 async fn download_consistent_snapshot(
     start: &WatchStart,
     client: &UserConvexClient,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<u64> {
     let (revision, threads) = fetch_consistent_snapshot(
         client,
         &start.repository_key,
@@ -387,7 +414,7 @@ async fn download_consistent_snapshot(
         })
         .await?;
     start.sync.note_success(&start.user_id, synced_at).await;
-    Ok(())
+    Ok(revision)
 }
 
 pub async fn fetch_consistent_snapshot(

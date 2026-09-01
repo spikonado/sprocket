@@ -16,7 +16,7 @@ use tokio::sync::broadcast;
 use crate::AppState;
 use crate::auth::require_session;
 use crate::routes::api_error::ApiError;
-use crate::thread_cache::CachedThreadSummary;
+use crate::thread_cache::{CachedThreadSummary, ThreadSnapshotCategory};
 use crate::thread_sync::{ThreadCacheEvent, ThreadCacheStatus};
 use crate::transcript_client::UserConvexClient;
 
@@ -65,6 +65,24 @@ struct LifecycleRequest {
     thread_id: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadCommandResult {
+    user_id: String,
+    repository_key: String,
+    #[serde(default)]
+    category: Option<ThreadSnapshotCategory>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RekeyResult {
+    user_id: String,
+    from: String,
+    to: String,
+    count: u64,
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ThreadCacheSnapshotResponse {
@@ -105,22 +123,37 @@ async fn run_thread_command(
     state: &AppState,
     payload: ThreadCommandRequest,
     function: &str,
+    categories: &[ThreadSnapshotCategory],
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let mut args = thread_args(payload.thread_id);
     if let Some(title) = payload.title {
         args.insert("title".into(), Value::String(title));
     }
-    let result = client(state, payload.auth_token.clone())
+    let result: ThreadCommandResult = client(state, payload.auth_token.clone())
         .await?
         .mutate(function, args)
         .await
         .map_err(ApiError::bad_request)?;
+    if result.user_id != payload.user_id {
+        return Err(ApiError::bad_request(anyhow!(
+            "thread command account does not match the requested account"
+        )));
+    }
+    let refresh_categories = result
+        .category
+        .as_ref()
+        .map_or(categories, std::slice::from_ref);
     state
         .thread_cache
-        .register(&payload.user_id, payload.auth_token.clone())
+        .refresh_repository(
+            &payload.user_id,
+            payload.auth_token,
+            &result.repository_key,
+            refresh_categories,
+        )
         .await
         .map_err(ApiError::bad_request)?;
-    Ok(Json(result))
+    Ok(Json(serde_json::Value::Null))
 }
 
 async fn rename_handler(
@@ -132,7 +165,16 @@ async fn rename_handler(
     require_session(&state.auth, &headers, &jar)
         .await
         .map_err(ApiError::unauthorized)?;
-    run_thread_command(&state, payload, "threads:rename").await
+    run_thread_command(
+        &state,
+        payload,
+        "threads:renameForLocalCache",
+        &[
+            ThreadSnapshotCategory::Active,
+            ThreadSnapshotCategory::Archived,
+        ],
+    )
+    .await
 }
 async fn archive_handler(
     State(state): State<AppState>,
@@ -143,7 +185,16 @@ async fn archive_handler(
     require_session(&state.auth, &headers, &jar)
         .await
         .map_err(ApiError::unauthorized)?;
-    run_thread_command(&state, payload, "threads:archive").await
+    run_thread_command(
+        &state,
+        payload,
+        "threads:archiveForLocalCache",
+        &[
+            ThreadSnapshotCategory::Active,
+            ThreadSnapshotCategory::Archived,
+        ],
+    )
+    .await
 }
 async fn restore_handler(
     State(state): State<AppState>,
@@ -154,7 +205,16 @@ async fn restore_handler(
     require_session(&state.auth, &headers, &jar)
         .await
         .map_err(ApiError::unauthorized)?;
-    run_thread_command(&state, payload, "threads:restore").await
+    run_thread_command(
+        &state,
+        payload,
+        "threads:restoreForLocalCache",
+        &[
+            ThreadSnapshotCategory::Active,
+            ThreadSnapshotCategory::Archived,
+        ],
+    )
+    .await
 }
 async fn rekey_handler(
     State(state): State<AppState>,
@@ -165,22 +225,38 @@ async fn rekey_handler(
     require_session(&state.auth, &headers, &jar)
         .await
         .map_err(ApiError::unauthorized)?;
-    let token = payload.auth_token.clone();
     let args = BTreeMap::from([
         ("from".into(), Value::String(payload.from)),
         ("to".into(), Value::String(payload.to)),
     ]);
-    let result = client(&state, payload.auth_token)
+    let result: RekeyResult = client(&state, payload.auth_token.clone())
         .await?
-        .mutate("threads:rekeyRepository", args)
+        .mutate("threads:rekeyRepositoryForLocalCache", args)
         .await
         .map_err(ApiError::bad_request)?;
-    state
-        .thread_cache
-        .register(&payload.user_id, token)
-        .await
-        .map_err(ApiError::bad_request)?;
-    Ok(Json(result))
+    if result.user_id != payload.user_id {
+        return Err(ApiError::bad_request(anyhow!(
+            "thread command account does not match the requested account"
+        )));
+    }
+    if result.count > 0 {
+        for repository_key in [&result.from, &result.to] {
+            state
+                .thread_cache
+                .refresh_repository(
+                    &payload.user_id,
+                    payload.auth_token.clone(),
+                    repository_key,
+                    &[
+                        ThreadSnapshotCategory::Active,
+                        ThreadSnapshotCategory::Archived,
+                    ],
+                )
+                .await
+                .map_err(ApiError::bad_request)?;
+        }
+    }
+    Ok(Json(serde_json::json!(result.count)))
 }
 async fn lifecycle_handler(
     State(state): State<AppState>,
@@ -246,12 +322,12 @@ async fn register_handler(
         .await
         .map_err(ApiError::unauthorized)?;
     state
-        .thread_cache
+        .machine_sessions
         .register(&payload.user_id, payload.auth_token.clone())
         .await
         .map_err(ApiError::bad_request)?;
     state
-        .machine_sessions
+        .thread_cache
         .register(&payload.user_id, payload.auth_token)
         .await
         .map_err(ApiError::bad_request)?;

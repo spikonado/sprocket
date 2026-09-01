@@ -3,6 +3,46 @@ import { api } from '@convex/_generated/api';
 import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 
 describe('agentRuntime.start', () => {
+	it('bumps the summary revision on status changes but not claim renewal', async () => {
+		const t = initConvexTest();
+		const { asUser, repositoryKey, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'start-revision-secret';
+		const revision = () =>
+			asUser.query(api.threads.getSnapshotRevision, {
+				repositoryKey,
+				category: 'active'
+			});
+
+		const beforeCreate = await revision();
+		const { runId } = await createQueuedRun(t, asUser, threadId, 'sub-revision', executionSecret);
+		const afterCreate = await revision();
+		expect(afterCreate).toBeGreaterThan(beforeCreate);
+
+		await asUser.mutation(api.agentRuntime.start, {
+			claimId: 'claim-revision',
+			runId,
+			executionSecret
+		});
+		const afterStart = await revision();
+		expect(afterStart).toBe(afterCreate + 1);
+
+		await asUser.mutation(api.agentRuntime.start, {
+			claimId: 'claim-revision',
+			runId,
+			executionSecret
+		});
+		expect(await revision()).toBe(afterStart);
+
+		await asUser.mutation(api.agentRuntime.finalizeRun, {
+			runId,
+			expectedStatus: 'running',
+			expectedClaimId: 'claim-revision',
+			text: 'done',
+			status: 'completed'
+		});
+		expect(await revision()).toBe(afterStart + 1);
+	});
+
 	it('claims a queued run and renews the same claim', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);

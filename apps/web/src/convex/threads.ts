@@ -20,15 +20,88 @@ import {
 	vServiceTier
 } from '@convex/lib/validators';
 
-async function patchOwnedThread(
-	ctx: MutationCtx,
-	threadId: Id<'threadRecords'>,
-	patch: Partial<Doc<'threadRecords'>>
-) {
+async function renameOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>, title: string) {
+	const trimmedTitle = title.trim();
+	if (trimmedTitle.length === 0) {
+		throw new Error('Thread title cannot be empty.');
+	}
 	const userId = await getUserId(ctx);
 	const record = await getOwnedThreadRecord(ctx.db, userId, threadId);
-	await ctx.db.patch('threadRecords', threadId, patch);
-	await bumpThreadSnapshotForRecord(ctx, { ...record, ...patch });
+	await ctx.db.patch('threadRecords', threadId, { title: trimmedTitle });
+	await bumpThreadSnapshotForRecord(ctx, record);
+	return { userId, record };
+}
+
+async function archiveOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>) {
+	const userId = await getUserId(ctx);
+	const record = await getOwnedThreadRecord(ctx.db, userId, threadId);
+
+	for (const status of ['queued', 'running', 'awaiting_executor'] as const) {
+		const activeRun = await ctx.db
+			.query('runs')
+			.withIndex('by_threadId_status_startedAt', (query) =>
+				query.eq('threadId', threadId).eq('status', status)
+			)
+			.first();
+		if (activeRun) {
+			throw new Error('Cannot archive a thread while a run is active.');
+		}
+	}
+
+	await ctx.db.patch('threadRecords', threadId, { archivedAt: Date.now() });
+	await bumpThreadSnapshotRevisions(ctx, {
+		userId,
+		repositoryKey: record.repositoryKey ?? '',
+		categories: ['active', 'archived']
+	});
+	return { userId, record };
+}
+
+async function restoreOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>) {
+	const userId = await getUserId(ctx);
+	const record = await getOwnedThreadRecord(ctx.db, userId, threadId);
+	await ctx.db.patch('threadRecords', threadId, { archivedAt: undefined });
+	await bumpThreadSnapshotRevisions(ctx, {
+		userId,
+		repositoryKey: record.repositoryKey ?? '',
+		categories: ['active', 'archived']
+	});
+	return { userId, record };
+}
+
+async function rekeyOwnedThreads(ctx: MutationCtx, fromArg: string, toArg: string) {
+	const userId = await getUserId(ctx);
+	const from = fromArg.trim();
+	const to = toArg.trim();
+	if (from.length === 0 || to.length === 0) {
+		throw new Error('Repository key is required.');
+	}
+	if (from === to) {
+		return { userId, from, to, count: 0 };
+	}
+
+	const threads = await ctx.db
+		.query('threadRecords')
+		.withIndex('by_userId_repositoryKey', (query) =>
+			query.eq('userId', userId).eq('repositoryKey', from)
+		)
+		.collect();
+	for (const thread of threads) {
+		await ctx.db.patch('threadRecords', thread._id, { repositoryKey: to });
+	}
+	if (threads.length > 0) {
+		await bumpThreadSnapshotRevisions(ctx, {
+			userId,
+			repositoryKey: from,
+			categories: ['active', 'archived']
+		});
+		await bumpThreadSnapshotRevisions(ctx, {
+			userId,
+			repositoryKey: to,
+			categories: ['active', 'archived']
+		});
+	}
+	return { userId, from, to, count: threads.length };
 }
 
 export const create = mutation({
@@ -224,11 +297,28 @@ export const rename = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const title = args.title.trim();
-		if (title.length === 0) {
-			throw new Error('Thread title cannot be empty.');
-		}
-		await patchOwnedThread(ctx, args.threadId, { title });
+		await renameOwnedThread(ctx, args.threadId, args.title);
+		return null;
+	}
+});
+
+export const renameForLocalCache = mutation({
+	args: {
+		threadId: v.id('threadRecords'),
+		title: v.string()
+	},
+	returns: v.object({
+		userId: v.string(),
+		repositoryKey: v.string(),
+		category: vThreadSnapshotCategory
+	}),
+	handler: async (ctx, args) => {
+		const { userId, record } = await renameOwnedThread(ctx, args.threadId, args.title);
+		return {
+			userId,
+			repositoryKey: record.repositoryKey ?? '',
+			category: record.archivedAt === undefined ? ('active' as const) : ('archived' as const)
+		};
 	}
 });
 
@@ -238,27 +328,19 @@ export const archive = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-		const record = await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+		await archiveOwnedThread(ctx, args.threadId);
+		return null;
+	}
+});
 
-		for (const status of ['queued', 'running', 'awaiting_executor'] as const) {
-			const activeRun = await ctx.db
-				.query('runs')
-				.withIndex('by_threadId_status_startedAt', (query) =>
-					query.eq('threadId', args.threadId).eq('status', status)
-				)
-				.first();
-			if (activeRun) {
-				throw new Error('Cannot archive a thread while a run is active.');
-			}
-		}
-
-		await ctx.db.patch('threadRecords', args.threadId, { archivedAt: Date.now() });
-		await bumpThreadSnapshotRevisions(ctx, {
-			userId,
-			repositoryKey: record.repositoryKey ?? '',
-			categories: ['active', 'archived']
-		});
+export const archiveForLocalCache = mutation({
+	args: {
+		threadId: v.id('threadRecords')
+	},
+	returns: v.object({ userId: v.string(), repositoryKey: v.string() }),
+	handler: async (ctx, args) => {
+		const { userId, record } = await archiveOwnedThread(ctx, args.threadId);
+		return { userId, repositoryKey: record.repositoryKey ?? '' };
 	}
 });
 
@@ -268,14 +350,19 @@ export const restore = mutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-		const record = await getOwnedThreadRecord(ctx.db, userId, args.threadId);
-		await ctx.db.patch('threadRecords', args.threadId, { archivedAt: undefined });
-		await bumpThreadSnapshotRevisions(ctx, {
-			userId,
-			repositoryKey: record.repositoryKey ?? '',
-			categories: ['active', 'archived']
-		});
+		await restoreOwnedThread(ctx, args.threadId);
+		return null;
+	}
+});
+
+export const restoreForLocalCache = mutation({
+	args: {
+		threadId: v.id('threadRecords')
+	},
+	returns: v.object({ userId: v.string(), repositoryKey: v.string() }),
+	handler: async (ctx, args) => {
+		const { userId, record } = await restoreOwnedThread(ctx, args.threadId);
+		return { userId, repositoryKey: record.repositoryKey ?? '' };
 	}
 });
 
@@ -286,37 +373,15 @@ export const rekeyRepository = mutation({
 	},
 	returns: v.number(),
 	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-		const from = args.from.trim();
-		const to = args.to.trim();
-		if (from.length === 0 || to.length === 0) {
-			throw new Error('Repository key is required.');
-		}
-		if (from === to) {
-			return 0;
-		}
-
-		const threads = await ctx.db
-			.query('threadRecords')
-			.withIndex('by_userId_repositoryKey', (query) =>
-				query.eq('userId', userId).eq('repositoryKey', from)
-			)
-			.collect();
-		for (const thread of threads) {
-			await ctx.db.patch('threadRecords', thread._id, { repositoryKey: to });
-		}
-		if (threads.length > 0) {
-			await bumpThreadSnapshotRevisions(ctx, {
-				userId,
-				repositoryKey: from,
-				categories: ['active', 'archived']
-			});
-			await bumpThreadSnapshotRevisions(ctx, {
-				userId,
-				repositoryKey: to,
-				categories: ['active', 'archived']
-			});
-		}
-		return threads.length;
+		return (await rekeyOwnedThreads(ctx, args.from, args.to)).count;
 	}
+});
+
+export const rekeyRepositoryForLocalCache = mutation({
+	args: {
+		from: v.string(),
+		to: v.string()
+	},
+	returns: v.object({ userId: v.string(), from: v.string(), to: v.string(), count: v.number() }),
+	handler: async (ctx, args) => await rekeyOwnedThreads(ctx, args.from, args.to)
 });

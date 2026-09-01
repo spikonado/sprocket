@@ -5,17 +5,19 @@ use std::time::Duration;
 use convex::Value;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use tokio::time::sleep;
+use tokio::time::{sleep, timeout};
 
 use crate::machine_identity::MachineIdentity;
 use crate::transcript_client::UserConvexClient;
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
+const SESSION_RPC_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RegisteredSession {
     session_id: String,
+    user_id: String,
 }
 
 struct AccountSession {
@@ -28,6 +30,14 @@ pub struct MachineSessionManager {
     deployment_url: String,
     identity: Arc<MachineIdentity>,
     sessions: Mutex<HashMap<String, AccountSession>>,
+    process_session_ids: Mutex<HashMap<String, String>>,
+    lifecycle: Mutex<LifecycleState>,
+}
+
+#[derive(Default)]
+struct LifecycleState {
+    shutting_down: bool,
+    accounts: HashMap<String, Arc<Mutex<()>>>,
 }
 
 impl MachineSessionManager {
@@ -36,6 +46,8 @@ impl MachineSessionManager {
             deployment_url,
             identity,
             sessions: Mutex::new(HashMap::new()),
+            process_session_ids: Mutex::new(HashMap::new()),
+            lifecycle: Mutex::new(LifecycleState::default()),
         })
     }
 
@@ -43,11 +55,33 @@ impl MachineSessionManager {
         self: &Arc<Self>,
         user_id: &str,
         auth_token: String,
-    ) -> anyhow::Result<()> {
-        let client = UserConvexClient::connect(&self.deployment_url, auth_token.clone()).await?;
-        let registered: RegisteredSession = client
-            .mutate("machineSessions:register", self.registration_args())
-            .await?;
+    ) -> anyhow::Result<String> {
+        let account = self.account_lock(user_id, false).await?;
+        let _account = account.lock().await;
+        self.ensure_running().await?;
+        let process_session_id = self
+            .process_session_ids
+            .lock()
+            .await
+            .entry(user_id.to_string())
+            .or_insert_with(|| self.identity.process_session_id.clone())
+            .clone();
+        let registered: RegisteredSession = timeout(SESSION_RPC_TIMEOUT, async {
+            let client =
+                UserConvexClient::connect(&self.deployment_url, auth_token.clone()).await?;
+            client
+                .mutate(
+                    "machineSessions:register",
+                    self.registration_args(process_session_id),
+                )
+                .await
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("machine session registration timed out"))??;
+        if registered.user_id != user_id {
+            anyhow::bail!("machine session account does not match the requested account");
+        }
+        let session_id = registered.session_id.clone();
         let user_id = user_id.to_string();
         let manager = Arc::clone(self);
         let heartbeat_user_id = user_id.clone();
@@ -70,34 +104,73 @@ impl MachineSessionManager {
         if let Some(previous) = previous {
             previous.heartbeat.abort();
         }
-        Ok(())
+        Ok(session_id)
     }
 
     pub async fn end(&self, user_id: &str) -> anyhow::Result<()> {
+        let account = self.account_lock(user_id, true).await?;
+        let _account = account.lock().await;
         let Some(session) = self.sessions.lock().await.remove(user_id) else {
             return Ok(());
         };
         session.heartbeat.abort();
+        self.process_session_ids
+            .lock()
+            .await
+            .insert(user_id.to_string(), uuid::Uuid::new_v4().to_string());
         self.end_remote(&session).await
     }
 
     pub async fn shutdown(&self) {
-        let sessions = self
-            .sessions
-            .lock()
-            .await
-            .drain()
-            .map(|(_, session)| session)
-            .collect::<Vec<_>>();
-        for session in sessions {
-            session.heartbeat.abort();
-            if let Err(error) = self.end_remote(&session).await {
-                tracing::warn!("failed to end machine session during shutdown: {error:#}");
+        let accounts = {
+            let mut lifecycle = self.lifecycle.lock().await;
+            lifecycle.shutting_down = true;
+            lifecycle.accounts.values().cloned().collect::<Vec<_>>()
+        };
+        for account in accounts {
+            let _account = account.lock().await;
+            let sessions = self
+                .sessions
+                .lock()
+                .await
+                .drain()
+                .map(|(_, session)| session)
+                .collect::<Vec<_>>();
+            for session in sessions {
+                session.heartbeat.abort();
+                if let Err(error) = self.end_remote(&session).await {
+                    tracing::warn!("failed to end machine session during shutdown: {error:#}");
+                }
             }
         }
     }
 
+    async fn account_lock(
+        &self,
+        user_id: &str,
+        allow_shutdown: bool,
+    ) -> anyhow::Result<Arc<Mutex<()>>> {
+        let mut lifecycle = self.lifecycle.lock().await;
+        if lifecycle.shutting_down && !allow_shutdown {
+            anyhow::bail!("machine session manager is shutting down");
+        }
+        Ok(lifecycle
+            .accounts
+            .entry(user_id.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone())
+    }
+
+    async fn ensure_running(&self) -> anyhow::Result<()> {
+        if self.lifecycle.lock().await.shutting_down {
+            anyhow::bail!("machine session manager is shutting down");
+        }
+        Ok(())
+    }
+
     async fn heartbeat(&self, user_id: &str) -> anyhow::Result<()> {
+        let account = self.account_lock(user_id, true).await?;
+        let _account = account.lock().await;
         let (auth_token, session_id) = {
             let sessions = self.sessions.lock().await;
             let Some(session) = sessions.get(user_id) else {
@@ -105,35 +178,42 @@ impl MachineSessionManager {
             };
             (session.auth_token.clone(), session.session_id.clone())
         };
-        let client = UserConvexClient::connect(&self.deployment_url, auth_token).await?;
-        let _: serde_json::Value = client
-            .mutate("machineSessions:heartbeat", self.session_args(session_id))
-            .await?;
+        timeout(SESSION_RPC_TIMEOUT, async {
+            let client = UserConvexClient::connect(&self.deployment_url, auth_token).await?;
+            let _: serde_json::Value = client
+                .mutate("machineSessions:heartbeat", self.session_args(session_id))
+                .await?;
+            anyhow::Ok(())
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("machine session heartbeat timed out"))??;
         Ok(())
     }
 
     async fn end_remote(&self, session: &AccountSession) -> anyhow::Result<()> {
-        let client =
-            UserConvexClient::connect(&self.deployment_url, session.auth_token.clone()).await?;
-        let _: serde_json::Value = client
-            .mutate(
-                "machineSessions:end",
-                self.session_args(session.session_id.clone()),
-            )
-            .await?;
+        timeout(SESSION_RPC_TIMEOUT, async {
+            let client =
+                UserConvexClient::connect(&self.deployment_url, session.auth_token.clone()).await?;
+            let _: serde_json::Value = client
+                .mutate(
+                    "machineSessions:end",
+                    self.session_args(session.session_id.clone()),
+                )
+                .await?;
+            anyhow::Ok(())
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("ending machine session timed out"))??;
         Ok(())
     }
 
-    fn registration_args(&self) -> BTreeMap<String, Value> {
+    fn registration_args(&self, process_session_id: String) -> BTreeMap<String, Value> {
         BTreeMap::from([
             (
                 "installationId".into(),
                 self.identity.installation_id.clone().into(),
             ),
-            (
-                "processSessionId".into(),
-                self.identity.process_session_id.clone().into(),
-            ),
+            ("processSessionId".into(), process_session_id.into()),
             (
                 "credentialHash".into(),
                 self.identity.credential_hash.clone().into(),
@@ -164,5 +244,29 @@ impl MachineSessionManager {
             ("sessionId".into(), session_id.into()),
             ("credential".into(), self.identity.credential.clone().into()),
         ])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn shutdown_rejects_late_registration_before_network_io() {
+        let dir = std::env::temp_dir().join(format!(
+            "sprocket-machine-session-manager-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let identity = Arc::new(MachineIdentity::load(&dir).expect("identity"));
+        let manager = MachineSessionManager::new("not a valid URL".into(), identity);
+
+        manager.shutdown().await;
+        let error = manager
+            .register("user-a", "browser-token".into())
+            .await
+            .expect_err("registration after shutdown must fail");
+        assert!(error.to_string().contains("shutting down"));
+
+        let _ = tokio::fs::remove_dir_all(dir).await;
     }
 }

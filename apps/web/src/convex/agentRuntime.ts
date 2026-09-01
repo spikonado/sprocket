@@ -47,6 +47,7 @@ import {
 } from '@convex/lib/agentErrors';
 import { unsupportedClient } from '@convex/lib/unsupportedClient';
 import { assertThreadCanStartRun, compareRunStartedAt } from '@convex/lib/runs';
+import { bumpThreadSnapshotForRun } from '@convex/lib/threadSnapshots';
 import {
 	canRegisterCompletionAttempt,
 	canFinalizeAfterClaimFailure,
@@ -276,6 +277,7 @@ async function createQueuedRunRecord(
 		reasoningEffort: args.reasoningEffort,
 		serviceTier: args.serviceTier
 	});
+	await bumpThreadSnapshotForRun(ctx, runRecord);
 	const lifecycleWorkflowId = await startRunLifecycle(ctx, runId);
 	await ctx.db.patch('runs', runId, { lifecycleWorkflowId });
 	return created;
@@ -501,6 +503,9 @@ export const start = mutation({
 		};
 		if (!isSameClaimRenewal) claimPatch.completionAttemptSeq = 0;
 		await ctx.db.patch('runs', args.runId, claimPatch);
+		if (!isSameClaimRenewal) {
+			await bumpThreadSnapshotForRun(ctx, run);
+		}
 
 		return { claimed: true, claimExpiresAt: nextClaimExpiresAt };
 	}
@@ -1028,6 +1033,7 @@ export const beginToolJob = mutation({
 				status: 'awaiting_executor',
 				activeJobId: jobId
 			});
+			await bumpThreadSnapshotForRun(ctx, run);
 			await recordStartedToolTranscript(ctx, {
 				threadId: run.threadId,
 				userId: run.userId,

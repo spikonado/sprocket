@@ -159,6 +159,17 @@ impl ThreadSnapshotStore {
             )
             .await;
         let _guard = lock.lock().await;
+        if self
+            .load_unlocked(
+                &snapshot.user_id,
+                &snapshot.repository_key,
+                snapshot.category,
+            )
+            .await?
+            .is_some_and(|current| current.revision > snapshot.revision)
+        {
+            return Ok(());
+        }
         let dir = self.snapshot_dir(&snapshot.user_id, &snapshot.repository_key);
         tokio::fs::create_dir_all(&dir).await?;
         let path = self.snapshot_path(
@@ -441,6 +452,38 @@ mod tests {
         store.write(&archived).await.expect("archived");
         let listed = store.list_user_threads("user-a").await.expect("list");
         assert_eq!(listed.len(), 2);
+        let _ = tokio::fs::remove_dir_all(dir).await;
+    }
+
+    #[tokio::test]
+    async fn older_download_does_not_replace_newer_snapshot() {
+        let dir = std::env::temp_dir().join(format!(
+            "sprocket-thread-cache-revision-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = ThreadSnapshotStore::new(dir.clone());
+        let mut newer = ThreadSnapshotFile {
+            version: THREAD_SNAPSHOT_VERSION,
+            user_id: "user-a".into(),
+            repository_key: "alpha".into(),
+            category: ThreadSnapshotCategory::Active,
+            revision: 2,
+            synced_at: 2,
+            threads: vec![sample_thread("newer", "alpha")],
+        };
+        store.write(&newer).await.expect("newer write");
+        newer.revision = 1;
+        newer.synced_at = 3;
+        newer.threads = vec![sample_thread("older", "alpha")];
+        store.write(&newer).await.expect("older write ignored");
+
+        let loaded = store
+            .load("user-a", "alpha", ThreadSnapshotCategory::Active)
+            .await
+            .expect("load")
+            .expect("snapshot");
+        assert_eq!(loaded.revision, 2);
+        assert_eq!(loaded.threads[0].thread_id, "newer");
         let _ = tokio::fs::remove_dir_all(dir).await;
     }
 }

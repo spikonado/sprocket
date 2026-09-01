@@ -1814,6 +1814,7 @@
 				}
 			}, agentLaunchTimeoutMs);
 			launchAgentRun({
+				userId: submittedUserId,
 				authToken,
 				desktopApi,
 				onError: (error) => {
@@ -1908,7 +1909,8 @@
 		}
 		const threadId = currentThreadId;
 		const workspacePath = currentProjectPath;
-		if (!workspacePath) {
+		const userId = getCurrentUserId();
+		if (!workspacePath || !userId) {
 			return;
 		}
 		const previousRunId = runState.runId;
@@ -1923,10 +1925,11 @@
 		pendingAgentLaunches = beginPendingAgentLaunch(pendingAgentLaunches, threadId, launch);
 		try {
 			const authToken = await getAccessToken({ forceRefreshToken: true });
-			if (!authToken) {
+			if (!authToken || getCurrentUserId() !== userId) {
 				throw new Error('User session is not ready.');
 			}
 			launchAgentRun({
+				userId,
 				authToken,
 				desktopApi,
 				onError: (error) => {

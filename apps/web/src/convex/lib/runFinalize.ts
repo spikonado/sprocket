@@ -6,6 +6,7 @@ import { reconcileTerminalRunPages } from '@convex/lib/runTerminal';
 import { cancelWebToolWork } from '@convex/webToolPool';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
 import { resolveRequestedFinalizeStatus } from '@convex/lib/runCancellation';
+import { bumpThreadSnapshotForRun } from '@convex/lib/threadSnapshots';
 
 type FinalizeRunArgs = {
 	text: string;
@@ -76,6 +77,7 @@ export async function finalizeRunRecord(
 		activeJobId: undefined,
 		completedAt
 	});
+	await bumpThreadSnapshotForRun(ctx, run);
 
 	const latest = await ctx.db.get('runs', run._id);
 	if (!latest) {

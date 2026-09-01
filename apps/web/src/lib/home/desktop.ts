@@ -112,6 +112,7 @@ export function lifecycleResumeKind(
 }
 
 export function launchAgentRun(args: {
+	userId: string;
 	authToken: string;
 	desktopApi: DesktopApi;
 	onError: (error: Error) => void;
@@ -127,6 +128,7 @@ export function launchAgentRun(args: {
 	continuationOfRunId?: Id<'runs'>;
 }) {
 	const request: AgentRunRequest = {
+		userId: args.userId,
 		authToken: args.authToken,
 		threadId: args.threadId,
 		prompt: args.prompt,

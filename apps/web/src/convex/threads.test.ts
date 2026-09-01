@@ -84,6 +84,38 @@ describe('threads.rekeyRepository', () => {
 			'beta'
 		);
 	});
+
+	it('returns authenticated cache-refresh metadata without changing compatibility results', async () => {
+		const t = initConvexTest();
+		const { asUser, subject, repositoryKey, threadId } = await seedOwnedThread(t);
+
+		expect(
+			await asUser.mutation(api.threads.renameForLocalCache, {
+				threadId,
+				title: 'Renamed locally'
+			})
+		).toEqual({ userId: subject, repositoryKey, category: 'active' });
+		expect(await asUser.mutation(api.threads.archiveForLocalCache, { threadId })).toEqual({
+			userId: subject,
+			repositoryKey
+		});
+		expect(
+			await asUser.mutation(api.threads.renameForLocalCache, {
+				threadId,
+				title: 'Renamed while archived'
+			})
+		).toEqual({ userId: subject, repositoryKey, category: 'archived' });
+		expect(await asUser.mutation(api.threads.restoreForLocalCache, { threadId })).toEqual({
+			userId: subject,
+			repositoryKey
+		});
+		expect(
+			await asUser.mutation(api.threads.rekeyRepositoryForLocalCache, {
+				from: ` ${repositoryKey} `,
+				to: ' gamma '
+			})
+		).toEqual({ userId: subject, from: repositoryKey, to: 'gamma', count: 1 });
+	});
 });
 
 describe('threads snapshot pages and revisions', () => {

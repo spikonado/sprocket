@@ -26,7 +26,6 @@ use crate::types::{RunAgentRequest, RunContextResponse, deserialize_agent_histor
 const RUN_CLAIM_LEASE_DURATION: Duration = Duration::from_secs(120);
 const RUN_CLAIM_RENEW_INTERVAL: Duration = Duration::from_secs(40);
 const RUN_CLAIM_RENEW_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(8);
-const MACHINE_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(5);
 const RUN_CLAIM_EXPIRY_SAFETY_MARGIN: Duration = Duration::from_secs(5);
 const RUN_CLAIM_RENEW_RETRY_DELAY: Duration = Duration::from_millis(250);
 const RUN_CLAIM_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(8);
@@ -469,20 +468,6 @@ async fn renew_claim_once(
     .await
     .map_err(|_| anyhow!("claim renewal timed out"))?
     .map(|response| response.renewed)?;
-    match timeout(
-        MACHINE_HEARTBEAT_TIMEOUT,
-        runtime.heartbeat_machine_session(),
-    )
-    .await
-    {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => {
-            eprintln!("sprocket-agent: machine heartbeat failed for run {run_id}: {error:#}");
-        }
-        Err(_) => {
-            eprintln!("sprocket-agent: machine heartbeat timed out for run {run_id}");
-        }
-    }
     Ok((renewed, request_started_at))
 }
 

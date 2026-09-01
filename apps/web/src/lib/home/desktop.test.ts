@@ -70,6 +70,7 @@ function launchArgs(
 		Pick<Parameters<typeof launchAgentRun>[0], 'desktopApi'>
 ): Parameters<typeof launchAgentRun>[0] {
 	return {
+		userId: 'user-1',
 		authToken: 'token-1',
 		onError: vi.fn(),
 		onStarted: vi.fn(),
@@ -110,6 +111,7 @@ describe('launchAgentRun', () => {
 		launchAgentRun(launchArgs({ desktopApi, onStarted }));
 
 		expect(runAgent).toHaveBeenCalledWith({
+			userId: 'user-1',
 			authToken: 'token-1',
 			threadId: 'thread-1',
 			prompt: 'Inspect src/lib.rs',
@@ -139,6 +141,7 @@ describe('launchAgentRun', () => {
 		);
 
 		expect(runAgent).toHaveBeenCalledWith({
+			userId: 'user-1',
 			authToken: 'token-1',
 			threadId: 'thread-1',
 			prompt: '',
