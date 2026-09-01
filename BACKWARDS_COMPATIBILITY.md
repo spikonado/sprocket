@@ -4,7 +4,7 @@ This file lists shims we still ship. When a removal PR merges, delete its
 entry. Age-out is a prod check for stored rows, or an explicit decision that
 a retired function name can disappear.
 
-Current as of 2026-09-01.
+Current as of 2026-09-02.
 
 ## Stored schema
 
@@ -236,9 +236,13 @@ to deliver the update sentence; current code never calls them.
 | -------------------------------------------------------------- | --------------------------------------------------------- |
 | `agentRuntime.createRun`                                       | Agent run creation before the gateway path                |
 | `agentRuntime.mergeAssistantStreamEvents`                      | Agents that streamed tokens onto `threadMessages`         |
+| `agentRuntime.reopenRun`                                       | Desktop UI that reopened a failed run in place            |
+| `chat.latestRunForThread`                                      | UI lifecycle from the latest Convex run document          |
 | `completion.complete` / `completion.summarize`                 | Convex-hosted model calls                                 |
 | `messages.listHistoryForThread` / `messages.listLiveForThread` | UI transcript from Convex                                 |
 | `modelCatalog.get`                                             | Static bundled catalog                                    |
+| `threads.listMine`                                             | UI thread list from Convex                                |
+| `threads.rename` / `archive` / `restore` / `rekeyRepository`   | UI thread commands that mutated Convex directly           |
 | `uiPreferences.setLastThread` / `setPaymentsEmail`             | Session restore and mandate email writes                  |
 | `webTools.scrapeUrl` / `webTools.webSearch`                    | Direct tool actions; current agents enqueue executor jobs |
 | `payments` mandate setup with `userEmail`                      | Agents that sent the customer email themselves            |
@@ -254,46 +258,26 @@ does not read `threadMessages` and is not an unsupported-client stub.
 
 Remove after rust/desktop stop calling it, then delete the Convex export.
 
-### Live leftover name: `agentRuntime.reopenRun`
-
-Released desktop UI reopened the latest failed, cancelled, or expired-claim
-run in place, then launched with that run's `submissionId`. Current clients
-create a new run through the local `/api/agent/run` path with
-`continuationOfRunId` instead.
-
-`reopenRun` still performs the in-place reopen so those older builds keep
-working. It is not an unsupported-client stub.
-
-Remove after all supported desktop/CLI builds have shipped new-run
-continuation and no longer call `reopenRun`. Then delete the Convex export
-and `reopenRunRecord`.
-
-### Live leftover thread and cancellation APIs
+### Local thread commands
 
 Current UI sends rename, archive, restore, repository-rekey, and cancellation
-commands through the authenticated local Rust API. The public Convex
-mutations remain live for released browser bundles. Remove direct public
-access only after all supported desktop bundles use the local routes.
+through the authenticated local Rust API. The public Convex names those older
+bundles called (`threads.rename`, `archive`, `restore`, `rekeyRepository`,
+`threads.listMine`, `chat.latestRunForThread`, `agentRuntime.reopenRun`) are
+unsupported-client stubs.
 
 The local command routes call `threads.renameForLocalCache`,
 `archiveForLocalCache`, `restoreForLocalCache`, and
 `rekeyRepositoryForLocalCache`. These variants return the authenticated user
 and affected repository/category metadata so Rust can refresh the cache before
-acknowledging a command. Keep the older mutation names and return shapes for
-released bundles. Remove the older names after all supported bundles use the
-local routes; remove the `ForLocalCache` variants only when Rust no longer
-needs synchronous cache-refresh metadata from Convex.
+acknowledging a command. Remove the `ForLocalCache` variants only when Rust no
+longer needs synchronous cache-refresh metadata from Convex.
 
-`threads.listMine` and `chat.latestRunForThread` remain available for released
-UIs. Current thread navigation reads the Rust-owned summary cache and current
-lifecycle UI reads `chat.selectedThreadLifecycle`. Remove the old queries
-after supported desktop versions no longer call them.
-
-The local-server boundary owns thread commands and the summary cache. The
-reactive lifecycle view intentionally remains a direct authenticated Convex
-subscription: the local `/threads/lifecycle` route is a one-shot command-time
-relay, not a replacement subscription. Move lifecycle reads behind Rust only
-if Rust gains an equivalent ordered reactive stream.
+Current thread navigation reads the Rust-owned summary cache. Current
+lifecycle UI reads `chat.selectedThreadLifecycle`. The local `/threads/lifecycle`
+route is a one-shot command-time relay, not a replacement subscription. Move
+lifecycle reads behind Rust only if Rust gains an equivalent ordered reactive
+stream.
 
 ## Removal checklist
 

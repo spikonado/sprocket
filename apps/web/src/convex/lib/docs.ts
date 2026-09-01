@@ -116,15 +116,6 @@ export const vCompletionActor = v.object({
 	streamAttemptId: v.optional(v.string())
 });
 
-export const vLatestRunForThread = v.object({
-	threadId: v.id('threadRecords'),
-	run: v.union(schema.doc('runs'), v.null()),
-	jobs: v.array(schema.doc('executorJobs')),
-	prompt: v.optional(v.string()),
-	imageUploadIds: v.optional(v.array(v.id('imageUploads'))),
-	serverNow: v.number()
-});
-
 export {
 	vSelectedThreadLifecycle,
 	vSelectedThreadLifecyclePhase,

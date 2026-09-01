@@ -1,4 +1,4 @@
-import type { Doc, Id } from '@convex/_generated/dataModel';
+import type { Id } from '@convex/_generated/dataModel';
 import { mutation, query, type MutationCtx } from '@convex/_generated/server';
 import { paginationOptsValidator, paginationResultValidator } from 'convex/server';
 import { v } from 'convex/values';
@@ -13,12 +13,8 @@ import {
 	summarizeThreadRecord,
 	vThreadSnapshotCategory
 } from '@convex/lib/threadSnapshots';
-import {
-	isRunFinalStatus,
-	vReasoningEffort,
-	vRunStatus,
-	vServiceTier
-} from '@convex/lib/validators';
+import { unsupportedClient } from '@convex/lib/unsupportedClient';
+import { vReasoningEffort, vRunStatus, vServiceTier } from '@convex/lib/validators';
 
 async function renameOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>, title: string) {
 	const trimmedTitle = title.trim();
@@ -188,42 +184,12 @@ export const create = mutation({
 	}
 });
 
+/** Retired UI listing. Current clients read the local summary cache. */
 export const listMine = query({
 	args: {},
-	returns: v.array(vThreadSummary),
-	handler: async (ctx) => {
-		const userId = await getUserId(ctx);
-		const records = await ctx.db
-			.query('threadRecords')
-			.withIndex('by_userId_lastMessageAt', (query) => query.eq('userId', userId))
-			.order('desc')
-			.collect();
-		const summaries = await Promise.all(
-			records.map(async (record) => {
-				const latestRun = await ctx.db
-					.query('runs')
-					.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', record._id))
-					.order('desc')
-					.first();
-				return {
-					...record,
-					threadId: record._id,
-					repositoryKey: record.repositoryKey ?? '',
-					title: record.title?.trim() || 'New thread',
-					threadStatus:
-						record.archivedAt !== undefined ? ('archived' as const) : ('active' as const),
-					latestRunStatus: latestRun?.status ?? null,
-					latestRunId: latestRun?._id ?? null,
-					latestRunStartedAt: latestRun?.startedAt,
-					latestRunClaimExpiresAt: latestRun?.claimExpiresAt,
-					hasActiveRun: latestRun ? !isRunFinalStatus(latestRun.status) : false
-				};
-			})
-		);
-		// Running threads first, then most recently active. The index already
-		// returns lastMessageAt-desc, so the comparator only needs to promote
-		// active runs while staying stable for the rest.
-		return summaries.sort((left, right) => Number(right.hasActiveRun) - Number(left.hasActiveRun));
+	returns: v.null(),
+	handler: async () => {
+		unsupportedClient();
 	}
 });
 
@@ -290,15 +256,15 @@ export const getByThreadId = query({
 	}
 });
 
+/** Retired direct Convex command. Current clients use the local thread routes. */
 export const rename = mutation({
 	args: {
 		threadId: v.id('threadRecords'),
 		title: v.string()
 	},
 	returns: v.null(),
-	handler: async (ctx, args) => {
-		await renameOwnedThread(ctx, args.threadId, args.title);
-		return null;
+	handler: async () => {
+		unsupportedClient();
 	}
 });
 
@@ -322,14 +288,14 @@ export const renameForLocalCache = mutation({
 	}
 });
 
+/** Retired direct Convex command. Current clients use the local thread routes. */
 export const archive = mutation({
 	args: {
 		threadId: v.id('threadRecords')
 	},
 	returns: v.null(),
-	handler: async (ctx, args) => {
-		await archiveOwnedThread(ctx, args.threadId);
-		return null;
+	handler: async () => {
+		unsupportedClient();
 	}
 });
 
@@ -344,14 +310,14 @@ export const archiveForLocalCache = mutation({
 	}
 });
 
+/** Retired direct Convex command. Current clients use the local thread routes. */
 export const restore = mutation({
 	args: {
 		threadId: v.id('threadRecords')
 	},
 	returns: v.null(),
-	handler: async (ctx, args) => {
-		await restoreOwnedThread(ctx, args.threadId);
-		return null;
+	handler: async () => {
+		unsupportedClient();
 	}
 });
 
@@ -366,14 +332,15 @@ export const restoreForLocalCache = mutation({
 	}
 });
 
+/** Retired direct Convex command. Current clients use the local thread routes. */
 export const rekeyRepository = mutation({
 	args: {
 		from: v.string(),
 		to: v.string()
 	},
-	returns: v.number(),
-	handler: async (ctx, args) => {
-		return (await rekeyOwnedThreads(ctx, args.from, args.to)).count;
+	returns: v.null(),
+	handler: async () => {
+		unsupportedClient();
 	}
 });
 

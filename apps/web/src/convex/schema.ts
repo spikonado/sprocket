@@ -128,7 +128,6 @@ export default defineSchema({
 		lastMessageAt: v.number(),
 		archivedAt: v.optional(v.number())
 	})
-		.index('by_userId_lastMessageAt', ['userId', 'lastMessageAt'])
 		.index('by_userId_submissionId', ['userId', 'submissionId'])
 		.index('by_userId_repositoryKey', ['userId', 'repositoryKey'])
 		.index('by_userId_and_repositoryKey_and_archivedAt_and_lastMessageAt', [
@@ -170,7 +169,7 @@ export default defineSchema({
 		status: vRunStatus,
 		// Hash of the bearer capability held only by the local executor.
 		executionSecretHash: v.string(),
-		// Optional while released clients age out. New runs are process-session bound.
+		// Optional on stored rows written before machine-session binding. New runs set both.
 		installationId: v.optional(v.string()),
 		executorSessionId: v.optional(v.id('machineSessions')),
 		continuationOfRunId: v.optional(v.id('runs')),

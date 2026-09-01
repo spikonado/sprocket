@@ -24,7 +24,7 @@ import {
 import { recordThreadUsageEvent, usageEventId } from '@convex/lib/threadUsage';
 import { finalizeRunRecord, matchesFinalizeExpectations } from '@convex/lib/runFinalize';
 import { startRunLifecycle } from '@convex/runLifecycle';
-import { assertContinuableParent, reopenRunRecord } from '@convex/lib/runResume';
+import { assertContinuableParent } from '@convex/lib/runResume';
 import { requestRunCancellation } from './runLifecycle';
 import { enqueueWebToolJob, isCloudWebToolKind } from '@convex/webToolPool';
 import { newToolInvocationId } from '@convex/lib/transcriptParts';
@@ -833,7 +833,6 @@ export const finalizeRun = mutation({
 	}
 });
 
-/** Compatibility command retained for released clients. */
 export const requestCancellation = mutation({
 	args: { runId: v.id('runs') },
 	returns: v.boolean(),
@@ -844,17 +843,14 @@ export const requestCancellation = mutation({
 	}
 });
 
-/** In-place reopen for released clients. See BACKWARDS_COMPATIBILITY.md. */
+/** Retired in-place reopen. Current clients continue with a new run. */
 export const reopenRun = mutation({
 	args: {
 		runId: v.id('runs')
 	},
 	returns: v.null(),
-	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-		const run = await getOwnedRun(ctx.db, userId, args.runId);
-		await reopenRunRecord(ctx, run);
-		return null;
+	handler: async () => {
+		unsupportedClient();
 	}
 });
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { api } from '@convex/_generated/api';
-import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
+import { createQueuedRun, initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
 
 describe('numbered transcript parts', () => {
 	it('assigns contiguous zero-based numbers to prompts and is idempotent on retry', async () => {
@@ -440,37 +440,42 @@ describe('numbered transcript parts', () => {
 		expect(parts.parts[0]?.kind).toBe('prompt');
 	});
 
-	it('keeps numbered completions when a failed run is reopened in place', async () => {
+	it('keeps numbered completions when a failed run continues as a new run', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		const executionSecret = 'transcript-reopen-secret';
+		const executionSecret = 'transcript-continue-secret';
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
 			threadId,
-			'sub-reopen',
+			'sub-continue-parent',
 			executionSecret,
 			'Keep going'
 		);
 		await asUser.mutation(api.agentRuntime.start, {
-			claimId: 'claim-reopen',
+			claimId: 'claim-continue',
 			runId,
 			executionSecret
 		});
 		await asUser.mutation(api.agentRuntime.beginAssistantMessage, { runId, executionSecret });
 		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, {
 			runId,
-			claimId: 'claim-reopen',
+			claimId: 'claim-continue',
 			attemptSeq: 1,
 			executionSecret
 		});
 		await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
 			runId,
-			claimId: 'claim-reopen',
+			claimId: 'claim-continue',
 			attemptSeq: 1,
-			streamId: 'stream-reopen',
+			streamId: 'stream-continue',
 			items: [
-				{ type: 'text', id: 'stream-reopen:text', text: 'Done step', turnId: 'stream-reopen' }
+				{
+					type: 'text',
+					id: 'stream-continue:text',
+					text: 'Done step',
+					turnId: 'stream-continue'
+				}
 			],
 			executionSecret
 		});
@@ -480,16 +485,15 @@ describe('numbered transcript parts', () => {
 			status: 'failed',
 			lastError: 'boom'
 		});
-		await asUser.mutation(api.agentRuntime.reopenRun, { runId });
-		const run = await t.run(async (ctx) => ctx.db.get('runs', runId));
-		expect(run?.status).toBe('queued');
-		await expect(
-			asUser.mutation(api.agentRuntime.start, {
-				claimId: 'claim-reopen',
-				runId,
-				executionSecret
-			})
-		).rejects.toThrow('Run not found.');
+		const continuation = await insertQueuedRun(t, asUser, {
+			threadId,
+			submissionId: 'sub-continue-child',
+			executionSecret: 'continue-secret',
+			prompt: '',
+			continuationOfRunId: runId
+		});
+		expect(continuation.runId).not.toBe(runId);
+		expect(await t.run(async (ctx) => (await ctx.db.get('runs', runId))?.status)).toBe('failed');
 		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
 		expect(parts.parts.map((part) => part.kind)).toEqual(['prompt', 'completion']);
 	});

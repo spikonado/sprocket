@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { api } from '@convex/_generated/api';
 import { UNSUPPORTED_CLIENT_MESSAGE } from '@convex/lib/unsupportedClient';
-import { initConvexTest, seedOwnedThread } from './test.setup';
+import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 
 describe('retired client APIs', () => {
 	it('tell older clients to update Sprocket', async () => {
@@ -36,6 +36,29 @@ describe('retired client APIs', () => {
 		await expect(asUser.query(api.projects.listMine, {})).rejects.toThrow(
 			UNSUPPORTED_CLIENT_MESSAGE
 		);
+
+		await expect(asUser.query(api.threads.listMine, {})).rejects.toThrow(
+			UNSUPPORTED_CLIENT_MESSAGE
+		);
+		await expect(asUser.query(api.chat.latestRunForThread, { threadId })).rejects.toThrow(
+			UNSUPPORTED_CLIENT_MESSAGE
+		);
+		const { runId } = await createQueuedRun(t, asUser, threadId, 'old-reopen', 'old-reopen-secret');
+		await expect(asUser.mutation(api.agentRuntime.reopenRun, { runId })).rejects.toThrow(
+			UNSUPPORTED_CLIENT_MESSAGE
+		);
+		await expect(
+			asUser.mutation(api.threads.rename, { threadId, title: 'Old client' })
+		).rejects.toThrow(UNSUPPORTED_CLIENT_MESSAGE);
+		await expect(asUser.mutation(api.threads.archive, { threadId })).rejects.toThrow(
+			UNSUPPORTED_CLIENT_MESSAGE
+		);
+		await expect(asUser.mutation(api.threads.restore, { threadId })).rejects.toThrow(
+			UNSUPPORTED_CLIENT_MESSAGE
+		);
+		await expect(
+			asUser.mutation(api.threads.rekeyRepository, { from: 'old', to: 'new' })
+		).rejects.toThrow(UNSUPPORTED_CLIENT_MESSAGE);
 
 		await expect(asUser.mutation(api.agentRuntime.mergeAssistantStreamEvents, {})).rejects.toThrow(
 			UNSUPPORTED_CLIENT_MESSAGE
