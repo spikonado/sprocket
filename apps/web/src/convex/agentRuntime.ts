@@ -24,7 +24,7 @@ import {
 } from '@convex/lib/assistantStreamWrites';
 import { recordThreadUsageEvent, usageEventId } from '@convex/lib/threadUsage';
 import { finalizeRunRecord, matchesFinalizeExpectations } from '@convex/lib/runFinalize';
-import { startRunLifecycle } from '@convex/runLifecycle';
+import { startRunLifecycle, requestRunCancellation } from '@convex/runLifecycle';
 import { reopenRunRecord } from '@convex/lib/runResume';
 import { enqueueWebToolJob, isCloudWebToolKind } from '@convex/webToolPool';
 import {
@@ -550,7 +550,9 @@ export const isFinished = query({
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		return isRunFinalStatus(run.status);
+		// True for a durable cancel request as well as a terminal run, so the
+		// executor aborts in-flight model/tool work before acknowledging.
+		return isRunFinalStatus(run.status) || run.cancellationRequestedAt !== undefined;
 	}
 });
 
@@ -669,7 +671,7 @@ export const registerCompletionAttempt = mutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		assertRunAcceptsModelCompletion(run.status);
+		assertRunAcceptsModelCompletion(run);
 		if (!isRunClaimLeaseActive(run, Date.now())) {
 			throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 		}
@@ -723,7 +725,9 @@ export const finalizeCompletionCall = mutation({
 	returns: v.union(v.number(), v.null()),
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		assertRunAcceptsModelCompletion(run.status);
+		if (isRunFinalStatus(run.status)) {
+			assertRunAcceptsModelCompletion(run);
+		}
 		if (!isRunClaimLeaseActive(run, Date.now())) {
 			throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 		}
@@ -747,6 +751,7 @@ export const finalizeCompletionCall = mutation({
 	}
 });
 
+/** Compatibility shim. Current UI writes a cancellation request instead. */
 export const finalizeRun = mutation({
 	args: {
 		expectedStatus: v.optional(vRunStatus),
@@ -767,16 +772,28 @@ export const finalizeRun = mutation({
 	}
 });
 
+export const requestCancellation = mutation({
+	args: {
+		runId: v.id('runs')
+	},
+	returns: v.boolean(),
+	handler: async (ctx, args) => {
+		const userId = await getUserId(ctx);
+		const run = await getOwnedRun(ctx.db, userId, args.runId);
+		return await requestRunCancellation(ctx, run);
+	}
+});
+
 export const reopenRun = mutation({
 	args: {
 		runId: v.id('runs')
 	},
-	returns: v.null(),
+	returns: v.object({ submissionId: v.string() }),
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		const run = await getOwnedRun(ctx.db, userId, args.runId);
 		await reopenRunRecord(ctx, run);
-		return null;
+		return { submissionId: run.submissionId };
 	}
 });
 
@@ -910,7 +927,7 @@ export const beginToolJob = mutation({
 	handler: async (ctx, args) => {
 		try {
 			const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-			assertRunAcceptsModelCompletion(run.status);
+			assertRunAcceptsModelCompletion(run);
 			if (run.claimId !== args.claimId || !isRunClaimLeaseActive(run, Date.now())) {
 				throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 			}

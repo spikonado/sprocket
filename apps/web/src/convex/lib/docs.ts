@@ -125,6 +125,12 @@ export const vLatestRunForThread = v.object({
 	serverNow: v.number()
 });
 
+export {
+	vSelectedThreadLifecycle,
+	vSelectedThreadLifecyclePhase,
+	vSelectedThreadLifecycleRun
+} from '@convex/lib/runCancellation';
+
 export const vUsageMeterWindow = v.object({
 	period: v.union(v.literal('weekly'), v.literal('monthly')),
 	used: v.number(),

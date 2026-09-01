@@ -12,6 +12,7 @@ import { advanceTerminalCleanup } from '@convex/lib/runTerminal';
 import { finalizeRunRecord } from '@convex/lib/runFinalize';
 import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
 import { isRunFinalStatus } from '@convex/lib/validators';
+import { CANCELLATION_FORCE_AFTER_MS, isRunCancellationOpen } from '@convex/lib/runCancellation';
 const MAX_SLEEP_MS = RUN_QUEUED_STARTUP_DEADLINE_MS;
 
 type RunWatchState =
@@ -49,6 +50,24 @@ export async function startRunLifecycle(ctx: MutationCtx, runId: Id<'runs'>): Pr
 		return 'test-workflow' as WorkflowId;
 	}
 	return await start(ctx, internal.runLifecycle.watchRun, { runId }, { startAsync: true });
+}
+
+export async function requestRunCancellation(ctx: MutationCtx, run: Doc<'runs'>): Promise<boolean> {
+	if (isRunFinalStatus(run.status)) {
+		return false;
+	}
+	if (run.cancellationRequestedAt !== undefined) {
+		return true;
+	}
+	const now = Date.now();
+	await ctx.db.patch('runs', run._id, {
+		cancellationRequestedAt: now,
+		cancellationDeadlineAt: now + CANCELLATION_FORCE_AFTER_MS
+	});
+	await ctx.scheduler.runAfter(CANCELLATION_FORCE_AFTER_MS, internal.runLifecycle.forceCancelRun, {
+		runId: run._id
+	});
+	return true;
 }
 
 export async function cancelRunLifecycle(ctx: MutationCtx, workflowId: string): Promise<void> {
@@ -93,6 +112,25 @@ export const abandonExpiredRun = internalMutation({
 			text: RUN_ABANDONED_BY_AGENT,
 			status: 'failed',
 			lastError: RUN_ABANDONED_BY_AGENT
+		});
+	}
+});
+
+export const forceCancelRun = internalMutation({
+	args: { runId: v.id('runs') },
+	returns: v.boolean(),
+	handler: async (ctx, args) => {
+		const run = await ctx.db.get('runs', args.runId);
+		if (!run || !isRunCancellationOpen(run)) {
+			return false;
+		}
+		const now = Date.now();
+		if (run.cancellationDeadlineAt !== undefined && now < run.cancellationDeadlineAt) {
+			return false;
+		}
+		return await finalizeRunRecord(ctx, run, {
+			text: '',
+			status: 'cancelled'
 		});
 	}
 });

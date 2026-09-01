@@ -21,7 +21,7 @@ export async function applyExecutorJobSuccess(
 	if (args.job.status === 'completed') {
 		return true;
 	}
-	if (isRunFinalStatus(args.run.status)) {
+	if (isRunFinalStatus(args.run.status) || args.run.cancellationRequestedAt !== undefined) {
 		return false;
 	}
 	if (!ownsActiveRunClaim(args.run, args.claimId, Date.now())) {
@@ -68,11 +68,14 @@ export async function applyExecutorJobFailure(
 		error: args.error,
 		completedAt
 	});
-	const runPatch = executorFailureRunPatch({
-		runStatus: args.run.status,
-		activeJobId: args.run.activeJobId,
-		failedJobId: args.job._id
-	});
+	const runPatch =
+		args.run.cancellationRequestedAt !== undefined
+			? undefined
+			: executorFailureRunPatch({
+					runStatus: args.run.status,
+					activeJobId: args.run.activeJobId,
+					failedJobId: args.job._id
+				});
 	if (runPatch) {
 		await ctx.db.patch('runs', args.job.runId, runPatch);
 		await bumpThreadSnapshotForRun(ctx, args.run);

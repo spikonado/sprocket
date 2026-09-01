@@ -11,6 +11,7 @@ import type {
 import { isClaimedRunStatus, isRunClaimLeaseActive } from '$convex/lib/runLease';
 import { RUN_ABANDONED_BY_AGENT } from '$convex/lib/agentErrors';
 import { isRunFinalStatus } from '$convex/lib/validators';
+import type { SelectedThreadLifecyclePhase } from '$convex/lib/runCancellation';
 import { areImageUploadIdsEqual } from '$lib/chat/attachments';
 
 export type ProjectState = Project & {
@@ -95,6 +96,17 @@ export function runResumeKind(
 	}
 	if (isClaimedRunStatus(run.status) && !isRunClaimLeaseActive(run, now)) {
 		return 'crash';
+	}
+	return null;
+}
+
+export function lifecycleResumeKind(
+	phase: SelectedThreadLifecyclePhase,
+	lastError?: string
+): RunResumeKind | null {
+	if (phase === 'cancelled') return 'cancelled';
+	if (phase === 'failed') {
+		return lastError === RUN_ABANDONED_BY_AGENT ? 'crash' : 'failed';
 	}
 	return null;
 }

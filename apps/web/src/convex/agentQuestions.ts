@@ -122,7 +122,7 @@ export const create = mutation({
 	handler: async (ctx, args) => {
 		try {
 			const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-			assertRunAcceptsModelCompletion(run.status);
+			assertRunAcceptsModelCompletion(run);
 			if (run.claimId !== args.claimId || !isRunClaimLeaseActive(run, Date.now())) {
 				throw new Error('Run is no longer active.');
 			}

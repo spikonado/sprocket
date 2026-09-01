@@ -88,6 +88,8 @@ export async function reopenRunRecord(ctx: MutationCtx, run: Doc<'runs'>): Promi
 		completedAt: undefined,
 		activeJobId: undefined,
 		executionSecretHash: await executionSecretHash(`reopen:${run._id}:${now}`),
+		cancellationRequestedAt: undefined,
+		cancellationDeadlineAt: undefined,
 		lifecycleWorkflowId
 	});
 	await bumpThreadSnapshotForRun(ctx, run);

@@ -391,6 +391,29 @@ async fn finalize_provider_result(
     }
 }
 
+async fn acknowledge_stop(
+    runtime: &RuntimeClient,
+    run_id: &str,
+    claim_id: &str,
+) -> anyhow::Result<()> {
+    match finalize_run(
+        runtime,
+        run_id,
+        claim_id,
+        "",
+        RunFinalStatus::Cancelled,
+        None,
+    )
+    .await
+    {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            eprintln!("sprocket-agent: stop acknowledgement for run {run_id}: {error}");
+            Ok(())
+        }
+    }
+}
+
 async fn claim_run(
     runtime: &RuntimeClient,
     run_id: &str,
@@ -820,7 +843,10 @@ pub async fn run_agent(run: AgentRun, live: Arc<LiveCompletionHub>) -> anyhow::R
 
     match timeout(RUN_CLAIM_ATTEMPT_TIMEOUT, runtime.run_finished(&run_id)).await {
         Ok(Ok(false)) => {}
-        Ok(Ok(true)) => return Ok(()),
+        Ok(Ok(true)) => {
+            acknowledge_stop(&runtime, &run_id, &claim_id).await?;
+            return Ok(());
+        }
         Ok(Err(error)) => return abort_after_claim(&runtime, &run_id, &claim_id, error).await,
         Err(_) => {
             return abort_after_claim(
@@ -865,7 +891,10 @@ pub async fn run_agent(run: AgentRun, live: Arc<LiveCompletionHub>) -> anyhow::R
             // A renewal tick can race the operation's own finalization; a run
             // that already finished server-side must not be reported as failed.
             match runtime.run_finished(&run_id).await {
-                Ok(true) => Ok(()),
+                Ok(true) => {
+                    acknowledge_stop(&runtime, &run_id, &claim_id).await?;
+                    Ok(())
+                }
                 _ => abort_after_claim(&runtime, &run_id, &claim_id, error).await,
             }
         }

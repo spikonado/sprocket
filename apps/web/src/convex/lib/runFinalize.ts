@@ -5,7 +5,7 @@ import { isRunFinalStatus, type vRunFinalStatus, type vRunStatus } from '@convex
 import { reconcileTerminalRunPages } from '@convex/lib/runTerminal';
 import { cancelWebToolWork } from '@convex/webToolPool';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
-import { bumpThreadSnapshotForRun } from '@convex/lib/threadSnapshots';
+import { resolveRequestedFinalizeStatus } from '@convex/lib/runCancellation';
 
 type FinalizeRunArgs = {
 	text: string;
@@ -40,7 +40,9 @@ export async function finalizeRunRecord(
 	args: FinalizeRunArgs
 ): Promise<boolean> {
 	const alreadyFinal = isRunFinalStatus(run.status);
-	const finalStatus = alreadyFinal ? run.status : args.status;
+	const finalStatus = alreadyFinal
+		? run.status
+		: resolveRequestedFinalizeStatus(run, args.status);
 	const completedAt = run.completedAt ?? Date.now();
 	const lastError = alreadyFinal ? run.lastError : args.lastError;
 	await cancelWebToolWork(ctx, run._id);
@@ -85,6 +87,5 @@ export async function finalizeRunRecord(
 		lastError: args.lastError,
 		completedAt
 	});
-	await bumpThreadSnapshotForRun(ctx, latest);
 	return true;
 }

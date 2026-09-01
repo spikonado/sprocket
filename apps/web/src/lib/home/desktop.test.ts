@@ -3,6 +3,7 @@ import type { Id } from '$convex/_generated/dataModel';
 import {
 	isRunBlockingAgentLaunch,
 	launchAgentRun,
+	lifecycleResumeKind,
 	resolveDraftRunSubmissionId,
 	resolveSubmissionId,
 	runResumeKind
@@ -228,5 +229,16 @@ describe('runResumeKind', () => {
 		expect(runResumeKind({ status: 'cancelled' }, 100)).toBe('cancelled');
 		expect(runResumeKind({ status: 'completed' }, 100)).toBeNull();
 		expect(runResumeKind({ status: 'running', claimExpiresAt: 150 }, 100)).toBeNull();
+	});
+});
+
+describe('lifecycleResumeKind', () => {
+	it('classifies failed, crashed, and cancelled projection phases', () => {
+		expect(lifecycleResumeKind('cancelled')).toBe('cancelled');
+		expect(lifecycleResumeKind('failed', RUN_ABANDONED_BY_AGENT)).toBe('crash');
+		expect(lifecycleResumeKind('failed', 'boom')).toBe('failed');
+		expect(lifecycleResumeKind('completed')).toBeNull();
+		expect(lifecycleResumeKind('running')).toBeNull();
+		expect(lifecycleResumeKind('cancellation_requested')).toBeNull();
 	});
 });
