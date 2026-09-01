@@ -57,9 +57,7 @@ export default defineSchema({
 		lastSeenAt: v.number(),
 		supersededAt: v.optional(v.number()),
 		revokedAt: v.optional(v.number())
-	})
-		.index('by_userId_and_processSessionId', ['userId', 'processSessionId'])
-		.index('by_processSessionId', ['processSessionId']),
+	}).index('by_userId_and_processSessionId', ['userId', 'processSessionId']),
 	machineSessionRuns: defineTable({
 		sessionId: v.id('machineSessions'),
 		runId: v.id('runs'),

@@ -3,6 +3,7 @@ use convex::{FunctionResult, QuerySubscription, Value};
 use serde::Deserialize;
 use sprocket_convex::Client as ConvexRpcClient;
 use std::collections::BTreeMap;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -32,8 +33,8 @@ pub(crate) enum FailedStartCleanup {
 pub(crate) struct RuntimeClient {
     pub(crate) client: ConvexRpcClient,
     execution_secret: String,
-    process_session_id: String,
     machine_credential: String,
+    machine_session_id: Arc<OnceLock<String>>,
 }
 
 impl RuntimeClient {
@@ -53,8 +54,8 @@ impl RuntimeClient {
         Ok(Self {
             client,
             execution_secret: request.execution_secret.clone(),
-            process_session_id: request.process_session_id.clone(),
             machine_credential: request.machine_credential.clone(),
+            machine_session_id: Arc::new(OnceLock::new()),
         })
     }
 
@@ -174,6 +175,9 @@ impl RuntimeClient {
             env!("CARGO_PKG_VERSION").to_string().into(),
         );
         let session = self.register_machine_session(request).await?;
+        self.machine_session_id
+            .set(session.session_id.clone())
+            .map_err(|_| anyhow!("machine session was registered more than once"))?;
         args.insert(
             "installationId".to_string(),
             request.installation_id.clone().into(),
@@ -255,11 +259,12 @@ impl RuntimeClient {
     }
 
     pub(crate) async fn heartbeat_machine_session(&self) -> anyhow::Result<()> {
+        let session_id = self
+            .machine_session_id
+            .get()
+            .ok_or_else(|| anyhow!("machine session is not registered"))?;
         let mut args = BTreeMap::new();
-        args.insert(
-            "processSessionId".to_string(),
-            self.process_session_id.clone().into(),
-        );
+        args.insert("sessionId".to_string(), session_id.clone().into());
         args.insert(
             "credential".to_string(),
             self.machine_credential.clone().into(),

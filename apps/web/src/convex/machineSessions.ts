@@ -32,13 +32,10 @@ async function failSessionRuns(ctx: MutationCtx, session: Doc<'machineSessions'>
 
 async function requireProcessSession(
 	ctx: QueryCtx | MutationCtx,
-	processSessionId: string,
+	sessionId: Doc<'machineSessions'>['_id'],
 	credential: string
 ): Promise<Doc<'machineSessions'>> {
-	const session = await ctx.db
-		.query('machineSessions')
-		.withIndex('by_processSessionId', (query) => query.eq('processSessionId', processSessionId))
-		.unique();
+	const session = await ctx.db.get('machineSessions', sessionId);
 	if (!session || session.revokedAt !== undefined || session.supersededAt !== undefined) {
 		throw new Error('Machine session is not active.');
 	}
@@ -84,13 +81,10 @@ export const register = mutation({
 			.unique();
 		const processSession = await ctx.db
 			.query('machineSessions')
-			.withIndex('by_processSessionId', (query) =>
-				query.eq('processSessionId', args.processSessionId)
+			.withIndex('by_userId_and_processSessionId', (query) =>
+				query.eq('userId', userId).eq('processSessionId', args.processSessionId)
 			)
 			.unique();
-		if (processSession && processSession.userId !== userId) {
-			throw new Error('Process session identity is already in use.');
-		}
 		if (processSession && processSession.installationId !== args.installationId) {
 			throw new Error('Process session belongs to another installation.');
 		}
@@ -155,20 +149,20 @@ export const register = mutation({
 });
 
 export const heartbeat = mutation({
-	args: { processSessionId: v.string(), credential: v.string() },
+	args: { sessionId: v.id('machineSessions'), credential: v.string() },
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const session = await requireProcessSession(ctx, args.processSessionId, args.credential);
+		const session = await requireProcessSession(ctx, args.sessionId, args.credential);
 		await ctx.db.patch('machineSessions', session._id, { lastSeenAt: Date.now() });
 		return null;
 	}
 });
 
 export const end = mutation({
-	args: { processSessionId: v.string(), credential: v.string() },
+	args: { sessionId: v.id('machineSessions'), credential: v.string() },
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const session = await requireProcessSession(ctx, args.processSessionId, args.credential);
+		const session = await requireProcessSession(ctx, args.sessionId, args.credential);
 		await failSessionRuns(ctx, session);
 		await ctx.db.patch('machineSessions', session._id, { revokedAt: Date.now() });
 		return null;

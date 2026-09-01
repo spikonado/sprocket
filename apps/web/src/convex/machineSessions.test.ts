@@ -79,7 +79,7 @@ describe('machine sessions', () => {
 	it('authenticates heartbeats with the process credential', async () => {
 		const t = initConvexTest();
 		const { asUser } = await seedOwnedThread(t);
-		await asUser.mutation(api.machineSessions.register, {
+		const session = await asUser.mutation(api.machineSessions.register, {
 			...machine,
 			processSessionId: 'process-a',
 			credentialHash: await executionSecretHash('credential-a')
@@ -87,13 +87,13 @@ describe('machine sessions', () => {
 
 		await expect(
 			t.mutation(api.machineSessions.heartbeat, {
-				processSessionId: 'process-a',
+				sessionId: session.sessionId,
 				credential: 'wrong'
 			})
 		).rejects.toThrow('Machine session is not active.');
 		await expect(
 			t.mutation(api.machineSessions.heartbeat, {
-				processSessionId: 'process-a',
+				sessionId: session.sessionId,
 				credential: 'credential-a'
 			})
 		).resolves.toBeNull();
@@ -103,13 +103,13 @@ describe('machine sessions', () => {
 		const t = initConvexTest();
 		const { asUser } = await seedOwnedThread(t);
 		const credentialHash = await executionSecretHash('credential-a');
-		await asUser.mutation(api.machineSessions.register, {
+		const session = await asUser.mutation(api.machineSessions.register, {
 			...machine,
 			processSessionId: 'process-a',
 			credentialHash
 		});
 		await t.mutation(api.machineSessions.end, {
-			processSessionId: 'process-a',
+			sessionId: session.sessionId,
 			credential: 'credential-a'
 		});
 
@@ -120,5 +120,25 @@ describe('machine sessions', () => {
 				credentialHash
 			})
 		).rejects.toThrow('Process session is no longer active.');
+	});
+
+	it('allows one local process identity to register for different users', async () => {
+		const t = initConvexTest();
+		const { asUser } = await seedOwnedThread(t);
+		const { asUser: asOtherUser } = await seedOwnedThread(t, 'other-user');
+		const credentialHash = await executionSecretHash('shared-process-credential');
+
+		const first = await asUser.mutation(api.machineSessions.register, {
+			...machine,
+			processSessionId: 'shared-process',
+			credentialHash
+		});
+		const second = await asOtherUser.mutation(api.machineSessions.register, {
+			...machine,
+			processSessionId: 'shared-process',
+			credentialHash
+		});
+
+		expect(second.sessionId).not.toBe(first.sessionId);
 	});
 });
