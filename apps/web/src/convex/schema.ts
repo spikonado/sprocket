@@ -153,6 +153,10 @@ export default defineSchema({
 	})
 		.index('by_threadId_startedAt', ['threadId', 'startedAt'])
 		.index('by_threadId_status_startedAt', ['threadId', 'status', 'startedAt'])
+		.index('by_userId_and_status_and_startedAt', {
+			fields: ['userId', 'status', 'startedAt'],
+			staged: true
+		})
 		.index('by_executionSecretHash', ['executionSecretHash'])
 		.index('by_userId_submissionId', ['userId', 'submissionId']),
 	threadMessages: defineTable({
