@@ -96,8 +96,7 @@ async function recordToolTranscriptsPage(
 			threadId: args.run.threadId,
 			userId: args.run.userId,
 			runId: args.run._id,
-			job,
-			allowWithoutMatchingCompletion: true
+			job
 		});
 	}
 	const last = jobs.at(-1);

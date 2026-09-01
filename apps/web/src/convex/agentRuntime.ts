@@ -697,7 +697,8 @@ export const finalizeCompletionCall = mutation({
 		await recordSettledToolTranscripts(ctx, {
 			threadId: run.threadId,
 			userId: run.userId,
-			runId: run._id
+			runId: run._id,
+			items: args.items
 		});
 		return number;
 	}
