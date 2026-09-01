@@ -3,9 +3,6 @@
 		"enabled": true
 	},
 	"functions": "src/convex/",
-	"node": {
-		"nodeVersion": "22"
-	},
 	"authKit": {
 		"dev": {
 			"configure": {
