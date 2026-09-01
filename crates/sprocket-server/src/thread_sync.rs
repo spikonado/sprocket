@@ -193,6 +193,8 @@ impl ThreadCacheSync {
         if repository_key.is_empty() {
             return Ok(());
         }
+        self.ensure_repository_watches(user_id, repository_key, categories, &auth_token)
+            .await;
         let client = UserConvexClient::connect(&self.deployment_url, auth_token).await?;
         for &category in categories {
             let start = WatchStart {
@@ -207,6 +209,39 @@ impl ThreadCacheSync {
             download_consistent_snapshot(&start, &client).await?;
         }
         Ok(())
+    }
+
+    async fn ensure_repository_watches(
+        self: &Arc<Self>,
+        user_id: &str,
+        repository_key: &str,
+        categories: &[ThreadSnapshotCategory],
+        auth_token: &str,
+    ) {
+        let mut inner = self.inner.lock().await;
+        if inner.user_id.as_deref() != Some(user_id) {
+            return;
+        }
+        for &category in categories {
+            let key = WatchKey {
+                user_id: user_id.to_string(),
+                repository_key: repository_key.to_string(),
+                category,
+            };
+            if inner.tasks.contains_key(&key) {
+                continue;
+            }
+            let task = tokio::spawn(watch_snapshot(WatchStart {
+                deployment_url: self.deployment_url.clone(),
+                store: Arc::clone(&self.store),
+                sync: Arc::clone(self),
+                user_id: key.user_id.clone(),
+                repository_key: key.repository_key.clone(),
+                category: key.category,
+                auth_token: auth_token.to_string(),
+            }));
+            inner.tasks.insert(key, task);
+        }
     }
 
     async fn reconcile_watches(
