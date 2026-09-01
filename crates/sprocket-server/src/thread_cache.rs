@@ -248,11 +248,29 @@ impl ThreadSnapshotStore {
 
     async fn load_user_snapshots(&self, user_id: &str) -> anyhow::Result<Vec<ThreadSnapshotFile>> {
         let mut snapshots = Vec::new();
-        let user_dir = self.root.join(cache_key(user_id));
-        if !tokio::fs::try_exists(&user_dir).await? {
+        if !tokio::fs::try_exists(&self.root).await? {
             return Ok(snapshots);
         }
-        let mut repos = tokio::fs::read_dir(&user_dir).await?;
+        let expected_user_dir = cache_key(user_id);
+        let mut users = tokio::fs::read_dir(&self.root).await?;
+        while let Some(entry) = users.next_entry().await? {
+            if entry.file_type().await?.is_dir() && entry.file_name() == expected_user_dir.as_str()
+            {
+                self.load_snapshots_from_user_dir(entry.path(), user_id, &mut snapshots)
+                    .await?;
+                break;
+            }
+        }
+        Ok(snapshots)
+    }
+
+    async fn load_snapshots_from_user_dir(
+        &self,
+        user_dir: PathBuf,
+        user_id: &str,
+        snapshots: &mut Vec<ThreadSnapshotFile>,
+    ) -> anyhow::Result<()> {
+        let mut repos = tokio::fs::read_dir(user_dir).await?;
         while let Some(entry) = repos.next_entry().await? {
             if !entry.file_type().await?.is_dir() {
                 continue;
@@ -280,7 +298,7 @@ impl ThreadSnapshotStore {
                 }
             }
         }
-        Ok(snapshots)
+        Ok(())
     }
 
     pub async fn contains_token(&self, token: &str) -> anyhow::Result<bool> {
