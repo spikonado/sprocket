@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 
 pub const THREAD_SNAPSHOT_VERSION: u32 = 1;
@@ -83,8 +84,8 @@ impl ThreadSnapshotStore {
 
     fn snapshot_dir(&self, user_id: &str, repository_key: &str) -> PathBuf {
         self.root
-            .join(safe_segment(user_id))
-            .join(safe_segment(repository_key))
+            .join(cache_key(user_id))
+            .join(cache_key(repository_key))
     }
 
     fn snapshot_path(
@@ -247,7 +248,7 @@ impl ThreadSnapshotStore {
 
     async fn load_user_snapshots(&self, user_id: &str) -> anyhow::Result<Vec<ThreadSnapshotFile>> {
         let mut snapshots = Vec::new();
-        let user_dir = self.root.join(safe_segment(user_id));
+        let user_dir = self.root.join(cache_key(user_id));
         if !tokio::fs::try_exists(&user_dir).await? {
             return Ok(snapshots);
         }
@@ -304,16 +305,10 @@ fn parse_snapshot(
     Ok(snapshot)
 }
 
-pub fn safe_segment(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| {
-            if matches!(ch, '/' | '\\' | ':' | '.') {
-                '_'
-            } else {
-                ch
-            }
-        })
+fn cache_key(value: &str) -> String {
+    Sha256::digest(value.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
         .collect()
 }
 
