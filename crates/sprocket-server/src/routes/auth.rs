@@ -367,6 +367,11 @@ mod tests {
             "https://example.convex.cloud".to_string(),
             transcript.clone(),
         );
+        let thread_cache = crate::thread_sync::ThreadCacheSync::new(
+            "https://example.convex.cloud".to_string(),
+            crate::thread_cache::ThreadSnapshotStore::new(temp_dir.clone()),
+            project_attachments.clone(),
+        );
 
         let state = AppState {
             auth,
@@ -374,6 +379,7 @@ mod tests {
             project_attachments,
             transcript,
             transcript_watchers,
+            thread_cache,
             live_completions: Arc::new(sprocket_agent::LiveCompletionHub::new()),
             http_base_url: "http://127.0.0.1:7731".to_string(),
             desktop_login_callback_url: auth::desktop_login_callback_url(7731),

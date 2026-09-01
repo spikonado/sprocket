@@ -6,6 +6,7 @@ import { isClaimedRunStatus, isRunClaimLeaseActive } from '@convex/lib/runLease'
 import { isSettledExecutorJobStatus } from '@convex/lib/runs';
 import { cancelRunLifecycle, startRunLifecycle } from '@convex/runLifecycle';
 import { cancelWebToolWork } from '@convex/webToolPool';
+import { bumpThreadSnapshotForRun } from '@convex/lib/threadSnapshots';
 
 const IN_FLIGHT_CANCELLED = 'The agent worker claim expired.';
 
@@ -89,4 +90,5 @@ export async function reopenRunRecord(ctx: MutationCtx, run: Doc<'runs'>): Promi
 		executionSecretHash: await executionSecretHash(`reopen:${run._id}:${now}`),
 		lifecycleWorkflowId
 	});
+	await bumpThreadSnapshotForRun(ctx, run);
 }

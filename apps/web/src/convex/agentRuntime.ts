@@ -17,6 +17,7 @@ import { modelGatewayTokenSecret, modelGatewayUrl } from '@convex/lib/gatewayFet
 import { gatewayTokenExpiresAt, mintGatewayToken } from '@convex/lib/gatewayToken';
 import { vCompletionActor, vGetContextResult } from '@convex/lib/docs';
 import { appendThreadMessage } from '@convex/lib/threadMessages';
+import { bumpThreadSnapshotForRun } from '@convex/lib/threadSnapshots';
 import {
 	getCompletionStreamState,
 	registerCompletionAttemptForRun
@@ -455,6 +456,9 @@ export const start = mutation({
 		};
 		if (!isSameClaimRenewal) claimPatch.completionAttemptSeq = 0;
 		await ctx.db.patch('runs', args.runId, claimPatch);
+		if (!isSameClaimRenewal) {
+			await bumpThreadSnapshotForRun(ctx, run);
+		}
 
 		return { claimed: true, claimExpiresAt: nextClaimExpiresAt };
 	}
@@ -943,6 +947,7 @@ export const beginToolJob = mutation({
 				status: 'awaiting_executor',
 				activeJobId: jobId
 			});
+			await bumpThreadSnapshotForRun(ctx, run);
 
 			return {
 				jobId,

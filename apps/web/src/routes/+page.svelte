@@ -100,6 +100,7 @@
 		DesktopApi,
 		LiveCompletionOverlay,
 		LocalTranscriptPart,
+		ThreadCacheStatus,
 		ThreadMessage,
 		ThreadSummary,
 		ProjectAttachment,
@@ -244,6 +245,12 @@
 	let desktopProjectAttachmentsByPath = $state<Record<string, ProjectAttachment>>({});
 	let hasLoadedDesktopProjectAttachments = $state(false);
 	let desktopProjectAttachmentsGeneration = 0;
+	let threadSnapshotReady = $state(false);
+	let threadCacheStatus = $state<ThreadCacheStatus>('loading');
+	let threadCacheLastSyncedAt = $state<number | null>(null);
+	let threadSnapshotThreads = $state<ThreadSummary[]>([]);
+	let threadCacheGeneration = 0;
+	let archivedSyncGeneration = 0;
 	let selectionUserId = $state<string | null>(null);
 	let projectPickerOpen = $state(false);
 	let projectPickerMode = $state<'add' | 'reconnect'>('add');
@@ -385,7 +392,6 @@
 		return $authState.user && convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip';
 	}
 
-	const threadsQuery = useQuery(api.threads.listMine, getAuthenticatedQueryArgs);
 	const uiPreferencesQuery = useQuery(api.uiPreferences.getMine, getAuthenticatedQueryArgs);
 	let workspaceTheme = $state<SprocketTheme>(resolveTheme(null));
 	let hasHydratedTheme = false;
@@ -472,7 +478,6 @@
 	);
 	const queryError = $derived.by(() => {
 		for (const query of [
-			threadsQuery,
 			uiPreferencesQuery,
 			activeThreadQuery,
 			latestRunQuery,
@@ -491,7 +496,7 @@
 			.sort((left, right) => right.lastUsedAt - left.lastUsedAt)
 			.map(projectFromAttachment)
 	);
-	const threads = $derived((threadsQuery.data ?? []).map(toThreadSummary));
+	const threads = $derived(threadSnapshotThreads.map(toThreadSummary));
 	const currentActiveThread = $derived(dataForThread(activeThreadQuery.data, currentThreadId));
 	const contextUsage = $derived.by(() => {
 		const model = modelCatalog
@@ -925,6 +930,7 @@
 		desktopProjectAttachmentsByPath = nextAttachments;
 		hasLoadedDesktopProjectAttachments = true;
 		await rekeyChangedLocalRepositories(nextAttachments);
+		await registerThreadCacheForCurrentUser();
 	}
 
 	async function rekeyChangedLocalRepositories(next: Record<string, ProjectAttachment>) {
@@ -950,6 +956,116 @@
 			await attachLocalProject(attachment.workspacePath);
 		}
 	}
+
+	function applyThreadCacheEvent(event: {
+		status: ThreadCacheStatus;
+		lastSyncedAt: number | null;
+	}) {
+		threadCacheStatus = event.status;
+		threadCacheLastSyncedAt = event.lastSyncedAt;
+		if (event.status !== 'loading') {
+			threadSnapshotReady = true;
+		}
+	}
+
+	async function pullThreadSnapshot(userId: string) {
+		const api = desktopApi;
+		if (!api) {
+			return;
+		}
+		const snapshot = await api.fetchThreadSnapshot({ userId });
+		if (getCurrentUserId() !== userId) {
+			return;
+		}
+		threadSnapshotThreads = snapshot.threads;
+		applyThreadCacheEvent(snapshot);
+	}
+
+	async function registerThreadCacheForCurrentUser() {
+		const api = desktopApi;
+		const userId = getCurrentUserId();
+		if (!api || !userId || !authReady) {
+			return;
+		}
+		const authToken = await getAccessToken();
+		if (!authToken || getCurrentUserId() !== userId) {
+			return;
+		}
+		const event = await api.registerThreadCache({ userId, authToken });
+		if (getCurrentUserId() !== userId) {
+			return;
+		}
+		applyThreadCacheEvent(event);
+		await pullThreadSnapshot(userId);
+	}
+
+	$effect(() => {
+		const api = desktopApi;
+		const userId = getCurrentUserId();
+		if (!api || !userId || !authReady) {
+			return;
+		}
+		const generation = ++threadCacheGeneration;
+		const ac = new AbortController();
+		void (async () => {
+			try {
+				await registerThreadCacheForCurrentUser();
+				if (generation !== threadCacheGeneration || ac.signal.aborted) {
+					return;
+				}
+				await api.watchThreadCache(
+					{ userId },
+					{
+						signal: ac.signal,
+						onEvent: (event) => {
+							if (generation !== threadCacheGeneration || getCurrentUserId() !== userId) {
+								return;
+							}
+							applyThreadCacheEvent(event);
+							if (event.status === 'live' || event.status === 'reconnecting') {
+								void pullThreadSnapshot(userId);
+							}
+						}
+					}
+				);
+			} catch (error) {
+				if (generation !== threadCacheGeneration || getCurrentUserId() !== userId) {
+					return;
+				}
+				threadCacheStatus = 'error';
+				threadSnapshotReady = true;
+				currentError = error instanceof Error ? error.message : 'Could not sync threads.';
+			}
+		})();
+		return () => {
+			ac.abort();
+		};
+	});
+
+	$effect(() => {
+		const api = desktopApi;
+		const userId = getCurrentUserId();
+		if (!api || !userId || !authReady || !settingsOpen || settingsPage !== 'archived') {
+			return;
+		}
+		const generation = ++archivedSyncGeneration;
+		void api
+			.syncArchivedThreads({ userId })
+			.then(async (event) => {
+				if (generation !== archivedSyncGeneration || getCurrentUserId() !== userId) {
+					return;
+				}
+				applyThreadCacheEvent(event);
+				await pullThreadSnapshot(userId);
+			})
+			.catch((error) => {
+				if (generation !== archivedSyncGeneration || getCurrentUserId() !== userId) {
+					return;
+				}
+				currentError = error instanceof Error ? error.message : 'Could not sync archived threads.';
+			});
+	});
+
 
 	function applyProjectSelection(
 		workspacePath: string,
@@ -1959,6 +2075,11 @@
 		restoredWorkspacePathToAttach = null;
 		ensureSubscriptionAttemptedFor = null;
 		lastSyncedComposerThreadId = null;
+		threadSnapshotReady = false;
+		threadCacheStatus = 'loading';
+		threadCacheLastSyncedAt = null;
+		threadSnapshotThreads = [];
+		threadCacheGeneration += 1;
 		projectSelectionGeneration += 1;
 		prompt = '';
 		clearComposerAttachments({ discard: true });
@@ -2093,7 +2214,7 @@
 			return;
 		}
 
-		if (!hasLoadedDesktopProjectAttachments || !threadsQuery.data) {
+		if (!hasLoadedDesktopProjectAttachments || !threadSnapshotReady) {
 			return;
 		}
 
@@ -2392,6 +2513,8 @@
 							currentError ??
 							$authState.error ??
 							(queryError instanceof Error ? convexClientErrorMessage(queryError) : null) ??
+							(threadCacheStatus === 'error' ? 'Could not sync threads.' : null) ??
+							(threadCacheStatus === 'offline' ? 'Thread sync is offline.' : null) ??
 							null}
 						runError={latestRunResumeKind ? null : (runState?.lastError ?? null)}
 						messages={visibleMessages}

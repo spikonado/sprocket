@@ -6,6 +6,8 @@ pub mod repo_env;
 mod routes;
 mod static_dir;
 mod static_files;
+mod thread_cache;
+mod thread_sync;
 mod transcript_client;
 mod transcript_watch;
 
@@ -83,6 +85,7 @@ pub struct AppState {
     pub project_attachments: Arc<project_attachments::ProjectAttachmentStore>,
     pub transcript: Arc<TranscriptStore>,
     pub transcript_watchers: Arc<TranscriptWatchers>,
+    pub thread_cache: Arc<thread_sync::ThreadCacheSync>,
     pub live_completions: Arc<LiveCompletionHub>,
     pub http_base_url: String,
     pub desktop_login_callback_url: String,
@@ -101,6 +104,7 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .merge(routes::workspace::routes())
         .merge(routes::agent::routes())
         .merge(routes::transcript::routes())
+        .merge(routes::threads::routes())
         .fallback(api_not_found)
         .with_state(state);
 
@@ -120,6 +124,11 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
     let transcript = TranscriptStore::new(data_dir.join("transcripts"));
     let transcript_watchers =
         TranscriptWatchers::new(convex_deployment_url.clone(), Arc::clone(&transcript));
+    let thread_cache = thread_sync::ThreadCacheSync::new(
+        convex_deployment_url.clone(),
+        thread_cache::ThreadSnapshotStore::new(data_dir.clone()),
+        Arc::clone(&project_attachments),
+    );
     let http_base_url = config.listen_url();
     let web_ui_enabled = config
         .resolve_static_dir()
@@ -138,6 +147,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         project_attachments,
         transcript,
         transcript_watchers,
+        thread_cache,
         live_completions: Arc::new(LiveCompletionHub::new()),
         http_base_url: http_base_url.clone(),
         desktop_login_callback_url: auth::desktop_login_callback_url(config.port),

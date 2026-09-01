@@ -5,6 +5,7 @@ import { isRunFinalStatus, type vRunFinalStatus, type vRunStatus } from '@convex
 import { reconcileTerminalRunPages } from '@convex/lib/runTerminal';
 import { cancelWebToolWork } from '@convex/webToolPool';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
+import { bumpThreadSnapshotForRun } from '@convex/lib/threadSnapshots';
 
 type FinalizeRunArgs = {
 	text: string;
@@ -84,5 +85,6 @@ export async function finalizeRunRecord(
 		lastError: args.lastError,
 		completedAt
 	});
+	await bumpThreadSnapshotForRun(ctx, latest);
 	return true;
 }

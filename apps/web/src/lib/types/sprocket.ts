@@ -179,6 +179,25 @@ export type TranscriptWatchEvent = {
 	stale: boolean;
 };
 
+export type ThreadCacheStatus = 'loading' | 'live' | 'reconnecting' | 'offline' | 'error';
+
+export type ThreadCacheWatchEvent = {
+	status: ThreadCacheStatus;
+	lastSyncedAt: number | null;
+};
+
+export type ThreadCacheSnapshot = ThreadCacheWatchEvent & {
+	threads: ThreadSummary[];
+};
+
+export type ThreadCacheUserRequest = {
+	userId: string;
+};
+
+export type ThreadCacheRegisterRequest = ThreadCacheUserRequest & {
+	authToken: string;
+};
+
 export type LiveCompletionWatchEvent =
 	{ eventType: 'updated'; live: LiveCompletionOverlay } | { eventType: 'cleared' };
 
@@ -248,6 +267,16 @@ export type DesktopApi = {
 	fetchTranscriptAttachment: (
 		request: TranscriptScopeRequest & { imageUploadId: Id<'imageUploads'> }
 	) => Promise<Blob | null>;
+	registerThreadCache: (request: ThreadCacheRegisterRequest) => Promise<ThreadCacheWatchEvent>;
+	fetchThreadSnapshot: (request: ThreadCacheUserRequest) => Promise<ThreadCacheSnapshot>;
+	syncArchivedThreads: (request: ThreadCacheUserRequest) => Promise<ThreadCacheWatchEvent>;
+	watchThreadCache: (
+		request: ThreadCacheUserRequest,
+		handlers: {
+			onEvent: (event: ThreadCacheWatchEvent) => void;
+			signal: AbortSignal;
+		}
+	) => Promise<void>;
 };
 
 export type WorkspacePathResolution = {

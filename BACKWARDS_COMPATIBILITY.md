@@ -218,6 +218,15 @@ does not read `threadMessages` and is not an unsupported-client stub.
 
 Remove after rust/desktop stop calling it, then delete the Convex export.
 
+### Live leftover name: `threads.listMine`
+
+Current desktop/web reads thread lists from the local snapshot cache
+(`threads.listSnapshotPage` / `getSnapshotRevision`). `threads.listMine`
+remains for older clients that still subscribe to the full user list.
+
+Remove after all supported clients read local snapshots, then delete the
+Convex export.
+
 ## Removal checklist
 
 1. Confirm the gate with prod numbers (schema) or an explicit decision that

@@ -4,6 +4,7 @@ import { executorFailureRunPatch } from '@convex/lib/runs';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
 import { normalizeExecutorJobResult } from '@convex/lib/commandResults';
 import { isRunFinalStatus, type ExecutorJobResult } from '@convex/lib/validators';
+import { bumpThreadSnapshotForRun } from '@convex/lib/threadSnapshots';
 
 export async function applyExecutorJobSuccess(
 	ctx: MutationCtx,
@@ -37,6 +38,7 @@ export async function applyExecutorJobSuccess(
 			status: 'running',
 			activeJobId: undefined
 		});
+		await bumpThreadSnapshotForRun(ctx, args.run);
 	}
 	return true;
 }
@@ -73,6 +75,7 @@ export async function applyExecutorJobFailure(
 	});
 	if (runPatch) {
 		await ctx.db.patch('runs', args.job.runId, runPatch);
+		await bumpThreadSnapshotForRun(ctx, args.run);
 	}
 	return true;
 }
