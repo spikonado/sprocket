@@ -1,5 +1,6 @@
 mod auth;
 mod config;
+mod machine_identity;
 mod project_attachments;
 pub mod repo_env;
 mod routes;
@@ -89,6 +90,7 @@ pub struct AppState {
     pub convex_deployment_url: String,
     pub web_ui_enabled: bool,
     pub desktop_bootstrap_token: Option<Arc<Mutex<Option<String>>>>,
+    pub(crate) machine_identity: Arc<machine_identity::MachineIdentity>,
 }
 
 pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
@@ -112,6 +114,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
     let convex_deployment_url = config.resolve_convex_deployment_url()?;
     let data_dir = config.resolve_data_dir();
     let auth = auth::AuthState::load(&data_dir)?;
+    let machine_identity = Arc::new(machine_identity::MachineIdentity::load(&data_dir)?);
     let pairing_credential = auth.pairing_credential().to_string();
     let project_attachments = project_attachments::ProjectAttachmentStore::new(data_dir.clone());
     let transcript = TranscriptStore::new(data_dir.join("transcripts"));
@@ -142,6 +145,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         convex_deployment_url,
         web_ui_enabled,
         desktop_bootstrap_token,
+        machine_identity,
     };
 
     let startup = StartupInfo {

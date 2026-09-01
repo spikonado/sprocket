@@ -137,7 +137,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 		).toBe(expiredAt);
 	});
 
-	it('rebinds a queued submission when its original local executor was lost', async () => {
+	it('never rebinds a queued submission to a different executor', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const args = {
@@ -159,12 +159,12 @@ describe('agentRuntime.insertGatewayRun', () => {
 				...args,
 				executionSecret: 'replacement-secret'
 			})
-		).resolves.toMatchObject({ created: false, runId: created.runId });
+		).rejects.toThrow('Submission belongs to a different executor.');
 		await expect(
 			t.mutation(api.agentRuntime.start, {
 				runId: created.runId,
-				claimId: 'replacement-claim',
-				executionSecret: 'replacement-secret'
+				claimId: 'original-claim',
+				executionSecret: 'lost-secret'
 			})
 		).resolves.toMatchObject({ claimed: true });
 	});
@@ -220,7 +220,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 		).resolves.toBe('pending');
 	});
 
-	it('reports pending for a rebound secret when the caller identity is gone', async () => {
+	it('finalizes with the original capability when a duplicate launch is rejected', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const args = {
@@ -236,22 +236,17 @@ describe('agentRuntime.insertGatewayRun', () => {
 			...args,
 			executionSecret: 'loser-secret'
 		});
-		await insertQueuedRun(t, asUser, {
-			...args,
-			executionSecret: 'winner-secret'
-		});
-
-		// Without an identity the mutation cannot tell a rebound run from a
-		// missing one. The executor avoids this path by standing down on the
-		// insertGatewayRun conflict error instead.
+		await expect(
+			insertQueuedRun(t, asUser, { ...args, executionSecret: 'winner-secret' })
+		).rejects.toThrow('Submission belongs to a different executor.');
 		await expect(
 			t.mutation(api.agentRuntime.finalizeFailedStart, {
 				...args,
 				executionSecret: 'loser-secret',
 				text: 'Run failed before the model started.',
-				lastError: 'lost the launch race'
+				lastError: 'original launch failed'
 			})
-		).resolves.toBe('pending');
+		).resolves.toBe('finalized');
 	});
 
 	it('tells the losing launch of a racing submission to stand down', async () => {
@@ -270,16 +265,14 @@ describe('agentRuntime.insertGatewayRun', () => {
 			...args,
 			executionSecret: 'loser-secret'
 		});
-		// The winning launch resumes the submission and rebinds its capability.
-		await insertQueuedRun(t, asUser, {
-			...args,
-			executionSecret: 'winner-secret'
-		});
+		await expect(
+			insertQueuedRun(t, asUser, { ...args, executionSecret: 'winner-secret' })
+		).rejects.toThrow('Submission belongs to a different executor.');
 
 		await expect(
 			asUser.mutation(api.agentRuntime.finalizeFailedStart, {
 				...args,
-				executionSecret: 'loser-secret',
+				executionSecret: 'winner-secret',
 				text: 'Run failed before the model started.',
 				lastError: 'lost the launch race'
 			})
@@ -348,7 +341,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 				serviceTier: 'standard',
 				executionSecret: 'intruder-secret'
 			})
-		).rejects.toThrow('Submission belongs to a different active executor.');
+		).rejects.toThrow('Submission belongs to a different executor.');
 	});
 
 	it('rejects a second run while the thread has an active run', async () => {

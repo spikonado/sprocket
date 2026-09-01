@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { api } from '@convex/_generated/api';
-import { RUN_CLAIM_LEASE_DURATION_MS } from '@convex/lib/runLease';
 import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 
 describe('agentRuntime.start', () => {
@@ -98,7 +97,7 @@ describe('agentRuntime.start', () => {
 		expect(await t.run(async (ctx) => (await ctx.db.get('runs', runId))?.status)).toBe('failed');
 	});
 
-	it('takes over an expired claim and hides in-flight jobs', async () => {
+	it('never transfers an expired claim to another executor', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'start-takeover-secret';
@@ -106,102 +105,27 @@ describe('agentRuntime.start', () => {
 
 		await asUser.mutation(api.agentRuntime.start, { claimId: 'claim-a', runId, executionSecret });
 
-		const seeded = await t.run(async (ctx) => {
-			const run = await ctx.db.get('runs', runId);
-			if (!run?.completionStreamStateId) {
-				throw new Error('Expected completion stream state');
-			}
-			await ctx.db.patch('completionStreamStates', run.completionStreamStateId, {
-				sequence: 3,
-				streamAttemptId: 'attempt-a'
-			});
-			const pendingJobId = await ctx.db.insert('executorJobs', {
-				threadId,
-				runId,
-				kind: 'exec_command',
-				payload: { cmd: 'sleep 1' },
-				hidden: false,
-				status: 'pending',
-				enqueuedAt: Date.now(),
-				sequence: 0
-			});
-			const completedJobId = await ctx.db.insert('executorJobs', {
-				threadId,
-				runId,
-				kind: 'exec_command',
-				payload: { cmd: 'echo ok' },
-				hidden: false,
-				status: 'completed',
-				enqueuedAt: Date.now(),
-				completedAt: Date.now(),
-				result: {
-					command: 'echo ok',
-					cwd: '/',
-					exitCode: 0,
-					success: true,
-					running: false,
-					timedOut: false,
-					stdout: 'ok',
-					stderr: '',
-					output: 'ok',
-					truncated: false
-				},
-				sequence: 1
-			});
+		await t.run(async (ctx) => {
 			await ctx.db.patch('runs', runId, {
-				activeJobId: pendingJobId,
 				completionAttemptSeq: 4,
 				claimExpiresAt: Date.now() - 1
 			});
-			return {
-				streamStateId: run.completionStreamStateId,
-				pendingJobId,
-				completedJobId
-			};
 		});
 
-		const takeover = await asUser.mutation(api.agentRuntime.start, {
-			claimId: 'claim-b',
-			runId,
-			executionSecret
+		await expect(
+			asUser.mutation(api.agentRuntime.start, {
+				claimId: 'claim-b',
+				runId,
+				executionSecret
+			})
+		).resolves.toEqual({ claimed: false });
+		expect(await t.run(async (ctx) => ctx.db.get('runs', runId))).toMatchObject({
+			claimId: 'claim-a',
+			completionAttemptSeq: 4
 		});
-		expect(takeover.claimed).toBe(true);
-		expect(takeover.claimExpiresAt).toBeGreaterThan(Date.now());
-
-		const state = await t.run(async (ctx) => {
-			const run = await ctx.db.get('runs', runId);
-			const stream = await ctx.db.get('completionStreamStates', seeded.streamStateId);
-			const pending = await ctx.db.get('executorJobs', seeded.pendingJobId);
-			const completed = await ctx.db.get('executorJobs', seeded.completedJobId);
-			return { run, stream, pending, completed };
-		});
-
-		expect(state.run).toMatchObject({
-			claimId: 'claim-b',
-			status: 'running',
-			completionAttemptSeq: 0
-		});
-		expect(state.run?.activeJobId ?? undefined).toBeUndefined();
-		expect(state.run?.claimExpiresAt).toBe(takeover.claimExpiresAt);
-		expect(state.stream).toMatchObject({
-			sequence: 0
-		});
-		expect(state.stream?.streamAttemptId ?? undefined).toBeUndefined();
-		expect(state.pending).toMatchObject({
-			hidden: true,
-			status: 'cancelled',
-			error: 'The agent worker claim expired.'
-		});
-		expect(state.completed).toMatchObject({
-			hidden: false,
-			status: 'completed'
-		});
-		expect(takeover.claimExpiresAt).toBeLessThanOrEqual(
-			Date.now() + RUN_CLAIM_LEASE_DURATION_MS + 1_000
-		);
 	});
 
-	it('re-claims with the same claim after a lapse without resetting run state', async () => {
+	it('does not revive the same claim after its lease lapses', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'start-reclaim-secret';
@@ -218,21 +142,18 @@ describe('agentRuntime.start', () => {
 			});
 		});
 
-		const reclaimed = await asUser.mutation(api.agentRuntime.start, {
-			claimId: 'claim-a',
-			runId,
-			executionSecret
-		});
-		expect(reclaimed.claimed).toBe(true);
-		expect(reclaimed.claimExpiresAt).toBeGreaterThan(Date.now());
+		await expect(
+			asUser.mutation(api.agentRuntime.start, {
+				claimId: 'claim-a',
+				runId,
+				executionSecret
+			})
+		).resolves.toEqual({ claimed: false });
 
 		const run = await t.run(async (ctx) => ctx.db.get('runs', runId));
-		// Same-claim re-start keeps run state; takeover cleanup is only for a
-		// different claim.
 		expect(run).toMatchObject({
 			claimId: 'claim-a',
-			completionAttemptSeq: 2,
-			claimExpiresAt: reclaimed.claimExpiresAt
+			completionAttemptSeq: 2
 		});
 	});
 });

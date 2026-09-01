@@ -14,6 +14,12 @@ use crate::types::{
 const CREATE_RUN_MAX_ATTEMPTS: usize = 3;
 const CREATE_RUN_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RegisteredMachineSession {
+    session_id: String,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum FailedStartCleanup {
@@ -26,6 +32,8 @@ pub(crate) enum FailedStartCleanup {
 pub(crate) struct RuntimeClient {
     pub(crate) client: ConvexRpcClient,
     execution_secret: String,
+    process_session_id: String,
+    machine_credential: String,
 }
 
 impl RuntimeClient {
@@ -45,6 +53,8 @@ impl RuntimeClient {
         Ok(Self {
             client,
             execution_secret: request.execution_secret.clone(),
+            process_session_id: request.process_session_id.clone(),
+            machine_credential: request.machine_credential.clone(),
         })
     }
 
@@ -163,6 +173,12 @@ impl RuntimeClient {
             "agentVersion".to_string(),
             env!("CARGO_PKG_VERSION").to_string().into(),
         );
+        let session = self.register_machine_session(request).await?;
+        args.insert(
+            "installationId".to_string(),
+            request.installation_id.clone().into(),
+        );
+        args.insert("executorSessionId".to_string(), session.session_id.into());
         self.add_execution_secret(&mut args);
 
         let mut retry_delay = CREATE_RUN_INITIAL_RETRY_DELAY;
@@ -196,6 +212,64 @@ impl RuntimeClient {
                 )
             },
         )
+    }
+
+    async fn register_machine_session(
+        &self,
+        request: &RunAgentRequest,
+    ) -> anyhow::Result<RegisteredMachineSession> {
+        let mut args = BTreeMap::new();
+        args.insert(
+            "installationId".to_string(),
+            request.installation_id.clone().into(),
+        );
+        args.insert(
+            "processSessionId".to_string(),
+            request.process_session_id.clone().into(),
+        );
+        args.insert(
+            "credentialHash".to_string(),
+            request.machine_credential_hash.clone().into(),
+        );
+        args.insert(
+            "friendlyName".to_string(),
+            request.machine_friendly_name.clone().into(),
+        );
+        args.insert(
+            "platform".to_string(),
+            request.machine_platform.clone().into(),
+        );
+        args.insert(
+            "architecture".to_string(),
+            request.machine_architecture.clone().into(),
+        );
+        args.insert(
+            "appVersion".to_string(),
+            env!("CARGO_PKG_VERSION").to_string().into(),
+        );
+        let result = self
+            .client
+            .mutation("machineSessions:register", args)
+            .await?;
+        decode_function_result(result, "machineSessions:register")
+    }
+
+    pub(crate) async fn heartbeat_machine_session(&self) -> anyhow::Result<()> {
+        let mut args = BTreeMap::new();
+        args.insert(
+            "processSessionId".to_string(),
+            self.process_session_id.clone().into(),
+        );
+        args.insert(
+            "credential".to_string(),
+            self.machine_credential.clone().into(),
+        );
+        let result = self
+            .client
+            .mutation("machineSessions:heartbeat", args)
+            .await?;
+        let _: serde_json::Value = decode_function_result(result, "machineSessions:heartbeat")?;
+        Ok(())
     }
 
     pub(crate) async fn start_run(

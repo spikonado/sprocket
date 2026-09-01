@@ -103,7 +103,7 @@ async function hashExecutionSecret(secret: string): Promise<string> {
 	return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-function constantTimeEqual(left: string, right: string): boolean {
+export function constantTimeEqual(left: string, right: string): boolean {
 	let difference = left.length ^ right.length;
 	const length = Math.max(left.length, right.length);
 	for (let index = 0; index < length; index += 1) {

@@ -37,6 +37,36 @@ export default defineSchema({
 		email: v.string(),
 		createdAt: v.number()
 	}).index('by_subject', ['subject']),
+	installations: defineTable({
+		userId: v.string(),
+		installationId: v.string(),
+		friendlyName: v.string(),
+		platform: v.string(),
+		architecture: v.string(),
+		appVersion: v.string(),
+		currentSessionId: v.optional(v.id('machineSessions')),
+		createdAt: v.number(),
+		updatedAt: v.number()
+	}).index('by_userId_and_installationId', ['userId', 'installationId']),
+	machineSessions: defineTable({
+		userId: v.string(),
+		installationId: v.string(),
+		processSessionId: v.string(),
+		credentialHash: v.string(),
+		startedAt: v.number(),
+		lastSeenAt: v.number(),
+		supersededAt: v.optional(v.number()),
+		revokedAt: v.optional(v.number())
+	})
+		.index('by_userId_and_processSessionId', ['userId', 'processSessionId'])
+		.index('by_processSessionId', ['processSessionId']),
+	machineSessionRuns: defineTable({
+		sessionId: v.id('machineSessions'),
+		runId: v.id('runs'),
+		active: v.boolean()
+	})
+		.index('by_sessionId_and_active', ['sessionId', 'active'])
+		.index('by_runId', ['runId']),
 	billingCustomers: defineTable({
 		userId: v.string(),
 		dodoCustomerId: v.string()
@@ -101,6 +131,13 @@ export default defineSchema({
 		.index('by_userId_lastMessageAt', ['userId', 'lastMessageAt'])
 		.index('by_userId_submissionId', ['userId', 'submissionId'])
 		.index('by_userId_repositoryKey', ['userId', 'repositoryKey']),
+	threadSnapshotRevisions: defineTable({
+		userId: v.string(),
+		repositoryKey: v.string(),
+		category: v.union(v.literal('active'), v.literal('archived')),
+		revision: v.number(),
+		updatedAt: v.number()
+	}).index('by_userId_and_repositoryKey_and_category', ['userId', 'repositoryKey', 'category']),
 	threadUsage: defineTable({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
@@ -127,6 +164,10 @@ export default defineSchema({
 		status: vRunStatus,
 		// Hash of the bearer capability held only by the local executor.
 		executionSecretHash: v.string(),
+		// Optional while released clients age out. New runs are process-session bound.
+		installationId: v.optional(v.string()),
+		executorSessionId: v.optional(v.id('machineSessions')),
+		continuationOfRunId: v.optional(v.id('runs')),
 		claimId: v.optional(v.string()),
 		claimExpiresAt: v.optional(v.number()),
 		completionAttemptSeq: v.number(),
@@ -143,6 +184,8 @@ export default defineSchema({
 		startedAt: v.number(),
 		completedAt: v.optional(v.number()),
 		lastError: v.optional(v.string()),
+		cancellationRequestedAt: v.optional(v.number()),
+		cancellationDeadlineAt: v.optional(v.number()),
 		activeJobId: v.optional(v.id('executorJobs')),
 		promptMessageId: v.optional(v.id('threadMessages')),
 		// Deprecated: new runs do not write a response message. Kept on leftover

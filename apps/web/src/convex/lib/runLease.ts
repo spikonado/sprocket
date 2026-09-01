@@ -25,9 +25,9 @@ export function isRunClaimLeaseActive(run: ClaimableRun, now: number): boolean {
 
 export function canStartRunWithClaim(run: ClaimableRun, claimId: string, now: number): boolean {
 	if (run.status === 'queued') return true;
-	if (!isClaimedRunStatus(run.status)) return false;
-	if (run.claimId === claimId) return true;
-	return !isRunClaimLeaseActive(run, now);
+	return (
+		isClaimedRunStatus(run.status) && run.claimId === claimId && isRunClaimLeaseActive(run, now)
+	);
 }
 
 export function ownsActiveRunClaim(run: ClaimableRun, claimId: string, now: number): boolean {
