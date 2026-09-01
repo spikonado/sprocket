@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { api } from '@convex/_generated/api';
-import { bindStagehandFactory } from '@convex/browserAgent';
+import {
+	bindBrowserSessionFactory,
+	type BrowserSessionHandle
+} from '@convex/browserAgent';
 import {
 	createQueuedRun,
 	initConvexTest,
@@ -9,28 +12,32 @@ import {
 	type ConvexTestInstance
 } from '@convex/test.setup';
 
-type StagehandInitOptions = {
+type SessionLaunchOptions = {
 	keepAlive?: boolean;
-	browserbaseSessionCreateParams?: { keepAlive?: boolean; timeout?: number };
-	browserbaseSessionID?: string;
+	timeout?: number;
+	sessionId?: string;
 };
 
 const act = vi.fn().mockResolvedValue({
-	success: true,
-	message: 'Action performed',
-	actionDescription: 'did the thing',
-	actions: []
+	data: {
+		success: true,
+		message: 'Action performed',
+		actionDescription: 'did the thing',
+		actions: []
+	},
+	metadata: {}
 });
-const observe = vi
-	.fn()
-	.mockResolvedValue([
-		{ selector: '#pay', description: 'Pay button', method: 'click', arguments: [] }
-	]);
-const extract = vi.fn().mockResolvedValue({ total: '₹1,240', items: 2 });
-const init = vi.fn().mockResolvedValue(undefined);
+const observe = vi.fn().mockResolvedValue({
+	data: [{ selector: '#pay', description: 'Pay button', method: 'click', arguments: [] }],
+	metadata: {}
+});
+const extract = vi.fn().mockResolvedValue({
+	data: { total: '₹1,240', items: 2 },
+	metadata: {}
+});
 const close = vi.fn().mockResolvedValue(undefined);
 const goto = vi.fn().mockResolvedValue(undefined);
-const stagehandOptions: StagehandInitOptions[] = [];
+const sessionOptions: SessionLaunchOptions[] = [];
 
 const LIVE_VIEW_URL = 'https://live.browserbase.test/fullscreen/bb-session-task';
 const fetchMock = vi.fn().mockResolvedValue({
@@ -61,36 +68,36 @@ async function startRun(
 	return { runId: created.runId, claimId, executionSecret };
 }
 
-let restoreStagehandFactory: () => void;
+let restoreSessionFactory: () => void;
 
 beforeEach(() => {
-	restoreStagehandFactory = bindStagehandFactory((options) => {
-		stagehandOptions.push(options);
-		return {
-			init,
-			close,
+	restoreSessionFactory = bindBrowserSessionFactory(async (options) => {
+		sessionOptions.push(options);
+		const session = {
+			sessionId: 'bb-session-task',
 			act,
 			observe,
 			extract,
-			browserbaseSessionId: 'bb-session-task',
-			context: { pages: () => [{ goto }] }
+			goto,
+			close
 		};
+		// SAFETY: the test double implements the session methods the agent
+		// calls; Stagehand's branded browser type is not constructed here.
+		return session as BrowserSessionHandle;
 	});
 });
 
 afterEach(() => {
 	vi.clearAllMocks();
-	stagehandOptions.length = 0;
-	restoreStagehandFactory();
+	sessionOptions.length = 0;
+	restoreSessionFactory();
 	delete process.env.BROWSERBASE_API_KEY;
-	delete process.env.BROWSERBASE_PROJECT_ID;
 	delete process.env.OPENAI_API_KEY;
 });
 
 describe('browserAgent', () => {
 	it('drives the browser via the sub-agent and persists the shared session', async () => {
 		process.env.BROWSERBASE_API_KEY = 'bb_key';
-		process.env.BROWSERBASE_PROJECT_ID = 'project-1';
 		process.env.OPENAI_API_KEY = 'openai_key';
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
@@ -104,7 +111,6 @@ describe('browserAgent', () => {
 			executionSecret: run.executionSecret
 		});
 
-		expect(init).toHaveBeenCalled();
 		expect(goto).toHaveBeenCalledWith('https://shop.example');
 		expect(act).toHaveBeenCalledWith('add the part to cart and stop at the payment form');
 		expect(close).toHaveBeenCalled();
@@ -112,11 +118,11 @@ describe('browserAgent', () => {
 		expect(out.text).toContain('Action performed');
 
 		// First call in a thread creates a long-lived keep-alive session.
-		expect(stagehandOptions.at(-1)).toMatchObject({
+		expect(sessionOptions.at(-1)).toMatchObject({
 			keepAlive: true,
-			browserbaseSessionCreateParams: { keepAlive: true, timeout: 3600 }
+			timeout: 3600
 		});
-		expect(stagehandOptions.at(-1)).not.toHaveProperty('browserbaseSessionID');
+		expect(sessionOptions.at(-1)).not.toHaveProperty('sessionId');
 
 		const stored = await t.run(async (ctx) =>
 			ctx.db
@@ -143,8 +149,8 @@ describe('browserAgent', () => {
 			claimId: secondRun.claimId,
 			executionSecret: secondRun.executionSecret
 		});
-		expect(stagehandOptions.at(-1)).toMatchObject({
-			browserbaseSessionID: 'bb-session-task'
+		expect(sessionOptions.at(-1)).toMatchObject({
+			sessionId: 'bb-session-task'
 		});
 
 		const afterResume = await t.run(async (ctx) =>
@@ -162,7 +168,6 @@ describe('browserAgent', () => {
 
 	it('still records the session when the live view URL fetch fails', async () => {
 		process.env.BROWSERBASE_API_KEY = 'bb_key';
-		process.env.BROWSERBASE_PROJECT_ID = 'project-1';
 		process.env.OPENAI_API_KEY = 'openai_key';
 		fetchMock.mockRejectedValueOnce(new Error('browserbase debug endpoint down'));
 		const t = initConvexTest();
@@ -192,7 +197,6 @@ describe('browserAgent', () => {
 
 	it('backfills the live view URL for a session row missing it', async () => {
 		process.env.BROWSERBASE_API_KEY = 'bb_key';
-		process.env.BROWSERBASE_PROJECT_ID = 'project-1';
 		process.env.OPENAI_API_KEY = 'openai_key';
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
@@ -227,7 +231,6 @@ describe('browserAgent', () => {
 
 	it('observe returns candidate actions, act runs one, extract reads page data', async () => {
 		process.env.BROWSERBASE_API_KEY = 'bb_key';
-		process.env.BROWSERBASE_PROJECT_ID = 'project-1';
 		process.env.OPENAI_API_KEY = 'openai_key';
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
@@ -267,19 +270,74 @@ describe('browserAgent', () => {
 		expect(extracted.text).toContain('1,240');
 	});
 
+	it('starts a fresh session when resuming a dead Browserbase session fails', async () => {
+		process.env.BROWSERBASE_API_KEY = 'bb_key';
+		process.env.OPENAI_API_KEY = 'openai_key';
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
+		const run = await startRun(t, asUser, threadId);
+		await t.run(async (ctx) => {
+			const thread = await ctx.db.get('threadRecords', threadId);
+			await ctx.db.insert('browserSessions', {
+				threadId,
+				runId: run.runId,
+				lastUsedRunId: run.runId,
+				userId: thread!.userId,
+				browserbaseSessionId: 'bb-dead-session',
+				startedAt: Date.now()
+			});
+		});
+
+		restoreSessionFactory();
+		restoreSessionFactory = bindBrowserSessionFactory(async (options) => {
+			sessionOptions.push(options);
+			if (options.sessionId) return null;
+			const session = {
+				sessionId: 'bb-session-task',
+				act,
+				observe,
+				extract,
+				goto,
+				close
+			};
+			// SAFETY: the test double implements the session methods the agent
+			// calls; Stagehand's branded browser type is not constructed here.
+			return session as BrowserSessionHandle;
+		});
+
+		await t.action(api.browserAgent.act, {
+			instruction: 'recover from the dead session',
+			runId: run.runId,
+			claimId: run.claimId,
+			executionSecret: run.executionSecret
+		});
+
+		expect(sessionOptions.map((options) => options.sessionId)).toEqual([
+			'bb-dead-session',
+			undefined
+		]);
+		const stored = await t.run(async (ctx) =>
+			ctx.db
+				.query('browserSessions')
+				.withIndex('by_thread', (query) => query.eq('threadId', threadId))
+				.first()
+		);
+		expect(stored?.browserbaseSessionId).toBe('bb-session-task');
+	});
+
 	it('bounds the actions payload and marks it truncated for a hostile page', async () => {
 		process.env.BROWSERBASE_API_KEY = 'bb_key';
-		process.env.BROWSERBASE_PROJECT_ID = 'project-1';
 		process.env.OPENAI_API_KEY = 'openai_key';
 		// A page that makes Stagehand return thousands of actions.
-		observe.mockResolvedValueOnce(
-			Array.from({ length: 5_000 }, (_, index) => ({
+		observe.mockResolvedValueOnce({
+			data: Array.from({ length: 5_000 }, (_, index) => ({
 				selector: `#el-${index}`,
 				description: `Element ${index} with a long description to inflate the payload size`,
 				method: 'click',
 				arguments: []
-			}))
-		);
+			})),
+			metadata: {}
+		});
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
 		const run = await startRun(t, asUser, threadId);
