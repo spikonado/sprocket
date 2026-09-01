@@ -110,6 +110,8 @@ export async function reopenRunRecord(ctx: MutationCtx, run: Doc<'runs'>): Promi
 		claimExpiresAt: undefined,
 		completedAt: undefined,
 		activeJobId: undefined,
+		cancellationRequestedAt: undefined,
+		cancellationDeadlineAt: undefined,
 		executionSecretHash: await executionSecretHash(`reopen:${run._id}:${now}`),
 		lifecycleWorkflowId
 	});

@@ -245,25 +245,31 @@ async fn rekey_handler(
         )));
     }
     if result.count > 0 {
-        for repository_key in [&result.from, &result.to] {
-            if let Err(error) = state
-                .thread_cache
-                .refresh_repository(
-                    &payload.user_id,
-                    payload.auth_token.clone(),
-                    repository_key,
-                    &[
-                        ThreadSnapshotCategory::Active,
-                        ThreadSnapshotCategory::Archived,
-                    ],
-                )
-                .await
-            {
-                tracing::warn!(
-                    repository_key,
-                    "repository rekey committed but cache refresh failed: {error:#}"
-                );
-            }
+        state
+            .thread_cache
+            .store()
+            .reset_repository(&payload.user_id, &result.from)
+            .await
+            .map_err(|error| {
+                ApiError::internal_with("rekey committed but source cache cleanup failed", error)
+            })?;
+        if let Err(error) = state
+            .thread_cache
+            .refresh_repository(
+                &payload.user_id,
+                payload.auth_token,
+                &result.to,
+                &[
+                    ThreadSnapshotCategory::Active,
+                    ThreadSnapshotCategory::Archived,
+                ],
+            )
+            .await
+        {
+            tracing::warn!(
+                repository_key = %result.to,
+                "repository rekey committed but destination cache refresh failed: {error:#}"
+            );
         }
     }
     Ok(Json(serde_json::json!(result.count)))

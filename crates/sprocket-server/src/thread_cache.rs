@@ -184,6 +184,23 @@ impl ThreadSnapshotStore {
         Ok(())
     }
 
+    pub async fn reset_repository(
+        &self,
+        user_id: &str,
+        repository_key: &str,
+    ) -> anyhow::Result<()> {
+        for category in [
+            ThreadSnapshotCategory::Active,
+            ThreadSnapshotCategory::Archived,
+        ] {
+            let lock = self.lock(user_id, repository_key, category).await;
+            let _guard = lock.lock().await;
+            self.reset_unlocked(user_id, repository_key, category)
+                .await?;
+        }
+        Ok(())
+    }
+
     async fn reset_unlocked(
         &self,
         user_id: &str,
@@ -484,6 +501,46 @@ mod tests {
             .expect("snapshot");
         assert_eq!(loaded.revision, 2);
         assert_eq!(loaded.threads[0].thread_id, "newer");
+        let _ = tokio::fs::remove_dir_all(dir).await;
+    }
+
+    #[tokio::test]
+    async fn resetting_a_repository_removes_all_categories() {
+        let dir = std::env::temp_dir().join(format!(
+            "sprocket-thread-cache-reset-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = ThreadSnapshotStore::new(dir.clone());
+        for category in [
+            ThreadSnapshotCategory::Active,
+            ThreadSnapshotCategory::Archived,
+        ] {
+            store
+                .write(&ThreadSnapshotFile {
+                    version: THREAD_SNAPSHOT_VERSION,
+                    user_id: "user-a".into(),
+                    repository_key: "alpha".into(),
+                    category,
+                    revision: 1,
+                    synced_at: 1,
+                    threads: vec![sample_thread("thread-1", "alpha")],
+                })
+                .await
+                .expect("write");
+        }
+
+        store
+            .reset_repository("user-a", "alpha")
+            .await
+            .expect("reset");
+
+        assert!(
+            store
+                .list_user_threads("user-a")
+                .await
+                .expect("list")
+                .is_empty()
+        );
         let _ = tokio::fs::remove_dir_all(dir).await;
     }
 }
