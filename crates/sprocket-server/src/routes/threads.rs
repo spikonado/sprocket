@@ -244,7 +244,7 @@ async fn rekey_handler(
             "thread command account does not match the requested account"
         )));
     }
-    if result.count > 0 {
+    if result.from != result.to {
         state
             .thread_cache
             .store()
