@@ -2,7 +2,6 @@ import type { Doc } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
 import { executorFailureRunPatch } from '@convex/lib/runs';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
-import { recordToolTranscript } from '@convex/lib/transcriptWrites';
 import { normalizeExecutorJobResult } from '@convex/lib/commandResults';
 import { isRunFinalStatus, type ExecutorJobResult } from '@convex/lib/validators';
 
@@ -39,16 +38,6 @@ export async function applyExecutorJobSuccess(
 			activeJobId: undefined
 		});
 	}
-	await recordToolTranscript(ctx, {
-		threadId: args.run.threadId,
-		userId: args.run.userId,
-		runId: args.run._id,
-		job: {
-			...args.job,
-			status: 'completed',
-			result
-		}
-	});
 	return true;
 }
 
@@ -85,15 +74,5 @@ export async function applyExecutorJobFailure(
 	if (runPatch) {
 		await ctx.db.patch('runs', args.job.runId, runPatch);
 	}
-	await recordToolTranscript(ctx, {
-		threadId: args.run.threadId,
-		userId: args.run.userId,
-		runId: args.run._id,
-		job: {
-			...args.job,
-			status: 'failed',
-			error: args.error
-		}
-	});
 	return true;
 }

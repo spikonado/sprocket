@@ -204,6 +204,69 @@ describe('numbered transcript parts', () => {
 		expect(parts.parts[2]?.tool?.callId).toBe('c1');
 	});
 
+	it('only reads jobs named by the current completion call', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'transcript-exact-tool-secret';
+		const { runId } = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			'sub-exact-tool',
+			executionSecret,
+			'Use one tool'
+		);
+		await asUser.mutation(api.agentRuntime.start, {
+			claimId: 'claim-exact-tool',
+			runId,
+			executionSecret
+		});
+		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, {
+			runId,
+			claimId: 'claim-exact-tool',
+			attemptSeq: 1,
+			executionSecret
+		});
+		await t.run(async (ctx) => {
+			await ctx.db.insert('executorJobs', {
+				threadId,
+				runId,
+				kind: 'exec_command',
+				callId: 'unrelated',
+				payload: { cmd: 'echo unrelated' },
+				hidden: false,
+				status: 'completed',
+				enqueuedAt: 1,
+				completedAt: 2,
+				result: {
+					command: 'echo unrelated',
+					cwd: '/',
+					exitCode: 0,
+					success: true,
+					running: false,
+					timedOut: false,
+					stdout: 'unrelated',
+					stderr: '',
+					output: 'unrelated',
+					truncated: false
+				},
+				sequence: 0
+			});
+		});
+
+		await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
+			runId,
+			claimId: 'claim-exact-tool',
+			attemptSeq: 1,
+			streamId: 'stream-without-tool',
+			items: [{ type: 'text', id: 'text', text: 'Done', turnId: 'stream-without-tool' }],
+			executionSecret
+		});
+
+		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1, 2] });
+		expect(parts.parts.map((part) => part.kind)).toEqual(['prompt', 'completion']);
+	});
+
 	it('does not number a failed run partial completion', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
