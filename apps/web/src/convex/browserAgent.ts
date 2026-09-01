@@ -4,7 +4,12 @@ import { v, type Infer } from 'convex/values';
 import { action, env, type ActionCtx } from '@convex/_generated/server';
 import { api, internal } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
-import { browserbase, Stagehand, type ModelName, type StagehandBrowser } from '@browserbasehq/stagehand';
+import {
+	browserbase,
+	Stagehand,
+	type ModelName,
+	type StagehandBrowser
+} from '@browserbasehq/stagehand';
 import { z } from 'zod';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
 import {
@@ -107,7 +112,7 @@ const SESSION_TIMEOUT_SECONDS = 3600;
 const SESSION_REUSE_MS = 55 * 60 * 1000;
 
 type ObservedAction = Infer<typeof vBrowserObservedAction>;
-type StagehandClient = Pick<InstanceType<typeof Stagehand>, 'act' | 'observe' | 'extract'>;
+type StagehandClient = Pick<Stagehand, 'act' | 'observe' | 'extract'>;
 type ActResult = Awaited<ReturnType<StagehandClient['act']>>;
 type ObserveResult = Awaited<ReturnType<StagehandClient['observe']>>;
 type ExtractResult = Awaited<ReturnType<StagehandClient['extract']>>;
