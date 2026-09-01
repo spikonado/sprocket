@@ -1,10 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { api } from '@convex/_generated/api';
-import {
-	bindBrowserSessionFactory,
-	type BrowserSessionHandle
-} from '@convex/browserAgent';
+import { bindBrowserSessionFactory, type BrowserSessionHandle } from '@convex/browserAgent';
 import {
 	createQueuedRun,
 	initConvexTest,
