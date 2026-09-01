@@ -22,11 +22,7 @@ describe('run claim leases', () => {
 
 	it('does not claim a run after cancellation is requested', () => {
 		expect(
-			canStartRunWithClaim(
-				{ status: 'queued', cancellationRequestedAt: 100 },
-				'claim-a',
-				101
-			)
+			canStartRunWithClaim({ status: 'queued', cancellationRequestedAt: 100 }, 'claim-a', 101)
 		).toBe(false);
 	});
 
