@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::history_json::completion_messages_json;
+use anyhow::Context;
 use rig::agent::{
     AgentHook, CompletionCallAction, CompletionCallEvent, HookContext, ModelTurnAction,
     ModelTurnFinished, RequestPatch, StepEventKind,
@@ -11,10 +11,14 @@ use rig::message::{AssistantContent, UserContent};
 use tokio::time::timeout;
 
 use crate::convex::RuntimeClient;
+use crate::history_json::completion_messages_json;
 use crate::types::{ContextBudget, gateway_api_v1_url};
 
 const CONTEXT_USAGE_TIMEOUT: Duration = Duration::from_secs(5);
 const SUMMARIZE_RETRY_DELAY: Duration = Duration::from_millis(250);
+/// Bound a hung gateway POST. App-level `summarize_with_retry` already
+/// accounts billed tokens; reqwest must not retry this call itself.
+const COMPACTION_HTTP_TIMEOUT: Duration = Duration::from_secs(180);
 /// Keep a small recent tail so the model retains immediate working context.
 const RECENT_TAIL_MESSAGES: usize = 6;
 /// Must match `COMPACTION_MAX_OUTPUT_TOKENS` in
@@ -286,7 +290,11 @@ impl ContextCompactionHook {
             "reasoning": { "effort": self.reasoning_effort },
             "service_tier": if self.service_tier == "fast" { "priority" } else { "standard" }
         });
-        let response = reqwest::Client::new()
+        let response = reqwest::Client::builder()
+            .timeout(COMPACTION_HTTP_TIMEOUT)
+            .retry(reqwest::retry::never())
+            .build()
+            .context("failed to build gateway compaction HTTP client")?
             .post(url)
             .bearer_auth(&credential.token)
             .json(&body)

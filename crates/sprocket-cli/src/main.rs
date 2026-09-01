@@ -157,6 +157,7 @@ async fn open_running_web_app(
     let client = reqwest::Client::builder()
         .no_proxy()
         .timeout(Duration::from_millis(750))
+        .retry(reqwest::retry::never())
         .build()?;
     let challenge = Uuid::new_v4().to_string();
     let response = match client

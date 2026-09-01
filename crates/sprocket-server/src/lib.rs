@@ -203,6 +203,7 @@ async fn open_browser_when_ready(health_base_url: String, open_target: String) {
     let client = match reqwest::Client::builder()
         .no_proxy()
         .timeout(Duration::from_millis(250))
+        .retry(reqwest::retry::never())
         .build()
     {
         Ok(client) => client,
