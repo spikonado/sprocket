@@ -177,6 +177,26 @@ and bind new runs to it.
 Remove the optionality after all supported clients register machine sessions
 and a production scan finds no active runs without both fields.
 
+### 11. Transcript tool `jobId`
+
+Sources: append-only tool progress events.
+
+New tool transcript parts pair by `toolInvocationId` and source keys
+`tool:<id>:started` / `tool:<id>:finished`. They do not write `tool.jobId`.
+Stored parts from before this change still carry `jobId` (and the un-suffixed
+`tool:<jobId>` source key). Readers keep using `jobId` as a fallback pairing
+key until those rows are gone.
+
+`executorJobs.toolInvocationId` is optional for the same reason: in-flight jobs
+created before this change have no stored id, and finished-event writes fall
+back to the job document id.
+
+Remove `vTranscriptToolBody.jobId` after a rewrite copies `jobId` onto
+`toolInvocationId` where missing and unsets `jobId`. Drop executor-job
+optionality after a production scan finds no jobs without `toolInvocationId`.
+
+Safe when a prod check shows zero transcript tool parts carrying `jobId`.
+
 ## Client APIs
 
 Released desktop/CLI builds that still call retired Convex functions get a

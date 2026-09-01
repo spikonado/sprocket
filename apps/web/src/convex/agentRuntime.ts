@@ -26,10 +26,12 @@ import { finalizeRunRecord, matchesFinalizeExpectations } from '@convex/lib/runF
 import { startRunLifecycle } from '@convex/runLifecycle';
 import { assertContinuableParent, reopenRunRecord } from '@convex/lib/runResume';
 import { enqueueWebToolJob, isCloudWebToolKind } from '@convex/webToolPool';
+import { newToolInvocationId } from '@convex/lib/transcriptParts';
 import {
 	recordCompletionTranscript,
 	recordPromptTranscript,
-	recordSettledToolTranscripts
+	recordSettledToolTranscripts,
+	recordStartedToolTranscript
 } from '@convex/lib/transcriptWrites';
 import {
 	areImageUploadIdsEqual,
@@ -87,6 +89,7 @@ type EnqueuedExecutorJob = {
 	claimedAt: number;
 	sequence: number;
 	callId?: string;
+	toolInvocationId: string;
 };
 
 type QueuedRunRequest = {
@@ -982,6 +985,7 @@ export const beginToolJob = mutation({
 				.order('desc')
 				.first();
 			const nextSequence = (lastJob?.sequence ?? -1) + 1;
+			const toolInvocationId = newToolInvocationId();
 
 			const job: EnqueuedExecutorJob = {
 				threadId: run.threadId,
@@ -992,7 +996,8 @@ export const beginToolJob = mutation({
 				status: 'claimed',
 				enqueuedAt: Date.now(),
 				claimedAt: Date.now(),
-				sequence: nextSequence
+				sequence: nextSequence,
+				toolInvocationId
 			};
 			if (args.callId) job.callId = args.callId;
 			const jobId = await ctx.db.insert('executorJobs', job);
@@ -1008,6 +1013,12 @@ export const beginToolJob = mutation({
 			await ctx.db.patch('runs', args.runId, {
 				status: 'awaiting_executor',
 				activeJobId: jobId
+			});
+			await recordStartedToolTranscript(ctx, {
+				threadId: run.threadId,
+				userId: run.userId,
+				runId: run._id,
+				job: { ...job, _id: jobId }
 			});
 
 			return {

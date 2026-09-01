@@ -264,6 +264,9 @@ export default defineSchema({
 		projectId: v.optional(v.id('projects')),
 		kind: vExecutorJobKind,
 		callId: v.optional(v.string()),
+		// Set on jobs created after tool progress events. Legacy rows omit it;
+		// transcript writes fall back to the job document id.
+		toolInvocationId: v.optional(v.string()),
 		payload: vExecutorJobPayload,
 		hidden: v.boolean(),
 		status: vExecutorJobStatus,

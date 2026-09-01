@@ -24,13 +24,88 @@ function toolCallId(part: AssistantPart): string | undefined {
 	return undefined;
 }
 
-function toolResultPart(part: LocalTranscriptPart): AssistantPart {
-	return {
+function toolProgressKey(tool: NonNullable<LocalTranscriptPart['tool']>): string {
+	return tool.toolInvocationId ?? tool.jobId ?? tool.callId;
+}
+
+function isTerminalToolStatus(
+	status: NonNullable<LocalTranscriptPart['tool']>['status']
+): boolean {
+	return status === 'completed' || status === 'failed' || status === 'cancelled';
+}
+
+function toolResultPart(part: LocalTranscriptPart): Extract<AssistantPart, { type: 'tool-result' }> {
+	const result: Extract<AssistantPart, { type: 'tool-result' }> = {
 		type: 'tool-result',
 		callId: part.tool?.callId ?? `tool:${part.number}`,
 		name: part.tool?.name ?? 'tool',
 		output: part.tool?.output ?? null
 	};
+	return result;
+}
+
+function applyCompletionItems(parts: AssistantPart[], items: AssistantPart[]): AssistantPart[] {
+	const next = [...parts];
+	for (const item of items) {
+		if (item.type !== 'tool-call') {
+			next.push(item);
+			continue;
+		}
+		const existingIndex = next.findIndex(
+			(part) => part.type === 'tool-call' && part.callId === item.callId
+		);
+		if (existingIndex >= 0) {
+			next[existingIndex] = item;
+			continue;
+		}
+		next.push(item);
+	}
+	return next;
+}
+
+function applyToolProgress(
+	parts: AssistantPart[],
+	part: LocalTranscriptPart,
+	appliedTerminalKeys: Set<string>
+): AssistantPart[] {
+	const tool = part.tool;
+	if (!tool) {
+		return parts;
+	}
+	const callId = tool.callId;
+	const key = toolProgressKey(tool);
+	const next = [...parts];
+	const callIndex = next.findIndex((entry) => entry.type === 'tool-call' && entry.callId === callId);
+	if (callIndex < 0) {
+		next.push({
+			type: 'tool-call',
+			callId,
+			name: tool.name,
+			input: {}
+		});
+	}
+	if (tool.status === 'started') {
+		return next;
+	}
+	if (!isTerminalToolStatus(tool.status) || appliedTerminalKeys.has(key)) {
+		return next;
+	}
+	appliedTerminalKeys.add(key);
+	const result = toolResultPart(part);
+	const resultIndex = next.findIndex(
+		(entry) => entry.type === 'tool-result' && entry.callId === callId
+	);
+	if (resultIndex >= 0) {
+		next[resultIndex] = result;
+		return next;
+	}
+	const insertAt = next.findIndex((entry) => entry.type === 'tool-call' && entry.callId === callId);
+	if (insertAt >= 0) {
+		next.splice(insertAt + 1, 0, result);
+		return next;
+	}
+	next.push(result);
+	return next;
 }
 
 function promptAttachments(
@@ -56,12 +131,40 @@ export function messagesFromTranscriptParts(args: {
 	const ordered = [...args.parts].sort((left, right) => left.number - right.number);
 	const messages: ThreadMessage[] = [];
 	let pendingResponse: ThreadMessage | null = null;
+	const appliedTerminalKeys = new Set<string>();
 
 	const flushResponse = () => {
 		if (pendingResponse) {
 			messages.push(pendingResponse);
 			pendingResponse = null;
 		}
+	};
+
+	const responseForRun = (runId: Id<'runs'>, creationTime: number): ThreadMessage => {
+		if (pendingResponse && pendingResponse.runId === runId) {
+			return pendingResponse;
+		}
+		const last = messages.at(-1);
+		if (last?.type === 'response' && last.runId === runId) {
+			messages.pop();
+			pendingResponse = last;
+			return last;
+		}
+		flushResponse();
+		pendingResponse = {
+			_id: responseMessageId(runId),
+			_creationTime: creationTime,
+			threadId: args.threadId,
+			runId,
+			userId: args.userId,
+			type: 'response',
+			text: '',
+			attachments: [],
+			parts: [],
+			runStatus: 'completed',
+			runStartedAt: creationTime
+		};
+		return pendingResponse;
 	};
 
 	for (const part of ordered) {
@@ -88,52 +191,14 @@ export function messagesFromTranscriptParts(args: {
 				.filter((item): item is Extract<AssistantPart, { type: 'text' }> => item.type === 'text')
 				.map((item) => item.text)
 				.join('');
-			if (pendingResponse && pendingResponse.runId === part.runId) {
-				pendingResponse.parts = [...pendingResponse.parts, ...items];
-				pendingResponse.text += text;
-				continue;
-			}
-			flushResponse();
-			pendingResponse = {
-				_id: responseMessageId(part.runId),
-				_creationTime: part.number,
-				threadId: args.threadId,
-				runId: part.runId,
-				userId: args.userId,
-				type: 'response',
-				text,
-				attachments: [],
-				parts: items,
-				runStatus: 'completed',
-				runStartedAt: part.number
-			};
+			const response = responseForRun(part.runId, part.number);
+			response.parts = applyCompletionItems(response.parts, items);
+			response.text += text;
 			continue;
 		}
 		if (part.kind === 'tool') {
-			const toolPart = toolResultPart(part);
-			if (pendingResponse && pendingResponse.runId === part.runId) {
-				pendingResponse.parts = [...pendingResponse.parts, toolPart];
-			} else {
-				const last = messages.at(-1);
-				if (last?.type === 'response' && last.runId === part.runId) {
-					last.parts = [...last.parts, toolPart];
-				} else {
-					flushResponse();
-					pendingResponse = {
-						_id: responseMessageId(part.runId),
-						_creationTime: part.number,
-						threadId: args.threadId,
-						runId: part.runId,
-						userId: args.userId,
-						type: 'response',
-						text: '',
-						attachments: [],
-						parts: [toolPart],
-						runStatus: 'completed',
-						runStartedAt: part.number
-					};
-				}
-			}
+			const response = responseForRun(part.runId, part.number);
+			response.parts = applyToolProgress(response.parts, part, appliedTerminalKeys);
 		}
 	}
 	flushResponse();
@@ -184,9 +249,12 @@ export function mergePagedTranscriptWithLive(args: {
 			})
 		);
 		const kept = (existing?.parts ?? []).filter((part) => {
+			const callId = toolCallId(part);
+			if (part.type === 'tool-call' && callId !== undefined && liveCallIds.has(callId)) {
+				return false;
+			}
 			if (part.type === 'tool-result') {
-				const callId = toolCallId(part);
-				return callId !== undefined && !liveCallIds.has(callId);
+				return true;
 			}
 			if (!live.streamId) {
 				return false;

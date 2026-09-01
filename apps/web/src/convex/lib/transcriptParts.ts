@@ -16,8 +16,27 @@ export function completionSourceKey(runId: Id<'runs'>, streamId: string): string
 	return `completion:${runId}:${streamId}`;
 }
 
-export function toolSourceKey(jobId: Id<'executorJobs'>): string {
-	return `tool:${jobId}`;
+export type ToolTranscriptPhase = 'started' | 'finished';
+
+export function newToolInvocationId(): string {
+	return crypto.randomUUID();
+}
+
+export function toolInvocationIdForJob(job: {
+	_id: Id<'executorJobs'>;
+	toolInvocationId?: string;
+}): string {
+	return job.toolInvocationId ?? job._id;
+}
+
+export function toolSourceKey(toolInvocationId: string, phase: ToolTranscriptPhase): string {
+	return `tool:${toolInvocationId}:${phase}`;
+}
+
+export function isTranscriptToolTerminalStatus(
+	status: TranscriptToolBody['status']
+): status is 'completed' | 'failed' | 'cancelled' {
+	return status === 'completed' || status === 'failed' || status === 'cancelled';
 }
 
 export async function getTranscriptState(

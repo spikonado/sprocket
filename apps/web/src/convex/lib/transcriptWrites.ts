@@ -5,10 +5,16 @@ import {
 	attachmentMetaForUploads,
 	completionSourceKey,
 	promptSourceKey,
+	toolInvocationIdForJob,
 	toolSourceKey
 } from '@convex/lib/transcriptParts';
 import { isSettledExecutorJobStatus } from '@convex/lib/runs';
 import type { TranscriptCompletionItem, TranscriptToolBody } from '@convex/lib/validators';
+
+type TranscriptToolJob = Pick<
+	Doc<'executorJobs'>,
+	'_id' | 'hidden' | 'status' | 'callId' | 'kind' | 'result' | 'error' | 'toolInvocationId'
+>;
 
 export async function recordPromptTranscript(
 	ctx: MutationCtx,
@@ -58,16 +64,36 @@ export async function recordCompletionTranscript(
 	return result.part.number;
 }
 
+export async function recordStartedToolTranscript(
+	ctx: MutationCtx,
+	args: {
+		threadId: Id<'threadRecords'>;
+		userId: string;
+		runId: Id<'runs'>;
+		job: TranscriptToolJob;
+	}
+): Promise<void> {
+	if (args.job.hidden) {
+		return;
+	}
+	const toolInvocationId = toolInvocationIdForJob(args.job);
+	await appendTranscriptPart(ctx, {
+		threadId: args.threadId,
+		userId: args.userId,
+		sourceKey: toolSourceKey(toolInvocationId, 'started'),
+		kind: 'tool',
+		runId: args.runId,
+		tool: progressToolBody(args.job, { status: 'started' })
+	});
+}
+
 export async function recordToolTranscript(
 	ctx: MutationCtx,
 	args: {
 		threadId: Id<'threadRecords'>;
 		userId: string;
 		runId: Id<'runs'>;
-		job: Pick<
-			Doc<'executorJobs'>,
-			'_id' | 'hidden' | 'status' | 'callId' | 'kind' | 'result' | 'error'
-		>;
+		job: TranscriptToolJob;
 	}
 ): Promise<void> {
 	if (args.job.hidden) {
@@ -76,10 +102,11 @@ export async function recordToolTranscript(
 	if (!isSettledExecutorJobStatus(args.job.status)) {
 		return;
 	}
+	const toolInvocationId = toolInvocationIdForJob(args.job);
 	await appendTranscriptPart(ctx, {
 		threadId: args.threadId,
 		userId: args.userId,
-		sourceKey: toolSourceKey(args.job._id),
+		sourceKey: toolSourceKey(toolInvocationId, 'finished'),
 		kind: 'tool',
 		runId: args.runId,
 		tool: settledToolBody(args.job)
@@ -117,9 +144,23 @@ export async function recordSettledToolTranscripts(
 	}
 }
 
-function settledToolBody(
-	job: Pick<Doc<'executorJobs'>, '_id' | 'status' | 'callId' | 'kind' | 'result' | 'error'>
+function progressToolBody(
+	job: TranscriptToolJob,
+	args: { status: TranscriptToolBody['status']; output?: TranscriptToolBody['output'] }
 ): TranscriptToolBody {
+	const body: TranscriptToolBody = {
+		toolInvocationId: toolInvocationIdForJob(job),
+		callId: job.callId ?? `executor-job:${job._id}`,
+		name: job.kind,
+		status: args.status
+	};
+	if (args.output !== undefined) {
+		body.output = args.output;
+	}
+	return body;
+}
+
+function settledToolBody(job: TranscriptToolJob): TranscriptToolBody {
 	if (!isSettledExecutorJobStatus(job.status)) {
 		throw new Error('settledToolBody requires a settled executor job.');
 	}
@@ -135,11 +176,5 @@ function settledToolBody(
 							: 'Executor job failed.'),
 					status
 				};
-	return {
-		jobId: job._id,
-		callId: job.callId ?? `executor-job:${job._id}`,
-		name: job.kind,
-		output,
-		status
-	};
+	return progressToolBody(job, { status, output });
 }

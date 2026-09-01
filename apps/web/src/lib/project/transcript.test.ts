@@ -11,6 +11,8 @@ import {
 const threadId = (value = 'thread-1') => value as Id<'threadRecords'>;
 // SAFETY: Tests use stable opaque strings where only ID equality matters.
 const runId = (value = 'run-1') => value as Id<'runs'>;
+// SAFETY: Tests use stable opaque strings where only ID equality matters.
+const jobId = (value = 'job-1') => value as Id<'executorJobs'>;
 
 function part(
 	overrides: Partial<LocalTranscriptPart> & Pick<LocalTranscriptPart, 'number' | 'kind'>
@@ -130,7 +132,141 @@ describe('mergePagedTranscriptWithLive', () => {
 
 		const response = messages.find((message) => message.type === 'response');
 		expect(response?.text).toBe('Hello\n\nworking');
-		expect(response?.parts.map((entry) => entry.type)).toEqual(['text', 'tool-result', 'text']);
+		expect(response?.parts.map((entry) => entry.type)).toEqual([
+			'text',
+			'tool-call',
+			'tool-result',
+			'text'
+		]);
+	});
+
+	it('folds start and finish tool events into one call and one result', () => {
+		const messages = messagesFromTranscriptParts({
+			userId: 'user_1',
+			threadId: threadId(),
+			parts: [
+				part({ number: 0, kind: 'prompt', prompt: { text: 'Hi', imageUploads: [] } }),
+				part({
+					number: 1,
+					kind: 'tool',
+					tool: {
+						toolInvocationId: 'inv-1',
+						callId: 'c1',
+						name: 'exec_command',
+						status: 'started'
+					}
+				}),
+				part({
+					number: 2,
+					kind: 'completion',
+					completion: {
+						streamId: 's1',
+						items: [
+							{
+								type: 'tool-call',
+								callId: 'c1',
+								name: 'exec_command',
+								input: { cmd: 'pwd' }
+							}
+						]
+					}
+				}),
+				part({
+					number: 3,
+					kind: 'tool',
+					tool: {
+						toolInvocationId: 'inv-1',
+						callId: 'c1',
+						name: 'exec_command',
+						output: 'ok',
+						status: 'completed'
+					}
+				}),
+				part({
+					number: 4,
+					kind: 'tool',
+					tool: {
+						toolInvocationId: 'inv-1',
+						callId: 'c1',
+						name: 'exec_command',
+						output: 'duplicate',
+						status: 'cancelled'
+					}
+				})
+			]
+		});
+
+		const response = messages.find((message) => message.type === 'response');
+		expect(response?.parts).toEqual([
+			{
+				type: 'tool-call',
+				callId: 'c1',
+				name: 'exec_command',
+				input: { cmd: 'pwd' }
+			},
+			{
+				type: 'tool-result',
+				callId: 'c1',
+				name: 'exec_command',
+				output: 'ok'
+			}
+		]);
+	});
+
+	it('keeps a started-only tool as an in-progress call without a result', () => {
+		const messages = messagesFromTranscriptParts({
+			userId: 'user_1',
+			threadId: threadId(),
+			parts: [
+				part({ number: 0, kind: 'prompt', prompt: { text: 'Hi', imageUploads: [] } }),
+				part({
+					number: 1,
+					kind: 'tool',
+					tool: {
+						toolInvocationId: 'inv-1',
+						callId: 'c1',
+						name: 'exec_command',
+						status: 'started'
+					}
+				})
+			]
+		});
+
+		const response = messages.find((message) => message.type === 'response');
+		expect(response?.parts).toEqual([
+			{ type: 'tool-call', callId: 'c1', name: 'exec_command', input: {} }
+		]);
+	});
+
+	it('folds a legacy jobId tool part into one result', () => {
+		const messages = messagesFromTranscriptParts({
+			userId: 'user_1',
+			threadId: threadId(),
+			parts: [
+				part({
+					number: 0,
+					kind: 'completion',
+					completion: {
+						items: [{ type: 'tool-call', callId: 'c1', name: 'exec_command', input: {} }]
+					}
+				}),
+				part({
+					number: 1,
+					kind: 'tool',
+					tool: {
+						jobId: jobId('job-legacy'),
+						callId: 'c1',
+						name: 'exec_command',
+						output: 'legacy',
+						status: 'completed'
+					}
+				})
+			]
+		});
+
+		const response = messages.find((message) => message.type === 'response');
+		expect(response?.parts.map((entry) => entry.type)).toEqual(['tool-call', 'tool-result']);
+		expect(response?.parts[1]).toMatchObject({ output: 'legacy', callId: 'c1' });
 	});
 });
 

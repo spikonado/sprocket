@@ -72,9 +72,12 @@ struct RemoteCompletion {
 struct RemoteTool {
     #[serde(default)]
     job_id: Option<String>,
+    #[serde(default)]
+    tool_invocation_id: Option<String>,
     call_id: String,
     name: String,
-    output: serde_json::Value,
+    #[serde(default)]
+    output: Option<serde_json::Value>,
     status: String,
 }
 
@@ -137,6 +140,7 @@ fn to_local_part(part: RemoteTranscriptPart) -> anyhow::Result<TranscriptPart> {
         }),
         tool: part.tool.map(|tool| TranscriptToolBody {
             job_id: tool.job_id,
+            tool_invocation_id: tool.tool_invocation_id,
             call_id: tool.call_id,
             name: tool.name,
             output: tool.output,

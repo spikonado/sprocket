@@ -147,10 +147,11 @@ export type LocalTranscriptPart = {
 	};
 	tool?: {
 		jobId?: Id<'executorJobs'>;
+		toolInvocationId?: string;
 		callId: string;
 		name: string;
-		output: JsonValue;
-		status: 'completed' | 'failed' | 'cancelled';
+		output?: JsonValue;
+		status: 'started' | 'completed' | 'failed' | 'cancelled';
 	};
 };
 

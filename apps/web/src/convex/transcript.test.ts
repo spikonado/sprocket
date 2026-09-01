@@ -131,7 +131,7 @@ describe('numbered transcript parts', () => {
 		expect(parts.parts.map((part) => part.kind)).toEqual(['prompt', 'completion']);
 	});
 
-	it('numbers a settled tool after the matching completion call', async () => {
+	it('appends started and finished tool events paired by invocation id', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'transcript-tool-order-secret';
@@ -163,6 +163,25 @@ describe('numbered transcript parts', () => {
 			payload: { cmd: 'echo hi' },
 			executionSecret
 		});
+		const afterStart = await asUser.query(api.transcript.getState, { threadId });
+		expect(afterStart.totalParts).toBe(2);
+		const startedParts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
+		const started = startedParts.parts[1];
+		const invocationId = started?.tool?.toolInvocationId;
+		expect(started).toMatchObject({
+			kind: 'tool',
+			sourceKey: `tool:${invocationId}:started`,
+			tool: {
+				callId: 'c1',
+				name: 'exec_command',
+				status: 'started'
+			}
+		});
+		expect(started?.tool?.jobId).toBeUndefined();
+		expect(started?.tool?.output).toBeUndefined();
+		const storedJob = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
+		expect(storedJob?.toolInvocationId).toBe(invocationId);
+
 		await asUser.mutation(api.executor.complete, {
 			jobId,
 			runId,
@@ -181,7 +200,26 @@ describe('numbered transcript parts', () => {
 				truncated: false
 			}
 		});
-		expect((await asUser.query(api.transcript.getState, { threadId })).totalParts).toBe(1);
+		expect((await asUser.query(api.transcript.getState, { threadId })).totalParts).toBe(3);
+		await asUser.mutation(api.executor.complete, {
+			jobId,
+			runId,
+			claimId: 'claim-tool-order',
+			executionSecret,
+			result: {
+				command: 'echo hi',
+				cwd: '/',
+				exitCode: 0,
+				success: true,
+				running: false,
+				timedOut: false,
+				stdout: 'ignored',
+				stderr: '',
+				output: 'ignored',
+				truncated: false
+			}
+		});
+		expect((await asUser.query(api.transcript.getState, { threadId })).totalParts).toBe(3);
 		await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
 			runId,
 			claimId: 'claim-tool-order',
@@ -199,9 +237,114 @@ describe('numbered transcript parts', () => {
 			],
 			executionSecret
 		});
-		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1, 2] });
-		expect(parts.parts.map((part) => part.kind)).toEqual(['prompt', 'completion', 'tool']);
-		expect(parts.parts[2]?.tool?.callId).toBe('c1');
+		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1, 2, 3] });
+		expect(parts.parts.map((part) => part.kind)).toEqual(['prompt', 'tool', 'tool', 'completion']);
+		expect(parts.parts[2]).toMatchObject({
+			sourceKey: `tool:${invocationId}:finished`,
+			tool: {
+				toolInvocationId: invocationId,
+				callId: 'c1',
+				status: 'completed'
+			}
+		});
+		expect(parts.parts[2]?.tool?.jobId).toBeUndefined();
+	});
+
+	it('records one cancelled finished event and ignores a later complete', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'transcript-tool-cancel-secret';
+		const { runId } = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			'sub-tool-cancel',
+			executionSecret,
+			'Use a tool'
+		);
+		await asUser.mutation(api.agentRuntime.start, {
+			claimId: 'claim-tool-cancel',
+			runId,
+			executionSecret
+		});
+		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
+			claimId: 'claim-tool-cancel',
+			runId,
+			kind: 'exec_command',
+			callId: 'c-cancel',
+			payload: { cmd: 'sleep 10' },
+			executionSecret
+		});
+		const started = await asUser.query(api.transcript.getParts, { threadId, numbers: [1] });
+		const invocationId = started.parts[0]?.tool?.toolInvocationId;
+		await asUser.mutation(api.agentRuntime.finalizeRun, {
+			runId,
+			expectedStatus: 'awaiting_executor',
+			expectedClaimId: 'claim-tool-cancel',
+			text: '',
+			status: 'cancelled'
+		});
+		const afterCancel = await asUser.query(api.transcript.getState, { threadId });
+		expect(afterCancel.totalParts).toBe(3);
+		const finished = await asUser.query(api.transcript.getParts, { threadId, numbers: [2] });
+		expect(finished.parts[0]).toMatchObject({
+			sourceKey: `tool:${invocationId}:finished`,
+			tool: {
+				toolInvocationId: invocationId,
+				callId: 'c-cancel',
+				status: 'cancelled'
+			}
+		});
+		await asUser.mutation(api.executor.complete, {
+			jobId,
+			runId,
+			claimId: 'claim-tool-cancel',
+			executionSecret,
+			result: {
+				command: 'sleep 10',
+				cwd: '/',
+				exitCode: 0,
+				success: true,
+				running: false,
+				timedOut: false,
+				stdout: '',
+				stderr: '',
+				output: '',
+				truncated: false
+			}
+		});
+		expect((await asUser.query(api.transcript.getState, { threadId })).totalParts).toBe(3);
+		const job = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
+		expect(job?.status).toBe('cancelled');
+	});
+
+	it('does not write transcript events for hidden tool jobs', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'transcript-hidden-tool-secret';
+		const { runId } = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			'sub-hidden-tool',
+			executionSecret,
+			'Hide it'
+		);
+		await asUser.mutation(api.agentRuntime.start, {
+			claimId: 'claim-hidden-tool',
+			runId,
+			executionSecret
+		});
+		await asUser.mutation(api.agentRuntime.beginToolJob, {
+			claimId: 'claim-hidden-tool',
+			runId,
+			kind: 'exec_command',
+			callId: 'hidden',
+			payload: { cmd: 'true' },
+			hidden: true,
+			executionSecret
+		});
+		expect((await asUser.query(api.transcript.getState, { threadId })).totalParts).toBe(1);
 	});
 
 	it('only reads jobs named by the current completion call', async () => {

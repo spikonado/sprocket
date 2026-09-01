@@ -31,7 +31,7 @@ export const removeExecutorJobCommandStreams = migrations.define({
 export const removeTranscriptCommandStreams = migrations.define({
 	table: 'threadTranscriptParts',
 	migrateOne: (_ctx, part) => {
-		if (part.kind !== 'tool' || !part.tool) return;
+		if (part.kind !== 'tool' || !part.tool || part.tool.output === undefined) return;
 		const output = removeLegacyCommandStreams(part.tool.name, part.tool.output);
 		if (output === part.tool.output) return;
 		return { tool: { ...part.tool, output } };

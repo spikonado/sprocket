@@ -84,10 +84,11 @@ const localTranscriptPartSchema = z.object({
 	tool: z
 		.object({
 			jobId: z.string().optional(),
+			toolInvocationId: z.string().optional(),
 			callId: z.string(),
 			name: z.string(),
-			output: z.unknown(),
-			status: z.enum(['completed', 'failed', 'cancelled'])
+			output: z.unknown().optional(),
+			status: z.enum(['started', 'completed', 'failed', 'cancelled'])
 		})
 		.optional()
 });
@@ -171,6 +172,23 @@ function parseLocalTranscriptPage(
 	};
 }
 
+function parseLocalTranscriptTool(
+	tool: NonNullable<z.infer<typeof localTranscriptPartSchema>['tool']>
+): NonNullable<LocalTranscriptPart['tool']> {
+	const parsed: NonNullable<LocalTranscriptPart['tool']> = {
+		callId: tool.callId,
+		name: tool.name,
+		status: tool.status
+	};
+	if (tool.jobId) parsed.jobId = asConvexId(tool.jobId);
+	if (tool.toolInvocationId) parsed.toolInvocationId = tool.toolInvocationId;
+	if (tool.output !== undefined) {
+		// SAFETY: JSONL replica tool output is Convex JSON.
+		parsed.output = tool.output as JsonValue;
+	}
+	return parsed;
+}
+
 function parseLocalTranscriptPart(
 	part: z.infer<typeof localTranscriptPartSchema>
 ): LocalTranscriptPart {
@@ -196,14 +214,7 @@ function parseLocalTranscriptPart(
 					items: part.completion.items as AssistantPart[]
 				}
 			: undefined,
-		tool: part.tool
-			? {
-					...part.tool,
-					jobId: part.tool.jobId ? asConvexId(part.tool.jobId) : undefined,
-					// SAFETY: JSONL replica tool output is Convex JSON.
-					output: part.tool.output as JsonValue
-				}
-			: undefined
+		tool: part.tool ? parseLocalTranscriptTool(part.tool) : undefined
 	};
 }
 
