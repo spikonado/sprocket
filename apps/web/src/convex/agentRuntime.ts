@@ -727,7 +727,7 @@ export const registerCompletionAttempt = mutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		assertRunAcceptsModelCompletion(run.status);
+		assertRunAcceptsModelCompletion(run);
 		if (!isRunClaimLeaseActive(run, Date.now())) {
 			throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 		}
@@ -781,7 +781,7 @@ export const finalizeCompletionCall = mutation({
 	returns: v.union(v.number(), v.null()),
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		assertRunAcceptsModelCompletion(run.status);
+		assertRunAcceptsModelCompletion(run);
 		if (!isRunClaimLeaseActive(run, Date.now())) {
 			throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 		}
@@ -975,7 +975,7 @@ export const beginToolJob = mutation({
 	handler: async (ctx, args) => {
 		try {
 			const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-			assertRunAcceptsModelCompletion(run.status);
+			assertRunAcceptsModelCompletion(run);
 			if (run.claimId !== args.claimId || !isRunClaimLeaseActive(run, Date.now())) {
 				throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 			}

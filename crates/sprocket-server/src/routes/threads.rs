@@ -123,7 +123,7 @@ async fn watch_handler(
         .event_for_user(user_id)
         .await
         .map_err(ApiError::internal)?;
-    let mut session = state.thread_cache.subscribe().await;
+    let session = state.thread_cache.subscribe().await;
     let stream = unfold(
         (Some(initial), session),
         |(initial, mut session)| async move {
