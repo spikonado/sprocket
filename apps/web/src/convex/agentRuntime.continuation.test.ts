@@ -187,7 +187,13 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 	it('reconciles a queued continuation after a failed start', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		const parent = await createQueuedRun(t, asUser, threadId, 'sub-cleanup-parent', 'cleanup-parent');
+		const parent = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			'sub-cleanup-parent',
+			'cleanup-parent'
+		);
 		await asUser.mutation(api.agentRuntime.finalizeRun, {
 			runId: parent.runId,
 			text: '',

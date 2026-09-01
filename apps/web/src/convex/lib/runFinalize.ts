@@ -40,9 +40,7 @@ export async function finalizeRunRecord(
 	args: FinalizeRunArgs
 ): Promise<boolean> {
 	const alreadyFinal = isRunFinalStatus(run.status);
-	const finalStatus = alreadyFinal
-		? run.status
-		: resolveRequestedFinalizeStatus(run, args.status);
+	const finalStatus = alreadyFinal ? run.status : resolveRequestedFinalizeStatus(run, args.status);
 	const completedAt = run.completedAt ?? Date.now();
 	const lastError = alreadyFinal ? run.lastError : args.lastError;
 	await cancelWebToolWork(ctx, run._id);

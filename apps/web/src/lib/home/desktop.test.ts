@@ -55,7 +55,12 @@ function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 		registerThreadCache: unusedDesktopCall,
 		fetchThreadSnapshot: unusedDesktopCall,
 		syncArchivedThreads: unusedDesktopCall,
-		watchThreadCache: unusedDesktopCall
+		watchThreadCache: unusedDesktopCall,
+		renameThread: unusedDesktopCall,
+		archiveThread: unusedDesktopCall,
+		restoreThread: unusedDesktopCall,
+		rekeyRepository: unusedDesktopCall,
+		requestRunCancellation: unusedDesktopCall
 	};
 }
 

@@ -13,9 +13,7 @@ use crate::project_attachments::{ProjectAttachmentStore, WorkspaceAvailability};
 use crate::thread_cache::{
     THREAD_SNAPSHOT_VERSION, ThreadSnapshotCategory, ThreadSnapshotFile, ThreadSnapshotStore,
 };
-use crate::transcript_client::{
-    UserConvexClient, decode_revision_update, retry_after_failure,
-};
+use crate::transcript_client::{UserConvexClient, decode_revision_update, retry_after_failure};
 
 const SNAPSHOT_PAGE_SIZE: f64 = 64.0;
 const SNAPSHOT_REVISION_RETRIES: usize = 8;
@@ -94,7 +92,10 @@ impl ThreadCacheSync {
     pub async fn snapshot(
         &self,
         user_id: &str,
-    ) -> anyhow::Result<(Vec<crate::thread_cache::CachedThreadSummary>, ThreadCacheEvent)> {
+    ) -> anyhow::Result<(
+        Vec<crate::thread_cache::CachedThreadSummary>,
+        ThreadCacheEvent,
+    )> {
         let threads = self.store.list_user_threads(user_id).await?;
         let event = self.event_for_user(user_id).await?;
         Ok((threads, event))
@@ -128,7 +129,11 @@ impl ThreadCacheSync {
         }
     }
 
-    pub async fn register(self: &Arc<Self>, user_id: &str, auth_token: String) -> anyhow::Result<()> {
+    pub async fn register(
+        self: &Arc<Self>,
+        user_id: &str,
+        auth_token: String,
+    ) -> anyhow::Result<()> {
         let user_id = user_id.trim();
         let auth_token = auth_token.trim();
         if user_id.is_empty() {
@@ -180,7 +185,10 @@ impl ThreadCacheSync {
         let (user_id, auth_token) = {
             let inner = self.inner.lock().await;
             (
-                inner.user_id.clone().ok_or_else(|| anyhow!("thread cache is not registered"))?,
+                inner
+                    .user_id
+                    .clone()
+                    .ok_or_else(|| anyhow!("thread cache is not registered"))?,
                 inner
                     .auth_token
                     .clone()
@@ -321,8 +329,7 @@ async fn watch_snapshot(start: WatchStart) {
 
 fn classify_watch_error(error: &anyhow::Error) -> ThreadCacheStatus {
     let message = error.to_string().to_lowercase();
-    if message.contains("auth") || message.contains("unauthor") || message.contains("identity")
-    {
+    if message.contains("auth") || message.contains("unauthor") || message.contains("identity") {
         ThreadCacheStatus::Error
     } else if message.contains("timed out")
         || message.contains("connection")
@@ -437,15 +444,15 @@ async fn download_pages(
         }
         cursor = Some(page.continue_cursor);
     }
-	threads.sort_by(|left, right| {
-		match right.has_active_run.cmp(&left.has_active_run) {
-			std::cmp::Ordering::Equal => right
-				.last_message_at
-				.partial_cmp(&left.last_message_at)
-				.unwrap_or(std::cmp::Ordering::Equal),
-			order => order,
-		}
-	});
+    threads.sort_by(
+        |left, right| match right.has_active_run.cmp(&left.has_active_run) {
+            std::cmp::Ordering::Equal => right
+                .last_message_at
+                .partial_cmp(&left.last_message_at)
+                .unwrap_or(std::cmp::Ordering::Equal),
+            order => order,
+        },
+    );
     Ok(threads)
 }
 
@@ -456,7 +463,9 @@ mod tests {
     #[test]
     fn auth_failures_surface_as_error_status() {
         assert_eq!(
-            classify_watch_error(&anyhow!("threads:getSnapshotRevision: Authentication required.")),
+            classify_watch_error(&anyhow!(
+                "threads:getSnapshotRevision: Authentication required."
+            )),
             ThreadCacheStatus::Error
         );
         assert_eq!(

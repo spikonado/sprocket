@@ -25,6 +25,7 @@ import { recordThreadUsageEvent, usageEventId } from '@convex/lib/threadUsage';
 import { finalizeRunRecord, matchesFinalizeExpectations } from '@convex/lib/runFinalize';
 import { startRunLifecycle } from '@convex/runLifecycle';
 import { assertContinuableParent, reopenRunRecord } from '@convex/lib/runResume';
+import { requestRunCancellation } from './runLifecycle';
 import { enqueueWebToolJob, isCloudWebToolKind } from '@convex/webToolPool';
 import { newToolInvocationId } from '@convex/lib/transcriptParts';
 import {
@@ -210,7 +211,7 @@ async function createQueuedRunRecord(
 	if (args.agentVersion) {
 		gatewayFields.agentVersion = args.agentVersion;
 	}
-	const runId = await ctx.db.insert('runs', {
+	const runRecord: Omit<Doc<'runs'>, '_id' | '_creationTime'> = {
 		threadId: args.threadId,
 		userId: args.userId,
 		submissionId: args.submissionId,
@@ -223,9 +224,10 @@ async function createQueuedRunRecord(
 		installationId: args.installationId,
 		executorSessionId: args.executorSessionId,
 		startedAt: Date.now(),
-		...(continuationOfRunId ? { continuationOfRunId } : {}),
 		...gatewayFields
-	});
+	};
+	if (continuationOfRunId) runRecord.continuationOfRunId = continuationOfRunId;
+	const runId = await ctx.db.insert('runs', runRecord);
 	if (args.executorSessionId) {
 		await ctx.db.insert('machineSessionRuns', {
 			sessionId: args.executorSessionId,
@@ -420,7 +422,7 @@ export const createGatewayRun = action({
 	handler: async (ctx, args): Promise<Infer<typeof vCreateGatewayRunResult>> => {
 		const userId = await getUserId(ctx);
 		const gatewayUrl = modelGatewayUrl();
-		const created = await ctx.runMutation(internal.agentRuntime.insertGatewayRun, {
+		const request: QueuedRunRequest = {
 			userId,
 			submissionId: args.submissionId,
 			threadId: args.threadId,
@@ -433,9 +435,10 @@ export const createGatewayRun = action({
 			protocolVersion: GATEWAY_PROTOCOL_VERSION,
 			agentVersion: args.agentVersion,
 			installationId: args.installationId,
-			executorSessionId: args.executorSessionId,
-			...(args.continuationOfRunId ? { continuationOfRunId: args.continuationOfRunId } : {})
-		});
+			executorSessionId: args.executorSessionId
+		};
+		if (args.continuationOfRunId) request.continuationOfRunId = args.continuationOfRunId;
+		const created = await ctx.runMutation(internal.agentRuntime.insertGatewayRun, request);
 		return {
 			...created,
 			gatewayUrl,
@@ -822,6 +825,17 @@ export const finalizeRun = mutation({
 			return false;
 		}
 		return finalizeRunRecord(ctx, run, args);
+	}
+});
+
+/** Compatibility command retained for released clients. */
+export const requestCancellation = mutation({
+	args: { runId: v.id('runs') },
+	returns: v.boolean(),
+	handler: async (ctx, args) => {
+		const userId = await getUserId(ctx);
+		const run = await getOwnedRun(ctx.db, userId, args.runId);
+		return await requestRunCancellation(ctx, run);
 	}
 });
 

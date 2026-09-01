@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::convert::Infallible;
 
 use anyhow::anyhow;
@@ -7,6 +8,7 @@ use axum::http::HeaderMap;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::post;
 use axum_extra::extract::CookieJar;
+use convex::Value;
 use futures::stream::unfold;
 use serde::Deserialize;
 use tokio::sync::broadcast;
@@ -16,6 +18,7 @@ use crate::auth::require_session;
 use crate::routes::api_error::ApiError;
 use crate::thread_cache::CachedThreadSummary;
 use crate::thread_sync::{ThreadCacheEvent, ThreadCacheStatus};
+use crate::transcript_client::UserConvexClient;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,6 +31,38 @@ struct ThreadCacheRegisterRequest {
 #[serde(rename_all = "camelCase")]
 struct ThreadCacheUserRequest {
     user_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadCommandRequest {
+    user_id: String,
+    auth_token: String,
+    thread_id: String,
+    title: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RekeyRequest {
+    user_id: String,
+    auth_token: String,
+    from: String,
+    to: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CancelRequest {
+    auth_token: String,
+    run_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LifecycleRequest {
+    auth_token: String,
+    thread_id: String,
 }
 
 #[derive(serde::Serialize)]
@@ -44,6 +79,140 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/threads/snapshot", post(snapshot_handler))
         .route("/threads/archive-sync", post(archive_sync_handler))
         .route("/threads/watch", post(watch_handler))
+        .route("/threads/rename", post(rename_handler))
+        .route("/threads/archive", post(archive_handler))
+        .route("/threads/restore", post(restore_handler))
+        .route("/threads/rekey", post(rekey_handler))
+        .route("/threads/lifecycle", post(lifecycle_handler))
+        .route("/threads/cancel", post(cancel_handler))
+}
+
+async fn client(state: &AppState, token: String) -> Result<UserConvexClient, ApiError> {
+    UserConvexClient::connect(&state.convex_deployment_url, token)
+        .await
+        .map_err(ApiError::bad_request)
+}
+
+fn thread_args(thread_id: String) -> BTreeMap<String, Value> {
+    BTreeMap::from([("threadId".into(), Value::String(thread_id))])
+}
+
+async fn run_thread_command(
+    state: &AppState,
+    payload: ThreadCommandRequest,
+    function: &str,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let mut args = thread_args(payload.thread_id);
+    if let Some(title) = payload.title {
+        args.insert("title".into(), Value::String(title));
+    }
+    let result = client(state, payload.auth_token.clone())
+        .await?
+        .mutate(function, args)
+        .await
+        .map_err(ApiError::bad_request)?;
+    state
+        .thread_cache
+        .register(&payload.user_id, payload.auth_token)
+        .await
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(result))
+}
+
+async fn rename_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(payload): Json<ThreadCommandRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_session(&state.auth, &headers, &jar)
+        .await
+        .map_err(ApiError::unauthorized)?;
+    run_thread_command(&state, payload, "threads:rename").await
+}
+async fn archive_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(payload): Json<ThreadCommandRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_session(&state.auth, &headers, &jar)
+        .await
+        .map_err(ApiError::unauthorized)?;
+    run_thread_command(&state, payload, "threads:archive").await
+}
+async fn restore_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(payload): Json<ThreadCommandRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_session(&state.auth, &headers, &jar)
+        .await
+        .map_err(ApiError::unauthorized)?;
+    run_thread_command(&state, payload, "threads:restore").await
+}
+async fn rekey_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(payload): Json<RekeyRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_session(&state.auth, &headers, &jar)
+        .await
+        .map_err(ApiError::unauthorized)?;
+    let token = payload.auth_token.clone();
+    let args = BTreeMap::from([
+        ("from".into(), Value::String(payload.from)),
+        ("to".into(), Value::String(payload.to)),
+    ]);
+    let result = client(&state, payload.auth_token)
+        .await?
+        .mutate("threads:rekeyRepository", args)
+        .await
+        .map_err(ApiError::bad_request)?;
+    state
+        .thread_cache
+        .register(&payload.user_id, token)
+        .await
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(result))
+}
+async fn lifecycle_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(payload): Json<LifecycleRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_session(&state.auth, &headers, &jar)
+        .await
+        .map_err(ApiError::unauthorized)?;
+    let result = client(&state, payload.auth_token)
+        .await?
+        .query(
+            "chat:selectedThreadLifecycle",
+            thread_args(payload.thread_id),
+        )
+        .await
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(result))
+}
+async fn cancel_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(payload): Json<CancelRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_session(&state.auth, &headers, &jar)
+        .await
+        .map_err(ApiError::unauthorized)?;
+    let args = BTreeMap::from([("runId".into(), Value::String(payload.run_id))]);
+    let result = client(&state, payload.auth_token)
+        .await?
+        .mutate("agentRuntime:requestCancellation", args)
+        .await
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(result))
 }
 
 async fn register_handler(

@@ -39,9 +39,9 @@ describe('selected thread lifecycle phase', () => {
 	});
 
 	it('maps stored run status onto queued, waiting, running, and terminal phases', () => {
-		expect(selectedThreadLifecyclePhase({ run: { status: 'queued' }, waitingForInput: false })).toBe(
-			'queued'
-		);
+		expect(
+			selectedThreadLifecyclePhase({ run: { status: 'queued' }, waitingForInput: false })
+		).toBe('queued');
 		expect(
 			selectedThreadLifecyclePhase({
 				run: { status: 'awaiting_executor' },
@@ -57,9 +57,9 @@ describe('selected thread lifecycle phase', () => {
 		expect(
 			selectedThreadLifecyclePhase({ run: { status: 'completed' }, waitingForInput: true })
 		).toBe('completed');
-		expect(selectedThreadLifecyclePhase({ run: { status: 'failed' }, waitingForInput: false })).toBe(
-			'failed'
-		);
+		expect(
+			selectedThreadLifecyclePhase({ run: { status: 'failed' }, waitingForInput: false })
+		).toBe('failed');
 		expect(
 			selectedThreadLifecyclePhase({ run: { status: 'cancelled' }, waitingForInput: false })
 		).toBe('cancelled');
@@ -77,10 +77,7 @@ describe('selected thread lifecycle phase', () => {
 describe('requested cancellation finalize mapping', () => {
 	it('lets completed win before the force-cancel deadline', () => {
 		expect(
-			resolveRequestedFinalizeStatus(
-				{ status: 'running', cancellationRequestedAt: 1 },
-				'completed'
-			)
+			resolveRequestedFinalizeStatus({ status: 'running', cancellationRequestedAt: 1 }, 'completed')
 		).toBe('completed');
 	});
 

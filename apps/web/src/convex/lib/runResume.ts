@@ -26,10 +26,9 @@ export function isContinuableRunStatus(
 	return status === 'failed' || status === 'cancelled';
 }
 
-export function assertContinuableParent<T extends { _id: Id<'runs'>; status: Doc<'runs'>['status'] }>(
-	latest: T | null,
-	parentRunId: Id<'runs'>
-): T {
+export function assertContinuableParent<
+	T extends { _id: Id<'runs'>; status: Doc<'runs'>['status'] }
+>(latest: T | null, parentRunId: Id<'runs'>): T {
 	if (!latest || latest._id !== parentRunId) {
 		throw new ConvexError(ONLY_LATEST_RUN_CAN_CONTINUE);
 	}

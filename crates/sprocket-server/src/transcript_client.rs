@@ -128,6 +128,22 @@ impl UserConvexClient {
     ) -> anyhow::Result<T> {
         decode_function_result(self.client.mutation(function, args).await?, function)
     }
+
+    pub async fn mutate<T: for<'de> serde::Deserialize<'de>>(
+        &self,
+        function: &str,
+        args: BTreeMap<String, Value>,
+    ) -> anyhow::Result<T> {
+        self.mutation_json(function, args).await
+    }
+
+    pub async fn query<T: for<'de> serde::Deserialize<'de>>(
+        &self,
+        function: &str,
+        args: BTreeMap<String, Value>,
+    ) -> anyhow::Result<T> {
+        self.query_json(function, args).await
+    }
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]

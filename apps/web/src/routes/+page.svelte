@@ -142,12 +142,6 @@
 		}
 	});
 	const createThreadMutation = useMutation(api.threads.create);
-	const rekeyRepository = useMutation(api.threads.rekeyRepository);
-	const renameThreadMutation = useMutation(api.threads.rename);
-	const archiveThreadMutation = useMutation(api.threads.archive);
-	const restoreThreadMutation = useMutation(api.threads.restore);
-	const requestCancellation = useMutation(api.agentRuntime.requestCancellation);
-	const reopenRun = useMutation(api.agentRuntime.reopenRun);
 	const answerAgentQuestion = useMutation(api.agentQuestions.answer);
 	const setThemePreference = useMutation(api.uiPreferences.setTheme);
 	const generateImageUploadUrl = useMutation(api.imageUploads.generateUploadUrl);
@@ -240,7 +234,6 @@
 	let desktopProjectAttachmentsGeneration = 0;
 	let threadSnapshotReady = $state(false);
 	let threadCacheStatus = $state<ThreadCacheStatus>('loading');
-	let threadCacheLastSyncedAt = $state<number | null>(null);
 	let threadSnapshotThreads = $state<ThreadSummary[]>([]);
 	let threadCacheGeneration = 0;
 	let archivedSyncGeneration = 0;
@@ -929,7 +922,7 @@
 					candidate.repositoryKey === previousKey
 			);
 			if (!siblingStillHasPreviousKey && getAuthenticatedQueryArgs() !== 'skip') {
-				await rekeyRepository({ from: previousKey, to: attachment.repositoryKey });
+				await rekeyLocalRepository(previousKey, attachment.repositoryKey);
 			}
 			if (currentWorkspacePath === attachment.workspacePath) {
 				currentRepositoryKey = attachment.repositoryKey;
@@ -938,12 +931,27 @@
 		}
 	}
 
+	async function localThreadCommandContext() {
+		const api = desktopApi;
+		const userId = getCurrentUserId();
+		const authToken = await getAccessToken();
+		if (!api || !userId || !authToken) {
+			throw new Error('The local Sprocket service is not ready.');
+		}
+		return { api, userId, authToken };
+	}
+
+	async function rekeyLocalRepository(from: string, to: string) {
+		const { api, userId, authToken } = await localThreadCommandContext();
+		await api.rekeyRepository({ userId, authToken, from, to });
+		await pullThreadSnapshot(userId);
+	}
+
 	function applyThreadCacheEvent(event: {
 		status: ThreadCacheStatus;
 		lastSyncedAt: number | null;
 	}) {
 		threadCacheStatus = event.status;
-		threadCacheLastSyncedAt = event.lastSyncedAt;
 		if (event.status !== 'loading') {
 			threadSnapshotReady = true;
 		}
@@ -1046,7 +1054,6 @@
 				currentError = error instanceof Error ? error.message : 'Could not sync archived threads.';
 			});
 	});
-
 
 	function applyProjectSelection(
 		workspacePath: string,
@@ -1201,10 +1208,7 @@
 					project.repositoryKey === previousProject.repositoryKey
 			)
 		) {
-			await rekeyRepository({
-				from: previousProject.repositoryKey,
-				to: selection.repositoryKey
-			});
+			await rekeyLocalRepository(previousProject.repositoryKey, selection.repositoryKey);
 		}
 		const keepThread =
 			previousProject?.repositoryKey === selection.repositoryKey ? currentThreadId : null;
@@ -1361,7 +1365,9 @@
 
 	async function renameThread(threadId: Id<'threadRecords'>, title: string) {
 		try {
-			await renameThreadMutation({ threadId, title });
+			const { api, userId, authToken } = await localThreadCommandContext();
+			await api.renameThread({ userId, authToken, threadId, title });
+			await pullThreadSnapshot(userId);
 		} catch (error) {
 			currentError = error instanceof Error ? error.message : 'Failed to rename thread.';
 		}
@@ -1431,7 +1437,9 @@
 	async function archiveThread(threadId: Id<'threadRecords'>) {
 		const archiveUserId = getCurrentUserId();
 		try {
-			await archiveThreadMutation({ threadId });
+			const { api, userId, authToken } = await localThreadCommandContext();
+			await api.archiveThread({ userId, authToken, threadId });
+			await pullThreadSnapshot(userId);
 			if (archiveUserId) {
 				clearComposerRecovery(archiveUserId, `thread:${threadId}`);
 				const api = desktopApi;
@@ -1462,7 +1470,9 @@
 
 	async function restoreThread(threadId: Id<'threadRecords'>) {
 		try {
-			await restoreThreadMutation({ threadId });
+			const { api, userId, authToken } = await localThreadCommandContext();
+			await api.restoreThread({ userId, authToken, threadId });
+			await pullThreadSnapshot(userId);
 		} catch (error) {
 			currentError = error instanceof Error ? error.message : 'Failed to restore thread.';
 		}
@@ -1676,10 +1686,7 @@
 							project.repositoryKey === submittedRepositoryKey
 					);
 					if (!siblingStillHasPreviousKey && getAuthenticatedQueryArgs() !== 'skip') {
-						await rekeyRepository({
-							from: submittedRepositoryKey,
-							to: resolution.repositoryKey
-						});
+						await rekeyLocalRepository(submittedRepositoryKey, resolution.repositoryKey);
 					}
 					if (!isSubmissionCurrent()) {
 						return;
@@ -1865,7 +1872,9 @@
 		}
 
 		try {
-			await requestCancellation({
+			const { api, authToken } = await localThreadCommandContext();
+			await api.requestRunCancellation({
+				authToken,
 				runId: runState.runId
 			});
 		} catch (error) {
@@ -1959,7 +1968,6 @@
 		lastSyncedComposerThreadId = null;
 		threadSnapshotReady = false;
 		threadCacheStatus = 'loading';
-		threadCacheLastSyncedAt = null;
 		threadSnapshotThreads = [];
 		threadCacheGeneration += 1;
 		projectSelectionGeneration += 1;

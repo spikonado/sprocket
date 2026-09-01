@@ -28,13 +28,13 @@ function toolProgressKey(tool: NonNullable<LocalTranscriptPart['tool']>): string
 	return tool.toolInvocationId ?? tool.jobId ?? tool.callId;
 }
 
-function isTerminalToolStatus(
-	status: NonNullable<LocalTranscriptPart['tool']>['status']
-): boolean {
+function isTerminalToolStatus(status: NonNullable<LocalTranscriptPart['tool']>['status']): boolean {
 	return status === 'completed' || status === 'failed' || status === 'cancelled';
 }
 
-function toolResultPart(part: LocalTranscriptPart): Extract<AssistantPart, { type: 'tool-result' }> {
+function toolResultPart(
+	part: LocalTranscriptPart
+): Extract<AssistantPart, { type: 'tool-result' }> {
 	const result: Extract<AssistantPart, { type: 'tool-result' }> = {
 		type: 'tool-result',
 		callId: part.tool?.callId ?? `tool:${part.number}`,
@@ -75,7 +75,9 @@ function applyToolProgress(
 	const callId = tool.callId;
 	const key = toolProgressKey(tool);
 	const next = [...parts];
-	const callIndex = next.findIndex((entry) => entry.type === 'tool-call' && entry.callId === callId);
+	const callIndex = next.findIndex(
+		(entry) => entry.type === 'tool-call' && entry.callId === callId
+	);
 	if (callIndex < 0) {
 		next.push({
 			type: 'tool-call',

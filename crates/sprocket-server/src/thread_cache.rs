@@ -135,14 +135,16 @@ impl ThreadSnapshotStore {
         let contents = match tokio::fs::read_to_string(&path).await {
             Ok(contents) => contents,
             Err(_) => {
-                self.reset_unlocked(user_id, repository_key, category).await?;
+                self.reset_unlocked(user_id, repository_key, category)
+                    .await?;
                 return Ok(None);
             }
         };
         match parse_snapshot(&contents, user_id, repository_key, category) {
             Ok(snapshot) => Ok(Some(snapshot)),
             Err(_) => {
-                self.reset_unlocked(user_id, repository_key, category).await?;
+                self.reset_unlocked(user_id, repository_key, category)
+                    .await?;
                 Ok(None)
             }
         }
@@ -188,7 +190,10 @@ impl ThreadSnapshotStore {
         Ok(())
     }
 
-    pub async fn list_user_threads(&self, user_id: &str) -> anyhow::Result<Vec<CachedThreadSummary>> {
+    pub async fn list_user_threads(
+        &self,
+        user_id: &str,
+    ) -> anyhow::Result<Vec<CachedThreadSummary>> {
         let mut threads = Vec::new();
         for snapshot in self.load_user_snapshots(user_id).await? {
             threads.extend(snapshot.threads);
@@ -334,7 +339,8 @@ mod tests {
 
     #[tokio::test]
     async fn writes_are_atomic_and_isolated_by_user() {
-        let dir = std::env::temp_dir().join(format!("sprocket-thread-cache-{}", uuid::Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("sprocket-thread-cache-{}", uuid::Uuid::new_v4()));
         let store = ThreadSnapshotStore::new(dir.clone());
         let snapshot = ThreadSnapshotFile {
             version: THREAD_SNAPSHOT_VERSION,
@@ -381,8 +387,10 @@ mod tests {
 
     #[tokio::test]
     async fn malformed_snapshots_reset_silently() {
-        let dir =
-            std::env::temp_dir().join(format!("sprocket-thread-cache-bad-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!(
+            "sprocket-thread-cache-bad-{}",
+            uuid::Uuid::new_v4()
+        ));
         let store = ThreadSnapshotStore::new(dir.clone());
         let path = store.snapshot_path("user-a", "alpha", ThreadSnapshotCategory::Active);
         tokio::fs::create_dir_all(path.parent().expect("parent"))

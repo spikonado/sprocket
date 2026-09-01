@@ -10,9 +10,7 @@ export type ThreadSnapshotCategory = Infer<typeof vThreadSnapshotCategory>;
 
 const ACTIVE_RUN_STATUSES = ['queued', 'running', 'awaiting_executor'] as const;
 
-export function threadSnapshotCategory(
-	archivedAt: number | undefined
-): ThreadSnapshotCategory {
+export function threadSnapshotCategory(archivedAt: number | undefined): ThreadSnapshotCategory {
 	return archivedAt !== undefined ? 'archived' : 'active';
 }
 

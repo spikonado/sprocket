@@ -9,6 +9,7 @@ import type {
 	LocalTranscriptPart,
 	ProjectAttachment,
 	ThreadCacheSnapshot,
+	ThreadCacheUserRequest,
 	ThreadCacheWatchEvent,
 	ThreadSummary,
 	TranscriptScopeRequest
@@ -128,10 +129,10 @@ const threadSummarySchema = z.object({
 	serviceTier: z.string(),
 	lastMessageAt: z.number(),
 	threadStatus: z.enum(['active', 'archived']),
-		latestRunStatus: z
-			.enum(['queued', 'running', 'awaiting_executor', 'completed', 'failed', 'cancelled'])
-			.nullable()
-			.optional(),
+	latestRunStatus: z
+		.enum(['queued', 'running', 'awaiting_executor', 'completed', 'failed', 'cancelled'])
+		.nullable()
+		.optional(),
 	latestRunId: z.string().nullable().optional(),
 	latestRunStartedAt: z.number().optional(),
 	latestRunClaimExpiresAt: z.number().optional(),
@@ -334,7 +335,7 @@ async function errorFromFailedResponse(response: Response): Promise<Error> {
 
 async function postSse(
 	url: string,
-	requestBody: object,
+	requestBody: TranscriptScopeRequest | ThreadCacheUserRequest,
 	signal: AbortSignal,
 	onData: (data: string) => void
 ) {
@@ -669,6 +670,35 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				if (parsed.success) {
 					handlers.onEvent(parseThreadCacheWatchEvent(parsed.data));
 				}
+			});
+		},
+		renameThread: async (requestBody) => {
+			await request('/api/threads/rename', z.null(), {
+				method: 'POST',
+				body: JSON.stringify(requestBody)
+			});
+		},
+		archiveThread: async (requestBody) => {
+			await request('/api/threads/archive', z.null(), {
+				method: 'POST',
+				body: JSON.stringify(requestBody)
+			});
+		},
+		restoreThread: async (requestBody) => {
+			await request('/api/threads/restore', z.null(), {
+				method: 'POST',
+				body: JSON.stringify(requestBody)
+			});
+		},
+		rekeyRepository: async (requestBody) =>
+			await request('/api/threads/rekey', z.number(), {
+				method: 'POST',
+				body: JSON.stringify(requestBody)
+			}),
+		requestRunCancellation: async (requestBody) => {
+			await request('/api/threads/cancel', z.null(), {
+				method: 'POST',
+				body: JSON.stringify(requestBody)
 			});
 		}
 	};

@@ -7,8 +7,13 @@ import {
 } from '@convex/lib/runResume';
 import type { Id } from '@convex/_generated/dataModel';
 
-function run(id: string, status: 'failed' | 'cancelled' | 'completed' | 'queued') {
-	return { _id: id as Id<'runs'>, status };
+// SAFETY: Convex IDs are opaque strings; these values never leave this pure unit test.
+const runOne = 'run-1' as Id<'runs'>;
+// SAFETY: Convex IDs are opaque strings; these values never leave this pure unit test.
+const runTwo = 'run-2' as Id<'runs'>;
+
+function run(id: Id<'runs'>, status: 'failed' | 'cancelled' | 'completed' | 'queued') {
+	return { _id: id, status };
 }
 
 describe('continuable parents', () => {
@@ -17,17 +22,13 @@ describe('continuable parents', () => {
 		expect(isContinuableRunStatus('cancelled')).toBe(true);
 		expect(isContinuableRunStatus('completed')).toBe(false);
 		expect(isContinuableRunStatus('queued')).toBe(false);
-		expect(assertContinuableParent(run('run-1', 'failed'), 'run-1' as Id<'runs'>)._id).toBe(
-			'run-1'
-		);
-		expect(() => assertContinuableParent(run('run-1', 'completed'), 'run-1' as Id<'runs'>)).toThrow(
+		expect(assertContinuableParent(run(runOne, 'failed'), runOne)._id).toBe(runOne);
+		expect(() => assertContinuableParent(run(runOne, 'completed'), runOne)).toThrow(
 			RUN_CANNOT_CONTINUE
 		);
-		expect(() => assertContinuableParent(run('run-2', 'failed'), 'run-1' as Id<'runs'>)).toThrow(
+		expect(() => assertContinuableParent(run(runTwo, 'failed'), runOne)).toThrow(
 			ONLY_LATEST_RUN_CAN_CONTINUE
 		);
-		expect(() => assertContinuableParent(null, 'run-1' as Id<'runs'>)).toThrow(
-			ONLY_LATEST_RUN_CAN_CONTINUE
-		);
+		expect(() => assertContinuableParent(null, runOne)).toThrow(ONLY_LATEST_RUN_CAN_CONTINUE);
 	});
 });

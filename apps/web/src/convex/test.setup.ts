@@ -30,6 +30,22 @@ export type ConvexTestInstance = TestConvex<typeof schema>;
 
 type AuthenticatedTest = ReturnType<ConvexTestInstance['withIdentity']>;
 
+type GatewayRunTestRequest = {
+	userId: string;
+	submissionId: string;
+	threadId: Id<'threadRecords'>;
+	prompt: string;
+	imageUploadIds: Id<'imageUploads'>[];
+	selectedModel: string;
+	reasoningEffort: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+	serviceTier: 'standard' | 'fast';
+	executionSecret: string;
+	protocolVersion: number;
+	installationId?: string;
+	executorSessionId?: Id<'machineSessions'>;
+	continuationOfRunId?: Id<'runs'>;
+};
+
 /** Fresh mock backend with our schema, functions, and registered components. */
 export function initConvexTest(): ConvexTestInstance {
 	const t = convexTest(schema, modules);
@@ -102,7 +118,7 @@ export async function insertQueuedRun(
 	}
 ) {
 	const thread = await asUser.query(api.threads.getByThreadId, { threadId: args.threadId });
-	return await t.mutation(internal.agentRuntime.insertGatewayRun, {
+	const request: GatewayRunTestRequest = {
 		userId: thread.userId,
 		submissionId: args.submissionId,
 		threadId: args.threadId,
@@ -114,9 +130,10 @@ export async function insertQueuedRun(
 		executionSecret: args.executionSecret,
 		protocolVersion: 1,
 		installationId: args.installationId,
-		executorSessionId: args.executorSessionId,
-		...(args.continuationOfRunId ? { continuationOfRunId: args.continuationOfRunId } : {})
-	});
+		executorSessionId: args.executorSessionId
+	};
+	if (args.continuationOfRunId) request.continuationOfRunId = args.continuationOfRunId;
+	return await t.mutation(internal.agentRuntime.insertGatewayRun, request);
 }
 
 export async function createQueuedRun(

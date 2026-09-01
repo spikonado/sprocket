@@ -279,6 +279,17 @@ export type DesktopApi = {
 			signal: AbortSignal;
 		}
 	) => Promise<void>;
+	renameThread: (request: ThreadCommandRequest & { title: string }) => Promise<void>;
+	archiveThread: (request: ThreadCommandRequest) => Promise<void>;
+	restoreThread: (request: ThreadCommandRequest) => Promise<void>;
+	rekeyRepository: (
+		request: ThreadCacheRegisterRequest & { from: string; to: string }
+	) => Promise<number>;
+	requestRunCancellation: (request: { authToken: string; runId: Id<'runs'> }) => Promise<void>;
+};
+
+export type ThreadCommandRequest = ThreadCacheRegisterRequest & {
+	threadId: Id<'threadRecords'>;
 };
 
 export type WorkspacePathResolution = {

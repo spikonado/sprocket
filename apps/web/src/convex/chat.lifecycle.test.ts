@@ -58,12 +58,12 @@ describe('durable run cancellation', { timeout: 30_000 }, () => {
 			run: { runId: created.runId }
 		});
 
-		expect(await asUser.mutation(api.agentRuntime.requestCancellation, { runId: created.runId })).toBe(
-			true
-		);
-		expect(await asUser.mutation(api.agentRuntime.requestCancellation, { runId: created.runId })).toBe(
-			true
-		);
+		expect(
+			await asUser.mutation(api.agentRuntime.requestCancellation, { runId: created.runId })
+		).toBe(true);
+		expect(
+			await asUser.mutation(api.agentRuntime.requestCancellation, { runId: created.runId })
+		).toBe(true);
 		const requested = await t.run(async (ctx) => ctx.db.get('runs', created.runId));
 		expect(requested?.cancellationRequestedAt).toEqual(expect.any(Number));
 		expect(requested?.cancellationDeadlineAt).toBe(
@@ -98,15 +98,15 @@ describe('durable run cancellation', { timeout: 30_000 }, () => {
 			})
 		).rejects.toThrow('Run is cancelled.');
 
-		expect(
-			await t.mutation(internal.runLifecycle.forceCancelRun, { runId: created.runId })
-		).toBe(false);
+		expect(await t.mutation(internal.runLifecycle.forceCancelRun, { runId: created.runId })).toBe(
+			false
+		);
 		await t.run(async (ctx) => {
 			await ctx.db.patch('runs', created.runId, { cancellationDeadlineAt: Date.now() - 1 });
 		});
-		expect(
-			await t.mutation(internal.runLifecycle.forceCancelRun, { runId: created.runId })
-		).toBe(true);
+		expect(await t.mutation(internal.runLifecycle.forceCancelRun, { runId: created.runId })).toBe(
+			true
+		);
 		expect(await t.run(async (ctx) => (await ctx.db.get('runs', created.runId))?.status)).toBe(
 			'cancelled'
 		);
@@ -135,9 +135,9 @@ describe('durable run cancellation', { timeout: 30_000 }, () => {
 		expect(await t.run(async (ctx) => (await ctx.db.get('runs', completed.runId))?.status)).toBe(
 			'completed'
 		);
-		expect(
-			await t.mutation(internal.runLifecycle.forceCancelRun, { runId: completed.runId })
-		).toBe(false);
+		expect(await t.mutation(internal.runLifecycle.forceCancelRun, { runId: completed.runId })).toBe(
+			false
+		);
 
 		const failed = await createQueuedRun(t, asUser, threadId, 'fail-to-cancel', 'fail-secret');
 		await asUser.mutation(api.agentRuntime.start, {
