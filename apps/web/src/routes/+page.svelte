@@ -1375,7 +1375,8 @@
 	async function renameThread(threadId: Id<'threadRecords'>, title: string) {
 		try {
 			const { api, userId, authToken } = await localThreadCommandContext();
-			await api.renameThread({ userId, authToken, threadId, title });
+			const cacheSynchronized = await api.renameThread({ userId, authToken, threadId, title });
+			if (!cacheSynchronized) threadCacheStatus = 'reconnecting';
 			await pullThreadSnapshot(userId);
 		} catch (error) {
 			currentError = error instanceof Error ? error.message : 'Failed to rename thread.';
@@ -1447,7 +1448,8 @@
 		const archiveUserId = getCurrentUserId();
 		try {
 			const { api, userId, authToken } = await localThreadCommandContext();
-			await api.archiveThread({ userId, authToken, threadId });
+			const cacheSynchronized = await api.archiveThread({ userId, authToken, threadId });
+			if (!cacheSynchronized) threadCacheStatus = 'reconnecting';
 			await pullThreadSnapshot(userId);
 			if (archiveUserId) {
 				clearComposerRecovery(archiveUserId, `thread:${threadId}`);
@@ -1480,7 +1482,8 @@
 	async function restoreThread(threadId: Id<'threadRecords'>) {
 		try {
 			const { api, userId, authToken } = await localThreadCommandContext();
-			await api.restoreThread({ userId, authToken, threadId });
+			const cacheSynchronized = await api.restoreThread({ userId, authToken, threadId });
+			if (!cacheSynchronized) threadCacheStatus = 'reconnecting';
 			await pullThreadSnapshot(userId);
 		} catch (error) {
 			currentError = error instanceof Error ? error.message : 'Failed to restore thread.';

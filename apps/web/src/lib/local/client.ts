@@ -672,24 +672,21 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				}
 			});
 		},
-		renameThread: async (requestBody) => {
-			await request('/api/threads/rename', z.null(), {
+		renameThread: async (requestBody) =>
+			await request('/api/threads/rename', z.boolean(), {
 				method: 'POST',
 				body: JSON.stringify(requestBody)
-			});
-		},
-		archiveThread: async (requestBody) => {
-			await request('/api/threads/archive', z.null(), {
+			}),
+		archiveThread: async (requestBody) =>
+			await request('/api/threads/archive', z.boolean(), {
 				method: 'POST',
 				body: JSON.stringify(requestBody)
-			});
-		},
-		restoreThread: async (requestBody) => {
-			await request('/api/threads/restore', z.null(), {
+			}),
+		restoreThread: async (requestBody) =>
+			await request('/api/threads/restore', z.boolean(), {
 				method: 'POST',
 				body: JSON.stringify(requestBody)
-			});
-		},
+			}),
 		rekeyRepository: async (requestBody) =>
 			await request('/api/threads/rekey', z.number(), {
 				method: 'POST',

@@ -143,7 +143,7 @@ async fn run_thread_command(
         .category
         .as_ref()
         .map_or(categories, std::slice::from_ref);
-    state
+    let cache_synchronized = match state
         .thread_cache
         .refresh_repository(
             &payload.user_id,
@@ -152,10 +152,17 @@ async fn run_thread_command(
             refresh_categories,
         )
         .await
-        .map_err(|error| {
-            ApiError::internal_with("thread command committed but cache refresh failed", error)
-        })?;
-    Ok(Json(serde_json::Value::Null))
+    {
+        Ok(()) => true,
+        Err(error) => {
+            tracing::warn!(
+                repository_key = %result.repository_key,
+                "thread command committed but cache refresh failed: {error:#}"
+            );
+            false
+        }
+    };
+    Ok(Json(serde_json::json!(cache_synchronized)))
 }
 
 async fn rename_handler(

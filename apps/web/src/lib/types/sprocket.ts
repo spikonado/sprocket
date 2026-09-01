@@ -280,9 +280,9 @@ export type DesktopApi = {
 			signal: AbortSignal;
 		}
 	) => Promise<void>;
-	renameThread: (request: ThreadCommandRequest & { title: string }) => Promise<void>;
-	archiveThread: (request: ThreadCommandRequest) => Promise<void>;
-	restoreThread: (request: ThreadCommandRequest) => Promise<void>;
+	renameThread: (request: ThreadCommandRequest & { title: string }) => Promise<boolean>;
+	archiveThread: (request: ThreadCommandRequest) => Promise<boolean>;
+	restoreThread: (request: ThreadCommandRequest) => Promise<boolean>;
 	rekeyRepository: (
 		request: ThreadCacheRegisterRequest & { from: string; to: string }
 	) => Promise<number>;
