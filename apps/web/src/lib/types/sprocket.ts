@@ -80,7 +80,6 @@ export type RunState = {
 	lastError?: string;
 	activeJobId?: Id<'executorJobs'>;
 	promptMessageId?: Id<'threadMessages'>;
-	jobs: ExecutorJob[];
 };
 
 export type MessageAttachment = {

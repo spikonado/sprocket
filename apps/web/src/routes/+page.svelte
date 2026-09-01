@@ -734,15 +734,8 @@
 	);
 
 	const runState = $derived(currentLatestRunData?.run ?? null);
-	const visibleActions = $derived.by(() =>
-		(latestRunResumeKind
-			? (currentLatestRunData?.jobs ?? []).filter(
-					(job) =>
-						!job.hidden &&
-						(job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled')
-				)
-			: (currentLatestRunData?.jobs ?? [])
-		).slice(-60)
+	const visibleActions = $derived(
+		currentLatestRunData?.activeJob ? [currentLatestRunData.activeJob] : []
 	);
 	const threadArtifacts = $derived(
 		(artifactsQuery.data ?? []).map((entry) => ({

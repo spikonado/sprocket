@@ -26,20 +26,16 @@ export const latestRunForThread = query({
 			return {
 				threadId: args.threadId,
 				run: null,
-				jobs: [],
+				activeJob: null,
 				prompt: undefined,
 				imageUploadIds: undefined,
 				serverNow
 			};
 		}
 
-		const jobs = await ctx.db
-			.query('executorJobs')
-			.withIndex('by_runId_hidden_sequence', (query) =>
-				query.eq('runId', latestRun._id).eq('hidden', false)
-			)
-			.order('desc')
-			.take(60);
+		const activeJob = latestRun.activeJobId
+			? await ctx.db.get('executorJobs', latestRun.activeJobId)
+			: null;
 		const promptMessage = latestRun.promptMessageId
 			? await ctx.db.get('threadMessages', latestRun.promptMessageId)
 			: null;
@@ -47,7 +43,7 @@ export const latestRunForThread = query({
 		const latest: Infer<typeof vLatestRunForThread> = {
 			threadId: args.threadId,
 			run: latestRun,
-			jobs: jobs.reverse(),
+			activeJob: activeJob?.hidden ? null : activeJob,
 			serverNow
 		};
 		if (promptMessage?.type === 'prompt') {

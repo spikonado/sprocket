@@ -119,7 +119,7 @@ export const vCompletionActor = v.object({
 export const vLatestRunForThread = v.object({
 	threadId: v.id('threadRecords'),
 	run: v.union(schema.doc('runs'), v.null()),
-	jobs: v.array(schema.doc('executorJobs')),
+	activeJob: v.union(schema.doc('executorJobs'), v.null()),
 	prompt: v.optional(v.string()),
 	imageUploadIds: v.optional(v.array(v.id('imageUploads'))),
 	serverNow: v.number()
