@@ -60,6 +60,25 @@ describe('threads.listMine ordering', () => {
 		const runningIds = threads.filter((thread) => thread.hasActiveRun).map((t) => t.threadId);
 		expect(runningIds).toEqual([runningNewer, runningOlder]);
 	});
+
+	it('does not load the latest settled run for an inactive thread', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const created = await createQueuedRun(t, asUser, threadId, 'settled-run', 'settled-run-secret');
+		await t.run(async (ctx) => {
+			await ctx.db.patch('runs', created.runId, {
+				status: 'completed',
+				completedAt: Date.now()
+			});
+		});
+
+		const threads = await asUser.query(api.threads.listMine, {});
+		expect(threads.find((thread) => thread.threadId === threadId)).toMatchObject({
+			latestRunId: null,
+			latestRunStatus: null,
+			hasActiveRun: false
+		});
+	});
 });
 
 describe('threads.rekeyRepository', () => {

@@ -4,13 +4,9 @@ import { v } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
 import { vThreadSummary, vThreadWithUsageDoc } from '@convex/lib/docs';
+import { compareRunStartedAt } from '@convex/lib/runs';
 import { getThreadUsageValues } from '@convex/lib/threadUsage';
-import {
-	isRunFinalStatus,
-	vReasoningEffort,
-	vRunStatus,
-	vServiceTier
-} from '@convex/lib/validators';
+import { vReasoningEffort, vRunStatus, vServiceTier } from '@convex/lib/validators';
 
 async function patchOwnedThread(
 	ctx: MutationCtx,
@@ -101,33 +97,43 @@ export const listMine = query({
 	returns: v.array(vThreadSummary),
 	handler: async (ctx) => {
 		const userId = await getUserId(ctx);
-		const records = await ctx.db
-			.query('threadRecords')
-			.withIndex('by_userId_lastMessageAt', (query) => query.eq('userId', userId))
-			.order('desc')
-			.collect();
-		const summaries = await Promise.all(
-			records.map(async (record) => {
-				const latestRun = await ctx.db
+		const [records, ...activeRunGroups] = await Promise.all([
+			ctx.db
+				.query('threadRecords')
+				.withIndex('by_userId_lastMessageAt', (query) => query.eq('userId', userId))
+				.order('desc')
+				.collect(),
+			...(['queued', 'running', 'awaiting_executor'] as const).map((status) =>
+				ctx.db
 					.query('runs')
-					.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', record._id))
-					.order('desc')
-					.first();
-				return {
-					...record,
-					threadId: record._id,
-					repositoryKey: record.repositoryKey ?? '',
-					title: record.title?.trim() || 'New thread',
-					threadStatus:
-						record.archivedAt !== undefined ? ('archived' as const) : ('active' as const),
-					latestRunStatus: latestRun?.status ?? null,
-					latestRunId: latestRun?._id ?? null,
-					latestRunStartedAt: latestRun?.startedAt,
-					latestRunClaimExpiresAt: latestRun?.claimExpiresAt,
-					hasActiveRun: latestRun ? !isRunFinalStatus(latestRun.status) : false
-				};
-			})
-		);
+					.withIndex('by_userId_and_status_and_startedAt', (query) =>
+						query.eq('userId', userId).eq('status', status)
+					)
+					.collect()
+			)
+		]);
+		const activeRunByThread = new Map<Id<'threadRecords'>, Doc<'runs'>>();
+		for (const run of activeRunGroups.flat()) {
+			const current = activeRunByThread.get(run.threadId);
+			if (!current || compareRunStartedAt(run, current) > 0) {
+				activeRunByThread.set(run.threadId, run);
+			}
+		}
+		const summaries = records.map((record) => {
+			const activeRun = activeRunByThread.get(record._id);
+			return {
+				...record,
+				threadId: record._id,
+				repositoryKey: record.repositoryKey ?? '',
+				title: record.title?.trim() || 'New thread',
+				threadStatus: record.archivedAt !== undefined ? ('archived' as const) : ('active' as const),
+				latestRunStatus: activeRun?.status ?? null,
+				latestRunId: activeRun?._id ?? null,
+				latestRunStartedAt: activeRun?.startedAt,
+				latestRunClaimExpiresAt: activeRun?.claimExpiresAt,
+				hasActiveRun: activeRun !== undefined
+			};
+		});
 		// Running threads first, then most recently active. The index already
 		// returns lastMessageAt-desc, so the comparator only needs to promote
 		// active runs while staying stable for the rest.
