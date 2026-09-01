@@ -143,7 +143,7 @@ async fn run_thread_command(
         .category
         .as_ref()
         .map_or(categories, std::slice::from_ref);
-    state
+    if let Err(error) = state
         .thread_cache
         .refresh_repository(
             &payload.user_id,
@@ -152,7 +152,12 @@ async fn run_thread_command(
             refresh_categories,
         )
         .await
-        .map_err(ApiError::bad_request)?;
+    {
+        tracing::warn!(
+            repository_key = %result.repository_key,
+            "thread command committed but cache refresh failed: {error:#}"
+        );
+    }
     Ok(Json(serde_json::Value::Null))
 }
 
@@ -241,7 +246,7 @@ async fn rekey_handler(
     }
     if result.count > 0 {
         for repository_key in [&result.from, &result.to] {
-            state
+            if let Err(error) = state
                 .thread_cache
                 .refresh_repository(
                     &payload.user_id,
@@ -253,7 +258,12 @@ async fn rekey_handler(
                     ],
                 )
                 .await
-                .map_err(ApiError::bad_request)?;
+            {
+                tracing::warn!(
+                    repository_key,
+                    "repository rekey committed but cache refresh failed: {error:#}"
+                );
+            }
         }
     }
     Ok(Json(serde_json::json!(result.count)))

@@ -88,6 +88,27 @@ describe('agentRuntime.start', () => {
 		).resolves.toEqual({ claimed: false });
 	});
 
+	it('does not start a queued run after cancellation is requested', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'start-cancelled-secret';
+		const { runId } = await createQueuedRun(t, asUser, threadId, 'sub-cancelled', executionSecret);
+
+		await asUser.mutation(api.agentRuntime.requestCancellation, { runId });
+
+		await expect(
+			asUser.mutation(api.agentRuntime.start, {
+				claimId: 'claim-cancelled',
+				runId,
+				executionSecret
+			})
+		).resolves.toEqual({ claimed: false });
+		expect(await t.run(async (ctx) => ctx.db.get('runs', runId))).toMatchObject({
+			status: 'queued',
+			cancellationRequestedAt: expect.any(Number)
+		});
+	});
+
 	it('rejects completion writes after a claim expires but lets the owner terminalize the run', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
