@@ -105,7 +105,9 @@ async fn run_agent_handler(
         machine_credential_hash: state.machine_identity.credential_hash.clone(),
         machine_friendly_name: state.machine_identity.friendly_name.clone(),
         machine_platform: state.machine_identity.platform.clone(),
+        machine_platform_version: state.machine_identity.platform_version.clone(),
         machine_architecture: state.machine_identity.architecture.clone(),
+        machine_hostname: state.machine_identity.hostname.clone(),
         continuation_of_run_id: payload.continuation_of_run_id,
     };
 

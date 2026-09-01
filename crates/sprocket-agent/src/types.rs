@@ -31,7 +31,9 @@ pub struct RunAgentRequest {
     pub machine_credential_hash: String,
     pub machine_friendly_name: String,
     pub machine_platform: String,
+    pub machine_platform_version: String,
     pub machine_architecture: String,
+    pub machine_hostname: String,
     pub continuation_of_run_id: Option<String>,
 }
 

@@ -53,7 +53,9 @@ export const register = mutation({
 		credentialHash: v.string(),
 		friendlyName: v.string(),
 		platform: v.string(),
+		platformVersion: v.optional(v.string()),
 		architecture: v.string(),
+		hostname: v.optional(v.string()),
 		appVersion: v.string()
 	},
 	returns: v.object({ sessionId: v.id('machineSessions'), userId: v.string() }),
@@ -126,7 +128,9 @@ export const register = mutation({
 			await ctx.db.patch('installations', installation._id, {
 				friendlyName: args.friendlyName,
 				platform: args.platform,
+				platformVersion: args.platformVersion,
 				architecture: args.architecture,
+				hostname: args.hostname,
 				appVersion: args.appVersion,
 				currentSessionId: sessionId,
 				updatedAt: now
@@ -137,7 +141,9 @@ export const register = mutation({
 				installationId: args.installationId,
 				friendlyName: args.friendlyName,
 				platform: args.platform,
+				platformVersion: args.platformVersion,
 				architecture: args.architecture,
+				hostname: args.hostname,
 				appVersion: args.appVersion,
 				currentSessionId: sessionId,
 				createdAt: now,

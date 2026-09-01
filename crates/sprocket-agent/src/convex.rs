@@ -254,6 +254,14 @@ impl RuntimeClient {
             request.machine_architecture.clone().into(),
         );
         args.insert(
+            "platformVersion".to_string(),
+            request.machine_platform_version.clone().into(),
+        );
+        args.insert(
+            "hostname".to_string(),
+            request.machine_hostname.clone().into(),
+        );
+        args.insert(
             "appVersion".to_string(),
             env!("CARGO_PKG_VERSION").to_string().into(),
         );
