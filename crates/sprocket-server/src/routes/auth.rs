@@ -381,6 +381,10 @@ mod tests {
             convex_deployment_url: "https://example.convex.cloud".to_string(),
             web_ui_enabled: true,
             desktop_bootstrap_token: None,
+            machine_identity: Arc::new(
+                crate::machine_identity::MachineIdentity::load(&temp_dir)
+                    .expect("machine identity"),
+            ),
         };
 
         (state, session_token, credential)

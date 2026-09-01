@@ -24,7 +24,7 @@ import {
 import { recordThreadUsageEvent, usageEventId } from '@convex/lib/threadUsage';
 import { finalizeRunRecord, matchesFinalizeExpectations } from '@convex/lib/runFinalize';
 import { startRunLifecycle } from '@convex/runLifecycle';
-import { clearInFlightWork, reopenRunRecord } from '@convex/lib/runResume';
+import { reopenRunRecord } from '@convex/lib/runResume';
 import { enqueueWebToolJob, isCloudWebToolKind } from '@convex/webToolPool';
 import {
 	recordCompletionTranscript,
@@ -101,6 +101,8 @@ type QueuedRunRequest = {
 	executionSecret: string;
 	protocolVersion: number;
 	agentVersion?: string;
+	installationId?: string;
+	executorSessionId?: Id<'machineSessions'>;
 };
 
 type GatewayRunTelemetry = {
@@ -126,6 +128,28 @@ async function createQueuedRunRecord(
 		throw new Error('Message cannot be empty.');
 	}
 	const imageUploads = await getOwnedImageUploads(ctx, args.userId, args.imageUploadIds);
+	if ((args.installationId === undefined) !== (args.executorSessionId === undefined)) {
+		throw new Error('Executor session identity is incomplete.');
+	}
+	if (args.executorSessionId) {
+		const session = await ctx.db.get('machineSessions', args.executorSessionId);
+		const installation = await ctx.db
+			.query('installations')
+			.withIndex('by_userId_and_installationId', (query) =>
+				query.eq('userId', args.userId).eq('installationId', args.installationId!)
+			)
+			.unique();
+		if (
+			!session ||
+			session.userId !== args.userId ||
+			session.installationId !== args.installationId ||
+			session.supersededAt !== undefined ||
+			session.revokedAt !== undefined ||
+			installation?.currentSessionId !== session._id
+		) {
+			throw new Error('Executor session is not active.');
+		}
+	}
 
 	const existingRun = await ctx.db
 		.query('runs')
@@ -135,13 +159,7 @@ async function createQueuedRunRecord(
 		.unique();
 	if (existingRun) {
 		if (existingRun.executionSecretHash !== secretHash) {
-			const canRecoverExecutor =
-				existingRun.status === 'queued' ||
-				(isClaimedRunStatus(existingRun.status) && !isRunClaimLeaseActive(existingRun, Date.now()));
-			if (!canRecoverExecutor) {
-				throw new ConvexError('Submission belongs to a different active executor.');
-			}
-			await ctx.db.patch('runs', existingRun._id, { executionSecretHash: secretHash });
+			throw new ConvexError('Submission belongs to a different executor.');
 		}
 		if (
 			existingRun.threadId !== args.threadId ||
@@ -183,6 +201,17 @@ async function createQueuedRunRecord(
 			promptPart
 		};
 	}
+	if (args.executorSessionId) {
+		const activeSessionRuns = await ctx.db
+			.query('machineSessionRuns')
+			.withIndex('by_sessionId_and_active', (query) =>
+				query.eq('sessionId', args.executorSessionId!).eq('active', true)
+			)
+			.take(64);
+		if (activeSessionRuns.length >= 64) {
+			throw new Error('Executor session has too many active runs.');
+		}
+	}
 	const latestRun = await ctx.db
 		.query('runs')
 		.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', args.threadId))
@@ -219,9 +248,18 @@ async function createQueuedRunRecord(
 		selectedModel: args.selectedModel,
 		reasoningEffort: args.reasoningEffort,
 		serviceTier: args.serviceTier,
+		installationId: args.installationId,
+		executorSessionId: args.executorSessionId,
 		startedAt: Date.now(),
 		...gatewayFields
 	});
+	if (args.executorSessionId) {
+		await ctx.db.insert('machineSessionRuns', {
+			sessionId: args.executorSessionId,
+			runId,
+			active: true
+		});
+	}
 	const completionStreamStateId = await ctx.db.insert('completionStreamStates', {
 		runId,
 		userId: args.userId,
@@ -306,7 +344,9 @@ export const insertGatewayRun = internalMutation({
 		serviceTier: vServiceTier,
 		executionSecret: v.string(),
 		protocolVersion: v.number(),
-		agentVersion: v.optional(v.string())
+		agentVersion: v.optional(v.string()),
+		installationId: v.optional(v.string()),
+		executorSessionId: v.optional(v.id('machineSessions'))
 	},
 	returns: v.object({
 		created: v.boolean(),
@@ -330,7 +370,9 @@ export const createGatewayRun = action({
 		reasoningEffort: vReasoningEffort,
 		serviceTier: vServiceTier,
 		executionSecret: v.string(),
-		agentVersion: v.optional(v.string())
+		agentVersion: v.optional(v.string()),
+		installationId: v.optional(v.string()),
+		executorSessionId: v.optional(v.id('machineSessions'))
 	},
 	returns: vCreateGatewayRunResult,
 	handler: async (ctx, args): Promise<Infer<typeof vCreateGatewayRunResult>> => {
@@ -347,7 +389,9 @@ export const createGatewayRun = action({
 			serviceTier: args.serviceTier,
 			executionSecret: args.executionSecret,
 			protocolVersion: GATEWAY_PROTOCOL_VERSION,
-			agentVersion: args.agentVersion
+			agentVersion: args.agentVersion,
+			installationId: args.installationId,
+			executorSessionId: args.executorSessionId
 		});
 		return {
 			...created,
@@ -399,11 +443,7 @@ export const start = mutation({
 			return { claimed: false };
 		}
 
-		const isTakeover = isClaimedRunStatus(run.status) && run.claimId !== args.claimId;
 		const isSameClaimRenewal = isClaimedRunStatus(run.status) && run.claimId === args.claimId;
-		if (isTakeover) {
-			await clearInFlightWork(ctx, run, now);
-		}
 
 		const nextClaimExpiresAt = claimExpiresAt(now);
 
@@ -414,7 +454,6 @@ export const start = mutation({
 			lastError: undefined
 		};
 		if (!isSameClaimRenewal) claimPatch.completionAttemptSeq = 0;
-		if (isTakeover) claimPatch.activeJobId = undefined;
 		await ctx.db.patch('runs', args.runId, claimPatch);
 
 		return { claimed: true, claimExpiresAt: nextClaimExpiresAt };
@@ -771,12 +810,9 @@ export const finalizeFailedStart = mutation({
 		executionSecret: v.string()
 	},
 	// `finalized`: the queued run was terminalized. `pending`: nothing is
-	// visible for the capability; either createGatewayRun is still in flight or, when
-	// the caller's identity is gone, a rebound run cannot be told apart from a
-	// missing one, so the caller keeps retrying until its deadline.
-	// `standDown`: the run belongs to an active executor (a racing launch
-	// rebound it) or is past the queued stage, so the caller stops without
-	// terminalizing it.
+	// visible for the capability, so createGatewayRun may still be in flight.
+	// `standDown`: the run belongs to another executor or is past the queued
+	// stage, so the caller stops without terminalizing it.
 	returns: v.union(v.literal('finalized'), v.literal('pending'), v.literal('standDown')),
 	handler: async (ctx, args) => {
 		// The browser identity can be gone by the time this cleanup runs; the
@@ -788,9 +824,8 @@ export const finalizeFailedStart = mutation({
 			.withIndex('by_executionSecretHash', (query) => query.eq('executionSecretHash', secretHash))
 			.unique();
 		if (!run) {
-			// A racing launch may already have rebound the run to its own
-			// secret; when the caller is still authenticated, tell the loser to
-			// stand down instead of retrying until its deadline.
+			// When the caller is still authenticated, distinguish a duplicate
+			// submission owned by another executor from an insert still in flight.
 			const identity = await ctx.auth.getUserIdentity();
 			if (identity !== null) {
 				const submittedRun = await ctx.db

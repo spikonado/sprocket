@@ -97,6 +97,13 @@ async fn run_agent_handler(
         service_tier: payload.service_tier,
         workspace_path,
         transcript_root: state.transcript.root(),
+        installation_id: state.machine_identity.installation_id.clone(),
+        process_session_id: state.machine_identity.process_session_id.clone(),
+        machine_credential: state.machine_identity.credential.clone(),
+        machine_credential_hash: state.machine_identity.credential_hash.clone(),
+        machine_friendly_name: state.machine_identity.friendly_name.clone(),
+        machine_platform: state.machine_identity.platform.clone(),
+        machine_architecture: state.machine_identity.architecture.clone(),
     };
 
     let cleanup_request = request.clone();

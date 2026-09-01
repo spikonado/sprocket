@@ -96,6 +96,8 @@ export async function insertQueuedRun(
 		selectedModel?: string;
 		reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 		serviceTier?: 'standard' | 'fast';
+		installationId?: string;
+		executorSessionId?: Id<'machineSessions'>;
 	}
 ) {
 	const thread = await asUser.query(api.threads.getByThreadId, { threadId: args.threadId });
@@ -109,7 +111,9 @@ export async function insertQueuedRun(
 		reasoningEffort: args.reasoningEffort ?? 'medium',
 		serviceTier: args.serviceTier ?? 'standard',
 		executionSecret: args.executionSecret,
-		protocolVersion: 1
+		protocolVersion: 1,
+		installationId: args.installationId,
+		executorSessionId: args.executorSessionId
 	});
 }
 

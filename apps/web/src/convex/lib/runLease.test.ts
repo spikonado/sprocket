@@ -15,15 +15,15 @@ describe('run claim leases', () => {
 			canStartRunWithClaim(
 				{ status: 'running', claimId: 'claim-a', claimExpiresAt: 200 },
 				'claim-a',
-				200
+				199
 			)
 		).toBe(true);
 	});
 
-	it('excludes a different claim until the lease expires', () => {
+	it('never transfers a claimed run to a different claim', () => {
 		const run = { status: 'running', claimId: 'claim-a', claimExpiresAt: 200 };
 		expect(canStartRunWithClaim(run, 'claim-b', 199)).toBe(false);
-		expect(canStartRunWithClaim(run, 'claim-b', 200)).toBe(true);
+		expect(canStartRunWithClaim(run, 'claim-b', 200)).toBe(false);
 	});
 
 	it('only reports an unexpired active-state lease as active', () => {
@@ -32,10 +32,11 @@ describe('run claim leases', () => {
 		expect(isRunClaimLeaseActive({ status: 'completed', claimExpiresAt: 200 }, 100)).toBe(false);
 	});
 
-	it('treats a claimed run without claimExpiresAt as inactive and startable', () => {
+	it('does not restart a claimed run whose lease is missing', () => {
 		const run = { status: 'running', claimId: 'claim-a' };
 		expect(isRunClaimLeaseActive(run, 100)).toBe(false);
-		expect(canStartRunWithClaim(run, 'claim-b', 100)).toBe(true);
+		expect(canStartRunWithClaim(run, 'claim-a', 100)).toBe(false);
+		expect(canStartRunWithClaim(run, 'claim-b', 100)).toBe(false);
 	});
 
 	it('only treats a matching unexpired claim as active ownership', () => {

@@ -167,6 +167,16 @@ supported agents emit the current `CommandExecOutput` schema. Then remove the
 legacy command validator and both migration definitions/pins; keep the
 write-boundary normalization until old executor clients are unsupported.
 
+### 10. Runs without machine-session identity
+
+Released agents create runs without `installationId` or `executorSessionId`,
+so both fields remain optional. Current local servers persist an installation
+ID, generate one process-session identity per launch, register that session,
+and bind new runs to it.
+
+Remove the optionality after all supported clients register machine sessions
+and a production scan finds no active runs without both fields.
+
 ## Client APIs
 
 Released desktop/CLI builds that still call retired Convex functions get a

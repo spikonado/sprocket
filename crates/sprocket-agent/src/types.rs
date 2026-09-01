@@ -25,6 +25,13 @@ pub struct RunAgentRequest {
     pub service_tier: String,
     pub workspace_path: String,
     pub transcript_root: std::path::PathBuf,
+    pub installation_id: String,
+    pub process_session_id: String,
+    pub machine_credential: String,
+    pub machine_credential_hash: String,
+    pub machine_friendly_name: String,
+    pub machine_platform: String,
+    pub machine_architecture: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
