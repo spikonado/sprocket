@@ -128,7 +128,11 @@ export default defineSchema({
 	})
 		.index('by_userId_lastMessageAt', ['userId', 'lastMessageAt'])
 		.index('by_userId_submissionId', ['userId', 'submissionId'])
-		.index('by_userId_repositoryKey', ['userId', 'repositoryKey']),
+		.index('by_userId_repositoryKey', ['userId', 'repositoryKey'])
+		.index('by_userId_and_repositoryKey_and_archivedAt_and_lastMessageAt', {
+			fields: ['userId', 'repositoryKey', 'archivedAt', 'lastMessageAt'],
+			staged: true
+		}),
 	threadSnapshotRevisions: defineTable({
 		userId: v.string(),
 		repositoryKey: v.string(),
