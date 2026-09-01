@@ -143,7 +143,7 @@ async fn run_thread_command(
         .category
         .as_ref()
         .map_or(categories, std::slice::from_ref);
-    if let Err(error) = state
+    state
         .thread_cache
         .refresh_repository(
             &payload.user_id,
@@ -152,12 +152,9 @@ async fn run_thread_command(
             refresh_categories,
         )
         .await
-    {
-        tracing::warn!(
-            repository_key = %result.repository_key,
-            "thread command committed but cache refresh failed: {error:#}"
-        );
-    }
+        .map_err(|error| {
+            ApiError::internal_with("thread command committed but cache refresh failed", error)
+        })?;
     Ok(Json(serde_json::Value::Null))
 }
 
@@ -247,14 +244,6 @@ async fn rekey_handler(
     if result.from != result.to {
         state
             .thread_cache
-            .store()
-            .reset_repository(&payload.user_id, &result.from)
-            .await
-            .map_err(|error| {
-                ApiError::internal_with("rekey committed but source cache cleanup failed", error)
-            })?;
-        if let Err(error) = state
-            .thread_cache
             .refresh_repository(
                 &payload.user_id,
                 payload.auth_token,
@@ -265,12 +254,20 @@ async fn rekey_handler(
                 ],
             )
             .await
-        {
-            tracing::warn!(
-                repository_key = %result.to,
-                "repository rekey committed but destination cache refresh failed: {error:#}"
-            );
-        }
+            .map_err(|error| {
+                ApiError::internal_with(
+                    "rekey committed but destination cache refresh failed",
+                    error,
+                )
+            })?;
+        state
+            .thread_cache
+            .store()
+            .reset_repository(&payload.user_id, &result.from)
+            .await
+            .map_err(|error| {
+                ApiError::internal_with("rekey committed but source cache cleanup failed", error)
+            })?;
     }
     Ok(Json(serde_json::json!(result.count)))
 }
