@@ -49,6 +49,12 @@ import { unsupportedClient } from '@convex/lib/unsupportedClient';
 import { assertThreadCanStartRun, compareRunStartedAt } from '@convex/lib/runs';
 import { bumpThreadSnapshotForRun } from '@convex/lib/threadSnapshots';
 import {
+	attachRunToMachine,
+	getOwnedMachine,
+	isMachineActive,
+	MAX_ACTIVE_MACHINE_RUNS
+} from '@convex/lib/machineRuns';
+import {
 	canRegisterCompletionAttempt,
 	canFinalizeAfterClaimFailure,
 	canStartRunWithClaim,
@@ -107,7 +113,7 @@ type QueuedRunRequest = {
 	protocolVersion: number;
 	agentVersion?: string;
 	installationId?: string;
-	executorSessionId?: Id<'machineSessions'>;
+	machineId?: string;
 	continuationOfRunId?: Id<'runs'>;
 };
 
@@ -139,26 +145,12 @@ async function createQueuedRunRecord(
 	const imageUploads = continuationOfRunId
 		? []
 		: await getOwnedImageUploads(ctx, args.userId, args.imageUploadIds);
-	if ((args.installationId === undefined) !== (args.executorSessionId === undefined)) {
-		throw new Error('Executor session identity is incomplete.');
-	}
-	if (args.executorSessionId) {
-		const session = await ctx.db.get('machineSessions', args.executorSessionId);
-		const installation = await ctx.db
-			.query('installations')
-			.withIndex('by_userId_and_installationId', (query) =>
-				query.eq('userId', args.userId).eq('installationId', args.installationId!)
-			)
-			.unique();
-		if (
-			!session ||
-			session.userId !== args.userId ||
-			session.installationId !== args.installationId ||
-			session.supersededAt !== undefined ||
-			session.revokedAt !== undefined ||
-			installation?.currentSessionId !== session._id
-		) {
-			throw new Error('Executor session is not active.');
+	const machineId = args.machineId ?? args.installationId;
+	let machine = null;
+	if (machineId) {
+		machine = await getOwnedMachine(ctx, args.userId, machineId);
+		if (!machine || !isMachineActive(machine)) {
+			throw new Error('Machine is not active.');
 		}
 	}
 
@@ -170,17 +162,6 @@ async function createQueuedRunRecord(
 		.unique();
 	if (existingRun) {
 		return await reconcileExistingQueuedRun(ctx, args, existingRun, secretHash, prompt);
-	}
-	if (args.executorSessionId) {
-		const activeSessionRuns = await ctx.db
-			.query('machineSessionRuns')
-			.withIndex('by_sessionId_and_active', (query) =>
-				query.eq('sessionId', args.executorSessionId!).eq('active', true)
-			)
-			.take(64);
-		if (activeSessionRuns.length >= 64) {
-			throw new Error('Executor session has too many active runs.');
-		}
 	}
 	let latestRun = await ctx.db
 		.query('runs')
@@ -198,11 +179,17 @@ async function createQueuedRunRecord(
 			lastError: RUN_ABANDONED_BY_AGENT
 		});
 		latestRun = (await ctx.db.get('runs', latestRun._id)) ?? latestRun;
+		if (machine) {
+			machine = (await ctx.db.get('machines', machine._id)) ?? machine;
+		}
 	} else {
 		assertThreadCanStartRun(latestRun?.status);
 	}
 	if (continuationOfRunId) {
 		assertContinuableParent(latestRun, continuationOfRunId);
+	}
+	if (machine && machine.runIds.length >= MAX_ACTIVE_MACHINE_RUNS) {
+		throw new Error('Machine has too many active runs.');
 	}
 
 	const gatewayFields: GatewayRunTelemetry = {
@@ -222,19 +209,14 @@ async function createQueuedRunRecord(
 		selectedModel: args.selectedModel,
 		reasoningEffort: args.reasoningEffort,
 		serviceTier: args.serviceTier,
-		installationId: args.installationId,
-		executorSessionId: args.executorSessionId,
 		startedAt: Date.now(),
 		...gatewayFields
 	};
+	if (machineId) runRecord.machineId = machineId;
 	if (continuationOfRunId) runRecord.continuationOfRunId = continuationOfRunId;
 	const runId = await ctx.db.insert('runs', runRecord);
-	if (args.executorSessionId) {
-		await ctx.db.insert('machineSessionRuns', {
-			sessionId: args.executorSessionId,
-			runId,
-			active: true
-		});
+	if (machine) {
+		await attachRunToMachine(ctx, machine, runId);
 	}
 	const completionStreamStateId = await ctx.db.insert('completionStreamStates', {
 		runId,
@@ -396,7 +378,8 @@ export const insertGatewayRun = internalMutation({
 		protocolVersion: v.number(),
 		agentVersion: v.optional(v.string()),
 		installationId: v.optional(v.string()),
-		executorSessionId: v.optional(v.id('machineSessions')),
+		machineId: v.optional(v.string()),
+		executorSessionId: v.optional(v.string()),
 		continuationOfRunId: v.optional(v.id('runs'))
 	},
 	returns: vCreatedGatewayRun,
@@ -417,7 +400,8 @@ export const createGatewayRun = action({
 		executionSecret: v.string(),
 		agentVersion: v.optional(v.string()),
 		installationId: v.optional(v.string()),
-		executorSessionId: v.optional(v.id('machineSessions')),
+		machineId: v.optional(v.string()),
+		executorSessionId: v.optional(v.string()),
 		continuationOfRunId: v.optional(v.id('runs'))
 	},
 	returns: vCreateGatewayRunResult,
@@ -437,7 +421,7 @@ export const createGatewayRun = action({
 			protocolVersion: GATEWAY_PROTOCOL_VERSION,
 			agentVersion: args.agentVersion,
 			installationId: args.installationId,
-			executorSessionId: args.executorSessionId
+			machineId: args.machineId
 		};
 		if (args.continuationOfRunId) request.continuationOfRunId = args.continuationOfRunId;
 		const created = await ctx.runMutation(internal.agentRuntime.insertGatewayRun, request);

@@ -325,7 +325,7 @@ async fn end_account_session_handler(
         .await
         .map_err(ApiError::unauthorized)?;
     state
-        .machine_sessions
+        .machines
         .end(&payload.user_id)
         .await
         .map_err(ApiError::bad_request)?;
@@ -342,7 +342,7 @@ async fn register_handler(
         .await
         .map_err(ApiError::unauthorized)?;
     state
-        .machine_sessions
+        .machines
         .register(&payload.user_id, payload.auth_token.clone())
         .await
         .map_err(ApiError::bad_request)?;

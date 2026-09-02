@@ -7,6 +7,7 @@ import { cancelWebToolWork } from '@convex/webToolPool';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
 import { resolveRequestedFinalizeStatus } from '@convex/lib/runCancellation';
 import { bumpThreadSnapshotForRun } from '@convex/lib/threadSnapshots';
+import { detachRunFromMachine } from '@convex/lib/machineRuns';
 
 type FinalizeRunArgs = {
 	text: string;
@@ -45,15 +46,7 @@ export async function finalizeRunRecord(
 	const completedAt = run.completedAt ?? Date.now();
 	const lastError = alreadyFinal ? run.lastError : args.lastError;
 	await cancelWebToolWork(ctx, run._id);
-	if (run.executorSessionId) {
-		const sessionRun = await ctx.db
-			.query('machineSessionRuns')
-			.withIndex('by_runId', (query) => query.eq('runId', run._id))
-			.unique();
-		if (sessionRun?.active) {
-			await ctx.db.patch('machineSessionRuns', sessionRun._id, { active: false });
-		}
-	}
+	await detachRunFromMachine(ctx, run);
 
 	if (alreadyFinal) {
 		await reconcileTerminalRunPages(

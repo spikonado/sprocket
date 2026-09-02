@@ -26,17 +26,19 @@ describe('durable run cancellation', { timeout: 30_000 }, () => {
 			if (!run) {
 				throw new Error('queued run missing');
 			}
-			await ctx.db.insert('installations', {
+			await ctx.db.insert('machines', {
 				userId: run.userId,
-				installationId: 'install-lifecycle',
+				machineId: 'install-lifecycle',
 				friendlyName: 'Workshop',
 				platform: 'linux',
 				architecture: 'x86_64',
 				appVersion: '0.3.2',
+				credentialHash: 'a'.repeat(64),
+				runIds: [created.runId],
 				createdAt: Date.now(),
 				updatedAt: Date.now()
 			});
-			await ctx.db.patch('runs', created.runId, { installationId: 'install-lifecycle' });
+			await ctx.db.patch('runs', created.runId, { machineId: 'install-lifecycle' });
 		});
 		const queued = await asUser.query(api.chat.selectedThreadLifecycle, { threadId });
 		expect(queued).toEqual({

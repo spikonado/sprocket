@@ -2,6 +2,7 @@ import { query } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
+import { getOwnedMachine, runMachineId } from '@convex/lib/machineRuns';
 import { vSelectedThreadLifecycle } from '@convex/lib/docs';
 import { projectSelectedThreadLifecycle } from '@convex/lib/runCancellation';
 import { unsupportedClient } from '@convex/lib/unsupportedClient';
@@ -47,14 +48,10 @@ export const selectedThreadLifecycle = query({
 			)
 			.first();
 		let executorFriendlyName: string | undefined;
-		if (latestRun.installationId) {
-			const installation = await ctx.db
-				.query('installations')
-				.withIndex('by_userId_and_installationId', (query) =>
-					query.eq('userId', latestRun.userId).eq('installationId', latestRun.installationId!)
-				)
-				.unique();
-			executorFriendlyName = installation?.friendlyName;
+		const machineId = runMachineId(latestRun);
+		if (machineId) {
+			const machine = await getOwnedMachine(ctx, latestRun.userId, machineId);
+			executorFriendlyName = machine?.friendlyName;
 		}
 
 		return projectSelectedThreadLifecycle({

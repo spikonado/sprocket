@@ -1,7 +1,7 @@
 mod auth;
 mod config;
 mod machine_identity;
-mod machine_sessions;
+mod machines;
 mod project_attachments;
 pub mod repo_env;
 mod routes;
@@ -87,7 +87,7 @@ pub struct AppState {
     pub transcript: Arc<TranscriptStore>,
     pub transcript_watchers: Arc<TranscriptWatchers>,
     pub thread_cache: Arc<thread_sync::ThreadCacheSync>,
-    pub machine_sessions: Arc<machine_sessions::MachineSessionManager>,
+    pub machines: Arc<machines::MachineManager>,
     pub live_completions: Arc<LiveCompletionHub>,
     pub http_base_url: String,
     pub desktop_login_callback_url: String,
@@ -121,10 +121,8 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
     let data_dir = config.resolve_data_dir();
     let auth = auth::AuthState::load(&data_dir)?;
     let machine_identity = Arc::new(machine_identity::MachineIdentity::load(&data_dir)?);
-    let machine_sessions = machine_sessions::MachineSessionManager::new(
-        convex_deployment_url.clone(),
-        Arc::clone(&machine_identity),
-    );
+    let machines =
+        machines::MachineManager::new(convex_deployment_url.clone(), Arc::clone(&machine_identity));
     let pairing_credential = auth.pairing_credential().to_string();
     let project_attachments = project_attachments::ProjectAttachmentStore::new(data_dir.clone());
     let transcript = TranscriptStore::new(data_dir.join("transcripts"));
@@ -154,7 +152,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         transcript,
         transcript_watchers,
         thread_cache,
-        machine_sessions: Arc::clone(&machine_sessions),
+        machines: Arc::clone(&machines),
         live_completions: Arc::new(LiveCompletionHub::new()),
         http_base_url: http_base_url.clone(),
         desktop_login_callback_url: auth::desktop_login_callback_url(config.port),
@@ -217,7 +215,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
     )
     .with_graceful_shutdown(shutdown_signal())
     .await;
-    machine_sessions.shutdown().await;
+    machines.shutdown().await;
     result?;
     Ok(())
 }

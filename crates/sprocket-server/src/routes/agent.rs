@@ -87,8 +87,8 @@ async fn run_agent_handler(
         .map_err(ApiError::bad_request)?;
 
     let auth_token = payload.auth_token;
-    let executor_session_id = state
-        .machine_sessions
+    state
+        .machines
         .register(&payload.user_id, auth_token.clone())
         .await
         .map_err(ApiError::bad_request)?;
@@ -107,7 +107,6 @@ async fn run_agent_handler(
         workspace_path,
         transcript_root: state.transcript.root(),
         installation_id: state.machine_identity.installation_id.clone(),
-        executor_session_id,
         continuation_of_run_id: payload.continuation_of_run_id,
     };
 

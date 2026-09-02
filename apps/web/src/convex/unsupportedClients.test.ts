@@ -40,6 +40,17 @@ describe('retired client APIs', () => {
 		await expect(asUser.query(api.threads.listMine, {})).rejects.toThrow(
 			UNSUPPORTED_CLIENT_MESSAGE
 		);
+		await expect(
+			asUser.mutation(api.machineSessions.register, {
+				installationId: 'old',
+				processSessionId: 'old',
+				credentialHash: 'a'.repeat(64),
+				friendlyName: 'Old',
+				platform: 'linux',
+				architecture: 'x86_64',
+				appVersion: '0.1.0'
+			})
+		).rejects.toThrow(UNSUPPORTED_CLIENT_MESSAGE);
 		await expect(asUser.query(api.chat.latestRunForThread, { threadId })).rejects.toThrow(
 			UNSUPPORTED_CLIENT_MESSAGE
 		);

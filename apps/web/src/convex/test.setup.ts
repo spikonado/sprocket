@@ -42,7 +42,7 @@ type GatewayRunTestRequest = {
 	executionSecret: string;
 	protocolVersion: number;
 	installationId?: string;
-	executorSessionId?: Id<'machineSessions'>;
+	machineId?: string;
 	continuationOfRunId?: Id<'runs'>;
 };
 
@@ -114,7 +114,7 @@ export async function insertQueuedRun(
 		reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 		serviceTier?: 'standard' | 'fast';
 		installationId?: string;
-		executorSessionId?: Id<'machineSessions'>;
+		machineId?: string;
 		continuationOfRunId?: Id<'runs'>;
 	}
 ) {
@@ -131,7 +131,7 @@ export async function insertQueuedRun(
 		executionSecret: args.executionSecret,
 		protocolVersion: 1,
 		installationId: args.installationId,
-		executorSessionId: args.executorSessionId
+		machineId: args.machineId
 	};
 	if (args.continuationOfRunId) request.continuationOfRunId = args.continuationOfRunId;
 	return await t.mutation(internal.agentRuntime.insertGatewayRun, request);
