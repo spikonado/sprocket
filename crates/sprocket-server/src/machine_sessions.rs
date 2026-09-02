@@ -13,6 +13,12 @@ use crate::transcript_client::UserConvexClient;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 const SESSION_RPC_TIMEOUT: Duration = Duration::from_secs(10);
 
+fn process_identity_is_inactive(error: &anyhow::Error) -> bool {
+    let message = error.to_string();
+    message.contains("Machine session is not active")
+        || message.contains("Process session is no longer active")
+}
+
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RegisteredSession {
@@ -62,25 +68,23 @@ impl MachineSessionManager {
         if let Some(session_id) = self.reuse_live_session(user_id, &auth_token).await {
             return Ok(session_id);
         }
-        let process_session_id = self
-            .process_session_ids
-            .lock()
+        let registered = match self
+            .register_remote(
+                auth_token.clone(),
+                self.process_session_id_for(user_id).await,
+            )
             .await
-            .entry(user_id.to_string())
-            .or_insert_with(|| self.identity.process_session_id.clone())
-            .clone();
-        let registered: RegisteredSession = timeout(SESSION_RPC_TIMEOUT, async {
-            let client =
-                UserConvexClient::connect(&self.deployment_url, auth_token.clone()).await?;
-            client
-                .mutate(
-                    "machineSessions:register",
-                    self.registration_args(process_session_id),
+        {
+            Ok(registered) => registered,
+            Err(error) if process_identity_is_inactive(&error) => {
+                self.register_remote(
+                    auth_token.clone(),
+                    self.rotate_process_session_id(user_id).await,
                 )
-                .await
-        })
-        .await
-        .map_err(|_| anyhow::anyhow!("machine session registration timed out"))??;
+                .await?
+            }
+            Err(error) => return Err(error),
+        };
         if registered.user_id != user_id {
             anyhow::bail!("machine session account does not match the requested account");
         }
@@ -118,10 +122,7 @@ impl MachineSessionManager {
             return Ok(());
         };
         session.heartbeat.abort();
-        self.process_session_ids
-            .lock()
-            .await
-            .insert(user_id.to_string(), uuid::Uuid::new_v4().to_string());
+        self.rotate_process_session_id(user_id).await;
         self.end_remote(&session).await
     }
 
@@ -205,7 +206,46 @@ impl MachineSessionManager {
         if let Some(session) = self.sessions.lock().await.remove(user_id) {
             session.heartbeat.abort();
         }
+        if process_identity_is_inactive(&error) {
+            self.rotate_process_session_id(user_id).await;
+        }
         Err(error)
+    }
+
+    async fn process_session_id_for(&self, user_id: &str) -> String {
+        self.process_session_ids
+            .lock()
+            .await
+            .entry(user_id.to_string())
+            .or_insert_with(|| self.identity.process_session_id.clone())
+            .clone()
+    }
+
+    async fn rotate_process_session_id(&self, user_id: &str) -> String {
+        let next = uuid::Uuid::new_v4().to_string();
+        self.process_session_ids
+            .lock()
+            .await
+            .insert(user_id.to_string(), next.clone());
+        next
+    }
+
+    async fn register_remote(
+        &self,
+        auth_token: String,
+        process_session_id: String,
+    ) -> anyhow::Result<RegisteredSession> {
+        timeout(SESSION_RPC_TIMEOUT, async {
+            let client = UserConvexClient::connect(&self.deployment_url, auth_token).await?;
+            client
+                .mutate(
+                    "machineSessions:register",
+                    self.registration_args(process_session_id),
+                )
+                .await
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("machine session registration timed out"))?
     }
 
     async fn end_remote(&self, session: &AccountSession) -> anyhow::Result<()> {
@@ -341,17 +381,40 @@ mod tests {
                 },
             );
         }
+        manager
+            .process_session_ids
+            .lock()
+            .await
+            .insert("user-a".into(), "process-a".into());
 
         manager
             .heartbeat("user-a")
             .await
             .expect_err("invalid deployment must fail heartbeat");
         assert!(manager.sessions.lock().await.get("user-a").is_none());
+        assert_eq!(
+            manager.process_session_id_for("user-a").await,
+            "process-a",
+            "transient heartbeat failures must keep the process identity"
+        );
         manager
             .register("user-a", "new-token".into())
             .await
             .expect_err("cleared session must register with Convex");
 
         let _ = tokio::fs::remove_dir_all(dir).await;
+    }
+
+    #[test]
+    fn convex_inactive_session_errors_are_recognized() {
+        assert!(process_identity_is_inactive(&anyhow::anyhow!(
+            "Machine session is not active."
+        )));
+        assert!(process_identity_is_inactive(&anyhow::anyhow!(
+            "Process session is no longer active."
+        )));
+        assert!(!process_identity_is_inactive(&anyhow::anyhow!(
+            "machine session heartbeat timed out"
+        )));
     }
 }
