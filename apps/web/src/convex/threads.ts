@@ -184,6 +184,25 @@ export const create = mutation({
 	}
 });
 
+export const setSelectedModel = mutation({
+	args: {
+		threadId: v.id('threadRecords'),
+		selectedModel: v.string()
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const userId = await getUserId(ctx);
+		const thread = await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+		if (thread.selectedModel === args.selectedModel) {
+			return null;
+		}
+
+		await ctx.db.patch('threadRecords', thread._id, { selectedModel: args.selectedModel });
+		await bumpThreadSnapshotForRecord(ctx, thread);
+		return null;
+	}
+});
+
 /** Retired UI listing. Current clients read the local summary cache. */
 export const listMine = query({
 	args: {},

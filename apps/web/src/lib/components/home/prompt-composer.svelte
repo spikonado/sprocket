@@ -44,6 +44,7 @@
 		onRemoveAttachment: (localId: string) => void;
 		modelCatalog?: ModelCatalog;
 		selectedModel?: CatalogModelId;
+		onModelChange?: (modelId: CatalogModelId) => void;
 		selectedReasoningEffort?: string;
 		selectedServiceTier?: string;
 		pendingQuestion?: PendingAgentQuestion | null;
@@ -77,6 +78,7 @@
 		onRemoveAttachment,
 		modelCatalog,
 		selectedModel = $bindable(defaultModelId),
+		onModelChange,
 		selectedReasoningEffort = $bindable<string>(defaultReasoningEffort),
 		selectedServiceTier = $bindable<string>(defaultServiceTier),
 		pendingQuestion = null,
@@ -428,6 +430,7 @@
 		if (!modelCatalog) return;
 		const model = getCatalogModel(modelCatalog, modelId);
 		if (model) selectedReasoningEffort = model.defaultReasoningEffort;
+		onModelChange?.(modelId);
 	}
 
 	function formatTokens(value: number): string {

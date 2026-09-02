@@ -147,6 +147,7 @@
 		}
 	});
 	const createThreadMutation = useMutation(api.threads.create);
+	const setThreadSelectedModel = useMutation(api.threads.setSelectedModel);
 	const answerAgentQuestion = useMutation(api.agentQuestions.answer);
 	const setThemePreference = useMutation(api.uiPreferences.setTheme);
 	const generateImageUploadUrl = useMutation(api.imageUploads.generateUploadUrl);
@@ -1347,6 +1348,29 @@
 		return result;
 	}
 
+	async function persistSelectedModel(modelId: CatalogModelId) {
+		const threadId = currentThreadId;
+		const userId = getCurrentUserId();
+		if (!threadId || !userId) {
+			return;
+		}
+
+		unconfirmedCreatedThreads = unconfirmedCreatedThreads.map((thread) =>
+			thread.threadId === threadId ? { ...thread, selectedModel: modelId } : thread
+		);
+		try {
+			await setThreadSelectedModel({ threadId, selectedModel: modelId });
+			if (getCurrentUserId() === userId) {
+				void pullThreadSnapshot(userId);
+			}
+		} catch (error) {
+			if (currentThreadId === threadId && getCurrentUserId() === userId) {
+				currentError =
+					error instanceof Error ? error.message : 'Failed to save the selected model.';
+			}
+		}
+	}
+
 	function startThreadDraftForProject(workspacePath: string) {
 		openProject(workspacePath, { draft: true });
 	}
@@ -2465,6 +2489,9 @@
 						onRemoveAttachment={removeComposerAttachment}
 						{modelCatalog}
 						bind:selectedModel
+						onModelChange={(modelId) => {
+							void persistSelectedModel(modelId);
+						}}
 						bind:selectedReasoningEffort
 						bind:selectedServiceTier
 						pendingQuestion={pendingAgentQuestion}
