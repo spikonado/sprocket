@@ -93,6 +93,7 @@ impl MachineSessionManager {
                 sleep(HEARTBEAT_INTERVAL).await;
                 if manager.heartbeat(&heartbeat_user_id).await.is_err() {
                     tracing::warn!("machine session heartbeat failed");
+                    break;
                 }
             }
         });
@@ -188,7 +189,7 @@ impl MachineSessionManager {
             };
             (session.auth_token.clone(), session.session_id.clone())
         };
-        timeout(SESSION_RPC_TIMEOUT, async {
+        let error = match timeout(SESSION_RPC_TIMEOUT, async {
             let client = UserConvexClient::connect(&self.deployment_url, auth_token).await?;
             let _: serde_json::Value = client
                 .mutate("machineSessions:heartbeat", self.session_args(session_id))
@@ -196,8 +197,15 @@ impl MachineSessionManager {
             anyhow::Ok(())
         })
         .await
-        .map_err(|_| anyhow::anyhow!("machine session heartbeat timed out"))??;
-        Ok(())
+        {
+            Ok(Ok(())) => return Ok(()),
+            Ok(Err(error)) => error,
+            Err(_) => anyhow::anyhow!("machine session heartbeat timed out"),
+        };
+        if let Some(session) = self.sessions.lock().await.remove(user_id) {
+            session.heartbeat.abort();
+        }
+        Err(error)
     }
 
     async fn end_remote(&self, session: &AccountSession) -> anyhow::Result<()> {
@@ -315,6 +323,34 @@ mod tests {
             );
             session.heartbeat.abort();
         }
+
+        let _ = tokio::fs::remove_dir_all(dir).await;
+    }
+
+    #[tokio::test]
+    async fn failed_heartbeat_drops_the_cached_session() {
+        let (dir, manager) = manager_for_test();
+        {
+            let mut sessions = manager.sessions.lock().await;
+            sessions.insert(
+                "user-a".into(),
+                AccountSession {
+                    auth_token: "old-token".into(),
+                    session_id: "session-1".into(),
+                    heartbeat: tokio::spawn(std::future::pending()),
+                },
+            );
+        }
+
+        manager
+            .heartbeat("user-a")
+            .await
+            .expect_err("invalid deployment must fail heartbeat");
+        assert!(manager.sessions.lock().await.get("user-a").is_none());
+        manager
+            .register("user-a", "new-token".into())
+            .await
+            .expect_err("cleared session must register with Convex");
 
         let _ = tokio::fs::remove_dir_all(dir).await;
     }
