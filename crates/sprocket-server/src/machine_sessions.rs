@@ -59,6 +59,9 @@ impl MachineSessionManager {
         let account = self.account_lock(user_id, false).await?;
         let _account = account.lock().await;
         self.ensure_running().await?;
+        if let Some(session_id) = self.reuse_live_session(user_id, &auth_token).await {
+            return Ok(session_id);
+        }
         let process_session_id = self
             .process_session_ids
             .lock()
@@ -168,6 +171,13 @@ impl MachineSessionManager {
         Ok(())
     }
 
+    async fn reuse_live_session(&self, user_id: &str, auth_token: &str) -> Option<String> {
+        let mut sessions = self.sessions.lock().await;
+        let session = sessions.get_mut(user_id)?;
+        session.auth_token = auth_token.to_string();
+        Some(session.session_id.clone())
+    }
+
     async fn heartbeat(&self, user_id: &str) -> anyhow::Result<()> {
         let account = self.account_lock(user_id, true).await?;
         let _account = account.lock().await;
@@ -251,14 +261,19 @@ impl MachineSessionManager {
 mod tests {
     use super::*;
 
+    fn manager_for_test() -> (std::path::PathBuf, Arc<MachineSessionManager>) {
+        let dir =
+            std::env::temp_dir().join(format!("sprocket-machine-session-{}", uuid::Uuid::new_v4()));
+        let identity = Arc::new(MachineIdentity::load(&dir).expect("identity"));
+        (
+            dir,
+            MachineSessionManager::new("not a valid URL".into(), identity),
+        )
+    }
+
     #[tokio::test]
     async fn shutdown_rejects_late_registration_before_network_io() {
-        let dir = std::env::temp_dir().join(format!(
-            "sprocket-machine-session-manager-{}",
-            uuid::Uuid::new_v4()
-        ));
-        let identity = Arc::new(MachineIdentity::load(&dir).expect("identity"));
-        let manager = MachineSessionManager::new("not a valid URL".into(), identity);
+        let (dir, manager) = manager_for_test();
 
         manager.shutdown().await;
         let error = manager
@@ -266,6 +281,40 @@ mod tests {
             .await
             .expect_err("registration after shutdown must fail");
         assert!(error.to_string().contains("shutting down"));
+
+        let _ = tokio::fs::remove_dir_all(dir).await;
+    }
+
+    #[tokio::test]
+    async fn live_session_is_reused_without_another_convex_call() {
+        let (dir, manager) = manager_for_test();
+        {
+            let mut sessions = manager.sessions.lock().await;
+            sessions.insert(
+                "user-a".into(),
+                AccountSession {
+                    auth_token: "old-token".into(),
+                    session_id: "session-1".into(),
+                    heartbeat: tokio::spawn(std::future::pending()),
+                },
+            );
+        }
+
+        let session_id = manager
+            .register("user-a", "new-token".into())
+            .await
+            .expect("reuse live session");
+        assert_eq!(session_id, "session-1");
+        {
+            let sessions = manager.sessions.lock().await;
+            let session = sessions.get("user-a").expect("session");
+            assert_eq!(session.auth_token, "new-token");
+            assert!(
+                !session.heartbeat.is_finished(),
+                "reuse must keep the existing heartbeat"
+            );
+            session.heartbeat.abort();
+        }
 
         let _ = tokio::fs::remove_dir_all(dir).await;
     }

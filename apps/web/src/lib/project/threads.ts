@@ -140,15 +140,98 @@ export function resolvePendingCreatedThreadId(args: {
 	threads: ThreadSummary[];
 }): Id<'threadRecords'> | null {
 	const { pendingCreatedThreadId, threads } = args;
-	if (!pendingCreatedThreadId) {
-		return null;
-	}
-
-	if (threads.some((thread) => thread.threadId === pendingCreatedThreadId)) {
+	if (!pendingCreatedThreadId || findThreadById(threads, pendingCreatedThreadId)) {
 		return null;
 	}
 
 	return pendingCreatedThreadId;
+}
+
+const PLACEHOLDER_THREAD_TITLE = 'New thread';
+const MAX_THREAD_TITLE_LENGTH = 72;
+
+export function threadTitleFromPrompt(prompt: string) {
+	return prompt.trim().slice(0, MAX_THREAD_TITLE_LENGTH) || PLACEHOLDER_THREAD_TITLE;
+}
+
+export function isPlaceholderThreadTitle(title: string) {
+	const trimmed = title.trim();
+	return trimmed === '' || trimmed === PLACEHOLDER_THREAD_TITLE;
+}
+
+export function makeUnconfirmedCreatedThread(args: {
+	threadId: ThreadSummary['threadId'];
+	repositoryKey: string;
+	selectedModel: ThreadSummary['selectedModel'];
+	reasoningEffort: ThreadSummary['reasoningEffort'];
+	serviceTier: ThreadSummary['serviceTier'];
+	title?: string;
+	lastMessageAt?: number;
+}): ThreadSummary {
+	return toThreadSummary({
+		threadId: args.threadId,
+		repositoryKey: args.repositoryKey,
+		title: threadTitleFromPrompt(args.title ?? ''),
+		selectedModel: args.selectedModel,
+		reasoningEffort: args.reasoningEffort,
+		serviceTier: args.serviceTier,
+		lastMessageAt: args.lastMessageAt ?? Date.now(),
+		threadStatus: 'active',
+		latestRunStatus: null,
+		latestRunId: null,
+		hasActiveRun: false
+	});
+}
+
+function needsUnconfirmedTitleOverlay(existing: ThreadSummary, unconfirmed: ThreadSummary) {
+	return isPlaceholderThreadTitle(existing.title) && !isPlaceholderThreadTitle(unconfirmed.title);
+}
+
+export function mergeUnconfirmedCreatedThread(
+	threads: ThreadSummary[],
+	unconfirmed: ThreadSummary | null
+): ThreadSummary[] {
+	if (!unconfirmed) {
+		return threads;
+	}
+	const existing = findThreadById(threads, unconfirmed.threadId);
+	if (!existing) {
+		return [unconfirmed, ...threads];
+	}
+	if (needsUnconfirmedTitleOverlay(existing, unconfirmed)) {
+		return threads.map((thread) =>
+			thread.threadId === existing.threadId ? { ...thread, title: unconfirmed.title } : thread
+		);
+	}
+	return threads;
+}
+
+export function shouldDropUnconfirmedCreatedThread(
+	threads: ThreadSummary[],
+	unconfirmed: ThreadSummary | null
+) {
+	if (!unconfirmed) {
+		return false;
+	}
+	const existing = findThreadById(threads, unconfirmed.threadId);
+	if (!existing) {
+		return false;
+	}
+	return !needsUnconfirmedTitleOverlay(existing, unconfirmed);
+}
+
+export function retainUnconfirmedCreatedThreads(
+	threads: ThreadSummary[],
+	unconfirmed: ThreadSummary[]
+) {
+	return unconfirmed.filter((row) => !shouldDropUnconfirmedCreatedThread(threads, row));
+}
+
+export function mergeUnconfirmedCreatedThreads(
+	threads: ThreadSummary[],
+	unconfirmed: ThreadSummary[]
+) {
+	return unconfirmed.reduce((list, row) => mergeUnconfirmedCreatedThread(list, row), threads);
 }
 
 export function isLatestRunReadyForThread(args: {

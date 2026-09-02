@@ -134,8 +134,8 @@ const threadSummarySchema = z.object({
 		.nullable()
 		.optional(),
 	latestRunId: z.string().nullable().optional(),
-	latestRunStartedAt: z.number().optional(),
-	latestRunClaimExpiresAt: z.number().optional(),
+	latestRunStartedAt: z.number().nullable().optional(),
+	latestRunClaimExpiresAt: z.number().nullable().optional(),
 	hasActiveRun: z.boolean()
 });
 const threadCacheWatchEventSchema = z.object({
@@ -246,8 +246,8 @@ function parseThreadSummary(thread: z.infer<typeof threadSummarySchema>): Thread
 		threadStatus: thread.threadStatus,
 		latestRunStatus: thread.latestRunStatus ?? null,
 		latestRunId: thread.latestRunId ? asConvexId(thread.latestRunId) : null,
-		latestRunStartedAt: thread.latestRunStartedAt,
-		latestRunClaimExpiresAt: thread.latestRunClaimExpiresAt,
+		latestRunStartedAt: thread.latestRunStartedAt ?? undefined,
+		latestRunClaimExpiresAt: thread.latestRunClaimExpiresAt ?? undefined,
 		hasActiveRun: thread.hasActiveRun
 	};
 }
