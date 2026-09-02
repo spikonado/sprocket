@@ -4,7 +4,7 @@ This file lists shims we still ship. When a removal PR merges, delete its
 entry. Age-out is a prod check for stored rows, or an explicit decision that
 a retired function name can disappear.
 
-Current as of 2026-09-02.
+Current as of 2026-09-03.
 
 ## Stored schema
 
@@ -123,18 +123,15 @@ contract, and `runs.responseMessageId` stays unset. Abstracted terminal text
 is deliberately not preserved anywhere; an incomplete completion call stays
 incomplete in the transcript.
 
-`clearResponseMessageParts` (the live `migrations` entry, driven by the
-migrations cron) rewrites every remaining response row to `{ text: "", parts:
-[] }` and doubles as the read/write gate for the future schema change. Once
-its status in prod is `success` with zero remaining rows, `runs` gets an
-unset rewrite for `responseMessageId` and then, only after all released
-agents/desktops have dropped `agentRuntime.beginAssistantMessage` calls:
+The completed `clearResponseMessageParts` pass rewrote every response row to
+`{ text: "", parts: [] }`. Once `runs.responseMessageId` has its own unset
+rewrite and all released agents/desktops have dropped
+`agentRuntime.beginAssistantMessage` calls:
 
 1. Delete `agentRuntime.beginAssistantMessage` (or convert it to the
    unsupported-client stub like the other retired function names).
 2. Drop `runs.responseMessageId` and `threadMessages.parts`, and the
    `by_type_runId` index, from `convex/schema.ts` and regenerate.
-3. Delete `migrations.clearResponseMessageParts` and its `run` pin.
 
 The prompt-half of `threadMessages` (text, attachments, retention bookkeeping)
 stays: it is the run-capability source of the user prompt and image
@@ -146,26 +143,17 @@ Older `exec_command` and `write_stdin` results contain `stdout` and `stderr` in
 addition to the combined, bounded `output`. The same result may exist in both
 `executorJobs.result` and `threadTranscriptParts.tool.output`.
 
-`removeExecutorJobCommandStreams` removes the duplicate fields from stored job
-results and `removeTranscriptCommandStreams` does the same for transcript
-copies. Both are pinned in `migrations.run`, which the migrations cron invokes
-every ten minutes. They can also be inspected before deployment with:
-
-```sh
-npx convex run migrations:removeExecutorJobCommandStreams '{ dryRun: true }'
-npx convex run migrations:removeTranscriptCommandStreams '{ dryRun: true }'
-```
+The completed command-stream migration passes removed the duplicate fields
+from stored job results and transcript copies.
 
 `applyExecutorJobSuccess` removes those fields before writing a result, so
 released executors that still return the old wire shape cannot reintroduce
 them after the sweep. The executor input validator temporarily accepts both
 command shapes so deployment can precede the online rewrites.
 
-Removal gate: both migration statuses are `success`, a production scan finds
-no `stdout` or `stderr` keys on command results in either table, and all
-supported agents emit the current `CommandExecOutput` schema. Then remove the
-legacy command validator and both migration definitions/pins; keep the
-write-boundary normalization until old executor clients are unsupported.
+Remove the legacy command validator once all supported agents emit the current
+`CommandExecOutput` schema. Keep the write-boundary normalization until old
+executor clients are unsupported.
 
 ### 10. Runs without machine identity
 
@@ -179,18 +167,11 @@ documents written under the removed `installations` / `machineSessions` tables
 still validate. New writes use `machineId` only. `createGatewayRun` still
 accepts leftover `installationId` / `executorSessionId` arguments.
 
-`removeRunMachineSessionFields` (pinned in `migrations.run`) copies leftover
-`installationId` onto `machineId` when missing, then unsets both leftover
-fields. Inspect before deploy with:
-
-```sh
-npx convex run migrations:removeRunMachineSessionFields '{ dryRun: true }'
-```
-
-Removal gate: the migration status is `success` and a production scan finds
-no rows carrying either leftover field. Then drop them from the schema and
-delete the migration definition/pin. Remove `machineId` optionality after all
-supported clients register machines and a scan finds no active runs without it.
+The completed run machine-session migration copied leftover `installationId`
+values onto `machineId` when missing and unset both leftover fields. Drop the
+leftover fields from the schema once released clients no longer send them.
+Remove `machineId` optionality after all supported clients register machines
+and a scan finds no active runs without it.
 
 ### 11. Transcript tool `jobId`
 

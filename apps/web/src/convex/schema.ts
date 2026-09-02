@@ -154,8 +154,7 @@ export default defineSchema({
 		status: vRunStatus,
 		// Hash of the bearer capability held only by the local executor.
 		executionSecretHash: v.string(),
-		// Leftover until `migrations.removeRunMachineSessionFields` unsets them.
-		// New writes set machineId only.
+		// Leftover fields accepted from released clients. New writes set machineId only.
 		installationId: v.optional(v.string()),
 		machineId: v.optional(v.string()),
 		executorSessionId: v.optional(v.string()),
@@ -199,9 +198,8 @@ export default defineSchema({
 		imageUploadIds: v.optional(v.array(v.id('imageUploads'))),
 		// Deprecated: only response rows written before the local-transcript
 		// cleanup populate this. New response rows (none are written anymore)
-		// would store an empty array. Remove the field once all existing rows
-		// have been rewritten by `migrations.clearResponseMessageParts` and the
-		// rust/desktop read gates pass; see BACKWARDS_COMPATIBILITY.md.
+		// would store an empty array. Existing rows have been cleared; remove the
+		// field once the rust/desktop read gates pass. See BACKWARDS_COMPATIBILITY.md.
 		parts: v.array(vAssistantMessagePart)
 	}).index('by_type_runId', ['type', 'runId']),
 	// Durable numbered transcript replica source. Kept off threadRecords so
