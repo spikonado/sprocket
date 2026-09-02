@@ -51,17 +51,12 @@ export const removeTranscriptCommandStreams = migrations.define({
 export const clearResponseMessageParts = migrations.define({
 	table: 'threadMessages',
 	customRange: (query) => query.withIndex('by_type_runId', (range) => range.eq('type', 'response')),
-	migrateOne: async (ctx, message) => {
+	// Leftover `parts` can sit near the 1 MiB document cap; the default page of 100 exceeds the 16 MiB read limit.
+	batchSize: 1,
+	migrateOne: (_ctx, message) => {
 		if (message.text === '' && message.parts.length === 0) {
 			return;
 		}
-		// Reads/writes the whole document on purpose: this migration's success
-		// is part of the gate for deleting the oversized `parts` field, which
-		// requires every stored row to survive a patch transaction.
-		const current = await ctx.db.get('threadMessages', message._id);
-		if (!current) {
-			return;
-		}
-		await ctx.db.patch('threadMessages', message._id, { text: '', parts: [] });
+		return { text: '', parts: [] };
 	}
 });
