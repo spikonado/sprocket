@@ -36,7 +36,7 @@ export function isUnparseablePageFailure(error: Error): boolean {
 
 const UNPARSEABLE_PAGE_ERROR = 'The webpage is too complex and could not be parsed as Markdown.';
 const UNCAUGHT_CONVEX_ERROR_PREFIX = 'Uncaught ConvexError: ';
-const scrapeHttpErrorSchema = z.object({ status: z.number().int().min(400).max(599) });
+const scrapeHttpErrorSchema = z.object({ status: z.int().min(400).max(599) });
 
 export function scrapeHttpErrorStatus(error: Error): number | undefined {
 	let message = error.message.split('\n', 1)[0] ?? '';

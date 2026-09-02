@@ -139,24 +139,22 @@ export function serviceTierLabel(tier: string): string {
 	}
 }
 
-const gatewayModelSchema = z
-	.object({
-		id: z.string().min(1),
-		label: z.string().min(1),
-		provider: z.string().min(1),
-		supportsImages: z.boolean(),
-		contextWindowTokens: z.number().finite(),
-		autoCompactTokenLimit: z.number().finite(),
-		reasoningEfforts: z.array(z.string()).min(1),
-		defaultReasoningEffort: z.string().min(1),
-		serviceTiers: z.array(z.string()).min(1),
-		usagePolicy: z.literal('unlimited').optional()
-	})
-	.passthrough();
+const gatewayModelSchema = z.looseObject({
+	id: z.string().min(1),
+	label: z.string().min(1),
+	provider: z.string().min(1),
+	supportsImages: z.boolean(),
+	contextWindowTokens: z.number(),
+	autoCompactTokenLimit: z.number(),
+	reasoningEfforts: z.array(z.string()).min(1),
+	defaultReasoningEffort: z.string().min(1),
+	serviceTiers: z.array(z.string()).min(1),
+	usagePolicy: z.literal('unlimited').optional()
+});
 
 const gatewayModelsResponseSchema = z.object({
 	sprocket: z.object({
-		protocolVersion: z.number().finite(),
+		protocolVersion: z.number(),
 		catalogVersion: z.string().min(1),
 		defaultModelId: z.string().min(1),
 		defaultReasoningEffort: z.string().min(1),
