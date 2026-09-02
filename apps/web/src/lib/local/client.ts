@@ -693,7 +693,7 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				body: JSON.stringify(requestBody)
 			}),
 		requestRunCancellation: async (requestBody) => {
-			await request('/api/threads/cancel', z.null(), {
+			await request('/api/threads/cancel', z.boolean(), {
 				method: 'POST',
 				body: JSON.stringify(requestBody)
 			});

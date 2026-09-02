@@ -600,7 +600,7 @@ export const isFinished = query({
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		return isRunFinalStatus(run.status);
+		return isRunFinalStatus(run.status) || run.cancellationRequestedAt !== undefined;
 	}
 });
 
