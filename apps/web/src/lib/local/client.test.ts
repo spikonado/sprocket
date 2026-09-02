@@ -82,6 +82,8 @@ describe('thread cache local API', () => {
 					threadStatus: 'active',
 					latestRunStatus: null,
 					latestRunId: null,
+					latestRunStartedAt: null,
+					latestRunClaimExpiresAt: null,
 					hasActiveRun: false
 				}
 			],
@@ -125,6 +127,8 @@ describe('thread cache local API', () => {
 					threadStatus: 'active',
 					latestRunStatus: null,
 					latestRunId: null,
+					latestRunStartedAt: undefined,
+					latestRunClaimExpiresAt: undefined,
 					hasActiveRun: false
 				}
 			],

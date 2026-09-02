@@ -59,25 +59,15 @@ impl MachineSessionManager {
         let account = self.account_lock(user_id, false).await?;
         let _account = account.lock().await;
         self.ensure_running().await?;
-        let process_session_id = self
-            .process_session_ids
-            .lock()
-            .await
-            .entry(user_id.to_string())
-            .or_insert_with(|| self.identity.process_session_id.clone())
-            .clone();
-        let registered: RegisteredSession = timeout(SESSION_RPC_TIMEOUT, async {
-            let client =
-                UserConvexClient::connect(&self.deployment_url, auth_token.clone()).await?;
-            client
-                .mutate(
-                    "machineSessions:register",
-                    self.registration_args(process_session_id),
-                )
-                .await
-        })
-        .await
-        .map_err(|_| anyhow::anyhow!("machine session registration timed out"))??;
+        if let Some(session_id) = self.reuse_live_session(user_id, &auth_token).await {
+            return Ok(session_id);
+        }
+        let registered = self
+            .register_remote(
+                auth_token.clone(),
+                self.process_session_id_for(user_id).await,
+            )
+            .await?;
         if registered.user_id != user_id {
             anyhow::bail!("machine session account does not match the requested account");
         }
@@ -90,6 +80,7 @@ impl MachineSessionManager {
                 sleep(HEARTBEAT_INTERVAL).await;
                 if manager.heartbeat(&heartbeat_user_id).await.is_err() {
                     tracing::warn!("machine session heartbeat failed");
+                    break;
                 }
             }
         });
@@ -114,10 +105,7 @@ impl MachineSessionManager {
             return Ok(());
         };
         session.heartbeat.abort();
-        self.process_session_ids
-            .lock()
-            .await
-            .insert(user_id.to_string(), uuid::Uuid::new_v4().to_string());
+        self.rotate_process_session_id(user_id).await;
         self.end_remote(&session).await
     }
 
@@ -168,6 +156,13 @@ impl MachineSessionManager {
         Ok(())
     }
 
+    async fn reuse_live_session(&self, user_id: &str, auth_token: &str) -> Option<String> {
+        let mut sessions = self.sessions.lock().await;
+        let session = sessions.get_mut(user_id)?;
+        session.auth_token = auth_token.to_string();
+        Some(session.session_id.clone())
+    }
+
     async fn heartbeat(&self, user_id: &str) -> anyhow::Result<()> {
         let account = self.account_lock(user_id, true).await?;
         let _account = account.lock().await;
@@ -178,7 +173,7 @@ impl MachineSessionManager {
             };
             (session.auth_token.clone(), session.session_id.clone())
         };
-        timeout(SESSION_RPC_TIMEOUT, async {
+        let error = match timeout(SESSION_RPC_TIMEOUT, async {
             let client = UserConvexClient::connect(&self.deployment_url, auth_token).await?;
             let _: serde_json::Value = client
                 .mutate("machineSessions:heartbeat", self.session_args(session_id))
@@ -186,8 +181,51 @@ impl MachineSessionManager {
             anyhow::Ok(())
         })
         .await
-        .map_err(|_| anyhow::anyhow!("machine session heartbeat timed out"))??;
-        Ok(())
+        {
+            Ok(Ok(())) => return Ok(()),
+            Ok(Err(error)) => error,
+            Err(_) => anyhow::anyhow!("machine session heartbeat timed out"),
+        };
+        if let Some(session) = self.sessions.lock().await.remove(user_id) {
+            session.heartbeat.abort();
+        }
+        Err(error)
+    }
+
+    async fn process_session_id_for(&self, user_id: &str) -> String {
+        self.process_session_ids
+            .lock()
+            .await
+            .entry(user_id.to_string())
+            .or_insert_with(|| self.identity.process_session_id.clone())
+            .clone()
+    }
+
+    async fn rotate_process_session_id(&self, user_id: &str) -> String {
+        let next = uuid::Uuid::new_v4().to_string();
+        self.process_session_ids
+            .lock()
+            .await
+            .insert(user_id.to_string(), next.clone());
+        next
+    }
+
+    async fn register_remote(
+        &self,
+        auth_token: String,
+        process_session_id: String,
+    ) -> anyhow::Result<RegisteredSession> {
+        timeout(SESSION_RPC_TIMEOUT, async {
+            let client = UserConvexClient::connect(&self.deployment_url, auth_token).await?;
+            client
+                .mutate(
+                    "machineSessions:register",
+                    self.registration_args(process_session_id),
+                )
+                .await
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("machine session registration timed out"))?
     }
 
     async fn end_remote(&self, session: &AccountSession) -> anyhow::Result<()> {
@@ -251,14 +289,19 @@ impl MachineSessionManager {
 mod tests {
     use super::*;
 
+    fn manager_for_test() -> (std::path::PathBuf, Arc<MachineSessionManager>) {
+        let dir =
+            std::env::temp_dir().join(format!("sprocket-machine-session-{}", uuid::Uuid::new_v4()));
+        let identity = Arc::new(MachineIdentity::load(&dir).expect("identity"));
+        (
+            dir,
+            MachineSessionManager::new("not a valid URL".into(), identity),
+        )
+    }
+
     #[tokio::test]
     async fn shutdown_rejects_late_registration_before_network_io() {
-        let dir = std::env::temp_dir().join(format!(
-            "sprocket-machine-session-manager-{}",
-            uuid::Uuid::new_v4()
-        ));
-        let identity = Arc::new(MachineIdentity::load(&dir).expect("identity"));
-        let manager = MachineSessionManager::new("not a valid URL".into(), identity);
+        let (dir, manager) = manager_for_test();
 
         manager.shutdown().await;
         let error = manager
@@ -266,6 +309,78 @@ mod tests {
             .await
             .expect_err("registration after shutdown must fail");
         assert!(error.to_string().contains("shutting down"));
+
+        let _ = tokio::fs::remove_dir_all(dir).await;
+    }
+
+    #[tokio::test]
+    async fn live_session_is_reused_without_another_convex_call() {
+        let (dir, manager) = manager_for_test();
+        {
+            let mut sessions = manager.sessions.lock().await;
+            sessions.insert(
+                "user-a".into(),
+                AccountSession {
+                    auth_token: "old-token".into(),
+                    session_id: "session-1".into(),
+                    heartbeat: tokio::spawn(std::future::pending()),
+                },
+            );
+        }
+
+        let session_id = manager
+            .register("user-a", "new-token".into())
+            .await
+            .expect("reuse live session");
+        assert_eq!(session_id, "session-1");
+        {
+            let sessions = manager.sessions.lock().await;
+            let session = sessions.get("user-a").expect("session");
+            assert_eq!(session.auth_token, "new-token");
+            assert!(
+                !session.heartbeat.is_finished(),
+                "reuse must keep the existing heartbeat"
+            );
+            session.heartbeat.abort();
+        }
+
+        let _ = tokio::fs::remove_dir_all(dir).await;
+    }
+
+    #[tokio::test]
+    async fn failed_heartbeat_drops_the_cached_session() {
+        let (dir, manager) = manager_for_test();
+        {
+            let mut sessions = manager.sessions.lock().await;
+            sessions.insert(
+                "user-a".into(),
+                AccountSession {
+                    auth_token: "old-token".into(),
+                    session_id: "session-1".into(),
+                    heartbeat: tokio::spawn(std::future::pending()),
+                },
+            );
+        }
+        manager
+            .process_session_ids
+            .lock()
+            .await
+            .insert("user-a".into(), "process-a".into());
+
+        manager
+            .heartbeat("user-a")
+            .await
+            .expect_err("invalid deployment must fail heartbeat");
+        assert!(manager.sessions.lock().await.get("user-a").is_none());
+        assert_eq!(
+            manager.process_session_id_for("user-a").await,
+            "process-a",
+            "transient heartbeat failures must keep the process identity"
+        );
+        manager
+            .register("user-a", "new-token".into())
+            .await
+            .expect_err("cleared session must register with Convex");
 
         let _ = tokio::fs::remove_dir_all(dir).await;
     }

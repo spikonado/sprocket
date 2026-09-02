@@ -8,12 +8,17 @@ import {
 	isActiveThread,
 	isAgentLaunchPending,
 	isLatestRunReadyForThread,
+	makeUnconfirmedCreatedThread,
+	mergeUnconfirmedCreatedThread,
+	mergeUnconfirmedCreatedThreads,
 	pickThreadToRestore,
 	resolveExpiredAgentLaunch,
 	resolvePendingAgentLaunch,
 	resolvePendingAgentLaunchesFromThreads,
 	resolvePendingCreatedThreadId,
 	resolveProjectThreadSelection,
+	retainUnconfirmedCreatedThreads,
+	shouldDropUnconfirmedCreatedThread,
 	toThreadSummary,
 	type PendingAgentLaunch,
 	type PendingAgentLaunches
@@ -393,6 +398,49 @@ describe('project thread helpers', () => {
 				threads: [created, existing]
 			})
 		).toBeNull();
+	});
+
+	it('prepends an unconfirmed thread and overlays placeholder titles until confirmed', () => {
+		const unconfirmed = makeUnconfirmedCreatedThread({
+			threadId: threadId('thread-record-new'),
+			repositoryKey: 'ws-1',
+			selectedModel: defaultModelId,
+			reasoningEffort: defaultReasoningEffort,
+			serviceTier: defaultServiceTier,
+			title: '  Hello from the first prompt  ',
+			lastMessageAt: 50
+		});
+		const existing = makeThreadSummary({
+			threadId: threadId('thread-record-old')
+		});
+		const placeholder = makeThreadSummary({
+			threadId: unconfirmed.threadId,
+			title: 'New thread'
+		});
+		const confirmed = makeThreadSummary({
+			threadId: unconfirmed.threadId,
+			title: 'Hello from the first prompt'
+		});
+
+		expect(unconfirmed.title).toBe('Hello from the first prompt');
+		expect(mergeUnconfirmedCreatedThread([existing], null)).toEqual([existing]);
+		expect(mergeUnconfirmedCreatedThread([existing], unconfirmed)).toEqual([unconfirmed, existing]);
+		expect(mergeUnconfirmedCreatedThread([placeholder, existing], unconfirmed)).toEqual([
+			{ ...placeholder, title: unconfirmed.title },
+			existing
+		]);
+		expect(mergeUnconfirmedCreatedThread([confirmed, existing], unconfirmed)).toEqual([
+			confirmed,
+			existing
+		]);
+		expect(shouldDropUnconfirmedCreatedThread([existing], unconfirmed)).toBe(false);
+		expect(shouldDropUnconfirmedCreatedThread([placeholder], unconfirmed)).toBe(false);
+		expect(shouldDropUnconfirmedCreatedThread([confirmed], unconfirmed)).toBe(true);
+		expect(mergeUnconfirmedCreatedThreads([existing], [unconfirmed, existing])).toEqual([
+			unconfirmed,
+			existing
+		]);
+		expect(retainUnconfirmedCreatedThreads([confirmed, existing], [unconfirmed])).toEqual([]);
 	});
 
 	it('tracks pending launches independently by thread and clears only progressed ones', () => {

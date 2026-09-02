@@ -77,7 +77,11 @@
 		isActiveThread,
 		isAgentLaunchPending,
 		isLatestRunReadyForThread,
+		makeUnconfirmedCreatedThread,
+		mergeUnconfirmedCreatedThreads,
 		pickThreadToRestore,
+		retainUnconfirmedCreatedThreads,
+		threadTitleFromPrompt,
 		resolveExpiredAgentLaunch,
 		resolvePendingAgentLaunch,
 		resolvePendingAgentLaunchesFromThreads,
@@ -110,6 +114,7 @@
 	const convexAuth = useAuth();
 	let sawAuthLoadingDuringRetry = $state(false);
 	const isSignedIn = $derived(Boolean($authState.user));
+	const signedInUserId = $derived($authState.user?.id ?? null);
 	const retryPending = $derived($convexAuthRetryPending);
 	const authReady = $derived(
 		$authState.isReady &&
@@ -229,6 +234,7 @@
 	let lastSyncedComposerThreadId: Id<'threadRecords'> | null = null;
 	let projectSelectionGeneration = $state(0);
 	let pendingCreatedThreadId = $state<Id<'threadRecords'> | null>(null);
+	let unconfirmedCreatedThreads = $state<ThreadSummary[]>([]);
 	let desktopProjectAttachmentsByPath = $state<Record<string, ProjectAttachment>>({});
 	let hasLoadedDesktopProjectAttachments = $state(false);
 	let desktopProjectAttachmentsGeneration = 0;
@@ -236,6 +242,7 @@
 	let threadCacheStatus = $state<ThreadCacheStatus>('loading');
 	let threadSnapshotThreads = $state<ThreadSummary[]>([]);
 	let threadCacheGeneration = 0;
+	let threadSnapshotPullGeneration = 0;
 	let archivedSyncGeneration = 0;
 	let selectionUserId = $state<string | null>(null);
 	let projectPickerOpen = $state(false);
@@ -252,7 +259,7 @@
 	const REMOTE_CHANGE_NOTICE =
 		'This directory’s git remote changed. Existing threads now follow the new repository.';
 	function getCurrentUserId() {
-		return $authState.user?.id ?? null;
+		return signedInUserId;
 	}
 
 	function updateComposerAttachment(localId: string, patch: Partial<ComposerAttachment>) {
@@ -482,7 +489,12 @@
 			.sort((left, right) => right.lastUsedAt - left.lastUsedAt)
 			.map(projectFromAttachment)
 	);
-	const threads = $derived(threadSnapshotThreads.map(toThreadSummary));
+	const threads = $derived(
+		mergeUnconfirmedCreatedThreads(
+			threadSnapshotThreads.map(toThreadSummary),
+			unconfirmedCreatedThreads
+		)
+	);
 	const currentActiveThread = $derived(dataForThread(activeThreadQuery.data, currentThreadId));
 	const contextUsage = $derived.by(() => {
 		const model = modelCatalog
@@ -539,7 +551,7 @@
 		if (!threadId || !api || !isSignedIn) {
 			return;
 		}
-		const userId = untrack(() => $authState.user?.id ?? null);
+		const userId = untrack(() => getCurrentUserId());
 		if (!userId) {
 			return;
 		}
@@ -605,7 +617,7 @@
 		if (!threadId || !api || !isSignedIn) {
 			return;
 		}
-		const userId = untrack(() => $authState.user?.id ?? null);
+		const userId = untrack(() => getCurrentUserId());
 		if (!userId) {
 			return;
 		}
@@ -971,18 +983,23 @@
 		if (!api) {
 			return;
 		}
+		const generation = ++threadSnapshotPullGeneration;
 		const snapshot = await api.fetchThreadSnapshot({ userId });
-		if (getCurrentUserId() !== userId) {
+		if (generation !== threadSnapshotPullGeneration || getCurrentUserId() !== userId) {
 			return;
 		}
 		threadSnapshotThreads = snapshot.threads;
+		unconfirmedCreatedThreads = retainUnconfirmedCreatedThreads(
+			snapshot.threads,
+			unconfirmedCreatedThreads
+		);
 		applyThreadCacheEvent(snapshot);
 	}
 
 	async function registerThreadCacheForCurrentUser() {
 		const api = desktopApi;
 		const userId = getCurrentUserId();
-		if (!api || !userId || !authReady) {
+		if (!api || !userId) {
 			return;
 		}
 		const authToken = await getAccessToken();
@@ -999,15 +1016,19 @@
 
 	$effect(() => {
 		const api = desktopApi;
-		const userId = getCurrentUserId();
-		if (!api || !userId || !authReady) {
+		const userId = signedInUserId;
+		if (!api || !userId) {
 			return;
 		}
 		const generation = ++threadCacheGeneration;
 		const ac = new AbortController();
 		void (async () => {
 			try {
-				await registerThreadCacheForCurrentUser();
+				try {
+					await registerThreadCacheForCurrentUser();
+				} catch {
+					await pullThreadSnapshot(userId);
+				}
 				if (generation !== threadCacheGeneration || ac.signal.aborted) {
 					return;
 				}
@@ -1038,6 +1059,15 @@
 		return () => {
 			ac.abort();
 		};
+	});
+
+	$effect(() => {
+		const api = desktopApi;
+		const userId = signedInUserId;
+		if (!api || !userId || !authReady) {
+			return;
+		}
+		void registerThreadCacheForCurrentUser().catch(() => {});
 	});
 
 	$effect(() => {
@@ -1269,53 +1299,9 @@
 		openProjectPicker('reconnect', workspacePath);
 	}
 
-	function schedulePendingCreatedThreadExpiration(args: {
-		prompt: string;
-		attachments: ComposerAttachment[];
-		imageUploadIds: Id<'imageUploads'>[];
-		reasoningEffort: string;
-		serviceTier: string;
-		selectedModel: CatalogModelId;
-		submissionId: string;
-		threadId: Id<'threadRecords'>;
-		userId: string;
-		repositoryKey: string;
-		workspacePath: string;
-	}) {
-		window.setTimeout(() => {
-			if (
-				getCurrentUserId() !== args.userId ||
-				pendingCreatedThreadId !== args.threadId ||
-				currentThreadId !== args.threadId ||
-				currentWorkspacePath !== args.workspacePath ||
-				threads.some((thread) => thread.threadId === args.threadId)
-			) {
-				return;
-			}
-
-			pendingCreatedThreadId = null;
-			setProjectSelection(args.workspacePath, null, true);
-			const recoveryScope = getComposerScope(null, args.workspacePath);
-			if (recoveryScope) {
-				storeComposerRecovery(args.userId, recoveryScope, {
-					message: 'The new thread did not appear. Review your prompt and try sending it again.',
-					prompt: args.prompt,
-					attachments: args.attachments,
-					imageUploadIds: args.imageUploadIds,
-					reasoningEffort: args.reasoningEffort,
-					serviceTier: args.serviceTier,
-					selectedModel: args.selectedModel,
-					submissionId: args.submissionId
-				});
-			}
-		}, agentLaunchTimeoutMs);
-	}
-
 	async function createThread(args: {
 		isSubmissionCurrent: () => boolean;
 		prompt: string;
-		attachments: ComposerAttachment[];
-		imageUploadIds: Id<'imageUploads'>[];
 		selectionGeneration: number;
 		selectedModel: CatalogModelId;
 		selectedReasoningEffort: string;
@@ -1323,7 +1309,6 @@
 		submissionId: string;
 		userId: string;
 		repositoryKey: string;
-		workspacePath: string;
 	}) {
 		const result = await createThreadMutation({
 			submissionId: args.submissionId,
@@ -1338,27 +1323,25 @@
 			return null;
 		}
 
-		if (
-			args.userId === getCurrentUserId() &&
-			args.selectionGeneration === projectSelectionGeneration
-		) {
-			pendingCreatedThreadId = result.threadId;
-			projectSelectionGeneration += 1;
-			currentThreadId = result.threadId;
-			draftWorkspacePath = null;
-			schedulePendingCreatedThreadExpiration({
-				prompt: args.prompt,
-				attachments: args.attachments,
-				imageUploadIds: args.imageUploadIds,
-				reasoningEffort: args.selectedReasoningEffort,
-				serviceTier: args.selectedServiceTier,
-				selectedModel: args.selectedModel,
-				submissionId: args.submissionId,
-				threadId: result.threadId,
-				userId: args.userId,
-				repositoryKey: args.repositoryKey,
-				workspacePath: args.workspacePath
-			});
+		if (args.userId === getCurrentUserId()) {
+			unconfirmedCreatedThreads = [
+				...unconfirmedCreatedThreads.filter((thread) => thread.threadId !== result.threadId),
+				makeUnconfirmedCreatedThread({
+					threadId: result.threadId,
+					repositoryKey: args.repositoryKey,
+					selectedModel: args.selectedModel,
+					reasoningEffort: args.selectedReasoningEffort,
+					serviceTier: args.selectedServiceTier,
+					title: threadTitleFromPrompt(args.prompt)
+				})
+			];
+			void pullThreadSnapshot(args.userId);
+			if (args.selectionGeneration === projectSelectionGeneration) {
+				pendingCreatedThreadId = result.threadId;
+				projectSelectionGeneration += 1;
+				currentThreadId = result.threadId;
+				draftWorkspacePath = null;
+			}
 		}
 
 		return result;
@@ -1377,6 +1360,9 @@
 			const { api, userId, authToken } = await localThreadCommandContext();
 			const cacheSynchronized = await api.renameThread({ userId, authToken, threadId, title });
 			if (!cacheSynchronized) threadCacheStatus = 'reconnecting';
+			unconfirmedCreatedThreads = unconfirmedCreatedThreads.map((thread) =>
+				thread.threadId === threadId ? { ...thread, title } : thread
+			);
 			await pullThreadSnapshot(userId);
 		} catch (error) {
 			currentError = error instanceof Error ? error.message : 'Failed to rename thread.';
@@ -1467,6 +1453,9 @@
 				if (currentThreadId === threadId) {
 					currentThreadId = null;
 					pendingCreatedThreadId = null;
+					unconfirmedCreatedThreads = unconfirmedCreatedThreads.filter(
+						(thread) => thread.threadId !== threadId
+					);
 					projectSelectionGeneration += 1;
 				}
 				currentError = null;
@@ -1714,16 +1703,13 @@
 				: await createThread({
 						isSubmissionCurrent,
 						prompt: submittedPrompt,
-						attachments: submittedAttachments,
-						imageUploadIds: submittedImageUploadIds,
 						selectionGeneration,
 						selectedModel: submittedModel,
 						selectedReasoningEffort: submittedReasoningEffort,
 						selectedServiceTier: submittedServiceTier,
 						submissionId: threadSubmissionId,
 						userId: submittedUserId,
-						repositoryKey: submittedRepositoryKey,
-						workspacePath
+						repositoryKey: submittedRepositoryKey
 					});
 			const threadId = selectedThreadId ?? threadCreation?.threadId ?? null;
 			if (!threadId || !isSubmissionCurrent()) {
@@ -1759,9 +1745,8 @@
 					remoteChangeNotices.set(threadId, REMOTE_CHANGE_NOTICE);
 				}
 			}
-			// The browser is no longer involved after Convex binds the run-scoped
-			// executor capability. Start with a fresh token so closing the tab during
-			// the detached launch cannot strand it on an expiring browser token.
+			// Refresh so a detached launch is not left on a token about to expire.
+			// The thread-cache watch keys off user id, so this does not tear it down.
 			const authToken = await getAccessToken({ forceRefreshToken: true });
 			if (!authToken) {
 				recoverSubmission('Your session ended before the agent started. Sign in again.');
@@ -1977,6 +1962,7 @@
 		currentThreadId = null;
 		draftWorkspacePath = null;
 		pendingCreatedThreadId = null;
+		unconfirmedCreatedThreads = [];
 		pendingAgentLaunches = {};
 		restoredWorkspacePathToAttach = null;
 		ensureSubscriptionAttemptedFor = null;
@@ -1984,7 +1970,7 @@
 		threadSnapshotReady = false;
 		threadCacheStatus = 'loading';
 		threadSnapshotThreads = [];
-		threadCacheGeneration += 1;
+		threadSnapshotPullGeneration += 1;
 		projectSelectionGeneration += 1;
 		prompt = '';
 		clearComposerAttachments({ discard: true });
@@ -2102,7 +2088,7 @@
 
 		const nextPendingCreatedThreadId = resolvePendingCreatedThreadId({
 			pendingCreatedThreadId,
-			threads
+			threads: threadSnapshotThreads
 		});
 		if (nextPendingCreatedThreadId !== pendingCreatedThreadId) {
 			pendingCreatedThreadId = nextPendingCreatedThreadId;
