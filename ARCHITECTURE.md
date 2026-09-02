@@ -208,8 +208,9 @@ Cloud and local authorization solve different problems:
   Convex client still attaches that JWT on the connection.
 - **Machine presence:** each local process holds a per-launch credential.
   Registration is a user-JWT mutation that upserts a `machines` row. Heartbeat
-  and end authorize with that credential against the current `lastSeenAt`
-  presence. A live machine rejects a different process until it goes stale.
+  and end are unauthenticated: they take the owner `userId` plus that
+  credential, and require current `lastSeenAt` presence. A live machine
+  rejects a different process until it goes stale.
 - **Desktop trust:** Electron isolates the renderer, validates its origin, and
   exposes only a small set of IPC calls to the renderer.
 

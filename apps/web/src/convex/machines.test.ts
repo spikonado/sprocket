@@ -77,13 +77,22 @@ describe('machines', () => {
 		});
 
 		await expect(
-			asUser.mutation(api.machines.heartbeat, {
+			t.mutation(api.machines.heartbeat, {
+				userId: 'other-user',
+				machineId: machine.machineId,
+				credential: 'credential-a'
+			})
+		).rejects.toThrow('Machine is not active.');
+		await expect(
+			t.mutation(api.machines.heartbeat, {
+				userId: 'user_alice',
 				machineId: machine.machineId,
 				credential: 'wrong'
 			})
 		).rejects.toThrow('Machine is not active.');
 		await expect(
-			asUser.mutation(api.machines.heartbeat, {
+			t.mutation(api.machines.heartbeat, {
+				userId: 'user_alice',
 				machineId: machine.machineId,
 				credential: 'credential-a'
 			})
@@ -105,7 +114,8 @@ describe('machines', () => {
 			machineId: machine.machineId
 		});
 
-		await asUser.mutation(api.machines.end, {
+		await t.mutation(api.machines.end, {
+			userId: 'user_alice',
 			machineId: machine.machineId,
 			credential: 'credential-a'
 		});
@@ -117,7 +127,8 @@ describe('machines', () => {
 			online: false
 		});
 		await expect(
-			asUser.mutation(api.machines.heartbeat, {
+			t.mutation(api.machines.heartbeat, {
+				userId: 'user_alice',
 				machineId: machine.machineId,
 				credential: 'credential-a'
 			})
@@ -169,7 +180,8 @@ describe('machines', () => {
 		vi.advanceTimersByTime(1);
 		expect((await asUser.query(api.machines.listMine, {}))[0]?.online).toBe(false);
 
-		await asUser.mutation(api.machines.heartbeat, {
+		await t.mutation(api.machines.heartbeat, {
+			userId: 'user_alice',
 			machineId: machine.machineId,
 			credential: 'credential-a'
 		});

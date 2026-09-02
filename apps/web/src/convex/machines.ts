@@ -62,10 +62,10 @@ async function failMachineRuns(ctx: MutationCtx, machine: Doc<'machines'>): Prom
 
 async function requireMachine(
 	ctx: MutationCtx,
+	userId: string,
 	machineId: string,
 	credential: string
 ): Promise<Doc<'machines'>> {
-	const userId = await getUserId(ctx);
 	const machine = await getOwnedMachine(ctx, userId, machineId);
 	const candidateHash = await executionSecretHash(credential);
 	if (
@@ -140,20 +140,20 @@ export const register = mutation({
 });
 
 export const heartbeat = mutation({
-	args: { machineId: v.string(), credential: v.string() },
+	args: { userId: v.string(), machineId: v.string(), credential: v.string() },
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const machine = await requireMachine(ctx, args.machineId, args.credential);
+		const machine = await requireMachine(ctx, args.userId, args.machineId, args.credential);
 		await ctx.db.patch('machines', machine._id, { lastSeenAt: Date.now(), updatedAt: Date.now() });
 		return null;
 	}
 });
 
 export const end = mutation({
-	args: { machineId: v.string(), credential: v.string() },
+	args: { userId: v.string(), machineId: v.string(), credential: v.string() },
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const machine = await requireMachine(ctx, args.machineId, args.credential);
+		const machine = await requireMachine(ctx, args.userId, args.machineId, args.credential);
 		await failMachineRuns(ctx, machine);
 		await ctx.db.patch('machines', machine._id, {
 			lastSeenAt: undefined,

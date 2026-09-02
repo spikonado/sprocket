@@ -23,6 +23,12 @@ impl UserConvexClient {
         Ok(Self { client })
     }
 
+    pub async fn connect_anonymous(deployment_url: &str) -> anyhow::Result<Self> {
+        Ok(Self {
+            client: ConvexClient::new(deployment_url).await?,
+        })
+    }
+
     pub async fn ensure_migrated(&self, thread_id: &str) -> anyhow::Result<RemoteTranscriptState> {
         self.mutation_json("transcript:ensureMigrated", thread_id_args(thread_id))
             .await

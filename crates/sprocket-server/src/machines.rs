@@ -21,7 +21,6 @@ struct RegisteredMachine {
 }
 
 struct AccountPresence {
-    auth_token: String,
     heartbeat: JoinHandle<()>,
 }
 
@@ -56,10 +55,10 @@ impl MachineManager {
         let account = self.account_lock(user_id, false).await?;
         let _account = account.lock().await;
         self.ensure_running().await?;
-        if self.reuse_live(user_id, &auth_token).await {
+        if self.reuse_live(user_id).await {
             return Ok(());
         }
-        let registered = self.register_remote(auth_token.clone()).await?;
+        let registered = self.register_remote(auth_token).await?;
         if registered.user_id != user_id || registered.machine_id != self.identity.installation_id {
             anyhow::bail!("machine registration does not match the requested account");
         }
@@ -75,13 +74,11 @@ impl MachineManager {
                 }
             }
         });
-        let previous = self.accounts.lock().await.insert(
-            user_id,
-            AccountPresence {
-                auth_token,
-                heartbeat,
-            },
-        );
+        let previous = self
+            .accounts
+            .lock()
+            .await
+            .insert(user_id, AccountPresence { heartbeat });
         if let Some(previous) = previous {
             previous.heartbeat.abort();
         }
@@ -95,7 +92,7 @@ impl MachineManager {
             return Ok(());
         };
         presence.heartbeat.abort();
-        self.end_remote(&presence.auth_token).await
+        self.end_remote(user_id).await
     }
 
     pub async fn shutdown(&self) {
@@ -106,16 +103,10 @@ impl MachineManager {
         };
         for lock in locks {
             let _lock = lock.lock().await;
-            let accounts = self
-                .accounts
-                .lock()
-                .await
-                .drain()
-                .map(|(_, presence)| presence)
-                .collect::<Vec<_>>();
-            for presence in accounts {
+            let accounts = self.accounts.lock().await.drain().collect::<Vec<_>>();
+            for (user_id, presence) in accounts {
                 presence.heartbeat.abort();
-                if let Err(error) = self.end_remote(&presence.auth_token).await {
+                if let Err(error) = self.end_remote(&user_id).await {
                     tracing::warn!("failed to end machine presence during shutdown: {error:#}");
                 }
             }
@@ -145,29 +136,20 @@ impl MachineManager {
         Ok(())
     }
 
-    async fn reuse_live(&self, user_id: &str, auth_token: &str) -> bool {
-        let mut accounts = self.accounts.lock().await;
-        let Some(presence) = accounts.get_mut(user_id) else {
-            return false;
-        };
-        presence.auth_token = auth_token.to_string();
-        true
+    async fn reuse_live(&self, user_id: &str) -> bool {
+        self.accounts.lock().await.contains_key(user_id)
     }
 
     async fn heartbeat(&self, user_id: &str) -> anyhow::Result<()> {
         let account = self.account_lock(user_id, true).await?;
         let _account = account.lock().await;
-        let auth_token = {
-            let accounts = self.accounts.lock().await;
-            let Some(presence) = accounts.get(user_id) else {
-                return Ok(());
-            };
-            presence.auth_token.clone()
-        };
+        if !self.accounts.lock().await.contains_key(user_id) {
+            return Ok(());
+        }
         let error = match timeout(RPC_TIMEOUT, async {
-            let client = UserConvexClient::connect(&self.deployment_url, auth_token).await?;
+            let client = UserConvexClient::connect_anonymous(&self.deployment_url).await?;
             let _: serde_json::Value = client
-                .mutate("machines:heartbeat", self.machine_args())
+                .mutate("machines:heartbeat", self.machine_args(user_id))
                 .await?;
             anyhow::Ok(())
         })
@@ -194,11 +176,12 @@ impl MachineManager {
         .map_err(|_| anyhow::anyhow!("machine registration timed out"))?
     }
 
-    async fn end_remote(&self, auth_token: &str) -> anyhow::Result<()> {
+    async fn end_remote(&self, user_id: &str) -> anyhow::Result<()> {
         timeout(RPC_TIMEOUT, async {
-            let client =
-                UserConvexClient::connect(&self.deployment_url, auth_token.to_string()).await?;
-            let _: serde_json::Value = client.mutate("machines:end", self.machine_args()).await?;
+            let client = UserConvexClient::connect_anonymous(&self.deployment_url).await?;
+            let _: serde_json::Value = client
+                .mutate("machines:end", self.machine_args(user_id))
+                .await?;
             anyhow::Ok(())
         })
         .await
@@ -237,8 +220,9 @@ impl MachineManager {
         ])
     }
 
-    fn machine_args(&self) -> BTreeMap<String, Value> {
+    fn machine_args(&self, user_id: &str) -> BTreeMap<String, Value> {
         BTreeMap::from([
+            ("userId".into(), user_id.to_string().into()),
             (
                 "machineId".into(),
                 self.identity.installation_id.clone().into(),
@@ -280,7 +264,6 @@ mod tests {
             accounts.insert(
                 "user-a".into(),
                 AccountPresence {
-                    auth_token: "old-token".into(),
                     heartbeat: tokio::spawn(std::future::pending()),
                 },
             );
@@ -293,7 +276,6 @@ mod tests {
         {
             let accounts = manager.accounts.lock().await;
             let presence = accounts.get("user-a").expect("presence");
-            assert_eq!(presence.auth_token, "new-token");
             assert!(
                 !presence.heartbeat.is_finished(),
                 "reuse must keep the existing heartbeat"
@@ -312,7 +294,6 @@ mod tests {
             accounts.insert(
                 "user-a".into(),
                 AccountPresence {
-                    auth_token: "old-token".into(),
                     heartbeat: tokio::spawn(std::future::pending()),
                 },
             );
