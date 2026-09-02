@@ -154,10 +154,10 @@ export default defineSchema({
 		status: vRunStatus,
 		// Hash of the bearer capability held only by the local executor.
 		executionSecretHash: v.string(),
-		// Optional on stored rows written before machine binding. New runs set machineId.
+		// Leftover until `migrations.removeRunMachineSessionFields` unsets them.
+		// New writes set machineId only.
 		installationId: v.optional(v.string()),
 		machineId: v.optional(v.string()),
-		// Leftover string after dropping machineSessions. Was v.id('machineSessions').
 		executorSessionId: v.optional(v.string()),
 		continuationOfRunId: v.optional(v.id('runs')),
 		claimId: v.optional(v.string()),

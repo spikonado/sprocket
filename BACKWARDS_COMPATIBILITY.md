@@ -179,9 +179,18 @@ documents written under the removed `installations` / `machineSessions` tables
 still validate. New writes use `machineId` only. `createGatewayRun` still
 accepts leftover `installationId` / `executorSessionId` arguments.
 
-Remove the leftover run fields after a production scan finds no rows carrying
-them. Remove `machineId` optionality after all supported clients register
-machines and a scan finds no active runs without it.
+`removeRunMachineSessionFields` (pinned in `migrations.run`) copies leftover
+`installationId` onto `machineId` when missing, then unsets both leftover
+fields. Inspect before deploy with:
+
+```sh
+npx convex run migrations:removeRunMachineSessionFields '{ dryRun: true }'
+```
+
+Removal gate: the migration status is `success` and a production scan finds
+no rows carrying either leftover field. Then drop them from the schema and
+delete the migration definition/pin. Remove `machineId` optionality after all
+supported clients register machines and a scan finds no active runs without it.
 
 ### 11. Transcript tool `jobId`
 

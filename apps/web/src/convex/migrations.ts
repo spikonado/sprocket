@@ -15,7 +15,8 @@ export const migrations = new Migrations(components.migrations, {
 export const run = migrations.runner([
 	internal.migrations.clearResponseMessageParts,
 	internal.migrations.removeExecutorJobCommandStreams,
-	internal.migrations.removeTranscriptCommandStreams
+	internal.migrations.removeTranscriptCommandStreams,
+	internal.migrations.removeRunMachineSessionFields
 ]);
 
 export const removeExecutorJobCommandStreams = migrations.define({
@@ -58,5 +59,24 @@ export const clearResponseMessageParts = migrations.define({
 			return;
 		}
 		return { text: '', parts: [] };
+	}
+});
+
+/**
+ * Copies leftover `installationId` onto `machineId` when missing, then unsets
+ * `installationId` and `executorSessionId`. Those fields stay in the schema
+ * until this migration is `success` and a scan finds no remaining rows.
+ */
+export const removeRunMachineSessionFields = migrations.define({
+	table: 'runs',
+	migrateOne: (_ctx, run) => {
+		if (run.installationId === undefined && run.executorSessionId === undefined) {
+			return;
+		}
+		return {
+			machineId: run.machineId ?? run.installationId,
+			installationId: undefined,
+			executorSessionId: undefined
+		};
 	}
 });
