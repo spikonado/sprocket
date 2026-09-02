@@ -167,15 +167,21 @@ supported agents emit the current `CommandExecOutput` schema. Then remove the
 legacy command validator and both migration definitions/pins; keep the
 write-boundary normalization until old executor clients are unsupported.
 
-### 10. Runs without machine-session identity
+### 10. Runs without machine identity
 
-Released agents create runs without `installationId` or `executorSessionId`,
-so both fields remain optional. Current local servers persist an installation
-ID, generate one process-session identity per launch, register that session,
-and bind new runs to it.
+Released agents create runs without `machineId` (and leftover `installationId` /
+`executorSessionId`), so those fields remain optional. Current local servers
+persist an installation UUID, register a `machines` row, and bind new runs
+through `machineId` plus `machines.runIds`.
 
-Remove the optionality after all supported clients register machine sessions
-and a production scan finds no active runs without both fields.
+`runs.installationId` and `runs.executorSessionId` stay optional strings so
+documents written under the removed `installations` / `machineSessions` tables
+still validate. New writes use `machineId` only. `createGatewayRun` still
+accepts leftover `installationId` / `executorSessionId` arguments.
+
+Remove the leftover run fields after a production scan finds no rows carrying
+them. Remove `machineId` optionality after all supported clients register
+machines and a scan finds no active runs without it.
 
 ### 11. Transcript tool `jobId`
 
@@ -204,10 +210,10 @@ after upgrade they preserve the UUID from the legacy plain-text
 `installation-id` file and write the JSON identity. The old file is left in
 place for rollback safety but is no longer read once the JSON file exists.
 
-`installations.platformVersion` and `installations.hostname` are optional so
+`machines.platformVersion` and `machines.hostname` are optional so
 rows and released agents without the expanded normalized machine metadata
 remain valid. Remove their optionality after all supported agents send both
-fields and a production scan finds no installation rows missing either one.
+fields and a production scan finds no machine rows missing either one.
 
 Delete legacy `installation-id` files only after all supported installations
 have launched a JSON-aware server and rollback to an older release is no
@@ -246,6 +252,7 @@ to deliver the update sentence; current code never calls them.
 | `uiPreferences.setLastThread` / `setPaymentsEmail`             | Session restore and mandate email writes                  |
 | `webTools.scrapeUrl` / `webTools.webSearch`                    | Direct tool actions; current agents enqueue executor jobs |
 | `payments` mandate setup with `userEmail`                      | Agents that sent the customer email themselves            |
+| `machineSessions.register` / `heartbeat` / `end` / `listMine`  | Local servers that registered process sessions            |
 
 Remove a stub when we are willing to let that function name disappear (old
 installs then see a missing-function error instead of the update sentence).

@@ -61,7 +61,7 @@ authorizes the browser or Electron renderer to access the machine-facing API.
 | Svelte app        | User interaction, reactive views, submission recovery                                                                | Thread-list cache, transcript synchronization, filesystem access, or provider secrets |
 | Electron shell    | Desktop lifecycle, trusted renderer bridge, local server process                                                     | Conversation or agent state                                                           |
 | CLI               | Process launch and server-mode selection                                                                             | Agent implementation                                                                  |
-| Local server      | Local authorization, thread summary cache, transcript replica and live stream, machine sessions, agent task lifetime | Durable conversation source of truth                                                  |
+| Local server      | Local authorization, thread summary cache, transcript replica and live stream, machine presence, agent task lifetime | Durable conversation source of truth                                                  |
 | Agent runtime     | Run claim, model/tool loop, cancellation, finalization                                                               | HTTP presentation or cloud schema                                                     |
 | Workspace crate   | Paths, commands, patches, workspace instructions                                                                     | Authentication or networking                                                          |
 | Convex RPC client | Generic Convex query/mutation/action/subscribe                                                                       | Completion translation                                                                |
@@ -110,8 +110,8 @@ Sprocket deliberately separates cloud and machine-local state.
 | Local transcript replica                                                     | Local server         |
 | Current assistant stream                                                     | Local process memory |
 | Local folder list (`workspacePath` + `repositoryKey`)                        | Local server         |
-| Installation identity and this process’s machine-session credential          | Local server         |
-| Machine sessions and presence                                                | Convex               |
+| Installation identity and this process’s machine credential                  | Local server         |
+| Machine presence                                                             | Convex               |
 | Pairing credential and local browser sessions                                | Local server         |
 | Active commands, cancellation tokens, and run execution capabilities         | Local process memory |
 | Source files and build artifacts                                             | User workspace       |
@@ -143,9 +143,9 @@ sequenceDiagram
     UI->>G: GET /api/v1/models
     UI->>C: Create thread
     UI->>S: Start run with user token and workspace identity
-    S->>C: Register account machine session
+    S->>C: Register machine presence
     S->>A: Prepare local run
-    A->>C: Create gateway run, bind execution capability and machine session
+    A->>C: Create gateway run, bind execution capability and machine
     C-->>A: Return authoritative numbered prompt part
     A-->>S: Add prompt to local transcript replica
     S-->>UI: Notify transcript update and refetch local page
@@ -206,9 +206,10 @@ Cloud and local authorization solve different problems:
   queries and mutations authorize with that secret (`getExecutionRun`), not
   `getUserId`. Creating the run still requires the user JWT, and the Rust
   Convex client still attaches that JWT on the connection.
-- **Machine session:** each local process holds a per-launch credential.
-  Registration is a user-JWT mutation; heartbeat and end authorize with the
-  credential hash, not the user identity.
+- **Machine presence:** each local process holds a per-launch credential.
+  Registration is a user-JWT mutation that upserts a `machines` row. Heartbeat
+  and end authorize with that credential against the current `lastSeenAt`
+  presence. A live machine rejects a different process until it goes stale.
 - **Desktop trust:** Electron isolates the renderer, validates its origin, and
   exposes only a small set of IPC calls to the renderer.
 

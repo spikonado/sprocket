@@ -164,12 +164,8 @@ impl RuntimeClient {
             env!("CARGO_PKG_VERSION").to_string().into(),
         );
         args.insert(
-            "installationId".to_string(),
+            "machineId".to_string(),
             request.installation_id.clone().into(),
-        );
-        args.insert(
-            "executorSessionId".to_string(),
-            request.executor_session_id.clone().into(),
         );
         if let Some(continuation_of_run_id) = &request.continuation_of_run_id {
             args.insert(

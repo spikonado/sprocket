@@ -37,36 +37,21 @@ export default defineSchema({
 		email: v.string(),
 		createdAt: v.number()
 	}).index('by_subject', ['subject']),
-	installations: defineTable({
+	machines: defineTable({
 		userId: v.string(),
-		installationId: v.string(),
+		machineId: v.string(),
 		friendlyName: v.string(),
 		platform: v.string(),
 		platformVersion: v.optional(v.string()),
 		architecture: v.string(),
 		hostname: v.optional(v.string()),
 		appVersion: v.string(),
-		currentSessionId: v.optional(v.id('machineSessions')),
+		credentialHash: v.string(),
+		lastSeenAt: v.optional(v.number()),
+		runIds: v.array(v.id('runs')),
 		createdAt: v.number(),
 		updatedAt: v.number()
-	}).index('by_userId_and_installationId', ['userId', 'installationId']),
-	machineSessions: defineTable({
-		userId: v.string(),
-		installationId: v.string(),
-		processSessionId: v.string(),
-		credentialHash: v.string(),
-		startedAt: v.number(),
-		lastSeenAt: v.number(),
-		supersededAt: v.optional(v.number()),
-		revokedAt: v.optional(v.number())
-	}).index('by_userId_and_processSessionId', ['userId', 'processSessionId']),
-	machineSessionRuns: defineTable({
-		sessionId: v.id('machineSessions'),
-		runId: v.id('runs'),
-		active: v.boolean()
-	})
-		.index('by_sessionId_and_active', ['sessionId', 'active'])
-		.index('by_runId', ['runId']),
+	}).index('by_userId_and_machineId', ['userId', 'machineId']),
 	billingCustomers: defineTable({
 		userId: v.string(),
 		dodoCustomerId: v.string()
@@ -169,9 +154,11 @@ export default defineSchema({
 		status: vRunStatus,
 		// Hash of the bearer capability held only by the local executor.
 		executionSecretHash: v.string(),
-		// Optional on stored rows written before machine-session binding. New runs set both.
+		// Optional on stored rows written before machine binding. New runs set machineId.
 		installationId: v.optional(v.string()),
-		executorSessionId: v.optional(v.id('machineSessions')),
+		machineId: v.optional(v.string()),
+		// Leftover string after dropping machineSessions. Was v.id('machineSessions').
+		executorSessionId: v.optional(v.string()),
 		continuationOfRunId: v.optional(v.id('runs')),
 		claimId: v.optional(v.string()),
 		claimExpiresAt: v.optional(v.number()),

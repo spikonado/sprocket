@@ -383,7 +383,7 @@ mod tests {
             transcript,
             transcript_watchers,
             thread_cache,
-            machine_sessions: crate::machine_sessions::MachineSessionManager::new(
+            machines: crate::machines::MachineManager::new(
                 "https://example.convex.cloud".to_string(),
                 Arc::clone(&machine_identity),
             ),

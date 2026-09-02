@@ -24,7 +24,6 @@ struct StoredInstallationIdentity {
 #[derive(Clone)]
 pub(crate) struct MachineIdentity {
     pub(crate) installation_id: String,
-    pub(crate) process_session_id: String,
     pub(crate) credential: String,
     pub(crate) credential_hash: String,
     pub(crate) friendly_name: String,
@@ -41,7 +40,6 @@ impl MachineIdentity {
         let hostname = hostname();
         Ok(Self {
             installation_id: stored.installation_id,
-            process_session_id: Uuid::new_v4().to_string(),
             credential_hash: Sha256::digest(credential.as_bytes())
                 .iter()
                 .map(|byte| format!("{byte:02x}"))
@@ -199,7 +197,6 @@ mod tests {
         let second = MachineIdentity::load(&dir).unwrap();
 
         assert_eq!(first.installation_id, second.installation_id);
-        assert_ne!(first.process_session_id, second.process_session_id);
         assert_ne!(first.credential, second.credential);
         assert!(identity_path(&dir).is_file());
         fs::remove_dir_all(dir).unwrap();
