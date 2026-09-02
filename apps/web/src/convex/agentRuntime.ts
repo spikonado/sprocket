@@ -112,7 +112,6 @@ type QueuedRunRequest = {
 	executionSecret: string;
 	protocolVersion: number;
 	agentVersion?: string;
-	installationId?: string;
 	machineId?: string;
 	continuationOfRunId?: Id<'runs'>;
 };
@@ -145,7 +144,7 @@ async function createQueuedRunRecord(
 	const imageUploads = continuationOfRunId
 		? []
 		: await getOwnedImageUploads(ctx, args.userId, args.imageUploadIds);
-	const machineId = args.machineId ?? args.installationId;
+	const machineId = args.machineId;
 	let machine = null;
 	if (machineId) {
 		machine = await getOwnedMachine(ctx, args.userId, machineId);
@@ -377,9 +376,7 @@ export const insertGatewayRun = internalMutation({
 		executionSecret: v.string(),
 		protocolVersion: v.number(),
 		agentVersion: v.optional(v.string()),
-		installationId: v.optional(v.string()),
 		machineId: v.optional(v.string()),
-		executorSessionId: v.optional(v.string()),
 		continuationOfRunId: v.optional(v.id('runs'))
 	},
 	returns: vCreatedGatewayRun,
@@ -399,9 +396,7 @@ export const createGatewayRun = action({
 		serviceTier: vServiceTier,
 		executionSecret: v.string(),
 		agentVersion: v.optional(v.string()),
-		installationId: v.optional(v.string()),
 		machineId: v.optional(v.string()),
-		executorSessionId: v.optional(v.string()),
 		continuationOfRunId: v.optional(v.id('runs'))
 	},
 	returns: vCreateGatewayRunResult,
@@ -420,7 +415,6 @@ export const createGatewayRun = action({
 			executionSecret: args.executionSecret,
 			protocolVersion: GATEWAY_PROTOCOL_VERSION,
 			agentVersion: args.agentVersion,
-			installationId: args.installationId,
 			machineId: args.machineId
 		};
 		if (args.continuationOfRunId) request.continuationOfRunId = args.continuationOfRunId;
@@ -727,20 +721,6 @@ export const registerCompletionAttempt = mutation({
 			throw new ConvexError(COMPLETION_STREAM_SUPERSEDED);
 		}
 		await registerCompletionAttemptForRun(ctx, run, args.attemptSeq);
-	}
-});
-
-export const beginAssistantMessage = mutation({
-	args: {
-		runId: v.id('runs'),
-		executionSecret: v.string()
-	},
-	returns: v.null(),
-	handler: async (ctx, args) => {
-		// Retired: agent responses no longer maintain a `threadMessages` row.
-		// Kept for the pre-backfill agent contract so old clients fail fast.
-		await getExecutionRun(ctx, args.runId, args.executionSecret);
-		return null;
 	}
 });
 

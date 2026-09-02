@@ -49,8 +49,6 @@ describe('assistant tool parts', () => {
 					success: true,
 					running: false,
 					timedOut: false,
-					stdout: 'instructions',
-					stderr: '',
 					output: 'instructions',
 					truncated: false,
 					exitCode: 0
@@ -75,8 +73,6 @@ describe('assistant tool parts', () => {
 					success: true,
 					running: false,
 					timedOut: false,
-					stdout: 'instructions',
-					stderr: '',
 					output: 'instructions',
 					truncated: false,
 					exitCode: 0
@@ -107,8 +103,6 @@ describe('assistant tool parts', () => {
 					success: true,
 					running: false,
 					timedOut: false,
-					stdout: 'instructions',
-					stderr: '',
 					output: 'instructions',
 					truncated: false,
 					exitCode: 0
@@ -128,8 +122,6 @@ describe('assistant tool parts', () => {
 					success: true,
 					running: false,
 					timedOut: false,
-					stdout: 'instructions',
-					stderr: '',
 					output: 'instructions',
 					truncated: false,
 					exitCode: 0

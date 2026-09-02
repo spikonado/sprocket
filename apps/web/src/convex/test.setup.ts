@@ -41,7 +41,6 @@ type GatewayRunTestRequest = {
 	serviceTier: 'standard' | 'fast';
 	executionSecret: string;
 	protocolVersion: number;
-	installationId?: string;
 	machineId?: string;
 	continuationOfRunId?: Id<'runs'>;
 };
@@ -113,7 +112,6 @@ export async function insertQueuedRun(
 		selectedModel?: string;
 		reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 		serviceTier?: 'standard' | 'fast';
-		installationId?: string;
 		machineId?: string;
 		continuationOfRunId?: Id<'runs'>;
 	}
@@ -130,7 +128,6 @@ export async function insertQueuedRun(
 		serviceTier: args.serviceTier ?? 'standard',
 		executionSecret: args.executionSecret,
 		protocolVersion: 1,
-		installationId: args.installationId,
 		machineId: args.machineId
 	};
 	if (args.continuationOfRunId) request.continuationOfRunId = args.continuationOfRunId;

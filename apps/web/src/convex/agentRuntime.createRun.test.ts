@@ -407,7 +407,6 @@ describe('agentRuntime.insertGatewayRun', () => {
 		});
 		// Aborted terminal text is not preserved: only runs and transcript
 		// parts written by completed model calls hold response content.
-		expect(abandonedRun?.responseMessageId ?? undefined).toBeUndefined();
 	});
 
 	it('rejects a new submission while the latest run holds an active claim', async () => {

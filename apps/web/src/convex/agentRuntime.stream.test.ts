@@ -38,10 +38,6 @@ describe('agentRuntime completion stream state', () => {
 			};
 		});
 		expect(
-			(await t.run(async (ctx) => (await ctx.db.get('runs', runId))?.responseMessageId)) ??
-				undefined
-		).toBeUndefined();
-		expect(
 			await t.run(async (ctx) => (await ctx.db.get('runs', runId))?.completionAttemptSeq)
 		).toBe(1);
 		expect(stored.state).toMatchObject({

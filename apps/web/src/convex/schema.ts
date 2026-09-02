@@ -12,7 +12,6 @@ import {
 	vArtifactType,
 	vAskQuestionAnswer,
 	vAskQuestionOption,
-	vAssistantMessagePart,
 	vExecutorJobKind,
 	vExecutorJobPayload,
 	vExecutorJobResult,
@@ -154,11 +153,7 @@ export default defineSchema({
 		status: vRunStatus,
 		// Hash of the bearer capability held only by the local executor.
 		executionSecretHash: v.string(),
-		// Leftover until `migrations.removeRunMachineSessionFields` unsets them.
-		// New writes set machineId only.
-		installationId: v.optional(v.string()),
 		machineId: v.optional(v.string()),
-		executorSessionId: v.optional(v.string()),
 		continuationOfRunId: v.optional(v.id('runs')),
 		claimId: v.optional(v.string()),
 		claimExpiresAt: v.optional(v.number()),
@@ -180,9 +175,6 @@ export default defineSchema({
 		cancellationDeadlineAt: v.optional(v.number()),
 		activeJobId: v.optional(v.id('executorJobs')),
 		promptMessageId: v.optional(v.id('threadMessages')),
-		// Deprecated: new runs do not write a response message. Kept on leftover
-		// rows until a migration removes them; then this field can go away.
-		responseMessageId: v.optional(v.id('threadMessages')),
 		completionStreamStateId: v.optional(v.id('completionStreamStates')),
 		lifecycleWorkflowId: v.optional(v.string())
 	})
@@ -196,14 +188,8 @@ export default defineSchema({
 		userId: v.string(),
 		type: vThreadMessageType,
 		text: v.string(),
-		imageUploadIds: v.optional(v.array(v.id('imageUploads'))),
-		// Deprecated: only response rows written before the local-transcript
-		// cleanup populate this. New response rows (none are written anymore)
-		// would store an empty array. Remove the field once all existing rows
-		// have been rewritten by `migrations.clearResponseMessageParts` and the
-		// rust/desktop read gates pass; see BACKWARDS_COMPATIBILITY.md.
-		parts: v.array(vAssistantMessagePart)
-	}).index('by_type_runId', ['type', 'runId']),
+		imageUploadIds: v.optional(v.array(v.id('imageUploads')))
+	}),
 	// Durable numbered transcript replica source. Kept off threadRecords so
 	// appends do not invalidate the thread list subscription.
 	threadTranscriptStates: defineTable({

@@ -24,7 +24,7 @@ export async function getOwnedMachine(
 }
 
 export function runMachineId(run: Doc<'runs'>): string | undefined {
-	return run.machineId ?? run.installationId;
+	return run.machineId;
 }
 
 export async function attachRunToMachine(

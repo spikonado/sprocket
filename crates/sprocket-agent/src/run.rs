@@ -825,9 +825,6 @@ pub async fn run_agent(run: AgentRun, live: Arc<LiveCompletionHub>) -> anyhow::R
             prompt
         };
 
-    if let Err(error) = runtime.begin_assistant_message(&run_id).await {
-        return abort_before_start(&runtime, &run_id, error).await;
-    }
     eprintln!("sprocket-agent: prepared assistant response {}", run_id);
 
     let Some(lease_started_at) = claim_run(&runtime, &run_id, &claim_id).await? else {
