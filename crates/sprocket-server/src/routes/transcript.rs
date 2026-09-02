@@ -11,6 +11,7 @@ use axum::routing::post;
 use axum_extra::extract::CookieJar;
 use futures::stream::unfold;
 use serde::Deserialize;
+use sprocket_agent::{TRANSCRIPT_CHUNK_SIZE, TRANSCRIPT_PAGE_SIZE};
 use tokio::sync::broadcast;
 
 use crate::AppState;
@@ -30,6 +31,7 @@ struct TranscriptScope {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TranscriptPageRequest {
+    auth_token: Option<String>,
     user_id: String,
     thread_id: String,
     before: Option<u32>,
@@ -62,6 +64,44 @@ async fn page_handler(
     require_session(&state.auth, &headers, &jar)
         .await
         .map_err(ApiError::unauthorized)?;
+    if let Some(auth_token) = payload.auth_token.as_deref() {
+        let client =
+            UserConvexClient::connect(&state.convex_deployment_url, auth_token.to_string())
+                .await
+                .map_err(|error| {
+                    ApiError::internal_with(
+                        "failed to connect while loading transcript history",
+                        error,
+                    )
+                })?;
+        let transcript_state = state
+            .transcript
+            .load_state(&payload.user_id, &payload.thread_id)
+            .await
+            .map_err(|error| ApiError::internal_with("failed to read transcript state", error))?;
+        let limit = payload
+            .limit
+            .unwrap_or(TRANSCRIPT_PAGE_SIZE)
+            .min(TRANSCRIPT_CHUNK_SIZE);
+        let end = payload
+            .before
+            .unwrap_or_else(|| transcript_state.visible_end_exclusive())
+            .min(transcript_state.visible_end_exclusive());
+        let start = end
+            .saturating_sub(limit)
+            .max(transcript_state.history_from_number);
+        crate::transcript_client::sync_range(
+            &state.transcript,
+            &client,
+            &payload.user_id,
+            &payload.thread_id,
+            start,
+            end,
+        )
+        .await
+        .map_err(|error| ApiError::internal_with("failed to load transcript history", error))?;
+    }
+
     let page = state
         .transcript
         .page(
