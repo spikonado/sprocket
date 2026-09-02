@@ -439,10 +439,8 @@ function createMainWindow() {
 		console.error('Renderer process gone', details);
 	});
 	mainWindow.webContents.on('did-finish-load', notifyWorkspaceLaunch);
-	mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
-		const levels = ['debug', 'info', 'warn', 'error'];
-		const label = levels[level] ?? 'log';
-		console.log(`[renderer:${label}] ${sourceId}:${line} ${message}`);
+	mainWindow.webContents.on('console-message', ({ level, message, lineNumber, sourceId }) => {
+		console.log(`[renderer:${level}] ${sourceId}:${lineNumber} ${message}`);
 	});
 
 	void loadRendererWhenReady(mainWindow, rendererUrl).catch((error) => {
