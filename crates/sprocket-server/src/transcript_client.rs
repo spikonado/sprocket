@@ -240,9 +240,24 @@ pub async fn sync_range(
 }
 
 pub async fn download_attachment_bytes(url: &str) -> anyhow::Result<Vec<u8>> {
-    let client = reqwest::Client::builder()
+    let mut builder = reqwest::Client::builder()
         .no_proxy()
-        .timeout(Duration::from_secs(60))
+        .timeout(Duration::from_secs(60));
+    if let Some(host) = reqwest::Url::parse(url)
+        .ok()
+        .and_then(|parsed| parsed.host_str().map(str::to_owned))
+    {
+        builder = builder.retry(reqwest::retry::for_host(host).classify_fn(|req_rep| {
+            if *req_rep.method() != reqwest::Method::GET {
+                return req_rep.success();
+            }
+            match req_rep.status().map(|status| status.as_u16()) {
+                Some(429 | 502 | 503 | 504) => req_rep.retryable(),
+                _ => req_rep.success(),
+            }
+        }));
+    }
+    let client = builder
         .build()
         .context("failed to build attachment HTTP client")?;
     let response = client
