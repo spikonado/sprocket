@@ -82,10 +82,11 @@ impl ThreadSnapshotStore {
         &self.root
     }
 
-    fn snapshot_dir(&self, user_id: &str, repository_key: &str) -> PathBuf {
-        self.root
-            .join(cache_key(user_id))
-            .join(cache_key(repository_key))
+    fn snapshot_dir(&self, user_id: &str, repository_key: &str) -> anyhow::Result<PathBuf> {
+        Ok(self
+            .root
+            .join(cache_segment(user_id)?)
+            .join(cache_segment(repository_key)?))
     }
 
     fn snapshot_path(
@@ -93,9 +94,10 @@ impl ThreadSnapshotStore {
         user_id: &str,
         repository_key: &str,
         category: ThreadSnapshotCategory,
-    ) -> PathBuf {
-        self.snapshot_dir(user_id, repository_key)
-            .join(format!("{}.json", category.as_str()))
+    ) -> anyhow::Result<PathBuf> {
+        Ok(self
+            .snapshot_dir(user_id, repository_key)?
+            .join(format!("{}.json", category.as_str())))
     }
 
     async fn lock(
@@ -129,7 +131,7 @@ impl ThreadSnapshotStore {
         repository_key: &str,
         category: ThreadSnapshotCategory,
     ) -> anyhow::Result<Option<ThreadSnapshotFile>> {
-        let path = self.snapshot_path(user_id, repository_key, category);
+        let path = self.snapshot_path(user_id, repository_key, category)?;
         if !tokio::fs::try_exists(&path).await? {
             return Ok(None);
         }
@@ -171,13 +173,13 @@ impl ThreadSnapshotStore {
         {
             return Ok(());
         }
-        let dir = self.snapshot_dir(&snapshot.user_id, &snapshot.repository_key);
+        let dir = self.snapshot_dir(&snapshot.user_id, &snapshot.repository_key)?;
         tokio::fs::create_dir_all(&dir).await?;
         let path = self.snapshot_path(
             &snapshot.user_id,
             &snapshot.repository_key,
             snapshot.category,
-        );
+        )?;
         let tmp = path.with_extension("json.tmp");
         let payload = serde_json::to_vec_pretty(snapshot)?;
         tokio::fs::write(&tmp, payload).await?;
@@ -208,13 +210,13 @@ impl ThreadSnapshotStore {
         repository_key: &str,
         category: ThreadSnapshotCategory,
     ) -> anyhow::Result<()> {
-        let path = self.snapshot_path(user_id, repository_key, category);
+        let path = self.snapshot_path(user_id, repository_key, category)?;
         if tokio::fs::try_exists(&path).await? {
-            tokio::fs::remove_file(&path).await.ok();
+            tokio::fs::remove_file(&path).await?;
         }
         let tmp = path.with_extension("json.tmp");
         if tokio::fs::try_exists(&tmp).await? {
-            tokio::fs::remove_file(&tmp).await.ok();
+            tokio::fs::remove_file(&tmp).await?;
         }
         Ok(())
     }
@@ -248,14 +250,21 @@ impl ThreadSnapshotStore {
 
     async fn load_user_snapshots(&self, user_id: &str) -> anyhow::Result<Vec<ThreadSnapshotFile>> {
         let mut snapshots = Vec::new();
-        if !tokio::fs::try_exists(&self.root).await? {
+        let root = cache_root(&self.root)?;
+        if !tokio::fs::try_exists(root).await? {
             return Ok(snapshots);
         }
-        let expected_user_dir = cache_key(user_id);
-        let mut users = tokio::fs::read_dir(&self.root).await?;
+        let expected_user_dir = cache_segment(user_id)?;
+        let mut users = tokio::fs::read_dir(root).await?;
         while let Some(entry) = users.next_entry().await? {
-            if entry.file_type().await?.is_dir() && entry.file_name() == expected_user_dir.as_str()
-            {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            if !is_safe_cache_segment(name) || name != expected_user_dir {
+                continue;
+            }
+            if entry.file_type().await?.is_dir() {
                 self.load_snapshots_from_user_dir(entry.path(), user_id, &mut snapshots)
                     .await?;
                 break;
@@ -272,7 +281,11 @@ impl ThreadSnapshotStore {
     ) -> anyhow::Result<()> {
         let mut repos = tokio::fs::read_dir(user_dir).await?;
         while let Some(entry) = repos.next_entry().await? {
-            if !entry.file_type().await?.is_dir() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            if !is_safe_cache_segment(name) || !entry.file_type().await?.is_dir() {
                 continue;
             }
             let mut files = tokio::fs::read_dir(entry.path()).await?;
@@ -328,6 +341,31 @@ fn cache_key(value: &str) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+fn is_safe_cache_segment(segment: &str) -> bool {
+    !segment.is_empty()
+        && !segment.contains("..")
+        && !segment.contains('/')
+        && !segment.contains('\\')
+        && segment.len() == 64
+        && segment.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn cache_segment(value: &str) -> anyhow::Result<String> {
+    let key = cache_key(value);
+    if !is_safe_cache_segment(&key) {
+        anyhow::bail!("invalid thread cache path segment");
+    }
+    Ok(key)
+}
+
+fn cache_root(root: &Path) -> anyhow::Result<&Path> {
+    let text = root.to_string_lossy();
+    if text.contains("..") || text.contains('\\') {
+        anyhow::bail!("invalid thread cache root");
+    }
+    Ok(root)
 }
 
 fn contains_token_in_dir<'a>(
@@ -433,7 +471,9 @@ mod tests {
             uuid::Uuid::new_v4()
         ));
         let store = ThreadSnapshotStore::new(dir.clone());
-        let path = store.snapshot_path("user-a", "alpha", ThreadSnapshotCategory::Active);
+        let path = store
+            .snapshot_path("user-a", "alpha", ThreadSnapshotCategory::Active)
+            .expect("path");
         tokio::fs::create_dir_all(path.parent().expect("parent"))
             .await
             .expect("dir");
