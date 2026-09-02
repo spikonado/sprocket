@@ -250,12 +250,16 @@ impl ThreadSnapshotStore {
 
     async fn load_user_snapshots(&self, user_id: &str) -> anyhow::Result<Vec<ThreadSnapshotFile>> {
         let mut snapshots = Vec::new();
-        let root = cache_root(&self.root)?;
-        if !tokio::fs::try_exists(root).await? {
+        let root_text = self.root.to_string_lossy().into_owned();
+        if root_text.contains("..") {
+            anyhow::bail!("invalid thread cache root");
+        }
+        let root = PathBuf::from(root_text);
+        if !tokio::fs::try_exists(&root).await? {
             return Ok(snapshots);
         }
         let expected_user_dir = cache_segment(user_id)?;
-        let mut users = tokio::fs::read_dir(root).await?;
+        let mut users = tokio::fs::read_dir(&root).await?;
         while let Some(entry) = users.next_entry().await? {
             let name = entry.file_name();
             let Some(name) = name.to_str() else {
@@ -358,14 +362,6 @@ fn cache_segment(value: &str) -> anyhow::Result<String> {
         anyhow::bail!("invalid thread cache path segment");
     }
     Ok(key)
-}
-
-fn cache_root(root: &Path) -> anyhow::Result<&Path> {
-    let text = root.to_string_lossy();
-    if text.contains("..") || text.contains('\\') {
-        anyhow::bail!("invalid thread cache root");
-    }
-    Ok(root)
 }
 
 fn contains_token_in_dir<'a>(
