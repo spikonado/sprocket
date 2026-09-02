@@ -852,16 +852,19 @@
 	const isRetryableQueuedRun = $derived(
 		currentLifecycle?.phase === 'queued' && currentRecoveredSubmission != null
 	);
-	const isRunning = $derived(
+	const isRunInProgress = $derived(
 		currentLifecycle != null &&
 			isLifecycleInProgress(currentLifecycle.phase) &&
 			!isRetryableQueuedRun
+	);
+	const isRunning = $derived(
+		isRunInProgress && currentLifecycle?.phase !== 'cancellation_requested'
 	);
 	const hasPendingAgentLaunch = $derived(
 		isAgentLaunchPending(pendingAgentLaunches, currentThreadId)
 	);
 	const latestRunResumeKind = $derived(
-		hasPendingAgentLaunch || isRunning
+		hasPendingAgentLaunch || isRunInProgress
 			? null
 			: lifecycleResumeKind(currentLifecycle?.phase ?? 'idle', currentLifecycle?.run?.lastError)
 	);
@@ -882,7 +885,7 @@
 			!isSubmittingPrompt &&
 			!answeringAgentQuestion &&
 			!hasPendingAgentLaunch &&
-			((!isRunning && isLatestRunReady) || pendingAgentQuestion)
+			((!isRunInProgress && isLatestRunReady) || pendingAgentQuestion)
 		)
 	);
 	const recentProjectDirectories = $derived.by(() => {
@@ -1555,7 +1558,7 @@
 
 		if (!canSend) {
 			currentError =
-				isRunning || hasPendingAgentLaunch || isSubmittingPrompt
+				isRunInProgress || hasPendingAgentLaunch || isSubmittingPrompt
 					? 'Wait for the current agent launch or run to finish.'
 					: currentProject?.localAttachmentAvailability === 'available'
 						? 'You need an active project before sending.'
@@ -1865,7 +1868,7 @@
 	}
 
 	async function cancelRun() {
-		if (!runState?.runId || !isRunning) {
+		if (!runState?.runId || !isRunInProgress) {
 			return;
 		}
 

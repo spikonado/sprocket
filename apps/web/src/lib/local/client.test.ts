@@ -11,6 +11,11 @@ function threadRecordId(value: string): Id<'threadRecords'> {
 	return value as Id<'threadRecords'>;
 }
 
+function runId(value: string): Id<'runs'> {
+	// SAFETY: fixture strings are only compared as opaque Convex document ids.
+	return value as Id<'runs'>;
+}
+
 afterEach(() => {
 	vi.unstubAllGlobals();
 });
@@ -147,5 +152,27 @@ describe('thread cache local API', () => {
 			}
 		);
 		expect(events).toEqual([{ status: 'live', lastSyncedAt: 20 }]);
+	});
+});
+
+describe('run cancellation local API', () => {
+	it('accepts the boolean returned by the cancellation mutation', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(
+				async () =>
+					new Response('true', {
+						status: 200,
+						headers: { 'content-type': 'application/json' }
+					})
+			)
+		);
+
+		await expect(
+			createLocalClient('http://127.0.0.1:7731').requestRunCancellation({
+				authToken: 'token',
+				runId: runId('run-1')
+			})
+		).resolves.toBeUndefined();
 	});
 });
