@@ -8,6 +8,7 @@ import {
 	buildOpenExecCommandSessions,
 	groupAssistantTimeline,
 	groupAssistantTimelineSections,
+	isAssistantResponseStreaming,
 	isAssistantTimelineToolRunning,
 	partitionWorkSectionTools,
 	resolveCommandSessionLabel,
@@ -59,6 +60,15 @@ function tool(
 ): AssistantTimelineTool {
 	return { type: 'tool', callId, name, input: {}, ...overrides };
 }
+
+describe('assistant response streaming', () => {
+	it('stays active between completion calls until the run itself finishes', () => {
+		const runId = executorRunId('run');
+
+		expect(isAssistantResponseStreaming({ runId, runStatus: 'completed' }, runId)).toBe(true);
+		expect(isAssistantResponseStreaming({ runId, runStatus: 'running' }, null)).toBe(false);
+	});
+});
 
 describe('assistant timeline', () => {
 	it('keeps tool calls between surrounding assistant parts and pairs results', () => {

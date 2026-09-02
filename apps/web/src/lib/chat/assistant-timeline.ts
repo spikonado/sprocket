@@ -6,7 +6,7 @@ import {
 } from '$convex/lib/assistantParts';
 import { isJsonObject, type JsonValue } from '$convex/lib/json';
 import { jsonBoolean, jsonObjectString } from '$lib/chat/json-fields';
-import type { ExecutorJob } from '$lib/types/sprocket';
+import type { ExecutorJob, ThreadMessage } from '$lib/types/sprocket';
 
 export type AssistantTimelineTool = {
 	type: 'tool';
@@ -39,6 +39,13 @@ export type AssistantTimelineSection =
 	| Extract<AssistantTimelineBlock, { type: 'text' }>;
 
 export type AssistantTimelineToolFailureKind = 'cancelled' | 'failed' | 'interrupted';
+
+export function isAssistantResponseStreaming(
+	message: Pick<ThreadMessage, 'runId' | 'runStatus'>,
+	activeRunId: ThreadMessage['runId'] | null
+): boolean {
+	return message.runId === activeRunId;
+}
 
 /** Tool type used for grouping: prefer streamed call name so groups stay stable as jobs attach. */
 export function assistantTimelineToolKey(tool: AssistantTimelineTool): string {
