@@ -104,7 +104,11 @@ export const getWebToolJob = internalQuery({
 			return null;
 		}
 		const run = await ctx.db.get('runs', args.runId);
-		if (!run || !ownsActiveRunClaim(run, args.claimId, Date.now())) {
+		if (
+			!run ||
+			!ownsActiveRunClaim(run, args.claimId, Date.now()) ||
+			run.cancellationRequestedAt !== undefined
+		) {
 			return null;
 		}
 		return { kind: job.kind, payload: job.payload };
@@ -123,7 +127,7 @@ export const completeWebTool = internalMutation({
 			return null;
 		}
 		const run = await ctx.db.get('runs', args.context.runId);
-		if (!run || isRunFinalStatus(run.status)) {
+		if (!run || isRunFinalStatus(run.status) || run.cancellationRequestedAt !== undefined) {
 			return null;
 		}
 		if (!ownsActiveRunClaim(run, args.context.claimId, Date.now())) {

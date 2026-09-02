@@ -163,7 +163,7 @@ describe('project thread helpers', () => {
 			threadStatus: 'archived'
 		});
 
-		// Running-first listMine order must not leak into session restore.
+		// Running-first sidebar order must not leak into session restore.
 		expect(pickThreadToRestore([runningOlder, idleNewer, archivedNewest])?.threadId).toBe(
 			'thread-record-idle'
 		);

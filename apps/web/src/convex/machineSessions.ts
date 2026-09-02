@@ -1,10 +1,55 @@
-import { mutation, type MutationCtx, type QueryCtx } from '@convex/_generated/server';
+import { mutation, query, type MutationCtx, type QueryCtx } from '@convex/_generated/server';
 import type { Doc } from '@convex/_generated/dataModel';
 import { v } from 'convex/values';
 import { constantTimeEqual, executionSecretHash, getUserId } from '@convex/lib/auth';
 import { finalizeRunRecord } from '@convex/lib/runFinalize';
 
 const SESSION_ENDED = 'The executor session ended before this run finished.';
+const ONLINE_THRESHOLD_MS = 90_000;
+
+export const listMine = query({
+	args: {},
+	returns: v.array(
+		v.object({
+			installationId: v.string(),
+			friendlyName: v.string(),
+			platform: v.string(),
+			platformVersion: v.optional(v.string()),
+			architecture: v.string(),
+			hostname: v.optional(v.string()),
+			appVersion: v.string(),
+			lastSeenAt: v.optional(v.number()),
+			online: v.boolean()
+		})
+	),
+	handler: async (ctx) => {
+		const userId = await getUserId(ctx);
+		const now = Date.now();
+		const installations = await ctx.db
+			.query('installations')
+			.withIndex('by_userId_and_installationId', (query) => query.eq('userId', userId))
+			.collect();
+		return await Promise.all(
+			installations.map(async (installation) => {
+				const session = installation.currentSessionId
+					? await ctx.db.get('machineSessions', installation.currentSessionId)
+					: null;
+				const active = session?.revokedAt === undefined && session?.supersededAt === undefined;
+				return {
+					installationId: installation.installationId,
+					friendlyName: installation.friendlyName,
+					platform: installation.platform,
+					platformVersion: installation.platformVersion,
+					architecture: installation.architecture,
+					hostname: installation.hostname,
+					appVersion: installation.appVersion,
+					lastSeenAt: session?.lastSeenAt,
+					online: Boolean(active && session && now - session.lastSeenAt <= ONLINE_THRESHOLD_MS)
+				};
+			})
+		);
+	}
+});
 
 async function failSessionRuns(ctx: MutationCtx, session: Doc<'machineSessions'>): Promise<void> {
 	const sessionRuns = await ctx.db
@@ -53,7 +98,9 @@ export const register = mutation({
 		credentialHash: v.string(),
 		friendlyName: v.string(),
 		platform: v.string(),
+		platformVersion: v.optional(v.string()),
 		architecture: v.string(),
+		hostname: v.optional(v.string()),
 		appVersion: v.string()
 	},
 	returns: v.object({ sessionId: v.id('machineSessions'), userId: v.string() }),
@@ -126,7 +173,9 @@ export const register = mutation({
 			await ctx.db.patch('installations', installation._id, {
 				friendlyName: args.friendlyName,
 				platform: args.platform,
+				platformVersion: args.platformVersion,
 				architecture: args.architecture,
+				hostname: args.hostname,
 				appVersion: args.appVersion,
 				currentSessionId: sessionId,
 				updatedAt: now
@@ -137,7 +186,9 @@ export const register = mutation({
 				installationId: args.installationId,
 				friendlyName: args.friendlyName,
 				platform: args.platform,
+				platformVersion: args.platformVersion,
 				architecture: args.architecture,
+				hostname: args.hostname,
 				appVersion: args.appVersion,
 				currentSessionId: sessionId,
 				createdAt: now,

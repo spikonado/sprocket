@@ -163,6 +163,7 @@ export type PendingAgentLaunch = {
 	expiresAt: number;
 	launchId: number;
 	previousClaimExpiresAt?: number;
+	previousStartedAt?: number;
 	previousRunId: Id<'runs'> | null;
 };
 
@@ -201,13 +202,15 @@ export function clearPendingAgentLaunch(
 function hasAgentLaunchProgressed(
 	pendingLaunch: PendingAgentLaunch,
 	observedRunId: Id<'runs'> | null,
-	observedClaimExpiresAt?: number
+	observedClaimExpiresAt?: number,
+	observedStartedAt?: number
 ): boolean {
 	return Boolean(
 		observedRunId &&
 		(observedRunId !== pendingLaunch.previousRunId ||
 			(observedClaimExpiresAt != null &&
-				observedClaimExpiresAt !== pendingLaunch.previousClaimExpiresAt))
+				observedClaimExpiresAt !== pendingLaunch.previousClaimExpiresAt) ||
+			(observedStartedAt != null && observedStartedAt !== pendingLaunch.previousStartedAt))
 	);
 }
 
@@ -215,12 +218,18 @@ export function resolvePendingAgentLaunch(
 	pendingLaunches: PendingAgentLaunches,
 	threadId: Id<'threadRecords'>,
 	observedRunId: Id<'runs'> | null,
-	observedClaimExpiresAt?: number
+	observedClaimExpiresAt?: number,
+	observedStartedAt?: number
 ): PendingAgentLaunches {
 	const pendingLaunch = pendingLaunches[threadId];
 	if (
 		!pendingLaunch ||
-		!hasAgentLaunchProgressed(pendingLaunch, observedRunId, observedClaimExpiresAt)
+		!hasAgentLaunchProgressed(
+			pendingLaunch,
+			observedRunId,
+			observedClaimExpiresAt,
+			observedStartedAt
+		)
 	) {
 		return pendingLaunches;
 	}
@@ -257,7 +266,8 @@ export function resolveExpiredAgentLaunch(
 	launchId: number,
 	now: number,
 	latestRunId: Id<'runs'> | null,
-	latestClaimExpiresAt?: number
+	latestClaimExpiresAt?: number,
+	latestStartedAt?: number
 ): ExpiredAgentLaunchResolution {
 	const pendingLaunch = pendingLaunches[threadId];
 	if (!pendingLaunch || pendingLaunch.launchId !== launchId || pendingLaunch.expiresAt > now) {
@@ -266,7 +276,12 @@ export function resolveExpiredAgentLaunch(
 
 	return {
 		pendingLaunches: clearPendingAgentLaunch(pendingLaunches, threadId, launchId),
-		shouldRecover: !hasAgentLaunchProgressed(pendingLaunch, latestRunId, latestClaimExpiresAt)
+		shouldRecover: !hasAgentLaunchProgressed(
+			pendingLaunch,
+			latestRunId,
+			latestClaimExpiresAt,
+			latestStartedAt
+		)
 	};
 }
 

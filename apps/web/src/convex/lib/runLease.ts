@@ -7,6 +7,7 @@ type ClaimableRun = {
 	status: string;
 	claimId?: string;
 	claimExpiresAt?: number;
+	cancellationRequestedAt?: number;
 };
 
 type CompletionAttemptRun = {
@@ -24,6 +25,7 @@ export function isRunClaimLeaseActive(run: ClaimableRun, now: number): boolean {
 }
 
 export function canStartRunWithClaim(run: ClaimableRun, claimId: string, now: number): boolean {
+	if (run.cancellationRequestedAt !== undefined) return false;
 	if (run.status === 'queued') return true;
 	return (
 		isClaimedRunStatus(run.status) && run.claimId === claimId && isRunClaimLeaseActive(run, now)

@@ -367,13 +367,26 @@ mod tests {
             "https://example.convex.cloud".to_string(),
             transcript.clone(),
         );
+        let thread_cache = crate::thread_sync::ThreadCacheSync::new(
+            "https://example.convex.cloud".to_string(),
+            crate::thread_cache::ThreadSnapshotStore::new(temp_dir.clone()),
+            project_attachments.clone(),
+        );
 
+        let machine_identity = Arc::new(
+            crate::machine_identity::MachineIdentity::load(&temp_dir).expect("machine identity"),
+        );
         let state = AppState {
             auth,
             desktop_login: DesktopLoginStore::new(),
             project_attachments,
             transcript,
             transcript_watchers,
+            thread_cache,
+            machine_sessions: crate::machine_sessions::MachineSessionManager::new(
+                "https://example.convex.cloud".to_string(),
+                Arc::clone(&machine_identity),
+            ),
             live_completions: Arc::new(sprocket_agent::LiveCompletionHub::new()),
             http_base_url: "http://127.0.0.1:7731".to_string(),
             desktop_login_callback_url: auth::desktop_login_callback_url(7731),
@@ -381,10 +394,7 @@ mod tests {
             convex_deployment_url: "https://example.convex.cloud".to_string(),
             web_ui_enabled: true,
             desktop_bootstrap_token: None,
-            machine_identity: Arc::new(
-                crate::machine_identity::MachineIdentity::load(&temp_dir)
-                    .expect("machine identity"),
-            ),
+            machine_identity,
         };
 
         (state, session_token, credential)

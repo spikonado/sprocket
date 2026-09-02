@@ -8,6 +8,10 @@ import type {
 	LocalTranscriptPage,
 	LocalTranscriptPart,
 	ProjectAttachment,
+	ThreadCacheSnapshot,
+	ThreadCacheUserRequest,
+	ThreadCacheWatchEvent,
+	ThreadSummary,
 	TranscriptScopeRequest
 } from '$lib/types/sprocket';
 import type { TableNamesInDataModel } from 'convex/server';
@@ -81,10 +85,11 @@ const localTranscriptPartSchema = z.object({
 	tool: z
 		.object({
 			jobId: z.string().optional(),
+			toolInvocationId: z.string().optional(),
 			callId: z.string(),
 			name: z.string(),
-			output: z.unknown(),
-			status: z.enum(['completed', 'failed', 'cancelled'])
+			output: z.unknown().optional(),
+			status: z.enum(['started', 'completed', 'failed', 'cancelled'])
 		})
 		.optional()
 });
@@ -115,6 +120,31 @@ const liveCompletionWatchEventSchema = z.discriminatedUnion('eventType', [
 	z.object({ eventType: z.literal('updated'), live: liveCompletionOverlaySchema }),
 	z.object({ eventType: z.literal('cleared') })
 ]);
+const threadSummarySchema = z.object({
+	threadId: z.string(),
+	repositoryKey: z.string(),
+	title: z.string(),
+	selectedModel: z.string(),
+	reasoningEffort: z.string(),
+	serviceTier: z.string(),
+	lastMessageAt: z.number(),
+	threadStatus: z.enum(['active', 'archived']),
+	latestRunStatus: z
+		.enum(['queued', 'running', 'awaiting_executor', 'completed', 'failed', 'cancelled'])
+		.nullable()
+		.optional(),
+	latestRunId: z.string().nullable().optional(),
+	latestRunStartedAt: z.number().optional(),
+	latestRunClaimExpiresAt: z.number().optional(),
+	hasActiveRun: z.boolean()
+});
+const threadCacheWatchEventSchema = z.object({
+	status: z.enum(['loading', 'live', 'reconnecting', 'offline', 'error']),
+	lastSyncedAt: z.number().nullable()
+});
+const threadCacheSnapshotSchema = threadCacheWatchEventSchema.extend({
+	threads: z.array(threadSummarySchema)
+});
 
 function asConvexId<TableName extends TableNamesInDataModel<DataModel>>(
 	value: string
@@ -143,6 +173,23 @@ function parseLocalTranscriptPage(
 	};
 }
 
+function parseLocalTranscriptTool(
+	tool: NonNullable<z.infer<typeof localTranscriptPartSchema>['tool']>
+): NonNullable<LocalTranscriptPart['tool']> {
+	const parsed: NonNullable<LocalTranscriptPart['tool']> = {
+		callId: tool.callId,
+		name: tool.name,
+		status: tool.status
+	};
+	if (tool.jobId) parsed.jobId = asConvexId(tool.jobId);
+	if (tool.toolInvocationId) parsed.toolInvocationId = tool.toolInvocationId;
+	if (tool.output !== undefined) {
+		// SAFETY: JSONL replica tool output is Convex JSON.
+		parsed.output = tool.output as JsonValue;
+	}
+	return parsed;
+}
+
 function parseLocalTranscriptPart(
 	part: z.infer<typeof localTranscriptPartSchema>
 ): LocalTranscriptPart {
@@ -168,14 +215,7 @@ function parseLocalTranscriptPart(
 					items: part.completion.items as AssistantPart[]
 				}
 			: undefined,
-		tool: part.tool
-			? {
-					...part.tool,
-					jobId: part.tool.jobId ? asConvexId(part.tool.jobId) : undefined,
-					// SAFETY: JSONL replica tool output is Convex JSON.
-					output: part.tool.output as JsonValue
-				}
-			: undefined
+		tool: part.tool ? parseLocalTranscriptTool(part.tool) : undefined
 	};
 }
 
@@ -191,6 +231,42 @@ function parseLiveCompletionOverlay(
 		// SAFETY: overlay parts match AssistantPart; the local SSE payload is produced by the hub.
 		parts: live.parts as AssistantPart[],
 		runStartedAt: live.runStartedAt
+	};
+}
+
+function parseThreadSummary(thread: z.infer<typeof threadSummarySchema>): ThreadSummary {
+	return {
+		threadId: asConvexId(thread.threadId),
+		repositoryKey: thread.repositoryKey,
+		title: thread.title,
+		selectedModel: thread.selectedModel,
+		reasoningEffort: thread.reasoningEffort,
+		serviceTier: thread.serviceTier,
+		lastMessageAt: thread.lastMessageAt,
+		threadStatus: thread.threadStatus,
+		latestRunStatus: thread.latestRunStatus ?? null,
+		latestRunId: thread.latestRunId ? asConvexId(thread.latestRunId) : null,
+		latestRunStartedAt: thread.latestRunStartedAt,
+		latestRunClaimExpiresAt: thread.latestRunClaimExpiresAt,
+		hasActiveRun: thread.hasActiveRun
+	};
+}
+
+function parseThreadCacheWatchEvent(
+	event: z.infer<typeof threadCacheWatchEventSchema>
+): ThreadCacheWatchEvent {
+	return {
+		status: event.status,
+		lastSyncedAt: event.lastSyncedAt
+	};
+}
+
+function parseThreadCacheSnapshot(
+	snapshot: z.infer<typeof threadCacheSnapshotSchema>
+): ThreadCacheSnapshot {
+	return {
+		...parseThreadCacheWatchEvent(snapshot),
+		threads: snapshot.threads.map(parseThreadSummary)
 	};
 }
 
@@ -259,7 +335,7 @@ async function errorFromFailedResponse(response: Response): Promise<Error> {
 
 async function postSse(
 	url: string,
-	requestBody: TranscriptScopeRequest,
+	requestBody: TranscriptScopeRequest | ThreadCacheUserRequest,
 	signal: AbortSignal,
 	onData: (data: string) => void
 ) {
@@ -566,6 +642,67 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				return null;
 			}
 			return await response.blob();
+		},
+		registerThreadCache: async (requestBody) =>
+			parseThreadCacheWatchEvent(
+				await request('/api/threads/register', threadCacheWatchEventSchema, {
+					method: 'POST',
+					body: JSON.stringify(requestBody)
+				})
+			),
+		fetchThreadSnapshot: async (requestBody) =>
+			parseThreadCacheSnapshot(
+				await request('/api/threads/snapshot', threadCacheSnapshotSchema, {
+					method: 'POST',
+					body: JSON.stringify(requestBody)
+				})
+			),
+		syncArchivedThreads: async (requestBody) =>
+			parseThreadCacheWatchEvent(
+				await request('/api/threads/archive-sync', threadCacheWatchEventSchema, {
+					method: 'POST',
+					body: JSON.stringify(requestBody)
+				})
+			),
+		watchThreadCache: async (requestBody, handlers) => {
+			await postSse(`${baseUrl}/api/threads/watch`, requestBody, handlers.signal, (data) => {
+				const parsed = threadCacheWatchEventSchema.safeParse(JSON.parse(data));
+				if (parsed.success) {
+					handlers.onEvent(parseThreadCacheWatchEvent(parsed.data));
+				}
+			});
+		},
+		renameThread: async (requestBody) =>
+			await request('/api/threads/rename', z.boolean(), {
+				method: 'POST',
+				body: JSON.stringify(requestBody)
+			}),
+		archiveThread: async (requestBody) =>
+			await request('/api/threads/archive', z.boolean(), {
+				method: 'POST',
+				body: JSON.stringify(requestBody)
+			}),
+		restoreThread: async (requestBody) =>
+			await request('/api/threads/restore', z.boolean(), {
+				method: 'POST',
+				body: JSON.stringify(requestBody)
+			}),
+		rekeyRepository: async (requestBody) =>
+			await request('/api/threads/rekey', z.number(), {
+				method: 'POST',
+				body: JSON.stringify(requestBody)
+			}),
+		requestRunCancellation: async (requestBody) => {
+			await request('/api/threads/cancel', z.null(), {
+				method: 'POST',
+				body: JSON.stringify(requestBody)
+			});
+		},
+		endAccountSession: async (requestBody) => {
+			await request('/api/threads/account-session/end', z.null(), {
+				method: 'POST',
+				body: JSON.stringify(requestBody)
+			});
 		}
 	};
 }

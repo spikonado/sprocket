@@ -535,16 +535,21 @@ export const vTranscriptCompletionBody = v.object({
 });
 
 export const vTranscriptToolStatus = v.union(
+	v.literal('started'),
 	v.literal('completed'),
 	v.literal('failed'),
 	v.literal('cancelled')
 );
 
 export const vTranscriptToolBody = v.object({
+	// Legacy: written on pre-progress-event tool parts. New events omit it and
+	// pair by toolInvocationId. Keep reading until the removal gate in
+	// BACKWARDS_COMPATIBILITY.md.
 	jobId: v.optional(v.id('executorJobs')),
+	toolInvocationId: v.optional(v.string()),
 	callId: v.string(),
 	name: v.string(),
-	output: vJsonValue,
+	output: v.optional(vJsonValue),
 	status: vTranscriptToolStatus
 });
 

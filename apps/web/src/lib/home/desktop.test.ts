@@ -3,6 +3,7 @@ import type { Id } from '$convex/_generated/dataModel';
 import {
 	isRunBlockingAgentLaunch,
 	launchAgentRun,
+	lifecycleResumeKind,
 	resolveDraftRunSubmissionId,
 	resolveSubmissionId,
 	runResumeKind
@@ -18,6 +19,11 @@ function imageUploadId(value: string): Id<'imageUploads'> {
 function threadRecordId(value: string): Id<'threadRecords'> {
 	// SAFETY: fixture strings are only compared as opaque Convex document ids.
 	return value as Id<'threadRecords'>;
+}
+
+function runId(value: string): Id<'runs'> {
+	// SAFETY: fixture strings are only compared as opaque Convex document ids.
+	return value as Id<'runs'>;
 }
 
 function unusedDesktopCall(): Promise<never> {
@@ -45,7 +51,17 @@ function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 		watchTranscript: unusedDesktopCall,
 		watchLiveCompletion: unusedDesktopCall,
 		clearTranscriptReplica: unusedDesktopCall,
-		fetchTranscriptAttachment: unusedDesktopCall
+		fetchTranscriptAttachment: unusedDesktopCall,
+		registerThreadCache: unusedDesktopCall,
+		fetchThreadSnapshot: unusedDesktopCall,
+		syncArchivedThreads: unusedDesktopCall,
+		watchThreadCache: unusedDesktopCall,
+		renameThread: unusedDesktopCall,
+		archiveThread: unusedDesktopCall,
+		restoreThread: unusedDesktopCall,
+		rekeyRepository: unusedDesktopCall,
+		requestRunCancellation: unusedDesktopCall,
+		endAccountSession: unusedDesktopCall
 	};
 }
 
@@ -54,6 +70,7 @@ function launchArgs(
 		Pick<Parameters<typeof launchAgentRun>[0], 'desktopApi'>
 ): Parameters<typeof launchAgentRun>[0] {
 	return {
+		userId: 'user-1',
 		authToken: 'token-1',
 		onError: vi.fn(),
 		onStarted: vi.fn(),
@@ -94,6 +111,7 @@ describe('launchAgentRun', () => {
 		launchAgentRun(launchArgs({ desktopApi, onStarted }));
 
 		expect(runAgent).toHaveBeenCalledWith({
+			userId: 'user-1',
 			authToken: 'token-1',
 			threadId: 'thread-1',
 			prompt: 'Inspect src/lib.rs',
@@ -106,6 +124,34 @@ describe('launchAgentRun', () => {
 		});
 		await vi.waitFor(() => {
 			expect(onStarted).toHaveBeenCalledWith('run-1');
+		});
+	});
+
+	it('forwards continuationOfRunId without a duplicated prompt', async () => {
+		const runAgent = vi.fn().mockResolvedValue({ runId: 'run-2' });
+		const desktopApi = createDesktopApi(runAgent);
+
+		launchAgentRun(
+			launchArgs({
+				desktopApi,
+				prompt: '',
+				imageUploadIds: [],
+				continuationOfRunId: runId('run-1')
+			})
+		);
+
+		expect(runAgent).toHaveBeenCalledWith({
+			userId: 'user-1',
+			authToken: 'token-1',
+			threadId: 'thread-1',
+			prompt: '',
+			imageUploadIds: [],
+			selectedModel: 'gpt-5.6-sol',
+			submissionId: 'submission-1',
+			reasoningEffort: 'medium',
+			serviceTier: 'standard',
+			workspacePath: '/workspaces/workspace-1',
+			continuationOfRunId: 'run-1'
 		});
 	});
 
@@ -224,5 +270,16 @@ describe('runResumeKind', () => {
 		expect(runResumeKind({ status: 'cancelled' }, 100)).toBe('cancelled');
 		expect(runResumeKind({ status: 'completed' }, 100)).toBeNull();
 		expect(runResumeKind({ status: 'running', claimExpiresAt: 150 }, 100)).toBeNull();
+	});
+});
+
+describe('lifecycleResumeKind', () => {
+	it('classifies failed, crashed, and cancelled projection phases', () => {
+		expect(lifecycleResumeKind('cancelled')).toBe('cancelled');
+		expect(lifecycleResumeKind('failed', RUN_ABANDONED_BY_AGENT)).toBe('crash');
+		expect(lifecycleResumeKind('failed', 'boom')).toBe('failed');
+		expect(lifecycleResumeKind('completed')).toBeNull();
+		expect(lifecycleResumeKind('running')).toBeNull();
+		expect(lifecycleResumeKind('cancellation_requested')).toBeNull();
 	});
 });

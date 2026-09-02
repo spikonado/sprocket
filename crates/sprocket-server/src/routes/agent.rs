@@ -32,6 +32,7 @@ const AGENT_START_CLEANUP_TIMEOUT: Duration = Duration::from_secs(12);
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RunAgentApiRequest {
+    user_id: String,
     auth_token: String,
     submission_id: String,
     thread_id: String,
@@ -41,6 +42,8 @@ struct RunAgentApiRequest {
     reasoning_effort: String,
     service_tier: String,
     workspace_path: String,
+    #[serde(default)]
+    continuation_of_run_id: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -83,7 +86,13 @@ async fn run_agent_handler(
         .await
         .map_err(ApiError::bad_request)?;
 
-    let auth_token_fetcher = static_auth_token_fetcher(payload.auth_token);
+    let auth_token = payload.auth_token;
+    let executor_session_id = state
+        .machine_sessions
+        .register(&payload.user_id, auth_token.clone())
+        .await
+        .map_err(ApiError::bad_request)?;
+    let auth_token_fetcher = static_auth_token_fetcher(auth_token);
     let request = RunAgentRequest {
         deployment_url: state.convex_deployment_url.clone(),
         auth_token_fetcher: auth_token_fetcher.clone(),
@@ -98,12 +107,8 @@ async fn run_agent_handler(
         workspace_path,
         transcript_root: state.transcript.root(),
         installation_id: state.machine_identity.installation_id.clone(),
-        process_session_id: state.machine_identity.process_session_id.clone(),
-        machine_credential: state.machine_identity.credential.clone(),
-        machine_credential_hash: state.machine_identity.credential_hash.clone(),
-        machine_friendly_name: state.machine_identity.friendly_name.clone(),
-        machine_platform: state.machine_identity.platform.clone(),
-        machine_architecture: state.machine_identity.architecture.clone(),
+        executor_session_id,
+        continuation_of_run_id: payload.continuation_of_run_id,
     };
 
     let cleanup_request = request.clone();
@@ -133,25 +138,26 @@ async fn run_agent_handler(
             Ok(run) => {
                 let run_id = run.run_id().to_string();
                 let user_id = run.user_id().to_string();
-                let prompt_part = run.prompt_part().clone();
-                match transcript
-                    .append_parts(&user_id, &thread_id, std::slice::from_ref(&prompt_part))
-                    .await
-                {
-                    Ok(state) => {
-                        transcript_watchers
-                            .notify_local_update(
-                                &user_id,
-                                &thread_id,
-                                prompt_part.number + 1,
-                                state.stale,
-                            )
-                            .await;
-                    }
-                    Err(error) => {
-                        eprintln!(
-                            "sprocket-server: failed to update local transcript for run {run_id}: {error:#}"
-                        );
+                if let Some(prompt_part) = run.prompt_part().cloned() {
+                    match transcript
+                        .append_parts(&user_id, &thread_id, std::slice::from_ref(&prompt_part))
+                        .await
+                    {
+                        Ok(state) => {
+                            transcript_watchers
+                                .notify_local_update(
+                                    &user_id,
+                                    &thread_id,
+                                    prompt_part.number + 1,
+                                    state.stale,
+                                )
+                                .await;
+                        }
+                        Err(error) => {
+                            eprintln!(
+                                "sprocket-server: failed to update local transcript for run {run_id}: {error:#}"
+                            );
+                        }
                     }
                 }
                 let _ = start_result_sender.send(Ok(run_id));

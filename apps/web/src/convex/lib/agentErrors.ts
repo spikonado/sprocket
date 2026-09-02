@@ -15,11 +15,14 @@ const UNCAUGHT_ERROR_PREFIX = 'Uncaught Error: ';
 
 // Sentinels are ConvexErrors so production keeps their text: the executor
 // classifies runs by these exact messages.
-export function assertRunAcceptsModelCompletion(status: Infer<typeof vRunStatus>): void {
-	if (status === 'cancelled') {
+export function assertRunAcceptsModelCompletion(run: {
+	status: Infer<typeof vRunStatus>;
+	cancellationRequestedAt?: number;
+}): void {
+	if (run.cancellationRequestedAt !== undefined || run.status === 'cancelled') {
 		throw new ConvexError(RUN_CANCELLED_BY_USER);
 	}
-	if (isRunFinalStatus(status)) {
+	if (isRunFinalStatus(run.status)) {
 		throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 	}
 }

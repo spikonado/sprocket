@@ -3,6 +3,7 @@ import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
 import { ConvexError } from 'convex/values';
 import type { ThreadMessageType } from '@convex/lib/validators';
 import { getOwnedThreadRecord } from './access';
+import { bumpThreadSnapshotForRecord } from './threadSnapshots';
 
 export async function getThreadMessage(
 	ctx: MutationCtx | QueryCtx,
@@ -45,6 +46,7 @@ export async function appendThreadMessage(
 	await ctx.db.patch('threadRecords', threadRecord._id, {
 		lastMessageAt: Date.now()
 	});
+	await bumpThreadSnapshotForRecord(ctx, threadRecord);
 
 	return messageId;
 }

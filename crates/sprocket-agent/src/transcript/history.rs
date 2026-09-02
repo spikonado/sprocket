@@ -1,6 +1,6 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use crate::transcript::types::{TranscriptPart, TranscriptPartKind};
+use crate::transcript::types::{TranscriptPart, TranscriptPartKind, TranscriptToolBody};
 use crate::types::{
     AgentHistoryContent, AgentHistoryMessage, AgentHistoryRole, AgentHistoryToolResultItem,
 };
@@ -13,6 +13,13 @@ pub fn current_run_has_finished_turns(parts: &[TranscriptPart], run_id: &str) ->
         .any(|part| part.run_id == run_id && part.kind == TranscriptPartKind::Completion)
 }
 
+fn completion_item_call_id(item: &serde_json::Value) -> Option<&str> {
+    if item.get("type").and_then(|value| value.as_str()) != Some("tool-call") {
+        return None;
+    }
+    item.get("callId").and_then(|value| value.as_str())
+}
+
 fn completion_call_ids(parts: &[TranscriptPart]) -> HashSet<&str> {
     let mut ids = HashSet::new();
     for part in parts {
@@ -20,15 +27,77 @@ fn completion_call_ids(parts: &[TranscriptPart]) -> HashSet<&str> {
             continue;
         };
         for item in &completion.items {
-            if item.get("type").and_then(|value| value.as_str()) != Some("tool-call") {
-                continue;
-            }
-            if let Some(call_id) = item.get("callId").and_then(|value| value.as_str()) {
+            if let Some(call_id) = completion_item_call_id(item) {
                 ids.insert(call_id);
             }
         }
     }
     ids
+}
+
+fn is_started_tool(tool: &TranscriptToolBody) -> bool {
+    tool.status == "started"
+}
+
+fn tool_result_message(tool: &TranscriptToolBody) -> AgentHistoryMessage {
+    let output = tool
+        .output
+        .as_ref()
+        .unwrap_or(&serde_json::Value::Null)
+        .to_string();
+    AgentHistoryMessage {
+        role: AgentHistoryRole::User,
+        assistant_id: None,
+        contents: vec![AgentHistoryContent::ToolResult {
+            id: tool.call_id.clone(),
+            call_id: Some(tool.call_id.clone()),
+            items: vec![AgentHistoryToolResultItem::Text { text: output }],
+        }],
+    }
+}
+
+fn take_matching_tool<'a>(
+    tool: &'a TranscriptToolBody,
+    protocol_call_ids: &HashSet<&str>,
+    opened_call_ids: &HashSet<String>,
+    emitted_results: &mut HashSet<String>,
+    pending_tools: &mut HashMap<String, &'a TranscriptToolBody>,
+) -> Option<&'a TranscriptToolBody> {
+    if is_started_tool(tool) || !protocol_call_ids.contains(tool.call_id.as_str()) {
+        return None;
+    }
+    if emitted_results.contains(&tool.call_id) {
+        return None;
+    }
+    if opened_call_ids.contains(&tool.call_id) {
+        emitted_results.insert(tool.call_id.clone());
+        return Some(tool);
+    }
+    pending_tools.entry(tool.call_id.clone()).or_insert(tool);
+    None
+}
+
+fn flush_pending_tools_for_completion(
+    items: &[serde_json::Value],
+    opened_call_ids: &mut HashSet<String>,
+    emitted_results: &mut HashSet<String>,
+    pending_tools: &mut HashMap<String, &TranscriptToolBody>,
+    history: &mut Vec<AgentHistoryMessage>,
+) {
+    for item in items {
+        let Some(call_id) = completion_item_call_id(item) else {
+            continue;
+        };
+        opened_call_ids.insert(call_id.to_string());
+        if emitted_results.contains(call_id) {
+            continue;
+        }
+        let Some(tool) = pending_tools.remove(call_id) else {
+            continue;
+        };
+        emitted_results.insert(call_id.to_string());
+        history.push(tool_result_message(tool));
+    }
 }
 
 pub fn agent_history_from_parts(
@@ -38,7 +107,7 @@ pub fn agent_history_from_parts(
 ) -> Vec<AgentHistoryMessage> {
     let include_current_prompt =
         skip_run_id.is_some_and(|run_id| current_run_has_finished_turns(parts, run_id));
-    let call_ids = completion_call_ids(parts);
+    let protocol_call_ids = completion_call_ids(parts);
     let mut history = Vec::new();
     if let Some(summary) = state
         .context_summary
@@ -56,6 +125,10 @@ pub fn agent_history_from_parts(
             }],
         });
     }
+
+    let mut opened_call_ids = HashSet::new();
+    let mut emitted_results = HashSet::new();
+    let mut pending_tools: HashMap<String, &TranscriptToolBody> = HashMap::new();
 
     for part in parts {
         if part.number < state.history_from_number {
@@ -116,24 +189,26 @@ pub fn agent_history_from_parts(
                             contents,
                         });
                     }
+                    flush_pending_tools_for_completion(
+                        &completion.items,
+                        &mut opened_call_ids,
+                        &mut emitted_results,
+                        &mut pending_tools,
+                        &mut history,
+                    );
                 }
             }
             TranscriptPartKind::Tool => {
                 if let Some(tool) = &part.tool {
-                    if !call_ids.contains(tool.call_id.as_str()) {
-                        continue;
+                    if let Some(ready) = take_matching_tool(
+                        tool,
+                        &protocol_call_ids,
+                        &opened_call_ids,
+                        &mut emitted_results,
+                        &mut pending_tools,
+                    ) {
+                        history.push(tool_result_message(ready));
                     }
-                    history.push(AgentHistoryMessage {
-                        role: AgentHistoryRole::User,
-                        assistant_id: None,
-                        contents: vec![AgentHistoryContent::ToolResult {
-                            id: tool.call_id.clone(),
-                            call_id: Some(tool.call_id.clone()),
-                            items: vec![AgentHistoryToolResultItem::Text {
-                                text: tool.output.to_string(),
-                            }],
-                        }],
-                    });
                 }
             }
         }
@@ -219,6 +294,53 @@ mod tests {
         }
     }
 
+    fn tool_part(
+        number: u32,
+        source_key: &str,
+        call_id: &str,
+        status: &str,
+        output: Option<serde_json::Value>,
+        tool_invocation_id: Option<&str>,
+        job_id: Option<&str>,
+    ) -> TranscriptPart {
+        TranscriptPart {
+            number,
+            source_key: source_key.into(),
+            kind: TranscriptPartKind::Tool,
+            run_id: "run".into(),
+            prompt: None,
+            completion: None,
+            tool: Some(TranscriptToolBody {
+                job_id: job_id.map(str::to_string),
+                tool_invocation_id: tool_invocation_id.map(str::to_string),
+                call_id: call_id.into(),
+                name: "exec_command".into(),
+                output,
+                status: status.into(),
+            }),
+        }
+    }
+
+    fn completion_with_call(number: u32, call_id: &str) -> TranscriptPart {
+        TranscriptPart {
+            number,
+            source_key: format!("completion:{number}"),
+            kind: TranscriptPartKind::Completion,
+            run_id: "run".into(),
+            prompt: None,
+            completion: Some(TranscriptCompletionBody {
+                stream_id: Some("s".into()),
+                items: vec![serde_json::json!({
+                    "type": "tool-call",
+                    "callId": call_id,
+                    "name": "exec_command",
+                    "input": {}
+                })],
+            }),
+            tool: None,
+        }
+    }
+
     #[test]
     fn skips_the_current_run_prompt_until_that_run_has_finished_turns() {
         let mut state = TranscriptState::new("user".into(), "thread".into());
@@ -266,6 +388,38 @@ mod tests {
     }
 
     #[test]
+    fn reconstructs_parent_transcript_for_a_continuation_run_without_a_prompt() {
+        let mut state = TranscriptState::new("user".into(), "thread".into());
+        state.history_from_number = 0;
+        let history = agent_history_from_parts(
+            &state,
+            &[
+                prompt(0, "parent", "original task"),
+                TranscriptPart {
+                    number: 1,
+                    source_key: "completion:parent".into(),
+                    kind: TranscriptPartKind::Completion,
+                    run_id: "parent".into(),
+                    prompt: None,
+                    completion: Some(TranscriptCompletionBody {
+                        stream_id: Some("s".into()),
+                        items: vec![serde_json::json!({ "type": "text", "text": "partial work" })],
+                    }),
+                    tool: None,
+                },
+            ],
+            Some("continuation"),
+        );
+        let serialized = format!("{history:?}");
+        assert!(serialized.contains("original task"));
+        assert!(serialized.contains("partial work"));
+        assert!(!current_run_has_finished_turns(
+            &[prompt(0, "parent", "original task")],
+            "continuation"
+        ));
+    }
+
+    #[test]
     fn skips_tool_parts_without_a_matching_completion_call() {
         let state = TranscriptState::new("user".into(), "thread".into());
         let history = agent_history_from_parts(
@@ -281,9 +435,10 @@ mod tests {
                     completion: None,
                     tool: Some(TranscriptToolBody {
                         job_id: None,
+                        tool_invocation_id: None,
                         call_id: "orphan".into(),
                         name: "exec_command".into(),
-                        output: serde_json::json!("orphan-output"),
+                        output: Some(serde_json::json!("orphan-output")),
                         status: "completed".into(),
                     }),
                 },
@@ -313,9 +468,10 @@ mod tests {
                     completion: None,
                     tool: Some(TranscriptToolBody {
                         job_id: None,
+                        tool_invocation_id: None,
                         call_id: "keep".into(),
                         name: "exec_command".into(),
-                        output: serde_json::json!("keep-output"),
+                        output: Some(serde_json::json!("keep-output")),
                         status: "completed".into(),
                     }),
                 },
@@ -326,6 +482,103 @@ mod tests {
         assert!(serialized.contains("do it"));
         assert!(serialized.contains("keep-output"));
         assert!(!serialized.contains("orphan-output"));
+    }
+
+    #[test]
+    fn skips_started_tool_progress_and_emits_one_finished_result_after_the_call() {
+        let state = TranscriptState::new("user".into(), "thread".into());
+        let history = agent_history_from_parts(
+            &state,
+            &[
+                prompt(0, "run", "do it"),
+                tool_part(
+                    1,
+                    "tool:inv-1:started",
+                    "keep",
+                    "started",
+                    None,
+                    Some("inv-1"),
+                    None,
+                ),
+                tool_part(
+                    2,
+                    "tool:inv-1:finished",
+                    "keep",
+                    "completed",
+                    Some(serde_json::json!("keep-output")),
+                    Some("inv-1"),
+                    None,
+                ),
+                completion_with_call(3, "keep"),
+            ],
+            Some("run"),
+        );
+        let serialized = format!("{history:?}");
+        assert!(serialized.contains("keep-output"));
+        assert_eq!(serialized.matches("keep-output").count(), 1);
+        assert!(!serialized.contains("started"));
+        let keep_at = serialized.find("keep-output").expect("result");
+        let call_at = serialized.find("ToolCall").expect("protocol call");
+        assert!(call_at < keep_at);
+    }
+
+    #[test]
+    fn first_terminal_tool_event_wins() {
+        let state = TranscriptState::new("user".into(), "thread".into());
+        let history = agent_history_from_parts(
+            &state,
+            &[
+                prompt(0, "run", "do it"),
+                completion_with_call(1, "keep"),
+                tool_part(
+                    2,
+                    "tool:inv-1:finished",
+                    "keep",
+                    "cancelled",
+                    Some(serde_json::json!({"error": "stopped", "status": "cancelled"})),
+                    Some("inv-1"),
+                    None,
+                ),
+                tool_part(
+                    3,
+                    "tool:inv-1:finished-dup",
+                    "keep",
+                    "completed",
+                    Some(serde_json::json!("should-not-win")),
+                    Some("inv-1"),
+                    None,
+                ),
+            ],
+            Some("run"),
+        );
+        let serialized = format!("{history:?}");
+        assert!(serialized.contains("stopped"));
+        assert!(!serialized.contains("should-not-win"));
+    }
+
+    #[test]
+    fn reads_legacy_job_id_tool_parts() {
+        let state = TranscriptState::new("user".into(), "thread".into());
+        let history = agent_history_from_parts(
+            &state,
+            &[
+                prompt(0, "run", "do it"),
+                completion_with_call(1, "keep"),
+                tool_part(
+                    2,
+                    "tool:legacy-job",
+                    "keep",
+                    "completed",
+                    Some(serde_json::json!("legacy-output")),
+                    None,
+                    Some("legacy-job"),
+                ),
+            ],
+            Some("run"),
+        );
+        let serialized = format!("{history:?}");
+        assert!(serialized.contains("legacy-output"));
+        assert!(serialized.contains("call_id: Some(\"keep\")"));
     }
 
     #[test]

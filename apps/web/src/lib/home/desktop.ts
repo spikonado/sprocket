@@ -11,6 +11,7 @@ import type {
 import { isClaimedRunStatus, isRunClaimLeaseActive } from '$convex/lib/runLease';
 import { RUN_ABANDONED_BY_AGENT } from '$convex/lib/agentErrors';
 import { isRunFinalStatus } from '$convex/lib/validators';
+import type { SelectedThreadLifecyclePhase } from '$convex/lib/runCancellation';
 import { areImageUploadIdsEqual } from '$lib/chat/attachments';
 
 export type ProjectState = Project & {
@@ -99,7 +100,19 @@ export function runResumeKind(
 	return null;
 }
 
+export function lifecycleResumeKind(
+	phase: SelectedThreadLifecyclePhase,
+	lastError?: string
+): RunResumeKind | null {
+	if (phase === 'cancelled') return 'cancelled';
+	if (phase === 'failed') {
+		return lastError === RUN_ABANDONED_BY_AGENT ? 'crash' : 'failed';
+	}
+	return null;
+}
+
 export function launchAgentRun(args: {
+	userId: string;
 	authToken: string;
 	desktopApi: DesktopApi;
 	onError: (error: Error) => void;
@@ -112,19 +125,25 @@ export function launchAgentRun(args: {
 	serviceTier: AgentRunRequest['serviceTier'];
 	submissionId: string;
 	workspacePath: string;
+	continuationOfRunId?: Id<'runs'>;
 }) {
+	const request: AgentRunRequest = {
+		userId: args.userId,
+		authToken: args.authToken,
+		threadId: args.threadId,
+		prompt: args.prompt,
+		imageUploadIds: args.imageUploadIds,
+		selectedModel: args.selectedModel,
+		reasoningEffort: args.reasoningEffort,
+		serviceTier: args.serviceTier,
+		submissionId: args.submissionId,
+		workspacePath: args.workspacePath
+	};
+	if (args.continuationOfRunId) {
+		request.continuationOfRunId = args.continuationOfRunId;
+	}
 	void args.desktopApi
-		.runAgent({
-			authToken: args.authToken,
-			threadId: args.threadId,
-			prompt: args.prompt,
-			imageUploadIds: args.imageUploadIds,
-			selectedModel: args.selectedModel,
-			reasoningEffort: args.reasoningEffort,
-			serviceTier: args.serviceTier,
-			submissionId: args.submissionId,
-			workspacePath: args.workspacePath
-		})
+		.runAgent(request)
 		.then(({ runId }) => {
 			args.onStarted(runId);
 		})

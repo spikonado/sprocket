@@ -3,7 +3,6 @@ use convex::{FunctionResult, QuerySubscription, Value};
 use serde::Deserialize;
 use sprocket_convex::Client as ConvexRpcClient;
 use std::collections::BTreeMap;
-use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -14,12 +13,6 @@ use crate::types::{
 
 const CREATE_RUN_MAX_ATTEMPTS: usize = 3;
 const CREATE_RUN_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RegisteredMachineSession {
-    session_id: String,
-}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -33,8 +26,6 @@ pub(crate) enum FailedStartCleanup {
 pub(crate) struct RuntimeClient {
     pub(crate) client: ConvexRpcClient,
     execution_secret: String,
-    machine_credential: String,
-    machine_session_id: Arc<OnceLock<String>>,
 }
 
 impl RuntimeClient {
@@ -54,8 +45,6 @@ impl RuntimeClient {
         Ok(Self {
             client,
             execution_secret: request.execution_secret.clone(),
-            machine_credential: request.machine_credential.clone(),
-            machine_session_id: Arc::new(OnceLock::new()),
         })
     }
 
@@ -174,15 +163,20 @@ impl RuntimeClient {
             "agentVersion".to_string(),
             env!("CARGO_PKG_VERSION").to_string().into(),
         );
-        let session = self.register_machine_session(request).await?;
-        self.machine_session_id
-            .set(session.session_id.clone())
-            .map_err(|_| anyhow!("machine session was registered more than once"))?;
         args.insert(
             "installationId".to_string(),
             request.installation_id.clone().into(),
         );
-        args.insert("executorSessionId".to_string(), session.session_id.into());
+        args.insert(
+            "executorSessionId".to_string(),
+            request.executor_session_id.clone().into(),
+        );
+        if let Some(continuation_of_run_id) = &request.continuation_of_run_id {
+            args.insert(
+                "continuationOfRunId".to_string(),
+                continuation_of_run_id.clone().into(),
+            );
+        }
         self.add_execution_secret(&mut args);
 
         let mut retry_delay = CREATE_RUN_INITIAL_RETRY_DELAY;
@@ -216,65 +210,6 @@ impl RuntimeClient {
                 )
             },
         )
-    }
-
-    async fn register_machine_session(
-        &self,
-        request: &RunAgentRequest,
-    ) -> anyhow::Result<RegisteredMachineSession> {
-        let mut args = BTreeMap::new();
-        args.insert(
-            "installationId".to_string(),
-            request.installation_id.clone().into(),
-        );
-        args.insert(
-            "processSessionId".to_string(),
-            request.process_session_id.clone().into(),
-        );
-        args.insert(
-            "credentialHash".to_string(),
-            request.machine_credential_hash.clone().into(),
-        );
-        args.insert(
-            "friendlyName".to_string(),
-            request.machine_friendly_name.clone().into(),
-        );
-        args.insert(
-            "platform".to_string(),
-            request.machine_platform.clone().into(),
-        );
-        args.insert(
-            "architecture".to_string(),
-            request.machine_architecture.clone().into(),
-        );
-        args.insert(
-            "appVersion".to_string(),
-            env!("CARGO_PKG_VERSION").to_string().into(),
-        );
-        let result = self
-            .client
-            .mutation("machineSessions:register", args)
-            .await?;
-        decode_function_result(result, "machineSessions:register")
-    }
-
-    pub(crate) async fn heartbeat_machine_session(&self) -> anyhow::Result<()> {
-        let session_id = self
-            .machine_session_id
-            .get()
-            .ok_or_else(|| anyhow!("machine session is not registered"))?;
-        let mut args = BTreeMap::new();
-        args.insert("sessionId".to_string(), session_id.clone().into());
-        args.insert(
-            "credential".to_string(),
-            self.machine_credential.clone().into(),
-        );
-        let result = self
-            .client
-            .mutation("machineSessions:heartbeat", args)
-            .await?;
-        let _: serde_json::Value = decode_function_result(result, "machineSessions:heartbeat")?;
-        Ok(())
     }
 
     pub(crate) async fn start_run(

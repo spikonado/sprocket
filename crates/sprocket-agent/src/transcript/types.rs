@@ -154,9 +154,12 @@ pub struct TranscriptCompletionBody {
 pub struct TranscriptToolBody {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_invocation_id: Option<String>,
     pub call_id: String,
     pub name: String,
-    pub output: JsonValue,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<JsonValue>,
     pub status: String,
 }
 

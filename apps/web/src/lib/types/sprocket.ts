@@ -107,6 +107,7 @@ export type ThreadMessage = {
 };
 
 export type AgentRunRequest = {
+	userId: string;
 	authToken: string;
 	submissionId: string;
 	threadId: Id<'threadRecords'>;
@@ -116,6 +117,7 @@ export type AgentRunRequest = {
 	reasoningEffort: string;
 	serviceTier: string;
 	workspacePath: string;
+	continuationOfRunId?: Id<'runs'>;
 };
 
 export type AgentRunStart = {
@@ -146,10 +148,11 @@ export type LocalTranscriptPart = {
 	};
 	tool?: {
 		jobId?: Id<'executorJobs'>;
+		toolInvocationId?: string;
 		callId: string;
 		name: string;
-		output: JsonValue;
-		status: 'completed' | 'failed' | 'cancelled';
+		output?: JsonValue;
+		status: 'started' | 'completed' | 'failed' | 'cancelled';
 	};
 };
 
@@ -177,6 +180,25 @@ export type TranscriptWatchEvent = {
 	eventType: string;
 	totalParts?: number;
 	stale: boolean;
+};
+
+export type ThreadCacheStatus = 'loading' | 'live' | 'reconnecting' | 'offline' | 'error';
+
+export type ThreadCacheWatchEvent = {
+	status: ThreadCacheStatus;
+	lastSyncedAt: number | null;
+};
+
+export type ThreadCacheSnapshot = ThreadCacheWatchEvent & {
+	threads: ThreadSummary[];
+};
+
+export type ThreadCacheUserRequest = {
+	userId: string;
+};
+
+export type ThreadCacheRegisterRequest = ThreadCacheUserRequest & {
+	authToken: string;
 };
 
 export type LiveCompletionWatchEvent =
@@ -248,6 +270,28 @@ export type DesktopApi = {
 	fetchTranscriptAttachment: (
 		request: TranscriptScopeRequest & { imageUploadId: Id<'imageUploads'> }
 	) => Promise<Blob | null>;
+	registerThreadCache: (request: ThreadCacheRegisterRequest) => Promise<ThreadCacheWatchEvent>;
+	fetchThreadSnapshot: (request: ThreadCacheUserRequest) => Promise<ThreadCacheSnapshot>;
+	syncArchivedThreads: (request: ThreadCacheUserRequest) => Promise<ThreadCacheWatchEvent>;
+	watchThreadCache: (
+		request: ThreadCacheUserRequest,
+		handlers: {
+			onEvent: (event: ThreadCacheWatchEvent) => void;
+			signal: AbortSignal;
+		}
+	) => Promise<void>;
+	renameThread: (request: ThreadCommandRequest & { title: string }) => Promise<boolean>;
+	archiveThread: (request: ThreadCommandRequest) => Promise<boolean>;
+	restoreThread: (request: ThreadCommandRequest) => Promise<boolean>;
+	rekeyRepository: (
+		request: ThreadCacheRegisterRequest & { from: string; to: string }
+	) => Promise<number>;
+	requestRunCancellation: (request: { authToken: string; runId: Id<'runs'> }) => Promise<void>;
+	endAccountSession: (request: ThreadCacheUserRequest) => Promise<void>;
+};
+
+export type ThreadCommandRequest = ThreadCacheRegisterRequest & {
+	threadId: Id<'threadRecords'>;
 };
 
 export type WorkspacePathResolution = {

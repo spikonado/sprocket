@@ -24,12 +24,15 @@ import {
 import { recordThreadUsageEvent, usageEventId } from '@convex/lib/threadUsage';
 import { finalizeRunRecord, matchesFinalizeExpectations } from '@convex/lib/runFinalize';
 import { startRunLifecycle } from '@convex/runLifecycle';
-import { reopenRunRecord } from '@convex/lib/runResume';
+import { assertContinuableParent } from '@convex/lib/runResume';
+import { requestRunCancellation } from './runLifecycle';
 import { enqueueWebToolJob, isCloudWebToolKind } from '@convex/webToolPool';
+import { newToolInvocationId } from '@convex/lib/transcriptParts';
 import {
 	recordCompletionTranscript,
 	recordPromptTranscript,
-	recordSettledToolTranscripts
+	recordSettledToolTranscripts,
+	recordStartedToolTranscript
 } from '@convex/lib/transcriptWrites';
 import {
 	areImageUploadIdsEqual,
@@ -44,6 +47,7 @@ import {
 } from '@convex/lib/agentErrors';
 import { unsupportedClient } from '@convex/lib/unsupportedClient';
 import { assertThreadCanStartRun, compareRunStartedAt } from '@convex/lib/runs';
+import { bumpThreadSnapshotForRun } from '@convex/lib/threadSnapshots';
 import {
 	canRegisterCompletionAttempt,
 	canFinalizeAfterClaimFailure,
@@ -87,6 +91,7 @@ type EnqueuedExecutorJob = {
 	claimedAt: number;
 	sequence: number;
 	callId?: string;
+	toolInvocationId: string;
 };
 
 type QueuedRunRequest = {
@@ -103,6 +108,15 @@ type QueuedRunRequest = {
 	agentVersion?: string;
 	installationId?: string;
 	executorSessionId?: Id<'machineSessions'>;
+	continuationOfRunId?: Id<'runs'>;
+};
+
+type CreatedGatewayRun = {
+	created: boolean;
+	runId: Id<'runs'>;
+	userId: string;
+	promptMessageId?: Id<'threadMessages'>;
+	promptPart?: Doc<'threadTranscriptParts'>;
 };
 
 type GatewayRunTelemetry = {
@@ -114,20 +128,17 @@ type GatewayRunTelemetry = {
 async function createQueuedRunRecord(
 	ctx: MutationCtx,
 	args: QueuedRunRequest
-): Promise<{
-	created: boolean;
-	runId: Id<'runs'>;
-	promptMessageId: Id<'threadMessages'>;
-	userId: string;
-	promptPart: Doc<'threadTranscriptParts'>;
-}> {
+): Promise<CreatedGatewayRun> {
 	const secretHash = await executionSecretHash(args.executionSecret);
 	const threadRecord = await getOwnedThreadRecord(ctx.db, args.userId, args.threadId);
+	const continuationOfRunId = args.continuationOfRunId;
 	const prompt = args.prompt.trim();
-	if (!prompt && args.imageUploadIds.length === 0) {
+	if (!continuationOfRunId && !prompt && args.imageUploadIds.length === 0) {
 		throw new Error('Message cannot be empty.');
 	}
-	const imageUploads = await getOwnedImageUploads(ctx, args.userId, args.imageUploadIds);
+	const imageUploads = continuationOfRunId
+		? []
+		: await getOwnedImageUploads(ctx, args.userId, args.imageUploadIds);
 	if ((args.installationId === undefined) !== (args.executorSessionId === undefined)) {
 		throw new Error('Executor session identity is incomplete.');
 	}
@@ -158,48 +169,7 @@ async function createQueuedRunRecord(
 		)
 		.unique();
 	if (existingRun) {
-		if (existingRun.executionSecretHash !== secretHash) {
-			throw new ConvexError('Submission belongs to a different executor.');
-		}
-		if (
-			existingRun.threadId !== args.threadId ||
-			existingRun.selectedModel !== args.selectedModel ||
-			existingRun.reasoningEffort !== args.reasoningEffort ||
-			existingRun.serviceTier !== args.serviceTier ||
-			!existingRun.promptMessageId ||
-			!existingRun.completionStreamStateId ||
-			existingRun.completionTransport !== 'gateway'
-		) {
-			throw new ConvexError('Submission belongs to a different or incomplete run.');
-		}
-		const existingPrompt = await ctx.db.get('threadMessages', existingRun.promptMessageId);
-		if (
-			!existingPrompt ||
-			existingPrompt.text !== prompt ||
-			!areImageUploadIdsEqual(existingPrompt.imageUploadIds, args.imageUploadIds)
-		) {
-			throw new Error('Submission prompt does not match the existing run.');
-		}
-
-		if (!existingRun.lifecycleWorkflowId && !isRunFinalStatus(existingRun.status)) {
-			const lifecycleWorkflowId = await startRunLifecycle(ctx, existingRun._id);
-			await ctx.db.patch('runs', existingRun._id, { lifecycleWorkflowId });
-		}
-		const promptPart = await recordPromptTranscript(ctx, {
-			threadId: args.threadId,
-			userId: args.userId,
-			runId: existingRun._id,
-			text: prompt,
-			imageUploadIds: args.imageUploadIds
-		});
-
-		return {
-			created: false,
-			runId: existingRun._id,
-			promptMessageId: existingRun.promptMessageId,
-			userId: args.userId,
-			promptPart
-		};
+		return await reconcileExistingQueuedRun(ctx, args, existingRun, secretHash, prompt);
 	}
 	if (args.executorSessionId) {
 		const activeSessionRuns = await ctx.db
@@ -212,7 +182,7 @@ async function createQueuedRunRecord(
 			throw new Error('Executor session has too many active runs.');
 		}
 	}
-	const latestRun = await ctx.db
+	let latestRun = await ctx.db
 		.query('runs')
 		.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', args.threadId))
 		.order('desc')
@@ -227,8 +197,12 @@ async function createQueuedRunRecord(
 			status: 'failed',
 			lastError: RUN_ABANDONED_BY_AGENT
 		});
+		latestRun = (await ctx.db.get('runs', latestRun._id)) ?? latestRun;
 	} else {
 		assertThreadCanStartRun(latestRun?.status);
+	}
+	if (continuationOfRunId) {
+		assertContinuableParent(latestRun, continuationOfRunId);
 	}
 
 	const gatewayFields: GatewayRunTelemetry = {
@@ -238,7 +212,7 @@ async function createQueuedRunRecord(
 	if (args.agentVersion) {
 		gatewayFields.agentVersion = args.agentVersion;
 	}
-	const runId = await ctx.db.insert('runs', {
+	const runRecord: Omit<Doc<'runs'>, '_id' | '_creationTime'> = {
 		threadId: args.threadId,
 		userId: args.userId,
 		submissionId: args.submissionId,
@@ -252,7 +226,9 @@ async function createQueuedRunRecord(
 		executorSessionId: args.executorSessionId,
 		startedAt: Date.now(),
 		...gatewayFields
-	});
+	};
+	if (continuationOfRunId) runRecord.continuationOfRunId = continuationOfRunId;
+	const runId = await ctx.db.insert('runs', runRecord);
 	if (args.executorSessionId) {
 		await ctx.db.insert('machineSessionRuns', {
 			sessionId: args.executorSessionId,
@@ -265,39 +241,110 @@ async function createQueuedRunRecord(
 		userId: args.userId,
 		sequence: 0
 	});
-	const promptMessageId = await appendThreadMessage(ctx, {
-		threadId: args.threadId,
+	const created: CreatedGatewayRun = {
+		created: true,
 		runId,
-		userId: args.userId,
-		type: 'prompt',
-		text: prompt,
-		imageUploadIds: args.imageUploadIds
-	});
-	await attachImageUploads(ctx, imageUploads, promptMessageId);
-	await ctx.db.patch('runs', runId, {
-		promptMessageId,
-		completionStreamStateId
-	});
-	const promptPart = await recordPromptTranscript(ctx, {
-		threadId: args.threadId,
-		userId: args.userId,
-		runId,
-		text: prompt,
-		imageUploadIds: args.imageUploadIds
-	});
+		userId: args.userId
+	};
+	if (!continuationOfRunId) {
+		const promptMessageId = await appendThreadMessage(ctx, {
+			threadId: args.threadId,
+			runId,
+			userId: args.userId,
+			type: 'prompt',
+			text: prompt,
+			imageUploadIds: args.imageUploadIds
+		});
+		await attachImageUploads(ctx, imageUploads, promptMessageId);
+		created.promptMessageId = promptMessageId;
+		created.promptPart = await recordPromptTranscript(ctx, {
+			threadId: args.threadId,
+			userId: args.userId,
+			runId,
+			text: prompt,
+			imageUploadIds: args.imageUploadIds
+		});
+		await ctx.db.patch('runs', runId, {
+			promptMessageId,
+			completionStreamStateId
+		});
+	} else {
+		await ctx.db.patch('runs', runId, { completionStreamStateId });
+	}
 	await ctx.db.patch('threadRecords', threadRecord._id, {
 		title: threadRecord.title ?? (prompt || imageUploads[0]?.name || 'New thread').slice(0, 72),
 		selectedModel: args.selectedModel,
 		reasoningEffort: args.reasoningEffort,
 		serviceTier: args.serviceTier
 	});
+	await bumpThreadSnapshotForRun(ctx, runRecord);
 	const lifecycleWorkflowId = await startRunLifecycle(ctx, runId);
 	await ctx.db.patch('runs', runId, { lifecycleWorkflowId });
+	return created;
+}
 
+async function reconcileExistingQueuedRun(
+	ctx: MutationCtx,
+	args: QueuedRunRequest,
+	existingRun: Doc<'runs'>,
+	secretHash: string,
+	prompt: string
+): Promise<CreatedGatewayRun> {
+	if (existingRun.executionSecretHash !== secretHash) {
+		throw new ConvexError('Submission belongs to a different executor.');
+	}
+	const continuationMatches =
+		(existingRun.continuationOfRunId ?? undefined) === (args.continuationOfRunId ?? undefined);
+	if (
+		existingRun.threadId !== args.threadId ||
+		existingRun.selectedModel !== args.selectedModel ||
+		existingRun.reasoningEffort !== args.reasoningEffort ||
+		existingRun.serviceTier !== args.serviceTier ||
+		!existingRun.completionStreamStateId ||
+		existingRun.completionTransport !== 'gateway' ||
+		!continuationMatches
+	) {
+		throw new ConvexError('Submission belongs to a different or incomplete run.');
+	}
+
+	if (!existingRun.lifecycleWorkflowId && !isRunFinalStatus(existingRun.status)) {
+		const lifecycleWorkflowId = await startRunLifecycle(ctx, existingRun._id);
+		await ctx.db.patch('runs', existingRun._id, { lifecycleWorkflowId });
+	}
+
+	if (args.continuationOfRunId) {
+		if (existingRun.promptMessageId) {
+			throw new ConvexError('Submission belongs to a different or incomplete run.');
+		}
+		return {
+			created: false,
+			runId: existingRun._id,
+			userId: args.userId
+		};
+	}
+
+	if (!existingRun.promptMessageId) {
+		throw new ConvexError('Submission belongs to a different or incomplete run.');
+	}
+	const existingPrompt = await ctx.db.get('threadMessages', existingRun.promptMessageId);
+	if (
+		!existingPrompt ||
+		existingPrompt.text !== prompt ||
+		!areImageUploadIdsEqual(existingPrompt.imageUploadIds, args.imageUploadIds)
+	) {
+		throw new Error('Submission prompt does not match the existing run.');
+	}
+	const promptPart = await recordPromptTranscript(ctx, {
+		threadId: args.threadId,
+		userId: args.userId,
+		runId: existingRun._id,
+		text: prompt,
+		imageUploadIds: args.imageUploadIds
+	});
 	return {
-		created: true,
-		runId,
-		promptMessageId,
+		created: false,
+		runId: existingRun._id,
+		promptMessageId: existingRun.promptMessageId,
 		userId: args.userId,
 		promptPart
 	};
@@ -322,12 +369,15 @@ export const createRun = mutation({
 	}
 });
 
-const vCreateGatewayRunResult = v.object({
+const vCreatedGatewayRun = v.object({
 	created: v.boolean(),
 	runId: v.id('runs'),
-	promptMessageId: v.id('threadMessages'),
+	promptMessageId: v.optional(v.id('threadMessages')),
 	userId: v.string(),
-	promptPart: schema.doc('threadTranscriptParts'),
+	promptPart: v.optional(schema.doc('threadTranscriptParts'))
+});
+
+const vCreateGatewayRunResult = vCreatedGatewayRun.extend({
 	gatewayUrl: v.string(),
 	protocolVersion: v.number()
 });
@@ -346,15 +396,10 @@ export const insertGatewayRun = internalMutation({
 		protocolVersion: v.number(),
 		agentVersion: v.optional(v.string()),
 		installationId: v.optional(v.string()),
-		executorSessionId: v.optional(v.id('machineSessions'))
+		executorSessionId: v.optional(v.id('machineSessions')),
+		continuationOfRunId: v.optional(v.id('runs'))
 	},
-	returns: v.object({
-		created: v.boolean(),
-		runId: v.id('runs'),
-		promptMessageId: v.id('threadMessages'),
-		userId: v.string(),
-		promptPart: schema.doc('threadTranscriptParts')
-	}),
+	returns: vCreatedGatewayRun,
 	handler: async (ctx, args) => {
 		return await createQueuedRunRecord(ctx, args);
 	}
@@ -372,13 +417,14 @@ export const createGatewayRun = action({
 		executionSecret: v.string(),
 		agentVersion: v.optional(v.string()),
 		installationId: v.optional(v.string()),
-		executorSessionId: v.optional(v.id('machineSessions'))
+		executorSessionId: v.optional(v.id('machineSessions')),
+		continuationOfRunId: v.optional(v.id('runs'))
 	},
 	returns: vCreateGatewayRunResult,
 	handler: async (ctx, args): Promise<Infer<typeof vCreateGatewayRunResult>> => {
 		const userId = await getUserId(ctx);
 		const gatewayUrl = modelGatewayUrl();
-		const created = await ctx.runMutation(internal.agentRuntime.insertGatewayRun, {
+		const request: QueuedRunRequest = {
 			userId,
 			submissionId: args.submissionId,
 			threadId: args.threadId,
@@ -392,7 +438,9 @@ export const createGatewayRun = action({
 			agentVersion: args.agentVersion,
 			installationId: args.installationId,
 			executorSessionId: args.executorSessionId
-		});
+		};
+		if (args.continuationOfRunId) request.continuationOfRunId = args.continuationOfRunId;
+		const created = await ctx.runMutation(internal.agentRuntime.insertGatewayRun, request);
 		return {
 			...created,
 			gatewayUrl,
@@ -455,6 +503,9 @@ export const start = mutation({
 		};
 		if (!isSameClaimRenewal) claimPatch.completionAttemptSeq = 0;
 		await ctx.db.patch('runs', args.runId, claimPatch);
+		if (!isSameClaimRenewal) {
+			await bumpThreadSnapshotForRun(ctx, run);
+		}
 
 		return { claimed: true, claimExpiresAt: nextClaimExpiresAt };
 	}
@@ -495,7 +546,26 @@ export const getContext = query({
 		const threadRecord = await getOwnedThreadRecord(ctx.db, userId, run.threadId);
 		const promptMessageId = run.promptMessageId;
 		if (!promptMessageId) {
-			throw new Error('Run does not contain a user prompt.');
+			if (!run.continuationOfRunId) {
+				throw new Error('Run does not contain a user prompt.');
+			}
+			const selection = coercePersistedSelection(run.selectedModel, run.serviceTier);
+			return {
+				run: {
+					...run,
+					selectedModel: selection.modelId,
+					serviceTier: selection.serviceTier,
+					reasoningEffort: coercePersistedReasoningEffort(selection.modelId, run.reasoningEffort)
+				},
+				threadRecord,
+				prompt: '',
+				promptAttachments: [],
+				agentHistory: [],
+				contextBudget: {
+					contextWindowTokens: run.contextWindowTokens ?? 0,
+					autoCompactTokenLimit: run.autoCompactTokenLimit ?? 0
+				}
+			};
 		}
 		const promptMessage = await ctx.db.get('threadMessages', promptMessageId);
 		if (!promptMessage || promptMessage.type !== 'prompt') {
@@ -665,7 +735,7 @@ export const registerCompletionAttempt = mutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		assertRunAcceptsModelCompletion(run.status);
+		assertRunAcceptsModelCompletion(run);
 		if (!isRunClaimLeaseActive(run, Date.now())) {
 			throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 		}
@@ -719,7 +789,7 @@ export const finalizeCompletionCall = mutation({
 	returns: v.union(v.number(), v.null()),
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		assertRunAcceptsModelCompletion(run.status);
+		assertRunAcceptsModelCompletion(run);
 		if (!isRunClaimLeaseActive(run, Date.now())) {
 			throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 		}
@@ -763,16 +833,24 @@ export const finalizeRun = mutation({
 	}
 });
 
+export const requestCancellation = mutation({
+	args: { runId: v.id('runs') },
+	returns: v.boolean(),
+	handler: async (ctx, args) => {
+		const userId = await getUserId(ctx);
+		const run = await getOwnedRun(ctx.db, userId, args.runId);
+		return await requestRunCancellation(ctx, run);
+	}
+});
+
+/** Retired in-place reopen. Current clients continue with a new run. */
 export const reopenRun = mutation({
 	args: {
 		runId: v.id('runs')
 	},
 	returns: v.null(),
-	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-		const run = await getOwnedRun(ctx.db, userId, args.runId);
-		await reopenRunRecord(ctx, run);
-		return null;
+	handler: async () => {
+		unsupportedClient();
 	}
 });
 
@@ -840,23 +918,29 @@ export const finalizeFailedStart = mutation({
 			}
 			return 'pending';
 		}
+		const isContinuation = run.continuationOfRunId !== undefined;
 		if (
 			run.status !== 'queued' ||
 			run.threadId !== args.threadId ||
 			run.selectedModel !== args.selectedModel ||
 			run.reasoningEffort !== args.reasoningEffort ||
-			run.serviceTier !== args.serviceTier ||
-			!run.promptMessageId
+			run.serviceTier !== args.serviceTier
 		) {
 			return 'standDown';
 		}
-		const promptMessage = await ctx.db.get('threadMessages', run.promptMessageId);
-		if (
-			!promptMessage ||
-			promptMessage.text !== args.prompt.trim() ||
-			!areImageUploadIdsEqual(promptMessage.imageUploadIds, args.imageUploadIds)
-		) {
-			return 'standDown';
+		if (!isContinuation) {
+			const promptMessageId = run.promptMessageId;
+			if (!promptMessageId) {
+				return 'standDown';
+			}
+			const promptMessage = await ctx.db.get('threadMessages', promptMessageId);
+			if (
+				!promptMessage ||
+				promptMessage.text !== args.prompt.trim() ||
+				!areImageUploadIdsEqual(promptMessage.imageUploadIds, args.imageUploadIds)
+			) {
+				return 'standDown';
+			}
 		}
 		await finalizeRunRecord(ctx, run, {
 			text: args.text,
@@ -906,7 +990,7 @@ export const beginToolJob = mutation({
 	handler: async (ctx, args) => {
 		try {
 			const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-			assertRunAcceptsModelCompletion(run.status);
+			assertRunAcceptsModelCompletion(run);
 			if (run.claimId !== args.claimId || !isRunClaimLeaseActive(run, Date.now())) {
 				throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 			}
@@ -916,6 +1000,7 @@ export const beginToolJob = mutation({
 				.order('desc')
 				.first();
 			const nextSequence = (lastJob?.sequence ?? -1) + 1;
+			const toolInvocationId = newToolInvocationId();
 
 			const job: EnqueuedExecutorJob = {
 				threadId: run.threadId,
@@ -926,7 +1011,8 @@ export const beginToolJob = mutation({
 				status: 'claimed',
 				enqueuedAt: Date.now(),
 				claimedAt: Date.now(),
-				sequence: nextSequence
+				sequence: nextSequence,
+				toolInvocationId
 			};
 			if (args.callId) job.callId = args.callId;
 			const jobId = await ctx.db.insert('executorJobs', job);
@@ -942,6 +1028,13 @@ export const beginToolJob = mutation({
 			await ctx.db.patch('runs', args.runId, {
 				status: 'awaiting_executor',
 				activeJobId: jobId
+			});
+			await bumpThreadSnapshotForRun(ctx, run);
+			await recordStartedToolTranscript(ctx, {
+				threadId: run.threadId,
+				userId: run.userId,
+				runId: run._id,
+				job: { ...job, _id: jobId }
 			});
 
 			return {

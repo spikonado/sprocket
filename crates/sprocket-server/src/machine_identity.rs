@@ -9,6 +9,17 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 const INSTALLATION_ID_FILE: &str = "installation-id";
+const INSTALLATION_IDENTITY_FILE: &str = "installation.json";
+const INSTALLATION_IDENTITY_VERSION: u32 = 1;
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredInstallationIdentity {
+    version: u32,
+    installation_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    friendly_name: Option<String>,
+}
 
 #[derive(Clone)]
 pub(crate) struct MachineIdentity {
@@ -18,54 +29,67 @@ pub(crate) struct MachineIdentity {
     pub(crate) credential_hash: String,
     pub(crate) friendly_name: String,
     pub(crate) platform: String,
+    pub(crate) platform_version: String,
     pub(crate) architecture: String,
+    pub(crate) hostname: String,
 }
 
 impl MachineIdentity {
     pub(crate) fn load(data_dir: &Path) -> anyhow::Result<Self> {
-        let installation_id = load_or_create_installation_id(data_dir)?;
+        let stored = load_or_create_installation_identity(data_dir)?;
         let credential = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+        let hostname = hostname();
         Ok(Self {
-            installation_id,
+            installation_id: stored.installation_id,
             process_session_id: Uuid::new_v4().to_string(),
             credential_hash: Sha256::digest(credential.as_bytes())
                 .iter()
                 .map(|byte| format!("{byte:02x}"))
                 .collect(),
             credential,
-            friendly_name: std::env::var("HOSTNAME")
-                .ok()
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or_else(|| "Sprocket machine".to_string()),
-            platform: std::env::consts::OS.to_string(),
+            friendly_name: stored.friendly_name.unwrap_or_else(|| hostname.clone()),
+            platform: normalized_platform().to_string(),
+            platform_version: platform_version(),
             architecture: std::env::consts::ARCH.to_string(),
+            hostname,
         })
     }
 }
 
-fn load_or_create_installation_id(data_dir: &Path) -> anyhow::Result<String> {
+fn load_or_create_installation_identity(
+    data_dir: &Path,
+) -> anyhow::Result<StoredInstallationIdentity> {
     fs::create_dir_all(data_dir)
         .with_context(|| format!("failed to create data directory {}", data_dir.display()))?;
-    let path = data_dir.join(INSTALLATION_ID_FILE);
-    if let Some(id) = read_installation_id(&path)? {
-        return Ok(id);
+    let path = data_dir.join(INSTALLATION_IDENTITY_FILE);
+    if let Some(identity) = read_installation_identity(&path)? {
+        return Ok(identity);
     }
 
-    let id = Uuid::new_v4().to_string();
+    let legacy_path = data_dir.join(INSTALLATION_ID_FILE);
+    let installation_id =
+        read_installation_id(&legacy_path)?.unwrap_or_else(|| Uuid::new_v4().to_string());
+    let identity = StoredInstallationIdentity {
+        version: INSTALLATION_IDENTITY_VERSION,
+        installation_id,
+        friendly_name: None,
+    };
+    let encoded = serde_json::to_vec_pretty(&identity)?;
     match OpenOptions::new().write(true).create_new(true).open(&path) {
         Ok(mut file) => {
-            writeln!(file, "{id}").with_context(|| {
+            file.write_all(&encoded).with_context(|| {
                 format!("failed to write installation identity {}", path.display())
             })?;
+            writeln!(file)?;
             file.sync_all().with_context(|| {
                 format!("failed to persist installation identity {}", path.display())
             })?;
-            Ok(id)
+            Ok(identity)
         }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
             for _ in 0..10 {
-                if let Some(id) = read_installation_id(&path)? {
-                    return Ok(id);
+                if let Some(identity) = read_installation_identity(&path)? {
+                    return Ok(identity);
                 }
                 thread::sleep(Duration::from_millis(10));
             }
@@ -77,6 +101,66 @@ fn load_or_create_installation_id(data_dir: &Path) -> anyhow::Result<String> {
         Err(error) => Err(error)
             .with_context(|| format!("failed to create installation identity {}", path.display())),
     }
+}
+
+fn read_installation_identity(path: &Path) -> anyhow::Result<Option<StoredInstallationIdentity>> {
+    let value = match fs::read(path) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to read {}", path.display()));
+        }
+    };
+    let identity: StoredInstallationIdentity = match serde_json::from_slice(&value) {
+        Ok(identity) => identity,
+        Err(error) if error.is_eof() => return Ok(None),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("invalid installation identity {}", path.display()));
+        }
+    };
+    if identity.version != INSTALLATION_IDENTITY_VERSION
+        || Uuid::parse_str(&identity.installation_id).is_err()
+    {
+        anyhow::bail!("unsupported installation identity {}", path.display());
+    }
+    Ok(Some(identity))
+}
+
+fn hostname() -> String {
+    ["HOSTNAME", "COMPUTERNAME"]
+        .into_iter()
+        .find_map(|name| {
+            std::env::var(name)
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .unwrap_or_else(|| "Sprocket machine".to_string())
+}
+
+fn normalized_platform() -> &'static str {
+    match std::env::consts::OS {
+        "macos" => "macOS",
+        "windows" => "Windows",
+        "linux" => "Linux",
+        other => other,
+    }
+}
+
+fn platform_version() -> String {
+    #[cfg(target_os = "windows")]
+    let output = std::process::Command::new("cmd")
+        .args(["/C", "ver"])
+        .output();
+    #[cfg(not(target_os = "windows"))]
+    let output = std::process::Command::new("uname").arg("-r").output();
+    output
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 fn read_installation_id(path: &Path) -> anyhow::Result<Option<String>> {
@@ -95,12 +179,17 @@ fn read_installation_id(path: &Path) -> anyhow::Result<Option<String>> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
     use std::sync::{Arc, Barrier};
 
     use super::*;
 
     fn temp_dir() -> std::path::PathBuf {
         std::env::temp_dir().join(format!("sprocket-machine-identity-{}", Uuid::new_v4()))
+    }
+
+    fn identity_path(dir: &Path) -> PathBuf {
+        dir.join(INSTALLATION_IDENTITY_FILE)
     }
 
     #[test]
@@ -112,6 +201,37 @@ mod tests {
         assert_eq!(first.installation_id, second.installation_id);
         assert_ne!(first.process_session_id, second.process_session_id);
         assert_ne!(first.credential, second.credential);
+        assert!(identity_path(&dir).is_file());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn migrates_legacy_plain_installation_id() {
+        let dir = temp_dir();
+        fs::create_dir_all(&dir).unwrap();
+        let id = Uuid::new_v4().to_string();
+        fs::write(dir.join(INSTALLATION_ID_FILE), &id).unwrap();
+
+        assert_eq!(MachineIdentity::load(&dir).unwrap().installation_id, id);
+        assert!(identity_path(&dir).is_file());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn retains_friendly_name_override() {
+        let dir = temp_dir();
+        fs::create_dir_all(&dir).unwrap();
+        let identity = StoredInstallationIdentity {
+            version: INSTALLATION_IDENTITY_VERSION,
+            installation_id: Uuid::new_v4().to_string(),
+            friendly_name: Some("Workbench".to_string()),
+        };
+        fs::write(identity_path(&dir), serde_json::to_vec(&identity).unwrap()).unwrap();
+
+        assert_eq!(
+            MachineIdentity::load(&dir).unwrap().friendly_name,
+            "Workbench"
+        );
         fs::remove_dir_all(dir).unwrap();
     }
 

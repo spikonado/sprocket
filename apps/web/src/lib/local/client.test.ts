@@ -66,3 +66,82 @@ describe('watchLiveCompletion', () => {
 		expect(events).toEqual([{ eventType: 'updated', live: overlay }, { eventType: 'cleared' }]);
 	});
 });
+
+describe('thread cache local API', () => {
+	it('parses snapshot threads and watch status events', async () => {
+		const snapshot = {
+			threads: [
+				{
+					threadId: 'thread-1',
+					repositoryKey: 'alpha',
+					title: 'Hello',
+					selectedModel: 'gpt-5.6-sol',
+					reasoningEffort: 'medium',
+					serviceTier: 'standard',
+					lastMessageAt: 10,
+					threadStatus: 'active',
+					latestRunStatus: null,
+					latestRunId: null,
+					hasActiveRun: false
+				}
+			],
+			status: 'live',
+			lastSyncedAt: 20
+		};
+		const encoder = new TextEncoder();
+		const body = new ReadableStream({
+			start(controller) {
+				controller.enqueue(
+					encoder.encode(`data: ${JSON.stringify({ status: 'live', lastSyncedAt: 20 })}\n\n`)
+				);
+				controller.close();
+			}
+		});
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (input: RequestInfo | URL) => {
+				const url = String(input);
+				if (url.endsWith('/api/threads/snapshot')) {
+					return new Response(JSON.stringify(snapshot), {
+						status: 200,
+						headers: { 'content-type': 'application/json' }
+					});
+				}
+				return new Response(body, { status: 200 });
+			})
+		);
+
+		const client = createLocalClient('http://127.0.0.1:7731');
+		expect(await client.fetchThreadSnapshot({ userId: 'user-1' })).toEqual({
+			threads: [
+				{
+					threadId: 'thread-1',
+					repositoryKey: 'alpha',
+					title: 'Hello',
+					selectedModel: 'gpt-5.6-sol',
+					reasoningEffort: 'medium',
+					serviceTier: 'standard',
+					lastMessageAt: 10,
+					threadStatus: 'active',
+					latestRunStatus: null,
+					latestRunId: null,
+					hasActiveRun: false
+				}
+			],
+			status: 'live',
+			lastSyncedAt: 20
+		});
+
+		const events: unknown[] = [];
+		await client.watchThreadCache(
+			{ userId: 'user-1' },
+			{
+				signal: new AbortController().signal,
+				onEvent: (event) => {
+					events.push(event);
+				}
+			}
+		);
+		expect(events).toEqual([{ status: 'live', lastSyncedAt: 20 }]);
+	});
+});

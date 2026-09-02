@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
 import { executionSecretHash } from '@convex/lib/auth';
 import { initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
@@ -10,6 +10,8 @@ const machine = {
 	architecture: 'x86_64',
 	appVersion: '0.3.2'
 };
+
+afterEach(() => vi.useRealTimers());
 
 describe('machine sessions', () => {
 	it('supersedes a process session and fails each of its active runs atomically', async () => {
@@ -140,5 +142,64 @@ describe('machine sessions', () => {
 		});
 
 		expect(second.sessionId).not.toBe(first.sessionId);
+	});
+
+	it('reports current installation metadata and only recent active sessions as online', async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+		const t = initConvexTest();
+		const { asUser } = await seedOwnedThread(t);
+		const first = await asUser.mutation(api.machineSessions.register, {
+			...machine,
+			platformVersion: '6.12.1',
+			hostname: 'workbench',
+			processSessionId: 'process-a',
+			credentialHash: await executionSecretHash('credential-a')
+		});
+
+		vi.advanceTimersByTime(90_000);
+		expect(await asUser.query(api.machineSessions.listMine, {})).toEqual([
+			{
+				...machine,
+				platformVersion: '6.12.1',
+				hostname: 'workbench',
+				lastSeenAt: Date.parse('2026-01-01T00:00:00.000Z'),
+				online: true
+			}
+		]);
+
+		vi.advanceTimersByTime(1);
+		expect((await asUser.query(api.machineSessions.listMine, {}))[0]?.online).toBe(false);
+
+		await t.mutation(api.machineSessions.heartbeat, {
+			sessionId: first.sessionId,
+			credential: 'credential-a'
+		});
+		expect((await asUser.query(api.machineSessions.listMine, {}))[0]?.online).toBe(true);
+
+		await asUser.mutation(api.machineSessions.register, {
+			...machine,
+			processSessionId: 'process-b',
+			credentialHash: await executionSecretHash('credential-b')
+		});
+		await t.run(async (ctx) => {
+			const installation = await ctx.db
+				.query('installations')
+				.withIndex('by_userId_and_installationId', (query) =>
+					query.eq('userId', 'user_alice').eq('installationId', machine.installationId)
+				)
+				.unique();
+			if (!installation) throw new Error('Expected installation fixture.');
+			await ctx.db.patch('installations', installation._id, { currentSessionId: first.sessionId });
+		});
+		expect((await asUser.query(api.machineSessions.listMine, {}))[0]?.online).toBe(false);
+
+		await t.run(async (ctx) => {
+			await ctx.db.patch('machineSessions', first.sessionId, {
+				supersededAt: undefined,
+				revokedAt: Date.now()
+			});
+		});
+		expect((await asUser.query(api.machineSessions.listMine, {}))[0]?.online).toBe(false);
 	});
 });

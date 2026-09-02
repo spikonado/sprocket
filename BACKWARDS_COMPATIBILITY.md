@@ -4,7 +4,7 @@ This file lists shims we still ship. When a removal PR merges, delete its
 entry. Age-out is a prod check for stored rows, or an explicit decision that
 a retired function name can disappear.
 
-Current as of 2026-08-29.
+Current as of 2026-09-02.
 
 ## Stored schema
 
@@ -177,6 +177,42 @@ and bind new runs to it.
 Remove the optionality after all supported clients register machine sessions
 and a production scan finds no active runs without both fields.
 
+### 11. Transcript tool `jobId`
+
+Sources: append-only tool progress events.
+
+New tool transcript parts pair by `toolInvocationId` and source keys
+`tool:<id>:started` / `tool:<id>:finished`. They do not write `tool.jobId`.
+Stored parts from before this change still carry `jobId` (and the un-suffixed
+`tool:<jobId>` source key). Readers keep using `jobId` as a fallback pairing
+key until those rows are gone.
+
+`executorJobs.toolInvocationId` is optional for the same reason: in-flight jobs
+created before this change have no stored id, and finished-event writes fall
+back to the job document id.
+
+Remove `vTranscriptToolBody.jobId` after a rewrite copies `jobId` onto
+`toolInvocationId` where missing and unsets `jobId`. Drop executor-job
+optionality after a production scan finds no jobs without `toolInvocationId`.
+
+Safe when a prod check shows zero transcript tool parts carrying `jobId`.
+
+### 12. Legacy installation identity and machine metadata
+
+Local servers now persist a versioned `installation.json`. On first launch
+after upgrade they preserve the UUID from the legacy plain-text
+`installation-id` file and write the JSON identity. The old file is left in
+place for rollback safety but is no longer read once the JSON file exists.
+
+`installations.platformVersion` and `installations.hostname` are optional so
+rows and released agents without the expanded normalized machine metadata
+remain valid. Remove their optionality after all supported agents send both
+fields and a production scan finds no installation rows missing either one.
+
+Delete legacy `installation-id` files only after all supported installations
+have launched a JSON-aware server and rollback to an older release is no
+longer supported.
+
 ## Client APIs
 
 Released desktop/CLI builds that still call retired Convex functions get a
@@ -200,9 +236,13 @@ to deliver the update sentence; current code never calls them.
 | -------------------------------------------------------------- | --------------------------------------------------------- |
 | `agentRuntime.createRun`                                       | Agent run creation before the gateway path                |
 | `agentRuntime.mergeAssistantStreamEvents`                      | Agents that streamed tokens onto `threadMessages`         |
+| `agentRuntime.reopenRun`                                       | Desktop UI that reopened a failed run in place            |
+| `chat.latestRunForThread`                                      | UI lifecycle from the latest Convex run document          |
 | `completion.complete` / `completion.summarize`                 | Convex-hosted model calls                                 |
 | `messages.listHistoryForThread` / `messages.listLiveForThread` | UI transcript from Convex                                 |
 | `modelCatalog.get`                                             | Static bundled catalog                                    |
+| `threads.listMine`                                             | UI thread list from Convex                                |
+| `threads.rename` / `archive` / `restore` / `rekeyRepository`   | UI thread commands that mutated Convex directly           |
 | `uiPreferences.setLastThread` / `setPaymentsEmail`             | Session restore and mandate email writes                  |
 | `webTools.scrapeUrl` / `webTools.webSearch`                    | Direct tool actions; current agents enqueue executor jobs |
 | `payments` mandate setup with `userEmail`                      | Agents that sent the customer email themselves            |
@@ -217,6 +257,27 @@ Current desktop/server still call this (`transcript_client.rs` /
 does not read `threadMessages` and is not an unsupported-client stub.
 
 Remove after rust/desktop stop calling it, then delete the Convex export.
+
+### Local thread commands
+
+Current UI sends rename, archive, restore, repository-rekey, and cancellation
+through the authenticated local Rust API. The public Convex names those older
+bundles called (`threads.rename`, `archive`, `restore`, `rekeyRepository`,
+`threads.listMine`, `chat.latestRunForThread`, `agentRuntime.reopenRun`) are
+unsupported-client stubs.
+
+The local command routes call `threads.renameForLocalCache`,
+`archiveForLocalCache`, `restoreForLocalCache`, and
+`rekeyRepositoryForLocalCache`. These variants return the authenticated user
+and affected repository/category metadata so Rust can refresh the cache before
+acknowledging a command. Remove the `ForLocalCache` variants only when Rust no
+longer needs synchronous cache-refresh metadata from Convex.
+
+Current thread navigation reads the Rust-owned summary cache. Current
+lifecycle UI reads `chat.selectedThreadLifecycle`. The local `/threads/lifecycle`
+route is a one-shot command-time relay, not a replacement subscription. Move
+lifecycle reads behind Rust only if Rust gains an equivalent ordered reactive
+stream.
 
 ## Removal checklist
 

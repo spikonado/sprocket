@@ -20,6 +20,12 @@ describe('run claim leases', () => {
 		).toBe(true);
 	});
 
+	it('does not claim a run after cancellation is requested', () => {
+		expect(
+			canStartRunWithClaim({ status: 'queued', cancellationRequestedAt: 100 }, 'claim-a', 101)
+		).toBe(false);
+	});
+
 	it('never transfers a claimed run to a different claim', () => {
 		const run = { status: 'running', claimId: 'claim-a', claimExpiresAt: 200 };
 		expect(canStartRunWithClaim(run, 'claim-b', 199)).toBe(false);
