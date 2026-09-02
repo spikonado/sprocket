@@ -519,14 +519,17 @@
 	let replicaLoading = $state(false);
 	let replicaContextSummary = $state<string | null>(null);
 	let replicaError = $state<string | null>(null);
-	let loadingOlderTranscript = $state(false);
+	let replicaGeneration = 0;
+	let loadingOlderTranscriptGeneration = $state<number | null>(null);
 	let liveCompletion = $state<LiveCompletionOverlay | null>(null);
+	const loadingOlderTranscript = $derived(loadingOlderTranscriptGeneration === replicaGeneration);
 
 	function applyOlderPageCursor(nextBefore: number | undefined) {
 		replicaNextBefore = nextBefore ?? null;
 	}
 
 	function showReplicaForThread(threadId: Id<'threadRecords'> | null) {
+		replicaGeneration += 1;
 		replicaThreadId = threadId;
 		liveCompletion = null;
 		replicaError = null;
@@ -557,13 +560,18 @@
 		}
 		const ac = new AbortController();
 		const watchedThreadId = threadId;
+		const generation = replicaGeneration;
 		void (async () => {
 			try {
 				const page = await api.fetchTranscriptPage({
 					userId,
 					threadId: watchedThreadId
 				});
-				if (ac.signal.aborted || currentThreadId !== watchedThreadId) {
+				if (
+					ac.signal.aborted ||
+					currentThreadId !== watchedThreadId ||
+					replicaGeneration !== generation
+				) {
 					return;
 				}
 				replicaParts = page.parts;
@@ -573,7 +581,7 @@
 				replicaContextSummary = page.contextSummary ?? null;
 				applyOlderPageCursor(page.nextBefore);
 			} catch {
-				if (!ac.signal.aborted) {
+				if (!ac.signal.aborted && replicaGeneration === generation) {
 					replicaLoading = false;
 					if (replicaParts.length === 0) {
 						replicaError = 'Could not load conversation history.';
@@ -1374,39 +1382,63 @@
 		if (!api || currentThreadId !== threadId) {
 			return;
 		}
+		const generation = replicaGeneration;
 		const page = await api.fetchTranscriptPage({ userId, threadId });
-		if (currentThreadId !== threadId) {
+		if (currentThreadId !== threadId || replicaGeneration !== generation) {
 			return;
 		}
 		replicaParts = mergeTranscriptParts(replicaParts, page.parts);
 		replicaStale = page.stale;
 		replicaContextSummary = page.contextSummary ?? replicaContextSummary;
+		if (replicaParts.length === page.parts.length) {
+			applyOlderPageCursor(page.nextBefore);
+		} else if (replicaNextBefore != null && page.nextBefore != null) {
+			replicaNextBefore = Math.min(replicaNextBefore, page.nextBefore);
+		}
 	}
 
 	async function loadOlderTranscript() {
 		const api = desktopApi;
 		const threadId = currentThreadId;
 		const userId = getCurrentUserId();
-		if (!api || !threadId || !userId || replicaNextBefore == null || loadingOlderTranscript) {
+		const before = replicaNextBefore;
+		const generation = replicaGeneration;
+		if (
+			!api ||
+			!threadId ||
+			!userId ||
+			before == null ||
+			loadingOlderTranscriptGeneration === generation
+		) {
 			return;
 		}
-		loadingOlderTranscript = true;
+		loadingOlderTranscriptGeneration = generation;
 		try {
+			const authToken = await getAccessToken();
+			if (!authToken || currentThreadId !== threadId || replicaGeneration !== generation) {
+				return;
+			}
 			const page = await api.fetchTranscriptPage({
+				authToken,
 				userId,
 				threadId,
-				before: replicaNextBefore
+				before,
+				limit: 100
 			});
-			if (currentThreadId !== threadId) {
+			if (currentThreadId !== threadId || replicaGeneration !== generation) {
 				return;
 			}
 			replicaParts = mergeTranscriptParts(replicaParts, page.parts);
 			replicaStale = page.stale;
 			applyOlderPageCursor(page.nextBefore);
 		} catch {
-			replicaStale = true;
+			if (currentThreadId === threadId && replicaGeneration === generation) {
+				replicaStale = true;
+			}
 		} finally {
-			loadingOlderTranscript = false;
+			if (loadingOlderTranscriptGeneration === generation) {
+				loadingOlderTranscriptGeneration = null;
+			}
 		}
 	}
 
@@ -2400,42 +2432,44 @@
 						<SettingsAccount user={$authState.user} onSignOut={() => void signOut()} />
 					{/if}
 				{:else}
-					<ThreadTranscript
-						currentError={replicaError ??
-							currentError ??
-							$authState.error ??
-							(queryError instanceof Error ? convexClientErrorMessage(queryError) : null) ??
-							(threadCacheStatus === 'error' ? 'Could not sync threads.' : null) ??
-							(threadCacheStatus === 'offline' ? 'Thread sync is offline.' : null) ??
-							null}
-						runError={latestRunResumeKind ? null : (runState?.lastError ?? null)}
-						messages={visibleMessages}
-						actions={visibleActions}
-						activeRunId={isRunning ? (runState?.runId ?? null) : null}
-						project={currentProject}
-						remoteChangeNotice={currentThreadId
-							? (remoteChangeNotices.get(currentThreadId) ?? null)
-							: null}
-						onDismissRemoteChangeNotice={() => {
-							if (currentThreadId) {
-								remoteChangeNotices.delete(currentThreadId);
-							}
-						}}
-						stale={replicaStale}
-						contextSummary={replicaContextSummary}
-						loadingOlder={loadingOlderTranscript}
-						hasOlder={replicaNextBefore != null}
-						emptyStateMessage={currentThreadId &&
-						(replicaLoading || replicaThreadId !== currentThreadId)
-							? 'Loading conversation…'
-							: currentProject
-								? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
-								: 'Add a project to begin.'}
-						onLoadOlder={() => {
-							void loadOlderTranscript();
-						}}
-						loadAttachment={loadTranscriptAttachment}
-					/>
+					{#key currentThreadId}
+						<ThreadTranscript
+							currentError={replicaError ??
+								currentError ??
+								$authState.error ??
+								(queryError instanceof Error ? convexClientErrorMessage(queryError) : null) ??
+								(threadCacheStatus === 'error' ? 'Could not sync threads.' : null) ??
+								(threadCacheStatus === 'offline' ? 'Thread sync is offline.' : null) ??
+								null}
+							runError={latestRunResumeKind ? null : (runState?.lastError ?? null)}
+							messages={visibleMessages}
+							actions={visibleActions}
+							activeRunId={isRunning ? (runState?.runId ?? null) : null}
+							project={currentProject}
+							remoteChangeNotice={currentThreadId
+								? (remoteChangeNotices.get(currentThreadId) ?? null)
+								: null}
+							onDismissRemoteChangeNotice={() => {
+								if (currentThreadId) {
+									remoteChangeNotices.delete(currentThreadId);
+								}
+							}}
+							stale={replicaStale}
+							contextSummary={replicaContextSummary}
+							loadingOlder={loadingOlderTranscript}
+							hasOlder={replicaNextBefore != null}
+							emptyStateMessage={currentThreadId &&
+							(replicaLoading || replicaThreadId !== currentThreadId)
+								? 'Loading conversation…'
+								: currentProject
+									? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
+									: 'Add a project to begin.'}
+							onLoadOlder={() => {
+								void loadOlderTranscript();
+							}}
+							loadAttachment={loadTranscriptAttachment}
+						/>
+					{/key}
 
 					{#if catalogError}
 						<div

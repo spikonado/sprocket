@@ -211,6 +211,7 @@ export type TranscriptScopeRequest = {
 };
 
 export type TranscriptPageRequest = {
+	authToken?: string;
 	userId: string;
 	threadId: Id<'threadRecords'>;
 	before?: number;
