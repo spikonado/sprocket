@@ -106,74 +106,7 @@ backfill. Current writes do not set it.
 
 Remove after an unset rewrite, then drop it from the schema.
 
-### 8. Response-half of `threadMessages`
-
-Runs used to keep a response `threadMessages` row: started by the executor,
-scrubbed on superseded attempts, backfilled with the merged transcript parts
-when the run terminalized. The per-completion and terminal-cleanup code paths
-already record every completed model call and settled tool into the numbered
-transcript (`threadTranscriptParts`), the agent replays history from
-transcripts and jobs, and the UI builds its thread from transcripts alone.
-The backfill could also exceed the 1 MiB document limit with enough tool
-output, failing `agentRuntime:finalizeRun`.
-
-New runs no longer create the row: `finalizeRunRecord` writes nothing to
-`threadMessages`, `beginAssistantMessage` is a no-op kept for the agent
-contract, and `runs.responseMessageId` stays unset. Abstracted terminal text
-is deliberately not preserved anywhere; an incomplete completion call stays
-incomplete in the transcript.
-
-The completed `clearResponseMessageParts` pass rewrote every response row to
-`{ text: "", parts: [] }`. Once `runs.responseMessageId` has its own unset
-rewrite and all released agents/desktops have dropped
-`agentRuntime.beginAssistantMessage` calls:
-
-1. Delete `agentRuntime.beginAssistantMessage` (or convert it to the
-   unsupported-client stub like the other retired function names).
-2. Drop `runs.responseMessageId` and `threadMessages.parts`, and the
-   `by_type_runId` index, from `convex/schema.ts` and regenerate.
-
-The prompt-half of `threadMessages` (text, attachments, retention bookkeeping)
-stays: it is the run-capability source of the user prompt and image
-attachments for `agentRuntime.getContext` and dedups repeated submissions.
-
-### 9. Duplicate command output streams
-
-Older `exec_command` and `write_stdin` results contain `stdout` and `stderr` in
-addition to the combined, bounded `output`. The same result may exist in both
-`executorJobs.result` and `threadTranscriptParts.tool.output`.
-
-The completed command-stream migration passes removed the duplicate fields
-from stored job results and transcript copies.
-
-`applyExecutorJobSuccess` removes those fields before writing a result, so
-released executors that still return the old wire shape cannot reintroduce
-them after the sweep. The executor input validator temporarily accepts both
-command shapes so deployment can precede the online rewrites.
-
-Remove the legacy command validator once all supported agents emit the current
-`CommandExecOutput` schema. Keep the write-boundary normalization until old
-executor clients are unsupported.
-
-### 10. Runs without machine identity
-
-Released agents create runs without `machineId` (and leftover `installationId` /
-`executorSessionId`), so those fields remain optional. Current local servers
-persist an installation UUID, register a `machines` row, and bind new runs
-through `machineId` plus `machines.runIds`.
-
-`runs.installationId` and `runs.executorSessionId` stay optional strings so
-documents written under the removed `installations` / `machineSessions` tables
-still validate. New writes use `machineId` only. `createGatewayRun` still
-accepts leftover `installationId` / `executorSessionId` arguments.
-
-The completed run machine-session migration copied leftover `installationId`
-values onto `machineId` when missing and unset both leftover fields. Drop the
-leftover fields from the schema once released clients no longer send them.
-Remove `machineId` optionality after all supported clients register machines
-and a scan finds no active runs without it.
-
-### 11. Transcript tool `jobId`
+### 8. Transcript tool `jobId`
 
 Sources: append-only tool progress events.
 
@@ -193,7 +126,7 @@ optionality after a production scan finds no jobs without `toolInvocationId`.
 
 Safe when a prod check shows zero transcript tool parts carrying `jobId`.
 
-### 12. Legacy installation identity and machine metadata
+### 9. Legacy installation identity and machine metadata
 
 Local servers now persist a versioned `installation.json`. On first launch
 after upgrade they preserve the UUID from the legacy plain-text

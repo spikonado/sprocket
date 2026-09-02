@@ -2,7 +2,6 @@ import type { Doc } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
 import { executorFailureRunPatch } from '@convex/lib/runs';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
-import { normalizeExecutorJobResult } from '@convex/lib/commandResults';
 import { recordToolTranscript } from '@convex/lib/transcriptWrites';
 import { isRunFinalStatus, type ExecutorJobResult } from '@convex/lib/validators';
 import { bumpThreadSnapshotForRun } from '@convex/lib/threadSnapshots';
@@ -34,15 +33,14 @@ export async function applyExecutorJobSuccess(
 	if (!ownsActiveRunClaim(args.run, args.claimId, Date.now())) {
 		return false;
 	}
-	const result = normalizeExecutorJobResult(args.job.kind, args.result);
 	const settledJob = {
 		...args.job,
 		status: 'completed' as const,
-		result
+		result: args.result
 	};
 	await ctx.db.patch('executorJobs', args.job._id, {
 		status: settledJob.status,
-		result,
+		result: args.result,
 		completedAt: Date.now()
 	});
 	if (args.run.activeJobId === args.job._id) {

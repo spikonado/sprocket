@@ -25,7 +25,6 @@ export async function appendThreadMessage(
 		type: ThreadMessageType;
 		text: string;
 		imageUploadIds?: Id<'imageUploads'>[];
-		parts?: Doc<'threadMessages'>['parts'];
 	}
 ): Promise<Id<'threadMessages'>> {
 	const threadRecord: Doc<'threadRecords'> = await getOwnedThreadRecord(
@@ -40,8 +39,7 @@ export async function appendThreadMessage(
 		userId: args.userId,
 		type: args.type,
 		text: args.text,
-		imageUploadIds: args.imageUploadIds,
-		parts: args.parts ?? []
+		imageUploadIds: args.imageUploadIds
 	});
 	await ctx.db.patch('threadRecords', threadRecord._id, {
 		lastMessageAt: Date.now()

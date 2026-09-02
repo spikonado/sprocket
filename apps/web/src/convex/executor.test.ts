@@ -71,8 +71,6 @@ const commandResult = {
 	success: true,
 	running: false,
 	timedOut: false,
-	stdout: 'hi',
-	stderr: '',
 	output: 'hi',
 	truncated: false
 };

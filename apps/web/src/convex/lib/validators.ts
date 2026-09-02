@@ -204,21 +204,6 @@ export const vApplyPatchResult = v.object({
 	)
 });
 
-const vLegacyCommandExecResult = v.object({
-	command: v.string(),
-	cwd: v.string(),
-	sessionId: v.optional(v.string()),
-	exitCode: v.optional(v.number()),
-	success: v.boolean(),
-	running: v.boolean(),
-	timedOut: v.boolean(),
-	stdout: v.string(),
-	stderr: v.string(),
-	output: v.string(),
-	truncated: v.boolean(),
-	error: v.optional(v.string())
-});
-
 export const vCommandExecResult = v.object({
 	command: v.string(),
 	cwd: v.string(),
@@ -360,7 +345,7 @@ export const vExecutorJobResult = v.union(
 	v.array(vWorkspaceInstruction),
 	vApplyPatchResult,
 	vAskQuestionResult,
-	v.union(vCommandExecResult, vLegacyCommandExecResult),
+	vCommandExecResult,
 	vReadSkillResult,
 	vScrapeUrlResult,
 	vWebSearchResult,

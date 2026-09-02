@@ -52,7 +52,6 @@ describe('numbered transcript parts', () => {
 			runId,
 			executionSecret
 		});
-		await asUser.mutation(api.agentRuntime.beginAssistantMessage, { runId, executionSecret });
 		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, {
 			runId,
 			claimId: 'claim-complete',
@@ -95,7 +94,7 @@ describe('numbered transcript parts', () => {
 		expect(parts.parts[1]?.completion?.items).toHaveLength(2);
 	});
 
-	it('records a completion even when beginAssistantMessage was skipped', async () => {
+	it('records a completion', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'transcript-no-begin-secret';
@@ -148,7 +147,6 @@ describe('numbered transcript parts', () => {
 			runId,
 			executionSecret
 		});
-		await asUser.mutation(api.agentRuntime.beginAssistantMessage, { runId, executionSecret });
 		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, {
 			runId,
 			claimId: 'claim-tool-order',
@@ -194,8 +192,6 @@ describe('numbered transcript parts', () => {
 				success: true,
 				running: false,
 				timedOut: false,
-				stdout: 'hi',
-				stderr: '',
 				output: 'hi',
 				truncated: false
 			}
@@ -213,8 +209,6 @@ describe('numbered transcript parts', () => {
 				success: true,
 				running: false,
 				timedOut: false,
-				stdout: 'ignored',
-				stderr: '',
 				output: 'ignored',
 				truncated: false
 			}
@@ -307,8 +301,6 @@ describe('numbered transcript parts', () => {
 				success: true,
 				running: false,
 				timedOut: false,
-				stdout: '',
-				stderr: '',
 				output: '',
 				truncated: false
 			}
@@ -388,8 +380,6 @@ describe('numbered transcript parts', () => {
 					success: true,
 					running: false,
 					timedOut: false,
-					stdout: 'unrelated',
-					stderr: '',
 					output: 'unrelated',
 					truncated: false
 				},
@@ -427,7 +417,6 @@ describe('numbered transcript parts', () => {
 			runId,
 			executionSecret
 		});
-		await asUser.mutation(api.agentRuntime.beginAssistantMessage, { runId, executionSecret });
 		await asUser.mutation(api.agentRuntime.finalizeRun, {
 			runId,
 			text: 'partial',
@@ -457,7 +446,6 @@ describe('numbered transcript parts', () => {
 			runId,
 			executionSecret
 		});
-		await asUser.mutation(api.agentRuntime.beginAssistantMessage, { runId, executionSecret });
 		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, {
 			runId,
 			claimId: 'claim-continue',
