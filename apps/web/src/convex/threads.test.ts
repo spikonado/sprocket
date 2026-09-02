@@ -3,6 +3,26 @@ import { api } from '@convex/_generated/api';
 import { initConvexTest, seedOwnedThread } from './test.setup';
 
 describe('threads local-cache commands', () => {
+	it('stores the selected model on its thread and advances the cache revision', async () => {
+		const t = initConvexTest();
+		const { asUser, repositoryKey, threadId } = await seedOwnedThread(t);
+
+		await asUser.mutation(api.threads.setSelectedModel, {
+			threadId,
+			selectedModel: 'grok-4.5'
+		});
+
+		expect((await asUser.query(api.threads.getByThreadId, { threadId })).selectedModel).toBe(
+			'grok-4.5'
+		);
+		expect(
+			await asUser.query(api.threads.getSnapshotRevision, {
+				repositoryKey,
+				category: 'active'
+			})
+		).toBe(2);
+	});
+
 	it('returns authenticated cache-refresh metadata', async () => {
 		const t = initConvexTest();
 		const { asUser, subject, repositoryKey, threadId } = await seedOwnedThread(t);
