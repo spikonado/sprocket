@@ -13,12 +13,6 @@ use crate::transcript_client::UserConvexClient;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 const SESSION_RPC_TIMEOUT: Duration = Duration::from_secs(10);
 
-fn process_identity_is_inactive(error: &anyhow::Error) -> bool {
-    let message = error.to_string();
-    message.contains("Machine session is not active")
-        || message.contains("Process session is no longer active")
-}
-
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RegisteredSession {
@@ -68,23 +62,12 @@ impl MachineSessionManager {
         if let Some(session_id) = self.reuse_live_session(user_id, &auth_token).await {
             return Ok(session_id);
         }
-        let registered = match self
+        let registered = self
             .register_remote(
                 auth_token.clone(),
                 self.process_session_id_for(user_id).await,
             )
-            .await
-        {
-            Ok(registered) => registered,
-            Err(error) if process_identity_is_inactive(&error) => {
-                self.register_remote(
-                    auth_token.clone(),
-                    self.rotate_process_session_id(user_id).await,
-                )
-                .await?
-            }
-            Err(error) => return Err(error),
-        };
+            .await?;
         if registered.user_id != user_id {
             anyhow::bail!("machine session account does not match the requested account");
         }
@@ -205,9 +188,6 @@ impl MachineSessionManager {
         };
         if let Some(session) = self.sessions.lock().await.remove(user_id) {
             session.heartbeat.abort();
-        }
-        if process_identity_is_inactive(&error) {
-            self.rotate_process_session_id(user_id).await;
         }
         Err(error)
     }
@@ -403,18 +383,5 @@ mod tests {
             .expect_err("cleared session must register with Convex");
 
         let _ = tokio::fs::remove_dir_all(dir).await;
-    }
-
-    #[test]
-    fn convex_inactive_session_errors_are_recognized() {
-        assert!(process_identity_is_inactive(&anyhow::anyhow!(
-            "Machine session is not active."
-        )));
-        assert!(process_identity_is_inactive(&anyhow::anyhow!(
-            "Process session is no longer active."
-        )));
-        assert!(!process_identity_is_inactive(&anyhow::anyhow!(
-            "machine session heartbeat timed out"
-        )));
     }
 }
