@@ -9,6 +9,7 @@
 		buildOpenExecCommandSessions,
 		groupAssistantTimeline,
 		groupAssistantTimelineSections,
+		isAssistantResponseStreaming,
 		partitionWorkSectionTools,
 		workSectionTimingAnchor,
 		workSectionTimingIndexes,
@@ -323,11 +324,7 @@
 							{@const sections = groupAssistantTimelineSections(blocks)}
 							{@const { workIndexBySectionIndex, priorCompletedAtByWorkIndex } =
 								workSectionTimingIndexes(sections)}
-							{@const isStreaming =
-								message.runId === activeRunId &&
-								message.runStatus !== 'completed' &&
-								message.runStatus !== 'failed' &&
-								message.runStatus !== 'cancelled'}
+							{@const isStreaming = isAssistantResponseStreaming(message, activeRunId)}
 							{@const openSessions = buildOpenExecCommandSessions(timelineTools, isStreaming)}
 							{@const hasPersistedAssistantContent = timeline.some(
 								(part) => part.type === 'text' || part.type === 'reasoning'
