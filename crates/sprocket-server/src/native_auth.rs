@@ -71,6 +71,24 @@ trait RefreshTokenStore: Send + Sync {
     fn clear(&self) -> anyhow::Result<()>;
 }
 
+#[cfg(test)]
+struct EmptyRefreshTokenStore;
+
+#[cfg(test)]
+impl RefreshTokenStore for EmptyRefreshTokenStore {
+    fn load(&self) -> anyhow::Result<Option<String>> {
+        Ok(None)
+    }
+
+    fn save(&self, _refresh_token: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn clear(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
 struct KeyringRefreshTokenStore {
     account: String,
 }
@@ -209,9 +227,7 @@ impl NativeAuthManager {
         Arc::new(Self::with_store(
             config,
             callback_url,
-            Arc::new(KeyringRefreshTokenStore {
-                account: format!("test-{}", uuid::Uuid::new_v4()),
-            }),
+            Arc::new(EmptyRefreshTokenStore),
         ))
     }
 
