@@ -7630,6 +7630,8 @@ dependencies = [
  "anyhow",
  "convex",
  "rustls",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 

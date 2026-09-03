@@ -1,5 +1,6 @@
 use anyhow::Context;
 use serde::Deserialize;
+use sprocket_convex::{deserialize_convex_u32, deserialize_convex_u64};
 
 use super::store::TranscriptStore;
 use super::types::{
@@ -11,9 +12,9 @@ use super::types::{
 #[serde(rename_all = "camelCase")]
 pub struct RemoteTranscriptState {
     pub thread_id: String,
-    #[serde(deserialize_with = "deserialize_u32")]
+    #[serde(deserialize_with = "deserialize_convex_u32")]
     pub total_parts: u32,
-    #[serde(deserialize_with = "deserialize_u32")]
+    #[serde(deserialize_with = "deserialize_convex_u32")]
     pub history_from_number: u32,
     #[serde(default)]
     pub context_summary: Option<String>,
@@ -28,7 +29,7 @@ struct RemotePartsResult {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RemoteTranscriptPart {
-    #[serde(deserialize_with = "deserialize_u32")]
+    #[serde(deserialize_with = "deserialize_convex_u32")]
     number: u32,
     source_key: String,
     kind: String,
@@ -52,7 +53,7 @@ struct RemoteAttachment {
     image_upload_id: String,
     name: String,
     media_type: String,
-    #[serde(deserialize_with = "deserialize_u64")]
+    #[serde(deserialize_with = "deserialize_convex_u64")]
     size: u64,
     storage_id: String,
     #[serde(default)]
@@ -79,32 +80,6 @@ struct RemoteTool {
     #[serde(default)]
     output: Option<serde_json::Value>,
     status: String,
-}
-
-fn deserialize_u32<'de, D>(deserializer: D) -> Result<u32, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let value = f64::deserialize(deserializer)?;
-    if !value.is_finite() || value < 0.0 || value.fract() != 0.0 || value > u32::MAX as f64 {
-        return Err(serde::de::Error::custom(format!(
-            "expected a u32-compatible Convex number, got {value}"
-        )));
-    }
-    Ok(value as u32)
-}
-
-fn deserialize_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let value = f64::deserialize(deserializer)?;
-    if !value.is_finite() || value < 0.0 || value.fract() != 0.0 {
-        return Err(serde::de::Error::custom(format!(
-            "expected a u64-compatible Convex number, got {value}"
-        )));
-    }
-    Ok(value as u64)
 }
 
 fn to_local_part(part: RemoteTranscriptPart) -> anyhow::Result<TranscriptPart> {

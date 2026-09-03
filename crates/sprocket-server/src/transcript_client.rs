@@ -1,12 +1,12 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use anyhow::{Context, anyhow};
+use anyhow::Context;
 use convex::{FunctionResult, QuerySubscription, Value};
 use sprocket_agent::{
     RemoteTranscriptState, TranscriptPart, TranscriptStore, fetch_missing_parts, parse_remote_parts,
 };
-use sprocket_convex::{AuthTokenFetcher, Client as ConvexClient};
+use sprocket_convex::{AuthTokenFetcher, Client as ConvexClient, decode_labeled_function_result};
 use tokio::time::sleep;
 
 #[derive(Clone)]
@@ -88,7 +88,7 @@ impl UserConvexClient {
         function: &str,
         args: BTreeMap<String, Value>,
     ) -> anyhow::Result<T> {
-        decode_function_result(self.client.query(function, args).await?, function)
+        decode_labeled_function_result(self.client.query(function, args).await?, function)
     }
 
     async fn mutation_json<T: for<'de> serde::Deserialize<'de>>(
@@ -96,7 +96,7 @@ impl UserConvexClient {
         function: &str,
         args: BTreeMap<String, Value>,
     ) -> anyhow::Result<T> {
-        decode_function_result(self.client.mutation(function, args).await?, function)
+        decode_labeled_function_result(self.client.mutation(function, args).await?, function)
     }
 
     pub async fn mutate<T: for<'de> serde::Deserialize<'de>>(
@@ -134,11 +134,11 @@ fn thread_id_args(thread_id: &str) -> BTreeMap<String, Value> {
 pub fn decode_thread_records_update(
     result: FunctionResult,
 ) -> anyhow::Result<Vec<crate::thread_cache::CachedThreadRecord>> {
-    decode_function_result(result, "threads:listRecent")
+    decode_labeled_function_result(result, "threads:listRecent")
 }
 
 pub fn decode_state_update(result: FunctionResult) -> anyhow::Result<RemoteTranscriptState> {
-    decode_function_result(result, "transcript:getState")
+    decode_labeled_function_result(result, "transcript:getState")
 }
 
 pub async fn sync_range(
@@ -197,41 +197,3 @@ pub async fn retry_after_failure() {
     sleep(Duration::from_secs(2)).await;
 }
 
-fn decode_function_result<T: for<'de> serde::Deserialize<'de>>(
-    result: FunctionResult,
-    function: &str,
-) -> anyhow::Result<T> {
-    match result {
-        FunctionResult::Value(value) => {
-            let json_value = convex_value_to_plain_json(value);
-            serde_json::from_value(json_value.clone()).with_context(|| {
-                format!("failed to decode response from {function}; payload: {json_value}")
-            })
-        }
-        FunctionResult::ErrorMessage(message) => Err(anyhow!("{function}: {message}")),
-        FunctionResult::ConvexError(error) => Err(anyhow!("{function}: {}", error.message)),
-    }
-}
-
-fn convex_value_to_plain_json(value: Value) -> serde_json::Value {
-    match value {
-        Value::Null => serde_json::Value::Null,
-        Value::Int64(number) => serde_json::json!(number),
-        Value::Float64(number) => serde_json::json!(number),
-        Value::Boolean(boolean) => serde_json::json!(boolean),
-        Value::String(text) => serde_json::json!(text),
-        Value::Bytes(bytes) => serde_json::json!(bytes),
-        Value::Array(values) => serde_json::Value::Array(
-            values
-                .into_iter()
-                .map(convex_value_to_plain_json)
-                .collect::<Vec<_>>(),
-        ),
-        Value::Object(fields) => serde_json::Value::Object(
-            fields
-                .into_iter()
-                .map(|(key, value)| (key, convex_value_to_plain_json(value)))
-                .collect(),
-        ),
-    }
-}
