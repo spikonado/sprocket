@@ -12,6 +12,7 @@ import {
 	mergeUnconfirmedCreatedThread,
 	mergeUnconfirmedCreatedThreads,
 	pickThreadToRestore,
+	overrideThreadActiveRun,
 	resolveExpiredAgentLaunch,
 	resolvePendingAgentLaunch,
 	resolvePendingAgentLaunchesFromThreads,
@@ -129,6 +130,20 @@ describe('project thread helpers', () => {
 		expect(
 			groups.find((group) => group.project.workspacePath === '/workspaces/local')?.threads
 		).toHaveLength(1);
+	});
+
+	it('overrides cached run activity for the selected thread only', () => {
+		const selected = makeThreadSummary({ threadId: threadA, hasActiveRun: false });
+		const other = makeThreadSummary({ threadId: threadB, hasActiveRun: true });
+
+		expect(overrideThreadActiveRun([selected, other], threadA, true)).toEqual([
+			{ ...selected, hasActiveRun: true },
+			other
+		]);
+		expect(overrideThreadActiveRun([selected, other], threadB, false)).toEqual([
+			selected,
+			{ ...other, hasActiveRun: false }
+		]);
 	});
 
 	it('keeps projects in their given order regardless of thread activity', () => {
