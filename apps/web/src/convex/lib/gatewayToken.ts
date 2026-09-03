@@ -4,7 +4,7 @@ import { GATEWAY_TOKEN_PREFIX, GATEWAY_TOKEN_TTL_MS } from '@convex/lib/gatewayP
 const gatewayTokenPayloadSchema = z.object({
 	v: z.literal(1),
 	userId: z.string(),
-	exp: z.number()
+	exp: z.int()
 });
 
 export type GatewayTokenPayload = z.infer<typeof gatewayTokenPayloadSchema>;
