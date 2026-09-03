@@ -2,7 +2,9 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::Permissions;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock, Weak};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
 use diffy::patch_set::{FileOperation, ParseOptions, PatchKind, PatchSet};
@@ -845,10 +847,168 @@ async fn write_new_file(
 }
 
 async fn replace_file(path: &Path, contents: &[u8], permissions: Permissions) -> Result<()> {
-    tokio::fs::remove_file(path)
+    // Write the full replacement beside the target first. A crash mid-write
+    // must not leave the original deleted with nothing in its place.
+    // Use a unique sibling name so we never delete a user's `*.sprocket-tmp`
+    // (or a recoverable `*.sprocket-bak` from an earlier failed replace).
+    //
+    // Windows replace moves the original to `*.sprocket-bak.*` before installing
+    // the staged file; if that process dies mid-way, restore the backup first.
+    recover_stranded_sprocket_bak(path).await?;
+
+    let tmp = stage_unique_sibling(path, "tmp", contents, Some(permissions)).await?;
+
+    match tokio::fs::rename(&tmp, path).await {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            #[cfg(windows)]
+            {
+                // Windows rename won't overwrite. Move the original aside first so
+                // a failed install can restore it instead of deleting in place.
+                if error.kind() == std::io::ErrorKind::AlreadyExists {
+                    return replace_existing_windows(path, &tmp).await;
+                }
+            }
+            let _ = tokio::fs::remove_file(&tmp).await;
+            Err(error).with_context(|| format!("failed to replace {}", path.display()))
+        }
+    }
+}
+
+fn unique_sibling_path(path: &Path, kind: &str) -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let mut name = path
+        .file_name()
+        .map(|name| name.to_os_string())
+        .unwrap_or_else(|| "file".into());
+    name.push(format!(
+        ".sprocket-{kind}.{}.{seq}.{nanos}",
+        std::process::id()
+    ));
+    path.with_file_name(name)
+}
+
+async fn stage_unique_sibling(
+    path: &Path,
+    kind: &str,
+    contents: &[u8],
+    permissions: Option<Permissions>,
+) -> Result<PathBuf> {
+    let mut last_error = None;
+    for _ in 0..16 {
+        let candidate = unique_sibling_path(path, kind);
+        if tokio::fs::try_exists(&candidate).await.unwrap_or(false) {
+            continue;
+        }
+        match write_new_file(&candidate, contents, permissions.clone()).await {
+            Ok(()) => return Ok(candidate),
+            Err(error) => {
+                if tokio::fs::try_exists(&candidate).await.unwrap_or(false) {
+                    last_error = Some(error);
+                    continue;
+                }
+                return Err(error).with_context(|| {
+                    format!("failed to stage replacement for {}", path.display())
+                });
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| anyhow!("failed to allocate staging path")))
+        .with_context(|| format!("failed to stage replacement for {}", path.display()))
+}
+
+/// Restore `{name}.sprocket-bak.*` when `path` is missing after an interrupted replace.
+async fn recover_stranded_sprocket_bak(path: &Path) -> Result<()> {
+    if tokio::fs::try_exists(path).await.unwrap_or(false) {
+        return Ok(());
+    }
+    let Some(bak) = newest_sprocket_bak_sibling(path).await? else {
+        return Ok(());
+    };
+    tokio::fs::rename(&bak, path)
         .await
-        .with_context(|| format!("failed to replace {}", path.display()))?;
-    write_new_file(path, contents, Some(permissions)).await
+        .with_context(|| format!("failed to restore stranded backup for {}", path.display()))?;
+    Ok(())
+}
+
+async fn newest_sprocket_bak_sibling(path: &Path) -> Result<Option<PathBuf>> {
+    let Some(parent) = path.parent() else {
+        return Ok(None);
+    };
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return Ok(None);
+    };
+    let prefix = format!("{file_name}.sprocket-bak.");
+    let mut entries = match tokio::fs::read_dir(parent).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to list {}", parent.display()));
+        }
+    };
+
+    let mut newest: Option<(SystemTime, PathBuf)> = None;
+    while let Some(entry) = entries.next_entry().await? {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !name.starts_with(&prefix) {
+            continue;
+        }
+        if !entry.file_type().await?.is_file() {
+            continue;
+        }
+        let modified = entry
+            .metadata()
+            .await?
+            .modified()
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        match &newest {
+            Some((best, _)) if modified <= *best => {}
+            _ => newest = Some((modified, entry.path())),
+        }
+    }
+    Ok(newest.map(|(_, path)| path))
+}
+
+#[cfg(windows)]
+async fn replace_existing_windows(path: &Path, tmp: &Path) -> Result<()> {
+    // Never clear a pre-existing backup name; allocate a unique sibling instead.
+    let bak = unique_sibling_path(path, "bak");
+
+    match tokio::fs::rename(path, &bak).await {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            let _ = tokio::fs::remove_file(tmp).await;
+            return Err(error).with_context(|| format!("failed to replace {}", path.display()));
+        }
+    }
+
+    match tokio::fs::rename(tmp, path).await {
+        Ok(()) => {
+            let _ = tokio::fs::remove_file(&bak).await;
+            Ok(())
+        }
+        Err(error) => {
+            match tokio::fs::rename(&bak, path).await {
+                Ok(()) => {
+                    let _ = tokio::fs::remove_file(tmp).await;
+                }
+                Err(_) => {
+                    // Leave bak + tmp so nothing is silently discarded.
+                    // A later replace_file will restore bak if `path` is still missing.
+                }
+            }
+            Err(error).with_context(|| format!("failed to replace {}", path.display()))
+        }
+    }
 }
 
 async fn file_permissions(path: &Path) -> Result<Permissions> {
@@ -868,16 +1028,13 @@ async fn restore_snapshot(snapshot: &PatchSnapshot) -> Result<()> {
     let mut errors = Vec::new();
     for (path, file_snapshot) in &snapshot.files {
         let result = match file_snapshot {
-            Some(snapshot) => {
-                async {
-                    match tokio::fs::remove_file(path).await {
-                        Ok(()) => {}
-                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                        Err(error) => return Err(error.into()),
-                    }
-                    write_new_file(path, &snapshot.contents, Some(snapshot.permissions.clone()))
-                        .await
-                }
+            Some(file_snapshot) => {
+                // Same crash-safe replace as apply: never delete then rewrite.
+                replace_file(
+                    path,
+                    &file_snapshot.contents,
+                    file_snapshot.permissions.clone(),
+                )
                 .await
             }
             None => match tokio::fs::remove_file(path).await {
@@ -938,11 +1095,39 @@ mod tests {
     use std::fs;
     use std::sync::Mutex;
 
-    use super::{apply_workspace_patch, normalize_unified_diff_hunk_counts, write_new_file};
+    use super::{
+        apply_workspace_patch, normalize_unified_diff_hunk_counts, recover_stranded_sprocket_bak,
+        replace_file, write_new_file,
+    };
     use crate::test_support::temp_workspace;
     use crate::tools::{WorkspaceCancellation, WorkspaceOperationCancelled};
 
     static HOME_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[tokio::test]
+    async fn restores_stranded_sprocket_bak_before_replace() {
+        let root = temp_workspace();
+        let target = root.join("file.txt");
+        let bak = root.join("file.txt.sprocket-bak.1.2.3");
+        fs::write(&bak, "original\n").unwrap();
+        assert!(!target.exists());
+
+        recover_stranded_sprocket_bak(&target)
+            .await
+            .expect("stranded bak should restore");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "original\n");
+        assert!(!bak.exists());
+
+        replace_file(
+            &target,
+            b"replacement\n",
+            fs::metadata(&target).unwrap().permissions(),
+        )
+        .await
+        .expect("replace after recovery");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "replacement\n");
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[tokio::test]
     async fn applies_begin_patch_format() {
