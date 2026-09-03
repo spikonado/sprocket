@@ -49,8 +49,8 @@ const projectAttachmentSchema = z.object({
 	repositoryKey: z.string(),
 	displayName: z.string(),
 	availability: z.enum(['available', 'unavailable']),
-	lastValidatedAt: z.number(),
-	lastUsedAt: z.number(),
+	lastValidatedAt: z.int(),
+	lastUsedAt: z.int(),
 	unavailableReason: z.string().optional(),
 	previousRepositoryKey: z.string().optional()
 });
@@ -61,12 +61,12 @@ const localTranscriptAttachmentSchema = z.object({
 	imageUploadId: z.string(),
 	name: z.string(),
 	mediaType: z.string(),
-	size: z.number(),
+	size: z.int(),
 	storageId: z.string(),
 	url: z.string().optional()
 });
 const localTranscriptPartSchema = z.object({
-	number: z.number(),
+	number: z.int(),
 	sourceKey: z.string(),
 	kind: z.enum(['prompt', 'completion', 'tool']),
 	runId: z.string(),
@@ -95,16 +95,16 @@ const localTranscriptPartSchema = z.object({
 });
 const localTranscriptPageSchema = z.object({
 	threadId: z.string(),
-	totalParts: z.number(),
-	historyFromNumber: z.number(),
+	totalParts: z.int(),
+	historyFromNumber: z.int(),
 	stale: z.boolean(),
 	parts: z.array(localTranscriptPartSchema),
-	nextBefore: z.number().optional(),
+	nextBefore: z.int().optional(),
 	contextSummary: z.string().optional()
 });
 const transcriptWatchEventSchema = z.object({
 	eventType: z.string(),
-	totalParts: z.number().optional(),
+	totalParts: z.int().optional(),
 	stale: z.boolean()
 });
 const liveCompletionOverlaySchema = z.object({
@@ -114,7 +114,7 @@ const liveCompletionOverlaySchema = z.object({
 	streamId: z.string().optional(),
 	text: z.string(),
 	parts: z.array(z.unknown()),
-	runStartedAt: z.number()
+	runStartedAt: z.int()
 });
 const liveCompletionWatchEventSchema = z.discriminatedUnion('eventType', [
 	z.object({ eventType: z.literal('updated'), live: liveCompletionOverlaySchema }),
@@ -127,20 +127,20 @@ const threadSummarySchema = z.object({
 	selectedModel: z.string(),
 	reasoningEffort: z.string(),
 	serviceTier: z.string(),
-	lastMessageAt: z.number(),
+	lastMessageAt: z.int(),
 	threadStatus: z.enum(['active', 'archived']),
 	latestRunStatus: z
 		.enum(['queued', 'running', 'awaiting_executor', 'completed', 'failed', 'cancelled'])
 		.nullable()
 		.optional(),
 	latestRunId: z.string().nullable().optional(),
-	latestRunStartedAt: z.number().nullable().optional(),
-	latestRunClaimExpiresAt: z.number().nullable().optional(),
+	latestRunStartedAt: z.int().nullable().optional(),
+	latestRunClaimExpiresAt: z.int().nullable().optional(),
 	hasActiveRun: z.boolean()
 });
 const threadCacheWatchEventSchema = z.object({
 	status: z.enum(['loading', 'live', 'reconnecting', 'offline', 'error']),
-	lastSyncedAt: z.number().nullable()
+	lastSyncedAt: z.int().nullable()
 });
 const threadCacheSnapshotSchema = threadCacheWatchEventSchema.extend({
 	threads: z.array(threadSummarySchema)
@@ -688,7 +688,7 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				body: JSON.stringify(requestBody)
 			}),
 		rekeyRepository: async (requestBody) =>
-			await request('/api/threads/rekey', z.number(), {
+			await request('/api/threads/rekey', z.int(), {
 				method: 'POST',
 				body: JSON.stringify(requestBody)
 			}),

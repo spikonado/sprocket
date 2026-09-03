@@ -144,8 +144,8 @@ const gatewayModelSchema = z.looseObject({
 	label: z.string().min(1),
 	provider: z.string().min(1),
 	supportsImages: z.boolean(),
-	contextWindowTokens: z.number(),
-	autoCompactTokenLimit: z.number(),
+	contextWindowTokens: z.int(),
+	autoCompactTokenLimit: z.int(),
 	reasoningEfforts: z.array(z.string()).min(1),
 	defaultReasoningEffort: z.string().min(1),
 	serviceTiers: z.array(z.string()).min(1),
@@ -154,7 +154,7 @@ const gatewayModelSchema = z.looseObject({
 
 const gatewayModelsResponseSchema = z.object({
 	sprocket: z.object({
-		protocolVersion: z.number(),
+		protocolVersion: z.int(),
 		catalogVersion: z.string().min(1),
 		defaultModelId: z.string().min(1),
 		defaultReasoningEffort: z.string().min(1),
