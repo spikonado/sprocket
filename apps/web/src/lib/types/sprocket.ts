@@ -163,7 +163,6 @@ export type LocalTranscriptPage = {
 	stale: boolean;
 	parts: LocalTranscriptPart[];
 	nextBefore?: number;
-	contextSummary?: string;
 };
 
 export type LiveCompletionOverlay = {

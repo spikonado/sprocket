@@ -519,7 +519,6 @@
 	let replicaStale = $state(false);
 	let replicaThreadId = $state<Id<'threadRecords'> | null>(null);
 	let replicaLoading = $state(false);
-	let replicaContextSummary = $state<string | null>(null);
 	let replicaError = $state<string | null>(null);
 	let replicaGeneration = 0;
 	let loadingOlderTranscriptGeneration = $state<number | null>(null);
@@ -539,7 +538,6 @@
 		replicaNextBefore = null;
 		replicaStale = false;
 		replicaLoading = threadId !== null;
-		replicaContextSummary = null;
 	}
 
 	$effect.pre(() => {
@@ -580,7 +578,6 @@
 				replicaStale = page.stale;
 				replicaLoading = false;
 				replicaError = null;
-				replicaContextSummary = page.contextSummary ?? null;
 				applyOlderPageCursor(page.nextBefore);
 			} catch {
 				if (!ac.signal.aborted && replicaGeneration === generation) {
@@ -1420,7 +1417,6 @@
 		}
 		replicaParts = mergeTranscriptParts(replicaParts, page.parts);
 		replicaStale = page.stale;
-		replicaContextSummary = page.contextSummary ?? replicaContextSummary;
 		if (replicaParts.length === page.parts.length) {
 			applyOlderPageCursor(page.nextBefore);
 		} else if (replicaNextBefore != null && page.nextBefore != null) {
@@ -2477,7 +2473,6 @@
 								}
 							}}
 							stale={replicaStale}
-							contextSummary={replicaContextSummary}
 							loadingOlder={loadingOlderTranscript}
 							hasOlder={replicaNextBefore != null}
 							emptyStateMessage={currentThreadId &&

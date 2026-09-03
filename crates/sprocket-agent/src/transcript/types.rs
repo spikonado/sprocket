@@ -173,8 +173,6 @@ pub struct TranscriptPage {
     pub parts: Vec<TranscriptPart>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_before: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context_summary: Option<String>,
 }
 
 impl TranscriptPart {
