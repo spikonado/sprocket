@@ -108,7 +108,6 @@ export type ThreadMessage = {
 
 export type AgentRunRequest = {
 	userId: string;
-	authToken: string;
 	submissionId: string;
 	threadId: Id<'threadRecords'>;
 	prompt: string;

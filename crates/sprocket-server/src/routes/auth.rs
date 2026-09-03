@@ -9,10 +9,10 @@ use axum_extra::extract::CookieJar;
 use serde::Deserialize;
 
 use crate::auth::{
-    AuthSessionResponse, AuthState, BootstrapRequest, BootstrapResponse,
-    DesktopLoginResultResponse, DesktopLoginStartResponse, extract_session_token,
-    peer_may_complete_desktop_login_callback, require_session,
+    AuthSessionResponse, AuthState, BootstrapRequest, BootstrapResponse, DesktopLoginStartResponse,
+    extract_session_token, peer_may_complete_desktop_login_callback, require_session,
 };
+use crate::native_auth::{NativeLoginFlow, NativeLoginStart, NativeLoginStatus};
 use crate::routes::api_error::ApiError;
 use crate::{AppState, PairingProofRequest, PairingProofResponse};
 
@@ -27,23 +27,22 @@ struct DesktopBootstrapResponse {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DesktopLoginStartRequest {
-    state: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DesktopLoginCancelRequest {
-    state: String,
-}
-
-#[derive(Debug, Deserialize)]
 struct DesktopLoginCallbackQuery {
     code: Option<String>,
     state: Option<String>,
     error: Option<String>,
     error_description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopLoginCancelRequest {
+    login_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DesktopLoginStartRequest {
+    flow: Option<NativeLoginFlow>,
 }
 
 pub fn routes() -> axum::Router<AppState> {
@@ -56,6 +55,10 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/auth/desktop-login/callback", get(desktop_login_callback))
         .route("/auth/desktop-login/result", get(desktop_login_result))
         .route("/auth/desktop-login/cancel", post(desktop_login_cancel))
+        .route(
+            "/auth/native-session",
+            get(desktop_login_result).delete(native_sign_out),
+        )
 }
 
 async fn session(
@@ -140,7 +143,7 @@ async fn desktop_login_start(
     headers: HeaderMap,
     jar: CookieJar,
     Json(payload): Json<DesktopLoginStartRequest>,
-) -> Result<Json<DesktopLoginStartResponse>, ApiError> {
+) -> Result<Json<NativeLoginStart>, ApiError> {
     let session_token = require_session(&state.auth, &headers, &jar)
         .await
         .map_err(|_| ApiError::authentication_required())?;
@@ -151,13 +154,16 @@ async fn desktop_login_start(
         )));
     }
 
-    state
-        .desktop_login
-        .start(&session_token, &payload.state)
+    let login = state
+        .native_auth
+        .start_login(
+            &session_token,
+            payload.flow.unwrap_or(NativeLoginFlow::SignIn),
+        )
         .await
         .map_err(ApiError::bad_request)?;
 
-    Ok(Json(DesktopLoginStartResponse { ok: true }))
+    Ok(Json(login))
 }
 
 async fn desktop_login_callback(
@@ -194,11 +200,7 @@ async fn desktop_login_callback(
         let message = format!("{error}: {description}");
 
         if let Some(callback_state) = callback_state {
-            if let Err(fail_error) = state
-                .desktop_login
-                .fail_callback(&message, callback_state)
-                .await
-            {
+            if let Err(fail_error) = state.native_auth.fail_login(callback_state, &message).await {
                 return desktop_login_html_response(
                     StatusCode::BAD_REQUEST,
                     "Sign-in failed",
@@ -230,12 +232,8 @@ async fn desktop_login_callback(
         );
     };
 
-    match state
-        .desktop_login
-        .complete_callback(code, callback_state)
-        .await
-    {
-        Ok(()) => desktop_login_html_response(
+    match state.native_auth.complete_login(code, callback_state).await {
+        Ok(_) => desktop_login_html_response(
             StatusCode::OK,
             "Signed in",
             "Return to Sprocket. You can close this tab.",
@@ -252,12 +250,12 @@ async fn desktop_login_result(
     State(state): State<AppState>,
     headers: HeaderMap,
     jar: CookieJar,
-) -> Result<Json<DesktopLoginResultResponse>, ApiError> {
+) -> Result<Json<NativeLoginStatus>, ApiError> {
     let session_token = require_session(&state.auth, &headers, &jar)
         .await
         .map_err(|_| ApiError::authentication_required())?;
 
-    Ok(Json(state.desktop_login.take_result(&session_token).await))
+    Ok(Json(state.native_auth.status(&session_token).await))
 }
 
 async fn desktop_login_cancel(
@@ -271,9 +269,25 @@ async fn desktop_login_cancel(
         .map_err(|_| ApiError::authentication_required())?;
 
     state
-        .desktop_login
-        .cancel(&session_token, &payload.state)
+        .native_auth
+        .cancel_login(&session_token, payload.login_id.trim())
         .await;
+    Ok(Json(DesktopLoginStartResponse { ok: true }))
+}
+
+async fn native_sign_out(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<DesktopLoginStartResponse>, ApiError> {
+    require_session(&state.auth, &headers, &jar)
+        .await
+        .map_err(|_| ApiError::authentication_required())?;
+    state
+        .native_auth
+        .sign_out()
+        .await
+        .map_err(|error| ApiError::internal_with("failed to clear native session", error))?;
     Ok(Json(DesktopLoginStartResponse { ok: true }))
 }
 
@@ -351,7 +365,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::auth::{self, DesktopLoginStore};
+    use crate::auth;
     use crate::project_attachments::ProjectAttachmentStore;
 
     async fn test_state(loopback_supported: bool) -> (AppState, String, String) {
@@ -376,15 +390,22 @@ mod tests {
         let machine_identity = Arc::new(
             crate::machine_identity::MachineIdentity::load(&temp_dir).expect("machine identity"),
         );
+        let native_auth = crate::native_auth::NativeAuthManager::new(
+            crate::native_auth::NativeAuthConfig {
+                workos_client_id: "client_test".to_string(),
+            },
+            auth::desktop_login_callback_url(7731),
+        );
         let state = AppState {
             auth,
-            desktop_login: DesktopLoginStore::new(),
+            native_auth: Arc::clone(&native_auth),
             project_attachments,
             transcript,
             transcript_watchers,
             thread_cache,
             machines: crate::machines::MachineManager::new(
                 "https://example.convex.cloud".to_string(),
+                native_auth.auth_token_fetcher(),
                 Arc::clone(&machine_identity),
             ),
             live_completions: Arc::new(sprocket_agent::LiveCompletionHub::new()),
@@ -420,6 +441,26 @@ mod tests {
 
     fn session_cookie(session_token: &str) -> String {
         format!("{}={session_token}", crate::SESSION_COOKIE_NAME)
+    }
+
+    async fn start_login(app: &axum::Router, session_token: &str) -> (String, serde_json::Value) {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/auth/desktop-login/start")
+                    .header(header::COOKIE, session_cookie(session_token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"flow":"signIn"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let payload = read_json(response).await;
+        let login_id = payload["loginId"].as_str().unwrap().to_string();
+        (login_id, payload)
     }
 
     fn loopback_peer() -> SocketAddr {
@@ -470,27 +511,13 @@ mod tests {
     async fn provider_error_terminates_pending_attempt() {
         let (state, session_token, _) = test_state(true).await;
         let app = router(state);
-
-        let start = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/auth/desktop-login/start")
-                    .header(header::COOKIE, session_cookie(&session_token))
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(r#"{"state":"nonce-1"}"#))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(start.status(), StatusCode::OK);
+        let (login_id, _) = start_login(&app, &session_token).await;
 
         let callback = app
             .clone()
             .oneshot(with_peer(
                 Request::builder()
-                    .uri("/api/auth/desktop-login/callback?error=access_denied&error_description=User%20cancelled&state=%7B%22nonce%22%3A%22nonce-1%22%7D")
+                    .uri(format!("/api/auth/desktop-login/callback?error=access_denied&error_description=User%20cancelled&state={login_id}"))
                     .body(Body::empty())
                     .unwrap(),
                 loopback_peer(),
@@ -523,7 +550,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn concurrent_sessions_cannot_steal_results() {
+    async fn concurrent_sessions_have_independent_pending_attempts() {
         let (state, session_a, credential) = test_state(true).await;
         let (_, session_b) = state
             .auth
@@ -532,37 +559,11 @@ mod tests {
             .expect("second session");
         let app = router(state);
 
-        for (token, nonce) in [(&session_a, "nonce-a"), (&session_b, "nonce-b")] {
-            let response = app
-                .clone()
-                .oneshot(
-                    Request::builder()
-                        .method("POST")
-                        .uri("/api/auth/desktop-login/start")
-                        .header(header::COOKIE, session_cookie(token))
-                        .header(header::CONTENT_TYPE, "application/json")
-                        .body(Body::from(format!(r#"{{"state":"{nonce}"}}"#)))
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::OK);
-        }
+        let (login_a, _) = start_login(&app, &session_a).await;
+        let (login_b, _) = start_login(&app, &session_b).await;
+        assert_ne!(login_a, login_b);
 
-        let callback = app
-            .clone()
-            .oneshot(with_peer(
-                Request::builder()
-                    .uri("/api/auth/desktop-login/callback?code=code-a&state=%7B%22nonce%22%3A%22nonce-a%22%7D")
-                    .body(Body::empty())
-                    .unwrap(),
-                loopback_peer(),
-            ))
-            .await
-            .unwrap();
-        assert_eq!(callback.status(), StatusCode::OK);
-
-        let stolen = app
+        let status_b = app
             .clone()
             .oneshot(
                 Request::builder()
@@ -573,10 +574,9 @@ mod tests {
             )
             .await
             .unwrap();
-        let stolen_payload = read_json(stolen).await;
-        assert_eq!(stolen_payload["status"], "pending");
+        assert_eq!(read_json(status_b).await["status"], "pending");
 
-        let owned = app
+        let status_a = app
             .oneshot(
                 Request::builder()
                     .uri("/api/auth/desktop-login/result")
@@ -586,9 +586,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let owned_payload = read_json(owned).await;
-        assert_eq!(owned_payload["status"], "complete");
-        assert_eq!(owned_payload["code"], "code-a");
+        assert_eq!(read_json(status_a).await["status"], "pending");
     }
 
     #[tokio::test]
@@ -596,20 +594,7 @@ mod tests {
         let (state, session_token, _) = test_state(true).await;
         let app = router(state);
 
-        let start = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/auth/desktop-login/start")
-                    .header(header::COOKIE, session_cookie(&session_token))
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(r#"{"state":"nonce-1"}"#))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(start.status(), StatusCode::OK);
+        let (login_id, _) = start_login(&app, &session_token).await;
 
         let cancel = app
             .clone()
@@ -619,7 +604,7 @@ mod tests {
                     .uri("/api/auth/desktop-login/cancel")
                     .header(header::COOKIE, session_cookie(&session_token))
                     .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(r#"{"state":"nonce-1"}"#))
+                    .body(Body::from(format!(r#"{{"loginId":"{login_id}"}}"#)))
                     .unwrap(),
             )
             .await
@@ -629,7 +614,9 @@ mod tests {
         let callback = app
             .oneshot(with_peer(
                 Request::builder()
-                    .uri("/api/auth/desktop-login/callback?code=auth-code&state=%7B%22nonce%22%3A%22nonce-1%22%7D")
+                    .uri(format!(
+                        "/api/auth/desktop-login/callback?code=auth-code&state={login_id}"
+                    ))
                     .body(Body::empty())
                     .unwrap(),
                 loopback_peer(),
@@ -646,22 +633,8 @@ mod tests {
         let (state, session_token, _) = test_state(true).await;
         let app = router(state);
 
-        for nonce in ["nonce-old", "nonce-new"] {
-            let start = app
-                .clone()
-                .oneshot(
-                    Request::builder()
-                        .method("POST")
-                        .uri("/api/auth/desktop-login/start")
-                        .header(header::COOKIE, session_cookie(&session_token))
-                        .header(header::CONTENT_TYPE, "application/json")
-                        .body(Body::from(format!(r#"{{"state":"{nonce}"}}"#)))
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            assert_eq!(start.status(), StatusCode::OK);
-        }
+        let (old_login_id, _) = start_login(&app, &session_token).await;
+        let (new_login_id, _) = start_login(&app, &session_token).await;
 
         let stale_cancel = app
             .clone()
@@ -671,27 +644,15 @@ mod tests {
                     .uri("/api/auth/desktop-login/cancel")
                     .header(header::COOKIE, session_cookie(&session_token))
                     .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(r#"{"state":"nonce-old"}"#))
+                    .body(Body::from(format!(r#"{{"loginId":"{old_login_id}"}}"#)))
                     .unwrap(),
             )
             .await
             .unwrap();
         assert_eq!(stale_cancel.status(), StatusCode::OK);
 
-        let callback = app
-            .clone()
-            .oneshot(with_peer(
-                Request::builder()
-                    .uri("/api/auth/desktop-login/callback?code=auth-code&state=%7B%22nonce%22%3A%22nonce-new%22%7D")
-                    .body(Body::empty())
-                    .unwrap(),
-                loopback_peer(),
-            ))
-            .await
-            .unwrap();
-        assert_eq!(callback.status(), StatusCode::OK);
-
         let result = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .uri("/api/auth/desktop-login/result")
@@ -702,8 +663,21 @@ mod tests {
             .await
             .unwrap();
         let payload = read_json(result).await;
-        assert_eq!(payload["status"], "complete");
-        assert_eq!(payload["code"], "auth-code");
+        assert_eq!(payload["status"], "pending");
+
+        let callback = app
+            .oneshot(with_peer(
+                Request::builder()
+                    .uri(format!(
+                        "/api/auth/desktop-login/callback?error=access_denied&state={new_login_id}"
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+                loopback_peer(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(callback.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
@@ -718,7 +692,7 @@ mod tests {
                     .uri("/api/auth/desktop-login/start")
                     .header(header::COOKIE, session_cookie(&session_token))
                     .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(r#"{"state":"nonce-1"}"#))
+                    .body(Body::from(r#"{"flow":"signIn"}"#))
                     .unwrap(),
             )
             .await
@@ -736,31 +710,18 @@ mod tests {
     #[tokio::test]
     async fn expired_attempt_cannot_complete() {
         let (state, session_token, _) = test_state(true).await;
-        let desktop_login = state.desktop_login.clone();
+        let native_auth = Arc::clone(&state.native_auth);
         let app = router(state);
-
-        let start = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/auth/desktop-login/start")
-                    .header(header::COOKIE, session_cookie(&session_token))
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(r#"{"state":"nonce-1"}"#))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(start.status(), StatusCode::OK);
-
-        desktop_login.expire_for_test(&session_token).await;
+        let (login_id, _) = start_login(&app, &session_token).await;
+        native_auth.expire_login_for_test(&session_token).await;
 
         let callback = app
             .clone()
             .oneshot(with_peer(
                 Request::builder()
-                    .uri("/api/auth/desktop-login/callback?code=auth-code&state=%7B%22nonce%22%3A%22nonce-1%22%7D")
+                    .uri(format!(
+                        "/api/auth/desktop-login/callback?code=auth-code&state={login_id}"
+                    ))
                     .body(Body::empty())
                     .unwrap(),
                 loopback_peer(),
@@ -780,82 +741,22 @@ mod tests {
             .await
             .unwrap();
         let payload = read_json(result).await;
-        assert_eq!(payload["status"], "pending");
-    }
-
-    #[tokio::test]
-    async fn loopback_peer_can_complete_callback() {
-        let (state, session_token, _) = test_state(true).await;
-        let app = router(state);
-
-        let start = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/auth/desktop-login/start")
-                    .header(header::COOKIE, session_cookie(&session_token))
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(r#"{"state":"nonce-1"}"#))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(start.status(), StatusCode::OK);
-
-        let callback = app
-            .clone()
-            .oneshot(with_peer(
-                Request::builder()
-                    .uri("/api/auth/desktop-login/callback?code=auth-code&state=%7B%22nonce%22%3A%22nonce-1%22%7D")
-                    .body(Body::empty())
-                    .unwrap(),
-                loopback_peer(),
-            ))
-            .await
-            .unwrap();
-        assert_eq!(callback.status(), StatusCode::OK);
-
-        let result = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/auth/desktop-login/result")
-                    .header(header::COOKIE, session_cookie(&session_token))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let payload = read_json(result).await;
-        assert_eq!(payload["status"], "complete");
-        assert_eq!(payload["code"], "auth-code");
+        assert_eq!(payload["status"], "signedOut");
     }
 
     #[tokio::test]
     async fn non_loopback_peer_cannot_complete_callback() {
         let (state, session_token, _) = test_state(true).await;
         let app = router(state);
-
-        let start = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/auth/desktop-login/start")
-                    .header(header::COOKIE, session_cookie(&session_token))
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(r#"{"state":"nonce-1"}"#))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(start.status(), StatusCode::OK);
+        let (login_id, _) = start_login(&app, &session_token).await;
 
         let callback = app
             .clone()
             .oneshot(with_peer(
                 Request::builder()
-                    .uri("/api/auth/desktop-login/callback?code=attacker-code&state=%7B%22nonce%22%3A%22nonce-1%22%7D")
+                    .uri(format!(
+                        "/api/auth/desktop-login/callback?code=attacker-code&state={login_id}"
+                    ))
                     .header("x-forwarded-for", "127.0.0.1")
                     .header(header::HOST, "127.0.0.1:7731")
                     .body(Body::empty())
@@ -883,7 +784,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn start_rejects_nonce_collision_across_sessions() {
+    async fn start_generates_distinct_state_across_sessions() {
         let (state, session_a, credential) = test_state(true).await;
         let (_, session_b) = state
             .auth
@@ -892,40 +793,21 @@ mod tests {
             .expect("second session");
         let app = router(state);
 
-        let first = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/auth/desktop-login/start")
-                    .header(header::COOKIE, session_cookie(&session_a))
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(r#"{"state":"shared-nonce"}"#))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(first.status(), StatusCode::OK);
+        let (login_a, payload_a) = start_login(&app, &session_a).await;
+        let (login_b, payload_b) = start_login(&app, &session_b).await;
 
-        let collision = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/auth/desktop-login/start")
-                    .header(header::COOKIE, session_cookie(&session_b))
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(r#"{"state":"shared-nonce"}"#))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(collision.status(), StatusCode::BAD_REQUEST);
-        let payload = read_json(collision).await;
+        assert_ne!(login_a, login_b);
         assert!(
-            payload["error"]
+            payload_a["authorizationUrl"]
                 .as_str()
-                .unwrap_or_default()
-                .contains("already in use")
+                .unwrap()
+                .contains(&login_a)
+        );
+        assert!(
+            payload_b["authorizationUrl"]
+                .as_str()
+                .unwrap()
+                .contains(&login_b)
         );
     }
 }

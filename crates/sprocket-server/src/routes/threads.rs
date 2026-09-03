@@ -343,7 +343,7 @@ async fn register_handler(
         .map_err(ApiError::unauthorized)?;
     state
         .machines
-        .register(&payload.user_id, payload.auth_token.clone())
+        .register(&payload.user_id)
         .await
         .map_err(ApiError::bad_request)?;
     state

@@ -1804,13 +1804,6 @@
 					remoteChangeNotices.set(threadId, REMOTE_CHANGE_NOTICE);
 				}
 			}
-			// Refresh so a detached launch is not left on a token about to expire.
-			// The thread-cache watch keys off user id, so this does not tear it down.
-			const authToken = await getAccessToken({ forceRefreshToken: true });
-			if (!authToken) {
-				recoverSubmission('Your session ended before the agent started. Sign in again.');
-				return;
-			}
 			if (!isSubmissionCurrent()) {
 				return;
 			}
@@ -1862,7 +1855,6 @@
 			}, agentLaunchTimeoutMs);
 			launchAgentRun({
 				userId: submittedUserId,
-				authToken,
 				desktopApi,
 				onError: (error) => {
 					if (!isSubmissionCurrent() || !isSubmittedUserCurrent()) {
@@ -1970,13 +1962,11 @@
 		};
 		pendingAgentLaunches = beginPendingAgentLaunch(pendingAgentLaunches, threadId, launch);
 		try {
-			const authToken = await getAccessToken({ forceRefreshToken: true });
-			if (!authToken || getCurrentUserId() !== userId) {
+			if (getCurrentUserId() !== userId) {
 				throw new Error('User session is not ready.');
 			}
 			launchAgentRun({
 				userId,
-				authToken,
 				desktopApi,
 				onError: (error) => {
 					pendingAgentLaunches = clearPendingAgentLaunch(pendingAgentLaunches, threadId, launchId);

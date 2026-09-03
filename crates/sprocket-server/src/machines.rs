@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use convex::Value;
+use sprocket_convex::AuthTokenFetcher;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::{sleep, timeout};
@@ -26,8 +27,10 @@ struct AccountPresence {
 
 pub struct MachineManager {
     deployment_url: String,
+    auth_token_fetcher: AuthTokenFetcher,
     identity: Arc<MachineIdentity>,
     accounts: Mutex<HashMap<String, AccountPresence>>,
+    registration: Mutex<()>,
     lifecycle: Mutex<LifecycleState>,
 }
 
@@ -38,31 +41,35 @@ struct LifecycleState {
 }
 
 impl MachineManager {
-    pub(crate) fn new(deployment_url: String, identity: Arc<MachineIdentity>) -> Arc<Self> {
+    pub(crate) fn new(
+        deployment_url: String,
+        auth_token_fetcher: AuthTokenFetcher,
+        identity: Arc<MachineIdentity>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             deployment_url,
+            auth_token_fetcher,
             identity,
             accounts: Mutex::new(HashMap::new()),
+            registration: Mutex::new(()),
             lifecycle: Mutex::new(LifecycleState::default()),
         })
     }
 
-    pub async fn register(
-        self: &Arc<Self>,
-        user_id: &str,
-        auth_token: String,
-    ) -> anyhow::Result<()> {
-        let account = self.account_lock(user_id, false).await?;
-        let _account = account.lock().await;
+    pub async fn register(self: &Arc<Self>, expected_user_id: &str) -> anyhow::Result<()> {
+        let _registration = self.registration.lock().await;
         self.ensure_running().await?;
-        if self.reuse_live(user_id).await {
+        let registered = self.register_remote().await?;
+        if registered.machine_id != self.identity.installation_id {
+            anyhow::bail!("machine registration returned a different installation");
+        }
+        if registered.user_id != expected_user_id {
+            anyhow::bail!("native and browser sessions belong to different users");
+        }
+        let user_id = registered.user_id;
+        if self.reuse_live(&user_id).await {
             return Ok(());
         }
-        let registered = self.register_remote(auth_token).await?;
-        if registered.user_id != user_id || registered.machine_id != self.identity.installation_id {
-            anyhow::bail!("machine registration does not match the requested account");
-        }
-        let user_id = user_id.to_string();
         let manager = Arc::clone(self);
         let heartbeat_user_id = user_id.clone();
         let heartbeat = tokio::spawn(async move {
@@ -78,7 +85,7 @@ impl MachineManager {
             .accounts
             .lock()
             .await
-            .insert(user_id, AccountPresence { heartbeat });
+            .insert(user_id.clone(), AccountPresence { heartbeat });
         if let Some(previous) = previous {
             previous.heartbeat.abort();
         }
@@ -165,9 +172,13 @@ impl MachineManager {
         Err(error)
     }
 
-    async fn register_remote(&self, auth_token: String) -> anyhow::Result<RegisteredMachine> {
+    async fn register_remote(&self) -> anyhow::Result<RegisteredMachine> {
         timeout(RPC_TIMEOUT, async {
-            let client = UserConvexClient::connect(&self.deployment_url, auth_token).await?;
+            let client = UserConvexClient::connect_with_fetcher(
+                &self.deployment_url,
+                Arc::clone(&self.auth_token_fetcher),
+            )
+            .await?;
             client
                 .mutate("machines:register", self.registration_args())
                 .await
@@ -239,7 +250,12 @@ mod tests {
     fn manager_for_test() -> (std::path::PathBuf, Arc<MachineManager>) {
         let dir = std::env::temp_dir().join(format!("sprocket-machine-{}", uuid::Uuid::new_v4()));
         let identity = Arc::new(MachineIdentity::load(&dir).expect("identity"));
-        (dir, MachineManager::new("not a valid URL".into(), identity))
+        let fetcher: AuthTokenFetcher =
+            Arc::new(|_| Box::pin(async { anyhow::bail!("unexpected authentication request") }));
+        (
+            dir,
+            MachineManager::new("not a valid URL".into(), fetcher, identity),
+        )
     }
 
     #[tokio::test]
@@ -248,7 +264,7 @@ mod tests {
 
         manager.shutdown().await;
         let error = manager
-            .register("user-a", "browser-token".into())
+            .register("user-a")
             .await
             .expect_err("registration after shutdown must fail");
         assert!(error.to_string().contains("shutting down"));
@@ -257,7 +273,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn live_registration_is_reused_without_another_convex_call() {
+    async fn failed_registration_keeps_an_existing_presence() {
         let (dir, manager) = manager_for_test();
         {
             let mut accounts = manager.accounts.lock().await;
@@ -270,9 +286,9 @@ mod tests {
         }
 
         manager
-            .register("user-a", "new-token".into())
+            .register("user-a")
             .await
-            .expect("reuse live registration");
+            .expect_err("registration still authenticates with Convex");
         {
             let accounts = manager.accounts.lock().await;
             let presence = accounts.get("user-a").expect("presence");
@@ -305,7 +321,7 @@ mod tests {
             .expect_err("invalid deployment must fail heartbeat");
         assert!(manager.accounts.lock().await.get("user-a").is_none());
         manager
-            .register("user-a", "new-token".into())
+            .register("user-a")
             .await
             .expect_err("cleared presence must register with Convex");
 

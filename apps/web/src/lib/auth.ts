@@ -46,8 +46,8 @@ let authConfigPromise: Promise<{ workosClientId: string }> | null = null;
 let bootstrapClient: AuthBootstrapClient | null = null;
 let isSigningOut = false;
 type DesktopSignInAttempt = {
-	nonce: string;
 	abort: AbortController;
+	loginId: string | null;
 };
 type AuthFlow = 'signIn' | 'signUp';
 let desktopSignInAttempt: DesktopSignInAttempt | null = null;
@@ -206,26 +206,17 @@ export async function initializeAuth(convexClient: AuthBootstrapClient) {
 	}
 }
 
-const desktopNonceStateSchema = z.object({ nonce: z.string() });
 const errorMessagePayloadSchema = z.object({ error: z.string().optional() });
+const desktopLoginStartSchema = z.object({ authorizationUrl: z.url(), loginId: z.string() });
 const desktopLoginResultSchema = z.discriminatedUnion('status', [
+	z.object({ status: z.literal('signedOut') }),
 	z.object({ status: z.literal('pending') }),
-	z.object({ status: z.literal('complete'), code: z.string(), state: z.string() }),
+	z.object({
+		status: z.literal('authenticated'),
+		user: z.object({ id: z.string(), email: z.string() })
+	}),
 	z.object({ status: z.literal('failed'), error: z.string() })
 ]);
-
-function extractNonceFromState(state: string): string | null {
-	try {
-		const parsed = desktopNonceStateSchema.safeParse(JSON.parse(state));
-		if (!parsed.success) {
-			return null;
-		}
-		const nonce = parsed.data.nonce.trim();
-		return nonce.length > 0 ? nonce : null;
-	} catch {
-		return state.trim() || null;
-	}
-}
 
 async function errorMessageFromFailedResponse(
 	response: Response,
@@ -235,14 +226,14 @@ async function errorMessageFromFailedResponse(
 	return parsed.success ? (parsed.data.error ?? fallback) : fallback;
 }
 
-async function startDesktopLogin(nonce: string): Promise<void> {
+async function startDesktopLogin(
+	flow: AuthFlow
+): Promise<{ authorizationUrl: string; loginId: string }> {
 	const response = await fetch('/api/auth/desktop-login/start', {
 		method: 'POST',
 		credentials: 'include',
-		headers: {
-			'content-type': 'application/json'
-		},
-		body: JSON.stringify({ state: nonce })
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ flow })
 	});
 
 	if (!response.ok) {
@@ -250,6 +241,11 @@ async function startDesktopLogin(nonce: string): Promise<void> {
 			await errorMessageFromFailedResponse(response, 'Failed to start desktop sign-in.')
 		);
 	}
+	const payload = desktopLoginStartSchema.safeParse(await response.json());
+	if (!payload.success) {
+		throw new Error('Local server returned an invalid desktop sign-in URL.');
+	}
+	return payload.data;
 }
 
 function isCurrentDesktopSignIn(attempt: DesktopSignInAttempt): boolean {
@@ -262,7 +258,10 @@ function requireCurrentDesktopSignIn(attempt: DesktopSignInAttempt): void {
 	}
 }
 
-async function startDesktopLoginInOrder(attempt: DesktopSignInAttempt): Promise<void> {
+async function startDesktopLoginInOrder(
+	attempt: DesktopSignInAttempt,
+	flow: AuthFlow
+): Promise<string> {
 	const previousStart = desktopLoginStartQueue;
 	let releaseStart!: () => void;
 	desktopLoginStartQueue = new Promise<void>((resolve) => {
@@ -276,37 +275,16 @@ async function startDesktopLoginInOrder(attempt: DesktopSignInAttempt): Promise<
 		// Do not abort this request: a client-side abort does not prove the server
 		// stopped processing it. Serializing complete responses guarantees that a
 		// replacement attempt is the last /start request handled by the server.
-		await startDesktopLogin(attempt.nonce);
+		const { authorizationUrl, loginId } = await startDesktopLogin(flow);
+		attempt.loginId = loginId;
 		requireCurrentDesktopSignIn(attempt);
+		return authorizationUrl;
 	} finally {
 		releaseStart();
 	}
 }
 
-function resolveDesktopLoginCallbackUrl(bootstrap: {
-	httpBaseUrl: string;
-	desktopLoginCallbackUrl?: string;
-}): string {
-	const configured = bootstrap.desktopLoginCallbackUrl?.trim();
-	if (configured) {
-		return configured.replace(/\/$/, '');
-	}
-
-	let parsed: URL;
-	try {
-		parsed = new URL(bootstrap.httpBaseUrl);
-	} catch {
-		throw new Error('Local server bootstrap URL is invalid.');
-	}
-
-	const port = parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
-	return `http://127.0.0.1:${port}/api/auth/desktop-login/callback`;
-}
-
-async function pollDesktopLoginResult(
-	nonce: string,
-	signal: AbortSignal
-): Promise<{ code: string; state: string }> {
+async function pollDesktopLoginResult(signal: AbortSignal): Promise<void> {
 	const startedAt = Date.now();
 
 	while (!signal.aborted) {
@@ -335,12 +313,8 @@ async function pollDesktopLoginResult(
 			throw new Error(result.error || 'Desktop sign-in failed.');
 		}
 
-		if (result.status === 'complete') {
-			const returnedNonce = extractNonceFromState(result.state);
-			if (returnedNonce !== nonce) {
-				throw new Error('Desktop sign-in state mismatch.');
-			}
-			return { code: result.code, state: result.state };
+		if (result.status === 'authenticated') {
+			return;
 		}
 
 		await new Promise<void>((resolve, reject) => {
@@ -361,7 +335,7 @@ async function pollDesktopLoginResult(
 	throw new DOMException('Aborted', 'AbortError');
 }
 
-async function authenticateWithLoopbackBrowser(clientId: string, flow: AuthFlow) {
+async function authenticateWithLoopbackBrowser(flow: AuthFlow) {
 	const bridge = getDesktopBridge();
 	if (!bridge && !isInstalledBrowserApp()) {
 		throw new Error('Loopback browser sign-in is unavailable.');
@@ -370,8 +344,8 @@ async function authenticateWithLoopbackBrowser(clientId: string, flow: AuthFlow)
 	stopDesktopSignInPolling();
 
 	const attempt: DesktopSignInAttempt = {
-		nonce: crypto.randomUUID(),
-		abort: new AbortController()
+		abort: new AbortController(),
+		loginId: null
 	};
 	desktopSignInAttempt = attempt;
 
@@ -383,28 +357,7 @@ async function authenticateWithLoopbackBrowser(clientId: string, flow: AuthFlow)
 	}));
 
 	try {
-		const bootstrap = bridge
-			? await bridge.getLocalBootstrap()
-			: { httpBaseUrl: window.location.origin };
-		requireCurrentDesktopSignIn(attempt);
-		const redirectUri = resolveDesktopLoginCallbackUrl(bootstrap);
-
-		await startDesktopLoginInOrder(attempt);
-		requireCurrentDesktopSignIn(attempt);
-
-		// Temporary client so AuthKit stores the PKCE verifier and builds an authorize URL
-		// that returns to the local loopback callback instead of the in-app /callback route.
-		// Do not dispose(): dispose() resets the shared AuthKit memory store used by the
-		// main client. This temporary client has no refresh timer unless a session exists.
-		const authorizeClient = await createClient(clientId, {
-			redirectUri
-		});
-		requireCurrentDesktopSignIn(attempt);
-		const authorizeOptions = { state: { nonce: attempt.nonce } };
-		const authorizeUrl =
-			flow === 'signUp'
-				? await authorizeClient.getSignUpUrl(authorizeOptions)
-				: await authorizeClient.getSignInUrl(authorizeOptions);
+		const authorizeUrl = await startDesktopLoginInOrder(attempt, flow);
 		requireCurrentDesktopSignIn(attempt);
 
 		authState.update((current) => ({
@@ -438,7 +391,7 @@ async function authenticateWithLoopbackBrowser(clientId: string, flow: AuthFlow)
 				}));
 			}
 		}
-		const result = await pollDesktopLoginResult(attempt.nonce, attempt.abort.signal);
+		await pollDesktopLoginResult(attempt.abort.signal);
 		requireCurrentDesktopSignIn(attempt);
 		if (bridge) {
 			try {
@@ -451,11 +404,14 @@ async function authenticateWithLoopbackBrowser(clientId: string, flow: AuthFlow)
 		}
 		requireCurrentDesktopSignIn(attempt);
 
-		const callbackUrl = new URL('/callback', window.location.origin);
-		callbackUrl.searchParams.set('code', result.code);
-		callbackUrl.searchParams.set('state', result.state);
+		const client = await getAuthClient();
+		if (!client) {
+			throw new Error('Browser authentication is not configured.');
+		}
+		const browserAuthorizeUrl =
+			flow === 'signUp' ? await client.getSignUpUrl() : await client.getSignInUrl();
 		requireCurrentDesktopSignIn(attempt);
-		window.location.href = callbackUrl.toString();
+		window.location.href = browserAuthorizeUrl;
 	} catch (error) {
 		if (desktopSignInAttempt !== attempt) {
 			return;
@@ -504,13 +460,14 @@ export function cancelDesktopSignIn() {
 	}
 	void pendingStarts
 		.then(async () => {
+			if (!cancelledAttempt.loginId) {
+				return;
+			}
 			await fetch('/api/auth/desktop-login/cancel', {
 				method: 'POST',
 				credentials: 'include',
-				headers: {
-					'content-type': 'application/json'
-				},
-				body: JSON.stringify({ state: cancelledAttempt.nonce })
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ loginId: cancelledAttempt.loginId })
 			});
 		})
 		.catch(() => {
@@ -543,7 +500,7 @@ async function authenticate(flow: AuthFlow) {
 	}
 
 	if (getDesktopBridge() || isInstalledBrowserApp()) {
-		await authenticateWithLoopbackBrowser(clientId, flow);
+		await authenticateWithLoopbackBrowser(flow);
 		return;
 	}
 
@@ -574,6 +531,17 @@ export async function signOut() {
 	authState.update((current) => ({ ...current, isLoading: true }));
 
 	try {
+		if (getDesktopBridge() || isInstalledBrowserApp()) {
+			const response = await fetch('/api/auth/native-session', {
+				method: 'DELETE',
+				credentials: 'include'
+			});
+			if (!response.ok) {
+				throw new Error(
+					await errorMessageFromFailedResponse(response, 'Failed to clear native session.')
+				);
+			}
+		}
 		await client.signOut({
 			navigate: false,
 			returnTo: window.location.origin
