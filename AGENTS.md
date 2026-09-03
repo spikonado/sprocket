@@ -59,9 +59,9 @@ All of these are core priorities; try your best to achieve all of them without h
 3. Fix any relevant issues found by it:
    - These can be inline comments on the PR or somewhere above "Important Files Changed" in the PR description.
    - It often happens that some of the issues reported are false positives, outdated, not relevant, etc.
-   - Don't spend any energy on these and skip them.
+   - Don't spend any energy on these; skip them and explain your reasoning in the inline thread or, for an issue in the PR description, in a top-level PR comment.
 4. Commit and push the code -> this time without asking.
-5. Loop on 2-4 till there are no more issues to fix.
+5. You should loop steps 2-4 until Greptile gives you a 5/5 confidence score or there are no remaining actionable issues. Comment `@greptileai review` when it doesn't start reviewing automatically; if the score remains below 5/5 with no actionable issues, explain why and stop.
 6. Clean up any worktrees and branches you created for this PR when you are done.
 
 ### Subagent prompting
