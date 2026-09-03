@@ -15,6 +15,22 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  native_credential_store_check:
+    name: Native credential store (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: native-credential-store-${{ matrix.os }}
+      - name: Check native server
+        run: cargo check --locked -p sprocket-server
+
   build_and_test:
     runs-on: ubuntu-latest
     steps:

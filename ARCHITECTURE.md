@@ -241,6 +241,12 @@ not return the authorization code to JavaScript. The installed renderer then
 starts a separate AuthKit browser login. Installed sign-out clears the native
 credential before signing out the browser session.
 
+Desktop releases package the renderer build and Rust server in the same
+installer, and Electron always launches the bundled server binary. These two
+parts therefore update atomically. Development builds likewise build both from
+one checkout. The local API does not support mixing renderer and server
+versions from different releases.
+
 The native migration is not complete. Thread-cache registration, thread
 commands, cancellation, lifecycle, transcript synchronization, and attachments
 still pass browser access tokens or browser user IDs to Rust. These paths must

@@ -28,10 +28,7 @@ export function canonicalDevWebUrl(currentUrl) {
  * Installed loopback pages and the Electron renderer use the server-mediated auth callback.
  * @param {string} hostname
  * @param {boolean} hasDesktopBridge
- * @param {boolean} isDevelopment
  */
-export function usesLoopbackBrowserAuth(hostname, hasDesktopBridge, isDevelopment) {
-	return (
-		hasDesktopBridge || (!isDevelopment && ['127.0.0.1', 'localhost', '[::1]'].includes(hostname))
-	);
+export function usesLoopbackBrowserAuth(hostname, hasDesktopBridge) {
+	return hasDesktopBridge || ['127.0.0.1', 'localhost', '[::1]'].includes(hostname);
 }

@@ -47,6 +47,7 @@ pub(crate) enum NativeLoginStatus {
     SignedOut,
     Pending,
     Authenticated { user: NativeUser },
+    Unavailable { error: String },
     Failed { error: String },
 }
 
@@ -351,8 +352,17 @@ impl NativeAuthManager {
             }
         }
 
-        if self.access_token(false).await.is_err() {
-            return NativeLoginStatus::SignedOut;
+        if let Err(error) = self.access_token(false).await {
+            let message = error.to_string();
+            return if message.contains("native WorkOS session is signed out")
+                || message.contains("native WorkOS session expired")
+            {
+                NativeLoginStatus::SignedOut
+            } else {
+                NativeLoginStatus::Unavailable {
+                    error: "Native sign-in is temporarily unavailable. Try again.".to_string(),
+                }
+            };
         }
 
         self.session
@@ -452,8 +462,7 @@ impl NativeAuthManager {
             }
             Err(error) if is_transient_refresh_error(&error) => {
                 let session = self.session.lock().await;
-                if !force_refresh
-                    && let Some(access_token) = &session.access_token
+                if let Some(access_token) = &session.access_token
                     && access_token.expires_at > unix_time_secs()
                 {
                     tracing::warn!(
@@ -464,12 +473,15 @@ impl NativeAuthManager {
                 Err(error).context("failed to refresh native WorkOS session")
             }
             Err(error) => {
-                let mut session = self.session.lock().await;
-                session.access_token = None;
-                session.user = None;
-                session.suppress_persisted_resume = true;
-                drop(session);
-                self.clear_refresh_token().await?;
+                let session = self.session.lock().await;
+                if let Some(access_token) = &session.access_token
+                    && access_token.expires_at > unix_time_secs()
+                {
+                    tracing::warn!(
+                        "native WorkOS refresh returned an unrecognized error; retaining current access token: {error}"
+                    );
+                    return Ok(access_token.value.clone());
+                }
                 Err(error).context("failed to refresh native WorkOS session")
             }
         }
@@ -1003,7 +1015,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unexpected_refresh_failure_fails_closed() {
+    async fn unexpected_refresh_failure_preserves_the_session_for_retry() {
         let store = MemoryRefreshTokenStore::with_token("refresh-current");
         let manager = manager_with_response(
             Arc::clone(&store),
@@ -1011,24 +1023,28 @@ mod tests {
             serde_json::json!({ "error": "unexpected" }),
         )
         .await;
+        let current_access_token = access_token(unix_time_secs() + 30);
         manager
             .accept_authentication(authentication_response(
-                access_token(unix_time_secs() + 30),
+                current_access_token.clone(),
                 "refresh-current",
             ))
             .await
             .unwrap();
 
-        assert!(manager.access_token(false).await.is_err());
-        assert_eq!(store.token(), None);
+        assert_eq!(
+            manager.access_token(false).await.unwrap(),
+            current_access_token
+        );
+        assert_eq!(store.token().as_deref(), Some("refresh-current"));
         assert!(matches!(
             manager.status("paired-session").await,
-            NativeLoginStatus::SignedOut
+            NativeLoginStatus::Authenticated { .. }
         ));
     }
 
     #[tokio::test]
-    async fn forced_refresh_does_not_return_a_stale_token_after_transient_failure() {
+    async fn forced_refresh_returns_a_still_valid_token_after_transient_failure() {
         let store = MemoryRefreshTokenStore::with_token("refresh-current");
         let manager = manager_with_response(
             Arc::clone(&store),
@@ -1044,7 +1060,19 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(manager.access_token(true).await.is_err());
+        let current_access_token = manager
+            .session
+            .lock()
+            .await
+            .access_token
+            .as_ref()
+            .unwrap()
+            .value
+            .clone();
+        assert_eq!(
+            manager.access_token(true).await.unwrap(),
+            current_access_token
+        );
         assert_eq!(store.token().as_deref(), Some("refresh-current"));
     }
 
