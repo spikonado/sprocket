@@ -1884,7 +1884,7 @@
 						error instanceof Error ? error.message : 'Failed to start the local agent run.'
 					);
 				},
-				onStarted: (runId) => {
+				onStarted: () => {
 					if (!isSubmissionCurrent() || !isSubmittedUserCurrent()) return;
 					clearComposerAttachments({ discard: false });
 				},
