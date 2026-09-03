@@ -1,9 +1,9 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use futures::StreamExt;
 use sprocket_agent::{TRANSCRIPT_PAGE_SIZE, TranscriptStore, apply_remote_state};
-use tokio::sync::{Mutex, broadcast};
+use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
 use crate::transcript_client::{
@@ -78,7 +78,7 @@ impl TranscriptWatchers {
             user_id: user_id.to_string(),
             thread_id: thread_id.to_string(),
         };
-        let mut inner = self.inner.lock().await;
+        let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
         if let Some(slot) = inner.remove(&key) {
             slot.task.abort();
         }
@@ -95,7 +95,12 @@ impl TranscriptWatchers {
             user_id: user_id.to_string(),
             thread_id: thread_id.to_string(),
         };
-        if let Some(slot) = self.inner.lock().await.get(&key) {
+        if let Some(slot) = self
+            .inner
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .get(&key)
+        {
             let _ = slot.events.send(TranscriptWatchEvent {
                 event_type: "updated",
                 total_parts: Some(total_parts),
@@ -114,7 +119,7 @@ impl TranscriptWatchers {
             user_id: user_id.to_string(),
             thread_id: thread_id.to_string(),
         };
-        let mut inner = self.inner.lock().await;
+        let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
         if let Some(slot) = inner.get_mut(&key) {
             slot.refs += 1;
             return TranscriptWatchSession {
@@ -147,8 +152,8 @@ impl TranscriptWatchers {
         }
     }
 
-    async fn close(&self, key: &WatchKey) {
-        let mut inner = self.inner.lock().await;
+    fn close(&self, key: &WatchKey) {
+        let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
         let Some(slot) = inner.get_mut(key) else {
             return;
         };
@@ -161,8 +166,11 @@ impl TranscriptWatchers {
     }
 
     #[cfg(test)]
-    pub async fn active_count(&self) -> usize {
-        self.inner.lock().await.len()
+    pub fn active_count(&self) -> usize {
+        self.inner
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .len()
     }
 }
 
@@ -174,11 +182,8 @@ impl TranscriptWatchSession {
 
 impl Drop for TranscriptWatchSession {
     fn drop(&mut self) {
-        let watchers = Arc::clone(&self.watchers);
-        let key = self.key.clone();
-        tokio::spawn(async move {
-            watchers.close(&key).await;
-        });
+        // Sync close so shutdown / no-runtime drops still release the slot.
+        self.watchers.close(&self.key);
     }
 }
 
@@ -309,14 +314,14 @@ mod tests {
 
         let first = watchers.open("user", "thread", "token".into()).await;
         let second = watchers.open("user", "thread", "token".into()).await;
-        assert_eq!(watchers.active_count().await, 1);
+        assert_eq!(watchers.active_count(), 1);
         assert_eq!(live.load(Ordering::SeqCst), 1);
         drop(first);
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        assert_eq!(watchers.active_count().await, 1);
+        assert_eq!(watchers.active_count(), 1);
         drop(second);
         tokio::time::sleep(std::time::Duration::from_millis(40)).await;
-        assert_eq!(watchers.active_count().await, 0);
+        assert_eq!(watchers.active_count(), 0);
         assert_eq!(live.load(Ordering::SeqCst), 0);
         let _ = tokio::fs::remove_dir_all(dir).await;
     }
