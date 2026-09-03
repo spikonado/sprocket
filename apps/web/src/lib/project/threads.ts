@@ -86,6 +86,18 @@ export function getProjectThreadGroups(projects: Project[], threads: ThreadSumma
 	);
 }
 
+export function overrideThreadActiveRun(
+	threads: ThreadSummary[],
+	threadId: Id<'threadRecords'>,
+	hasActiveRun: boolean
+): ThreadSummary[] {
+	return threads.map((thread) =>
+		thread.threadId === threadId && thread.hasActiveRun !== hasActiveRun
+			? { ...thread, hasActiveRun }
+			: thread
+	);
+}
+
 function sortThreadsRunningFirst(threads: ThreadSummary[]) {
 	return [...threads].sort((left, right) => {
 		if (left.hasActiveRun !== right.hasActiveRun) {

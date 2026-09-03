@@ -79,6 +79,7 @@
 		isLatestRunReadyForThread,
 		makeUnconfirmedCreatedThread,
 		mergeUnconfirmedCreatedThreads,
+		overrideThreadActiveRun,
 		pickThreadToRestore,
 		retainUnconfirmedCreatedThreads,
 		threadTitleFromPrompt,
@@ -741,10 +742,6 @@
 			.sort((left, right) => right.lastMessageAt - left.lastMessageAt);
 	});
 
-	const groupedProjectThreads = $derived.by<ProjectThreadGroup[]>(() =>
-		getProjectThreadGroups(projects, threads)
-	);
-
 	const runState = $derived(currentLifecycle?.run ?? null);
 	const visibleActions: ExecutorJob[] = [];
 	const threadArtifacts = $derived(
@@ -869,6 +866,13 @@
 	const isRunning = $derived(
 		isRunInProgress && currentLifecycle?.phase !== 'cancellation_requested'
 	);
+	const groupedProjectThreads = $derived.by<ProjectThreadGroup[]>(() => {
+		const sidebarThreads =
+			currentThreadId && currentLifecycle
+				? overrideThreadActiveRun(threads, currentThreadId, isRunInProgress)
+				: threads;
+		return getProjectThreadGroups(projects, sidebarThreads);
+	});
 	const hasPendingAgentLaunch = $derived(
 		isAgentLaunchPending(pendingAgentLaunches, currentThreadId)
 	);
@@ -1880,9 +1884,8 @@
 						error instanceof Error ? error.message : 'Failed to start the local agent run.'
 					);
 				},
-				onStarted: (runId) => {
+				onStarted: () => {
 					if (!isSubmissionCurrent() || !isSubmittedUserCurrent()) return;
-					pendingAgentLaunches = resolvePendingAgentLaunch(pendingAgentLaunches, threadId, runId);
 					clearComposerAttachments({ discard: false });
 				},
 				threadId,
@@ -1983,15 +1986,7 @@
 					pendingAgentLaunches = clearPendingAgentLaunch(pendingAgentLaunches, threadId, launchId);
 					currentError = error.message;
 				},
-				onStarted: (runId) => {
-					pendingAgentLaunches = resolvePendingAgentLaunch(
-						pendingAgentLaunches,
-						threadId,
-						runId,
-						undefined,
-						Date.now()
-					);
-				},
+				onStarted: () => {},
 				threadId,
 				prompt: '',
 				imageUploadIds: [],
