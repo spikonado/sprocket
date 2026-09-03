@@ -179,6 +179,7 @@ const chargeDoc = v.object({
 	reportingStartedAt: v.optional(v.number()),
 	chargingStartedAt: v.optional(v.number()),
 	providerRequestedAt: v.optional(v.number()),
+	claimGeneration: v.optional(v.number()),
 	reportRetrierRunId: v.optional(v.string()),
 	createdAt: v.number(),
 	updatedAt: v.number()
@@ -493,7 +494,8 @@ export const syncMandate = internalMutation({
 const reserveChargeResult = v.union(
 	v.object({
 		kind: v.literal('reserved'),
-		chargeId: v.id('mandateCharges')
+		chargeId: v.id('mandateCharges'),
+		claimGeneration: v.number()
 	}),
 	v.object({
 		kind: v.literal('existing'),
@@ -560,6 +562,7 @@ export const reserveCharge = internalMutation({
 						);
 					}
 					if (existing.status === 'failed') {
+						const claimGeneration = (existing.claimGeneration ?? 0) + 1;
 						await ctx.db.patch('mandateCharges', existing._id, {
 							runId: args.runId,
 							description: args.description,
@@ -567,9 +570,14 @@ export const reserveCharge = internalMutation({
 							pravaTransactionId: undefined,
 							providerRequestedAt: undefined,
 							chargingStartedAt: now,
+							claimGeneration,
 							updatedAt: now
 						});
-						return { kind: 'reserved' as const, chargeId: existing._id };
+						return {
+							kind: 'reserved' as const,
+							chargeId: existing._id,
+							claimGeneration
+						};
 					}
 					if (
 						existing.chargingStartedAt !== undefined &&
@@ -578,14 +586,20 @@ export const reserveCharge = internalMutation({
 						return { kind: 'inFlight' as const };
 					}
 					// Abandoned reservation that never reached Prava: reclaim.
+					const claimGeneration = (existing.claimGeneration ?? 0) + 1;
 					await ctx.db.patch('mandateCharges', existing._id, {
 						runId: args.runId,
 						description: args.description,
 						status: 'awaiting_result',
 						chargingStartedAt: now,
+						claimGeneration,
 						updatedAt: now
 					});
-					return { kind: 'reserved' as const, chargeId: existing._id };
+					return {
+						kind: 'reserved' as const,
+						chargeId: existing._id,
+						claimGeneration
+					};
 				}
 			}
 
@@ -599,10 +613,11 @@ export const reserveCharge = internalMutation({
 				reference,
 				status: 'awaiting_result',
 				chargingStartedAt: now,
+				claimGeneration: 1,
 				createdAt: now,
 				updatedAt: now
 			});
-			return { kind: 'reserved' as const, chargeId };
+			return { kind: 'reserved' as const, chargeId, claimGeneration: 1 };
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
@@ -610,10 +625,24 @@ export const reserveCharge = internalMutation({
 });
 
 export const markChargeProviderRequested = internalMutation({
-	args: { chargeId: v.id('mandateCharges'), userId: v.string() },
+	args: {
+		chargeId: v.id('mandateCharges'),
+		userId: v.string(),
+		claimGeneration: v.number()
+	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		await ownedCharge(ctx, args.chargeId, args.userId);
+		const charge = await ownedCharge(ctx, args.chargeId, args.userId);
+		if ((charge.claimGeneration ?? 0) !== args.claimGeneration) {
+			throw new Error(
+				'Charge reservation was taken over by another attempt; refusing to charge again.'
+			);
+		}
+		if (charge.providerRequestedAt !== undefined) {
+			throw new Error(
+				'A previous charge attempt for this reference may have already been submitted to Prava; refusing to charge again.'
+			);
+		}
 		await ctx.db.patch('mandateCharges', args.chargeId, {
 			providerRequestedAt: Date.now(),
 			updatedAt: Date.now()
@@ -1313,10 +1342,13 @@ export const mandateCharge = action({
 				errorMessage?: string;
 			};
 			// Mark before the network call so a lost response cannot be mistaken
-			// for an abandoned reservation that is safe to reclaim.
+			// for an abandoned reservation that is safe to reclaim. claimGeneration
+			// stops a concurrent reclaim (e.g. during a slow resolve above) from
+			// also reaching POST /charge.
 			await ctx.runMutation(internal.payments.markChargeProviderRequested, {
 				chargeId: reservation.chargeId,
-				userId: actor.userId
+				userId: actor.userId,
+				claimGeneration: reservation.claimGeneration
 			});
 			try {
 				result = await pravaRequest(`/v1/mandates/${encodeURIComponent(prava.id)}/charge`, {

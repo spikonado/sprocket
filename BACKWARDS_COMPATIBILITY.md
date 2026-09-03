@@ -76,7 +76,16 @@ read gate.
 Remove the dual-write (and then the required field) after an unset rewrite.
 Drop `usageLedgerMigratedAt` after a separate unset, or in the same rewrite.
 
-### 4. Historical `runs.completionTransport`
+### 4. Optional `mandateCharges.claimGeneration`
+
+Added so reserve/reclaim can hand a generation token to
+`markChargeProviderRequested`. Older charge rows omit it; readers treat a
+missing value as `0`.
+
+Remove optionality after a rewrite sets `claimGeneration` on every row, or a
+prod check shows none omit it.
+
+### 5. Historical `runs.completionTransport`
 
 Stored runs may still say `convex-action`. New inserts are `gateway`. The
 field stays optional so those rows validate.
@@ -84,7 +93,7 @@ field stays optional so those rows validate.
 Remove the `convex-action` union member after a rewrite or a prod check shows
 none remain.
 
-### 5. Catalog snapshot fields on `runs`
+### 6. Catalog snapshot fields on `runs`
 
 Earlier gateway work stored `catalogVersion`, `contextWindowTokens`, and
 `autoCompactTokenLimit` on new runs. Current inserts leave those unset. The
@@ -94,14 +103,14 @@ agent reads context budget from `GET /api/v1/models`; `getContext` returns
 Keep the optional fields so rows that still have them validate. Unset them in
 a later rewrite, then drop them from the schema.
 
-### 6. Numbered transcript `migratedAt`
+### 7. Numbered transcript `migratedAt`
 
 `threadTranscriptStates.migratedAt` is leftover after the numbered-transcript
 backfill. Current writes do not set it.
 
 Remove after an unset rewrite, then drop it from the schema.
 
-### 7. Transcript tool `jobId`
+### 8. Transcript tool `jobId`
 
 Sources: append-only tool progress events.
 
@@ -121,7 +130,7 @@ optionality after a production scan finds no jobs without `toolInvocationId`.
 
 Safe when a prod check shows zero transcript tool parts carrying `jobId`.
 
-### 8. Legacy installation identity and machine metadata
+### 9. Legacy installation identity and machine metadata
 
 Local servers now persist a versioned `installation.json`. On first launch
 after upgrade they preserve the UUID from the legacy plain-text
@@ -137,7 +146,7 @@ Delete legacy `installation-id` files only after all supported installations
 have launched a JSON-aware server and rollback to an older release is no
 longer supported.
 
-### 9. Thread-message references
+### 10. Thread-message references
 
 Prompts and attachment metadata now live in `threadTranscriptParts`; current
 code neither reads nor writes `threadMessages`. The table is no longer in the
