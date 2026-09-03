@@ -59,11 +59,6 @@ Sprocket remembers attached workspaces and local server sessions between launche
 Local state lives in `$HOME/.sprocket` (or `%USERPROFILE%\.sprocket` on Windows when `HOME` is unset).
 Override with `SPROCKET_DATA_DIR`.
 
-Installed Sprocket keeps its machine-side WorkOS refresh token in your operating
-system credential store, not in the data directory. The renderer has a separate
-browser session. Signing in may therefore open two AuthKit flows, and both must
-use the same account.
-
 ## Additional CLI reference
 
 | Command                     | Behavior                                                                       |
