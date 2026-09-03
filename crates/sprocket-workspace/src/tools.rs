@@ -593,8 +593,10 @@ fn stop_remaining_processes(process_id: Option<u32>) -> Result<()> {
 }
 
 #[cfg(windows)]
-fn stop_processes_after_shell_exit(_process_id: Option<u32>) -> Result<()> {
-    Ok(())
+fn stop_processes_after_shell_exit(process_id: Option<u32>) -> Result<()> {
+    // Match Unix: after the shell exits, kill any leftover process tree so
+    // background children from PowerShell do not outlive the session.
+    stop_remaining_processes(process_id)
 }
 
 pub fn default_command_shell() -> String {
