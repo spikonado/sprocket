@@ -181,6 +181,15 @@ may tighten the schema and remove the read fallbacks only after the production
 scans described above pass. That PR may also remove the cleanup cron and its
 `migrationSchedules` row and table.
 
+## Mandate charge claims
+
+Older `mandateCharges` rows omit `claimGeneration`. Readers treat a missing
+value as `0`. Reserve and reclaim operations use this generation to prevent a
+stale worker from starting a second provider request.
+
+Remove the optional schema field after a rewrite sets `claimGeneration` on
+every row, or a production scan finds no rows without it.
+
 ## Stored executor jobs
 
 ### Historical artifact tools
