@@ -168,6 +168,7 @@ struct NativeSession {
     user: Option<NativeUser>,
     login_errors: HashMap<String, String>,
     suppress_persisted_resume: bool,
+    sign_out_generation: u64,
 }
 
 pub(crate) struct NativeAuthManager {
@@ -300,7 +301,7 @@ impl NativeAuthManager {
     pub async fn complete_login(&self, code: &str, state: &str) -> anyhow::Result<NativeUser> {
         let code = required_callback_value(code, "authorization code")?;
         let state = required_callback_value(state, "desktop login state")?;
-        let (code_verifier, pending_session_token) = {
+        let (code_verifier, pending_session_token, sign_out_generation) = {
             let mut session = self.session.lock().await;
             purge_expired_logins(&mut session.pending);
             let pending = session
@@ -309,10 +310,17 @@ impl NativeAuthManager {
                 .remove(state)
                 .context("no pending desktop login attempt")?;
             session.pending.by_session.remove(&pending.session_token);
-            (pending.code_verifier, pending.session_token)
+            (
+                pending.code_verifier,
+                pending.session_token,
+                session.sign_out_generation,
+            )
         };
 
         let _credential_operation = self.credential_operation.lock().await;
+        if self.session.lock().await.sign_out_generation != sign_out_generation {
+            anyhow::bail!("desktop login attempt was invalidated by sign-out");
+        }
         let mut params = AuthenticateWithCodeParams::new(code);
         params.code_verifier = Some(code_verifier);
         match self
@@ -417,8 +425,15 @@ impl NativeAuthManager {
 
     pub async fn sign_out(&self) -> anyhow::Result<()> {
         let _credential_operation = self.credential_operation.lock().await;
+        let sign_out_generation = self
+            .session
+            .lock()
+            .await
+            .sign_out_generation
+            .wrapping_add(1);
         let mut session = NativeSession::default();
         session.suppress_persisted_resume = true;
+        session.sign_out_generation = sign_out_generation;
         *self.session.lock().await = session;
         self.clear_refresh_token().await
     }
