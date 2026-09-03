@@ -19,7 +19,7 @@ type UsageEventInsert = {
 	createdAt: number;
 };
 
-export const threadProcessedTokens = new TableAggregate<{
+const threadProcessedTokens = new TableAggregate<{
 	Namespace: Id<'threadRecords'>;
 	Key: string;
 	DataModel: DataModel;
@@ -63,32 +63,36 @@ async function getUsageRow(
 		.unique();
 }
 
-async function aggregatedProcessedTokens(
+async function staleAggregatedProcessedTokens(
 	ctx: QueryCtx | MutationCtx,
 	threadId: Id<'threadRecords'>
 ): Promise<number | null> {
 	try {
-		return await threadProcessedTokens.sum(ctx, { namespace: threadId });
+		return await threadProcessedTokens.sum(ctx, { namespace: threadId, stale: true });
 	} catch {
 		return null;
 	}
 }
 
-/** Current counters for a thread. Reads the Aggregate ledger. */
+/** Live threadUsage counters, or a stale ledger sum if the row is missing. */
 export async function getThreadUsageValues(
 	ctx: QueryCtx | MutationCtx,
 	thread: Doc<'threadRecords'>
 ): Promise<ThreadUsageValues> {
 	const usageRow = await getUsageRow(ctx.db, thread._id);
-	const fieldTotal = usageRow?.totalTokensProcessed ?? 0;
-	const aggregated = await aggregatedProcessedTokens(ctx, thread._id);
+	if (usageRow) {
+		return {
+			contextTokens: usageRow.contextTokens,
+			totalTokensProcessed: usageRow.totalTokensProcessed
+		};
+	}
 	return {
-		contextTokens: usageRow?.contextTokens,
-		totalTokensProcessed: aggregated ?? fieldTotal
+		contextTokens: undefined,
+		totalTokensProcessed: (await staleAggregatedProcessedTokens(ctx, thread._id)) ?? 0
 	};
 }
 
-/** Insert an idempotent usage event and dual-write the additive field. */
+/** Insert an idempotent usage event and update the live threadUsage counters. */
 export async function recordThreadUsageEvent(
 	ctx: MutationCtx,
 	thread: Doc<'threadRecords'>,
@@ -126,7 +130,7 @@ export async function recordThreadUsageEvent(
 	if (!inserted) {
 		throw new Error('Failed to insert usage event.');
 	}
-	await threadProcessedTokens.insertIfDoesNotExist(ctx, inserted);
+	await threadProcessedTokens.insertIfDoesNotExist(ctx, inserted, { async: true });
 
 	const usageRow = await getUsageRow(ctx.db, thread._id);
 	const next: ThreadUsageValues = {
