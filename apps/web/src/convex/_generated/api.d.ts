@@ -28,7 +28,6 @@ import type * as lib_agentQuestions from "../lib/agentQuestions.js";
 import type * as lib_assistantParts from "../lib/assistantParts.js";
 import type * as lib_assistantStreamWrites from "../lib/assistantStreamWrites.js";
 import type * as lib_auth from "../lib/auth.js";
-import type * as lib_commandResults from "../lib/commandResults.js";
 import type * as lib_completionStream from "../lib/completionStream.js";
 import type * as lib_contextCompaction from "../lib/contextCompaction.js";
 import type * as lib_docs from "../lib/docs.js";
@@ -99,7 +98,6 @@ declare const fullApi: ApiFromModules<{
   "lib/assistantParts": typeof lib_assistantParts;
   "lib/assistantStreamWrites": typeof lib_assistantStreamWrites;
   "lib/auth": typeof lib_auth;
-  "lib/commandResults": typeof lib_commandResults;
   "lib/completionStream": typeof lib_completionStream;
   "lib/contextCompaction": typeof lib_contextCompaction;
   "lib/docs": typeof lib_docs;

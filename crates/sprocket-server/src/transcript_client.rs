@@ -23,6 +23,15 @@ impl UserConvexClient {
         Ok(Self { client })
     }
 
+    pub async fn connect_with_fetcher(
+        deployment_url: &str,
+        fetcher: AuthTokenFetcher,
+    ) -> anyhow::Result<Self> {
+        let client = ConvexClient::new(deployment_url).await?;
+        client.set_auth_token_fetcher(fetcher).await;
+        Ok(Self { client })
+    }
+
     pub async fn connect_anonymous(deployment_url: &str) -> anyhow::Result<Self> {
         Ok(Self {
             client: ConvexClient::new(deployment_url).await?,

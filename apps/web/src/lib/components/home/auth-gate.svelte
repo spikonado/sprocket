@@ -17,10 +17,19 @@
 		onSignIn: () => void;
 		onSignOut: () => void;
 		onRetry: () => void;
+		retryLabel?: string;
 		onSignUp: () => void;
 	};
 
-	let { authState, overlayOpen = false, onSignIn, onSignOut, onRetry, onSignUp }: Props = $props();
+	let {
+		authState,
+		overlayOpen = false,
+		onSignIn,
+		onSignOut,
+		onRetry,
+		retryLabel = 'Retry',
+		onSignUp
+	}: Props = $props();
 
 	const showConfirming = $derived(
 		authState.isAuthenticated && (authState.isLoading || !authState.connectionFailed)
@@ -75,7 +84,7 @@
 		{#snippet actions()}
 			{#if authState.isAuthenticated}
 				{#if authState.connectionFailed}
-					<Button onclick={onRetry} disabled={authState.isLoading}>Retry</Button>
+					<Button onclick={onRetry} disabled={authState.isLoading}>{retryLabel}</Button>
 				{/if}
 				<Button variant="outline" onclick={onSignOut}>Sign Out</Button>
 			{:else if authState.isConfigured}

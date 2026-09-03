@@ -14,8 +14,8 @@ use futures::StreamExt;
 use futures::stream::{self, unfold};
 use serde::Deserialize;
 use sprocket_agent::{
-    AuthTokenFetcher, LiveCompletionHub, LiveCompletionWatchEvent, RunAgentRequest,
-    finalize_failed_start, run_agent, start_agent_run,
+    LiveCompletionHub, LiveCompletionWatchEvent, RunAgentRequest, finalize_failed_start, run_agent,
+    start_agent_run,
 };
 use tokio::sync::broadcast;
 use tokio::sync::oneshot;
@@ -33,7 +33,6 @@ const AGENT_START_CLEANUP_TIMEOUT: Duration = Duration::from_secs(12);
 #[serde(rename_all = "camelCase")]
 struct RunAgentApiRequest {
     user_id: String,
-    auth_token: String,
     submission_id: String,
     thread_id: String,
     prompt: String,
@@ -50,18 +49,6 @@ struct RunAgentApiRequest {
 #[serde(rename_all = "camelCase")]
 struct RunAgentStartResponse {
     run_id: String,
-}
-
-fn static_auth_token_fetcher(token: String) -> AuthTokenFetcher {
-    Arc::new(move |_force_refresh| {
-        let token = token.clone();
-        Box::pin(async move {
-            if token.trim().is_empty() {
-                return Err(anyhow!("agent auth token is empty"));
-            }
-            Ok(token)
-        })
-    })
 }
 
 pub fn routes() -> axum::Router<AppState> {
@@ -86,13 +73,12 @@ async fn run_agent_handler(
         .await
         .map_err(ApiError::bad_request)?;
 
-    let auth_token = payload.auth_token;
     state
         .machines
-        .register(&payload.user_id, auth_token.clone())
+        .register(&payload.user_id)
         .await
         .map_err(ApiError::bad_request)?;
-    let auth_token_fetcher = static_auth_token_fetcher(auth_token);
+    let auth_token_fetcher = state.native_auth.auth_token_fetcher();
     let request = RunAgentRequest {
         deployment_url: state.convex_deployment_url.clone(),
         auth_token_fetcher: auth_token_fetcher.clone(),
@@ -302,19 +288,6 @@ mod tests {
         fn drop(&mut self) {
             self.0.store(true, Ordering::SeqCst);
         }
-    }
-
-    #[tokio::test]
-    async fn static_fetcher_returns_the_launch_token_without_waiting() {
-        let fetcher = static_auth_token_fetcher("token-1".to_string());
-        assert_eq!(fetcher(false).await.expect("initial token"), "token-1");
-        assert_eq!(
-            timeout(Duration::from_millis(20), fetcher(true))
-                .await
-                .expect("forced refresh must be noninteractive")
-                .expect("same launch token"),
-            "token-1"
-        );
     }
 
     #[tokio::test]

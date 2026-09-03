@@ -22,13 +22,14 @@ describe('canonicalDevWebUrl', () => {
 
 describe('usesLoopbackBrowserAuth', () => {
 	it('uses the registered server callback for the installed browser app', () => {
-		expect(usesLoopbackBrowserAuth('127.0.0.1', false, false)).toBe(true);
-		expect(usesLoopbackBrowserAuth('localhost', false, false)).toBe(true);
-		expect(usesLoopbackBrowserAuth('[::1]', false, false)).toBe(true);
+		expect(usesLoopbackBrowserAuth('127.0.0.1', false)).toBe(true);
+		expect(usesLoopbackBrowserAuth('localhost', false)).toBe(true);
+		expect(usesLoopbackBrowserAuth('[::1]', false)).toBe(true);
 	});
 
-	it('keeps localhost development on the normal web callback', () => {
-		expect(usesLoopbackBrowserAuth('localhost', false, true)).toBe(false);
-		expect(usesLoopbackBrowserAuth('localhost', true, true)).toBe(true);
+	it('uses native authentication for local web development', () => {
+		expect(usesLoopbackBrowserAuth('localhost', false)).toBe(true);
+		expect(usesLoopbackBrowserAuth('example.com', false)).toBe(false);
+		expect(usesLoopbackBrowserAuth('example.com', true)).toBe(true);
 	});
 });

@@ -141,6 +141,9 @@ Published installers come from GitHub Releases; the `sprocket` CLI is published 
 ## Troubleshooting
 
 - If `17731` is already occupied, set `SPROCKET_PORT` before launching.
+- If installed sign-in cannot save or restore its native session, check that
+  your operating system credential service is available. Linux development
+  environments need a working Secret Service provider.
 - If `sprocket` opens the browser instead of the desktop app, install `sprocket-desktop` from [GitHub Releases](https://github.com/spikonado/sprocket/releases) onto `PATH`, or set `SPROCKET_DESKTOP_EXECUTABLE`.
 - Unsigned macOS and Windows desktop builds may need a Gatekeeper / SmartScreen override the first time you open them.
 - Contact [aarav@spikonado.com](mailto:aarav@spikonado.com) for help.

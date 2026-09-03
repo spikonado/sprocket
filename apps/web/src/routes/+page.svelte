@@ -13,6 +13,7 @@
 		clearDesktopSignInOpenError,
 		convexAuthRetryPending,
 		getAccessToken,
+		reconcileNativeAuthentication,
 		retryConvexAuthentication,
 		signIn,
 		signOut as authSignOut,
@@ -117,10 +118,17 @@
 	const isSignedIn = $derived(Boolean($authState.user));
 	const signedInUserId = $derived($authState.user?.id ?? null);
 	const retryPending = $derived($convexAuthRetryPending);
+	const nativeAuthLoading = $derived($authState.nativeSession === 'loading');
+	const nativeAuthBlocked = $derived(
+		$authState.nativeSession === 'missing' ||
+			$authState.nativeSession === 'mismatch' ||
+			$authState.nativeSession === 'unavailable'
+	);
 	const authReady = $derived(
 		$authState.isReady &&
 			!$authState.isLoading &&
 			isSignedIn &&
+			($authState.nativeSession === 'notRequired' || $authState.nativeSession === 'ready') &&
 			!convexAuth.isLoading &&
 			convexAuth.isAuthenticated
 	);
@@ -132,6 +140,7 @@
 			!convexAuth.isLoading &&
 			!convexAuth.isAuthenticated
 	);
+	const authGateBlocked = $derived(authConnectionFailed || nativeAuthBlocked);
 
 	$effect(() => {
 		const next = advanceConvexAuthRetryPending({
@@ -1030,7 +1039,7 @@
 	$effect(() => {
 		const api = desktopApi;
 		const userId = signedInUserId;
-		if (!api || !userId) {
+		if (!api || !userId || !authReady) {
 			return;
 		}
 		const generation = ++threadCacheGeneration;
@@ -1804,13 +1813,6 @@
 					remoteChangeNotices.set(threadId, REMOTE_CHANGE_NOTICE);
 				}
 			}
-			// Refresh so a detached launch is not left on a token about to expire.
-			// The thread-cache watch keys off user id, so this does not tear it down.
-			const authToken = await getAccessToken({ forceRefreshToken: true });
-			if (!authToken) {
-				recoverSubmission('Your session ended before the agent started. Sign in again.');
-				return;
-			}
 			if (!isSubmissionCurrent()) {
 				return;
 			}
@@ -1862,7 +1864,6 @@
 			}, agentLaunchTimeoutMs);
 			launchAgentRun({
 				userId: submittedUserId,
-				authToken,
 				desktopApi,
 				onError: (error) => {
 					if (!isSubmissionCurrent() || !isSubmittedUserCurrent()) {
@@ -1970,13 +1971,11 @@
 		};
 		pendingAgentLaunches = beginPendingAgentLaunch(pendingAgentLaunches, threadId, launch);
 		try {
-			const authToken = await getAccessToken({ forceRefreshToken: true });
-			if (!authToken || getCurrentUserId() !== userId) {
+			if (getCurrentUserId() !== userId) {
 				throw new Error('User session is not ready.');
 			}
 			launchAgentRun({
 				userId,
-				authToken,
 				desktopApi,
 				onError: (error) => {
 					pendingAgentLaunches = clearPendingAgentLaunch(pendingAgentLaunches, threadId, launchId);
@@ -2300,8 +2299,9 @@
 		}
 
 		void resolveDesktopApi()
-			.then((client) => {
+			.then(async (client) => {
 				desktopApi = client;
+				await reconcileNativeAuthentication();
 				desktopApiResolved = true;
 				void refreshDesktopProjectAttachments().catch((error) => {
 					currentError =
@@ -2344,17 +2344,19 @@
 				isLoading:
 					!$authState.isReady ||
 					$authState.isLoading ||
+					nativeAuthLoading ||
 					retryPending ||
 					(isSignedIn && convexAuth.isLoading),
 				isConfigured: $authState.isConfigured,
 				isAuthenticated: isSignedIn,
-				connectionFailed: authConnectionFailed,
+				connectionFailed: authGateBlocked,
 				error: $authState.error
 			}}
 			overlayOpen={$authState.isWaitingForBrowserSignIn}
 			onSignIn={() => void signIn()}
 			onSignOut={() => void signOut()}
-			onRetry={() => void retryConvexAuthentication()}
+			onRetry={() => void (nativeAuthBlocked ? signIn() : retryConvexAuthentication())}
+			retryLabel={nativeAuthBlocked ? 'Finish sign-in' : 'Retry'}
 			onSignUp={() => void signUp()}
 		/>
 		<BrowserSignInOverlay

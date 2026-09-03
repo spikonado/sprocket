@@ -11,8 +11,10 @@ full process topology.
 ## Responsibilities
 
 - Establish local browser or desktop authorization.
+- Own the installed client's native WorkOS session and refresh its access
+  tokens for machine-side Convex calls.
 - Resolve, attach, and revalidate local workspaces.
-- Start agent runs with a fresh authenticated cloud user token.
+- Start agent runs with the Rust-owned WorkOS token fetcher.
 - Detach accepted launches from browser requests and hand active work a
   run-scoped execution capability.
 - Serve the local API and optional static web build.
@@ -27,17 +29,37 @@ pairing/session data and this machine’s folder list (`workspacePath` plus
 those threads onto local folders whose key matches.
 
 Local authorization and cloud authentication are separate. A local session
-permits access to machine-facing operations; a WorkOS token identifies the user
-to Convex while the run is created. After creation, the agent uses a random
-capability whose hash is bound to that run, so closing the browser does not
-interrupt active work.
+permits access to machine-facing operations. Rust owns a WorkOS session for
+agent runs and machine registration, separate from the renderer's AuthKit
+session. Rust keeps the native access token in memory and stores its refresh
+token in the operating system credential store. It scopes the credential by
+Convex deployment and data directory so development and installed sessions do
+not overwrite each other.
+
+Rust loads the public WorkOS client ID on demand from the unauthenticated Convex
+query `authBootstrap:getClientConfig`. Native auth failures do not block server
+startup. The local loopback flow keeps PKCE, state, code exchange, and refresh
+rotation in Rust; neither the authorization code nor native refresh token is
+returned to the renderer.
+
+Machine registration returns the canonical native user ID. Agent launch checks
+it against the renderer's browser user ID and rejects mismatched accounts.
+After run creation, the agent also uses a random capability whose hash is bound
+to that run, so closing the browser does not interrupt active work.
+
+This migration is partial. Thread cache and transcript-related routes still use
+browser tokens in several local API requests. Do not treat a paired local
+session or caller-supplied user ID as proof of cloud ownership.
 
 The server binds locally by default. Static serving and API-only operation are
 two configurations of the same router rather than separate applications.
 
 ## Main areas
 
-- `auth.rs`: local sessions, pairing, and desktop browser sign-in.
+- `auth.rs`: local pairing and HTTP-only browser sessions.
+- `native_auth.rs`: native WorkOS login, credential persistence, and token
+  refresh.
+- `routes/auth.rs`: local session endpoints and the native loopback callback.
 - `project_attachments.rs`: local folder list (`workspacePath` + `repositoryKey`).
 - `routes/`: HTTP boundaries for configuration, workspaces, auth, and agents.
 - `static_dir.rs` and `static_files.rs`: web-build discovery and serving.

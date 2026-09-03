@@ -31,7 +31,7 @@ repos:
     rev: v2.4.3
     hooks:
       - id: codespell
-        exclude: (^bun\.lock$|/_generated/)
+        exclude: (^(bun\.lock|Cargo\.lock)$|/_generated/)
         exclude_types: [svg]
 
   - repo: https://github.com/python-jsonschema/check-jsonschema

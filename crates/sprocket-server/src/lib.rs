@@ -2,6 +2,7 @@ mod auth;
 mod config;
 mod machine_identity;
 mod machines;
+mod native_auth;
 mod project_attachments;
 pub mod repo_env;
 mod routes;
@@ -82,7 +83,7 @@ impl StartupInfo {
 #[derive(Clone)]
 pub struct AppState {
     pub auth: Arc<auth::AuthState>,
-    pub desktop_login: Arc<auth::DesktopLoginStore>,
+    pub(crate) native_auth: Arc<native_auth::NativeAuthManager>,
     pub project_attachments: Arc<project_attachments::ProjectAttachmentStore>,
     pub transcript: Arc<TranscriptStore>,
     pub transcript_watchers: Arc<TranscriptWatchers>,
@@ -119,10 +120,18 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
 pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()> {
     let convex_deployment_url = config.resolve_convex_deployment_url()?;
     let data_dir = config.resolve_data_dir();
+    let native_auth = native_auth::NativeAuthManager::new(
+        convex_deployment_url.clone(),
+        auth::desktop_login_callback_url(config.port),
+        &data_dir,
+    );
     let auth = auth::AuthState::load(&data_dir)?;
     let machine_identity = Arc::new(machine_identity::MachineIdentity::load(&data_dir)?);
-    let machines =
-        machines::MachineManager::new(convex_deployment_url.clone(), Arc::clone(&machine_identity));
+    let machines = machines::MachineManager::new(
+        convex_deployment_url.clone(),
+        native_auth.auth_token_fetcher(),
+        Arc::clone(&machine_identity),
+    );
     let pairing_credential = auth.pairing_credential().to_string();
     let project_attachments = project_attachments::ProjectAttachmentStore::new(data_dir.clone());
     let transcript = TranscriptStore::new(data_dir.join("transcripts"));
@@ -147,7 +156,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
 
     let state = AppState {
         auth,
-        desktop_login: auth::DesktopLoginStore::new(),
+        native_auth,
         project_attachments,
         transcript,
         transcript_watchers,
