@@ -99,8 +99,7 @@ const localTranscriptPageSchema = z.object({
 	historyFromNumber: z.int(),
 	stale: z.boolean(),
 	parts: z.array(localTranscriptPartSchema),
-	nextBefore: z.int().optional(),
-	contextSummary: z.string().optional()
+	nextBefore: z.int().optional()
 });
 const transcriptWatchEventSchema = z.object({
 	eventType: z.string(),
@@ -168,7 +167,6 @@ function parseLocalTranscriptPage(
 		historyFromNumber: page.historyFromNumber,
 		stale: page.stale,
 		nextBefore: page.nextBefore,
-		contextSummary: page.contextSummary,
 		parts: page.parts.map(parseLocalTranscriptPart)
 	};
 }

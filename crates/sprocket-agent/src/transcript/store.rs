@@ -219,7 +219,6 @@ impl TranscriptStore {
                 stale: state.stale,
                 parts: Vec::new(),
                 next_before: None,
-                context_summary: state.context_summary.clone(),
             });
         }
         let start = end_exclusive.saturating_sub(limit).max(history_from);
@@ -236,7 +235,6 @@ impl TranscriptStore {
             } else {
                 None
             },
-            context_summary: state.context_summary.clone(),
         })
     }
 

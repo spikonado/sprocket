@@ -46,7 +46,6 @@
 		onDismissRemoteChangeNotice?: () => void;
 		emptyStateMessage?: string;
 		stale?: boolean;
-		contextSummary?: string | null;
 		loadingOlder?: boolean;
 		hasOlder?: boolean;
 		onLoadOlder?: () => void;
@@ -66,7 +65,6 @@
 			? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
 			: 'Add a project to begin.',
 		stale = false,
-		contextSummary = null,
 		loadingOlder = false,
 		hasOlder = false,
 		onLoadOlder,
@@ -228,15 +226,6 @@
 				>
 					Showing a local copy while Sprocket reconnects to history.
 				</div>
-			{/if}
-
-			{#if contextSummary}
-				<details class="text-muted-foreground mb-6 rounded-2xl border px-4 py-3 text-sm">
-					<summary class="text-foreground cursor-pointer"
-						>Earlier conversation was summarized</summary
-					>
-					<p class="mt-2 whitespace-pre-wrap">{contextSummary}</p>
-				</details>
 			{/if}
 
 			{#if loadingOlder}
