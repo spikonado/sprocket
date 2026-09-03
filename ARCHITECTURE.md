@@ -38,7 +38,8 @@ flowchart LR
     Local -->|"POST /api/v1/responses"| Gateway
     Gateway --> Providers[Model providers]
     Gateway -->|"quota check, consume units"| Convex
-    Web <--> Auth[WorkOS]
+    Web <--> Auth[WorkOS AuthKit]
+    Local <--> Auth
     Local --> Workspace[Local workspace and processes]
 ```
 
@@ -51,8 +52,11 @@ The system has three main planes:
 3. **Cloud coordination plane:** Convex stores durable application state and
    coordinates run ownership. Completions go through the AI gateway.
 
-WorkOS establishes cloud user identity. A separate local pairing mechanism
-authorizes the browser or Electron renderer to access the machine-facing API.
+WorkOS establishes cloud user identity. Installed clients hold two independent
+WorkOS sessions: AuthKit JS owns the renderer session, while Rust owns the
+native session used by agent runs and machine registration. A separate local
+pairing mechanism authorizes the browser or Electron renderer to access the
+machine-facing API.
 
 ## Component boundaries
 
@@ -113,6 +117,8 @@ Sprocket deliberately separates cloud and machine-local state.
 | Installation identity and this process’s machine credential                  | Local server         |
 | Machine presence                                                             | Convex               |
 | Pairing credential and local browser sessions                                | Local server         |
+| Native WorkOS access token and user                                          | Local process memory |
+| Native WorkOS refresh token                                                  | OS credential store  |
 | Active commands, cancellation tokens, and run execution capabilities         | Local process memory |
 | Source files and build artifacts                                             | User workspace       |
 | Model and authentication provider secrets                                    | Cloud deployment     |
@@ -142,8 +148,10 @@ sequenceDiagram
 
     UI->>G: GET /api/v1/models
     UI->>C: Create thread
-    UI->>S: Start run with user token and workspace identity
-    S->>C: Register machine presence
+    UI->>S: Start run with browser user ID and workspace identity
+    S->>C: Register machine with the native WorkOS session
+    C-->>S: Return canonical native user ID
+    S->>S: Require browser and native user IDs to match
     S->>A: Prepare local run
     A->>C: Create gateway run, bind execution capability and machine
     C-->>A: Return authoritative numbered prompt part
@@ -195,10 +203,17 @@ that order and keeps no cross-thread transcript cache.
 
 Cloud and local authorization solve different problems:
 
-- **Cloud identity:** WorkOS access tokens authenticate the user to Convex.
-  Convex validates them as JWTs (`apps/web/src/convex/auth.config.ts`) and
-  checks ownership before reading or changing user records. The browser and
-  every Rust Convex client that acts as the user present this token.
+- **Browser cloud identity:** AuthKit JS owns a browser session and supplies
+  access tokens to the renderer's direct Convex client. Convex validates them
+  as JWTs (`apps/web/src/convex/auth.config.ts`) and checks ownership before
+  reading or changing user records.
+- **Native cloud identity:** Rust owns a separate WorkOS authorization-code
+  session for machine-side work. It generates PKCE and state, exchanges the
+  code on the loopback callback, keeps the access token in memory, and stores
+  the refresh token in the operating system credential store. Rust fetches the
+  public WorkOS client ID from the unauthenticated Convex query
+  `authBootstrap:getClientConfig` when it first needs WorkOS. Convex being
+  unavailable therefore does not prevent the local server from starting.
 - **Local authorization:** a machine-local pairing credential bootstraps a
   local session used for filesystem, cache, and agent endpoints.
 - **Agent delegation:** the local server mints a random run-scoped execution
@@ -207,16 +222,30 @@ Cloud and local authorization solve different problems:
   `getUserId`. Creating the run still requires the user JWT, and the Rust
   Convex client still attaches that JWT on the connection.
 - **Machine presence:** each local process holds a per-launch credential.
-  Registration is a user-JWT mutation that upserts a `machines` row. Heartbeat
-  and end are unauthenticated: they take the owner `userId` plus that
-  credential, and require current `lastSeenAt` presence. A live machine
-  rejects a different process until it goes stale.
+  Registration uses the native WorkOS session and returns the canonical user
+  ID. Agent launch compares that ID with the renderer's browser user ID and
+  rejects mismatched accounts. Heartbeat and end are unauthenticated: they take
+  the owner `userId` plus the machine credential, and require current
+  `lastSeenAt` presence. A live machine rejects a different process until it
+  goes stale.
 - **Desktop trust:** Electron isolates the renderer, validates its origin, and
   exposes only a small set of IPC calls to the renderer.
 
 The local server binds to loopback by default. Exposing it on another interface
 changes the trust model and should be treated as a security-sensitive
 deployment choice.
+
+The native authorization callback accepts only a loopback socket peer. Its
+pending state and PKCE verifier never enter the renderer, and the callback does
+not return the authorization code to JavaScript. The installed renderer then
+starts a separate AuthKit browser login. Installed sign-out clears the native
+credential before signing out the browser session.
+
+The native migration is not complete. Thread-cache registration, thread
+commands, cancellation, lifecycle, transcript synchronization, and attachments
+still pass browser access tokens or browser user IDs to Rust. These paths must
+continue to validate Convex ownership until they move to the native token
+fetcher. The `/agent/run` request no longer contains a WorkOS token.
 
 Workspace patches and shell commands are not sandboxed: both run with the
 permissions of the local Sprocket process, confined only by the OS user.
@@ -263,6 +292,7 @@ routes under `/api/`.
 - **`sprocket-desktop`** (GitHub Releases): Electron app that embeds the static web UI and a native `sprocket` server binary. Users get `.AppImage`/`.dmg`/`.exe` installers.
 - **`sprocket` CLI** (npm `@spikonado/sprocket`): the same native binary plus the static web UI for `sprocket --web`. No Electron.
 
-The local executable receives only public runtime configuration. WorkOS secrets
-remain in the Convex deployment. Model-provider secrets live in the gateway
-deployment; Convex still keeps `OPENAI_API_KEY` for browser automation.
+The local executable receives only public runtime configuration. It obtains the
+public WorkOS client ID from Convex and never receives a WorkOS client secret.
+Model-provider secrets live in the gateway deployment; Convex still keeps
+`OPENAI_API_KEY` for browser automation.

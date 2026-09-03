@@ -59,6 +59,11 @@ Sprocket remembers attached workspaces and local server sessions between launche
 Local state lives in `$HOME/.sprocket` (or `%USERPROFILE%\.sprocket` on Windows when `HOME` is unset).
 Override with `SPROCKET_DATA_DIR`.
 
+Installed Sprocket keeps its machine-side WorkOS refresh token in your operating
+system credential store, not in the data directory. The renderer has a separate
+browser session. Signing in may therefore open two AuthKit flows, and both must
+use the same account.
+
 ## Additional CLI reference
 
 | Command                     | Behavior                                                                       |
@@ -141,6 +146,9 @@ Published installers come from GitHub Releases; the `sprocket` CLI is published 
 ## Troubleshooting
 
 - If `17731` is already occupied, set `SPROCKET_PORT` before launching.
+- If installed sign-in cannot save or restore its native session, check that
+  your operating system credential service is available. Linux development
+  environments need a working Secret Service provider.
 - If `sprocket` opens the browser instead of the desktop app, install `sprocket-desktop` from [GitHub Releases](https://github.com/spikonado/sprocket/releases) onto `PATH`, or set `SPROCKET_DESKTOP_EXECUTABLE`.
 - Unsigned macOS and Windows desktop builds may need a Gatekeeper / SmartScreen override the first time you open them.
 - Contact [aarav@spikonado.com](mailto:aarav@spikonado.com) for help.
