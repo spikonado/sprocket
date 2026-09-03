@@ -119,14 +119,12 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
 
 pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()> {
     let convex_deployment_url = config.resolve_convex_deployment_url()?;
-    let native_auth_config = native_auth::NativeAuthConfig::load(&convex_deployment_url)
-        .await
-        .context("failed to configure native authentication")?;
-    let native_auth = native_auth::NativeAuthManager::new(
-        native_auth_config,
-        auth::desktop_login_callback_url(config.port),
-    );
     let data_dir = config.resolve_data_dir();
+    let native_auth = native_auth::NativeAuthManager::new(
+        convex_deployment_url.clone(),
+        auth::desktop_login_callback_url(config.port),
+        &data_dir,
+    );
     let auth = auth::AuthState::load(&data_dir)?;
     let machine_identity = Arc::new(machine_identity::MachineIdentity::load(&data_dir)?);
     let machines = machines::MachineManager::new(

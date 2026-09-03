@@ -390,7 +390,7 @@ mod tests {
         let machine_identity = Arc::new(
             crate::machine_identity::MachineIdentity::load(&temp_dir).expect("machine identity"),
         );
-        let native_auth = crate::native_auth::NativeAuthManager::new(
+        let native_auth = crate::native_auth::NativeAuthManager::configured_for_test(
             crate::native_auth::NativeAuthConfig {
                 workos_client_id: "client_test".to_string(),
             },

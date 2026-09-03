@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -8,8 +9,9 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use convex::{FunctionResult, Value};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sprocket_convex::{AuthTokenFetcher, Client as ConvexClient};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, OnceCell};
 use tokio::time::timeout;
 use workos::helpers::AuthKitAuthorizationUrlParams;
 use workos::resources::user_management::{
@@ -22,7 +24,7 @@ const CLIENT_CONFIG_TIMEOUT: Duration = Duration::from_secs(15);
 const LOGIN_ATTEMPT_TTL: Duration = Duration::from_secs(5 * 60);
 const ACCESS_TOKEN_REFRESH_MARGIN_SECS: u64 = 60;
 const KEYRING_SERVICE: &str = "dev.sprocket.native-auth";
-const KEYRING_ACCOUNT: &str = "workos-refresh-token";
+const KEYRING_ACCOUNT_PREFIX: &str = "workos-refresh-token";
 
 #[derive(Clone, Debug)]
 pub(crate) struct NativeAuthConfig {
@@ -68,18 +70,35 @@ trait RefreshTokenStore: Send + Sync {
     fn clear(&self) -> anyhow::Result<()>;
 }
 
-struct KeyringRefreshTokenStore;
+struct KeyringRefreshTokenStore {
+    account: String,
+}
 
 impl KeyringRefreshTokenStore {
-    fn entry() -> anyhow::Result<keyring::Entry> {
-        keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT)
+    fn new(deployment_url: &str, data_dir: &Path) -> Self {
+        let mut hasher = Sha256::new();
+        hasher.update(deployment_url.as_bytes());
+        hasher.update([0]);
+        hasher.update(data_dir.as_os_str().as_encoded_bytes());
+        let digest = hasher.finalize();
+        let suffix = digest[..16]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        Self {
+            account: format!("{KEYRING_ACCOUNT_PREFIX}-{suffix}"),
+        }
+    }
+
+    fn entry(&self) -> anyhow::Result<keyring::Entry> {
+        keyring::Entry::new(KEYRING_SERVICE, &self.account)
             .context("failed to access the operating system credential store")
     }
 }
 
 impl RefreshTokenStore for KeyringRefreshTokenStore {
     fn load(&self) -> anyhow::Result<Option<String>> {
-        match Self::entry()?.get_password() {
+        match self.entry()?.get_password() {
             Ok(token) if token.trim().is_empty() => {
                 anyhow::bail!("stored WorkOS refresh token is empty")
             }
@@ -93,13 +112,13 @@ impl RefreshTokenStore for KeyringRefreshTokenStore {
         if refresh_token.trim().is_empty() {
             anyhow::bail!("refusing to persist an empty WorkOS refresh token");
         }
-        Self::entry()?
+        self.entry()?
             .set_password(refresh_token)
             .context("failed to persist WorkOS refresh token")
     }
 
     fn clear(&self) -> anyhow::Result<()> {
-        match Self::entry()?.delete_credential() {
+        match self.entry()?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(error) => Err(error).context("failed to delete WorkOS refresh token"),
         }
@@ -133,7 +152,8 @@ struct NativeSession {
 }
 
 pub(crate) struct NativeAuthManager {
-    client: WorkOsClient,
+    deployment_url: Option<String>,
+    client: OnceCell<WorkOsClient>,
     callback_url: String,
     refresh_tokens: Arc<dyn RefreshTokenStore>,
     credential_operation: Mutex<()>,
@@ -141,14 +161,37 @@ pub(crate) struct NativeAuthManager {
 }
 
 impl NativeAuthManager {
-    pub fn new(config: NativeAuthConfig, callback_url: String) -> Arc<Self> {
-        Arc::new(Self::with_store(
-            config,
+    pub fn new(deployment_url: String, callback_url: String, data_dir: &Path) -> Arc<Self> {
+        let refresh_tokens = Arc::new(KeyringRefreshTokenStore::new(&deployment_url, data_dir));
+        Arc::new(Self {
+            deployment_url: Some(deployment_url),
+            client: OnceCell::new(),
             callback_url,
-            Arc::new(KeyringRefreshTokenStore),
-        ))
+            refresh_tokens,
+            credential_operation: Mutex::new(()),
+            session: Mutex::new(NativeSession::default()),
+        })
     }
 
+    #[cfg(test)]
+    fn with_client(
+        client: WorkOsClient,
+        callback_url: String,
+        refresh_tokens: Arc<dyn RefreshTokenStore>,
+    ) -> Self {
+        let client_cell = OnceCell::new();
+        assert!(client_cell.set(client).is_ok());
+        Self {
+            deployment_url: None,
+            client: client_cell,
+            callback_url,
+            refresh_tokens,
+            credential_operation: Mutex::new(()),
+            session: Mutex::new(NativeSession::default()),
+        }
+    }
+
+    #[cfg(test)]
     fn with_store(
         config: NativeAuthConfig,
         callback_url: String,
@@ -160,18 +203,32 @@ impl NativeAuthManager {
         Self::with_client(client, callback_url, refresh_tokens)
     }
 
-    fn with_client(
-        client: WorkOsClient,
-        callback_url: String,
-        refresh_tokens: Arc<dyn RefreshTokenStore>,
-    ) -> Self {
-        Self {
-            client,
+    #[cfg(test)]
+    pub(crate) fn configured_for_test(config: NativeAuthConfig, callback_url: String) -> Arc<Self> {
+        Arc::new(Self::with_store(
+            config,
             callback_url,
-            refresh_tokens,
-            credential_operation: Mutex::new(()),
-            session: Mutex::new(NativeSession::default()),
-        }
+            Arc::new(KeyringRefreshTokenStore {
+                account: format!("test-{}", uuid::Uuid::new_v4()),
+            }),
+        ))
+    }
+
+    async fn client(&self) -> anyhow::Result<&WorkOsClient> {
+        self.client
+            .get_or_try_init(|| async {
+                let deployment_url = self
+                    .deployment_url
+                    .as_deref()
+                    .context("native authentication deployment URL is missing")?;
+                let config = NativeAuthConfig::load(deployment_url)
+                    .await
+                    .context("failed to configure native authentication")?;
+                Ok(WorkOsClient::builder()
+                    .client_id(config.workos_client_id)
+                    .build())
+            })
+            .await
     }
 
     pub async fn start_login(
@@ -185,7 +242,8 @@ impl NativeAuthManager {
         }
 
         let authorization = self
-            .client
+            .client()
+            .await?
             .authkit()
             .pkce_authorization_url(AuthKitAuthorizationUrlParams {
                 redirect_uri: self.callback_url.clone(),
@@ -241,7 +299,8 @@ impl NativeAuthManager {
         let mut params = AuthenticateWithCodeParams::new(code);
         params.code_verifier = Some(code_verifier);
         match self
-            .client
+            .client()
+            .await?
             .user_management()
             .authenticate_with_code(params)
             .await
@@ -366,7 +425,8 @@ impl NativeAuthManager {
             .await?
             .context("native WorkOS session is signed out")?;
         let response = self
-            .client
+            .client()
+            .await?
             .user_management()
             .authenticate_with_refresh_token(AuthenticateWithRefreshTokenParams::new(refresh_token))
             .await;
@@ -739,6 +799,20 @@ mod tests {
         .expect("valid configuration");
 
         assert_eq!(config.workos_client_id, "client_123");
+    }
+
+    #[test]
+    fn keyring_credentials_are_scoped_to_deployment_and_data_directory() {
+        let first = KeyringRefreshTokenStore::new("https://first.convex.cloud", Path::new("/one"));
+        let same = KeyringRefreshTokenStore::new("https://first.convex.cloud", Path::new("/one"));
+        let other_deployment =
+            KeyringRefreshTokenStore::new("https://second.convex.cloud", Path::new("/one"));
+        let other_data_dir =
+            KeyringRefreshTokenStore::new("https://first.convex.cloud", Path::new("/two"));
+
+        assert_eq!(first.account, same.account);
+        assert_ne!(first.account, other_deployment.account);
+        assert_ne!(first.account, other_data_dir.account);
     }
 
     #[tokio::test]
