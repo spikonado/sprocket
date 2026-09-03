@@ -428,6 +428,7 @@
 
 	function handleModelChange(modelId: CatalogModelId) {
 		if (!modelCatalog) return;
+		selectedModel = modelId;
 		const model = getCatalogModel(modelCatalog, modelId);
 		if (model) selectedReasoningEffort = model.defaultReasoningEffort;
 		onModelChange?.(modelId);
@@ -775,7 +776,7 @@
 							<div class="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
 
 							<OptionSelector
-								bind:value={selectedModel}
+								value={selectedModel}
 								options={tierModelOptions}
 								ariaLabel="Select model"
 								menuTitle="Model"
