@@ -2,6 +2,7 @@ mod agents;
 mod apply_patch_format;
 mod browse;
 mod builtin_skills;
+mod commands;
 mod git_repository;
 mod patch;
 mod paths;
@@ -11,7 +12,7 @@ mod skills;
 #[cfg(test)]
 mod test_support;
 mod text;
-mod tools;
+mod unified_diff;
 mod workspace;
 
 pub use agents::{WorkspaceInstruction, load_workspace_instructions};
@@ -27,7 +28,7 @@ pub use skills::{
     SkillSource, WorkspaceSkill, WorkspaceSkills, default_user_skills_dirs, load_workspace_skills,
     read_skill_content,
 };
-pub use tools::{
+pub use commands::{
     CommandExecOutput, CommandSessionManager, WorkspaceCancellation, WorkspaceOperationCancelled,
     default_command_shell,
 };
