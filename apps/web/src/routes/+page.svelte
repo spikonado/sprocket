@@ -52,7 +52,7 @@
 	import { validateImageAttachmentAddition, type ComposerAttachment } from '$lib/chat/attachments';
 	import {
 		coercePersistedReasoningEffort,
-		coercePersistedSelection,
+		coercePersistedServiceTier,
 		defaultModelId,
 		defaultReasoningEffort,
 		defaultServiceTier,
@@ -2074,13 +2074,9 @@
 		if (threadId === lastSyncedComposerThreadId) return;
 		lastSyncedComposerThreadId = threadId;
 		if (!thread) return;
-		const selection = coercePersistedSelection(thread.selectedModel, thread.serviceTier);
-		selectedModel = selection.modelId;
-		selectedReasoningEffort = coercePersistedReasoningEffort(
-			selection.modelId,
-			thread.reasoningEffort
-		);
-		selectedServiceTier = selection.serviceTier;
+		selectedModel = thread.selectedModel;
+		selectedReasoningEffort = coercePersistedReasoningEffort(thread.reasoningEffort);
+		selectedServiceTier = coercePersistedServiceTier(thread.serviceTier);
 	});
 
 	$effect(() => {

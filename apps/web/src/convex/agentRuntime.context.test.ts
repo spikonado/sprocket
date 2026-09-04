@@ -283,31 +283,34 @@ describe('agentRuntime context accounting', () => {
 		});
 	});
 
-	it('coerces retired run models before the worker sees them', async () => {
+	it('preserves opaque run model ids for the worker', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		const executionSecret = 'context-retired-secret';
+		const executionSecret = 'context-opaque-model-secret';
 		const { runId } = await createQueuedRun(
 			t,
 			asUser,
 			threadId,
-			'context-retired',
+			'context-opaque-model',
 			executionSecret,
 			'Continue'
 		);
 		await asUser.mutation(api.agentRuntime.start, {
 			runId,
-			claimId: 'claim-retired',
+			claimId: 'claim-opaque-model',
 			executionSecret
 		});
 		await t.run(async (ctx) => {
-			await ctx.db.patch('runs', runId, { selectedModel: 'grok-4.5', serviceTier: 'fast' });
+			await ctx.db.patch('runs', runId, {
+				selectedModel: 'gateway-only-model',
+				serviceTier: 'fast'
+			});
 		});
 		const context = await asUser.query(api.agentRuntime.getContext, {
 			runId,
 			executionSecret
 		});
-		expect(context.run.selectedModel).toBe('gpt-5.6-sol');
+		expect(context.run.selectedModel).toBe('gateway-only-model');
 		expect(context.run.serviceTier).toBe('fast');
 	});
 });

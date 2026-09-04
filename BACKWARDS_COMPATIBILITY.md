@@ -43,23 +43,7 @@ backfill, then dropping them from `convex/schema.ts`.
 
 Safe when a prod check shows zero rows carrying the field.
 
-### 2. Retired model IDs on stored selections
-
-Sources: #191, #192, and later catalog drops. Retired ids:
-`gpt-5.6-terra`, `grok-4.5`, `stealth/ox-alpha`,
-`deepseek-v4-pro`, `deepseek-v4-flash`. They survive on
-`threadRecords.selectedModel` and `runs.selectedModel`.
-
-`coercePersistedModelId` / `coercePersistedSelection` map known ids at read
-time (`agentRuntime.getContext`, stale-run recovery, thread open). The
-rewrite passes that copied those replacements onto stored rows are done.
-
-Remove the coerce helpers, `retiredModelIds`, and `retiredModelReplacements`
-once we drop this known-id map. Keep `selectedModel` as `v.string()`.
-
-Every later catalog drop should ship its own rewrite in the same PR.
-
-### 3. Mandate job payloads still accept `userEmail`
+### 2. Mandate job payloads still accept `userEmail`
 
 Up to v0.3.2, mandate setup stored the caller email on
 `executorJobs.payload`. `vMandateSetupPayload.userEmail` stays optional so
@@ -69,7 +53,7 @@ an unsupported client (see below).
 Remove by dropping the field after a prod sweep shows no stored mandate-setup
 jobs carrying it.
 
-### 4. Aggregate usage ledger leftovers
+### 3. Aggregate usage ledger leftovers
 
 Processed-token totals live in `threadUsageEvents` plus a namespaced
 Aggregate. `getThreadUsageValues` reads that sum. `recordThreadUsageEvent`
@@ -81,7 +65,7 @@ read gate.
 Remove the dual-write (and then the required field) after an unset rewrite.
 Drop `usageLedgerMigratedAt` after a separate unset, or in the same rewrite.
 
-### 5. Historical `runs.completionTransport`
+### 4. Historical `runs.completionTransport`
 
 Stored runs may still say `convex-action`. New inserts are `gateway`. The
 field stays optional so those rows validate.
@@ -89,7 +73,7 @@ field stays optional so those rows validate.
 Remove the `convex-action` union member after a rewrite or a prod check shows
 none remain.
 
-### 6. Catalog snapshot fields on `runs`
+### 5. Catalog snapshot fields on `runs`
 
 Earlier gateway work stored `catalogVersion`, `contextWindowTokens`, and
 `autoCompactTokenLimit` on new runs. Current inserts leave those unset. The
@@ -99,14 +83,14 @@ agent reads context budget from `GET /api/v1/models`; `getContext` returns
 Keep the optional fields so rows that still have them validate. Unset them in
 a later rewrite, then drop them from the schema.
 
-### 7. Numbered transcript `migratedAt`
+### 6. Numbered transcript `migratedAt`
 
 `threadTranscriptStates.migratedAt` is leftover after the numbered-transcript
 backfill. Current writes do not set it.
 
 Remove after an unset rewrite, then drop it from the schema.
 
-### 8. Transcript tool `jobId`
+### 7. Transcript tool `jobId`
 
 Sources: append-only tool progress events.
 
@@ -126,7 +110,7 @@ optionality after a production scan finds no jobs without `toolInvocationId`.
 
 Safe when a prod check shows zero transcript tool parts carrying `jobId`.
 
-### 9. Legacy installation identity and machine metadata
+### 8. Legacy installation identity and machine metadata
 
 Local servers now persist a versioned `installation.json`. On first launch
 after upgrade they preserve the UUID from the legacy plain-text
