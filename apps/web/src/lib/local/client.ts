@@ -26,8 +26,8 @@ export type LocalBootstrap = {
 const errorPayloadSchema = z.object({ error: z.string().optional() });
 const sessionSchema = z.object({ authenticated: z.boolean().optional() });
 const localBootstrapSchema = z.object({
-	httpBaseUrl: z.string(),
-	desktopLoginCallbackUrl: z.string().optional(),
+	httpBaseUrl: z.url(),
+	desktopLoginCallbackUrl: z.url().optional(),
 	pairingCredential: z.string()
 });
 const filesystemBrowseResultSchema = z.object({
@@ -63,7 +63,7 @@ const localTranscriptAttachmentSchema = z.object({
 	mediaType: z.string(),
 	size: z.int(),
 	storageId: z.string(),
-	url: z.string().optional()
+	url: z.url().optional()
 });
 const localTranscriptPartSchema = z.object({
 	number: z.int(),
