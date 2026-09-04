@@ -11,6 +11,7 @@ import workpoolTest from '@convex-dev/workpool/test';
 import { convexTest, type TestConvex } from 'convex-test';
 import { api, internal } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
+import type { FunctionArgs } from 'convex/server';
 import schema from './schema';
 
 /**
@@ -29,21 +30,6 @@ export const modules = import.meta.glob([
 export type ConvexTestInstance = TestConvex<typeof schema>;
 
 type AuthenticatedTest = ReturnType<ConvexTestInstance['withIdentity']>;
-
-type GatewayRunTestRequest = {
-	userId: string;
-	submissionId: string;
-	threadId: Id<'threadRecords'>;
-	prompt: string;
-	imageUploadIds: Id<'imageUploads'>[];
-	selectedModel: string;
-	reasoningEffort: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
-	serviceTier: 'standard' | 'fast';
-	executionSecret: string;
-	protocolVersion: number;
-	machineId?: string;
-	continuationOfRunId?: Id<'runs'>;
-};
 
 /** Fresh mock backend with our schema, functions, and registered components. */
 export function initConvexTest(): ConvexTestInstance {
@@ -150,7 +136,7 @@ export async function insertQueuedRun(
 	}
 ) {
 	const thread = await asUser.query(api.threads.getByThreadId, { threadId: args.threadId });
-	const request: GatewayRunTestRequest = {
+	const request: FunctionArgs<typeof internal.agentRuntime.insertGatewayRun> = {
 		userId: thread.userId,
 		submissionId: args.submissionId,
 		threadId: args.threadId,

@@ -12,6 +12,20 @@ export function promptSourceKey(runId: Id<'runs'>): string {
 	return `prompt:${runId}`;
 }
 
+export async function getPromptPart(
+	ctx: MutationCtx | QueryCtx,
+	threadId: Id<'threadRecords'>,
+	runId: Id<'runs'>
+): Promise<Doc<'threadTranscriptParts'> | null> {
+	const part = await ctx.db
+		.query('threadTranscriptParts')
+		.withIndex('by_threadId_and_sourceKey', (query) =>
+			query.eq('threadId', threadId).eq('sourceKey', promptSourceKey(runId))
+		)
+		.unique();
+	return part?.kind === 'prompt' && part.runId === runId && part.prompt ? part : null;
+}
+
 export function completionSourceKey(runId: Id<'runs'>, streamId: string): string {
 	return `completion:${runId}:${streamId}`;
 }
