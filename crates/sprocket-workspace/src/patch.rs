@@ -911,7 +911,9 @@ async fn stage_unique_sibling(
                 let already_exists = error.chain().any(|cause| {
                     cause
                         .downcast_ref::<std::io::Error>()
-                        .is_some_and(|io_error| io_error.kind() == std::io::ErrorKind::AlreadyExists)
+                        .is_some_and(|io_error| {
+                            io_error.kind() == std::io::ErrorKind::AlreadyExists
+                        })
                 });
                 if already_exists {
                     last_error = Some(error);
