@@ -456,7 +456,10 @@
 			? { threadId: currentThreadId, now: tickingNow() }
 			: 'skip';
 	const activeThreadQuery = useQuery(api.threads.getByThreadId, authenticatedThreadQueryArgs);
-	const lifecycleQuery = useQuery(api.chat.selectedThreadLifecycle, authenticatedLifecycleQueryArgs);
+	const lifecycleQuery = useQuery(
+		api.chat.selectedThreadLifecycle,
+		authenticatedLifecycleQueryArgs
+	);
 	const artifactsQuery = useQuery(
 		api.artifacts.listArtifactsForThread,
 		authenticatedThreadQueryArgs
