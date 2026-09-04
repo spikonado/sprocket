@@ -10,17 +10,53 @@ export function isMachineActive(machine: Doc<'machines'>, now = Date.now()): boo
 	);
 }
 
+/** Earliest row wins so concurrent register duplicates converge. */
+export function pickPrimaryMachine(rows: Array<Doc<'machines'>>): Doc<'machines'> | null {
+	if (rows.length === 0) return null;
+	return [...rows].sort((a, b) => a.createdAt - b.createdAt || a._id.localeCompare(b._id))[0];
+}
+
 export async function getOwnedMachine(
 	ctx: QueryCtx | MutationCtx,
 	userId: string,
 	machineId: string
 ): Promise<Doc<'machines'> | null> {
-	return await ctx.db
+	const rows = await ctx.db
 		.query('machines')
 		.withIndex('by_userId_and_machineId', (query) =>
 			query.eq('userId', userId).eq('machineId', machineId)
 		)
-		.unique();
+		.collect();
+	return pickPrimaryMachine(rows);
+}
+
+/** Mutation-only: collapse concurrent register races onto one row. */
+export async function getOwnedMachineExclusive(
+	ctx: MutationCtx,
+	userId: string,
+	machineId: string
+): Promise<Doc<'machines'> | null> {
+	const rows = await ctx.db
+		.query('machines')
+		.withIndex('by_userId_and_machineId', (query) =>
+			query.eq('userId', userId).eq('machineId', machineId)
+		)
+		.collect();
+	const keep = pickPrimaryMachine(rows);
+	if (!keep) return null;
+	const mergedRunIds = [...new Set(rows.flatMap((row) => row.runIds))];
+	const keepSet = new Set(keep.runIds);
+	const needsMerge =
+		mergedRunIds.length !== keep.runIds.length || mergedRunIds.some((runId) => !keepSet.has(runId));
+	if (needsMerge) {
+		await ctx.db.patch('machines', keep._id, { runIds: mergedRunIds });
+	}
+	for (const row of rows) {
+		if (row._id !== keep._id) {
+			await ctx.db.delete('machines', row._id);
+		}
+	}
+	return (await ctx.db.get('machines', keep._id)) ?? keep;
 }
 
 export function runMachineId(run: Doc<'runs'>): string | undefined {
