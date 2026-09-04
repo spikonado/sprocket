@@ -115,9 +115,27 @@ async fn recover_stranded_json_bak(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn resolve_atomic_write_path(path: &Path) -> anyhow::Result<PathBuf> {
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("failed to create parent directory {}", parent.display()))?;
+        if let Ok(canonical_parent) = parent.canonicalize() {
+            let file_name = path.file_name().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "atomic write path {} is missing a file name",
+                    path.display()
+                )
+            })?;
+            return reject_path_traversal(&canonical_parent.join(file_name));
+        }
+    }
+    reject_path_traversal(path)
+}
+
 /// Write `payload` to `path` via a unique sibling temp file then rename.
 pub(crate) async fn write_atomic(path: &Path, payload: &[u8]) -> anyhow::Result<()> {
-    let path = reject_path_traversal(path)?;
+    let path = resolve_atomic_write_path(path).await?;
     recover_stranded_json_bak(&path).await?;
 
     let mut last_error = None;
@@ -504,5 +522,20 @@ mod tests {
             browser_launch_url("http://localhost:5173/", "secret", Some("/robot & tools")),
             "http://localhost:5173/pair#token=secret&workspace=%2Frobot+%26+tools"
         );
+    }
+
+    #[tokio::test]
+    async fn write_atomic_creates_missing_parent_with_parent_dir_components() {
+        let root = std::env::temp_dir().join(format!("sprocket-atomic-{}", now_ms()));
+        let existing = root.join("existing");
+        std::fs::create_dir_all(&existing).expect("create existing");
+        let path = existing
+            .join("..")
+            .join("missing-data")
+            .join("sessions.json");
+        write_atomic(&path, b"[]").await.expect("write");
+        let written = std::fs::read(root.join("missing-data").join("sessions.json")).expect("read");
+        assert_eq!(written, b"[]");
+        let _ = std::fs::remove_dir_all(root);
     }
 }

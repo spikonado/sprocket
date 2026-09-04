@@ -1,4 +1,5 @@
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Component, PathBuf};
 
 use clap::Parser;
 
@@ -99,5 +100,41 @@ fn canonicalize_data_dir(path: PathBuf) -> PathBuf {
         path
     };
 
+    // First launch often points at a directory that does not exist yet. Create
+    // it so canonicalize can collapse `..` instead of leaving ParentDir in the
+    // path that write_atomic later rejects.
+    let _ = fs::create_dir_all(&resolved);
     resolved.canonicalize().unwrap_or(resolved)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn canonicalize_data_dir_collapses_parent_dir_on_first_launch() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let root = std::env::temp_dir().join(format!("sprocket-data-dir-{stamp}"));
+        let existing = root.join("existing");
+        fs::create_dir_all(&existing).expect("create existing");
+        let unresolved = existing.join("..").join("missing-data");
+        let resolved = canonicalize_data_dir(unresolved);
+        assert!(
+            !resolved
+                .components()
+                .any(|component| component == Component::ParentDir),
+            "{}",
+            resolved.display()
+        );
+        assert_eq!(
+            resolved.file_name().and_then(|name| name.to_str()),
+            Some("missing-data")
+        );
+        assert!(resolved.is_dir());
+        let _ = fs::remove_dir_all(root);
+    }
 }
