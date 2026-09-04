@@ -960,6 +960,21 @@ fn parse_sprocket_sibling(name: &str, file_name: &str, kind: &str) -> Option<(u1
     Some((nanos, seq, pid))
 }
 
+/// Same-process seq is monotonic even if the wall clock jumps backward.
+/// Different processes have no shared counter, so timestamp is the fallback.
+fn sprocket_sibling_is_newer(
+    candidate: (u128, u64, u32),
+    best: (u128, u64, u32),
+) -> bool {
+    let (candidate_nanos, candidate_seq, candidate_pid) = candidate;
+    let (best_nanos, best_seq, best_pid) = best;
+    if candidate_pid == best_pid {
+        (candidate_seq, candidate_nanos) > (best_seq, best_nanos)
+    } else {
+        (candidate_nanos, candidate_seq, candidate_pid) > (best_nanos, best_seq, best_pid)
+    }
+}
+
 async fn newest_sprocket_bak_sibling(path: &Path) -> Result<Option<PathBuf>> {
     let Some(parent) = path.parent() else {
         return Ok(None);
@@ -987,7 +1002,10 @@ async fn newest_sprocket_bak_sibling(path: &Path) -> Result<Option<PathBuf>> {
         if !entry.file_type().await?.is_file() {
             continue;
         }
-        if newest.as_ref().is_none_or(|(best, _)| key > *best) {
+        if newest
+            .as_ref()
+            .is_none_or(|(best, _)| sprocket_sibling_is_newer(key, *best))
+        {
             newest = Some((key, entry.path()));
         }
     }
@@ -1114,12 +1132,20 @@ mod tests {
 
     use super::{
         apply_workspace_patch, normalize_unified_diff_hunk_counts, recover_stranded_sprocket_bak,
-        replace_file, write_new_file,
+        replace_file, sprocket_sibling_is_newer, write_new_file,
     };
     use crate::test_support::temp_workspace;
     use crate::tools::{WorkspaceCancellation, WorkspaceOperationCancelled};
 
     static HOME_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn same_process_bak_prefers_later_seq_if_clock_jumps_back() {
+        let older = (200_u128, 1_u64, 10_u32);
+        let newer = (50_u128, 2_u64, 10_u32);
+        assert!(sprocket_sibling_is_newer(newer, older));
+        assert!(!sprocket_sibling_is_newer(older, newer));
+    }
 
     #[tokio::test]
     async fn restores_stranded_sprocket_bak_before_replace() {
