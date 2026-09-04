@@ -908,10 +908,18 @@ async fn stage_unique_sibling(
         match write_new_file(&candidate, contents, permissions.clone()).await {
             Ok(()) => return Ok(candidate),
             Err(error) => {
-                if tokio::fs::try_exists(&candidate).await.unwrap_or(false) {
+                let already_exists = error.chain().any(|cause| {
+                    cause
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|io_error| io_error.kind() == std::io::ErrorKind::AlreadyExists)
+                });
+                if already_exists {
                     last_error = Some(error);
                     continue;
                 }
+                // create_new succeeded and a later write step failed. Remove our
+                // partial sibling instead of treating it as a name collision.
+                let _ = tokio::fs::remove_file(&candidate).await;
                 return Err(error).with_context(|| {
                     format!("failed to stage replacement for {}", path.display())
                 });
@@ -936,6 +944,20 @@ async fn recover_stranded_sprocket_bak(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Matches `unique_sibling_path`: `{file_name}.sprocket-{kind}.{pid}.{seq}.{nanos}`.
+fn parse_sprocket_sibling(name: &str, file_name: &str, kind: &str) -> Option<(u128, u64, u32)> {
+    let prefix = format!("{file_name}.sprocket-{kind}.");
+    let rest = name.strip_prefix(&prefix)?;
+    let mut parts = rest.split('.');
+    let pid: u32 = parts.next()?.parse().ok()?;
+    let seq: u64 = parts.next()?.parse().ok()?;
+    let nanos: u128 = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((nanos, seq, pid))
+}
+
 async fn newest_sprocket_bak_sibling(path: &Path) -> Result<Option<PathBuf>> {
     let Some(parent) = path.parent() else {
         return Ok(None);
@@ -943,7 +965,6 @@ async fn newest_sprocket_bak_sibling(path: &Path) -> Result<Option<PathBuf>> {
     let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
         return Ok(None);
     };
-    let prefix = format!("{file_name}.sprocket-bak.");
     let mut entries = match tokio::fs::read_dir(parent).await {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -952,26 +973,20 @@ async fn newest_sprocket_bak_sibling(path: &Path) -> Result<Option<PathBuf>> {
         }
     };
 
-    let mut newest: Option<(SystemTime, PathBuf)> = None;
+    let mut newest: Option<((u128, u64, u32), PathBuf)> = None;
     while let Some(entry) = entries.next_entry().await? {
         let name = entry.file_name();
         let Some(name) = name.to_str() else {
             continue;
         };
-        if !name.starts_with(&prefix) {
+        let Some(key) = parse_sprocket_sibling(name, file_name, "bak") else {
             continue;
-        }
+        };
         if !entry.file_type().await?.is_file() {
             continue;
         }
-        let modified = entry
-            .metadata()
-            .await?
-            .modified()
-            .unwrap_or(SystemTime::UNIX_EPOCH);
-        match &newest {
-            Some((best, _)) if modified <= *best => {}
-            _ => newest = Some((modified, entry.path())),
+        if newest.as_ref().is_none_or(|(best, _)| key > *best) {
+            newest = Some((key, entry.path()));
         }
     }
     Ok(newest.map(|(_, path)| path))
@@ -1126,6 +1141,44 @@ mod tests {
         .await
         .expect("replace after recovery");
         assert_eq!(fs::read_to_string(&target).unwrap(), "replacement\n");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn recovery_ignores_non_format_sprocket_bak_siblings() {
+        let root = temp_workspace();
+        let target = root.join("file.txt");
+        let user_notes = root.join("file.txt.sprocket-bak.notes");
+        let stale = root.join("file.txt.sprocket-bak.1.1.100");
+        let newest = root.join("file.txt.sprocket-bak.1.2.200");
+        fs::write(&user_notes, "user notes\n").unwrap();
+        fs::write(&stale, "stale original\n").unwrap();
+        fs::write(&newest, "latest original\n").unwrap();
+        assert!(!target.exists());
+
+        recover_stranded_sprocket_bak(&target)
+            .await
+            .expect("valid bak should restore");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "latest original\n");
+        assert!(!newest.exists());
+        assert_eq!(fs::read_to_string(&user_notes).unwrap(), "user notes\n");
+        assert_eq!(fs::read_to_string(&stale).unwrap(), "stale original\n");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn recovery_does_not_promote_unrelated_prefix_matches() {
+        let root = temp_workspace();
+        let target = root.join("file.txt");
+        let decoy = root.join("file.txt.sprocket-bak.user-notes");
+        fs::write(&decoy, "do not restore me\n").unwrap();
+        assert!(!target.exists());
+
+        recover_stranded_sprocket_bak(&target)
+            .await
+            .expect("unrelated sibling should be ignored");
+        assert!(!target.exists());
+        assert_eq!(fs::read_to_string(&decoy).unwrap(), "do not restore me\n");
         fs::remove_dir_all(root).unwrap();
     }
 
