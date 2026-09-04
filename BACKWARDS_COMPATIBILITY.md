@@ -46,7 +46,7 @@ Safe when a prod check shows zero rows carrying the field.
 ### 2. Retired model IDs on stored selections
 
 Sources: #191, #192, and later catalog drops. Retired ids:
-`gpt-5.6-terra`, `gpt-5.6-luna`, `grok-4.5`, `stealth/ox-alpha`,
+`gpt-5.6-terra`, `grok-4.5`, `stealth/ox-alpha`,
 `deepseek-v4-pro`, `deepseek-v4-flash`. They survive on
 `threadRecords.selectedModel` and `runs.selectedModel`.
 

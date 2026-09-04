@@ -6,8 +6,11 @@ import {
 } from '@convex/lib/models';
 
 describe('model configuration', () => {
+	it('preserves active model ids that were previously retired', () => {
+		expect(coercePersistedModelId('gpt-5.6-luna')).toBe('gpt-5.6-luna');
+	});
+
 	it('maps retired stored models onto current ids', () => {
-		expect(coercePersistedModelId('gpt-5.6-luna')).toBe('gpt-5.6-sol');
 		expect(coercePersistedModelId('deepseek-v4-pro')).toBe('deepseek-v4-pro-0813');
 		expect(coercePersistedModelId('deepseek-v4-flash')).toBe('deepseek-v4-flash-0731');
 		expect(coercePersistedModelId('stealth/ox-alpha')).toBe('deepseek-v4-pro-0813');

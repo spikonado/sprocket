@@ -14,7 +14,6 @@ export const defaultServiceTier: SupportedServiceTier = 'standard';
 const retiredModelIds = [
 	'stealth/ox-alpha',
 	'gpt-5.6-terra',
-	'gpt-5.6-luna',
 	'grok-4.5',
 	'deepseek-v4-pro',
 	'deepseek-v4-flash'
@@ -23,7 +22,6 @@ const retiredModelIds = [
 const retiredModelReplacements = {
 	'stealth/ox-alpha': 'deepseek-v4-pro-0813',
 	'gpt-5.6-terra': 'gpt-5.6-sol',
-	'gpt-5.6-luna': 'gpt-5.6-sol',
 	'grok-4.5': 'gpt-5.6-sol',
 	'deepseek-v4-pro': 'deepseek-v4-pro-0813',
 	'deepseek-v4-flash': 'deepseek-v4-flash-0731'
