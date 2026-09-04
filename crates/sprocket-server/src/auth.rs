@@ -3,8 +3,6 @@ use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::thread;
-use std::time::Duration;
 
 use axum::http::HeaderMap;
 use axum_extra::extract::CookieJar;
@@ -265,22 +263,48 @@ fn load_or_create_pairing_credential(data_dir: &Path) -> anyhow::Result<String> 
 
     let path = data_dir.join(PAIRING_CREDENTIAL_FILE);
     let credential = Uuid::new_v4().to_string();
-    match OpenOptions::new().write(true).create_new(true).open(&path) {
-        Ok(mut file) => {
-            file.write_all(format!("{credential}\n").as_bytes())?;
-            file.sync_all()?;
-            Ok(credential)
-        }
+    let tmp_path = data_dir.join(format!(
+        "{PAIRING_CREDENTIAL_FILE}.{}.{}.tmp",
+        std::process::id(),
+        Uuid::new_v4()
+    ));
+
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp_path)?;
+    file.write_all(format!("{credential}\n").as_bytes())?;
+    file.sync_all()?;
+    drop(file);
+
+    let published = publish_exclusive_file(&tmp_path, &path);
+    let _ = fs::remove_file(&tmp_path);
+
+    match published {
+        Ok(()) => Ok(credential),
         Err(error) if error.kind() == ErrorKind::AlreadyExists => {
-            for _ in 0..10 {
-                if let Some(existing) = read_ready_pairing_credential(data_dir)? {
-                    return Ok(existing);
-                }
-                thread::sleep(Duration::from_millis(10));
-            }
-            anyhow::bail!("pairing credential {} is invalid", path.display())
+            read_ready_pairing_credential(data_dir)?
+                .ok_or_else(|| anyhow::anyhow!("pairing credential {} is invalid", path.display()))
         }
         Err(error) => Err(error.into()),
+    }
+}
+
+/// Publish `tmp_path` as `dest` only if `dest` does not already exist.
+///
+/// Unix `rename` replaces an existing dest, so first boot uses `hard_link`.
+/// Windows `rename` is exclusive and is the fallback when `hard_link` is unavailable.
+fn publish_exclusive_file(tmp_path: &Path, dest: &Path) -> std::io::Result<()> {
+    match fs::hard_link(tmp_path, dest) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => Err(error),
+        Err(error) => {
+            if cfg!(unix) {
+                Err(error)
+            } else {
+                fs::rename(tmp_path, dest)
+            }
+        }
     }
 }
 
@@ -397,6 +421,7 @@ fn session_is_expired(session: &SessionRecord) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread;
 
     #[test]
     fn reading_a_missing_pairing_credential_has_no_side_effects() {
@@ -404,6 +429,22 @@ mod tests {
 
         assert_eq!(read_pairing_credential(&temp_dir).unwrap(), None);
         assert!(!temp_dir.exists());
+    }
+
+    #[test]
+    fn exclusive_publish_does_not_replace_an_existing_credential() {
+        let temp_dir = std::env::temp_dir().join(format!("sprocket-auth-link-{}", Uuid::new_v4()));
+        fs::create_dir_all(&temp_dir).unwrap();
+        let dest = temp_dir.join(PAIRING_CREDENTIAL_FILE);
+        fs::write(&dest, "winner\n").unwrap();
+        let tmp_path = temp_dir.join(format!("{PAIRING_CREDENTIAL_FILE}.loser.tmp"));
+        fs::write(&tmp_path, "loser\n").unwrap();
+
+        let error = publish_exclusive_file(&tmp_path, &dest).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(&dest).unwrap(), "winner\n");
+
+        let _ = fs::remove_dir_all(temp_dir);
     }
 
     #[test]
