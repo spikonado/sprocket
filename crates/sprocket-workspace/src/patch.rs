@@ -960,16 +960,26 @@ fn parse_sprocket_sibling(name: &str, file_name: &str, kind: &str) -> Option<(u1
     Some((nanos, seq, pid))
 }
 
-/// Same-process seq is monotonic even if the wall clock jumps backward.
-/// Different processes have no shared counter, so timestamp is the fallback.
-fn sprocket_sibling_is_newer(candidate: (u128, u64, u32), best: (u128, u64, u32)) -> bool {
-    let (candidate_nanos, candidate_seq, candidate_pid) = candidate;
-    let (best_nanos, best_seq, best_pid) = best;
-    if candidate_pid == best_pid {
-        (candidate_seq, candidate_nanos) > (best_seq, best_nanos)
-    } else {
-        (candidate_nanos, candidate_seq, candidate_pid) > (best_nanos, best_seq, best_pid)
+/// Newest sibling is unique even when same-pid seq order and cross-pid
+/// timestamps would not form a pairwise ranking. Keep the latest seq per pid,
+/// then pick the latest timestamp among those per-process winners.
+fn select_newest_sprocket_sibling<T>(
+    items: impl IntoIterator<Item = ((u128, u64, u32), T)>,
+) -> Option<T> {
+    let mut newest_by_pid: HashMap<u32, ((u128, u64, u32), T)> = HashMap::new();
+    for (key, value) in items {
+        let pid = key.2;
+        if newest_by_pid
+            .get(&pid)
+            .is_none_or(|(best, _)| (key.1, key.0) > (best.1, best.0))
+        {
+            newest_by_pid.insert(pid, (key, value));
+        }
     }
+    newest_by_pid
+        .into_values()
+        .max_by(|(left, _), (right, _)| left.cmp(right))
+        .map(|(_, value)| value)
 }
 
 async fn newest_sprocket_bak_sibling(path: &Path) -> Result<Option<PathBuf>> {
@@ -987,7 +997,7 @@ async fn newest_sprocket_bak_sibling(path: &Path) -> Result<Option<PathBuf>> {
         }
     };
 
-    let mut newest: Option<((u128, u64, u32), PathBuf)> = None;
+    let mut found = Vec::new();
     while let Some(entry) = entries.next_entry().await? {
         let name = entry.file_name();
         let Some(name) = name.to_str() else {
@@ -999,14 +1009,9 @@ async fn newest_sprocket_bak_sibling(path: &Path) -> Result<Option<PathBuf>> {
         if !entry.file_type().await?.is_file() {
             continue;
         }
-        if newest
-            .as_ref()
-            .is_none_or(|(best, _)| sprocket_sibling_is_newer(key, *best))
-        {
-            newest = Some((key, entry.path()));
-        }
+        found.push((key, entry.path()));
     }
-    Ok(newest.map(|(_, path)| path))
+    Ok(select_newest_sprocket_sibling(found))
 }
 
 #[cfg(windows)]
@@ -1129,7 +1134,7 @@ mod tests {
 
     use super::{
         apply_workspace_patch, normalize_unified_diff_hunk_counts, recover_stranded_sprocket_bak,
-        replace_file, sprocket_sibling_is_newer, write_new_file,
+        replace_file, select_newest_sprocket_sibling, write_new_file,
     };
     use crate::test_support::temp_workspace;
     use crate::tools::{WorkspaceCancellation, WorkspaceOperationCancelled};
@@ -1140,8 +1145,26 @@ mod tests {
     fn same_process_bak_prefers_later_seq_if_clock_jumps_back() {
         let older = (200_u128, 1_u64, 10_u32);
         let newer = (50_u128, 2_u64, 10_u32);
-        assert!(sprocket_sibling_is_newer(newer, older));
-        assert!(!sprocket_sibling_is_newer(older, newer));
+        assert_eq!(
+            select_newest_sprocket_sibling([(older, "old"), (newer, "new")]),
+            Some("new")
+        );
+    }
+
+    #[test]
+    fn mixed_pid_bak_selection_is_order_independent() {
+        let a = (10_u128, 2_u64, 1_u32);
+        let b = (20_u128, 1_u64, 1_u32);
+        let c = (15_u128, 0_u64, 2_u32);
+        let keys = [a, b, c];
+        assert_eq!(
+            select_newest_sprocket_sibling(keys.into_iter().map(|key| (key, key))),
+            Some(c)
+        );
+        assert_eq!(
+            select_newest_sprocket_sibling(keys.into_iter().rev().map(|key| (key, key))),
+            Some(c)
+        );
     }
 
     #[tokio::test]
