@@ -1,9 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
 import { CANCELLATION_FORCE_AFTER_MS } from '@convex/lib/runCancellation';
 import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 
 describe('chat.selectedThreadLifecycle', { timeout: 20_000 }, () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
 	it('shows the latest completed run for a persisted thread', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
@@ -12,6 +16,61 @@ describe('chat.selectedThreadLifecycle', { timeout: 20_000 }, () => {
 			phase: 'completed',
 			run: { runId: expect.any(String) }
 		});
+	});
+
+	it('stops counting overdue ask questions as waiting_for_input when now is passed', async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date('2026-07-26T12:00:00.000Z'));
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
+		const executionSecret = 'lifecycle-question-secret';
+		const created = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			`lifecycle-q-${Math.random()}`,
+			executionSecret,
+			'Need a choice'
+		);
+		const claimId = 'claim-lifecycle-q';
+		await t.mutation(api.agentRuntime.start, {
+			runId: created.runId,
+			claimId,
+			executionSecret
+		});
+		await t.mutation(api.agentRuntime.beginToolJob, {
+			runId: created.runId,
+			claimId,
+			kind: 'ask_question',
+			payload: {
+				question: 'placeholder',
+				options: [{ id: 'a', label: 'A' }]
+			},
+			executionSecret
+		});
+		await t.mutation(api.agentQuestions.create, {
+			runId: created.runId,
+			claimId,
+			question: 'Overdue?',
+			options: [{ id: 'old', label: 'Old' }],
+			timeoutMs: 1_000,
+			executionSecret
+		});
+
+		expect(
+			await asUser.query(api.chat.selectedThreadLifecycle, {
+				threadId,
+				now: Date.now()
+			})
+		).toMatchObject({ phase: 'waiting_for_input' });
+
+		vi.setSystemTime(new Date('2026-07-26T12:00:02.000Z'));
+		expect(
+			await asUser.query(api.chat.selectedThreadLifecycle, {
+				threadId,
+				now: Date.now()
+			})
+		).toMatchObject({ phase: 'running' });
 	});
 });
 

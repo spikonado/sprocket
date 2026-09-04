@@ -21,7 +21,10 @@ export const latestRunForThread = query({
 
 export const selectedThreadLifecycle = query({
 	args: {
-		threadId: v.id('threadRecords')
+		threadId: v.id('threadRecords'),
+		// Callers that can refresh should pass wall-clock time so overdue ask
+		// questions stop counting as waiting_for_input without a DB write.
+		now: v.optional(v.number())
 	},
 	returns: vSelectedThreadLifecycle,
 	handler: async (ctx, args) => {
@@ -41,12 +44,14 @@ export const selectedThreadLifecycle = query({
 			});
 		}
 
-		const pendingQuestion = await ctx.db
+		const now = args.now ?? Date.now();
+		const pendingQuestions = await ctx.db
 			.query('agentQuestions')
 			.withIndex('by_threadId_status_sequence', (query) =>
 				query.eq('threadId', args.threadId).eq('status', 'pending')
 			)
-			.first();
+			.collect();
+		const waitingForInput = pendingQuestions.some((question) => question.timeoutAt > now);
 		let executorFriendlyName: string | undefined;
 		const machineId = runMachineId(latestRun);
 		if (machineId) {
@@ -57,7 +62,7 @@ export const selectedThreadLifecycle = query({
 		return projectSelectedThreadLifecycle({
 			threadId: args.threadId,
 			run: latestRun,
-			waitingForInput: pendingQuestion !== null,
+			waitingForInput,
 			executorFriendlyName
 		});
 	}
