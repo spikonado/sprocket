@@ -1910,8 +1910,9 @@
 		}
 
 		try {
-			const { api } = localThreadCommandContext();
+			const { api, userId } = localThreadCommandContext();
 			await api.requestRunCancellation({
+				userId,
 				runId: runState.runId
 			});
 		} catch (error) {

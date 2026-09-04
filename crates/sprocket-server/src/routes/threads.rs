@@ -45,12 +45,14 @@ struct RekeyRequest {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CancelRequest {
+    user_id: String,
     run_id: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct LifecycleRequest {
+    user_id: String,
     thread_id: String,
 }
 
@@ -107,6 +109,14 @@ async fn client(state: &AppState) -> Result<UserConvexClient, ApiError> {
     .map_err(ApiError::bad_request)
 }
 
+async fn require_user(state: &AppState, user_id: &str) -> Result<(), ApiError> {
+    state
+        .native_auth
+        .require_user(user_id)
+        .await
+        .map_err(ApiError::unauthorized)
+}
+
 fn thread_args(thread_id: String) -> BTreeMap<String, Value> {
     BTreeMap::from([("threadId".into(), Value::String(thread_id))])
 }
@@ -117,6 +127,7 @@ async fn run_thread_command(
     function: &str,
     categories: &[ThreadSnapshotCategory],
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    require_user(state, &payload.user_id).await?;
     let mut args = thread_args(payload.thread_id);
     if let Some(title) = payload.title {
         args.insert("title".into(), Value::String(title));
@@ -221,6 +232,7 @@ async fn rekey_handler(
     require_session(&state.auth, &headers, &jar)
         .await
         .map_err(ApiError::unauthorized)?;
+    require_user(&state, &payload.user_id).await?;
     let args = BTreeMap::from([
         ("from".into(), Value::String(payload.from)),
         ("to".into(), Value::String(payload.to)),
@@ -273,6 +285,7 @@ async fn lifecycle_handler(
     require_session(&state.auth, &headers, &jar)
         .await
         .map_err(ApiError::unauthorized)?;
+    require_user(&state, &payload.user_id).await?;
     let result = client(&state)
         .await?
         .query(
@@ -292,6 +305,7 @@ async fn cancel_handler(
     require_session(&state.auth, &headers, &jar)
         .await
         .map_err(ApiError::unauthorized)?;
+    require_user(&state, &payload.user_id).await?;
     let args = BTreeMap::from([("runId".into(), Value::String(payload.run_id))]);
     let result = client(&state)
         .await?
@@ -310,6 +324,7 @@ async fn end_account_session_handler(
     require_session(&state.auth, &headers, &jar)
         .await
         .map_err(ApiError::unauthorized)?;
+    require_user(&state, &payload.user_id).await?;
     state
         .machines
         .end(&payload.user_id)
@@ -327,6 +342,7 @@ async fn register_handler(
     require_session(&state.auth, &headers, &jar)
         .await
         .map_err(ApiError::unauthorized)?;
+    require_user(&state, &payload.user_id).await?;
     state
         .machines
         .register(&payload.user_id)
@@ -349,6 +365,7 @@ async fn snapshot_handler(
     require_session(&state.auth, &headers, &jar)
         .await
         .map_err(ApiError::unauthorized)?;
+    require_user(&state, &payload.user_id).await?;
     let user_id = payload.user_id.trim();
     if user_id.is_empty() {
         return Err(ApiError::bad_request(anyhow!("user id is required")));
@@ -374,6 +391,7 @@ async fn archive_sync_handler(
     require_session(&state.auth, &headers, &jar)
         .await
         .map_err(ApiError::unauthorized)?;
+    require_user(&state, &payload.user_id).await?;
     state
         .thread_cache
         .sync_archived(&payload.user_id)
@@ -391,6 +409,7 @@ async fn watch_handler(
     require_session(&state.auth, &headers, &jar)
         .await
         .map_err(ApiError::unauthorized)?;
+    require_user(&state, &payload.user_id).await?;
     let user_id = payload.user_id.trim();
     if user_id.is_empty() {
         return Err(ApiError::bad_request(anyhow!("user id is required")));

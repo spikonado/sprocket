@@ -279,7 +279,9 @@ export type DesktopApi = {
 	rekeyRepository: (
 		request: ThreadCacheUserRequest & { from: string; to: string }
 	) => Promise<number>;
-	requestRunCancellation: (request: { runId: Id<'runs'> }) => Promise<void>;
+	requestRunCancellation: (
+		request: ThreadCacheUserRequest & { runId: Id<'runs'> }
+	) => Promise<void>;
 	endAccountSession: (request: ThreadCacheUserRequest) => Promise<void>;
 };
 

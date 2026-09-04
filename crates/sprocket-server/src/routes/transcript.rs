@@ -52,6 +52,14 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/transcript/attachment", post(attachment_handler))
 }
 
+async fn require_user(state: &AppState, user_id: &str) -> Result<(), ApiError> {
+    state
+        .native_auth
+        .require_user(user_id)
+        .await
+        .map_err(ApiError::unauthorized)
+}
+
 async fn page_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -61,6 +69,7 @@ async fn page_handler(
     require_session(&state.auth, &headers, &jar)
         .await
         .map_err(ApiError::unauthorized)?;
+    require_user(&state, &payload.user_id).await?;
     if payload.before.is_some() {
         let client = UserConvexClient::connect_with_fetcher(
             &state.convex_deployment_url,
@@ -120,6 +129,7 @@ async fn watch_handler(
     require_session(&state.auth, &headers, &jar)
         .await
         .map_err(ApiError::unauthorized)?;
+    require_user(&state, &payload.user_id).await?;
     let session = state
         .transcript_watchers
         .open(&payload.user_id, &payload.thread_id)
@@ -158,6 +168,7 @@ async fn clear_handler(
     require_session(&state.auth, &headers, &jar)
         .await
         .map_err(ApiError::unauthorized)?;
+    require_user(&state, &payload.user_id).await?;
     state
         .transcript_watchers
         .abort_thread(&payload.user_id, &payload.thread_id)
@@ -179,6 +190,7 @@ async fn attachment_handler(
     require_session(&state.auth, &headers, &jar)
         .await
         .map_err(ApiError::unauthorized)?;
+    require_user(&state, &payload.user_id).await?;
     if let Some(blob) = state
         .transcript
         .blob_for_upload(&payload.user_id, &payload.image_upload_id)

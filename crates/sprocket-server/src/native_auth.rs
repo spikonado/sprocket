@@ -446,6 +446,19 @@ impl NativeAuthManager {
         })
     }
 
+    pub async fn require_user(&self, expected_user_id: &str) -> anyhow::Result<()> {
+        self.access_token(false).await?;
+        let session = self.session.lock().await;
+        let user = session
+            .user
+            .as_ref()
+            .context("native WorkOS session has no user")?;
+        if user.id != expected_user_id {
+            anyhow::bail!("native and browser sessions belong to different users");
+        }
+        Ok(())
+    }
+
     async fn access_token(&self, force_refresh: bool) -> anyhow::Result<String> {
         let _credential_operation = self.credential_operation.lock().await;
         let refresh_before = unix_time_secs().saturating_add(ACCESS_TOKEN_REFRESH_MARGIN_SECS);
@@ -918,6 +931,30 @@ mod tests {
             expected_access_token
         );
         assert_eq!(store.token().as_deref(), Some("refresh-new"));
+    }
+
+    #[tokio::test]
+    async fn require_user_rejects_a_different_native_identity() {
+        let manager = manager_with_response(
+            MemoryRefreshTokenStore::with_token("refresh-old"),
+            StatusCode::OK,
+            serde_json::to_value(authentication_response(
+                access_token(unix_time_secs() + 3_600),
+                "refresh-new",
+            ))
+            .unwrap(),
+        )
+        .await;
+
+        manager.require_user("user_123").await.unwrap();
+        assert_eq!(
+            manager
+                .require_user("user_456")
+                .await
+                .unwrap_err()
+                .to_string(),
+            "native and browser sessions belong to different users"
+        );
     }
 
     #[tokio::test]

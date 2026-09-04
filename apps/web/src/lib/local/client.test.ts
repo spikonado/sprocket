@@ -170,6 +170,7 @@ describe('run cancellation local API', () => {
 
 		await expect(
 			createLocalClient('http://127.0.0.1:7731').requestRunCancellation({
+				userId: 'user-1',
 				runId: runId('run-1')
 			})
 		).resolves.toBeUndefined();
