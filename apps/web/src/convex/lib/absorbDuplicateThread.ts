@@ -111,8 +111,7 @@ export async function absorbDuplicateThread(
 		await ctx.db.delete('threadTranscriptStates', extra._id);
 	}
 
-	const numberOffset = keepState?.totalParts ?? 0;
-	let nextNumber = numberOffset;
+	let nextNumber = keepState?.totalParts ?? 0;
 	const dropParts = await ctx.db
 		.query('threadTranscriptParts')
 		.withIndex('by_threadId_and_number', (query) => query.eq('threadId', dropId))
@@ -128,8 +127,8 @@ export async function absorbDuplicateThread(
 			await ctx.db.delete('threadTranscriptParts', part._id);
 			continue;
 		}
-		const number = part.number + numberOffset;
-		nextNumber = Math.max(nextNumber, number + 1);
+		const number = nextNumber;
+		nextNumber += 1;
 		await ctx.db.patch('threadTranscriptParts', part._id, {
 			threadId: keepId,
 			number
