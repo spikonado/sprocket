@@ -4,6 +4,7 @@ export const AGENT_DECIDE_OPTION_LABEL = 'Let me (the agent) decide';
 export const MAX_QUESTION_CHARS = 2000;
 export const MAX_OPTION_ID_CHARS = 20;
 export const MAX_OPTION_LABEL_CHARS = 200;
+export const MAX_QUESTION_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 const MIN_AGENT_OPTIONS = 1;
 const MAX_AGENT_OPTIONS = 4;
 

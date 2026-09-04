@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { GATEWAY_TOKEN_TTL_MS } from '@convex/lib/gatewayProtocol';
+import { MAX_QUESTION_TIMEOUT_MS } from '@convex/lib/agentQuestions';
+import { GATEWAY_TOKEN_PRIOR_WORK_MS, GATEWAY_TOKEN_TTL_MS } from '@convex/lib/gatewayProtocol';
 import { mintGatewayToken, verifyGatewayToken } from '@convex/lib/gatewayToken';
 
 const secret = 'test-gateway-token-secret';
-/** Keep in sync with MAX_QUESTION_TIMEOUT_MS in agentQuestions.ts. */
-const MAX_QUESTION_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
 describe('gateway token', () => {
 	it('round-trips a valid token and rejects expiry and tampering', async () => {
@@ -23,7 +22,9 @@ describe('gateway token', () => {
 		);
 	});
 
-	it('outlives the maximum ask-question wait', () => {
-		expect(GATEWAY_TOKEN_TTL_MS).toBeGreaterThan(MAX_QUESTION_TIMEOUT_MS);
+	it('outlives a max-length ask wait after prior work', () => {
+		expect(GATEWAY_TOKEN_TTL_MS).toBeGreaterThanOrEqual(
+			MAX_QUESTION_TIMEOUT_MS + GATEWAY_TOKEN_PRIOR_WORK_MS
+		);
 	});
 });
