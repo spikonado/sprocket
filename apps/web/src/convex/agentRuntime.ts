@@ -255,13 +255,14 @@ async function createQueuedRunRecord(
 	} else {
 		await ctx.db.patch('runs', runId, { completionStreamStateId });
 	}
-	await ctx.db.patch('threadRecords', threadRecord._id, {
+	const threadUpdates = {
 		title: threadRecord.title ?? (prompt || imageUploads[0]?.name || 'New thread').slice(0, 72),
 		selectedModel: args.selectedModel,
 		reasoningEffort: args.reasoningEffort,
 		serviceTier: args.serviceTier,
-		...(continuationOfRunId ? {} : { lastMessageAt: Date.now() })
-	});
+		lastMessageAt: continuationOfRunId ? threadRecord.lastMessageAt : Date.now()
+	};
+	await ctx.db.patch('threadRecords', threadRecord._id, threadUpdates);
 	await bumpThreadSnapshotForRun(ctx, runRecord);
 	const lifecycleWorkflowId = await startRunLifecycle(ctx, runId);
 	await ctx.db.patch('runs', runId, { lifecycleWorkflowId });
