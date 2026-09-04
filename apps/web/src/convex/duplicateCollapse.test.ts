@@ -47,7 +47,7 @@ describe('absorbDuplicateThread', { timeout: 20_000 }, () => {
 				sourceKey: 'prompt:shared',
 				kind: 'prompt',
 				runId: keepRun._id,
-				prompt: { text: 'keep' }
+				prompt: { text: 'keep', imageUploads: [] }
 			});
 			await ctx.db.insert('threadTranscriptStates', {
 				threadId: dropId,
@@ -61,7 +61,7 @@ describe('absorbDuplicateThread', { timeout: 20_000 }, () => {
 				sourceKey: 'prompt:shared',
 				kind: 'prompt',
 				runId: dropRunId,
-				prompt: { text: 'drop-dup' }
+				prompt: { text: 'drop-dup', imageUploads: [] }
 			});
 			await ctx.db.insert('threadTranscriptParts', {
 				threadId: dropId,
@@ -70,7 +70,9 @@ describe('absorbDuplicateThread', { timeout: 20_000 }, () => {
 				sourceKey: 'completion:unique',
 				kind: 'completion',
 				runId: dropRunId,
-				completion: { text: 'only on drop' }
+				completion: {
+					items: [{ type: 'text', id: 'drop-text', text: 'only on drop' }]
+				}
 			});
 			const keepUsage = await ctx.db
 				.query('threadUsage')
