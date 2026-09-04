@@ -240,4 +240,34 @@ describe('subscription and usage backend', () => {
 		expect(rows).toHaveLength(1);
 		expect(rows[0]).toMatchObject({ subject: userId });
 	});
+
+	it('collapses duplicate billing customers without throwing', async () => {
+		const t = initConvexTest();
+		const userId = 'user_dup_customer';
+		await t.run(async (ctx) => {
+			await ctx.db.insert('billingCustomers', { userId, dodoCustomerId: 'old' });
+			await ctx.db.insert('billingCustomers', { userId, dodoCustomerId: 'stale' });
+		});
+		expect((await t.query(internal.billing.getBillingCustomer, { userId }))?.dodoCustomerId).toBe(
+			'old'
+		);
+
+		await t.mutation(internal.billing.upsertSubscription, {
+			userId,
+			tier: 'pro',
+			dodoSubscriptionId: 'sub_dup',
+			dodoProductId: 'prod_dup',
+			dodoCustomerId: 'fresh',
+			status: 'active',
+			eventAt: 1
+		});
+		const customers = await t.run(async (ctx) =>
+			ctx.db
+				.query('billingCustomers')
+				.withIndex('by_userId', (query) => query.eq('userId', userId))
+				.collect()
+		);
+		expect(customers).toHaveLength(1);
+		expect(customers[0]?.dodoCustomerId).toBe('fresh');
+	});
 });
