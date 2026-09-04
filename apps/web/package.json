@@ -16,7 +16,7 @@
 		"@browserbasehq/stagehand": "^3.7.1",
 		"@context-dot-dev/convex": "^1.0.1",
 		"@convex-dev/action-retrier": "^0.3.1",
-		"@convex-dev/aggregate": "^0.2.2",
+		"@convex-dev/aggregate": "^0.3.0",
 		"@convex-dev/migrations": "^0.3.6",
 		"@convex-dev/rate-limiter": "^0.3.2",
 		"@convex-dev/workflow": "^0.4.6",
