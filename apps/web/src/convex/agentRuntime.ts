@@ -4,7 +4,8 @@ import {
 	internalMutation,
 	mutation,
 	query,
-	type MutationCtx
+	type MutationCtx,
+	type QueryCtx
 } from '@convex/_generated/server';
 import { internal } from '@convex/_generated/api';
 import schema from '@convex/schema';
@@ -15,7 +16,6 @@ import { GATEWAY_PROTOCOL_VERSION } from '@convex/lib/gatewayProtocol';
 import { modelGatewayTokenSecret, modelGatewayUrl } from '@convex/lib/gatewayFetch';
 import { gatewayTokenExpiresAt, mintGatewayToken } from '@convex/lib/gatewayToken';
 import { vCompletionActor, vGetContextResult } from '@convex/lib/docs';
-import { appendThreadMessage } from '@convex/lib/threadMessages';
 import {
 	getCompletionStreamState,
 	registerCompletionAttemptForRun
@@ -35,9 +35,10 @@ import {
 } from '@convex/lib/transcriptWrites';
 import {
 	areImageUploadIdsEqual,
-	attachImageUploads,
+	markImageUploadsAttached,
 	getOwnedImageUploads
 } from '@convex/lib/imageUploads';
+import { promptSourceKey } from '@convex/lib/transcriptParts';
 import {
 	RUN_ABANDONED_BY_AGENT,
 	RUN_NO_LONGER_ACTIVE,
@@ -119,9 +120,23 @@ type CreatedGatewayRun = {
 	created: boolean;
 	runId: Id<'runs'>;
 	userId: string;
-	promptMessageId?: Id<'threadMessages'>;
+	promptMessageId?: string;
 	promptPart?: Doc<'threadTranscriptParts'>;
 };
+
+async function getPromptPart(
+	ctx: MutationCtx | QueryCtx,
+	threadId: Id<'threadRecords'>,
+	runId: Id<'runs'>
+): Promise<Doc<'threadTranscriptParts'> | null> {
+	const part = await ctx.db
+		.query('threadTranscriptParts')
+		.withIndex('by_threadId_and_sourceKey', (query) =>
+			query.eq('threadId', threadId).eq('sourceKey', promptSourceKey(runId))
+		)
+		.unique();
+	return part?.kind === 'prompt' && part.runId === runId && part.prompt ? part : null;
+}
 
 type GatewayRunTelemetry = {
 	completionTransport: 'gateway';
@@ -227,16 +242,8 @@ async function createQueuedRunRecord(
 		userId: args.userId
 	};
 	if (!continuationOfRunId) {
-		const promptMessageId = await appendThreadMessage(ctx, {
-			threadId: args.threadId,
-			runId,
-			userId: args.userId,
-			type: 'prompt',
-			text: prompt,
-			imageUploadIds: args.imageUploadIds
-		});
-		await attachImageUploads(ctx, imageUploads, promptMessageId);
-		created.promptMessageId = promptMessageId;
+		await markImageUploadsAttached(ctx, imageUploads);
+		created.promptMessageId = promptSourceKey(runId);
 		created.promptPart = await recordPromptTranscript(ctx, {
 			threadId: args.threadId,
 			userId: args.userId,
@@ -244,19 +251,18 @@ async function createQueuedRunRecord(
 			text: prompt,
 			imageUploadIds: args.imageUploadIds
 		});
-		await ctx.db.patch('runs', runId, {
-			promptMessageId,
-			completionStreamStateId
-		});
+		await ctx.db.patch('runs', runId, { completionStreamStateId });
 	} else {
 		await ctx.db.patch('runs', runId, { completionStreamStateId });
 	}
-	await ctx.db.patch('threadRecords', threadRecord._id, {
+	const threadUpdates = {
 		title: threadRecord.title ?? (prompt || imageUploads[0]?.name || 'New thread').slice(0, 72),
 		selectedModel: args.selectedModel,
 		reasoningEffort: args.reasoningEffort,
-		serviceTier: args.serviceTier
-	});
+		serviceTier: args.serviceTier,
+		lastMessageAt: continuationOfRunId ? threadRecord.lastMessageAt : Date.now()
+	};
+	await ctx.db.patch('threadRecords', threadRecord._id, threadUpdates);
 	await bumpThreadSnapshotForRun(ctx, runRecord);
 	const lifecycleWorkflowId = await startRunLifecycle(ctx, runId);
 	await ctx.db.patch('runs', runId, { lifecycleWorkflowId });
@@ -293,9 +299,6 @@ async function reconcileExistingQueuedRun(
 	}
 
 	if (args.continuationOfRunId) {
-		if (existingRun.promptMessageId) {
-			throw new ConvexError('Submission belongs to a different or incomplete run.');
-		}
 		return {
 			created: false,
 			runId: existingRun._id,
@@ -303,14 +306,14 @@ async function reconcileExistingQueuedRun(
 		};
 	}
 
-	if (!existingRun.promptMessageId) {
-		throw new ConvexError('Submission belongs to a different or incomplete run.');
-	}
-	const existingPrompt = await ctx.db.get('threadMessages', existingRun.promptMessageId);
+	const existingPrompt = await getPromptPart(ctx, args.threadId, existingRun._id);
 	if (
-		!existingPrompt ||
-		existingPrompt.text !== prompt ||
-		!areImageUploadIdsEqual(existingPrompt.imageUploadIds, args.imageUploadIds)
+		!existingPrompt?.prompt ||
+		existingPrompt.prompt.text !== prompt ||
+		!areImageUploadIdsEqual(
+			existingPrompt.prompt.imageUploads.map((upload) => upload.imageUploadId),
+			args.imageUploadIds
+		)
 	) {
 		throw new Error('Submission prompt does not match the existing run.');
 	}
@@ -324,7 +327,7 @@ async function reconcileExistingQueuedRun(
 	return {
 		created: false,
 		runId: existingRun._id,
-		promptMessageId: existingRun.promptMessageId,
+		promptMessageId: promptSourceKey(existingRun._id),
 		userId: args.userId,
 		promptPart
 	};
@@ -352,7 +355,7 @@ export const createRun = mutation({
 const vCreatedGatewayRun = v.object({
 	created: v.boolean(),
 	runId: v.id('runs'),
-	promptMessageId: v.optional(v.id('threadMessages')),
+	promptMessageId: v.optional(v.string()),
 	userId: v.string(),
 	promptPart: v.optional(schema.doc('threadTranscriptParts'))
 });
@@ -521,8 +524,8 @@ export const getContext = query({
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		const userId = run.userId;
 		const threadRecord = await getOwnedThreadRecord(ctx.db, userId, run.threadId);
-		const promptMessageId = run.promptMessageId;
-		if (!promptMessageId) {
+		const promptPart = await getPromptPart(ctx, run.threadId, run._id);
+		if (!promptPart?.prompt) {
 			if (!run.continuationOfRunId) {
 				throw new Error('Run does not contain a user prompt.');
 			}
@@ -538,25 +541,19 @@ export const getContext = query({
 				}
 			};
 		}
-		const promptMessage = await ctx.db.get('threadMessages', promptMessageId);
-		if (!promptMessage || promptMessage.type !== 'prompt') {
-			throw new Error('Run does not contain a user prompt.');
-		}
 		const promptAttachments = (
 			await Promise.all(
-				(promptMessage.imageUploadIds ?? []).map(async (imageUploadId) => {
-					const upload = await ctx.db.get('imageUploads', imageUploadId);
-					if (!upload) return null;
+				promptPart.prompt.imageUploads.map(async (upload) => {
 					const url = await ctx.storage.getUrl(upload.storageId);
 					return url ? { mediaType: upload.mediaType, url } : null;
 				})
 			)
 		).filter((attachment) => attachment !== null);
-		if ((promptMessage.imageUploadIds?.length ?? 0) !== promptAttachments.length) {
+		if (promptPart.prompt.imageUploads.length !== promptAttachments.length) {
 			throw new Error('One or more image attachments are unavailable.');
 		}
 
-		const prompt = promptMessage.text;
+		const prompt = promptPart.prompt.text;
 		const contextBudget = {
 			contextWindowTokens: run.contextWindowTokens ?? 0,
 			autoCompactTokenLimit: run.autoCompactTokenLimit ?? 0
@@ -880,15 +877,14 @@ export const finalizeFailedStart = mutation({
 			return 'standDown';
 		}
 		if (!isContinuation) {
-			const promptMessageId = run.promptMessageId;
-			if (!promptMessageId) {
-				return 'standDown';
-			}
-			const promptMessage = await ctx.db.get('threadMessages', promptMessageId);
+			const promptPart = await getPromptPart(ctx, run.threadId, run._id);
 			if (
-				!promptMessage ||
-				promptMessage.text !== args.prompt.trim() ||
-				!areImageUploadIdsEqual(promptMessage.imageUploadIds, args.imageUploadIds)
+				!promptPart?.prompt ||
+				promptPart.prompt.text !== args.prompt.trim() ||
+				!areImageUploadIdsEqual(
+					promptPart.prompt.imageUploads.map((upload) => upload.imageUploadId),
+					args.imageUploadIds
+				)
 			) {
 				return 'standDown';
 			}

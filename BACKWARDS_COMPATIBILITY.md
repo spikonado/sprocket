@@ -126,6 +126,21 @@ Delete legacy `installation-id` files only after all supported installations
 have launched a JSON-aware server and rollback to an older release is no
 longer supported.
 
+### 9. Thread-message references
+
+Prompts and attachment metadata now live in `threadTranscriptParts`; current
+code neither reads nor writes `threadMessages`. The table is no longer in the
+validated schema. Historical `runs.promptMessageId` and
+`imageUploads.messageIds` remain optional so existing documents validate.
+Gateway run creation still returns a synthetic `promptMessageId` for released
+agents that require the response field; current code does not consume it.
+
+`migrations.removeRunPromptMessageIds` and
+`migrations.removeImageUploadMessageIds` unset both fields. Remove the pinned
+migration runner, its cron, and both schema fields once both migrations report
+`success` and production scans find no remaining values. Historical documents
+in the now-unvalidated `threadMessages` table may be deleted independently.
+
 ## Client APIs
 
 ### Local sessions created before account binding

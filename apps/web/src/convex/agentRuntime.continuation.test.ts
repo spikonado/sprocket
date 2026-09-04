@@ -28,7 +28,6 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 		};
 		const created = await insertQueuedRun(t, asUser, args);
 		expect(created).toMatchObject({ created: true, runId: expect.any(String) });
-		expect(created.promptMessageId).toBeUndefined();
 		expect(created.promptPart).toBeUndefined();
 		expect(created.runId).not.toBe(parent.runId);
 
@@ -44,7 +43,6 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			serviceTier: 'fast',
 			submissionId: 'sub-continue'
 		});
-		expect(continuation?.promptMessageId).toBeUndefined();
 
 		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
 		expect(parts.parts.map((part) => [part.number, part.kind, part.runId])).toEqual([

@@ -34,17 +34,13 @@ export async function getOwnedImageUploads(
 	);
 }
 
-export async function attachImageUploads(
+export async function markImageUploadsAttached(
 	ctx: MutationCtx,
-	uploads: Doc<'imageUploads'>[],
-	messageId: Id<'threadMessages'>
+	uploads: Doc<'imageUploads'>[]
 ): Promise<void> {
 	for (const upload of uploads) {
-		if (!upload.messageIds.includes(messageId)) {
-			await ctx.db.patch('imageUploads', upload._id, {
-				messageIds: [...upload.messageIds, messageId],
-				attached: true
-			});
+		if (!upload.attached) {
+			await ctx.db.patch('imageUploads', upload._id, { attached: true });
 		}
 	}
 }

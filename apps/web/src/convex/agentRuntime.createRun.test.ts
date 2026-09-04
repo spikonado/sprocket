@@ -32,7 +32,6 @@ describe('agentRuntime.insertGatewayRun', () => {
 				name: 'robot.png',
 				mediaType: 'image/png',
 				size: 5,
-				messageIds: [],
 				attached: false
 			});
 		});
@@ -48,13 +47,16 @@ describe('agentRuntime.insertGatewayRun', () => {
 		};
 
 		const created = await insertQueuedRun(t, asUser, args);
-		expect(created).toMatchObject({ created: true });
+		expect(created).toMatchObject({
+			created: true,
+			promptMessageId: `prompt:${created.runId}`
+		});
 
 		const again = await insertQueuedRun(t, asUser, args);
 		expect(again).toEqual({
 			created: false,
 			runId: created.runId,
-			promptMessageId: created.promptMessageId,
+			promptMessageId: `prompt:${created.runId}`,
 			userId: created.userId,
 			promptPart: created.promptPart
 		});
@@ -81,8 +83,10 @@ describe('agentRuntime.insertGatewayRun', () => {
 		expect(run).toMatchObject({
 			status: 'queued',
 			submissionId: 'sub-1',
-			promptMessageId: created.promptMessageId,
 			completionTransport: 'gateway'
+		});
+		expect(await t.run(async (ctx) => ctx.db.get('imageUploads', imageUploadId))).toMatchObject({
+			attached: true
 		});
 	});
 

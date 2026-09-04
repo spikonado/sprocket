@@ -7,14 +7,12 @@ import type {
 	ThreadMessage
 } from '$lib/types/sprocket';
 
-function promptMessageId(runId: Id<'runs'>): Id<'threadMessages'> {
-	// SAFETY: local replica rows are not Convex threadMessages documents.
-	return `prompt:${runId}` as Id<'threadMessages'>;
+function promptMessageId(runId: Id<'runs'>): string {
+	return `prompt:${runId}`;
 }
 
-function responseMessageId(runId: Id<'runs'>): Id<'threadMessages'> {
-	// SAFETY: local replica rows are not Convex threadMessages documents.
-	return `response:${runId}` as Id<'threadMessages'>;
+function responseMessageId(runId: Id<'runs'>): string {
+	return `response:${runId}`;
 }
 
 function toolCallId(part: AssistantPart): string | undefined {
