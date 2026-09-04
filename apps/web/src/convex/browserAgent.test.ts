@@ -190,6 +190,39 @@ describe('browserAgent', () => {
 		expect(stored?.liveViewUrl).toBeUndefined();
 	});
 
+	it('still records the session when the live view URL is not a URL', async () => {
+		process.env.BROWSERBASE_API_KEY = 'bb_key';
+		process.env.BROWSERBASE_PROJECT_ID = 'project-1';
+		process.env.OPENAI_API_KEY = 'openai_key';
+		fetchMock.mockResolvedValueOnce({
+			ok: true,
+			json: async () => ({ debuggerFullscreenUrl: 'not-a-url' })
+		});
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
+		const run = await startRun(t, asUser, threadId);
+
+		const out = await t.action(api.browserAgent.act, {
+			instruction: 'browse anyway',
+			runId: run.runId,
+			claimId: run.claimId,
+			executionSecret: run.executionSecret
+		});
+		expect(out.text).toContain('Action performed');
+
+		const stored = await t.run(async (ctx) =>
+			ctx.db
+				.query('browserSessions')
+				.withIndex('by_thread', (query) => query.eq('threadId', threadId))
+				.first()
+		);
+		expect(stored).toMatchObject({
+			browserbaseSessionId: 'bb-session-task',
+			lastUsedRunId: run.runId
+		});
+		expect(stored?.liveViewUrl).toBeUndefined();
+	});
+
 	it('backfills the live view URL for a session row missing it', async () => {
 		process.env.BROWSERBASE_API_KEY = 'bb_key';
 		process.env.BROWSERBASE_PROJECT_ID = 'project-1';
