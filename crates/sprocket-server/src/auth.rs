@@ -75,6 +75,8 @@ pub fn peer_may_complete_desktop_login_callback(peer: std::net::SocketAddr) -> b
 struct SessionRecord {
     role: String,
     created_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    user_id: Option<String>,
 }
 
 impl AuthState {
@@ -178,6 +180,7 @@ impl AuthState {
             SessionRecord {
                 role: "owner".to_string(),
                 created_at: crate::now_ms(),
+                user_id: None,
             },
         );
         self.persist_sessions().await?;
@@ -198,6 +201,50 @@ impl AuthState {
             .same_site(SameSite::Lax)
             .max_age(cookie::time::Duration::seconds(SESSION_MAX_AGE_SECS))
             .build()
+    }
+
+    pub async fn bind_session_user(
+        &self,
+        session_token: &str,
+        user_id: &str,
+    ) -> anyhow::Result<()> {
+        let snapshot = {
+            let mut sessions = self.sessions.write().await;
+            let session = sessions
+                .get_mut(session_token)
+                .ok_or_else(|| anyhow::anyhow!("authentication required"))?;
+            if session_is_expired(session) {
+                anyhow::bail!("authentication required");
+            }
+            session.user_id = Some(user_id.to_string());
+            sessions_snapshot(&sessions)
+        };
+        self.save_sessions(snapshot).await
+    }
+
+    pub async fn require_session_user(
+        &self,
+        session_token: &str,
+        expected_user_id: &str,
+    ) -> anyhow::Result<()> {
+        let sessions = self.sessions.read().await;
+        let session = sessions
+            .get(session_token)
+            .filter(|session| !session_is_expired(session))
+            .ok_or_else(|| anyhow::anyhow!("authentication required"))?;
+        match session.user_id.as_deref() {
+            Some(user_id) if user_id == expected_user_id => Ok(()),
+            Some(_) => anyhow::bail!("local session belongs to a different user"),
+            None => anyhow::bail!("local session is not bound to a user; sign in again"),
+        }
+    }
+
+    pub async fn session_has_user(&self, session_token: &str) -> bool {
+        self.sessions
+            .read()
+            .await
+            .get(session_token)
+            .is_some_and(|session| !session_is_expired(session) && session.user_id.is_some())
     }
 
     async fn persist_sessions(&self) -> anyhow::Result<()> {
@@ -259,6 +306,17 @@ pub async fn require_session(
     if !session.authenticated {
         anyhow::bail!("authentication required");
     }
+    Ok(session_token)
+}
+
+pub async fn require_session_user(
+    auth: &AuthState,
+    headers: &HeaderMap,
+    jar: &CookieJar,
+    user_id: &str,
+) -> anyhow::Result<String> {
+    let session_token = require_session(auth, headers, jar).await?;
+    auth.require_session_user(&session_token, user_id).await?;
     Ok(session_token)
 }
 
@@ -348,6 +406,44 @@ mod tests {
         let session = reloaded.session_state(Some(&session_token)).await;
         assert!(session.authenticated);
 
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[tokio::test]
+    async fn account_scoped_access_requires_the_bound_session_user() {
+        let temp_dir = std::env::temp_dir().join(format!("sprocket-auth-test-{}", Uuid::new_v4()));
+        let auth = AuthState::load(&temp_dir).expect("auth state");
+        let (_, session_token) = auth
+            .bootstrap(auth.pairing_credential())
+            .await
+            .expect("bootstrap should succeed");
+
+        assert!(
+            auth.require_session_user(&session_token, "user-1")
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("sign in again")
+        );
+        auth.bind_session_user(&session_token, "user-1")
+            .await
+            .unwrap();
+        auth.require_session_user(&session_token, "user-1")
+            .await
+            .unwrap();
+        assert_eq!(
+            auth.require_session_user(&session_token, "user-2")
+                .await
+                .unwrap_err()
+                .to_string(),
+            "local session belongs to a different user"
+        );
+
+        let reloaded = AuthState::load(&temp_dir).expect("reloaded auth state");
+        reloaded
+            .require_session_user(&session_token, "user-1")
+            .await
+            .unwrap();
         let _ = fs::remove_dir_all(temp_dir);
     }
 

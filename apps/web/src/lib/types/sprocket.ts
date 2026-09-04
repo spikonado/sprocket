@@ -195,21 +195,15 @@ export type ThreadCacheUserRequest = {
 	userId: string;
 };
 
-export type ThreadCacheRegisterRequest = ThreadCacheUserRequest & {
-	authToken: string;
-};
-
 export type LiveCompletionWatchEvent =
 	{ eventType: 'updated'; live: LiveCompletionOverlay } | { eventType: 'cleared' };
 
 export type TranscriptScopeRequest = {
-	authToken: string;
 	userId: string;
 	threadId: Id<'threadRecords'>;
 };
 
 export type TranscriptPageRequest = {
-	authToken?: string;
 	userId: string;
 	threadId: Id<'threadRecords'>;
 	before?: number;
@@ -269,7 +263,7 @@ export type DesktopApi = {
 	fetchTranscriptAttachment: (
 		request: TranscriptScopeRequest & { imageUploadId: Id<'imageUploads'> }
 	) => Promise<Blob | null>;
-	registerThreadCache: (request: ThreadCacheRegisterRequest) => Promise<ThreadCacheWatchEvent>;
+	registerThreadCache: (request: ThreadCacheUserRequest) => Promise<ThreadCacheWatchEvent>;
 	fetchThreadSnapshot: (request: ThreadCacheUserRequest) => Promise<ThreadCacheSnapshot>;
 	syncArchivedThreads: (request: ThreadCacheUserRequest) => Promise<ThreadCacheWatchEvent>;
 	watchThreadCache: (
@@ -283,13 +277,15 @@ export type DesktopApi = {
 	archiveThread: (request: ThreadCommandRequest) => Promise<boolean>;
 	restoreThread: (request: ThreadCommandRequest) => Promise<boolean>;
 	rekeyRepository: (
-		request: ThreadCacheRegisterRequest & { from: string; to: string }
+		request: ThreadCacheUserRequest & { from: string; to: string }
 	) => Promise<number>;
-	requestRunCancellation: (request: { authToken: string; runId: Id<'runs'> }) => Promise<void>;
+	requestRunCancellation: (
+		request: ThreadCacheUserRequest & { runId: Id<'runs'> }
+	) => Promise<void>;
 	endAccountSession: (request: ThreadCacheUserRequest) => Promise<void>;
 };
 
-export type ThreadCommandRequest = ThreadCacheRegisterRequest & {
+export type ThreadCommandRequest = ThreadCacheUserRequest & {
 	threadId: Id<'threadRecords'>;
 };
 

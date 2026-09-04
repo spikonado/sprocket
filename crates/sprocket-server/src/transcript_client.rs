@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, anyhow};
@@ -16,13 +15,6 @@ pub struct UserConvexClient {
 }
 
 impl UserConvexClient {
-    pub async fn connect(deployment_url: &str, auth_token: String) -> anyhow::Result<Self> {
-        let client = ConvexClient::new(deployment_url).await?;
-        let fetcher = static_token_fetcher(auth_token);
-        client.set_auth_token_fetcher(fetcher).await;
-        Ok(Self { client })
-    }
-
     pub async fn connect_with_fetcher(
         deployment_url: &str,
         fetcher: AuthTokenFetcher,
@@ -168,18 +160,6 @@ pub struct RemoteAttachmentDownload {
     pub media_type: String,
     pub storage_id: String,
     pub url: String,
-}
-
-fn static_token_fetcher(token: String) -> AuthTokenFetcher {
-    Arc::new(move |_force_refresh| {
-        let token = token.clone();
-        Box::pin(async move {
-            if token.trim().is_empty() {
-                return Err(anyhow!("transcript auth token is empty"));
-            }
-            Ok(token)
-        })
-    })
 }
 
 fn thread_id_args(thread_id: &str) -> BTreeMap<String, Value> {

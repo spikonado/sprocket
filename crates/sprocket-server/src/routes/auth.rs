@@ -233,11 +233,20 @@ async fn desktop_login_callback(
     };
 
     match state.native_auth.complete_login(code, callback_state).await {
-        Ok(_) => desktop_login_html_response(
-            StatusCode::OK,
-            "Signed in",
-            "Return to Sprocket. You can close this tab.",
-        ),
+        Ok((user, session_token)) => {
+            if let Err(error) = state.auth.bind_session_user(&session_token, &user.id).await {
+                return desktop_login_html_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Sign-in failed",
+                    &error.to_string(),
+                );
+            }
+            desktop_login_html_response(
+                StatusCode::OK,
+                "Signed in",
+                "Return to Sprocket. You can close this tab.",
+            )
+        }
         Err(error) => desktop_login_html_response(
             StatusCode::BAD_REQUEST,
             "Sign-in failed",
@@ -255,7 +264,13 @@ async fn desktop_login_result(
         .await
         .map_err(|_| ApiError::authentication_required())?;
 
-    Ok(Json(state.native_auth.status(&session_token).await))
+    let status = state.native_auth.status(&session_token).await;
+    if matches!(status, NativeLoginStatus::Authenticated { .. })
+        && !state.auth.session_has_user(&session_token).await
+    {
+        return Ok(Json(NativeLoginStatus::SignedOut));
+    }
+    Ok(Json(status))
 }
 
 async fn desktop_login_cancel(
@@ -377,24 +392,26 @@ mod tests {
 
         let project_attachments = ProjectAttachmentStore::new(temp_dir.clone());
         let transcript = sprocket_agent::TranscriptStore::new(temp_dir.join("transcripts"));
-        let transcript_watchers = crate::transcript_watch::TranscriptWatchers::new(
-            "https://example.convex.cloud".to_string(),
-            transcript.clone(),
-        );
-        let thread_cache = crate::thread_sync::ThreadCacheSync::new(
-            "https://example.convex.cloud".to_string(),
-            crate::thread_cache::ThreadSnapshotStore::new(temp_dir.clone()),
-            project_attachments.clone(),
-        );
-
-        let machine_identity = Arc::new(
-            crate::machine_identity::MachineIdentity::load(&temp_dir).expect("machine identity"),
-        );
         let native_auth = crate::native_auth::NativeAuthManager::configured_for_test(
             crate::native_auth::NativeAuthConfig {
                 workos_client_id: "client_test".to_string(),
             },
             auth::desktop_login_callback_url(7731),
+        );
+        let transcript_watchers = crate::transcript_watch::TranscriptWatchers::new(
+            "https://example.convex.cloud".to_string(),
+            transcript.clone(),
+            Arc::clone(&native_auth),
+        );
+        let thread_cache = crate::thread_sync::ThreadCacheSync::new(
+            "https://example.convex.cloud".to_string(),
+            crate::thread_cache::ThreadSnapshotStore::new(temp_dir.clone()),
+            project_attachments.clone(),
+            Arc::clone(&native_auth),
+        );
+
+        let machine_identity = Arc::new(
+            crate::machine_identity::MachineIdentity::load(&temp_dir).expect("machine identity"),
         );
         let state = AppState {
             auth,
@@ -405,7 +422,7 @@ mod tests {
             thread_cache,
             machines: crate::machines::MachineManager::new(
                 "https://example.convex.cloud".to_string(),
-                native_auth.auth_token_fetcher(),
+                Arc::clone(&native_auth),
                 Arc::clone(&machine_identity),
             ),
             live_completions: Arc::new(sprocket_agent::LiveCompletionHub::new()),

@@ -8,6 +8,7 @@ use tokio::sync::{Mutex, broadcast};
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
+use crate::native_auth::NativeAuthManager;
 use crate::now_ms;
 use crate::project_attachments::{ProjectAttachmentStore, WorkspaceAvailability};
 use crate::thread_cache::{
@@ -45,7 +46,6 @@ struct WatchKey {
 
 struct CacheInner {
     user_id: Option<String>,
-    auth_token: Option<String>,
     status: ThreadCacheStatus,
     last_synced_at: Option<u64>,
     tasks: HashMap<WatchKey, JoinHandle<()>>,
@@ -55,6 +55,7 @@ pub struct ThreadCacheSync {
     deployment_url: String,
     store: Arc<ThreadSnapshotStore>,
     attachments: Arc<ProjectAttachmentStore>,
+    native_auth: Arc<NativeAuthManager>,
     inner: Mutex<CacheInner>,
     events: broadcast::Sender<ThreadCacheEvent>,
 }
@@ -64,19 +65,20 @@ pub struct ThreadCacheWatchSession {
 }
 
 impl ThreadCacheSync {
-    pub fn new(
+    pub(crate) fn new(
         deployment_url: String,
         store: Arc<ThreadSnapshotStore>,
         attachments: Arc<ProjectAttachmentStore>,
+        native_auth: Arc<NativeAuthManager>,
     ) -> Arc<Self> {
         let (events, _) = broadcast::channel(32);
         Arc::new(Self {
             deployment_url,
             store,
             attachments,
+            native_auth,
             inner: Mutex::new(CacheInner {
                 user_id: None,
-                auth_token: None,
                 status: ThreadCacheStatus::Loading,
                 last_synced_at: None,
                 tasks: HashMap::new(),
@@ -129,18 +131,10 @@ impl ThreadCacheSync {
         }
     }
 
-    pub async fn register(
-        self: &Arc<Self>,
-        user_id: &str,
-        auth_token: String,
-    ) -> anyhow::Result<()> {
+    pub async fn register(self: &Arc<Self>, user_id: &str) -> anyhow::Result<()> {
         let user_id = user_id.trim();
-        let auth_token = auth_token.trim();
         if user_id.is_empty() {
             anyhow::bail!("user id is required");
-        }
-        if auth_token.is_empty() {
-            anyhow::bail!("auth token is required");
         }
         let last_synced_at = self.store.latest_synced_at(user_id).await?;
         let mut emit_loading = false;
@@ -152,7 +146,6 @@ impl ThreadCacheSync {
                 emit_loading = true;
             }
             inner.user_id = Some(user_id.to_string());
-            inner.auth_token = Some(auth_token.to_string());
             inner.last_synced_at = last_synced_at.or(inner.last_synced_at);
         }
         if emit_loading {
@@ -173,9 +166,6 @@ impl ThreadCacheSync {
             if inner.user_id.as_deref() != Some(user_id) {
                 anyhow::bail!("thread cache is registered to a different account");
             }
-            if inner.auth_token.as_deref().unwrap_or("").is_empty() {
-                anyhow::bail!("thread cache is not registered");
-            }
         }
         self.reconcile_watches(ThreadSnapshotCategory::Archived)
             .await?;
@@ -185,17 +175,21 @@ impl ThreadCacheSync {
     pub async fn refresh_repository(
         self: &Arc<Self>,
         user_id: &str,
-        auth_token: String,
         repository_key: &str,
         categories: &[ThreadSnapshotCategory],
     ) -> anyhow::Result<()> {
-        self.register(user_id, auth_token.clone()).await?;
+        self.register(user_id).await?;
         if repository_key.is_empty() {
             return Ok(());
         }
-        self.ensure_repository_watches(user_id, repository_key, categories, &auth_token)
+        self.ensure_repository_watches(user_id, repository_key, categories)
             .await;
-        let client = UserConvexClient::connect(&self.deployment_url, auth_token).await?;
+        let client = UserConvexClient::connect_with_fetcher(
+            &self.deployment_url,
+            self.native_auth
+                .auth_token_fetcher_for_user(user_id.to_string()),
+        )
+        .await?;
         for &category in categories {
             let start = WatchStart {
                 deployment_url: self.deployment_url.clone(),
@@ -204,7 +198,7 @@ impl ThreadCacheSync {
                 user_id: user_id.to_string(),
                 repository_key: repository_key.to_string(),
                 category,
-                auth_token: String::new(),
+                native_auth: Arc::clone(&self.native_auth),
             };
             download_consistent_snapshot(&start, &client).await?;
         }
@@ -216,7 +210,6 @@ impl ThreadCacheSync {
         user_id: &str,
         repository_key: &str,
         categories: &[ThreadSnapshotCategory],
-        auth_token: &str,
     ) {
         let mut inner = self.inner.lock().await;
         if inner.user_id.as_deref() != Some(user_id) {
@@ -238,7 +231,7 @@ impl ThreadCacheSync {
                 user_id: key.user_id.clone(),
                 repository_key: key.repository_key.clone(),
                 category: key.category,
-                auth_token: auth_token.to_string(),
+                native_auth: Arc::clone(&self.native_auth),
             }));
             inner.tasks.insert(key, task);
         }
@@ -248,18 +241,12 @@ impl ThreadCacheSync {
         self: &Arc<Self>,
         category: ThreadSnapshotCategory,
     ) -> anyhow::Result<()> {
-        let (user_id, auth_token) = {
+        let user_id = {
             let inner = self.inner.lock().await;
-            (
-                inner
-                    .user_id
-                    .clone()
-                    .ok_or_else(|| anyhow!("thread cache is not registered"))?,
-                inner
-                    .auth_token
-                    .clone()
-                    .ok_or_else(|| anyhow!("thread cache is not registered"))?,
-            )
+            inner
+                .user_id
+                .clone()
+                .ok_or_else(|| anyhow!("thread cache is not registered"))?
         };
         let repository_keys = attached_repository_keys(&self.attachments).await?;
         let wanted: HashSet<WatchKey> = repository_keys
@@ -293,7 +280,7 @@ impl ThreadCacheSync {
                 user_id: key.user_id.clone(),
                 repository_key: key.repository_key.clone(),
                 category: key.category,
-                auth_token: auth_token.clone(),
+                native_auth: Arc::clone(&self.native_auth),
             }));
             inner.tasks.insert(key, task);
         }
@@ -345,7 +332,7 @@ struct WatchStart {
     user_id: String,
     repository_key: String,
     category: ThreadSnapshotCategory,
-    auth_token: String,
+    native_auth: Arc<NativeAuthManager>,
 }
 
 fn abort_tasks(inner: &mut CacheInner) {
@@ -409,7 +396,13 @@ fn classify_watch_error(error: &anyhow::Error) -> ThreadCacheStatus {
 }
 
 async fn run_watch(start: &WatchStart) -> anyhow::Result<()> {
-    let client = UserConvexClient::connect(&start.deployment_url, start.auth_token.clone()).await?;
+    let client = UserConvexClient::connect_with_fetcher(
+        &start.deployment_url,
+        start
+            .native_auth
+            .auth_token_fetcher_for_user(start.user_id.clone()),
+    )
+    .await?;
     let mut subscription = client
         .subscribe_snapshot_revision(&start.repository_key, start.category.as_str())
         .await?;

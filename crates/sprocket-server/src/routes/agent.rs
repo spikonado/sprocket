@@ -23,14 +23,14 @@ use tokio::time::timeout;
 use uuid::Uuid;
 
 use crate::AppState;
-use crate::auth::require_session;
+use crate::auth::require_session_user;
 use crate::routes::api_error::ApiError;
 
 const AGENT_START_TIMEOUT: Duration = Duration::from_secs(20);
 const AGENT_START_CLEANUP_TIMEOUT: Duration = Duration::from_secs(12);
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RunAgentApiRequest {
     user_id: String,
     submission_id: String,
@@ -63,7 +63,12 @@ async fn run_agent_handler(
     jar: CookieJar,
     Json(payload): Json<RunAgentApiRequest>,
 ) -> Result<(StatusCode, Json<RunAgentStartResponse>), ApiError> {
-    require_session(&state.auth, &headers, &jar)
+    require_session_user(&state.auth, &headers, &jar, &payload.user_id)
+        .await
+        .map_err(ApiError::unauthorized)?;
+    state
+        .native_auth
+        .require_user(&payload.user_id)
         .await
         .map_err(ApiError::unauthorized)?;
 
@@ -78,7 +83,9 @@ async fn run_agent_handler(
         .register(&payload.user_id)
         .await
         .map_err(ApiError::bad_request)?;
-    let auth_token_fetcher = state.native_auth.auth_token_fetcher();
+    let auth_token_fetcher = state
+        .native_auth
+        .auth_token_fetcher_for_user(payload.user_id.clone());
     let request = RunAgentRequest {
         deployment_url: state.convex_deployment_url.clone(),
         auth_token_fetcher: auth_token_fetcher.clone(),
@@ -172,8 +179,9 @@ async fn run_agent_handler(
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct LiveCompletionWatchRequest {
+    user_id: String,
     thread_id: String,
 }
 
@@ -189,7 +197,7 @@ async fn live_handler(
     jar: CookieJar,
     Json(payload): Json<LiveCompletionWatchRequest>,
 ) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    require_session(&state.auth, &headers, &jar)
+    require_session_user(&state.auth, &headers, &jar, &payload.user_id)
         .await
         .map_err(ApiError::unauthorized)?;
     let hub = Arc::clone(&state.live_completions);
