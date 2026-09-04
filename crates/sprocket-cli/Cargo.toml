@@ -11,7 +11,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1.0.102"
 clap = { version = "4.5.60", features = ["derive", "env"] }
-open = "5.3.3"
+open = "5.4.2"
 reqwest = { version = "0.13.4", default-features = false, features = ["json"] }
 sprocket-server = { path = "../sprocket-server" }
 sprocket-workspace = { path = "../sprocket-workspace" }

@@ -266,7 +266,7 @@ async fn open_browser_when_ready(health_base_url: String, open_target: String) {
             .await
             .is_ok_and(|response| response.status().is_success())
         {
-            if let Err(error) = open::that(&open_target) {
+            if let Err(error) = open::that_detached(&open_target) {
                 tracing::warn!("failed to open browser: {error}");
             }
             return;
