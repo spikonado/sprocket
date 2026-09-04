@@ -20,8 +20,6 @@ export async function registerCompletionAttemptForRun(
 	run: Doc<'runs'>,
 	attemptSeq: number
 ): Promise<void> {
-	// The response `threadMessages` document is no longer maintained (see
-	// BACKWARDS_COMPATIBILITY.md). Superseded-attempt scrubbing retires with it:
-	// partial turns are discarded on the agent side, not in Convex.
+	// Partial superseded turns are discarded on the agent side, not in Convex.
 	await ctx.db.patch('runs', run._id, { completionAttemptSeq: attemptSeq });
 }

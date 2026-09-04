@@ -507,7 +507,7 @@ mod tests {
         let created: CreateRunResponse = serde_json::from_value(serde_json::json!({
             "created": true,
             "runId": "jd7run",
-            "promptMessageId": "jd7msg",
+            "promptMessageId": "prompt:jd7run",
             "userId": "user_1",
             "promptPart": {
                 "number": 0.0,

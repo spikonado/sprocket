@@ -21,7 +21,6 @@ import {
 	vServiceTier,
 	vSubscriptionStatus,
 	vSubscriptionTier,
-	vThreadMessageType,
 	vTranscriptCompletionBody,
 	vTranscriptPartKind,
 	vTranscriptPromptBody,
@@ -174,7 +173,8 @@ export default defineSchema({
 		cancellationRequestedAt: v.optional(v.number()),
 		cancellationDeadlineAt: v.optional(v.number()),
 		activeJobId: v.optional(v.id('executorJobs')),
-		promptMessageId: v.optional(v.id('threadMessages')),
+		// Deprecated: prompts now live in threadTranscriptParts.
+		promptMessageId: v.optional(v.string()),
 		completionStreamStateId: v.optional(v.id('completionStreamStates')),
 		lifecycleWorkflowId: v.optional(v.string())
 	})
@@ -182,14 +182,6 @@ export default defineSchema({
 		.index('by_threadId_status_startedAt', ['threadId', 'status', 'startedAt'])
 		.index('by_executionSecretHash', ['executionSecretHash'])
 		.index('by_userId_submissionId', ['userId', 'submissionId']),
-	threadMessages: defineTable({
-		threadId: v.id('threadRecords'),
-		runId: v.id('runs'),
-		userId: v.string(),
-		type: vThreadMessageType,
-		text: v.string(),
-		imageUploadIds: v.optional(v.array(v.id('imageUploads')))
-	}),
 	// Durable numbered transcript replica source. Kept off threadRecords so
 	// appends do not invalidate the thread list subscription.
 	threadTranscriptStates: defineTable({
@@ -225,7 +217,8 @@ export default defineSchema({
 		name: v.string(),
 		mediaType: v.string(),
 		size: v.number(),
-		messageIds: v.array(v.id('threadMessages')),
+		// Deprecated: attachment retention uses `attached`.
+		messageIds: v.optional(v.array(v.string())),
 		attached: v.boolean()
 	})
 		.index('by_userId', ['userId'])

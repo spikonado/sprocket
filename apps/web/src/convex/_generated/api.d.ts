@@ -46,7 +46,6 @@ import type * as lib_runLease from "../lib/runLease.js";
 import type * as lib_runResume from "../lib/runResume.js";
 import type * as lib_runTerminal from "../lib/runTerminal.js";
 import type * as lib_runs from "../lib/runs.js";
-import type * as lib_threadMessages from "../lib/threadMessages.js";
 import type * as lib_threadSnapshots from "../lib/threadSnapshots.js";
 import type * as lib_threadUsage from "../lib/threadUsage.js";
 import type * as lib_tiers from "../lib/tiers.js";
@@ -116,7 +115,6 @@ declare const fullApi: ApiFromModules<{
   "lib/runResume": typeof lib_runResume;
   "lib/runTerminal": typeof lib_runTerminal;
   "lib/runs": typeof lib_runs;
-  "lib/threadMessages": typeof lib_threadMessages;
   "lib/threadSnapshots": typeof lib_threadSnapshots;
   "lib/threadUsage": typeof lib_threadUsage;
   "lib/tiers": typeof lib_tiers;

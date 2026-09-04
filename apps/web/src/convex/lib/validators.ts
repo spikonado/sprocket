@@ -415,10 +415,6 @@ export const vExecutorJobStatus = v.union(
 	v.literal('cancelled')
 );
 
-export const vThreadMessageType = v.union(v.literal('prompt'), v.literal('response'));
-
-export type ThreadMessageType = Infer<typeof vThreadMessageType>;
-
 export const supportedImageMediaTypes = [
 	'image/jpeg',
 	'image/png',

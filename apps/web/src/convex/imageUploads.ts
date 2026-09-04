@@ -73,7 +73,6 @@ export const register = mutation({
 			name,
 			mediaType,
 			size: metadata.size,
-			messageIds: [],
 			attached: false
 		});
 		const url = await ctx.storage.getUrl(args.storageId);

@@ -6,7 +6,6 @@ import {
 	vExecutorJobKind,
 	vExecutorJobStatus,
 	vRunStatus,
-	vThreadMessageType,
 	type ExecutorJobPayload,
 	type ExecutorJobResult,
 	type WorkspaceInstruction
@@ -79,7 +78,6 @@ export type RunState = {
 	completedAt?: number;
 	lastError?: string;
 	activeJobId?: Id<'executorJobs'>;
-	promptMessageId?: Id<'threadMessages'>;
 	jobs: ExecutorJob[];
 };
 
@@ -92,12 +90,12 @@ export type MessageAttachment = {
 };
 
 export type ThreadMessage = {
-	_id: Id<'threadMessages'>;
+	_id: string;
 	_creationTime?: number;
 	threadId: Id<'threadRecords'>;
 	runId: Id<'runs'>;
 	userId: string;
-	type: Infer<typeof vThreadMessageType>;
+	type: 'prompt' | 'response';
 	text: string;
 	attachments: MessageAttachment[];
 	parts: AssistantPart[];
