@@ -144,7 +144,7 @@ async function fetchLiveViewUrl(apiKey: string, sessionId: string): Promise<stri
 			signal: AbortSignal.timeout(5_000)
 		});
 		if (!response.ok) return null;
-		const parsed = z.object({ debuggerFullscreenUrl: z.string() }).safeParse(await response.json());
+		const parsed = z.object({ debuggerFullscreenUrl: z.url() }).safeParse(await response.json());
 		return parsed.success ? parsed.data.debuggerFullscreenUrl : null;
 	} catch {
 		return null;

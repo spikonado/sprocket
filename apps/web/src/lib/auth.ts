@@ -226,7 +226,7 @@ const desktopLoginResultSchema = z.discriminatedUnion('status', [
 	z.object({ status: z.literal('pending') }),
 	z.object({
 		status: z.literal('authenticated'),
-		user: z.object({ id: z.string(), email: z.string() })
+		user: z.object({ id: z.string(), email: z.email() })
 	}),
 	z.object({ status: z.literal('unavailable'), error: z.string() }),
 	z.object({ status: z.literal('failed'), error: z.string() })
