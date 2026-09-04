@@ -962,10 +962,7 @@ fn parse_sprocket_sibling(name: &str, file_name: &str, kind: &str) -> Option<(u1
 
 /// Same-process seq is monotonic even if the wall clock jumps backward.
 /// Different processes have no shared counter, so timestamp is the fallback.
-fn sprocket_sibling_is_newer(
-    candidate: (u128, u64, u32),
-    best: (u128, u64, u32),
-) -> bool {
+fn sprocket_sibling_is_newer(candidate: (u128, u64, u32), best: (u128, u64, u32)) -> bool {
     let (candidate_nanos, candidate_seq, candidate_pid) = candidate;
     let (best_nanos, best_seq, best_pid) = best;
     if candidate_pid == best_pid {
