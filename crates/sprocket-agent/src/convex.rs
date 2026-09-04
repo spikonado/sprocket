@@ -134,7 +134,12 @@ impl RuntimeClient {
             "submissionId".to_string(),
             request.submission_id.clone().into(),
         );
-        args.insert("threadId".to_string(), request.thread_id.clone().into());
+        if !request.thread_id.is_empty() {
+            args.insert("threadId".to_string(), request.thread_id.clone().into());
+        }
+        if let Some(repository_key) = &request.repository_key {
+            args.insert("repositoryKey".to_string(), repository_key.clone().into());
+        }
         args.insert("prompt".to_string(), request.prompt.clone().into());
         args.insert(
             "imageUploadIds".to_string(),
@@ -276,7 +281,9 @@ impl RuntimeClient {
             "submissionId".to_string(),
             request.submission_id.clone().into(),
         );
-        args.insert("threadId".to_string(), request.thread_id.clone().into());
+        if !request.thread_id.is_empty() {
+            args.insert("threadId".to_string(), request.thread_id.clone().into());
+        }
         args.insert("prompt".to_string(), request.prompt.clone().into());
         args.insert(
             "imageUploadIds".to_string(),

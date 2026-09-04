@@ -77,19 +77,17 @@ describe('thread cache local API', () => {
 		const snapshot = {
 			threads: [
 				{
-					threadId: 'thread-1',
+					_id: 'thread-1',
+					_creationTime: 1,
+					userId: 'user-1',
+					submissionId: 'submission-1',
 					repositoryKey: 'alpha',
 					title: 'Hello',
 					selectedModel: 'gpt-5.6-sol',
 					reasoningEffort: 'medium',
 					serviceTier: 'standard',
 					lastMessageAt: 10,
-					threadStatus: 'active',
-					latestRunStatus: null,
-					latestRunId: null,
-					latestRunStartedAt: null,
-					latestRunClaimExpiresAt: null,
-					hasActiveRun: false
+					status: 'completed'
 				}
 			],
 			status: 'live',
@@ -122,19 +120,17 @@ describe('thread cache local API', () => {
 		expect(await client.fetchThreadSnapshot({ userId: 'user-1' })).toEqual({
 			threads: [
 				{
-					threadId: 'thread-1',
+					_id: 'thread-1',
+					_creationTime: 1,
+					userId: 'user-1',
+					submissionId: 'submission-1',
 					repositoryKey: 'alpha',
 					title: 'Hello',
 					selectedModel: 'gpt-5.6-sol',
 					reasoningEffort: 'medium',
 					serviceTier: 'standard',
 					lastMessageAt: 10,
-					threadStatus: 'active',
-					latestRunStatus: null,
-					latestRunId: null,
-					latestRunStartedAt: undefined,
-					latestRunClaimExpiresAt: undefined,
-					hasActiveRun: false
+					status: 'completed'
 				}
 			],
 			status: 'live',

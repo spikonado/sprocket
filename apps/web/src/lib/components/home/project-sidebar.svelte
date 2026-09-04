@@ -374,7 +374,7 @@
 																	class="size-1.5 shrink-0 animate-pulse rounded-full bg-amber-300"
 																	aria-label="Starting agent"
 																></span>
-															{:else if thread.hasActiveRun}
+															{:else if thread.status === 'queued' || thread.status === 'running' || thread.status === 'awaiting_executor'}
 																<span
 																	class="size-1.5 shrink-0 animate-pulse rounded-full bg-emerald-400"
 																	aria-label="Thread has an active run"

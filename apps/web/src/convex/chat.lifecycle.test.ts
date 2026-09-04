@@ -4,13 +4,13 @@ import { CANCELLATION_FORCE_AFTER_MS } from '@convex/lib/runCancellation';
 import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 
 describe('chat.selectedThreadLifecycle', { timeout: 20_000 }, () => {
-	it('is idle when the thread has no run', async () => {
+	it('shows the latest completed run for a persisted thread', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		expect(await asUser.query(api.chat.selectedThreadLifecycle, { threadId })).toEqual({
+		expect(await asUser.query(api.chat.selectedThreadLifecycle, { threadId })).toMatchObject({
 			threadId,
-			phase: 'idle',
-			run: null
+			phase: 'completed',
+			run: { runId: expect.any(String) }
 		});
 	});
 });

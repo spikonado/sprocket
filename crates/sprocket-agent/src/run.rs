@@ -63,6 +63,10 @@ impl AgentRun {
         &self.user_id
     }
 
+    pub fn thread_id(&self) -> &str {
+        &self.request.thread_id
+    }
+
     pub fn prompt_part(&self) -> Option<&crate::transcript::TranscriptPart> {
         self.prompt_part.as_ref()
     }
@@ -581,6 +585,8 @@ pub async fn start_agent_run(request: RunAgentRequest) -> anyhow::Result<AgentRu
     let workspace_root = resolve_workspace_root(&request.workspace_path)?;
 
     let created_run = runtime.create_run(&request).await?;
+    let mut request = request;
+    request.thread_id = created_run.thread_id.clone();
     // The browser token is only needed to create and bind the run. Every later
     // operation uses the run-scoped capability, so browser lifetime and token
     // refresh can no longer interrupt an active local executor.

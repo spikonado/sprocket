@@ -11,7 +11,6 @@ import type {
 	ThreadCacheSnapshot,
 	ThreadCacheUserRequest,
 	ThreadCacheWatchEvent,
-	ThreadSummary,
 	TranscriptScopeRequest
 } from '$lib/types/sprocket';
 import type { TableNamesInDataModel } from 'convex/server';
@@ -55,7 +54,8 @@ const projectAttachmentSchema = z.object({
 	previousRepositoryKey: z.string().optional()
 });
 const agentRunStartSchema = z.object({
-	runId: z.string()
+	runId: z.string(),
+	threadId: z.string()
 });
 const localTranscriptAttachmentSchema = z.object({
 	imageUploadId: z.string(),
@@ -120,22 +120,23 @@ const liveCompletionWatchEventSchema = z.discriminatedUnion('eventType', [
 	z.object({ eventType: z.literal('cleared') })
 ]);
 const threadSummarySchema = z.object({
-	threadId: z.string(),
-	repositoryKey: z.string(),
-	title: z.string(),
+	_id: z.string(),
+	_creationTime: z.number(),
+	userId: z.string(),
+	submissionId: z.string(),
+	repositoryKey: z.string().optional(),
+	projectId: z.string().optional(),
+	title: z.string().optional(),
 	selectedModel: z.string(),
-	reasoningEffort: z.string(),
-	serviceTier: z.string(),
-	lastMessageAt: z.int(),
-	threadStatus: z.enum(['active', 'archived']),
-	latestRunStatus: z
+	reasoningEffort: z.enum(['none', 'low', 'medium', 'high', 'xhigh', 'max']),
+	serviceTier: z.enum(['standard', 'fast']),
+	contextSummary: z.string().optional(),
+	contextSummaryThroughRunId: z.string().optional(),
+	lastMessageAt: z.number(),
+	archivedAt: z.number().optional(),
+	status: z
 		.enum(['queued', 'running', 'awaiting_executor', 'completed', 'failed', 'cancelled'])
-		.nullable()
-		.optional(),
-	latestRunId: z.string().nullable().optional(),
-	latestRunStartedAt: z.int().nullable().optional(),
-	latestRunClaimExpiresAt: z.int().nullable().optional(),
-	hasActiveRun: z.boolean()
+		.optional()
 });
 const threadCacheWatchEventSchema = z.object({
 	status: z.enum(['loading', 'live', 'reconnecting', 'offline', 'error']),
@@ -232,21 +233,16 @@ function parseLiveCompletionOverlay(
 	};
 }
 
-function parseThreadSummary(thread: z.infer<typeof threadSummarySchema>): ThreadSummary {
+function parseThreadRecord(
+	thread: z.infer<typeof threadSummarySchema>
+): DataModel['threadRecords']['document'] {
 	return {
-		threadId: asConvexId(thread.threadId),
-		repositoryKey: thread.repositoryKey,
-		title: thread.title,
-		selectedModel: thread.selectedModel,
-		reasoningEffort: thread.reasoningEffort,
-		serviceTier: thread.serviceTier,
-		lastMessageAt: thread.lastMessageAt,
-		threadStatus: thread.threadStatus,
-		latestRunStatus: thread.latestRunStatus ?? null,
-		latestRunId: thread.latestRunId ? asConvexId(thread.latestRunId) : null,
-		latestRunStartedAt: thread.latestRunStartedAt ?? undefined,
-		latestRunClaimExpiresAt: thread.latestRunClaimExpiresAt ?? undefined,
-		hasActiveRun: thread.hasActiveRun
+		...thread,
+		_id: asConvexId(thread._id),
+		projectId: thread.projectId ? asConvexId(thread.projectId) : undefined,
+		contextSummaryThroughRunId: thread.contextSummaryThroughRunId
+			? asConvexId(thread.contextSummaryThroughRunId)
+			: undefined
 	};
 }
 
@@ -264,7 +260,7 @@ function parseThreadCacheSnapshot(
 ): ThreadCacheSnapshot {
 	return {
 		...parseThreadCacheWatchEvent(snapshot),
-		threads: snapshot.threads.map(parseThreadSummary)
+		threads: snapshot.threads.map(parseThreadRecord)
 	};
 }
 
@@ -590,7 +586,7 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				method: 'POST',
 				body: JSON.stringify(requestBody)
 			});
-			return { runId: asConvexId(result.runId) };
+			return { runId: asConvexId(result.runId), threadId: asConvexId(result.threadId) };
 		},
 		fetchTranscriptPage: async (requestBody) => {
 			const page = await request('/api/transcript/page', localTranscriptPageSchema, {
@@ -651,13 +647,6 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 		fetchThreadSnapshot: async (requestBody) =>
 			parseThreadCacheSnapshot(
 				await request('/api/threads/snapshot', threadCacheSnapshotSchema, {
-					method: 'POST',
-					body: JSON.stringify(requestBody)
-				})
-			),
-		syncArchivedThreads: async (requestBody) =>
-			parseThreadCacheWatchEvent(
-				await request('/api/threads/archive-sync', threadCacheWatchEventSchema, {
 					method: 'POST',
 					body: JSON.stringify(requestBody)
 				})

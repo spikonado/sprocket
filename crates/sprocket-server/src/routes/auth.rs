@@ -405,8 +405,7 @@ mod tests {
         );
         let thread_cache = crate::thread_sync::ThreadCacheSync::new(
             "https://example.convex.cloud".to_string(),
-            crate::thread_cache::ThreadSnapshotStore::new(temp_dir.clone()),
-            project_attachments.clone(),
+            crate::thread_cache::ThreadCacheStore::new(temp_dir.clone()),
             Arc::clone(&native_auth),
         );
 

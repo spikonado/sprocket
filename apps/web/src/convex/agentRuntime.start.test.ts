@@ -3,36 +3,26 @@ import { api } from '@convex/_generated/api';
 import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 
 describe('agentRuntime.start', () => {
-	it('bumps the summary revision on status changes but not claim renewal', async () => {
+	it('mirrors status changes onto the thread record', async () => {
 		const t = initConvexTest();
-		const { asUser, repositoryKey, threadId } = await seedOwnedThread(t);
+		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'start-revision-secret';
-		const revision = () =>
-			asUser.query(api.threads.getSnapshotRevision, {
-				repositoryKey,
-				category: 'active'
-			});
-
-		const beforeCreate = await revision();
 		const { runId } = await createQueuedRun(t, asUser, threadId, 'sub-revision', executionSecret);
-		const afterCreate = await revision();
-		expect(afterCreate).toBeGreaterThan(beforeCreate);
 
 		await asUser.mutation(api.agentRuntime.start, {
 			claimId: 'claim-revision',
 			runId,
 			executionSecret
 		});
-		const afterStart = await revision();
-		expect(afterStart).toBe(afterCreate + 1);
+		expect(await t.run(async (ctx) => (await ctx.db.get('threadRecords', threadId))?.status)).toBe(
+			'running'
+		);
 
 		await asUser.mutation(api.agentRuntime.start, {
 			claimId: 'claim-revision',
 			runId,
 			executionSecret
 		});
-		expect(await revision()).toBe(afterStart);
-
 		await asUser.mutation(api.agentRuntime.finalizeRun, {
 			runId,
 			expectedStatus: 'running',
@@ -40,7 +30,9 @@ describe('agentRuntime.start', () => {
 			text: 'done',
 			status: 'completed'
 		});
-		expect(await revision()).toBe(afterStart + 1);
+		expect(await t.run(async (ctx) => (await ctx.db.get('threadRecords', threadId))?.status)).toBe(
+			'completed'
+		);
 	});
 
 	it('claims a queued run and renews the same claim', async () => {
@@ -74,6 +66,65 @@ describe('agentRuntime.start', () => {
 		expect(
 			await t.run(async (ctx) => (await ctx.db.get('runs', runId))?.completionAttemptSeq)
 		).toBe(0);
+	});
+
+	it('does not let an older run finalization overwrite the latest run status', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		await t.run(async (ctx) => {
+			for (const run of await ctx.db
+				.query('runs')
+				.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadId))
+				.collect()) {
+				await ctx.db.patch('runs', run._id, { startedAt: 0 });
+			}
+		});
+		const older = await createQueuedRun(t, asUser, threadId, 'sub-older', 'older-secret');
+		await asUser.mutation(api.agentRuntime.start, {
+			claimId: 'older-claim',
+			runId: older.runId,
+			executionSecret: 'older-secret'
+		});
+		await t.run(async (ctx) => {
+			await ctx.db.patch('runs', older.runId, { startedAt: 1 });
+		});
+		const newerRunId = await t.run(async (ctx) => {
+			const runId = await ctx.db.insert('runs', {
+				threadId,
+				userId: 'user_alice',
+				submissionId: 'sub-newer',
+				status: 'queued',
+				executionSecretHash: 'newer-fixture',
+				completionAttemptSeq: 0,
+				selectedModel: 'gpt-5.6-sol',
+				reasoningEffort: 'medium',
+				serviceTier: 'standard',
+				startedAt: 2
+			});
+			await ctx.db.patch('threadRecords', threadId, { status: 'queued' });
+			return runId;
+		});
+		expect(
+			await t.run(async (ctx) =>
+				ctx.db
+					.query('runs')
+					.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadId))
+					.order('desc')
+					.first()
+			)
+		).toMatchObject({ _id: newerRunId, status: 'queued' });
+
+		await asUser.mutation(api.agentRuntime.finalizeRun, {
+			runId: older.runId,
+			expectedStatus: 'running',
+			expectedClaimId: 'older-claim',
+			text: 'older finished',
+			status: 'completed'
+		});
+
+		expect(await t.run(async (ctx) => (await ctx.db.get('threadRecords', threadId))?.status)).toBe(
+			'queued'
+		);
 	});
 
 	it('refuses a different claim while the lease is active', async () => {

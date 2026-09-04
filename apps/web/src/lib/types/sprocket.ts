@@ -1,4 +1,4 @@
-import type { Id } from '$convex/_generated/dataModel';
+import type { Doc, Id } from '$convex/_generated/dataModel';
 import type { AssistantPart } from '$convex/lib/assistantParts';
 import type { JsonValue } from '$convex/lib/json';
 import type { Infer } from 'convex/values';
@@ -34,11 +34,7 @@ export type ThreadSummary = {
 	serviceTier: string;
 	lastMessageAt: number;
 	threadStatus: 'active' | 'archived';
-	latestRunStatus: RunState['status'] | null;
-	latestRunId: Id<'runs'> | null;
-	latestRunStartedAt?: number;
-	latestRunClaimExpiresAt?: number;
-	hasActiveRun: boolean;
+	status: RunState['status'];
 };
 
 export type ProjectThreadGroup = {
@@ -107,7 +103,8 @@ export type ThreadMessage = {
 export type AgentRunRequest = {
 	userId: string;
 	submissionId: string;
-	threadId: Id<'threadRecords'>;
+	threadId?: Id<'threadRecords'>;
+	repositoryKey?: string;
 	prompt: string;
 	imageUploadIds: Id<'imageUploads'>[];
 	selectedModel: string;
@@ -119,6 +116,7 @@ export type AgentRunRequest = {
 
 export type AgentRunStart = {
 	runId: Id<'runs'>;
+	threadId: Id<'threadRecords'>;
 };
 
 export type LocalTranscriptAttachment = {
@@ -186,11 +184,12 @@ export type ThreadCacheWatchEvent = {
 };
 
 export type ThreadCacheSnapshot = ThreadCacheWatchEvent & {
-	threads: ThreadSummary[];
+	threads: Doc<'threadRecords'>[];
 };
 
 export type ThreadCacheUserRequest = {
 	userId: string;
+	selectedThreadId?: Id<'threadRecords'>;
 };
 
 export type LiveCompletionWatchEvent =
@@ -263,7 +262,6 @@ export type DesktopApi = {
 	) => Promise<Blob | null>;
 	registerThreadCache: (request: ThreadCacheUserRequest) => Promise<ThreadCacheWatchEvent>;
 	fetchThreadSnapshot: (request: ThreadCacheUserRequest) => Promise<ThreadCacheSnapshot>;
-	syncArchivedThreads: (request: ThreadCacheUserRequest) => Promise<ThreadCacheWatchEvent>;
 	watchThreadCache: (
 		request: ThreadCacheUserRequest,
 		handlers: {

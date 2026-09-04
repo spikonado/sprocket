@@ -16,6 +16,17 @@ instead of leaving a coerce path behind.
 `@convex-dev/migrations` stays mounted so future one-off jobs can use
 `migrations.runner()`. Completed series members are gone.
 
+### Thread status backfill
+
+`threadRecords.status` is temporarily optional while
+`migrations:backfillThreadStatus` populates it from each thread's latest run
+and deletes legacy runless threads and their usage row. Cache consumers accept
+the field as absent only while this migration is rolling out.
+
+Deploy this compatibility schema and code, run the migration to completion,
+verify every thread has a status, then make the field required and remove the
+optional cache handling in a follow-up deployment.
+
 ### 1. Legacy fields on `uiPreferences`
 
 Source: #187, plus later catalog/payments work.

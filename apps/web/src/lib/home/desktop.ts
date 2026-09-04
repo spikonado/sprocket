@@ -115,8 +115,9 @@ export function launchAgentRun(args: {
 	userId: string;
 	desktopApi: DesktopApi;
 	onError: (error: Error) => void;
-	onStarted: (runId: Id<'runs'>) => void;
-	threadId: Id<'threadRecords'>;
+	onStarted: (runId: Id<'runs'>, threadId: Id<'threadRecords'>) => void;
+	threadId?: Id<'threadRecords'>;
+	repositoryKey?: string;
 	prompt: string;
 	imageUploadIds: Id<'imageUploads'>[];
 	selectedModel: AgentRunRequest['selectedModel'];
@@ -128,7 +129,6 @@ export function launchAgentRun(args: {
 }) {
 	const request: AgentRunRequest = {
 		userId: args.userId,
-		threadId: args.threadId,
 		prompt: args.prompt,
 		imageUploadIds: args.imageUploadIds,
 		selectedModel: args.selectedModel,
@@ -137,13 +137,15 @@ export function launchAgentRun(args: {
 		submissionId: args.submissionId,
 		workspacePath: args.workspacePath
 	};
+	if (args.threadId) request.threadId = args.threadId;
+	if (args.repositoryKey) request.repositoryKey = args.repositoryKey;
 	if (args.continuationOfRunId) {
 		request.continuationOfRunId = args.continuationOfRunId;
 	}
-	void args.desktopApi
+	return args.desktopApi
 		.runAgent(request)
-		.then(({ runId }) => {
-			args.onStarted(runId);
+		.then(({ runId, threadId }) => {
+			args.onStarted(runId, threadId);
 		})
 		.catch((error) => {
 			const failure = error instanceof Error ? error : new Error(String(error));

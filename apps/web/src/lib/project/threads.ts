@@ -1,4 +1,4 @@
-import type { Id } from '$convex/_generated/dataModel';
+import type { Doc, Id } from '$convex/_generated/dataModel';
 import type { Project, ThreadSummary, ProjectThreadGroup } from '$lib/types/sprocket';
 
 export type ThreadSummaryRow = {
@@ -10,11 +10,7 @@ export type ThreadSummaryRow = {
 	serviceTier: ThreadSummary['serviceTier'];
 	lastMessageAt: number;
 	threadStatus: ThreadSummary['threadStatus'];
-	latestRunStatus: ThreadSummary['latestRunStatus'];
-	latestRunId: ThreadSummary['latestRunId'];
-	latestRunStartedAt?: number;
-	latestRunClaimExpiresAt?: number;
-	hasActiveRun: boolean;
+	status: ThreadSummary['status'];
 };
 
 export function toThreadSummary(row: ThreadSummaryRow): ThreadSummary {
@@ -27,12 +23,22 @@ export function toThreadSummary(row: ThreadSummaryRow): ThreadSummary {
 		serviceTier: row.serviceTier,
 		lastMessageAt: row.lastMessageAt,
 		threadStatus: row.threadStatus,
-		latestRunStatus: row.latestRunStatus,
-		latestRunId: row.latestRunId,
-		latestRunStartedAt: row.latestRunStartedAt,
-		latestRunClaimExpiresAt: row.latestRunClaimExpiresAt,
-		hasActiveRun: row.hasActiveRun
+		status: row.status
 	};
+}
+
+export function threadRecordToSummary(record: Doc<'threadRecords'>): ThreadSummary {
+	return toThreadSummary({
+		threadId: record._id,
+		repositoryKey: record.repositoryKey ?? '',
+		title: record.title ?? 'New thread',
+		selectedModel: record.selectedModel,
+		reasoningEffort: record.reasoningEffort,
+		serviceTier: record.serviceTier,
+		lastMessageAt: record.lastMessageAt,
+		threadStatus: record.archivedAt === undefined ? 'active' : 'archived',
+		status: record.status ?? 'completed'
+	});
 }
 
 export function findProjectByRepositoryKey<T extends Pick<Project, 'repositoryKey'>>(
@@ -85,22 +91,18 @@ export function getProjectThreadGroups(projects: Project[], threads: ThreadSumma
 	);
 }
 
-export function overrideThreadActiveRun(
-	threads: ThreadSummary[],
-	threadId: Id<'threadRecords'>,
-	hasActiveRun: boolean
-): ThreadSummary[] {
-	return threads.map((thread) =>
-		thread.threadId === threadId && thread.hasActiveRun !== hasActiveRun
-			? { ...thread, hasActiveRun }
-			: thread
+export function hasActiveRun(thread: Pick<ThreadSummary, 'status'>) {
+	return (
+		thread.status === 'queued' ||
+		thread.status === 'running' ||
+		thread.status === 'awaiting_executor'
 	);
 }
 
 function sortThreadsRunningFirst(threads: ThreadSummary[]) {
 	return [...threads].sort((left, right) => {
-		if (left.hasActiveRun !== right.hasActiveRun) {
-			return Number(right.hasActiveRun) - Number(left.hasActiveRun);
+		if (hasActiveRun(left) !== hasActiveRun(right)) {
+			return Number(hasActiveRun(right)) - Number(hasActiveRun(left));
 		}
 
 		return right.lastMessageAt - left.lastMessageAt;
@@ -108,7 +110,7 @@ function sortThreadsRunningFirst(threads: ThreadSummary[]) {
 }
 
 function countActiveThreads(threads: ThreadSummary[]) {
-	return threads.filter((thread) => thread.hasActiveRun).length;
+	return threads.filter(hasActiveRun).length;
 }
 
 export function findThreadById(
@@ -188,9 +190,7 @@ export function makeUnconfirmedCreatedThread(args: {
 		serviceTier: args.serviceTier,
 		lastMessageAt: args.lastMessageAt ?? Date.now(),
 		threadStatus: 'active',
-		latestRunStatus: null,
-		latestRunId: null,
-		hasActiveRun: false
+		status: 'queued'
 	});
 }
 
@@ -331,24 +331,6 @@ export function resolvePendingAgentLaunch(
 	return clearPendingAgentLaunch(pendingLaunches, threadId, pendingLaunch.launchId);
 }
 
-export function resolvePendingAgentLaunchesFromThreads(
-	pendingLaunches: PendingAgentLaunches,
-	threads: ThreadSummary[]
-): PendingAgentLaunches {
-	let nextPendingLaunches = pendingLaunches;
-
-	for (const thread of threads) {
-		nextPendingLaunches = resolvePendingAgentLaunch(
-			nextPendingLaunches,
-			thread.threadId,
-			thread.latestRunId,
-			thread.latestRunClaimExpiresAt
-		);
-	}
-
-	return nextPendingLaunches;
-}
-
 export type ExpiredAgentLaunchResolution = {
 	pendingLaunches: PendingAgentLaunches;
 	shouldRecover: boolean;
@@ -386,27 +368,14 @@ export function resolveProjectThreadSelection(args: {
 	draftWorkspacePath: string | null;
 	pendingCreatedThreadId?: Id<'threadRecords'> | null;
 }) {
-	const {
-		threads,
-		currentThreadId,
-		currentWorkspacePath,
-		draftWorkspacePath,
-		pendingCreatedThreadId = null
-	} = args;
+	const { threads, currentThreadId, currentWorkspacePath, draftWorkspacePath } = args;
 
 	if (currentWorkspacePath && draftWorkspacePath === currentWorkspacePath) {
 		return null;
 	}
 
 	if (currentThreadId) {
-		if (threads.some((thread) => thread.threadId === currentThreadId)) {
-			return currentThreadId;
-		}
-
-		// Preserve an unknown ID only during the create → list catch-up window.
-		if (pendingCreatedThreadId && currentThreadId === pendingCreatedThreadId) {
-			return currentThreadId;
-		}
+		return currentThreadId;
 	}
 
 	return threads[0]?.threadId ?? null;
