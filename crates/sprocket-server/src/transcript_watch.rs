@@ -3,10 +3,10 @@ use std::sync::{Arc, Mutex};
 
 use futures::StreamExt;
 use sprocket_agent::{TRANSCRIPT_PAGE_SIZE, TranscriptStore, apply_remote_state};
-use sprocket_convex::AuthTokenFetcher;
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
+use crate::native_auth::NativeAuthManager;
 use crate::transcript_client::{
     UserConvexClient, decode_state_update, retry_after_failure, sync_range,
 };
@@ -37,7 +37,7 @@ type WatchStarter = Arc<dyn Fn(WatchStart) -> JoinHandle<()> + Send + Sync>;
 struct WatchStart {
     deployment_url: String,
     store: Arc<TranscriptStore>,
-    auth_token_fetcher: AuthTokenFetcher,
+    native_auth: Arc<NativeAuthManager>,
     user_id: String,
     thread_id: String,
     events: broadcast::Sender<TranscriptWatchEvent>,
@@ -46,7 +46,7 @@ struct WatchStart {
 pub struct TranscriptWatchers {
     deployment_url: String,
     store: Arc<TranscriptStore>,
-    auth_token_fetcher: AuthTokenFetcher,
+    native_auth: Arc<NativeAuthManager>,
     inner: Mutex<HashMap<WatchKey, WatchSlot>>,
     start: WatchStarter,
 }
@@ -58,15 +58,15 @@ pub struct TranscriptWatchSession {
 }
 
 impl TranscriptWatchers {
-    pub fn new(
+    pub(crate) fn new(
         deployment_url: String,
         store: Arc<TranscriptStore>,
-        auth_token_fetcher: AuthTokenFetcher,
+        native_auth: Arc<NativeAuthManager>,
     ) -> Arc<Self> {
         Self::with_starter(
             deployment_url,
             store,
-            auth_token_fetcher,
+            native_auth,
             Arc::new(spawn_convex_watch),
         )
     }
@@ -74,13 +74,13 @@ impl TranscriptWatchers {
     fn with_starter(
         deployment_url: String,
         store: Arc<TranscriptStore>,
-        auth_token_fetcher: AuthTokenFetcher,
+        native_auth: Arc<NativeAuthManager>,
         start: WatchStarter,
     ) -> Arc<Self> {
         Arc::new(Self {
             deployment_url,
             store,
-            auth_token_fetcher,
+            native_auth,
             inner: Mutex::new(HashMap::new()),
             start,
         })
@@ -140,7 +140,7 @@ impl TranscriptWatchers {
         let task = (self.start)(WatchStart {
             deployment_url: self.deployment_url.clone(),
             store: Arc::clone(&self.store),
-            auth_token_fetcher: Arc::clone(&self.auth_token_fetcher),
+            native_auth: Arc::clone(&self.native_auth),
             user_id: user_id.to_string(),
             thread_id: thread_id.to_string(),
             events: events.clone(),
@@ -233,7 +233,9 @@ fn spawn_convex_watch(start: WatchStart) -> JoinHandle<()> {
 async fn run_watch_loop(start: &WatchStart) -> anyhow::Result<()> {
     let client = UserConvexClient::connect_with_fetcher(
         &start.deployment_url,
-        Arc::clone(&start.auth_token_fetcher),
+        start
+            .native_auth
+            .auth_token_fetcher_for_user(start.user_id.clone()),
     )
     .await?;
     let remote = client.ensure_migrated(&start.thread_id).await?;
@@ -299,8 +301,13 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    fn auth_token_fetcher() -> AuthTokenFetcher {
-        Arc::new(|_| Box::pin(async { Ok("token".to_string()) }))
+    fn native_auth() -> Arc<NativeAuthManager> {
+        NativeAuthManager::configured_for_test(
+            crate::native_auth::NativeAuthConfig {
+                workos_client_id: "client_test".to_string(),
+            },
+            "http://127.0.0.1/callback".to_string(),
+        )
     }
 
     #[tokio::test]
@@ -312,7 +319,7 @@ mod tests {
         let watchers = TranscriptWatchers::with_starter(
             "https://example.convex.cloud".into(),
             store,
-            auth_token_fetcher(),
+            native_auth(),
             Arc::new(move |_start| {
                 let live_task = live_task.clone();
                 live_task.fetch_add(1, Ordering::SeqCst);
@@ -350,7 +357,7 @@ mod tests {
         let watchers = TranscriptWatchers::with_starter(
             "https://example.convex.cloud".into(),
             store,
-            auth_token_fetcher(),
+            native_auth(),
             Arc::new(|_start| tokio::spawn(std::future::pending())),
         );
         let mut session = watchers.open("user", "thread").await;

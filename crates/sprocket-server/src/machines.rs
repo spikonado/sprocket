@@ -3,12 +3,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use convex::Value;
-use sprocket_convex::AuthTokenFetcher;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::{sleep, timeout};
 
 use crate::machine_identity::MachineIdentity;
+use crate::native_auth::NativeAuthManager;
 use crate::transcript_client::UserConvexClient;
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
@@ -27,7 +27,7 @@ struct AccountPresence {
 
 pub struct MachineManager {
     deployment_url: String,
-    auth_token_fetcher: AuthTokenFetcher,
+    native_auth: Arc<NativeAuthManager>,
     identity: Arc<MachineIdentity>,
     accounts: Mutex<HashMap<String, AccountPresence>>,
     registration: Mutex<()>,
@@ -43,12 +43,12 @@ struct LifecycleState {
 impl MachineManager {
     pub(crate) fn new(
         deployment_url: String,
-        auth_token_fetcher: AuthTokenFetcher,
+        native_auth: Arc<NativeAuthManager>,
         identity: Arc<MachineIdentity>,
     ) -> Arc<Self> {
         Arc::new(Self {
             deployment_url,
-            auth_token_fetcher,
+            native_auth,
             identity,
             accounts: Mutex::new(HashMap::new()),
             registration: Mutex::new(()),
@@ -59,7 +59,7 @@ impl MachineManager {
     pub async fn register(self: &Arc<Self>, expected_user_id: &str) -> anyhow::Result<()> {
         let _registration = self.registration.lock().await;
         self.ensure_running().await?;
-        let registered = self.register_remote().await?;
+        let registered = self.register_remote(expected_user_id).await?;
         if registered.machine_id != self.identity.installation_id {
             anyhow::bail!("machine registration returned a different installation");
         }
@@ -172,11 +172,12 @@ impl MachineManager {
         Err(error)
     }
 
-    async fn register_remote(&self) -> anyhow::Result<RegisteredMachine> {
+    async fn register_remote(&self, expected_user_id: &str) -> anyhow::Result<RegisteredMachine> {
         timeout(RPC_TIMEOUT, async {
             let client = UserConvexClient::connect_with_fetcher(
                 &self.deployment_url,
-                Arc::clone(&self.auth_token_fetcher),
+                self.native_auth
+                    .auth_token_fetcher_for_user(expected_user_id.to_string()),
             )
             .await?;
             client
@@ -250,11 +251,15 @@ mod tests {
     fn manager_for_test() -> (std::path::PathBuf, Arc<MachineManager>) {
         let dir = std::env::temp_dir().join(format!("sprocket-machine-{}", uuid::Uuid::new_v4()));
         let identity = Arc::new(MachineIdentity::load(&dir).expect("identity"));
-        let fetcher: AuthTokenFetcher =
-            Arc::new(|_| Box::pin(async { anyhow::bail!("unexpected authentication request") }));
+        let native_auth = NativeAuthManager::configured_for_test(
+            crate::native_auth::NativeAuthConfig {
+                workos_client_id: "client_test".to_string(),
+            },
+            "http://127.0.0.1/callback".to_string(),
+        );
         (
             dir,
-            MachineManager::new("not a valid URL".into(), fetcher, identity),
+            MachineManager::new("not a valid URL".into(), native_auth, identity),
         )
     }
 

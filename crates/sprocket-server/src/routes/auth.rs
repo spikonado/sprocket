@@ -386,13 +386,13 @@ mod tests {
         let transcript_watchers = crate::transcript_watch::TranscriptWatchers::new(
             "https://example.convex.cloud".to_string(),
             transcript.clone(),
-            native_auth.auth_token_fetcher(),
+            Arc::clone(&native_auth),
         );
         let thread_cache = crate::thread_sync::ThreadCacheSync::new(
             "https://example.convex.cloud".to_string(),
             crate::thread_cache::ThreadSnapshotStore::new(temp_dir.clone()),
             project_attachments.clone(),
-            native_auth.auth_token_fetcher(),
+            Arc::clone(&native_auth),
         );
 
         let machine_identity = Arc::new(
@@ -407,7 +407,7 @@ mod tests {
             thread_cache,
             machines: crate::machines::MachineManager::new(
                 "https://example.convex.cloud".to_string(),
-                native_auth.auth_token_fetcher(),
+                Arc::clone(&native_auth),
                 Arc::clone(&machine_identity),
             ),
             live_completions: Arc::new(sprocket_agent::LiveCompletionHub::new()),

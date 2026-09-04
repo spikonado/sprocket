@@ -438,16 +438,39 @@ impl NativeAuthManager {
         self.clear_refresh_token().await
     }
 
-    pub fn auth_token_fetcher(self: &Arc<Self>) -> AuthTokenFetcher {
+    pub fn auth_token_fetcher_for_user(
+        self: &Arc<Self>,
+        expected_user_id: String,
+    ) -> AuthTokenFetcher {
         let manager = Arc::clone(self);
         Arc::new(move |force_refresh| {
             let manager = Arc::clone(&manager);
-            Box::pin(async move { manager.access_token(force_refresh).await })
+            let expected_user_id = expected_user_id.clone();
+            Box::pin(async move {
+                manager
+                    .access_token_for_user(force_refresh, &expected_user_id)
+                    .await
+            })
         })
     }
 
     pub async fn require_user(&self, expected_user_id: &str) -> anyhow::Result<()> {
-        self.access_token(false).await?;
+        self.access_token_for_user(false, expected_user_id).await?;
+        Ok(())
+    }
+
+    async fn access_token(&self, force_refresh: bool) -> anyhow::Result<String> {
+        let _credential_operation = self.credential_operation.lock().await;
+        self.access_token_locked(force_refresh).await
+    }
+
+    async fn access_token_for_user(
+        &self,
+        force_refresh: bool,
+        expected_user_id: &str,
+    ) -> anyhow::Result<String> {
+        let _credential_operation = self.credential_operation.lock().await;
+        let token = self.access_token_locked(force_refresh).await?;
         let session = self.session.lock().await;
         let user = session
             .user
@@ -456,11 +479,10 @@ impl NativeAuthManager {
         if user.id != expected_user_id {
             anyhow::bail!("native and browser sessions belong to different users");
         }
-        Ok(())
+        Ok(token)
     }
 
-    async fn access_token(&self, force_refresh: bool) -> anyhow::Result<String> {
-        let _credential_operation = self.credential_operation.lock().await;
+    async fn access_token_locked(&self, force_refresh: bool) -> anyhow::Result<String> {
         let refresh_before = unix_time_secs().saturating_add(ACCESS_TOKEN_REFRESH_MARGIN_SECS);
         if !force_refresh {
             let session = self.session.lock().await;
@@ -953,6 +975,31 @@ mod tests {
                 .await
                 .unwrap_err()
                 .to_string(),
+            "native and browser sessions belong to different users"
+        );
+    }
+
+    #[tokio::test]
+    async fn user_bound_fetcher_rejects_an_account_transition() {
+        let manager = Arc::new(
+            manager_with_response(
+                MemoryRefreshTokenStore::with_token("refresh-old"),
+                StatusCode::OK,
+                serde_json::to_value(authentication_response(
+                    access_token(unix_time_secs() + 3_600),
+                    "refresh-new",
+                ))
+                .unwrap(),
+            )
+            .await,
+        );
+        let fetcher = manager.auth_token_fetcher_for_user("user_123".to_string());
+
+        fetcher(false).await.unwrap();
+        manager.session.lock().await.user.as_mut().unwrap().id = "user_456".to_string();
+
+        assert_eq!(
+            fetcher(false).await.unwrap_err().to_string(),
             "native and browser sessions belong to different users"
         );
     }

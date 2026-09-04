@@ -78,7 +78,9 @@ async fn run_agent_handler(
         .register(&payload.user_id)
         .await
         .map_err(ApiError::bad_request)?;
-    let auth_token_fetcher = state.native_auth.auth_token_fetcher();
+    let auth_token_fetcher = state
+        .native_auth
+        .auth_token_fetcher_for_user(payload.user_id.clone());
     let request = RunAgentRequest {
         deployment_url: state.convex_deployment_url.clone(),
         auth_token_fetcher: auth_token_fetcher.clone(),

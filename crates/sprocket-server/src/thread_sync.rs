@@ -4,11 +4,11 @@ use std::time::Duration;
 
 use anyhow::anyhow;
 use futures::StreamExt;
-use sprocket_convex::AuthTokenFetcher;
 use tokio::sync::{Mutex, broadcast};
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
+use crate::native_auth::NativeAuthManager;
 use crate::now_ms;
 use crate::project_attachments::{ProjectAttachmentStore, WorkspaceAvailability};
 use crate::thread_cache::{
@@ -55,7 +55,7 @@ pub struct ThreadCacheSync {
     deployment_url: String,
     store: Arc<ThreadSnapshotStore>,
     attachments: Arc<ProjectAttachmentStore>,
-    auth_token_fetcher: AuthTokenFetcher,
+    native_auth: Arc<NativeAuthManager>,
     inner: Mutex<CacheInner>,
     events: broadcast::Sender<ThreadCacheEvent>,
 }
@@ -65,18 +65,18 @@ pub struct ThreadCacheWatchSession {
 }
 
 impl ThreadCacheSync {
-    pub fn new(
+    pub(crate) fn new(
         deployment_url: String,
         store: Arc<ThreadSnapshotStore>,
         attachments: Arc<ProjectAttachmentStore>,
-        auth_token_fetcher: AuthTokenFetcher,
+        native_auth: Arc<NativeAuthManager>,
     ) -> Arc<Self> {
         let (events, _) = broadcast::channel(32);
         Arc::new(Self {
             deployment_url,
             store,
             attachments,
-            auth_token_fetcher,
+            native_auth,
             inner: Mutex::new(CacheInner {
                 user_id: None,
                 status: ThreadCacheStatus::Loading,
@@ -186,7 +186,8 @@ impl ThreadCacheSync {
             .await;
         let client = UserConvexClient::connect_with_fetcher(
             &self.deployment_url,
-            Arc::clone(&self.auth_token_fetcher),
+            self.native_auth
+                .auth_token_fetcher_for_user(user_id.to_string()),
         )
         .await?;
         for &category in categories {
@@ -197,7 +198,7 @@ impl ThreadCacheSync {
                 user_id: user_id.to_string(),
                 repository_key: repository_key.to_string(),
                 category,
-                auth_token_fetcher: Arc::clone(&self.auth_token_fetcher),
+                native_auth: Arc::clone(&self.native_auth),
             };
             download_consistent_snapshot(&start, &client).await?;
         }
@@ -230,7 +231,7 @@ impl ThreadCacheSync {
                 user_id: key.user_id.clone(),
                 repository_key: key.repository_key.clone(),
                 category: key.category,
-                auth_token_fetcher: Arc::clone(&self.auth_token_fetcher),
+                native_auth: Arc::clone(&self.native_auth),
             }));
             inner.tasks.insert(key, task);
         }
@@ -279,7 +280,7 @@ impl ThreadCacheSync {
                 user_id: key.user_id.clone(),
                 repository_key: key.repository_key.clone(),
                 category: key.category,
-                auth_token_fetcher: Arc::clone(&self.auth_token_fetcher),
+                native_auth: Arc::clone(&self.native_auth),
             }));
             inner.tasks.insert(key, task);
         }
@@ -331,7 +332,7 @@ struct WatchStart {
     user_id: String,
     repository_key: String,
     category: ThreadSnapshotCategory,
-    auth_token_fetcher: AuthTokenFetcher,
+    native_auth: Arc<NativeAuthManager>,
 }
 
 fn abort_tasks(inner: &mut CacheInner) {
@@ -397,7 +398,9 @@ fn classify_watch_error(error: &anyhow::Error) -> ThreadCacheStatus {
 async fn run_watch(start: &WatchStart) -> anyhow::Result<()> {
     let client = UserConvexClient::connect_with_fetcher(
         &start.deployment_url,
-        Arc::clone(&start.auth_token_fetcher),
+        start
+            .native_auth
+            .auth_token_fetcher_for_user(start.user_id.clone()),
     )
     .await?;
     let mut subscription = client

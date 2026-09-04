@@ -73,7 +73,9 @@ async fn page_handler(
     if payload.before.is_some() {
         let client = UserConvexClient::connect_with_fetcher(
             &state.convex_deployment_url,
-            state.native_auth.auth_token_fetcher(),
+            state
+                .native_auth
+                .auth_token_fetcher_for_user(payload.user_id.clone()),
         )
         .await
         .map_err(|error| {
@@ -210,7 +212,9 @@ async fn attachment_handler(
 
     let client = UserConvexClient::connect_with_fetcher(
         &state.convex_deployment_url,
-        state.native_auth.auth_token_fetcher(),
+        state
+            .native_auth
+            .auth_token_fetcher_for_user(payload.user_id.clone()),
     )
     .await
     .map_err(|error| ApiError::internal_with("failed to connect to Convex", error))?;

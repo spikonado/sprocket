@@ -129,7 +129,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
     let machine_identity = Arc::new(machine_identity::MachineIdentity::load(&data_dir)?);
     let machines = machines::MachineManager::new(
         convex_deployment_url.clone(),
-        native_auth.auth_token_fetcher(),
+        Arc::clone(&native_auth),
         Arc::clone(&machine_identity),
     );
     let pairing_credential = auth.pairing_credential().to_string();
@@ -138,13 +138,13 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
     let transcript_watchers = TranscriptWatchers::new(
         convex_deployment_url.clone(),
         Arc::clone(&transcript),
-        native_auth.auth_token_fetcher(),
+        Arc::clone(&native_auth),
     );
     let thread_cache = thread_sync::ThreadCacheSync::new(
         convex_deployment_url.clone(),
         thread_cache::ThreadSnapshotStore::new(data_dir.clone()),
         Arc::clone(&project_attachments),
-        native_auth.auth_token_fetcher(),
+        Arc::clone(&native_auth),
     );
     let http_base_url = config.listen_url();
     let web_ui_enabled = config

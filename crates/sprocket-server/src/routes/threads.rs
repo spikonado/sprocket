@@ -100,10 +100,12 @@ pub fn routes() -> axum::Router<AppState> {
         )
 }
 
-async fn client(state: &AppState) -> Result<UserConvexClient, ApiError> {
+async fn client(state: &AppState, user_id: &str) -> Result<UserConvexClient, ApiError> {
     UserConvexClient::connect_with_fetcher(
         &state.convex_deployment_url,
-        state.native_auth.auth_token_fetcher(),
+        state
+            .native_auth
+            .auth_token_fetcher_for_user(user_id.to_string()),
     )
     .await
     .map_err(ApiError::bad_request)
@@ -132,7 +134,7 @@ async fn run_thread_command(
     if let Some(title) = payload.title {
         args.insert("title".into(), Value::String(title));
     }
-    let result: ThreadCommandResult = client(state)
+    let result: ThreadCommandResult = client(state, &payload.user_id)
         .await?
         .mutate(function, args)
         .await
@@ -237,7 +239,7 @@ async fn rekey_handler(
         ("from".into(), Value::String(payload.from)),
         ("to".into(), Value::String(payload.to)),
     ]);
-    let result: RekeyResult = client(&state)
+    let result: RekeyResult = client(&state, &payload.user_id)
         .await?
         .mutate("threads:rekeyRepositoryForLocalCache", args)
         .await
@@ -286,7 +288,7 @@ async fn lifecycle_handler(
         .await
         .map_err(ApiError::unauthorized)?;
     require_user(&state, &payload.user_id).await?;
-    let result = client(&state)
+    let result = client(&state, &payload.user_id)
         .await?
         .query(
             "chat:selectedThreadLifecycle",
@@ -307,7 +309,7 @@ async fn cancel_handler(
         .map_err(ApiError::unauthorized)?;
     require_user(&state, &payload.user_id).await?;
     let args = BTreeMap::from([("runId".into(), Value::String(payload.run_id))]);
-    let result = client(&state)
+    let result = client(&state, &payload.user_id)
         .await?
         .mutate("agentRuntime:requestCancellation", args)
         .await
