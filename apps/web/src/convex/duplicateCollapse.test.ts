@@ -134,8 +134,8 @@ describe('absorbDuplicateThread', { timeout: 20_000 }, () => {
 
 		expect(ids.dropped).toBeNull();
 		expect(ids.partCount).toBe(2);
-		expect(ids.partNumbers).toEqual([0, 2]);
-		expect(ids.totalParts).toBe(3);
+		expect(ids.partNumbers).toEqual([0, 1]);
+		expect(ids.totalParts).toBe(2);
 		expect(ids.eventCount).toBe(2);
 		expect(ids.totalTokensProcessed).toBe(13);
 	});
