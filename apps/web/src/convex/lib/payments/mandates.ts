@@ -125,10 +125,7 @@ export function mandateStatusResult(mandate: Doc<'mandates'>): Infer<typeof vMan
 /** True when a live Prava mandate uniquely matches a local setup's merchant,
  * amount cap, and currency. Used both for charge-time resolution and for
  * linking local rows after the owner approves in a new tab. */
-function isMatchingLivePravaMandate(
-	mandate: Doc<'mandates'>,
-	prava: PravaMandate
-): boolean {
+function isMatchingLivePravaMandate(mandate: Doc<'mandates'>, prava: PravaMandate): boolean {
 	if (!prava.id) return false;
 	if (!LIVE_MANDATE_STATUSES.has(prava.status ?? '')) return false;
 	// A different scope or cadence is a different authorization even when the

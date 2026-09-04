@@ -144,7 +144,6 @@ struct CreateQuestionResponse {
     options: Vec<AskQuestionOption>,
 }
 
-
 impl rig::tool::Tool for AskQuestionTool {
     const NAME: &'static str = "ask_question";
     type Error = ToolExecutionError;
@@ -268,14 +267,15 @@ impl rig::tool::Tool for AwaitQuestionTool {
     }
 }
 
-
 #[derive(Clone, Debug)]
 pub(super) struct PreparedAskQuestion {
     pub(super) question: String,
     pub(super) options: Vec<AskQuestionOption>,
 }
 
-pub(super) fn prepare_ask_question(args: &AskQuestionArgs) -> Result<PreparedAskQuestion, ToolExecutionError> {
+pub(super) fn prepare_ask_question(
+    args: &AskQuestionArgs,
+) -> Result<PreparedAskQuestion, ToolExecutionError> {
     let question = args.question.trim();
     if question.is_empty() {
         return Err(tool_failure("Question cannot be empty."));

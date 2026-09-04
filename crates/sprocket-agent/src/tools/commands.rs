@@ -149,7 +149,6 @@ pub(crate) struct WriteStdinArgs {
     pub(crate) yield_time_ms: u64,
 }
 
-
 impl rig::tool::Tool for ExecCommandTool {
     const NAME: &'static str = "exec_command";
     type Error = ToolExecutionError;

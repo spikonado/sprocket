@@ -196,4 +196,3 @@ pub async fn download_attachment_bytes(url: &str) -> anyhow::Result<Vec<u8>> {
 pub async fn retry_after_failure() {
     sleep(Duration::from_secs(2)).await;
 }
-

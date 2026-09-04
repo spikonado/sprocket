@@ -99,6 +99,8 @@ export async function ownedCharge(
 	return charge;
 }
 
-export function statusForOutcome(outcome: Infer<typeof vMandateReportOutcome>): 'completed' | 'declined' {
+export function statusForOutcome(
+	outcome: Infer<typeof vMandateReportOutcome>
+): 'completed' | 'declined' {
 	return outcome === 'approved' ? 'completed' : 'declined';
 }

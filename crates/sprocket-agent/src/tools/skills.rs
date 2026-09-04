@@ -21,7 +21,6 @@ pub(crate) struct ReadSkillArgs {
     pub(crate) name: String,
 }
 
-
 impl rig::tool::Tool for ReadSkillTool {
     const NAME: &'static str = "read_skill";
     type Error = ToolExecutionError;

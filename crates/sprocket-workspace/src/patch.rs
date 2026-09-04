@@ -729,8 +729,8 @@ mod tests {
     use std::sync::Mutex;
 
     use super::{apply_workspace_patch, write_new_file};
-    use crate::test_support::temp_workspace;
     use crate::commands::{WorkspaceCancellation, WorkspaceOperationCancelled};
+    use crate::test_support::temp_workspace;
 
     static HOME_ENV_LOCK: Mutex<()> = Mutex::new(());
 

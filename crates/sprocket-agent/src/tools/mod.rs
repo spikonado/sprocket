@@ -33,8 +33,8 @@ use crate::hooks::ToolCallTracker;
 use self::artifacts::{ArtifactContentType, CreateArtifactArgs, UpdateArtifactArgs};
 #[cfg(test)]
 use self::commands::{
-    exec_command_parameters, ExecCommandArgs, WriteStdinArgs, DEFAULT_COMMAND_MAX_OUTPUT_CHARS,
-    DEFAULT_COMMAND_TIMEOUT_MS, DEFAULT_COMMAND_YIELD_MS, DEFAULT_STDIN_YIELD_MS,
+    DEFAULT_COMMAND_MAX_OUTPUT_CHARS, DEFAULT_COMMAND_TIMEOUT_MS, DEFAULT_COMMAND_YIELD_MS,
+    DEFAULT_STDIN_YIELD_MS, ExecCommandArgs, WriteStdinArgs, exec_command_parameters,
 };
 #[cfg(test)]
 use self::context::tool_error;
@@ -42,13 +42,13 @@ use self::context::tool_error;
 use self::job::mutation_args_from_payload;
 #[cfg(test)]
 use self::questions::{
-    prepare_ask_question, AskQuestionArgs, AskQuestionOption, AGENT_DECIDE_OPTION_ID,
-    DEFAULT_ASK_QUESTION_TIMEOUT_MS, DEFAULT_ASK_QUESTION_YIELD_MS, MAX_QUESTION_CHARS,
+    AGENT_DECIDE_OPTION_ID, AskQuestionArgs, AskQuestionOption, DEFAULT_ASK_QUESTION_TIMEOUT_MS,
+    DEFAULT_ASK_QUESTION_YIELD_MS, MAX_QUESTION_CHARS, prepare_ask_question,
 };
 #[cfg(test)]
 use self::skills::resolve_read_skill;
 #[cfg(test)]
-use self::web::{web_search_parameters, WebSearchArgs, DEFAULT_WEB_SEARCH_RESULTS};
+use self::web::{DEFAULT_WEB_SEARCH_RESULTS, WebSearchArgs, web_search_parameters};
 
 pub(crate) struct AgentToolSet {
     pub(crate) apply_patch: ApplyPatchTool,

@@ -48,7 +48,6 @@ pub(crate) struct ScrapeUrlArgs {
     pub(crate) url: String,
 }
 
-
 impl rig::tool::Tool for WebSearchTool {
     const NAME: &'static str = "web_search";
     type Error = ToolExecutionError;

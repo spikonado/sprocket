@@ -39,7 +39,6 @@ pub(crate) struct UpdateArtifactArgs {
     pub(crate) content: String,
 }
 
-
 impl rig::tool::Tool for CreateArtifactTool {
     const NAME: &'static str = "create_artifact";
     type Error = ToolExecutionError;

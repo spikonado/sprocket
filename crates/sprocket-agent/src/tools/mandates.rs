@@ -98,7 +98,6 @@ pub(crate) struct MandateReportArgs {
     pub(crate) amount_paid: Option<String>,
 }
 
-
 impl rig::tool::Tool for MandateSetupTool {
     const NAME: &'static str = "mandate_setup";
     type Error = ToolExecutionError;
@@ -242,7 +241,6 @@ impl rig::tool::Tool for MandateReportTool {
         .await
     }
 }
-
 
 pub(super) async fn mandate_action_job(
     context: &AgentToolContext,

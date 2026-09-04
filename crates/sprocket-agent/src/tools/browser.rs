@@ -53,7 +53,6 @@ pub(crate) struct BrowserExtractArgs {
     pub(crate) start_url: Option<String>,
 }
 
-
 impl rig::tool::Tool for BrowserObserveTool {
     const NAME: &'static str = "browser_observe";
     type Error = ToolExecutionError;

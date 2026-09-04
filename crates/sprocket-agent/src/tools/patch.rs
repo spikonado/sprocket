@@ -28,7 +28,6 @@ pub(crate) struct ApplyPatchArgs {
     pub(crate) patch: String,
 }
 
-
 impl rig::tool::Tool for ApplyPatchTool {
     const NAME: &'static str = "apply_patch";
     type Error = ToolExecutionError;
