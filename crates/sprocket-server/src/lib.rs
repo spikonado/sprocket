@@ -135,12 +135,16 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
     let pairing_credential = auth.pairing_credential().to_string();
     let project_attachments = project_attachments::ProjectAttachmentStore::new(data_dir.clone());
     let transcript = TranscriptStore::new(data_dir.join("transcripts"));
-    let transcript_watchers =
-        TranscriptWatchers::new(convex_deployment_url.clone(), Arc::clone(&transcript));
+    let transcript_watchers = TranscriptWatchers::new(
+        convex_deployment_url.clone(),
+        Arc::clone(&transcript),
+        native_auth.auth_token_fetcher(),
+    );
     let thread_cache = thread_sync::ThreadCacheSync::new(
         convex_deployment_url.clone(),
         thread_cache::ThreadSnapshotStore::new(data_dir.clone()),
         Arc::clone(&project_attachments),
+        native_auth.auth_token_fetcher(),
     );
     let http_base_url = config.listen_url();
     let web_ui_enabled = config

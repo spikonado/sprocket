@@ -59,7 +59,7 @@ describe('watchLiveCompletion', () => {
 
 		const events: unknown[] = [];
 		await createLocalClient('http://127.0.0.1:7731').watchLiveCompletion(
-			{ authToken: 'token', userId: 'user-1', threadId: threadRecordId('thread-1') },
+			{ userId: 'user-1', threadId: threadRecordId('thread-1') },
 			{
 				signal: new AbortController().signal,
 				onEvent: (event) => {
@@ -170,7 +170,6 @@ describe('run cancellation local API', () => {
 
 		await expect(
 			createLocalClient('http://127.0.0.1:7731').requestRunCancellation({
-				authToken: 'token',
 				runId: runId('run-1')
 			})
 		).resolves.toBeUndefined();

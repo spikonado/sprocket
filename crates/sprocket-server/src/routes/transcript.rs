@@ -21,17 +21,15 @@ use crate::transcript_client::{UserConvexClient, download_attachment_bytes};
 use crate::transcript_watch::TranscriptWatchEvent;
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TranscriptScope {
-    auth_token: String,
     user_id: String,
     thread_id: String,
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TranscriptPageRequest {
-    auth_token: Option<String>,
     user_id: String,
     thread_id: String,
     before: Option<u32>,
@@ -39,9 +37,8 @@ struct TranscriptPageRequest {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TranscriptAttachmentRequest {
-    auth_token: String,
     user_id: String,
     thread_id: String,
     image_upload_id: String,
@@ -64,16 +61,15 @@ async fn page_handler(
     require_session(&state.auth, &headers, &jar)
         .await
         .map_err(ApiError::unauthorized)?;
-    if let Some(auth_token) = payload.auth_token.as_deref() {
-        let client =
-            UserConvexClient::connect(&state.convex_deployment_url, auth_token.to_string())
-                .await
-                .map_err(|error| {
-                    ApiError::internal_with(
-                        "failed to connect while loading transcript history",
-                        error,
-                    )
-                })?;
+    if payload.before.is_some() {
+        let client = UserConvexClient::connect_with_fetcher(
+            &state.convex_deployment_url,
+            state.native_auth.auth_token_fetcher(),
+        )
+        .await
+        .map_err(|error| {
+            ApiError::internal_with("failed to connect while loading transcript history", error)
+        })?;
         let transcript_state = state
             .transcript
             .load_state(&payload.user_id, &payload.thread_id)
@@ -126,7 +122,7 @@ async fn watch_handler(
         .map_err(ApiError::unauthorized)?;
     let session = state
         .transcript_watchers
-        .open(&payload.user_id, &payload.thread_id, payload.auth_token)
+        .open(&payload.user_id, &payload.thread_id)
         .await;
     let stream = unfold(session, |mut session| async move {
         loop {
@@ -200,9 +196,12 @@ async fn attachment_handler(
         return Ok(blob_response(blob.media_type, blob.bytes));
     }
 
-    let client = UserConvexClient::connect(&state.convex_deployment_url, payload.auth_token)
-        .await
-        .map_err(|error| ApiError::internal_with("failed to connect to Convex", error))?;
+    let client = UserConvexClient::connect_with_fetcher(
+        &state.convex_deployment_url,
+        state.native_auth.auth_token_fetcher(),
+    )
+    .await
+    .map_err(|error| ApiError::internal_with("failed to connect to Convex", error))?;
     let Some(remote) = client
         .attachment_download(&payload.image_upload_id)
         .await

@@ -12,7 +12,6 @@
 		cancelDesktopSignIn,
 		clearDesktopSignInOpenError,
 		convexAuthRetryPending,
-		getAccessToken,
 		reconcileNativeAuthentication,
 		retryConvexAuthentication,
 		signIn,
@@ -599,12 +598,11 @@
 				}
 			}
 			try {
-				const authToken = await getAccessToken();
-				if (!authToken || ac.signal.aborted || currentThreadId !== watchedThreadId) {
+				if (ac.signal.aborted || currentThreadId !== watchedThreadId) {
 					return;
 				}
 				await api.watchTranscript(
-					{ authToken, userId, threadId: watchedThreadId },
+					{ userId, threadId: watchedThreadId },
 					{
 						signal: ac.signal,
 						onEvent: (event) => {
@@ -642,28 +640,22 @@
 		void (async () => {
 			while (!ac.signal.aborted) {
 				try {
-					const authToken = await getAccessToken();
-					if (ac.signal.aborted) {
-						return;
-					}
-					if (authToken) {
-						await api.watchLiveCompletion(
-							{ authToken, userId, threadId: watchedThreadId },
-							{
-								signal: ac.signal,
-								onEvent: (event) => {
-									if (ac.signal.aborted || currentThreadId !== watchedThreadId) {
-										return;
-									}
-									if (event.eventType === 'updated') {
-										liveCompletion = event.live;
-									} else {
-										liveCompletion = null;
-									}
+					await api.watchLiveCompletion(
+						{ userId, threadId: watchedThreadId },
+						{
+							signal: ac.signal,
+							onEvent: (event) => {
+								if (ac.signal.aborted || currentThreadId !== watchedThreadId) {
+									return;
+								}
+								if (event.eventType === 'updated') {
+									liveCompletion = event.live;
+								} else {
+									liveCompletion = null;
 								}
 							}
-						);
-					}
+						}
+					);
 				} catch {
 					if (ac.signal.aborted) {
 						return;
@@ -965,14 +957,13 @@
 		}
 	}
 
-	async function localThreadCommandContext() {
+	function localThreadCommandContext() {
 		const api = desktopApi;
 		const userId = getCurrentUserId();
-		const authToken = await getAccessToken();
-		if (!api || !userId || !authToken) {
+		if (!api || !userId) {
 			throw new Error('The local Sprocket service is not ready.');
 		}
-		return { api, userId, authToken };
+		return { api, userId };
 	}
 
 	async function signOut() {
@@ -985,8 +976,8 @@
 	}
 
 	async function rekeyLocalRepository(from: string, to: string) {
-		const { api, userId, authToken } = await localThreadCommandContext();
-		await api.rekeyRepository({ userId, authToken, from, to });
+		const { api, userId } = localThreadCommandContext();
+		await api.rekeyRepository({ userId, from, to });
 		await pullThreadSnapshot(userId);
 	}
 
@@ -1024,11 +1015,10 @@
 		if (!api || !userId) {
 			return;
 		}
-		const authToken = await getAccessToken();
-		if (!authToken || getCurrentUserId() !== userId) {
+		if (getCurrentUserId() !== userId) {
 			return;
 		}
-		const event = await api.registerThreadCache({ userId, authToken });
+		const event = await api.registerThreadCache({ userId });
 		if (getCurrentUserId() !== userId) {
 			return;
 		}
@@ -1402,8 +1392,8 @@
 
 	async function renameThread(threadId: Id<'threadRecords'>, title: string) {
 		try {
-			const { api, userId, authToken } = await localThreadCommandContext();
-			const cacheSynchronized = await api.renameThread({ userId, authToken, threadId, title });
+			const { api, userId } = localThreadCommandContext();
+			const cacheSynchronized = await api.renameThread({ userId, threadId, title });
 			if (!cacheSynchronized) threadCacheStatus = 'reconnecting';
 			unconfirmedCreatedThreads = unconfirmedCreatedThreads.map((thread) =>
 				thread.threadId === threadId ? { ...thread, title } : thread
@@ -1450,12 +1440,10 @@
 		}
 		loadingOlderTranscriptGeneration = generation;
 		try {
-			const authToken = await getAccessToken();
-			if (!authToken || currentThreadId !== threadId || replicaGeneration !== generation) {
+			if (currentThreadId !== threadId || replicaGeneration !== generation) {
 				return;
 			}
 			const page = await api.fetchTranscriptPage({
-				authToken,
 				userId,
 				threadId,
 				before,
@@ -1485,12 +1473,7 @@
 		if (!api || !threadId || !userId) {
 			return null;
 		}
-		const authToken = await getAccessToken();
-		if (!authToken) {
-			return null;
-		}
 		const blob = await api.fetchTranscriptAttachment({
-			authToken,
 			userId,
 			threadId,
 			imageUploadId
@@ -1501,17 +1484,15 @@
 	async function archiveThread(threadId: Id<'threadRecords'>) {
 		const archiveUserId = getCurrentUserId();
 		try {
-			const { api, userId, authToken } = await localThreadCommandContext();
-			const cacheSynchronized = await api.archiveThread({ userId, authToken, threadId });
+			const { api, userId } = localThreadCommandContext();
+			const cacheSynchronized = await api.archiveThread({ userId, threadId });
 			if (!cacheSynchronized) threadCacheStatus = 'reconnecting';
 			await pullThreadSnapshot(userId);
 			if (archiveUserId) {
 				clearComposerRecovery(archiveUserId, `thread:${threadId}`);
 				const api = desktopApi;
-				const authToken = await getAccessToken();
-				if (api && authToken) {
+				if (api) {
 					await api.clearTranscriptReplica({
-						authToken,
 						userId: archiveUserId,
 						threadId
 					});
@@ -1538,8 +1519,8 @@
 
 	async function restoreThread(threadId: Id<'threadRecords'>) {
 		try {
-			const { api, userId, authToken } = await localThreadCommandContext();
-			const cacheSynchronized = await api.restoreThread({ userId, authToken, threadId });
+			const { api, userId } = localThreadCommandContext();
+			const cacheSynchronized = await api.restoreThread({ userId, threadId });
 			if (!cacheSynchronized) threadCacheStatus = 'reconnecting';
 			await pullThreadSnapshot(userId);
 		} catch (error) {
@@ -1929,9 +1910,8 @@
 		}
 
 		try {
-			const { api, authToken } = await localThreadCommandContext();
+			const { api } = localThreadCommandContext();
 			await api.requestRunCancellation({
-				authToken,
 				runId: runState.runId
 			});
 		} catch (error) {

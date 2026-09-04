@@ -377,24 +377,26 @@ mod tests {
 
         let project_attachments = ProjectAttachmentStore::new(temp_dir.clone());
         let transcript = sprocket_agent::TranscriptStore::new(temp_dir.join("transcripts"));
-        let transcript_watchers = crate::transcript_watch::TranscriptWatchers::new(
-            "https://example.convex.cloud".to_string(),
-            transcript.clone(),
-        );
-        let thread_cache = crate::thread_sync::ThreadCacheSync::new(
-            "https://example.convex.cloud".to_string(),
-            crate::thread_cache::ThreadSnapshotStore::new(temp_dir.clone()),
-            project_attachments.clone(),
-        );
-
-        let machine_identity = Arc::new(
-            crate::machine_identity::MachineIdentity::load(&temp_dir).expect("machine identity"),
-        );
         let native_auth = crate::native_auth::NativeAuthManager::configured_for_test(
             crate::native_auth::NativeAuthConfig {
                 workos_client_id: "client_test".to_string(),
             },
             auth::desktop_login_callback_url(7731),
+        );
+        let transcript_watchers = crate::transcript_watch::TranscriptWatchers::new(
+            "https://example.convex.cloud".to_string(),
+            transcript.clone(),
+            native_auth.auth_token_fetcher(),
+        );
+        let thread_cache = crate::thread_sync::ThreadCacheSync::new(
+            "https://example.convex.cloud".to_string(),
+            crate::thread_cache::ThreadSnapshotStore::new(temp_dir.clone()),
+            project_attachments.clone(),
+            native_auth.auth_token_fetcher(),
+        );
+
+        let machine_identity = Arc::new(
+            crate::machine_identity::MachineIdentity::load(&temp_dir).expect("machine identity"),
         );
         let state = AppState {
             auth,

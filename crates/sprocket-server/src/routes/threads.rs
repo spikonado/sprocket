@@ -21,47 +21,36 @@ use crate::thread_sync::{ThreadCacheEvent, ThreadCacheStatus};
 use crate::transcript_client::UserConvexClient;
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ThreadCacheRegisterRequest {
-    user_id: String,
-    auth_token: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ThreadCacheUserRequest {
     user_id: String,
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ThreadCommandRequest {
     user_id: String,
-    auth_token: String,
     thread_id: String,
     title: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RekeyRequest {
     user_id: String,
-    auth_token: String,
     from: String,
     to: String,
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CancelRequest {
-    auth_token: String,
     run_id: String,
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct LifecycleRequest {
-    auth_token: String,
     thread_id: String,
 }
 
@@ -109,10 +98,13 @@ pub fn routes() -> axum::Router<AppState> {
         )
 }
 
-async fn client(state: &AppState, token: String) -> Result<UserConvexClient, ApiError> {
-    UserConvexClient::connect(&state.convex_deployment_url, token)
-        .await
-        .map_err(ApiError::bad_request)
+async fn client(state: &AppState) -> Result<UserConvexClient, ApiError> {
+    UserConvexClient::connect_with_fetcher(
+        &state.convex_deployment_url,
+        state.native_auth.auth_token_fetcher(),
+    )
+    .await
+    .map_err(ApiError::bad_request)
 }
 
 fn thread_args(thread_id: String) -> BTreeMap<String, Value> {
@@ -129,7 +121,7 @@ async fn run_thread_command(
     if let Some(title) = payload.title {
         args.insert("title".into(), Value::String(title));
     }
-    let result: ThreadCommandResult = client(state, payload.auth_token.clone())
+    let result: ThreadCommandResult = client(state)
         .await?
         .mutate(function, args)
         .await
@@ -145,12 +137,7 @@ async fn run_thread_command(
         .map_or(categories, std::slice::from_ref);
     let cache_synchronized = match state
         .thread_cache
-        .refresh_repository(
-            &payload.user_id,
-            payload.auth_token,
-            &result.repository_key,
-            refresh_categories,
-        )
+        .refresh_repository(&payload.user_id, &result.repository_key, refresh_categories)
         .await
     {
         Ok(()) => true,
@@ -238,7 +225,7 @@ async fn rekey_handler(
         ("from".into(), Value::String(payload.from)),
         ("to".into(), Value::String(payload.to)),
     ]);
-    let result: RekeyResult = client(&state, payload.auth_token.clone())
+    let result: RekeyResult = client(&state)
         .await?
         .mutate("threads:rekeyRepositoryForLocalCache", args)
         .await
@@ -253,7 +240,6 @@ async fn rekey_handler(
             .thread_cache
             .refresh_repository(
                 &payload.user_id,
-                payload.auth_token,
                 &result.to,
                 &[
                     ThreadSnapshotCategory::Active,
@@ -287,7 +273,7 @@ async fn lifecycle_handler(
     require_session(&state.auth, &headers, &jar)
         .await
         .map_err(ApiError::unauthorized)?;
-    let result = client(&state, payload.auth_token)
+    let result = client(&state)
         .await?
         .query(
             "chat:selectedThreadLifecycle",
@@ -307,7 +293,7 @@ async fn cancel_handler(
         .await
         .map_err(ApiError::unauthorized)?;
     let args = BTreeMap::from([("runId".into(), Value::String(payload.run_id))]);
-    let result = client(&state, payload.auth_token)
+    let result = client(&state)
         .await?
         .mutate("agentRuntime:requestCancellation", args)
         .await
@@ -336,7 +322,7 @@ async fn register_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     jar: CookieJar,
-    Json(payload): Json<ThreadCacheRegisterRequest>,
+    Json(payload): Json<ThreadCacheUserRequest>,
 ) -> Result<Json<ThreadCacheEvent>, ApiError> {
     require_session(&state.auth, &headers, &jar)
         .await
@@ -348,7 +334,7 @@ async fn register_handler(
         .map_err(ApiError::bad_request)?;
     state
         .thread_cache
-        .register(&payload.user_id, payload.auth_token)
+        .register(&payload.user_id)
         .await
         .map_err(ApiError::bad_request)?;
     Ok(Json(state.thread_cache.current_event().await))
