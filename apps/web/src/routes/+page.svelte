@@ -51,8 +51,6 @@
 	import { convexClientErrorMessage } from '$lib/convex-error';
 	import { validateImageAttachmentAddition, type ComposerAttachment } from '$lib/chat/attachments';
 	import {
-		coercePersistedReasoningEffort,
-		coercePersistedServiceTier,
 		defaultModelId,
 		defaultReasoningEffort,
 		defaultServiceTier,
@@ -2075,8 +2073,8 @@
 		lastSyncedComposerThreadId = threadId;
 		if (!thread) return;
 		selectedModel = thread.selectedModel;
-		selectedReasoningEffort = coercePersistedReasoningEffort(thread.reasoningEffort);
-		selectedServiceTier = coercePersistedServiceTier(thread.serviceTier);
+		selectedReasoningEffort = thread.reasoningEffort;
+		selectedServiceTier = thread.serviceTier;
 	});
 
 	$effect(() => {

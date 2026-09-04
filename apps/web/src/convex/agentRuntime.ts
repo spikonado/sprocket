@@ -11,7 +11,6 @@ import schema from '@convex/schema';
 import { ConvexError, v, type Infer } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord } from '@convex/lib/access';
 import { executionSecretHash, getExecutionRun, getUserId } from '@convex/lib/auth';
-import { coercePersistedReasoningEffort, coercePersistedServiceTier } from '@convex/lib/models';
 import { GATEWAY_PROTOCOL_VERSION } from '@convex/lib/gatewayProtocol';
 import { modelGatewayTokenSecret, modelGatewayUrl } from '@convex/lib/gatewayFetch';
 import { gatewayTokenExpiresAt, mintGatewayToken } from '@convex/lib/gatewayToken';
@@ -528,11 +527,7 @@ export const getContext = query({
 				throw new Error('Run does not contain a user prompt.');
 			}
 			return {
-				run: {
-					...run,
-					serviceTier: coercePersistedServiceTier(run.serviceTier),
-					reasoningEffort: coercePersistedReasoningEffort(run.reasoningEffort)
-				},
+				run,
 				threadRecord,
 				prompt: '',
 				promptAttachments: [],
@@ -568,11 +563,7 @@ export const getContext = query({
 		};
 
 		return {
-			run: {
-				...run,
-				serviceTier: coercePersistedServiceTier(run.serviceTier),
-				reasoningEffort: coercePersistedReasoningEffort(run.reasoningEffort)
-			},
+			run,
 			threadRecord,
 			prompt,
 			promptAttachments,
