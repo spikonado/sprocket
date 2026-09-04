@@ -11,7 +11,6 @@ import schema from '@convex/schema';
 import { ConvexError, v, type Infer } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord } from '@convex/lib/access';
 import { executionSecretHash, getExecutionRun, getUserId } from '@convex/lib/auth';
-import { coercePersistedReasoningEffort, coercePersistedSelection } from '@convex/lib/models';
 import { GATEWAY_PROTOCOL_VERSION } from '@convex/lib/gatewayProtocol';
 import { modelGatewayTokenSecret, modelGatewayUrl } from '@convex/lib/gatewayFetch';
 import { gatewayTokenExpiresAt, mintGatewayToken } from '@convex/lib/gatewayToken';
@@ -527,14 +526,8 @@ export const getContext = query({
 			if (!run.continuationOfRunId) {
 				throw new Error('Run does not contain a user prompt.');
 			}
-			const selection = coercePersistedSelection(run.selectedModel, run.serviceTier);
 			return {
-				run: {
-					...run,
-					selectedModel: selection.modelId,
-					serviceTier: selection.serviceTier,
-					reasoningEffort: coercePersistedReasoningEffort(selection.modelId, run.reasoningEffort)
-				},
+				run,
 				threadRecord,
 				prompt: '',
 				promptAttachments: [],
@@ -564,19 +557,13 @@ export const getContext = query({
 		}
 
 		const prompt = promptMessage.text;
-		const selection = coercePersistedSelection(run.selectedModel, run.serviceTier);
 		const contextBudget = {
 			contextWindowTokens: run.contextWindowTokens ?? 0,
 			autoCompactTokenLimit: run.autoCompactTokenLimit ?? 0
 		};
 
 		return {
-			run: {
-				...run,
-				selectedModel: selection.modelId,
-				serviceTier: selection.serviceTier,
-				reasoningEffort: coercePersistedReasoningEffort(selection.modelId, run.reasoningEffort)
-			},
+			run,
 			threadRecord,
 			prompt,
 			promptAttachments,

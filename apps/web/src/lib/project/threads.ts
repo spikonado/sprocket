@@ -1,5 +1,4 @@
 import type { Id } from '$convex/_generated/dataModel';
-import { coercePersistedModelId } from '$convex/lib/models';
 import type { Project, ThreadSummary, ProjectThreadGroup } from '$lib/types/sprocket';
 
 export type ThreadSummaryRow = {
@@ -23,7 +22,7 @@ export function toThreadSummary(row: ThreadSummaryRow): ThreadSummary {
 		threadId: row.threadId,
 		repositoryKey: row.repositoryKey ?? '',
 		title: row.title,
-		selectedModel: coercePersistedModelId(row.selectedModel),
+		selectedModel: row.selectedModel,
 		reasoningEffort: row.reasoningEffort,
 		serviceTier: row.serviceTier,
 		lastMessageAt: row.lastMessageAt,

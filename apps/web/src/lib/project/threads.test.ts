@@ -287,7 +287,7 @@ describe('project thread helpers', () => {
 			threadId: threadA,
 			repositoryKey: 'ws-1',
 			title: 'Checkout',
-			selectedModel: 'gpt-5.6-sol',
+			selectedModel: 'gpt-5.6-luna',
 			reasoningEffort: defaultReasoningEffort,
 			serviceTier: defaultServiceTier,
 			lastMessageAt: 42,
