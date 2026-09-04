@@ -111,6 +111,9 @@ mod tests {
         assert_eq!(resolve_static_file(&dir, "/../Cargo.toml"), None);
         assert_eq!(resolve_static_file(&dir, "/foo/../../Cargo.toml"), None);
         assert_eq!(resolve_static_file(&dir, "/./pair"), None);
+        // `C:` is a Prefix component only on Windows. On Unix it is a normal
+        // path segment, so drive-style rejection is Windows-only.
+        #[cfg(windows)]
         assert_eq!(resolve_static_file(&dir, "/C:/Windows/win.ini"), None);
     }
 }
