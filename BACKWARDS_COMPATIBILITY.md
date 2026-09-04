@@ -144,6 +144,17 @@ longer supported.
 
 ## Client APIs
 
+### Local sessions created before account binding
+
+Persisted local sessions created before native WorkOS account binding have no
+`userId`. They continue to deserialize so users receive an explicit sign-in
+error instead of losing the pairing credential, but account-scoped routes
+reject them until the user signs in again. New desktop login callbacks bind
+the authenticated WorkOS user to the local session that started the flow.
+
+Remove `SessionRecord.user_id` optionality after all supported installations
+have completed a native sign-in on a version that writes the binding.
+
 Released desktop/CLI builds that still call retired Convex functions get a
 `ConvexError`: "This Sprocket version is no longer supported. Update to the
 latest Sprocket release." Production does not mask that text.

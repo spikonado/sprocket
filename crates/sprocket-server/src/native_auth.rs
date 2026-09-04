@@ -298,7 +298,11 @@ impl NativeAuthManager {
         })
     }
 
-    pub async fn complete_login(&self, code: &str, state: &str) -> anyhow::Result<NativeUser> {
+    pub async fn complete_login(
+        &self,
+        code: &str,
+        state: &str,
+    ) -> anyhow::Result<(NativeUser, String)> {
         let code = required_callback_value(code, "authorization code")?;
         let state = required_callback_value(state, "desktop login state")?;
         let (code_verifier, pending_session_token, sign_out_generation) = {
@@ -330,7 +334,10 @@ impl NativeAuthManager {
             .authenticate_with_code(params)
             .await
         {
-            Ok(response) => self.accept_authentication(response).await,
+            Ok(response) => self
+                .accept_authentication(response)
+                .await
+                .map(|user| (user, pending_session_token)),
             Err(error) => {
                 self.session
                     .lock()
@@ -1023,12 +1030,13 @@ mod tests {
             .await
             .unwrap();
 
-        let user = manager
+        let (user, session_token) = manager
             .complete_login("authorization-code", &login.login_id)
             .await
             .unwrap();
 
         assert_eq!(user.id, "user_123");
+        assert_eq!(session_token, "paired-session");
         assert_eq!(store.token().as_deref(), Some("refresh-new"));
         assert_eq!(
             manager.access_token(false).await.unwrap(),

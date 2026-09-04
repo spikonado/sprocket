@@ -15,7 +15,6 @@ use sprocket_agent::{TRANSCRIPT_CHUNK_SIZE, TRANSCRIPT_PAGE_SIZE};
 use tokio::sync::broadcast;
 
 use crate::AppState;
-use crate::auth::require_session;
 use crate::routes::api_error::ApiError;
 use crate::transcript_client::{UserConvexClient, download_attachment_bytes};
 use crate::transcript_watch::TranscriptWatchEvent;
@@ -60,16 +59,25 @@ async fn require_user(state: &AppState, user_id: &str) -> Result<(), ApiError> {
         .map_err(ApiError::unauthorized)
 }
 
+async fn require_session_user(
+    state: &AppState,
+    headers: &HeaderMap,
+    jar: &CookieJar,
+    user_id: &str,
+) -> Result<(), ApiError> {
+    crate::auth::require_session_user(&state.auth, headers, jar, user_id)
+        .await
+        .map_err(ApiError::unauthorized)?;
+    require_user(state, user_id).await
+}
+
 async fn page_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     jar: CookieJar,
     Json(payload): Json<TranscriptPageRequest>,
 ) -> Result<Json<sprocket_agent::TranscriptPage>, ApiError> {
-    require_session(&state.auth, &headers, &jar)
-        .await
-        .map_err(ApiError::unauthorized)?;
-    require_user(&state, &payload.user_id).await?;
+    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
     if payload.before.is_some() {
         let client = UserConvexClient::connect_with_fetcher(
             &state.convex_deployment_url,
@@ -128,10 +136,7 @@ async fn watch_handler(
     jar: CookieJar,
     Json(payload): Json<TranscriptScope>,
 ) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    require_session(&state.auth, &headers, &jar)
-        .await
-        .map_err(ApiError::unauthorized)?;
-    require_user(&state, &payload.user_id).await?;
+    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
     let session = state
         .transcript_watchers
         .open(&payload.user_id, &payload.thread_id)
@@ -167,10 +172,7 @@ async fn clear_handler(
     jar: CookieJar,
     Json(payload): Json<TranscriptScope>,
 ) -> Result<StatusCode, ApiError> {
-    require_session(&state.auth, &headers, &jar)
-        .await
-        .map_err(ApiError::unauthorized)?;
-    require_user(&state, &payload.user_id).await?;
+    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
     state
         .transcript_watchers
         .abort_thread(&payload.user_id, &payload.thread_id)
@@ -189,10 +191,7 @@ async fn attachment_handler(
     jar: CookieJar,
     Json(payload): Json<TranscriptAttachmentRequest>,
 ) -> Result<Response, ApiError> {
-    require_session(&state.auth, &headers, &jar)
-        .await
-        .map_err(ApiError::unauthorized)?;
-    require_user(&state, &payload.user_id).await?;
+    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
     if let Some(blob) = state
         .transcript
         .blob_for_upload(&payload.user_id, &payload.image_upload_id)

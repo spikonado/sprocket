@@ -233,11 +233,20 @@ async fn desktop_login_callback(
     };
 
     match state.native_auth.complete_login(code, callback_state).await {
-        Ok(_) => desktop_login_html_response(
-            StatusCode::OK,
-            "Signed in",
-            "Return to Sprocket. You can close this tab.",
-        ),
+        Ok((user, session_token)) => {
+            if let Err(error) = state.auth.bind_session_user(&session_token, &user.id).await {
+                return desktop_login_html_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Sign-in failed",
+                    &error.to_string(),
+                );
+            }
+            desktop_login_html_response(
+                StatusCode::OK,
+                "Signed in",
+                "Return to Sprocket. You can close this tab.",
+            )
+        }
         Err(error) => desktop_login_html_response(
             StatusCode::BAD_REQUEST,
             "Sign-in failed",
@@ -255,7 +264,13 @@ async fn desktop_login_result(
         .await
         .map_err(|_| ApiError::authentication_required())?;
 
-    Ok(Json(state.native_auth.status(&session_token).await))
+    let status = state.native_auth.status(&session_token).await;
+    if matches!(status, NativeLoginStatus::Authenticated { .. })
+        && !state.auth.session_has_user(&session_token).await
+    {
+        return Ok(Json(NativeLoginStatus::SignedOut));
+    }
+    Ok(Json(status))
 }
 
 async fn desktop_login_cancel(

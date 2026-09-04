@@ -14,7 +14,6 @@ use serde::Deserialize;
 use tokio::sync::broadcast;
 
 use crate::AppState;
-use crate::auth::require_session;
 use crate::routes::api_error::ApiError;
 use crate::thread_cache::{CachedThreadSummary, ThreadSnapshotCategory};
 use crate::thread_sync::{ThreadCacheEvent, ThreadCacheStatus};
@@ -119,6 +118,18 @@ async fn require_user(state: &AppState, user_id: &str) -> Result<(), ApiError> {
         .map_err(ApiError::unauthorized)
 }
 
+async fn require_session_user(
+    state: &AppState,
+    headers: &HeaderMap,
+    jar: &CookieJar,
+    user_id: &str,
+) -> Result<(), ApiError> {
+    crate::auth::require_session_user(&state.auth, headers, jar, user_id)
+        .await
+        .map_err(ApiError::unauthorized)?;
+    require_user(state, user_id).await
+}
+
 fn thread_args(thread_id: String) -> BTreeMap<String, Value> {
     BTreeMap::from([("threadId".into(), Value::String(thread_id))])
 }
@@ -129,7 +140,6 @@ async fn run_thread_command(
     function: &str,
     categories: &[ThreadSnapshotCategory],
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    require_user(state, &payload.user_id).await?;
     let mut args = thread_args(payload.thread_id);
     if let Some(title) = payload.title {
         args.insert("title".into(), Value::String(title));
@@ -171,9 +181,7 @@ async fn rename_handler(
     jar: CookieJar,
     Json(payload): Json<ThreadCommandRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    require_session(&state.auth, &headers, &jar)
-        .await
-        .map_err(ApiError::unauthorized)?;
+    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
     run_thread_command(
         &state,
         payload,
@@ -191,9 +199,7 @@ async fn archive_handler(
     jar: CookieJar,
     Json(payload): Json<ThreadCommandRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    require_session(&state.auth, &headers, &jar)
-        .await
-        .map_err(ApiError::unauthorized)?;
+    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
     run_thread_command(
         &state,
         payload,
@@ -211,9 +217,7 @@ async fn restore_handler(
     jar: CookieJar,
     Json(payload): Json<ThreadCommandRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    require_session(&state.auth, &headers, &jar)
-        .await
-        .map_err(ApiError::unauthorized)?;
+    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
     run_thread_command(
         &state,
         payload,
@@ -231,10 +235,7 @@ async fn rekey_handler(
     jar: CookieJar,
     Json(payload): Json<RekeyRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    require_session(&state.auth, &headers, &jar)
-        .await
-        .map_err(ApiError::unauthorized)?;
-    require_user(&state, &payload.user_id).await?;
+    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
     let args = BTreeMap::from([
         ("from".into(), Value::String(payload.from)),
         ("to".into(), Value::String(payload.to)),
@@ -284,10 +285,7 @@ async fn lifecycle_handler(
     jar: CookieJar,
     Json(payload): Json<LifecycleRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    require_session(&state.auth, &headers, &jar)
-        .await
-        .map_err(ApiError::unauthorized)?;
-    require_user(&state, &payload.user_id).await?;
+    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
     let result = client(&state, &payload.user_id)
         .await?
         .query(
@@ -304,10 +302,7 @@ async fn cancel_handler(
     jar: CookieJar,
     Json(payload): Json<CancelRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    require_session(&state.auth, &headers, &jar)
-        .await
-        .map_err(ApiError::unauthorized)?;
-    require_user(&state, &payload.user_id).await?;
+    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
     let args = BTreeMap::from([("runId".into(), Value::String(payload.run_id))]);
     let result = client(&state, &payload.user_id)
         .await?
@@ -323,10 +318,7 @@ async fn end_account_session_handler(
     jar: CookieJar,
     Json(payload): Json<ThreadCacheUserRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    require_session(&state.auth, &headers, &jar)
-        .await
-        .map_err(ApiError::unauthorized)?;
-    require_user(&state, &payload.user_id).await?;
+    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
     state
         .machines
         .end(&payload.user_id)
@@ -341,10 +333,7 @@ async fn register_handler(
     jar: CookieJar,
     Json(payload): Json<ThreadCacheUserRequest>,
 ) -> Result<Json<ThreadCacheEvent>, ApiError> {
-    require_session(&state.auth, &headers, &jar)
-        .await
-        .map_err(ApiError::unauthorized)?;
-    require_user(&state, &payload.user_id).await?;
+    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
     state
         .machines
         .register(&payload.user_id)
@@ -364,10 +353,7 @@ async fn snapshot_handler(
     jar: CookieJar,
     Json(payload): Json<ThreadCacheUserRequest>,
 ) -> Result<Json<ThreadCacheSnapshotResponse>, ApiError> {
-    require_session(&state.auth, &headers, &jar)
-        .await
-        .map_err(ApiError::unauthorized)?;
-    require_user(&state, &payload.user_id).await?;
+    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
     let user_id = payload.user_id.trim();
     if user_id.is_empty() {
         return Err(ApiError::bad_request(anyhow!("user id is required")));
@@ -390,10 +376,7 @@ async fn archive_sync_handler(
     jar: CookieJar,
     Json(payload): Json<ThreadCacheUserRequest>,
 ) -> Result<Json<ThreadCacheEvent>, ApiError> {
-    require_session(&state.auth, &headers, &jar)
-        .await
-        .map_err(ApiError::unauthorized)?;
-    require_user(&state, &payload.user_id).await?;
+    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
     state
         .thread_cache
         .sync_archived(&payload.user_id)
@@ -408,10 +391,7 @@ async fn watch_handler(
     jar: CookieJar,
     Json(payload): Json<ThreadCacheUserRequest>,
 ) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    require_session(&state.auth, &headers, &jar)
-        .await
-        .map_err(ApiError::unauthorized)?;
-    require_user(&state, &payload.user_id).await?;
+    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
     let user_id = payload.user_id.trim();
     if user_id.is_empty() {
         return Err(ApiError::bad_request(anyhow!("user id is required")));
