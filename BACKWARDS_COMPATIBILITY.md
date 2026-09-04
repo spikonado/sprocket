@@ -135,9 +135,11 @@ validated schema. Historical `runs.promptMessageId` and
 Gateway run creation still returns a synthetic `promptMessageId` for released
 agents that require the response field; current code does not consume it.
 
-Unset both fields in a production rewrite, then remove them from
-`convex/schema.ts`. Historical documents in the now-unvalidated
-`threadMessages` table may be deleted independently.
+`migrations.removeRunPromptMessageIds` and
+`migrations.removeImageUploadMessageIds` unset both fields. Remove the pinned
+migration runner, its cron, and both schema fields once both migrations report
+`success` and production scans find no remaining values. Historical documents
+in the now-unvalidated `threadMessages` table may be deleted independently.
 
 ## Client APIs
 
