@@ -206,6 +206,7 @@
 	let composerAttachments = $state<ComposerAttachment[]>([]);
 	let currentError = $state<string | null>(null);
 	let elapsedSeconds = $state(0);
+	let clientNowMs = $state(Date.now());
 	const submittingPromptScopes = new SvelteMap<string, number>();
 	const composerRecoveries = new SvelteMap<string, ComposerRecovery>();
 	const recoveredSubmissionIds = new SvelteMap<
@@ -447,8 +448,12 @@
 		currentThreadId && getAuthenticatedQueryArgs() !== 'skip'
 			? { threadId: currentThreadId }
 			: 'skip';
+	const authenticatedLifecycleQueryArgs = () =>
+		currentThreadId && getAuthenticatedQueryArgs() !== 'skip'
+			? { threadId: currentThreadId, now: clientNowMs }
+			: 'skip';
 	const activeThreadQuery = useQuery(api.threads.getByThreadId, authenticatedThreadQueryArgs);
-	const lifecycleQuery = useQuery(api.chat.selectedThreadLifecycle, authenticatedThreadQueryArgs);
+	const lifecycleQuery = useQuery(api.chat.selectedThreadLifecycle, authenticatedLifecycleQueryArgs);
 	const artifactsQuery = useQuery(
 		api.artifacts.listArtifactsForThread,
 		authenticatedThreadQueryArgs
@@ -459,7 +464,7 @@
 	);
 	const pendingAgentQuestionQuery = useQuery(
 		api.agentQuestions.headPendingForThread,
-		authenticatedThreadQueryArgs
+		authenticatedLifecycleQueryArgs
 	);
 	const queryError = $derived.by(() => {
 		for (const query of [
@@ -1446,13 +1451,16 @@
 			};
 			await answerAgentQuestion(answer);
 		} catch (error) {
-			if (
-				currentThreadId === threadId &&
-				pendingAgentQuestion?.questionId === question.questionId
-			) {
-				prompt = submittedPrompt;
-				selectedQuestionOptionId = submittedOptionId;
+			// Always surface the error on this thread. Restore the draft only when
+			// the same ask is still showing, or the ask UI cleared (timeout /
+			// advance); never overwrite a different live question's composer.
+			if (currentThreadId === threadId) {
 				currentError = error instanceof Error ? error.message : String(error);
+				const head = pendingAgentQuestion;
+				if (!head || head.questionId === question.questionId) {
+					prompt = submittedPrompt;
+					selectedQuestionOptionId = submittedOptionId;
+				}
 			}
 		} finally {
 			answeringAgentQuestion = false;
@@ -2106,6 +2114,16 @@
 		updateElapsed();
 		const intervalId = window.setInterval(updateElapsed, 1000);
 
+		return () => {
+			window.clearInterval(intervalId);
+		};
+	});
+
+	$effect(() => {
+		clientNowMs = Date.now();
+		const intervalId = window.setInterval(() => {
+			clientNowMs = Date.now();
+		}, 1000);
 		return () => {
 			window.clearInterval(intervalId);
 		};
