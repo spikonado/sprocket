@@ -4,7 +4,7 @@
 	import { PanelRight } from '@lucide/svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import { useAuth, useMutation, useQuery } from 'convex-svelte';
-	import type { Id } from '$convex/_generated/dataModel';
+	import type { Doc, Id } from '$convex/_generated/dataModel';
 	import { api } from '$convex/_generated/api';
 	import {
 		advanceConvexAuthRetryPending,
@@ -41,7 +41,6 @@
 		lifecycleResumeKind,
 		refreshDesktopProjectAttachments as refreshDesktopProjectAttachmentsFromDesktop,
 		projectFromAttachment,
-		resolveDraftRunSubmissionId,
 		resolveSubmissionId,
 		verifyProjectAttachment as verifyProjectAttachmentForExecution,
 		type ProjectState
@@ -49,13 +48,7 @@
 	import { formatElapsedDuration } from '$lib/format';
 	import { convexClientErrorMessage } from '$lib/convex-error';
 	import { validateImageAttachmentAddition, type ComposerAttachment } from '$lib/chat/attachments';
-	import {
-		defaultModelId,
-		defaultReasoningEffort,
-		defaultServiceTier,
-		type SupportedReasoningEffort,
-		type SupportedServiceTier
-	} from '$convex/lib/models';
+	import { defaultModelId, defaultReasoningEffort, defaultServiceTier } from '$convex/lib/models';
 	import {
 		CATALOG_UNAVAILABLE_MESSAGE,
 		fetchGatewayModelCatalog,
@@ -75,18 +68,12 @@
 		isActiveThread,
 		isAgentLaunchPending,
 		isLatestRunReadyForThread,
-		makeUnconfirmedCreatedThread,
-		mergeUnconfirmedCreatedThreads,
-		overrideThreadActiveRun,
 		pickThreadToRestore,
-		retainUnconfirmedCreatedThreads,
-		threadTitleFromPrompt,
 		resolveExpiredAgentLaunch,
 		resolvePendingAgentLaunch,
-		resolvePendingAgentLaunchesFromThreads,
 		resolvePendingCreatedThreadId,
 		resolveProjectThreadSelection,
-		toThreadSummary,
+		threadRecordToSummary,
 		type PendingAgentLaunch,
 		type PendingAgentLaunches
 	} from '$lib/project/threads';
@@ -104,10 +91,10 @@
 		LiveCompletionOverlay,
 		LocalTranscriptPart,
 		ThreadCacheStatus,
+		ThreadCacheUserRequest,
 		ThreadMessage,
 		ThreadSummary,
-		ProjectAttachment,
-		ProjectThreadGroup
+		ProjectAttachment
 	} from '$lib/types/sprocket';
 
 	const convexAuth = useAuth();
@@ -153,7 +140,6 @@
 			convexAuthRetryPending.set(false);
 		}
 	});
-	const createThreadMutation = useMutation(api.threads.create);
 	const setThreadSelectedModel = useMutation(api.threads.setSelectedModel);
 	const answerAgentQuestion = useMutation(api.agentQuestions.answer);
 	const setThemePreference = useMutation(api.uiPreferences.setTheme);
@@ -242,16 +228,14 @@
 	let lastSyncedComposerThreadId: Id<'threadRecords'> | null = null;
 	let projectSelectionGeneration = $state(0);
 	let pendingCreatedThreadId = $state<Id<'threadRecords'> | null>(null);
-	let unconfirmedCreatedThreads = $state<ThreadSummary[]>([]);
 	let desktopProjectAttachmentsByPath = $state<Record<string, ProjectAttachment>>({});
 	let hasLoadedDesktopProjectAttachments = $state(false);
 	let desktopProjectAttachmentsGeneration = 0;
 	let threadSnapshotReady = $state(false);
 	let threadCacheStatus = $state<ThreadCacheStatus>('loading');
-	let threadSnapshotThreads = $state<ThreadSummary[]>([]);
+	let threadSnapshotThreads = $state<Doc<'threadRecords'>[]>([]);
 	let threadCacheGeneration = 0;
 	let threadSnapshotPullGeneration = 0;
-	let archivedSyncGeneration = 0;
 	let selectionUserId = $state<string | null>(null);
 	let projectPickerOpen = $state(false);
 	let projectPickerMode = $state<'add' | 'reconnect'>('add');
@@ -497,12 +481,7 @@
 			.sort((left, right) => right.lastUsedAt - left.lastUsedAt)
 			.map(projectFromAttachment)
 	);
-	const threads = $derived(
-		mergeUnconfirmedCreatedThreads(
-			threadSnapshotThreads.map(toThreadSummary),
-			unconfirmedCreatedThreads
-		)
-	);
+	const threads = $derived(threadSnapshotThreads.map(threadRecordToSummary));
 	const currentActiveThread = $derived(dataForThread(activeThreadQuery.data, currentThreadId));
 	const contextUsage = $derived.by(() => {
 		const model = modelCatalog
@@ -862,13 +841,7 @@
 	const isRunning = $derived(
 		isRunInProgress && currentLifecycle?.phase !== 'cancellation_requested'
 	);
-	const groupedProjectThreads = $derived.by<ProjectThreadGroup[]>(() => {
-		const sidebarThreads =
-			currentThreadId && currentLifecycle
-				? overrideThreadActiveRun(threads, currentThreadId, isRunInProgress)
-				: threads;
-		return getProjectThreadGroups(projects, sidebarThreads);
-	});
+	const groupedProjectThreads = $derived(getProjectThreadGroups(projects, threads));
 	const hasPendingAgentLaunch = $derived(
 		isAgentLaunchPending(pendingAgentLaunches, currentThreadId)
 	);
@@ -1000,14 +973,12 @@
 			return;
 		}
 		threadSnapshotThreads = snapshot.threads;
-		unconfirmedCreatedThreads = retainUnconfirmedCreatedThreads(
-			snapshot.threads,
-			unconfirmedCreatedThreads
-		);
 		applyThreadCacheEvent(snapshot);
 	}
 
-	async function registerThreadCacheForCurrentUser() {
+	async function registerThreadCacheForCurrentUser(
+		selectedThreadId: Id<'threadRecords'> | null = currentThreadId
+	) {
 		const api = desktopApi;
 		const userId = getCurrentUserId();
 		if (!api || !userId) {
@@ -1016,7 +987,11 @@
 		if (getCurrentUserId() !== userId) {
 			return;
 		}
-		const event = await api.registerThreadCache({ userId });
+		const request: ThreadCacheUserRequest = { userId };
+		if (selectedThreadId) {
+			request.selectedThreadId = selectedThreadId;
+		}
+		const event = await api.registerThreadCache(request);
 		if (getCurrentUserId() !== userId) {
 			return;
 		}
@@ -1074,34 +1049,11 @@
 	$effect(() => {
 		const api = desktopApi;
 		const userId = signedInUserId;
+		const selectedThreadId = currentThreadId;
 		if (!api || !userId || !authReady) {
 			return;
 		}
-		void registerThreadCacheForCurrentUser().catch(() => {});
-	});
-
-	$effect(() => {
-		const api = desktopApi;
-		const userId = getCurrentUserId();
-		if (!api || !userId || !authReady || !settingsOpen || settingsPage !== 'archived') {
-			return;
-		}
-		const generation = ++archivedSyncGeneration;
-		void api
-			.syncArchivedThreads({ userId })
-			.then(async (event) => {
-				if (generation !== archivedSyncGeneration || getCurrentUserId() !== userId) {
-					return;
-				}
-				applyThreadCacheEvent(event);
-				await pullThreadSnapshot(userId);
-			})
-			.catch((error) => {
-				if (generation !== archivedSyncGeneration || getCurrentUserId() !== userId) {
-					return;
-				}
-				currentError = error instanceof Error ? error.message : 'Could not sync archived threads.';
-			});
+		void registerThreadCacheForCurrentUser(selectedThreadId).catch(() => {});
 	});
 
 	function applyProjectSelection(
@@ -1309,54 +1261,6 @@
 		openProjectPicker('reconnect', workspacePath);
 	}
 
-	async function createThread(args: {
-		isSubmissionCurrent: () => boolean;
-		prompt: string;
-		selectionGeneration: number;
-		selectedModel: CatalogModelId;
-		selectedReasoningEffort: string;
-		selectedServiceTier: string;
-		submissionId: string;
-		userId: string;
-		repositoryKey: string;
-	}) {
-		const result = await createThreadMutation({
-			submissionId: args.submissionId,
-			repositoryKey: args.repositoryKey,
-			selectedModel: args.selectedModel,
-			// SAFETY: threads.create validates this against the reasoning-effort union.
-			reasoningEffort: args.selectedReasoningEffort as SupportedReasoningEffort,
-			// SAFETY: threads.create validates this against the service-tier union.
-			serviceTier: args.selectedServiceTier as SupportedServiceTier
-		});
-		if (!args.isSubmissionCurrent()) {
-			return null;
-		}
-
-		if (args.userId === getCurrentUserId()) {
-			unconfirmedCreatedThreads = [
-				...unconfirmedCreatedThreads.filter((thread) => thread.threadId !== result.threadId),
-				makeUnconfirmedCreatedThread({
-					threadId: result.threadId,
-					repositoryKey: args.repositoryKey,
-					selectedModel: args.selectedModel,
-					reasoningEffort: args.selectedReasoningEffort,
-					serviceTier: args.selectedServiceTier,
-					title: threadTitleFromPrompt(args.prompt)
-				})
-			];
-			void pullThreadSnapshot(args.userId);
-			if (args.selectionGeneration === projectSelectionGeneration) {
-				pendingCreatedThreadId = result.threadId;
-				projectSelectionGeneration += 1;
-				currentThreadId = result.threadId;
-				draftWorkspacePath = null;
-			}
-		}
-
-		return result;
-	}
-
 	async function persistSelectedModel(modelId: CatalogModelId) {
 		const threadId = currentThreadId;
 		const userId = getCurrentUserId();
@@ -1364,9 +1268,6 @@
 			return;
 		}
 
-		unconfirmedCreatedThreads = unconfirmedCreatedThreads.map((thread) =>
-			thread.threadId === threadId ? { ...thread, selectedModel: modelId } : thread
-		);
 		try {
 			await setThreadSelectedModel({ threadId, selectedModel: modelId });
 			if (getCurrentUserId() === userId) {
@@ -1393,9 +1294,6 @@
 			const { api, userId } = localThreadCommandContext();
 			const cacheSynchronized = await api.renameThread({ userId, threadId, title });
 			if (!cacheSynchronized) threadCacheStatus = 'reconnecting';
-			unconfirmedCreatedThreads = unconfirmedCreatedThreads.map((thread) =>
-				thread.threadId === threadId ? { ...thread, title } : thread
-			);
 			await pullThreadSnapshot(userId);
 		} catch (error) {
 			currentError = error instanceof Error ? error.message : 'Failed to rename thread.';
@@ -1499,10 +1397,6 @@
 			if (getCurrentUserId() === archiveUserId) {
 				if (currentThreadId === threadId) {
 					currentThreadId = null;
-					pendingCreatedThreadId = null;
-					unconfirmedCreatedThreads = unconfirmedCreatedThreads.filter(
-						(thread) => thread.threadId !== threadId
-					);
 					projectSelectionGeneration += 1;
 				}
 				currentError = null;
@@ -1612,7 +1506,6 @@
 
 		elapsedSeconds = 0;
 
-		const selectionGeneration = projectSelectionGeneration;
 		const selectedThreadId = currentThreadId;
 		let submittedRepositoryKey = currentRepositoryKey;
 		if (!submittedRepositoryKey) {
@@ -1667,7 +1560,7 @@
 				: undefined,
 			selectedModel: submittedModel
 		});
-		let runSubmissionId = threadSubmissionId;
+		const runSubmissionId = threadSubmissionId;
 		clearComposerRecovery(submittedUserId, originatingRecoveryScope);
 		let launchedThreadId: Id<'threadRecords'> | null = null;
 		let agentLaunchId: number | null = null;
@@ -1708,10 +1601,9 @@
 				return;
 			}
 
-			storeComposerRecovery(submittedUserId, recoveryScope, {
-				message: submissionDelayMessage,
-				prompt: ''
-			});
+			recoverSubmission(submissionDelayMessage);
+			clearSubmittingPrompt(submissionScope, submissionSequence);
+			latestSubmissionSequencesByRecoveryScope.delete(submissionTrackingKey);
 		}, agentLaunchTimeoutMs);
 		prompt = '';
 		currentError = null;
@@ -1745,53 +1637,15 @@
 				}
 			}
 
-			const threadCreation = selectedThreadId
-				? null
-				: await createThread({
-						isSubmissionCurrent,
-						prompt: submittedPrompt,
-						selectionGeneration,
-						selectedModel: submittedModel,
-						selectedReasoningEffort: submittedReasoningEffort,
-						selectedServiceTier: submittedServiceTier,
-						submissionId: threadSubmissionId,
-						userId: submittedUserId,
-						repositoryKey: submittedRepositoryKey
-					});
-			const threadId = selectedThreadId ?? threadCreation?.threadId ?? null;
-			if (!threadId || !isSubmissionCurrent()) {
+			const threadId = selectedThreadId;
+			if (!isSubmissionCurrent()) {
 				return;
-			}
-			if (threadCreation) {
-				runSubmissionId = resolveDraftRunSubmissionId({
-					freshSubmissionId,
-					submissionRunStatus: threadCreation.submissionRunStatus,
-					threadSubmissionId
-				});
 			}
 			if (!isSubmittedUserCurrent()) {
 				recoverSubmission(sessionChangedMessage);
 				return;
 			}
 			launchedThreadId = threadId;
-			if (!selectedThreadId) {
-				clearSubmittingPrompt(submissionScope, submissionSequence);
-				submissionScope = `thread:${threadId}`;
-				submittingPromptScopes.set(submissionScope, submissionSequence);
-				clearSubmissionDelay();
-				if (
-					latestSubmissionSequencesByRecoveryScope.get(submissionTrackingKey) === submissionSequence
-				) {
-					latestSubmissionSequencesByRecoveryScope.delete(submissionTrackingKey);
-				}
-				recoveryScope = `thread:${threadId}`;
-				submissionTrackingKey = getComposerRecoveryKey(submittedUserId, recoveryScope);
-				latestSubmissionSequencesByRecoveryScope.set(submissionTrackingKey, submissionSequence);
-				if (repositoryKeyChanged) {
-					setProjectSelection(workspacePath, threadId);
-					remoteChangeNotices.set(threadId, REMOTE_CHANGE_NOTICE);
-				}
-			}
 			if (!isSubmissionCurrent()) {
 				return;
 			}
@@ -1810,61 +1664,71 @@
 			if (runState?.startedAt) {
 				launch.previousStartedAt = runState.startedAt;
 			}
-			pendingAgentLaunches = beginPendingAgentLaunch(pendingAgentLaunches, threadId, launch);
-			window.setTimeout(() => {
-				const threadLatestRunId =
-					threads.find((thread) => thread.threadId === threadId)?.latestRunId ?? null;
-				const selectedRunId = currentThreadId === threadId ? (runState?.runId ?? null) : null;
-				const latestRunId =
-					[threadLatestRunId, selectedRunId].find((runId) => runId && runId !== previousRunId) ??
-					threadLatestRunId ??
-					selectedRunId;
-				const latestStartedAt =
-					currentThreadId === threadId && runState?.runId === latestRunId
-						? runState.startedAt
-						: undefined;
-				const recovery = resolveExpiredAgentLaunch(
-					pendingAgentLaunches,
-					threadId,
-					launchId,
-					Date.now(),
-					latestRunId,
-					undefined,
-					latestStartedAt
-				);
-				if (recovery.pendingLaunches === pendingAgentLaunches) {
-					return;
-				}
+			if (threadId)
+				pendingAgentLaunches = beginPendingAgentLaunch(pendingAgentLaunches, threadId, launch);
+			if (threadId)
+				window.setTimeout(() => {
+					const selectedRunId = currentThreadId === threadId ? (runState?.runId ?? null) : null;
+					const latestRunId = selectedRunId;
+					const latestStartedAt =
+						currentThreadId === threadId && runState?.runId === latestRunId
+							? runState?.startedAt
+							: undefined;
+					const recovery = resolveExpiredAgentLaunch(
+						pendingAgentLaunches,
+						threadId,
+						launchId,
+						Date.now(),
+						latestRunId,
+						undefined,
+						latestStartedAt
+					);
+					if (recovery.pendingLaunches === pendingAgentLaunches) {
+						return;
+					}
 
-				pendingAgentLaunches = recovery.pendingLaunches;
-				if (recovery.shouldRecover) {
-					recoverSubmission('The local agent did not start. Please try again.');
-				}
-			}, agentLaunchTimeoutMs);
-			launchAgentRun({
+					pendingAgentLaunches = recovery.pendingLaunches;
+					if (recovery.shouldRecover) {
+						recoverSubmission('The local agent did not start. Please try again.');
+					}
+				}, agentLaunchTimeoutMs);
+			await launchAgentRun({
 				userId: submittedUserId,
 				desktopApi,
 				onError: (error) => {
 					if (!isSubmissionCurrent() || !isSubmittedUserCurrent()) {
 						return;
 					}
-					const nextPendingAgentLaunches = clearPendingAgentLaunch(
-						pendingAgentLaunches,
-						threadId,
-						launchId
-					);
-					if (nextPendingAgentLaunches !== pendingAgentLaunches) {
-						pendingAgentLaunches = nextPendingAgentLaunches;
+					if (threadId) {
+						const nextPendingAgentLaunches = clearPendingAgentLaunch(
+							pendingAgentLaunches,
+							threadId,
+							launchId
+						);
+						if (nextPendingAgentLaunches !== pendingAgentLaunches) {
+							pendingAgentLaunches = nextPendingAgentLaunches;
+						}
 					}
 					recoverSubmission(
 						error instanceof Error ? error.message : 'Failed to start the local agent run.'
 					);
 				},
-				onStarted: () => {
+				onStarted: (_runId, createdThreadId) => {
 					if (!isSubmissionCurrent() || !isSubmittedUserCurrent()) return;
+					if (!selectedThreadId) {
+						launchedThreadId = createdThreadId;
+						pendingCreatedThreadId = createdThreadId;
+						projectSelectionGeneration += 1;
+						currentThreadId = createdThreadId;
+						draftWorkspacePath = null;
+						void pullThreadSnapshot(submittedUserId);
+						if (repositoryKeyChanged)
+							remoteChangeNotices.set(createdThreadId, REMOTE_CHANGE_NOTICE);
+					}
 					clearComposerAttachments({ discard: false });
 				},
-				threadId,
+				threadId: threadId ?? undefined,
+				repositoryKey: threadId ? undefined : submittedRepositoryKey,
 				prompt: submittedPrompt,
 				imageUploadIds: submittedImageUploadIds,
 				selectedModel: submittedModel,
@@ -1953,7 +1817,7 @@
 			if (getCurrentUserId() !== userId) {
 				throw new Error('User session is not ready.');
 			}
-			launchAgentRun({
+			await launchAgentRun({
 				userId,
 				desktopApi,
 				onError: (error) => {
@@ -1990,7 +1854,6 @@
 		currentThreadId = null;
 		draftWorkspacePath = null;
 		pendingCreatedThreadId = null;
-		unconfirmedCreatedThreads = [];
 		pendingAgentLaunches = {};
 		restoredWorkspacePathToAttach = null;
 		ensureSubscriptionAttemptedFor = null;
@@ -2010,6 +1873,20 @@
 		projectPickerOpen = false;
 		projectPickerReconnectWorkspacePath = null;
 		projectPickerExpectedDisplayName = undefined;
+	});
+
+	$effect(() => {
+		if (!pendingCreatedThreadId) {
+			return;
+		}
+
+		const nextPendingCreatedThreadId = resolvePendingCreatedThreadId({
+			pendingCreatedThreadId,
+			threads: threadSnapshotThreads.map(threadRecordToSummary)
+		});
+		if (nextPendingCreatedThreadId !== pendingCreatedThreadId) {
+			pendingCreatedThreadId = nextPendingCreatedThreadId;
+		}
 	});
 
 	$effect(() => {
@@ -2106,20 +1983,6 @@
 	});
 
 	$effect(() => {
-		if (!pendingCreatedThreadId) {
-			return;
-		}
-
-		const nextPendingCreatedThreadId = resolvePendingCreatedThreadId({
-			pendingCreatedThreadId,
-			threads: threadSnapshotThreads
-		});
-		if (nextPendingCreatedThreadId !== pendingCreatedThreadId) {
-			pendingCreatedThreadId = nextPendingCreatedThreadId;
-		}
-	});
-
-	$effect(() => {
 		if (
 			hasResolvedInitialSelection ||
 			!initialProjectLaunchResolved ||
@@ -2199,8 +2062,7 @@
 			threads,
 			currentThreadId,
 			currentWorkspacePath,
-			draftWorkspacePath,
-			pendingCreatedThreadId
+			draftWorkspacePath
 		});
 		if (nextThreadId === currentThreadId) {
 			return;
@@ -2215,10 +2077,7 @@
 	});
 
 	$effect(() => {
-		let nextPendingAgentLaunches = resolvePendingAgentLaunchesFromThreads(
-			pendingAgentLaunches,
-			threads
-		);
+		let nextPendingAgentLaunches = pendingAgentLaunches;
 		if (currentThreadId && runState?.runId) {
 			nextPendingAgentLaunches = resolvePendingAgentLaunch(
 				nextPendingAgentLaunches,

@@ -12,10 +12,8 @@ import {
 	mergeUnconfirmedCreatedThread,
 	mergeUnconfirmedCreatedThreads,
 	pickThreadToRestore,
-	overrideThreadActiveRun,
 	resolveExpiredAgentLaunch,
 	resolvePendingAgentLaunch,
-	resolvePendingAgentLaunchesFromThreads,
 	resolvePendingCreatedThreadId,
 	resolveProjectThreadSelection,
 	retainUnconfirmedCreatedThreads,
@@ -25,9 +23,10 @@ import {
 	type PendingAgentLaunches
 } from '$lib/project/threads';
 import { defaultModelId, defaultReasoningEffort, defaultServiceTier } from '$convex/lib/models';
+import type { Id } from '$convex/_generated/dataModel';
 import type { ThreadSummary, Project } from '$lib/types/sprocket';
 
-type RunId = NonNullable<ThreadSummary['latestRunId']>;
+type RunId = Id<'runs'>;
 
 function threadId(value: string): ThreadSummary['threadId'] {
 	// SAFETY: fixture strings are only compared as opaque Convex document ids.
@@ -66,11 +65,7 @@ function makeThreadSummary(overrides: Partial<ThreadSummary> = {}): ThreadSummar
 		serviceTier: overrides.serviceTier ?? defaultServiceTier,
 		lastMessageAt: 0,
 		threadStatus: 'active',
-		latestRunStatus: null,
-		latestRunId: null,
-		latestRunStartedAt: undefined,
-		latestRunClaimExpiresAt: undefined,
-		hasActiveRun: false,
+		status: 'completed',
 		...overrides
 	};
 }
@@ -132,20 +127,6 @@ describe('project thread helpers', () => {
 		).toHaveLength(1);
 	});
 
-	it('overrides cached run activity for the selected thread only', () => {
-		const selected = makeThreadSummary({ threadId: threadA, hasActiveRun: false });
-		const other = makeThreadSummary({ threadId: threadB, hasActiveRun: true });
-
-		expect(overrideThreadActiveRun([selected, other], threadA, true)).toEqual([
-			{ ...selected, hasActiveRun: true },
-			other
-		]);
-		expect(overrideThreadActiveRun([selected, other], threadB, false)).toEqual([
-			selected,
-			{ ...other, hasActiveRun: false }
-		]);
-	});
-
 	it('keeps projects in their given order regardless of thread activity', () => {
 		const groups = getProjectThreadGroups(
 			[
@@ -171,7 +152,7 @@ describe('project thread helpers', () => {
 		const runningOlder = makeThreadSummary({
 			threadId: threadId('thread-record-running'),
 			lastMessageAt: 10,
-			hasActiveRun: true
+			status: 'running'
 		});
 		const idleNewer = makeThreadSummary({
 			threadId: threadId('thread-record-idle'),
@@ -232,12 +213,12 @@ describe('project thread helpers', () => {
 				makeThreadSummary({
 					threadId: threadId('thread-record-running-older'),
 					lastMessageAt: 10,
-					hasActiveRun: true
+					status: 'running'
 				}),
 				makeThreadSummary({
 					threadId: threadId('thread-record-running-newer'),
 					lastMessageAt: 20,
-					hasActiveRun: true
+					status: 'running'
 				})
 			]
 		);
@@ -276,11 +257,7 @@ describe('project thread helpers', () => {
 			serviceTier: defaultServiceTier,
 			lastMessageAt: 42,
 			threadStatus: 'active' as const,
-			latestRunStatus: null,
-			latestRunId: runA1,
-			latestRunStartedAt: 10,
-			latestRunClaimExpiresAt: 20,
-			hasActiveRun: true
+			status: 'running' as const
 		};
 
 		expect(toThreadSummary(row)).toEqual({
@@ -292,11 +269,7 @@ describe('project thread helpers', () => {
 			serviceTier: defaultServiceTier,
 			lastMessageAt: 42,
 			threadStatus: 'active',
-			latestRunStatus: null,
-			latestRunId: runA1,
-			latestRunStartedAt: 10,
-			latestRunClaimExpiresAt: 20,
-			hasActiveRun: true
+			status: 'running'
 		});
 	});
 
@@ -349,21 +322,22 @@ describe('project thread helpers', () => {
 		).toBe(pendingThreadId);
 	});
 
-	it('falls back when an established thread disappears from the list', () => {
+	it('preserves the selected thread while the cache fetches a record outside the recent list', () => {
 		const newest = makeThreadSummary({
 			threadId: threadId('thread-record-newest'),
 			lastMessageAt: 30
 		});
+		const selected = threadId('thread-record-older');
 
 		expect(
 			resolveProjectThreadSelection({
 				threads: [newest],
-				currentThreadId: threadId('thread-record-vanished'),
+				currentThreadId: selected,
 				currentWorkspacePath: '/workspaces/ws-1',
 				draftWorkspacePath: null,
 				pendingCreatedThreadId: null
 			})
-		).toBe(newest.threadId);
+		).toBe(selected);
 	});
 
 	it('falls back to the newest thread only after the current id is cleared', () => {
@@ -468,13 +442,7 @@ describe('project thread helpers', () => {
 			isAgentLaunchPending(resolvePendingAgentLaunch(pendingLaunches, threadA, runA1), threadA)
 		).toBe(true);
 
-		pendingLaunches = resolvePendingAgentLaunchesFromThreads(pendingLaunches, [
-			makeThreadSummary({ threadId: threadA, latestRunId: runA1, latestRunStartedAt: 10 }),
-			makeThreadSummary({ threadId: threadB, latestRunId: runB2, latestRunStartedAt: 10 })
-		]);
-		expect(isAgentLaunchPending(pendingLaunches, threadA)).toBe(true);
-		expect(isAgentLaunchPending(pendingLaunches, threadB)).toBe(false);
-
+		pendingLaunches = resolvePendingAgentLaunch(pendingLaunches, threadB, runB2, undefined, 10);
 		pendingLaunches = resolvePendingAgentLaunch(pendingLaunches, threadA, runA2);
 		expect(isAgentLaunchPending(pendingLaunches, threadA)).toBe(false);
 	});

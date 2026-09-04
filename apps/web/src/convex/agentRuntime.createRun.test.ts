@@ -1,8 +1,34 @@
 import { describe, expect, it } from 'vitest';
-import { api } from '@convex/_generated/api';
+import { api, internal } from '@convex/_generated/api';
 import { createQueuedRun, initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
 
 describe('agentRuntime.insertGatewayRun', () => {
+	it('atomically creates a new thread with its first queued run', async () => {
+		const t = initConvexTest();
+		const userId = 'user_alice';
+		const created = await t.mutation(internal.agentRuntime.insertGatewayRun, {
+			userId,
+			submissionId: 'new-thread-submission',
+			repositoryKey: 'alpha',
+			prompt: 'Build it',
+			imageUploadIds: [],
+			selectedModel: 'gpt-5.6-sol',
+			reasoningEffort: 'medium',
+			serviceTier: 'standard',
+			executionSecret: 'new-thread-secret',
+			protocolVersion: 1
+		});
+
+		const [thread, run] = await t.run(async (ctx) =>
+			Promise.all([
+				ctx.db.get('threadRecords', created.threadId),
+				ctx.db.get('runs', created.runId)
+			])
+		);
+		expect(thread).toMatchObject({ userId, repositoryKey: 'alpha', status: 'queued' });
+		expect(run).toMatchObject({ threadId: created.threadId, status: 'queued' });
+	});
+
 	it('rejects an empty prompt with no images', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
@@ -56,6 +82,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 		expect(again).toEqual({
 			created: false,
 			runId: created.runId,
+			threadId: created.threadId,
 			promptMessageId: `prompt:${created.runId}`,
 			userId: created.userId,
 			promptPart: created.promptPart

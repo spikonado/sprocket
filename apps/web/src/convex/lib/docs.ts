@@ -18,18 +18,6 @@ export const vThreadWithUsageDoc = schema.doc('threadRecords').extend({
 	totalTokensProcessed: v.number()
 });
 
-export const vThreadSummary = schema.doc('threadRecords').extend({
-	threadId: v.id('threadRecords'),
-	repositoryKey: v.string(),
-	title: v.string(),
-	threadStatus: v.union(v.literal('archived'), v.literal('active')),
-	latestRunStatus: v.union(vRunStatus, v.null()),
-	latestRunId: v.union(v.id('runs'), v.null()),
-	latestRunStartedAt: v.optional(v.number()),
-	latestRunClaimExpiresAt: v.optional(v.number()),
-	hasActiveRun: v.boolean()
-});
-
 export const vTranscriptStateResult = v.object({
 	threadId: v.id('threadRecords'),
 	totalParts: v.number(),

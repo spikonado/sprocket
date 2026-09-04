@@ -47,7 +47,7 @@ import {
 } from '@convex/lib/agentErrors';
 import { unsupportedClient } from '@convex/lib/unsupportedClient';
 import { assertThreadCanStartRun, compareRunStartedAt } from '@convex/lib/runs';
-import { bumpThreadSnapshotForRun } from '@convex/lib/threadSnapshots';
+import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
 import {
 	attachRunToMachine,
 	getOwnedMachine,
@@ -103,7 +103,8 @@ type EnqueuedExecutorJob = {
 type QueuedRunRequest = {
 	userId: string;
 	submissionId: string;
-	threadId: Id<'threadRecords'>;
+	threadId?: Id<'threadRecords'>;
+	repositoryKey?: string;
 	prompt: string;
 	imageUploadIds: Id<'imageUploads'>[];
 	selectedModel: string;
@@ -119,6 +120,7 @@ type QueuedRunRequest = {
 type CreatedGatewayRun = {
 	created: boolean;
 	runId: Id<'runs'>;
+	threadId: Id<'threadRecords'>;
 	userId: string;
 	promptMessageId?: string;
 	promptPart?: Doc<'threadTranscriptParts'>;
@@ -148,8 +150,13 @@ async function createQueuedRunRecord(
 	ctx: MutationCtx,
 	args: QueuedRunRequest
 ): Promise<CreatedGatewayRun> {
+	if ((args.threadId === undefined) === (args.repositoryKey === undefined)) {
+		throw new Error('Exactly one of thread ID or repository key is required.');
+	}
+	if (args.continuationOfRunId && !args.threadId) {
+		throw new Error('A continuation requires an existing thread.');
+	}
 	const secretHash = await executionSecretHash(args.executionSecret);
-	const threadRecord = await getOwnedThreadRecord(ctx.db, args.userId, args.threadId);
 	const continuationOfRunId = args.continuationOfRunId;
 	const prompt = args.prompt.trim();
 	if (!continuationOfRunId && !prompt && args.imageUploadIds.length === 0) {
@@ -176,9 +183,34 @@ async function createQueuedRunRecord(
 	if (existingRun) {
 		return await reconcileExistingQueuedRun(ctx, args, existingRun, secretHash, prompt);
 	}
+	let threadRecord: Doc<'threadRecords'>;
+	if (args.threadId) {
+		threadRecord = await getOwnedThreadRecord(ctx.db, args.userId, args.threadId);
+	} else {
+		const repositoryKey = args.repositoryKey?.trim();
+		if (!repositoryKey) throw new Error('Repository key is required for a new thread.');
+		const now = Date.now();
+		const threadId = await ctx.db.insert('threadRecords', {
+			userId: args.userId,
+			submissionId: args.submissionId,
+			status: 'queued',
+			repositoryKey,
+			title: (prompt || imageUploads[0]?.name || 'New thread').slice(0, 72),
+			selectedModel: args.selectedModel,
+			reasoningEffort: args.reasoningEffort,
+			serviceTier: args.serviceTier,
+			lastMessageAt: now
+		});
+		await ctx.db.insert('threadUsage', {
+			threadId,
+			userId: args.userId,
+			totalTokensProcessed: 0
+		});
+		threadRecord = (await ctx.db.get('threadRecords', threadId))!;
+	}
 	let latestRun = await ctx.db
 		.query('runs')
-		.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', args.threadId))
+		.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadRecord._id))
 		.order('desc')
 		.first();
 	if (
@@ -213,7 +245,7 @@ async function createQueuedRunRecord(
 		gatewayFields.agentVersion = args.agentVersion;
 	}
 	const runRecord: Omit<Doc<'runs'>, '_id' | '_creationTime'> = {
-		threadId: args.threadId,
+		threadId: threadRecord._id,
 		userId: args.userId,
 		submissionId: args.submissionId,
 		status: 'queued' as const,
@@ -239,13 +271,14 @@ async function createQueuedRunRecord(
 	const created: CreatedGatewayRun = {
 		created: true,
 		runId,
+		threadId: threadRecord._id,
 		userId: args.userId
 	};
 	if (!continuationOfRunId) {
 		await markImageUploadsAttached(ctx, imageUploads);
 		created.promptMessageId = promptSourceKey(runId);
 		created.promptPart = await recordPromptTranscript(ctx, {
-			threadId: args.threadId,
+			threadId: threadRecord._id,
 			userId: args.userId,
 			runId,
 			text: prompt,
@@ -256,6 +289,7 @@ async function createQueuedRunRecord(
 		await ctx.db.patch('runs', runId, { completionStreamStateId });
 	}
 	const threadUpdates = {
+		status: 'queued' as const,
 		title: threadRecord.title ?? (prompt || imageUploads[0]?.name || 'New thread').slice(0, 72),
 		selectedModel: args.selectedModel,
 		reasoningEffort: args.reasoningEffort,
@@ -263,7 +297,6 @@ async function createQueuedRunRecord(
 		lastMessageAt: continuationOfRunId ? threadRecord.lastMessageAt : Date.now()
 	};
 	await ctx.db.patch('threadRecords', threadRecord._id, threadUpdates);
-	await bumpThreadSnapshotForRun(ctx, runRecord);
 	const lifecycleWorkflowId = await startRunLifecycle(ctx, runId);
 	await ctx.db.patch('runs', runId, { lifecycleWorkflowId });
 	return created;
@@ -281,8 +314,13 @@ async function reconcileExistingQueuedRun(
 	}
 	const continuationMatches =
 		(existingRun.continuationOfRunId ?? undefined) === (args.continuationOfRunId ?? undefined);
+	const existingThread = await ctx.db.get('threadRecords', existingRun.threadId);
 	if (
-		existingRun.threadId !== args.threadId ||
+		(args.threadId !== undefined && existingRun.threadId !== args.threadId) ||
+		!existingThread ||
+		existingThread.userId !== args.userId ||
+		(args.repositoryKey !== undefined &&
+			existingThread.repositoryKey !== args.repositoryKey.trim()) ||
 		existingRun.selectedModel !== args.selectedModel ||
 		existingRun.reasoningEffort !== args.reasoningEffort ||
 		existingRun.serviceTier !== args.serviceTier ||
@@ -302,11 +340,12 @@ async function reconcileExistingQueuedRun(
 		return {
 			created: false,
 			runId: existingRun._id,
+			threadId: existingRun.threadId,
 			userId: args.userId
 		};
 	}
 
-	const existingPrompt = await getPromptPart(ctx, args.threadId, existingRun._id);
+	const existingPrompt = await getPromptPart(ctx, existingRun.threadId, existingRun._id);
 	if (
 		!existingPrompt?.prompt ||
 		existingPrompt.prompt.text !== prompt ||
@@ -318,7 +357,7 @@ async function reconcileExistingQueuedRun(
 		throw new Error('Submission prompt does not match the existing run.');
 	}
 	const promptPart = await recordPromptTranscript(ctx, {
-		threadId: args.threadId,
+		threadId: existingRun.threadId,
 		userId: args.userId,
 		runId: existingRun._id,
 		text: prompt,
@@ -327,6 +366,7 @@ async function reconcileExistingQueuedRun(
 	return {
 		created: false,
 		runId: existingRun._id,
+		threadId: existingRun.threadId,
 		promptMessageId: promptSourceKey(existingRun._id),
 		userId: args.userId,
 		promptPart
@@ -355,6 +395,7 @@ export const createRun = mutation({
 const vCreatedGatewayRun = v.object({
 	created: v.boolean(),
 	runId: v.id('runs'),
+	threadId: v.id('threadRecords'),
 	promptMessageId: v.optional(v.string()),
 	userId: v.string(),
 	promptPart: v.optional(schema.doc('threadTranscriptParts'))
@@ -369,7 +410,8 @@ export const insertGatewayRun = internalMutation({
 	args: {
 		userId: v.string(),
 		submissionId: v.string(),
-		threadId: v.id('threadRecords'),
+		threadId: v.optional(v.id('threadRecords')),
+		repositoryKey: v.optional(v.string()),
 		prompt: v.string(),
 		imageUploadIds: v.array(v.id('imageUploads')),
 		selectedModel: v.string(),
@@ -390,7 +432,8 @@ export const insertGatewayRun = internalMutation({
 export const createGatewayRun = action({
 	args: {
 		submissionId: v.string(),
-		threadId: v.id('threadRecords'),
+		threadId: v.optional(v.id('threadRecords')),
+		repositoryKey: v.optional(v.string()),
 		prompt: v.string(),
 		imageUploadIds: v.array(v.id('imageUploads')),
 		selectedModel: v.string(),
@@ -409,6 +452,7 @@ export const createGatewayRun = action({
 			userId,
 			submissionId: args.submissionId,
 			threadId: args.threadId,
+			repositoryKey: args.repositoryKey,
 			prompt: args.prompt,
 			imageUploadIds: args.imageUploadIds,
 			selectedModel: args.selectedModel,
@@ -482,10 +526,7 @@ export const start = mutation({
 			lastError: undefined
 		};
 		if (!isSameClaimRenewal) claimPatch.completionAttemptSeq = 0;
-		await ctx.db.patch('runs', args.runId, claimPatch);
-		if (!isSameClaimRenewal) {
-			await bumpThreadSnapshotForRun(ctx, run);
-		}
+		await setRunAndThreadStatus(ctx, run, claimPatch.status, claimPatch);
 
 		return { claimed: true, claimExpiresAt: nextClaimExpiresAt };
 	}
@@ -825,7 +866,7 @@ export const finalizeExecutorRun = mutation({
 export const finalizeFailedStart = mutation({
 	args: {
 		submissionId: v.string(),
-		threadId: v.id('threadRecords'),
+		threadId: v.optional(v.id('threadRecords')),
 		prompt: v.string(),
 		imageUploadIds: v.array(v.id('imageUploads')),
 		selectedModel: v.string(),
@@ -869,7 +910,7 @@ export const finalizeFailedStart = mutation({
 		const isContinuation = run.continuationOfRunId !== undefined;
 		if (
 			run.status !== 'queued' ||
-			run.threadId !== args.threadId ||
+			(args.threadId !== undefined && run.threadId !== args.threadId) ||
 			run.selectedModel !== args.selectedModel ||
 			run.reasoningEffort !== args.reasoningEffort ||
 			run.serviceTier !== args.serviceTier
@@ -972,11 +1013,7 @@ export const beginToolJob = mutation({
 				});
 			}
 
-			await ctx.db.patch('runs', args.runId, {
-				status: 'awaiting_executor',
-				activeJobId: jobId
-			});
-			await bumpThreadSnapshotForRun(ctx, run);
+			await setRunAndThreadStatus(ctx, run, 'awaiting_executor', { activeJobId: jobId });
 			await recordStartedToolTranscript(ctx, {
 				threadId: run.threadId,
 				userId: run.userId,

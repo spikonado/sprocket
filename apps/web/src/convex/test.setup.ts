@@ -85,19 +85,52 @@ export async function seedOwnedThread(
 		});
 	});
 	const repositoryKey = 'alpha';
-	const created = await asUser.mutation(api.threads.create, {
-		submissionId: `thread-${subject}-${Date.now()}-${Math.random()}`,
-		repositoryKey,
-		selectedModel: 'gpt-5.6-sol',
-		reasoningEffort: 'medium',
-		serviceTier: 'standard'
-	});
+	const threadId = await seedThreadRecord(t, subject, repositoryKey);
 	return {
 		asUser,
 		subject,
 		repositoryKey,
-		threadId: created.threadId
+		threadId
 	};
+}
+
+export async function seedThreadRecord(
+	t: ConvexTestInstance,
+	userId: string,
+	repositoryKey: string
+): Promise<Id<'threadRecords'>> {
+	return await t.run(async (ctx) => {
+		const submissionId = `thread-${userId}-${Date.now()}-${Math.random()}`;
+		const threadId = await ctx.db.insert('threadRecords', {
+			userId,
+			submissionId,
+			status: 'completed',
+			repositoryKey,
+			selectedModel: 'gpt-5.6-sol',
+			reasoningEffort: 'medium',
+			serviceTier: 'standard',
+			lastMessageAt: Date.now()
+		});
+		await ctx.db.insert('threadUsage', {
+			threadId,
+			userId,
+			totalTokensProcessed: 0
+		});
+		await ctx.db.insert('runs', {
+			threadId,
+			userId,
+			submissionId,
+			status: 'completed',
+			executionSecretHash: 'fixture',
+			completionAttemptSeq: 0,
+			selectedModel: 'gpt-5.6-sol',
+			reasoningEffort: 'medium',
+			serviceTier: 'standard',
+			startedAt: Date.now(),
+			completedAt: Date.now()
+		});
+		return threadId;
+	});
 }
 
 export async function insertQueuedRun(

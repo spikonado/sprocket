@@ -142,8 +142,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
     );
     let thread_cache = thread_sync::ThreadCacheSync::new(
         convex_deployment_url.clone(),
-        thread_cache::ThreadSnapshotStore::new(data_dir.clone()),
-        Arc::clone(&project_attachments),
+        thread_cache::ThreadCacheStore::new(data_dir.clone()),
         Arc::clone(&native_auth),
     );
     let http_base_url = config.listen_url();

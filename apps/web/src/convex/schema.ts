@@ -97,6 +97,9 @@ export default defineSchema({
 	threadRecords: defineTable({
 		userId: v.string(),
 		submissionId: v.string(),
+		// Optional until migrations:backfillThreadStatus has removed runless rows
+		// and populated existing threads. New threads always write this field.
+		status: v.optional(vRunStatus),
 		// Leftover optionality after the repository-key backfill. Current
 		// inserts always write it.
 		repositoryKey: v.optional(v.string()),
@@ -112,6 +115,7 @@ export default defineSchema({
 		archivedAt: v.optional(v.number())
 	})
 		.index('by_userId_submissionId', ['userId', 'submissionId'])
+		.index('by_userId_lastMessageAt', ['userId', 'lastMessageAt'])
 		.index('by_userId_repositoryKey', ['userId', 'repositoryKey'])
 		.index('by_userId_and_repositoryKey_and_archivedAt_and_lastMessageAt', [
 			'userId',
@@ -119,13 +123,6 @@ export default defineSchema({
 			'archivedAt',
 			'lastMessageAt'
 		]),
-	threadSnapshotRevisions: defineTable({
-		userId: v.string(),
-		repositoryKey: v.string(),
-		category: v.union(v.literal('active'), v.literal('archived')),
-		revision: v.number(),
-		updatedAt: v.number()
-	}).index('by_userId_and_repositoryKey_and_category', ['userId', 'repositoryKey', 'category']),
 	threadUsage: defineTable({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),

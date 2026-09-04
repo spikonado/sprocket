@@ -15,7 +15,7 @@ use tokio::sync::broadcast;
 
 use crate::AppState;
 use crate::routes::api_error::ApiError;
-use crate::thread_cache::{CachedThreadSummary, ThreadSnapshotCategory};
+use crate::thread_cache::CachedThreadRecord;
 use crate::thread_sync::{ThreadCacheEvent, ThreadCacheStatus};
 use crate::transcript_client::UserConvexClient;
 
@@ -23,6 +23,7 @@ use crate::transcript_client::UserConvexClient;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ThreadCacheUserRequest {
     user_id: String,
+    selected_thread_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -59,24 +60,19 @@ struct LifecycleRequest {
 #[serde(rename_all = "camelCase")]
 struct ThreadCommandResult {
     user_id: String,
-    repository_key: String,
-    #[serde(default)]
-    category: Option<ThreadSnapshotCategory>,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RekeyResult {
     user_id: String,
-    from: String,
-    to: String,
     count: u64,
 }
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ThreadCacheSnapshotResponse {
-    threads: Vec<CachedThreadSummary>,
+    threads: Vec<CachedThreadRecord>,
     status: ThreadCacheStatus,
     last_synced_at: Option<u64>,
 }
@@ -85,7 +81,6 @@ pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/threads/register", post(register_handler))
         .route("/threads/snapshot", post(snapshot_handler))
-        .route("/threads/archive-sync", post(archive_sync_handler))
         .route("/threads/watch", post(watch_handler))
         .route("/threads/rename", post(rename_handler))
         .route("/threads/archive", post(archive_handler))
@@ -138,7 +133,6 @@ async fn run_thread_command(
     state: &AppState,
     payload: ThreadCommandRequest,
     function: &str,
-    categories: &[ThreadSnapshotCategory],
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let mut args = thread_args(payload.thread_id);
     if let Some(title) = payload.title {
@@ -154,25 +148,7 @@ async fn run_thread_command(
             "thread command account does not match the requested account"
         )));
     }
-    let refresh_categories = result
-        .category
-        .as_ref()
-        .map_or(categories, std::slice::from_ref);
-    let cache_synchronized = match state
-        .thread_cache
-        .refresh_repository(&payload.user_id, &result.repository_key, refresh_categories)
-        .await
-    {
-        Ok(()) => true,
-        Err(error) => {
-            tracing::warn!(
-                repository_key = %result.repository_key,
-                "thread command committed but cache refresh failed: {error:#}"
-            );
-            false
-        }
-    };
-    Ok(Json(serde_json::json!(cache_synchronized)))
+    Ok(Json(serde_json::json!(true)))
 }
 
 async fn rename_handler(
@@ -182,16 +158,7 @@ async fn rename_handler(
     Json(payload): Json<ThreadCommandRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     require_session_user(&state, &headers, &jar, &payload.user_id).await?;
-    run_thread_command(
-        &state,
-        payload,
-        "threads:renameForLocalCache",
-        &[
-            ThreadSnapshotCategory::Active,
-            ThreadSnapshotCategory::Archived,
-        ],
-    )
-    .await
+    run_thread_command(&state, payload, "threads:renameForLocalCache").await
 }
 async fn archive_handler(
     State(state): State<AppState>,
@@ -200,16 +167,7 @@ async fn archive_handler(
     Json(payload): Json<ThreadCommandRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     require_session_user(&state, &headers, &jar, &payload.user_id).await?;
-    run_thread_command(
-        &state,
-        payload,
-        "threads:archiveForLocalCache",
-        &[
-            ThreadSnapshotCategory::Active,
-            ThreadSnapshotCategory::Archived,
-        ],
-    )
-    .await
+    run_thread_command(&state, payload, "threads:archiveForLocalCache").await
 }
 async fn restore_handler(
     State(state): State<AppState>,
@@ -218,16 +176,7 @@ async fn restore_handler(
     Json(payload): Json<ThreadCommandRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     require_session_user(&state, &headers, &jar, &payload.user_id).await?;
-    run_thread_command(
-        &state,
-        payload,
-        "threads:restoreForLocalCache",
-        &[
-            ThreadSnapshotCategory::Active,
-            ThreadSnapshotCategory::Archived,
-        ],
-    )
-    .await
+    run_thread_command(&state, payload, "threads:restoreForLocalCache").await
 }
 async fn rekey_handler(
     State(state): State<AppState>,
@@ -249,33 +198,6 @@ async fn rekey_handler(
         return Err(ApiError::bad_request(anyhow!(
             "thread command account does not match the requested account"
         )));
-    }
-    if result.from != result.to {
-        state
-            .thread_cache
-            .refresh_repository(
-                &payload.user_id,
-                &result.to,
-                &[
-                    ThreadSnapshotCategory::Active,
-                    ThreadSnapshotCategory::Archived,
-                ],
-            )
-            .await
-            .map_err(|error| {
-                ApiError::internal_with(
-                    "rekey committed but destination cache refresh failed",
-                    error,
-                )
-            })?;
-        state
-            .thread_cache
-            .store()
-            .reset_repository(&payload.user_id, &result.from)
-            .await
-            .map_err(|error| {
-                ApiError::internal_with("rekey committed but source cache cleanup failed", error)
-            })?;
     }
     Ok(Json(serde_json::json!(result.count)))
 }
@@ -341,7 +263,7 @@ async fn register_handler(
         .map_err(ApiError::bad_request)?;
     state
         .thread_cache
-        .register(&payload.user_id)
+        .register(&payload.user_id, payload.selected_thread_id.as_deref())
         .await
         .map_err(ApiError::bad_request)?;
     Ok(Json(state.thread_cache.current_event().await))
@@ -368,21 +290,6 @@ async fn snapshot_handler(
         status: event.status,
         last_synced_at: event.last_synced_at,
     }))
-}
-
-async fn archive_sync_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(payload): Json<ThreadCacheUserRequest>,
-) -> Result<Json<ThreadCacheEvent>, ApiError> {
-    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
-    state
-        .thread_cache
-        .sync_archived(&payload.user_id)
-        .await
-        .map_err(ApiError::bad_request)?;
-    Ok(Json(state.thread_cache.current_event().await))
 }
 
 async fn watch_handler(

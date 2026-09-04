@@ -18,6 +18,7 @@ pub struct RunAgentRequest {
     pub execution_secret: String,
     pub submission_id: String,
     pub thread_id: String,
+    pub repository_key: Option<String>,
     pub prompt: String,
     pub image_upload_ids: Vec<String>,
     pub selected_model: String,
@@ -34,6 +35,7 @@ pub struct RunAgentRequest {
 pub struct CreateRunResponse {
     pub created: bool,
     pub run_id: String,
+    pub thread_id: String,
     #[serde(default)]
     pub prompt_message_id: Option<String>,
     pub user_id: String,
@@ -507,6 +509,7 @@ mod tests {
         let created: CreateRunResponse = serde_json::from_value(serde_json::json!({
             "created": true,
             "runId": "jd7run",
+            "threadId": "jd7thread",
             "promptMessageId": "prompt:jd7run",
             "userId": "user_1",
             "promptPart": {
@@ -552,6 +555,7 @@ mod tests {
         let created: CreateRunResponse = serde_json::from_value(serde_json::json!({
             "created": true,
             "runId": "jd7cont",
+            "threadId": "jd7thread",
             "userId": "user_1",
             "gatewayUrl": "https://preview.gateway.example",
             "protocolVersion": 1.0

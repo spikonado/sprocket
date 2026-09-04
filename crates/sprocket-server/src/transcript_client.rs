@@ -60,52 +60,15 @@ impl UserConvexClient {
             .await
     }
 
-    pub async fn snapshot_revision(
+    pub async fn subscribe_recent_threads(
         &self,
-        repository_key: &str,
-        category: &str,
-    ) -> anyhow::Result<u64> {
-        decode_revision_json(
-            self.query_json(
-                "threads:getSnapshotRevision",
-                snapshot_args(repository_key, category),
-            )
-            .await?,
-        )
-    }
-
-    pub async fn subscribe_snapshot_revision(
-        &self,
-        repository_key: &str,
-        category: &str,
+        selected_thread_id: Option<&str>,
     ) -> anyhow::Result<QuerySubscription> {
-        self.client
-            .subscribe(
-                "threads:getSnapshotRevision",
-                snapshot_args(repository_key, category),
-            )
-            .await
-    }
-
-    pub async fn list_snapshot_page(
-        &self,
-        repository_key: &str,
-        category: &str,
-        cursor: Option<&str>,
-        num_items: f64,
-    ) -> anyhow::Result<ThreadSnapshotPage> {
-        let mut args = snapshot_args(repository_key, category);
-        let mut pagination = BTreeMap::new();
-        pagination.insert("numItems".to_string(), Value::Float64(num_items));
-        pagination.insert(
-            "cursor".to_string(),
-            match cursor {
-                Some(cursor) => Value::String(cursor.to_string()),
-                None => Value::Null,
-            },
-        );
-        args.insert("paginationOpts".to_string(), Value::Object(pagination));
-        self.query_json("threads:listSnapshotPage", args).await
+        let mut args = BTreeMap::new();
+        if let Some(thread_id) = selected_thread_id {
+            args.insert("selectedThreadId".to_string(), thread_id.to_string().into());
+        }
+        self.client.subscribe("threads:listRecent", args).await
     }
 
     pub async fn attachment_download(
@@ -168,43 +131,10 @@ fn thread_id_args(thread_id: &str) -> BTreeMap<String, Value> {
     args
 }
 
-fn snapshot_args(repository_key: &str, category: &str) -> BTreeMap<String, Value> {
-    let mut args = BTreeMap::new();
-    args.insert(
-        "repositoryKey".to_string(),
-        repository_key.to_string().into(),
-    );
-    args.insert("category".to_string(), category.to_string().into());
-    args
-}
-
-#[derive(Clone, Debug, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ThreadSnapshotPage {
-    pub page: Vec<crate::thread_cache::CachedThreadSummary>,
-    pub is_done: bool,
-    pub continue_cursor: String,
-}
-
-pub fn decode_revision_update(result: FunctionResult) -> anyhow::Result<u64> {
-    decode_revision_json(decode_function_result(
-        result,
-        "threads:getSnapshotRevision",
-    )?)
-}
-
-fn decode_revision_json(value: serde_json::Value) -> anyhow::Result<u64> {
-    let number = value
-        .as_u64()
-        .or_else(|| value.as_f64().and_then(|float| decode_revision(float).ok()));
-    number.ok_or_else(|| anyhow!("invalid snapshot revision {value}"))
-}
-
-fn decode_revision(value: f64) -> anyhow::Result<u64> {
-    if !value.is_finite() || value < 0.0 || value.fract() != 0.0 {
-        anyhow::bail!("invalid snapshot revision {value}");
-    }
-    Ok(value as u64)
+pub fn decode_thread_records_update(
+    result: FunctionResult,
+) -> anyhow::Result<Vec<crate::thread_cache::CachedThreadRecord>> {
+    decode_function_result(result, "threads:listRecent")
 }
 
 pub fn decode_state_update(result: FunctionResult) -> anyhow::Result<RemoteTranscriptState> {

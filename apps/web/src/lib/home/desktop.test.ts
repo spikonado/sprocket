@@ -54,7 +54,6 @@ function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 		fetchTranscriptAttachment: unusedDesktopCall,
 		registerThreadCache: unusedDesktopCall,
 		fetchThreadSnapshot: unusedDesktopCall,
-		syncArchivedThreads: unusedDesktopCall,
 		watchThreadCache: unusedDesktopCall,
 		renameThread: unusedDesktopCall,
 		archiveThread: unusedDesktopCall,
@@ -103,11 +102,11 @@ function resolveRecoveredSubmission(
 
 describe('launchAgentRun', () => {
 	it('acknowledges a durably created desktop run', async () => {
-		const runAgent = vi.fn().mockResolvedValue({ runId: 'run-1' });
+		const runAgent = vi.fn().mockResolvedValue({ runId: 'run-1', threadId: 'thread-1' });
 		const desktopApi = createDesktopApi(runAgent);
 		const onStarted = vi.fn();
 
-		launchAgentRun(launchArgs({ desktopApi, onStarted }));
+		await launchAgentRun(launchArgs({ desktopApi, onStarted }));
 
 		expect(runAgent).toHaveBeenCalledWith({
 			userId: 'user-1',
@@ -120,16 +119,14 @@ describe('launchAgentRun', () => {
 			serviceTier: 'standard',
 			workspacePath: '/workspaces/workspace-1'
 		});
-		await vi.waitFor(() => {
-			expect(onStarted).toHaveBeenCalledWith('run-1');
-		});
+		expect(onStarted).toHaveBeenCalledWith('run-1', 'thread-1');
 	});
 
 	it('forwards continuationOfRunId without a duplicated prompt', async () => {
-		const runAgent = vi.fn().mockResolvedValue({ runId: 'run-2' });
+		const runAgent = vi.fn().mockResolvedValue({ runId: 'run-2', threadId: 'thread-1' });
 		const desktopApi = createDesktopApi(runAgent);
 
-		launchAgentRun(
+		await launchAgentRun(
 			launchArgs({
 				desktopApi,
 				prompt: '',
@@ -157,11 +154,9 @@ describe('launchAgentRun', () => {
 		const onError = vi.fn();
 		const desktopApi = createDesktopApi(vi.fn().mockRejectedValue(launchError));
 
-		launchAgentRun(launchArgs({ desktopApi, onError }));
+		await launchAgentRun(launchArgs({ desktopApi, onError }));
 
-		await vi.waitFor(() => {
-			expect(onError).toHaveBeenCalledWith(launchError);
-		});
+		expect(onError).toHaveBeenCalledWith(launchError);
 	});
 });
 
