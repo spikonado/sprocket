@@ -10,7 +10,7 @@ use cookie::{Cookie, SameSite};
 use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
 use crate::config::SESSION_COOKIE_NAME;
@@ -45,6 +45,7 @@ pub struct AuthState {
     data_dir: PathBuf,
     pairing_credential: String,
     sessions: RwLock<HashMap<String, SessionRecord>>,
+    persist_lock: Mutex<()>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -98,6 +99,7 @@ impl AuthState {
             data_dir: data_dir.to_path_buf(),
             pairing_credential,
             sessions: RwLock::new(sessions),
+            persist_lock: Mutex::new(()),
         }))
     }
 
@@ -106,7 +108,7 @@ impl AuthState {
     }
 
     pub fn verify_pairing_credential(&self, credential: &str) -> anyhow::Result<()> {
-        if credential.trim() != self.pairing_credential {
+        if !constant_time_eq(credential.trim(), &self.pairing_credential) {
             anyhow::bail!(
                 "invalid pairing credential; use the token printed by your running Sprocket server"
             );
@@ -256,11 +258,22 @@ impl AuthState {
     }
 
     async fn save_sessions(&self, snapshot: Vec<PersistedSessionRecord>) -> anyhow::Result<()> {
+        let _persist = self.persist_lock.lock().await;
         let sessions_path = self.data_dir.join(SESSIONS_FILE);
         let payload = serde_json::to_string_pretty(&snapshot)?;
-        tokio::fs::write(sessions_path, payload).await?;
-        Ok(())
+        crate::write_atomic(&sessions_path, payload.as_bytes()).await
     }
+}
+
+fn constant_time_eq(left: &str, right: &str) -> bool {
+    let mut difference = left.len() ^ right.len();
+    let length = left.len().max(right.len());
+    for index in 0..length {
+        let left_byte = left.as_bytes().get(index).copied().unwrap_or(0);
+        let right_byte = right.as_bytes().get(index).copied().unwrap_or(0);
+        difference |= (left_byte ^ right_byte) as usize;
+    }
+    difference == 0
 }
 
 pub fn read_pairing_credential(data_dir: &Path) -> anyhow::Result<Option<String>> {
