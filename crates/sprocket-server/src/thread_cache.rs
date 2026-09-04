@@ -40,9 +40,9 @@ pub struct ThreadCacheStore {
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct CachedThreads {
-    user_id: String,
-    threads: Vec<CachedThreadRecord>,
+pub(crate) struct CachedThreads {
+    pub(crate) user_id: String,
+    pub(crate) threads: Vec<CachedThreadRecord>,
 }
 
 impl ThreadCacheStore {
@@ -53,18 +53,17 @@ impl ThreadCacheStore {
         })
     }
 
-    pub async fn load(&self, user_id: &str) -> anyhow::Result<Vec<CachedThreadRecord>> {
+    pub(crate) async fn load(&self) -> anyhow::Result<Option<CachedThreads>> {
         let _guard = self.lock.lock().await;
         if !tokio::fs::try_exists(&self.path).await? {
-            return Ok(Vec::new());
+            return Ok(None);
         }
         let contents = tokio::fs::read_to_string(&self.path).await?;
         match serde_json::from_str::<CachedThreads>(&contents) {
-            Ok(cache) if cache.user_id == user_id => Ok(cache.threads),
-            Ok(_) => Ok(Vec::new()),
+            Ok(cache) => Ok(Some(cache)),
             Err(_) => {
                 tokio::fs::remove_file(&self.path).await.ok();
-                Ok(Vec::new())
+                Ok(None)
             }
         }
     }
@@ -118,27 +117,26 @@ mod tests {
         let store = ThreadCacheStore::new(dir.clone());
         store.write("user-a", &[record("thread-1")]).await.unwrap();
         assert_eq!(
-            store.load("user-a").await.unwrap(),
+            store.load().await.unwrap().unwrap().threads,
             vec![record("thread-1")]
         );
-        assert!(store.load("user-b").await.unwrap().is_empty());
 
         store.write("user-a", &[record("thread-2")]).await.unwrap();
         assert_eq!(
-            store.load("user-a").await.unwrap(),
+            store.load().await.unwrap().unwrap().threads,
             vec![record("thread-2")]
         );
         let _ = tokio::fs::remove_dir_all(dir).await;
     }
 
     #[tokio::test]
-    async fn does_not_return_another_users_cache() {
+    async fn records_the_cache_owner() {
         let dir =
             std::env::temp_dir().join(format!("sprocket-thread-cache-{}", uuid::Uuid::new_v4()));
         let store = ThreadCacheStore::new(dir.clone());
         store.write("user-a", &[record("thread-1")]).await.unwrap();
 
-        assert!(store.load("user-b").await.unwrap().is_empty());
+        assert_eq!(store.load().await.unwrap().unwrap().user_id, "user-a");
 
         let _ = tokio::fs::remove_dir_all(dir).await;
     }

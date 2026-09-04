@@ -74,10 +74,13 @@ impl ThreadCacheSync {
         &self,
         user_id: &str,
     ) -> anyhow::Result<(Vec<CachedThreadRecord>, ThreadCacheEvent)> {
-        Ok((
-            self.store.load(user_id).await?,
-            self.event_for_user(user_id).await?,
-        ))
+        let threads = self
+            .store
+            .load()
+            .await?
+            .filter(|cache| cache.user_id == user_id)
+            .map_or_else(Vec::new, |cache| cache.threads);
+        Ok((threads, self.event_for_user(user_id).await?))
     }
 
     pub async fn event_for_user(&self, user_id: &str) -> anyhow::Result<ThreadCacheEvent> {
