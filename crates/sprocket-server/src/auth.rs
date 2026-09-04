@@ -1,8 +1,10 @@
 use std::collections::HashMap;
-use std::fs;
-use std::io::ErrorKind;
+use std::fs::{self, OpenOptions};
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
 
 use axum::http::HeaderMap;
 use axum_extra::extract::CookieJar;
@@ -83,14 +85,7 @@ impl AuthState {
     pub fn load(data_dir: &Path) -> anyhow::Result<Arc<Self>> {
         fs::create_dir_all(data_dir)?;
 
-        let credential_path = data_dir.join(PAIRING_CREDENTIAL_FILE);
-        let pairing_credential = if let Some(existing) = read_pairing_credential(data_dir)? {
-            existing
-        } else {
-            let credential = Uuid::new_v4().to_string();
-            fs::write(&credential_path, format!("{credential}\n"))?;
-            credential
-        };
+        let pairing_credential = load_or_create_pairing_credential(data_dir)?;
 
         let sessions = load_sessions(&data_dir)?;
 
@@ -263,6 +258,45 @@ impl AuthState {
     }
 }
 
+fn load_or_create_pairing_credential(data_dir: &Path) -> anyhow::Result<String> {
+    if let Some(existing) = read_ready_pairing_credential(data_dir)? {
+        return Ok(existing);
+    }
+
+    let path = data_dir.join(PAIRING_CREDENTIAL_FILE);
+    let credential = Uuid::new_v4().to_string();
+    match OpenOptions::new().write(true).create_new(true).open(&path) {
+        Ok(mut file) => {
+            file.write_all(format!("{credential}\n").as_bytes())?;
+            file.sync_all()?;
+            Ok(credential)
+        }
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+            for _ in 0..10 {
+                if let Some(existing) = read_ready_pairing_credential(data_dir)? {
+                    return Ok(existing);
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            anyhow::bail!("pairing credential {} is invalid", path.display())
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn read_ready_pairing_credential(data_dir: &Path) -> anyhow::Result<Option<String>> {
+    let credential = match fs::read_to_string(data_dir.join(PAIRING_CREDENTIAL_FILE)) {
+        Ok(credential) => credential,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let credential = credential.trim().to_string();
+    if credential.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(credential))
+}
+
 pub fn read_pairing_credential(data_dir: &Path) -> anyhow::Result<Option<String>> {
     let credential = match fs::read_to_string(data_dir.join(PAIRING_CREDENTIAL_FILE)) {
         Ok(credential) => credential,
@@ -370,6 +404,33 @@ mod tests {
 
         assert_eq!(read_pairing_credential(&temp_dir).unwrap(), None);
         assert!(!temp_dir.exists());
+    }
+
+    #[test]
+    fn concurrent_first_load_shares_one_pairing_credential() {
+        let temp_dir = std::env::temp_dir().join(format!("sprocket-auth-race-{}", Uuid::new_v4()));
+        let joiners: Vec<_> = (0..8)
+            .map(|_| {
+                let dir = temp_dir.clone();
+                thread::spawn(move || {
+                    AuthState::load(&dir)
+                        .expect("auth state")
+                        .pairing_credential()
+                        .to_string()
+                })
+            })
+            .collect();
+        let credentials: Vec<_> = joiners
+            .into_iter()
+            .map(|worker| worker.join().expect("join"))
+            .collect();
+        let first = credentials[0].as_str();
+        assert!(credentials.iter().all(|credential| credential == first));
+        assert_eq!(
+            read_pairing_credential(&temp_dir).unwrap().as_deref(),
+            Some(first)
+        );
+        let _ = fs::remove_dir_all(temp_dir);
     }
 
     #[tokio::test]
