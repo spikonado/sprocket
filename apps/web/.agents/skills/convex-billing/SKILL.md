@@ -31,57 +31,45 @@ Wire Stripe to Convex using @convex-dev/stripe: a checkout action, an httpAction
    export default http;
    ```
 5. Create `convex/billing.ts` with a checkout action and a subscription-gate query:
-   <!-- prettier-ignore -->
    ```ts
    import { action, query } from './_generated/server';
    import { components } from './_generated/api';
    import { StripeSubscriptions } from '@convex-dev/stripe';
    import { v } from 'convex/values';
    const stripeClient = new StripeSubscriptions(components.stripe, {});
-   const priceByTier = {
-     pro: process.env.STRIPE_PRO_PRICE_ID
-   } as const;
    export const createSubscriptionCheckout = action({
-     args: { tier: v.literal('pro') },
-     returns: v.object({ sessionId: v.string(), url: v.union(v.string(), v.null()) }),
-     handler: async (ctx, args) => {
-       const identity = await ctx.auth.getUserIdentity();
-       if (!identity) throw new Error('Not authenticated');
-       const priceId = priceByTier[args.tier];
-       if (!priceId) throw new Error('Price is not configured');
-       const customer = await stripeClient.getOrCreateCustomer(ctx, {
-         userId: identity.subject,
-         email: identity.email,
-         name: identity.name
-       });
-       return await stripeClient.createCheckoutSession(ctx, {
-         priceId,
-         customerId: customer.customerId,
-         mode: 'subscription',
-         successUrl: `${process.env.SITE_URL ?? 'http://localhost:3000'}/?success=true`,
-         cancelUrl: `${process.env.SITE_URL ?? 'http://localhost:3000'}/?canceled=true`,
-         subscriptionMetadata: { userId: identity.subject, tier: args.tier }
-       });
-     }
+   	args: { priceId: v.string() },
+   	returns: v.object({ sessionId: v.string(), url: v.union(v.string(), v.null()) }),
+   	handler: async (ctx, args) => {
+   		const identity = await ctx.auth.getUserIdentity();
+   		if (!identity) throw new Error('Not authenticated');
+   		const customer = await stripeClient.getOrCreateCustomer(ctx, {
+   			userId: identity.subject,
+   			email: identity.email,
+   			name: identity.name
+   		});
+   		return await stripeClient.createCheckoutSession(ctx, {
+   			priceId: args.priceId,
+   			customerId: customer.customerId,
+   			mode: 'subscription',
+   			successUrl: `${process.env.SITE_URL ?? 'http://localhost:3000'}/?success=true`,
+   			cancelUrl: `${process.env.SITE_URL ?? 'http://localhost:3000'}/?canceled=true`,
+   			subscriptionMetadata: { userId: identity.subject }
+   		});
+   	}
    });
    export const isSubscribed = query({
-     args: {},
-     returns: v.boolean(),
-     handler: async (ctx) => {
-       const identity = await ctx.auth.getUserIdentity();
-       if (!identity) return false;
-       const subscriptions = await ctx.runQuery(
-         components.stripe.public.listSubscriptionsByUserId,
-         { userId: identity.subject }
-       );
-       const allowedPriceIds = new Set(Object.values(priceByTier).filter(Boolean));
-       return subscriptions.some(
-         (sub) =>
-           (sub.status === 'active' || sub.status === 'trialing') &&
-           allowedPriceIds.has(sub.priceId) &&
-           sub.metadata?.tier === 'pro'
-       );
-     }
+   	args: {},
+   	returns: v.boolean(),
+   	handler: async (ctx) => {
+   		const identity = await ctx.auth.getUserIdentity();
+   		if (!identity) return false;
+   		const subscriptions = await ctx.runQuery(
+   			components.stripe.public.listSubscriptionsByUserId,
+   			{ userId: identity.subject }
+   		);
+   		return subscriptions.some((sub) => sub.status === 'active' || sub.status === 'trialing');
+   	}
    });
    ```
 6. Run `npx convex dev --once` — it will install the component and push the functions. Verify output shows `✔ Installed component stripe.`
@@ -90,6 +78,6 @@ Wire Stripe to Convex using @convex-dev/stripe: a checkout action, an httpAction
 ## Rules
 
 - Use @convex-dev/stripe (npm: @convex-dev/stripe@^0.1.4) — it handles webhook signature verification internally via registerRoutes; do NOT write a manual constructEvent webhook.
-- Stripe keys and allowlisted price IDs live in Convex env (use the `env` micro power): STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, and STRIPE_PRO_PRICE_ID.
-- Accept a validated tier, never a caller-provided Stripe price ID. Gate on server-stored subscription state, status, allowlisted price ID, and tier metadata via isSubscribed.
+- Stripe keys live in Convex env (use the `env` micro power): STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET.
+- Gate on server-stored subscription state via isSubscribed query (reads component tables), not client claims.
 - convex/convex.config.ts must import from '@convex-dev/stripe/convex.config.js' (not .ts) — the .js extension is required by the Convex bundler.
