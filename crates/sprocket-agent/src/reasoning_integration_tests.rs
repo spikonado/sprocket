@@ -15,7 +15,7 @@ use rig::streaming::StreamedAssistantContent;
 use serde_json::{Value as JsonValue, json};
 
 use super::{contiguous_text_id, durable_items_json};
-use crate::live::LiveAssistantPart;
+use crate::live::{LiveAssistantPart, LiveAssistantParts, now_ms};
 use crate::reasoning::{apply_completed_reasoning, merge_provider_metadata};
 use crate::transcript::{TranscriptPart, TranscriptStore, agent_history_from_parts};
 use crate::types::{AgentHistoryMessage, deserialize_agent_history};
@@ -247,28 +247,6 @@ fn live_reasoning_text(parts: &[LiveAssistantPart]) -> Option<&str> {
     })
 }
 
-fn apply_reasoning_delta(
-    parts: &mut Vec<LiveAssistantPart>,
-    text_index: &mut HashMap<String, usize>,
-    correlator: &str,
-    delta: &str,
-) {
-    let id = format!("{STREAM_ID}:{correlator}");
-    let key = format!("reasoning:{id}");
-    if let Some(&index) = text_index.get(&key) {
-        if let LiveAssistantPart::Reasoning { text, .. } = &mut parts[index] {
-            text.push_str(delta);
-        }
-        return;
-    }
-    text_index.insert(key, parts.len());
-    parts.push(LiveAssistantPart::Reasoning {
-        id,
-        text: delta.to_string(),
-        turn_id: Some(STREAM_ID.to_string()),
-    });
-}
-
 async fn durable_history_from_parts(
     parts: &[LiveAssistantPart],
     provider_metadata: &HashMap<String, JsonValue>,
@@ -328,8 +306,7 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
         .await
         .expect("mocked responses stream");
 
-    let mut parts = Vec::new();
-    let mut text_index = HashMap::new();
+    let mut parts = LiveAssistantParts::default();
     let mut provider_metadata = HashMap::new();
     let mut observed = Vec::new();
     let mut completed: Option<Reasoning> = None;
@@ -338,8 +315,14 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
         match item.expect("stream item") {
             StreamedAssistantContent::ReasoningDelta { id, reasoning, .. } => {
                 observed.push(Observed::ReasoningDelta);
-                apply_reasoning_delta(&mut parts, &mut text_index, &id, &reasoning);
-                let text = live_reasoning_text(&parts).expect("live reasoning after delta");
+                parts.apply_text_delta(
+                    "reasoning",
+                    format!("{STREAM_ID}:{id}"),
+                    &reasoning,
+                    Some(STREAM_ID.to_string()),
+                    now_ms(),
+                );
+                let text = live_reasoning_text(&parts.parts).expect("live reasoning after delta");
                 assert_eq!(text, DELTA_SUMMARY);
                 assert!(
                     !text.contains(ENVELOPE),
@@ -357,7 +340,6 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
                 );
                 apply_completed_reasoning(
                     &mut parts,
-                    &mut text_index,
                     &mut provider_metadata,
                     STREAM_ID,
                     &id,
@@ -367,21 +349,24 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
             }
             StreamedAssistantContent::Text(text) => {
                 observed.push(Observed::Text);
-                parts.push(LiveAssistantPart::Text {
-                    id: contiguous_text_id(&parts, STREAM_ID),
-                    text: text.text,
-                    turn_id: Some(STREAM_ID.to_string()),
-                });
+                parts.apply_text_delta(
+                    "text",
+                    contiguous_text_id(&parts.parts, STREAM_ID),
+                    &text.text,
+                    Some(STREAM_ID.to_string()),
+                    now_ms(),
+                );
             }
             StreamedAssistantContent::ToolCall { tool_call, .. } => {
                 observed.push(Observed::ToolCall);
-                parts.push(LiveAssistantPart::ToolCall {
-                    part_id: Some(tool_call.id.as_str().to_string()),
-                    call_id: tool_call.wire_call_id().to_string(),
-                    name: tool_call.function.name,
-                    input: tool_call.function.arguments,
-                    turn_id: Some(STREAM_ID.to_string()),
-                });
+                parts.apply_tool_call(
+                    Some(tool_call.id.as_str().to_string()),
+                    tool_call.wire_call_id().to_string(),
+                    tool_call.function.name,
+                    tool_call.function.arguments,
+                    Some(STREAM_ID.to_string()),
+                    now_ms(),
+                );
             }
             StreamedAssistantContent::ToolCallDelta { .. }
             | StreamedAssistantContent::Final(_)
@@ -419,19 +404,21 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
 
     let completed = completed.expect("completed reasoning");
     let reasoning_part = parts
+        .parts
         .iter()
         .find(|part| matches!(part, LiveAssistantPart::Reasoning { .. }))
         .expect("live reasoning part");
-    let live_text = live_reasoning_text(&parts).expect("live reasoning text");
+    let live_text = live_reasoning_text(&parts.parts).expect("live reasoning text");
     assert_eq!(live_text, DONE_SUMMARY);
     assert!(!live_text.contains(ENVELOPE));
     assert_ne!(live_text, DELTA_SUMMARY, "done summary is authoritative");
     assert!(
         parts
+            .parts
             .iter()
             .any(|part| matches!(part, LiveAssistantPart::Text { text, .. } if text == TEXT))
     );
-    assert!(parts.iter().any(|part| {
+    assert!(parts.parts.iter().any(|part| {
         matches!(
             part,
             LiveAssistantPart::ToolCall {
@@ -468,9 +455,10 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
     );
     assert_eq!(completed.encrypted_content(), Some(ENVELOPE));
 
-    let history =
-        deserialize_agent_history(durable_history_from_parts(&parts, &provider_metadata).await)
-            .expect("durable history conversion");
+    let history = deserialize_agent_history(
+        durable_history_from_parts(&parts.parts, &provider_metadata).await,
+    )
+    .expect("durable history conversion");
     match &history[0] {
         Message::Assistant { content, .. } => {
             let reasoning = content.iter().find_map(|part| match part {
@@ -531,7 +519,7 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
     assert_eq!(inputs[4]["call_id"], TOOL_CALL_ID);
     assert!(inputs[4]["output"].to_string().contains("/workspace"));
 
-    let after_compaction = durable_items_json(&parts, &provider_metadata, false);
+    let after_compaction = durable_items_json(&parts.parts, &provider_metadata, false);
     assert!(
         after_compaction
             .iter()

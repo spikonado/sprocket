@@ -9,7 +9,7 @@ use tokio::sync::Mutex;
 
 use super::types::{
     TRANSCRIPT_CHUNK_SIZE, TRANSCRIPT_PAGE_SIZE, TranscriptMessage, TranscriptPage, TranscriptPart,
-    TranscriptPartKind, TranscriptState,
+    TranscriptPartKind, TranscriptState, UNKNOWN_RUN_STARTED_AT,
 };
 
 fn safe_segment(value: &str) -> String {
@@ -597,7 +597,7 @@ fn project_messages(
                         attachments: prompt.image_uploads,
                         parts: Vec::new(),
                         run_status: "completed".to_string(),
-                        run_started_at: u64::from(part.number),
+                        run_started_at: UNKNOWN_RUN_STARTED_AT,
                         source_numbers: vec![part.number],
                         stream_ids: Vec::new(),
                         details_loaded: true,
@@ -619,7 +619,7 @@ fn project_messages(
                             attachments: Vec::new(),
                             parts: Vec::new(),
                             run_status: "completed".to_string(),
-                            run_started_at: u64::from(part.number),
+                            run_started_at: UNKNOWN_RUN_STARTED_AT,
                             source_numbers: Vec::new(),
                             stream_ids: Vec::new(),
                             details_loaded: include_details,
@@ -637,21 +637,24 @@ fn project_messages(
                         .items
                         .iter()
                         .filter_map(|item| {
-                            (item.get("type").and_then(JsonValue::as_str) == Some("tool-call"))
-                                .then(|| item.get("callId").and_then(JsonValue::as_str))
-                                .flatten()
+                            (json_type(item) == Some("tool-call")).then(|| json_call_id(item))
                         })
+                        .flatten()
                         .collect::<HashSet<_>>();
                     let mut results = HashMap::new();
+                    let mut placeholder_calls = HashMap::new();
                     response.parts.retain(|item| {
-                        let Some(call_id) = item.get("callId").and_then(JsonValue::as_str) else {
+                        let Some(call_id) = json_call_id(item) else {
                             return true;
                         };
                         if !call_ids.contains(call_id) {
                             return true;
                         }
-                        match item.get("type").and_then(JsonValue::as_str) {
-                            Some("tool-call") => false,
+                        match json_type(item) {
+                            Some("tool-call") => {
+                                placeholder_calls.insert(call_id.to_string(), item.clone());
+                                false
+                            }
                             Some("tool-result") => {
                                 results.insert(call_id.to_string(), item.clone());
                                 false
@@ -660,14 +663,22 @@ fn project_messages(
                         }
                     });
                     for item in &completion.items {
-                        if item.get("type").and_then(JsonValue::as_str) == Some("tool-result") {
-                            if let Some(call_id) = item.get("callId").and_then(JsonValue::as_str) {
+                        if json_type(item) == Some("tool-result") {
+                            if let Some(call_id) = json_call_id(item) {
                                 results.remove(call_id);
                             }
                         }
                     }
                     for mut item in completion.items {
-                        match item.get("type").and_then(JsonValue::as_str) {
+                        // Released UIs understand omitted timestamps, but not explicit nulls.
+                        if let Some(object) = item.as_object_mut() {
+                            for key in ["startedAt", "completedAt"] {
+                                if object.get(key).is_some_and(JsonValue::is_null) {
+                                    object.remove(key);
+                                }
+                            }
+                        }
+                        match json_type(&item) {
                             Some("text") => {
                                 if let Some(text) = item.get("text").and_then(JsonValue::as_str) {
                                     response.text.push_str(text);
@@ -707,27 +718,45 @@ fn project_messages(
                             }
                             _ => {}
                         }
-                        let result = item
-                            .get("callId")
-                            .and_then(JsonValue::as_str)
-                            .and_then(|call_id| results.remove(call_id));
+                        if json_type(&item) == Some("tool-call") {
+                            if let Some(call_id) = json_call_id(&item) {
+                                if let Some(placeholder) = placeholder_calls.get(call_id) {
+                                    copy_missing_timing(&mut item, placeholder);
+                                }
+                            }
+                        }
+                        let result =
+                            json_call_id(&item).and_then(|call_id| results.remove(call_id));
                         response.parts.push(item);
                         if let Some(result) = result {
                             response.parts.push(result);
                         }
                     }
                 }
+                let created_at = part.created_at;
                 if let Some(tool) = part.tool {
-                    let call_exists = response.parts.iter().any(|item| {
-                        item.get("type").and_then(JsonValue::as_str) == Some("tool-call")
-                            && item.get("callId").and_then(JsonValue::as_str)
-                                == Some(tool.call_id.as_str())
-                    });
-                    if !call_exists {
-                        response.parts.push(serde_json::json!({
-                            "type": "tool-call", "callId": tool.call_id,
-                            "name": tool.name, "input": if include_details { serde_json::json!({}) } else { JsonValue::Null }
-                        }));
+                    let existing_call = response
+                        .parts
+                        .iter_mut()
+                        .find(|item| is_typed_call(item, "tool-call", &tool.call_id));
+                    let started_at = created_at.filter(|_| tool.status == "started");
+                    if let Some(call) = existing_call {
+                        if call.get("startedAt").is_none() {
+                            if let Some(object) = call.as_object_mut() {
+                                insert_ms(object, "startedAt", started_at);
+                            }
+                        }
+                    } else {
+                        response.parts.push(tool_call_placeholder(
+                            &tool.call_id,
+                            &tool.name,
+                            if include_details {
+                                serde_json::json!({})
+                            } else {
+                                JsonValue::Null
+                            },
+                            started_at,
+                        ));
                     }
                     let terminal_key = tool
                         .tool_invocation_id
@@ -740,8 +769,9 @@ fn project_messages(
                         let mut result = serde_json::json!({
                             "type": "tool-result", "callId": tool.call_id, "name": tool.name
                         });
+                        let object = result.as_object_mut().expect("object");
                         let output = tool.output.unwrap_or(JsonValue::Null);
-                        result.as_object_mut().expect("object").insert(
+                        object.insert(
                             "output".to_string(),
                             if include_details {
                                 output
@@ -749,17 +779,18 @@ fn project_messages(
                                 tool_output_summary(output)
                             },
                         );
-                        if let Some(index) = response.parts.iter().position(|item| {
-                            item.get("type").and_then(JsonValue::as_str) == Some("tool-result")
-                                && item.get("callId").and_then(JsonValue::as_str)
-                                    == Some(tool.call_id.as_str())
-                        }) {
+                        insert_ms(object, "completedAt", created_at);
+                        if let Some(index) = response
+                            .parts
+                            .iter()
+                            .position(|item| is_typed_call(item, "tool-result", &tool.call_id))
+                        {
                             response.parts[index] = result;
-                        } else if let Some(index) = response.parts.iter().position(|item| {
-                            item.get("type").and_then(JsonValue::as_str) == Some("tool-call")
-                                && item.get("callId").and_then(JsonValue::as_str)
-                                    == Some(tool.call_id.as_str())
-                        }) {
+                        } else if let Some(index) = response
+                            .parts
+                            .iter()
+                            .position(|item| is_typed_call(item, "tool-call", &tool.call_id))
+                        {
                             response.parts.insert(index + 1, result);
                         } else {
                             response.parts.push(result);
@@ -770,6 +801,59 @@ fn project_messages(
         }
     }
     messages
+}
+
+fn json_str<'a>(item: &'a JsonValue, key: &str) -> Option<&'a str> {
+    item.get(key).and_then(JsonValue::as_str)
+}
+
+fn json_type(item: &JsonValue) -> Option<&str> {
+    json_str(item, "type")
+}
+
+fn json_call_id(item: &JsonValue) -> Option<&str> {
+    json_str(item, "callId")
+}
+
+fn is_typed_call(item: &JsonValue, type_name: &str, call_id: &str) -> bool {
+    json_type(item) == Some(type_name) && json_call_id(item) == Some(call_id)
+}
+
+fn insert_ms(object: &mut serde_json::Map<String, JsonValue>, key: &str, value: Option<u64>) {
+    if let Some(ms) = value {
+        object.insert(key.to_string(), JsonValue::from(ms));
+    }
+}
+
+fn copy_missing_timing(target: &mut JsonValue, source: &JsonValue) {
+    let Some(object) = target.as_object_mut() else {
+        return;
+    };
+    for key in ["startedAt", "completedAt"] {
+        if object.get(key).is_none() {
+            if let Some(value) = source.get(key) {
+                object.insert(key.to_string(), value.clone());
+            }
+        }
+    }
+}
+
+fn tool_call_placeholder(
+    call_id: &str,
+    name: &str,
+    input: JsonValue,
+    started_at: Option<u64>,
+) -> JsonValue {
+    let mut call = serde_json::json!({
+        "type": "tool-call",
+        "callId": call_id,
+        "name": name,
+        "input": input
+    });
+    if let Some(object) = call.as_object_mut() {
+        insert_ms(object, "startedAt", started_at);
+    }
+    call
 }
 
 fn tool_output_summary(output: JsonValue) -> JsonValue {
@@ -867,7 +951,7 @@ async fn recover_and_read_chunk(path: &Path) -> anyhow::Result<Vec<TranscriptPar
 mod tests {
     use super::*;
     use crate::transcript::types::{
-        TranscriptCompletionBody, TranscriptPartKind, TranscriptPromptBody,
+        TranscriptCompletionBody, TranscriptPartKind, TranscriptPromptBody, UNKNOWN_RUN_STARTED_AT,
     };
 
     fn prompt(number: u32, text: &str) -> TranscriptPart {
@@ -876,6 +960,7 @@ mod tests {
             source_key: format!("prompt:{number}"),
             kind: TranscriptPartKind::Prompt,
             run_id: format!("run-{number}"),
+            created_at: None,
             prompt: Some(TranscriptPromptBody {
                 text: text.to_string(),
                 image_uploads: Vec::new(),
@@ -891,6 +976,7 @@ mod tests {
             source_key: format!("completion:{number}"),
             kind: TranscriptPartKind::Completion,
             run_id: "run-1".to_string(),
+            created_at: None,
             prompt: None,
             completion: Some(TranscriptCompletionBody {
                 stream_id: Some("stream-1".to_string()),
@@ -911,6 +997,7 @@ mod tests {
             source_key: format!("completion:{number}"),
             kind: TranscriptPartKind::Completion,
             run_id: run_id.to_string(),
+            created_at: None,
             prompt: None,
             completion: Some(TranscriptCompletionBody {
                 stream_id: Some(format!("stream-{number}")),
@@ -924,16 +1011,23 @@ mod tests {
 
     #[test]
     fn projection_omits_disclosure_payloads_until_requested() {
-        let part = completion(0);
+        let mut part = completion(0);
+        let reasoning = &mut part.completion.as_mut().unwrap().items[0];
+        reasoning["startedAt"] = serde_json::json!(1_000);
+        reasoning["completedAt"] = serde_json::json!(2_000);
         let summary = project_messages("user", "thread", vec![part.clone()], false);
         assert_eq!(summary[0].text, "answer");
         assert_eq!(summary[0].parts[0]["text"], "");
+        assert_eq!(summary[0].parts[0]["startedAt"], 1_000);
+        assert_eq!(summary[0].parts[0]["completedAt"], 2_000);
         assert!(summary[0].parts[1]["input"].is_null());
         assert!(summary[0].parts[2]["output"].is_null());
         assert!(!summary[0].details_loaded);
 
         let details = project_messages("user", "thread", vec![part], true);
         assert_eq!(details[0].parts[0]["text"], "secret");
+        assert_eq!(details[0].parts[0]["startedAt"], 1_000);
+        assert_eq!(details[0].parts[0]["completedAt"], 2_000);
         assert_eq!(details[0].parts[1]["input"]["cmd"], "pwd");
         assert_eq!(details[0].parts[2]["output"], "secret output");
         assert!(details[0].details_loaded);
@@ -1049,11 +1143,12 @@ mod tests {
 
     #[test]
     fn completion_order_replaces_early_tool_placeholders() {
-        let tool = |number, call_id: &str, status: &str| TranscriptPart {
+        let tool = |number, call_id: &str, status: &str, created_at: Option<u64>| TranscriptPart {
             number,
             source_key: format!("tool:{number}"),
             kind: TranscriptPartKind::Tool,
             run_id: "run-1".to_string(),
+            created_at,
             prompt: None,
             completion: None,
             tool: Some(crate::transcript::types::TranscriptToolBody {
@@ -1070,7 +1165,7 @@ mod tests {
             serde_json::json!({"type": "reasoning", "id": "r", "text": "plan"}),
             serde_json::json!({"type": "text", "id": "t", "text": "checking"}),
             serde_json::json!({"type": "tool-call", "callId": "a", "name": "exec_command", "input": {}}),
-            serde_json::json!({"type": "tool-call", "callId": "b", "name": "exec_command", "input": {}}),
+            serde_json::json!({"type": "tool-call", "callId": "b", "name": "exec_command", "input": {}, "startedAt": null, "completedAt": null}),
         ];
         for include_details in [false, true] {
             let messages = project_messages(
@@ -1078,11 +1173,11 @@ mod tests {
                 "thread",
                 vec![
                     completion_for_run(0, "run-1", "previous turn"),
-                    tool(1, "b", "started"),
-                    tool(2, "a", "started"),
-                    tool(3, "a", "completed"),
+                    tool(1, "b", "started", Some(1_100)),
+                    tool(2, "a", "started", Some(1_200)),
+                    tool(3, "a", "completed", Some(1_800)),
                     turn.clone(),
-                    tool(5, "b", "completed"),
+                    tool(5, "b", "completed", Some(2_400)),
                     completion_for_run(6, "run-1", "answer"),
                 ],
                 include_details,
@@ -1110,7 +1205,111 @@ mod tests {
             assert_eq!(parts[6]["callId"], "b");
             assert_eq!(parts[4]["output"]["status"], "completed");
             assert_eq!(parts[1]["text"], if include_details { "plan" } else { "" });
+            assert_eq!(parts[1].get("startedAt"), None);
+            assert_eq!(parts[3]["startedAt"], 1_200);
+            assert_eq!(parts[4]["completedAt"], 1_800);
+            assert_eq!(parts[5]["startedAt"], 1_100);
+            assert_eq!(parts[6]["completedAt"], 2_400);
         }
+    }
+
+    #[test]
+    fn projected_messages_use_unknown_run_start_instead_of_sequence() {
+        let messages = project_messages("user", "thread", vec![prompt(7, "hi")], true);
+        assert_eq!(messages[0].run_started_at, UNKNOWN_RUN_STARTED_AT);
+        assert_eq!(messages[0].source_numbers, vec![7]);
+    }
+
+    #[test]
+    fn finished_tool_without_start_does_not_invent_zero_duration() {
+        let part = TranscriptPart {
+            number: 1,
+            source_key: "tool:finished".into(),
+            kind: TranscriptPartKind::Tool,
+            run_id: "run-1".into(),
+            created_at: Some(5_000),
+            prompt: None,
+            completion: None,
+            tool: Some(crate::transcript::types::TranscriptToolBody {
+                job_id: None,
+                tool_invocation_id: None,
+                call_id: "c1".into(),
+                name: "exec_command".into(),
+                output: None,
+                status: "completed".into(),
+            }),
+        };
+        let messages = project_messages("user", "thread", vec![part], false);
+        assert!(messages[0].parts[0].get("startedAt").is_none());
+        assert_eq!(messages[0].parts[1]["completedAt"], 5_000);
+    }
+
+    #[test]
+    fn does_not_fabricate_reasoning_timing_from_part_created_at() {
+        let mut part = completion(4);
+        part.created_at = Some(9_000);
+        let messages = project_messages("user", "thread", vec![part], true);
+        assert!(messages[0].parts[0].get("startedAt").is_none());
+        assert!(messages[0].parts[0].get("completedAt").is_none());
+        assert_eq!(messages[0].run_started_at, UNKNOWN_RUN_STARTED_AT);
+    }
+
+    #[test]
+    fn migrated_null_timing_projects_as_missing_for_released_clients() {
+        let mut part = completion(4);
+        for item in &mut part.completion.as_mut().unwrap().items {
+            item["startedAt"] = JsonValue::Null;
+            item["completedAt"] = JsonValue::Null;
+        }
+        for include_details in [false, true] {
+            let messages = project_messages("user", "thread", vec![part.clone()], include_details);
+            for item in &messages[0].parts {
+                assert!(item.get("startedAt").is_none());
+                assert!(item.get("completedAt").is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn completion_tool_call_keeps_its_own_start_over_placeholder() {
+        let tool = TranscriptPart {
+            number: 1,
+            source_key: "tool:1".into(),
+            kind: TranscriptPartKind::Tool,
+            run_id: "run-1".into(),
+            created_at: Some(500),
+            prompt: None,
+            completion: None,
+            tool: Some(crate::transcript::types::TranscriptToolBody {
+                job_id: None,
+                tool_invocation_id: None,
+                call_id: "c1".into(),
+                name: "exec_command".into(),
+                output: None,
+                status: "started".into(),
+            }),
+        };
+        let turn = TranscriptPart {
+            number: 2,
+            source_key: "completion:2".into(),
+            kind: TranscriptPartKind::Completion,
+            run_id: "run-1".into(),
+            created_at: Some(900),
+            prompt: None,
+            completion: Some(TranscriptCompletionBody {
+                stream_id: Some("s".into()),
+                items: vec![serde_json::json!({
+                    "type": "tool-call",
+                    "callId": "c1",
+                    "name": "exec_command",
+                    "input": {},
+                    "startedAt": 700
+                })],
+            }),
+            tool: None,
+        };
+        let messages = project_messages("user", "thread", vec![tool, turn], true);
+        assert_eq!(messages[0].parts[0]["startedAt"], 700);
     }
 
     #[test]
@@ -1169,6 +1368,28 @@ mod tests {
         assert_eq!(older.next_before, Some(2));
 
         tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn preserves_created_at_on_disk() {
+        let dir =
+            std::env::temp_dir().join(format!("sprocket-created-at-{}", uuid::Uuid::new_v4()));
+        let store = TranscriptStore::new(dir.clone());
+        let mut part = prompt(0, "hello");
+        part.created_at = Some(1_700_000_000_000);
+        store.append_parts("user", "thread", &[part]).await.unwrap();
+        let read = store.read_parts("user", "thread", &[0]).await.unwrap();
+        assert_eq!(read[0].created_at, Some(1_700_000_000_000));
+        let chunk = tokio::fs::read_to_string(
+            store
+                .thread_dir("user", "thread")
+                .join("parts")
+                .join("00000000.jsonl"),
+        )
+        .await
+        .unwrap();
+        assert!(chunk.contains("\"createdAt\":1700000000000"));
+        let _ = tokio::fs::remove_dir_all(dir).await;
     }
 
     #[tokio::test]

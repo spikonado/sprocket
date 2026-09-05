@@ -4,7 +4,7 @@ use rig::completion::Message;
 use rig::message::{AssistantContent, Reasoning, ReasoningContent};
 use serde_json::Value as JsonValue;
 
-use crate::live::LiveAssistantPart;
+use crate::live::{LiveAssistantPart, LiveAssistantParts, now_ms};
 
 /// Durable OpenAI-shaped metadata already stored on transcript reasoning items.
 /// `encrypted` is gateway envelope bytes: persist and replay as-is, never decode.
@@ -131,8 +131,7 @@ pub(crate) fn kept_suffix_raw_indices(
 }
 
 pub(crate) fn apply_completed_reasoning(
-    parts: &mut Vec<LiveAssistantPart>,
-    text_index: &mut HashMap<String, usize>,
+    parts: &mut LiveAssistantParts,
     provider_metadata: &mut HashMap<String, JsonValue>,
     stream_id: &str,
     correlator: &str,
@@ -144,28 +143,11 @@ pub(crate) fn apply_completed_reasoning(
     let metadata =
         openai_reasoning_metadata(reasoning.id.as_deref(), opaque_reasoning_blob(reasoning));
     if let Some(metadata) = metadata {
-        provider_metadata.insert(key.clone(), metadata);
+        provider_metadata.insert(key, metadata);
     } else {
         provider_metadata.remove(&key);
     }
-    if let Some(&index) = text_index.get(&key) {
-        if let LiveAssistantPart::Reasoning {
-            text: existing,
-            turn_id,
-            ..
-        } = &mut parts[index]
-        {
-            *existing = text;
-            *turn_id = Some(stream_id.to_string());
-            return;
-        }
-    }
-    text_index.insert(key, parts.len());
-    parts.push(LiveAssistantPart::Reasoning {
-        id,
-        text,
-        turn_id: Some(stream_id.to_string()),
-    });
+    parts.apply_completed_reasoning(id, text, Some(stream_id.to_string()), now_ms());
 }
 
 pub(crate) fn merge_provider_metadata(
@@ -229,16 +211,17 @@ mod tests {
 
     #[test]
     fn completed_reasoning_replaces_delta_text_and_stores_opaque_state() {
-        let mut parts = vec![LiveAssistantPart::Reasoning {
-            id: "agent:run:claim:1:corr".to_string(),
-            text: "partial".to_string(),
-            turn_id: Some("agent:run:claim:1".to_string()),
-        }];
-        let mut text_index = HashMap::from([("reasoning:agent:run:claim:1:corr".to_string(), 0)]);
+        let mut parts = LiveAssistantParts::default();
+        parts.apply_text_delta(
+            "reasoning",
+            "agent:run:claim:1:corr".to_string(),
+            "partial",
+            Some("agent:run:claim:1".to_string()),
+            10,
+        );
         let mut provider_metadata = HashMap::new();
         apply_completed_reasoning(
             &mut parts,
-            &mut text_index,
             &mut provider_metadata,
             "agent:run:claim:1",
             "corr",
@@ -259,8 +242,8 @@ mod tests {
             ),
         );
 
-        assert_eq!(parts.len(), 1);
-        match &parts[0] {
+        assert_eq!(parts.parts.len(), 1);
+        match &parts.parts[0] {
             LiveAssistantPart::Reasoning { text, .. } => {
                 assert_eq!(text, "done\nsecond");
                 assert!(!text.contains("envelope"));
@@ -282,12 +265,10 @@ mod tests {
 
     #[test]
     fn empty_signed_completion_inserts_a_durable_slot_without_live_ciphertext() {
-        let mut parts = Vec::new();
-        let mut text_index = HashMap::new();
+        let mut parts = LiveAssistantParts::default();
         let mut provider_metadata = HashMap::new();
         apply_completed_reasoning(
             &mut parts,
-            &mut text_index,
             &mut provider_metadata,
             "stream",
             "corr",
@@ -297,12 +278,14 @@ mod tests {
             ),
         );
 
-        match &parts[0] {
+        match &parts.parts[0] {
             LiveAssistantPart::Reasoning { text, .. } => assert!(text.is_empty()),
             other => panic!("expected reasoning part, got {other:?}"),
         }
-        let item =
-            merge_provider_metadata(&parts[0], provider_metadata.get("reasoning:stream:corr"));
+        let item = merge_provider_metadata(
+            &parts.parts[0],
+            provider_metadata.get("reasoning:stream:corr"),
+        );
         assert_eq!(item["text"], "");
         assert_eq!(item["providerMetadata"]["openai"]["itemId"], "rs_signed");
         assert_eq!(
@@ -313,23 +296,25 @@ mod tests {
 
     #[test]
     fn interleaved_reasoning_keeps_arrival_order_beside_tool_calls() {
-        let mut parts = vec![LiveAssistantPart::Reasoning {
-            id: "stream:r1".to_string(),
-            text: "first".to_string(),
-            turn_id: Some("stream".to_string()),
-        }];
-        let mut text_index = HashMap::from([("reasoning:stream:r1".to_string(), 0)]);
+        let mut parts = LiveAssistantParts::default();
+        parts.apply_text_delta(
+            "reasoning",
+            "stream:r1".to_string(),
+            "first",
+            Some("stream".to_string()),
+            10,
+        );
+        parts.apply_tool_call(
+            Some("call-1".to_string()),
+            "call_1".to_string(),
+            "exec_command".to_string(),
+            serde_json::json!({ "cmd": "pwd" }),
+            Some("stream".to_string()),
+            20,
+        );
         let mut provider_metadata = HashMap::new();
-        parts.push(LiveAssistantPart::ToolCall {
-            part_id: Some("call-1".to_string()),
-            call_id: "call_1".to_string(),
-            name: "exec_command".to_string(),
-            input: serde_json::json!({ "cmd": "pwd" }),
-            turn_id: Some("stream".to_string()),
-        });
         apply_completed_reasoning(
             &mut parts,
-            &mut text_index,
             &mut provider_metadata,
             "stream",
             "r2",
@@ -340,7 +325,6 @@ mod tests {
         );
         apply_completed_reasoning(
             &mut parts,
-            &mut text_index,
             &mut provider_metadata,
             "stream",
             "r1",
@@ -350,16 +334,16 @@ mod tests {
             ),
         );
 
-        assert_eq!(parts.len(), 3);
-        match &parts[0] {
+        assert_eq!(parts.parts.len(), 3);
+        match &parts.parts[0] {
             LiveAssistantPart::Reasoning { text, .. } => assert_eq!(text, "first done"),
             other => panic!("expected first reasoning, got {other:?}"),
         }
-        match &parts[1] {
+        match &parts.parts[1] {
             LiveAssistantPart::ToolCall { call_id, .. } => assert_eq!(call_id, "call_1"),
             other => panic!("expected tool call, got {other:?}"),
         }
-        match &parts[2] {
+        match &parts.parts[2] {
             LiveAssistantPart::Reasoning { text, .. } => assert_eq!(text, "after"),
             other => panic!("expected second reasoning, got {other:?}"),
         }
@@ -488,12 +472,10 @@ mod tests {
 
     #[test]
     fn completed_reasoning_without_opaque_state_clears_metadata() {
-        let mut parts = Vec::new();
-        let mut text_index = HashMap::new();
+        let mut parts = LiveAssistantParts::default();
         let mut provider_metadata = HashMap::new();
         apply_completed_reasoning(
             &mut parts,
-            &mut text_index,
             &mut provider_metadata,
             "stream",
             "corr",
@@ -506,14 +488,13 @@ mod tests {
 
         apply_completed_reasoning(
             &mut parts,
-            &mut text_index,
             &mut provider_metadata,
             "stream",
             "corr",
             &reasoning_with(None, vec![ReasoningContent::Summary("visible".to_string())]),
         );
         assert!(!provider_metadata.contains_key("reasoning:stream:corr"));
-        match &parts[0] {
+        match &parts.parts[0] {
             LiveAssistantPart::Reasoning { text, .. } => assert_eq!(text, "visible"),
             other => panic!("expected updated reasoning, got {other:?}"),
         }
@@ -521,18 +502,26 @@ mod tests {
 
     #[test]
     fn stale_reasoning_index_still_inserts_a_new_part() {
-        let mut parts = vec![LiveAssistantPart::ToolCall {
+        let mut parts = LiveAssistantParts::default();
+        parts.apply_text_delta(
+            "reasoning",
+            "stream:corr".to_string(),
+            "stale",
+            Some("stream".to_string()),
+            10,
+        );
+        parts.parts[0] = LiveAssistantPart::ToolCall {
             part_id: Some("call-1".to_string()),
             call_id: "call_1".to_string(),
             name: "exec_command".to_string(),
             input: serde_json::json!({ "cmd": "pwd" }),
+            started_at: Some(10),
+            completed_at: Some(10),
             turn_id: Some("stream".to_string()),
-        }];
-        let mut text_index = HashMap::from([("reasoning:stream:corr".to_string(), 0)]);
+        };
         let mut provider_metadata = HashMap::new();
         apply_completed_reasoning(
             &mut parts,
-            &mut text_index,
             &mut provider_metadata,
             "stream",
             "corr",
@@ -542,11 +531,98 @@ mod tests {
             ),
         );
 
-        assert_eq!(parts.len(), 2);
-        match &parts[1] {
+        assert_eq!(parts.parts.len(), 2);
+        match &parts.parts[1] {
             LiveAssistantPart::Reasoning { text, .. } => assert_eq!(text, "late"),
             other => panic!("expected appended reasoning, got {other:?}"),
         }
-        assert_eq!(text_index["reasoning:stream:corr"], 1);
+
+        apply_completed_reasoning(
+            &mut parts,
+            &mut provider_metadata,
+            "stream",
+            "corr",
+            &reasoning_with(
+                Some("rs_1"),
+                vec![ReasoningContent::Summary("late again".to_string())],
+            ),
+        );
+        assert_eq!(parts.parts.len(), 2);
+        match &parts.parts[1] {
+            LiveAssistantPart::Reasoning { text, .. } => assert_eq!(text, "late again"),
+            other => panic!("expected retargeted reasoning slot, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn completed_reasoning_preserves_delta_start_time() {
+        let mut parts = LiveAssistantParts::default();
+        parts.apply_text_delta(
+            "reasoning",
+            "stream:corr".to_string(),
+            "partial",
+            Some("stream".to_string()),
+            1_000,
+        );
+        let mut provider_metadata = HashMap::new();
+        let before = now_ms();
+        apply_completed_reasoning(
+            &mut parts,
+            &mut provider_metadata,
+            "stream",
+            "corr",
+            &reasoning_with(
+                Some("rs_1"),
+                vec![ReasoningContent::Summary("done".to_string())],
+            ),
+        );
+        let after = now_ms();
+        match &parts.parts[0] {
+            LiveAssistantPart::Reasoning {
+                text,
+                started_at,
+                completed_at,
+                ..
+            } => {
+                assert_eq!(text, "done");
+                assert_eq!(*started_at, Some(1_000));
+                let completed = completed_at.expect("completed at");
+                assert!(completed >= before && completed <= after);
+            }
+            other => panic!("expected reasoning part, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn empty_completed_reasoning_sets_start_and_end() {
+        let mut parts = LiveAssistantParts::default();
+        let mut provider_metadata = HashMap::new();
+        let before = now_ms();
+        apply_completed_reasoning(
+            &mut parts,
+            &mut provider_metadata,
+            "stream",
+            "corr",
+            &reasoning_with(
+                Some("rs_signed"),
+                vec![ReasoningContent::Encrypted("opaque".to_string())],
+            ),
+        );
+        let after = now_ms();
+        match &parts.parts[0] {
+            LiveAssistantPart::Reasoning {
+                text,
+                started_at,
+                completed_at,
+                ..
+            } => {
+                assert!(text.is_empty());
+                let started = started_at.expect("started at");
+                let completed = completed_at.expect("completed at");
+                assert_eq!(started, completed);
+                assert!(started >= before && completed <= after);
+            }
+            other => panic!("expected reasoning part, got {other:?}"),
+        }
     }
 }

@@ -71,21 +71,32 @@ describe('mergePagedTranscriptWithLive', () => {
 	});
 
 	it('keeps durable tool results attached to their streamed calls', () => {
-		const call = { type: 'tool-call' as const, callId: 'call', name: 'exec_command', input: null };
+		const call = {
+			type: 'tool-call' as const,
+			callId: 'call',
+			name: 'exec_command',
+			input: null,
+			startedAt: 1_000
+		};
 		const result = {
 			type: 'tool-result' as const,
 			callId: 'call',
 			name: 'exec_command',
-			output: 'done'
+			output: 'done',
+			completedAt: 5_000
 		};
 		const messages = mergePagedTranscriptWithLive({
 			messages: [message({ streamIds: [], parts: [call, result], sourceNumbers: [1, 2] })],
-			live: { ...live(), parts: [{ ...call, input: { cmd: 'pwd' } }] },
+			live: { ...live(), parts: [{ ...call, input: { cmd: 'pwd' }, startedAt: undefined }] },
 			userId: 'user-1',
 			threadId
 		});
 		expect(messages[0].parts.map((part) => part.type)).toEqual(['tool-call', 'tool-result']);
 		expect(messages[0].sourceNumbers).toEqual([1, 2]);
+		expect(buildAssistantTimeline(messages[0].parts, [])[0]).toMatchObject({
+			startedAt: 1_000,
+			completedAt: 5_000
+		});
 	});
 
 	it('keeps reasoning before its tools when tool events arrive before the completion', () => {

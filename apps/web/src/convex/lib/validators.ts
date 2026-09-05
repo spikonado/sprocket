@@ -426,10 +426,14 @@ export const MAX_IMAGE_ATTACHMENTS = 4;
 export const MAX_IMAGE_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 export const MAX_IMAGE_ATTACHMENT_LABEL = '10 MiB';
 
+const vAssistantTimestamp = v.optional(v.union(v.number(), v.null()));
+
 export const vAssistantTextPart = v.object({
 	type: v.literal('text'),
 	id: v.string(),
 	text: v.string(),
+	startedAt: vAssistantTimestamp,
+	completedAt: vAssistantTimestamp,
 	turnId: v.optional(v.string()),
 	providerMetadata: v.optional(vJsonValue)
 });
@@ -438,6 +442,8 @@ export const vAssistantReasoningPart = v.object({
 	type: v.literal('reasoning'),
 	id: v.string(),
 	text: v.string(),
+	startedAt: vAssistantTimestamp,
+	completedAt: vAssistantTimestamp,
 	turnId: v.optional(v.string()),
 	providerMetadata: v.optional(vJsonValue)
 });
@@ -449,6 +455,8 @@ export const vAssistantToolCallPart = v.object({
 	name: v.string(),
 	input: vJsonValue,
 	turnId: v.optional(v.string()),
+	startedAt: vAssistantTimestamp,
+	completedAt: vAssistantTimestamp,
 	providerMetadata: v.optional(vJsonValue)
 });
 
@@ -468,6 +476,7 @@ export const vAssistantToolResultPart = v.object({
 	type: v.literal('tool-result'),
 	callId: v.string(),
 	name: v.optional(v.string()),
+	completedAt: vAssistantTimestamp,
 	output: vJsonValue
 });
 

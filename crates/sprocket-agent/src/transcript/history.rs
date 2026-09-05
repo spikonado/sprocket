@@ -293,6 +293,7 @@ mod tests {
             source_key: format!("prompt:{number}"),
             kind: TranscriptPartKind::Prompt,
             run_id: run_id.to_string(),
+            created_at: None,
             prompt: Some(TranscriptPromptBody {
                 text: text.to_string(),
                 image_uploads: Vec::new(),
@@ -316,6 +317,7 @@ mod tests {
             source_key: source_key.into(),
             kind: TranscriptPartKind::Tool,
             run_id: "run".into(),
+            created_at: None,
             prompt: None,
             completion: None,
             tool: Some(TranscriptToolBody {
@@ -335,6 +337,7 @@ mod tests {
             source_key: format!("completion:{number}"),
             kind: TranscriptPartKind::Completion,
             run_id: "run".into(),
+            created_at: None,
             prompt: None,
             completion: Some(TranscriptCompletionBody {
                 stream_id: Some("s".into()),
@@ -380,6 +383,7 @@ mod tests {
                     source_key: "completion:current".into(),
                     kind: TranscriptPartKind::Completion,
                     run_id: "current".into(),
+                    created_at: None,
                     prompt: None,
                     completion: Some(TranscriptCompletionBody {
                         stream_id: Some("s".into()),
@@ -408,6 +412,7 @@ mod tests {
                     source_key: "completion:parent".into(),
                     kind: TranscriptPartKind::Completion,
                     run_id: "parent".into(),
+                    created_at: None,
                     prompt: None,
                     completion: Some(TranscriptCompletionBody {
                         stream_id: Some("s".into()),
@@ -439,6 +444,7 @@ mod tests {
                     source_key: "tool:orphan".into(),
                     kind: TranscriptPartKind::Tool,
                     run_id: "run".into(),
+                    created_at: None,
                     prompt: None,
                     completion: None,
                     tool: Some(TranscriptToolBody {
@@ -455,6 +461,7 @@ mod tests {
                     source_key: "completion:run".into(),
                     kind: TranscriptPartKind::Completion,
                     run_id: "run".into(),
+                    created_at: None,
                     prompt: None,
                     completion: Some(TranscriptCompletionBody {
                         stream_id: Some("s".into()),
@@ -472,6 +479,7 @@ mod tests {
                     source_key: "tool:keep".into(),
                     kind: TranscriptPartKind::Tool,
                     run_id: "run".into(),
+                    created_at: None,
                     prompt: None,
                     completion: None,
                     tool: Some(TranscriptToolBody {
@@ -600,6 +608,7 @@ mod tests {
                     source_key: "prompt:0".into(),
                     kind: TranscriptPartKind::Prompt,
                     run_id: "run".into(),
+                    created_at: None,
                     prompt: Some(TranscriptPromptBody {
                         text: "see this".into(),
                         image_uploads: vec![TranscriptAttachmentMeta {
@@ -619,6 +628,7 @@ mod tests {
                     source_key: "completion:1".into(),
                     kind: TranscriptPartKind::Completion,
                     run_id: "run".into(),
+                    created_at: None,
                     prompt: None,
                     completion: Some(TranscriptCompletionBody {
                         stream_id: Some("s".into()),

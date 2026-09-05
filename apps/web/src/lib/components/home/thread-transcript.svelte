@@ -12,7 +12,6 @@
 		isAssistantResponseStreaming,
 		partitionWorkSectionTools,
 		workSectionTimingAnchor,
-		workSectionTimingIndexes,
 		type AssistantTimelineTool,
 		type AssistantTimelineWorkBlock
 	} from '$lib/chat/assistant-timeline';
@@ -336,8 +335,6 @@
 							{@const sessionCommands = buildCommandSessionCommandMap(timelineTools)}
 							{@const blocks = groupAssistantTimeline(timeline)}
 							{@const sections = groupAssistantTimelineSections(blocks)}
-							{@const { workIndexBySectionIndex, priorCompletedAtByWorkIndex } =
-								workSectionTimingIndexes(sections)}
 							{@const isStreaming = isAssistantResponseStreaming(message, activeRunId)}
 							{@const openSessions = buildOpenExecCommandSessions(timelineTools, isStreaming)}
 							{@const hasPersistedAssistantContent = timeline.some(
@@ -371,13 +368,13 @@
 											{@const workInProgress =
 												isStreaming &&
 												(sectionIndex === sections.length - 1 || runningTools.length > 0)}
-											{@const workSectionOrder = workIndexBySectionIndex[sectionIndex] ?? 0}
+											{@const nextSection = sections[sectionIndex + 1]}
 											{@const timing = workSectionTimingAnchor(section, {
 												inProgress: workInProgress,
-												workSectionIndex: workSectionOrder,
-												runStartedAt: message.runStartedAt,
-												runCompletedAt: message.runCompletedAt,
-												priorWorkCompletedAtMs: priorCompletedAtByWorkIndex[workSectionOrder]
+												endedAt:
+													nextSection?.type === 'text'
+														? (nextSection.startedAt ?? undefined)
+														: undefined
 											})}
 											{#if visibleBlocks.length > 0 || workInProgress || runningTools.length > 0}
 												<WorkDisclosure
@@ -481,7 +478,7 @@
 											{/if}
 										{/if}
 									{/each}
-									{#if !isStreaming && message.runCompletedAt !== undefined}
+									{#if !isStreaming && message.runStartedAt > 0 && message.runCompletedAt !== undefined}
 										<p class="text-muted-foreground text-sm">
 											Worked for {formatElapsedDuration(
 												Math.max(

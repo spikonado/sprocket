@@ -17,7 +17,8 @@ use crate::compaction::ContextCompactionHook;
 use crate::convex::RuntimeClient;
 use crate::hooks::{AgentPromptHook, GatewayRequestHook, ToolCallTracker};
 use crate::live::{
-    LiveAssistantPart, LiveCompletionHub, LiveCompletionOverlay, join_assistant_text_parts,
+    LiveAssistantPart, LiveAssistantParts, LiveCompletionHub, LiveCompletionOverlay,
+    join_assistant_text_parts, now_ms,
 };
 use crate::reasoning::{apply_completed_reasoning, merge_provider_metadata};
 use crate::tools::agent_tools;
@@ -428,9 +429,7 @@ struct TranscriptSink {
     run_started_at: u64,
     stream_id: String,
     attempt_seq: u64,
-    parts: Vec<LiveAssistantPart>,
-    text_index: HashMap<String, usize>,
-    tool_index: HashMap<String, usize>,
+    parts: LiveAssistantParts,
     provider_metadata: HashMap<String, serde_json::Value>,
     last_publish: Instant,
     unpublished: usize,
@@ -460,9 +459,7 @@ impl TranscriptSink {
             thread_id,
             run_started_at,
             attempt_seq: 1,
-            parts: Vec::new(),
-            text_index: HashMap::new(),
-            tool_index: HashMap::new(),
+            parts: LiveAssistantParts::default(),
             provider_metadata: HashMap::new(),
             last_publish: Instant::now(),
             unpublished: 0,
@@ -472,7 +469,7 @@ impl TranscriptSink {
     }
 
     fn push_text(&mut self, text: &rig::message::Text) {
-        let id = contiguous_text_id(&self.parts, &self.stream_id);
+        let id = contiguous_text_id(&self.parts.parts, &self.stream_id);
         let turn_id = Some(self.stream_id.clone());
         if let Some(params) = &text.additional_params {
             self.provider_metadata
@@ -494,7 +491,6 @@ impl TranscriptSink {
         self.unpublished += 1;
         apply_completed_reasoning(
             &mut self.parts,
-            &mut self.text_index,
             &mut self.provider_metadata,
             &self.stream_id,
             correlator,
@@ -517,8 +513,6 @@ impl TranscriptSink {
 
     fn reset_parts(&mut self) {
         self.parts.clear();
-        self.text_index.clear();
-        self.tool_index.clear();
         self.provider_metadata.clear();
         self.unpublished = 0;
         self.streamed = false;
@@ -561,7 +555,7 @@ impl TranscriptSink {
 
     fn items_json(&self) -> Vec<serde_json::Value> {
         durable_items_json(
-            &self.parts,
+            &self.parts.parts,
             &self.provider_metadata,
             self.persist_reasoning_replay.load(Ordering::Acquire),
         )
@@ -596,8 +590,8 @@ impl TranscriptSink {
             run_id: self.run_id.clone(),
             run_status: "running".to_string(),
             stream_id: Some(self.stream_id.clone()),
-            text: join_assistant_text_parts(&self.parts),
-            parts: visible_live_parts(&self.parts),
+            text: join_assistant_text_parts(&self.parts.parts),
+            parts: visible_live_parts(&self.parts.parts),
             run_started_at: self.run_started_at,
         });
     }
@@ -611,48 +605,8 @@ impl TranscriptSink {
     ) {
         self.streamed = true;
         self.unpublished += 1;
-        let key = format!("{event_type}:{id}");
-        if let Some(&index) = self.text_index.get(&key) {
-            match &mut self.parts[index] {
-                LiveAssistantPart::Text {
-                    text,
-                    turn_id: existing,
-                    ..
-                } if event_type == "text" => {
-                    text.push_str(delta);
-                    if turn_id.is_some() {
-                        *existing = turn_id;
-                    }
-                }
-                LiveAssistantPart::Reasoning {
-                    text,
-                    turn_id: existing,
-                    ..
-                } if event_type == "reasoning" => {
-                    text.push_str(delta);
-                    if turn_id.is_some() {
-                        *existing = turn_id;
-                    }
-                }
-                _ => {}
-            }
-            return;
-        }
-        let part = if event_type == "reasoning" {
-            LiveAssistantPart::Reasoning {
-                id,
-                text: delta.to_string(),
-                turn_id,
-            }
-        } else {
-            LiveAssistantPart::Text {
-                id,
-                text: delta.to_string(),
-                turn_id,
-            }
-        };
-        self.text_index.insert(key, self.parts.len());
-        self.parts.push(part);
+        self.parts
+            .apply_text_delta(event_type, id, delta, turn_id, now_ms());
     }
 
     fn apply_tool_call(
@@ -665,20 +619,8 @@ impl TranscriptSink {
     ) {
         self.streamed = true;
         self.unpublished += 1;
-        let key = part_id.clone().unwrap_or_else(|| call_id.clone());
-        let part = LiveAssistantPart::ToolCall {
-            part_id,
-            call_id,
-            name,
-            input,
-            turn_id,
-        };
-        if let Some(&index) = self.tool_index.get(&key) {
-            self.parts[index] = part;
-        } else {
-            self.tool_index.insert(key, self.parts.len());
-            self.parts.push(part);
-        }
+        self.parts
+            .apply_tool_call(part_id, call_id, name, input, turn_id, now_ms());
     }
 }
 
@@ -779,11 +721,15 @@ mod tests {
             LiveAssistantPart::Reasoning {
                 id: "empty".into(),
                 text: " \n".into(),
+                started_at: None,
+                completed_at: None,
                 turn_id: None,
             },
             LiveAssistantPart::Reasoning {
                 id: "visible".into(),
                 text: "plan".into(),
+                started_at: None,
+                completed_at: None,
                 turn_id: None,
             },
         ];
@@ -801,12 +747,16 @@ mod tests {
         let mut parts = vec![LiveAssistantPart::Text {
             id: "stream:text:0".into(),
             text: "Before".into(),
+            started_at: None,
+            completed_at: None,
             turn_id: Some("stream".into()),
         }];
         assert_eq!(contiguous_text_id(&parts, "stream"), "stream:text:0");
         parts.push(LiveAssistantPart::Reasoning {
             id: "stream:reasoning".into(),
             text: "".into(),
+            started_at: None,
+            completed_at: None,
             turn_id: Some("stream".into()),
         });
         assert_eq!(contiguous_text_id(&parts, "stream"), "stream:text:2");
@@ -815,6 +765,8 @@ mod tests {
             call_id: "call".into(),
             name: "read".into(),
             input: serde_json::json!({}),
+            started_at: None,
+            completed_at: None,
             turn_id: Some("stream".into()),
         });
         assert_eq!(contiguous_text_id(&parts, "stream"), "stream:text:3");
@@ -865,6 +817,8 @@ mod tests {
         let mut parts = vec![LiveAssistantPart::Reasoning {
             id: "stream:r1".into(),
             text: "visible plan".into(),
+            started_at: None,
+            completed_at: None,
             turn_id: Some("stream".into()),
         }];
         let mut provider_metadata =
@@ -872,17 +826,23 @@ mod tests {
         parts.push(LiveAssistantPart::Text {
             id: "stream:text:1".into(),
             text: "hello".into(),
+            started_at: None,
+            completed_at: None,
             turn_id: Some("stream".into()),
         });
         assert_eq!(contiguous_text_id(&parts, "stream"), "stream:text:1");
         parts.push(LiveAssistantPart::Reasoning {
             id: "stream:r2".into(),
             text: "".into(),
+            started_at: None,
+            completed_at: None,
             turn_id: Some("stream".into()),
         });
         parts.push(LiveAssistantPart::Text {
             id: "stream:text:3".into(),
             text: " after".into(),
+            started_at: None,
+            completed_at: None,
             turn_id: Some("stream".into()),
         });
         assert_eq!(contiguous_text_id(&parts, "stream"), "stream:text:3");
