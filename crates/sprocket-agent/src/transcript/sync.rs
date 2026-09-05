@@ -1,5 +1,6 @@
 use anyhow::Context;
 use serde::Deserialize;
+use serde::Deserializer;
 use sprocket_convex::{deserialize_convex_u32, deserialize_convex_u64};
 
 use super::store::TranscriptStore;
@@ -34,6 +35,12 @@ struct RemoteTranscriptPart {
     source_key: String,
     kind: String,
     run_id: String,
+    #[serde(
+        rename = "_creationTime",
+        default,
+        deserialize_with = "deserialize_creation_time"
+    )]
+    created_at: Option<u64>,
     prompt: Option<RemotePrompt>,
     completion: Option<RemoteCompletion>,
     tool: Option<RemoteTool>,
@@ -82,6 +89,21 @@ struct RemoteTool {
     status: String,
 }
 
+fn deserialize_creation_time<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<f64>::deserialize(deserializer)?
+        .map(|value| {
+            if !value.is_finite() || value < 0.0 || value >= u64::MAX as f64 {
+                return Err(serde::de::Error::custom("invalid transcript creation time"));
+            }
+            // Convex creation times can include fractional milliseconds.
+            Ok(value as u64)
+        })
+        .transpose()
+}
+
 fn to_local_part(part: RemoteTranscriptPart) -> anyhow::Result<TranscriptPart> {
     let kind = match part.kind.as_str() {
         "prompt" => TranscriptPartKind::Prompt,
@@ -94,6 +116,7 @@ fn to_local_part(part: RemoteTranscriptPart) -> anyhow::Result<TranscriptPart> {
         source_key: part.source_key,
         kind,
         run_id: part.run_id,
+        created_at: part.created_at,
         prompt: part.prompt.map(|prompt| TranscriptPromptBody {
             text: prompt.text,
             image_uploads: prompt
@@ -201,6 +224,7 @@ mod tests {
             source_key: format!("prompt:{number}"),
             kind: TranscriptPartKind::Prompt,
             run_id: format!("run-{number}"),
+            created_at: None,
             prompt: Some(TranscriptPromptBody {
                 text: format!("{number}"),
                 image_uploads: Vec::new(),
@@ -238,5 +262,42 @@ mod tests {
             vec![0, 1, 2]
         );
         let _ = tokio::fs::remove_dir_all(dir).await;
+    }
+
+    #[test]
+    fn remote_parts_read_convex_creation_time() {
+        let parts = parse_remote_parts(serde_json::json!({
+            "parts": [{
+                "number": 2.0,
+                "sourceKey": "tool:inv:started",
+                "kind": "tool",
+                "runId": "run",
+                "_creationTime": 1_700_000_000_000.125,
+                "tool": {
+                    "callId": "c1",
+                    "name": "exec_command",
+                    "status": "started"
+                }
+            }]
+        }))
+        .unwrap();
+        assert_eq!(parts[0].created_at, Some(1_700_000_000_000));
+        assert_eq!(parts[0].tool.as_ref().unwrap().call_id, "c1");
+    }
+
+    #[test]
+    fn remote_parts_keep_working_without_creation_time() {
+        let parts = parse_remote_parts(serde_json::json!({
+            "parts": [{
+                "number": 0.0,
+                "sourceKey": "prompt:0",
+                "kind": "prompt",
+                "runId": "run",
+                "prompt": { "text": "hi", "imageUploads": [] }
+            }]
+        }))
+        .unwrap();
+        assert_eq!(parts[0].created_at, None);
+        assert_eq!(parts[0].prompt.as_ref().unwrap().text, "hi");
     }
 }

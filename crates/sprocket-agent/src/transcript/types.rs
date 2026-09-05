@@ -4,6 +4,8 @@ use serde_json::Value as JsonValue;
 pub const TRANSCRIPT_CHUNK_SIZE: u32 = 100;
 pub const TRANSCRIPT_PAGE_SIZE: u32 = 40;
 pub const TRANSCRIPT_SCHEMA_VERSION: u32 = 1;
+/// Projected when no real run start timestamp exists. Never a sequence number.
+pub const UNKNOWN_RUN_STARTED_AT: u64 = 0;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -106,6 +108,8 @@ pub struct TranscriptPart {
     pub kind: TranscriptPartKind,
     pub run_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt: Option<TranscriptPromptBody>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completion: Option<TranscriptCompletionBody>,
@@ -188,6 +192,7 @@ pub struct TranscriptMessage {
     pub attachments: Vec<TranscriptAttachmentMeta>,
     pub parts: Vec<JsonValue>,
     pub run_status: String,
+    /// Unix milliseconds. `0` means the run start was never recorded.
     pub run_started_at: u64,
     pub source_numbers: Vec<u32>,
     pub stream_ids: Vec<String>,
@@ -224,5 +229,23 @@ mod tests {
         assert_eq!(state.missing_in(0, 7), vec![3, 6]);
         state.remote_total_parts = 1;
         assert_eq!(state.visible_end_exclusive(), 6);
+    }
+
+    #[test]
+    fn transcript_part_keeps_old_json_without_created_at() {
+        let part: TranscriptPart = serde_json::from_value(serde_json::json!({
+            "number": 3,
+            "sourceKey": "prompt:3",
+            "kind": "prompt",
+            "runId": "run",
+            "prompt": { "text": "hi", "imageUploads": [] }
+        }))
+        .unwrap();
+        assert_eq!(part.number, 3);
+        assert_eq!(part.created_at, None);
+        assert_eq!(
+            part.prompt.as_ref().map(|prompt| prompt.text.as_str()),
+            Some("hi")
+        );
     }
 }

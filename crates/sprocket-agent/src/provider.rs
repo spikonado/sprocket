@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -16,7 +15,7 @@ use crate::compaction::ContextCompactionHook;
 use crate::convex::RuntimeClient;
 use crate::hooks::{AgentPromptHook, GatewayRequestHook, ToolCallTracker};
 use crate::live::{
-    LiveAssistantPart, LiveCompletionHub, LiveCompletionOverlay, join_assistant_text_parts,
+    LiveAssistantParts, LiveCompletionHub, LiveCompletionOverlay, join_assistant_text_parts, now_ms,
 };
 use crate::tools::agent_tools;
 use crate::types::{ContextBudget, RunContextResponse, gateway_api_v1_url};
@@ -414,9 +413,7 @@ struct TranscriptSink {
     run_started_at: u64,
     stream_id: String,
     attempt_seq: u64,
-    parts: Vec<LiveAssistantPart>,
-    text_index: HashMap<String, usize>,
-    tool_index: HashMap<String, usize>,
+    parts: LiveAssistantParts,
     last_publish: Instant,
     unpublished: usize,
     streamed: bool,
@@ -443,9 +440,7 @@ impl TranscriptSink {
             thread_id,
             run_started_at,
             attempt_seq: 1,
-            parts: Vec::new(),
-            text_index: HashMap::new(),
-            tool_index: HashMap::new(),
+            parts: LiveAssistantParts::default(),
             last_publish: Instant::now(),
             unpublished: 0,
             streamed: false,
@@ -480,8 +475,6 @@ impl TranscriptSink {
 
     fn reset_parts(&mut self) {
         self.parts.clear();
-        self.text_index.clear();
-        self.tool_index.clear();
         self.unpublished = 0;
         self.streamed = false;
     }
@@ -522,10 +515,7 @@ impl TranscriptSink {
     }
 
     fn items_json(&self) -> Vec<serde_json::Value> {
-        self.parts
-            .iter()
-            .map(|part| serde_json::to_value(part).expect("live assistant parts always serialize"))
-            .collect()
+        self.parts.items_json()
     }
 
     fn has_unpublished(&self) -> bool {
@@ -557,8 +547,8 @@ impl TranscriptSink {
             run_id: self.run_id.clone(),
             run_status: "running".to_string(),
             stream_id: Some(self.stream_id.clone()),
-            text: join_assistant_text_parts(&self.parts),
-            parts: self.parts.clone(),
+            text: join_assistant_text_parts(&self.parts.parts),
+            parts: self.parts.parts.clone(),
             run_started_at: self.run_started_at,
         });
     }
@@ -572,48 +562,8 @@ impl TranscriptSink {
     ) {
         self.streamed = true;
         self.unpublished += 1;
-        let key = format!("{event_type}:{id}");
-        if let Some(&index) = self.text_index.get(&key) {
-            match &mut self.parts[index] {
-                LiveAssistantPart::Text {
-                    text,
-                    turn_id: existing,
-                    ..
-                } if event_type == "text" => {
-                    text.push_str(delta);
-                    if turn_id.is_some() {
-                        *existing = turn_id;
-                    }
-                }
-                LiveAssistantPart::Reasoning {
-                    text,
-                    turn_id: existing,
-                    ..
-                } if event_type == "reasoning" => {
-                    text.push_str(delta);
-                    if turn_id.is_some() {
-                        *existing = turn_id;
-                    }
-                }
-                _ => {}
-            }
-            return;
-        }
-        let part = if event_type == "reasoning" {
-            LiveAssistantPart::Reasoning {
-                id,
-                text: delta.to_string(),
-                turn_id,
-            }
-        } else {
-            LiveAssistantPart::Text {
-                id,
-                text: delta.to_string(),
-                turn_id,
-            }
-        };
-        self.text_index.insert(key, self.parts.len());
-        self.parts.push(part);
+        self.parts
+            .apply_text_delta(event_type, id, delta, turn_id, now_ms());
     }
 
     fn apply_tool_call(
@@ -626,20 +576,8 @@ impl TranscriptSink {
     ) {
         self.streamed = true;
         self.unpublished += 1;
-        let key = part_id.clone().unwrap_or_else(|| call_id.clone());
-        let part = LiveAssistantPart::ToolCall {
-            part_id,
-            call_id,
-            name,
-            input,
-            turn_id,
-        };
-        if let Some(&index) = self.tool_index.get(&key) {
-            self.parts[index] = part;
-        } else {
-            self.tool_index.insert(key, self.parts.len());
-            self.parts.push(part);
-        }
+        self.parts
+            .apply_tool_call(part_id, call_id, name, input, turn_id, now_ms());
     }
 }
 

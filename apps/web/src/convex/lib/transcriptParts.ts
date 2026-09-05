@@ -8,6 +8,35 @@ import type {
 
 const MAX_TRANSCRIPT_PARTS_PER_QUERY = 100;
 
+export function normalizeCompletionTiming(
+	completion: TranscriptCompletionBody
+): TranscriptCompletionBody {
+	return {
+		...completion,
+		items: completion.items.map((item) => ({
+			...item,
+			startedAt: item.startedAt ?? null,
+			completedAt: item.completedAt ?? null
+		}))
+	};
+}
+
+function transcriptPartForClient(part: Doc<'threadTranscriptParts'>): Doc<'threadTranscriptParts'> {
+	if (!part.completion) return part;
+	return {
+		...part,
+		completion: {
+			...part.completion,
+			items: part.completion.items.map((item) => {
+				const projected = { ...item };
+				if (projected.startedAt == null) delete projected.startedAt;
+				if (projected.completedAt == null) delete projected.completedAt;
+				return projected;
+			})
+		}
+	};
+}
+
 export function promptSourceKey(runId: Id<'runs'>): string {
 	return `prompt:${runId}`;
 }
@@ -134,7 +163,7 @@ export async function appendTranscriptPart(
 		runId: args.runId
 	};
 	if (args.prompt) part.prompt = args.prompt;
-	if (args.completion) part.completion = args.completion;
+	if (args.completion) part.completion = normalizeCompletionTiming(args.completion);
 	if (args.tool) part.tool = args.tool;
 	const partId = await ctx.db.insert('threadTranscriptParts', part);
 	await ctx.db.patch('threadTranscriptStates', state._id, { totalParts: number + 1 });
@@ -170,7 +199,7 @@ export async function loadTranscriptPartsByNumbers(
 	);
 	return numbers.flatMap((number) => {
 		const part = byNumber.get(number);
-		return part ? [part] : [];
+		return part ? [transcriptPartForClient(part)] : [];
 	});
 }
 
