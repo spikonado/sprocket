@@ -437,7 +437,8 @@ export function assistantTimelineToolError(
 
 export function buildAssistantTimeline(
 	parts: AssistantPart[],
-	jobs: ExecutorJob[]
+	jobs: ExecutorJob[],
+	detailsLoaded = true
 ): AssistantTimelineItem[] {
 	const resultsByCallId = new Map(
 		parts
@@ -468,11 +469,11 @@ export function buildAssistantTimeline(
 
 	for (const part of parts) {
 		if (part.type === 'tool-result') continue;
-		if (part.type === 'reasoning') {
+		if (part.type === 'reasoning' && !detailsLoaded) {
 			timeline.push(part);
 			continue;
 		}
-		if (part.type === 'text') {
+		if (part.type === 'reasoning' || part.type === 'text') {
 			if (part.text.trim().length > 0) timeline.push(part);
 			continue;
 		}

@@ -77,7 +77,6 @@ pub(crate) fn completion_messages_json<'a>(
             }
             Message::Assistant { content, .. } => {
                 let mut parts: Vec<serde_json::Value> = Vec::new();
-                let mut has_openai_reasoning_reference = false;
                 for item in content.iter() {
                     match item {
                         AssistantContent::Text(text) => {
@@ -88,43 +87,26 @@ pub(crate) fn completion_messages_json<'a>(
                             if let Some(provider_options) = &text.additional_params {
                                 part["providerOptions"] = provider_options.clone().into_value();
                             }
-                            if !has_openai_reasoning_reference {
-                                strip_openai_item_reference(&mut part);
-                            }
+                            strip_provider_replay_state(&mut part);
                             parts.push(part);
                         }
                         AssistantContent::Reasoning(reasoning) => {
-                            let encrypted = reasoning.content.iter().find_map(|content| {
-                                if let ReasoningContent::Encrypted(value) = content {
-                                    Some(value.clone())
-                                } else {
-                                    None
-                                }
-                            });
-                            let mut openai = serde_json::Map::new();
-                            if let Some(id) = &reasoning.id {
-                                openai.insert("itemId".to_string(), id.clone().into());
-                                if id.starts_with("rs_") {
-                                    has_openai_reasoning_reference = true;
-                                }
-                            }
-                            if let Some(encrypted) = encrypted {
-                                openai.insert(
-                                    "reasoningEncryptedContent".to_string(),
-                                    encrypted.into(),
-                                );
-                            }
-                            let text = reasoning.display_text();
-                            if !text.is_empty() || !openai.is_empty() {
-                                let mut part = serde_json::json!({
+                            let text = reasoning
+                                .content
+                                .iter()
+                                .filter_map(|block| match block {
+                                    ReasoningContent::Summary(text)
+                                    | ReasoningContent::Text { text, .. } => Some(text.as_str()),
+                                    ReasoningContent::Encrypted(_)
+                                    | ReasoningContent::Redacted { .. } => None,
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            if !text.is_empty() {
+                                parts.push(serde_json::json!({
                                     "type": "reasoning",
                                     "text": text
-                                });
-                                if !openai.is_empty() {
-                                    part["providerOptions"] =
-                                        serde_json::json!({ "openai": openai });
-                                }
-                                parts.push(part);
+                                }));
                             }
                         }
                         AssistantContent::ToolCall(tool_call) => {
@@ -142,9 +124,7 @@ pub(crate) fn completion_messages_json<'a>(
                             if let Some(provider_options) = &tool_call.additional_params {
                                 part["providerOptions"] = provider_options.clone();
                             }
-                            if !has_openai_reasoning_reference {
-                                strip_openai_item_reference(&mut part);
-                            }
+                            strip_provider_replay_state(&mut part);
                             parts.push(part);
                         }
                         _ => {
@@ -168,7 +148,7 @@ pub(crate) fn completion_messages_json<'a>(
     Ok(serde_json::Value::Array(messages))
 }
 
-fn strip_openai_item_reference(part: &mut serde_json::Value) {
+fn strip_provider_replay_state(part: &mut serde_json::Value) {
     let Some(provider_options) = part
         .get_mut("providerOptions")
         .and_then(serde_json::Value::as_object_mut)
@@ -183,6 +163,7 @@ fn strip_openai_item_reference(part: &mut serde_json::Value) {
     };
 
     openai.remove("itemId");
+    openai.remove("reasoningEncryptedContent");
     if openai.is_empty() {
         provider_options.remove("openai");
     }
@@ -394,44 +375,80 @@ mod tests {
     }
 
     #[test]
-    fn preserves_openai_item_reference_after_reasoning_reference() {
+    fn excludes_opaque_reasoning_state_and_item_references_from_summarizer_json() {
         let messages = vec![Message::Assistant {
             id: None,
             content: vec![
                 AssistantContent::Reasoning(Reasoning {
                     id: Some("rs_123".to_string()),
-                    content: vec![ReasoningContent::Text {
-                        text: String::new(),
-                        signature: None,
-                    }],
+                    content: vec![
+                        ReasoningContent::Summary("visible step".to_string()),
+                        ReasoningContent::Encrypted("envelope".to_string()),
+                        ReasoningContent::Redacted {
+                            data: "redacted-secret".to_string(),
+                        },
+                    ],
                 }),
                 AssistantContent::Text(Text {
                     text: "Grounded answer".to_string(),
                     additional_params: AdditionalParams::from_entries([(
                         "openai",
-                        serde_json::json!({ "itemId": "msg_123" }),
+                        serde_json::json!({
+                            "itemId": "msg_123",
+                            "phase": "final_answer",
+                            "reasoningEncryptedContent": "text-envelope"
+                        }),
                     )]),
                 }),
             ],
         }];
 
         let structured = completion_messages_json(messages.iter()).expect("structured");
+        let serialized = structured.to_string();
 
         assert_eq!(
             structured[0]["content"],
             serde_json::json!([
                 {
                     "type": "reasoning",
-                    "text": "",
-                    "providerOptions": { "openai": { "itemId": "rs_123" } }
+                    "text": "visible step"
                 },
                 {
                     "type": "text",
                     "text": "Grounded answer",
-                    "providerOptions": { "openai": { "itemId": "msg_123" } }
+                    "providerOptions": { "openai": { "phase": "final_answer" } }
                 }
             ])
         );
+        assert!(!serialized.contains("envelope"));
+        assert!(!serialized.contains("itemId"));
+        assert!(!serialized.contains("rs_123"));
+        assert!(!serialized.contains("msg_123"));
+    }
+
+    #[test]
+    fn omits_empty_opaque_reasoning_from_summarizer_json() {
+        let messages = vec![Message::Assistant {
+            id: None,
+            content: vec![
+                AssistantContent::Reasoning(Reasoning {
+                    id: Some("rs_empty".to_string()),
+                    content: vec![ReasoningContent::Encrypted("secret".to_string())],
+                }),
+                AssistantContent::Text(Text::new("answer")),
+            ],
+        }];
+
+        let structured = completion_messages_json(messages.iter()).expect("structured");
+        let serialized = structured.to_string();
+
+        assert_eq!(
+            structured[0]["content"],
+            serde_json::json!([{ "type": "text", "text": "answer" }])
+        );
+        assert!(!serialized.contains("secret"));
+        assert!(!serialized.contains("rs_empty"));
+        assert!(!serialized.contains("reasoning"));
     }
 
     #[test]

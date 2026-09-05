@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::anyhow;
@@ -18,6 +19,7 @@ use crate::hooks::{AgentPromptHook, GatewayRequestHook, ToolCallTracker};
 use crate::live::{
     LiveAssistantPart, LiveCompletionHub, LiveCompletionOverlay, join_assistant_text_parts,
 };
+use crate::reasoning::{apply_completed_reasoning, merge_provider_metadata};
 use crate::tools::agent_tools;
 use crate::types::{ContextBudget, RunContextResponse, gateway_api_v1_url};
 
@@ -188,6 +190,7 @@ where
     eprintln!("sprocket-agent: built agent {}", request.run_id);
     eprintln!("sprocket-agent: prompting model {}", request.run_id);
 
+    let persist_reasoning_replay = Arc::new(AtomicBool::new(true));
     let mut transcript = match TranscriptSink::start(
         runtime.clone(),
         request.live.clone(),
@@ -195,6 +198,7 @@ where
         request.claim_id.clone(),
         request.thread_id.clone(),
         request.run_started_at,
+        persist_reasoning_replay.clone(),
     )
     .await
     {
@@ -231,6 +235,7 @@ where
         request.context_budget,
         prior_history_len,
         gateway_url,
+        persist_reasoning_replay,
     );
 
     let mut finished = match runtime.run_finished_subscription(&request.run_id).await {
@@ -307,12 +312,17 @@ where
                             StreamedAssistantContent::Text(text),
                         ))) => {
                             streamed_text.push_str(&text.text);
-                            transcript.push_text(&text.text);
+                            transcript.push_text(&text);
                         }
                         Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
                             StreamedAssistantContent::ReasoningDelta { id, reasoning, .. },
                         ))) => {
                             transcript.push_reasoning(&id, &reasoning);
+                        }
+                        Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
+                            StreamedAssistantContent::Reasoning { reasoning, id },
+                        ))) => {
+                            transcript.complete_reasoning(&id, &reasoning);
                         }
                         Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
                             StreamedAssistantContent::ToolCall { tool_call, internal_call_id },
@@ -331,7 +341,6 @@ where
                         }
                         Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
                             StreamedAssistantContent::ToolCallDelta { .. }
-                            | StreamedAssistantContent::Reasoning { .. }
                             | StreamedAssistantContent::Final(_)
                             | StreamedAssistantContent::Unknown(_),
                         )))
@@ -389,6 +398,10 @@ where
 
 const TRANSCRIPT_FLUSH_INTERVAL: Duration = Duration::from_millis(500);
 
+#[cfg(test)]
+#[path = "reasoning_integration_tests.rs"]
+mod reasoning_integration_tests;
+
 fn transcript_error(
     error: anyhow::Error,
     final_text: &str,
@@ -418,9 +431,11 @@ struct TranscriptSink {
     parts: Vec<LiveAssistantPart>,
     text_index: HashMap<String, usize>,
     tool_index: HashMap<String, usize>,
+    provider_metadata: HashMap<String, serde_json::Value>,
     last_publish: Instant,
     unpublished: usize,
     streamed: bool,
+    persist_reasoning_replay: Arc<AtomicBool>,
 }
 
 impl TranscriptSink {
@@ -431,6 +446,7 @@ impl TranscriptSink {
         claim_id: String,
         thread_id: String,
         run_started_at: u64,
+        persist_reasoning_replay: Arc<AtomicBool>,
     ) -> anyhow::Result<Self> {
         runtime
             .register_completion_attempt(&run_id, &claim_id, 1)
@@ -447,16 +463,22 @@ impl TranscriptSink {
             parts: Vec::new(),
             text_index: HashMap::new(),
             tool_index: HashMap::new(),
+            provider_metadata: HashMap::new(),
             last_publish: Instant::now(),
             unpublished: 0,
             streamed: false,
+            persist_reasoning_replay,
         })
     }
 
-    fn push_text(&mut self, text: &str) {
-        let id = format!("{}:text", self.stream_id);
+    fn push_text(&mut self, text: &rig::message::Text) {
+        let id = contiguous_text_id(&self.parts, &self.stream_id);
         let turn_id = Some(self.stream_id.clone());
-        self.apply_text_delta("text", id, text, turn_id);
+        if let Some(params) = &text.additional_params {
+            self.provider_metadata
+                .insert(format!("text:{id}"), params.clone().into_value());
+        }
+        self.apply_text_delta("text", id, &text.text, turn_id);
         self.publish_if_needed(false);
     }
 
@@ -465,6 +487,20 @@ impl TranscriptSink {
         let turn_id = Some(self.stream_id.clone());
         self.apply_text_delta("reasoning", part_id, text, turn_id);
         self.publish_if_needed(false);
+    }
+
+    fn complete_reasoning(&mut self, correlator: &str, reasoning: &rig::message::Reasoning) {
+        self.streamed = true;
+        self.unpublished += 1;
+        apply_completed_reasoning(
+            &mut self.parts,
+            &mut self.text_index,
+            &mut self.provider_metadata,
+            &self.stream_id,
+            correlator,
+            reasoning,
+        );
+        self.publish_if_needed(true);
     }
 
     fn push_tool_call(
@@ -483,6 +519,7 @@ impl TranscriptSink {
         self.parts.clear();
         self.text_index.clear();
         self.tool_index.clear();
+        self.provider_metadata.clear();
         self.unpublished = 0;
         self.streamed = false;
     }
@@ -523,10 +560,11 @@ impl TranscriptSink {
     }
 
     fn items_json(&self) -> Vec<serde_json::Value> {
-        self.parts
-            .iter()
-            .map(|part| serde_json::to_value(part).expect("live assistant parts always serialize"))
-            .collect()
+        durable_items_json(
+            &self.parts,
+            &self.provider_metadata,
+            self.persist_reasoning_replay.load(Ordering::Acquire),
+        )
     }
 
     fn has_unpublished(&self) -> bool {
@@ -559,7 +597,7 @@ impl TranscriptSink {
             run_status: "running".to_string(),
             stream_id: Some(self.stream_id.clone()),
             text: join_assistant_text_parts(&self.parts),
-            parts: self.parts.clone(),
+            parts: visible_live_parts(&self.parts),
             run_started_at: self.run_started_at,
         });
     }
@@ -651,6 +689,47 @@ impl Drop for TranscriptSink {
     }
 }
 
+fn visible_live_parts(parts: &[LiveAssistantPart]) -> Vec<LiveAssistantPart> {
+    parts
+        .iter()
+        .filter(|part| {
+            !matches!(part, LiveAssistantPart::Reasoning { text, .. } if text.trim().is_empty())
+        })
+        .cloned()
+        .collect()
+}
+
+fn durable_items_json(
+    parts: &[LiveAssistantPart],
+    provider_metadata: &HashMap<String, serde_json::Value>,
+    persist_reasoning_replay: bool,
+) -> Vec<serde_json::Value> {
+    parts
+        .iter()
+        .map(|part| {
+            let key = match part {
+                LiveAssistantPart::Text { id, .. } => format!("text:{id}"),
+                LiveAssistantPart::Reasoning { id, .. } => format!("reasoning:{id}"),
+                LiveAssistantPart::ToolCall {
+                    part_id, call_id, ..
+                } => part_id.clone().unwrap_or_else(|| call_id.clone()),
+            };
+            let metadata = match part {
+                LiveAssistantPart::Reasoning { .. } if !persist_reasoning_replay => None,
+                _ => provider_metadata.get(&key),
+            };
+            merge_provider_metadata(part, metadata)
+        })
+        .collect()
+}
+
+fn contiguous_text_id(parts: &[LiveAssistantPart], stream_id: &str) -> String {
+    match parts.last() {
+        Some(LiveAssistantPart::Text { id, .. }) => id.clone(),
+        _ => format!("{stream_id}:text:{}", parts.len()),
+    }
+}
+
 /// Stops persistent command sessions on the normal path and if this future is
 /// dropped early (for example when claim lease renewal fails).
 struct CommandSessionShutdown {
@@ -682,12 +761,64 @@ impl Drop for CommandSessionShutdown {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use rig::completion::FinishReason;
 
     use super::{
         ProviderErrorDisposition, RUN_NO_LONGER_ACTIVE, classify_provider_error,
-        incomplete_completion_error,
+        contiguous_text_id, durable_items_json, incomplete_completion_error, visible_live_parts,
     };
+    use crate::live::LiveAssistantPart;
+
+    #[test]
+    fn live_projection_omits_empty_reasoning_without_removing_durable_state() {
+        let parts = vec![
+            LiveAssistantPart::Reasoning {
+                id: "empty".into(),
+                text: " \n".into(),
+                turn_id: None,
+            },
+            LiveAssistantPart::Reasoning {
+                id: "visible".into(),
+                text: "plan".into(),
+                turn_id: None,
+            },
+        ];
+        let metadata = HashMap::from([("reasoning:empty".into(), reasoning_envelope())]);
+        let live = visible_live_parts(&parts);
+        assert_eq!(live.len(), 1);
+        assert!(matches!(&live[0], LiveAssistantPart::Reasoning { id, .. } if id == "visible"));
+        let durable = durable_items_json(&parts, &metadata, true);
+        assert_eq!(durable.len(), 2);
+        assert_eq!(durable[0]["providerMetadata"], reasoning_envelope());
+    }
+
+    #[test]
+    fn text_after_reasoning_or_tools_starts_a_new_transcript_part() {
+        let mut parts = vec![LiveAssistantPart::Text {
+            id: "stream:text:0".into(),
+            text: "Before".into(),
+            turn_id: Some("stream".into()),
+        }];
+        assert_eq!(contiguous_text_id(&parts, "stream"), "stream:text:0");
+        parts.push(LiveAssistantPart::Reasoning {
+            id: "stream:reasoning".into(),
+            text: "".into(),
+            turn_id: Some("stream".into()),
+        });
+        assert_eq!(contiguous_text_id(&parts, "stream"), "stream:text:2");
+        parts.push(LiveAssistantPart::ToolCall {
+            part_id: None,
+            call_id: "call".into(),
+            name: "read".into(),
+            input: serde_json::json!({}),
+            turn_id: Some("stream".into()),
+        });
+        assert_eq!(contiguous_text_id(&parts, "stream"), "stream:text:3");
+    }
 
     #[test]
     fn classifies_superseded_completion_without_treating_it_as_failure() {
@@ -717,5 +848,78 @@ mod tests {
 
         assert!(error.to_string().contains("output token limit"));
         assert!(incomplete_completion_error(Some(&FinishReason::Stop)).is_none());
+    }
+
+    fn reasoning_envelope() -> serde_json::Value {
+        serde_json::json!({
+            "openai": {
+                "itemId": "rs_1",
+                "reasoningEncryptedContent": "envelope"
+            }
+        })
+    }
+
+    #[test]
+    fn items_json_omits_reasoning_metadata_after_compaction_keeps_visible_text() {
+        let persist_reasoning_replay = Arc::new(AtomicBool::new(true));
+        let mut parts = vec![LiveAssistantPart::Reasoning {
+            id: "stream:r1".into(),
+            text: "visible plan".into(),
+            turn_id: Some("stream".into()),
+        }];
+        let mut provider_metadata =
+            HashMap::from([("reasoning:stream:r1".to_string(), reasoning_envelope())]);
+        parts.push(LiveAssistantPart::Text {
+            id: "stream:text:1".into(),
+            text: "hello".into(),
+            turn_id: Some("stream".into()),
+        });
+        assert_eq!(contiguous_text_id(&parts, "stream"), "stream:text:1");
+        parts.push(LiveAssistantPart::Reasoning {
+            id: "stream:r2".into(),
+            text: "".into(),
+            turn_id: Some("stream".into()),
+        });
+        parts.push(LiveAssistantPart::Text {
+            id: "stream:text:3".into(),
+            text: " after".into(),
+            turn_id: Some("stream".into()),
+        });
+        assert_eq!(contiguous_text_id(&parts, "stream"), "stream:text:3");
+        provider_metadata.insert("reasoning:stream:r2".to_string(), reasoning_envelope());
+
+        let before = durable_items_json(
+            &parts,
+            &provider_metadata,
+            persist_reasoning_replay.load(Ordering::Acquire),
+        );
+        assert_eq!(before[0]["text"], "visible plan");
+        assert_eq!(before[0]["providerMetadata"], reasoning_envelope());
+        assert_eq!(before[1]["text"], "hello");
+        assert!(before[1].get("providerMetadata").is_none());
+        assert_eq!(before[2]["providerMetadata"], reasoning_envelope());
+
+        persist_reasoning_replay.store(false, Ordering::Release);
+        let after = durable_items_json(
+            &parts,
+            &provider_metadata,
+            persist_reasoning_replay.load(Ordering::Acquire),
+        );
+        assert_eq!(after[0]["type"], "reasoning");
+        assert_eq!(after[0]["text"], "visible plan");
+        assert!(after[0].get("providerMetadata").is_none());
+        assert_eq!(after[1]["text"], "hello");
+        assert_eq!(after[2]["text"], "");
+        assert!(after[2].get("providerMetadata").is_none());
+        assert_eq!(after[3]["text"], " after");
+        assert_eq!(
+            provider_metadata.get("reasoning:stream:r1"),
+            Some(&reasoning_envelope()),
+            "native in-process metadata stays after durable omit"
+        );
+        match &parts[0] {
+            LiveAssistantPart::Reasoning { text, .. } => assert_eq!(text, "visible plan"),
+            other => panic!("expected live reasoning text, got {other:?}"),
+        }
     }
 }

@@ -673,13 +673,22 @@ fn project_messages(
                                     response.text.push_str(text);
                                 }
                             }
-                            Some("reasoning") if !include_details => {
+                            Some("reasoning") => {
+                                if item
+                                    .get("text")
+                                    .and_then(JsonValue::as_str)
+                                    .is_none_or(|text| text.trim().is_empty())
+                                {
+                                    continue;
+                                }
                                 if let Some(object) = item.as_object_mut() {
-                                    object.insert(
-                                        "text".to_string(),
-                                        JsonValue::String(String::new()),
-                                    );
                                     object.remove("providerMetadata");
+                                    if !include_details {
+                                        object.insert(
+                                            "text".to_string(),
+                                            JsonValue::String(String::new()),
+                                        );
+                                    }
                                 }
                             }
                             Some("tool-call") if !include_details => {
@@ -928,6 +937,114 @@ mod tests {
         assert_eq!(details[0].parts[1]["input"]["cmd"], "pwd");
         assert_eq!(details[0].parts[2]["output"], "secret output");
         assert!(details[0].details_loaded);
+    }
+
+    #[test]
+    fn detailed_projection_keeps_reasoning_summary_and_drops_ciphertext() {
+        const ENVELOPE: &str = "opaque-envelope-bytes";
+        let mut part = completion(0);
+        part.completion.as_mut().unwrap().items[0] = serde_json::json!({
+            "type": "reasoning",
+            "id": "r1",
+            "text": "visible plan",
+            "turnId": "stream-1",
+            "providerMetadata": {
+                "openai": {
+                    "itemId": "rs_123",
+                    "reasoningEncryptedContent": ENVELOPE
+                }
+            }
+        });
+
+        let summary = project_messages("user", "thread", vec![part.clone()], false);
+        let details = project_messages("user", "thread", vec![part.clone()], true);
+
+        assert_eq!(summary[0].text, "answer");
+        assert_eq!(details[0].text, "answer");
+        assert_eq!(summary[0].parts[0]["text"], "");
+        assert_eq!(details[0].parts[0]["text"], "visible plan");
+        assert_eq!(details[0].parts[0]["id"], "r1");
+        assert_eq!(details[0].parts[0]["turnId"], "stream-1");
+
+        for message in [&summary[0], &details[0]] {
+            assert!(message.parts[0].get("providerMetadata").is_none());
+            let rendered = serde_json::to_string(message).unwrap();
+            assert!(
+                !rendered.contains(ENVELOPE),
+                "renderer projection leaked ciphertext: {rendered}"
+            );
+            assert!(!rendered.contains("reasoningEncryptedContent"));
+            assert!(!rendered.contains("rs_123"));
+        }
+
+        assert_eq!(
+            part.completion.as_ref().unwrap().items[0]["providerMetadata"]["openai"]["reasoningEncryptedContent"],
+            ENVELOPE
+        );
+    }
+
+    #[tokio::test]
+    async fn message_details_omit_ciphertext_and_leave_stored_reasoning_intact() {
+        const ENVELOPE: &str = "stored-opaque-envelope";
+        let dir = std::env::temp_dir().join(format!(
+            "sprocket-reasoning-privacy-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let store = TranscriptStore::new(dir.clone());
+        let mut part = completion(0);
+        part.completion.as_mut().unwrap().items = vec![
+            serde_json::json!({
+                "type": "reasoning",
+                "id": "r1",
+                "text": "",
+                "providerMetadata": {
+                    "openai": {
+                        "itemId": "rs_empty",
+                        "reasoningEncryptedContent": ENVELOPE
+                    }
+                }
+            }),
+            serde_json::json!({ "type": "text", "id": "t1", "text": "answer" }),
+        ];
+        store.append_parts("user", "thread", &[part]).await.unwrap();
+
+        let details = store
+            .message_details("user", "thread", &[0])
+            .await
+            .unwrap()
+            .unwrap();
+        let rendered = serde_json::to_string(&details).unwrap();
+        assert_eq!(details.parts.len(), 1);
+        assert_eq!(details.parts[0]["type"], "text");
+        assert_eq!(details.text, "answer");
+        assert!(details.parts[0].get("providerMetadata").is_none());
+        assert!(!rendered.contains(ENVELOPE));
+        assert!(!rendered.contains("reasoningEncryptedContent"));
+
+        let stored = store.read_parts("user", "thread", &[0]).await.unwrap();
+        assert_eq!(
+            stored[0].completion.as_ref().unwrap().items[0]["providerMetadata"]["openai"]["reasoningEncryptedContent"],
+            ENVELOPE
+        );
+
+        let _ = tokio::fs::remove_dir_all(dir).await;
+    }
+
+    #[test]
+    fn lightweight_projection_keeps_only_reasoning_with_a_summary_to_load() {
+        let mut part = completion(0);
+        part.completion.as_mut().unwrap().items = vec![
+            serde_json::json!({ "type": "reasoning", "id": "empty", "text": "" }),
+            serde_json::json!({ "type": "reasoning", "id": "blank", "text": " \n" }),
+            serde_json::json!({ "type": "reasoning", "id": "visible", "text": "plan" }),
+            serde_json::json!({ "type": "text", "id": "answer", "text": "done" }),
+        ];
+
+        let messages = project_messages("user", "thread", vec![part], false);
+        assert_eq!(messages[0].parts.len(), 2);
+        assert_eq!(messages[0].parts[0]["id"], "visible");
+        assert_eq!(messages[0].parts[0]["text"], "");
+        assert!(!messages[0].details_loaded);
     }
 
     #[test]
