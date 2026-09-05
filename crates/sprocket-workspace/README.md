@@ -34,8 +34,9 @@ the agent implementation.
 - `workspace.rs`, `paths.rs`, and `browse.rs`: path resolution and selection.
 - `agents.rs`: workspace instruction discovery.
 - `skills.rs` and `skills/`: skill discovery and built-in skill embedding.
-- `tools.rs`: command sessions and cancellation.
+- `commands.rs`: command sessions and cancellation.
 - `patch.rs`: transactional patches.
+- `unified_diff.rs`: unified-diff normalization helpers used by `patch.rs`.
 
 ## Built-in skills
 

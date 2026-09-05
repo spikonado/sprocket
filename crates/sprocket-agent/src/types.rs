@@ -4,8 +4,8 @@ use rig::message::{
     AdditionalParams, AssistantContent, ProviderCallId, ReasoningContent, Text, ToolCall,
     ToolCallId, ToolFunction, ToolResult, ToolResultContent, UserContent,
 };
-use serde::{Deserialize, Deserializer, Serialize};
-use sprocket_convex::AuthTokenFetcher;
+use serde::{Deserialize, Serialize};
+use sprocket_convex::{AuthTokenFetcher, deserialize_convex_u64};
 
 pub(crate) fn gateway_api_v1_url(gateway_url: &str) -> String {
     format!("{}/api/v1", gateway_url.trim_end_matches('/'))
@@ -84,19 +84,6 @@ pub struct ContextBudget {
     pub context_window_tokens: u64,
     #[serde(deserialize_with = "deserialize_convex_u64")]
     pub auto_compact_token_limit: u64,
-}
-
-fn deserialize_convex_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = f64::deserialize(deserializer)?;
-    if !value.is_finite() || value < 0.0 || value.fract() != 0.0 {
-        return Err(serde::de::Error::custom(format!(
-            "expected a non-negative integer-compatible Convex number, got {value}"
-        )));
-    }
-    Ok(value as u64)
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
