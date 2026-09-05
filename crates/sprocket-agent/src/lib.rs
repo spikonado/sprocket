@@ -17,7 +17,8 @@ pub use live::{
 pub use run::{AgentRun, finalize_failed_start, run_agent, start_agent_run};
 pub use sprocket_convex::AuthTokenFetcher;
 pub use transcript::{
-    RemoteTranscriptState, TRANSCRIPT_CHUNK_SIZE, TRANSCRIPT_PAGE_SIZE, TranscriptPage,
-    TranscriptPart, TranscriptStore, apply_remote_state, fetch_missing_parts, parse_remote_parts,
+    RemoteTranscriptState, TRANSCRIPT_CHUNK_SIZE, TRANSCRIPT_PAGE_SIZE, TranscriptMessage,
+    TranscriptPage, TranscriptPart, TranscriptStore, apply_remote_state, fetch_missing_parts,
+    message_page_start, parse_remote_parts,
 };
 pub use types::RunAgentRequest;

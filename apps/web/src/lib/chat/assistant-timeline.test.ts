@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+	assistantTimelinePartKey,
 	assistantTimelineToolError,
 	assistantTimelineToolFailureKind,
 	assistantTimelineToolKey,
+	assistantTimelineWorkSectionKey,
 	buildAssistantTimeline,
 	buildCommandSessionCommandMap,
 	buildOpenExecCommandSessions,
@@ -355,7 +357,7 @@ describe('groupAssistantTimelineSections', () => {
 		expect(sections.map((section) => section.type)).toEqual(['work', 'text', 'work', 'text']);
 		expect(sections[0]).toMatchObject({
 			type: 'work',
-			key: 'r1',
+			key: 'reasoning::r1',
 			blocks: [
 				{ type: 'reasoning', id: 'r1' },
 				{ type: 'tool-group', toolKey: 'exec_command' }
@@ -364,13 +366,36 @@ describe('groupAssistantTimelineSections', () => {
 		expect(sections[1]).toMatchObject({ type: 'text', id: 't1' });
 		expect(sections[2]).toMatchObject({
 			type: 'work',
-			key: 'r2',
+			key: 'reasoning::r2',
 			blocks: [
 				{ type: 'reasoning', id: 'r2' },
 				{ type: 'tool-group', toolKey: 'apply_patch' }
 			]
 		});
 		expect(sections[3]).toMatchObject({ type: 'text', id: 't2' });
+	});
+
+	it('distinguishes text and reasoning identities by turnId and id', () => {
+		expect(assistantTimelinePartKey({ type: 'text', id: 't1', text: 'mid' })).toBe('text::t1');
+		expect(
+			assistantTimelinePartKey({ type: 'text', id: 't1', text: 'later', turnId: 'turn-2' })
+		).toBe('text:turn-2:t1');
+		expect(
+			assistantTimelineWorkSectionKey({
+				type: 'reasoning',
+				id: 'r1',
+				text: 'plan',
+				turnId: 'turn-1'
+			})
+		).toBe('reasoning:turn-1:r1');
+		expect(
+			assistantTimelineWorkSectionKey({
+				type: 'reasoning',
+				id: 'r1',
+				text: 'again',
+				turnId: 'turn-2'
+			})
+		).toBe('reasoning:turn-2:r1');
 	});
 
 	it('keys a tools-only work section from the first tool callId', () => {
@@ -388,6 +413,31 @@ describe('groupAssistantTimelineSections', () => {
 				]
 			})
 		]);
+	});
+
+	it('keeps the work-section key on the first callId after running tools settle', () => {
+		const running = tool('c1', 'exec_command', {
+			job: executorJob('job-1', 1, { status: 'claimed', kind: 'exec_command' })
+		});
+		const done = tool('c2', 'exec_command', {
+			job: executorJob('job-2', 2, { status: 'completed', kind: 'exec_command' })
+		});
+		const sections = groupAssistantTimelineSections(groupAssistantTimeline([running, done]));
+		const work = sections[0];
+		if (work?.type !== 'work') throw new Error('Expected a work section.');
+
+		const { settledBlocks } = partitionWorkSectionTools(
+			work.blocks,
+			true,
+			buildOpenExecCommandSessions([running, done], true)
+		);
+
+		expect(work.key).toBe('c1');
+		expect(settledBlocks[0]).toMatchObject({
+			type: 'tool-group',
+			tools: [expect.objectContaining({ callId: 'c2' })]
+		});
+		expect(assistantTimelineWorkSectionKey(work.blocks[0])).toBe(work.key);
 	});
 });
 

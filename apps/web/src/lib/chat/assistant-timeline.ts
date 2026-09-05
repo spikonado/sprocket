@@ -78,10 +78,16 @@ export function groupAssistantTimeline(items: AssistantTimelineItem[]): Assistan
 	return blocks;
 }
 
-/** Stable identity for a work section from its first nested block. */
+export function assistantTimelinePartKey(
+	part: Extract<AssistantTimelineItem, { type: 'text' | 'reasoning' }>
+): string {
+	return `${part.type}:${part.turnId ?? ''}:${part.id}`;
+}
+
+/** Use the unpartitioned group so running tools settling does not change the key. */
 export function assistantTimelineWorkSectionKey(block: AssistantTimelineWorkBlock): string {
 	if (block.type === 'reasoning') {
-		return block.id;
+		return assistantTimelinePartKey(block);
 	}
 	return block.tools[0]?.callId ?? block.toolKey;
 }
@@ -462,7 +468,11 @@ export function buildAssistantTimeline(
 
 	for (const part of parts) {
 		if (part.type === 'tool-result') continue;
-		if (part.type === 'text' || part.type === 'reasoning') {
+		if (part.type === 'reasoning') {
+			timeline.push(part);
+			continue;
+		}
+		if (part.type === 'text') {
 			if (part.text.trim().length > 0) timeline.push(part);
 			continue;
 		}

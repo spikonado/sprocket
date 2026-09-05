@@ -6,6 +6,14 @@ a retired function name can disappear.
 
 Current as of 2026-09-03.
 
+## Transcript projection API
+
+PR #295 keeps `/api/transcript/page` returning raw `parts` for released clients.
+The projected-message client uses `/api/transcript/messages`; the legacy route
+reads the same complete message window and returns its original parts. The
+JSONL replica format is unchanged. Remove the legacy route after all supported
+clients use the projected-message endpoint.
+
 ## Stored schema
 
 Optional fields, dual-writes, and leftover tables that keep documents written

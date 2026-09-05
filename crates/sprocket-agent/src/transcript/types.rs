@@ -170,9 +170,28 @@ pub struct TranscriptPage {
     pub total_parts: u32,
     pub history_from_number: u32,
     pub stale: bool,
-    pub parts: Vec<TranscriptPart>,
+    pub messages: Vec<TranscriptMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_before: Option<u32>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptMessage {
+    pub id: String,
+    pub thread_id: String,
+    pub run_id: String,
+    pub user_id: String,
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub text: String,
+    pub attachments: Vec<TranscriptAttachmentMeta>,
+    pub parts: Vec<JsonValue>,
+    pub run_status: String,
+    pub run_started_at: u64,
+    pub source_numbers: Vec<u32>,
+    pub stream_ids: Vec<String>,
+    pub details_loaded: bool,
 }
 
 impl TranscriptPart {

@@ -50,6 +50,7 @@
 		hasOlder?: boolean;
 		onLoadOlder?: () => void;
 		loadAttachment?: (imageUploadId: MessageAttachment['imageUploadId']) => Promise<string | null>;
+		onLoadDetails?: (message: ThreadMessage) => Promise<void>;
 	};
 
 	let {
@@ -68,30 +69,29 @@
 		loadingOlder = false,
 		hasOlder = false,
 		onLoadOlder,
-		loadAttachment
+		loadAttachment,
+		onLoadDetails
 	}: Props = $props();
 	const firstPromptMessageId = $derived(messages.find((message) => message.type === 'prompt')?._id);
 	let scrollViewport = $state<HTMLDivElement | null>(null);
+	let scrollContent = $state<HTMLDivElement | null>(null);
 	let stickToBottom = $state(true);
-	let restoringOlderScroll = $state(false);
-	let previousScrollHeight = 0;
+	let adjustingScroll = false;
 
 	const SCROLL_EPSILON_PX = 28;
-	const LOAD_OLDER_THRESHOLD_PX = 96;
+	const LOAD_OLDER_THRESHOLD_PX = 2_000;
 
 	function updateStickToBottom() {
 		const viewport = scrollViewport;
 		if (!viewport) {
 			return;
 		}
-		if (restoringOlderScroll) {
+		if (adjustingScroll) {
 			return;
 		}
 		const distanceToBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
 		stickToBottom = distanceToBottom <= SCROLL_EPSILON_PX;
 		if (hasOlder && !loadingOlder && onLoadOlder && viewport.scrollTop <= LOAD_OLDER_THRESHOLD_PX) {
-			previousScrollHeight = viewport.scrollHeight;
-			restoringOlderScroll = true;
 			onLoadOlder();
 		}
 	}
@@ -151,43 +151,63 @@
 		viewport.scrollTop = viewport.scrollHeight;
 	}
 
-	$effect(() => {
+	function firstVisibleMessage(viewport: HTMLDivElement) {
+		const elements = viewport.querySelectorAll<HTMLElement>('[data-message-id]');
+		const top = viewport.getBoundingClientRect().top;
+		let low = 0;
+		let high = elements.length;
+		while (low < high) {
+			const mid = Math.floor((low + high) / 2);
+			if (elements[mid].getBoundingClientRect().bottom <= top) low = mid + 1;
+			else high = mid;
+		}
+		return elements[low];
+	}
+
+	$effect.pre(() => {
 		void messages;
 		void actions;
-		const viewport = scrollViewport;
-		if (untrack(() => restoringOlderScroll) && viewport) {
-			viewport.scrollTop += Math.max(0, viewport.scrollHeight - previousScrollHeight);
-			restoringOlderScroll = false;
-			return;
-		}
-		if (!stickToBottom) {
-			return;
-		}
-
-		void tick().then(scrollToBottom);
-	});
-
-	$effect(() => {
-		if (loadingOlder) {
-			return;
-		}
-		void tick().then(() => {
-			if (!loadingOlder) {
-				restoringOlderScroll = false;
-			}
+		untrack(() => {
+			const viewport = scrollViewport;
+			if (!viewport) return;
+			const anchor = stickToBottom ? undefined : firstVisibleMessage(viewport);
+			const offset = anchor?.getBoundingClientRect().top;
+			const scrollTop = viewport.scrollTop;
+			void tick().then(() => {
+				if (viewport !== scrollViewport) return;
+				adjustingScroll = true;
+				if (stickToBottom) {
+					scrollToBottom();
+				} else if (
+					anchor?.isConnected &&
+					offset !== undefined &&
+					viewport.scrollTop === scrollTop
+				) {
+					viewport.scrollTop += anchor.getBoundingClientRect().top - offset;
+				}
+				requestAnimationFrame(() => {
+					adjustingScroll = false;
+				});
+			});
 		});
 	});
 
 	$effect(() => {
 		const viewport = scrollViewport;
-		if (!viewport || !globalThis.ResizeObserver) {
+		const content = scrollContent;
+		if (!viewport || !content || !globalThis.ResizeObserver) {
 			return;
 		}
 
 		const observer = new ResizeObserver(() => {
+			adjustingScroll = true;
 			scrollToBottom();
+			requestAnimationFrame(() => {
+				adjustingScroll = false;
+			});
 		});
 		observer.observe(viewport);
+		observer.observe(content);
 		return () => {
 			observer.disconnect();
 		};
@@ -196,11 +216,14 @@
 
 <div class="relative min-h-0 flex-1">
 	<div
-		class="hide-scrollbar h-full overflow-auto [overflow-anchor:none]"
+		class="hide-scrollbar h-full overflow-auto"
 		bind:this={scrollViewport}
 		onscroll={updateStickToBottom}
 	>
-		<div class="mx-auto flex min-h-full w-full max-w-5xl flex-col px-4 py-8">
+		<div
+			bind:this={scrollContent}
+			class="mx-auto flex min-h-full w-full max-w-5xl flex-col px-4 py-8"
+		>
 			{#if currentError}
 				<div
 					role="alert"
@@ -228,21 +251,19 @@
 				</div>
 			{/if}
 
-			{#if loadingOlder}
-				<div class="text-muted-foreground mb-4 text-center text-xs">Loading earlier messages…</div>
-			{/if}
-
 			{#if messages.length === 0}
-				<div class="flex flex-1 items-center justify-center">
-					<div class="max-w-2xl text-center">
-						<p class="text-muted-foreground text-sm leading-7">{emptyStateMessage}</p>
+				{#if emptyStateMessage}
+					<div class="flex flex-1 items-center justify-center">
+						<div class="max-w-2xl text-center">
+							<p class="text-muted-foreground text-sm leading-7">{emptyStateMessage}</p>
+						</div>
 					</div>
-				</div>
+				{/if}
 			{:else}
 				<div class="space-y-8 pb-14">
 					{#each messages as message (message._id)}
 						{#if message.type === 'prompt'}
-							<div class="flex flex-col items-end gap-1.5">
+							<div data-message-id={message._id} class="flex flex-col items-end gap-1.5">
 								{#if message.attachments.length}
 									<ul
 										class="flex max-w-132 flex-wrap justify-end gap-2"
@@ -319,6 +340,7 @@
 								(part) => part.type === 'text' || part.type === 'reasoning'
 							)}
 							<div
+								data-message-id={message._id}
 								class="w-full min-w-0"
 								role={isStreaming ? 'log' : undefined}
 								aria-live={isStreaming ? 'polite' : undefined}
@@ -358,6 +380,8 @@
 													inProgress={workInProgress}
 													startedAtMs={timing.startedAtMs}
 													completedAtMs={timing.completedAtMs}
+													detailsKey={`${message.sourceNumbers?.join(',')}:${message.detailsLoaded}`}
+													onExpand={() => onLoadDetails?.(message)}
 												>
 													{#each visibleBlocks as block, blockIndex (`${block.type}-${block.type === 'tool-group' ? block.tools.map((tool) => tool.callId).join(',') : block.id}-${blockIndex}`)}
 														{#if block.type === 'reasoning'}
@@ -481,3 +505,10 @@
 		viewerImage = null;
 	}}
 />
+
+<style>
+	[data-message-id] {
+		content-visibility: auto;
+		contain-intrinsic-size: auto 300px;
+	}
+</style>

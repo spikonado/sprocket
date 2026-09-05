@@ -1,13 +1,12 @@
 import type { AssistantPart } from '$convex/lib/assistantParts';
 import type { DataModel, Id } from '$convex/_generated/dataModel';
-import type { JsonValue } from '$convex/lib/json';
 import type {
 	DesktopApi,
 	LiveCompletionOverlay,
 	LiveCompletionWatchEvent,
 	LocalTranscriptPage,
-	LocalTranscriptPart,
 	ProjectAttachment,
+	ThreadMessage,
 	ThreadCacheSnapshot,
 	ThreadCacheUserRequest,
 	ThreadCacheWatchEvent,
@@ -65,40 +64,27 @@ const localTranscriptAttachmentSchema = z.object({
 	storageId: z.string(),
 	url: z.url().optional()
 });
-const localTranscriptPartSchema = z.object({
-	number: z.int(),
-	sourceKey: z.string(),
-	kind: z.enum(['prompt', 'completion', 'tool']),
+const transcriptMessageSchema = z.object({
+	id: z.string(),
+	threadId: z.string(),
 	runId: z.string(),
-	prompt: z
-		.object({
-			text: z.string(),
-			imageUploads: z.array(localTranscriptAttachmentSchema)
-		})
-		.optional(),
-	completion: z
-		.object({
-			streamId: z.string().optional(),
-			items: z.array(z.unknown())
-		})
-		.optional(),
-	tool: z
-		.object({
-			jobId: z.string().optional(),
-			toolInvocationId: z.string().optional(),
-			callId: z.string(),
-			name: z.string(),
-			output: z.unknown().optional(),
-			status: z.enum(['started', 'completed', 'failed', 'cancelled'])
-		})
-		.optional()
+	userId: z.string(),
+	type: z.enum(['prompt', 'response']),
+	text: z.string(),
+	attachments: z.array(localTranscriptAttachmentSchema),
+	parts: z.array(z.unknown()),
+	runStatus: z.enum(['queued', 'running', 'awaiting_executor', 'completed', 'failed', 'cancelled']),
+	runStartedAt: z.int(),
+	sourceNumbers: z.array(z.int()),
+	streamIds: z.array(z.string()),
+	detailsLoaded: z.boolean()
 });
 const localTranscriptPageSchema = z.object({
 	threadId: z.string(),
 	totalParts: z.int(),
 	historyFromNumber: z.int(),
 	stale: z.boolean(),
-	parts: z.array(localTranscriptPartSchema),
+	messages: z.array(transcriptMessageSchema),
 	nextBefore: z.int().optional()
 });
 const transcriptWatchEventSchema = z.object({
@@ -168,53 +154,32 @@ function parseLocalTranscriptPage(
 		historyFromNumber: page.historyFromNumber,
 		stale: page.stale,
 		nextBefore: page.nextBefore,
-		parts: page.parts.map(parseLocalTranscriptPart)
+		messages: page.messages.map(parseTranscriptMessage)
 	};
 }
 
-function parseLocalTranscriptTool(
-	tool: NonNullable<z.infer<typeof localTranscriptPartSchema>['tool']>
-): NonNullable<LocalTranscriptPart['tool']> {
-	const parsed: NonNullable<LocalTranscriptPart['tool']> = {
-		callId: tool.callId,
-		name: tool.name,
-		status: tool.status
-	};
-	if (tool.jobId) parsed.jobId = asConvexId(tool.jobId);
-	if (tool.toolInvocationId) parsed.toolInvocationId = tool.toolInvocationId;
-	if (tool.output !== undefined) {
-		// SAFETY: JSONL replica tool output is Convex JSON.
-		parsed.output = tool.output as JsonValue;
-	}
-	return parsed;
-}
-
-function parseLocalTranscriptPart(
-	part: z.infer<typeof localTranscriptPartSchema>
-): LocalTranscriptPart {
+function parseTranscriptMessage(message: z.infer<typeof transcriptMessageSchema>): ThreadMessage {
 	return {
-		number: part.number,
-		sourceKey: part.sourceKey,
-		kind: part.kind,
-		runId: asConvexId(part.runId),
-		prompt: part.prompt
-			? {
-					text: part.prompt.text,
-					imageUploads: part.prompt.imageUploads.map((upload) => ({
-						...upload,
-						imageUploadId: asConvexId(upload.imageUploadId)
-					}))
-				}
-			: undefined,
-		completion: part.completion
-			? {
-					streamId: part.completion.streamId,
-					// SAFETY: Convex completion items are assistant parts; the page API
-					// already validated the surrounding replica payload.
-					items: part.completion.items as AssistantPart[]
-				}
-			: undefined,
-		tool: part.tool ? parseLocalTranscriptTool(part.tool) : undefined
+		_id: message.id,
+		threadId: asConvexId(message.threadId),
+		runId: asConvexId(message.runId),
+		userId: message.userId,
+		type: message.type,
+		text: message.text,
+		attachments: message.attachments.map((attachment) => ({
+			imageUploadId: asConvexId(attachment.imageUploadId),
+			name: attachment.name,
+			mediaType: attachment.mediaType,
+			size: attachment.size,
+			url: attachment.url ?? null
+		})),
+		// SAFETY: the local Rust API emits transcript parts in the shared assistant-part shape.
+		parts: message.parts as AssistantPart[],
+		runStatus: message.runStatus,
+		runStartedAt: message.runStartedAt,
+		sourceNumbers: message.sourceNumbers,
+		streamIds: message.streamIds,
+		detailsLoaded: message.detailsLoaded
 	};
 }
 
@@ -589,12 +554,19 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 			return { runId: asConvexId(result.runId), threadId: asConvexId(result.threadId) };
 		},
 		fetchTranscriptPage: async (requestBody) => {
-			const page = await request('/api/transcript/page', localTranscriptPageSchema, {
+			const page = await request('/api/transcript/messages', localTranscriptPageSchema, {
 				method: 'POST',
 				body: JSON.stringify(requestBody)
 			});
 			return parseLocalTranscriptPage(page);
 		},
+		fetchTranscriptDetails: async (requestBody) =>
+			parseTranscriptMessage(
+				await request('/api/transcript/details', transcriptMessageSchema, {
+					method: 'POST',
+					body: JSON.stringify(requestBody)
+				})
+			),
 		watchTranscript: async (requestBody, handlers) => {
 			await postSse(`${baseUrl}/api/transcript/watch`, requestBody, handlers.signal, (data) => {
 				const parsed = transcriptWatchEventSchema.safeParse(JSON.parse(data));

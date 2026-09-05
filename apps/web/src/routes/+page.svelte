@@ -77,7 +77,8 @@
 		type PendingAgentLaunch,
 		type PendingAgentLaunches
 	} from '$lib/project/threads';
-	import { mergePagedTranscriptWithLive, mergeTranscriptParts } from '$lib/project/transcript';
+	import { historyHasLiveCompletion, mergePagedTranscriptWithLive } from '$lib/project/transcript';
+	import { TranscriptHistory } from '$lib/project/transcript-history';
 	import {
 		clearLaunchHash,
 		readWorkspaceLaunchFromHash,
@@ -89,7 +90,6 @@
 		DesktopApi,
 		ExecutorJob,
 		LiveCompletionOverlay,
-		LocalTranscriptPart,
 		ThreadCacheStatus,
 		ThreadCacheUserRequest,
 		ThreadMessage,
@@ -499,27 +499,30 @@
 	const pendingAgentQuestion = $derived(
 		dataForThread(pendingAgentQuestionQuery.data, currentThreadId)
 	);
-	let replicaParts = $state<LocalTranscriptPart[]>([]);
+	let replicaMessages = $state<ThreadMessage[]>([]);
 	let replicaNextBefore = $state<number | null>(null);
 	let replicaStale = $state(false);
 	let replicaThreadId = $state<Id<'threadRecords'> | null>(null);
 	let replicaLoading = $state(false);
 	let replicaError = $state<string | null>(null);
 	let replicaGeneration = 0;
-	let loadingOlderTranscriptGeneration = $state<number | null>(null);
+	let transcriptHistory: TranscriptHistory | null = null;
+	let loadingOlderTranscript = $state(false);
+	const loadingTranscriptDetails = new SvelteMap<string, Promise<void>>();
 	let liveCompletion = $state<LiveCompletionOverlay | null>(null);
-	const loadingOlderTranscript = $derived(loadingOlderTranscriptGeneration === replicaGeneration);
-
-	function applyOlderPageCursor(nextBefore: number | undefined) {
-		replicaNextBefore = nextBefore ?? null;
-	}
+	let pendingCompletions = $state<LiveCompletionOverlay[]>([]);
 
 	function showReplicaForThread(threadId: Id<'threadRecords'> | null) {
 		replicaGeneration += 1;
+		transcriptHistory?.stop();
+		transcriptHistory = null;
+		loadingOlderTranscript = false;
+		loadingTranscriptDetails.clear();
 		replicaThreadId = threadId;
 		liveCompletion = null;
+		pendingCompletions = [];
 		replicaError = null;
-		replicaParts = [];
+		replicaMessages = [];
 		replicaNextBefore = null;
 		replicaStale = false;
 		replicaLoading = threadId !== null;
@@ -546,59 +549,48 @@
 		const ac = new AbortController();
 		const watchedThreadId = threadId;
 		const generation = replicaGeneration;
-		void (async () => {
-			try {
-				const page = await api.fetchTranscriptPage({
-					userId,
-					threadId: watchedThreadId
-				});
-				if (
-					ac.signal.aborted ||
-					currentThreadId !== watchedThreadId ||
-					replicaGeneration !== generation
-				) {
-					return;
-				}
-				replicaParts = page.parts;
-				replicaStale = page.stale;
-				replicaLoading = false;
-				replicaError = null;
-				applyOlderPageCursor(page.nextBefore);
-			} catch {
-				if (!ac.signal.aborted && replicaGeneration === generation) {
-					replicaLoading = false;
-					if (replicaParts.length === 0) {
-						replicaError = 'Could not load conversation history.';
-					} else {
-						replicaStale = true;
-					}
-				}
-			}
-			try {
-				if (ac.signal.aborted || currentThreadId !== watchedThreadId) {
-					return;
-				}
-				await api.watchTranscript(
-					{ userId, threadId: watchedThreadId },
-					{
-						signal: ac.signal,
-						onEvent: (event) => {
-							if (ac.signal.aborted || currentThreadId !== watchedThreadId) {
-								return;
-							}
-							replicaStale = event.stale;
-							void refreshNewestTranscriptPage(watchedThreadId, userId);
-						}
-					}
+		const history = new TranscriptHistory(
+			(request) => api.fetchTranscriptPage({ userId, threadId: watchedThreadId, ...request }),
+			() => {
+				if (ac.signal.aborted || replicaGeneration !== generation) return;
+				replicaMessages = history.messages;
+				replicaNextBefore = history.nextBefore ?? null;
+				replicaStale = history.stale;
+				replicaLoading = history.loading;
+				loadingOlderTranscript = history.loadingOlder;
+				replicaError = history.error;
+				pendingCompletions = pendingCompletions.filter(
+					(live) => !historyHasLiveCompletion(history.messages, live)
 				);
-			} catch {
-				if (!ac.signal.aborted) {
-					replicaStale = true;
+			}
+		);
+		transcriptHistory = history;
+		void history.refresh();
+		void (async () => {
+			while (!ac.signal.aborted) {
+				try {
+					await api.watchTranscript(
+						{ userId, threadId: watchedThreadId },
+						{
+							signal: ac.signal,
+							onEvent: (event) => {
+								if (ac.signal.aborted || currentThreadId !== watchedThreadId) {
+									return;
+								}
+								replicaStale = event.stale;
+								void history.refresh();
+							}
+						}
+					);
+				} catch {
+					if (!ac.signal.aborted) replicaStale = true;
 				}
+				if (!ac.signal.aborted) await new Promise((resolve) => setTimeout(resolve, 1_000));
 			}
 		})();
 		return () => {
 			ac.abort();
+			history.stop();
 		};
 	});
 
@@ -624,6 +616,15 @@
 							onEvent: (event) => {
 								if (ac.signal.aborted || currentThreadId !== watchedThreadId) {
 									return;
+								}
+								if (
+									liveCompletion &&
+									(event.eventType === 'cleared' || event.live.streamId !== liveCompletion.streamId)
+								) {
+									if (!historyHasLiveCompletion(replicaMessages, liveCompletion)) {
+										pendingCompletions = [...pendingCompletions, liveCompletion];
+									}
+									void transcriptHistory?.refresh();
 								}
 								if (event.eventType === 'updated') {
 									liveCompletion = event.live;
@@ -664,16 +665,18 @@
 		if (!currentThreadId || !userId || replicaThreadId !== currentThreadId) {
 			return [];
 		}
-		if (replicaLoading && replicaParts.length === 0) {
-			return [];
-		}
-		const live = latestRunResumeKind ? null : liveCompletion;
-		return mergePagedTranscriptWithLive({
-			parts: replicaParts,
-			live,
+		const messages = mergePagedTranscriptWithLive({
+			messages: replicaMessages,
+			live: liveCompletion,
+			pending: pendingCompletions,
 			userId,
 			threadId: currentThreadId
 		});
+		return messages.map((message) =>
+			message.runId === runState?.runId
+				? { ...message, runStartedAt: runState.startedAt, runCompletedAt: runState.completedAt }
+				: message
+		);
 	});
 
 	const currentProject = $derived.by<ProjectState | null>(() => {
@@ -1300,66 +1303,8 @@
 		}
 	}
 
-	async function refreshNewestTranscriptPage(threadId: Id<'threadRecords'>, userId: string) {
-		const api = desktopApi;
-		if (!api || currentThreadId !== threadId) {
-			return;
-		}
-		const generation = replicaGeneration;
-		const page = await api.fetchTranscriptPage({ userId, threadId });
-		if (currentThreadId !== threadId || replicaGeneration !== generation) {
-			return;
-		}
-		replicaParts = mergeTranscriptParts(replicaParts, page.parts);
-		replicaStale = page.stale;
-		if (replicaParts.length === page.parts.length) {
-			applyOlderPageCursor(page.nextBefore);
-		} else if (replicaNextBefore != null && page.nextBefore != null) {
-			replicaNextBefore = Math.min(replicaNextBefore, page.nextBefore);
-		}
-	}
-
 	async function loadOlderTranscript() {
-		const api = desktopApi;
-		const threadId = currentThreadId;
-		const userId = getCurrentUserId();
-		const before = replicaNextBefore;
-		const generation = replicaGeneration;
-		if (
-			!api ||
-			!threadId ||
-			!userId ||
-			before == null ||
-			loadingOlderTranscriptGeneration === generation
-		) {
-			return;
-		}
-		loadingOlderTranscriptGeneration = generation;
-		try {
-			if (currentThreadId !== threadId || replicaGeneration !== generation) {
-				return;
-			}
-			const page = await api.fetchTranscriptPage({
-				userId,
-				threadId,
-				before,
-				limit: 100
-			});
-			if (currentThreadId !== threadId || replicaGeneration !== generation) {
-				return;
-			}
-			replicaParts = mergeTranscriptParts(replicaParts, page.parts);
-			replicaStale = page.stale;
-			applyOlderPageCursor(page.nextBefore);
-		} catch {
-			if (currentThreadId === threadId && replicaGeneration === generation) {
-				replicaStale = true;
-			}
-		} finally {
-			if (loadingOlderTranscriptGeneration === generation) {
-				loadingOlderTranscriptGeneration = null;
-			}
-		}
+		await transcriptHistory?.loadOlder();
 	}
 
 	async function loadTranscriptAttachment(imageUploadId: Id<'imageUploads'>) {
@@ -1375,6 +1320,41 @@
 			imageUploadId
 		});
 		return blob ? URL.createObjectURL(blob) : null;
+	}
+
+	async function loadTranscriptMessageDetails(message: ThreadMessage) {
+		const api = desktopApi;
+		const threadId = currentThreadId;
+		const userId = getCurrentUserId();
+		const history = transcriptHistory;
+		const generation = replicaGeneration;
+		if (
+			!api ||
+			!threadId ||
+			!userId ||
+			!history ||
+			message.detailsLoaded ||
+			!message.sourceNumbers?.length
+		) {
+			return;
+		}
+		const key = `${generation}:${message._id}:${message.sourceNumbers.join(',')}`;
+		const pending = loadingTranscriptDetails.get(key);
+		if (pending) return pending;
+		const request = api
+			.fetchTranscriptDetails({
+				userId,
+				threadId,
+				numbers: message.sourceNumbers
+			})
+			.then((details) => {
+				if (replicaGeneration === generation) history.applyDetails(details);
+			})
+			.finally(() => {
+				loadingTranscriptDetails.delete(key);
+			});
+		loadingTranscriptDetails.set(key, request);
+		return request;
 	}
 
 	async function archiveThread(threadId: Id<'threadRecords'>) {
@@ -2313,7 +2293,7 @@
 							hasOlder={replicaNextBefore != null}
 							emptyStateMessage={currentThreadId &&
 							(replicaLoading || replicaThreadId !== currentThreadId)
-								? 'Loading conversation…'
+								? ''
 								: currentProject
 									? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
 									: 'Add a project to begin.'}
@@ -2321,6 +2301,7 @@
 								void loadOlderTranscript();
 							}}
 							loadAttachment={loadTranscriptAttachment}
+							onLoadDetails={(message) => loadTranscriptMessageDetails(message)}
 						/>
 					{/key}
 
