@@ -59,14 +59,31 @@ describe('numbered transcript parts', () => {
 			executionSecret
 		});
 		const items = [
-			{ type: 'text' as const, id: 'stream-1:text:a', text: 'Working', turnId: 'stream-1' },
+			{
+				type: 'reasoning' as const,
+				id: 'stream-1:reasoning:a',
+				text: 'Thinking',
+				turnId: 'stream-1',
+				startedAt: 1_000,
+				completedAt: 2_000
+			},
+			{
+				type: 'text' as const,
+				id: 'stream-1:text:a',
+				text: 'Working',
+				turnId: 'stream-1',
+				startedAt: 2_000,
+				completedAt: 3_000
+			},
 			{
 				type: 'tool-call' as const,
 				partId: 'stream-1:tool:c1',
 				callId: 'c1',
 				name: 'exec_command',
 				input: { cmd: 'ls' },
-				turnId: 'stream-1'
+				turnId: 'stream-1',
+				startedAt: 3_000,
+				completedAt: 3_100
 			}
 		];
 		const number = await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
@@ -91,7 +108,7 @@ describe('numbered transcript parts', () => {
 		expect(state.totalParts).toBe(2);
 		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
 		expect(parts.parts.map((part) => part.kind)).toEqual(['prompt', 'completion']);
-		expect(parts.parts[1]?.completion?.items).toHaveLength(2);
+		expect(parts.parts[1]?.completion?.items).toEqual(items);
 	});
 
 	it('records a completion', async () => {

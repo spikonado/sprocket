@@ -3,11 +3,11 @@
 	import { untrack, type Snippet } from 'svelte';
 	import { createInProgressDisclosure } from '$lib/components/home/in-progress-disclosure.svelte';
 	import { formatElapsedDuration } from '$lib/format';
+	import { elapsedSeconds, tickingNow } from '$lib/chat/elapsed-time';
 
 	type Props = {
 		inProgress: boolean;
-		/** Durable Convex/job/run wall-clock start for this work section. */
-		startedAtMs: number;
+		startedAtMs?: number;
 		/** Durable end when the section is finished; omit while in progress. */
 		completedAtMs?: number;
 		children: Snippet;
@@ -22,7 +22,7 @@
 		disclosure.toggle();
 	}
 
-	let elapsedSeconds = $state(0);
+	const duration = $derived(elapsedSeconds(startedAtMs, inProgress ? tickingNow() : completedAtMs));
 	const disclosure = createInProgressDisclosure(() => inProgress);
 
 	$effect(() => {
@@ -38,28 +38,8 @@
 		};
 	});
 
-	$effect(() => {
-		const start = startedAtMs;
-
-		if (inProgress) {
-			const tick = () => {
-				elapsedSeconds = Math.max(0, Math.floor((Date.now() - start) / 1000));
-			};
-			tick();
-			const intervalId = window.setInterval(tick, 1000);
-			return () => {
-				window.clearInterval(intervalId);
-			};
-		}
-
-		const end = completedAtMs ?? Date.now();
-		elapsedSeconds = Math.max(0, Math.floor((end - start) / 1000));
-	});
-
 	const label = $derived(
-		inProgress
-			? `Working for ${formatElapsedDuration(elapsedSeconds)}`
-			: `Worked for ${formatElapsedDuration(elapsedSeconds)}`
+		`${inProgress ? 'Working' : 'Worked'}${duration === undefined ? '' : ` for ${formatElapsedDuration(duration)}`}`
 	);
 </script>
 

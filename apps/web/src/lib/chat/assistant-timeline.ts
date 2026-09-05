@@ -15,6 +15,8 @@ export type AssistantTimelineTool = {
 	input: JsonValue;
 	output?: JsonValue;
 	job?: ExecutorJob;
+	startedAt?: number;
+	completedAt?: number;
 };
 
 export type AssistantTimelineItem =
@@ -123,112 +125,34 @@ export function groupAssistantTimelineSections(
 	return sections;
 }
 
-function forEachWorkSectionJob(
-	blocks: AssistantTimelineWorkBlock[],
-	visit: (job: NonNullable<AssistantTimelineTool['job']>) => void
-) {
-	for (const block of blocks) {
-		if (block.type !== 'tool-group') continue;
-		for (const tool of block.tools) {
-			if (tool.job) visit(tool.job);
-		}
-	}
-}
-
-/** Earliest durable job start in a work section, if any. */
-export function workSectionJobStartedAtMs(
-	blocks: AssistantTimelineWorkBlock[]
-): number | undefined {
-	let startMs: number | undefined;
-	forEachWorkSectionJob(blocks, (job) => {
-		const jobStart = job.claimedAt ?? job.enqueuedAt;
-		startMs = startMs === undefined ? jobStart : Math.min(startMs, jobStart);
-	});
-	return startMs;
-}
-
-/** Latest durable job completion in a work section, if any. */
-export function workSectionJobCompletedAtMs(
-	blocks: AssistantTimelineWorkBlock[]
-): number | undefined {
-	let endMs: number | undefined;
-	forEachWorkSectionJob(blocks, (job) => {
-		if (job.completedAt === undefined) return;
-		endMs = endMs === undefined ? job.completedAt : Math.max(endMs, job.completedAt);
-	});
-	return endMs;
-}
-
-/**
- * Precompute work-section indexes and prior-completion anchors so the transcript
- * can resolve timing without O(n²) slice/filter per section.
- */
-export type WorkSectionTimingIndexes = {
-	workIndexBySectionIndex: Array<number | undefined>;
-	priorCompletedAtByWorkIndex: Array<number | undefined>;
-};
-
-export function workSectionTimingIndexes(
-	sections: AssistantTimelineSection[]
-): WorkSectionTimingIndexes {
-	const workIndexBySectionIndex: Array<number | undefined> = [];
-	const priorCompletedAtByWorkIndex: Array<number | undefined> = [];
-	let workIndex = 0;
-	let priorEnd: number | undefined;
-
-	for (const section of sections) {
-		if (section.type !== 'work') {
-			workIndexBySectionIndex.push(undefined);
-			continue;
-		}
-
-		workIndexBySectionIndex.push(workIndex);
-		priorCompletedAtByWorkIndex.push(priorEnd);
-		const sectionEnd = workSectionJobCompletedAtMs(section.blocks);
-		if (sectionEnd !== undefined) {
-			priorEnd = priorEnd === undefined ? sectionEnd : Math.max(priorEnd, sectionEnd);
-		}
-		workIndex += 1;
-	}
-
-	return { workIndexBySectionIndex, priorCompletedAtByWorkIndex };
-}
-
 export type WorkSectionTimingAnchor = {
-	startedAtMs: number;
+	startedAtMs?: number;
 	completedAtMs?: number;
 };
 
-/**
- * Durable wall-clock anchors for a work section from Convex job/run timestamps.
- * First section starts at run start; later sections prefer job start / prior work end.
- */
 export function workSectionTimingAnchor(
 	section: Extract<AssistantTimelineSection, { type: 'work' }>,
 	options: {
 		inProgress: boolean;
-		/** 0-based index among work sections in this assistant message. */
-		workSectionIndex: number;
-		runStartedAt: number;
-		runCompletedAt?: number;
-		/** Latest job completion among earlier work sections in this message. */
-		priorWorkCompletedAtMs?: number;
+		endedAt?: number;
 	}
 ): WorkSectionTimingAnchor {
-	const jobStartedAtMs = workSectionJobStartedAtMs(section.blocks);
-	const startedAtMs =
-		options.workSectionIndex === 0
-			? options.runStartedAt
-			: (jobStartedAtMs ?? options.priorWorkCompletedAtMs ?? options.runStartedAt);
-
-	if (options.inProgress) {
-		return { startedAtMs };
+	let startedAtMs: number | undefined;
+	let completedAtMs = options.endedAt;
+	for (const block of section.blocks) {
+		const items = block.type === 'tool-group' ? block.tools : [block];
+		for (const item of items) {
+			// Older transcripts did not record boundaries. A partial duration is misleading.
+			if (item.startedAt === undefined) return {};
+			startedAtMs = Math.min(startedAtMs ?? item.startedAt, item.startedAt);
+			if (!options.inProgress) {
+				const end = item.completedAt ?? options.endedAt;
+				if (end === undefined) return {};
+				completedAtMs = Math.max(completedAtMs ?? end, end);
+			}
+		}
 	}
-
-	const completedAtMs =
-		workSectionJobCompletedAtMs(section.blocks) ?? options.runCompletedAt ?? startedAtMs;
-
-	return { startedAtMs, completedAtMs };
+	return options.inProgress ? { startedAtMs } : { startedAtMs, completedAtMs };
 }
 
 /** Whether a tool call never reached a durable result (no output and no finished job). */
@@ -484,7 +408,10 @@ export function buildAssistantTimeline(
 			type: 'tool',
 			callId: part.callId,
 			name: part.name,
-			input: part.input
+			input: part.input,
+			startedAt: part.startedAt ?? job?.enqueuedAt,
+			// The call's completedAt ends argument generation, not tool execution.
+			completedAt: result?.completedAt ?? job?.completedAt
 		};
 		if (result) {
 			item.output = result.output;
@@ -504,6 +431,8 @@ export function buildAssistantTimeline(
 			callId: job.callId ?? `executor-job:${job._id}`,
 			name: job.kind,
 			input: job.payload,
+			startedAt: job.enqueuedAt,
+			completedAt: job.completedAt,
 			job
 		};
 		if (job.result !== undefined) {

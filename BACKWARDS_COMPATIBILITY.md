@@ -8,6 +8,17 @@ Current as of 2026-09-03.
 
 ## Transcript projection API
 
+Assistant text, reasoning, and tool calls accept optional `startedAt` and
+`completedAt` timestamps. Released agents and old stored completions lack them.
+The UI omits durations when section boundaries are unknown rather than inferring
+them from the run start or transcript sequence numbers. New local replicas also
+retain the transcript record creation time for tool-event timing. Existing JSONL
+records remain readable without it; historical reasoning timing cannot be recovered.
+Keep these fields optional until old agents age out and untimed history is retired.
+The projected `runStartedAt` field remains numeric for released clients, with `0`
+meaning unknown instead of a sequence number. Remove it once supported clients no
+longer read it; the current section timer uses assistant-part timestamps.
+
 PR #295 keeps `/api/transcript/page` returning raw `parts` for released clients.
 The projected-message client uses `/api/transcript/messages`; the legacy route
 reads the same complete message window and returns its original parts. The
