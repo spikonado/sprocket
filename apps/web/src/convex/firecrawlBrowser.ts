@@ -246,7 +246,7 @@ async function execute(ctx: ActionCtx, args: BrowserArgs, code: string, language
 		executionSecret: args.executionSecret
 	});
 	const operationId = crypto.randomUUID();
-	const session = await ctx.runMutation(internal.firecrawlSessions.acquire, {
+	const session = await ctx.runMutation(internal.browserSessions.acquire, {
 		threadId: actor.threadId,
 		userId: actor.userId,
 		runId: args.runId,
@@ -280,7 +280,7 @@ async function execute(ctx: ActionCtx, args: BrowserArgs, code: string, language
 			const created = createdSchema.parse(data);
 			sessionId = created.id;
 			const expiresAt = Date.parse(created.expiresAt ?? '');
-			const attached = await ctx.runMutation(internal.firecrawlSessions.attach, {
+			const attached = await ctx.runMutation(internal.browserSessions.attach, {
 				id: session._id,
 				operationId,
 				sessionId,
@@ -300,7 +300,7 @@ async function execute(ctx: ActionCtx, args: BrowserArgs, code: string, language
 			}
 			createdId = undefined;
 		}
-		await ctx.runMutation(internal.firecrawlSessions.beforeExecute, {
+		await ctx.runMutation(internal.browserSessions.beforeExecute, {
 			id: session._id,
 			operationId,
 			runId: args.runId,
@@ -339,7 +339,7 @@ async function execute(ctx: ActionCtx, args: BrowserArgs, code: string, language
 			);
 		}
 		if (executing) {
-			await ctx.runMutation(internal.firecrawlSessions.quarantine, {
+			await ctx.runMutation(internal.browserSessions.quarantine, {
 				id: session._id,
 				operationId
 			});
@@ -349,7 +349,7 @@ async function execute(ctx: ActionCtx, args: BrowserArgs, code: string, language
 		}
 		throw error;
 	} finally {
-		await ctx.runMutation(internal.firecrawlSessions.release, {
+		await ctx.runMutation(internal.browserSessions.release, {
 			id: session._id,
 			operationId,
 			destroyed
@@ -402,24 +402,24 @@ export async function screenshot(ctx: ActionCtx, args: BrowserArgs) {
 }
 
 export const close = internalAction({
-	args: { id: v.id('firecrawlSessions') },
+	args: { id: v.id('browserSessions') },
 	returns: v.null(),
 	handler: async (ctx, { id }) => {
 		const operationId = crypto.randomUUID();
-		const session = await ctx.runMutation(internal.firecrawlSessions.claimClose, {
+		const session = await ctx.runMutation(internal.browserSessions.claimClose, {
 			id,
 			operationId
 		});
 		if (!session) return null;
 		try {
 			if (session.sessionId) await destroy(session.sessionId);
-			await ctx.runMutation(internal.firecrawlSessions.release, {
+			await ctx.runMutation(internal.browserSessions.release, {
 				id,
 				operationId,
 				destroyed: true
 			});
 		} catch {
-			await ctx.runMutation(internal.firecrawlSessions.release, { id, operationId });
+			await ctx.runMutation(internal.browserSessions.release, { id, operationId });
 			await ctx.scheduler.runAfter(60_000, internal.firecrawlBrowser.close, { id });
 		}
 		return null;
@@ -443,11 +443,11 @@ export const reconcile = internalAction({
 		);
 		let cursor: string | null = null;
 		for (;;) {
-			const batch: PaginationResult<Doc<'firecrawlSessions'>> = await ctx.runQuery(
-				internal.firecrawlSessions.list,
+			const batch: PaginationResult<Doc<'browserSessions'>> = await ctx.runQuery(
+				internal.browserSessions.list,
 				{ paginationOpts: { cursor, numItems: 100 } }
 			);
-			await ctx.runMutation(internal.firecrawlSessions.reconcile, {
+			await ctx.runMutation(internal.browserSessions.reconcile, {
 				ids: batch.page
 					.filter((session) => session.sessionId && destroyed.has(session.sessionId))
 					.map((session) => session._id),

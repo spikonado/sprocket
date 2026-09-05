@@ -26,16 +26,14 @@ export type BrowserLiveViewState = {
 	/** Embeddable watch-only live view URL; null while it is being set up. */
 	url: string | null;
 	/** Interactive variant. Load it only after humanControl is true. */
-	interactiveUrl?: string | null;
+	interactiveUrl: string | null;
 	/** Whether this session persists cookies and login state. */
-	saving?: boolean;
+	saving: boolean;
 	/** Hard deadline for the Firecrawl session. */
-	expiresAt?: number;
+	expiresAt: number;
 	/** True after the user takes control; agent browser calls are blocked. */
-	humanControl?: boolean;
-	/** Present for Firecrawl sessions that support takeover. Absent on
-	 * legacy Browserbase sessions, which stay watch-only. */
-	threadId?: Id<'threadRecords'>;
+	humanControl: boolean;
+	threadId: Id<'threadRecords'>;
 	/** Run that most recently drove the browser; matched against the active run
 	 * for liveness and auto-open. */
 	lastUsedRunId: Id<'runs'> | null;

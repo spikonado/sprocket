@@ -51,11 +51,11 @@ export const reset = mutation({
 				name: `sprocket-${crypto.randomUUID()}`
 			});
 		const sessions = await ctx.db
-			.query('firecrawlSessions')
+			.query('browserSessions')
 			.withIndex('by_userId', (q) => q.eq('userId', userId))
 			.take(100);
 		for (const session of sessions) {
-			await ctx.db.patch('firecrawlSessions', session._id, { closing: true });
+			await ctx.db.patch('browserSessions', session._id, { closing: true });
 			await ctx.scheduler.runAfter(0, internal.firecrawlBrowser.close, { id: session._id });
 		}
 		return null;
@@ -69,14 +69,14 @@ export const setHumanControl = mutation({
 		const userId = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 		const session = await ctx.db
-			.query('firecrawlSessions')
+			.query('browserSessions')
 			.withIndex('by_threadId', (q) => q.eq('threadId', args.threadId))
 			.unique();
 		if (!session || session.closing || !session.sessionId || session.expiresAt <= Date.now())
 			throw new ConvexError('This browser session has ended.');
 		if (session.operationId && session.operationExpiresAt > Date.now())
 			throw new ConvexError('Wait for the current browser action to finish before taking control.');
-		await ctx.db.patch('firecrawlSessions', session._id, { humanControl: args.enabled });
+		await ctx.db.patch('browserSessions', session._id, { humanControl: args.enabled });
 		return null;
 	}
 });
