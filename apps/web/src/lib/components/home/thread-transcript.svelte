@@ -252,11 +252,13 @@
 			{/if}
 
 			{#if messages.length === 0}
-				<div class="flex flex-1 items-center justify-center">
-					<div class="max-w-2xl text-center">
-						<p class="text-muted-foreground text-sm leading-7">{emptyStateMessage}</p>
+				{#if emptyStateMessage}
+					<div class="flex flex-1 items-center justify-center">
+						<div class="max-w-2xl text-center">
+							<p class="text-muted-foreground text-sm leading-7">{emptyStateMessage}</p>
+						</div>
 					</div>
-				</div>
+				{/if}
 			{:else}
 				<div class="space-y-8 pb-14">
 					{#each messages as message (message._id)}

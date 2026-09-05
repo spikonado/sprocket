@@ -425,6 +425,14 @@ impl TranscriptStore {
     }
 
     pub async fn clear_thread(&self, user_id: &str, thread_id: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !thread_id.is_empty()
+                && !thread_id.eq_ignore_ascii_case("blobs")
+                && thread_id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')),
+            "invalid transcript thread ID"
+        );
         let lock = self.lock_thread(user_id, thread_id).await;
         let _guard = lock.lock().await;
         let referenced =
@@ -1076,6 +1084,17 @@ mod tests {
             vec!["b", "c"]
         );
         assert_eq!(page.next_before, Some(1));
+        for invalid_id in ["", "blobs", "BLOBS", "blobs ", "../thread"] {
+            assert!(store.clear_thread("user", invalid_id).await.is_err());
+        }
+        assert_eq!(
+            store
+                .read_parts("user", "thread", &[0, 1, 2])
+                .await
+                .unwrap()
+                .len(),
+            3
+        );
         store.clear_thread("user", "thread").await.unwrap();
         let _ = tokio::fs::remove_dir_all(dir).await;
     }

@@ -23,6 +23,7 @@ use crate::transcript_watch::TranscriptWatchEvent;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TranscriptScope {
     user_id: String,
+    #[serde(deserialize_with = "deserialize_thread_id")]
     thread_id: String,
 }
 
@@ -30,6 +31,7 @@ struct TranscriptScope {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TranscriptPageRequest {
     user_id: String,
+    #[serde(deserialize_with = "deserialize_thread_id")]
     thread_id: String,
     before: Option<u32>,
     limit: Option<u32>,
@@ -51,6 +53,7 @@ struct LegacyTranscriptPage {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TranscriptAttachmentRequest {
     user_id: String,
+    #[serde(deserialize_with = "deserialize_thread_id")]
     thread_id: String,
     image_upload_id: String,
 }
@@ -59,8 +62,24 @@ struct TranscriptAttachmentRequest {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TranscriptDetailsRequest {
     user_id: String,
+    #[serde(deserialize_with = "deserialize_thread_id")]
     thread_id: String,
     numbers: Vec<u32>,
+}
+
+fn deserialize_thread_id<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<String, D::Error> {
+    let id = String::deserialize(deserializer)?;
+    if id.is_empty()
+        || id.eq_ignore_ascii_case("blobs")
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err(serde::de::Error::custom("invalid transcript thread ID"));
+    }
+    Ok(id)
 }
 
 pub fn routes() -> axum::Router<AppState> {
@@ -392,4 +411,40 @@ fn blob_response(media_type: String, bytes: Vec<u8>) -> Response {
         Bytes::from(bytes),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::de::DeserializeOwned;
+
+    fn parse<T: DeserializeOwned>(thread_id: &str, mut extra: serde_json::Value) -> bool {
+        extra["userId"] = "user-1".into();
+        extra["threadId"] = thread_id.into();
+        serde_json::from_value::<T>(extra).is_ok()
+    }
+
+    #[test]
+    fn request_thread_ids_reject_unsafe_paths() {
+        use serde_json::json;
+
+        for thread_id in [
+            "", "blobs", "BLOBS", "../other", "a\\b", "C:", "blobs ", "thread-1",
+        ] {
+            let valid = thread_id == "thread-1";
+            assert_eq!(parse::<TranscriptScope>(thread_id, json!({})), valid);
+            assert_eq!(parse::<TranscriptPageRequest>(thread_id, json!({})), valid);
+            assert_eq!(
+                parse::<TranscriptAttachmentRequest>(
+                    thread_id,
+                    json!({"imageUploadId": "upload-1"})
+                ),
+                valid
+            );
+            assert_eq!(
+                parse::<TranscriptDetailsRequest>(thread_id, json!({"numbers": [1]})),
+                valid
+            );
+        }
+    }
 }

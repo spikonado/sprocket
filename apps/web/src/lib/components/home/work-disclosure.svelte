@@ -16,7 +16,6 @@
 	};
 
 	let { inProgress, startedAtMs, completedAtMs, children, onExpand, detailsKey }: Props = $props();
-	let loading = $state(false);
 	let loadError = $state(false);
 
 	function toggle() {
@@ -30,15 +29,10 @@
 		void detailsKey;
 		if (!disclosure.expanded) return;
 		let cancelled = false;
-		loading = true;
 		loadError = false;
-		void Promise.resolve(untrack(() => onExpand?.()))
-			.catch(() => {
-				if (!cancelled) loadError = true;
-			})
-			.finally(() => {
-				if (!cancelled) loading = false;
-			});
+		void Promise.resolve(untrack(() => onExpand?.())).catch(() => {
+			if (!cancelled) loadError = true;
+		});
 		return () => {
 			cancelled = true;
 		};
@@ -84,7 +78,6 @@
 	</button>
 	{#if disclosure.expanded}
 		<div class="mt-1.5 space-y-2">
-			{#if loading}<p role="status">Loading details…</p>{/if}
 			{#if loadError}<p role="status">Could not load details. Close and reopen to retry.</p>{/if}
 			{@render children()}
 		</div>
