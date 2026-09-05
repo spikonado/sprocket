@@ -13,6 +13,30 @@ import {
 	vBrowserTaskResult
 } from '@convex/lib/validators';
 import { toAgentToolConvexError } from '@convex/lib/agentErrors';
+import {
+	interact as firecrawlInteract,
+	screenshot as firecrawlScreenshot
+} from '@convex/firecrawlBrowser';
+import { vBrowserScreenshotResult } from '@convex/lib/validators';
+
+const browserArgs = {
+	runId: v.id('runs'),
+	claimId: v.string(),
+	executionSecret: v.string(),
+	disable_saving: v.optional(v.boolean())
+};
+
+export const interact = action({
+	args: { ...browserArgs, command: v.string() },
+	returns: vBrowserTaskResult,
+	handler: firecrawlInteract
+});
+
+export const screenshot = action({
+	args: browserArgs,
+	returns: vBrowserScreenshotResult,
+	handler: firecrawlScreenshot
+});
 
 // The browsing sub-agent's model. Uses the same OpenAI key as the main agent.
 const DEFAULT_MODEL = 'openai/gpt-5.6-sol';

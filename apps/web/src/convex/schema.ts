@@ -324,6 +324,31 @@ export default defineSchema({
 	})
 		.index('by_mandate_reference', ['mandateId', 'reference'])
 		.index('by_reportRetrierRunId', ['reportRetrierRunId']),
+	browserProfiles: defineTable({
+		userId: v.string(),
+		name: v.string(),
+		savingEnabled: v.boolean()
+	}).index('by_userId', ['userId']),
+	firecrawlSessions: defineTable({
+		humanControl: v.optional(v.boolean()),
+		attachedAt: v.optional(v.number()),
+		threadId: v.id('threadRecords'),
+		userId: v.string(),
+		profileName: v.string(),
+		saveChanges: v.boolean(),
+		lastUsedRunId: v.id('runs'),
+		startedAt: v.number(),
+		expiresAt: v.number(),
+		sessionId: v.optional(v.string()),
+		liveViewUrl: v.optional(v.string()),
+		interactiveLiveViewUrl: v.optional(v.string()),
+		operationId: v.optional(v.string()),
+		operationExpiresAt: v.number(),
+		closing: v.boolean()
+	})
+		.index('by_threadId', ['threadId'])
+		.index('by_userId', ['userId'])
+		.index('by_expiresAt', ['expiresAt']),
 	browserSessions: defineTable({
 		threadId: v.id('threadRecords'),
 		runId: v.id('runs'),

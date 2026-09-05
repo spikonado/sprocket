@@ -6,6 +6,14 @@ a retired function name can disappear.
 
 Current as of 2026-09-03.
 
+## Firecrawl browser migration (unreleased)
+
+New agents call `browserAgent.interact` and `browserAgent.screenshot`. Released agents still call `act`, `observe`, and `extract`, so those actions, their executor job kinds/payloads/results, the Stagehand dependency, and the Browserbase/OpenAI environment settings remain supported. `browserSessions` retains its original schema; new sessions use `firecrawlSessions`, so existing rows need no backfill. `liveViewForThread` retains its original fields and falls back to legacy sessions.
+
+Remove the legacy actions and provider dependency only after all supported desktop/CLI releases use the new tools and legacy browser endpoint traffic has stopped for two weeks. In the same removal PR, expire remaining Browserbase sessions and delete their rows before dropping the legacy table. Keep validators for historical executor jobs until a migration has rewritten or removed every job with a legacy browser kind, payload, or result.
+
+The Firecrawl saving preference applies only to new Firecrawl sessions, not Browserbase sessions used by old agents. Browserbase cookies are not migrated into Firecrawl profiles.
+
 ## Transcript projection API
 
 PR #295 keeps `/api/transcript/page` returning raw `parts` for released clients.

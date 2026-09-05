@@ -223,6 +223,34 @@ where
     F: FnOnce(WorkspaceCancellation) -> Fut,
     Fut: std::future::Future<Output = Result<serde_json::Value, ToolExecutionError>>,
 {
+    execute_tool_job_with_persisted_result(
+        runtime,
+        run_id,
+        claim_id,
+        kind,
+        tool_call_tracker,
+        payload,
+        operation,
+        Clone::clone,
+    )
+    .await
+}
+
+pub(super) async fn execute_tool_job_with_persisted_result<F, Fut, P>(
+    runtime: &RuntimeClient,
+    run_id: &str,
+    claim_id: &str,
+    kind: &str,
+    tool_call_tracker: &ToolCallTracker,
+    payload: serde_json::Value,
+    operation: F,
+    persisted_result: P,
+) -> Result<serde_json::Value, ToolExecutionError>
+where
+    F: FnOnce(WorkspaceCancellation) -> Fut,
+    Fut: std::future::Future<Output = Result<serde_json::Value, ToolExecutionError>>,
+    P: FnOnce(&serde_json::Value) -> serde_json::Value,
+{
     eprintln!("sprocket-agent: starting tool {} for run {}", kind, run_id);
     let mut run_updates = runtime
         .run_finished_subscription(run_id)
@@ -281,7 +309,7 @@ where
             complete_args.insert("claimId".to_string(), claim_id.to_string().into());
             complete_args.insert(
                 "result".to_string(),
-                Value::try_from(output.clone()).map_err(tool_error)?,
+                Value::try_from(persisted_result(&output)).map_err(tool_error)?,
             );
             let accepted: bool = runtime
                 .mutation_json("executor:complete", complete_args)

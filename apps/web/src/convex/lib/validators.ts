@@ -90,6 +90,15 @@ export const vBrowserActPayload = v.object({
 	startUrl: v.optional(v.string())
 });
 
+export const vBrowserInteractPayload = v.object({
+	command: v.string(),
+	disable_saving: v.optional(v.boolean())
+});
+
+export const vBrowserScreenshotPayload = v.object({
+	disable_saving: v.optional(v.boolean())
+});
+
 const mandateFrequencies = ['one_time', 'weekly', 'monthly', 'yearly'] as const;
 export const vMandateFrequency = v.union(...literals(mandateFrequencies));
 
@@ -183,6 +192,8 @@ export const vExecutorJobPayload = v.union(
 	vCreateArtifactPayload,
 	vUpdateArtifactPayload,
 	vBrowserActPayload,
+	vBrowserInteractPayload,
+	vBrowserScreenshotPayload,
 	vMandateSetupPayload,
 	vMandateIdPayload,
 	vMandateChargePayload,
@@ -297,6 +308,14 @@ export const vBrowserTaskResult = v.object({
 	truncated: v.boolean()
 });
 
+export const vBrowserScreenshotResult = v.object({
+	mediaType: v.literal('image/png'),
+	dataBase64: v.string(),
+	byteLength: v.number(),
+	truncated: v.boolean(),
+	url: v.optional(v.string())
+});
+
 export const vBrowserObservedAction = v.object({
 	selector: v.string(),
 	description: v.string(),
@@ -351,6 +370,7 @@ export const vExecutorJobResult = v.union(
 	vWebSearchResult,
 	vArtifactResult,
 	vBrowserTaskResult,
+	vBrowserScreenshotResult,
 	vBrowserObserveResult,
 	vMandateSetupResult,
 	vMandateStatusResult,
@@ -384,6 +404,8 @@ export const vExecutorJobKind = v.union(
 	v.literal('await_question'),
 	v.literal('browser_observe'),
 	v.literal('browser_act'),
+	v.literal('browser_interact'),
+	v.literal('browser_screenshot'),
 	v.literal('browser_extract'),
 	v.literal('exec_command'),
 	v.literal('get_workspace_instructions'),

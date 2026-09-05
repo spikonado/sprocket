@@ -43,6 +43,11 @@ export const liveViewForThread = query({
 	returns: v.union(
 		v.object({
 			url: v.union(v.string(), v.null()),
+			interactiveUrl: v.optional(v.union(v.string(), v.null())),
+			saving: v.optional(v.boolean()),
+			humanControl: v.optional(v.boolean()),
+			threadId: v.optional(v.id('threadRecords')),
+			expiresAt: v.optional(v.number()),
 			/** Run that most recently drove the browser; the client compares it
 			 * against the active run for liveness and auto-open. */
 			lastUsedRunId: v.union(v.id('runs'), v.null()),
@@ -53,6 +58,23 @@ export const liveViewForThread = query({
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
+		const firecrawl = await ctx.db
+			.query('firecrawlSessions')
+			.withIndex('by_threadId', (q) => q.eq('threadId', args.threadId))
+			.unique();
+		if (firecrawl) {
+			if (firecrawl.closing) return null;
+			return {
+				url: firecrawl.liveViewUrl ?? null,
+				interactiveUrl: firecrawl.interactiveLiveViewUrl ?? null,
+				saving: firecrawl.saveChanges,
+				humanControl: firecrawl.humanControl ?? false,
+				threadId: firecrawl.threadId,
+				expiresAt: firecrawl.expiresAt,
+				lastUsedRunId: firecrawl.lastUsedRunId,
+				startedAt: firecrawl.startedAt
+			};
+		}
 		const session = await ctx.db
 			.query('browserSessions')
 			.withIndex('by_thread', (query) => query.eq('threadId', args.threadId))
