@@ -97,14 +97,11 @@
 	}: Props = $props();
 
 	const convexAuth = useAuth();
-	const subscriptionQuery = useQuery(api.billing.getMySubscription, () =>
-		convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip'
-	);
 	const usageQuery = useQuery(api.usage.getMyUsage, () =>
 		convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip'
 	);
-	const subscriptionTier = $derived(subscriptionQuery.data?.tier);
-	const subscriptionFailed = $derived(Boolean(subscriptionQuery.error));
+	const subscriptionTier = $derived(usageQuery.data?.tier);
+	const subscriptionFailed = $derived(Boolean(usageQuery.error));
 	// Until the tier is known, render the free allowlist so locked models are never selectable.
 	const tierModelOptions = $derived(
 		modelCatalog ? modelOptionsForTier(modelCatalog, subscriptionTier ?? 'free') : []
@@ -121,7 +118,7 @@
 				)
 			: undefined
 	);
-	// Block send until a catalog model is selected. If the subscription query fails, keep send
+	// Block send until a catalog model is selected. If the usage query fails, keep send
 	// enabled for a known selection and let the backend enforce entitlements.
 	const canSubmitWithModel = $derived(
 		selectedCatalogModel !== undefined &&

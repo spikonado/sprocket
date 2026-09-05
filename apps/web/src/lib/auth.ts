@@ -3,7 +3,7 @@ import { createClient, type User } from '@workos-inc/authkit-js';
 import { z } from 'zod';
 import { api } from '$convex/_generated/api';
 import { usesLoopbackBrowserAuth } from '../../../desktop/local-config.mjs';
-import { get, writable } from 'svelte/store';
+import { derived, get, writable } from 'svelte/store';
 
 type AuthStatus = {
 	isLoading: boolean;
@@ -28,6 +28,9 @@ const initialState: AuthStatus = {
 };
 
 export const authState = writable<AuthStatus>(initialState);
+// Primitive stores suppress same-user refresh notifications before setupAuth's effect.
+export const convexAuthUserId = derived(authState, (state) => state.user?.id ?? null);
+export const convexAuthLoading = derived(authState, (state) => !state.isReady || state.isLoading);
 export const convexAuthRetryVersion = writable(0);
 /** UI-only: stays true until Convex confirms or rejects the post-retry token. */
 export const convexAuthRetryPending = writable(false);

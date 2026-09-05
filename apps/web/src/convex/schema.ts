@@ -64,13 +64,7 @@ export default defineSchema({
 	}).index('by_userId', ['userId']),
 	uiPreferences: defineTable({
 		userId: v.string(),
-		// Deprecated: only present on rows written by older clients. New clients
-		// resume the latest active thread instead.
-		lastThreadId: v.optional(v.id('threadRecords')),
-		theme: v.optional(v.union(v.literal('light'), v.literal('dark'))),
-		// Deprecated: mandate setup uses the WorkOS identity email. Kept so
-		// rows written by older clients still validate.
-		paymentsEmail: v.optional(v.string())
+		theme: v.union(v.literal('light'), v.literal('dark'))
 	}).index('by_userId', ['userId']),
 	// Stored-only. New clients do not write these tables. Kept so existing
 	// documents and leftover `projectId` fields validate until the rewrite

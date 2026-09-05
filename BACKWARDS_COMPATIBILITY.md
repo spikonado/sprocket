@@ -35,14 +35,7 @@ Deploy this compatibility schema and code, run the migration to completion,
 verify every thread has a status, then make the field required and remove the
 optional cache handling in a follow-up deployment.
 
-### 1. Legacy fields on `uiPreferences`
-
-Source: #187, plus later catalog/payments work.
-
-Optional fields kept so existing rows validate. Nothing current writes them:
-
-- `uiPreferences.lastThreadId` — restore uses `pickThreadToRestore`
-- `uiPreferences.paymentsEmail` — mandate setup uses the WorkOS identity email
+### 1. Legacy project tables and references
 
 The `projects` and `projectConnections` tables stay in the schema so existing
 rows and leftover `projectId` fields validate. Threads store `repositoryKey`
@@ -56,11 +49,6 @@ error.
 The repository-key backfill and `projectId` unset passes are done. Remove the
 leftover tables and `projectId` fields after a later unset rewrite, then drop
 `repositoryKey` optionality.
-
-Remove the remaining `uiPreferences` fields by unsetting each in a one-off
-backfill, then dropping them from `convex/schema.ts`.
-
-Safe when a prod check shows zero rows carrying the field.
 
 ### 2. Mandate job payloads still accept `userEmail`
 
