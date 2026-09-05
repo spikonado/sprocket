@@ -324,6 +324,9 @@ export default defineSchema({
 		// may have committed, so a row with this set and no transaction id must
 		// not be reclaimed for another provider request.
 		providerRequestedAt: v.optional(v.number()),
+		// Bumped on every reserve/reclaim. markChargeProviderRequested must see
+		// the same generation or a concurrent reclaim won the row.
+		claimGeneration: v.optional(v.number()),
 		reportRetrierRunId: v.optional(v.string()),
 		createdAt: v.number(),
 		updatedAt: v.number()
