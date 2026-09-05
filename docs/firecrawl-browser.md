@@ -12,6 +12,6 @@ Take control blocks new agent commands until the user gives control back. An in-
 
 Convex operation leases serialize commands and fence stale runs. Unknown execution outcomes close the session and require checking the website before retrying a consequential action. Commands are never automatically replayed. A process crash or ambiguous create response can leave an unidentified provider session alive until its provider TTL expires. The provider writer lock prevents a second saving session during that interval.
 
-Reconciliation removes only sessions explicitly reported destroyed, never sessions merely absent from a list. Hard-expiry jobs retry close failures. Screenshots are limited to 600,000 bytes before base64 encoding; larger images return size metadata without pixels. The agent's durable tool result strips image data.
+Reconciliation removes only sessions explicitly reported destroyed, never sessions merely absent from a list. Hard-expiry jobs retry close failures. Screenshots are limited to 600,000 bytes before base64 encoding; larger images return size metadata without pixels. The agent's durable tool result strips image data and page URLs. Screenshot model summaries also omit URLs to avoid retaining credential-bearing links.
 
 Firecrawl's session list has no documented pagination. Responses over 2 MB fail closed, so a large destroyed-session history can delay local cleanup until hard expiry or the next tool call. It does not extend the provider's session lifetime.

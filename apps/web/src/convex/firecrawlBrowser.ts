@@ -284,7 +284,9 @@ async function execute(ctx: ActionCtx, args: BrowserArgs, code: string, language
 				id: session._id,
 				operationId,
 				sessionId,
-				expiresAt: Number.isFinite(expiresAt) ? expiresAt : session.expiresAt,
+				expiresAt: Number.isFinite(expiresAt)
+					? Math.min(expiresAt, session.expiresAt)
+					: session.expiresAt,
 				liveViewUrl: optionalHttpUrl(created.liveViewUrl),
 				interactiveLiveViewUrl: optionalHttpUrl(created.interactiveLiveViewUrl)
 			});

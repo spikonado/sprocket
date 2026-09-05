@@ -115,6 +115,22 @@ describe('Firecrawl browser lifecycle', () => {
 		});
 	});
 
+	it('caps provider expiry at the reserved one-hour deadline', async () => {
+		remote().mockResolvedValueOnce(
+			new Response(JSON.stringify({ success: true, id: 'long-lived', expiresAt: '2099-01-01' }))
+		);
+		const t = initConvexTest();
+		const { runId, claimId, executionSecret } = await fixture(t);
+		await t.action(api.browserAgent.interact, {
+			runId,
+			claimId,
+			executionSecret,
+			command: 'get url'
+		});
+		const session = await t.run((ctx) => ctx.db.query('firecrawlSessions').unique());
+		expect(session?.expiresAt).toBe((session?.startedAt ?? 0) + 3_600_000);
+	});
+
 	it('reports writer contention without executing a command or falling back', async () => {
 		const fetch = remote().mockResolvedValue(new Response('{}', { status: 409 }));
 		const t = initConvexTest();
