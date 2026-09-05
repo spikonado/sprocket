@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use axum::Router;
 use axum::body::Body;
@@ -53,7 +53,16 @@ fn resolve_static_file(dir: &Path, path: &str) -> Option<PathBuf> {
         return Some(dir.join("index.html"));
     }
 
-    let direct = dir.join(clean);
+    // Only Normal components: reject `..`, absolute/prefix segments, and `.`.
+    let relative = Path::new(clean);
+    if !relative
+        .components()
+        .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return None;
+    }
+
+    let direct = dir.join(relative);
     if direct.is_file() {
         return Some(direct);
     }
@@ -93,5 +102,18 @@ mod tests {
             resolve_static_file(&dir, "/callback"),
             Some(dir.join("callback.html"))
         );
+    }
+
+    #[test]
+    fn rejects_path_traversal_and_absolute_segments() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apps/web/dist");
+
+        assert_eq!(resolve_static_file(&dir, "/../Cargo.toml"), None);
+        assert_eq!(resolve_static_file(&dir, "/foo/../../Cargo.toml"), None);
+        assert_eq!(resolve_static_file(&dir, "/./pair"), None);
+        // `C:` is a Prefix component only on Windows. On Unix it is a normal
+        // path segment, so drive-style rejection is Windows-only.
+        #[cfg(windows)]
+        assert_eq!(resolve_static_file(&dir, "/C:/Windows/win.ini"), None);
     }
 }
