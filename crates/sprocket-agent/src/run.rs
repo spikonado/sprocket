@@ -2,8 +2,9 @@ use anyhow::anyhow;
 use rig::completion::Message;
 use rig::message::{ImageMediaType, UserContent};
 use sprocket_workspace::{
-    BUILTIN_SKILLS, WorkspaceInstruction, WorkspaceSkill, default_user_skills_dirs,
-    load_workspace_instructions, load_workspace_skills, resolve_workspace_root,
+    BUILTIN_SKILLS, WorkspaceInstruction, WorkspaceInstructionSource, WorkspaceSkill,
+    default_user_skills_dirs, load_workspace_instructions, load_workspace_skills,
+    resolve_workspace_root,
 };
 use std::future::Future;
 use std::sync::Arc;
@@ -94,17 +95,33 @@ fn build_workspace_preamble(
     workspace_instructions: &[WorkspaceInstruction],
     skills: &[WorkspaceSkill],
 ) -> String {
-    let instruction_block = if workspace_instructions.is_empty() {
+    let user_instructions = workspace_instructions
+        .iter()
+        .filter(|instruction| instruction.source == WorkspaceInstructionSource::User)
+        .map(|instruction| instruction.contents.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let project_instructions = workspace_instructions
+        .iter()
+        .filter(|instruction| instruction.source == WorkspaceInstructionSource::Workspace)
+        .map(|instruction| instruction.contents.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let instruction_block = if user_instructions.is_empty() && project_instructions.is_empty() {
         "No AGENTS.md instructions were preloaded for the current workspace.".to_string()
     } else {
-        format!(
-            "# AGENTS.md instructions for {workspace_path}:\n<INSTRUCTIONS>\n{}\n</INSTRUCTIONS>",
-            workspace_instructions
-                .iter()
-                .map(|instruction| instruction.contents.as_str())
-                .collect::<Vec<_>>()
-                .join("\n\n")
-        )
+        let mut blocks = Vec::new();
+        if !user_instructions.is_empty() {
+            blocks.push(format!(
+                "# AGENTS.md specific to the user:\n<INSTRUCTIONS>\n{user_instructions}\n</INSTRUCTIONS>"
+            ));
+        }
+        if !project_instructions.is_empty() {
+            blocks.push(format!(
+                "# AGENTS.md instructions for {workspace_path}:\n<INSTRUCTIONS>\n{project_instructions}\n</INSTRUCTIONS>"
+            ));
+        }
+        blocks.join("\n\n")
     };
 
     let skills_block = if skills.is_empty() {
@@ -184,6 +201,7 @@ fn build_workspace_preamble(
         "",
         "## AGENTS.md Spec",
         "",
+        "The user's `~/.agents/AGENTS.md` applies to every workspace and appears before repository instructions.",
         "AGENTS.md files can appear anywhere in the repository tree.",
         "Each AGENTS.md file applies to the directory tree rooted at the folder that contains it.",
         "Follow all applicable AGENTS.md instructions, with deeper files taking precedence.",
@@ -915,7 +933,9 @@ fn image_media_type(media_type: &str) -> anyhow::Result<ImageMediaType> {
 
 #[cfg(test)]
 mod tests {
-    use sprocket_workspace::{SkillSource, WorkspaceSkill};
+    use sprocket_workspace::{
+        SkillSource, WorkspaceInstruction, WorkspaceInstructionSource, WorkspaceSkill,
+    };
 
     use super::{build_workspace_preamble, submission_owned_by_another_executor};
 
@@ -972,6 +992,37 @@ mod tests {
         let preamble = build_workspace_preamble("/tmp/project", &[], &skills);
         assert!(preamble.contains("description: Line one line two"));
         assert!(!preamble.contains("description: Line one\n"));
+    }
+
+    #[test]
+    fn preamble_renders_user_instructions_before_workspace_instructions() {
+        let instructions = [
+            WorkspaceInstruction {
+                path: "/home/user/.agents/AGENTS.md".to_string(),
+                directory: "/home/user/.agents".to_string(),
+                contents: "user instructions".to_string(),
+                truncated: false,
+                source: WorkspaceInstructionSource::User,
+            },
+            WorkspaceInstruction {
+                path: "/tmp/project/AGENTS.md".to_string(),
+                directory: "/tmp/project".to_string(),
+                contents: "workspace instructions".to_string(),
+                truncated: false,
+                source: WorkspaceInstructionSource::Workspace,
+            },
+        ];
+
+        let preamble = build_workspace_preamble("/tmp/project", &instructions, &[]);
+
+        let user_heading = "# AGENTS.md specific to the user:";
+        let workspace_heading = "# AGENTS.md instructions for /tmp/project:";
+        assert!(preamble.contains(user_heading));
+        assert!(preamble.contains(workspace_heading));
+        assert!(
+            preamble.find(user_heading).expect("user heading")
+                < preamble.find(workspace_heading).expect("workspace heading")
+        );
     }
 }
 

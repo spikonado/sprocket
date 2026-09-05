@@ -15,7 +15,7 @@ mod text;
 mod unified_diff;
 mod workspace;
 
-pub use agents::{WorkspaceInstruction, load_workspace_instructions};
+pub use agents::{WorkspaceInstruction, WorkspaceInstructionSource, load_workspace_instructions};
 pub use browse::{
     FilesystemBrowseEntry, FilesystemBrowseResult, browse_filesystem,
     resolve_or_create_workspace_root,
