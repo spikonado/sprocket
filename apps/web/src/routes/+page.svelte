@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
+	import { elapsedSeconds, tickingNow } from '$lib/chat/elapsed-time';
 	import { page } from '$app/state';
 	import { PanelRight } from '@lucide/svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
@@ -206,7 +207,6 @@
 	let answeringAgentQuestion = $state(false);
 	let composerAttachments = $state<ComposerAttachment[]>([]);
 	let currentError = $state<string | null>(null);
-	let elapsedSeconds = $state(0);
 	const submittingPromptScopes = new SvelteMap<string, number>();
 	const composerRecoveries = new SvelteMap<string, ComposerRecovery>();
 	const recoveredSubmissionIds = new SvelteMap<
@@ -844,6 +844,9 @@
 	);
 	const isRunning = $derived(
 		isRunInProgress && currentLifecycle?.phase !== 'cancellation_requested'
+	);
+	const runElapsedSeconds = $derived(
+		isRunInProgress ? elapsedSeconds(runState?.startedAt, tickingNow()) : undefined
 	);
 	const groupedProjectThreads = $derived(getProjectThreadGroups(projects, threads));
 	const hasPendingAgentLaunch = $derived(
@@ -1485,8 +1488,6 @@
 			return;
 		}
 
-		elapsedSeconds = 0;
-
 		const selectedThreadId = currentThreadId;
 		let submittedRepositoryKey = currentRepositoryKey;
 		if (!submittedRepositoryKey) {
@@ -1847,7 +1848,6 @@
 		prompt = '';
 		clearComposerAttachments({ discard: true });
 		currentError = null;
-		elapsedSeconds = 0;
 		selectedModel = modelCatalog?.defaultModelId ?? defaultModelId;
 		selectedReasoningEffort = modelCatalog?.defaultReasoningEffort ?? defaultReasoningEffort;
 		selectedServiceTier = modelCatalog?.defaultServiceTier ?? defaultServiceTier;
@@ -2073,25 +2073,6 @@
 		}
 	});
 
-	$effect(() => {
-		const startedAt = runState?.startedAt;
-		if (!isRunning || !startedAt) {
-			elapsedSeconds = 0;
-			return;
-		}
-
-		const updateElapsed = () => {
-			elapsedSeconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
-		};
-
-		updateElapsed();
-		const intervalId = window.setInterval(updateElapsed, 1000);
-
-		return () => {
-			window.clearInterval(intervalId);
-		};
-	});
-
 	onMount(() => {
 		void loadModelCatalog();
 		const bridge = window.sprocketDesktopBridge;
@@ -2279,7 +2260,7 @@
 							runError={latestRunResumeKind ? null : (runState?.lastError ?? null)}
 							messages={visibleMessages}
 							actions={visibleActions}
-							activeRunId={isRunning ? (runState?.runId ?? null) : null}
+							activeRunId={isRunInProgress ? (runState?.runId ?? null) : null}
 							project={currentProject}
 							remoteChangeNotice={currentThreadId
 								? (remoteChangeNotices.get(currentThreadId) ?? null)
@@ -2349,7 +2330,9 @@
 						isSubmitting={isSubmittingPrompt || hasPendingAgentLaunch || answeringAgentQuestion}
 						isStarting={hasPendingAgentLaunch}
 						{isRunning}
-						elapsedLabel={isRunning ? formatElapsedDuration(elapsedSeconds) : null}
+						elapsedLabel={runElapsedSeconds === undefined
+							? null
+							: formatElapsedDuration(runElapsedSeconds)}
 						{contextUsage}
 						projectSkills={composerProjectSkills}
 						onSubmit={() => {

@@ -1,10 +1,18 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
 const CHANNEL_CAPACITY: usize = 64;
+
+pub(crate) fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(0)
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "type")]
@@ -13,6 +21,14 @@ pub enum LiveAssistantPart {
     Text {
         id: String,
         text: String,
+        #[serde(rename = "startedAt", default, skip_serializing_if = "Option::is_none")]
+        started_at: Option<u64>,
+        #[serde(
+            rename = "completedAt",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        completed_at: Option<u64>,
         #[serde(rename = "turnId", skip_serializing_if = "Option::is_none")]
         turn_id: Option<String>,
     },
@@ -20,6 +36,14 @@ pub enum LiveAssistantPart {
     Reasoning {
         id: String,
         text: String,
+        #[serde(rename = "startedAt", default, skip_serializing_if = "Option::is_none")]
+        started_at: Option<u64>,
+        #[serde(
+            rename = "completedAt",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        completed_at: Option<u64>,
         #[serde(rename = "turnId", skip_serializing_if = "Option::is_none")]
         turn_id: Option<String>,
     },
@@ -31,9 +55,142 @@ pub enum LiveAssistantPart {
         call_id: String,
         name: String,
         input: serde_json::Value,
+        #[serde(rename = "startedAt", default, skip_serializing_if = "Option::is_none")]
+        started_at: Option<u64>,
+        #[serde(
+            rename = "completedAt",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        completed_at: Option<u64>,
         #[serde(rename = "turnId", skip_serializing_if = "Option::is_none")]
         turn_id: Option<String>,
     },
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct LiveAssistantParts {
+    pub parts: Vec<LiveAssistantPart>,
+    text_index: HashMap<String, usize>,
+    tool_index: HashMap<String, usize>,
+}
+
+impl LiveAssistantParts {
+    pub fn clear(&mut self) {
+        self.parts.clear();
+        self.text_index.clear();
+        self.tool_index.clear();
+    }
+
+    pub fn items_json(&self) -> Vec<serde_json::Value> {
+        self.parts
+            .iter()
+            .map(|part| serde_json::to_value(part).expect("live assistant parts always serialize"))
+            .collect()
+    }
+
+    pub fn apply_text_delta(
+        &mut self,
+        event_type: &str,
+        id: String,
+        delta: &str,
+        turn_id: Option<String>,
+        now_ms: u64,
+    ) {
+        let key = format!("{event_type}:{id}");
+        if let Some(&index) = self.text_index.get(&key) {
+            match &mut self.parts[index] {
+                LiveAssistantPart::Text {
+                    text,
+                    started_at,
+                    completed_at,
+                    turn_id: existing,
+                    ..
+                } if event_type == "text" => {
+                    text.push_str(delta);
+                    if started_at.is_none() {
+                        *started_at = Some(now_ms);
+                    }
+                    *completed_at = Some(now_ms);
+                    if turn_id.is_some() {
+                        *existing = turn_id;
+                    }
+                }
+                LiveAssistantPart::Reasoning {
+                    text,
+                    started_at,
+                    completed_at,
+                    turn_id: existing,
+                    ..
+                } if event_type == "reasoning" => {
+                    text.push_str(delta);
+                    if started_at.is_none() {
+                        *started_at = Some(now_ms);
+                    }
+                    *completed_at = Some(now_ms);
+                    if turn_id.is_some() {
+                        *existing = turn_id;
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+        let part = if event_type == "reasoning" {
+            LiveAssistantPart::Reasoning {
+                id,
+                text: delta.to_string(),
+                started_at: Some(now_ms),
+                completed_at: Some(now_ms),
+                turn_id,
+            }
+        } else {
+            LiveAssistantPart::Text {
+                id,
+                text: delta.to_string(),
+                started_at: Some(now_ms),
+                completed_at: Some(now_ms),
+                turn_id,
+            }
+        };
+        self.text_index.insert(key, self.parts.len());
+        self.parts.push(part);
+    }
+
+    pub fn apply_tool_call(
+        &mut self,
+        part_id: Option<String>,
+        call_id: String,
+        name: String,
+        input: serde_json::Value,
+        turn_id: Option<String>,
+        now_ms: u64,
+    ) {
+        let key = part_id.clone().unwrap_or_else(|| call_id.clone());
+        let started_at = self
+            .tool_index
+            .get(&key)
+            .and_then(|&index| match &self.parts[index] {
+                LiveAssistantPart::ToolCall { started_at, .. } => *started_at,
+                _ => None,
+            })
+            .or(Some(now_ms));
+        let part = LiveAssistantPart::ToolCall {
+            part_id,
+            call_id,
+            name,
+            input,
+            started_at,
+            completed_at: Some(now_ms),
+            turn_id,
+        };
+        if let Some(&index) = self.tool_index.get(&key) {
+            self.parts[index] = part;
+        } else {
+            self.tool_index.insert(key, self.parts.len());
+            self.parts.push(part);
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -185,10 +342,97 @@ mod tests {
             parts: vec![LiveAssistantPart::Text {
                 id: "t".to_string(),
                 text: text.to_string(),
+                started_at: None,
+                completed_at: None,
                 turn_id: Some("stream-1".to_string()),
             }],
             run_started_at: 1,
         }
+    }
+
+    #[test]
+    fn live_parts_keep_old_json_without_timing() {
+        let part: LiveAssistantPart = serde_json::from_value(serde_json::json!({
+            "type": "text",
+            "id": "t",
+            "text": "hello",
+            "turnId": "stream-1"
+        }))
+        .unwrap();
+        assert_eq!(
+            part,
+            LiveAssistantPart::Text {
+                id: "t".into(),
+                text: "hello".into(),
+                started_at: None,
+                completed_at: None,
+                turn_id: Some("stream-1".into()),
+            }
+        );
+    }
+
+    #[test]
+    fn text_and_reasoning_record_start_once_and_update_end() {
+        let mut parts = LiveAssistantParts::default();
+        parts.apply_text_delta("text", "t".into(), "Hello", Some("turn".into()), 10);
+        parts.apply_text_delta("text", "t".into(), "!", Some("turn".into()), 25);
+        parts.apply_text_delta("reasoning", "r".into(), "think", Some("turn".into()), 11);
+        parts.apply_text_delta("reasoning", "r".into(), " more", Some("turn".into()), 40);
+
+        assert_eq!(
+            parts.parts,
+            vec![
+                LiveAssistantPart::Text {
+                    id: "t".into(),
+                    text: "Hello!".into(),
+                    started_at: Some(10),
+                    completed_at: Some(25),
+                    turn_id: Some("turn".into()),
+                },
+                LiveAssistantPart::Reasoning {
+                    id: "r".into(),
+                    text: "think more".into(),
+                    started_at: Some(11),
+                    completed_at: Some(40),
+                    turn_id: Some("turn".into()),
+                }
+            ]
+        );
+        assert_eq!(parts.items_json()[0]["startedAt"], serde_json::json!(10));
+    }
+
+    #[test]
+    fn tool_replacement_keeps_the_original_start() {
+        let mut parts = LiveAssistantParts::default();
+        parts.apply_tool_call(
+            Some("p1".into()),
+            "c1".into(),
+            "exec_command".into(),
+            serde_json::json!({"cmd": "echo"}),
+            Some("turn".into()),
+            50,
+        );
+        parts.apply_tool_call(
+            Some("p1".into()),
+            "c1".into(),
+            "exec_command".into(),
+            serde_json::json!({"cmd": "ls"}),
+            Some("turn".into()),
+            80,
+        );
+
+        assert_eq!(
+            parts.parts,
+            vec![LiveAssistantPart::ToolCall {
+                part_id: Some("p1".into()),
+                call_id: "c1".into(),
+                name: "exec_command".into(),
+                input: serde_json::json!({"cmd": "ls"}),
+                started_at: Some(50),
+                completed_at: Some(80),
+                turn_id: Some("turn".into()),
+            }]
+        );
     }
 
     #[tokio::test]

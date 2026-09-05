@@ -64,7 +64,13 @@ export function mergePagedTranscriptWithLive(args: {
 				parts.push(part);
 			}
 		}
-		const turnParts = live.parts.flatMap((part) => {
+		const previousParts = new Map(existing?.parts.map((part) => [partKey(part), part]));
+		const turnParts = live.parts.flatMap((incoming) => {
+			const previous = previousParts.get(partKey(incoming));
+			const part =
+				previous?.type === 'tool-call' && incoming.type === 'tool-call'
+					? { ...incoming, startedAt: incoming.startedAt ?? previous.startedAt }
+					: incoming;
 			const result = part.type === 'tool-call' ? results.get(part.callId) : undefined;
 			return result && !liveKeys.has(partKey(result)) ? [part, result] : [part];
 		});
