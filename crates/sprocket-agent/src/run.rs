@@ -113,7 +113,7 @@ fn build_workspace_preamble(
         let mut blocks = Vec::new();
         if !user_instructions.is_empty() {
             blocks.push(format!(
-                "# AGENTS.md specific to the user:\n<INSTRUCTIONS>\n{user_instructions}\n</INSTRUCTIONS>"
+                "# The user's AGENTS.md:\n<INSTRUCTIONS>\n{user_instructions}\n</INSTRUCTIONS>"
             ));
         }
         if !project_instructions.is_empty() {
@@ -201,11 +201,11 @@ fn build_workspace_preamble(
         "",
         "## AGENTS.md Spec",
         "",
-        "The user's `~/.agents/AGENTS.md` applies to every workspace and appears before repository instructions.",
         "AGENTS.md files can appear anywhere in the repository tree.",
         "Each AGENTS.md file applies to the directory tree rooted at the folder that contains it.",
         "Follow all applicable AGENTS.md instructions, with deeper files taking precedence.",
-        "The AGENTS.md instructions for the current workspace path are already included below and do not need to be re-read.",
+        "The user's `AGENTS.md`, located at `~/.agents/AGENTS.md`, applies to every workspace.",
+        "The user's AGENTS.md and the AGENTS.md for the current workspace path are already included below and do not need to be re-read.",
         "If you move into a deeper subdirectory before editing, check for additional nested AGENTS.md files there.",
         "",
         &instruction_block,
@@ -1015,7 +1015,7 @@ mod tests {
 
         let preamble = build_workspace_preamble("/tmp/project", &instructions, &[]);
 
-        let user_heading = "# AGENTS.md specific to the user:";
+        let user_heading = "# The user's AGENTS.md:";
         let workspace_heading = "# AGENTS.md instructions for /tmp/project:";
         assert!(preamble.contains(user_heading));
         assert!(preamble.contains(workspace_heading));
