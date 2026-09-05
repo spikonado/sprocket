@@ -19,8 +19,10 @@ pub use static_dir::{INSTALLED_WEB_DIR, resolve_static_dir};
 
 use std::io::ErrorKind;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context as _;
 use axum::Json;
@@ -34,11 +36,189 @@ use tokio::time::{Duration, sleep};
 use crate::transcript_watch::TranscriptWatchers;
 
 pub(crate) fn now_ms() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0)
+}
+
+fn reject_path_traversal(path: &Path) -> anyhow::Result<PathBuf> {
+    if path
+        .components()
+        .any(|component| component == std::path::Component::ParentDir)
+    {
+        anyhow::bail!("path must not contain '..'");
+    }
+    Ok(path.to_path_buf())
+}
+
+fn unique_json_sibling(path: &Path, kind: &str) -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    path.with_extension(format!("json.{kind}.{}.{seq}.{nanos}", std::process::id()))
+}
+
+fn parse_json_sibling(name: &str, file_name: &str, kind: &str) -> Option<(u128, u64, u32)> {
+    let prefix = format!("{file_name}.{kind}.");
+    let rest = name.strip_prefix(&prefix)?;
+    let mut parts = rest.split('.');
+    let pid: u32 = parts.next()?.parse().ok()?;
+    let seq: u64 = parts.next()?.parse().ok()?;
+    let nanos: u128 = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((nanos, seq, pid))
+}
+
+/// Restore `{name}.bak.{pid}.{seq}.{nanos}` when `path` is missing after an interrupted replace.
+async fn recover_stranded_json_bak(path: &Path) -> anyhow::Result<()> {
+    if tokio::fs::try_exists(path).await.unwrap_or(false) {
+        return Ok(());
+    }
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return Ok(());
+    };
+    let mut entries = match tokio::fs::read_dir(parent).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+
+    let mut newest: Option<((u128, u64, u32), PathBuf)> = None;
+    while let Some(entry) = entries.next_entry().await? {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let Some(key) = parse_json_sibling(name, file_name, "bak") else {
+            continue;
+        };
+        if !entry.file_type().await?.is_file() {
+            continue;
+        }
+        if newest.as_ref().is_none_or(|(best, _)| key > *best) {
+            newest = Some((key, entry.path()));
+        }
+    }
+
+    if let Some((_, bak)) = newest {
+        tokio::fs::rename(&bak, path).await?;
+    }
+    Ok(())
+}
+
+async fn resolve_atomic_write_path(path: &Path) -> anyhow::Result<PathBuf> {
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("failed to create parent directory {}", parent.display()))?;
+        if let Ok(canonical_parent) = parent.canonicalize() {
+            let file_name = path.file_name().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "atomic write path {} is missing a file name",
+                    path.display()
+                )
+            })?;
+            return reject_path_traversal(&canonical_parent.join(file_name));
+        }
+    }
+    reject_path_traversal(path)
+}
+
+/// Write `payload` to `path` via a unique sibling temp file then rename.
+pub(crate) async fn write_atomic(path: &Path, payload: &[u8]) -> anyhow::Result<()> {
+    let path = resolve_atomic_write_path(path).await?;
+    recover_stranded_json_bak(&path).await?;
+
+    let mut last_error = None;
+    let mut tmp = None;
+    for _ in 0..16 {
+        let candidate = reject_path_traversal(&unique_json_sibling(&path, "tmp"))?;
+        match tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+            .await
+        {
+            Ok(mut file) => {
+                use tokio::io::AsyncWriteExt;
+                if let Err(error) = async {
+                    file.write_all(payload).await?;
+                    file.flush().await?;
+                    anyhow::Ok(())
+                }
+                .await
+                {
+                    let _ = tokio::fs::remove_file(&candidate).await;
+                    return Err(error);
+                }
+                tmp = Some(candidate);
+                break;
+            }
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                last_error = Some(error);
+                continue;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    let tmp = tmp.ok_or_else(|| {
+        last_error
+            .map(anyhow::Error::from)
+            .unwrap_or_else(|| anyhow::anyhow!("failed to allocate staging path"))
+    })?;
+
+    match tokio::fs::rename(&tmp, &path).await {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            #[cfg(windows)]
+            {
+                if error.kind() == ErrorKind::AlreadyExists {
+                    return replace_existing_windows(&path, &tmp).await;
+                }
+            }
+            let _ = tokio::fs::remove_file(&tmp).await;
+            Err(error.into())
+        }
+    }
+}
+
+#[cfg(windows)]
+async fn replace_existing_windows(path: &Path, tmp: &Path) -> anyhow::Result<()> {
+    let bak = reject_path_traversal(&unique_json_sibling(path, "bak"))?;
+
+    match tokio::fs::rename(path, &bak).await {
+        Ok(()) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => {
+            let _ = tokio::fs::remove_file(tmp).await;
+            return Err(error.into());
+        }
+    }
+
+    match tokio::fs::rename(tmp, path).await {
+        Ok(()) => {
+            let _ = tokio::fs::remove_file(&bak).await;
+            Ok(())
+        }
+        Err(error) => {
+            match tokio::fs::rename(&bak, path).await {
+                Ok(()) => {
+                    let _ = tokio::fs::remove_file(tmp).await;
+                }
+                Err(_) => {}
+            }
+            Err(error.into())
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -342,5 +522,20 @@ mod tests {
             browser_launch_url("http://localhost:5173/", "secret", Some("/robot & tools")),
             "http://localhost:5173/pair#token=secret&workspace=%2Frobot+%26+tools"
         );
+    }
+
+    #[tokio::test]
+    async fn write_atomic_creates_missing_parent_with_parent_dir_components() {
+        let root = std::env::temp_dir().join(format!("sprocket-atomic-{}", now_ms()));
+        let existing = root.join("existing");
+        std::fs::create_dir_all(&existing).expect("create existing");
+        let path = existing
+            .join("..")
+            .join("missing-data")
+            .join("sessions.json");
+        write_atomic(&path, b"[]").await.expect("write");
+        let written = std::fs::read(root.join("missing-data").join("sessions.json")).expect("read");
+        assert_eq!(written, b"[]");
+        let _ = std::fs::remove_dir_all(root);
     }
 }

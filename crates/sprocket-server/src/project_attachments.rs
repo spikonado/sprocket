@@ -77,6 +77,7 @@ pub struct ProjectAttachmentStore {
     attachments: RwLock<HashMap<String, ProjectAttachmentRecord>>,
     loaded: RwLock<bool>,
     refresh_lock: Mutex<()>,
+    persist_lock: Mutex<()>,
 }
 
 impl ProjectAttachmentStore {
@@ -86,6 +87,7 @@ impl ProjectAttachmentStore {
             attachments: RwLock::new(HashMap::new()),
             loaded: RwLock::new(false),
             refresh_lock: Mutex::new(()),
+            persist_lock: Mutex::new(()),
         })
     }
 
@@ -232,13 +234,13 @@ impl ProjectAttachmentStore {
 
     async fn save_to_disk(&self) -> Result<()> {
         self.prune().await;
+        let _persist = self.persist_lock.lock().await;
         let store_path = self.data_dir.join(PROJECT_ATTACHMENTS_FILE);
         let payload = {
             let sessions = self.attachments.read().await;
             serde_json::to_string_pretty(&sessions.values().collect::<Vec<_>>())?
         };
-        tokio::fs::write(store_path, payload).await?;
-        Ok(())
+        crate::write_atomic(&store_path, payload.as_bytes()).await
     }
 
     async fn prune(&self) {
