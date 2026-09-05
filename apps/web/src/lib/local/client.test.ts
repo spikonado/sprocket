@@ -31,6 +31,31 @@ describe('workspace launch fragments', () => {
 	});
 });
 
+describe('projected transcript pages', () => {
+	it('uses the message endpoint without changing the legacy parts endpoint', async () => {
+		const fetch = vi.fn(async () =>
+			Response.json({
+				threadId: 'thread-1',
+				totalParts: 0,
+				historyFromNumber: 0,
+				stale: false,
+				messages: []
+			})
+		);
+		vi.stubGlobal('fetch', fetch);
+		const page = await createLocalClient('http://127.0.0.1:7731').fetchTranscriptPage({
+			userId: 'user-1',
+			threadId: threadRecordId('thread-1'),
+			limit: 12
+		});
+		expect(page.messages).toEqual([]);
+		expect(fetch).toHaveBeenCalledWith(
+			'http://127.0.0.1:7731/api/transcript/messages',
+			expect.objectContaining({ method: 'POST' })
+		);
+	});
+});
+
 describe('watchLiveCompletion', () => {
 	it('parses updated and cleared SSE events', async () => {
 		const overlay = {

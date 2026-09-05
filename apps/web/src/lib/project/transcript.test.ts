@@ -40,6 +40,53 @@ function live(): LiveCompletionOverlay {
 }
 
 describe('mergePagedTranscriptWithLive', () => {
+	it('keeps completed messages referentially stable on each streamed update', () => {
+		const old = message({ _id: 'prompt:run-1', type: 'prompt' });
+		const messages = mergePagedTranscriptWithLive({
+			messages: [old],
+			live: live(),
+			userId: 'user-1',
+			threadId
+		});
+		expect(messages[0]).toBe(old);
+	});
+
+	it('keeps the prior streamed turn visible until history acknowledges it', () => {
+		const previous = live();
+		const next = {
+			...live(),
+			streamId: 'stream-2',
+			parts: [{ type: 'text' as const, id: 'next', text: 'next', turnId: 'stream-2' }]
+		};
+		const args = { live: next, pending: [previous], userId: 'user-1', threadId };
+		const before = mergePagedTranscriptWithLive({ ...args, messages: [] });
+		expect(before[0].text).toBe('working\n\nnext');
+		const after = mergePagedTranscriptWithLive({
+			...args,
+			messages: [message({ parts: previous.parts })]
+		});
+		expect(after[0].text).toBe('working\n\nnext');
+		expect(after[0].sourceNumbers).toEqual([1]);
+	});
+
+	it('replaces streamed tool calls in place without moving their durable results', () => {
+		const call = { type: 'tool-call' as const, callId: 'call', name: 'exec_command', input: null };
+		const result = {
+			type: 'tool-result' as const,
+			callId: 'call',
+			name: 'exec_command',
+			output: 'done'
+		};
+		const messages = mergePagedTranscriptWithLive({
+			messages: [message({ streamIds: [], parts: [call, result], sourceNumbers: [1, 2] })],
+			live: { ...live(), parts: [{ ...call, input: { cmd: 'pwd' } }] },
+			userId: 'user-1',
+			threadId
+		});
+		expect(messages[0].parts.map((part) => part.type)).toEqual(['tool-call', 'tool-result']);
+		expect(messages[0].sourceNumbers).toEqual([1, 2]);
+	});
+
 	it('does not duplicate a response after its durable message arrives', () => {
 		expect(
 			mergePagedTranscriptWithLive({
@@ -63,6 +110,25 @@ describe('mergePagedTranscriptWithLive', () => {
 });
 
 describe('mergeTranscriptMessages', () => {
+	it('does not re-render immutable messages when the same source snapshot is refreshed', () => {
+		const current = message();
+		expect(mergeTranscriptMessages([current], [message()])[0]).toBe(current);
+	});
+
+	it('hydrates an older snapshot without erasing new output, and retains it on later refreshes', () => {
+		const reasoning = { type: 'reasoning' as const, id: 'reasoning', text: '' };
+		const latest = message({ sourceNumbers: [1, 2], parts: [reasoning, ...message().parts] });
+		const details = message({
+			sourceNumbers: [1],
+			detailsLoaded: true,
+			parts: [{ ...reasoning, text: 'details' }]
+		});
+		const merged = mergeTranscriptMessages([latest], [details]);
+		expect(merged[0].parts).toEqual([{ ...reasoning, text: 'details' }, ...message().parts]);
+		expect(merged[0].sourceNumbers).toEqual([1, 2]);
+		expect(merged[0].detailsLoaded).toBe(false);
+		expect(mergeTranscriptMessages(merged, [latest])[0].parts).toEqual(merged[0].parts);
+	});
 	it('merges pages by message id and source order', () => {
 		const newer = message({ _id: 'prompt:run-2', type: 'prompt', sourceNumbers: [4] });
 		const older = message({ _id: 'prompt:run-1', type: 'prompt', sourceNumbers: [0] });

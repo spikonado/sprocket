@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { ChevronRight } from '@lucide/svelte';
-	import type { Snippet } from 'svelte';
+	import { untrack, type Snippet } from 'svelte';
 	import { createInProgressDisclosure } from '$lib/components/home/in-progress-disclosure.svelte';
 	import { formatElapsedDuration } from '$lib/format';
 
@@ -12,18 +12,37 @@
 		completedAtMs?: number;
 		children: Snippet;
 		onExpand?: () => void | Promise<void>;
+		detailsKey?: string;
 	};
 
-	let { inProgress, startedAtMs, completedAtMs, children, onExpand }: Props = $props();
+	let { inProgress, startedAtMs, completedAtMs, children, onExpand, detailsKey }: Props = $props();
+	let loading = $state(false);
+	let loadError = $state(false);
 
 	function toggle() {
-		const expanding = !disclosure.expanded;
 		disclosure.toggle();
-		if (expanding) void onExpand?.();
 	}
 
 	let elapsedSeconds = $state(0);
 	const disclosure = createInProgressDisclosure(() => inProgress);
+
+	$effect(() => {
+		void detailsKey;
+		if (!disclosure.expanded) return;
+		let cancelled = false;
+		loading = true;
+		loadError = false;
+		void Promise.resolve(untrack(() => onExpand?.()))
+			.catch(() => {
+				if (!cancelled) loadError = true;
+			})
+			.finally(() => {
+				if (!cancelled) loading = false;
+			});
+		return () => {
+			cancelled = true;
+		};
+	});
 
 	$effect(() => {
 		const start = startedAtMs;
@@ -65,6 +84,8 @@
 	</button>
 	{#if disclosure.expanded}
 		<div class="mt-1.5 space-y-2">
+			{#if loading}<p role="status">Loading details…</p>{/if}
+			{#if loadError}<p role="status">Could not load details. Close and reopen to retry.</p>{/if}
 			{@render children()}
 		</div>
 	{/if}

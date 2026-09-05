@@ -35,6 +35,18 @@ struct TranscriptPageRequest {
     limit: Option<u32>,
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacyTranscriptPage {
+    thread_id: String,
+    total_parts: u32,
+    history_from_number: u32,
+    stale: bool,
+    parts: Vec<sprocket_agent::TranscriptPart>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_before: Option<u32>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TranscriptAttachmentRequest {
@@ -53,11 +65,41 @@ struct TranscriptDetailsRequest {
 
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
-        .route("/transcript/page", post(page_handler))
+        .route("/transcript/page", post(legacy_page_handler))
+        .route("/transcript/messages", post(page_handler))
         .route("/transcript/watch", post(watch_handler))
         .route("/transcript/details", post(details_handler))
         .route("/transcript/clear", post(clear_handler))
         .route("/transcript/attachment", post(attachment_handler))
+}
+
+async fn legacy_page_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(payload): Json<TranscriptPageRequest>,
+) -> Result<Json<LegacyTranscriptPage>, ApiError> {
+    let user_id = payload.user_id.clone();
+    let thread_id = payload.thread_id.clone();
+    let Json(page) = page_handler(State(state.clone()), headers, jar, Json(payload)).await?;
+    let numbers = page
+        .messages
+        .iter()
+        .flat_map(|message| message.source_numbers.iter().copied())
+        .collect::<Vec<_>>();
+    let parts = state
+        .transcript
+        .read_parts(&user_id, &thread_id, &numbers)
+        .await
+        .map_err(|error| ApiError::internal_with("failed to read legacy transcript", error))?;
+    Ok(Json(LegacyTranscriptPage {
+        thread_id: page.thread_id,
+        total_parts: page.total_parts,
+        history_from_number: page.history_from_number,
+        stale: page.stale,
+        parts,
+        next_before: page.next_before,
+    }))
 }
 
 async fn details_handler(
@@ -67,7 +109,7 @@ async fn details_handler(
     Json(payload): Json<TranscriptDetailsRequest>,
 ) -> Result<Json<sprocket_agent::TranscriptMessage>, ApiError> {
     require_session_user(&state, &headers, &jar, &payload.user_id).await?;
-    if payload.numbers.is_empty() || payload.numbers.len() > 1_000 {
+    if payload.numbers.is_empty() {
         return Err(ApiError::bad_request(anyhow!(
             "invalid transcript detail range"
         )));
@@ -147,9 +189,13 @@ async fn page_handler(
         .limit
         .unwrap_or(TRANSCRIPT_PAGE_SIZE)
         .clamp(1, TRANSCRIPT_CHUNK_SIZE);
+    let end = payload
+        .before
+        .unwrap_or_else(|| transcript_state.visible_end_exclusive())
+        .min(transcript_state.visible_end_exclusive());
     if !state
         .transcript
-        .has_complete_message_page(&payload.user_id, &payload.thread_id, payload.before, limit)
+        .has_complete_message_page(&payload.user_id, &payload.thread_id, Some(end), limit)
         .await
         .map_err(|error| ApiError::internal_with("failed to inspect transcript history", error))?
     {
@@ -163,10 +209,6 @@ async fn page_handler(
         .map_err(|error| {
             ApiError::internal_with("failed to connect while loading transcript history", error)
         })?;
-        let end = payload
-            .before
-            .unwrap_or_else(|| transcript_state.visible_end_exclusive())
-            .min(transcript_state.visible_end_exclusive());
         let mut scan_end = end;
         let mut parts = Vec::new();
         loop {
@@ -189,6 +231,12 @@ async fn page_handler(
                 .map_err(|error| {
                     ApiError::internal_with("failed to read transcript history", error)
                 })?;
+            if batch.len() != numbers.len() {
+                return Err(ApiError::internal_with(
+                    "incomplete transcript history",
+                    anyhow!("transcript parts are not yet available; retry the page"),
+                ));
+            }
             batch.append(&mut parts);
             parts = batch;
             if sprocket_agent::message_page_start(&parts, limit, start == 0).is_some() || start == 0
@@ -204,7 +252,7 @@ async fn page_handler(
         .page(
             &payload.user_id,
             &payload.thread_id,
-            payload.before,
+            Some(end),
             payload.limit,
         )
         .await

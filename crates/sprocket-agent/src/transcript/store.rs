@@ -2,9 +2,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{Context, anyhow};
+use anyhow::Context;
 use serde_json::Value as JsonValue;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
 use super::types::{
@@ -132,40 +132,69 @@ impl TranscriptStore {
         let lock = self.lock_thread(user_id, thread_id).await;
         let _guard = lock.lock().await;
         let mut state = self.load_state(user_id, thread_id).await?;
-        for part in parts {
-            self.write_part_unlocked(user_id, thread_id, part).await?;
-            state.mark_downloaded(&[part.number]);
+        self.write_parts_unlocked(user_id, thread_id, parts).await?;
+        if !parts.is_empty() {
+            let numbers = parts.iter().map(|part| part.number).collect::<Vec<_>>();
+            state.mark_downloaded(&numbers);
         }
         self.write_state(user_id, thread_id, &state).await?;
         Ok(state)
     }
 
-    async fn write_part_unlocked(
+    async fn write_parts_unlocked(
         &self,
         user_id: &str,
         thread_id: &str,
-        part: &TranscriptPart,
+        parts: &[TranscriptPart],
     ) -> anyhow::Result<()> {
-        let dir = self.thread_dir(user_id, thread_id).join("parts");
-        tokio::fs::create_dir_all(&dir).await?;
-        let path = chunk_path(&dir, part.number);
-        recover_chunk(&path).await?;
-        let existing = read_chunk_parts(&path).await?;
-        if existing
-            .iter()
-            .any(|candidate| candidate.number == part.number)
-        {
+        if parts.is_empty() {
             return Ok(());
         }
-        let mut file = tokio::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .await?;
-        let mut line = serde_json::to_string(&part.without_ephemeral_urls())?;
-        line.push('\n');
-        file.write_all(line.as_bytes()).await?;
-        file.flush().await?;
+        let dir = self.thread_dir(user_id, thread_id).join("parts");
+        tokio::fs::create_dir_all(&dir).await?;
+        let mut grouped: HashMap<u32, Vec<&TranscriptPart>> = HashMap::new();
+        let mut starts = Vec::new();
+        for part in parts {
+            let start = chunk_start(part.number);
+            grouped
+                .entry(start)
+                .or_insert_with(|| {
+                    starts.push(start);
+                    Vec::new()
+                })
+                .push(part);
+        }
+        for start in starts {
+            let path = chunk_path(&dir, start);
+            let existing = recover_and_read_chunk(&path).await?;
+            let mut seen = existing
+                .into_iter()
+                .map(|part| part.number)
+                .collect::<HashSet<_>>();
+            let mut file = None;
+            for part in grouped
+                .remove(&start)
+                .expect("chunk start was recorded while grouping")
+            {
+                if !seen.insert(part.number) {
+                    continue;
+                }
+                if file.is_none() {
+                    file = Some(
+                        tokio::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(&path)
+                            .await?,
+                    );
+                }
+                let mut line = serde_json::to_string(&part.without_ephemeral_urls())?;
+                line.push('\n');
+                let file = file.as_mut().expect("append file opened above");
+                file.write_all(line.as_bytes()).await?;
+                file.flush().await?;
+            }
+        }
         Ok(())
     }
 
@@ -179,19 +208,13 @@ impl TranscriptStore {
         let _guard = lock.lock().await;
         let dir = self.thread_dir(user_id, thread_id).join("parts");
         let mut by_number = HashMap::new();
-        let mut loaded_chunks = HashMap::new();
+        let mut loaded_chunks = HashSet::new();
         for &number in numbers {
             let start = chunk_start(number);
-            if !loaded_chunks.contains_key(&start) {
-                let path = chunk_path(&dir, number);
-                recover_chunk(&path).await?;
-                loaded_chunks.insert(start, read_chunk_parts(&path).await?);
-            }
-            if let Some(part) = loaded_chunks
-                .get(&start)
-                .and_then(|parts| parts.iter().find(|part| part.number == number))
-            {
-                by_number.insert(number, part.clone());
+            if loaded_chunks.insert(start) {
+                for part in recover_and_read_chunk(&chunk_path(&dir, number)).await? {
+                    by_number.entry(part.number).or_insert(part);
+                }
             }
         }
         Ok(numbers
@@ -213,7 +236,9 @@ impl TranscriptStore {
             .clamp(1, TRANSCRIPT_CHUNK_SIZE);
         // Compaction limits model context, not what the user may scroll back to.
         let history_from = 0;
-        let end_exclusive = before.unwrap_or_else(|| state.visible_end_exclusive());
+        let end_exclusive = before
+            .unwrap_or_else(|| state.visible_end_exclusive())
+            .min(state.visible_end_exclusive());
         if end_exclusive <= history_from {
             return Ok(TranscriptPage {
                 thread_id: thread_id.to_string(),
@@ -240,12 +265,8 @@ impl TranscriptStore {
             }
             scan_end = scan_start;
         };
-        let page_parts = parts
-            .iter()
-            .filter(|part| part.number >= start)
-            .cloned()
-            .collect::<Vec<_>>();
-        let messages = project_messages(user_id, thread_id, &page_parts, false);
+        parts.retain(|part| part.number >= start);
+        let messages = project_messages(user_id, thread_id, parts, false);
         Ok(TranscriptPage {
             thread_id: thread_id.to_string(),
             total_parts: state.remote_total_parts,
@@ -299,7 +320,7 @@ impl TranscriptStore {
         if parts.len() != numbers.len() {
             return Ok(None);
         }
-        let mut messages = project_messages(user_id, thread_id, &parts, true);
+        let mut messages = project_messages(user_id, thread_id, parts, true);
         if messages.len() != 1 {
             return Ok(None);
         }
@@ -548,14 +569,13 @@ pub fn message_page_start(
 fn project_messages(
     user_id: &str,
     thread_id: &str,
-    parts: &[TranscriptPart],
+    mut parts: Vec<TranscriptPart>,
     include_details: bool,
 ) -> Vec<TranscriptMessage> {
-    let mut ordered = parts.to_vec();
-    ordered.sort_by_key(|part| part.number);
+    parts.sort_by_key(|part| part.number);
     let mut messages = Vec::new();
     let mut applied_terminal_tools = HashSet::new();
-    for part in ordered {
+    for part in parts {
         match part.kind {
             TranscriptPartKind::Prompt => {
                 if let Some(prompt) = part.prompt {
@@ -628,7 +648,9 @@ fn project_messages(
                             }
                             Some("tool-result") if !include_details => {
                                 if let Some(object) = item.as_object_mut() {
-                                    object.insert("output".to_string(), JsonValue::Null);
+                                    let output = object.remove("output").unwrap_or(JsonValue::Null);
+                                    object
+                                        .insert("output".to_string(), tool_output_summary(output));
                                     object.remove("providerMetadata");
                                 }
                             }
@@ -671,12 +693,15 @@ fn project_messages(
                         let mut result = serde_json::json!({
                             "type": "tool-result", "callId": tool.call_id, "name": tool.name
                         });
-                        if include_details {
-                            result.as_object_mut().expect("object").insert(
-                                "output".to_string(),
-                                tool.output.unwrap_or(JsonValue::Null),
-                            );
-                        }
+                        let output = tool.output.unwrap_or(JsonValue::Null);
+                        result.as_object_mut().expect("object").insert(
+                            "output".to_string(),
+                            if include_details {
+                                output
+                            } else {
+                                tool_output_summary(output)
+                            },
+                        );
                         if let Some(index) = response.parts.iter().position(|item| {
                             item.get("type").and_then(JsonValue::as_str) == Some("tool-result")
                                 && item.get("callId").and_then(JsonValue::as_str)
@@ -698,6 +723,26 @@ fn project_messages(
         }
     }
     messages
+}
+
+fn tool_output_summary(output: JsonValue) -> JsonValue {
+    let JsonValue::Object(mut object) = output else {
+        return JsonValue::Null;
+    };
+    object.retain(|key, _| {
+        matches!(
+            key.as_str(),
+            "status"
+                | "error"
+                | "sessionId"
+                | "running"
+                | "command"
+                | "exitCode"
+                | "mandateId"
+                | "approvalUrl"
+        )
+    });
+    JsonValue::Object(object)
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -730,8 +775,7 @@ async fn storage_ids_from_parts_dir(parts_dir: &Path) -> anyhow::Result<HashSet<
         if entry.path().extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
             continue;
         }
-        recover_chunk(&entry.path()).await?;
-        for part in read_chunk_parts(&entry.path()).await? {
+        for part in recover_and_read_chunk(&entry.path()).await? {
             if let Some(prompt) = &part.prompt {
                 for upload in &prompt.image_uploads {
                     ids.insert(upload.storage_id.clone());
@@ -742,50 +786,32 @@ async fn storage_ids_from_parts_dir(parts_dir: &Path) -> anyhow::Result<HashSet<
     Ok(ids)
 }
 
-async fn recover_chunk(path: &Path) -> anyhow::Result<()> {
+async fn recover_and_read_chunk(path: &Path) -> anyhow::Result<Vec<TranscriptPart>> {
     if !tokio::fs::try_exists(path).await? {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let contents = tokio::fs::read(path).await?;
     if contents.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let text = String::from_utf8_lossy(&contents);
     let mut valid = String::new();
+    let mut parts = Vec::new();
     for line in text.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
-        if serde_json::from_str::<TranscriptPart>(trimmed).is_ok() {
+        if let Ok(part) = serde_json::from_str::<TranscriptPart>(trimmed) {
             valid.push_str(trimmed);
             valid.push('\n');
+            parts.push(part);
         }
     }
     if valid.as_bytes() != contents {
         let tmp = path.with_extension("jsonl.tmp");
         tokio::fs::write(&tmp, valid.as_bytes()).await?;
         tokio::fs::rename(&tmp, path).await?;
-    }
-    Ok(())
-}
-
-async fn read_chunk_parts(path: &Path) -> anyhow::Result<Vec<TranscriptPart>> {
-    if !tokio::fs::try_exists(path).await? {
-        return Ok(Vec::new());
-    }
-    let file = tokio::fs::File::open(path).await?;
-    let mut lines = BufReader::new(file).lines();
-    let mut parts = Vec::new();
-    while let Some(line) = lines.next_line().await? {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        match serde_json::from_str::<TranscriptPart>(trimmed) {
-            Ok(part) => parts.push(part),
-            Err(error) => return Err(anyhow!("invalid transcript chunk line: {error}")),
-        }
     }
     Ok(parts)
 }
@@ -852,18 +878,35 @@ mod tests {
     #[test]
     fn projection_omits_disclosure_payloads_until_requested() {
         let part = completion(0);
-        let summary = project_messages("user", "thread", std::slice::from_ref(&part), false);
+        let summary = project_messages("user", "thread", vec![part.clone()], false);
         assert_eq!(summary[0].text, "answer");
         assert_eq!(summary[0].parts[0]["text"], "");
         assert!(summary[0].parts[1]["input"].is_null());
         assert!(summary[0].parts[2]["output"].is_null());
         assert!(!summary[0].details_loaded);
 
-        let details = project_messages("user", "thread", &[part], true);
+        let details = project_messages("user", "thread", vec![part], true);
         assert_eq!(details[0].parts[0]["text"], "secret");
         assert_eq!(details[0].parts[1]["input"]["cmd"], "pwd");
         assert_eq!(details[0].parts[2]["output"], "secret output");
         assert!(details[0].details_loaded);
+    }
+
+    #[test]
+    fn lightweight_tools_keep_terminal_state_sessions_and_approvals() {
+        let mut part = completion(0);
+        part.completion.as_mut().unwrap().items[2]["output"] = serde_json::json!({
+            "sessionId": "session", "running": true, "command": "sleep 10",
+            "status": "failed", "error": "failure", "output": "large log",
+            "mandateId": "mandate", "approvalUrl": "https://example.com/approve"
+        });
+        let messages = project_messages("user", "thread", vec![part], false);
+        let output = &messages[0].parts[2]["output"];
+        assert_eq!(output["running"], true);
+        assert_eq!(output["sessionId"], "session");
+        assert_eq!(output["error"], "failure");
+        assert_eq!(output["approvalUrl"], "https://example.com/approve");
+        assert!(output.get("output").is_none());
     }
 
     #[tokio::test]
@@ -995,6 +1038,53 @@ mod tests {
         assert_eq!(
             store.missing_numbers("user", "thread", 0, 2).await.unwrap(),
             vec![1]
+        );
+        let _ = tokio::fs::remove_dir_all(dir).await;
+    }
+
+    #[tokio::test]
+    async fn append_parts_keeps_the_first_write_for_a_number() {
+        let dir =
+            std::env::temp_dir().join(format!("sprocket-transcript-dup-{}", uuid::Uuid::new_v4()));
+        let store = TranscriptStore::new(dir.clone());
+        store
+            .append_parts(
+                "user",
+                "thread",
+                &[prompt(0, "first"), prompt(0, "dup"), prompt(1, "second")],
+            )
+            .await
+            .unwrap();
+        store
+            .append_parts(
+                "user",
+                "thread",
+                &[prompt(1, "ignored"), prompt(2, "third")],
+            )
+            .await
+            .unwrap();
+        let parts = store
+            .read_parts("user", "thread", &[0, 1, 2])
+            .await
+            .unwrap();
+        assert_eq!(
+            parts
+                .iter()
+                .map(|part| part.prompt.as_ref().unwrap().text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["first", "second", "third"]
+        );
+        let chunk = store
+            .thread_dir("user", "thread")
+            .join("parts")
+            .join("00000000.jsonl");
+        let contents = tokio::fs::read_to_string(&chunk).await.unwrap();
+        assert_eq!(
+            contents
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .count(),
+            3
         );
         let _ = tokio::fs::remove_dir_all(dir).await;
     }

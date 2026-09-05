@@ -554,7 +554,7 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 			return { runId: asConvexId(result.runId), threadId: asConvexId(result.threadId) };
 		},
 		fetchTranscriptPage: async (requestBody) => {
-			const page = await request('/api/transcript/page', localTranscriptPageSchema, {
+			const page = await request('/api/transcript/messages', localTranscriptPageSchema, {
 				method: 'POST',
 				body: JSON.stringify(requestBody)
 			});
