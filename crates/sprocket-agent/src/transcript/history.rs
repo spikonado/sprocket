@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::reasoning::{opaque_encrypted, skip_reasoning_on_reload};
 use crate::transcript::types::{TranscriptPart, TranscriptPartKind, TranscriptToolBody};
 use crate::types::{
     AgentHistoryContent, AgentHistoryMessage, AgentHistoryRole, AgentHistoryToolResultItem,
@@ -179,6 +180,11 @@ pub fn agent_history_from_parts(
                     let mut contents = Vec::new();
                     for item in &completion.items {
                         if let Some(content) = completion_item_to_history(item) {
+                            if matches!(content, AgentHistoryContent::Reasoning { .. })
+                                && skip_reasoning_on_reload(state.context_summary.as_deref())
+                            {
+                                continue;
+                            }
                             contents.push(content);
                         }
                     }
@@ -234,12 +240,14 @@ fn completion_item_to_history(item: &serde_json::Value) -> Option<AgentHistoryCo
                 .unwrap_or("");
             let item_id = openai_field(item, "itemId")
                 .and_then(|value| value.as_str())
+                .and_then(|id| opaque_encrypted(Some(id)))
                 .map(str::to_string);
-            let encrypted =
-                openai_field(item, "reasoningEncryptedContent").and_then(|value| value.as_str());
+            let encrypted = opaque_encrypted(
+                openai_field(item, "reasoningEncryptedContent").and_then(|value| value.as_str()),
+            );
             let mut blocks = Vec::new();
             if !text.is_empty() {
-                blocks.push(serde_json::json!({ "type": "text", "content": { "text": text } }));
+                blocks.push(serde_json::json!({ "type": "summary", "content": text }));
             }
             if let Some(content) = encrypted {
                 blocks.push(serde_json::json!({ "type": "encrypted", "content": content }));
@@ -645,5 +653,141 @@ mod tests {
         assert!(serialized.contains("rs_123"));
         assert!(serialized.contains("encrypted"));
         assert!(serialized.contains("enc"));
+    }
+
+    fn reasoning_completion(number: u32, item: serde_json::Value) -> TranscriptPart {
+        TranscriptPart {
+            number,
+            source_key: format!("completion:{number}"),
+            kind: TranscriptPartKind::Completion,
+            run_id: "run".into(),
+            created_at: None,
+            prompt: None,
+            completion: Some(TranscriptCompletionBody {
+                stream_id: Some("s".into()),
+                items: vec![item],
+            }),
+            tool: None,
+        }
+    }
+
+    #[test]
+    fn reloads_empty_opaque_reasoning_without_inventing_ciphertext() {
+        let state = TranscriptState::new("user".into(), "thread".into());
+        let history = agent_history_from_parts(
+            &state,
+            &[reasoning_completion(
+                0,
+                serde_json::json!({
+                    "type": "reasoning",
+                    "text": "",
+                    "providerMetadata": {
+                        "openai": {
+                            "itemId": "rs_empty",
+                            "reasoningEncryptedContent": ""
+                        }
+                    }
+                }),
+            )],
+            None,
+        );
+        assert_eq!(history.len(), 1);
+        match &history[0].contents[0] {
+            AgentHistoryContent::Reasoning { id, blocks_json } => {
+                assert_eq!(id.as_deref(), Some("rs_empty"));
+                assert_eq!(blocks_json, "[]");
+            }
+            other => panic!("expected empty signed reasoning, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compaction_reload_drops_all_loaded_reasoning_regardless_of_part_number() {
+        // A context summary is not proof the retained prefix is unchanged.
+        // In-flight old generations can commit later, and in-memory compaction
+        // can replace current-run text while historyFromNumber only drops the
+        // prior run. Fail closed: drop every loaded reasoning item.
+        let mut state = TranscriptState::new("user".into(), "thread".into());
+        state.context_summary = Some("Prior work is done.".into());
+        state.history_from_number = 1;
+        let history = agent_history_from_parts(
+            &state,
+            &[
+                prompt(0, "old", "covered"),
+                reasoning_completion(
+                    1,
+                    serde_json::json!({
+                        "type": "reasoning",
+                        "text": "stale-tail",
+                        "providerMetadata": {
+                            "openai": {
+                                "itemId": "rs_tail",
+                                "reasoningEncryptedContent": "tail-envelope"
+                            }
+                        }
+                    }),
+                ),
+                reasoning_completion(
+                    3,
+                    serde_json::json!({
+                        "type": "reasoning",
+                        "text": "also-stale",
+                        "providerMetadata": {
+                            "openai": {
+                                "itemId": "rs_later",
+                                "reasoningEncryptedContent": "later-envelope"
+                            }
+                        }
+                    }),
+                ),
+            ],
+            None,
+        );
+        let serialized = format!("{history:?}");
+        assert!(serialized.contains("Prior work is done."));
+        assert!(!serialized.contains("rs_tail"));
+        assert!(!serialized.contains("tail-envelope"));
+        assert!(!serialized.contains("rs_later"));
+        assert!(!serialized.contains("later-envelope"));
+    }
+
+    #[test]
+    fn compaction_reload_keeps_text_while_dropping_reasoning() {
+        let mut state = TranscriptState::new("user".into(), "thread".into());
+        state.context_summary = Some("Prior work is done.".into());
+        state.history_from_number = 1;
+        let history = agent_history_from_parts(
+            &state,
+            &[TranscriptPart {
+                number: 1,
+                source_key: "completion:1".into(),
+                kind: TranscriptPartKind::Completion,
+                created_at: None,
+                run_id: "run".into(),
+                prompt: None,
+                completion: Some(TranscriptCompletionBody {
+                    stream_id: Some("s".into()),
+                    items: vec![
+                        serde_json::json!({
+                            "type": "reasoning",
+                            "text": "stale",
+                            "providerMetadata": {
+                                "openai": {
+                                    "itemId": "rs_old",
+                                    "reasoningEncryptedContent": "old-envelope"
+                                }
+                            }
+                        }),
+                        serde_json::json!({ "type": "text", "text": "kept answer" }),
+                    ],
+                }),
+                tool: None,
+            }],
+            None,
+        );
+        let serialized = format!("{history:?}");
+        assert!(serialized.contains("kept answer"));
+        assert!(!serialized.contains("rs_old"));
+        assert!(!serialized.contains("old-envelope"));
     }
 }

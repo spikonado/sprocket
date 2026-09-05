@@ -82,13 +82,6 @@ impl LiveAssistantParts {
         self.tool_index.clear();
     }
 
-    pub fn items_json(&self) -> Vec<serde_json::Value> {
-        self.parts
-            .iter()
-            .map(|part| serde_json::to_value(part).expect("live assistant parts always serialize"))
-            .collect()
-    }
-
     pub fn apply_text_delta(
         &mut self,
         event_type: &str,
@@ -190,6 +183,38 @@ impl LiveAssistantParts {
             self.tool_index.insert(key, self.parts.len());
             self.parts.push(part);
         }
+    }
+
+    pub fn apply_completed_reasoning(
+        &mut self,
+        id: String,
+        text: String,
+        turn_id: Option<String>,
+        now_ms: u64,
+    ) {
+        let key = format!("reasoning:{id}");
+        if let Some(&index) = self.text_index.get(&key) {
+            if let LiveAssistantPart::Reasoning {
+                text: existing,
+                completed_at,
+                turn_id: existing_turn,
+                ..
+            } = &mut self.parts[index]
+            {
+                *existing = text;
+                *completed_at = Some(now_ms);
+                *existing_turn = turn_id;
+                return;
+            }
+        }
+        self.text_index.insert(key, self.parts.len());
+        self.parts.push(LiveAssistantPart::Reasoning {
+            id,
+            text,
+            started_at: Some(now_ms),
+            completed_at: Some(now_ms),
+            turn_id,
+        });
     }
 }
 
@@ -398,7 +423,10 @@ mod tests {
                 }
             ]
         );
-        assert_eq!(parts.items_json()[0]["startedAt"], serde_json::json!(10));
+        assert_eq!(
+            serde_json::to_value(&parts.parts).unwrap()[0]["startedAt"],
+            serde_json::json!(10)
+        );
     }
 
     #[test]
@@ -432,6 +460,80 @@ mod tests {
                 completed_at: Some(80),
                 turn_id: Some("turn".into()),
             }]
+        );
+    }
+
+    #[test]
+    fn completed_reasoning_keeps_delta_start_and_sets_end() {
+        let mut parts = LiveAssistantParts::default();
+        parts.apply_text_delta("reasoning", "s:c".into(), "partial", Some("s".into()), 10);
+        parts.apply_completed_reasoning("s:c".into(), "done".into(), Some("s".into()), 50);
+
+        assert_eq!(
+            parts.parts,
+            vec![LiveAssistantPart::Reasoning {
+                id: "s:c".into(),
+                text: "done".into(),
+                started_at: Some(10),
+                completed_at: Some(50),
+                turn_id: Some("s".into()),
+            }]
+        );
+    }
+
+    #[test]
+    fn empty_completed_reasoning_sets_start_and_end() {
+        let mut parts = LiveAssistantParts::default();
+        parts.apply_completed_reasoning("s:c".into(), String::new(), Some("s".into()), 70);
+
+        assert_eq!(
+            parts.parts,
+            vec![LiveAssistantPart::Reasoning {
+                id: "s:c".into(),
+                text: String::new(),
+                started_at: Some(70),
+                completed_at: Some(70),
+                turn_id: Some("s".into()),
+            }]
+        );
+    }
+
+    #[test]
+    fn completed_reasoning_appends_when_indexed_slot_is_not_reasoning() {
+        let mut parts = LiveAssistantParts::default();
+        parts.apply_text_delta("reasoning", "s:c".into(), "stale", Some("s".into()), 10);
+        parts.parts[0] = LiveAssistantPart::ToolCall {
+            part_id: Some("p1".into()),
+            call_id: "c1".into(),
+            name: "exec_command".into(),
+            input: serde_json::json!({"cmd": "pwd"}),
+            started_at: Some(10),
+            completed_at: Some(10),
+            turn_id: Some("s".into()),
+        };
+        parts.apply_completed_reasoning("s:c".into(), "late".into(), Some("s".into()), 90);
+        parts.apply_completed_reasoning("s:c".into(), "late again".into(), Some("s".into()), 95);
+
+        assert_eq!(
+            parts.parts,
+            vec![
+                LiveAssistantPart::ToolCall {
+                    part_id: Some("p1".into()),
+                    call_id: "c1".into(),
+                    name: "exec_command".into(),
+                    input: serde_json::json!({"cmd": "pwd"}),
+                    started_at: Some(10),
+                    completed_at: Some(10),
+                    turn_id: Some("s".into()),
+                },
+                LiveAssistantPart::Reasoning {
+                    id: "s:c".into(),
+                    text: "late again".into(),
+                    started_at: Some(90),
+                    completed_at: Some(95),
+                    turn_id: Some("s".into()),
+                }
+            ]
         );
     }
 

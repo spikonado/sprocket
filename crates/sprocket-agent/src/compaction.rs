@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -12,6 +13,9 @@ use tokio::time::timeout;
 
 use crate::convex::RuntimeClient;
 use crate::history_json::completion_messages_json;
+use crate::reasoning::{
+    kept_suffix_raw_indices, strip_assistant_reasoning, strip_pre_compaction_reasoning,
+};
 use crate::types::{ContextBudget, gateway_api_v1_url};
 
 const CONTEXT_USAGE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -37,6 +41,8 @@ const COMPACTED_CONTEXT_PREAMBLE: &str = "The conversation context was automatic
 struct CompactedContext {
     summary: String,
     replaced_prefix_len: usize,
+    /// Raw length when this summary was written. Suffix reasoning before this index is dropped.
+    reasoning_from_len: usize,
 }
 
 #[derive(Debug, Default)]
@@ -56,6 +62,7 @@ pub(crate) struct ContextCompactionHook {
     context_budget: ContextBudget,
     prior_history_len: usize,
     gateway_url: String,
+    persist_reasoning_replay: Arc<AtomicBool>,
     state: Arc<Mutex<CompactionState>>,
 }
 
@@ -70,6 +77,7 @@ impl ContextCompactionHook {
         context_budget: ContextBudget,
         prior_history_len: usize,
         gateway_url: String,
+        persist_reasoning_replay: Arc<AtomicBool>,
     ) -> Self {
         Self {
             runtime,
@@ -81,6 +89,7 @@ impl ContextCompactionHook {
             context_budget,
             prior_history_len,
             gateway_url,
+            persist_reasoning_replay,
             state: Arc::new(Mutex::new(CompactionState::default())),
         }
     }
@@ -162,7 +171,8 @@ impl ContextCompactionHook {
             (state.last_input_tokens, state.active_summary.clone())
         };
 
-        let effective_history = rebuild_effective_history(history, active_summary.as_ref());
+        let (effective_history, suffix_raw) =
+            rebuild_effective_history(history, active_summary.as_ref());
         if !should_compact(
             last_input_tokens,
             self.context_budget.auto_compact_token_limit,
@@ -175,6 +185,7 @@ impl ContextCompactionHook {
             active_summary.as_ref(),
             self.prior_history_len,
             history.len(),
+            &suffix_raw,
         );
         let split = choose_split_index(
             &effective_history,
@@ -186,7 +197,9 @@ impl ContextCompactionHook {
         }
 
         let prefix = &effective_history[..split];
-        let tail = effective_history[split..].to_vec();
+        let mut tail = effective_history[split..].to_vec();
+        let tail_len = tail.len();
+        strip_pre_compaction_reasoning(&mut tail, 0, tail_len);
         let messages_json = match completion_messages_json(prefix.iter()) {
             Ok(value) => value.to_string(),
             Err(error) => {
@@ -213,7 +226,7 @@ impl ContextCompactionHook {
         let summary_text = summary;
         let compacted_summary = context_summary_text(&summary_text);
         let replaced_prefix_len =
-            next_replaced_prefix_len(active_summary.as_ref(), history.len(), split);
+            next_replaced_prefix_len(active_summary.as_ref(), history.len(), split, &suffix_raw);
         let persist_for_future_runs =
             should_persist_for_future_runs(self.prior_history_len, replaced_prefix_len);
 
@@ -247,8 +260,11 @@ impl ContextCompactionHook {
             state.active_summary = Some(CompactedContext {
                 summary: summary_text,
                 replaced_prefix_len,
+                reasoning_from_len: history.len(),
             });
         }
+        self.persist_reasoning_replay
+            .store(false, Ordering::Release);
 
         let mut compacted = vec![Message::user(compacted_summary)];
         compacted.extend(tail);
@@ -356,30 +372,43 @@ fn continue_with_history(has_active_summary: bool, history: Vec<Message>) -> Com
 fn rebuild_effective_history(
     history: &[Message],
     active_summary: Option<&CompactedContext>,
-) -> Vec<Message> {
+) -> (Vec<Message>, Vec<usize>) {
     let Some(active) = active_summary else {
-        return history.to_vec();
+        return (history.to_vec(), (0..history.len()).collect());
     };
+    let suffix_raw = kept_suffix_raw_indices(
+        history,
+        active.replaced_prefix_len,
+        active.reasoning_from_len,
+    );
+    let strip_end = active.reasoning_from_len.min(history.len());
     let mut effective = vec![Message::user(context_summary_text(&active.summary))];
-    let suffix_start = active.replaced_prefix_len.min(history.len());
-    effective.extend(history[suffix_start..].iter().cloned());
-    effective
+    for &raw in &suffix_raw {
+        let mut message = history[raw].clone();
+        if raw < strip_end {
+            strip_assistant_reasoning(std::slice::from_mut(&mut message));
+        }
+        effective.push(message);
+    }
+    (effective, suffix_raw)
 }
 
 fn next_replaced_prefix_len(
     active_summary: Option<&CompactedContext>,
     raw_history_len: usize,
     effective_split: usize,
+    suffix_raw: &[usize],
 ) -> usize {
     match active_summary {
         None => effective_split.min(raw_history_len),
         Some(active) => {
-            // effective = [summary] + raw[replaced_prefix_len..]
-            // compacting effective[..split] advances the raw cutoff by (split - 1).
-            let advanced = effective_split.saturating_sub(1);
-            active
-                .replaced_prefix_len
-                .saturating_add(advanced)
+            if effective_split <= 1 {
+                return active.replaced_prefix_len.min(raw_history_len);
+            }
+            suffix_raw
+                .get(effective_split - 2)
+                .map(|raw| raw.saturating_add(1))
+                .unwrap_or(raw_history_len)
                 .min(raw_history_len)
         }
     }
@@ -467,14 +496,16 @@ fn should_compact(
 }
 
 fn estimate_context_tokens(messages: &[Message]) -> u64 {
-    match serde_json::to_string(messages) {
+    let mut stripped = messages.to_vec();
+    strip_assistant_reasoning(&mut stripped);
+    match serde_json::to_string(&stripped) {
         Ok(serialized) => serialized.len().div_ceil(3) as u64,
         Err(error) => {
             eprintln!(
                 "sprocket-agent: failed to serialize messages for context token estimate: {error}"
             );
-            let content_bytes: usize = messages.iter().map(rough_message_content_bytes).sum();
-            content_bytes.max(messages.len()).div_ceil(3) as u64
+            let content_bytes: usize = stripped.iter().map(rough_message_content_bytes).sum();
+            content_bytes.max(stripped.len()).div_ceil(3) as u64
         }
     }
 }
@@ -493,6 +524,7 @@ fn rough_message_content_bytes(message: &Message) -> usize {
             .iter()
             .map(|part| match part {
                 AssistantContent::Text(text) => text.text.len(),
+                AssistantContent::Reasoning(reasoning) => reasoning.display_text().len(),
                 _ => 1,
             })
             .sum(),
@@ -503,16 +535,20 @@ fn prior_boundary_in_effective(
     active_summary: Option<&CompactedContext>,
     prior_history_len: usize,
     raw_history_len: usize,
+    suffix_raw: &[usize],
 ) -> Option<usize> {
     let boundary = prior_history_len.min(raw_history_len);
     match active_summary {
         None => (boundary > 0).then_some(boundary),
         Some(active) => {
-            // effective = [summary] + raw[replaced_prefix_len..]
             if boundary <= active.replaced_prefix_len {
                 return None;
             }
-            Some(1 + (boundary - active.replaced_prefix_len))
+            let offset = suffix_raw
+                .iter()
+                .position(|&raw| raw >= boundary)
+                .unwrap_or(suffix_raw.len());
+            Some(1 + offset)
         }
     }
 }
@@ -562,10 +598,8 @@ fn adjust_split_for_tool_results(history: &[Message], mut split: usize) -> usize
     split
 }
 
-/// Durable thread summaries require a prior-run cutoff. Persist only when prior
-/// history exists and the compacted prefix covers all of it.
 fn should_persist_for_future_runs(prior_history_len: usize, replaced_prefix_len: usize) -> bool {
-    prior_history_len > 0 && replaced_prefix_len >= prior_history_len
+    prior_history_len > 0 && replaced_prefix_len == prior_history_len
 }
 
 fn is_tool_result_user(message: &Message) -> bool {
@@ -620,6 +654,24 @@ mod tests {
         }
     }
 
+    fn assistant_reasoning_only(text: &str) -> Message {
+        Message::Assistant {
+            id: None,
+            content: vec![AssistantContent::Reasoning(rig::message::Reasoning::new(
+                text,
+            ))],
+        }
+    }
+
+    fn assistant_encrypted(envelope: &str) -> Message {
+        Message::Assistant {
+            id: None,
+            content: vec![AssistantContent::Reasoning(
+                rig::message::Reasoning::encrypted(envelope),
+            )],
+        }
+    }
+
     #[test]
     fn split_point_does_not_orphan_leading_tool_result() {
         let history = vec![
@@ -664,9 +716,11 @@ mod tests {
         let active = CompactedContext {
             summary: "Prior work is done.".to_string(),
             replaced_prefix_len: 1,
+            reasoning_from_len: 1,
         };
 
-        let effective = rebuild_effective_history(&history, Some(&active));
+        let (effective, suffix_raw) = rebuild_effective_history(&history, Some(&active));
+        assert_eq!(suffix_raw, vec![1, 2]);
         assert_eq!(effective.len(), 3);
         match &effective[0] {
             Message::User { content } => {
@@ -698,22 +752,141 @@ mod tests {
 
     #[test]
     fn advances_replaced_prefix_len_in_raw_coordinates() {
-        assert_eq!(next_replaced_prefix_len(None, 10, 4), 4);
+        assert_eq!(next_replaced_prefix_len(None, 10, 4, &[]), 4);
         let active = CompactedContext {
             summary: "s".to_string(),
             replaced_prefix_len: 3,
+            reasoning_from_len: 3,
         };
-        // effective split 3 => summary + 2 raw messages compacted => raw cutoff 5
-        assert_eq!(next_replaced_prefix_len(Some(&active), 10, 3), 5);
+        let suffix_raw: Vec<usize> = (3..10).collect();
+        assert_eq!(
+            next_replaced_prefix_len(Some(&active), 10, 3, &suffix_raw),
+            5
+        );
+        assert_eq!(
+            next_replaced_prefix_len(Some(&active), 10, 1, &suffix_raw),
+            3
+        );
     }
 
     #[test]
-    fn persist_gate_requires_covered_prior_history() {
+    fn rebuild_strips_pre_compaction_reasoning_and_keeps_later_state() {
+        let history = vec![
+            user_text("covered"),
+            Message::Assistant {
+                id: None,
+                content: vec![
+                    AssistantContent::Reasoning(rig::message::Reasoning::new("stale")),
+                    AssistantContent::tool_call(
+                        "call_1",
+                        "exec_command",
+                        serde_json::json!({ "cmd": "pwd" }),
+                    ),
+                ],
+            },
+            Message::Assistant {
+                id: None,
+                content: vec![AssistantContent::Reasoning(
+                    rig::message::Reasoning::encrypted("new-envelope"),
+                )],
+            },
+        ];
+        let active = CompactedContext {
+            summary: "Prior work is done.".to_string(),
+            replaced_prefix_len: 1,
+            reasoning_from_len: 2,
+        };
+
+        let (effective, suffix_raw) = rebuild_effective_history(&history, Some(&active));
+        assert_eq!(suffix_raw, vec![1, 2]);
+        assert_eq!(effective.len(), 3);
+        match &effective[1] {
+            Message::Assistant { content, .. } => {
+                assert_eq!(content.len(), 1);
+                assert!(matches!(content[0], AssistantContent::ToolCall(_)));
+            }
+            other => panic!("expected stripped tail assistant, got {other:?}"),
+        }
+        match &effective[2] {
+            Message::Assistant { content, .. } => {
+                assert!(matches!(content[0], AssistantContent::Reasoning(_)));
+            }
+            other => panic!("expected post-compaction reasoning, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn repeated_compaction_maps_around_removed_reasoning_only_messages() {
+        let history = vec![
+            user_text("covered"),
+            assistant_reasoning_only("stale-a"),
+            user_text("kept"),
+            assistant_reasoning_only("stale-b"),
+            assistant_encrypted("keep-envelope"),
+        ];
+        let first = CompactedContext {
+            summary: "first".to_string(),
+            replaced_prefix_len: 1,
+            reasoning_from_len: 4,
+        };
+
+        let (effective, suffix_raw) = rebuild_effective_history(&history, Some(&first));
+        assert_eq!(suffix_raw, vec![2, 4]);
+        assert_eq!(effective.len(), 3);
+        assert_eq!(effective[1], user_text("kept"));
+        match &effective[2] {
+            Message::Assistant { content, .. } => {
+                assert!(matches!(content[0], AssistantContent::Reasoning(_)));
+            }
+            other => panic!("expected post-boundary reasoning, got {other:?}"),
+        }
+
+        assert_eq!(
+            prior_boundary_in_effective(Some(&first), 4, history.len(), &suffix_raw),
+            Some(2)
+        );
+        assert_eq!(
+            next_replaced_prefix_len(Some(&first), history.len(), 2, &suffix_raw),
+            3
+        );
+
+        let second = CompactedContext {
+            summary: "second".to_string(),
+            replaced_prefix_len: 3,
+            reasoning_from_len: history.len(),
+        };
+        let mut after_second = history.clone();
+        after_second.push(assistant_encrypted("post-second"));
+        let (effective2, suffix_raw2) = rebuild_effective_history(&after_second, Some(&second));
+        assert_eq!(suffix_raw2, vec![5]);
+        assert_eq!(effective2.len(), 2);
+        match &effective2[1] {
+            Message::Assistant { content, .. } => {
+                assert!(matches!(content[0], AssistantContent::Reasoning(_)));
+            }
+            other => panic!("expected reasoning added after the second compaction, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn token_estimate_ignores_encrypted_reasoning_envelopes() {
+        let baseline = estimate_context_tokens(&[user_text("hi")]);
+        let envelope = "A".repeat(12_000);
+        let estimated = estimate_context_tokens(&[user_text("hi"), assistant_encrypted(&envelope)]);
+        assert!(
+            estimated < baseline + 40,
+            "base64 envelope expanded estimate from {baseline} to {estimated}"
+        );
+        assert!(estimated < 200);
+    }
+
+    #[test]
+    fn persist_gate_requires_exact_prior_history() {
         assert!(!should_persist_for_future_runs(0, 0));
         assert!(!should_persist_for_future_runs(0, 4));
         assert!(!should_persist_for_future_runs(6, 4));
         assert!(should_persist_for_future_runs(6, 6));
-        assert!(should_persist_for_future_runs(6, 8));
+        assert!(!should_persist_for_future_runs(6, 8));
     }
 
     #[test]

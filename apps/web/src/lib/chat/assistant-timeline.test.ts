@@ -96,6 +96,52 @@ describe('assistant timeline', () => {
 		});
 	});
 
+	it('keeps unloaded reasoning reachable until its summary is fetched', () => {
+		const parts = [{ type: 'reasoning' as const, id: 'unloaded', text: '' }];
+		expect(buildAssistantTimeline(parts, [], false)).toEqual(parts);
+		expect(buildAssistantTimeline(parts, [], true)).toEqual([]);
+	});
+
+	it('hides empty reasoning and keeps later tool then text in arrival order', () => {
+		const timeline = buildAssistantTimeline(
+			[
+				{ type: 'reasoning', id: 'r-empty', text: '' },
+				{ type: 'tool-call', callId: 'call-1', name: 'exec_command', input: { cmd: 'pwd' } },
+				{
+					type: 'tool-result',
+					callId: 'call-1',
+					name: 'exec_command',
+					output: { output: '/workspace' }
+				},
+				{ type: 'reasoning', id: 'r-blank', text: '   ' },
+				{ type: 'text', id: 't1', text: 'Done' }
+			],
+			[]
+		);
+
+		expect(timeline.map((item) => item.type)).toEqual(['tool', 'text']);
+		expect(timeline[0]).toMatchObject({ type: 'tool', callId: 'call-1' });
+		expect(timeline[1]).toMatchObject({ type: 'text', id: 't1', text: 'Done' });
+	});
+
+	it('keeps nonempty reasoning before a following empty slot, tool, and text', () => {
+		const timeline = buildAssistantTimeline(
+			[
+				{ type: 'reasoning', id: 'r1', text: 'plan' },
+				{ type: 'reasoning', id: 'r-empty', text: '' },
+				{ type: 'tool-call', callId: 'call-1', name: 'exec_command', input: { cmd: 'pwd' } },
+				{ type: 'text', id: 't1', text: 'Done' }
+			],
+			[]
+		);
+
+		expect(timeline.map((item) => (item.type === 'reasoning' ? item.id : item.type))).toEqual([
+			'r1',
+			'tool',
+			'text'
+		]);
+	});
+
 	it('correlates reversed same-name jobs by payload and keeps remaining jobs visible', () => {
 		const first = executorJob('job-1', 1, { payload: { cmd: 'one' } });
 		const second = executorJob('job-2', 2, { payload: { cmd: 'two' } });

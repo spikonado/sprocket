@@ -588,4 +588,59 @@ mod tests {
         );
         assert_eq!(image.media_type, Some(ImageMediaType::PNG));
     }
+
+    #[test]
+    fn reloads_encrypted_reasoning_as_native_rig_blocks() {
+        let history = vec![AgentHistoryMessage {
+            role: AgentHistoryRole::Assistant,
+            assistant_id: None,
+            contents: vec![AgentHistoryContent::Reasoning {
+                id: Some("rs_123".to_string()),
+                blocks_json: serde_json::json!([
+                    { "type": "summary", "content": "think" },
+                    { "type": "encrypted", "content": "envelope" }
+                ])
+                .to_string(),
+            }],
+        }];
+
+        let messages = deserialize_agent_history(history).expect("messages");
+        match &messages[0] {
+            Message::Assistant { content, .. } => match content.iter().next() {
+                Some(AssistantContent::Reasoning(reasoning)) => {
+                    assert_eq!(reasoning.id.as_deref(), Some("rs_123"));
+                    assert_eq!(reasoning.display_text(), "think");
+                    assert_eq!(reasoning.encrypted_content(), Some("envelope"));
+                }
+                other => panic!("expected reasoning, got {other:?}"),
+            },
+            other => panic!("expected assistant message, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn reloads_empty_signed_reasoning_without_opaque_blocks() {
+        let history = vec![AgentHistoryMessage {
+            role: AgentHistoryRole::Assistant,
+            assistant_id: None,
+            contents: vec![AgentHistoryContent::Reasoning {
+                id: Some("rs_empty".to_string()),
+                blocks_json: "[]".to_string(),
+            }],
+        }];
+
+        let messages = deserialize_agent_history(history).expect("messages");
+        match &messages[0] {
+            Message::Assistant { content, .. } => match content.iter().next() {
+                Some(AssistantContent::Reasoning(reasoning)) => {
+                    assert_eq!(reasoning.id.as_deref(), Some("rs_empty"));
+                    assert!(reasoning.content.is_empty());
+                    assert!(reasoning.encrypted_content().is_none());
+                    assert!(reasoning.display_text().is_empty());
+                }
+                other => panic!("expected empty signed reasoning, got {other:?}"),
+            },
+            other => panic!("expected assistant message, got {other:?}"),
+        }
+    }
 }

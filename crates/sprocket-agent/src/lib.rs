@@ -5,6 +5,7 @@ mod history_json;
 mod hooks;
 mod live;
 mod provider;
+mod reasoning;
 mod run;
 mod tools;
 mod transcript;
