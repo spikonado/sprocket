@@ -1402,9 +1402,7 @@
 				numbers: message.sourceNumbers
 			});
 			if (currentThreadId !== threadId) return;
-			replicaMessages = replicaMessages.map((entry) =>
-				entry._id === details._id ? details : entry
-			);
+			replicaMessages = mergeTranscriptMessages(replicaMessages, [details]);
 		} catch {
 			if (currentThreadId === threadId) replicaStale = true;
 		} finally {
