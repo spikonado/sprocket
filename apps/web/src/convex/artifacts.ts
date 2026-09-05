@@ -2,6 +2,7 @@ import type { Doc, Id } from '@convex/_generated/dataModel';
 import { mutation, query, type MutationCtx, type QueryCtx } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
+import { absorbDuplicateArtifact } from '@convex/lib/artifactAbsorb';
 import { getExecutionRun, getUserId } from '@convex/lib/auth';
 import { vArtifactType } from '@convex/lib/validators';
 import schema from '@convex/schema';
@@ -117,19 +118,31 @@ export const createArtifact = mutation({
 
 			// A repeated title in the same thread updates the existing artifact
 			// instead of silently dropping the new content.
-			const existing = await ctx.db
+			const existingRows = await ctx.db
 				.query('artifacts')
 				.withIndex('by_threadId_title', (q) => q.eq('threadId', threadId).eq('title', title))
-				.first();
+				.collect();
+			const existing =
+				existingRows.length === 0
+					? null
+					: [...existingRows].sort(
+							(a, b) => a.createdAt - b.createdAt || a._id.localeCompare(b._id)
+						)[0];
 
 			if (existing) {
-				const latest = await latestArtifactVersion(ctx, existing._id);
+				for (const extra of existingRows) {
+					if (extra._id !== existing._id) {
+						await absorbDuplicateArtifact(ctx, existing._id, extra._id);
+					}
+				}
+				const refreshed = (await ctx.db.get('artifacts', existing._id)) ?? existing;
+				const latest = await latestArtifactVersion(ctx, refreshed._id);
 				const version =
 					latest?.content === args.content
-						? existing.currentVersion
-						: await insertNextVersion(ctx, existing, userId, latest, args.content);
+						? refreshed.currentVersion
+						: await insertNextVersion(ctx, refreshed, userId, latest, args.content);
 
-				return mutationResult(existing, version);
+				return mutationResult(refreshed, version);
 			}
 
 			const now = Date.now();
@@ -143,6 +156,25 @@ export const createArtifact = mutation({
 				createdAt: now,
 				updatedAt: now
 			});
+
+			// A concurrent create for the same title may have landed too. Keep the
+			// earliest row and delete ours if we lost.
+			const raced = await ctx.db
+				.query('artifacts')
+				.withIndex('by_threadId_title', (q) => q.eq('threadId', threadId).eq('title', title))
+				.collect();
+			const primary =
+				[...raced].sort((a, b) => a.createdAt - b.createdAt || a._id.localeCompare(b._id))[0] ??
+				null;
+			if (primary && primary._id !== artifactId) {
+				await ctx.db.delete('artifacts', artifactId);
+				const latest = await latestArtifactVersion(ctx, primary._id);
+				const version =
+					latest?.content === args.content
+						? primary.currentVersion
+						: await insertNextVersion(ctx, primary, userId, latest, args.content);
+				return mutationResult(primary, version);
+			}
 
 			await ctx.db.insert('artifactVersions', {
 				artifactId,

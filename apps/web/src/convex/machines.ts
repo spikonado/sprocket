@@ -2,7 +2,12 @@ import { mutation, query, type MutationCtx } from '@convex/_generated/server';
 import type { Doc } from '@convex/_generated/dataModel';
 import { v } from 'convex/values';
 import { constantTimeEqual, executionSecretHash, getUserId } from '@convex/lib/auth';
-import { getOwnedMachine, isMachineActive, MAX_ACTIVE_MACHINE_RUNS } from '@convex/lib/machineRuns';
+import {
+	getOwnedMachine,
+	getOwnedMachineExclusive,
+	isMachineActive,
+	MAX_ACTIVE_MACHINE_RUNS
+} from '@convex/lib/machineRuns';
 import { finalizeRunRecord } from '@convex/lib/runFinalize';
 
 const MACHINE_ENDED = 'The machine stopped before this run finished.';
@@ -105,7 +110,7 @@ export const register = mutation({
 		if (!/^[0-9a-f]{64}$/.test(args.credentialHash)) {
 			throw new Error('Machine credential digest is invalid.');
 		}
-		const existing = await getOwnedMachine(ctx, userId, args.machineId);
+		const existing = await getOwnedMachineExclusive(ctx, userId, args.machineId);
 		const metadata = {
 			friendlyName: args.friendlyName,
 			platform: args.platform,

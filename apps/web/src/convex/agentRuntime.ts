@@ -11,6 +11,7 @@ import { internal } from '@convex/_generated/api';
 import schema from '@convex/schema';
 import { ConvexError, v, type Infer } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord } from '@convex/lib/access';
+import { collapseDuplicateSubmissionThreads } from '@convex/lib/absorbDuplicateThread';
 import { executionSecretHash, getExecutionRun, getUserId } from '@convex/lib/auth';
 import { GATEWAY_PROTOCOL_VERSION } from '@convex/lib/gatewayProtocol';
 import { modelGatewayTokenSecret, modelGatewayUrl } from '@convex/lib/gatewayFetch';
@@ -174,13 +175,25 @@ async function createQueuedRunRecord(
 		}
 	}
 
-	const existingRun = await ctx.db
+	const existingRuns = await ctx.db
 		.query('runs')
 		.withIndex('by_userId_submissionId', (query) =>
 			query.eq('userId', args.userId).eq('submissionId', args.submissionId)
 		)
-		.unique();
+		.collect();
+	const existingRun =
+		existingRuns.length === 0
+			? null
+			: [...existingRuns].sort(
+					(a, b) => a.startedAt - b.startedAt || a._id.localeCompare(b._id)
+				)[0];
 	if (existingRun) {
+		await collapseDuplicateSubmissionThreads(
+			ctx,
+			args.userId,
+			args.submissionId,
+			existingRun.threadId
+		);
 		return await reconcileExistingQueuedRun(ctx, args, existingRun, secretHash, prompt);
 	}
 	let threadRecord: Doc<'threadRecords'>;
@@ -207,6 +220,12 @@ async function createQueuedRunRecord(
 			totalTokensProcessed: 0
 		});
 		threadRecord = (await ctx.db.get('threadRecords', threadId))!;
+		threadRecord = await collapseDuplicateSubmissionThreads(
+			ctx,
+			args.userId,
+			args.submissionId,
+			threadRecord._id
+		);
 	}
 	let latestRun = await ctx.db
 		.query('runs')
@@ -889,7 +908,7 @@ export const finalizeFailedStart = mutation({
 		const run = await ctx.db
 			.query('runs')
 			.withIndex('by_executionSecretHash', (query) => query.eq('executionSecretHash', secretHash))
-			.unique();
+			.first();
 		if (!run) {
 			// When the caller is still authenticated, distinguish a duplicate
 			// submission owned by another executor from an insert still in flight.
@@ -900,7 +919,7 @@ export const finalizeFailedStart = mutation({
 					.withIndex('by_userId_submissionId', (query) =>
 						query.eq('userId', identity.subject).eq('submissionId', args.submissionId)
 					)
-					.unique();
+					.first();
 				if (submittedRun) {
 					return 'standDown';
 				}
