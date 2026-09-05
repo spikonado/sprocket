@@ -11,9 +11,16 @@
 		/** Durable end when the section is finished; omit while in progress. */
 		completedAtMs?: number;
 		children: Snippet;
+		onExpand?: () => void | Promise<void>;
 	};
 
-	let { inProgress, startedAtMs, completedAtMs, children }: Props = $props();
+	let { inProgress, startedAtMs, completedAtMs, children, onExpand }: Props = $props();
+
+	function toggle() {
+		const expanding = !disclosure.expanded;
+		disclosure.toggle();
+		if (expanding) void onExpand?.();
+	}
 
 	let elapsedSeconds = $state(0);
 	const disclosure = createInProgressDisclosure(() => inProgress);
@@ -47,7 +54,7 @@
 	<button
 		type="button"
 		class="text-muted-foreground hover:text-muted-foreground inline-flex items-center gap-1 transition"
-		onclick={disclosure.toggle}
+		onclick={toggle}
 		aria-expanded={disclosure.expanded}
 	>
 		<span>{label}</span>

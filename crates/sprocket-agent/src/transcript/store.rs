@@ -3,11 +3,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, anyhow};
+use serde_json::Value as JsonValue;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex;
 
 use super::types::{
-    TRANSCRIPT_CHUNK_SIZE, TRANSCRIPT_PAGE_SIZE, TranscriptPage, TranscriptPart, TranscriptState,
+    TRANSCRIPT_CHUNK_SIZE, TRANSCRIPT_PAGE_SIZE, TranscriptMessage, TranscriptPage, TranscriptPart,
+    TranscriptPartKind, TranscriptState,
 };
 
 fn safe_segment(value: &str) -> String {
@@ -208,34 +210,100 @@ impl TranscriptStore {
         let state = self.load_state(user_id, thread_id).await?;
         let limit = limit
             .unwrap_or(TRANSCRIPT_PAGE_SIZE)
-            .min(TRANSCRIPT_CHUNK_SIZE);
-        let history_from = state.history_from_number;
+            .clamp(1, TRANSCRIPT_CHUNK_SIZE);
+        // Compaction limits model context, not what the user may scroll back to.
+        let history_from = 0;
         let end_exclusive = before.unwrap_or_else(|| state.visible_end_exclusive());
         if end_exclusive <= history_from {
             return Ok(TranscriptPage {
                 thread_id: thread_id.to_string(),
                 total_parts: state.remote_total_parts,
-                history_from_number: history_from,
+                history_from_number: state.history_from_number,
                 stale: state.stale,
-                parts: Vec::new(),
+                messages: Vec::new(),
                 next_before: None,
             });
         }
-        let start = end_exclusive.saturating_sub(limit).max(history_from);
-        let numbers: Vec<u32> = (start..end_exclusive).collect();
-        let parts = self.read_parts(user_id, thread_id, &numbers).await?;
+        let mut scan_end = end_exclusive;
+        let mut parts = Vec::new();
+        let start = loop {
+            let scan_start = scan_end.saturating_sub(TRANSCRIPT_CHUNK_SIZE);
+            let numbers: Vec<u32> = (scan_start..scan_end).collect();
+            let mut batch = self.read_parts(user_id, thread_id, &numbers).await?;
+            batch.append(&mut parts);
+            parts = batch;
+            if let Some(start) = message_page_start(&parts, limit, scan_start == history_from) {
+                break start;
+            }
+            if scan_start == history_from {
+                break history_from;
+            }
+            scan_end = scan_start;
+        };
+        let page_parts = parts
+            .iter()
+            .filter(|part| part.number >= start)
+            .cloned()
+            .collect::<Vec<_>>();
+        let messages = project_messages(user_id, thread_id, &page_parts, false);
         Ok(TranscriptPage {
             thread_id: thread_id.to_string(),
             total_parts: state.remote_total_parts,
-            history_from_number: history_from,
+            history_from_number: state.history_from_number,
             stale: state.stale,
-            parts,
+            messages,
             next_before: if start > history_from {
                 Some(start)
             } else {
                 None
             },
         })
+    }
+
+    pub async fn has_complete_message_page(
+        &self,
+        user_id: &str,
+        thread_id: &str,
+        before: Option<u32>,
+        limit: u32,
+    ) -> anyhow::Result<bool> {
+        let state = self.load_state(user_id, thread_id).await?;
+        let mut scan_end = before
+            .unwrap_or_else(|| state.visible_end_exclusive())
+            .min(state.visible_end_exclusive());
+        let mut parts = Vec::new();
+        while scan_end > 0 {
+            let scan_start = scan_end.saturating_sub(TRANSCRIPT_CHUNK_SIZE);
+            let numbers = (scan_start..scan_end).collect::<Vec<_>>();
+            let mut batch = self.read_parts(user_id, thread_id, &numbers).await?;
+            if batch.len() != numbers.len() {
+                return Ok(false);
+            }
+            batch.append(&mut parts);
+            parts = batch;
+            if message_page_start(&parts, limit, scan_start == 0).is_some() {
+                return Ok(true);
+            }
+            scan_end = scan_start;
+        }
+        Ok(true)
+    }
+
+    pub async fn message_details(
+        &self,
+        user_id: &str,
+        thread_id: &str,
+        numbers: &[u32],
+    ) -> anyhow::Result<Option<TranscriptMessage>> {
+        let parts = self.read_parts(user_id, thread_id, numbers).await?;
+        if parts.len() != numbers.len() {
+            return Ok(None);
+        }
+        let mut messages = project_messages(user_id, thread_id, &parts, true);
+        if messages.len() != 1 {
+            return Ok(None);
+        }
+        Ok(messages.pop())
     }
 
     pub async fn missing_numbers(
@@ -435,6 +503,203 @@ impl TranscriptStore {
     }
 }
 
+pub fn message_page_start(
+    parts: &[TranscriptPart],
+    message_limit: u32,
+    reached_history_start: bool,
+) -> Option<u32> {
+    let mut ordered = parts.iter().collect::<Vec<_>>();
+    ordered.sort_by_key(|part| part.number);
+    let mut current_key: Option<(bool, &str)> = None;
+    let mut current_start = None;
+    let mut completed = 0;
+
+    for part in ordered.into_iter().rev() {
+        let key = match part.kind {
+            TranscriptPartKind::Prompt => (true, part.run_id.as_str()),
+            TranscriptPartKind::Completion | TranscriptPartKind::Tool => {
+                (false, part.run_id.as_str())
+            }
+        };
+        match current_key {
+            None => {
+                current_key = Some(key);
+                current_start = Some(part.number);
+            }
+            Some(existing) if existing == key => current_start = Some(part.number),
+            Some(_) => {
+                completed += 1;
+                if completed >= message_limit.max(1) {
+                    return current_start;
+                }
+                current_key = Some(key);
+                current_start = Some(part.number);
+            }
+        }
+    }
+
+    if reached_history_start && current_key.is_some() {
+        Some(current_start.unwrap_or(0))
+    } else {
+        None
+    }
+}
+
+fn project_messages(
+    user_id: &str,
+    thread_id: &str,
+    parts: &[TranscriptPart],
+    include_details: bool,
+) -> Vec<TranscriptMessage> {
+    let mut ordered = parts.to_vec();
+    ordered.sort_by_key(|part| part.number);
+    let mut messages = Vec::new();
+    let mut applied_terminal_tools = HashSet::new();
+    for part in ordered {
+        match part.kind {
+            TranscriptPartKind::Prompt => {
+                if let Some(prompt) = part.prompt {
+                    messages.push(TranscriptMessage {
+                        id: format!("prompt:{}", part.run_id),
+                        thread_id: thread_id.to_string(),
+                        run_id: part.run_id,
+                        user_id: user_id.to_string(),
+                        message_type: "prompt".to_string(),
+                        text: prompt.text,
+                        attachments: prompt.image_uploads,
+                        parts: Vec::new(),
+                        run_status: "completed".to_string(),
+                        run_started_at: u64::from(part.number),
+                        source_numbers: vec![part.number],
+                        stream_ids: Vec::new(),
+                        details_loaded: true,
+                    });
+                }
+            }
+            TranscriptPartKind::Completion | TranscriptPartKind::Tool => {
+                let response_id = format!("response:{}", part.run_id);
+                let response = match messages.last_mut() {
+                    Some(message) if message.id == response_id => message,
+                    _ => {
+                        messages.push(TranscriptMessage {
+                            id: response_id,
+                            thread_id: thread_id.to_string(),
+                            run_id: part.run_id.clone(),
+                            user_id: user_id.to_string(),
+                            message_type: "response".to_string(),
+                            text: String::new(),
+                            attachments: Vec::new(),
+                            parts: Vec::new(),
+                            run_status: "completed".to_string(),
+                            run_started_at: u64::from(part.number),
+                            source_numbers: Vec::new(),
+                            stream_ids: Vec::new(),
+                            details_loaded: include_details,
+                        });
+                        messages.last_mut().expect("message was just pushed")
+                    }
+                };
+                response.source_numbers.push(part.number);
+                if let Some(completion) = part.completion {
+                    if let Some(stream_id) = completion.stream_id {
+                        response.stream_ids.push(stream_id);
+                    }
+                    for mut item in completion.items {
+                        match item.get("type").and_then(JsonValue::as_str) {
+                            Some("text") => {
+                                if let Some(text) = item.get("text").and_then(JsonValue::as_str) {
+                                    response.text.push_str(text);
+                                }
+                            }
+                            Some("reasoning") if !include_details => {
+                                if let Some(object) = item.as_object_mut() {
+                                    object.insert(
+                                        "text".to_string(),
+                                        JsonValue::String(String::new()),
+                                    );
+                                    object.remove("providerMetadata");
+                                }
+                            }
+                            Some("tool-call") if !include_details => {
+                                if let Some(object) = item.as_object_mut() {
+                                    object.insert("input".to_string(), JsonValue::Null);
+                                    object.remove("providerMetadata");
+                                }
+                            }
+                            Some("tool-result") if !include_details => {
+                                if let Some(object) = item.as_object_mut() {
+                                    object.insert("output".to_string(), JsonValue::Null);
+                                    object.remove("providerMetadata");
+                                }
+                            }
+                            _ => {}
+                        }
+                        if item.get("type").and_then(JsonValue::as_str) == Some("tool-call") {
+                            let call_id = item.get("callId").and_then(JsonValue::as_str);
+                            if let Some(index) = response.parts.iter().position(|existing| {
+                                existing.get("type").and_then(JsonValue::as_str)
+                                    == Some("tool-call")
+                                    && existing.get("callId").and_then(JsonValue::as_str) == call_id
+                            }) {
+                                response.parts[index] = item;
+                                continue;
+                            }
+                        }
+                        response.parts.push(item);
+                    }
+                }
+                if let Some(tool) = part.tool {
+                    let call_exists = response.parts.iter().any(|item| {
+                        item.get("type").and_then(JsonValue::as_str) == Some("tool-call")
+                            && item.get("callId").and_then(JsonValue::as_str)
+                                == Some(tool.call_id.as_str())
+                    });
+                    if !call_exists {
+                        response.parts.push(serde_json::json!({
+                            "type": "tool-call", "callId": tool.call_id,
+                            "name": tool.name, "input": if include_details { serde_json::json!({}) } else { JsonValue::Null }
+                        }));
+                    }
+                    let terminal_key = tool
+                        .tool_invocation_id
+                        .as_deref()
+                        .or(tool.job_id.as_deref())
+                        .unwrap_or(tool.call_id.as_str());
+                    if tool.status != "started"
+                        && applied_terminal_tools.insert(terminal_key.to_string())
+                    {
+                        let mut result = serde_json::json!({
+                            "type": "tool-result", "callId": tool.call_id, "name": tool.name
+                        });
+                        if include_details {
+                            result.as_object_mut().expect("object").insert(
+                                "output".to_string(),
+                                tool.output.unwrap_or(JsonValue::Null),
+                            );
+                        }
+                        if let Some(index) = response.parts.iter().position(|item| {
+                            item.get("type").and_then(JsonValue::as_str) == Some("tool-result")
+                                && item.get("callId").and_then(JsonValue::as_str)
+                                    == Some(tool.call_id.as_str())
+                        }) {
+                            response.parts[index] = result;
+                        } else if let Some(index) = response.parts.iter().position(|item| {
+                            item.get("type").and_then(JsonValue::as_str) == Some("tool-call")
+                                && item.get("callId").and_then(JsonValue::as_str)
+                                    == Some(tool.call_id.as_str())
+                        }) {
+                            response.parts.insert(index + 1, result);
+                        } else {
+                            response.parts.push(result);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    messages
+}
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BlobMeta {
@@ -528,7 +793,9 @@ async fn read_chunk_parts(path: &Path) -> anyhow::Result<Vec<TranscriptPart>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transcript::types::{TranscriptPartKind, TranscriptPromptBody};
+    use crate::transcript::types::{
+        TranscriptCompletionBody, TranscriptPartKind, TranscriptPromptBody,
+    };
 
     fn prompt(number: u32, text: &str) -> TranscriptPart {
         TranscriptPart {
@@ -543,6 +810,101 @@ mod tests {
             completion: None,
             tool: None,
         }
+    }
+
+    fn completion(number: u32) -> TranscriptPart {
+        TranscriptPart {
+            number,
+            source_key: format!("completion:{number}"),
+            kind: TranscriptPartKind::Completion,
+            run_id: "run-1".to_string(),
+            prompt: None,
+            completion: Some(TranscriptCompletionBody {
+                stream_id: Some("stream-1".to_string()),
+                items: vec![
+                    serde_json::json!({ "type": "reasoning", "id": "r1", "text": "secret" }),
+                    serde_json::json!({ "type": "tool-call", "callId": "c1", "name": "exec_command", "input": { "cmd": "pwd" } }),
+                    serde_json::json!({ "type": "tool-result", "callId": "c1", "name": "exec_command", "output": "secret output" }),
+                    serde_json::json!({ "type": "text", "id": "t1", "text": "answer" }),
+                ],
+            }),
+            tool: None,
+        }
+    }
+
+    fn completion_for_run(number: u32, run_id: &str, text: &str) -> TranscriptPart {
+        TranscriptPart {
+            number,
+            source_key: format!("completion:{number}"),
+            kind: TranscriptPartKind::Completion,
+            run_id: run_id.to_string(),
+            prompt: None,
+            completion: Some(TranscriptCompletionBody {
+                stream_id: Some(format!("stream-{number}")),
+                items: vec![
+                    serde_json::json!({ "type": "text", "id": format!("t-{number}"), "text": text }),
+                ],
+            }),
+            tool: None,
+        }
+    }
+
+    #[test]
+    fn projection_omits_disclosure_payloads_until_requested() {
+        let part = completion(0);
+        let summary = project_messages("user", "thread", std::slice::from_ref(&part), false);
+        assert_eq!(summary[0].text, "answer");
+        assert_eq!(summary[0].parts[0]["text"], "");
+        assert!(summary[0].parts[1]["input"].is_null());
+        assert!(summary[0].parts[2]["output"].is_null());
+        assert!(!summary[0].details_loaded);
+
+        let details = project_messages("user", "thread", &[part], true);
+        assert_eq!(details[0].parts[0]["text"], "secret");
+        assert_eq!(details[0].parts[1]["input"]["cmd"], "pwd");
+        assert_eq!(details[0].parts[2]["output"], "secret output");
+        assert!(details[0].details_loaded);
+    }
+
+    #[tokio::test]
+    async fn pages_by_complete_messages_instead_of_parts() {
+        let dir =
+            std::env::temp_dir().join(format!("sprocket-page-messages-{}", uuid::Uuid::new_v4()));
+        let store = TranscriptStore::new(dir.clone());
+        store
+            .append_parts(
+                "user",
+                "thread",
+                &[
+                    prompt(0, "first"),
+                    completion_for_run(1, "run-0", "old answer"),
+                    prompt(2, "second"),
+                    completion_for_run(3, "run-2", "new "),
+                    completion_for_run(4, "run-2", "answer"),
+                ],
+            )
+            .await
+            .unwrap();
+        store
+            .update_state("user", "thread", |state| state.remote_total_parts = 5)
+            .await
+            .unwrap();
+
+        let newest = store.page("user", "thread", None, Some(1)).await.unwrap();
+        assert_eq!(newest.messages.len(), 1);
+        assert_eq!(newest.messages[0].text, "new answer");
+        assert_eq!(newest.messages[0].source_numbers, vec![3, 4]);
+        assert_eq!(newest.next_before, Some(3));
+
+        let older = store
+            .page("user", "thread", newest.next_before, Some(1))
+            .await
+            .unwrap();
+        assert_eq!(older.messages.len(), 1);
+        assert_eq!(older.messages[0].text, "second");
+        assert_eq!(older.next_before, Some(2));
+
+        tokio::fs::remove_dir_all(dir).await.unwrap();
     }
 
     #[tokio::test]
@@ -568,9 +930,9 @@ mod tests {
             .unwrap();
         let page = store.page("user", "thread", None, Some(2)).await.unwrap();
         assert_eq!(
-            page.parts
+            page.messages
                 .iter()
-                .map(|part| part.prompt.as_ref().unwrap().text.as_str())
+                .map(|message| message.text.as_str())
                 .collect::<Vec<_>>(),
             vec!["b", "c"]
         );
@@ -602,9 +964,9 @@ mod tests {
             .unwrap();
         let page = store.page("user", "thread", None, None).await.unwrap();
         assert_eq!(
-            page.parts
+            page.messages
                 .iter()
-                .map(|part| part.prompt.as_ref().unwrap().text.as_str())
+                .map(|message| message.text.as_str())
                 .collect::<Vec<_>>(),
             vec!["a", "b", "c"]
         );

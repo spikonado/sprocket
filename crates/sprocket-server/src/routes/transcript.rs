@@ -43,12 +43,47 @@ struct TranscriptAttachmentRequest {
     image_upload_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct TranscriptDetailsRequest {
+    user_id: String,
+    thread_id: String,
+    numbers: Vec<u32>,
+}
+
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/transcript/page", post(page_handler))
         .route("/transcript/watch", post(watch_handler))
+        .route("/transcript/details", post(details_handler))
         .route("/transcript/clear", post(clear_handler))
         .route("/transcript/attachment", post(attachment_handler))
+}
+
+async fn details_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(payload): Json<TranscriptDetailsRequest>,
+) -> Result<Json<sprocket_agent::TranscriptMessage>, ApiError> {
+    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
+    if payload.numbers.is_empty() || payload.numbers.len() > 1_000 {
+        return Err(ApiError::bad_request(anyhow!(
+            "invalid transcript detail range"
+        )));
+    }
+    if payload.numbers.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err(ApiError::bad_request(anyhow!(
+            "transcript detail numbers must be strictly increasing"
+        )));
+    }
+    let message = state
+        .transcript
+        .message_details(&payload.user_id, &payload.thread_id, &payload.numbers)
+        .await
+        .map_err(|error| ApiError::internal_with("failed to read transcript details", error))?
+        .ok_or_else(|| ApiError::bad_request(anyhow!("transcript message not found")))?;
+    Ok(Json(message))
 }
 
 async fn require_user(state: &AppState, user_id: &str) -> Result<(), ApiError> {
@@ -78,7 +113,46 @@ async fn page_handler(
     Json(payload): Json<TranscriptPageRequest>,
 ) -> Result<Json<sprocket_agent::TranscriptPage>, ApiError> {
     require_session_user(&state, &headers, &jar, &payload.user_id).await?;
-    if payload.before.is_some() {
+    let mut transcript_state = state
+        .transcript
+        .load_state(&payload.user_id, &payload.thread_id)
+        .await
+        .map_err(|error| ApiError::internal_with("failed to read transcript state", error))?;
+    if transcript_state.visible_end_exclusive() == 0 {
+        let client = UserConvexClient::connect_with_fetcher(
+            &state.convex_deployment_url,
+            state
+                .native_auth
+                .auth_token_fetcher_for_user(payload.user_id.clone()),
+        )
+        .await
+        .map_err(|error| {
+            ApiError::internal_with("failed to connect while loading transcript", error)
+        })?;
+        let remote = client
+            .ensure_migrated(&payload.thread_id)
+            .await
+            .map_err(|error| ApiError::internal_with("failed to load transcript state", error))?;
+        transcript_state = sprocket_agent::apply_remote_state(
+            &state.transcript,
+            &payload.user_id,
+            &payload.thread_id,
+            &remote,
+            false,
+        )
+        .await
+        .map_err(|error| ApiError::internal_with("failed to save transcript state", error))?;
+    }
+    let limit = payload
+        .limit
+        .unwrap_or(TRANSCRIPT_PAGE_SIZE)
+        .clamp(1, TRANSCRIPT_CHUNK_SIZE);
+    if !state
+        .transcript
+        .has_complete_message_page(&payload.user_id, &payload.thread_id, payload.before, limit)
+        .await
+        .map_err(|error| ApiError::internal_with("failed to inspect transcript history", error))?
+    {
         let client = UserConvexClient::connect_with_fetcher(
             &state.convex_deployment_url,
             state
@@ -89,32 +163,40 @@ async fn page_handler(
         .map_err(|error| {
             ApiError::internal_with("failed to connect while loading transcript history", error)
         })?;
-        let transcript_state = state
-            .transcript
-            .load_state(&payload.user_id, &payload.thread_id)
-            .await
-            .map_err(|error| ApiError::internal_with("failed to read transcript state", error))?;
-        let limit = payload
-            .limit
-            .unwrap_or(TRANSCRIPT_PAGE_SIZE)
-            .min(TRANSCRIPT_CHUNK_SIZE);
         let end = payload
             .before
             .unwrap_or_else(|| transcript_state.visible_end_exclusive())
             .min(transcript_state.visible_end_exclusive());
-        let start = end
-            .saturating_sub(limit)
-            .max(transcript_state.history_from_number);
-        crate::transcript_client::sync_range(
-            &state.transcript,
-            &client,
-            &payload.user_id,
-            &payload.thread_id,
-            start,
-            end,
-        )
-        .await
-        .map_err(|error| ApiError::internal_with("failed to load transcript history", error))?;
+        let mut scan_end = end;
+        let mut parts = Vec::new();
+        loop {
+            let start = scan_end.saturating_sub(TRANSCRIPT_CHUNK_SIZE);
+            crate::transcript_client::sync_range(
+                &state.transcript,
+                &client,
+                &payload.user_id,
+                &payload.thread_id,
+                start,
+                scan_end,
+            )
+            .await
+            .map_err(|error| ApiError::internal_with("failed to load transcript history", error))?;
+            let numbers = (start..scan_end).collect::<Vec<_>>();
+            let mut batch = state
+                .transcript
+                .read_parts(&payload.user_id, &payload.thread_id, &numbers)
+                .await
+                .map_err(|error| {
+                    ApiError::internal_with("failed to read transcript history", error)
+                })?;
+            batch.append(&mut parts);
+            parts = batch;
+            if sprocket_agent::message_page_start(&parts, limit, start == 0).is_some() || start == 0
+            {
+                break;
+            }
+            scan_end = start;
+        }
     }
 
     let page = state

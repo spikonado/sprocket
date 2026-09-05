@@ -50,6 +50,7 @@
 		hasOlder?: boolean;
 		onLoadOlder?: () => void;
 		loadAttachment?: (imageUploadId: MessageAttachment['imageUploadId']) => Promise<string | null>;
+		onLoadDetails?: (message: ThreadMessage) => Promise<void>;
 	};
 
 	let {
@@ -68,7 +69,8 @@
 		loadingOlder = false,
 		hasOlder = false,
 		onLoadOlder,
-		loadAttachment
+		loadAttachment,
+		onLoadDetails
 	}: Props = $props();
 	const firstPromptMessageId = $derived(messages.find((message) => message.type === 'prompt')?._id);
 	let scrollViewport = $state<HTMLDivElement | null>(null);
@@ -151,6 +153,20 @@
 		viewport.scrollTop = viewport.scrollHeight;
 	}
 
+	function loadOlderIfNeeded(viewport: HTMLDivElement) {
+		if (
+			hasOlder &&
+			!loadingOlder &&
+			!restoringOlderScroll &&
+			onLoadOlder &&
+			viewport.scrollTop <= LOAD_OLDER_THRESHOLD_PX
+		) {
+			previousScrollHeight = viewport.scrollHeight;
+			restoringOlderScroll = true;
+			onLoadOlder();
+		}
+	}
+
 	$effect(() => {
 		void messages;
 		void actions;
@@ -158,13 +174,22 @@
 		if (untrack(() => restoringOlderScroll) && viewport) {
 			viewport.scrollTop += Math.max(0, viewport.scrollHeight - previousScrollHeight);
 			restoringOlderScroll = false;
+			void tick().then(() => {
+				const currentViewport = scrollViewport;
+				if (currentViewport) loadOlderIfNeeded(currentViewport);
+			});
 			return;
 		}
 		if (!stickToBottom) {
 			return;
 		}
 
-		void tick().then(scrollToBottom);
+		void tick().then(() => {
+			const currentViewport = scrollViewport;
+			if (!currentViewport) return;
+			scrollToBottom();
+			loadOlderIfNeeded(currentViewport);
+		});
 	});
 
 	$effect(() => {
@@ -358,6 +383,7 @@
 													inProgress={workInProgress}
 													startedAtMs={timing.startedAtMs}
 													completedAtMs={timing.completedAtMs}
+													onExpand={() => onLoadDetails?.(message)}
 												>
 													{#each visibleBlocks as block, blockIndex (`${block.type}-${block.type === 'tool-group' ? block.tools.map((tool) => tool.callId).join(',') : block.id}-${blockIndex}`)}
 														{#if block.type === 'reasoning'}

@@ -77,7 +77,7 @@
 		type PendingAgentLaunch,
 		type PendingAgentLaunches
 	} from '$lib/project/threads';
-	import { mergePagedTranscriptWithLive, mergeTranscriptParts } from '$lib/project/transcript';
+	import { mergePagedTranscriptWithLive, mergeTranscriptMessages } from '$lib/project/transcript';
 	import {
 		clearLaunchHash,
 		readWorkspaceLaunchFromHash,
@@ -89,7 +89,6 @@
 		DesktopApi,
 		ExecutorJob,
 		LiveCompletionOverlay,
-		LocalTranscriptPart,
 		ThreadCacheStatus,
 		ThreadCacheUserRequest,
 		ThreadMessage,
@@ -499,7 +498,7 @@
 	const pendingAgentQuestion = $derived(
 		dataForThread(pendingAgentQuestionQuery.data, currentThreadId)
 	);
-	let replicaParts = $state<LocalTranscriptPart[]>([]);
+	let replicaMessages = $state<ThreadMessage[]>([]);
 	let replicaNextBefore = $state<number | null>(null);
 	let replicaStale = $state(false);
 	let replicaThreadId = $state<Id<'threadRecords'> | null>(null);
@@ -507,6 +506,7 @@
 	let replicaError = $state<string | null>(null);
 	let replicaGeneration = 0;
 	let loadingOlderTranscriptGeneration = $state<number | null>(null);
+	const loadingTranscriptDetails = new SvelteSet<string>();
 	let liveCompletion = $state<LiveCompletionOverlay | null>(null);
 	const loadingOlderTranscript = $derived(loadingOlderTranscriptGeneration === replicaGeneration);
 
@@ -516,10 +516,11 @@
 
 	function showReplicaForThread(threadId: Id<'threadRecords'> | null) {
 		replicaGeneration += 1;
+		loadingTranscriptDetails.clear();
 		replicaThreadId = threadId;
 		liveCompletion = null;
 		replicaError = null;
-		replicaParts = [];
+		replicaMessages = [];
 		replicaNextBefore = null;
 		replicaStale = false;
 		replicaLoading = threadId !== null;
@@ -550,7 +551,8 @@
 			try {
 				const page = await api.fetchTranscriptPage({
 					userId,
-					threadId: watchedThreadId
+					threadId: watchedThreadId,
+					limit: 1
 				});
 				if (
 					ac.signal.aborted ||
@@ -559,7 +561,7 @@
 				) {
 					return;
 				}
-				replicaParts = page.parts;
+				replicaMessages = page.messages;
 				replicaStale = page.stale;
 				replicaLoading = false;
 				replicaError = null;
@@ -567,7 +569,7 @@
 			} catch {
 				if (!ac.signal.aborted && replicaGeneration === generation) {
 					replicaLoading = false;
-					if (replicaParts.length === 0) {
+					if (replicaMessages.length === 0) {
 						replicaError = 'Could not load conversation history.';
 					} else {
 						replicaStale = true;
@@ -664,12 +666,12 @@
 		if (!currentThreadId || !userId || replicaThreadId !== currentThreadId) {
 			return [];
 		}
-		if (replicaLoading && replicaParts.length === 0) {
+		if (replicaLoading && replicaMessages.length === 0) {
 			return [];
 		}
 		const live = latestRunResumeKind ? null : liveCompletion;
 		return mergePagedTranscriptWithLive({
-			parts: replicaParts,
+			messages: replicaMessages,
 			live,
 			userId,
 			threadId: currentThreadId
@@ -1306,13 +1308,14 @@
 			return;
 		}
 		const generation = replicaGeneration;
-		const page = await api.fetchTranscriptPage({ userId, threadId });
+		const page = await api.fetchTranscriptPage({ userId, threadId, limit: 1 });
 		if (currentThreadId !== threadId || replicaGeneration !== generation) {
 			return;
 		}
-		replicaParts = mergeTranscriptParts(replicaParts, page.parts);
+		const hadMessages = replicaMessages.length > 0;
+		replicaMessages = mergeTranscriptMessages(replicaMessages, page.messages);
 		replicaStale = page.stale;
-		if (replicaParts.length === page.parts.length) {
+		if (!hadMessages) {
 			applyOlderPageCursor(page.nextBefore);
 		} else if (replicaNextBefore != null && page.nextBefore != null) {
 			replicaNextBefore = Math.min(replicaNextBefore, page.nextBefore);
@@ -1343,12 +1346,12 @@
 				userId,
 				threadId,
 				before,
-				limit: 100
+				limit: 1
 			});
 			if (currentThreadId !== threadId || replicaGeneration !== generation) {
 				return;
 			}
-			replicaParts = mergeTranscriptParts(replicaParts, page.parts);
+			replicaMessages = mergeTranscriptMessages(replicaMessages, page.messages);
 			replicaStale = page.stale;
 			applyOlderPageCursor(page.nextBefore);
 		} catch {
@@ -1375,6 +1378,38 @@
 			imageUploadId
 		});
 		return blob ? URL.createObjectURL(blob) : null;
+	}
+
+	async function loadTranscriptMessageDetails(message: ThreadMessage) {
+		const api = desktopApi;
+		const threadId = currentThreadId;
+		const userId = getCurrentUserId();
+		if (
+			!api ||
+			!threadId ||
+			!userId ||
+			message.detailsLoaded ||
+			!message.sourceNumbers?.length ||
+			loadingTranscriptDetails.has(message._id)
+		) {
+			return;
+		}
+		loadingTranscriptDetails.add(message._id);
+		try {
+			const details = await api.fetchTranscriptDetails({
+				userId,
+				threadId,
+				numbers: message.sourceNumbers
+			});
+			if (currentThreadId !== threadId) return;
+			replicaMessages = replicaMessages.map((entry) =>
+				entry._id === details._id ? details : entry
+			);
+		} catch {
+			if (currentThreadId === threadId) replicaStale = true;
+		} finally {
+			loadingTranscriptDetails.delete(message._id);
+		}
 	}
 
 	async function archiveThread(threadId: Id<'threadRecords'>) {
@@ -2321,6 +2356,7 @@
 								void loadOlderTranscript();
 							}}
 							loadAttachment={loadTranscriptAttachment}
+							onLoadDetails={(message) => loadTranscriptMessageDetails(message)}
 						/>
 					{/key}
 

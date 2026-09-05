@@ -1,6 +1,5 @@
 import type { Doc, Id } from '$convex/_generated/dataModel';
 import type { AssistantPart } from '$convex/lib/assistantParts';
-import type { JsonValue } from '$convex/lib/json';
 import type { Infer } from 'convex/values';
 import {
 	vExecutorJobKind,
@@ -98,6 +97,9 @@ export type ThreadMessage = {
 	runStatus: Infer<typeof vRunStatus>;
 	runStartedAt: number;
 	runCompletedAt?: number;
+	sourceNumbers?: number[];
+	streamIds?: string[];
+	detailsLoaded?: boolean;
 };
 
 export type AgentRunRequest = {
@@ -128,35 +130,12 @@ export type LocalTranscriptAttachment = {
 	url?: string;
 };
 
-export type LocalTranscriptPart = {
-	number: number;
-	sourceKey: string;
-	kind: 'prompt' | 'completion' | 'tool';
-	runId: Id<'runs'>;
-	prompt?: {
-		text: string;
-		imageUploads: LocalTranscriptAttachment[];
-	};
-	completion?: {
-		streamId?: string;
-		items: AssistantPart[];
-	};
-	tool?: {
-		jobId?: Id<'executorJobs'>;
-		toolInvocationId?: string;
-		callId: string;
-		name: string;
-		output?: JsonValue;
-		status: 'started' | 'completed' | 'failed' | 'cancelled';
-	};
-};
-
 export type LocalTranscriptPage = {
 	threadId: Id<'threadRecords'>;
 	totalParts: number;
 	historyFromNumber: number;
 	stale: boolean;
-	parts: LocalTranscriptPart[];
+	messages: ThreadMessage[];
 	nextBefore?: number;
 };
 
@@ -207,6 +186,8 @@ export type TranscriptPageRequest = {
 	limit?: number;
 };
 
+export type TranscriptDetailsRequest = TranscriptScopeRequest & { numbers: number[] };
+
 export type FilesystemBrowseEntry = {
 	name: string;
 	fullPath: string;
@@ -242,6 +223,7 @@ export type DesktopApi = {
 	attachProject: (attachment: ProjectAttachmentRequest) => Promise<ProjectAttachment>;
 	runAgent: (request: AgentRunRequest) => Promise<AgentRunStart>;
 	fetchTranscriptPage: (request: TranscriptPageRequest) => Promise<LocalTranscriptPage>;
+	fetchTranscriptDetails: (request: TranscriptDetailsRequest) => Promise<ThreadMessage>;
 	watchTranscript: (
 		request: TranscriptScopeRequest,
 		handlers: {
