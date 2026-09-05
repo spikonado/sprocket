@@ -11,6 +11,7 @@ import { v, type Infer } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import {
 	finalizeQuestionOptions,
+	MAX_QUESTION_TIMEOUT_MS,
 	normalizeQuestionAnswer,
 	validateQuestionText
 } from '@convex/lib/agentQuestions';
@@ -22,7 +23,6 @@ import { vAskQuestionOption } from '@convex/lib/validators';
 
 const DEFAULT_QUESTION_TIMEOUT_MS = 30 * 60 * 1000;
 const MIN_QUESTION_TIMEOUT_MS = 1_000;
-const MAX_QUESTION_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
 export type AgentQuestionSnapshot = Infer<typeof vAgentQuestionSnapshot>;
 
