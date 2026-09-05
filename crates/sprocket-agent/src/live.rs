@@ -82,13 +82,6 @@ impl LiveAssistantParts {
         self.tool_index.clear();
     }
 
-    pub fn items_json(&self) -> Vec<serde_json::Value> {
-        self.parts
-            .iter()
-            .map(|part| serde_json::to_value(part).expect("live assistant parts always serialize"))
-            .collect()
-    }
-
     pub fn apply_text_delta(
         &mut self,
         event_type: &str,
@@ -430,7 +423,10 @@ mod tests {
                 }
             ]
         );
-        assert_eq!(parts.items_json()[0]["startedAt"], serde_json::json!(10));
+        assert_eq!(
+            serde_json::to_value(&parts.parts).unwrap()[0]["startedAt"],
+            serde_json::json!(10)
+        );
     }
 
     #[test]

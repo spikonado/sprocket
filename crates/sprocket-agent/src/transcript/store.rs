@@ -672,6 +672,7 @@ fn project_messages(
                     for mut item in completion.items {
                         // Released UIs understand omitted timestamps, but not explicit nulls.
                         if let Some(object) = item.as_object_mut() {
+                            object.remove("providerMetadata");
                             for key in ["startedAt", "completedAt"] {
                                 if object.get(key).is_some_and(JsonValue::is_null) {
                                     object.remove(key);
@@ -693,7 +694,6 @@ fn project_messages(
                                     continue;
                                 }
                                 if let Some(object) = item.as_object_mut() {
-                                    object.remove("providerMetadata");
                                     if !include_details {
                                         object.insert(
                                             "text".to_string(),
@@ -705,7 +705,6 @@ fn project_messages(
                             Some("tool-call") if !include_details => {
                                 if let Some(object) = item.as_object_mut() {
                                     object.insert("input".to_string(), JsonValue::Null);
-                                    object.remove("providerMetadata");
                                 }
                             }
                             Some("tool-result") if !include_details => {
@@ -713,7 +712,6 @@ fn project_messages(
                                     let output = object.remove("output").unwrap_or(JsonValue::Null);
                                     object
                                         .insert("output".to_string(), tool_output_summary(output));
-                                    object.remove("providerMetadata");
                                 }
                             }
                             _ => {}
@@ -1031,6 +1029,44 @@ mod tests {
         assert_eq!(details[0].parts[1]["input"]["cmd"], "pwd");
         assert_eq!(details[0].parts[2]["output"], "secret output");
         assert!(details[0].details_loaded);
+    }
+
+    #[test]
+    fn projections_strip_all_completion_metadata_without_changing_replay_items() {
+        let metadata = serde_json::json!({
+            "openai": { "itemId": "provider-item", "reasoningEncryptedContent": "opaque" }
+        });
+        let mut part = completion(0);
+        let items = vec![
+            serde_json::json!({
+                "type": "text", "id": "t", "text": "answer", "startedAt": 10,
+                "completedAt": 20, "providerMetadata": metadata
+            }),
+            serde_json::json!({
+                "type": "tool-call", "callId": "c", "name": "read", "input": {},
+                "providerMetadata": metadata
+            }),
+            serde_json::json!({
+                "type": "tool-result", "callId": "c", "name": "read", "output": "ok",
+                "providerMetadata": metadata
+            }),
+        ];
+        part.completion.as_mut().unwrap().items = items.clone();
+
+        for include_details in [false, true] {
+            let messages = project_messages("user", "thread", vec![part.clone()], include_details);
+            assert_eq!(messages[0].text, "answer");
+            assert_eq!(messages[0].parts.len(), 3);
+            assert_eq!(messages[0].parts[0]["startedAt"], 10);
+            assert_eq!(messages[0].parts[0]["completedAt"], 20);
+            for item in &messages[0].parts {
+                assert!(item.get("providerMetadata").is_none());
+            }
+            let rendered = serde_json::to_string(&messages).unwrap();
+            assert!(!rendered.contains("provider-item"));
+            assert!(!rendered.contains("opaque"));
+        }
+        assert_eq!(part.completion.unwrap().items, items);
     }
 
     #[test]
