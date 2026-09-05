@@ -661,6 +661,7 @@ mod tests {
             source_key: format!("completion:{number}"),
             kind: TranscriptPartKind::Completion,
             run_id: "run".into(),
+            created_at: None,
             prompt: None,
             completion: Some(TranscriptCompletionBody {
                 stream_id: Some("s".into()),
@@ -761,6 +762,7 @@ mod tests {
                 number: 1,
                 source_key: "completion:1".into(),
                 kind: TranscriptPartKind::Completion,
+                created_at: None,
                 run_id: "run".into(),
                 prompt: None,
                 completion: Some(TranscriptCompletionBody {
