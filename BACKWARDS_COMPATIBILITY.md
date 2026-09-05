@@ -219,6 +219,12 @@ agents may send empty placeholders until details load; the browser hides them
 after loading. Live overlays also omit empty reasoning slots. Completed display
 text comes from summary blocks, never redacted or encrypted content.
 
+Hidden empty reasoning keeps its timestamps on disk but does not anchor a
+visible work-section timer. The run-level elapsed time still covers the full
+run. Rig 0.42 groups reasoning before other content within each assistant
+message on replay; arbitrary interleaving and upstream message phases are not
+guaranteed by this client.
+
 No rewrite. The metadata fields are additive; there is no new schema field.
 
 Deploy the gateway reasoning-envelope support before releasing this client.
