@@ -37,19 +37,9 @@ All of these are core priorities; try your best to achieve all of them without h
 ## Writing code
 
 - Deleting code often fixes more problems than writing code does. Sometimes writing too much code introduces problems.
-- Specifically for gpt-5.6-sol: You often end up writing more code than needed, especially tests. Please don't do this.
+- Feel free to commit, branch, and spin up worktrees as you please.
 
-## Subagents
-
-### Working on stuff, main agents only
-
-- Feel free to commit, branch, and spin up worktrees as you please. Don't push before asking.
-- Do the deep dives and figure out what needs to be done, and delegate the rest accordingly and as needed to subagents.
-- Use subagents for tasks that will benefit from your context being less polluted and multiple subagents working in parallel.
-- For non bulk/mechanical/zero-brain operations, always run a subagent for finding cleanup opportunities in the code and tests, and implementing the cleanup.
-- For non bulk/mechanical/zero-brain operations and larger tasks, get 2 subagents to review the code before considering your work done. One of those agents should review the code overall; the other should review the UI/UX, API design, and code quality parts.
-
-#### PR Workflow
+## PR Workflow
 
 - Unless requested, PRs should be made only against the default branch and should not be a draft.
 - After a PR is made, don't perform any code review using subagents; let Greptile review the code.
@@ -63,6 +53,15 @@ All of these are core priorities; try your best to achieve all of them without h
 4. Commit and push the code -> this time without asking.
 5. You should loop steps 2-4 until Greptile gives you a 5/5 confidence score or there are no remaining actionable issues. Comment `@greptileai review` when it doesn't start reviewing automatically; if the score remains below 5/5 with no actionable issues, explain why and stop.
 6. Clean up any worktrees and branches you created for this PR when you are done.
+
+## Subagents
+
+### Working on stuff, main agents only
+
+- Do the deep dives and figure out what needs to be done, and delegate the rest accordingly and as needed to subagents.
+- Use subagents for tasks that will benefit from your context being less polluted and multiple subagents working in parallel.
+- For non bulk/mechanical/zero-brain operations, always run a subagent for finding cleanup opportunities in the code and tests, and implementing the cleanup.
+- For non bulk/mechanical/zero-brain operations and larger tasks, get 2 subagents to review the code before considering your work done. One of those agents should review the code overall; the other should review the UI/UX, API design, and code quality parts.
 
 ### Subagent prompting
 
