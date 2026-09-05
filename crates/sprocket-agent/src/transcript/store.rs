@@ -624,6 +624,40 @@ fn project_messages(
                     if let Some(stream_id) = completion.stream_id {
                         response.stream_ids.push(stream_id);
                     }
+                    // Tool events can be persisted before the completion that ordered their calls.
+                    let call_ids = completion
+                        .items
+                        .iter()
+                        .filter_map(|item| {
+                            (item.get("type").and_then(JsonValue::as_str) == Some("tool-call"))
+                                .then(|| item.get("callId").and_then(JsonValue::as_str))
+                                .flatten()
+                        })
+                        .collect::<HashSet<_>>();
+                    let mut results = HashMap::new();
+                    response.parts.retain(|item| {
+                        let Some(call_id) = item.get("callId").and_then(JsonValue::as_str) else {
+                            return true;
+                        };
+                        if !call_ids.contains(call_id) {
+                            return true;
+                        }
+                        match item.get("type").and_then(JsonValue::as_str) {
+                            Some("tool-call") => false,
+                            Some("tool-result") => {
+                                results.insert(call_id.to_string(), item.clone());
+                                false
+                            }
+                            _ => true,
+                        }
+                    });
+                    for item in &completion.items {
+                        if item.get("type").and_then(JsonValue::as_str) == Some("tool-result") {
+                            if let Some(call_id) = item.get("callId").and_then(JsonValue::as_str) {
+                                results.remove(call_id);
+                            }
+                        }
+                    }
                     for mut item in completion.items {
                         match item.get("type").and_then(JsonValue::as_str) {
                             Some("text") => {
@@ -656,18 +690,14 @@ fn project_messages(
                             }
                             _ => {}
                         }
-                        if item.get("type").and_then(JsonValue::as_str) == Some("tool-call") {
-                            let call_id = item.get("callId").and_then(JsonValue::as_str);
-                            if let Some(index) = response.parts.iter().position(|existing| {
-                                existing.get("type").and_then(JsonValue::as_str)
-                                    == Some("tool-call")
-                                    && existing.get("callId").and_then(JsonValue::as_str) == call_id
-                            }) {
-                                response.parts[index] = item;
-                                continue;
-                            }
-                        }
+                        let result = item
+                            .get("callId")
+                            .and_then(JsonValue::as_str)
+                            .and_then(|call_id| results.remove(call_id));
                         response.parts.push(item);
+                        if let Some(result) = result {
+                            response.parts.push(result);
+                        }
                     }
                 }
                 if let Some(tool) = part.tool {
@@ -890,6 +920,72 @@ mod tests {
         assert_eq!(details[0].parts[1]["input"]["cmd"], "pwd");
         assert_eq!(details[0].parts[2]["output"], "secret output");
         assert!(details[0].details_loaded);
+    }
+
+    #[test]
+    fn completion_order_replaces_early_tool_placeholders() {
+        let tool = |number, call_id: &str, status: &str| TranscriptPart {
+            number,
+            source_key: format!("tool:{number}"),
+            kind: TranscriptPartKind::Tool,
+            run_id: "run-1".to_string(),
+            prompt: None,
+            completion: None,
+            tool: Some(crate::transcript::types::TranscriptToolBody {
+                job_id: None,
+                tool_invocation_id: None,
+                call_id: call_id.to_string(),
+                name: "exec_command".to_string(),
+                output: Some(serde_json::json!({"status": "completed", "output": "done"})),
+                status: status.to_string(),
+            }),
+        };
+        let mut turn = completion(4);
+        turn.completion.as_mut().unwrap().items = vec![
+            serde_json::json!({"type": "reasoning", "id": "r", "text": "plan"}),
+            serde_json::json!({"type": "text", "id": "t", "text": "checking"}),
+            serde_json::json!({"type": "tool-call", "callId": "a", "name": "exec_command", "input": {}}),
+            serde_json::json!({"type": "tool-call", "callId": "b", "name": "exec_command", "input": {}}),
+        ];
+        for include_details in [false, true] {
+            let messages = project_messages(
+                "user",
+                "thread",
+                vec![
+                    completion_for_run(0, "run-1", "previous turn"),
+                    tool(1, "b", "started"),
+                    tool(2, "a", "started"),
+                    tool(3, "a", "completed"),
+                    turn.clone(),
+                    tool(5, "b", "completed"),
+                    completion_for_run(6, "run-1", "answer"),
+                ],
+                include_details,
+            );
+            let parts = &messages[0].parts;
+            assert_eq!(
+                parts
+                    .iter()
+                    .map(|part| part["type"].as_str().unwrap())
+                    .collect::<Vec<_>>(),
+                [
+                    "text",
+                    "reasoning",
+                    "text",
+                    "tool-call",
+                    "tool-result",
+                    "tool-call",
+                    "tool-result",
+                    "text"
+                ]
+            );
+            assert_eq!(parts[3]["callId"], "a");
+            assert_eq!(parts[4]["callId"], "a");
+            assert_eq!(parts[5]["callId"], "b");
+            assert_eq!(parts[6]["callId"], "b");
+            assert_eq!(parts[4]["output"]["status"], "completed");
+            assert_eq!(parts[1]["text"], if include_details { "plan" } else { "" });
+        }
     }
 
     #[test]

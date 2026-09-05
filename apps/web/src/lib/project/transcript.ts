@@ -46,17 +46,29 @@ export function mergePagedTranscriptWithLive(args: {
 			(message) => message.type === 'response' && message.runId === live.runId
 		);
 		const existing = existingIndex >= 0 ? messages[existingIndex] : undefined;
-		const parts = [...(existing?.parts ?? [])];
-		const indexes = new Map(parts.map((part, index) => [partKey(part), index]));
-		for (const part of live.parts) {
-			const index = indexes.get(partKey(part));
-			if (index === undefined) {
-				indexes.set(partKey(part), parts.length);
-				parts.push(part);
+		const liveKeys = new Set(live.parts.map(partKey));
+		const liveCallIds = new Set(
+			live.parts.flatMap((part) => (part.type === 'tool-call' ? [part.callId] : []))
+		);
+		const results = new Map<string, AssistantPart>();
+		const parts: AssistantPart[] = [];
+		let insertionIndex: number | undefined;
+		// Early durable tool events must not override the streamed turn's item order.
+		for (const part of existing?.parts ?? []) {
+			if (part.type === 'tool-result' && liveCallIds.has(part.callId)) {
+				results.set(part.callId, part);
+				insertionIndex ??= parts.length;
+			} else if (liveKeys.has(partKey(part))) {
+				insertionIndex ??= parts.length;
 			} else {
-				parts[index] = part;
+				parts.push(part);
 			}
 		}
+		const turnParts = live.parts.flatMap((part) => {
+			const result = part.type === 'tool-call' ? results.get(part.callId) : undefined;
+			return result && !liveKeys.has(partKey(result)) ? [part, result] : [part];
+		});
+		parts.splice(insertionIndex ?? parts.length, 0, ...turnParts);
 		const overlay: ThreadMessage = {
 			...existing,
 			_id: existing?._id ?? responseMessageId(live.runId),

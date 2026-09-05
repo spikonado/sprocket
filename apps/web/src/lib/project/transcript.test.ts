@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Id } from '$convex/_generated/dataModel';
 import type { LiveCompletionOverlay, ThreadMessage } from '$lib/types/sprocket';
 import { mergePagedTranscriptWithLive, mergeTranscriptMessages } from '$lib/project/transcript';
+import { buildAssistantTimeline } from '$lib/chat/assistant-timeline';
 
 // SAFETY: Tests use stable opaque strings where only ID equality matters.
 const threadId = 'thread-1' as Id<'threadRecords'>;
@@ -69,7 +70,7 @@ describe('mergePagedTranscriptWithLive', () => {
 		expect(after[0].sourceNumbers).toEqual([1]);
 	});
 
-	it('replaces streamed tool calls in place without moving their durable results', () => {
+	it('keeps durable tool results attached to their streamed calls', () => {
 		const call = { type: 'tool-call' as const, callId: 'call', name: 'exec_command', input: null };
 		const result = {
 			type: 'tool-result' as const,
@@ -85,6 +86,41 @@ describe('mergePagedTranscriptWithLive', () => {
 		});
 		expect(messages[0].parts.map((part) => part.type)).toEqual(['tool-call', 'tool-result']);
 		expect(messages[0].sourceNumbers).toEqual([1, 2]);
+	});
+
+	it('keeps reasoning before its tools when tool events arrive before the completion', () => {
+		const reasoning = { type: 'reasoning' as const, id: 'r', turnId: 'stream-1', text: 'plan' };
+		const text = { type: 'text' as const, id: 't', turnId: 'stream-1', text: 'checking' };
+		const first = { type: 'tool-call' as const, callId: 'a', name: 'exec_command', input: null };
+		const second = { ...first, callId: 'b' };
+		const result = {
+			type: 'tool-result' as const,
+			callId: 'a',
+			name: 'exec_command',
+			output: 'done'
+		};
+		const stream = { ...live(), parts: [reasoning, text, first, second] };
+		const previous = { type: 'text' as const, id: 'previous', text: 'previous turn' };
+		const args = { live: stream, userId: 'user-1', threadId };
+		const before = mergePagedTranscriptWithLive({
+			...args,
+			messages: [message({ parts: [previous], streamIds: [] })]
+		});
+		const during = mergePagedTranscriptWithLive({
+			...args,
+			messages: [message({ parts: [previous, second, first, result], streamIds: [] })]
+		});
+		expect(during[0].parts).toEqual([previous, reasoning, text, first, result, second]);
+		const order = (entry: ThreadMessage) =>
+			buildAssistantTimeline(entry.parts, []).map((part) =>
+				part.type === 'tool' ? part.callId : part.id
+			);
+		expect(order(during[0])).toEqual(order(before[0]));
+		const completed = message({ parts: during[0].parts });
+		expect(order(mergePagedTranscriptWithLive({ ...args, messages: [completed] })[0])).toEqual(
+			order(before[0])
+		);
+		expect(during[0].parts.filter((part) => part.type === 'tool-result')).toEqual([result]);
 	});
 
 	it('does not duplicate a response after its durable message arrives', () => {
