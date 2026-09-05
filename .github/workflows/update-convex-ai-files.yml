@@ -28,10 +28,12 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Update Convex AI files
-        working-directory: apps/web
         run: |
+          cd apps/web
           bunx convex ai-files update
           bunx prettier --write AGENTS.md CLAUDE.md skills-lock.json .agents/skills
+          cd ../..
+          python .github/scripts/harden-convex-ai-files.py
 
       - name: Create pull request and enable auto-merge
         env:
@@ -42,10 +44,29 @@ jobs:
             exit 0
           fi
 
+          while IFS= read -r path; do
+            case "$path" in
+              apps/web/AGENTS.md | \
+              apps/web/CLAUDE.md | \
+              apps/web/skills-lock.json | \
+              apps/web/.agents/skills/* | \
+              apps/web/src/convex/_generated/ai/*) ;;
+              *)
+                echo "::error::Convex AI file update changed unexpected path: $path"
+                exit 1
+                ;;
+            esac
+          done < <(git status --porcelain | cut -c4-)
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$BRANCH_NAME"
-          git add --all
+          git add \
+            apps/web/AGENTS.md \
+            apps/web/CLAUDE.md \
+            apps/web/skills-lock.json \
+            apps/web/.agents/skills \
+            apps/web/src/convex/_generated/ai
           git commit -m "chore(convex): Update Convex AI files"
 
           git fetch origin "$BRANCH_NAME:refs/remotes/origin/$BRANCH_NAME" || true
