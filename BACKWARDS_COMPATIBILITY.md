@@ -97,15 +97,17 @@ jobs carrying it.
 
 ### 3. Aggregate usage ledger leftovers
 
-Processed-token totals live in `threadUsageEvents` plus a namespaced
-Aggregate. `getThreadUsageValues` reads that sum. `recordThreadUsageEvent`
-still dual-writes `threadUsage.totalTokensProcessed` as a denormalized cache.
+Processed-token totals live on `threadUsage.totalTokensProcessed`.
+`getThreadUsageValues` reads that row. `recordThreadUsageEvent` still
+enqueues a namespaced Aggregate write (`async: true`) so the ledger can
+fill in threads that have no usage row. Those ledger reads are stale.
 
 `usageLedgerMigratedAt` is unused leftover after the backfill. It is not a
 read gate.
 
-Remove the dual-write (and then the required field) after an unset rewrite.
-Drop `usageLedgerMigratedAt` after a separate unset, or in the same rewrite.
+Drop the Aggregate enqueue and the missing-row fallback after a prod check
+shows every thread has a `threadUsage` row. Drop `usageLedgerMigratedAt`
+after a separate unset, or in the same rewrite.
 
 ### 4. Historical `runs.completionTransport`
 

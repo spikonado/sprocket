@@ -121,8 +121,8 @@ export default defineSchema({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
 		contextTokens: v.optional(v.number()),
-		// Denormalized cache of the Aggregate ledger. See
-		// BACKWARDS_COMPATIBILITY.md (stored schema, usage ledger).
+		// Live processed-token total. See BACKWARDS_COMPATIBILITY.md
+		// (stored schema, usage ledger).
 		totalTokensProcessed: v.number(),
 		// Leftover after the usage-ledger backfill.
 		usageLedgerMigratedAt: v.optional(v.number())

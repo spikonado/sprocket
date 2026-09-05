@@ -5,6 +5,7 @@ import rateLimiterTest from '@convex-dev/rate-limiter/test';
 import exaTest from '@exalabs/convex-exa/test';
 import migrationsTest from '@convex-dev/migrations/test';
 import aggregateTest from '@convex-dev/aggregate/test';
+import batchWorkerTest from '@convex-dev/batch-worker/test';
 import workflowTest from '@convex-dev/workflow/test';
 import actionRetrierTest from '@convex-dev/action-retrier/test';
 import workpoolTest from '@convex-dev/workpool/test';
@@ -43,6 +44,8 @@ export function initConvexTest(): ConvexTestInstance {
 	exaTest.register(backend);
 	migrationsTest.register(backend);
 	aggregateTest.register(backend);
+	// Queued writes use a nested Batch Worker the aggregate test helper omits.
+	batchWorkerTest.register(backend, 'aggregate/batchWorker');
 	workflowTest.register(backend);
 	actionRetrierTest.register(backend);
 	workpoolTest.register(backend, 'webToolWorkpool');
