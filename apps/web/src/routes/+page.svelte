@@ -12,6 +12,7 @@
 		cancelDesktopSignIn,
 		clearDesktopSignInOpenError,
 		convexAuthRetryPending,
+		convexAuthUserId,
 		reconcileNativeAuthentication,
 		retryConvexAuthentication,
 		signIn,
@@ -99,8 +100,8 @@
 
 	const convexAuth = useAuth();
 	let sawAuthLoadingDuringRetry = $state(false);
-	const isSignedIn = $derived(Boolean($authState.user));
-	const signedInUserId = $derived($authState.user?.id ?? null);
+	const signedInUserId = $derived($convexAuthUserId);
+	const isSignedIn = $derived(Boolean(signedInUserId));
 	const retryPending = $derived($convexAuthRetryPending);
 	const nativeAuthLoading = $derived($authState.nativeSession === 'loading');
 	const nativeAuthBlocked = $derived(
@@ -374,7 +375,7 @@
 	}
 
 	function getAuthenticatedQueryArgs() {
-		return $authState.user && convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip';
+		return signedInUserId && convexAuth.isAuthenticated && !convexAuth.isLoading ? {} : 'skip';
 	}
 
 	const uiPreferencesQuery = useQuery(api.uiPreferences.getMine, getAuthenticatedQueryArgs);
