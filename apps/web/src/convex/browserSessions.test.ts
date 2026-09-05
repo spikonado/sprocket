@@ -21,6 +21,49 @@ async function seedRun(t: ConvexTestInstance, subject: string) {
 }
 
 describe('browserSessions', () => {
+	it('selects the most recently used provider and falls back when Firecrawl closes', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId, runId, userId } = await seedRun(t, 'user_browser_mixed');
+		await t.mutation(internal.browserSessions.upsertForThread, {
+			threadId,
+			runId,
+			userId,
+			browserbaseSessionId: 'legacy',
+			liveViewUrl: 'https://view.example/legacy'
+		});
+		await t.run((ctx) => ctx.db.patch('runs', runId, { status: 'completed' }));
+		await new Promise((resolve) => setTimeout(resolve, 5));
+		const newer = await createQueuedRun(t, asUser, threadId, 'newer', 'secret');
+		const firecrawlId = await t.run(async (ctx) => {
+			return await ctx.db.insert('firecrawlSessions', {
+				threadId,
+				userId,
+				lastUsedRunId: newer.runId,
+				profileName: 'profile',
+				saveChanges: true,
+				startedAt: Date.now(),
+				expiresAt: Date.now() + 3_600_000,
+				operationExpiresAt: 0,
+				closing: false,
+				liveViewUrl: 'https://view.example/firecrawl'
+			});
+		});
+		expect((await asUser.query(api.browserSessions.liveViewForThread, { threadId }))?.url).toBe(
+			'https://view.example/firecrawl'
+		);
+		await t.run((ctx) => ctx.db.patch('firecrawlSessions', firecrawlId, { closing: true }));
+		expect((await asUser.query(api.browserSessions.liveViewForThread, { threadId }))?.url).toBe(
+			'https://view.example/legacy'
+		);
+		await t.run((ctx) =>
+			ctx.db.patch('firecrawlSessions', firecrawlId, { closing: false, lastUsedRunId: runId })
+		);
+		await t.mutation(internal.browserSessions.touchForThread, { threadId, runId: newer.runId });
+		expect((await asUser.query(api.browserSessions.liveViewForThread, { threadId }))?.url).toBe(
+			'https://view.example/legacy'
+		);
+	});
+
 	it('creates a session row and returns it for the owning user', async () => {
 		const t = initConvexTest();
 		const { threadId, runId, userId } = await seedRun(t, 'user_browser_a');

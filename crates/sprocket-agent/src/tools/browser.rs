@@ -46,8 +46,6 @@ struct BrowserScreenshotResult {
     data_base64: String,
     byte_length: u64,
     truncated: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    url: Option<String>,
 }
 
 /// Screenshots must go through browser_screenshot; capture them from here and
@@ -186,6 +184,7 @@ fn screenshot_persisted_result(output: &serde_json::Value) -> serde_json::Value 
             "dataBase64".to_string(),
             serde_json::Value::String(String::new()),
         );
+        object.remove("url");
     }
     persisted
 }
@@ -201,15 +200,6 @@ fn parse_screenshot_result(
     let data_base64 = required_screenshot_str(object, "dataBase64")?.to_string();
     let byte_length = required_screenshot_u64(object, "byteLength")?;
     let truncated = required_screenshot_bool(object, "truncated")?;
-    let url = match object.get("url") {
-        None | Some(serde_json::Value::Null) => None,
-        Some(value) => Some(
-            value
-                .as_str()
-                .ok_or_else(|| tool_failure("screenshot url must be a string"))?
-                .to_string(),
-        ),
-    };
     if !truncated && data_base64.is_empty() {
         return Err(tool_failure("browser_screenshot returned no image data"));
     }
@@ -218,7 +208,6 @@ fn parse_screenshot_result(
         data_base64,
         byte_length,
         truncated,
-        url,
     })
 }
 
@@ -263,16 +252,12 @@ fn required_screenshot_u64(
 }
 
 /// Convert the Convex screenshot result into model content: a compact text
-/// block plus the image itself. The durable job result keeps the same shape
-/// with `dataBase64` cleared so the transcript never stores the pixels.
+/// block plus the image itself. Durable results omit pixels and page URLs.
 fn screenshot_tool_output(
     value: serde_json::Value,
 ) -> Result<rig::tool::ToolOutput, ToolExecutionError> {
     let shot = parse_screenshot_result(&value)?;
     let mut summary = format!("Screenshot captured ({} bytes)", shot.byte_length);
-    if let Some(url) = &shot.url {
-        summary.push_str(&format!(" of {url}"));
-    }
     if shot.truncated {
         summary.push_str("; too large to attach");
     }
@@ -330,13 +315,13 @@ mod tests {
     }
 
     #[test]
-    fn screenshot_persistence_strips_only_the_image_payload() {
+    fn screenshot_persistence_strips_image_payload_and_page_url() {
         let output = serde_json::json!({
             "dataBase64": "aGVsbG8=",
             "mediaType": "image/png",
             "byteLength": 5,
             "truncated": false,
-            "url": "https://shop.example/"
+            "url": "https://shop.example/reset?token=secret#credential"
         });
 
         let persisted = screenshot_persisted_result(&output);
@@ -346,7 +331,7 @@ mod tests {
         assert_eq!(persisted["mediaType"], output["mediaType"]);
         assert_eq!(persisted["byteLength"], output["byteLength"]);
         assert_eq!(persisted["truncated"], output["truncated"]);
-        assert_eq!(persisted["url"], output["url"]);
+        assert!(persisted.get("url").is_none());
     }
 
     #[test]
@@ -356,13 +341,17 @@ mod tests {
             "mediaType": "image/png",
             "byteLength": 5.0,
             "truncated": false,
-            "url": "https://shop.example/"
+            "url": "https://shop.example/reset?token=secret#credential"
         }))
         .expect("valid screenshot");
         assert!(matches!(
             attached.as_content(),
             [ToolResultContent::Text(_), ToolResultContent::Image(_)]
         ));
+        let ToolResultContent::Text(summary) = &attached.as_content()[0] else {
+            panic!("expected screenshot summary");
+        };
+        assert!(!summary.text.contains("secret"));
 
         let truncated = screenshot_tool_output(serde_json::json!({
             "dataBase64": "",

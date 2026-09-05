@@ -62,8 +62,19 @@ export const liveViewForThread = query({
 			.query('firecrawlSessions')
 			.withIndex('by_threadId', (q) => q.eq('threadId', args.threadId))
 			.unique();
-		if (firecrawl) {
-			if (firecrawl.closing) return null;
+		const session = await ctx.db
+			.query('browserSessions')
+			.withIndex('by_thread', (query) => query.eq('threadId', args.threadId))
+			.first();
+		let preferFirecrawl = !session;
+		if (firecrawl && session) {
+			const firecrawlRun = await ctx.db.get('runs', firecrawl.lastUsedRunId);
+			const legacyRun = await ctx.db.get('runs', session.lastUsedRunId);
+			preferFirecrawl =
+				(firecrawlRun?._creationTime ?? firecrawl.startedAt) >=
+				(legacyRun?._creationTime ?? session.startedAt);
+		}
+		if (firecrawl && !firecrawl.closing && preferFirecrawl) {
 			return {
 				url: firecrawl.liveViewUrl ?? null,
 				interactiveUrl: firecrawl.interactiveLiveViewUrl ?? null,
@@ -75,10 +86,6 @@ export const liveViewForThread = query({
 				startedAt: firecrawl.startedAt
 			};
 		}
-		const session = await ctx.db
-			.query('browserSessions')
-			.withIndex('by_thread', (query) => query.eq('threadId', args.threadId))
-			.first();
 		if (!session) return null;
 		return {
 			url: session.liveViewUrl ?? null,
