@@ -1,7 +1,7 @@
-use anyhow::{Context, anyhow};
+use anyhow::Context;
 use convex::{FunctionResult, QuerySubscription, Value};
 use serde::Deserialize;
-use sprocket_convex::Client as ConvexRpcClient;
+use sprocket_convex::{Client as ConvexRpcClient, decode_function_result};
 use std::collections::BTreeMap;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -487,120 +487,5 @@ impl RuntimeClient {
         let mut args = self.run_args(run_id);
         args.insert("claimId".to_string(), claim_id.to_string().into());
         args
-    }
-}
-
-fn decode_function_result<T: for<'de> Deserialize<'de>>(
-    result: FunctionResult,
-    function: &str,
-) -> anyhow::Result<T> {
-    match result {
-        FunctionResult::Value(value) => {
-            let json_value = convex_value_to_plain_json(value);
-            serde_json::from_value(json_value.clone()).with_context(|| {
-                format!(
-                    "failed to decode response from {function}; payload: {}",
-                    json_value
-                )
-            })
-        }
-        FunctionResult::ErrorMessage(message) => {
-            Err(anyhow!(clean_function_error_message(&message)))
-        }
-        FunctionResult::ConvexError(error) => {
-            Err(anyhow!(clean_function_error_message(&error.message)))
-        }
-    }
-}
-
-/// Strips the transport noise Convex wraps around failed function calls:
-/// production masking lines ("[Request ID ...] Server Error"), `Uncaught`
-/// prefixes, and stack frames. Tool results show only the readable sentence.
-fn clean_function_error_message(raw: &str) -> String {
-    let mut content: Vec<&str> = Vec::new();
-    for line in raw.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with("[Request ID") {
-            continue;
-        }
-        if line.starts_with([' ', '\t']) && trimmed.starts_with("at ") {
-            continue;
-        }
-        let message = trimmed
-            .strip_prefix("Uncaught ConvexError: ")
-            .or_else(|| trimmed.strip_prefix("Uncaught Error: "))
-            .unwrap_or(trimmed);
-        content.push(message);
-    }
-    if content.is_empty() {
-        // Production masking left nothing readable behind; the request id
-        // stays available in the Convex dashboard logs.
-        return "The server failed without a readable error.".to_string();
-    }
-    content.join(" ")
-}
-
-fn convex_value_to_plain_json(value: Value) -> serde_json::Value {
-    match value {
-        Value::Null => serde_json::Value::Null,
-        Value::Int64(number) => serde_json::json!(number),
-        Value::Float64(number) => serde_json::json!(number),
-        Value::Boolean(boolean) => serde_json::json!(boolean),
-        Value::String(text) => serde_json::json!(text),
-        Value::Bytes(bytes) => serde_json::json!(bytes),
-        Value::Array(values) => serde_json::Value::Array(
-            values
-                .into_iter()
-                .map(convex_value_to_plain_json)
-                .collect::<Vec<_>>(),
-        ),
-        Value::Object(fields) => serde_json::Value::Object(
-            fields
-                .into_iter()
-                .map(|(key, value)| (key, convex_value_to_plain_json(value)))
-                .collect(),
-        ),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn cleans_masking_lines_prefixes_and_stack_frames() {
-        let raw = concat!(
-            "[Request ID: 84f5068c0836218d] Server Error\n",
-            "Uncaught ConvexError: The webpage is too complex and could not be parsed as Markdown.\n",
-            "    at handler (../src/convex/webTools.ts:130:2)"
-        );
-        assert_eq!(
-            clean_function_error_message(raw),
-            "The webpage is too complex and could not be parsed as Markdown."
-        );
-    }
-
-    #[test]
-    fn keeps_plain_messages_untouched() {
-        assert_eq!(
-            clean_function_error_message("Mandate not found."),
-            "Mandate not found."
-        );
-    }
-
-    #[test]
-    fn strips_uncaught_error_prefixes() {
-        assert_eq!(
-            clean_function_error_message("Uncaught Error: Prava request failed (500): boom"),
-            "Prava request failed (500): boom"
-        );
-    }
-
-    #[test]
-    fn falls_back_when_production_masks_the_whole_error() {
-        assert_eq!(
-            clean_function_error_message("[Request ID: 0d45611fde71c0f2] Server Error"),
-            "The server failed without a readable error."
-        );
     }
 }

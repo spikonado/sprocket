@@ -1,17 +1,10 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
-import {
-	action,
-	internalMutation,
-	mutation,
-	query,
-	type MutationCtx,
-	type QueryCtx
-} from '@convex/_generated/server';
+import { action, internalMutation, mutation, query } from '@convex/_generated/server';
 import { internal } from '@convex/_generated/api';
 import schema from '@convex/schema';
 import { ConvexError, v, type Infer } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord } from '@convex/lib/access';
-import { executionSecretHash, getExecutionRun, getUserId } from '@convex/lib/auth';
+import { getExecutionRun, getUserId } from '@convex/lib/auth';
 import { GATEWAY_PROTOCOL_VERSION } from '@convex/lib/gatewayProtocol';
 import { modelGatewayTokenSecret, modelGatewayUrl } from '@convex/lib/gatewayFetch';
 import { gatewayTokenExpiresAt, mintGatewayToken } from '@convex/lib/gatewayToken';
@@ -22,38 +15,26 @@ import {
 } from '@convex/lib/assistantStreamWrites';
 import { recordThreadUsageEvent, usageEventId } from '@convex/lib/threadUsage';
 import { finalizeRunRecord, matchesFinalizeExpectations } from '@convex/lib/runFinalize';
-import { startRunLifecycle } from '@convex/runLifecycle';
-import { assertContinuableParent } from '@convex/lib/runResume';
 import { requestRunCancellation } from './runLifecycle';
-import { enqueueWebToolJob, isCloudWebToolKind } from '@convex/webToolPool';
-import { newToolInvocationId } from '@convex/lib/transcriptParts';
 import {
 	recordCompletionTranscript,
-	recordPromptTranscript,
-	recordSettledToolTranscripts,
-	recordStartedToolTranscript
+	recordSettledToolTranscripts
 } from '@convex/lib/transcriptWrites';
 import {
-	areImageUploadIdsEqual,
-	markImageUploadsAttached,
-	getOwnedImageUploads
-} from '@convex/lib/imageUploads';
-import { promptSourceKey } from '@convex/lib/transcriptParts';
-import {
-	RUN_ABANDONED_BY_AGENT,
 	RUN_NO_LONGER_ACTIVE,
 	assertRunAcceptsModelCompletion,
 	toAgentToolConvexError
 } from '@convex/lib/agentErrors';
 import { unsupportedClient } from '@convex/lib/unsupportedClient';
-import { assertThreadCanStartRun, compareRunStartedAt } from '@convex/lib/runs';
+import { compareRunStartedAt } from '@convex/lib/runs';
 import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
 import {
-	attachRunToMachine,
-	getOwnedMachine,
-	isMachineActive,
-	MAX_ACTIVE_MACHINE_RUNS
-} from '@convex/lib/machineRuns';
+	createQueuedRunRecord,
+	finalizeFailedQueuedStart,
+	type QueuedRunRequest
+} from '@convex/lib/runCreate';
+import { beginExecutorJob } from '@convex/lib/toolJobs';
+import { getPromptPart } from '@convex/lib/transcriptParts';
 import {
 	canRegisterCompletionAttempt,
 	canFinalizeAfterClaimFailure,
@@ -85,293 +66,6 @@ type RunClaimPatch = {
 	completionAttemptSeq?: number;
 	activeJobId?: undefined;
 };
-
-type EnqueuedExecutorJob = {
-	threadId: Id<'threadRecords'>;
-	runId: Id<'runs'>;
-	kind: Infer<typeof vExecutorJobKind>;
-	payload: Infer<typeof vExecutorJobPayload>;
-	hidden: boolean;
-	status: 'claimed';
-	enqueuedAt: number;
-	claimedAt: number;
-	sequence: number;
-	callId?: string;
-	toolInvocationId: string;
-};
-
-type QueuedRunRequest = {
-	userId: string;
-	submissionId: string;
-	threadId?: Id<'threadRecords'>;
-	repositoryKey?: string;
-	prompt: string;
-	imageUploadIds: Id<'imageUploads'>[];
-	selectedModel: string;
-	reasoningEffort: Infer<typeof vReasoningEffort>;
-	serviceTier: Infer<typeof vServiceTier>;
-	executionSecret: string;
-	protocolVersion: number;
-	agentVersion?: string;
-	machineId?: string;
-	continuationOfRunId?: Id<'runs'>;
-};
-
-type CreatedGatewayRun = {
-	created: boolean;
-	runId: Id<'runs'>;
-	threadId: Id<'threadRecords'>;
-	userId: string;
-	promptMessageId?: string;
-	promptPart?: Doc<'threadTranscriptParts'>;
-};
-
-async function getPromptPart(
-	ctx: MutationCtx | QueryCtx,
-	threadId: Id<'threadRecords'>,
-	runId: Id<'runs'>
-): Promise<Doc<'threadTranscriptParts'> | null> {
-	const part = await ctx.db
-		.query('threadTranscriptParts')
-		.withIndex('by_threadId_and_sourceKey', (query) =>
-			query.eq('threadId', threadId).eq('sourceKey', promptSourceKey(runId))
-		)
-		.unique();
-	return part?.kind === 'prompt' && part.runId === runId && part.prompt ? part : null;
-}
-
-type GatewayRunTelemetry = {
-	completionTransport: 'gateway';
-	gatewayProtocolVersion: number;
-	agentVersion?: string;
-};
-
-async function createQueuedRunRecord(
-	ctx: MutationCtx,
-	args: QueuedRunRequest
-): Promise<CreatedGatewayRun> {
-	if ((args.threadId === undefined) === (args.repositoryKey === undefined)) {
-		throw new Error('Exactly one of thread ID or repository key is required.');
-	}
-	if (args.continuationOfRunId && !args.threadId) {
-		throw new Error('A continuation requires an existing thread.');
-	}
-	const secretHash = await executionSecretHash(args.executionSecret);
-	const continuationOfRunId = args.continuationOfRunId;
-	const prompt = args.prompt.trim();
-	if (!continuationOfRunId && !prompt && args.imageUploadIds.length === 0) {
-		throw new Error('Message cannot be empty.');
-	}
-	const imageUploads = continuationOfRunId
-		? []
-		: await getOwnedImageUploads(ctx, args.userId, args.imageUploadIds);
-	const machineId = args.machineId;
-	let machine = null;
-	if (machineId) {
-		machine = await getOwnedMachine(ctx, args.userId, machineId);
-		if (!machine || !isMachineActive(machine)) {
-			throw new Error('Machine is not active.');
-		}
-	}
-
-	const existingRun = await ctx.db
-		.query('runs')
-		.withIndex('by_userId_submissionId', (query) =>
-			query.eq('userId', args.userId).eq('submissionId', args.submissionId)
-		)
-		.unique();
-	if (existingRun) {
-		return await reconcileExistingQueuedRun(ctx, args, existingRun, secretHash, prompt);
-	}
-	let threadRecord: Doc<'threadRecords'>;
-	if (args.threadId) {
-		threadRecord = await getOwnedThreadRecord(ctx.db, args.userId, args.threadId);
-	} else {
-		const repositoryKey = args.repositoryKey?.trim();
-		if (!repositoryKey) throw new Error('Repository key is required for a new thread.');
-		const now = Date.now();
-		const threadId = await ctx.db.insert('threadRecords', {
-			userId: args.userId,
-			submissionId: args.submissionId,
-			status: 'queued',
-			repositoryKey,
-			title: (prompt || imageUploads[0]?.name || 'New thread').slice(0, 72),
-			selectedModel: args.selectedModel,
-			reasoningEffort: args.reasoningEffort,
-			serviceTier: args.serviceTier,
-			lastMessageAt: now
-		});
-		await ctx.db.insert('threadUsage', {
-			threadId,
-			userId: args.userId,
-			totalTokensProcessed: 0
-		});
-		threadRecord = (await ctx.db.get('threadRecords', threadId))!;
-	}
-	let latestRun = await ctx.db
-		.query('runs')
-		.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadRecord._id))
-		.order('desc')
-		.first();
-	if (
-		latestRun &&
-		isClaimedRunStatus(latestRun.status) &&
-		!isRunClaimLeaseActive(latestRun, Date.now())
-	) {
-		await finalizeRunRecord(ctx, latestRun, {
-			text: `Run aborted: ${RUN_ABANDONED_BY_AGENT}`,
-			status: 'failed',
-			lastError: RUN_ABANDONED_BY_AGENT
-		});
-		latestRun = (await ctx.db.get('runs', latestRun._id)) ?? latestRun;
-		if (machine) {
-			machine = (await ctx.db.get('machines', machine._id)) ?? machine;
-		}
-	} else {
-		assertThreadCanStartRun(latestRun?.status);
-	}
-	if (continuationOfRunId) {
-		assertContinuableParent(latestRun, continuationOfRunId);
-	}
-	if (machine && machine.runIds.length >= MAX_ACTIVE_MACHINE_RUNS) {
-		throw new Error('Machine has too many active runs.');
-	}
-
-	const gatewayFields: GatewayRunTelemetry = {
-		completionTransport: 'gateway',
-		gatewayProtocolVersion: args.protocolVersion
-	};
-	if (args.agentVersion) {
-		gatewayFields.agentVersion = args.agentVersion;
-	}
-	const runRecord: Omit<Doc<'runs'>, '_id' | '_creationTime'> = {
-		threadId: threadRecord._id,
-		userId: args.userId,
-		submissionId: args.submissionId,
-		status: 'queued' as const,
-		executionSecretHash: secretHash,
-		completionAttemptSeq: 0,
-		selectedModel: args.selectedModel,
-		reasoningEffort: args.reasoningEffort,
-		serviceTier: args.serviceTier,
-		startedAt: Date.now(),
-		...gatewayFields
-	};
-	if (machineId) runRecord.machineId = machineId;
-	if (continuationOfRunId) runRecord.continuationOfRunId = continuationOfRunId;
-	const runId = await ctx.db.insert('runs', runRecord);
-	if (machine) {
-		await attachRunToMachine(ctx, machine, runId);
-	}
-	const completionStreamStateId = await ctx.db.insert('completionStreamStates', {
-		runId,
-		userId: args.userId,
-		sequence: 0
-	});
-	const created: CreatedGatewayRun = {
-		created: true,
-		runId,
-		threadId: threadRecord._id,
-		userId: args.userId
-	};
-	if (!continuationOfRunId) {
-		await markImageUploadsAttached(ctx, imageUploads);
-		created.promptMessageId = promptSourceKey(runId);
-		created.promptPart = await recordPromptTranscript(ctx, {
-			threadId: threadRecord._id,
-			userId: args.userId,
-			runId,
-			text: prompt,
-			imageUploadIds: args.imageUploadIds
-		});
-		await ctx.db.patch('runs', runId, { completionStreamStateId });
-	} else {
-		await ctx.db.patch('runs', runId, { completionStreamStateId });
-	}
-	const threadUpdates = {
-		status: 'queued' as const,
-		title: threadRecord.title ?? (prompt || imageUploads[0]?.name || 'New thread').slice(0, 72),
-		selectedModel: args.selectedModel,
-		reasoningEffort: args.reasoningEffort,
-		serviceTier: args.serviceTier,
-		lastMessageAt: continuationOfRunId ? threadRecord.lastMessageAt : Date.now()
-	};
-	await ctx.db.patch('threadRecords', threadRecord._id, threadUpdates);
-	const lifecycleWorkflowId = await startRunLifecycle(ctx, runId);
-	await ctx.db.patch('runs', runId, { lifecycleWorkflowId });
-	return created;
-}
-
-async function reconcileExistingQueuedRun(
-	ctx: MutationCtx,
-	args: QueuedRunRequest,
-	existingRun: Doc<'runs'>,
-	secretHash: string,
-	prompt: string
-): Promise<CreatedGatewayRun> {
-	if (existingRun.executionSecretHash !== secretHash) {
-		throw new ConvexError('Submission belongs to a different executor.');
-	}
-	const continuationMatches =
-		(existingRun.continuationOfRunId ?? undefined) === (args.continuationOfRunId ?? undefined);
-	const existingThread = await ctx.db.get('threadRecords', existingRun.threadId);
-	if (
-		(args.threadId !== undefined && existingRun.threadId !== args.threadId) ||
-		!existingThread ||
-		existingThread.userId !== args.userId ||
-		(args.repositoryKey !== undefined &&
-			existingThread.repositoryKey !== args.repositoryKey.trim()) ||
-		existingRun.selectedModel !== args.selectedModel ||
-		existingRun.reasoningEffort !== args.reasoningEffort ||
-		existingRun.serviceTier !== args.serviceTier ||
-		!existingRun.completionStreamStateId ||
-		existingRun.completionTransport !== 'gateway' ||
-		!continuationMatches
-	) {
-		throw new ConvexError('Submission belongs to a different or incomplete run.');
-	}
-
-	if (!existingRun.lifecycleWorkflowId && !isRunFinalStatus(existingRun.status)) {
-		const lifecycleWorkflowId = await startRunLifecycle(ctx, existingRun._id);
-		await ctx.db.patch('runs', existingRun._id, { lifecycleWorkflowId });
-	}
-
-	if (args.continuationOfRunId) {
-		return {
-			created: false,
-			runId: existingRun._id,
-			threadId: existingRun.threadId,
-			userId: args.userId
-		};
-	}
-
-	const existingPrompt = await getPromptPart(ctx, existingRun.threadId, existingRun._id);
-	if (
-		!existingPrompt?.prompt ||
-		existingPrompt.prompt.text !== prompt ||
-		!areImageUploadIdsEqual(
-			existingPrompt.prompt.imageUploads.map((upload) => upload.imageUploadId),
-			args.imageUploadIds
-		)
-	) {
-		throw new Error('Submission prompt does not match the existing run.');
-	}
-	const promptPart = await recordPromptTranscript(ctx, {
-		threadId: existingRun.threadId,
-		userId: args.userId,
-		runId: existingRun._id,
-		text: prompt,
-		imageUploadIds: args.imageUploadIds
-	});
-	return {
-		created: false,
-		runId: existingRun._id,
-		threadId: existingRun.threadId,
-		promptMessageId: promptSourceKey(existingRun._id),
-		userId: args.userId,
-		promptPart
-	};
-}
 
 /** Retired Convex createRun. Kept so older agents get an update message. */
 export const createRun = mutation({
@@ -882,60 +576,7 @@ export const finalizeFailedStart = mutation({
 	// stage, so the caller stops without terminalizing it.
 	returns: v.union(v.literal('finalized'), v.literal('pending'), v.literal('standDown')),
 	handler: async (ctx, args) => {
-		// The browser identity can be gone by the time this cleanup runs; the
-		// execution secret is the capability. A secret match on a still-queued
-		// run means it is waiting on this executor, so terminalizing is safe.
-		const secretHash = await executionSecretHash(args.executionSecret);
-		const run = await ctx.db
-			.query('runs')
-			.withIndex('by_executionSecretHash', (query) => query.eq('executionSecretHash', secretHash))
-			.unique();
-		if (!run) {
-			// When the caller is still authenticated, distinguish a duplicate
-			// submission owned by another executor from an insert still in flight.
-			const identity = await ctx.auth.getUserIdentity();
-			if (identity !== null) {
-				const submittedRun = await ctx.db
-					.query('runs')
-					.withIndex('by_userId_submissionId', (query) =>
-						query.eq('userId', identity.subject).eq('submissionId', args.submissionId)
-					)
-					.unique();
-				if (submittedRun) {
-					return 'standDown';
-				}
-			}
-			return 'pending';
-		}
-		const isContinuation = run.continuationOfRunId !== undefined;
-		if (
-			run.status !== 'queued' ||
-			(args.threadId !== undefined && run.threadId !== args.threadId) ||
-			run.selectedModel !== args.selectedModel ||
-			run.reasoningEffort !== args.reasoningEffort ||
-			run.serviceTier !== args.serviceTier
-		) {
-			return 'standDown';
-		}
-		if (!isContinuation) {
-			const promptPart = await getPromptPart(ctx, run.threadId, run._id);
-			if (
-				!promptPart?.prompt ||
-				promptPart.prompt.text !== args.prompt.trim() ||
-				!areImageUploadIdsEqual(
-					promptPart.prompt.imageUploads.map((upload) => upload.imageUploadId),
-					args.imageUploadIds
-				)
-			) {
-				return 'standDown';
-			}
-		}
-		await finalizeRunRecord(ctx, run, {
-			text: args.text,
-			status: 'failed',
-			lastError: args.lastError
-		});
-		return 'finalized';
+		return await finalizeFailedQueuedStart(ctx, args);
 	}
 });
 
@@ -982,49 +623,14 @@ export const beginToolJob = mutation({
 			if (run.claimId !== args.claimId || !isRunClaimLeaseActive(run, Date.now())) {
 				throw new ConvexError(RUN_NO_LONGER_ACTIVE);
 			}
-			const lastJob = await ctx.db
-				.query('executorJobs')
-				.withIndex('by_threadId_sequence', (query) => query.eq('threadId', run.threadId))
-				.order('desc')
-				.first();
-			const nextSequence = (lastJob?.sequence ?? -1) + 1;
-			const toolInvocationId = newToolInvocationId();
-
-			const job: EnqueuedExecutorJob = {
-				threadId: run.threadId,
-				runId: args.runId,
+			return await beginExecutorJob(ctx, {
+				run,
+				claimId: args.claimId,
 				kind: args.kind,
 				payload: args.payload,
-				hidden: args.hidden ?? false,
-				status: 'claimed',
-				enqueuedAt: Date.now(),
-				claimedAt: Date.now(),
-				sequence: nextSequence,
-				toolInvocationId
-			};
-			if (args.callId) job.callId = args.callId;
-			const jobId = await ctx.db.insert('executorJobs', job);
-			if (isCloudWebToolKind(args.kind)) {
-				await enqueueWebToolJob(ctx, {
-					jobId,
-					runId: args.runId,
-					claimId: args.claimId,
-					kind: args.kind
-				});
-			}
-
-			await setRunAndThreadStatus(ctx, run, 'awaiting_executor', { activeJobId: jobId });
-			await recordStartedToolTranscript(ctx, {
-				threadId: run.threadId,
-				userId: run.userId,
-				runId: run._id,
-				job: { ...job, _id: jobId }
+				callId: args.callId,
+				hidden: args.hidden
 			});
-
-			return {
-				jobId,
-				sequence: nextSequence
-			};
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}

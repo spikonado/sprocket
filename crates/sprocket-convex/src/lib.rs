@@ -10,6 +10,13 @@ use rustls::crypto::ring::default_provider;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 
+mod decode;
+
+pub use decode::{
+    decode_function_result, decode_labeled_function_result, deserialize_convex_u32,
+    deserialize_convex_u64,
+};
+
 const CONVEX_RPC_TIMEOUT: Duration = Duration::from_secs(20 * 60);
 
 pub type AuthTokenFetcher =
