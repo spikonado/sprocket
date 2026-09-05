@@ -59,12 +59,12 @@ describe('Firecrawl browser lifecycle', () => {
 		await t.run(async (ctx) => {
 			await ctx.db.patch('runs', runId, { cancellationRequestedAt: Date.now() });
 		});
-		await expect(t.mutation(internal.firecrawlSessions.acquire, args)).rejects.toThrow();
+		await expect(t.mutation(internal.browserSessions.acquire, args)).rejects.toThrow();
 		await t.run(async (ctx) => {
 			await ctx.db.patch('runs', runId, { cancellationRequestedAt: undefined });
 		});
-		const session = await t.mutation(internal.firecrawlSessions.acquire, args);
-		await t.mutation(internal.firecrawlSessions.attach, {
+		const session = await t.mutation(internal.browserSessions.acquire, args);
+		await t.mutation(internal.browserSessions.attach, {
 			id: session._id,
 			operationId: args.operationId,
 			sessionId: 'remote',
@@ -74,7 +74,7 @@ describe('Firecrawl browser lifecycle', () => {
 			await ctx.db.patch('runs', runId, { cancellationRequestedAt: Date.now() });
 		});
 		await expect(
-			t.mutation(internal.firecrawlSessions.beforeExecute, {
+			t.mutation(internal.browserSessions.beforeExecute, {
 				id: session._id,
 				operationId: args.operationId,
 				runId,
@@ -100,7 +100,7 @@ describe('Firecrawl browser lifecycle', () => {
 				})
 			).toEqual({ text: 'Done', truncated: false });
 		}
-		const rows = await t.run((ctx) => ctx.db.query('firecrawlSessions').collect());
+		const rows = await t.run((ctx) => ctx.db.query('browserSessions').collect());
 		expect(rows).toHaveLength(2);
 		expect(rows[0].profileName).toBe(rows[1].profileName);
 		expect(rows[0].sessionId).not.toBe(rows[1].sessionId);
@@ -127,7 +127,7 @@ describe('Firecrawl browser lifecycle', () => {
 			executionSecret,
 			command: 'get url'
 		});
-		const session = await t.run((ctx) => ctx.db.query('firecrawlSessions').unique());
+		const session = await t.run((ctx) => ctx.db.query('browserSessions').unique());
 		expect(session?.expiresAt).toBe((session?.startedAt ?? 0) + 3_600_000);
 	});
 
@@ -139,7 +139,7 @@ describe('Firecrawl browser lifecycle', () => {
 			t.action(api.browserAgent.interact, { runId, claimId, executionSecret, command: 'click @e1' })
 		).rejects.toThrow('profile_in_use');
 		expect(fetch).toHaveBeenCalledTimes(1);
-		expect(await t.run((ctx) => ctx.db.query('firecrawlSessions').collect())).toEqual([]);
+		expect(await t.run((ctx) => ctx.db.query('browserSessions').collect())).toEqual([]);
 	});
 
 	it('fixes saving mode for a session and applies preference only to new sessions', async () => {
@@ -154,7 +154,7 @@ describe('Firecrawl browser lifecycle', () => {
 			t.action(api.browserAgent.interact, { ...args, disable_saving: true })
 		).rejects.toThrow('saving_mode_fixed');
 		expect(fetch).toHaveBeenCalledTimes(3);
-		expect(await t.run((ctx) => ctx.db.query('firecrawlSessions').first())).toMatchObject({
+		expect(await t.run((ctx) => ctx.db.query('browserSessions').first())).toMatchObject({
 			saveChanges: true
 		});
 	});
@@ -188,7 +188,7 @@ describe('Firecrawl browser lifecycle', () => {
 	it('fences in-flight creation when the profile is reset', async () => {
 		const t = initConvexTest();
 		const { asUser, userId, threadId, runId, claimId } = await fixture(t);
-		const session = await t.mutation(internal.firecrawlSessions.acquire, {
+		const session = await t.mutation(internal.browserSessions.acquire, {
 			userId,
 			threadId,
 			runId,
@@ -197,14 +197,14 @@ describe('Firecrawl browser lifecycle', () => {
 		});
 		await asUser.mutation(api.browserProfiles.reset, {});
 		expect(
-			await t.mutation(internal.firecrawlSessions.attach, {
+			await t.mutation(internal.browserSessions.attach, {
 				id: session._id,
 				operationId: 'creating',
 				sessionId: 'late',
 				expiresAt: Date.now() + 3_600_000
 			})
 		).toBe(false);
-		expect(await t.run((ctx) => ctx.db.get('firecrawlSessions', session._id))).toMatchObject({
+		expect(await t.run((ctx) => ctx.db.get('browserSessions', session._id))).toMatchObject({
 			sessionId: 'late',
 			closing: true
 		});
@@ -213,39 +213,39 @@ describe('Firecrawl browser lifecycle', () => {
 	it('does not let stale reconciliation delete a newly attached session', async () => {
 		const t = initConvexTest();
 		const { userId, threadId, runId, claimId } = await fixture(t);
-		const session = await t.mutation(internal.firecrawlSessions.acquire, {
+		const session = await t.mutation(internal.browserSessions.acquire, {
 			userId,
 			threadId,
 			runId,
 			claimId,
 			operationId: 'new'
 		});
-		await t.mutation(internal.firecrawlSessions.attach, {
+		await t.mutation(internal.browserSessions.attach, {
 			id: session._id,
 			operationId: 'new',
 			sessionId: 'remote-new',
 			expiresAt: Date.now() + 3_600_000
 		});
-		await t.mutation(internal.firecrawlSessions.release, { id: session._id, operationId: 'new' });
-		const attached = await t.run((ctx) => ctx.db.get('firecrawlSessions', session._id));
-		await t.mutation(internal.firecrawlSessions.reconcile, {
+		await t.mutation(internal.browserSessions.release, { id: session._id, operationId: 'new' });
+		const attached = await t.run((ctx) => ctx.db.get('browserSessions', session._id));
+		await t.mutation(internal.browserSessions.reconcile, {
 			ids: [session._id],
 			before: attached!.attachedAt! - 1
 		});
-		expect(await t.run((ctx) => ctx.db.get('firecrawlSessions', session._id))).not.toBeNull();
+		expect(await t.run((ctx) => ctx.db.get('browserSessions', session._id))).not.toBeNull();
 	});
 
 	it('rejects takeover during an action and rejects another user', async () => {
 		const t = initConvexTest();
 		const { asUser, userId, threadId, runId, claimId } = await fixture(t);
-		const session = await t.mutation(internal.firecrawlSessions.acquire, {
+		const session = await t.mutation(internal.browserSessions.acquire, {
 			userId,
 			threadId,
 			runId,
 			claimId,
 			operationId: 'busy'
 		});
-		await t.mutation(internal.firecrawlSessions.attach, {
+		await t.mutation(internal.browserSessions.attach, {
 			id: session._id,
 			operationId: 'busy',
 			sessionId: 'remote',
@@ -361,9 +361,9 @@ describe('Firecrawl browser lifecycle', () => {
 			async () => new Response(JSON.stringify({ success: true, sessions: [] }))
 		);
 		await t.action(internal.firecrawlBrowser.reconcile, {});
-		expect(await t.run((ctx) => ctx.db.query('firecrawlSessions').collect())).toHaveLength(1);
-		const session = await t.run((ctx) => ctx.db.query('firecrawlSessions').unique());
-		await t.run((ctx) => ctx.db.patch('firecrawlSessions', session!._id, { attachedAt: 0 }));
+		expect(await t.run((ctx) => ctx.db.query('browserSessions').collect())).toHaveLength(1);
+		const session = await t.run((ctx) => ctx.db.query('browserSessions').unique());
+		await t.run((ctx) => ctx.db.patch('browserSessions', session!._id, { attachedAt: 0 }));
 		fetch.mockImplementation(
 			async () =>
 				new Response(
@@ -374,7 +374,7 @@ describe('Firecrawl browser lifecycle', () => {
 				)
 		);
 		await t.action(internal.firecrawlBrowser.reconcile, {});
-		expect(await t.run((ctx) => ctx.db.query('firecrawlSessions').collect())).toHaveLength(0);
+		expect(await t.run((ctx) => ctx.db.query('browserSessions').collect())).toHaveLength(0);
 	});
 
 	it('quarantines uncertain execution without replaying it', async () => {
@@ -388,7 +388,7 @@ describe('Firecrawl browser lifecycle', () => {
 			'browser_outcome_unknown'
 		);
 		expect(fetch).toHaveBeenCalledTimes(3);
-		expect(await t.run((ctx) => ctx.db.query('firecrawlSessions').first())).toMatchObject({
+		expect(await t.run((ctx) => ctx.db.query('browserSessions').first())).toMatchObject({
 			closing: true
 		});
 	});

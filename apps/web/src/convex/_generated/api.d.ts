@@ -21,7 +21,6 @@ import type * as completion from "../completion.js";
 import type * as crons from "../crons.js";
 import type * as executor from "../executor.js";
 import type * as firecrawlBrowser from "../firecrawlBrowser.js";
-import type * as firecrawlSessions from "../firecrawlSessions.js";
 import type * as gateway from "../gateway.js";
 import type * as http from "../http.js";
 import type * as imageUploads from "../imageUploads.js";
@@ -99,7 +98,6 @@ declare const fullApi: ApiFromModules<{
   crons: typeof crons;
   executor: typeof executor;
   firecrawlBrowser: typeof firecrawlBrowser;
-  firecrawlSessions: typeof firecrawlSessions;
   gateway: typeof gateway;
   http: typeof http;
   imageUploads: typeof imageUploads;

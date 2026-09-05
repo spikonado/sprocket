@@ -1,6 +1,8 @@
 # Firecrawl browser sessions
 
-New agents use `browser_interact` for agent-browser commands and `browser_screenshot` for model-visible PNGs. Set `FIRECRAWL_API_KEY` in the Convex deployment. Released agents continue to use Browserbase until they update. See `BACKWARDS_COMPATIBILITY.md` for the removal gate.
+Agents use `browser_interact` for agent-browser commands and `browser_screenshot` for model-visible PNGs. Set `FIRECRAWL_API_KEY` in the Convex deployment. Browserbase actions are retired; older clients must update to use browser tools.
+
+Firecrawl sessions use `browserSessions`. The old Browserbase rows were cleared, and both session tables were confirmed empty in development and production before replacing the schema. There is no separate `firecrawlSessions` table or Browserbase fallback.
 
 Each user has one Firecrawl saved profile. Each conversation has a separate live browser session. Saving is on by default, and Firecrawl permits only one saving session per profile. Another conversation gets `profile_in_use` without executing its action. Passing `disable_saving: true` opens a reader from the last saved profile. It does not save browser state, but purchases, messages, and other website changes still happen.
 

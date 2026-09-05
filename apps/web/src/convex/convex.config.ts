@@ -16,10 +16,6 @@ const app = defineApp({
 		EXA_API_KEY: v.string(),
 		FIRECRAWL_API_KEY: v.optional(v.string()),
 		WORKOS_CLIENT_ID: v.string(),
-		OPENAI_API_KEY: v.optional(v.string()),
-		BROWSERBASE_API_KEY: v.optional(v.string()),
-		BROWSERBASE_PROJECT_ID: v.optional(v.string()),
-		BROWSER_TASK_MODEL: v.optional(v.string()),
 		PRAVA_SECRET_KEY: v.optional(v.string()),
 		PRAVA_BACKEND_URL: v.union(
 			v.literal('https://sandbox.api.prava.space'),

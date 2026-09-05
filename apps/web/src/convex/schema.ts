@@ -329,7 +329,7 @@ export default defineSchema({
 		name: v.string(),
 		savingEnabled: v.boolean()
 	}).index('by_userId', ['userId']),
-	firecrawlSessions: defineTable({
+	browserSessions: defineTable({
 		humanControl: v.optional(v.boolean()),
 		attachedAt: v.optional(v.number()),
 		threadId: v.id('threadRecords'),
@@ -348,14 +348,5 @@ export default defineSchema({
 	})
 		.index('by_threadId', ['threadId'])
 		.index('by_userId', ['userId'])
-		.index('by_expiresAt', ['expiresAt']),
-	browserSessions: defineTable({
-		threadId: v.id('threadRecords'),
-		runId: v.id('runs'),
-		lastUsedRunId: v.id('runs'),
-		userId: v.string(),
-		browserbaseSessionId: v.string(),
-		liveViewUrl: v.optional(v.string()),
-		startedAt: v.number()
-	}).index('by_thread', ['threadId'])
+		.index('by_expiresAt', ['expiresAt'])
 });

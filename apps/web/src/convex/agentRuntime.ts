@@ -49,8 +49,8 @@ import { COMPLETION_STREAM_SUPERSEDED, vCompletionStreamEvent } from '@convex/li
 import {
 	isRunFinalStatus,
 	runFinalStatus,
-	vExecutorJobKind,
-	vExecutorJobPayload,
+	vCurrentExecutorJobKind,
+	vCurrentExecutorJobPayload,
 	vReasoningEffort,
 	vServiceTier,
 	vRunFinalStatus,
@@ -606,9 +606,9 @@ export const beginToolJob = mutation({
 	args: {
 		claimId: v.string(),
 		runId: v.id('runs'),
-		kind: vExecutorJobKind,
+		kind: vCurrentExecutorJobKind,
 		callId: v.optional(v.string()),
-		payload: vExecutorJobPayload,
+		payload: vCurrentExecutorJobPayload,
 		hidden: v.optional(v.boolean()),
 		executionSecret: v.string()
 	},

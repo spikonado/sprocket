@@ -120,7 +120,6 @@ describe('executor', () => {
 			executionSecret: 'executor-browser-result-secret'
 		});
 
-		// browser_act / browser_extract
 		const taskResult = { text: 'success: true', truncated: false };
 		await expect(
 			asUser.mutation(api.executor.complete, {
@@ -132,19 +131,19 @@ describe('executor', () => {
 			})
 		).resolves.toBe(true);
 
-		// browser_observe, on a fresh job
-		const observeResult = {
-			actions: [{ selector: 'xpath=/html/body/button', description: 'Pay' }],
-			text: '[]',
+		const screenshotResult = {
+			mediaType: 'image/png' as const,
+			dataBase64: '',
+			byteLength: 123,
 			truncated: false
 		};
 		const second = await seedRunWithJob(t, {
-			executionSecret: 'executor-browser-observe-secret'
+			executionSecret: 'executor-browser-screenshot-secret'
 		});
 		await expect(
 			second.asUser.mutation(api.executor.complete, {
 				jobId: second.jobId,
-				result: observeResult,
+				result: screenshotResult,
 				runId: second.runId,
 				claimId: second.claimId,
 				executionSecret: second.executionSecret

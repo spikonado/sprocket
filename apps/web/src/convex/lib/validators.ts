@@ -77,7 +77,7 @@ export const vReadSkillPayload = v.object({
 	name: v.string()
 });
 
-export const vBrowserActPayload = v.object({
+const vHistoricalBrowserActPayload = v.object({
 	instruction: v.optional(v.string()),
 	action: v.optional(
 		v.object({
@@ -179,7 +179,7 @@ export const vAwaitQuestionPayload = v.object({
 	yieldTimeMs: v.optional(v.number())
 });
 
-export const vExecutorJobPayload = v.union(
+export const vCurrentExecutorJobPayload = v.union(
 	v.object({}),
 	vApplyPatchPayload,
 	vAskQuestionPayload,
@@ -191,13 +191,17 @@ export const vExecutorJobPayload = v.union(
 	vWriteStdinPayload,
 	vCreateArtifactPayload,
 	vUpdateArtifactPayload,
-	vBrowserActPayload,
 	vBrowserInteractPayload,
 	vBrowserScreenshotPayload,
 	vMandateSetupPayload,
 	vMandateIdPayload,
 	vMandateChargePayload,
 	vMandateReportPayload
+);
+
+export const vExecutorJobPayload = v.union(
+	vCurrentExecutorJobPayload,
+	vHistoricalBrowserActPayload
 );
 
 export const vApplyPatchResult = v.object({
@@ -316,15 +320,15 @@ export const vBrowserScreenshotResult = v.object({
 	url: v.optional(v.string())
 });
 
-export const vBrowserObservedAction = v.object({
+const vHistoricalBrowserObservedAction = v.object({
 	selector: v.string(),
 	description: v.string(),
 	method: v.optional(v.string()),
 	arguments: v.optional(v.array(v.string()))
 });
 
-export const vBrowserObserveResult = v.object({
-	actions: v.array(vBrowserObservedAction),
+const vHistoricalBrowserObserveResult = v.object({
+	actions: v.array(vHistoricalBrowserObservedAction),
 	text: v.string(),
 	truncated: v.boolean()
 });
@@ -371,7 +375,7 @@ export const vExecutorJobResult = v.union(
 	vArtifactResult,
 	vBrowserTaskResult,
 	vBrowserScreenshotResult,
-	vBrowserObserveResult,
+	vHistoricalBrowserObserveResult,
 	vMandateSetupResult,
 	vMandateStatusResult,
 	vMandateListResult,
@@ -398,15 +402,12 @@ export function isRunFinalStatus(
 	return runFinalStatus.some((allowed) => allowed === status);
 }
 
-export const vExecutorJobKind = v.union(
+export const vCurrentExecutorJobKind = v.union(
 	v.literal('apply_patch'),
 	v.literal('ask_question'),
 	v.literal('await_question'),
-	v.literal('browser_observe'),
-	v.literal('browser_act'),
 	v.literal('browser_interact'),
 	v.literal('browser_screenshot'),
-	v.literal('browser_extract'),
 	v.literal('exec_command'),
 	v.literal('get_workspace_instructions'),
 	v.literal('mandate_setup'),
@@ -420,6 +421,13 @@ export const vExecutorJobKind = v.union(
 	v.literal('write_stdin'),
 	v.literal('create_artifact'),
 	v.literal('update_artifact')
+);
+
+export const vExecutorJobKind = v.union(
+	vCurrentExecutorJobKind,
+	v.literal('browser_observe'),
+	v.literal('browser_act'),
+	v.literal('browser_extract')
 );
 
 export const vAgentQuestionStatus = v.union(
