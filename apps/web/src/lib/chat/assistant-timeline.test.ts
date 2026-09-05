@@ -649,6 +649,17 @@ describe('command session labels', () => {
 });
 
 describe('workSectionTimingAnchor', () => {
+	it('treats migrated null timing as unknown rather than epoch zero', () => {
+		const section = {
+			type: 'work' as const,
+			key: 'r1',
+			blocks: [
+				{ type: 'reasoning' as const, id: 'r1', text: '', startedAt: null, completedAt: null }
+			]
+		};
+		expect(workSectionTimingAnchor(section, { inProgress: true })).toEqual({});
+		expect(workSectionTimingAnchor(section, { inProgress: false, endedAt: 9_000 })).toEqual({});
+	});
 	it('uses recorded reasoning and tool boundaries without a job subscription', () => {
 		const section = {
 			type: 'work' as const,

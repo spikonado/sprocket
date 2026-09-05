@@ -14,7 +14,31 @@ The UI omits durations when section boundaries are unknown rather than inferring
 them from the run start or transcript sequence numbers. New local replicas also
 retain the transcript record creation time for tool-event timing. Existing JSONL
 records remain readable without it; historical reasoning timing cannot be recovered.
-Keep these fields optional until old agents age out and untimed history is retired.
+New completion writes normalize missing timestamps to explicit `null`, including
+writes from older agents. `backfillTranscriptTiming` in `convex/migrations.ts`
+does the same for stored completion items without changing known timestamps.
+It is included in the default migration runner. After deploying the nullable
+validators, write normalization, and null-aware UI, run from `apps/web`:
+
+```sh
+bun convex run migrations:runTranscriptTiming
+```
+
+Pass `'{"dryRun":true}'` to preview one batch without writes.
+Use `--prod` for the production deployment. This is a resumable, idempotent
+backfill; verify its status is complete in the migrations component before
+tightening the stored validators to `v.union(v.number(), v.null())`.
+No historical timing is invented and untimed history need not be deleted.
+Keep optional input validators separate for supported agents that omit timing.
+Removing optional timing from the shared wire validators additionally requires
+all supported producers to emit explicit nulls and old JSONL replicas to be
+normalized at the read boundary. Tool results are projected, not stored as
+completion items, so their wire validator has that separate removal gate.
+Both Convex transcript read endpoints omit null timestamps for released agents
+and UIs; stored records still contain explicit nulls. The local projected-message
+API also omits nulls from replicas populated before that read adapter was deployed.
+Remove these adapters once all supported consumers handle explicit nulls, keeping
+stored and wire validators separate until then.
 The projected `runStartedAt` field remains numeric for released clients, with `0`
 meaning unknown instead of a sequence number. Remove it once supported clients no
 longer read it; the current section timer uses assistant-part timestamps.

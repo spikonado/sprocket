@@ -367,7 +367,10 @@
 											{@const nextSection = sections[sectionIndex + 1]}
 											{@const timing = workSectionTimingAnchor(section, {
 												inProgress: workInProgress,
-												endedAt: nextSection?.type === 'text' ? nextSection.startedAt : undefined
+												endedAt:
+													nextSection?.type === 'text'
+														? (nextSection.startedAt ?? undefined)
+														: undefined
 											})}
 											{#if visibleBlocks.length > 0 || workInProgress || runningTools.length > 0}
 												<WorkDisclosure

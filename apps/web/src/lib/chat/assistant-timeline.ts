@@ -143,7 +143,7 @@ export function workSectionTimingAnchor(
 		const items = block.type === 'tool-group' ? block.tools : [block];
 		for (const item of items) {
 			// Older transcripts did not record boundaries. A partial duration is misleading.
-			if (item.startedAt === undefined) return {};
+			if (item.startedAt == null) return {};
 			startedAtMs = Math.min(startedAtMs ?? item.startedAt, item.startedAt);
 			if (!options.inProgress) {
 				const end = item.completedAt ?? options.endedAt;

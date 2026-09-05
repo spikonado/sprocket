@@ -111,7 +111,7 @@ describe('numbered transcript parts', () => {
 		expect(parts.parts[1]?.completion?.items).toEqual(items);
 	});
 
-	it('records a completion', async () => {
+	it('normalizes missing timing from older agents on new completion writes', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'transcript-no-begin-secret';
@@ -145,6 +145,21 @@ describe('numbered transcript parts', () => {
 		expect(number).toBe(1);
 		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
 		expect(parts.parts.map((part) => part.kind)).toEqual(['prompt', 'completion']);
+		const stored = await t.run(
+			async (ctx) => await ctx.db.get('threadTranscriptParts', parts.parts[1]!._id)
+		);
+		expect(stored?.completion?.items).toEqual([
+			{ type: 'text', id: 't', text: 'Hi', turnId: 'stream-1', startedAt: null, completedAt: null }
+		]);
+		expect(parts.parts[1]?.completion?.items).toEqual([
+			{ type: 'text', id: 't', text: 'Hi', turnId: 'stream-1' }
+		]);
+		const agentParts = await t.query(api.transcript.getPartsForRun, {
+			runId,
+			executionSecret,
+			numbers: [1]
+		});
+		expect(agentParts.parts[0]?.completion?.items).toEqual(parts.parts[1]?.completion?.items);
 	});
 
 	it('appends started and finished tool events paired by invocation id', async () => {

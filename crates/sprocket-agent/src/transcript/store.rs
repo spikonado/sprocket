@@ -670,6 +670,14 @@ fn project_messages(
                         }
                     }
                     for mut item in completion.items {
+                        // Released UIs understand omitted timestamps, but not explicit nulls.
+                        if let Some(object) = item.as_object_mut() {
+                            for key in ["startedAt", "completedAt"] {
+                                if object.get(key).is_some_and(JsonValue::is_null) {
+                                    object.remove(key);
+                                }
+                            }
+                        }
                         match json_type(&item) {
                             Some("text") => {
                                 if let Some(text) = item.get("text").and_then(JsonValue::as_str) {
@@ -1040,7 +1048,7 @@ mod tests {
             serde_json::json!({"type": "reasoning", "id": "r", "text": "plan"}),
             serde_json::json!({"type": "text", "id": "t", "text": "checking"}),
             serde_json::json!({"type": "tool-call", "callId": "a", "name": "exec_command", "input": {}}),
-            serde_json::json!({"type": "tool-call", "callId": "b", "name": "exec_command", "input": {}}),
+            serde_json::json!({"type": "tool-call", "callId": "b", "name": "exec_command", "input": {}, "startedAt": null, "completedAt": null}),
         ];
         for include_details in [false, true] {
             let messages = project_messages(
@@ -1127,6 +1135,22 @@ mod tests {
         assert!(messages[0].parts[0].get("startedAt").is_none());
         assert!(messages[0].parts[0].get("completedAt").is_none());
         assert_eq!(messages[0].run_started_at, UNKNOWN_RUN_STARTED_AT);
+    }
+
+    #[test]
+    fn migrated_null_timing_projects_as_missing_for_released_clients() {
+        let mut part = completion(4);
+        for item in &mut part.completion.as_mut().unwrap().items {
+            item["startedAt"] = JsonValue::Null;
+            item["completedAt"] = JsonValue::Null;
+        }
+        for include_details in [false, true] {
+            let messages = project_messages("user", "thread", vec![part.clone()], include_details);
+            for item in &messages[0].parts {
+                assert!(item.get("startedAt").is_none());
+                assert!(item.get("completedAt").is_none());
+            }
+        }
     }
 
     #[test]

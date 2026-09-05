@@ -2,6 +2,7 @@ import { Migrations } from '@convex-dev/migrations';
 import { components, internal } from '@convex/_generated/api';
 import { internalMutation } from '@convex/_generated/server';
 import schema from '@convex/schema';
+import { normalizeCompletionTiming } from '@convex/lib/transcriptParts';
 
 export const migrations = new Migrations(components.migrations, {
 	schema,
@@ -10,8 +11,24 @@ export const migrations = new Migrations(components.migrations, {
 
 export const run = migrations.runner([
 	internal.migrations.removeRunPromptMessageIds,
-	internal.migrations.removeImageUploadMessageIds
+	internal.migrations.removeImageUploadMessageIds,
+	internal.migrations.backfillTranscriptTiming
 ]);
+
+export const runTranscriptTiming = migrations.runner(internal.migrations.backfillTranscriptTiming);
+
+export const backfillTranscriptTiming = migrations.define({
+	table: 'threadTranscriptParts',
+	migrateOne: (_ctx, part) => {
+		if (
+			!part.completion?.items.some(
+				(item) => item.startedAt === undefined || item.completedAt === undefined
+			)
+		)
+			return;
+		return { completion: normalizeCompletionTiming(part.completion) };
+	}
+});
 
 export const removeRunPromptMessageIds = migrations.define({
 	table: 'runs',
