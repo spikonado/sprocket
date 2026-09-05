@@ -36,21 +36,22 @@ fn load_workspace_instructions_from(
     let project_root = find_project_root(&canonical_cwd);
     let search_dirs = directories_from_root(&project_root, &canonical_cwd);
     let mut instructions = Vec::new();
-    let mut remaining_bytes = MAX_INSTRUCTION_BYTES;
 
     if let Some(user_home) = user_home {
         let user_agents_path = user_home.join(".agents/AGENTS.md");
+        let mut remaining_user_bytes = MAX_INSTRUCTION_BYTES;
         load_instruction(
             &user_agents_path,
             user_agents_path.parent().unwrap_or(user_home),
             WorkspaceInstructionSource::User,
-            &mut remaining_bytes,
+            &mut remaining_user_bytes,
             &mut instructions,
         )?;
     }
 
+    let mut remaining_workspace_bytes = MAX_INSTRUCTION_BYTES;
     for directory in search_dirs {
-        if remaining_bytes == 0 {
+        if remaining_workspace_bytes == 0 {
             break;
         }
 
@@ -58,7 +59,7 @@ fn load_workspace_instructions_from(
             &directory.join("AGENTS.md"),
             &directory,
             WorkspaceInstructionSource::Workspace,
-            &mut remaining_bytes,
+            &mut remaining_workspace_bytes,
             &mut instructions,
         )?;
     }
@@ -167,6 +168,35 @@ mod tests {
         assert_eq!(instructions.len(), 2);
         assert_eq!(instructions[0].source, WorkspaceInstructionSource::User);
         assert_eq!(instructions[0].contents, "user instructions");
+        assert_eq!(
+            instructions[1].source,
+            WorkspaceInstructionSource::Workspace
+        );
+        assert_eq!(instructions[1].contents, "workspace instructions");
+
+        fs::remove_dir_all(root).expect("temp workspace should be removed");
+        fs::remove_dir_all(user_home).expect("temp user home should be removed");
+    }
+
+    #[test]
+    fn user_instructions_do_not_consume_workspace_instruction_budget() {
+        let root = temp_path("sprocket-user-instruction-budget");
+        let user_home = temp_path("sprocket-user-budget-home");
+        fs::create_dir_all(user_home.join(".agents")).expect("user agents dir");
+        gix::init(&root).expect("git repository should be created");
+        fs::write(
+            user_home.join(".agents/AGENTS.md"),
+            "u".repeat(super::MAX_INSTRUCTION_BYTES),
+        )
+        .expect("user instructions");
+        fs::write(root.join("AGENTS.md"), "workspace instructions")
+            .expect("workspace instructions");
+
+        let instructions = load_workspace_instructions_from(&root, Some(&user_home))
+            .expect("instructions should load");
+
+        assert_eq!(instructions.len(), 2);
+        assert_eq!(instructions[0].source, WorkspaceInstructionSource::User);
         assert_eq!(
             instructions[1].source,
             WorkspaceInstructionSource::Workspace
