@@ -4,7 +4,7 @@ This file lists shims we still ship. When a removal PR merges, delete its
 entry. Age-out is a prod check for stored rows, or an explicit decision that
 a retired function name can disappear.
 
-Current as of 2026-09-05.
+Current as of 2026-09-03.
 
 ## Transcript projection API
 
@@ -182,61 +182,6 @@ agents that require the response field; current code does not consume it.
 migration runner, its cron, and both schema fields once both migrations report
 `success` and production scans find no remaining values. Historical documents
 in the now-unvalidated `threadMessages` table may be deleted independently.
-
-### 10. Transcript reasoning replay metadata
-
-Sources: completion items persisted by the local agent.
-
-New completion reasoning items may carry optional
-`providerMetadata.openai.itemId` and
-`providerMetadata.openai.reasoningEncryptedContent`. The encrypted field is
-gateway envelope state. Readers must persist and replay it unchanged, treat a
-missing or empty string as "no opaque state", and never require either field.
-
-Older stored completions omit the object. History reconstruction then keeps
-display text only and skips provider replay. Live overlays stay display-only
-and do not include the envelope.
-
-A stored `contextSummary` is not a safe prefix watermark. In-flight
-completions from the old generation can land after the save, and in-memory
-compaction can replace current-run text while durable `historyFromNumber`
-only drops the prior run. A `totalParts` snapshot at save time does not
-prove the retained tail is unchanged. When reload sees a context summary,
-it drops every loaded reasoning item. Newly generated reasoning stays in
-the running native Rig history and across tool turns of that process.
-Threads without a summary keep durable reasoning on reload.
-
-After an in-process compaction, the agent stops persisting opaque reasoning
-for that run. Native Rig history still carries it across tool turns. Only a
-summary that replaces exactly the prior-run history is saved for later runs;
-a summary that also replaces current-run messages stays in memory.
-
-Browser transcript projections omit reasoning provider metadata, including
-detail responses. Empty signed items remain in storage but are omitted from
-browser projections. Lightweight projections retain placeholders only for
-nonempty summaries, so users can still expand them to load details. Older
-agents may send empty placeholders until details load; the browser hides them
-after loading. Live overlays also omit empty reasoning slots. Completed display
-text comes from summary blocks, never redacted or encrypted content.
-
-Hidden empty reasoning keeps its timestamps on disk but does not anchor a
-visible work-section timer. The run-level elapsed time still covers the full
-run. Rig 0.42 groups reasoning before other content within each assistant
-message on replay; arbitrary interleaving and upstream message phases are not
-guaranteed by this client.
-
-No rewrite. The metadata fields are additive; there is no new schema field.
-
-Deploy the gateway reasoning-envelope support before releasing this client.
-Older clients can still use that gateway without replaying reasoning. Validate
-authenticated streaming, tool follow-up, transcript reload, and compaction
-against each enabled provider before rollout; local mocked SDK tests do not
-verify provider credentials or account retention eligibility.
-
-Safe when a prod check shows every supported agent writes the metadata on
-completed reasoning items, and a later rewrite either backfills missing
-`itemId` rows or documents that pre-metadata completions stay replay-less.
-Do not make the fields required until that scan.
 
 ## Client APIs
 
