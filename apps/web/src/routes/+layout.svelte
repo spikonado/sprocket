@@ -6,7 +6,7 @@
 		convexAuthLoading,
 		convexAuthUserId,
 		convexAuthRetryVersion,
-		getAccessToken,
+		getConvexAccessToken,
 		initializeAuth
 	} from '$lib/auth';
 	import type { RuntimeConfig } from './+layout';
@@ -27,7 +27,7 @@
 		return {
 			isLoading: $convexAuthLoading,
 			isAuthenticated: Boolean($convexAuthUserId),
-			fetchAccessToken: getAccessToken
+			fetchAccessToken: getConvexAccessToken
 		};
 	});
 

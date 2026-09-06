@@ -17,7 +17,7 @@ export default defineConfig({
 		proxy: {
 			'/api': {
 				target: DEV_API_URL,
-				changeOrigin: true
+				changeOrigin: false
 			}
 		}
 	},

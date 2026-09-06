@@ -10,7 +10,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use convex::{FunctionResult, Value};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use sprocket_convex::{AuthTokenFetcher, Client as ConvexClient};
+use sprocket_convex::{AuthSignedOut, AuthTokenFetcher, Client as ConvexClient};
 use tokio::sync::{Mutex, OnceCell};
 use tokio::time::timeout;
 use workos::helpers::AuthKitAuthorizationUrlParams;
@@ -25,6 +25,9 @@ const LOGIN_ATTEMPT_TTL: Duration = Duration::from_secs(5 * 60);
 const ACCESS_TOKEN_REFRESH_MARGIN_SECS: u64 = 60;
 const KEYRING_SERVICE: &str = "dev.sprocket.native-auth";
 const KEYRING_ACCOUNT_PREFIX: &str = "workos-refresh-token";
+const NATIVE_SESSION_SIGNED_OUT: &str = "native WorkOS session is signed out";
+const NATIVE_SESSION_EXPIRED: &str = "native WorkOS session expired";
+const NATIVE_SESSION_UNAVAILABLE: &str = "Native sign-in is temporarily unavailable. Try again.";
 
 #[derive(Clone, Debug)]
 pub(crate) struct NativeAuthConfig {
@@ -33,12 +36,28 @@ pub(crate) struct NativeAuthConfig {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct NativeUser {
+pub struct NativeUser {
     pub id: String,
     pub email: String,
     pub first_name: Option<String>,
     pub last_name: Option<String>,
     pub profile_picture_url: Option<String>,
+}
+
+#[derive(Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeBrowserSession {
+    pub access_token: String,
+    pub user: NativeUser,
+}
+
+impl std::fmt::Debug for NativeBrowserSession {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NativeBrowserSession")
+            .field("user", &self.user)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -161,14 +180,42 @@ struct AccessToken {
     expires_at: u64,
 }
 
-#[derive(Default)]
 struct NativeSession {
     pending: PendingLogins,
     access_token: Option<AccessToken>,
+    refresh_token: Option<String>,
+    refresh_token_persisted: bool,
+    refresh_generation: u64,
     user: Option<NativeUser>,
     login_errors: HashMap<String, String>,
     suppress_persisted_resume: bool,
     sign_out_generation: u64,
+}
+
+impl Default for NativeSession {
+    fn default() -> Self {
+        Self {
+            pending: PendingLogins::default(),
+            access_token: None,
+            refresh_token: None,
+            refresh_token_persisted: true,
+            refresh_generation: 0,
+            user: None,
+            login_errors: HashMap::new(),
+            suppress_persisted_resume: false,
+            sign_out_generation: 0,
+        }
+    }
+}
+
+impl NativeSession {
+    fn clear_authenticated_state(&mut self) {
+        self.access_token = None;
+        self.refresh_token = None;
+        self.refresh_token_persisted = true;
+        self.user = None;
+        self.suppress_persisted_resume = true;
+    }
 }
 
 pub(crate) struct NativeAuthManager {
@@ -198,17 +245,17 @@ impl NativeAuthManager {
         client: WorkOsClient,
         callback_url: String,
         refresh_tokens: Arc<dyn RefreshTokenStore>,
-    ) -> Self {
+    ) -> Arc<Self> {
         let client_cell = OnceCell::new();
         assert!(client_cell.set(client).is_ok());
-        Self {
+        Arc::new(Self {
             deployment_url: None,
             client: client_cell,
             callback_url,
             refresh_tokens,
             credential_operation: Mutex::new(()),
             session: Mutex::new(NativeSession::default()),
-        }
+        })
     }
 
     #[cfg(test)]
@@ -216,7 +263,7 @@ impl NativeAuthManager {
         config: NativeAuthConfig,
         callback_url: String,
         refresh_tokens: Arc<dyn RefreshTokenStore>,
-    ) -> Self {
+    ) -> Arc<Self> {
         let client = WorkOsClient::builder()
             .client_id(config.workos_client_id)
             .build();
@@ -225,11 +272,23 @@ impl NativeAuthManager {
 
     #[cfg(test)]
     pub(crate) fn configured_for_test(config: NativeAuthConfig, callback_url: String) -> Arc<Self> {
-        Arc::new(Self::with_store(
-            config,
-            callback_url,
-            Arc::new(EmptyRefreshTokenStore),
-        ))
+        Self::with_store(config, callback_url, Arc::new(EmptyRefreshTokenStore))
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn authenticate_for_test(&self, user_id: &str) {
+        let mut session = self.session.lock().await;
+        session.access_token = Some(AccessToken {
+            value: "test-access-token".to_string(),
+            expires_at: unix_time_secs() + 3_600,
+        });
+        session.user = Some(NativeUser {
+            id: user_id.to_string(),
+            email: "test@example.com".to_string(),
+            first_name: None,
+            last_name: None,
+            profile_picture_url: None,
+        });
     }
 
     async fn client(&self) -> anyhow::Result<&WorkOsClient> {
@@ -299,6 +358,19 @@ impl NativeAuthManager {
     }
 
     pub async fn complete_login(
+        self: &Arc<Self>,
+        code: &str,
+        state: &str,
+    ) -> anyhow::Result<(NativeUser, String)> {
+        let manager = Arc::clone(self);
+        let code = code.to_string();
+        let state = state.to_string();
+        tokio::spawn(async move { manager.complete_login_inner(&code, &state).await })
+            .await
+            .context("native login task failed")?
+    }
+
+    async fn complete_login_inner(
         &self,
         code: &str,
         state: &str,
@@ -366,7 +438,7 @@ impl NativeAuthManager {
         Ok(())
     }
 
-    pub async fn status(&self, session_token: &str) -> NativeLoginStatus {
+    pub async fn status(self: &Arc<Self>, session_token: &str) -> NativeLoginStatus {
         {
             let mut session = self.session.lock().await;
             purge_expired_logins(&mut session.pending);
@@ -378,32 +450,15 @@ impl NativeAuthManager {
                     error: error.clone(),
                 };
             }
-            if let Some(user) = &session.user {
-                return NativeLoginStatus::Authenticated { user: user.clone() };
-            }
         }
 
-        if let Err(error) = self.access_token(false).await {
-            let message = error.to_string();
-            return if message.contains("native WorkOS session is signed out")
-                || message.contains("native WorkOS session expired")
-            {
-                NativeLoginStatus::SignedOut
-            } else {
-                NativeLoginStatus::Unavailable {
-                    error: "Native sign-in is temporarily unavailable. Try again.".to_string(),
-                }
-            };
+        match self.browser_session(false).await {
+            Ok(Some(session)) => NativeLoginStatus::Authenticated { user: session.user },
+            Ok(None) => NativeLoginStatus::SignedOut,
+            Err(_) => NativeLoginStatus::Unavailable {
+                error: NATIVE_SESSION_UNAVAILABLE.to_string(),
+            },
         }
-
-        self.session
-            .lock()
-            .await
-            .user
-            .as_ref()
-            .map_or(NativeLoginStatus::SignedOut, |user| {
-                NativeLoginStatus::Authenticated { user: user.clone() }
-            })
     }
 
     pub async fn cancel_login(&self, session_token: &str, login_id: &str) {
@@ -430,7 +485,14 @@ impl NativeAuthManager {
         }
     }
 
-    pub async fn sign_out(&self) -> anyhow::Result<()> {
+    pub async fn sign_out(self: &Arc<Self>) -> anyhow::Result<()> {
+        let manager = Arc::clone(self);
+        tokio::spawn(async move { manager.sign_out_inner().await })
+            .await
+            .context("native sign-out task failed")?
+    }
+
+    async fn sign_out_inner(&self) -> anyhow::Result<()> {
         let _credential_operation = self.credential_operation.lock().await;
         let sign_out_generation = self
             .session
@@ -454,30 +516,95 @@ impl NativeAuthManager {
             let manager = Arc::clone(&manager);
             let expected_user_id = expected_user_id.clone();
             Box::pin(async move {
-                manager
+                let result = manager
                     .access_token_for_user(force_refresh, &expected_user_id)
-                    .await
+                    .await;
+                match result {
+                    Err(error) if is_authoritative_unauthenticated(&error) => {
+                        Err(AuthSignedOut.into())
+                    }
+                    result => result,
+                }
             })
         })
     }
 
-    pub async fn require_user(&self, expected_user_id: &str) -> anyhow::Result<()> {
+    pub async fn require_user(self: &Arc<Self>, expected_user_id: &str) -> anyhow::Result<()> {
         self.access_token_for_user(false, expected_user_id).await?;
         Ok(())
     }
 
-    async fn access_token(&self, force_refresh: bool) -> anyhow::Result<String> {
+    pub async fn browser_session(
+        self: &Arc<Self>,
+        force_refresh: bool,
+    ) -> anyhow::Result<Option<NativeBrowserSession>> {
+        let manager = Arc::clone(self);
+        tokio::spawn(async move { manager.browser_session_inner(force_refresh).await })
+            .await
+            .context("native session task failed")?
+    }
+
+    async fn browser_session_inner(
+        &self,
+        force_refresh: bool,
+    ) -> anyhow::Result<Option<NativeBrowserSession>> {
+        let refresh_generation = self.session.lock().await.refresh_generation;
         let _credential_operation = self.credential_operation.lock().await;
-        self.access_token_locked(force_refresh).await
+        match self
+            .access_token_locked(force_refresh, refresh_generation)
+            .await
+        {
+            Ok(access_token) => {
+                let user = self
+                    .session
+                    .lock()
+                    .await
+                    .user
+                    .clone()
+                    .context("native WorkOS session has no user")?;
+                Ok(Some(NativeBrowserSession { access_token, user }))
+            }
+            Err(error) if is_authoritative_unauthenticated(&error) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    #[cfg(test)]
+    async fn access_token(self: &Arc<Self>, force_refresh: bool) -> anyhow::Result<String> {
+        self.browser_session(force_refresh)
+            .await?
+            .map(|session| session.access_token)
+            .context(NATIVE_SESSION_SIGNED_OUT)
     }
 
     async fn access_token_for_user(
+        self: &Arc<Self>,
+        force_refresh: bool,
+        expected_user_id: &str,
+    ) -> anyhow::Result<String> {
+        let manager = Arc::clone(self);
+        let expected_user_id = expected_user_id.to_string();
+        // A cancelled HTTP request or Convex refresh must not drop a rotated token
+        // or release the credential lock while a keyring write is still running.
+        tokio::spawn(async move {
+            manager
+                .access_token_for_user_inner(force_refresh, &expected_user_id)
+                .await
+        })
+        .await
+        .context("native token task failed")?
+    }
+
+    async fn access_token_for_user_inner(
         &self,
         force_refresh: bool,
         expected_user_id: &str,
     ) -> anyhow::Result<String> {
+        let refresh_generation = self.session.lock().await.refresh_generation;
         let _credential_operation = self.credential_operation.lock().await;
-        let token = self.access_token_locked(force_refresh).await?;
+        let token = self
+            .access_token_locked(force_refresh, refresh_generation)
+            .await?;
         let session = self.session.lock().await;
         let user = session
             .user
@@ -489,24 +616,27 @@ impl NativeAuthManager {
         Ok(token)
     }
 
-    async fn access_token_locked(&self, force_refresh: bool) -> anyhow::Result<String> {
-        let refresh_before = unix_time_secs().saturating_add(ACCESS_TOKEN_REFRESH_MARGIN_SECS);
-        if !force_refresh {
+    async fn access_token_locked(
+        &self,
+        force_refresh: bool,
+        refresh_generation: u64,
+    ) -> anyhow::Result<String> {
+        let reusable = {
             let session = self.session.lock().await;
-            if let Some(access_token) = &session.access_token
-                && access_token.expires_at > refresh_before
-            {
-                return Ok(access_token.value.clone());
-            }
+            reusable_access_token(&session, force_refresh, refresh_generation)
+        };
+        if let Some(access_token) = reusable {
+            self.flush_refresh_token().await?;
+            return Ok(access_token);
         }
         if self.session.lock().await.suppress_persisted_resume {
-            anyhow::bail!("native WorkOS session is signed out");
+            return Err(anyhow!(NATIVE_SESSION_SIGNED_OUT));
         }
 
         let refresh_token = self
             .load_refresh_token()
             .await?
-            .context("native WorkOS session is signed out")?;
+            .context(NATIVE_SESSION_SIGNED_OUT)?;
         let response = self
             .client()
             .await?
@@ -525,35 +655,26 @@ impl NativeAuthManager {
                     .context("WorkOS response omitted access token")
             }
             Err(error) if is_terminal_refresh_error(&error) => {
-                let mut session = self.session.lock().await;
-                session.access_token = None;
-                session.user = None;
-                session.suppress_persisted_resume = true;
-                drop(session);
+                self.session.lock().await.clear_authenticated_state();
                 self.clear_refresh_token().await?;
-                Err(error).context("native WorkOS session expired")
-            }
-            Err(error) if is_transient_refresh_error(&error) => {
-                let session = self.session.lock().await;
-                if let Some(access_token) = &session.access_token
-                    && access_token.expires_at > unix_time_secs()
-                {
-                    tracing::warn!(
-                        "native WorkOS refresh failed; retaining current access token: {error}"
-                    );
-                    return Ok(access_token.value.clone());
-                }
-                Err(error).context("failed to refresh native WorkOS session")
+                Err(error).context(NATIVE_SESSION_EXPIRED)
             }
             Err(error) => {
                 let session = self.session.lock().await;
-                if let Some(access_token) = &session.access_token
-                    && access_token.expires_at > unix_time_secs()
-                {
+                let retained_access_token = session.access_token.as_ref().and_then(|token| {
+                    (!force_refresh && token.expires_at > unix_time_secs())
+                        .then(|| token.value.clone())
+                });
+                if let Some(access_token) = retained_access_token {
+                    let kind = if is_transient_refresh_error(&error) {
+                        "transient"
+                    } else {
+                        "unrecognized"
+                    };
                     tracing::warn!(
-                        "native WorkOS refresh returned an unrecognized error; retaining current access token: {error}"
+                        "native WorkOS refresh failed ({kind}); retaining current access token: {error}"
                     );
-                    return Ok(access_token.value.clone());
+                    return Ok(access_token);
                 }
                 Err(error).context("failed to refresh native WorkOS session")
             }
@@ -574,20 +695,30 @@ impl NativeAuthManager {
         let access_token = response.access_token.into_inner();
         let expires_at = jwt_expiration(&access_token)?;
         let refresh_token = response.refresh_token.into_inner();
-        self.save_refresh_token(refresh_token).await?;
-
-        let mut session = self.session.lock().await;
-        session.access_token = Some(AccessToken {
-            value: access_token,
-            expires_at,
-        });
-        session.user = Some(user.clone());
-        session.login_errors.clear();
-        session.suppress_persisted_resume = false;
+        {
+            let mut session = self.session.lock().await;
+            session.access_token = Some(AccessToken {
+                value: access_token,
+                expires_at,
+            });
+            session.refresh_token = Some(refresh_token);
+            session.refresh_token_persisted = false;
+            session.refresh_generation = session.refresh_generation.wrapping_add(1);
+            session.user = Some(user.clone());
+            session.login_errors.clear();
+            session.suppress_persisted_resume = false;
+        }
+        self.flush_refresh_token().await?;
         Ok(user)
     }
 
     async fn load_refresh_token(&self) -> anyhow::Result<Option<String>> {
+        {
+            let session = self.session.lock().await;
+            if let Some(token) = &session.refresh_token {
+                return Ok(Some(token.clone()));
+            }
+        }
         let store = Arc::clone(&self.refresh_tokens);
         let token = tokio::task::spawn_blocking(move || store.load())
             .await
@@ -596,8 +727,32 @@ impl NativeAuthManager {
             Some(token) if token.trim().is_empty() => {
                 anyhow::bail!("stored WorkOS refresh token is empty")
             }
-            token => Ok(token),
+            Some(token) => {
+                let mut session = self.session.lock().await;
+                if session.refresh_token.is_none() {
+                    session.refresh_token = Some(token.clone());
+                    session.refresh_token_persisted = true;
+                }
+                Ok(session.refresh_token.clone())
+            }
+            None => Ok(None),
         }
+    }
+
+    async fn flush_refresh_token(&self) -> anyhow::Result<()> {
+        let token = {
+            let session = self.session.lock().await;
+            if session.refresh_token_persisted {
+                return Ok(());
+            }
+            session.refresh_token.clone()
+        };
+        let Some(token) = token else {
+            return Ok(());
+        };
+        self.save_refresh_token(token).await?;
+        self.session.lock().await.refresh_token_persisted = true;
+        Ok(())
     }
 
     async fn save_refresh_token(&self, refresh_token: String) -> anyhow::Result<()> {
@@ -661,20 +816,40 @@ fn unix_time_secs() -> u64 {
         .map_or(0, |duration| duration.as_secs())
 }
 
+fn reusable_access_token(
+    session: &NativeSession,
+    force_refresh: bool,
+    refresh_generation: u64,
+) -> Option<String> {
+    let access_token = session.access_token.as_ref()?;
+    let now = unix_time_secs();
+    if access_token.expires_at <= now {
+        return None;
+    }
+    let rotated_while_waiting = session.refresh_generation != refresh_generation;
+    if force_refresh {
+        return rotated_while_waiting.then(|| access_token.value.clone());
+    }
+    let refresh_before = now.saturating_add(ACCESS_TOKEN_REFRESH_MARGIN_SECS);
+    (access_token.expires_at > refresh_before).then(|| access_token.value.clone())
+}
+
+fn is_authoritative_unauthenticated(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        let message = cause.to_string();
+        message == NATIVE_SESSION_SIGNED_OUT || message == NATIVE_SESSION_EXPIRED
+    })
+}
+
 fn is_terminal_refresh_error(error: &workos::Error) -> bool {
     matches!(error.status(), Some(400 | 401)) && error.code() == Some("invalid_grant")
 }
 
 fn is_transient_refresh_error(error: &workos::Error) -> bool {
-    matches!(
-        error,
-        workos::Error::Network(network)
-            if matches!(
-                network.kind,
-                workos::transport::TransportErrorKind::Connect
-                    | workos::transport::TransportErrorKind::Timeout
-            )
-    ) || matches!(error.status(), Some(408 | 429 | 500 | 502 | 503 | 504))
+    matches!(error, workos::Error::Network(_))
+        || error.is_rate_limited()
+        || error.is_server_error()
+        || matches!(error.status(), Some(408))
 }
 
 fn provider_error(error: &workos::Error) -> String {
@@ -769,14 +944,20 @@ mod tests {
         token: std::sync::Mutex<Option<String>>,
         fail_save: AtomicBool,
         fail_clear: AtomicBool,
+        fail_load: AtomicBool,
     }
 
     impl MemoryRefreshTokenStore {
+        fn empty() -> Arc<Self> {
+            Arc::new(Self::default())
+        }
+
         fn with_token(token: &str) -> Arc<Self> {
             Arc::new(Self {
                 token: std::sync::Mutex::new(Some(token.to_string())),
                 fail_save: AtomicBool::new(false),
                 fail_clear: AtomicBool::new(false),
+                fail_load: AtomicBool::new(false),
             })
         }
 
@@ -787,6 +968,9 @@ mod tests {
 
     impl RefreshTokenStore for MemoryRefreshTokenStore {
         fn load(&self) -> anyhow::Result<Option<String>> {
+            if self.fail_load.load(Ordering::SeqCst) {
+                anyhow::bail!("credential store unavailable");
+            }
             Ok(self.token())
         }
 
@@ -810,6 +994,16 @@ mod tests {
     fn access_token(expires_at: u64) -> String {
         let claims = URL_SAFE_NO_PAD.encode(format!(r#"{{"exp":{expires_at}}}"#));
         format!("e30.{claims}.signature")
+    }
+
+    fn native_user() -> NativeUser {
+        NativeUser {
+            id: "user_123".to_string(),
+            email: "ada@example.com".to_string(),
+            first_name: Some("Ada".to_string()),
+            last_name: Some("Lovelace".to_string()),
+            profile_picture_url: None,
+        }
     }
 
     fn authentication_response(access_token: String, refresh_token: &str) -> AuthenticateResponse {
@@ -840,16 +1034,35 @@ mod tests {
         .expect("authentication response")
     }
 
-    async fn manager_with_response(
+    async fn manager_with_handler<H>(
         store: Arc<MemoryRefreshTokenStore>,
-        status: StatusCode,
-        body: serde_json::Value,
-    ) -> NativeAuthManager {
+        handler: H,
+    ) -> Arc<NativeAuthManager>
+    where
+        H: Fn(serde_json::Value) -> (StatusCode, serde_json::Value) + Clone + Send + Sync + 'static,
+    {
+        manager_with_delayed_handler(store, Duration::ZERO, handler).await
+    }
+
+    async fn manager_with_delayed_handler<H>(
+        store: Arc<MemoryRefreshTokenStore>,
+        delay: Duration,
+        handler: H,
+    ) -> Arc<NativeAuthManager>
+    where
+        H: Fn(serde_json::Value) -> (StatusCode, serde_json::Value) + Clone + Send + Sync + 'static,
+    {
         let app = axum::Router::new().route(
             "/user_management/authenticate",
-            post(move || {
-                let body = body.clone();
-                async move { (status, Json(body)) }
+            post(move |Json(body): Json<serde_json::Value>| {
+                let handler = handler.clone();
+                async move {
+                    if !delay.is_zero() {
+                        tokio::time::sleep(delay).await;
+                    }
+                    let (status, body) = handler(body);
+                    (status, Json(body))
+                }
             }),
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -866,6 +1079,14 @@ mod tests {
             .base_url(format!("http://{address}"))
             .build();
         NativeAuthManager::with_client(client, "http://127.0.0.1/callback".to_string(), store)
+    }
+
+    async fn manager_with_response(
+        store: Arc<MemoryRefreshTokenStore>,
+        status: StatusCode,
+        body: serde_json::Value,
+    ) -> Arc<NativeAuthManager> {
+        manager_with_handler(store, move |_| (status, body.clone())).await
     }
 
     fn config_result(client_id: Value) -> FunctionResult {
@@ -951,14 +1172,17 @@ mod tests {
         )
         .await;
 
+        let session = manager
+            .browser_session(false)
+            .await
+            .unwrap()
+            .expect("persisted WorkOS session resumes");
+        assert_eq!(session.access_token, expected_access_token);
+        assert_eq!(session.user, native_user());
         assert!(matches!(
             manager.status("paired-session").await,
             NativeLoginStatus::Authenticated { .. }
         ));
-        assert_eq!(
-            manager.access_token(false).await.unwrap(),
-            expected_access_token
-        );
         assert_eq!(store.token().as_deref(), Some("refresh-new"));
     }
 
@@ -1012,6 +1236,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn signed_out_fetcher_returns_a_terminal_auth_error() {
+        let manager = NativeAuthManager::configured_for_test(
+            NativeAuthConfig {
+                workos_client_id: "client_test".to_string(),
+            },
+            "http://127.0.0.1/callback".to_string(),
+        );
+        let fetcher = manager.auth_token_fetcher_for_user("user_123".to_string());
+        assert!(fetcher(false).await.unwrap_err().is::<AuthSignedOut>());
+    }
+
+    #[tokio::test]
     async fn authorization_code_exchange_installs_the_native_session() {
         let store = MemoryRefreshTokenStore::with_token("refresh-old");
         let expected_access_token = access_token(unix_time_secs() + 3_600);
@@ -1061,7 +1297,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failed_rotation_does_not_replace_the_in_memory_session() {
+    async fn persist_failure_keeps_the_rotated_refresh_token_in_memory() {
         let store = MemoryRefreshTokenStore::with_token("refresh-old");
         let manager = NativeAuthManager::with_store(
             NativeAuthConfig {
@@ -1070,29 +1306,42 @@ mod tests {
             "http://127.0.0.1/callback".to_string(),
             store.clone(),
         );
-        manager
-            .accept_authentication(authentication_response(
-                access_token(unix_time_secs() + 3_600),
-                "refresh-current",
-            ))
-            .await
-            .unwrap();
         store.fail_save.store(true, Ordering::SeqCst);
+        let expected_access_token = access_token(unix_time_secs() + 3_600);
 
         let error = manager
             .accept_authentication(authentication_response(
-                access_token(unix_time_secs() + 7_200),
-                "refresh-replacement",
+                expected_access_token.clone(),
+                "refresh-new",
             ))
             .await
-            .expect_err("failed persistence must reject new session");
+            .expect_err("failed persistence must surface a store error");
 
         assert!(error.to_string().contains("credential store unavailable"));
-        assert_eq!(store.token().as_deref(), Some("refresh-current"));
+        assert_eq!(store.token().as_deref(), Some("refresh-old"));
         assert_eq!(
-            manager.session.lock().await.user.as_ref().unwrap().email,
-            "ada@example.com"
+            manager.session.lock().await.refresh_token.as_deref(),
+            Some("refresh-new")
         );
+        assert!(
+            manager
+                .browser_session(false)
+                .await
+                .expect_err("unpersisted rotation is unavailable, not signed out")
+                .to_string()
+                .contains("credential store unavailable")
+        );
+
+        store.fail_save.store(false, Ordering::SeqCst);
+        let session = manager
+            .browser_session(false)
+            .await
+            .expect("retrying persist must succeed without contacting WorkOS")
+            .expect("session remains signed in");
+
+        assert_eq!(session.access_token, expected_access_token);
+        assert_eq!(session.user, native_user());
+        assert_eq!(store.token().as_deref(), Some("refresh-new"));
     }
 
     #[tokio::test]
@@ -1167,7 +1416,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn forced_refresh_returns_a_still_valid_token_after_transient_failure() {
+    async fn forced_refresh_does_not_return_a_rejected_token_after_transient_failure() {
         let store = MemoryRefreshTokenStore::with_token("refresh-current");
         let manager = manager_with_response(
             Arc::clone(&store),
@@ -1192,8 +1441,9 @@ mod tests {
             .unwrap()
             .value
             .clone();
+        assert!(manager.access_token(true).await.is_err());
         assert_eq!(
-            manager.access_token(true).await.unwrap(),
+            manager.access_token(false).await.unwrap(),
             current_access_token
         );
         assert_eq!(store.token().as_deref(), Some("refresh-current"));
@@ -1204,38 +1454,24 @@ mod tests {
         let store = MemoryRefreshTokenStore::with_token("refresh-current");
         let requests = Arc::new(AtomicUsize::new(0));
         let expected_access_token = access_token(unix_time_secs() + 3_600);
-        let response = serde_json::to_value(authentication_response(
-            expected_access_token.clone(),
-            "refresh-new",
-        ))
-        .unwrap();
-        let app = axum::Router::new().route(
-            "/user_management/authenticate",
-            post({
+        let manager = Arc::new(
+            manager_with_delayed_handler(store, Duration::from_millis(25), {
                 let requests = Arc::clone(&requests);
-                move || {
-                    let requests = Arc::clone(&requests);
-                    let response = response.clone();
-                    async move {
-                        requests.fetch_add(1, Ordering::SeqCst);
-                        tokio::time::sleep(Duration::from_millis(25)).await;
-                        Json(response)
-                    }
+                let expected_access_token = expected_access_token.clone();
+                move |_| {
+                    requests.fetch_add(1, Ordering::SeqCst);
+                    (
+                        StatusCode::OK,
+                        serde_json::to_value(authentication_response(
+                            expected_access_token.clone(),
+                            "refresh-new",
+                        ))
+                        .unwrap(),
+                    )
                 }
-            }),
+            })
+            .await,
         );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let client = WorkOsClient::builder()
-            .client_id("client_test")
-            .base_url(format!("http://{address}"))
-            .build();
-        let manager = Arc::new(NativeAuthManager::with_client(
-            client,
-            "http://127.0.0.1/callback".to_string(),
-            store,
-        ));
 
         let first_manager = Arc::clone(&manager);
         let second_manager = Arc::clone(&manager);
@@ -1247,6 +1483,61 @@ mod tests {
         assert_eq!(first.unwrap(), expected_access_token);
         assert_eq!(second.unwrap(), expected_access_token);
         assert_eq!(requests.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_token_consumer_does_not_cancel_refresh_rotation() {
+        let started = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let app = axum::Router::new().route(
+            "/user_management/authenticate",
+            post({
+                let started = Arc::clone(&started);
+                let release = Arc::clone(&release);
+                move || {
+                    let started = Arc::clone(&started);
+                    let release = Arc::clone(&release);
+                    async move {
+                        started.notify_one();
+                        release.notified().await;
+                        Json(authentication_response(
+                            access_token(unix_time_secs() + 3_600),
+                            "rotated",
+                        ))
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let store = MemoryRefreshTokenStore::with_token("old");
+        let manager = NativeAuthManager::with_client(
+            WorkOsClient::builder()
+                .client_id("client_test")
+                .base_url(format!("http://{address}"))
+                .build(),
+            "http://127.0.0.1/callback".to_string(),
+            store.clone(),
+        );
+        let request = tokio::spawn({
+            let manager = Arc::clone(&manager);
+            async move { manager.browser_session(false).await }
+        });
+        timeout(Duration::from_secs(2), started.notified())
+            .await
+            .unwrap();
+        request.abort();
+        assert!(request.await.unwrap_err().is_cancelled());
+        release.notify_one();
+        let session = timeout(Duration::from_secs(2), manager.browser_session(false))
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(session.user, native_user());
+        assert_eq!(store.token().as_deref(), Some("rotated"));
+        server.abort();
     }
 
     #[tokio::test]
@@ -1271,6 +1562,229 @@ mod tests {
         assert!(manager.sign_out().await.is_err());
         assert!(manager.session.lock().await.user.is_none());
         assert!(manager.session.lock().await.access_token.is_none());
-        assert!(manager.access_token(false).await.is_err());
+        assert!(manager.browser_session(false).await.unwrap().is_none());
+    }
+
+    #[test]
+    fn browser_session_serializes_camel_case() {
+        let json = serde_json::to_value(NativeBrowserSession {
+            access_token: "token".to_string(),
+            user: native_user(),
+        })
+        .unwrap();
+
+        assert_eq!(json["accessToken"], "token");
+        assert_eq!(json["user"]["firstName"], "Ada");
+        assert_eq!(json["user"]["profilePictureUrl"], serde_json::Value::Null);
+    }
+
+    #[tokio::test]
+    async fn browser_session_is_none_when_signed_out() {
+        let manager = NativeAuthManager::with_store(
+            NativeAuthConfig {
+                workos_client_id: "client_test".to_string(),
+            },
+            "http://127.0.0.1/callback".to_string(),
+            MemoryRefreshTokenStore::empty(),
+        );
+
+        assert!(manager.browser_session(false).await.unwrap().is_none());
+        assert!(matches!(
+            manager.status("paired-session").await,
+            NativeLoginStatus::SignedOut
+        ));
+    }
+
+    #[tokio::test]
+    async fn browser_session_is_none_after_a_terminal_refresh_failure() {
+        let store = MemoryRefreshTokenStore::with_token("expired-refresh");
+        let manager = manager_with_response(
+            Arc::clone(&store),
+            StatusCode::BAD_REQUEST,
+            serde_json::json!({
+                "error": "invalid_grant",
+                "error_description": "refresh token expired"
+            }),
+        )
+        .await;
+
+        assert!(manager.browser_session(false).await.unwrap().is_none());
+        assert_eq!(store.token(), None);
+        assert!(matches!(
+            manager.status("paired-session").await,
+            NativeLoginStatus::SignedOut
+        ));
+    }
+
+    #[tokio::test]
+    async fn browser_session_errors_when_the_credential_store_cannot_load() {
+        let store = MemoryRefreshTokenStore::with_token("refresh-current");
+        store.fail_load.store(true, Ordering::SeqCst);
+        let manager = NativeAuthManager::with_store(
+            NativeAuthConfig {
+                workos_client_id: "client_test".to_string(),
+            },
+            "http://127.0.0.1/callback".to_string(),
+            store,
+        );
+
+        assert!(
+            manager
+                .browser_session(false)
+                .await
+                .expect_err("store outage is transient")
+                .to_string()
+                .contains("credential store unavailable")
+        );
+        assert!(matches!(
+            manager.status("paired-session").await,
+            NativeLoginStatus::Unavailable { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn status_does_not_trust_a_stale_in_memory_user() {
+        let manager = manager_with_response(
+            MemoryRefreshTokenStore::with_token("expired-refresh"),
+            StatusCode::BAD_REQUEST,
+            serde_json::json!({
+                "error": "invalid_grant",
+                "error_description": "refresh token expired"
+            }),
+        )
+        .await;
+        {
+            let mut session = manager.session.lock().await;
+            session.user = Some(native_user());
+            session.access_token = Some(AccessToken {
+                value: access_token(unix_time_secs().saturating_sub(30)),
+                expires_at: unix_time_secs().saturating_sub(30),
+            });
+        }
+
+        assert!(matches!(
+            manager.status("paired-session").await,
+            NativeLoginStatus::SignedOut
+        ));
+        assert!(manager.browser_session(false).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn status_reports_unavailable_when_a_stale_user_cannot_refresh() {
+        let manager = manager_with_response(
+            MemoryRefreshTokenStore::with_token("refresh-current"),
+            StatusCode::SERVICE_UNAVAILABLE,
+            serde_json::json!({ "error": "unavailable" }),
+        )
+        .await;
+        {
+            let mut session = manager.session.lock().await;
+            session.user = Some(native_user());
+            session.access_token = Some(AccessToken {
+                value: access_token(unix_time_secs().saturating_sub(30)),
+                expires_at: unix_time_secs().saturating_sub(30),
+            });
+        }
+
+        assert!(matches!(
+            manager.status("paired-session").await,
+            NativeLoginStatus::Unavailable { .. }
+        ));
+        assert!(manager.browser_session(false).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn refresh_after_persist_failure_uses_the_rotated_token() {
+        let store = MemoryRefreshTokenStore::with_token("refresh-old");
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let expected_access_token = access_token(unix_time_secs() + 3_600);
+        let manager = manager_with_handler(Arc::clone(&store), {
+            let seen = Arc::clone(&seen);
+            let expected_access_token = expected_access_token.clone();
+            move |body| {
+                seen.lock().unwrap().push(
+                    body["refresh_token"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string(),
+                );
+                (
+                    StatusCode::OK,
+                    serde_json::to_value(authentication_response(
+                        expected_access_token.clone(),
+                        "refresh-newer",
+                    ))
+                    .unwrap(),
+                )
+            }
+        })
+        .await;
+        store.fail_save.store(true, Ordering::SeqCst);
+        manager
+            .accept_authentication(authentication_response(
+                access_token(unix_time_secs() + 30),
+                "refresh-new",
+            ))
+            .await
+            .expect_err("rotation must be remembered even when persist fails");
+        store.fail_save.store(false, Ordering::SeqCst);
+
+        let session = manager
+            .browser_session(false)
+            .await
+            .unwrap()
+            .expect("session recovers with the rotated refresh token");
+
+        assert_eq!(session.access_token, expected_access_token);
+        assert_eq!(seen.lock().unwrap().as_slice(), ["refresh-new"]);
+        assert_eq!(store.token().as_deref(), Some("refresh-newer"));
+    }
+
+    #[tokio::test]
+    async fn queued_force_refresh_reuses_a_completed_rotation() {
+        let store = MemoryRefreshTokenStore::with_token("refresh-current");
+        let requests = Arc::new(AtomicUsize::new(0));
+        let expected_access_token = access_token(unix_time_secs() + 3_600);
+        let manager =
+            manager_with_delayed_handler(Arc::clone(&store), Duration::from_millis(25), {
+                let requests = Arc::clone(&requests);
+                let expected_access_token = expected_access_token.clone();
+                move |_| {
+                    requests.fetch_add(1, Ordering::SeqCst);
+                    (
+                        StatusCode::OK,
+                        serde_json::to_value(authentication_response(
+                            expected_access_token.clone(),
+                            "refresh-new",
+                        ))
+                        .unwrap(),
+                    )
+                }
+            })
+            .await;
+        manager
+            .accept_authentication(authentication_response(
+                access_token(unix_time_secs() + 3_600),
+                "refresh-current",
+            ))
+            .await
+            .unwrap();
+        let manager = Arc::new(manager);
+
+        let first_manager = Arc::clone(&manager);
+        let second_manager = Arc::clone(&manager);
+        let (first, second) = tokio::join!(
+            first_manager.browser_session(true),
+            second_manager.browser_session(true)
+        );
+
+        let first = first.unwrap().expect("forced refresh stays signed in");
+        let second = second
+            .unwrap()
+            .expect("queued force refresh stays signed in");
+        assert_eq!(first.access_token, expected_access_token);
+        assert_eq!(second.access_token, expected_access_token);
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        assert_eq!(store.token().as_deref(), Some("refresh-new"));
     }
 }

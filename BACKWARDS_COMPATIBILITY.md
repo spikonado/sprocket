@@ -225,13 +225,28 @@ remaining run-id values in that same PR, then drop the field.
 ### Local sessions created before account binding
 
 Persisted local sessions created before native WorkOS account binding have no
-`userId`. They continue to deserialize so users receive an explicit sign-in
-error instead of losing the pairing credential, but account-scoped routes
-reject them until the user signs in again. New desktop login callbacks bind
-the authenticated WorkOS user to the local session that started the flow.
+`userId`. They continue to deserialize without losing the pairing credential.
+The paired, same-origin, loopback-only native token endpoint now resumes a
+valid native WorkOS session and persists its user binding on first use.
+Account-scoped routes still reject unbound sessions. Desktop login callbacks
+also bind the authenticated WorkOS user to the session that started the flow.
 
 Remove `SessionRecord.user_id` optionality after all supported installations
-have completed a native sign-in on a version that writes the binding.
+have completed a native sign-in or resume on a version that writes the binding.
+
+### Installed authentication session consolidation
+
+New installed renderers use `POST /api/auth/native-session/token` instead of
+maintaining a second AuthKit JS session. The existing keyring service and account
+derivation are unchanged, so valid native refresh tokens resume in place. Old
+browser cookies are ignored, not copied into native storage. Users whose native
+credentials were already deleted must sign in once to restore them.
+
+The renderer retains the legacy dual-session flow only when the token endpoint
+returns HTTP 404 or 405. Network, pairing, and provider errors do not trigger
+fallback or delete credentials. Existing login/status/sign-out endpoints remain
+available to released clients. Remove the legacy renderer path once supported
+local servers all provide the native token endpoint.
 
 Released desktop/CLI builds that still call retired Convex functions get a
 `ConvexError`: "This Sprocket version is no longer supported. Update to the

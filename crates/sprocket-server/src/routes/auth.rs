@@ -45,6 +45,12 @@ struct DesktopLoginStartRequest {
     flow: Option<NativeLoginFlow>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeSessionTokenRequest {
+    force_refresh_token: bool,
+}
+
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/auth/session", get(session))
@@ -59,6 +65,7 @@ pub fn routes() -> axum::Router<AppState> {
             "/auth/native-session",
             get(desktop_login_result).delete(native_sign_out),
         )
+        .route("/auth/native-session/token", post(native_session_token))
 }
 
 async fn session(
@@ -306,6 +313,87 @@ async fn native_sign_out(
     Ok(Json(DesktopLoginStartResponse { ok: true }))
 }
 
+async fn native_session_token(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(payload): Json<NativeSessionTokenRequest>,
+) -> Response {
+    let result = native_session_token_response(&state, peer, &headers, &jar, payload).await;
+    let mut response = result.into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
+    response
+}
+
+async fn native_session_token_response(
+    state: &AppState,
+    peer: SocketAddr,
+    headers: &HeaderMap,
+    jar: &CookieJar,
+    payload: NativeSessionTokenRequest,
+) -> Result<Json<Option<crate::native_auth::NativeBrowserSession>>, ApiError> {
+    if !peer.ip().is_loopback() || !is_loopback_same_origin(headers) {
+        return Err(ApiError::with_status(
+            StatusCode::FORBIDDEN,
+            anyhow::anyhow!("native tokens are only available to the local application"),
+        ));
+    }
+    let session_token = require_session(&state.auth, headers, jar)
+        .await
+        .map_err(|_| ApiError::authentication_required())?;
+    let session = state
+        .native_auth
+        .browser_session(payload.force_refresh_token)
+        .await
+        .map_err(|error| {
+            tracing::warn!("native browser session unavailable: {error:#}");
+            ApiError::with_status(
+                StatusCode::SERVICE_UNAVAILABLE,
+                anyhow::anyhow!("Native sign-in is temporarily unavailable. Try again."),
+            )
+        })?;
+    if let Some(session) = &session {
+        if state.auth.session_has_user(&session_token).await {
+            state
+                .auth
+                .require_session_user(&session_token, &session.user.id)
+                .await
+                .map_err(|error| ApiError::with_status(StatusCode::CONFLICT, error))?;
+        } else {
+            state
+                .auth
+                .bind_session_user(&session_token, &session.user.id)
+                .await
+                .map_err(ApiError::internal)?;
+        }
+    }
+    Ok(Json(session))
+}
+
+fn is_loopback_same_origin(headers: &HeaderMap) -> bool {
+    let Some(host) = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return false;
+    };
+    let Some(origin) = headers
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return false;
+    };
+    let Ok(url) = url::Url::parse(origin) else {
+        return false;
+    };
+    matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))
+        && matches!(url.scheme(), "http" | "https")
+        && origin == format!("{}://{host}", url.scheme())
+}
+
 fn desktop_bootstrap_response(state: &AppState) -> Json<DesktopBootstrapResponse> {
     Json(DesktopBootstrapResponse {
         http_base_url: state.http_base_url.clone(),
@@ -490,6 +578,136 @@ mod tests {
     fn with_peer(mut request: Request<Body>, peer: SocketAddr) -> Request<Body> {
         request.extensions_mut().insert(ConnectInfo(peer));
         request
+    }
+
+    fn native_token_request(session_token: Option<&str>, origin: &str) -> Request<Body> {
+        let mut request = Request::builder()
+            .method("POST")
+            .uri("/api/auth/native-session/token")
+            .header(header::HOST, "127.0.0.1:7731")
+            .header(header::ORIGIN, origin)
+            .header(header::CONTENT_TYPE, "application/json");
+        if let Some(session_token) = session_token {
+            request = request.header(header::COOKIE, session_cookie(session_token));
+        }
+        request
+            .body(Body::from(r#"{"forceRefreshToken":false}"#))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn native_token_requires_pairing_and_does_not_cache_signed_out_response() {
+        let (state, session_token, _) = test_state(true).await;
+        let app = router(state);
+        let unpaired = app
+            .clone()
+            .oneshot(with_peer(
+                native_token_request(None, "http://127.0.0.1:7731"),
+                loopback_peer(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(unpaired.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(unpaired.headers()[header::CACHE_CONTROL], "no-store");
+
+        let signed_out = app
+            .oneshot(with_peer(
+                native_token_request(Some(&session_token), "http://127.0.0.1:7731"),
+                loopback_peer(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(signed_out.status(), StatusCode::OK);
+        assert_eq!(signed_out.headers()[header::CACHE_CONTROL], "no-store");
+        assert!(read_json(signed_out).await.is_null());
+    }
+
+    #[tokio::test]
+    async fn native_token_rejects_cross_origin_and_remote_requests_even_when_paired() {
+        let (state, session_token, _) = test_state(true).await;
+        let app = router(state);
+        for origin in [
+            "https://attacker.example",
+            "http://127.0.0.1:8080",
+            "null",
+            "http://127.0.0.1:7731/",
+        ] {
+            let response = app
+                .clone()
+                .oneshot(with_peer(
+                    native_token_request(Some(&session_token), origin),
+                    loopback_peer(),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{origin}");
+        }
+
+        let mut request = native_token_request(Some(&session_token), "http://127.0.0.1:7731");
+        request
+            .headers_mut()
+            .insert("x-forwarded-for", "127.0.0.1".parse().unwrap());
+        let response = app.oneshot(with_peer(request, lan_peer())).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn native_token_binds_a_resumed_session_but_rejects_another_account() {
+        let (state, session_token, _) = test_state(true).await;
+        let auth = Arc::clone(&state.auth);
+        let native_auth = Arc::clone(&state.native_auth);
+        native_auth.authenticate_for_test("user-a").await;
+        let app = router(state);
+        let response = app
+            .clone()
+            .oneshot(with_peer(
+                native_token_request(Some(&session_token), "http://127.0.0.1:7731"),
+                loopback_peer(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        let payload = read_json(response).await;
+        assert_eq!(payload["accessToken"], "test-access-token");
+        assert_eq!(payload["user"]["id"], "user-a");
+        assert!(payload.get("refreshToken").is_none());
+        auth.require_session_user(&session_token, "user-a")
+            .await
+            .unwrap();
+
+        native_auth.authenticate_for_test("user-b").await;
+        let response = app
+            .oneshot(with_peer(
+                native_token_request(Some(&session_token), "http://127.0.0.1:7731"),
+                loopback_peer(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert!(read_json(response).await.get("accessToken").is_none());
+        auth.require_session_user(&session_token, "user-a")
+            .await
+            .unwrap();
+    }
+
+    #[test]
+    fn token_origin_validation_rejects_missing_headers_and_dns_rebinding() {
+        let mut headers = HeaderMap::new();
+        assert!(!is_loopback_same_origin(&headers));
+        headers.insert(header::HOST, "localhost:5173".parse().unwrap());
+        assert!(!is_loopback_same_origin(&headers));
+        headers.insert(header::ORIGIN, "http://localhost:5173".parse().unwrap());
+        assert!(is_loopback_same_origin(&headers));
+        headers.insert(header::HOST, "[::1]:17731".parse().unwrap());
+        headers.insert(header::ORIGIN, "http://[::1]:17731".parse().unwrap());
+        assert!(is_loopback_same_origin(&headers));
+        headers.insert(header::HOST, "attacker.example:7731".parse().unwrap());
+        headers.insert(
+            header::ORIGIN,
+            "http://attacker.example:7731".parse().unwrap(),
+        );
+        assert!(!is_loopback_same_origin(&headers));
     }
 
     #[tokio::test]
