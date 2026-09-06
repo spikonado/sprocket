@@ -16,7 +16,7 @@ async function renameOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>
 	}
 	const userId = await getUserId(ctx);
 	const record = await getOwnedThreadRecord(ctx.db, userId, threadId);
-	await ctx.db.patch('threadRecords', threadId, { title: trimmedTitle, updatedAt: Date.now() });
+	await ctx.db.patch('threadRecords', threadId, { title: trimmedTitle });
 	return { userId, record };
 }
 
@@ -28,14 +28,14 @@ async function archiveOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'
 		throw new Error('Cannot archive a thread while a run is active.');
 	}
 
-	await ctx.db.patch('threadRecords', threadId, { archivedAt: Date.now(), updatedAt: Date.now() });
+	await ctx.db.patch('threadRecords', threadId, { archivedAt: Date.now() });
 	return { userId, record };
 }
 
 async function restoreOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>) {
 	const userId = await getUserId(ctx);
 	const record = await getOwnedThreadRecord(ctx.db, userId, threadId);
-	await ctx.db.patch('threadRecords', threadId, { archivedAt: undefined, updatedAt: Date.now() });
+	await ctx.db.patch('threadRecords', threadId, { archivedAt: undefined });
 	return { userId, record };
 }
 
@@ -57,7 +57,7 @@ async function rekeyOwnedThreads(ctx: MutationCtx, fromArg: string, toArg: strin
 		)
 		.collect();
 	for (const thread of threads) {
-		await ctx.db.patch('threadRecords', thread._id, { repositoryKey: to, updatedAt: Date.now() });
+		await ctx.db.patch('threadRecords', thread._id, { repositoryKey: to });
 	}
 	return { userId, from, to, count: threads.length };
 }
@@ -94,10 +94,7 @@ export const setSelectedModel = mutation({
 			return null;
 		}
 
-		await ctx.db.patch('threadRecords', thread._id, {
-			selectedModel: args.selectedModel,
-			updatedAt: Date.now()
-		});
+		await ctx.db.patch('threadRecords', thread._id, { selectedModel: args.selectedModel });
 		return null;
 	}
 });

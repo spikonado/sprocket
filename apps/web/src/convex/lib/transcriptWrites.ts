@@ -9,7 +9,6 @@ import {
 	toolSourceKey
 } from '@convex/lib/transcriptParts';
 import { isSettledExecutorJobStatus } from '@convex/lib/runs';
-import { ensureThreadAttachmentRefs } from '@convex/lib/attachmentRetention';
 import type { TranscriptCompletionItem, TranscriptToolBody } from '@convex/lib/validators';
 
 type TranscriptToolJob = Pick<
@@ -38,9 +37,6 @@ export async function recordPromptTranscript(
 			imageUploads: await attachmentMetaForUploads(ctx, args.imageUploadIds)
 		}
 	});
-	if (args.imageUploadIds && args.imageUploadIds.length > 0) {
-		await ensureThreadAttachmentRefs(ctx, args.threadId, args.imageUploadIds);
-	}
 	return result.part;
 }
 

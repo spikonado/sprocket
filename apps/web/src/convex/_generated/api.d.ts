@@ -29,7 +29,6 @@ import type * as lib_agentErrors from "../lib/agentErrors.js";
 import type * as lib_agentQuestions from "../lib/agentQuestions.js";
 import type * as lib_assistantParts from "../lib/assistantParts.js";
 import type * as lib_assistantStreamWrites from "../lib/assistantStreamWrites.js";
-import type * as lib_attachmentRetention from "../lib/attachmentRetention.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_completionStream from "../lib/completionStream.js";
 import type * as lib_contextHandoff from "../lib/contextHandoff.js";
@@ -109,7 +108,6 @@ declare const fullApi: ApiFromModules<{
   "lib/agentQuestions": typeof lib_agentQuestions;
   "lib/assistantParts": typeof lib_assistantParts;
   "lib/assistantStreamWrites": typeof lib_assistantStreamWrites;
-  "lib/attachmentRetention": typeof lib_attachmentRetention;
   "lib/auth": typeof lib_auth;
   "lib/completionStream": typeof lib_completionStream;
   "lib/contextHandoff": typeof lib_contextHandoff;

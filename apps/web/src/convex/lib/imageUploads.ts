@@ -32,13 +32,14 @@ export async function getOwnedImageUploads(
 
 export async function markImageUploadsAttached(
 	ctx: MutationCtx,
-	uploads: Doc<'imageUploads'>[]
+	uploads: Doc<'imageUploads'>[],
+	threadId: Id<'threadRecords'>
 ): Promise<void> {
 	for (const upload of uploads) {
 		if (!upload.attached) {
 			await ctx.db.patch('imageUploads', upload._id, {
 				attached: true,
-				threadRefsMigratedAt: Date.now()
+				threadId
 			});
 		}
 	}

@@ -31,21 +31,11 @@ those caches. New uploads never write to the legacy blob store. Draft uploads
 are staged temporarily and moved into the destination thread cache when their
 message is submitted. They are not bound to the thread selected during upload.
 
-Convex deletes attached file bytes when every thread that references the upload
-has not been updated for more than one week. Transcript
-metadata and local copies stay. Remote downloads and local reads do not extend
-retention. `threadRecords.updatedAt` is the activity clock; `lastMessageAt`
-still only moves on user prompts so the thread list stays ordered by messages.
-Rename, archive, restore, repository rekey, model selection, transcript
-appends, and context compaction/handoff all write `updatedAt`. Existing threads
-are backfilled from their latest prompt, transcript part, or run timestamp, not
-from deploy time plus one week. Cleanup scans refs in bounded pages. A scan
-that fits in one transaction relies on OCC. A multi-page scan records its start
-time and refuses to delete if any of the owner's threads was updated at or after
-that time, so a thread that was already checked cannot wake up between
-transactions and still lose bytes. A busy account can delay expiry of
-widely shared files until a quiet window; the next cron retries. Released
-clients still read storage URLs; a missing URL means the bytes are gone.
+Convex deletes attached file bytes when the owning thread's `lastMessageAt` is
+older than one week. Ownership is `imageUploads.threadId`, set on first attach.
+Shared references, run exceptions, and `threadRecords.updatedAt` are not part of
+retention. Transcript metadata and local copies stay. Released clients still
+read storage URLs; a missing URL means the bytes are gone.
 
 Assistant text, reasoning, and tool calls accept optional `startedAt` and
 `completedAt` timestamps. Released agents and old stored completions lack them.
@@ -261,22 +251,13 @@ remaining run-id values in that same PR, then drop the field.
 
 ### 11. Attachment storage retention
 
-Historical prompt attachments are copied into `threadAttachmentRefs`. Attached
-Convex storage is not deleted until `imageUploads.threadRefsMigratedAt` is set,
-so a shared upload cannot lose bytes while another thread's prompt is still
-being migrated. New uploads get that stamp on first attach. Unattached drafts
-are still removed after 24 hours, including their documents.
+Uploads missing `threadId` get an owner from the first historical prompt that
+attached them. Unattached drafts are still removed after 24 hours, including
+their documents.
 
-`threadRecords.updatedAt` is optional until `backfillThreadUpdatedAt` fills it.
-Cleanup treats a missing value as "not yet migrated" and keeps the bytes.
-A migrated upload with zero refs on the first scan page is also kept, so a
-stamp cannot race ahead of the ref backfill. After a scan has already seen
-refs, an empty later page may expire the bytes.
-
-Multi-page scans check index `by_userId_and_updatedAt` for updates at or after
-the scan's start time, including same-millisecond updates. Activity on the same
-account can postpone a multi-page scan until the next hourly pass. Other users
-do not block cleanup, and single-page expiry is unaffected.
+`threadRecords.updatedAt`, `imageUploads.threadRefsMigratedAt`, and the
+`threadAttachmentRefs` table stay as leftover until migrations clear stored
+values and rows. Runtime cleanup does not read them.
 
 These backfills are in the default `migrations:run` cron. After deploy they run
 automatically. To run once from `apps/web`:
@@ -285,10 +266,8 @@ automatically. To run once from `apps/web`:
 bun convex run migrations:run
 ```
 
-Use `--prod` for the production deployment. Keep both fields optional until the
-backfills report `success` and a production scan shows `updatedAt` on threads
-and `threadRefsMigratedAt` on attached uploads. Then require them in a follow-up
-and drop the wait-for-backfill branch in cleanup.
+Use `--prod` for the production deployment. Drop the leftover fields and table
+after a production scan finds no remaining values or rows.
 
 ## Client APIs
 

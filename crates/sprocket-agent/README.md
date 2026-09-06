@@ -68,11 +68,11 @@ The server expires pending local uploads after 24 hours, sweeping on startup and
 hourly while running. Submitted local thread attachments are not expired. If a pending
 copy expires after submission but before caching, the agent downloads it from Convex.
 
-Convex deletes attachment bytes after every referencing thread has gone more
-than one week without an update. Active runs protect their attachments. Reading
-or downloading a file does not reset this clock. Transcript metadata and local
-copies remain. If an old file is unavailable both locally and in Convex, the
-thread still opens and the agent asks for the file to be attached again.
+Convex deletes attached file bytes when the owning thread's `lastMessageAt` is
+older than one week. The owner is the thread that first attached the upload.
+Assistant activity, reads, and downloads do not extend that window. Transcript metadata and
+local copies remain. If an old file is unavailable both locally and in Convex,
+the thread still opens and the agent asks for the file to be attached again.
 
 The tool is available to every model. It returns image content only for models
 whose gateway catalog entry supports images. Image decoding has separate safety

@@ -110,8 +110,7 @@ export async function createQueuedRunRecord(
 			selectedModel: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
 			serviceTier: args.serviceTier,
-			lastMessageAt: now,
-			updatedAt: now
+			lastMessageAt: now
 		});
 		await ctx.db.insert('threadUsage', {
 			threadId,
@@ -187,7 +186,7 @@ export async function createQueuedRunRecord(
 		userId: args.userId
 	};
 	if (!continuationOfRunId) {
-		await markImageUploadsAttached(ctx, imageUploads);
+		await markImageUploadsAttached(ctx, imageUploads, threadRecord._id);
 		created.promptMessageId = promptSourceKey(runId);
 		created.promptPart = await recordPromptTranscript(ctx, {
 			threadId: threadRecord._id,
@@ -204,8 +203,7 @@ export async function createQueuedRunRecord(
 		selectedModel: args.selectedModel,
 		reasoningEffort: args.reasoningEffort,
 		serviceTier: args.serviceTier,
-		lastMessageAt: continuationOfRunId ? threadRecord.lastMessageAt : Date.now(),
-		updatedAt: Date.now()
+		lastMessageAt: continuationOfRunId ? threadRecord.lastMessageAt : Date.now()
 	};
 	await ctx.db.patch('threadRecords', threadRecord._id, threadUpdates);
 	const lifecycleWorkflowId = await startRunLifecycle(ctx, runId);

@@ -29,8 +29,5 @@ export async function setRunAndThreadStatus(
 		ctx.db.get('threadRecords', run.threadId)
 	]);
 	if (!latestRun || !thread || thread.status === latestRun.status) return;
-	await ctx.db.patch('threadRecords', run.threadId, {
-		status: latestRun.status,
-		updatedAt: Date.now()
-	});
+	await ctx.db.patch('threadRecords', run.threadId, { status: latestRun.status });
 }

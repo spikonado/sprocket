@@ -431,8 +431,7 @@ export const saveContextCompaction = mutation({
 			await ctx.db.patch('threadRecords', thread._id, {
 				...durableSummary,
 				contextSummaryThroughPartNumber: undefined,
-				contextSummaryHandoffKey: undefined,
-				updatedAt: Date.now()
+				contextSummaryHandoffKey: undefined
 			});
 		}
 		return true;
@@ -483,8 +482,7 @@ export const saveContextHandoff = mutation({
 			contextSummary: args.summary,
 			contextSummaryThroughPartNumber: throughPartNumber,
 			contextSummaryThroughRunId: undefined,
-			contextSummaryHandoffKey: handoffKey,
-			updatedAt: Date.now()
+			contextSummaryHandoffKey: handoffKey
 		});
 		await clearThreadContextTokens(ctx, thread._id);
 		return true;
