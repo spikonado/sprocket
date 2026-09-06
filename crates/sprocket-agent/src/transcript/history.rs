@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::compaction::context_summary_text;
 use crate::reasoning::{opaque_encrypted, skip_reasoning_on_reload};
 use crate::transcript::types::{TranscriptPart, TranscriptPartKind, TranscriptToolBody};
 use crate::types::{
@@ -119,9 +120,7 @@ pub fn agent_history_from_parts(
             role: AgentHistoryRole::User,
             assistant_id: None,
             contents: vec![AgentHistoryContent::Text {
-                text: format!(
-                    "The conversation context was automatically compacted. Treat this summary as authoritative, continue the current task from this state, and do not redo completed work.\n\n<conversation_summary>\n{summary}\n</conversation_summary>"
-                ),
+                text: context_summary_text(summary),
                 additional_params_json: None,
             }],
         });

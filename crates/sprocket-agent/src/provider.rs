@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::anyhow;
@@ -11,9 +10,9 @@ use rig::completion::{FinishReason, Message};
 use rig::providers::openai;
 use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
 use sprocket_workspace::{CommandSessionManager, WorkspaceSkill};
-use tokio::time::sleep;
+use tokio::time::{sleep, timeout};
 
-use crate::compaction::ContextCompactionHook;
+use crate::compaction::{ContextCompactionHook, HANDOFF_PROMPT, context_summary_text};
 use crate::convex::RuntimeClient;
 use crate::hooks::{AgentPromptHook, GatewayRequestHook, ToolCallTracker};
 use crate::live::{
@@ -82,10 +81,11 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) prior_history: Vec<Message>,
     pub(crate) workspace_root: PathBuf,
     pub(crate) skills: Arc<[WorkspaceSkill]>,
-    pub(crate) model: String,
     pub(crate) reasoning_effort: String,
     pub(crate) service_tier: String,
     pub(crate) context_budget: ContextBudget,
+    pub(crate) context_tokens: u64,
+    pub(crate) defer_prompt_for_compaction: bool,
 }
 
 pub(crate) enum AgentProviderResult {
@@ -134,14 +134,7 @@ impl AgentProvider {
                 };
             }
         };
-        run_with_completion_client(
-            completion_client,
-            self.model,
-            runtime,
-            request,
-            self.gateway_url,
-        )
-        .await
+        run_with_completion_client(completion_client, self.model, runtime, request).await
     }
 }
 
@@ -150,7 +143,6 @@ async fn run_with_completion_client<C>(
     model: String,
     runtime: RuntimeClient,
     request: AgentProviderRequest,
-    gateway_url: String,
 ) -> AgentProviderResult
 where
     C: CompletionClient + AgentClientExt,
@@ -166,6 +158,11 @@ where
         request.skills.clone(),
     );
     let session_shutdown = CommandSessionShutdown::new(tools.command_sessions.clone());
+    let compaction_hook = ContextCompactionHook::new(
+        request.context_budget.auto_compact_token_limit,
+        request.context_tokens,
+        request.defer_prompt_for_compaction,
+    );
     let agent = completion_client
         .agent(model)
         .preamble(&request.base_instructions)
@@ -187,12 +184,12 @@ where
         .tool(tools.mandate_list)
         .tool(tools.mandate_charge)
         .tool(tools.mandate_report)
+        .tool(compaction_hook.tool())
         .build();
 
     eprintln!("sprocket-agent: built agent {}", request.run_id);
     eprintln!("sprocket-agent: prompting model {}", request.run_id);
 
-    let persist_reasoning_replay = Arc::new(AtomicBool::new(true));
     let mut transcript = match TranscriptSink::start(
         runtime.clone(),
         request.live.clone(),
@@ -200,7 +197,6 @@ where
         request.claim_id.clone(),
         request.thread_id.clone(),
         request.run_started_at,
-        persist_reasoning_replay.clone(),
     )
     .await
     {
@@ -222,24 +218,10 @@ where
     };
 
     let prompt_hook = AgentPromptHook::new(tool_call_tracker);
-    let prior_history_len = request.prior_history.len();
     let initial_context: Arc<[Message]> = request.initial_context.into();
     let gateway_hook = GatewayRequestHook::new(
         request.reasoning_effort.clone(),
         request.service_tier.clone(),
-    );
-    let compaction_hook = ContextCompactionHook::new(
-        runtime.clone(),
-        request.run_id.clone(),
-        request.claim_id.clone(),
-        request.model,
-        request.reasoning_effort,
-        request.service_tier,
-        request.context_budget,
-        prior_history_len,
-        initial_context.clone(),
-        gateway_url,
-        persist_reasoning_replay,
     );
 
     let mut finished = match runtime.run_finished_subscription(&request.run_id).await {
@@ -253,143 +235,234 @@ where
         }
     };
 
-    let history = initial_context.iter().cloned().chain(request.prior_history);
-    let mut stream = agent
-        .stream_prompt(request.prompt)
-        .history(history)
-        .max_turns(AGENT_MAX_TURNS)
-        .add_hook(prompt_hook)
-        .add_hook(gateway_hook)
-        .add_hook(compaction_hook)
-        .max_invalid_tool_call_retries(MAX_INVALID_TOOL_CALL_RETRIES)
-        .await;
+    let mut history: Vec<_> = initial_context
+        .iter()
+        .cloned()
+        .chain(request.prior_history)
+        .collect();
+    let mut prompt = request.prompt;
+    let mut deferred_prompt = None;
+    let mut before_prompt = false;
     let mut final_text = String::new();
     let mut streamed_text = String::new();
     let mut completion_error = None;
+    let mut observed_calls = 0;
+    let mut recorded_attempt = None;
 
     let result = 'agent_run: {
-        loop {
-            tokio::select! {
-                biased;
-                _ = sleep(transcript.publish_delay()), if transcript.has_unpublished() => {
-                    transcript.publish_if_needed(true);
-                }
-                update = finished.next() => {
-                    match update {
-                        Some(result) => {
-                            match RuntimeClient::decode_run_finished_update(result) {
-                                Ok(true) => {
-                                    let text = if final_text.is_empty() {
-                                        streamed_text
-                                    } else {
-                                        final_text
-                                    };
-                                    break 'agent_run AgentProviderResult::Cancelled { text };
-                                }
-                                Ok(false) => {}
-                                Err(error) => {
-                                    break 'agent_run AgentProviderResult::Failed {
-                                        text: if final_text.is_empty() {
+        'generations: loop {
+            let mut stream = agent
+                .stream_prompt(prompt)
+                .history(history)
+                .max_turns(AGENT_MAX_TURNS)
+                .add_hook(prompt_hook.clone())
+                .add_hook(gateway_hook.clone())
+                .add_hook(compaction_hook.clone())
+                .max_invalid_tool_call_retries(MAX_INVALID_TOOL_CALL_RETRIES)
+                .await;
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = sleep(transcript.publish_delay()), if transcript.has_unpublished() => {
+                        transcript.publish_if_needed(true);
+                    }
+                    update = finished.next() => {
+                        match update {
+                            Some(result) => {
+                                match RuntimeClient::decode_run_finished_update(result) {
+                                    Ok(true) => {
+                                        let text = if final_text.is_empty() {
                                             streamed_text
                                         } else {
                                             final_text
-                                        },
+                                        };
+                                        break 'agent_run AgentProviderResult::Cancelled { text };
+                                    }
+                                    Ok(false) => {}
+                                    Err(error) => {
+                                        break 'agent_run AgentProviderResult::Failed {
+                                            text: if final_text.is_empty() {
+                                                streamed_text
+                                            } else {
+                                                final_text
+                                            },
+                                            error,
+                                        };
+                                    }
+                                }
+                            }
+                            None => {}
+                        }
+                    }
+                    item = stream.next() => {
+                        let calls = compaction_hook.completion_calls();
+                        if calls != observed_calls {
+                            if recorded_attempt == Some(transcript.attempt_seq) {
+                                if let Err(error) = transcript.advance_attempt().await {
+                                    break 'agent_run transcript_error(error, &final_text, &streamed_text);
+                                }
+                            }
+                            observed_calls = calls;
+                        }
+                        match item {
+                            Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(_)))
+                            | Some(Ok(rig::agent::MultiTurnStreamItem::FinalResponse(_)))
+                                if compaction_hook.is_writing() => {}
+                            Some(Ok(rig::agent::MultiTurnStreamItem::CompletionCall(call))) => {
+                                recorded_attempt = Some(transcript.attempt_seq);
+                                let tokens = compaction_hook.record_usage(call.usage);
+                                if tokens == 0 {
+                                    continue;
+                                }
+                                let recorded = timeout(Duration::from_secs(5), runtime.record_context_usage(
+                                    &request.run_id, &request.claim_id, tokens, tokens,
+                                )).await;
+                                match recorded {
+                                    Ok(Ok(true)) => {}
+                                    Ok(Ok(false)) => break 'agent_run AgentProviderResult::Cancelled { text: streamed_text },
+                                    Ok(Err(error)) => break 'agent_run transcript_error(error, &final_text, &streamed_text),
+                                    Err(_) => break 'agent_run AgentProviderResult::Failed {
+                                        text: streamed_text,
+                                        error: anyhow!("Recording provider usage timed out."),
+                                    },
+                                }
+                            }
+                            Some(Ok(rig::agent::MultiTurnStreamItem::FinalResponse(response))) => {
+                                final_text = response.output().to_string();
+                                completion_error = incomplete_completion_error(
+                                    response
+                                        .completion_calls
+                                        .last()
+                                        .and_then(|call| call.finish_reason.as_ref()),
+                                );
+                            }
+                            Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
+                                StreamedAssistantContent::Text(text),
+                            ))) => {
+                                streamed_text.push_str(&text.text);
+                                transcript.push_text(&text);
+                            }
+                            Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
+                                StreamedAssistantContent::ReasoningDelta { id, reasoning, .. },
+                            ))) => {
+                                transcript.push_reasoning(&id, &reasoning);
+                            }
+                            Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
+                                StreamedAssistantContent::Reasoning { reasoning, id },
+                            ))) => {
+                                transcript.complete_reasoning(&id, &reasoning);
+                            }
+                            Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
+                                StreamedAssistantContent::ToolCall { tool_call, internal_call_id },
+                            ))) => {
+                                transcript.push_tool_call(
+                                    Some(internal_call_id.to_string()),
+                                    tool_call.wire_call_id().to_string(),
+                                    tool_call.function.name,
+                                    tool_call.function.arguments,
+                                );
+                            }
+                            Some(Ok(rig::agent::MultiTurnStreamItem::ToolExecutionCommitted { .. })) => {
+                                if compaction_hook.is_writing() {
+                                    let Some(summary) = compaction_hook.take_summary() else {
+                                        break 'agent_run AgentProviderResult::Failed {
+                                            text: streamed_text,
+                                            error: anyhow!("Context handoff failed: no valid document was submitted."),
+                                        };
+                                    };
+                                    match runtime.save_context_handoff(
+                                        &request.run_id, &request.claim_id, &summary,
+                                        transcript.attempt_seq, before_prompt,
+                                    ).await {
+                                        Ok(true) => {}
+                                        Ok(false) => break 'agent_run AgentProviderResult::Cancelled { text: streamed_text },
+                                        Err(error) => break 'agent_run transcript_error(error, &final_text, &streamed_text),
+                                    }
+                                    if let Err(error) = transcript.advance_attempt().await {
+                                        break 'agent_run transcript_error(error, &final_text, &streamed_text);
+                                    }
+                                    history = initial_context.to_vec();
+                                    let handoff = Message::user(context_summary_text(&summary));
+                                    prompt = match deferred_prompt.take() {
+                                        Some(pending) => { history.push(handoff); pending }
+                                        None => handoff,
+                                    };
+                                    compaction_hook.restart();
+                                    final_text.clear();
+                                    streamed_text.clear();
+                                    completion_error = None;
+                                    continue 'generations;
+                                }
+                                if let Err(error) = transcript.begin_next_turn_if_streamed().await {
+                                    break 'agent_run transcript_error(error, &final_text, &streamed_text);
+                                }
+                            }
+                            Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
+                                StreamedAssistantContent::ToolCallDelta { .. }
+                                | StreamedAssistantContent::Final(_)
+                                | StreamedAssistantContent::Unknown(_),
+                            )))
+                            | Some(Ok(rig::agent::MultiTurnStreamItem::ModelTurnRetried { .. }))
+                            | Some(Ok(rig::agent::MultiTurnStreamItem::StreamUserItem(_))) => {}
+                            Some(Err(error)) => {
+                                if let Some(handoff) = compaction_hook.take_request() {
+                                    history = handoff.history;
+                                    prompt = Message::user(HANDOFF_PROMPT);
+                                    deferred_prompt = handoff.deferred_prompt;
+                                    before_prompt = handoff.before_prompt;
+                                    compaction_hook.start_handoff();
+                                    continue 'generations;
+                                }
+                                if compaction_hook.is_writing() {
+                                    break 'agent_run AgentProviderResult::Failed {
+                                        text: streamed_text,
+                                        error: anyhow!("Context handoff failed. Retry to continue the conversation."),
+                                    };
+                                }
+                                let text = if final_text.is_empty() {
+                                    streamed_text
+                                } else {
+                                    final_text
+                                };
+                                let result = match classify_provider_error(&error) {
+                                    ProviderErrorDisposition::Superseded => AgentProviderResult::Superseded {
+                                        error: anyhow!(error),
+                                    },
+                                    ProviderErrorDisposition::Cancelled => {
+                                        AgentProviderResult::Cancelled { text }
+                                    }
+                                    ProviderErrorDisposition::Failed => AgentProviderResult::Failed {
+                                        text,
+                                        error: anyhow!(error),
+                                    },
+                                };
+                                break 'agent_run result;
+                            }
+                            None => {
+                                if compaction_hook.is_writing() {
+                                    break 'agent_run AgentProviderResult::Failed {
+                                        text: streamed_text,
+                                        error: anyhow!("Context handoff ended without submitting a document."),
+                                    };
+                                }
+                                if let Some(error) = completion_error {
+                                    break 'agent_run AgentProviderResult::Failed {
+                                        text: String::new(),
                                         error,
                                     };
                                 }
-                            }
-                        }
-                        None => {}
-                    }
-                }
-                item = stream.next() => {
-                    match item {
-                        Some(Ok(rig::agent::MultiTurnStreamItem::FinalResponse(response))) => {
-                            final_text = response.output().to_string();
-                            completion_error = incomplete_completion_error(
-                                response
-                                    .completion_calls
-                                    .last()
-                                    .and_then(|call| call.finish_reason.as_ref()),
-                            );
-                        }
-                        Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
-                            StreamedAssistantContent::Text(text),
-                        ))) => {
-                            streamed_text.push_str(&text.text);
-                            transcript.push_text(&text);
-                        }
-                        Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
-                            StreamedAssistantContent::ReasoningDelta { id, reasoning, .. },
-                        ))) => {
-                            transcript.push_reasoning(&id, &reasoning);
-                        }
-                        Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
-                            StreamedAssistantContent::Reasoning { reasoning, id },
-                        ))) => {
-                            transcript.complete_reasoning(&id, &reasoning);
-                        }
-                        Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
-                            StreamedAssistantContent::ToolCall { tool_call, internal_call_id },
-                        ))) => {
-                            transcript.push_tool_call(
-                                Some(internal_call_id.to_string()),
-                                tool_call.wire_call_id().to_string(),
-                                tool_call.function.name,
-                                tool_call.function.arguments,
-                            );
-                        }
-                        Some(Ok(rig::agent::MultiTurnStreamItem::ToolExecutionCommitted { .. })) => {
-                            if let Err(error) = transcript.begin_next_turn_if_streamed().await {
-                                break 'agent_run transcript_error(error, &final_text, &streamed_text);
-                            }
-                        }
-                        Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(
-                            StreamedAssistantContent::ToolCallDelta { .. }
-                            | StreamedAssistantContent::Final(_)
-                            | StreamedAssistantContent::Unknown(_),
-                        )))
-                        | Some(Ok(rig::agent::MultiTurnStreamItem::ModelTurnRetried { .. }))
-                        | Some(Ok(rig::agent::MultiTurnStreamItem::StreamUserItem(_)))
-                        | Some(Ok(rig::agent::MultiTurnStreamItem::CompletionCall(_))) => {}
-                        Some(Err(error)) => {
-                            let text = if final_text.is_empty() {
-                                streamed_text
-                            } else {
-                                final_text
-                            };
-                            let result = match classify_provider_error(&error) {
-                                ProviderErrorDisposition::Superseded => AgentProviderResult::Superseded {
-                                    error: anyhow!(error),
-                                },
-                                ProviderErrorDisposition::Cancelled => {
-                                    AgentProviderResult::Cancelled { text }
+                                if let Err(error) = transcript.finalize_turn().await {
+                                    break 'agent_run transcript_error(
+                                        error,
+                                        &final_text,
+                                        &streamed_text,
+                                    );
                                 }
-                                ProviderErrorDisposition::Failed => AgentProviderResult::Failed {
-                                    text,
-                                    error: anyhow!(error),
-                                },
-                            };
-                            break 'agent_run result;
-                        }
-                        None => {
-                            if let Some(error) = completion_error {
-                                break 'agent_run AgentProviderResult::Failed {
-                                    text: String::new(),
-                                    error,
-                                };
+                                if final_text.is_empty() {
+                                    final_text = streamed_text;
+                                }
+                                break 'agent_run AgentProviderResult::Completed { text: final_text };
                             }
-                            if let Err(error) = transcript.finalize_turn().await {
-                                break 'agent_run transcript_error(
-                                    error,
-                                    &final_text,
-                                    &streamed_text,
-                                );
-                            }
-                            if final_text.is_empty() {
-                                final_text = streamed_text;
-                            }
-                            break 'agent_run AgentProviderResult::Completed { text: final_text };
                         }
                     }
                 }
@@ -438,7 +511,6 @@ struct TranscriptSink {
     last_publish: Instant,
     unpublished: usize,
     streamed: bool,
-    persist_reasoning_replay: Arc<AtomicBool>,
 }
 
 impl TranscriptSink {
@@ -449,7 +521,6 @@ impl TranscriptSink {
         claim_id: String,
         thread_id: String,
         run_started_at: u64,
-        persist_reasoning_replay: Arc<AtomicBool>,
     ) -> anyhow::Result<Self> {
         runtime
             .register_completion_attempt(&run_id, &claim_id, 1)
@@ -468,7 +539,6 @@ impl TranscriptSink {
             last_publish: Instant::now(),
             unpublished: 0,
             streamed: false,
-            persist_reasoning_replay,
         })
     }
 
@@ -539,6 +609,10 @@ impl TranscriptSink {
 
     async fn begin_next_turn(&mut self) -> anyhow::Result<()> {
         self.finalize_turn().await?;
+        self.advance_attempt().await
+    }
+
+    async fn advance_attempt(&mut self) -> anyhow::Result<()> {
         self.reset_parts();
         self.attempt_seq += 1;
         self.stream_id = format!(
@@ -558,11 +632,7 @@ impl TranscriptSink {
     }
 
     fn items_json(&self) -> Vec<serde_json::Value> {
-        durable_items_json(
-            &self.parts.parts,
-            &self.provider_metadata,
-            self.persist_reasoning_replay.load(Ordering::Acquire),
-        )
+        durable_items_json(&self.parts.parts, &self.provider_metadata)
     }
 
     fn has_unpublished(&self) -> bool {
@@ -648,7 +718,6 @@ fn visible_live_parts(parts: &[LiveAssistantPart]) -> Vec<LiveAssistantPart> {
 fn durable_items_json(
     parts: &[LiveAssistantPart],
     provider_metadata: &HashMap<String, serde_json::Value>,
-    persist_reasoning_replay: bool,
 ) -> Vec<serde_json::Value> {
     parts
         .iter()
@@ -660,11 +729,7 @@ fn durable_items_json(
                     part_id, call_id, ..
                 } => part_id.clone().unwrap_or_else(|| call_id.clone()),
             };
-            let metadata = match part {
-                LiveAssistantPart::Reasoning { .. } if !persist_reasoning_replay => None,
-                _ => provider_metadata.get(&key),
-            };
-            merge_provider_metadata(part, metadata)
+            merge_provider_metadata(part, provider_metadata.get(&key))
         })
         .collect()
 }
@@ -708,8 +773,6 @@ impl Drop for CommandSessionShutdown {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
 
     use rig::completion::FinishReason;
 
@@ -741,7 +804,7 @@ mod tests {
         let live = visible_live_parts(&parts);
         assert_eq!(live.len(), 1);
         assert!(matches!(&live[0], LiveAssistantPart::Reasoning { id, .. } if id == "visible"));
-        let durable = durable_items_json(&parts, &metadata, true);
+        let durable = durable_items_json(&parts, &metadata);
         assert_eq!(durable.len(), 2);
         assert_eq!(durable[0]["providerMetadata"], reasoning_envelope());
     }
@@ -816,8 +879,7 @@ mod tests {
     }
 
     #[test]
-    fn items_json_omits_reasoning_metadata_after_compaction_keeps_visible_text() {
-        let persist_reasoning_replay = Arc::new(AtomicBool::new(true));
+    fn items_json_preserves_reasoning_metadata_and_visible_text() {
         let mut parts = vec![LiveAssistantPart::Reasoning {
             id: "stream:r1".into(),
             text: "visible plan".into(),
@@ -834,7 +896,6 @@ mod tests {
             completed_at: None,
             turn_id: Some("stream".into()),
         });
-        assert_eq!(contiguous_text_id(&parts, "stream"), "stream:text:1");
         parts.push(LiveAssistantPart::Reasoning {
             id: "stream:r2".into(),
             text: "".into(),
@@ -849,41 +910,14 @@ mod tests {
             completed_at: None,
             turn_id: Some("stream".into()),
         });
-        assert_eq!(contiguous_text_id(&parts, "stream"), "stream:text:3");
         provider_metadata.insert("reasoning:stream:r2".to_string(), reasoning_envelope());
 
-        let before = durable_items_json(
-            &parts,
-            &provider_metadata,
-            persist_reasoning_replay.load(Ordering::Acquire),
-        );
-        assert_eq!(before[0]["text"], "visible plan");
-        assert_eq!(before[0]["providerMetadata"], reasoning_envelope());
-        assert_eq!(before[1]["text"], "hello");
-        assert!(before[1].get("providerMetadata").is_none());
-        assert_eq!(before[2]["providerMetadata"], reasoning_envelope());
-
-        persist_reasoning_replay.store(false, Ordering::Release);
-        let after = durable_items_json(
-            &parts,
-            &provider_metadata,
-            persist_reasoning_replay.load(Ordering::Acquire),
-        );
-        assert_eq!(after[0]["type"], "reasoning");
-        assert_eq!(after[0]["text"], "visible plan");
-        assert!(after[0].get("providerMetadata").is_none());
-        assert_eq!(after[1]["text"], "hello");
-        assert_eq!(after[2]["text"], "");
-        assert!(after[2].get("providerMetadata").is_none());
-        assert_eq!(after[3]["text"], " after");
-        assert_eq!(
-            provider_metadata.get("reasoning:stream:r1"),
-            Some(&reasoning_envelope()),
-            "native in-process metadata stays after durable omit"
-        );
-        match &parts[0] {
-            LiveAssistantPart::Reasoning { text, .. } => assert_eq!(text, "visible plan"),
-            other => panic!("expected live reasoning text, got {other:?}"),
-        }
+        let durable = durable_items_json(&parts, &provider_metadata);
+        assert_eq!(durable[0]["text"], "visible plan");
+        assert_eq!(durable[0]["providerMetadata"], reasoning_envelope());
+        assert_eq!(durable[1]["text"], "hello");
+        assert!(durable[1].get("providerMetadata").is_none());
+        assert_eq!(durable[2]["providerMetadata"], reasoning_envelope());
+        assert_eq!(durable[3]["text"], " after");
     }
 }

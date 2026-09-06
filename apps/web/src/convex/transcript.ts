@@ -8,6 +8,7 @@ import {
 	vTranscriptPartsResult,
 	vTranscriptStateResult
 } from '@convex/lib/docs';
+import { transcriptHistoryFromNumber } from '@convex/lib/contextHandoff';
 import {
 	getOrCreateTranscriptState,
 	getTranscriptState,
@@ -26,20 +27,7 @@ async function transcriptStateResult(
 }> {
 	const state = await getTranscriptState(ctx, threadId);
 	const thread = await ctx.db.get('threadRecords', threadId);
-	let historyFromNumber = 0;
-	if (thread?.contextSummaryThroughRunId) {
-		const cutoffRunId = thread.contextSummaryThroughRunId;
-		const lastCovered = await ctx.db
-			.query('threadTranscriptParts')
-			.withIndex('by_threadId_and_runId_and_number', (query) =>
-				query.eq('threadId', threadId).eq('runId', cutoffRunId)
-			)
-			.order('desc')
-			.first();
-		if (lastCovered) {
-			historyFromNumber = lastCovered.number + 1;
-		}
-	}
+	const historyFromNumber = await transcriptHistoryFromNumber(ctx, thread);
 	if (thread?.contextSummary) {
 		return {
 			threadId,

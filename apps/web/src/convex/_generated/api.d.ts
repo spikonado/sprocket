@@ -29,7 +29,7 @@ import type * as lib_assistantParts from "../lib/assistantParts.js";
 import type * as lib_assistantStreamWrites from "../lib/assistantStreamWrites.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_completionStream from "../lib/completionStream.js";
-import type * as lib_contextCompaction from "../lib/contextCompaction.js";
+import type * as lib_contextHandoff from "../lib/contextHandoff.js";
 import type * as lib_docs from "../lib/docs.js";
 import type * as lib_executorJobs from "../lib/executorJobs.js";
 import type * as lib_gatewayFetch from "../lib/gatewayFetch.js";
@@ -104,7 +104,7 @@ declare const fullApi: ApiFromModules<{
   "lib/assistantStreamWrites": typeof lib_assistantStreamWrites;
   "lib/auth": typeof lib_auth;
   "lib/completionStream": typeof lib_completionStream;
-  "lib/contextCompaction": typeof lib_contextCompaction;
+  "lib/contextHandoff": typeof lib_contextHandoff;
   "lib/docs": typeof lib_docs;
   "lib/executorJobs": typeof lib_executorJobs;
   "lib/gatewayFetch": typeof lib_gatewayFetch;

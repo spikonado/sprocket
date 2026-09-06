@@ -2,6 +2,7 @@ import { Migrations } from '@convex-dev/migrations';
 import { components, internal } from '@convex/_generated/api';
 import { internalMutation } from '@convex/_generated/server';
 import schema from '@convex/schema';
+import { throughPartNumberForRunId } from '@convex/lib/contextHandoff';
 import { normalizeCompletionTiming } from '@convex/lib/transcriptParts';
 
 export const migrations = new Migrations(components.migrations, {
@@ -12,7 +13,8 @@ export const migrations = new Migrations(components.migrations, {
 export const run = migrations.runner([
 	internal.migrations.removeRunPromptMessageIds,
 	internal.migrations.removeImageUploadMessageIds,
-	internal.migrations.backfillTranscriptTiming
+	internal.migrations.backfillTranscriptTiming,
+	internal.migrations.backfillContextSummaryThroughPartNumber
 ]);
 
 export const runTranscriptTiming = migrations.runner(internal.migrations.backfillTranscriptTiming);
@@ -43,6 +45,21 @@ export const removeImageUploadMessageIds = migrations.define({
 	migrateOne: (_ctx, upload) => {
 		if (upload.messageIds === undefined) return;
 		return { messageIds: undefined };
+	}
+});
+
+export const backfillContextSummaryThroughPartNumber = migrations.define({
+	table: 'threadRecords',
+	migrateOne: async (ctx, thread) => {
+		if (thread.contextSummaryThroughPartNumber !== undefined) return;
+		if (!thread.contextSummaryThroughRunId) return;
+		return {
+			contextSummaryThroughPartNumber: await throughPartNumberForRunId(
+				ctx,
+				thread._id,
+				thread.contextSummaryThroughRunId
+			)
+		};
 	}
 });
 

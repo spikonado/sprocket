@@ -561,4 +561,61 @@ describe('numbered transcript parts', () => {
 			totalParts: 0
 		});
 	});
+
+	it('does not delete covered parts when a handoff cutoff advances historyFromNumber', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'handoff-keep-history-secret';
+		const { runId } = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			'sub-handoff-keep-history',
+			executionSecret,
+			'Keep this prompt visible'
+		);
+		await asUser.mutation(api.agentRuntime.start, {
+			claimId: 'claim-keep-history',
+			runId,
+			executionSecret
+		});
+		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, {
+			runId,
+			claimId: 'claim-keep-history',
+			attemptSeq: 1,
+			executionSecret
+		});
+		await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
+			runId,
+			claimId: 'claim-keep-history',
+			attemptSeq: 1,
+			streamId: 'stream-keep',
+			items: [{ type: 'text' as const, id: 't', text: 'Covered work', turnId: 'stream-keep' }],
+			executionSecret
+		});
+		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, {
+			runId,
+			claimId: 'claim-keep-history',
+			attemptSeq: 2,
+			executionSecret
+		});
+		await asUser.mutation(api.agentRuntime.saveContextHandoff, {
+			runId,
+			claimId: 'claim-keep-history',
+			executionSecret,
+			summary: 'Covered work is done.',
+			completionAttemptSeq: 2,
+			beforePrompt: false
+		});
+		expect(await asUser.query(api.transcript.getState, { threadId })).toMatchObject({
+			totalParts: 2,
+			historyFromNumber: 2,
+			contextSummary: 'Covered work is done.'
+		});
+		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
+		expect(parts.parts.map((part) => [part.number, part.kind])).toEqual([
+			[0, 'prompt'],
+			[1, 'completion']
+		]);
+	});
 });

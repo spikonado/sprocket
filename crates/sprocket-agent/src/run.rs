@@ -754,6 +754,16 @@ async fn load_prior_history(
     )
     .await?;
     let state = store.load_state(user_id, thread_id).await?;
+    let current_run_was_compacted =
+        if state.context_summary.is_some() && state.history_from_number > 0 {
+            runtime
+                .transcript_parts_for_run(run_id, &[state.history_from_number - 1])
+                .await?
+                .iter()
+                .any(|part| part.run_id == run_id)
+        } else {
+            false
+        };
     let numbers: Vec<u32> = (state.history_from_number..state.remote_total_parts).collect();
     let local_parts = store.read_parts(user_id, thread_id, &numbers).await?;
     let missing = numbers
@@ -790,6 +800,7 @@ async fn load_prior_history(
             Some(run_id),
         ))?,
         continue_from_finished_turns: context.run.continuation_of_run_id.is_some()
+            || current_run_was_compacted
             || current_run_has_finished_turns(&parts, run_id),
     })
 }
@@ -811,13 +822,13 @@ pub async fn run_agent(run: AgentRun, live: Arc<LiveCompletionHub>) -> anyhow::R
     };
     eprintln!("sprocket-agent: loaded run context {}", run_id);
 
-    let model = context.run.selected_model.clone();
     let reasoning_effort = context.run.reasoning_effort.clone();
     let service_tier = context.run.service_tier.clone();
-    let context_budget = match context_budget_for_model(&gateway_url, &model).await {
-        Ok(budget) => budget,
-        Err(error) => return abort_before_start(&runtime, &run_id, error).await,
-    };
+    let context_budget =
+        match context_budget_for_model(&gateway_url, &context.run.selected_model).await {
+            Ok(budget) => budget,
+            Err(error) => return abort_before_start(&runtime, &run_id, error).await,
+        };
 
     let prepared = (|| {
         let workspace_instructions = load_workspace_instructions(&workspace_root)?;
@@ -916,10 +927,13 @@ pub async fn run_agent(run: AgentRun, live: Arc<LiveCompletionHub>) -> anyhow::R
                     prior_history: prior_history.messages,
                     workspace_root,
                     skills,
-                    model,
                     reasoning_effort,
                     service_tier,
                     context_budget,
+                    context_tokens: context.context_tokens,
+                    defer_prompt_for_compaction: !prior_history.continue_from_finished_turns
+                        && context.run.continuation_of_run_id.is_none()
+                        && request.continuation_of_run_id.is_none(),
                 },
             )
             .await;

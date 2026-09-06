@@ -75,6 +75,8 @@ pub struct RunContextResponse {
     pub prompt_attachments: Vec<ResolvedImageAttachment>,
     pub agent_history: Vec<AgentHistoryMessage>,
     pub context_budget: ContextBudget,
+    #[serde(default, deserialize_with = "deserialize_convex_u64")]
+    pub context_tokens: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
