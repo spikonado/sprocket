@@ -4,7 +4,12 @@ import { v, type Infer } from 'convex/values';
 import { action, env, type ActionCtx } from '@convex/_generated/server';
 import { api, internal } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
-import { Stagehand } from '@browserbasehq/stagehand';
+import {
+	browserbase,
+	Stagehand,
+	type ModelName,
+	type StagehandBrowser
+} from '@browserbasehq/stagehand';
 import { z } from 'zod';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
 import {
@@ -22,21 +27,35 @@ const MAX_RESULT_CHARS = 8_000;
 // hostile or complex page can make Stagehand return thousands of actions.
 const MAX_OBSERVE_ACTIONS = 50;
 
-function config() {
+type BrowserModel = {
+	modelName: ModelName;
+	apiKey: string;
+};
+
+type BrowserAgentConfig = {
+	apiKey: string;
+	projectId?: string;
+	model: BrowserModel;
+};
+
+function config(): BrowserAgentConfig {
 	const apiKey = env.BROWSERBASE_API_KEY?.trim();
 	if (!apiKey) throw new Error('BROWSERBASE_API_KEY is not configured.');
-	const projectId = env.BROWSERBASE_PROJECT_ID?.trim();
-	if (!projectId) throw new Error('BROWSERBASE_PROJECT_ID is not configured.');
 	const openaiApiKey = env.OPENAI_API_KEY?.trim();
 	if (!openaiApiKey) throw new Error('OPENAI_API_KEY is not configured.');
-	return {
+	const projectId = env.BROWSERBASE_PROJECT_ID?.trim();
+	const modelName = env.BROWSER_TASK_MODEL?.trim() || DEFAULT_MODEL;
+	const resolved: BrowserAgentConfig = {
 		apiKey,
-		projectId,
 		model: {
-			modelName: env.BROWSER_TASK_MODEL?.trim() || DEFAULT_MODEL,
+			// SAFETY: BROWSER_TASK_MODEL is an operator-selected Stagehand
+			// provider/model id; Stagehand rejects unknown names at session start.
+			modelName: modelName as ModelName,
 			apiKey: openaiApiKey
 		}
 	};
+	if (projectId) resolved.projectId = projectId;
+	return resolved;
 }
 
 async function activeActor(
@@ -92,20 +111,36 @@ function boundActions<T>(actions: T[]): BoundedActions<T> {
 const SESSION_TIMEOUT_SECONDS = 3600;
 const SESSION_REUSE_MS = 55 * 60 * 1000;
 
-type StagehandConfig = ReturnType<typeof config>;
-type StagehandOptions = ConstructorParameters<typeof Stagehand>[0];
-type StagehandInstance = InstanceType<typeof Stagehand>;
-type StagehandClient = Pick<
-	StagehandInstance,
-	'init' | 'close' | 'act' | 'observe' | 'extract' | 'browserbaseSessionId'
-> & {
-	context: { pages: () => Array<{ goto: (url: string) => Promise<void> }> };
-};
-type StagehandHandle = StagehandClient | StagehandInstance;
-type StagehandFactory = (options: StagehandOptions) => StagehandHandle;
+type ObservedAction = Infer<typeof vBrowserObservedAction>;
+type StagehandClient = Pick<Stagehand, 'act' | 'observe' | 'extract'>;
+type ActResult = Awaited<ReturnType<StagehandClient['act']>>;
+type ObserveResult = Awaited<ReturnType<StagehandClient['observe']>>;
+type ExtractResult = Awaited<ReturnType<StagehandClient['extract']>>;
 
-type StagehandFactorySlot = typeof globalThis & {
-	__sprocketCreateStagehand?: StagehandFactory;
+type BrowserSessionLaunch = {
+	apiKey: string;
+	projectId?: string;
+	model: BrowserModel;
+	keepAlive: boolean;
+	timeout: number;
+	sessionId?: string;
+};
+
+export type BrowserSessionHandle = {
+	sessionId: string;
+	act: StagehandClient['act'];
+	observe: StagehandClient['observe'];
+	extract: StagehandClient['extract'];
+	goto: (url: string) => Promise<void>;
+	close: () => Promise<void>;
+};
+
+type BrowserSessionFactory = (
+	options: BrowserSessionLaunch
+) => Promise<BrowserSessionHandle | null>;
+
+type BrowserSessionFactorySlot = typeof globalThis & {
+	__sprocketCreateBrowserSession?: BrowserSessionFactory;
 };
 
 type BrowserSessionUpsert = {
@@ -116,20 +151,97 @@ type BrowserSessionUpsert = {
 	liveViewUrl?: string;
 };
 
-// SAFETY: only test suites assign __sprocketCreateStagehand on globalThis; production never writes this slot.
-const stagehandFactorySlot = globalThis as StagehandFactorySlot;
+// SAFETY: only test suites assign __sprocketCreateBrowserSession on globalThis; production never writes this slot.
+const sessionFactorySlot = globalThis as BrowserSessionFactorySlot;
 
-function createStagehand(options: StagehandOptions): StagehandHandle {
-	const bound = stagehandFactorySlot.__sprocketCreateStagehand;
-	if (bound) return bound(options);
-	return new Stagehand(options);
+function actSummary(result: ActResult): string {
+	return `success: ${result.data.success}\n${result.data.message}`.trim();
 }
 
-export function bindStagehandFactory(factory: StagehandFactory | undefined): () => void {
-	const previous = stagehandFactorySlot.__sprocketCreateStagehand;
-	stagehandFactorySlot.__sprocketCreateStagehand = factory;
+function observeActions(result: ObserveResult): ObservedAction[] {
+	return result.data;
+}
+
+function extractPayload(result: ExtractResult): string {
+	return JSON.stringify(result.data);
+}
+
+async function gotoOnBrowser(browser: StagehandBrowser, url: string): Promise<void> {
+	const page = (await browser.context.activePage()) ?? (await browser.context.pages())[0];
+	if (page) {
+		await page.goto(url);
+		return;
+	}
+	await browser.context.newPage(url);
+}
+
+async function launchBrowserbase(options: BrowserSessionLaunch): Promise<StagehandBrowser> {
+	const launch = {
+		apiKey: options.apiKey,
+		keepAlive: options.keepAlive,
+		// Browserbase session duration. The SDK field is `api_timeout`; it is
+		// serialized as `timeout` on the Sessions API.
+		api_timeout: options.timeout
+	};
+	if (options.projectId) {
+		return await browserbase.launch({ ...launch, projectId: options.projectId });
+	}
+	return await browserbase.launch(launch);
+}
+
+async function createProductionSession(
+	options: BrowserSessionLaunch
+): Promise<BrowserSessionHandle | null> {
+	const browser = options.sessionId
+		? await browserbase.connect({ apiKey: options.apiKey, sessionId: options.sessionId })
+		: await launchBrowserbase(options);
+	try {
+		const stagehand = await Stagehand.create({
+			browser,
+			apiKey: options.apiKey,
+			model: options.model,
+			selfHeal: true,
+			cache: true,
+			logging: { level: 'off' }
+		});
+		const sessionId = browser.sessionId;
+		if (!sessionId) {
+			await stagehand.close().catch(() => {});
+			await browser.close().catch(() => {});
+			if (options.sessionId) return null;
+			throw new Error('Browserbase did not report a session id.');
+		}
+		return {
+			sessionId,
+			act: stagehand.act.bind(stagehand),
+			observe: stagehand.observe.bind(stagehand),
+			extract: stagehand.extract.bind(stagehand),
+			goto: (url) => gotoOnBrowser(browser, url),
+			close: async () => {
+				await stagehand.close().catch(() => {});
+				// keepAlive sessions stay running after this; close() only
+				// drops the CDP connection so the next tool call can reconnect.
+				await browser.close().catch(() => {});
+			}
+		};
+	} catch (error) {
+		await browser.close().catch(() => {});
+		if (options.sessionId) return null;
+		throw error;
+	}
+}
+
+async function createSession(options: BrowserSessionLaunch): Promise<BrowserSessionHandle | null> {
+	const bound = sessionFactorySlot.__sprocketCreateBrowserSession;
+	if (bound) return bound(options);
+	return createProductionSession(options);
+}
+
+export function bindBrowserSessionFactory(factory: BrowserSessionFactory | undefined): () => void {
+	const previous = sessionFactorySlot.__sprocketCreateBrowserSession;
+	sessionFactorySlot.__sprocketCreateBrowserSession = factory;
 	return () => {
-		stagehandFactorySlot.__sprocketCreateStagehand = previous;
+		sessionFactorySlot.__sprocketCreateBrowserSession = previous;
 	};
 }
 
@@ -151,34 +263,25 @@ async function fetchLiveViewUrl(apiKey: string, sessionId: string): Promise<stri
 	}
 }
 
-/** Start a Stagehand on Browserbase, resuming `browserbaseSessionID` when
- * given. Returns null when a resume fails (dead session) so the caller can
- * fall back to a fresh one; failures of a fresh session throw. */
-async function startStagehand(
-	{ apiKey, projectId, model }: StagehandConfig,
-	browserbaseSessionID?: string
-): Promise<StagehandHandle | null> {
-	const options: StagehandOptions = {
-		env: 'BROWSERBASE',
-		apiKey,
-		projectId,
-		model,
-		selfHeal: true,
+/** Start a Stagehand on Browserbase, resuming `sessionId` when given. Returns
+ * null when a resume fails (dead session) so the caller can fall back to a
+ * fresh one; failures of a fresh session throw. */
+async function startSession(
+	cfg: BrowserAgentConfig,
+	sessionId?: string
+): Promise<BrowserSessionHandle | null> {
+	const options: BrowserSessionLaunch = {
+		apiKey: cfg.apiKey,
+		model: cfg.model,
 		keepAlive: true,
-		// Convex actions can't spawn pino's transport worker, which the
-		// default pretty-printing logger needs; it fails to resolve
-		// pino-pretty and crashes Stagehand construction.
-		disablePino: true,
-		browserbaseSessionCreateParams: { keepAlive: true, timeout: SESSION_TIMEOUT_SECONDS }
+		timeout: SESSION_TIMEOUT_SECONDS
 	};
-	if (browserbaseSessionID) options.browserbaseSessionID = browserbaseSessionID;
-	const stagehand = createStagehand(options);
+	if (cfg.projectId) options.projectId = cfg.projectId;
+	if (sessionId) options.sessionId = sessionId;
 	try {
-		await stagehand.init();
-		return stagehand;
+		return await createSession(options);
 	} catch (error) {
-		await stagehand.close().catch(() => {});
-		if (browserbaseSessionID) return null;
+		if (sessionId) return null;
 		throw error;
 	}
 }
@@ -186,12 +289,12 @@ async function startStagehand(
 /** Attach a Stagehand to the thread's shared Browserbase session, creating or
  * rotating it as needed. All runs and tool calls in a thread share one
  * session so the agent keeps its page state between turns. */
-async function attachStagehand(
+async function attachSession(
 	ctx: ActionCtx,
 	userId: string,
 	runId: Doc<'runs'>['_id'],
 	threadId: Doc<'threadRecords'>['_id']
-): Promise<StagehandHandle> {
+): Promise<BrowserSessionHandle> {
 	const cfg = config();
 	const existing = await ctx.runQuery(internal.browserSessions.getForThread, {
 		threadId,
@@ -199,34 +302,29 @@ async function attachStagehand(
 	});
 	const reusable = existing && Date.now() - existing.startedAt < SESSION_REUSE_MS ? existing : null;
 
-	let stagehand = reusable ? await startStagehand(cfg, reusable.browserbaseSessionId) : null;
-	stagehand ??= await startStagehand(cfg);
-	if (!stagehand) {
+	let session = reusable ? await startSession(cfg, reusable.browserbaseSessionId) : null;
+	session ??= await startSession(cfg);
+	if (!session) {
 		throw new Error('Failed to start a browser session.');
 	}
 
-	const browserbaseSessionId = stagehand.browserbaseSessionId;
-	if (!browserbaseSessionId) {
-		await stagehand.close().catch(() => {});
-		throw new Error('Stagehand did not report a Browserbase session id.');
-	}
-	if (browserbaseSessionId !== reusable?.browserbaseSessionId) {
-		const liveViewUrl = await fetchLiveViewUrl(cfg.apiKey, browserbaseSessionId);
-		const session: BrowserSessionUpsert = {
+	if (session.sessionId !== reusable?.browserbaseSessionId) {
+		const liveViewUrl = await fetchLiveViewUrl(cfg.apiKey, session.sessionId);
+		const stored: BrowserSessionUpsert = {
 			threadId,
 			runId,
 			userId,
-			browserbaseSessionId
+			browserbaseSessionId: session.sessionId
 		};
-		if (liveViewUrl) session.liveViewUrl = liveViewUrl;
-		await ctx.runMutation(internal.browserSessions.upsertForThread, session);
+		if (liveViewUrl) stored.liveViewUrl = liveViewUrl;
+		await ctx.runMutation(internal.browserSessions.upsertForThread, stored);
 	} else if (existing) {
 		if (!existing.liveViewUrl) {
-			const liveViewUrl = await fetchLiveViewUrl(cfg.apiKey, browserbaseSessionId);
+			const liveViewUrl = await fetchLiveViewUrl(cfg.apiKey, session.sessionId);
 			if (liveViewUrl) {
 				await ctx.runMutation(internal.browserSessions.setLiveViewUrl, {
 					threadId,
-					browserbaseSessionId,
+					browserbaseSessionId: session.sessionId,
 					liveViewUrl
 				});
 			}
@@ -236,13 +334,11 @@ async function attachStagehand(
 			runId
 		});
 	}
-	return stagehand;
+	return session;
 }
 
-async function gotoIfProvided(stagehand: StagehandHandle, startUrl?: string): Promise<void> {
-	if (startUrl) {
-		await stagehand.context.pages()[0]?.goto(startUrl);
-	}
+async function gotoIfProvided(session: BrowserSessionHandle, startUrl?: string): Promise<void> {
+	if (startUrl) await session.goto(startUrl);
 }
 
 export const act = action({
@@ -258,18 +354,18 @@ export const act = action({
 	handler: async (ctx, args): Promise<Infer<typeof vBrowserTaskResult>> => {
 		try {
 			const actor = await activeActor(ctx, args);
-			const stagehand = await attachStagehand(ctx, actor.userId, args.runId, actor.threadId);
+			const session = await attachSession(ctx, actor.userId, args.runId, actor.threadId);
 			try {
-				await gotoIfProvided(stagehand, args.startUrl);
+				await gotoIfProvided(session, args.startUrl);
 				if (!args.instruction && !args.action) {
 					throw new Error('browser_act needs an instruction or an action.');
 				}
 				const result = args.action
-					? await stagehand.act(args.action)
-					: await stagehand.act(args.instruction!);
-				return clip(`success: ${result.success}\n${result.message}`.trim());
+					? await session.act(args.action)
+					: await session.act(args.instruction!);
+				return clip(actSummary(result));
 			} finally {
-				await stagehand.close().catch(() => {});
+				await session.close().catch(() => {});
 			}
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
@@ -289,10 +385,10 @@ export const observe = action({
 	handler: async (ctx, args) => {
 		try {
 			const actor = await activeActor(ctx, args);
-			const stagehand = await attachStagehand(ctx, actor.userId, args.runId, actor.threadId);
+			const session = await attachSession(ctx, actor.userId, args.runId, actor.threadId);
 			try {
-				await gotoIfProvided(stagehand, args.startUrl);
-				const actions = await stagehand.observe(args.instruction);
+				await gotoIfProvided(session, args.startUrl);
+				const actions = observeActions(await session.observe(args.instruction));
 				const bounded = boundActions(actions);
 				const clipped = clip(JSON.stringify(bounded.actions));
 				return {
@@ -301,7 +397,7 @@ export const observe = action({
 					truncated: bounded.truncated || clipped.truncated
 				};
 			} finally {
-				await stagehand.close().catch(() => {});
+				await session.close().catch(() => {});
 			}
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
@@ -321,13 +417,12 @@ export const extract = action({
 	handler: async (ctx, args): Promise<Infer<typeof vBrowserTaskResult>> => {
 		try {
 			const actor = await activeActor(ctx, args);
-			const stagehand = await attachStagehand(ctx, actor.userId, args.runId, actor.threadId);
+			const session = await attachSession(ctx, actor.userId, args.runId, actor.threadId);
 			try {
-				await gotoIfProvided(stagehand, args.startUrl);
-				const result = await stagehand.extract(args.instruction);
-				return clip(JSON.stringify(result));
+				await gotoIfProvided(session, args.startUrl);
+				return clip(extractPayload(await session.extract(args.instruction)));
 			} finally {
-				await stagehand.close().catch(() => {});
+				await session.close().catch(() => {});
 			}
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));

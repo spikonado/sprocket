@@ -13,7 +13,7 @@
 		"lint": "eslint . && convex typecheck"
 	},
 	"dependencies": {
-		"@browserbasehq/stagehand": "^3.7.1",
+		"@browserbasehq/stagehand": "^4.0.2",
 		"@context-dot-dev/convex": "^1.0.1",
 		"@convex-dev/action-retrier": "^0.3.1",
 		"@convex-dev/aggregate": "^0.2.2",
