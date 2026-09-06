@@ -42,6 +42,8 @@ export function toolGroupLabel(toolKey: string) {
 			return 'Checked Mandate';
 		case 'read_skill':
 			return 'Read Skill';
+		case 'parse_file':
+			return 'Parsed Files';
 		case 'scrape_url':
 			return 'Read Pages';
 		case 'update_artifact':
@@ -106,6 +108,8 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 		}
 		case 'scrape_url':
 			return jsonString(fields?.url) ?? 'Web page';
+		case 'parse_file':
+			return jsonString(fields?.path) ?? jsonString(fields?.url) ?? 'File';
 		case 'update_artifact':
 			return 'Updated artifact';
 		case 'web_search':

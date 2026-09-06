@@ -88,6 +88,13 @@ pub struct ContextBudget {
     pub auto_compact_token_limit: u64,
 }
 
+/// Live catalog fields for the selected model. Fetched once with the budget.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CatalogModelCapabilities {
+    pub context_budget: ContextBudget,
+    pub supports_images: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedImageAttachment {

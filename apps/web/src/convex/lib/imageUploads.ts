@@ -1,6 +1,5 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
-import { MAX_IMAGE_ATTACHMENTS } from '@convex/lib/validators';
 
 export function areImageUploadIdsEqual(
 	left: Id<'imageUploads'>[] | undefined,
@@ -16,18 +15,15 @@ export async function getOwnedImageUploads(
 	userId: string,
 	imageUploadIds: Id<'imageUploads'>[]
 ): Promise<Doc<'imageUploads'>[]> {
-	if (imageUploadIds.length > MAX_IMAGE_ATTACHMENTS) {
-		throw new Error(`Attach at most ${MAX_IMAGE_ATTACHMENTS} images.`);
-	}
 	if (new Set(imageUploadIds).size !== imageUploadIds.length) {
-		throw new Error('The same image cannot be attached more than once.');
+		throw new Error('The same file cannot be attached more than once.');
 	}
 
 	return await Promise.all(
 		imageUploadIds.map(async (imageUploadId) => {
 			const upload = await ctx.db.get('imageUploads', imageUploadId);
 			if (!upload || upload.userId !== userId) {
-				throw new Error('Image attachment was not found.');
+				throw new Error('File attachment was not found.');
 			}
 			return upload;
 		})

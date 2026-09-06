@@ -3,14 +3,8 @@ import { internalMutation, mutation, type MutationCtx } from '@convex/_generated
 import { v, type Infer } from 'convex/values';
 import { getUserId } from '@convex/lib/auth';
 import { vRegisterImageUploadResult } from '@convex/lib/docs';
-import {
-	MAX_IMAGE_ATTACHMENT_BYTES,
-	MAX_IMAGE_ATTACHMENT_LABEL,
-	supportedImageMediaTypes
-} from '@convex/lib/validators';
+import { registeredFileUploadError } from '@convex/lib/validators';
 
-const supportedMediaTypes = new Set<string>(supportedImageMediaTypes);
-const MAX_IMAGE_NAME_LENGTH = 255;
 const ORPHAN_RETENTION_MS = 24 * 60 * 60 * 1_000;
 const ORPHAN_CLEANUP_BATCH_SIZE = 100;
 
@@ -39,32 +33,24 @@ export const register = mutation({
 			.unique();
 		if (existing) {
 			if (existing.userId !== userId) {
-				throw new Error('Uploaded image belongs to another user.');
+				throw new Error('Uploaded file belongs to another user.');
 			}
 			return await uploadResult(ctx, existing);
 		}
 
 		const metadata = await ctx.db.system.get('_storage', args.storageId);
 		if (!metadata) {
-			return { error: 'Uploaded image was not found.' };
+			return { error: 'Uploaded file was not found.' };
 		}
 
 		const name = args.name.trim();
+		const mediaType = (metadata.contentType?.trim() || 'application/octet-stream').toLowerCase();
 		// Validation failures return (instead of throw) so the storage delete
 		// commits; throwing would roll back the whole mutation, delete included.
-		if (!name || name.length > MAX_IMAGE_NAME_LENGTH) {
+		const validationError = registeredFileUploadError(name);
+		if (validationError) {
 			await ctx.storage.delete(args.storageId);
-			return { error: 'Image filename must be between 1 and 255 characters.' };
-		}
-
-		const mediaType = metadata.contentType?.toLowerCase() ?? '';
-		if (!supportedMediaTypes.has(mediaType)) {
-			await ctx.storage.delete(args.storageId);
-			return { error: 'Only JPEG, PNG, GIF, and WebP images are supported.' };
-		}
-		if (metadata.size > MAX_IMAGE_ATTACHMENT_BYTES) {
-			await ctx.storage.delete(args.storageId);
-			return { error: `Images must be ${MAX_IMAGE_ATTACHMENT_LABEL} or smaller.` };
+			return { error: validationError };
 		}
 
 		const imageUploadId = await ctx.db.insert('imageUploads', {
@@ -79,7 +65,7 @@ export const register = mutation({
 		if (!url) {
 			await ctx.storage.delete(args.storageId);
 			await ctx.db.delete('imageUploads', imageUploadId);
-			return { error: 'Uploaded image is unavailable.' };
+			return { error: 'Uploaded file is unavailable.' };
 		}
 		return { imageUploadId, name, mediaType, size: metadata.size, url };
 	}
@@ -133,5 +119,5 @@ async function uploadResult(
 				size: upload.size,
 				url
 			}
-		: { error: 'Uploaded image is unavailable.' };
+		: { error: 'Uploaded file is unavailable.' };
 }

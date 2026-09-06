@@ -53,6 +53,8 @@ function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 		watchLiveCompletion: unusedDesktopCall,
 		clearTranscriptReplica: unusedDesktopCall,
 		fetchTranscriptAttachment: unusedDesktopCall,
+		uploadTranscriptAttachment: unusedDesktopCall,
+		discardTranscriptAttachment: unusedDesktopCall,
 		registerThreadCache: unusedDesktopCall,
 		fetchThreadSnapshot: unusedDesktopCall,
 		watchThreadCache: unusedDesktopCall,
@@ -169,7 +171,7 @@ describe('resolveSubmissionId', () => {
 		expect(resolveRecoveredSubmission({ serviceTier: 'fast' })).toBe('new-id');
 	});
 
-	it('reuses a submission only when its image attachments are unchanged', () => {
+	it('reuses a submission only when its attachments are unchanged', () => {
 		expect(resolveRecoveredSubmission({ imageUploadIds: [] })).toBe('new-id');
 		expect(resolveRecoveredSubmission({ imageUploadIds: [imageUploadId('image-2')] })).toBe(
 			'new-id'

@@ -2,7 +2,7 @@ use std::convert::Infallible;
 
 use anyhow::anyhow;
 use axum::Json;
-use axum::body::Bytes;
+use axum::body::Body;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -11,12 +11,15 @@ use axum::routing::post;
 use axum_extra::extract::CookieJar;
 use futures::stream::unfold;
 use serde::Deserialize;
-use sprocket_agent::{TRANSCRIPT_CHUNK_SIZE, TRANSCRIPT_PAGE_SIZE};
+use sprocket_agent::{
+    TRANSCRIPT_CHUNK_SIZE, TRANSCRIPT_PAGE_SIZE, TranscriptAttachmentMeta, cache_attachment,
+};
 use tokio::sync::broadcast;
+use tokio_util::io::ReaderStream;
 
 use crate::AppState;
 use crate::routes::api_error::ApiError;
-use crate::transcript_client::{UserConvexClient, download_attachment_bytes};
+use crate::transcript_client::UserConvexClient;
 use crate::transcript_watch::TranscriptWatchEvent;
 
 #[derive(Debug, Deserialize)]
@@ -73,6 +76,7 @@ fn deserialize_thread_id<'de, D: serde::Deserializer<'de>>(
     let id = String::deserialize(deserializer)?;
     if id.is_empty()
         || id.eq_ignore_ascii_case("blobs")
+        || id.eq_ignore_ascii_case("pending-attachments")
         || !id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
@@ -90,6 +94,14 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/transcript/details", post(details_handler))
         .route("/transcript/clear", post(clear_handler))
         .route("/transcript/attachment", post(attachment_handler))
+        .route(
+            "/transcript/upload",
+            post(super::attachment_upload::upload_handler),
+        )
+        .route(
+            "/transcript/discard",
+            post(super::attachment_upload::discard_handler),
+        )
 }
 
 async fn legacy_page_handler(
@@ -341,9 +353,13 @@ async fn attachment_handler(
     Json(payload): Json<TranscriptAttachmentRequest>,
 ) -> Result<Response, ApiError> {
     require_session_user(&state, &headers, &jar, &payload.user_id).await?;
-    if let Some(blob) = state
+    if let Some(meta) = state
         .transcript
-        .blob_for_upload(&payload.user_id, &payload.image_upload_id)
+        .attachment_metadata(
+            &payload.user_id,
+            &payload.thread_id,
+            &payload.image_upload_id,
+        )
         .await
         .map_err(|error| {
             ApiError::internal_with(
@@ -355,7 +371,35 @@ async fn attachment_handler(
             )
         })?
     {
-        return Ok(blob_response(blob.media_type, blob.bytes));
+        let path = state
+            .transcript
+            .attachment_path(&payload.user_id, &payload.thread_id, &meta);
+        if tokio::fs::try_exists(&path)
+            .await
+            .map_err(|error| ApiError::internal(error.into()))?
+        {
+            return attachment_response(&path, &meta.media_type).await;
+        }
+        if tokio::fs::try_exists(
+            state
+                .transcript
+                .blob_data_path(&payload.user_id, &meta.storage_id),
+        )
+        .await
+        .map_err(|error| ApiError::internal(error.into()))?
+        {
+            let path = cache_attachment(
+                &state.transcript,
+                &payload.user_id,
+                &payload.thread_id,
+                &meta,
+            )
+            .await
+            .map_err(|error| {
+                ApiError::internal_with("failed to migrate cached attachment", error)
+            })?;
+            return attachment_response(&path, &meta.media_type).await;
+        }
     }
 
     let client = UserConvexClient::connect_with_fetcher(
@@ -376,30 +420,38 @@ async fn attachment_handler(
             anyhow!("attachment not found"),
         ));
     };
-    let bytes = download_attachment_bytes(&remote.url)
-        .await
-        .map_err(|error| ApiError::internal_with("failed to download attachment", error))?;
-    state
-        .transcript
-        .write_blob(
-            &payload.user_id,
-            &remote.storage_id,
-            &payload.image_upload_id,
-            &remote.media_type,
-            &remote.name,
-            &bytes,
-        )
-        .await
-        .map_err(|error| ApiError::internal_with("failed to cache attachment", error))?;
-    Ok(blob_response(remote.media_type, bytes))
+    let attachment = TranscriptAttachmentMeta {
+        image_upload_id: payload.image_upload_id,
+        storage_id: remote.storage_id,
+        name: remote.name,
+        media_type: remote.media_type,
+        size: remote.size,
+        url: Some(remote.url),
+        local_path: None,
+    };
+    let path = cache_attachment(
+        &state.transcript,
+        &payload.user_id,
+        &payload.thread_id,
+        &attachment,
+    )
+    .await
+    .map_err(|error| ApiError::internal_with("failed to cache attachment", error))?;
+    attachment_response(&path, &attachment.media_type).await
 }
 
-fn blob_response(media_type: String, bytes: Vec<u8>) -> Response {
-    (
+async fn attachment_response(
+    path: &std::path::Path,
+    media_type: &str,
+) -> Result<Response, ApiError> {
+    let file = tokio::fs::File::open(path)
+        .await
+        .map_err(|error| ApiError::internal(error.into()))?;
+    Ok((
         [
             (
                 header::CONTENT_TYPE,
-                header::HeaderValue::from_str(&media_type).unwrap_or_else(|_| {
+                header::HeaderValue::from_str(media_type).unwrap_or_else(|_| {
                     header::HeaderValue::from_static("application/octet-stream")
                 }),
             ),
@@ -407,10 +459,18 @@ fn blob_response(media_type: String, bytes: Vec<u8>) -> Response {
                 header::CACHE_CONTROL,
                 header::HeaderValue::from_static("private, max-age=31536000, immutable"),
             ),
+            (
+                header::CONTENT_DISPOSITION,
+                header::HeaderValue::from_static("attachment"),
+            ),
+            (
+                header::X_CONTENT_TYPE_OPTIONS,
+                header::HeaderValue::from_static("nosniff"),
+            ),
         ],
-        Bytes::from(bytes),
+        Body::from_stream(ReaderStream::new(file)),
     )
-        .into_response()
+        .into_response())
 }
 
 #[cfg(test)]

@@ -284,7 +284,8 @@ function getContextResult(args: {
 export const getContext = query({
 	args: {
 		runId: v.id('runs'),
-		executionSecret: v.string()
+		executionSecret: v.string(),
+		attachmentsAsPaths: v.optional(v.boolean())
 	},
 	returns: vGetContextResult,
 	handler: async (ctx, args) => {
@@ -310,16 +311,21 @@ export const getContext = query({
 				contextTokens
 			});
 		}
-		const promptAttachments = (
-			await Promise.all(
-				promptPart.prompt.imageUploads.map(async (upload) => {
-					const url = await ctx.storage.getUrl(upload.storageId);
-					return url ? { mediaType: upload.mediaType, url } : null;
-				})
-			)
-		).filter((attachment) => attachment !== null);
-		if (promptPart.prompt.imageUploads.length !== promptAttachments.length) {
-			throw new Error('One or more image attachments are unavailable.');
+		const promptAttachments = args.attachmentsAsPaths
+			? []
+			: (
+					await Promise.all(
+						promptPart.prompt.imageUploads.map(async (upload) => {
+							const url = await ctx.storage.getUrl(upload.storageId);
+							return url ? { mediaType: upload.mediaType, url } : null;
+						})
+					)
+				).filter((attachment) => attachment !== null);
+		if (
+			!args.attachmentsAsPaths &&
+			promptPart.prompt.imageUploads.length !== promptAttachments.length
+		) {
+			throw new Error('One or more file attachments are unavailable.');
 		}
 
 		return getContextResult({

@@ -34,6 +34,22 @@ the on-disk layout.
 
 ## Tools
 
+Message attachments can contain any file type, with no application size or count
+limit. The UI streams them through Rust to Convex storage. Each thread keeps its
+local copies in `attachments/` under the transcript cache. Prompts list those
+local paths; attaching an image does not put its pixels in model context.
+
+`parse_file` accepts a local path or an HTTP URL. Firecrawl's AnyDoc Rust library
+converts supported office documents and PDFs to Markdown locally. UTF-8 text is
+returned as text. Scanned PDFs report that OCR is needed; they are not sent to a
+hosted OCR service. Long parsed results include a preview and the path to the full
+text in the thread's `parse_file/` cache.
+
+The tool is available to every model. It returns image content only for models
+whose gateway catalog entry supports images. Image decoding has separate safety
+limits, which do not limit attachment uploads. Rebuilding history omits prior
+image results when the selected model cannot accept them.
+
 The agent currently offers command execution, command-session input, workspace
 patching, skill loading (`read_skill`), web search, and web-page scraping. Every
 tool call is wrapped in a durable executor-job record and observes run

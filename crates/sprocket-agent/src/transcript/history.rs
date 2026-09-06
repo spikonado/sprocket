@@ -7,7 +7,29 @@ use crate::types::{
     AgentHistoryContent, AgentHistoryMessage, AgentHistoryRole, AgentHistoryToolResultItem,
 };
 
-use super::types::TranscriptState;
+use super::types::{TranscriptPromptBody, TranscriptState};
+
+pub(crate) fn prompt_text_with_attachments(prompt: &TranscriptPromptBody) -> String {
+    if prompt.image_uploads.is_empty() {
+        return prompt.text.clone();
+    }
+    let attachments = prompt
+        .image_uploads
+        .iter()
+        .map(|attachment| {
+            serde_json::json!({
+                "name": attachment.name,
+                "mediaType": attachment.media_type,
+                "path": attachment.local_path,
+            })
+        })
+        .collect::<Vec<_>>();
+    format!(
+        "{}\n\nAttached files in the local transcript cache:\n{}",
+        prompt.text,
+        serde_json::json!(attachments)
+    )
+}
 
 pub fn current_run_has_finished_turns(parts: &[TranscriptPart], run_id: &str) -> bool {
     parts
@@ -144,26 +166,12 @@ pub fn agent_history_from_parts(
             TranscriptPartKind::Prompt => {
                 if let Some(prompt) = &part.prompt {
                     let mut contents = Vec::new();
-                    if !prompt.text.trim().is_empty() {
+                    let text = prompt_text_with_attachments(prompt);
+                    if !text.trim().is_empty() {
                         contents.push(AgentHistoryContent::Text {
-                            text: prompt.text.clone(),
+                            text,
                             additional_params_json: None,
                         });
-                    }
-                    for upload in &prompt.image_uploads {
-                        if let Some(url) = &upload.url {
-                            let media = upload
-                                .media_type
-                                .strip_prefix("image/")
-                                .unwrap_or(&upload.media_type);
-                            contents.push(AgentHistoryContent::Image {
-                                image_json: serde_json::json!({
-                                    "data": { "type": "url", "value": url },
-                                    "media_type": media
-                                })
-                                .to_string(),
-                            });
-                        }
                     }
                     if !contents.is_empty() {
                         history.push(AgentHistoryMessage {
@@ -597,7 +605,7 @@ mod tests {
     }
 
     #[test]
-    fn includes_prompt_images_and_openai_reasoning_replay_fields() {
+    fn includes_attachment_paths_not_images_and_openai_reasoning_replay_fields() {
         let state = TranscriptState::new("user".into(), "thread".into());
         let history = agent_history_from_parts(
             &state,
@@ -617,6 +625,7 @@ mod tests {
                             size: 12,
                             storage_id: "st".into(),
                             url: Some("https://files.example/shot.png".into()),
+                            local_path: Some("/cache/user/blobs/st".into()),
                         }],
                     }),
                     completion: None,
@@ -648,7 +657,9 @@ mod tests {
             None,
         );
         let serialized = format!("{history:?}");
-        assert!(serialized.contains("https://files.example/shot.png"));
+        assert!(!serialized.contains("https://files.example/shot.png"));
+        assert!(!serialized.contains("Image {"));
+        assert!(serialized.contains("/cache/user/blobs/st"));
         assert!(serialized.contains("rs_123"));
         assert!(serialized.contains("encrypted"));
         assert!(serialized.contains("enc"));

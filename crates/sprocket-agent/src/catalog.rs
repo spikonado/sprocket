@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use anyhow::{Context, anyhow};
 
-use crate::types::{ContextBudget, gateway_api_v1_url};
+use crate::types::{CatalogModelCapabilities, ContextBudget, gateway_api_v1_url};
 
 const GATEWAY_PROTOCOL_VERSION: u64 = 1;
 const CATALOG_TIMEOUT: Duration = Duration::from_secs(15);
@@ -47,14 +47,41 @@ struct GatewaySprocketCatalog {
 #[serde(rename_all = "camelCase")]
 struct GatewayCatalogModel {
     id: String,
+    supports_images: bool,
     context_window_tokens: u64,
     auto_compact_token_limit: u64,
 }
 
-pub async fn context_budget_for_model(
+fn select_catalog_model(
+    payload: GatewayModelsResponse,
+    model_id: &str,
+) -> anyhow::Result<CatalogModelCapabilities> {
+    if payload.sprocket.protocol_version != GATEWAY_PROTOCOL_VERSION {
+        anyhow::bail!(
+            "unsupported AI gateway protocol version {}",
+            payload.sprocket.protocol_version
+        );
+    }
+    let model = payload
+        .sprocket
+        .models
+        .iter()
+        .find(|model| model.id == model_id)
+        .ok_or_else(|| anyhow!("model {model_id} is not in the AI gateway catalog"))?;
+    Ok(CatalogModelCapabilities {
+        context_budget: ContextBudget {
+            context_window_tokens: model.context_window_tokens,
+            auto_compact_token_limit: model.auto_compact_token_limit,
+        },
+        supports_images: model.supports_images,
+    })
+}
+
+/// Fetch context budget and `supportsImages` for `model_id` from one catalog GET.
+pub async fn catalog_capabilities_for_model(
     gateway_url: &str,
     model_id: &str,
-) -> anyhow::Result<ContextBudget> {
+) -> anyhow::Result<CatalogModelCapabilities> {
     let url = format!("{}/models", gateway_api_v1_url(gateway_url));
     let response = catalog_client(gateway_url)?
         .get(url)
@@ -69,20 +96,66 @@ pub async fn context_budget_for_model(
         .json()
         .await
         .context("AI gateway catalog was not valid JSON")?;
-    if payload.sprocket.protocol_version != GATEWAY_PROTOCOL_VERSION {
-        anyhow::bail!(
-            "unsupported AI gateway protocol version {}",
-            payload.sprocket.protocol_version
-        );
+    select_catalog_model(payload, model_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn catalog_payload(supports_images: bool) -> GatewayModelsResponse {
+        serde_json::from_value(serde_json::json!({
+            "sprocket": {
+                "protocolVersion": 1,
+                "models": [
+                    {
+                        "id": "gpt-5.6-sol",
+                        "supportsImages": supports_images,
+                        "contextWindowTokens": 272000,
+                        "autoCompactTokenLimit": 258000
+                    },
+                    {
+                        "id": "deepseek-v4-pro-0813",
+                        "supportsImages": false,
+                        "contextWindowTokens": 1000000,
+                        "autoCompactTokenLimit": 967000
+                    }
+                ]
+            }
+        }))
+        .expect("catalog payload")
     }
-    let model = payload
-        .sprocket
-        .models
-        .iter()
-        .find(|model| model.id == model_id)
-        .ok_or_else(|| anyhow!("model {model_id} is not in the AI gateway catalog"))?;
-    Ok(ContextBudget {
-        context_window_tokens: model.context_window_tokens,
-        auto_compact_token_limit: model.auto_compact_token_limit,
-    })
+
+    #[test]
+    fn fixture_reports_image_capability_with_budget_from_one_payload() {
+        let vision =
+            select_catalog_model(catalog_payload(true), "gpt-5.6-sol").expect("vision model");
+        assert!(vision.supports_images);
+        assert_eq!(vision.context_budget.context_window_tokens, 272000);
+        assert_eq!(vision.context_budget.auto_compact_token_limit, 258000);
+
+        let text = select_catalog_model(catalog_payload(true), "deepseek-v4-pro-0813")
+            .expect("text model");
+        assert!(!text.supports_images);
+        assert_eq!(text.context_budget.context_window_tokens, 1_000_000);
+    }
+
+    #[test]
+    fn missing_catalog_model_is_an_error() {
+        let error = select_catalog_model(catalog_payload(true), "no-such-model")
+            .expect_err("unknown model")
+            .to_string();
+        assert!(error.contains("no-such-model"));
+    }
+
+    #[test]
+    fn catalog_model_requires_supports_images() {
+        let error = serde_json::from_value::<GatewayCatalogModel>(serde_json::json!({
+            "id": "gpt-5.6-sol",
+            "contextWindowTokens": 272000,
+            "autoCompactTokenLimit": 258000
+        }))
+        .expect_err("supportsImages is required");
+        assert!(error.to_string().contains("supportsImages"));
+    }
 }

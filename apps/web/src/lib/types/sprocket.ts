@@ -174,6 +174,29 @@ export type ThreadCacheUserRequest = {
 export type LiveCompletionWatchEvent =
 	{ eventType: 'updated'; live: LiveCompletionOverlay } | { eventType: 'cleared' };
 
+export type TranscriptUploadRequest = {
+	userId: string;
+	name: string;
+	file: File;
+	threadId?: Id<'threadRecords'>;
+};
+
+export type TranscriptUploadResult =
+	| {
+			imageUploadId: Id<'imageUploads'>;
+			name: string;
+			mediaType: string;
+			size: number;
+			url: string;
+	  }
+	| { error: string };
+
+export type TranscriptDiscardRequest = {
+	userId: string;
+	imageUploadId: Id<'imageUploads'>;
+	threadId?: Id<'threadRecords'>;
+};
+
 export type TranscriptScopeRequest = {
 	userId: string;
 	threadId: Id<'threadRecords'>;
@@ -242,6 +265,8 @@ export type DesktopApi = {
 	fetchTranscriptAttachment: (
 		request: TranscriptScopeRequest & { imageUploadId: Id<'imageUploads'> }
 	) => Promise<Blob | null>;
+	uploadTranscriptAttachment: (request: TranscriptUploadRequest) => Promise<TranscriptUploadResult>;
+	discardTranscriptAttachment: (request: TranscriptDiscardRequest) => Promise<boolean>;
 	registerThreadCache: (request: ThreadCacheUserRequest) => Promise<ThreadCacheWatchEvent>;
 	fetchThreadSnapshot: (request: ThreadCacheUserRequest) => Promise<ThreadCacheSnapshot>;
 	watchThreadCache: (

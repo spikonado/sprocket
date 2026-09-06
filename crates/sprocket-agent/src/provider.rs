@@ -84,6 +84,8 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) reasoning_effort: String,
     pub(crate) service_tier: String,
     pub(crate) context_budget: ContextBudget,
+    pub(crate) supports_images: bool,
+    pub(crate) parse_file_cache_dir: PathBuf,
     pub(crate) context_tokens: u64,
     pub(crate) defer_prompt_for_compaction: bool,
 }
@@ -154,6 +156,8 @@ where
         request.run_id.clone(),
         request.claim_id.clone(),
         request.workspace_root.clone(),
+        request.parse_file_cache_dir.clone(),
+        request.supports_images,
         tool_call_tracker.clone(),
         request.skills.clone(),
     );
@@ -184,6 +188,7 @@ where
         .tool(tools.mandate_list)
         .tool(tools.mandate_charge)
         .tool(tools.mandate_report)
+        .tool(tools.parse_file)
         .tool(compaction_hook.tool())
         .build();
 
