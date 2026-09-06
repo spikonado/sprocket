@@ -64,6 +64,30 @@ const localTranscriptAttachmentSchema = z.object({
 	storageId: z.string(),
 	url: z.url().optional()
 });
+const transcriptUploadSuccessSchema = z.object({
+	imageUploadId: z.string(),
+	name: z.string(),
+	mediaType: z.string(),
+	size: z.number(),
+	url: z.string()
+});
+const transcriptUploadResultSchema = z.union([
+	transcriptUploadSuccessSchema,
+	z.object({ error: z.string() })
+]);
+
+export function transcriptUploadPath(args: {
+	userId: string;
+	name: string;
+	threadId?: string;
+}): string {
+	let query = `userId=${encodeURIComponent(args.userId)}&name=${encodeURIComponent(args.name)}`;
+	if (args.threadId) {
+		query += `&threadId=${encodeURIComponent(args.threadId)}`;
+	}
+	return `/api/transcript/upload?${query}`;
+}
+
 const transcriptMessageSchema = z.object({
 	id: z.string(),
 	threadId: z.string(),
@@ -625,6 +649,42 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 			}
 			return await response.blob();
 		},
+		uploadTranscriptAttachment: async (requestBody) => {
+			const result = await request(
+				transcriptUploadPath({
+					userId: requestBody.userId,
+					name: requestBody.name,
+					threadId: requestBody.threadId
+				}),
+				transcriptUploadResultSchema,
+				{
+					method: 'POST',
+					headers: {
+						'content-type': requestBody.file.type.trim() || 'application/octet-stream'
+					},
+					body: requestBody.file
+				}
+			);
+			if ('error' in result) {
+				return result;
+			}
+			return {
+				imageUploadId: asConvexId(result.imageUploadId),
+				name: result.name,
+				mediaType: result.mediaType,
+				size: result.size,
+				url: result.url
+			};
+		},
+		discardTranscriptAttachment: async (requestBody) =>
+			await request('/api/transcript/discard', z.boolean(), {
+				method: 'POST',
+				body: JSON.stringify({
+					userId: requestBody.userId,
+					imageUploadId: requestBody.imageUploadId,
+					threadId: requestBody.threadId
+				})
+			}),
 		registerThreadCache: async (requestBody) =>
 			parseThreadCacheWatchEvent(
 				await request('/api/threads/register', threadCacheWatchEventSchema, {

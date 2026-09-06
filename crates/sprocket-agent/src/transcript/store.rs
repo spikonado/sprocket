@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use anyhow::Context;
 use serde_json::Value as JsonValue;
@@ -52,8 +53,201 @@ impl TranscriptStore {
             .join(safe_segment(thread_id))
     }
 
-    async fn lock_thread(&self, user_id: &str, thread_id: &str) -> Arc<Mutex<()>> {
-        let key = format!("{user_id}/{thread_id}");
+    pub fn pending_attachment_path(&self, user_id: &str, storage_id: &str) -> PathBuf {
+        self.root
+            .join(safe_segment(user_id))
+            .join("pending-attachments")
+            .join(safe_segment(storage_id))
+    }
+
+    pub(crate) async fn lock_attachment(&self, user_id: &str, storage_id: &str) -> Arc<Mutex<()>> {
+        self.lock_pending_path(&self.pending_attachment_path(user_id, storage_id))
+            .await
+    }
+
+    async fn lock_pending_path(&self, path: &Path) -> Arc<Mutex<()>> {
+        self.lock_key(format!("attachment:{}", path.display()))
+            .await
+    }
+
+    pub async fn protect_pending_upload(&self, path: &Path) -> tokio::sync::OwnedMutexGuard<()> {
+        self.lock_pending_path(path).await.lock_owned().await
+    }
+
+    pub async fn prune_pending_attachments(&self, cutoff: SystemTime) -> anyhow::Result<u64> {
+        let mut users = match tokio::fs::read_dir(&self.root).await {
+            Ok(users) => users,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(error) => return Err(error.into()),
+        };
+        let mut removed = 0;
+        while let Some(user) = users.next_entry().await? {
+            if !user.file_type().await?.is_dir() {
+                continue;
+            }
+            let directory = user.path().join("pending-attachments");
+            let metadata = match tokio::fs::symlink_metadata(&directory).await {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error.into()),
+            };
+            if !metadata.is_dir() {
+                continue;
+            }
+            let mut files = tokio::fs::read_dir(directory).await?;
+            while let Some(file) = files.next_entry().await? {
+                let path = file.path();
+                let lock = self.lock_pending_path(&path).await;
+                let Ok(_guard) = lock.try_lock() else {
+                    continue;
+                };
+                let metadata = match tokio::fs::symlink_metadata(&path).await {
+                    Ok(metadata) => metadata,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(error) => return Err(error.into()),
+                };
+                if metadata.is_file() && metadata.modified()? <= cutoff {
+                    match tokio::fs::remove_file(&path).await {
+                        Ok(()) => removed += 1,
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(error) => {
+                            eprintln!(
+                                "sprocket-agent: failed to expire {}: {error}",
+                                path.display()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        Ok(removed)
+    }
+
+    pub fn attachment_path(
+        &self,
+        user_id: &str,
+        thread_id: &str,
+        attachment: &super::types::TranscriptAttachmentMeta,
+    ) -> PathBuf {
+        let mut name: String = attachment
+            .name
+            .chars()
+            .map(|ch| {
+                if ch.is_control()
+                    || matches!(ch, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
+                {
+                    '_'
+                } else {
+                    ch
+                }
+            })
+            .collect();
+        if name.len() > 200 {
+            let extension = Path::new(&name)
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .filter(|ext| ext.len() <= 20)
+                .map(|ext| format!(".{ext}"))
+                .unwrap_or_default();
+            while name.len() > 200 - extension.len() {
+                name.pop();
+            }
+            name.push_str(&extension);
+        }
+        let name = name.trim_end_matches(['.', ' ']);
+        self.thread_dir(user_id, thread_id)
+            .join("attachments")
+            .join(safe_segment(&attachment.image_upload_id))
+            .join(format!("file-{name}"))
+    }
+
+    pub async fn save_attachment_metadata(
+        &self,
+        user_id: &str,
+        thread_id: &str,
+        attachment: &super::types::TranscriptAttachmentMeta,
+    ) -> anyhow::Result<()> {
+        let dir = self
+            .thread_dir(user_id, thread_id)
+            .join("attachments")
+            .join(safe_segment(&attachment.image_upload_id));
+        tokio::fs::create_dir_all(&dir).await?;
+        let mut meta = attachment.clone();
+        meta.url = None;
+        meta.local_path = None;
+        let temp = tempfile::NamedTempFile::new_in(&dir)?;
+        tokio::fs::write(temp.path(), serde_json::to_vec(&meta)?).await?;
+        temp.persist(dir.join("metadata.json"))?;
+        Ok(())
+    }
+
+    pub async fn attachment_metadata(
+        &self,
+        user_id: &str,
+        thread_id: &str,
+        upload_id: &str,
+    ) -> anyhow::Result<Option<super::types::TranscriptAttachmentMeta>> {
+        let path = self
+            .thread_dir(user_id, thread_id)
+            .join("attachments")
+            .join(safe_segment(upload_id))
+            .join("metadata.json");
+        match tokio::fs::read(path).await {
+            Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let state = self.load_state(user_id, thread_id).await?;
+                let numbers = state
+                    .downloaded_ranges
+                    .iter()
+                    .flat_map(|range| range.start..=range.end)
+                    .collect::<Vec<_>>();
+                Ok(self
+                    .read_parts(user_id, thread_id, &numbers)
+                    .await?
+                    .into_iter()
+                    .filter_map(|part| part.prompt)
+                    .flat_map(|prompt| prompt.image_uploads)
+                    .find(|attachment| attachment.image_upload_id == upload_id))
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    pub async fn discard_attachment(
+        &self,
+        user_id: &str,
+        thread_id: Option<&str>,
+        upload_id: &str,
+        storage_id: &str,
+    ) -> anyhow::Result<()> {
+        let lock = self.lock_attachment(user_id, storage_id).await;
+        let _guard = lock.lock().await;
+        if let Err(error) =
+            tokio::fs::remove_file(self.pending_attachment_path(user_id, storage_id)).await
+        {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                return Err(error.into());
+            }
+        }
+        if let Some(thread_id) = thread_id {
+            let dir = self
+                .thread_dir(user_id, thread_id)
+                .join("attachments")
+                .join(safe_segment(upload_id));
+            if let Err(error) = tokio::fs::remove_dir_all(dir).await {
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    return Err(error.into());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn lock_thread(&self, user_id: &str, thread_id: &str) -> Arc<Mutex<()>> {
+        self.lock_key(format!("{user_id}/{thread_id}")).await
+    }
+
+    async fn lock_key(&self, key: String) -> Arc<Mutex<()>> {
         let mut locks = self.locks.lock().await;
         locks
             .entry(key)
@@ -428,6 +622,7 @@ impl TranscriptStore {
         anyhow::ensure!(
             !thread_id.is_empty()
                 && !thread_id.eq_ignore_ascii_case("blobs")
+                && !thread_id.eq_ignore_ascii_case("pending-attachments")
                 && thread_id
                     .bytes()
                     .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')),
@@ -449,7 +644,7 @@ impl TranscriptStore {
         self.root.join(safe_segment(user_id)).join("blobs")
     }
 
-    fn blob_data_path(&self, user_id: &str, storage_id: &str) -> PathBuf {
+    pub fn blob_data_path(&self, user_id: &str, storage_id: &str) -> PathBuf {
         self.blobs_dir(user_id).join(safe_segment(storage_id))
     }
 
@@ -1592,6 +1787,7 @@ mod tests {
                 size: 4,
                 storage_id: "storage-1".into(),
                 url: None,
+                local_path: None,
             },
         );
         store.append_parts("user", "thread", &[part]).await.unwrap();

@@ -266,7 +266,7 @@
 								{#if message.attachments.length}
 									<ul
 										class="flex max-w-132 flex-wrap justify-end gap-2"
-										aria-label="Attached images"
+										aria-label="Attached files"
 									>
 										{#each message.attachments as attachment (attachment.imageUploadId)}
 											<li>

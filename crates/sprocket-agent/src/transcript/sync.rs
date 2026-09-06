@@ -129,6 +129,7 @@ fn to_local_part(part: RemoteTranscriptPart) -> anyhow::Result<TranscriptPart> {
                     size: upload.size,
                     storage_id: upload.storage_id,
                     url: upload.url,
+                    local_path: None,
                 })
                 .collect(),
         }),

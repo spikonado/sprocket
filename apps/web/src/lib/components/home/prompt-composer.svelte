@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ArrowUp, CircleAlert, ImagePlus, Square, X } from '@lucide/svelte';
+	import { ArrowUp, CircleAlert, FileText, Paperclip, Square, X } from '@lucide/svelte';
 	import { useAuth, useQuery } from 'convex-svelte';
 	import { api } from '$convex/_generated/api';
 	import type { Id } from '$convex/_generated/dataModel';
@@ -27,8 +27,8 @@
 		type ModelCatalog
 	} from '$lib/chat/model-catalog';
 	import {
-		MAX_IMAGE_ATTACHMENTS,
-		SUPPORTED_IMAGE_MEDIA_TYPES,
+		formatAttachmentSize,
+		isPreviewableImageMediaType,
 		type ComposerAttachment
 	} from '$lib/chat/attachments';
 	export type PendingAgentQuestion = {
@@ -181,10 +181,6 @@
 		return `Your limit resets in ${formatCountdownDuration(usageQuery.data.resetsAt - now)}. ${keepGoing}`;
 	});
 	const hasMessageContent = $derived(Boolean(prompt.trim()) || attachments.length > 0);
-	const selectedModelSupportsImages = $derived(selectedCatalogModel?.supportsImages === true);
-	const hasUnsupportedAttachments = $derived(
-		attachments.length > 0 && selectedCatalogModel?.supportsImages === false
-	);
 	const canAnswerQuestion = $derived(
 		canSubmitQuestionAnswer({
 			selectedOptionId: selectedQuestionOptionId,
@@ -195,12 +191,7 @@
 	const attachmentsPending = $derived(
 		attachments.some((attachment) => attachment.status !== 'ready')
 	);
-	const canAttachMore = $derived(
-		selectedModelSupportsImages &&
-			attachments.length < MAX_IMAGE_ATTACHMENTS &&
-			!composerLocked &&
-			!answeringQuestion
-	);
+	const canAttachMore = $derived(!composerLocked && !answeringQuestion);
 
 	let trackedPendingQuestionId = $state<string | null>(null);
 	$effect(() => {
@@ -215,11 +206,7 @@
 			}
 		}
 	});
-	const attachTooltipLabel = $derived(
-		selectedCatalogModel?.supportsImages === false
-			? `${selectedCatalogModel.label} does not support image input`
-			: `Attach images (up to ${MAX_IMAGE_ATTACHMENTS})`
-	);
+	const attachTooltipLabel = 'Attach files';
 	const supportsFieldSizing = Boolean(globalThis.CSS?.supports('field-sizing', 'content'));
 	const contextPercent = $derived(
 		contextUsage.contextWindowTokens > 0
@@ -321,29 +308,19 @@
 	}
 
 	function handleComposerPaste(event: ClipboardEvent) {
-		const files = Array.from(event.clipboardData?.files ?? []).filter((file) =>
-			file.type.startsWith('image/')
-		);
-		if (
-			files.length === 0 ||
-			isRunning ||
-			isSubmitting ||
-			answeringQuestion ||
-			!selectedModelSupportsImages
-		) {
+		const files = Array.from(event.clipboardData?.files ?? []);
+		if (files.length === 0 || isRunning || isSubmitting || answeringQuestion) {
 			return;
 		}
-		event.preventDefault();
+		if (!event.clipboardData?.getData('text/plain')) {
+			event.preventDefault();
+		}
 		onAttachFiles(files);
 	}
 
 	function showAttachTooltip(event: MouseEvent | FocusEvent) {
 		const target = event.currentTarget;
-		if (!(target instanceof HTMLButtonElement)) {
-			return;
-		}
-		// Disabled attach still explains no-image models; skip other disabled reasons.
-		if (target.disabled && selectedCatalogModel?.supportsImages !== false) {
+		if (!(target instanceof HTMLButtonElement) || target.disabled) {
 			return;
 		}
 		const rect = target.getBoundingClientRect();
@@ -406,7 +383,7 @@
 			isSubmitting ||
 			composerLocked ||
 			!canSubmitContent ||
-			(!answeringQuestion && (attachmentsPending || hasUnsupportedAttachments))
+			(!answeringQuestion && attachmentsPending)
 		) {
 			return;
 		}
@@ -604,25 +581,47 @@
 						</div>
 					{/if}
 					{#if attachments.length > 0 && !answeringQuestion}
-						<ul class="mb-3 flex flex-wrap items-center gap-2" aria-label="Attached images">
+						<ul
+							class="mb-3 flex max-h-36 flex-wrap items-center gap-2 overflow-y-auto"
+							aria-label="Attached files"
+						>
 							{#each attachments as attachment (attachment.localId)}
+								{@const previewable =
+									isPreviewableImageMediaType(attachment.mediaType) &&
+									Boolean(attachment.previewUrl)}
 								<li
-									class="group relative size-14 overflow-hidden rounded-xl border {attachment.status ===
-									'error'
-										? 'border-rose-500/60'
-										: 'border-border'}"
-									title={attachment.error ?? attachment.name}
+									class={previewable
+										? `group relative size-14 overflow-hidden rounded-xl border ${
+												attachment.status === 'error' ? 'border-rose-500/60' : 'border-border'
+											}`
+										: `group relative flex h-14 max-w-56 items-center gap-2 overflow-hidden rounded-xl border pr-7 pl-2 ${
+												attachment.status === 'error' ? 'border-rose-500/60' : 'border-border'
+											}`}
+									title={attachment.error ??
+										`${attachment.name} · ${formatAttachmentSize(attachment.size)}`}
 								>
-									<img
-										src={attachment.previewUrl}
-										alt={attachment.name}
-										class="size-full object-cover {attachment.status === 'uploading'
-											? 'opacity-50'
-											: ''}"
-									/>
+									{#if previewable}
+										<img
+											src={attachment.previewUrl}
+											alt={attachment.name}
+											class="size-full object-cover {attachment.status === 'uploading'
+												? 'opacity-50'
+												: ''}"
+										/>
+									{:else}
+										<FileText class="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
+										<span class="min-w-0 text-[12px] leading-4">
+											<span class="text-foreground block truncate">{attachment.name}</span>
+											<span class="text-muted-foreground block"
+												>{formatAttachmentSize(attachment.size)}</span
+											>
+										</span>
+									{/if}
 									{#if attachment.status === 'uploading'}
 										<span
-											class="absolute inset-0 flex items-center justify-center"
+											class="absolute inset-0 flex items-center justify-center {previewable
+												? ''
+												: 'bg-background/60'}"
 											role="status"
 											aria-label="Uploading {attachment.name}"
 										>
@@ -650,12 +649,6 @@
 								</li>
 							{/each}
 						</ul>
-						{#if hasUnsupportedAttachments && selectedCatalogModel}
-							<p class="text-destructive mb-3 text-xs" role="alert">
-								{selectedCatalogModel.label} does not support image input. Remove the images or choose
-								another model.
-							</p>
-						{/if}
 					{/if}
 					<div class="relative min-h-0 flex-1">
 						{#if skillsPopupOpen}
@@ -749,7 +742,6 @@
 								bind:this={attachmentInput}
 								type="file"
 								class="hidden"
-								accept={SUPPORTED_IMAGE_MEDIA_TYPES.join(',')}
 								multiple
 								onchange={handleAttachmentInputChange}
 							/>
@@ -767,7 +759,7 @@
 									attachmentInput?.click();
 								}}
 							>
-								<ImagePlus class="size-4" aria-hidden="true" />
+								<Paperclip class="size-4" aria-hidden="true" />
 							</button>
 
 							<div class="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
@@ -868,7 +860,7 @@
 										(!answeringQuestion && usageBlocked) ||
 										isSubmitting ||
 										!canSubmitContent ||
-										(!answeringQuestion && (attachmentsPending || hasUnsupportedAttachments))}
+										(!answeringQuestion && attachmentsPending)}
 									aria-label={answeringQuestion ? 'Submit answer' : 'Send message'}
 								>
 									<ArrowUp class="size-4" />

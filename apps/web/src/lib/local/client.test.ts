@@ -4,12 +4,18 @@ import {
 	createLocalClient,
 	ensureLocalSession,
 	readWorkspaceLaunchFromHash,
+	transcriptUploadPath,
 	workspaceLaunchHash
 } from '$lib/local/client';
 
 function threadRecordId(value: string): Id<'threadRecords'> {
 	// SAFETY: fixture strings are only compared as opaque Convex document ids.
 	return value as Id<'threadRecords'>;
+}
+
+function imageUploadId(value: string): Id<'imageUploads'> {
+	// SAFETY: fixture strings are only compared as opaque Convex document ids.
+	return value as Id<'imageUploads'>;
 }
 
 function runId(value: string): Id<'runs'> {
@@ -222,5 +228,146 @@ describe('run cancellation local API', () => {
 				runId: runId('run-1')
 			})
 		).resolves.toBeUndefined();
+	});
+});
+
+describe('transcript file upload', () => {
+	it('encodes query values and omits threadId until one exists', () => {
+		expect(
+			transcriptUploadPath({
+				userId: 'user/1',
+				name: 'spec & notes.pdf'
+			})
+		).toBe('/api/transcript/upload?userId=user%2F1&name=spec%20%26%20notes.pdf');
+		expect(
+			transcriptUploadPath({
+				userId: 'user-1',
+				name: 'notes.txt',
+				threadId: 'thread/1'
+			})
+		).toBe('/api/transcript/upload?userId=user-1&name=notes.txt&threadId=thread%2F1');
+	});
+
+	it('posts the raw file through the authenticated helper', async () => {
+		const file = new File(['hello'], 'notes.txt', { type: 'text/plain' });
+		const fetch = vi.fn(async () =>
+			Response.json({
+				imageUploadId: 'upload-1',
+				name: 'notes.txt',
+				mediaType: 'text/plain',
+				size: 5,
+				url: 'http://127.0.0.1:7731/files/notes.txt'
+			})
+		);
+		vi.stubGlobal('fetch', fetch);
+
+		const result = await createLocalClient('http://127.0.0.1:7731').uploadTranscriptAttachment({
+			userId: 'user/1',
+			name: 'spec & notes.pdf',
+			file,
+			threadId: threadRecordId('thread/1')
+		});
+
+		expect(result).toEqual({
+			imageUploadId: 'upload-1',
+			name: 'notes.txt',
+			mediaType: 'text/plain',
+			size: 5,
+			url: 'http://127.0.0.1:7731/files/notes.txt'
+		});
+		expect(fetch).toHaveBeenCalledWith(
+			'http://127.0.0.1:7731/api/transcript/upload?userId=user%2F1&name=spec%20%26%20notes.pdf&threadId=thread%2F1',
+			expect.objectContaining({
+				method: 'POST',
+				credentials: 'include',
+				headers: expect.objectContaining({ 'content-type': 'text/plain' }),
+				body: file
+			})
+		);
+	});
+
+	it('uses octet-stream when the file has no MIME type', async () => {
+		const file = new File(['blob'], 'blob.bin', { type: '' });
+		const fetch = vi.fn(async () =>
+			Response.json({
+				error: 'staged'
+			})
+		);
+		vi.stubGlobal('fetch', fetch);
+
+		await expect(
+			createLocalClient('http://127.0.0.1:7731').uploadTranscriptAttachment({
+				userId: 'user-1',
+				name: 'blob.bin',
+				file
+			})
+		).resolves.toEqual({ error: 'staged' });
+		expect(fetch).toHaveBeenCalledWith(
+			'http://127.0.0.1:7731/api/transcript/upload?userId=user-1&name=blob.bin',
+			expect.objectContaining({
+				headers: expect.objectContaining({ 'content-type': 'application/octet-stream' }),
+				body: file
+			})
+		);
+	});
+});
+
+describe('transcript attachment discard', () => {
+	it('posts the originating user, upload, and thread', async () => {
+		const fetch = vi.fn(
+			async () =>
+				new Response('true', {
+					status: 200,
+					headers: { 'content-type': 'application/json' }
+				})
+		);
+		vi.stubGlobal('fetch', fetch);
+
+		await expect(
+			createLocalClient('http://127.0.0.1:7731').discardTranscriptAttachment({
+				userId: 'user-1',
+				imageUploadId: imageUploadId('upload-1'),
+				threadId: threadRecordId('thread-1')
+			})
+		).resolves.toBe(true);
+
+		expect(fetch).toHaveBeenCalledWith(
+			'http://127.0.0.1:7731/api/transcript/discard',
+			expect.objectContaining({
+				method: 'POST',
+				credentials: 'include'
+			})
+		);
+		expect(fetch).toHaveBeenCalledWith(
+			expect.any(String),
+			expect.objectContaining({
+				body: JSON.stringify({ userId: 'user-1', imageUploadId: 'upload-1', threadId: 'thread-1' })
+			})
+		);
+	});
+
+	it('omits threadId and returns false when the file is absent or attached', async () => {
+		const fetch = vi.fn(
+			async () =>
+				new Response('false', {
+					status: 200,
+					headers: { 'content-type': 'application/json' }
+				})
+		);
+		vi.stubGlobal('fetch', fetch);
+
+		await expect(
+			createLocalClient('http://127.0.0.1:7731').discardTranscriptAttachment({
+				userId: 'user-1',
+				imageUploadId: imageUploadId('upload-1')
+			})
+		).resolves.toBe(false);
+
+		expect(fetch).toHaveBeenCalledWith(
+			expect.any(String),
+			expect.objectContaining({
+				body: JSON.stringify({ userId: 'user-1', imageUploadId: 'upload-1' })
+			})
+		);
 	});
 });

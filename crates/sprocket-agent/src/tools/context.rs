@@ -23,6 +23,8 @@ pub(super) struct AgentToolContext {
     pub(super) run_id: String,
     pub(super) claim_id: String,
     pub(super) workspace_root: PathBuf,
+    pub(super) parse_file_cache_dir: PathBuf,
+    pub(super) supports_images: bool,
     pub(super) tool_call_tracker: ToolCallTracker,
     pub(super) command_sessions: CommandSessionManager,
 }
@@ -33,6 +35,8 @@ impl AgentToolContext {
         run_id: String,
         claim_id: String,
         workspace_root: PathBuf,
+        parse_file_cache_dir: PathBuf,
+        supports_images: bool,
         tool_call_tracker: ToolCallTracker,
         command_sessions: CommandSessionManager,
     ) -> Self {
@@ -41,6 +45,8 @@ impl AgentToolContext {
             run_id,
             claim_id,
             workspace_root,
+            parse_file_cache_dir,
+            supports_images,
             tool_call_tracker,
             command_sessions,
         }

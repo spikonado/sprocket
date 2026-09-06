@@ -186,7 +186,7 @@ export async function createQueuedRunRecord(
 		userId: args.userId
 	};
 	if (!continuationOfRunId) {
-		await markImageUploadsAttached(ctx, imageUploads);
+		await markImageUploadsAttached(ctx, imageUploads, threadRecord._id);
 		created.promptMessageId = promptSourceKey(runId);
 		created.promptPart = await recordPromptTranscript(ctx, {
 			threadId: threadRecord._id,

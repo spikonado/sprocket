@@ -8,6 +8,35 @@ Current as of 2026-09-06.
 
 ## Transcript projection API
 
+Message attachments keep the `imageUploads` table, its public mutation names,
+and the `imageUploadIds` / `imageUploads` wire fields. They now hold any file
+type. Keeping these names avoids rewriting stored messages and lets released
+clients continue submitting images. Remove them only after supported clients
+use a replacement API and a migration rewrites all referencing records.
+
+New clients upload files through Rust. Released clients can still upload to
+Convex directly, so the Rust runtime downloads any missing files before building
+the agent's prompt. Local attachment paths are computed for the current machine,
+never copied from another machine's transcript.
+The optional `getContext.attachmentsAsPaths` flag skips legacy image-URL
+resolution for these agents. Keep the default URL response until all supported
+agents resolve attachment paths from the transcript cache.
+
+Attachments now live under each thread's `attachments/` directory. Reading an
+old attachment copies any existing user-level blob into that directory before
+exposing its path. Missing files download from Convex. This on-access migration
+also runs when rebuilding agent history. Legacy blob reads and cleanup remain
+until supported installations have migrated their cached threads or cleared
+those caches. New uploads never write to the legacy blob store. Draft uploads
+are staged temporarily and moved into the destination thread cache when their
+message is submitted. They are not bound to the thread selected during upload.
+
+Convex deletes attached file bytes when the owning thread's `lastMessageAt` is
+older than one week. Ownership is `imageUploads.threadId`, set on first attach.
+Shared references, run exceptions, and `threadRecords.updatedAt` are not part of
+retention. Transcript metadata and local copies stay. Released clients still
+read storage URLs; a missing URL means the bytes are gone.
+
 Assistant text, reasoning, and tool calls accept optional `startedAt` and
 `completedAt` timestamps. Released agents and old stored completions lack them.
 The UI omits durations when section boundaries are unknown rather than inferring
@@ -219,6 +248,26 @@ all supported agents call `saveContextHandoff`, the backfill reports `success`,
 and a production scan finds no rows that still have
 `contextSummaryThroughRunId` without `contextSummaryThroughPartNumber`. Unset
 remaining run-id values in that same PR, then drop the field.
+
+### 11. Attachment storage retention
+
+Uploads missing `threadId` get an owner from the first historical prompt that
+attached them. Unattached drafts are still removed after 24 hours, including
+their documents.
+
+`threadRecords.updatedAt`, `imageUploads.threadRefsMigratedAt`, and the
+`threadAttachmentRefs` table stay as leftover until migrations clear stored
+values and rows. Runtime cleanup does not read them.
+
+These backfills are in the default `migrations:run` cron. After deploy they run
+automatically. To run once from `apps/web`:
+
+```sh
+bun convex run migrations:run
+```
+
+Use `--prod` for the production deployment. Drop the leftover fields and table
+after a production scan finds no remaining values or rows.
 
 ## Client APIs
 

@@ -76,6 +76,67 @@ const commandResult = {
 };
 
 describe('executor', () => {
+	it.each(['text', 'image'] as const)(
+		'persists parse_file path jobs and %s results',
+		async (mode) => {
+			const t = initConvexTest();
+			const { asUser, threadId } = await seedOwnedThread(t);
+			const executionSecret = `parse-${mode}`;
+			const claimId = `claim-${mode}`;
+			const { runId } = await createQueuedRun(
+				t,
+				asUser,
+				threadId,
+				`submission-${mode}`,
+				executionSecret,
+				'Parse this file'
+			);
+			await asUser.mutation(api.agentRuntime.start, { runId, claimId, executionSecret });
+			const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
+				runId,
+				claimId,
+				executionSecret,
+				kind: 'parse_file',
+				callId: `call-${mode}`,
+				payload: { path: '/cache/attachments/source' }
+			});
+			await expect(
+				asUser.mutation(api.executor.complete, {
+					runId,
+					claimId,
+					executionSecret,
+					jobId,
+					result:
+						mode === 'text'
+							? {
+									outputType: 'text',
+									path: '/cache/parse_file/result.md',
+									source: { type: 'path', path: '/cache/attachments/source' },
+									format: 'rtf',
+									charCount: 5,
+									preview: 'hello',
+									truncated: false
+								}
+							: {
+									outputType: 'image',
+									path: '/cache/parse_file/result.png',
+									source: { type: 'path', path: '/cache/attachments/source' },
+									mediaType: 'image/png',
+									byteSize: 123,
+									width: 1,
+									height: 1
+								}
+				})
+			).resolves.toBe(true);
+			const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1, 2] });
+			expect(
+				parts.parts.some(
+					(part) => part.tool?.name === 'parse_file' && part.tool.status === 'completed'
+				)
+			).toBe(true);
+		}
+	);
+
 	it('completes the active job and releases the run back to running', async () => {
 		const t = initConvexTest();
 		const { asUser, runId, jobId, claimId, executionSecret } = await seedRunWithJob(t, {

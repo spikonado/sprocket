@@ -170,8 +170,14 @@ export const vAwaitQuestionPayload = v.object({
 	yieldTimeMs: v.optional(v.number())
 });
 
+export const vParseFilePayload = v.union(
+	v.object({ path: v.string() }),
+	v.object({ url: v.string() })
+);
+
 export const vExecutorJobPayload = v.union(
 	v.object({}),
+	vParseFilePayload,
 	vApplyPatchPayload,
 	vAskQuestionPayload,
 	vAwaitQuestionPayload,
@@ -340,8 +346,35 @@ export const vArtifactResult = v.object({
 	contentType: v.optional(vArtifactType)
 });
 
+const vParsedFileSource = v.union(
+	v.object({ type: v.literal('path'), path: v.string() }),
+	v.object({ type: v.literal('url'), url: v.string() })
+);
+
+export const vParsedFileResult = v.union(
+	v.object({
+		outputType: v.literal('image'),
+		mediaType: v.string(),
+		path: v.string(),
+		source: vParsedFileSource,
+		byteSize: v.number(),
+		width: v.number(),
+		height: v.number()
+	}),
+	v.object({
+		outputType: v.literal('text'),
+		path: v.string(),
+		source: vParsedFileSource,
+		format: v.string(),
+		charCount: v.number(),
+		preview: v.string(),
+		truncated: v.boolean()
+	})
+);
+
 export const vExecutorJobResult = v.union(
 	v.string(),
+	vParsedFileResult,
 	v.array(vWorkspaceInstruction),
 	vApplyPatchResult,
 	vAskQuestionResult,
@@ -393,6 +426,7 @@ export const vExecutorJobKind = v.union(
 	v.literal('mandate_charge'),
 	v.literal('mandate_report'),
 	v.literal('read_skill'),
+	v.literal('parse_file'),
 	v.literal('scrape_url'),
 	v.literal('web_search'),
 	v.literal('write_stdin'),
@@ -415,16 +449,15 @@ export const vExecutorJobStatus = v.union(
 	v.literal('cancelled')
 );
 
-export const supportedImageMediaTypes = [
-	'image/jpeg',
-	'image/png',
-	'image/gif',
-	'image/webp'
-] as const;
+export const MAX_FILE_NAME_LENGTH = 255;
 
-export const MAX_IMAGE_ATTACHMENTS = 4;
-export const MAX_IMAGE_ATTACHMENT_BYTES = 10 * 1024 * 1024;
-export const MAX_IMAGE_ATTACHMENT_LABEL = '10 MiB';
+export function registeredFileUploadError(name: string): string | null {
+	const trimmed = name.trim();
+	if (!trimmed || trimmed.length > MAX_FILE_NAME_LENGTH) {
+		return 'Filename must be between 1 and 255 characters.';
+	}
+	return null;
+}
 
 const vAssistantTimestamp = v.optional(v.union(v.number(), v.null()));
 

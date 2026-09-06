@@ -94,8 +94,9 @@ impl RuntimeClient {
     }
 
     pub(crate) async fn run_context(&self, run_id: &str) -> anyhow::Result<RunContextResponse> {
-        self.query_json("agentRuntime:getContext", self.run_args(run_id))
-            .await
+        let mut args = self.run_args(run_id);
+        args.insert("attachmentsAsPaths".into(), true.into());
+        self.query_json("agentRuntime:getContext", args).await
     }
 
     pub(crate) async fn transcript_state_for_run(
