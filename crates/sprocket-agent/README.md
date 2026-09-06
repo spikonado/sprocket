@@ -45,6 +45,16 @@ returned as text. Scanned PDFs report that OCR is needed; they are not sent to a
 hosted OCR service. Long parsed results include a preview and the path to the full
 text in the thread's `parse_file/` cache.
 
+Document conversion and URL downloads accept at most 64 MiB per call to bound
+input buffering. Larger attachments remain available through shell tools. This
+does not sandbox AnyDoc's memory or CPU use for compressed documents. HTTP
+requests use the local process's network access, including localhost and LAN
+devices, just like shell commands. `parse_file` is not a network isolation boundary.
+
+The server expires pending local uploads after 24 hours, sweeping on startup and
+hourly while running. Submitted thread attachments are not expired. If a pending
+copy expires after submission but before caching, the agent downloads it from Convex.
+
 The tool is available to every model. It returns image content only for models
 whose gateway catalog entry supports images. Image decoding has separate safety
 limits, which do not limit attachment uploads. Rebuilding history omits prior

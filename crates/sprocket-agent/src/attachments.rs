@@ -51,9 +51,7 @@ pub async fn cache_attachment(
     thread_id: &str,
     attachment: &TranscriptAttachmentMeta,
 ) -> anyhow::Result<PathBuf> {
-    let lock = store
-        .lock_thread(user_id, &format!("attachment/{}", attachment.storage_id))
-        .await;
+    let lock = store.lock_attachment(user_id, &attachment.storage_id).await;
     let _guard = lock.lock().await;
     let path = store.attachment_path(user_id, thread_id, attachment);
     if !tokio::fs::try_exists(&path).await? {
@@ -135,6 +133,67 @@ mod tests {
             url: None,
             local_path: None,
         }
+    }
+
+    #[tokio::test]
+    async fn expires_abandoned_staging_without_removing_fresh_or_submitted_files() {
+        use std::time::{Duration, SystemTime};
+        let dir = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::new(dir.path().into());
+        let now = SystemTime::now();
+        let old = now - Duration::from_secs(2 * 24 * 60 * 60);
+        let cutoff = now - Duration::from_secs(24 * 60 * 60);
+        assert_eq!(store.prune_pending_attachments(cutoff).await.unwrap(), 0);
+
+        let stale = store.pending_attachment_path("user", "stale");
+        let fresh = store.pending_attachment_path("user", "fresh");
+        let crashed = store.pending_attachment_path("other", "upload");
+        let submitted = store.attachment_path("user", "thread", &attachment("submitted", 0));
+        for path in [&stale, &fresh, &crashed, &submitted] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let file = std::fs::File::create(path).unwrap();
+            file.set_modified(if path == &fresh { now } else { old })
+                .unwrap();
+        }
+        let lock = store.lock_attachment("user", "stale").await;
+        let guard = lock.lock().await;
+        let sweep_store = store.clone();
+        let mut sweep =
+            tokio::spawn(async move { sweep_store.prune_pending_attachments(cutoff).await });
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut sweep)
+                .await
+                .is_err()
+        );
+        assert!(stale.exists());
+        drop(guard);
+        assert_eq!(sweep.await.unwrap().unwrap(), 2);
+        assert!(!stale.exists());
+        assert!(!crashed.exists());
+        assert!(fresh.exists());
+        assert!(submitted.exists());
+        assert_eq!(store.prune_pending_attachments(cutoff).await.unwrap(), 0);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn pending_expiry_does_not_follow_directory_symlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::new(dir.path().into());
+        let target = outside.path().join("keep");
+        std::fs::write(&target, b"keep").unwrap();
+        let pending = store.pending_attachment_path("user", "ignored");
+        std::fs::create_dir_all(pending.parent().unwrap().parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(outside.path(), pending.parent().unwrap()).unwrap();
+        assert_eq!(
+            store
+                .prune_pending_attachments(std::time::SystemTime::now())
+                .await
+                .unwrap(),
+            0
+        );
+        assert!(target.exists());
     }
 
     #[test]

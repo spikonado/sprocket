@@ -1,4 +1,4 @@
-use std::io::Cursor;
+use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -24,6 +24,7 @@ pub(crate) const MAX_PARSE_FILE_IMAGE_BYTES: usize = 20 * 1024 * 1024;
 pub(crate) const MAX_PARSE_FILE_IMAGE_DIMENSION: u32 = 8192;
 pub(crate) const MAX_PARSE_FILE_IMAGE_PIXELS: u32 = 36_000_000;
 pub(crate) const MAX_PARSE_FILE_PREVIEW_CHARS: usize = 20_000;
+const MAX_PARSE_FILE_DOCUMENT_BYTES: u64 = 64 * 1024 * 1024;
 
 const PARSE_FILE_HTTP_TIMEOUT: Duration = Duration::from_secs(60);
 const IMAGE_SNIFF_BYTES: usize = 16;
@@ -106,7 +107,7 @@ impl rig::tool::Tool for ParseFileTool {
     type Output = ToolOutput;
 
     fn description(&self) -> String {
-        let docs = "Parse a local file or http(s) URL. Converts Word, PowerPoint, Excel, OpenDocument, RTF, EPUB, CSV, and PDF to Markdown, and returns UTF-8 text for source and other text files. Provide exactly one of path or url.";
+        let docs = "Parse a local file or http(s) URL, up to 64 MiB. Converts Word, PowerPoint, Excel, OpenDocument, RTF, EPUB, CSV, and PDF to Markdown, and returns UTF-8 text for source and other text files. Provide exactly one of path or url. Larger attachments remain available to shell tools.";
         if self.0.supports_images {
             format!(
                 "{docs} jpeg, png, gif, and webp are returned as the image itself; images larger than 20 MiB or 8192 px on a side are rejected."
@@ -432,8 +433,17 @@ fn convert_non_image_blocking(
     cancellation: WorkspaceCancellation,
 ) -> anyhow::Result<ParsedText> {
     ensure_not_cancelled(&cancellation)?;
-    let bytes =
-        std::fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
+    let file =
+        std::fs::File::open(&path).with_context(|| format!("failed to open {}", path.display()))?;
+    let metadata = file.metadata()?;
+    anyhow::ensure!(metadata.is_file(), "{} is not a file", path.display());
+    ensure_document_size(metadata.len())?;
+    let mut bytes = Vec::new();
+    file.take(MAX_PARSE_FILE_DOCUMENT_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    ensure_document_size(bytes.len() as u64)?;
+    ensure_not_cancelled(&cancellation)?;
     anyhow::ensure!(!bytes.is_empty(), "file is empty");
     if let Some(format) = detect_anydoc_format(&bytes, &path, &name_hint) {
         let markdown = anydoc::to_markdown_bytes(&bytes, format).map_err(map_anydoc_error)?;
@@ -542,6 +552,14 @@ fn http_client() -> anyhow::Result<reqwest::Client> {
         .context("failed to build parse_file HTTP client")
 }
 
+fn ensure_document_size(size: u64) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        size <= MAX_PARSE_FILE_DOCUMENT_BYTES,
+        "parse_file accepts at most 64 MiB per document or download; use shell tools for larger files. Attachment uploads are not limited"
+    );
+    Ok(())
+}
+
 async fn stream_http_to_path(
     client: reqwest::Client,
     url: reqwest::Url,
@@ -555,9 +573,13 @@ async fn stream_http_to_path(
         .with_context(|| format!("failed to fetch {url}"))?
         .error_for_status()
         .with_context(|| format!("file URL returned an error status: {url}"))?;
+    if let Some(size) = response.content_length() {
+        ensure_document_size(size)?;
+    }
     let mut file = tokio::fs::File::create(path)
         .await
         .with_context(|| format!("failed to create {}", path.display()))?;
+    let mut received = 0u64;
     loop {
         ensure_not_cancelled(cancellation)?;
         let chunk = tokio::select! {
@@ -572,6 +594,8 @@ async fn stream_http_to_path(
         let Some(chunk) = chunk else {
             break;
         };
+        received = received.saturating_add(chunk.len() as u64);
+        ensure_document_size(received)?;
         file.write_all(&chunk)
             .await
             .with_context(|| format!("failed to write {}", path.display()))?;
@@ -1056,6 +1080,72 @@ mod tests {
         assert!(too_wide.to_string().contains("8192"));
         let too_many_pixels = ensure_image_within_model_bounds(7000, 7000, 16).expect_err("pixels");
         assert!(too_many_pixels.to_string().contains("pixels"));
+    }
+
+    #[tokio::test]
+    async fn refuses_oversized_local_documents_without_removing_the_attachment() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("large.txt");
+        std::fs::File::create(&source)
+            .unwrap()
+            .set_len(MAX_PARSE_FILE_DOCUMENT_BYTES + 1)
+            .unwrap();
+        let cache = dir.path().join("parsed");
+        let error = persist(
+            dir.path(),
+            &cache,
+            ParseFileArgs {
+                path: Some(source.to_string_lossy().into_owned()),
+                url: None,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("64 MiB"), "{error}");
+        assert!(source.exists());
+        assert!(!cache.exists());
+    }
+
+    #[tokio::test]
+    async fn bounds_http_documents_with_and_without_content_length() {
+        for declared in [true, false] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream.read(&mut [0; 1024]).unwrap();
+                let length = if declared {
+                    format!("Content-Length: {}\r\n", MAX_PARSE_FILE_DOCUMENT_BYTES + 1)
+                } else {
+                    String::new()
+                };
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\n{length}Connection: close\r\n\r\n"
+                )
+                .unwrap();
+                if !declared {
+                    let chunk = vec![b'x'; 1024 * 1024];
+                    for _ in 0..=MAX_PARSE_FILE_DOCUMENT_BYTES / chunk.len() as u64 {
+                        if stream.write_all(&chunk).is_err() {
+                            break;
+                        }
+                    }
+                }
+            });
+            let temp = tempfile::NamedTempFile::new().unwrap();
+            let error = stream_http_to_path(
+                http_client().unwrap(),
+                validate_http_url(&format!("http://{address}/large.txt")).unwrap(),
+                temp.path(),
+                &WorkspaceCancellation::new(),
+            )
+            .await
+            .unwrap_err();
+            assert!(error.to_string().contains("64 MiB"), "{error}");
+            assert!(temp.as_file().metadata().unwrap().len() <= MAX_PARSE_FILE_DOCUMENT_BYTES);
+            server.join().unwrap();
+        }
     }
 
     #[test]

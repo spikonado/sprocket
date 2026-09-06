@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use anyhow::Context;
 use serde_json::Value as JsonValue;
@@ -57,6 +58,63 @@ impl TranscriptStore {
             .join(safe_segment(user_id))
             .join("pending-attachments")
             .join(safe_segment(storage_id))
+    }
+
+    pub(crate) async fn lock_attachment(&self, user_id: &str, storage_id: &str) -> Arc<Mutex<()>> {
+        self.lock_pending_path(&self.pending_attachment_path(user_id, storage_id))
+            .await
+    }
+
+    async fn lock_pending_path(&self, path: &Path) -> Arc<Mutex<()>> {
+        self.lock_key(format!("attachment:{}", path.display()))
+            .await
+    }
+
+    pub async fn prune_pending_attachments(&self, cutoff: SystemTime) -> anyhow::Result<u64> {
+        let mut users = match tokio::fs::read_dir(&self.root).await {
+            Ok(users) => users,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(error) => return Err(error.into()),
+        };
+        let mut removed = 0;
+        while let Some(user) = users.next_entry().await? {
+            if !user.file_type().await?.is_dir() {
+                continue;
+            }
+            let directory = user.path().join("pending-attachments");
+            let metadata = match tokio::fs::symlink_metadata(&directory).await {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error.into()),
+            };
+            if !metadata.is_dir() {
+                continue;
+            }
+            let mut files = tokio::fs::read_dir(directory).await?;
+            while let Some(file) = files.next_entry().await? {
+                let path = file.path();
+                let lock = self.lock_pending_path(&path).await;
+                let _guard = lock.lock().await;
+                let metadata = match tokio::fs::symlink_metadata(&path).await {
+                    Ok(metadata) => metadata,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(error) => return Err(error.into()),
+                };
+                if metadata.is_file() && metadata.modified()? <= cutoff {
+                    match tokio::fs::remove_file(&path).await {
+                        Ok(()) => removed += 1,
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(error) => {
+                            eprintln!(
+                                "sprocket-agent: failed to expire {}: {error}",
+                                path.display()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        Ok(removed)
     }
 
     pub fn attachment_path(
@@ -156,9 +214,7 @@ impl TranscriptStore {
         upload_id: &str,
         storage_id: &str,
     ) -> anyhow::Result<()> {
-        let lock = self
-            .lock_thread(user_id, &format!("attachment/{storage_id}"))
-            .await;
+        let lock = self.lock_attachment(user_id, storage_id).await;
         let _guard = lock.lock().await;
         if let Err(error) =
             tokio::fs::remove_file(self.pending_attachment_path(user_id, storage_id)).await
@@ -182,7 +238,10 @@ impl TranscriptStore {
     }
 
     pub(crate) async fn lock_thread(&self, user_id: &str, thread_id: &str) -> Arc<Mutex<()>> {
-        let key = format!("{user_id}/{thread_id}");
+        self.lock_key(format!("{user_id}/{thread_id}")).await
+    }
+
+    async fn lock_key(&self, key: String) -> Arc<Mutex<()>> {
         let mut locks = self.locks.lock().await;
         locks
             .entry(key)
