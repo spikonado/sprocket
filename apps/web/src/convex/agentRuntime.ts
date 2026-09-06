@@ -13,7 +13,17 @@ import {
 	getCompletionStreamState,
 	registerCompletionAttemptForRun
 } from '@convex/lib/assistantStreamWrites';
-import { recordThreadUsageEvent, usageEventId } from '@convex/lib/threadUsage';
+import {
+	contextHandoffKey,
+	existingThroughPartNumber,
+	throughPartNumberForHandoff
+} from '@convex/lib/contextHandoff';
+import {
+	clearThreadContextTokens,
+	getThreadContextTokens,
+	recordThreadUsageEvent,
+	usageEventId
+} from '@convex/lib/threadUsage';
 import { finalizeRunRecord, matchesFinalizeExpectations } from '@convex/lib/runFinalize';
 import { requestRunCancellation } from './runLifecycle';
 import {
@@ -249,6 +259,28 @@ export const renewClaim = mutation({
 	}
 });
 
+function getContextResult(args: {
+	run: Doc<'runs'>;
+	threadRecord: Doc<'threadRecords'>;
+	prompt: string;
+	promptAttachments: Infer<typeof vGetContextResult>['promptAttachments'];
+	contextBudget: Infer<typeof vGetContextResult>['contextBudget'];
+	contextTokens: number | undefined;
+}): Infer<typeof vGetContextResult> {
+	const result: Infer<typeof vGetContextResult> = {
+		run: args.run,
+		threadRecord: args.threadRecord,
+		prompt: args.prompt,
+		promptAttachments: args.promptAttachments,
+		agentHistory: [],
+		contextBudget: args.contextBudget
+	};
+	if (args.contextTokens !== undefined) {
+		result.contextTokens = args.contextTokens;
+	}
+	return result;
+}
+
 export const getContext = query({
 	args: {
 		runId: v.id('runs'),
@@ -259,22 +291,24 @@ export const getContext = query({
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		const userId = run.userId;
 		const threadRecord = await getOwnedThreadRecord(ctx.db, userId, run.threadId);
+		const contextTokens = await getThreadContextTokens(ctx, threadRecord._id);
+		const contextBudget = {
+			contextWindowTokens: run.contextWindowTokens ?? 0,
+			autoCompactTokenLimit: run.autoCompactTokenLimit ?? 0
+		};
 		const promptPart = await getPromptPart(ctx, run.threadId, run._id);
 		if (!promptPart?.prompt) {
 			if (!run.continuationOfRunId) {
 				throw new Error('Run does not contain a user prompt.');
 			}
-			return {
+			return getContextResult({
 				run,
 				threadRecord,
 				prompt: '',
 				promptAttachments: [],
-				agentHistory: [],
-				contextBudget: {
-					contextWindowTokens: run.contextWindowTokens ?? 0,
-					autoCompactTokenLimit: run.autoCompactTokenLimit ?? 0
-				}
-			};
+				contextBudget,
+				contextTokens
+			});
 		}
 		const promptAttachments = (
 			await Promise.all(
@@ -288,20 +322,14 @@ export const getContext = query({
 			throw new Error('One or more image attachments are unavailable.');
 		}
 
-		const prompt = promptPart.prompt.text;
-		const contextBudget = {
-			contextWindowTokens: run.contextWindowTokens ?? 0,
-			autoCompactTokenLimit: run.autoCompactTokenLimit ?? 0
-		};
-
-		return {
+		return getContextResult({
 			run,
 			threadRecord,
-			prompt,
+			prompt: promptPart.prompt.text,
 			promptAttachments,
-			agentHistory: [],
-			contextBudget
-		};
+			contextBudget,
+			contextTokens
+		});
 	}
 });
 
@@ -341,6 +369,7 @@ export const completionActor = query({
 	}
 });
 
+/** Legacy previous-run cutoff for released agents. New agents call saveContextHandoff. */
 export const saveContextCompaction = mutation({
 	args: {
 		runId: v.id('runs'),
@@ -393,8 +422,63 @@ export const saveContextCompaction = mutation({
 			}
 		}
 		if (durableSummary) {
-			await ctx.db.patch('threadRecords', thread._id, durableSummary);
+			await ctx.db.patch('threadRecords', thread._id, {
+				...durableSummary,
+				contextSummaryThroughPartNumber: undefined,
+				contextSummaryHandoffKey: undefined
+			});
 		}
+		return true;
+	}
+});
+
+/** Persist the hidden handoff after all covered visible parts have been finalized. */
+export const saveContextHandoff = mutation({
+	args: {
+		runId: v.id('runs'),
+		claimId: v.string(),
+		executionSecret: v.string(),
+		summary: v.string(),
+		completionAttemptSeq: v.number(),
+		beforePrompt: v.boolean()
+	},
+	returns: v.boolean(),
+	handler: async (ctx, args) => {
+		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) return false;
+		if (!isCurrentCompletionAttempt(run, args.claimId, args.completionAttemptSeq)) {
+			return false;
+		}
+		if (!args.summary.trim()) {
+			throw new Error('Invalid context handoff.');
+		}
+		const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
+		const throughPartNumber = await throughPartNumberForHandoff(ctx, {
+			threadId: run.threadId,
+			runId: run._id,
+			beforePrompt: args.beforePrompt
+		});
+		const handoffKey = contextHandoffKey(run._id, args.claimId, args.completionAttemptSeq);
+		const existingCutoff = await existingThroughPartNumber(ctx, thread);
+		if (thread.contextSummaryHandoffKey === handoffKey) {
+			if (existingCutoff !== undefined && throughPartNumber < existingCutoff) {
+				throw new Error('Invalid context handoff cutoff.');
+			}
+			if (thread.contextSummary !== args.summary) {
+				throw new Error('Conflicting context handoff retry.');
+			}
+			return true;
+		}
+		if (existingCutoff !== undefined && throughPartNumber < existingCutoff) {
+			throw new Error('Invalid context handoff cutoff.');
+		}
+		await ctx.db.patch('threadRecords', thread._id, {
+			contextSummary: args.summary,
+			contextSummaryThroughPartNumber: throughPartNumber,
+			contextSummaryThroughRunId: undefined,
+			contextSummaryHandoffKey: handoffKey
+		});
+		await clearThreadContextTokens(ctx, thread._id);
 		return true;
 	}
 });

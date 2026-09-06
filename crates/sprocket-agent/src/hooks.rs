@@ -101,8 +101,10 @@ impl AgentHook for AgentPromptHook {
         _context: &HookContext,
         event: rig::agent::ToolCall<'_>,
     ) -> ToolCallAction {
-        self.tracker
-            .record(event.tool_call_id, event.tool_name, event.args);
+        if AGENT_TOOL_NAMES.contains(&event.tool_name) {
+            self.tracker
+                .record(event.tool_call_id, event.tool_name, event.args);
+        }
         ToolCallAction::Run
     }
 
@@ -221,6 +223,7 @@ fn levenshtein(left: &str, right: &str) -> usize {
     previous[right_chars.len()]
 }
 
+#[derive(Clone)]
 pub(crate) struct GatewayRequestHook {
     reasoning_effort: String,
     service_tier: String,

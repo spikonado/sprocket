@@ -90,7 +90,8 @@ export const vGetContextResult = v.object({
 	contextBudget: v.object({
 		contextWindowTokens: v.number(),
 		autoCompactTokenLimit: v.number()
-	})
+	}),
+	contextTokens: v.optional(v.number())
 });
 
 export const vCompletionActor = v.object({

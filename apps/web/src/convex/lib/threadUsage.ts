@@ -74,6 +74,24 @@ async function aggregatedProcessedTokens(
 	}
 }
 
+/** Latest provider-reported context size. Does not read the processed-token ledger. */
+export async function getThreadContextTokens(
+	ctx: QueryCtx | MutationCtx,
+	threadId: Id<'threadRecords'>
+): Promise<number | undefined> {
+	const usageRow = await getUsageRow(ctx.db, threadId);
+	return usageRow?.contextTokens;
+}
+
+export async function clearThreadContextTokens(
+	ctx: MutationCtx,
+	threadId: Id<'threadRecords'>
+): Promise<void> {
+	const usageRow = await getUsageRow(ctx.db, threadId);
+	if (!usageRow || usageRow.contextTokens === undefined) return;
+	await ctx.db.patch('threadUsage', usageRow._id, { contextTokens: undefined });
+}
+
 /** Current counters for a thread. Reads the Aggregate ledger. */
 export async function getThreadUsageValues(
 	ctx: QueryCtx | MutationCtx,

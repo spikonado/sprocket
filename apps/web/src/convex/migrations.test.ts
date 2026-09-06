@@ -254,3 +254,110 @@ describe('transcript timing migration', () => {
 		expect(await loadTranscriptTimingParts(t, ids)).toEqual(first);
 	});
 });
+
+async function seedLegacyCutoffThread(
+	t: ConvexTestInstance,
+	args: {
+		submissionId: string;
+		throughPartNumber?: number;
+		withParts: boolean;
+	}
+) {
+	return await t.run(async (ctx) => {
+		const threadId = await ctx.db.insert('threadRecords', {
+			userId: 'user_alice',
+			submissionId: args.submissionId,
+			repositoryKey: 'alpha',
+			selectedModel: 'gpt-5.6-sol',
+			reasoningEffort: 'medium',
+			serviceTier: 'standard',
+			lastMessageAt: 1,
+			contextSummary: 'Legacy summary'
+		});
+		const runId = await ctx.db.insert('runs', {
+			threadId,
+			userId: 'user_alice',
+			submissionId: `${args.submissionId}-run`,
+			status: 'completed',
+			executionSecretHash: 'fixture',
+			completionAttemptSeq: 0,
+			selectedModel: 'gpt-5.6-sol',
+			reasoningEffort: 'medium',
+			serviceTier: 'standard',
+			startedAt: 1
+		});
+		await ctx.db.patch('threadRecords', threadId, {
+			contextSummaryThroughRunId: runId,
+			contextSummaryThroughPartNumber: args.throughPartNumber
+		});
+		if (args.withParts) {
+			await ctx.db.insert('threadTranscriptParts', {
+				threadId,
+				userId: 'user_alice',
+				number: 0,
+				sourceKey: 'prompt:legacy-cutoff',
+				kind: 'prompt',
+				runId,
+				prompt: { text: 'Hello', imageUploads: [] }
+			});
+			await ctx.db.insert('threadTranscriptParts', {
+				threadId,
+				userId: 'user_alice',
+				number: 1,
+				sourceKey: 'completion:legacy-cutoff',
+				kind: 'completion',
+				runId,
+				completion: {
+					streamId: 'stream-legacy',
+					items: [{ type: 'text', id: 't', text: 'done', startedAt: null, completedAt: null }]
+				}
+			});
+		}
+		return threadId;
+	});
+}
+
+describe('context summary cutoff migration', () => {
+	it('copies a run-id cutoff onto the last covered part number', async () => {
+		const t = initConvexTest();
+		const threadId = await seedLegacyCutoffThread(t, {
+			submissionId: 'cutoff-copy',
+			withParts: true
+		});
+
+		await t.mutation(internal.migrations.backfillContextSummaryThroughPartNumber, oneBatch);
+
+		expect(await t.run(async (ctx) => await ctx.db.get('threadRecords', threadId))).toMatchObject({
+			contextSummaryThroughPartNumber: 1
+		});
+	});
+
+	it('records -1 when the cutoff run has no parts', async () => {
+		const t = initConvexTest();
+		const threadId = await seedLegacyCutoffThread(t, {
+			submissionId: 'cutoff-empty',
+			withParts: false
+		});
+
+		await t.mutation(internal.migrations.backfillContextSummaryThroughPartNumber, oneBatch);
+
+		expect(await t.run(async (ctx) => await ctx.db.get('threadRecords', threadId))).toMatchObject({
+			contextSummaryThroughPartNumber: -1
+		});
+	});
+
+	it('leaves an existing part-number cutoff alone', async () => {
+		const t = initConvexTest();
+		const threadId = await seedLegacyCutoffThread(t, {
+			submissionId: 'cutoff-keep',
+			throughPartNumber: 0,
+			withParts: true
+		});
+
+		await t.mutation(internal.migrations.backfillContextSummaryThroughPartNumber, oneBatch);
+
+		expect(await t.run(async (ctx) => await ctx.db.get('threadRecords', threadId))).toMatchObject({
+			contextSummaryThroughPartNumber: 0
+		});
+	});
+});

@@ -251,7 +251,7 @@ async fn durable_history_from_parts(
     parts: &[LiveAssistantPart],
     provider_metadata: &HashMap<String, JsonValue>,
 ) -> Vec<AgentHistoryMessage> {
-    let items = durable_items_json(parts, provider_metadata, true);
+    let items = durable_items_json(parts, provider_metadata);
     let part: TranscriptPart = serde_json::from_value(json!({
         "number": 0,
         "sourceKey": "completion:test",
@@ -562,14 +562,6 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
     assert_eq!(inputs[4]["type"], "function_call_output");
     assert_eq!(inputs[4]["call_id"], TOOL_CALL_ID);
     assert!(inputs[4]["output"].to_string().contains("/workspace"));
-
-    let after_compaction = durable_items_json(&parts.parts, &provider_metadata, false);
-    assert!(
-        after_compaction
-            .iter()
-            .all(|item| item["providerMetadata"].is_null())
-    );
-    assert_eq!(after_compaction[0]["text"], DONE_SUMMARY);
 
     let requests = server.join().expect("gateway mock thread");
     assert!(

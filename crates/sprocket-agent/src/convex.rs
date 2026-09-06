@@ -360,25 +360,22 @@ impl RuntimeClient {
             .await
     }
 
-    pub(crate) async fn save_context_compaction(
+    pub(crate) async fn save_context_handoff(
         &self,
         run_id: &str,
         claim_id: &str,
         summary: &str,
-        processed_tokens: u64,
-        persist_for_future_runs: bool,
+        completion_attempt_seq: u64,
+        before_prompt: bool,
     ) -> anyhow::Result<bool> {
         let mut args = self.run_args_with_claim(run_id, claim_id);
         args.insert("summary".to_string(), summary.to_string().into());
         args.insert(
-            "processedTokens".to_string(),
-            Value::Float64(processed_tokens as f64),
+            "completionAttemptSeq".to_string(),
+            Value::Float64(completion_attempt_seq as f64),
         );
-        args.insert(
-            "persistForFutureRuns".to_string(),
-            Value::Boolean(persist_for_future_runs),
-        );
-        self.mutation_json("agentRuntime:saveContextCompaction", args)
+        args.insert("beforePrompt".to_string(), Value::Boolean(before_prompt));
+        self.mutation_json("agentRuntime:saveContextHandoff", args)
             .await
     }
 

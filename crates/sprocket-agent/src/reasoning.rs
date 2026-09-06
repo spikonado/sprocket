@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
-use rig::completion::Message;
-use rig::message::{AssistantContent, Reasoning, ReasoningContent};
+use rig::message::{Reasoning, ReasoningContent};
 use serde_json::Value as JsonValue;
 
 use crate::live::{LiveAssistantPart, LiveAssistantParts, now_ms};
@@ -38,46 +37,10 @@ pub(crate) fn opaque_reasoning_blob(reasoning: &Reasoning) -> Option<&str> {
     opaque_encrypted(reasoning.encrypted_content())
 }
 
-/// Durable reload cannot treat a part-number cutoff as an unchanged prefix.
-/// In-flight old generations can commit later, and in-memory compaction can
-/// replace current-run text while durable `historyFromNumber` only drops the
-/// prior run. When a context summary is present, drop every loaded reasoning
-/// item. Newly generated reasoning stays in the running native Rig history.
+/// Legacy summaries can leave reasoning whose original context was replaced.
+/// Reload conservatively omits it until legacy compaction writers age out.
 pub(crate) fn skip_reasoning_on_reload(context_summary: Option<&str>) -> bool {
     context_summary.is_some_and(|summary| !summary.is_empty())
-}
-
-pub(crate) fn strip_assistant_reasoning(messages: &mut [Message]) {
-    for message in messages {
-        strip_message_reasoning(message);
-    }
-}
-
-fn strip_message_reasoning(message: &mut Message) {
-    if let Message::Assistant { content, .. } = message {
-        content.retain(|part| !matches!(part, AssistantContent::Reasoning(_)));
-    }
-}
-
-fn assistant_has_only_reasoning(message: &Message) -> bool {
-    match message {
-        Message::Assistant { content, .. } => {
-            !content.is_empty()
-                && content
-                    .iter()
-                    .all(|part| matches!(part, AssistantContent::Reasoning(_)))
-        }
-        _ => false,
-    }
-}
-
-fn compaction_reasoning_range(
-    message_count: usize,
-    replaced_prefix_len: usize,
-    reasoning_from_len: usize,
-) -> (usize, usize) {
-    let start = replaced_prefix_len.min(message_count);
-    (start, reasoning_from_len.min(message_count).max(start))
 }
 
 /// Live display is summary blocks only. Rig's `display_text` also joins
@@ -92,42 +55,6 @@ fn reasoning_summary_text(reasoning: &Reasoning) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-/// Drop reasoning in `[replaced_prefix_len, reasoning_from_len)` and remove
-/// assistants that become empty. Later messages keep newly generated state.
-pub(crate) fn strip_pre_compaction_reasoning(
-    messages: &mut Vec<Message>,
-    replaced_prefix_len: usize,
-    reasoning_from_len: usize,
-) {
-    let (start, end) =
-        compaction_reasoning_range(messages.len(), replaced_prefix_len, reasoning_from_len);
-    let mut kept = Vec::with_capacity(messages.len());
-    for (index, mut message) in std::mem::take(messages).into_iter().enumerate() {
-        if index >= start && index < end {
-            if assistant_has_only_reasoning(&message) {
-                continue;
-            }
-            strip_message_reasoning(&mut message);
-        }
-        kept.push(message);
-    }
-    *messages = kept;
-}
-
-/// Raw indices that survive `strip_pre_compaction_reasoning` on a suffix
-/// starting at `replaced_prefix_len`.
-pub(crate) fn kept_suffix_raw_indices(
-    messages: &[Message],
-    replaced_prefix_len: usize,
-    reasoning_from_len: usize,
-) -> Vec<usize> {
-    let (start, end) =
-        compaction_reasoning_range(messages.len(), replaced_prefix_len, reasoning_from_len);
-    (start..messages.len())
-        .filter(|&index| index >= end || !assistant_has_only_reasoning(&messages[index]))
-        .collect()
 }
 
 pub(crate) fn apply_completed_reasoning(
@@ -167,7 +94,7 @@ pub(crate) fn merge_provider_metadata(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rig::message::{ReasoningContent, Text};
+    use rig::message::ReasoningContent;
 
     fn reasoning_with(id: Option<&str>, content: Vec<ReasoningContent>) -> Reasoning {
         Reasoning {
@@ -350,124 +277,11 @@ mod tests {
     }
 
     #[test]
-    fn compaction_strips_old_reasoning_and_keeps_later_state() {
-        let mut messages = vec![
-            Message::user("old"),
-            Message::Assistant {
-                id: None,
-                content: vec![
-                    AssistantContent::Reasoning(Reasoning::new("stale")),
-                    AssistantContent::Text(Text::new("kept text")),
-                ],
-            },
-            Message::Assistant {
-                id: None,
-                content: vec![AssistantContent::Reasoning(Reasoning::encrypted(
-                    "new-envelope",
-                ))],
-            },
-        ];
-
-        strip_pre_compaction_reasoning(&mut messages, 1, 2);
-
-        assert_eq!(messages.len(), 3);
-        match &messages[1] {
-            Message::Assistant { content, .. } => {
-                assert_eq!(content.len(), 1);
-                assert!(matches!(content[0], AssistantContent::Text(_)));
-            }
-            other => panic!("expected stripped assistant, got {other:?}"),
-        }
-        match &messages[2] {
-            Message::Assistant { content, .. } => {
-                assert!(matches!(content[0], AssistantContent::Reasoning(_)));
-            }
-            other => panic!("expected new reasoning, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn compaction_strip_removes_reasoning_only_assistants() {
-        let messages = vec![
-            Message::user("old"),
-            Message::Assistant {
-                id: None,
-                content: vec![AssistantContent::Reasoning(Reasoning::new("stale"))],
-            },
-            Message::Assistant {
-                id: None,
-                content: vec![AssistantContent::Reasoning(Reasoning::encrypted("new"))],
-            },
-        ];
-        assert_eq!(kept_suffix_raw_indices(&messages, 1, 2), vec![2]);
-
-        let mut stripped = messages;
-        strip_pre_compaction_reasoning(&mut stripped, 1, 2);
-        assert_eq!(stripped.len(), 2);
-        match &stripped[1] {
-            Message::Assistant { content, .. } => {
-                assert!(matches!(content[0], AssistantContent::Reasoning(_)));
-            }
-            other => panic!("expected surviving reasoning, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn reload_drops_all_reasoning_when_a_context_summary_is_present() {
         assert!(!skip_reasoning_on_reload(None));
         assert!(skip_reasoning_on_reload(Some("summary")));
         assert!(!skip_reasoning_on_reload(Some("")));
         assert!(skip_reasoning_on_reload(Some("   ")));
-    }
-
-    #[test]
-    fn empty_assistants_are_not_reasoning_only() {
-        let messages = vec![
-            Message::user("old"),
-            Message::Assistant {
-                id: None,
-                content: vec![],
-            },
-            Message::Assistant {
-                id: None,
-                content: vec![AssistantContent::Reasoning(Reasoning::new("stale"))],
-            },
-        ];
-        assert_eq!(kept_suffix_raw_indices(&messages, 1, 3), vec![1]);
-
-        let mut stripped = messages;
-        strip_pre_compaction_reasoning(&mut stripped, 1, 3);
-        assert_eq!(stripped.len(), 2);
-        match &stripped[1] {
-            Message::Assistant { content, .. } => assert!(content.is_empty()),
-            other => panic!("expected empty assistant to remain, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn inverted_compaction_range_does_not_strip() {
-        let messages = vec![
-            Message::user("old"),
-            Message::Assistant {
-                id: None,
-                content: vec![AssistantContent::Reasoning(Reasoning::new("keep"))],
-            },
-        ];
-        assert_eq!(
-            kept_suffix_raw_indices(&messages, 5, 1),
-            Vec::<usize>::new()
-        );
-
-        let mut stripped = messages.clone();
-        strip_pre_compaction_reasoning(&mut stripped, 5, 1);
-        assert_eq!(stripped.len(), 2);
-        match &stripped[1] {
-            Message::Assistant { content, .. } => {
-                assert!(matches!(content[0], AssistantContent::Reasoning(_)));
-            }
-            other => panic!("expected untouched reasoning, got {other:?}"),
-        }
-        assert_eq!(kept_suffix_raw_indices(&messages, 0, 0), vec![0, 1]);
     }
 
     #[test]

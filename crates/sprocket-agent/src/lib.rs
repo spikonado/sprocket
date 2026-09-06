@@ -1,7 +1,6 @@
 mod catalog;
 mod compaction;
 mod convex;
-mod history_json;
 mod hooks;
 mod live;
 mod provider;

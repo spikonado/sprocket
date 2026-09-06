@@ -4,7 +4,7 @@ This file lists shims we still ship. When a removal PR merges, delete its
 entry. Age-out is a prod check for stored rows, or an explicit decision that
 a retired function name can disappear.
 
-Current as of 2026-09-03.
+Current as of 2026-09-06.
 
 ## Transcript projection API
 
@@ -182,6 +182,43 @@ agents that require the response field; current code does not consume it.
 migration runner, its cron, and both schema fields once both migrations report
 `success` and production scans find no remaining values. Historical documents
 in the now-unvalidated `threadMessages` table may be deleted independently.
+
+### 10. Legacy context compaction cutoff
+
+Released agents still call `saveContextCompaction`, which bills through the
+`compaction:` usage event and stores `contextSummaryThroughRunId` (last fully
+covered prior run). Transcript reads keep that run-id lookup so old rows skip
+the covered prefix. A legacy persist clears `contextSummaryThroughPartNumber`
+so a coarser run-id cutoff cannot sit under a leftover precise boundary.
+
+New agents call `saveContextHandoff` and store
+`contextSummaryThroughPartNumber`, the inclusive last covered transcript part
+(`-1` when the prefix is empty). Reads prefer the part-number cutoff when it
+is present so a mid-run handoff does not replay work that a run-scoped cutoff
+would leave in context. Parts are not deleted; UI paging still starts at part 0. `saveContextHandoff` unsets `contextSummaryThroughRunId`.
+
+Handoff usage is recorded by `recordContextUsage`, not by `saveContextHandoff`.
+
+Agents still omit encrypted reasoning on reload when a summary exists, because
+legacy compaction can leave reasoning tied to replaced context. Remove this
+reload filter when legacy writers have aged out and all cutoffs are precise.
+
+`migrations.backfillContextSummaryThroughPartNumber` copies a run-id cutoff
+onto `contextSummaryThroughPartNumber` when that field is missing. It is in
+the default `migrations:run` cron. From `apps/web`:
+
+```sh
+bun convex run migrations:run
+```
+
+Use `--prod` for the production deployment. Leave the run-id fallback in
+place while released agents still write `saveContextCompaction`.
+
+Remove `saveContextCompaction`, the run-id field, and the fallback read after
+all supported agents call `saveContextHandoff`, the backfill reports `success`,
+and a production scan finds no rows that still have
+`contextSummaryThroughRunId` without `contextSummaryThroughPartNumber`. Unset
+remaining run-id values in that same PR, then drop the field.
 
 ## Client APIs
 
