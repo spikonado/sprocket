@@ -175,6 +175,14 @@ export const cleanupExpired = internalMutation({
 					return deleted;
 				}
 			}
+			if (remainingUploadIds.length > 0 || args.cursor !== undefined) {
+				await ctx.scheduler.runAfter(
+					0,
+					internal.imageUploads.cleanupExpired,
+					expiredCleanupArgs({ cursor: args.cursor, remainingUploadIds })
+				);
+			}
+			return deleted;
 		}
 
 		while (remainingUploadIds.length > 0) {
@@ -198,9 +206,13 @@ export const cleanupExpired = internalMutation({
 				);
 				return deleted;
 			}
-		}
-
-		if (args.continueUploadId !== undefined && args.cursor === undefined) {
+			if (remainingUploadIds.length > 0 || args.cursor !== undefined) {
+				await ctx.scheduler.runAfter(
+					0,
+					internal.imageUploads.cleanupExpired,
+					expiredCleanupArgs({ cursor: args.cursor, remainingUploadIds })
+				);
+			}
 			return deleted;
 		}
 

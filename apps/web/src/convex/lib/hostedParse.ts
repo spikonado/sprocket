@@ -114,6 +114,7 @@ export async function readBoundedResponseBytes(
 ): Promise<Uint8Array> {
 	const declared = Number(response.headers.get('content-length'));
 	if (Number.isFinite(declared) && declared > maxBytes) {
+		await response.body?.cancel();
 		throw new Error('Firecrawl parse response is too large.');
 	}
 	if (!response.body) {

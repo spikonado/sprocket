@@ -4,8 +4,10 @@ import { isRunFinalStatus, type vRunStatus } from '@convex/lib/validators';
 import type { Infer } from 'convex/values';
 
 export const ATTACHMENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
-export const ATTACHMENT_CLEANUP_UPLOAD_BATCH = 25;
-export const ATTACHMENT_CLEANUP_REF_BATCH = 32;
+// Each thread/run document can approach 1 MiB. Keep every transaction below
+// Convex's 16 MiB read limit even when shared threads have large summaries.
+export const ATTACHMENT_CLEANUP_UPLOAD_BATCH = 1;
+export const ATTACHMENT_CLEANUP_REF_BATCH = 4;
 
 export type AttachmentRetentionDecision = 'retain' | 'delete' | 'wait';
 

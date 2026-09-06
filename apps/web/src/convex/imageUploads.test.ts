@@ -531,6 +531,41 @@ describe('attached file retention', () => {
 		});
 	});
 
+	it('expires shared files with large thread summaries within transaction read limits', async () => {
+		const t = initConvexTest();
+		const subject = 'large-summary-owner';
+		const { imageUploadId, storageId } = await insertStoredUpload(t, {
+			userId: subject,
+			name: 'large-history.txt',
+			attached: true,
+			threadRefsMigratedAt: 1
+		});
+		const next = await insertStoredUpload(t, {
+			userId: subject,
+			name: 'next-file.txt',
+			attached: true,
+			threadRefsMigratedAt: 1
+		});
+		for (let index = 0; index < 33; index += 1) {
+			const threadId = await seedThreadRecord(t, subject, `large-summary-${index}`);
+			await t.run(async (ctx) => {
+				await ctx.db.patch('threadRecords', threadId, {
+					updatedAt: staleActivityAt(),
+					contextSummary: 'x'.repeat(600_000)
+				});
+				await ctx.db.insert('threadAttachmentRefs', { threadId, imageUploadId });
+				if (index === 0)
+					await ctx.db.insert('threadAttachmentRefs', {
+						threadId,
+						imageUploadId: next.imageUploadId
+					});
+			});
+		}
+		await expireAttachedStorage(t);
+		expect(await t.run((ctx) => ctx.db.system.get('_storage', storageId))).toBeNull();
+		expect(await t.run((ctx) => ctx.db.system.get('_storage', next.storageId))).toBeNull();
+	});
+
 	it('deletes a full first page of stale refs once the next page is empty', async () => {
 		const t = initConvexTest();
 		const { subject } = await seedOwnedThread(t);
