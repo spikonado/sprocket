@@ -23,8 +23,17 @@ export const DEFAULT_SIDE_PANEL_SNAPSHOT: SidePanelSnapshot = {
 
 /** Live-view state for the thread's shared browser session. */
 export type BrowserLiveViewState = {
-	/** Embeddable Browserbase live view URL; null while it is being set up. */
+	/** Embeddable watch-only live view URL; null while it is being set up. */
 	url: string | null;
+	/** Interactive variant. Load it only after humanControl is true. */
+	interactiveUrl: string | null;
+	/** Whether this session persists cookies and login state. */
+	saving: boolean;
+	/** Hard deadline for the Firecrawl session. */
+	expiresAt: number;
+	/** True after the user takes control; agent browser calls are blocked. */
+	humanControl: boolean;
+	threadId: Id<'threadRecords'>;
 	/** Run that most recently drove the browser; matched against the active run
 	 * for liveness and auto-open. */
 	lastUsedRunId: Id<'runs'> | null;

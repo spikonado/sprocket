@@ -30,16 +30,13 @@ import type { DataModel } from "./dataModel.js";
 type Env = {
   readonly CONVEX_CLOUD_URL: string;
   readonly CONVEX_SITE_URL: string;
-  readonly BROWSERBASE_API_KEY: string | undefined;
-  readonly BROWSERBASE_PROJECT_ID: string | undefined;
-  readonly BROWSER_TASK_MODEL: string | undefined;
   readonly CONTEXT_DEV_API_KEY: string;
   readonly DODO_PAYMENTS_API_KEY: string | undefined;
   readonly DODO_PAYMENTS_ENVIRONMENT: "live_mode" | "test_mode" | undefined;
   readonly EXA_API_KEY: string;
+  readonly FIRECRAWL_API_KEY: string | undefined;
   readonly MODEL_GATEWAY_TOKEN_SECRET: string | undefined;
   readonly MODEL_GATEWAY_URL: string | undefined;
-  readonly OPENAI_API_KEY: string | undefined;
   readonly PRAVA_BACKEND_URL:
     "https://sandbox.api.prava.space" | "https://api.prava.space";
   readonly PRAVA_SECRET_KEY: string | undefined;

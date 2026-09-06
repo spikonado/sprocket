@@ -11,4 +11,10 @@ crons.interval(
 
 crons.interval('run convex component migrations', { minutes: 10 }, internal.migrations.run, {});
 
+crons.interval(
+	'reconcile Firecrawl browser sessions',
+	{ minutes: 1 },
+	internal.firecrawlBrowser.reconcile
+);
+
 export default crons;

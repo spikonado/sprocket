@@ -15,7 +15,7 @@ use std::sync::Arc;
 use sprocket_workspace::{CommandSessionManager, WorkspaceSkill};
 
 use self::artifacts::{CreateArtifactTool, UpdateArtifactTool};
-use self::browser::{BrowserActTool, BrowserExtractTool, BrowserObserveTool};
+use self::browser::{BrowserInteractTool, BrowserScreenshotTool};
 use self::commands::{ExecCommandTool, WriteStdinTool};
 use self::context::AgentToolContext;
 use self::mandates::{
@@ -62,9 +62,8 @@ pub(crate) struct AgentToolSet {
     pub(crate) write_stdin: WriteStdinTool,
     pub(crate) create_artifact: CreateArtifactTool,
     pub(crate) update_artifact: UpdateArtifactTool,
-    pub(crate) browser_observe: BrowserObserveTool,
-    pub(crate) browser_act: BrowserActTool,
-    pub(crate) browser_extract: BrowserExtractTool,
+    pub(crate) browser_interact: BrowserInteractTool,
+    pub(crate) browser_screenshot: BrowserScreenshotTool,
     pub(crate) mandate_setup: MandateSetupTool,
     pub(crate) mandate_status: MandateStatusTool,
     pub(crate) mandate_list: MandateListTool,
@@ -104,9 +103,8 @@ pub(crate) fn agent_tools(
         write_stdin: WriteStdinTool(context.clone()),
         create_artifact: CreateArtifactTool(context.clone()),
         update_artifact: UpdateArtifactTool(context.clone()),
-        browser_observe: BrowserObserveTool(context.clone()),
-        browser_act: BrowserActTool(context.clone()),
-        browser_extract: BrowserExtractTool(context.clone()),
+        browser_interact: BrowserInteractTool(context.clone()),
+        browser_screenshot: BrowserScreenshotTool(context.clone()),
         mandate_setup: MandateSetupTool(context.clone()),
         mandate_status: MandateStatusTool(context.clone()),
         mandate_list: MandateListTool(context.clone()),

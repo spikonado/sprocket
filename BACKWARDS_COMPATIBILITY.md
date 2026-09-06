@@ -6,6 +6,12 @@ a retired function name can disappear.
 
 Current as of 2026-09-06.
 
+## Historical Browserbase executor jobs
+
+Browserbase client support is explicitly retired. Its actions, provider dependencies, configuration and session schema are removed. New tool jobs accept only current tool kinds. Firecrawl uses the cleared `browserSessions` table directly.
+
+Production still contains historical Browserbase executor jobs. Their stored kind, payload and result validators remain so deployment and conversation history do not break. Remove these validators only after a migration rewrites or removes every historical Browserbase job. This does not preserve Browserbase endpoints or allow old clients to start browser jobs.
+
 ## Transcript projection API
 
 Assistant text, reasoning, and tool calls accept optional `startedAt` and

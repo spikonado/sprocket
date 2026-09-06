@@ -4,6 +4,7 @@
 	import { useAuth, useQuery } from 'convex-svelte';
 	import { api } from '$convex/_generated/api';
 	import { tierLabels } from '$convex/lib/tiers';
+	import SettingsBrowser from '$lib/components/home/settings-browser.svelte';
 	import Button from '$lib/components/ui/button/button.svelte';
 
 	type Props = {
@@ -75,6 +76,8 @@
 					<div class="bg-hover-fill mt-3.5 h-4 w-16 animate-pulse rounded" aria-hidden="true"></div>
 				{/if}
 			</div>
+
+			<SettingsBrowser />
 
 			<div>
 				<p class="text-muted-foreground font-mono text-[11px] tracking-[0.18em] uppercase">
