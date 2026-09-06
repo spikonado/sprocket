@@ -91,6 +91,7 @@ async fn upload(
     let dir = pending.parent().context("invalid staging directory")?;
     tokio::fs::create_dir_all(dir).await?;
     let temp = tempfile::NamedTempFile::new_in(dir)?;
+    let _upload_guard = state.transcript.protect_pending_upload(temp.path()).await;
     let size = stage_body(request.into_body(), temp.path()).await?;
     let upload_url: String = client
         .mutate("imageUploads:generateUploadUrl", BTreeMap::new())
@@ -128,6 +129,7 @@ async fn upload(
         RegistrationResult::Error { error } => anyhow::bail!(error),
     };
     anyhow::ensure!(result.size == size, "uploaded attachment size mismatch");
+    temp.as_file().set_modified(std::time::SystemTime::now())?;
     temp.persist(
         state
             .transcript

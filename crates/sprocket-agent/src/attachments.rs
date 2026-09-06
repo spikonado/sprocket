@@ -155,19 +155,11 @@ mod tests {
             file.set_modified(if path == &fresh { now } else { old })
                 .unwrap();
         }
-        let lock = store.lock_attachment("user", "stale").await;
-        let guard = lock.lock().await;
-        let sweep_store = store.clone();
-        let mut sweep =
-            tokio::spawn(async move { sweep_store.prune_pending_attachments(cutoff).await });
-        assert!(
-            tokio::time::timeout(Duration::from_millis(20), &mut sweep)
-                .await
-                .is_err()
-        );
+        let guard = store.protect_pending_upload(&stale).await;
+        assert_eq!(store.prune_pending_attachments(cutoff).await.unwrap(), 1);
         assert!(stale.exists());
         drop(guard);
-        assert_eq!(sweep.await.unwrap().unwrap(), 2);
+        assert_eq!(store.prune_pending_attachments(cutoff).await.unwrap(), 1);
         assert!(!stale.exists());
         assert!(!crashed.exists());
         assert!(fresh.exists());
@@ -204,6 +196,37 @@ mod tests {
         let path = store.attachment_path("user", "thread", &meta);
         assert_eq!(path.extension().unwrap(), "csv");
         assert!(path.file_name().unwrap().to_string_lossy().len() <= 205);
+    }
+
+    #[test]
+    fn attachment_paths_keep_untrusted_ids_and_names_inside_the_cache() {
+        let root = std::env::temp_dir().join("attachment-path-test");
+        let store = TranscriptStore::new(root.clone());
+        for input in [
+            "../../outside",
+            r"..\..\outside",
+            "/etc/passwd",
+            r"C:\outside",
+        ] {
+            let mut meta = attachment("unsafe", 0);
+            meta.image_upload_id = input.into();
+            meta.storage_id = input.into();
+            meta.name = input.into();
+            for path in [
+                store.attachment_path(input, input, &meta),
+                store.pending_attachment_path(input, input),
+                store.blob_data_path(input, input),
+            ] {
+                let relative = path.strip_prefix(&root).unwrap();
+                assert!(
+                    relative
+                        .components()
+                        .all(|part| matches!(part, std::path::Component::Normal(_))),
+                    "{}",
+                    path.display()
+                );
+            }
+        }
     }
 
     #[tokio::test]

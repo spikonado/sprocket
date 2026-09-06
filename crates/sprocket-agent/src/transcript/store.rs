@@ -70,6 +70,10 @@ impl TranscriptStore {
             .await
     }
 
+    pub async fn protect_pending_upload(&self, path: &Path) -> tokio::sync::OwnedMutexGuard<()> {
+        self.lock_pending_path(path).await.lock_owned().await
+    }
+
     pub async fn prune_pending_attachments(&self, cutoff: SystemTime) -> anyhow::Result<u64> {
         let mut users = match tokio::fs::read_dir(&self.root).await {
             Ok(users) => users,
@@ -94,7 +98,9 @@ impl TranscriptStore {
             while let Some(file) = files.next_entry().await? {
                 let path = file.path();
                 let lock = self.lock_pending_path(&path).await;
-                let _guard = lock.lock().await;
+                let Ok(_guard) = lock.try_lock() else {
+                    continue;
+                };
                 let metadata = match tokio::fs::symlink_metadata(&path).await {
                     Ok(metadata) => metadata,
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
