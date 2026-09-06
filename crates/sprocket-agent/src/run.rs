@@ -90,11 +90,16 @@ impl RunFinalStatus {
     }
 }
 
-fn build_workspace_preamble(
+struct WorkspacePromptContext {
+    base_instructions: String,
+    initial_context: Message,
+}
+
+fn build_workspace_prompt_context(
     workspace_path: &str,
     workspace_instructions: &[WorkspaceInstruction],
     skills: &[WorkspaceSkill],
-) -> String {
+) -> WorkspacePromptContext {
     let user_instructions = workspace_instructions
         .iter()
         .filter(|instruction| instruction.source == WorkspaceInstructionSource::User)
@@ -138,7 +143,7 @@ fn build_workspace_preamble(
         format!("<SKILLS>\n{entries}\n</SKILLS>")
     };
 
-    [
+    let base_instructions = [
         "# System Instructions",
         "",
         "## Identity",
@@ -192,12 +197,10 @@ fn build_workspace_preamble(
         "## Skills",
         "",
         "Skills are reusable instruction packages.",
-        "The available skills are listed below.",
+        "The available skills are listed in the initial conversation context.",
         "When a task matches a skill's description, call the read_skill tool with its name before proceeding, and follow the returned instructions as needed.",
         "If the user writes $skill-name in their message (for example $code-review), they are explicitly invoking that skill: read it with read_skill and apply it, even if you would not have selected it yourself.",
         "Skills may reference bundled files; for on-disk skills, the read_skill result includes a dir path for reading those with exec_command when needed.",
-        "",
-        &skills_block,
         "",
         "## AGENTS.md Spec",
         "",
@@ -205,12 +208,29 @@ fn build_workspace_preamble(
         "Each AGENTS.md file applies to the directory tree rooted at the folder that contains it.",
         "Follow all applicable AGENTS.md instructions, with deeper files taking precedence.",
         "The user's `AGENTS.md`, located at `~/.agents/AGENTS.md`, applies to every workspace.",
-        "The user's AGENTS.md and the AGENTS.md for the current workspace path are already included below and do not need to be re-read.",
+        "The user's AGENTS.md and the AGENTS.md for the current workspace path are included in the initial conversation context and do not need to be re-read.",
         "If you move into a deeper subdirectory before editing, check for additional nested AGENTS.md files there.",
-        "",
-        &instruction_block,
     ]
-    .join("\n")
+    .join("\n");
+    let initial_context = Message::user(
+        [
+            "The following thread-scoped workspace context was loaded when this conversation began.",
+            "",
+            "## Available Skills",
+            "",
+            &skills_block,
+            "",
+            "## Preloaded AGENTS.md Instructions",
+            "",
+            &instruction_block,
+        ]
+        .join("\n"),
+    );
+
+    WorkspacePromptContext {
+        base_instructions,
+        initial_context,
+    }
 }
 
 async fn cleanup_twice<T, F, Fut>(
@@ -826,12 +846,15 @@ pub async fn run_agent(run: AgentRun, live: Arc<LiveCompletionHub>) -> anyhow::R
             content: prompt_contents,
         };
         let provider = AgentProvider::default_for_run(&context, &gateway_url);
-        let preamble =
-            build_workspace_preamble(&request.workspace_path, &workspace_instructions, &skills);
-        Ok((prompt, provider, preamble, skills))
+        let prompt_context = build_workspace_prompt_context(
+            &request.workspace_path,
+            &workspace_instructions,
+            &skills,
+        );
+        Ok((prompt, provider, prompt_context, skills))
     })();
 
-    let (prompt, provider, preamble, skills) = match prepared {
+    let (prompt, provider, prompt_context, skills) = match prepared {
         Ok(values) => values,
         Err(error) => return abort_before_start(&runtime, &run_id, error).await,
     };
@@ -886,7 +909,8 @@ pub async fn run_agent(run: AgentRun, live: Arc<LiveCompletionHub>) -> anyhow::R
                     run_started_at: context.run.started_at,
                     live: live.clone(),
                     prompt,
-                    preamble,
+                    base_instructions: prompt_context.base_instructions,
+                    initial_context: vec![prompt_context.initial_context],
                     prior_history: prior_history.messages,
                     workspace_root,
                     skills,
@@ -933,11 +957,23 @@ fn image_media_type(media_type: &str) -> anyhow::Result<ImageMediaType> {
 
 #[cfg(test)]
 mod tests {
+    use rig::completion::Message;
+    use rig::message::UserContent;
     use sprocket_workspace::{
         SkillSource, WorkspaceInstruction, WorkspaceInstructionSource, WorkspaceSkill,
     };
 
-    use super::{build_workspace_preamble, submission_owned_by_another_executor};
+    use super::{build_workspace_prompt_context, submission_owned_by_another_executor};
+
+    fn initial_context_text(message: &Message) -> &str {
+        match message {
+            Message::User { content } => match content.first() {
+                Some(UserContent::Text(text)) => &text.text,
+                other => panic!("expected initial context text, got {other:?}"),
+            },
+            other => panic!("expected initial context user message, got {other:?}"),
+        }
+    }
 
     #[test]
     fn submission_conflict_errors_match_the_convex_sentinel() {
@@ -956,7 +992,7 @@ mod tests {
     }
 
     #[test]
-    fn preamble_renders_skills_block() {
+    fn initial_context_renders_skills_block() {
         let skills = [WorkspaceSkill {
             name: "pdf-processing".to_string(),
             description: "Handle PDFs".to_string(),
@@ -964,24 +1000,27 @@ mod tests {
                 contents: "---\nname: pdf-processing\ndescription: Handle PDFs\n---\n",
             },
         }];
-        let preamble = build_workspace_preamble("/tmp/project", &[], &skills);
-        assert!(preamble.contains("## Skills"));
-        assert!(preamble.contains("<SKILLS>"));
-        assert!(preamble.contains("- name: pdf-processing"));
-        assert!(preamble.contains("description: Handle PDFs"));
-        assert!(!preamble.contains("No skills are installed."));
+        let prompt_context = build_workspace_prompt_context("/tmp/project", &[], &skills);
+        let initial_context = initial_context_text(&prompt_context.initial_context);
+        assert!(initial_context.contains("## Available Skills"));
+        assert!(initial_context.contains("<SKILLS>"));
+        assert!(initial_context.contains("- name: pdf-processing"));
+        assert!(initial_context.contains("description: Handle PDFs"));
+        assert!(!initial_context.contains("No skills are installed."));
+        assert!(!prompt_context.base_instructions.contains("pdf-processing"));
     }
 
     #[test]
-    fn preamble_renders_empty_skills_line() {
-        let preamble = build_workspace_preamble("/tmp/project", &[], &[]);
-        assert!(preamble.contains("## Skills"));
-        assert!(preamble.contains("No skills are installed."));
-        assert!(!preamble.contains("<SKILLS>"));
+    fn initial_context_renders_empty_skills_line() {
+        let prompt_context = build_workspace_prompt_context("/tmp/project", &[], &[]);
+        let initial_context = initial_context_text(&prompt_context.initial_context);
+        assert!(initial_context.contains("## Available Skills"));
+        assert!(initial_context.contains("No skills are installed."));
+        assert!(!initial_context.contains("<SKILLS>"));
     }
 
     #[test]
-    fn preamble_collapses_multiline_skill_descriptions() {
+    fn initial_context_collapses_multiline_skill_descriptions() {
         let skills = [WorkspaceSkill {
             name: "demo".to_string(),
             description: "Line one\nline two".to_string(),
@@ -989,13 +1028,14 @@ mod tests {
                 contents: "---\nname: demo\ndescription: Line one\n---\n",
             },
         }];
-        let preamble = build_workspace_preamble("/tmp/project", &[], &skills);
-        assert!(preamble.contains("description: Line one line two"));
-        assert!(!preamble.contains("description: Line one\n"));
+        let prompt_context = build_workspace_prompt_context("/tmp/project", &[], &skills);
+        let initial_context = initial_context_text(&prompt_context.initial_context);
+        assert!(initial_context.contains("description: Line one line two"));
+        assert!(!initial_context.contains("description: Line one\n"));
     }
 
     #[test]
-    fn preamble_renders_user_instructions_before_workspace_instructions() {
+    fn initial_context_renders_user_instructions_before_workspace_instructions() {
         let instructions = [
             WorkspaceInstruction {
                 path: "/home/user/.agents/AGENTS.md".to_string(),
@@ -1013,15 +1053,28 @@ mod tests {
             },
         ];
 
-        let preamble = build_workspace_preamble("/tmp/project", &instructions, &[]);
+        let prompt_context = build_workspace_prompt_context("/tmp/project", &instructions, &[]);
+        let initial_context = initial_context_text(&prompt_context.initial_context);
 
         let user_heading = "# The user's AGENTS.md:";
         let workspace_heading = "# AGENTS.md instructions for /tmp/project:";
-        assert!(preamble.contains(user_heading));
-        assert!(preamble.contains(workspace_heading));
+        assert!(initial_context.contains(user_heading));
+        assert!(initial_context.contains(workspace_heading));
         assert!(
-            preamble.find(user_heading).expect("user heading")
-                < preamble.find(workspace_heading).expect("workspace heading")
+            initial_context.find(user_heading).expect("user heading")
+                < initial_context
+                    .find(workspace_heading)
+                    .expect("workspace heading")
+        );
+        assert!(
+            !prompt_context
+                .base_instructions
+                .contains("user instructions")
+        );
+        assert!(
+            !prompt_context
+                .base_instructions
+                .contains("workspace instructions")
         );
     }
 }

@@ -61,6 +61,7 @@ pub(crate) struct ContextCompactionHook {
     service_tier: String,
     context_budget: ContextBudget,
     prior_history_len: usize,
+    initial_context: Arc<[Message]>,
     gateway_url: String,
     persist_reasoning_replay: Arc<AtomicBool>,
     state: Arc<Mutex<CompactionState>>,
@@ -76,6 +77,7 @@ impl ContextCompactionHook {
         service_tier: String,
         context_budget: ContextBudget,
         prior_history_len: usize,
+        initial_context: Arc<[Message]>,
         gateway_url: String,
         persist_reasoning_replay: Arc<AtomicBool>,
     ) -> Self {
@@ -88,6 +90,7 @@ impl ContextCompactionHook {
             service_tier,
             context_budget,
             prior_history_len,
+            initial_context,
             gateway_url,
             persist_reasoning_replay,
             state: Arc::new(Mutex::new(CompactionState::default())),
@@ -171,20 +174,26 @@ impl ContextCompactionHook {
             (state.last_input_tokens, state.active_summary.clone())
         };
 
+        let Some(raw_history) = history.strip_prefix(self.initial_context.as_ref()) else {
+            return CompletionCallAction::stop(
+                "The conversation's initial workspace context was lost.".to_string(),
+            );
+        };
         let (effective_history, suffix_raw) =
-            rebuild_effective_history(history, active_summary.as_ref());
+            rebuild_effective_history(raw_history, active_summary.as_ref());
+        let request_history = prepend_initial_context(&self.initial_context, &effective_history);
         if !should_compact(
             last_input_tokens,
             self.context_budget.auto_compact_token_limit,
-            &effective_history,
+            &request_history,
         ) {
-            return continue_with_history(active_summary.is_some(), effective_history);
+            return continue_with_history(active_summary.is_some(), request_history);
         }
 
         let prior_boundary = prior_boundary_in_effective(
             active_summary.as_ref(),
             self.prior_history_len,
-            history.len(),
+            raw_history.len(),
             &suffix_raw,
         );
         let split = choose_split_index(
@@ -193,7 +202,7 @@ impl ContextCompactionHook {
             self.context_budget.auto_compact_token_limit,
         );
         if split == 0 {
-            return continue_with_history(active_summary.is_some(), effective_history);
+            return continue_with_history(active_summary.is_some(), request_history);
         }
 
         let prefix = &effective_history[..split];
@@ -225,8 +234,12 @@ impl ContextCompactionHook {
         let processed_tokens = billed_tokens;
         let summary_text = summary;
         let compacted_summary = context_summary_text(&summary_text);
-        let replaced_prefix_len =
-            next_replaced_prefix_len(active_summary.as_ref(), history.len(), split, &suffix_raw);
+        let replaced_prefix_len = next_replaced_prefix_len(
+            active_summary.as_ref(),
+            raw_history.len(),
+            split,
+            &suffix_raw,
+        );
         let persist_for_future_runs =
             should_persist_for_future_runs(self.prior_history_len, replaced_prefix_len);
 
@@ -260,13 +273,14 @@ impl ContextCompactionHook {
             state.active_summary = Some(CompactedContext {
                 summary: summary_text,
                 replaced_prefix_len,
-                reasoning_from_len: history.len(),
+                reasoning_from_len: raw_history.len(),
             });
         }
         self.persist_reasoning_replay
             .store(false, Ordering::Release);
 
-        let mut compacted = vec![Message::user(compacted_summary)];
+        let mut compacted = self.initial_context.to_vec();
+        compacted.push(Message::user(compacted_summary));
         compacted.extend(tail);
         CompletionCallAction::patch(RequestPatch::new().history(compacted))
     }
@@ -337,14 +351,15 @@ impl ContextCompactionHook {
         has_active_summary: bool,
         effective_history: &[Message],
     ) -> CompletionCallAction {
-        let estimated = estimate_context_tokens(effective_history);
+        let request_history = prepend_initial_context(&self.initial_context, effective_history);
+        let estimated = estimate_context_tokens(&request_history);
         if estimated >= self.context_budget.context_window_tokens {
             return CompletionCallAction::stop(format!(
                 "Context compaction failed and the conversation (~{estimated} tokens) exceeds the model context window ({} tokens).",
                 self.context_budget.context_window_tokens
             ));
         }
-        continue_with_history(has_active_summary, effective_history.to_vec())
+        continue_with_history(has_active_summary, request_history)
     }
 }
 
@@ -361,9 +376,16 @@ fn context_summary_text(summary: &str) -> String {
     )
 }
 
-fn continue_with_history(has_active_summary: bool, history: Vec<Message>) -> CompletionCallAction {
+fn prepend_initial_context(initial_context: &[Message], history: &[Message]) -> Vec<Message> {
+    initial_context.iter().chain(history).cloned().collect()
+}
+
+fn continue_with_history(
+    has_active_summary: bool,
+    request_history: Vec<Message>,
+) -> CompletionCallAction {
     if has_active_summary {
-        CompletionCallAction::patch(RequestPatch::new().history(history))
+        CompletionCallAction::patch(RequestPatch::new().history(request_history))
     } else {
         CompletionCallAction::Continue
     }
@@ -735,6 +757,55 @@ mod tests {
         }
         assert_eq!(effective[1], user_text("kept a"));
         assert_eq!(effective[2], user_text("kept b"));
+    }
+
+    #[test]
+    fn reinserts_initial_context_before_compacted_history_without_summarizing_it() {
+        let initial_context = vec![user_text("canonical workspace context")];
+        let history = vec![user_text("covered"), user_text("kept")];
+        let active = CompactedContext {
+            summary: "Prior work is done.".to_string(),
+            replaced_prefix_len: 1,
+            reasoning_from_len: 1,
+        };
+
+        let (effective, _) = rebuild_effective_history(&history, Some(&active));
+        let request_history = prepend_initial_context(&initial_context, &effective);
+
+        assert_eq!(request_history[0], initial_context[0]);
+        assert!(is_summary_user_message(&request_history[1]));
+        assert_eq!(request_history[2], user_text("kept"));
+        assert_eq!(
+            request_history
+                .iter()
+                .filter(|message| **message == initial_context[0])
+                .count(),
+            1
+        );
+        let summarized = completion_messages_json(effective.iter())
+            .expect("serialize summary input")
+            .to_string();
+        assert!(!summarized.contains("canonical workspace context"));
+    }
+
+    #[test]
+    fn active_summary_history_patch_keeps_initial_context_at_the_front() {
+        let initial_context = vec![user_text("canonical workspace context")];
+        let effective = vec![
+            user_text(&context_summary_text("summary")),
+            user_text("kept"),
+        ];
+
+        let CompletionCallAction::Patch(patch) =
+            continue_with_history(true, prepend_initial_context(&initial_context, &effective))
+        else {
+            panic!("active summaries must patch request history");
+        };
+        let history = patch.history.expect("patched history");
+
+        assert_eq!(history[0], initial_context[0]);
+        assert!(is_summary_user_message(&history[1]));
+        assert_eq!(history[2], user_text("kept"));
     }
 
     #[test]
