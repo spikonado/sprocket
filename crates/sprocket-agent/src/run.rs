@@ -118,12 +118,12 @@ fn build_workspace_prompt_context(
         let mut blocks = Vec::new();
         if !user_instructions.is_empty() {
             blocks.push(format!(
-                "# The user's AGENTS.md:\n<INSTRUCTIONS>\n{user_instructions}\n</INSTRUCTIONS>"
+                "### The user's AGENTS.md\n<INSTRUCTIONS>\n{user_instructions}\n</INSTRUCTIONS>"
             ));
         }
         if !project_instructions.is_empty() {
             blocks.push(format!(
-                "# AGENTS.md instructions for {workspace_path}:\n<INSTRUCTIONS>\n{project_instructions}\n</INSTRUCTIONS>"
+                "### AGENTS.md instructions for {workspace_path}\n<INSTRUCTIONS>\n{project_instructions}\n</INSTRUCTIONS>"
             ));
         }
         blocks.join("\n\n")
@@ -214,7 +214,9 @@ fn build_workspace_prompt_context(
     .join("\n");
     let initial_context = Message::user(
         [
-            "The following thread-scoped workspace context was loaded when this conversation began.",
+            "# Thread-Scoped Workspace Context",
+            "",
+            "The following workspace context was loaded when this conversation began.",
             "",
             "## Available Skills",
             "",
@@ -1002,6 +1004,7 @@ mod tests {
         }];
         let prompt_context = build_workspace_prompt_context("/tmp/project", &[], &skills);
         let initial_context = initial_context_text(&prompt_context.initial_context);
+        assert!(initial_context.starts_with("# Thread-Scoped Workspace Context\n"));
         assert!(initial_context.contains("## Available Skills"));
         assert!(initial_context.contains("<SKILLS>"));
         assert!(initial_context.contains("- name: pdf-processing"));
@@ -1056,10 +1059,18 @@ mod tests {
         let prompt_context = build_workspace_prompt_context("/tmp/project", &instructions, &[]);
         let initial_context = initial_context_text(&prompt_context.initial_context);
 
-        let user_heading = "# The user's AGENTS.md:";
-        let workspace_heading = "# AGENTS.md instructions for /tmp/project:";
+        let user_heading = "### The user's AGENTS.md";
+        let workspace_heading = "### AGENTS.md instructions for /tmp/project";
+        let agents_heading = "## Preloaded AGENTS.md Instructions";
+        assert!(initial_context.contains(agents_heading));
         assert!(initial_context.contains(user_heading));
         assert!(initial_context.contains(workspace_heading));
+        assert!(
+            initial_context
+                .find(agents_heading)
+                .expect("agents heading")
+                < initial_context.find(user_heading).expect("user heading")
+        );
         assert!(
             initial_context.find(user_heading).expect("user heading")
                 < initial_context
