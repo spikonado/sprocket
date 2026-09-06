@@ -77,7 +77,8 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) run_started_at: u64,
     pub(crate) live: Arc<LiveCompletionHub>,
     pub(crate) prompt: Message,
-    pub(crate) preamble: String,
+    pub(crate) base_instructions: String,
+    pub(crate) initial_context: Vec<Message>,
     pub(crate) prior_history: Vec<Message>,
     pub(crate) workspace_root: PathBuf,
     pub(crate) skills: Arc<[WorkspaceSkill]>,
@@ -167,7 +168,7 @@ where
     let session_shutdown = CommandSessionShutdown::new(tools.command_sessions.clone());
     let agent = completion_client
         .agent(model)
-        .preamble(&request.preamble)
+        .preamble(&request.base_instructions)
         .tool(tools.apply_patch)
         .tool(tools.ask_question)
         .tool(tools.await_question)
@@ -222,6 +223,7 @@ where
 
     let prompt_hook = AgentPromptHook::new(tool_call_tracker);
     let prior_history_len = request.prior_history.len();
+    let initial_context: Arc<[Message]> = request.initial_context.into();
     let gateway_hook = GatewayRequestHook::new(
         request.reasoning_effort.clone(),
         request.service_tier.clone(),
@@ -235,6 +237,7 @@ where
         request.service_tier,
         request.context_budget,
         prior_history_len,
+        initial_context.clone(),
         gateway_url,
         persist_reasoning_replay,
     );
@@ -250,9 +253,10 @@ where
         }
     };
 
+    let history = initial_context.iter().cloned().chain(request.prior_history);
     let mut stream = agent
         .stream_prompt(request.prompt)
-        .history(request.prior_history)
+        .history(history)
         .max_turns(AGENT_MAX_TURNS)
         .add_hook(prompt_hook)
         .add_hook(gateway_hook)

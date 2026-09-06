@@ -291,6 +291,50 @@ fn first_index(events: &[Observed], kind: Observed) -> Option<usize> {
     events.iter().position(|event| *event == kind)
 }
 
+#[test]
+fn responses_keep_thread_context_in_history_and_base_instructions_separate() {
+    const BASE_INSTRUCTIONS: &str = "stable base instructions";
+    const INITIAL_CONTEXT: &str = "unique initial workspace context";
+
+    let client = openai::Client::builder()
+        .api_key("test-key")
+        .base_url("http://127.0.0.1:1")
+        .build()
+        .expect("openai responses client");
+    let model = client.completion_model("gateway-model");
+    let request = model
+        .completion_request(Message::user("current request"))
+        .preamble(BASE_INSTRUCTIONS.to_string())
+        .messages([
+            Message::user(INITIAL_CONTEXT),
+            Message::user("earlier request"),
+            Message::assistant("earlier response"),
+        ])
+        .build();
+    let wire =
+        openai::responses_api::CompletionRequest::try_from(("gateway-model".to_string(), request))
+            .expect("native responses request");
+    let wire = serde_json::to_value(wire).expect("serialize responses request");
+
+    assert_eq!(wire["instructions"], BASE_INSTRUCTIONS);
+    assert!(
+        !wire["instructions"]
+            .as_str()
+            .unwrap()
+            .contains(INITIAL_CONTEXT)
+    );
+    let input = wire["input"].as_array().expect("responses input");
+    assert_eq!(input[0]["role"], "user");
+    assert!(input[0].to_string().contains(INITIAL_CONTEXT));
+    assert_eq!(
+        input
+            .iter()
+            .filter(|item| item.to_string().contains(INITIAL_CONTEXT))
+            .count(),
+        1
+    );
+}
+
 #[tokio::test]
 async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
     let (base_url, server) = spawn_gateway_sse(gateway_sse_body());
