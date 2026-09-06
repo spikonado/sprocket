@@ -356,7 +356,11 @@ describe('installed and hosted auth', () => {
 		stubInstalledWindow();
 		let polls = 0;
 		const fetch = stubFetch({
-			desktopStart: () => jsonResponse(200, { authorizationUrl: 'https://authkit.example/native', loginId: 'login-1' }),
+			desktopStart: () =>
+				jsonResponse(200, {
+					authorizationUrl: 'https://authkit.example/native',
+					loginId: 'login-1'
+				}),
 			desktopResult: () => {
 				polls += 1;
 				if (polls === 1) return jsonResponse(503, { error: 'Unavailable' });
@@ -370,7 +374,9 @@ describe('installed and hosted auth', () => {
 		await login;
 		expect(polls).toBe(3);
 		expect(get(authState).user).toEqual(nativeUser);
-		expect(fetch.mock.calls.filter(([input]) => requestUrl(input).endsWith('/start'))).toHaveLength(1);
+		expect(fetch.mock.calls.filter(([input]) => requestUrl(input).endsWith('/start'))).toHaveLength(
+			1
+		);
 	});
 
 	it('shares inflight native token requests', async () => {

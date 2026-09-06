@@ -42,8 +42,10 @@ export const convexAuthRetryVersion = writable(0);
 /** UI-only: stays true until Convex confirms or rejects the post-retry token. */
 export const convexAuthRetryPending = writable(false);
 
-type AuthClient = Pick<Awaited<ReturnType<typeof createClient>>,
-	'getUser' | 'getAccessToken' | 'signIn' | 'signUp' | 'signOut' | 'getSignInUrl' | 'getSignUpUrl'>;
+type AuthClient = Pick<
+	Awaited<ReturnType<typeof createClient>>,
+	'getUser' | 'getAccessToken' | 'signIn' | 'signUp' | 'signOut' | 'getSignInUrl' | 'getSignUpUrl'
+>;
 type AuthBootstrapClient = {
 	query: (
 		query: typeof api.authBootstrap.getClientConfig,
@@ -842,7 +844,9 @@ async function fetchDesktopLoginResult(signal: AbortSignal) {
 	}
 	if (isTransientHttpStatus(response.status)) return null;
 	if (!response.ok) {
-		throw new Error(await errorMessageFromFailedResponse(response, 'Failed to check desktop sign-in status.'));
+		throw new Error(
+			await errorMessageFromFailedResponse(response, 'Failed to check desktop sign-in status.')
+		);
 	}
 	return desktopLoginResultSchema.parse(await response.json());
 }
