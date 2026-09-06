@@ -54,7 +54,7 @@
 			: showConfirming
 				? 'Verifying your secure connection before opening your projects.'
 				: authState.connectionFailed
-					? 'You’re signed in, but the secure connection could not be confirmed. Retry or sign out and sign in again.'
+					? 'Your session could not be confirmed. Retry when the connection is available.'
 					: showPreparing
 						? 'Getting account sign-in ready. This usually takes a moment.'
 						: 'Sign in to sync your coding threads, streaming responses, and projects.'
@@ -82,12 +82,12 @@
 		{/if}
 
 		{#snippet actions()}
+			{#if authState.connectionFailed && authState.isConfigured}
+				<Button onclick={onRetry} disabled={authState.isLoading}>{retryLabel}</Button>
+			{/if}
 			{#if authState.isAuthenticated}
-				{#if authState.connectionFailed}
-					<Button onclick={onRetry} disabled={authState.isLoading}>{retryLabel}</Button>
-				{/if}
 				<Button variant="outline" onclick={onSignOut}>Sign Out</Button>
-			{:else if authState.isConfigured}
+			{:else if authState.isConfigured && !authState.connectionFailed}
 				<Button onclick={onSignIn} disabled={authState.isLoading}>Sign In</Button>
 				<Button variant="outline" onclick={onSignUp} disabled={authState.isLoading}>
 					Create Account

@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { LogOut } from '@lucide/svelte';
-	import type { User } from '@workos-inc/authkit-js';
 	import { useAuth, useQuery } from 'convex-svelte';
 	import { api } from '$convex/_generated/api';
 	import { tierLabels } from '$convex/lib/tiers';
+	import type { AuthUser } from '$lib/auth';
 	import Button from '$lib/components/ui/button/button.svelte';
 
 	type Props = {
-		user: User | null;
+		user: AuthUser | null;
 		onSignOut: () => void;
 	};
 

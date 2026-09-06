@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Id } from '$convex/_generated/dataModel';
 import {
 	createLocalClient,
+	ensureLocalSession,
 	readWorkspaceLaunchFromHash,
 	workspaceLaunchHash
 } from '$lib/local/client';
@@ -18,6 +19,32 @@ function runId(value: string): Id<'runs'> {
 
 afterEach(() => {
 	vi.unstubAllGlobals();
+});
+
+describe('local pairing', () => {
+	it("shares startup pairing so auth and the local API do not replace each other's cookie", async () => {
+		vi.stubGlobal('window', { location: { hash: '' } });
+		const fetch = vi.fn(async (url: string) => {
+			if (url.endsWith('/api/auth/session')) {
+				return Response.json({ authenticated: false });
+			}
+			return Response.json({ authenticated: true });
+		});
+		vi.stubGlobal('fetch', fetch);
+		const bootstrap = { httpBaseUrl: 'http://localhost:17731', pairingCredential: 'test' };
+		await Promise.all([
+			ensureLocalSession(bootstrap.httpBaseUrl, bootstrap),
+			ensureLocalSession(bootstrap.httpBaseUrl, bootstrap)
+		]);
+		expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+			`${bootstrap.httpBaseUrl}/api/auth/session`,
+			`${bootstrap.httpBaseUrl}/api/auth/bootstrap`
+		]);
+
+		fetch.mockClear();
+		await ensureLocalSession(bootstrap.httpBaseUrl, bootstrap);
+		expect(fetch).toHaveBeenCalledTimes(2);
+	});
 });
 
 describe('workspace launch fragments', () => {

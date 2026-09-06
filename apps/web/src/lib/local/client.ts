@@ -394,7 +394,23 @@ export async function hasLocalSession(baseUrl: string): Promise<boolean> {
 	return session.success ? Boolean(session.data.authenticated) : false;
 }
 
+const localSessionRequests = new Map<string, Promise<void>>();
+
 export async function ensureLocalSession(baseUrl: string, bootstrap?: LocalBootstrap | null) {
+	const pending = localSessionRequests.get(baseUrl);
+	if (pending) {
+		return await pending;
+	}
+	const request = establishLocalSession(baseUrl, bootstrap);
+	localSessionRequests.set(baseUrl, request);
+	try {
+		await request;
+	} finally {
+		localSessionRequests.delete(baseUrl);
+	}
+}
+
+async function establishLocalSession(baseUrl: string, bootstrap?: LocalBootstrap | null) {
 	if (await hasLocalSession(baseUrl)) {
 		return;
 	}

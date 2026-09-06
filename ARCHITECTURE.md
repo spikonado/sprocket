@@ -52,9 +52,9 @@ The system has three main planes:
 3. **Cloud coordination plane:** Convex stores durable application state and
    coordinates run ownership. Completions go through the AI gateway.
 
-WorkOS establishes cloud user identity. Installed clients hold two independent
-WorkOS sessions: AuthKit JS owns the renderer session, while Rust owns the
-native session used by agent runs and machine registration. A separate local
+WorkOS establishes cloud user identity. Installed clients share one Rust-owned
+WorkOS session across the renderer, agent runs, and machine registration.
+Hosted web clients use AuthKit JS. A separate local
 pairing mechanism authorizes the browser or Electron renderer to access the
 machine-facing API.
 
@@ -203,12 +203,13 @@ that order and keeps no cross-thread transcript cache.
 
 Cloud and local authorization solve different problems:
 
-- **Browser cloud identity:** AuthKit JS owns a browser session and supplies
-  access tokens to the renderer's direct Convex client. Convex validates them
+- **Browser cloud identity:** AuthKit JS owns the hosted web session. Installed
+  renderers obtain short-lived access tokens from the Rust-owned session through
+  the paired, same-origin, loopback-only native token endpoint. Convex validates them
   as JWTs (`apps/web/src/convex/auth.config.ts`) and checks ownership before
   reading or changing user records.
-- **Native cloud identity:** Rust owns a separate WorkOS authorization-code
-  session for machine-side work. It generates PKCE and state, exchanges the
+- **Native cloud identity:** Rust owns the installed client's WorkOS authorization-code
+  session. It generates PKCE and state, exchanges the
   code on the loopback callback, keeps the access token in memory, and stores
   the refresh token in the operating system credential store. Rust fetches the
   public WorkOS client ID from the unauthenticated Convex query
@@ -237,9 +238,11 @@ deployment choice.
 
 The native authorization callback accepts only a loopback socket peer. Its
 pending state and PKCE verifier never enter the renderer, and the callback does
-not return the authorization code to JavaScript. The installed renderer then
-starts a separate AuthKit browser login. Installed sign-out clears the native
-credential before signing out the browser session.
+not return the authorization code to JavaScript. The installed renderer resumes
+that same session without another AuthKit browser login. Access-token responses
+are never cached, and refresh tokens never enter JavaScript. Installed sign-out
+clears the native credential. A missing or temporarily unavailable browser session
+does not sign out native work.
 
 Desktop releases package the renderer build and Rust server in the same
 installer, and Electron always launches the bundled server binary. These two

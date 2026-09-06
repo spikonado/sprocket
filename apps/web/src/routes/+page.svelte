@@ -110,6 +110,9 @@
 			$authState.nativeSession === 'mismatch' ||
 			$authState.nativeSession === 'unavailable'
 	);
+	const nativeSignInRequired = $derived(
+		$authState.nativeSession === 'missing' || $authState.nativeSession === 'mismatch'
+	);
 	const authReady = $derived(
 		$authState.isReady &&
 			!$authState.isLoading &&
@@ -2151,8 +2154,8 @@
 			overlayOpen={$authState.isWaitingForBrowserSignIn}
 			onSignIn={() => void signIn()}
 			onSignOut={() => void signOut()}
-			onRetry={() => void (nativeAuthBlocked ? signIn() : retryConvexAuthentication())}
-			retryLabel={nativeAuthBlocked ? 'Finish sign-in' : 'Retry'}
+			onRetry={() => void (nativeSignInRequired ? signIn() : retryConvexAuthentication())}
+			retryLabel={nativeSignInRequired ? 'Finish sign-in' : 'Retry'}
 			onSignUp={() => void signUp()}
 		/>
 		<BrowserSignInOverlay
