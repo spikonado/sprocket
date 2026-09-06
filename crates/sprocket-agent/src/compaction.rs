@@ -202,7 +202,12 @@ impl ContextCompactionHook {
             self.context_budget.auto_compact_token_limit,
         );
         if split == 0 {
-            return continue_with_history(active_summary.is_some(), request_history);
+            return continue_without_compaction(
+                active_summary.is_some(),
+                request_history,
+                self.context_budget.context_window_tokens,
+                "The conversation has no history that can be compacted",
+            );
         }
 
         let prefix = &effective_history[..split];
@@ -352,14 +357,12 @@ impl ContextCompactionHook {
         effective_history: &[Message],
     ) -> CompletionCallAction {
         let request_history = prepend_initial_context(&self.initial_context, effective_history);
-        let estimated = estimate_context_tokens(&request_history);
-        if estimated >= self.context_budget.context_window_tokens {
-            return CompletionCallAction::stop(format!(
-                "Context compaction failed and the conversation (~{estimated} tokens) exceeds the model context window ({} tokens).",
-                self.context_budget.context_window_tokens
-            ));
-        }
-        continue_with_history(has_active_summary, request_history)
+        continue_without_compaction(
+            has_active_summary,
+            request_history,
+            self.context_budget.context_window_tokens,
+            "Context compaction failed",
+        )
     }
 }
 
@@ -389,6 +392,21 @@ fn continue_with_history(
     } else {
         CompletionCallAction::Continue
     }
+}
+
+fn continue_without_compaction(
+    has_active_summary: bool,
+    request_history: Vec<Message>,
+    context_window_tokens: u64,
+    overflow_reason: &str,
+) -> CompletionCallAction {
+    let estimated = estimate_context_tokens(&request_history);
+    if estimated >= context_window_tokens {
+        return CompletionCallAction::stop(format!(
+            "{overflow_reason}, and the conversation (~{estimated} tokens) exceeds the model context window ({context_window_tokens} tokens)."
+        ));
+    }
+    continue_with_history(has_active_summary, request_history)
 }
 
 fn rebuild_effective_history(
@@ -806,6 +824,23 @@ mod tests {
         assert_eq!(history[0], initial_context[0]);
         assert!(is_summary_user_message(&history[1]));
         assert_eq!(history[2], user_text("kept"));
+    }
+
+    #[test]
+    fn uncompacted_history_cannot_exceed_the_model_context_window() {
+        let request_history = vec![user_text(&"x".repeat(400))];
+        let action = continue_without_compaction(
+            false,
+            request_history,
+            50,
+            "The conversation has no history that can be compacted",
+        );
+
+        let CompletionCallAction::Stop(reason) = action else {
+            panic!("oversized uncompacted history must stop the run");
+        };
+        assert!(reason.contains("no history that can be compacted"));
+        assert!(reason.contains("exceeds the model context window (50 tokens)"));
     }
 
     #[test]
