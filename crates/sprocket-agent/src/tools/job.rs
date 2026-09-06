@@ -223,6 +223,31 @@ where
     F: FnOnce(WorkspaceCancellation) -> Fut,
     Fut: std::future::Future<Output = Result<serde_json::Value, ToolExecutionError>>,
 {
+    execute_tool_job_with_id(
+        runtime,
+        run_id,
+        claim_id,
+        kind,
+        tool_call_tracker,
+        payload,
+        |cancellation, _job_id| operation(cancellation),
+    )
+    .await
+}
+
+pub(super) async fn execute_tool_job_with_id<F, Fut>(
+    runtime: &RuntimeClient,
+    run_id: &str,
+    claim_id: &str,
+    kind: &str,
+    tool_call_tracker: &ToolCallTracker,
+    payload: serde_json::Value,
+    operation: F,
+) -> Result<serde_json::Value, ToolExecutionError>
+where
+    F: FnOnce(WorkspaceCancellation, String) -> Fut,
+    Fut: std::future::Future<Output = Result<serde_json::Value, ToolExecutionError>>,
+{
     eprintln!("sprocket-agent: starting tool {} for run {}", kind, run_id);
     let mut run_updates = runtime
         .run_finished_subscription(run_id)
@@ -242,7 +267,7 @@ where
         begin_executor_job(runtime, run_id, claim_id, kind, tool_call_tracker, &payload).await?;
 
     let cancellation = WorkspaceCancellation::new();
-    let operation = operation(cancellation.clone());
+    let operation = operation(cancellation.clone(), job_id.clone());
     tokio::pin!(operation);
     let operation_result = loop {
         tokio::select! {

@@ -361,3 +361,191 @@ describe('context summary cutoff migration', () => {
 		});
 	});
 });
+
+describe('attachment retention migrations', () => {
+	it('copies prompt attachments onto threadAttachmentRefs without duplicating', async () => {
+		const t = initConvexTest();
+		const ids = await t.run(async (ctx) => {
+			const threadId = await ctx.db.insert('threadRecords', {
+				userId: 'user_alice',
+				submissionId: 'attach-refs',
+				repositoryKey: 'alpha',
+				selectedModel: 'gpt-5.6-sol',
+				reasoningEffort: 'medium',
+				serviceTier: 'standard',
+				lastMessageAt: 1
+			});
+			const runId = await ctx.db.insert('runs', {
+				threadId,
+				userId: 'user_alice',
+				submissionId: 'attach-refs-run',
+				status: 'completed',
+				executionSecretHash: 'fixture',
+				completionAttemptSeq: 0,
+				selectedModel: 'gpt-5.6-sol',
+				reasoningEffort: 'medium',
+				serviceTier: 'standard',
+				startedAt: 1
+			});
+			const storageId = await ctx.storage.store(new Blob(['file']));
+			const imageUploadId = await ctx.db.insert('imageUploads', {
+				userId: 'user_alice',
+				storageId,
+				name: 'notes.txt',
+				mediaType: 'text/plain',
+				size: 4,
+				attached: true
+			});
+			await ctx.db.insert('threadTranscriptParts', {
+				threadId,
+				userId: 'user_alice',
+				number: 0,
+				sourceKey: 'prompt:attach-refs',
+				kind: 'prompt',
+				runId,
+				prompt: {
+					text: 'Read this',
+					imageUploads: [
+						{
+							imageUploadId,
+							name: 'notes.txt',
+							mediaType: 'text/plain',
+							size: 4,
+							storageId
+						},
+						{
+							imageUploadId,
+							name: 'notes.txt',
+							mediaType: 'text/plain',
+							size: 4,
+							storageId
+						}
+					]
+				}
+			});
+			await ctx.db.insert('threadTranscriptParts', {
+				threadId,
+				userId: 'user_alice',
+				number: 1,
+				sourceKey: 'prompt:attach-refs-again',
+				kind: 'prompt',
+				runId,
+				prompt: {
+					text: 'Again',
+					imageUploads: [
+						{
+							imageUploadId,
+							name: 'notes.txt',
+							mediaType: 'text/plain',
+							size: 4,
+							storageId
+						}
+					]
+				}
+			});
+			return { threadId, imageUploadId };
+		});
+
+		await t.mutation(internal.migrations.backfillThreadAttachmentRefs, oneBatch);
+		await t.mutation(internal.migrations.backfillThreadAttachmentRefs, oneBatch);
+
+		const refs = await t.run(async (ctx) =>
+			ctx.db
+				.query('threadAttachmentRefs')
+				.withIndex('by_threadId_and_imageUploadId', (query) =>
+					query.eq('threadId', ids.threadId).eq('imageUploadId', ids.imageUploadId)
+				)
+				.collect()
+		);
+		expect(refs).toHaveLength(1);
+	});
+
+	it('backfills updatedAt from stored activity instead of a new grace period', async () => {
+		const t = initConvexTest();
+		const threadId = await t.run(async (ctx) => {
+			const threadId = await ctx.db.insert('threadRecords', {
+				userId: 'user_alice',
+				submissionId: 'updated-at',
+				repositoryKey: 'alpha',
+				selectedModel: 'gpt-5.6-sol',
+				reasoningEffort: 'medium',
+				serviceTier: 'standard',
+				lastMessageAt: 1
+			});
+			const runId = await ctx.db.insert('runs', {
+				threadId,
+				userId: 'user_alice',
+				submissionId: 'updated-at-run',
+				status: 'completed',
+				executionSecretHash: 'fixture',
+				completionAttemptSeq: 0,
+				selectedModel: 'gpt-5.6-sol',
+				reasoningEffort: 'medium',
+				serviceTier: 'standard',
+				startedAt: 2,
+				completedAt: 3
+			});
+			await ctx.db.insert('threadTranscriptParts', {
+				threadId,
+				userId: 'user_alice',
+				number: 0,
+				sourceKey: 'prompt:updated-at',
+				kind: 'prompt',
+				runId,
+				prompt: { text: 'Hello', imageUploads: [] }
+			});
+			return threadId;
+		});
+
+		const expected = await t.run(async (ctx) => {
+			const thread = await ctx.db.get('threadRecords', threadId);
+			if (!thread) throw new Error('Missing thread');
+			const part = await ctx.db
+				.query('threadTranscriptParts')
+				.withIndex('by_threadId_and_number', (query) => query.eq('threadId', threadId))
+				.order('desc')
+				.first();
+			return Math.max(thread.lastMessageAt, thread._creationTime, part?._creationTime ?? 0, 3);
+		});
+
+		await t.mutation(internal.migrations.backfillThreadUpdatedAt, oneBatch);
+
+		const migrated = await t.run(async (ctx) => await ctx.db.get('threadRecords', threadId));
+		expect(migrated?.updatedAt).toBe(expected);
+		expect(migrated?.updatedAt).not.toBe(Date.now() + 7 * 24 * 60 * 60 * 1_000);
+	});
+
+	it('stamps attached uploads only after associations are ready', async () => {
+		const t = initConvexTest();
+		const { attachedId, draftId } = await t.run(async (ctx) => {
+			const attachedStorageId = await ctx.storage.store(new Blob(['a']));
+			const draftStorageId = await ctx.storage.store(new Blob(['b']));
+			const attachedId = await ctx.db.insert('imageUploads', {
+				userId: 'user_alice',
+				storageId: attachedStorageId,
+				name: 'attached.txt',
+				mediaType: 'text/plain',
+				size: 1,
+				attached: true
+			});
+			const draftId = await ctx.db.insert('imageUploads', {
+				userId: 'user_alice',
+				storageId: draftStorageId,
+				name: 'draft.txt',
+				mediaType: 'text/plain',
+				size: 1,
+				attached: false
+			});
+			return { attachedId, draftId };
+		});
+
+		await t.mutation(internal.migrations.markImageUploadThreadRefsMigrated, oneBatch);
+
+		expect(await t.run(async (ctx) => await ctx.db.get('imageUploads', attachedId))).toMatchObject({
+			threadRefsMigratedAt: expect.any(Number)
+		});
+		expect(
+			(await t.run(async (ctx) => ctx.db.get('imageUploads', draftId)))?.threadRefsMigratedAt
+		).toBeUndefined();
+	});
+});

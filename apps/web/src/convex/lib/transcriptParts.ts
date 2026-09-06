@@ -167,6 +167,7 @@ export async function appendTranscriptPart(
 	if (args.tool) part.tool = args.tool;
 	const partId = await ctx.db.insert('threadTranscriptParts', part);
 	await ctx.db.patch('threadTranscriptStates', state._id, { totalParts: number + 1 });
+	await ctx.db.patch('threadRecords', args.threadId, { updatedAt: Date.now() });
 	const inserted = await ctx.db.get('threadTranscriptParts', partId);
 	if (!inserted) {
 		throw new Error('Failed to create transcript part.');

@@ -11,4 +11,24 @@ crons.interval(
 
 crons.interval('run convex component migrations', { minutes: 10 }, internal.migrations.run, {});
 
+crons.interval(
+	'delete inactive attached file bytes',
+	{ hours: 1 },
+	internal.imageUploads.cleanupExpired,
+	{}
+);
+
+crons.interval(
+	'expire hosted parse temporaries',
+	{ hours: 1 },
+	internal.hostedParse.cleanupExpired
+);
+
+crons.interval(
+	'delete unregistered file bytes',
+	{ hours: 1 },
+	internal.storageCleanup.cleanupUnregistered,
+	{}
+);
+
 export default crons;

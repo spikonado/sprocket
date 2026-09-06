@@ -24,11 +24,19 @@ pub(crate) fn prompt_text_with_attachments(prompt: &TranscriptPromptBody) -> Str
             })
         })
         .collect::<Vec<_>>();
-    format!(
+    let mut text = format!(
         "{}\n\nAttached files in the local transcript cache:\n{}",
         prompt.text,
         serde_json::json!(attachments)
-    )
+    );
+    if prompt
+        .image_uploads
+        .iter()
+        .any(|attachment| attachment.local_path.is_none())
+    {
+        text.push_str("\nFiles with a null path are unavailable locally and missing or expired in remote storage. Ask the user to reattach them if needed.");
+    }
+    text
 }
 
 pub fn current_run_has_finished_turns(parts: &[TranscriptPart], run_id: &str) -> bool {

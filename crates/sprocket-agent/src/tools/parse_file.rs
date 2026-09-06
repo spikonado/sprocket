@@ -13,7 +13,8 @@ use sprocket_workspace::{WorkspaceCancellation, WorkspaceOperationCancelled};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::context::{AgentToolContext, tool_error};
-use super::job::execute_tool_job;
+use super::hosted_parse::HostedParseContext;
+use super::job::execute_tool_job_with_id;
 use crate::types::AgentHistoryToolResultItem;
 
 pub(crate) const PARSE_FILE_TOOL_NAME: &str = "parse_file";
@@ -92,6 +93,10 @@ struct ParsedText {
     truncated: bool,
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+struct LocalConversionFailed(String);
+
 pub(crate) fn parse_file_cache_dir(thread_dir: impl AsRef<Path>) -> PathBuf {
     thread_dir.as_ref().join("parse_file")
 }
@@ -107,7 +112,7 @@ impl rig::tool::Tool for ParseFileTool {
     type Output = ToolOutput;
 
     fn description(&self) -> String {
-        let docs = "Parse a local file or http(s) URL, up to 64 MiB. Converts Word, PowerPoint, Excel, OpenDocument, RTF, EPUB, CSV, and PDF to Markdown, and returns UTF-8 text for source and other text files. Provide exactly one of path or url. Larger attachments remain available to shell tools.";
+        let docs = "Parse a local file or http(s) URL, up to 64 MiB. Converts Word, PowerPoint, Excel, OpenDocument, RTF, EPUB, CSV, and PDF to Markdown, and returns UTF-8 text for source and other text files. If local document conversion fails, automatically uploads the file to Firecrawl for hosted parsing and OCR, up to 50 MB, at no charge to the user. Provide exactly one of path or url. Larger attachments remain available to shell tools.";
         if self.0.supports_images {
             format!(
                 "{docs} jpeg, png, gif, and webp are returned as the image itself; images larger than 20 MiB or 8192 px on a side are rejected."
@@ -131,20 +136,27 @@ impl rig::tool::Tool for ParseFileTool {
         let workspace_root = self.0.workspace_root.clone();
         let cache_dir = self.0.parse_file_cache_dir.clone();
         let supports_images = self.0.supports_images;
-        let persisted = execute_tool_job(
+        let persisted = execute_tool_job_with_id(
             &self.0.runtime,
             &self.0.run_id,
             &self.0.claim_id,
             Self::NAME,
             &self.0.tool_call_tracker,
             payload,
-            |cancellation| async move {
+            |cancellation, job_id| async move {
+                let hosted = HostedParseContext {
+                    runtime: &self.0.runtime,
+                    run_id: &self.0.run_id,
+                    claim_id: &self.0.claim_id,
+                    job_id: &job_id,
+                };
                 let output = fetch_and_persist_parse_file(
                     &workspace_root,
                     &cache_dir,
                     cancellation,
                     supports_images,
                     args,
+                    Some(&hosted),
                 )
                 .await
                 .map_err(tool_error)?;
@@ -347,9 +359,7 @@ fn detect_anydoc_format(bytes: &[u8], path: &Path, name_hint: &Path) -> Option<a
 }
 
 fn ocr_unavailable_message(detail: impl std::fmt::Display) -> String {
-    format!(
-        "{detail}. parse_file converts PDFs locally and does not run OCR, and it will not send the file to a hosted OCR service"
-    )
+    format!("{detail}. Local AnyDoc conversion does not run OCR; hosted parsing is required")
 }
 
 fn map_anydoc_error(error: anydoc::ConvertError) -> anyhow::Error {
@@ -446,7 +456,8 @@ fn convert_non_image_blocking(
     ensure_not_cancelled(&cancellation)?;
     anyhow::ensure!(!bytes.is_empty(), "file is empty");
     if let Some(format) = detect_anydoc_format(&bytes, &path, &name_hint) {
-        let markdown = anydoc::to_markdown_bytes(&bytes, format).map_err(map_anydoc_error)?;
+        let markdown = anydoc::to_markdown_bytes(&bytes, format)
+            .map_err(|error| LocalConversionFailed(map_anydoc_error(error).to_string()))?;
         return persist_parsed_text(
             &cache_dir,
             &markdown,
@@ -454,9 +465,10 @@ fn convert_non_image_blocking(
             &cancellation,
         );
     }
-    let text = String::from_utf8(bytes).map_err(|_| unsupported_file_error())?;
+    let text = String::from_utf8(bytes)
+        .map_err(|_| LocalConversionFailed(unsupported_file_error().to_string()))?;
     if text.contains('\0') {
-        return Err(unsupported_file_error());
+        return Err(LocalConversionFailed(unsupported_file_error().to_string()).into());
     }
     persist_parsed_text(&cache_dir, &text, "text", &cancellation)
 }
@@ -675,12 +687,24 @@ async fn persist_non_image_file(
     source: ParseFilePersistedSource,
     cache_dir: PathBuf,
     cancellation: &WorkspaceCancellation,
+    hosted: Option<&HostedParseContext<'_>>,
 ) -> anyhow::Result<ParseFilePersistedOutput> {
     let worker_cancellation = cancellation.clone();
-    let parsed = run_cancellable_blocking(cancellation, move || {
-        convert_non_image_blocking(path, name_hint, cache_dir, worker_cancellation)
+    let worker_path = path.clone();
+    let worker_hint = name_hint.clone();
+    let worker_cache = cache_dir.clone();
+    let local = run_cancellable_blocking(cancellation, move || {
+        convert_non_image_blocking(worker_path, worker_hint, worker_cache, worker_cancellation)
     })
-    .await?;
+    .await;
+    let parsed = if let Some(hosted) = hosted {
+        local_or_hosted(local, cache_dir, cancellation, || {
+            super::hosted_parse::parse(hosted, &path, &name_hint, cancellation)
+        })
+        .await?
+    } else {
+        local?
+    };
     Ok(ParseFilePersistedOutput::Text {
         path: parsed.path.to_string_lossy().into_owned(),
         source,
@@ -691,12 +715,39 @@ async fn persist_non_image_file(
     })
 }
 
+async fn local_or_hosted<F, Fut>(
+    local: anyhow::Result<ParsedText>,
+    cache_dir: PathBuf,
+    cancellation: &WorkspaceCancellation,
+    fallback: F,
+) -> anyhow::Result<ParsedText>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<String>>,
+{
+    let error = match local {
+        Ok(parsed) => return Ok(parsed),
+        Err(error) if error.is::<LocalConversionFailed>() => error,
+        Err(error) => return Err(error),
+    };
+    ensure_not_cancelled(cancellation)?;
+    let markdown = fallback()
+        .await
+        .with_context(|| format!("local conversion failed: {error}; hosted fallback failed"))?;
+    let worker_cancellation = cancellation.clone();
+    run_cancellable_blocking(cancellation, move || {
+        persist_parsed_text(&cache_dir, &markdown, "firecrawl", &worker_cancellation)
+    })
+    .await
+}
+
 async fn fetch_and_persist_parse_file(
     workspace_root: &Path,
     cache_dir: &Path,
     cancellation: WorkspaceCancellation,
     supports_images: bool,
     args: ParseFileArgs,
+    hosted: Option<&HostedParseContext<'_>>,
 ) -> anyhow::Result<ParseFilePersistedOutput> {
     let request = parse_file_args(&args)?;
     ensure_not_cancelled(&cancellation)?;
@@ -738,6 +789,7 @@ async fn fetch_and_persist_parse_file(
             source,
             cache_dir.to_path_buf(),
             &cancellation,
+            hosted,
         )
         .await
     }
@@ -973,6 +1025,7 @@ mod tests {
             WorkspaceCancellation::new(),
             supports_images,
             args,
+            None,
         )
         .await
     }
@@ -1149,12 +1202,67 @@ mod tests {
     }
 
     #[test]
-    fn needs_ocr_refuses_hosted_fallback() {
+    fn needs_ocr_preserves_page_details_for_hosted_fallback() {
         let message = ocr_unavailable_message("pages 2, 5-7, 12 of 20 need OCR");
         assert!(message.contains("2, 5-7, 12"), "{message}");
         assert!(message.contains("does not run OCR"), "{message}");
-        assert!(message.contains("hosted OCR"), "{message}");
+        assert!(message.contains("hosted parsing is required"), "{message}");
         assert!(!message.to_lowercase().contains("firecrawl"));
+    }
+
+    #[tokio::test]
+    async fn failed_local_conversion_automatically_caches_hosted_markdown() {
+        let dir = tempfile::tempdir().unwrap();
+        let cancellation = WorkspaceCancellation::new();
+        let error = LocalConversionFailed("scanned PDF needs OCR".into());
+        let parsed = local_or_hosted(
+            Err(error.into()),
+            dir.path().into(),
+            &cancellation,
+            || async { Ok("# Scanned page\nRecognized text".into()) },
+        )
+        .await
+        .unwrap();
+        assert_eq!(parsed.format, "firecrawl");
+        assert!(parsed.preview.contains("Recognized text"));
+        assert_eq!(
+            std::fs::read_to_string(parsed.path).unwrap(),
+            parsed.preview
+        );
+    }
+
+    #[tokio::test]
+    async fn hosted_fallback_does_not_run_on_success_io_errors_or_cancellation() {
+        let dir = tempfile::tempdir().unwrap();
+        let cancellation = WorkspaceCancellation::new();
+        let local = persist_parsed_text(dir.path(), "local text", "text", &cancellation).unwrap();
+        let parsed = local_or_hosted(Ok(local), dir.path().into(), &cancellation, || async {
+            panic!("successful local parsing must not contact Firecrawl")
+        })
+        .await
+        .unwrap();
+        assert_eq!(parsed.format, "text");
+        let error = local_or_hosted(
+            Err(std::io::Error::other("disk full").into()),
+            dir.path().into(),
+            &cancellation,
+            || async { panic!("cache errors must not upload documents") },
+        )
+        .await
+        .err()
+        .unwrap();
+        assert!(error.to_string().contains("disk full"));
+        cancellation.cancel();
+        let error = local_or_hosted(
+            Err(LocalConversionFailed("bad PDF".into()).into()),
+            dir.path().into(),
+            &cancellation,
+            || async { panic!("cancellation must not upload documents") },
+        )
+        .await
+        .err()
+        .unwrap();
+        assert!(error.is::<WorkspaceOperationCancelled>());
     }
 
     #[test]
@@ -1677,6 +1785,7 @@ mod tests {
                 path: Some("shot.png".into()),
                 url: None,
             },
+            None,
         )
         .await
         .expect_err("cancelled");

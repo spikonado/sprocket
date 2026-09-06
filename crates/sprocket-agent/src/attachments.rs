@@ -5,6 +5,10 @@ use tokio::io::AsyncWriteExt;
 
 use crate::transcript::{TranscriptAttachmentMeta, TranscriptPart, TranscriptStore};
 
+#[derive(Debug, thiserror::Error)]
+#[error("attachment is unavailable locally and its remote copy is missing or expired")]
+struct AttachmentUnavailable;
+
 pub async fn download_attachment_to_file(
     url: &str,
     path: &Path,
@@ -20,7 +24,11 @@ pub async fn download_attachment_to_file(
         .connect_timeout(std::time::Duration::from_secs(30))
         .read_timeout(std::time::Duration::from_secs(60))
         .build()?;
-    let mut response = client.get(url).send().await?.error_for_status()?;
+    let response = client.get(url).send().await?;
+    if matches!(response.status().as_u16(), 404 | 410) {
+        return Err(AttachmentUnavailable.into());
+    }
+    let mut response = response.error_for_status()?;
     if let Some(size) = response.content_length() {
         anyhow::ensure!(
             size == expected_size,
@@ -67,10 +75,7 @@ pub async fn cache_attachment(
         } else if tokio::fs::try_exists(&legacy).await? {
             tokio::fs::copy(&legacy, temp.path()).await?;
         } else {
-            let url = attachment
-                .url
-                .as_deref()
-                .context("attachment is missing locally and has no download URL")?;
+            let url = attachment.url.as_deref().ok_or(AttachmentUnavailable)?;
             download_attachment_to_file(url, temp.path(), attachment.size)
                 .await
                 .with_context(|| format!("failed to retrieve attachment {}", attachment.name))?;
@@ -107,12 +112,12 @@ pub(crate) async fn cache_prompt_attachments(
             continue;
         };
         for attachment in &mut prompt.image_uploads {
-            attachment.local_path = Some(
-                cache_attachment(store, user_id, thread_id, attachment)
-                    .await?
-                    .to_string_lossy()
-                    .into_owned(),
-            );
+            attachment.local_path =
+                match cache_attachment(store, user_id, thread_id, attachment).await {
+                    Ok(path) => Some(path.to_string_lossy().into_owned()),
+                    Err(error) if error.is::<AttachmentUnavailable>() => None,
+                    Err(error) => return Err(error),
+                };
         }
     }
     Ok(())
@@ -367,5 +372,40 @@ mod tests {
         );
         assert!(!store.attachment_path("user", "thread", &meta).exists());
         assert!(staged.exists());
+    }
+
+    #[tokio::test]
+    async fn expired_remote_files_do_not_block_history_and_cached_files_remain_usable() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::new(dir.path().into());
+        let cached = attachment("cached", 4);
+        let missing = attachment("expired", 4);
+        let staged = store.pending_attachment_path("user", &cached.storage_id);
+        tokio::fs::create_dir_all(staged.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(staged, b"data").await.unwrap();
+        let mut parts = vec![TranscriptPart {
+            number: 0,
+            source_key: "prompt:0".into(),
+            kind: TranscriptPartKind::Prompt,
+            run_id: "run".into(),
+            created_at: None,
+            prompt: Some(TranscriptPromptBody {
+                text: "Continue".into(),
+                image_uploads: vec![cached, missing],
+            }),
+            completion: None,
+            tool: None,
+        }];
+        cache_prompt_attachments(&store, "user", "thread", &mut parts)
+            .await
+            .unwrap();
+        let prompt = parts[0].prompt.as_ref().unwrap();
+        assert!(prompt.image_uploads[0].local_path.is_some());
+        assert!(prompt.image_uploads[1].local_path.is_none());
+        let text = crate::transcript::prompt_text_with_attachments(prompt);
+        assert!(text.contains("reattach"));
+        assert!(text.contains("Continue"));
     }
 }

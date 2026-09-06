@@ -112,10 +112,14 @@ export default defineSchema({
 		// runId:claimId:attemptSeq that wrote the current part-number cutoff.
 		contextSummaryHandoffKey: v.optional(v.string()),
 		lastMessageAt: v.number(),
+		// Last visible run or transcript activity. Attachment retention uses this
+		// rather than lastMessageAt, which only moves on user prompts.
+		updatedAt: v.optional(v.number()),
 		archivedAt: v.optional(v.number())
 	})
 		.index('by_userId_submissionId', ['userId', 'submissionId'])
 		.index('by_userId_lastMessageAt', ['userId', 'lastMessageAt'])
+		.index('by_userId_and_updatedAt', ['userId', 'updatedAt'])
 		.index('by_userId_repositoryKey', ['userId', 'repositoryKey'])
 		.index('by_userId_and_repositoryKey_and_archivedAt_and_lastMessageAt', [
 			'userId',
@@ -214,13 +218,45 @@ export default defineSchema({
 		name: v.string(),
 		mediaType: v.string(),
 		size: v.number(),
-		// Deprecated: attachment retention uses `attached`.
+		// Deprecated: attachment retention uses `attached` plus threadAttachmentRefs.
 		messageIds: v.optional(v.array(v.string())),
-		attached: v.boolean()
+		attached: v.boolean(),
+		// Set after historical prompt associations are backfilled, or on first
+		// attach of a new upload. Attached storage is not deleted until this is set.
+		threadRefsMigratedAt: v.optional(v.number()),
+		storageDeletedAt: v.optional(v.number())
 	})
 		.index('by_userId', ['userId'])
 		.index('by_storageId', ['storageId'])
-		.index('by_attached', ['attached']),
+		.index('by_attached_and_storageDeletedAt', ['attached', 'storageDeletedAt']),
+	threadAttachmentRefs: defineTable({
+		threadId: v.id('threadRecords'),
+		imageUploadId: v.id('imageUploads')
+	})
+		.index('by_threadId_and_imageUploadId', ['threadId', 'imageUploadId'])
+		.index('by_imageUploadId_and_threadId', ['imageUploadId', 'threadId']),
+	hostedParseRequests: defineTable({
+		jobId: v.id('executorJobs'),
+		runId: v.id('runs'),
+		userId: v.string(),
+		claimId: v.string(),
+		status: v.union(
+			v.literal('awaiting_upload'),
+			v.literal('pending'),
+			v.literal('completed'),
+			v.literal('failed')
+		),
+		uploadUrl: v.optional(v.string()),
+		inputStorageId: v.optional(v.id('_storage')),
+		resultStorageId: v.optional(v.id('_storage')),
+		filename: v.optional(v.string()),
+		error: v.optional(v.string()),
+		expiresAt: v.number()
+	})
+		.index('by_jobId', ['jobId'])
+		.index('by_inputStorageId', ['inputStorageId'])
+		.index('by_resultStorageId', ['resultStorageId'])
+		.index('by_expiresAt', ['expiresAt']),
 	executorJobs: defineTable({
 		threadId: v.id('threadRecords'),
 		runId: v.id('runs'),

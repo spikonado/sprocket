@@ -36,7 +36,10 @@ export async function markImageUploadsAttached(
 ): Promise<void> {
 	for (const upload of uploads) {
 		if (!upload.attached) {
-			await ctx.db.patch('imageUploads', upload._id, { attached: true });
+			await ctx.db.patch('imageUploads', upload._id, {
+				attached: true,
+				threadRefsMigratedAt: Date.now()
+			});
 		}
 	}
 }

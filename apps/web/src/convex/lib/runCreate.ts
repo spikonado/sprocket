@@ -110,7 +110,8 @@ export async function createQueuedRunRecord(
 			selectedModel: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
 			serviceTier: args.serviceTier,
-			lastMessageAt: now
+			lastMessageAt: now,
+			updatedAt: now
 		});
 		await ctx.db.insert('threadUsage', {
 			threadId,
@@ -203,7 +204,8 @@ export async function createQueuedRunRecord(
 		selectedModel: args.selectedModel,
 		reasoningEffort: args.reasoningEffort,
 		serviceTier: args.serviceTier,
-		lastMessageAt: continuationOfRunId ? threadRecord.lastMessageAt : Date.now()
+		lastMessageAt: continuationOfRunId ? threadRecord.lastMessageAt : Date.now(),
+		updatedAt: Date.now()
 	};
 	await ctx.db.patch('threadRecords', threadRecord._id, threadUpdates);
 	const lifecycleWorkflowId = await startRunLifecycle(ctx, runId);

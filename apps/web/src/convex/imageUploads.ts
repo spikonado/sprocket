@@ -1,12 +1,38 @@
-import type { Doc } from '@convex/_generated/dataModel';
+import type { Doc, Id } from '@convex/_generated/dataModel';
 import { internalMutation, mutation, type MutationCtx } from '@convex/_generated/server';
 import { v, type Infer } from 'convex/values';
 import { getUserId } from '@convex/lib/auth';
 import { vRegisterImageUploadResult } from '@convex/lib/docs';
 import { registeredFileUploadError } from '@convex/lib/validators';
+import { registeredParseStorage } from '@convex/lib/hostedParse';
+import { internal } from '@convex/_generated/api';
+import {
+	ATTACHMENT_CLEANUP_UPLOAD_BATCH,
+	expireUploadIfInactive
+} from '@convex/lib/attachmentRetention';
 
 const ORPHAN_RETENTION_MS = 24 * 60 * 60 * 1_000;
 const ORPHAN_CLEANUP_BATCH_SIZE = 100;
+
+type ExpiredCleanupArgs = {
+	cursor?: string | null;
+	remainingUploadIds?: Id<'imageUploads'>[];
+	continueUploadId?: Id<'imageUploads'>;
+	exclusiveThreadId?: Id<'threadRecords'>;
+	activityFenceAt?: number;
+};
+
+function expiredCleanupArgs(args: ExpiredCleanupArgs): ExpiredCleanupArgs {
+	const next: ExpiredCleanupArgs = {};
+	if (args.cursor !== undefined) next.cursor = args.cursor;
+	if (args.remainingUploadIds && args.remainingUploadIds.length > 0) {
+		next.remainingUploadIds = args.remainingUploadIds;
+	}
+	if (args.continueUploadId !== undefined) next.continueUploadId = args.continueUploadId;
+	if (args.exclusiveThreadId !== undefined) next.exclusiveThreadId = args.exclusiveThreadId;
+	if (args.activityFenceAt !== undefined) next.activityFenceAt = args.activityFenceAt;
+	return next;
+}
 
 export type RegisterImageUploadResult = Infer<typeof vRegisterImageUploadResult>;
 
@@ -38,6 +64,9 @@ export const register = mutation({
 			return await uploadResult(ctx, existing);
 		}
 
+		if (await registeredParseStorage(ctx, args.storageId)) {
+			return { error: 'Temporary parse files cannot be registered as attachments.' };
+		}
 		const metadata = await ctx.db.system.get('_storage', args.storageId);
 		if (!metadata) {
 			return { error: 'Uploaded file was not found.' };
@@ -94,8 +123,11 @@ export const cleanupOrphans = internalMutation({
 	handler: async (ctx) => {
 		const uploads = await ctx.db
 			.query('imageUploads')
-			.withIndex('by_attached', (query) =>
-				query.eq('attached', false).lt('_creationTime', Date.now() - ORPHAN_RETENTION_MS)
+			.withIndex('by_attached_and_storageDeletedAt', (query) =>
+				query
+					.eq('attached', false)
+					.eq('storageDeletedAt', undefined)
+					.lt('_creationTime', Date.now() - ORPHAN_RETENTION_MS)
 			)
 			.take(ORPHAN_CLEANUP_BATCH_SIZE);
 		for (const upload of uploads) {
@@ -103,6 +135,109 @@ export const cleanupOrphans = internalMutation({
 			await ctx.db.delete('imageUploads', upload._id);
 		}
 		return uploads.length;
+	}
+});
+
+export const cleanupExpired = internalMutation({
+	args: {
+		cursor: v.optional(v.union(v.string(), v.null())),
+		remainingUploadIds: v.optional(v.array(v.id('imageUploads'))),
+		continueUploadId: v.optional(v.id('imageUploads')),
+		exclusiveThreadId: v.optional(v.id('threadRecords')),
+		activityFenceAt: v.optional(v.number())
+	},
+	returns: v.number(),
+	handler: async (ctx, args): Promise<number> => {
+		const now = Date.now();
+		let deleted = 0;
+		const remainingUploadIds = [...(args.remainingUploadIds ?? [])];
+
+		if (args.continueUploadId) {
+			const continued = await ctx.db.get('imageUploads', args.continueUploadId);
+			if (continued) {
+				const result = await expireUploadIfInactive(ctx, continued, now, {
+					exclusiveThreadId: args.exclusiveThreadId,
+					activityFenceAt: args.activityFenceAt
+				});
+				deleted += result.deleted;
+				if (result.continueFromThreadId !== undefined) {
+					await ctx.scheduler.runAfter(
+						0,
+						internal.imageUploads.cleanupExpired,
+						expiredCleanupArgs({
+							cursor: args.cursor,
+							remainingUploadIds,
+							continueUploadId: continued._id,
+							exclusiveThreadId: result.continueFromThreadId,
+							activityFenceAt: result.activityFenceAt
+						})
+					);
+					return deleted;
+				}
+			}
+		}
+
+		while (remainingUploadIds.length > 0) {
+			const uploadId = remainingUploadIds.shift();
+			if (!uploadId) break;
+			const upload = await ctx.db.get('imageUploads', uploadId);
+			if (!upload) continue;
+			const result = await expireUploadIfInactive(ctx, upload, now);
+			deleted += result.deleted;
+			if (result.continueFromThreadId !== undefined) {
+				await ctx.scheduler.runAfter(
+					0,
+					internal.imageUploads.cleanupExpired,
+					expiredCleanupArgs({
+						cursor: args.cursor,
+						remainingUploadIds,
+						continueUploadId: upload._id,
+						exclusiveThreadId: result.continueFromThreadId,
+						activityFenceAt: result.activityFenceAt
+					})
+				);
+				return deleted;
+			}
+		}
+
+		if (args.continueUploadId !== undefined && args.cursor === undefined) {
+			return deleted;
+		}
+
+		const page = await ctx.db
+			.query('imageUploads')
+			.withIndex('by_attached_and_storageDeletedAt', (query) =>
+				query.eq('attached', true).eq('storageDeletedAt', undefined)
+			)
+			.paginate({
+				numItems: ATTACHMENT_CLEANUP_UPLOAD_BATCH,
+				cursor: args.cursor ?? null
+			});
+		const nextCursor = page.isDone ? undefined : page.continueCursor;
+
+		for (const [index, upload] of page.page.entries()) {
+			const result = await expireUploadIfInactive(ctx, upload, now);
+			deleted += result.deleted;
+			if (result.continueFromThreadId !== undefined) {
+				await ctx.scheduler.runAfter(
+					0,
+					internal.imageUploads.cleanupExpired,
+					expiredCleanupArgs({
+						cursor: nextCursor,
+						remainingUploadIds: page.page.slice(index + 1).map((row) => row._id),
+						continueUploadId: upload._id,
+						exclusiveThreadId: result.continueFromThreadId,
+						activityFenceAt: result.activityFenceAt
+					})
+				);
+				return deleted;
+			}
+		}
+
+		if (nextCursor !== undefined) {
+			await ctx.scheduler.runAfter(0, internal.imageUploads.cleanupExpired, { cursor: nextCursor });
+		}
+		return deleted;
 	}
 });
 
