@@ -30,7 +30,7 @@ async function settle() {
 	await vi.advanceTimersByTimeAsync(16);
 }
 
-async function renderTranscript(numbers: number[]) {
+async function renderTranscript(numbers: number[], viewportHeight = 600) {
 	const props = $state<ComponentProps<typeof ThreadTranscript>>({
 		currentError: null,
 		runError: null,
@@ -49,8 +49,8 @@ async function renderTranscript(numbers: number[]) {
 	let scrollTop = 0;
 	// jsdom has no layout. Model fixed-height rows while exercising the real DOM and effects.
 	Object.defineProperties(viewport, {
-		clientHeight: { get: () => 600 },
-		scrollHeight: { get: () => Math.max(600, messageElements().length * 300) },
+		clientHeight: { get: () => viewportHeight },
+		scrollHeight: { get: () => Math.max(viewportHeight, messageElements().length * 300) },
 		scrollTop: {
 			get: () => scrollTop,
 			set: (top: number) => {
@@ -62,7 +62,12 @@ async function renderTranscript(numbers: number[]) {
 		this: HTMLElement
 	) {
 		const index = messageElements().indexOf(this);
-		return new DOMRect(0, index < 0 ? 0 : index * 300 - scrollTop, 800, index < 0 ? 600 : 300);
+		return new DOMRect(
+			0,
+			index < 0 ? 0 : index * 300 - scrollTop,
+			800,
+			index < 0 ? viewportHeight : 300
+		);
 	});
 	await settle();
 	return {
@@ -138,6 +143,13 @@ describe('transcript viewport paging', () => {
 		cleanup = undefined;
 		await vi.advanceTimersByTimeAsync(2_000);
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(2);
+	});
+
+	it('fills pages whose small overflow cannot leave the bottom-stick threshold', async () => {
+		const { props, scrollTo } = await renderTranscript([1, 2, 3], 880);
+		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
+		scrollTo(0);
+		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
 	});
 
 	it('preserves the visible message offset when an older page is prepended', async () => {

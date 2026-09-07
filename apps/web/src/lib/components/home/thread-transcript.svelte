@@ -210,7 +210,7 @@
 				viewport &&
 				!loadingOlder &&
 				viewport.clientHeight > 0 &&
-				viewport.scrollHeight <= viewport.clientHeight
+				viewport.scrollHeight - viewport.clientHeight <= SCROLL_EPSILON_PX
 			) {
 				onLoadOlder?.();
 			}
