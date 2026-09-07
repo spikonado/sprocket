@@ -4,7 +4,7 @@ This file lists shims we still ship. When a removal PR merges, delete its
 entry. Age-out is a prod check for stored rows, or an explicit decision that
 a retired function name can disappear.
 
-Current as of 2026-09-06.
+Current as of 2026-09-07.
 
 ## Transcript projection API
 
@@ -219,6 +219,26 @@ all supported agents call `saveContextHandoff`, the backfill reports `success`,
 and a production scan finds no rows that still have
 `contextSummaryThroughRunId` without `contextSummaryThroughPartNumber`. Unset
 remaining run-id values in that same PR, then drop the field.
+
+### 11. Completion provider identity
+
+Stored completion bodies may include `providerResponseId`,
+`providerRequestId`, and `providerMessageId`. New agents copy non-empty
+values from the provider `CompletionCall`. Missing and empty strings are
+omitted, not stored as `""`.
+
+`finalizeCompletionCall` keeps the three arguments optional so released
+agents that never send them still finalize. `vTranscriptCompletionBody`
+keeps the fields optional so older completions validate and so current
+writes can omit ids the provider did not issue.
+
+The local JSONL replica type does not carry these fields.
+
+Remove mutation-arg optionality after all supported agents send the three
+keys on every finalize. Do not make the stored fields required while
+omission is the write path for missing ids. Tightening stored validators
+to an explicit null union needs a backfill of historical completions and
+a change to that omit-empty write path.
 
 ## Client APIs
 
