@@ -649,7 +649,10 @@ async fn replace_file(path: &Path, contents: &[u8], permissions: Permissions) ->
     let tmp = stage_unique_sibling(path, "tmp", contents, Some(permissions)).await?;
 
     match tokio::fs::rename(&tmp, path).await {
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            discard_sprocket_bak_siblings(path).await;
+            Ok(())
+        }
         Err(error) => {
             #[cfg(windows)]
             {
@@ -771,16 +774,27 @@ async fn stage_unique_sibling(
 }
 
 /// Restore `{name}.sprocket-bak.*` when `path` is missing after an interrupted replace.
+///
+/// Unselected generated backups are removed after the chosen file is restored so
+/// a later boot cannot rank a leftover against a new monotonic stamp.
 async fn recover_stranded_sprocket_bak(path: &Path) -> Result<()> {
     if tokio::fs::try_exists(path).await.unwrap_or(false) {
         return Ok(());
     }
-    let Some(bak) = newest_sprocket_bak_sibling(path).await? else {
+    let found = list_sprocket_bak_siblings(path).await?;
+    let Some(bak) =
+        select_newest_sprocket_sibling(found.iter().map(|(key, path)| (*key, path.clone())))
+    else {
         return Ok(());
     };
     tokio::fs::rename(&bak, path)
         .await
         .with_context(|| format!("failed to restore stranded backup for {}", path.display()))?;
+    for (_, leftover) in found {
+        if leftover != bak {
+            let _ = tokio::fs::remove_file(&leftover).await;
+        }
+    }
     Ok(())
 }
 
@@ -830,16 +844,16 @@ fn select_newest_sprocket_sibling<T>(
         .map(|(_, value)| value)
 }
 
-async fn newest_sprocket_bak_sibling(path: &Path) -> Result<Option<PathBuf>> {
+async fn list_sprocket_bak_siblings(path: &Path) -> Result<Vec<(SprocketSiblingKey, PathBuf)>> {
     let Some(parent) = path.parent() else {
-        return Ok(None);
+        return Ok(Vec::new());
     };
     let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
-        return Ok(None);
+        return Ok(Vec::new());
     };
     let mut entries = match tokio::fs::read_dir(parent).await {
         Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => {
             return Err(error).with_context(|| format!("failed to list {}", parent.display()));
         }
@@ -859,7 +873,16 @@ async fn newest_sprocket_bak_sibling(path: &Path) -> Result<Option<PathBuf>> {
         }
         found.push((key, entry.path()));
     }
-    Ok(select_newest_sprocket_sibling(found))
+    Ok(found)
+}
+
+async fn discard_sprocket_bak_siblings(path: &Path) {
+    let Ok(found) = list_sprocket_bak_siblings(path).await else {
+        return;
+    };
+    for (_, bak) in found {
+        let _ = tokio::fs::remove_file(bak).await;
+    }
 }
 
 #[cfg(windows)]
@@ -878,7 +901,7 @@ async fn replace_existing_windows(path: &Path, tmp: &Path) -> Result<()> {
 
     match tokio::fs::rename(tmp, path).await {
         Ok(()) => {
-            let _ = tokio::fs::remove_file(&bak).await;
+            discard_sprocket_bak_siblings(path).await;
             Ok(())
         }
         Err(error) => {
@@ -1117,7 +1140,7 @@ mod tests {
         assert_eq!(fs::read_to_string(&target).unwrap(), "latest original\n");
         assert!(!newest.exists());
         assert_eq!(fs::read_to_string(&user_notes).unwrap(), "user notes\n");
-        assert_eq!(fs::read_to_string(&stale).unwrap(), "stale original\n");
+        assert!(!stale.exists());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1136,7 +1159,7 @@ mod tests {
             .expect("later instance should restore");
         assert_eq!(fs::read_to_string(&target).unwrap(), "latest original\n");
         assert!(!current.exists());
-        assert_eq!(fs::read_to_string(&leftover).unwrap(), "stale original\n");
+        assert!(!leftover.exists());
         fs::remove_dir_all(root).unwrap();
     }
 
