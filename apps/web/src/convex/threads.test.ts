@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
+import { recordThreadUsageEvent } from './lib/threadUsage';
 import { initConvexTest, seedOwnedThread, seedThreadRecord } from './test.setup';
 
 describe('threads local-cache commands', () => {
@@ -67,5 +68,51 @@ describe('threads.listRecent', () => {
 			selectedThreadId: bob.threadId
 		});
 		expect(recordsWithForeignSelection).toEqual(records);
+	});
+});
+
+describe('duplicate threadUsage rows', () => {
+	it('reads and collapses extras without throwing', async () => {
+		const t = initConvexTest();
+		const { asUser, subject, threadId } = await seedOwnedThread(t, 'user_dup_usage');
+		await t.run(async (ctx) => {
+			await ctx.db.insert('threadUsage', {
+				threadId,
+				userId: subject,
+				totalTokensProcessed: 4,
+				contextTokens: 10
+			});
+			await ctx.db.insert('threadUsage', {
+				threadId,
+				userId: subject,
+				totalTokensProcessed: 9,
+				contextTokens: 20
+			});
+		});
+
+		expect(await asUser.query(api.threads.getByThreadId, { threadId })).toMatchObject({
+			totalTokensProcessed: 4,
+			contextTokens: 10
+		});
+
+		await t.run(async (ctx) => {
+			const thread = await ctx.db.get('threadRecords', threadId);
+			if (!thread) throw new Error('thread missing');
+			await recordThreadUsageEvent(ctx, thread, {
+				eventId: 'usage:collapse',
+				processedTokens: 1
+			});
+		});
+		const rows = await t.run(async (ctx) =>
+			ctx.db
+				.query('threadUsage')
+				.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
+				.collect()
+		);
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).toMatchObject({
+			totalTokensProcessed: 10,
+			contextTokens: 20
+		});
 	});
 });
