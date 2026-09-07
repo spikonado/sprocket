@@ -13,11 +13,11 @@
 		isAssistantResponseStreaming,
 		partitionWorkSectionTools,
 		workSectionTimingAnchor,
-		type AssistantTimelineSection,
 		type AssistantTimelineTool,
 		type AssistantTimelineWorkBlock
 	} from '$lib/chat/assistant-timeline';
 	import { toolKindIcon, toolLogIcon } from '$lib/chat/tool-icons';
+	import { TranscriptSectionKeys } from '$lib/chat/transcript-section-keys';
 	import {
 		changedFileCount,
 		fullToolSummary,
@@ -143,10 +143,8 @@
 		return !isArtifactToolGroup(block);
 	}
 
-	function sectionKey(section: AssistantTimelineSection, next?: AssistantTimelineSection) {
-		if (section.type === 'text') return assistantTimelinePartKey(section);
-		return `work:${next?.type === 'text' ? assistantTimelinePartKey(next) : 'tail'}`;
-	}
+	const sectionKeys = new TranscriptSectionKeys();
+	$effect.pre(() => sectionKeys.retain(messages.map((message) => message._id)));
 
 	const userMessageClass =
 		'user-bubble w-fit max-w-[33rem] rounded-xl border px-5 py-3.5 text-[15.5px] leading-7 text-foreground';
@@ -399,7 +397,10 @@
 							)}
 							{@const sessionCommands = buildCommandSessionCommandMap(timelineTools)}
 							{@const blocks = groupAssistantTimeline(timeline)}
-							{@const sections = groupAssistantTimelineSections(blocks)}
+							{@const sections = sectionKeys.reconcile(
+								message._id,
+								groupAssistantTimelineSections(blocks)
+							)}
 							{@const isStreaming = isAssistantResponseStreaming(message, activeRunId)}
 							{@const openSessions = buildOpenExecCommandSessions(timelineTools, isStreaming)}
 							{@const hasPersistedAssistantContent = timeline.some(
@@ -417,7 +418,7 @@
 									{#if !hasPersistedAssistantContent && (message.text || (isStreaming && timeline.length === 0))}
 										<ChatMarkdown content={message.text || '...'} className="text-foreground" />
 									{/if}
-									{#each sections as section, sectionIndex (sectionKey(section, sections[sectionIndex + 1]))}
+									{#each sections as section, sectionIndex (section.renderKey)}
 										{#if section.type === 'text'}
 											<div
 												data-transcript-anchor={`${message._id}:${assistantTimelinePartKey(section)}`}
@@ -448,7 +449,7 @@
 											{#if visibleBlocks.length > 0 || workInProgress || runningTools.length > 0}
 												<div
 													class="space-y-3"
-													data-transcript-anchor={`${message._id}:${sectionKey(section, nextSection)}`}
+													data-transcript-anchor={`${message._id}:${section.renderKey}`}
 												>
 													<WorkDisclosure
 														inProgress={workInProgress}

@@ -241,4 +241,36 @@ describe('transcript viewport paging', () => {
 		expect(button.isConnected).toBe(true);
 		expect(button.getAttribute('aria-expanded')).toBe('true');
 	});
+
+	it.each([false, true])(
+		'keeps disclosure state on its own work when sections split: %s',
+		async (split) => {
+			const first = { type: 'reasoning' as const, id: 'r1', text: 'First work' };
+			const second = { type: 'reasoning' as const, id: 'r2', text: 'Second work' };
+			const response: ThreadMessage = {
+				...message(3),
+				_id: 'response:run',
+				type: 'response',
+				parts: split ? [first, second] : [first]
+			};
+			const { props, viewport } = await renderTranscript([response]);
+			const original = viewport.querySelector<HTMLButtonElement>(
+				'[data-transcript-anchor] > div > button'
+			);
+			if (!original) throw new Error('Missing original work disclosure');
+			original.click();
+			await settle();
+			props.messages = [
+				{ ...response, parts: [first, { type: 'text', id: 't1', text: 'Update' }, second] }
+			];
+			await settle();
+			const buttons = viewport.querySelectorAll<HTMLButtonElement>(
+				'[data-transcript-anchor] > div > button'
+			);
+			expect(buttons).toHaveLength(2);
+			expect(buttons[0]).toBe(original);
+			expect(buttons[0]?.getAttribute('aria-expanded')).toBe('true');
+			expect(buttons[1]?.getAttribute('aria-expanded')).toBe('false');
+		}
+	);
 });
