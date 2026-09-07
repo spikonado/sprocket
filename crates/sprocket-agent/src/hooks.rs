@@ -20,6 +20,7 @@ pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
     "mandate_report",
     "mandate_setup",
     "mandate_status",
+    "parse_file",
     "read_skill",
     "scrape_url",
     "update_artifact",
@@ -289,6 +290,7 @@ mod tests {
         assert_repaired("exec-command", "exec_command");
         assert_repaired("apply-patch", "apply_patch");
         assert_repaired("writestdin", "write_stdin");
+        assert_repaired("parse-file", "parse_file");
     }
 
     #[test]

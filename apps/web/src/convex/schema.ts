@@ -214,13 +214,37 @@ export default defineSchema({
 		name: v.string(),
 		mediaType: v.string(),
 		size: v.number(),
-		// Deprecated: attachment retention uses `attached`.
+		// Deprecated: removed by removeImageUploadMessageIds.
 		messageIds: v.optional(v.array(v.string())),
-		attached: v.boolean()
+		attached: v.boolean(),
+		threadId: v.optional(v.id('threadRecords')),
+		storageDeletedAt: v.optional(v.number())
 	})
 		.index('by_userId', ['userId'])
 		.index('by_storageId', ['storageId'])
-		.index('by_attached', ['attached']),
+		.index('by_attached_and_storageDeletedAt', ['attached', 'storageDeletedAt']),
+	hostedParseRequests: defineTable({
+		jobId: v.id('executorJobs'),
+		runId: v.id('runs'),
+		userId: v.string(),
+		claimId: v.string(),
+		status: v.union(
+			v.literal('awaiting_upload'),
+			v.literal('pending'),
+			v.literal('completed'),
+			v.literal('failed')
+		),
+		uploadUrl: v.optional(v.string()),
+		inputStorageId: v.optional(v.id('_storage')),
+		resultStorageId: v.optional(v.id('_storage')),
+		filename: v.optional(v.string()),
+		error: v.optional(v.string()),
+		expiresAt: v.number()
+	})
+		.index('by_jobId', ['jobId'])
+		.index('by_inputStorageId', ['inputStorageId'])
+		.index('by_resultStorageId', ['resultStorageId'])
+		.index('by_expiresAt', ['expiresAt']),
 	executorJobs: defineTable({
 		threadId: v.id('threadRecords'),
 		runId: v.id('runs'),

@@ -218,7 +218,6 @@ export async function attachmentMetaForUploads(
 					return null;
 				}
 				return {
-					imageUploadId: upload._id,
 					name: upload.name,
 					mediaType: upload.mediaType,
 					size: upload.size,
@@ -250,4 +249,32 @@ export async function hydrateTranscriptPartUrls(
 			};
 		})
 	);
+}
+
+export function stripLegacyAttachmentImageUploadIds(
+	parts: Doc<'threadTranscriptParts'>[]
+): Doc<'threadTranscriptParts'>[] {
+	return parts.map((part) => {
+		if (!part.prompt || part.prompt.imageUploads.length === 0) {
+			return part;
+		}
+		return {
+			...part,
+			prompt: {
+				...part.prompt,
+				imageUploads: part.prompt.imageUploads.map((upload) => {
+					const attachment = { ...upload };
+					delete attachment.imageUploadId;
+					return attachment;
+				})
+			}
+		};
+	});
+}
+
+export async function transcriptPartsForClient(
+	ctx: MutationCtx | QueryCtx,
+	parts: Doc<'threadTranscriptParts'>[]
+): Promise<Doc<'threadTranscriptParts'>[]> {
+	return stripLegacyAttachmentImageUploadIds(await hydrateTranscriptPartUrls(ctx, parts));
 }

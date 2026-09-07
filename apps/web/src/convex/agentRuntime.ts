@@ -44,7 +44,7 @@ import {
 	type QueuedRunRequest
 } from '@convex/lib/runCreate';
 import { beginExecutorJob } from '@convex/lib/toolJobs';
-import { getPromptPart } from '@convex/lib/transcriptParts';
+import { getPromptPart, stripLegacyAttachmentImageUploadIds } from '@convex/lib/transcriptParts';
 import {
 	canRegisterCompletionAttempt,
 	canFinalizeAfterClaimFailure,
@@ -139,7 +139,7 @@ export const createGatewayRun = action({
 		threadId: v.optional(v.id('threadRecords')),
 		repositoryKey: v.optional(v.string()),
 		prompt: v.string(),
-		imageUploadIds: v.array(v.id('imageUploads')),
+		storageIds: v.array(v.id('_storage')),
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
 		serviceTier: vServiceTier,
@@ -151,6 +151,10 @@ export const createGatewayRun = action({
 	returns: vCreateGatewayRunResult,
 	handler: async (ctx, args): Promise<Infer<typeof vCreateGatewayRunResult>> => {
 		const userId = await getUserId(ctx);
+		const imageUploadIds = await ctx.runQuery(internal.imageUploads.ownedIdsForStorageIds, {
+			userId,
+			storageIds: args.storageIds
+		});
 		const gatewayUrl = modelGatewayUrl();
 		const request: QueuedRunRequest = {
 			userId,
@@ -158,7 +162,7 @@ export const createGatewayRun = action({
 			threadId: args.threadId,
 			repositoryKey: args.repositoryKey,
 			prompt: args.prompt,
-			imageUploadIds: args.imageUploadIds,
+			imageUploadIds,
 			selectedModel: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
 			serviceTier: args.serviceTier,
@@ -169,6 +173,9 @@ export const createGatewayRun = action({
 		};
 		if (args.continuationOfRunId) request.continuationOfRunId = args.continuationOfRunId;
 		const created = await ctx.runMutation(internal.agentRuntime.insertGatewayRun, request);
+		if (created.promptPart) {
+			created.promptPart = stripLegacyAttachmentImageUploadIds([created.promptPart])[0];
+		}
 		return {
 			...created,
 			gatewayUrl,
@@ -263,7 +270,6 @@ function getContextResult(args: {
 	run: Doc<'runs'>;
 	threadRecord: Doc<'threadRecords'>;
 	prompt: string;
-	promptAttachments: Infer<typeof vGetContextResult>['promptAttachments'];
 	contextBudget: Infer<typeof vGetContextResult>['contextBudget'];
 	contextTokens: number | undefined;
 }): Infer<typeof vGetContextResult> {
@@ -271,7 +277,6 @@ function getContextResult(args: {
 		run: args.run,
 		threadRecord: args.threadRecord,
 		prompt: args.prompt,
-		promptAttachments: args.promptAttachments,
 		agentHistory: [],
 		contextBudget: args.contextBudget
 	};
@@ -305,28 +310,14 @@ export const getContext = query({
 				run,
 				threadRecord,
 				prompt: '',
-				promptAttachments: [],
 				contextBudget,
 				contextTokens
 			});
 		}
-		const promptAttachments = (
-			await Promise.all(
-				promptPart.prompt.imageUploads.map(async (upload) => {
-					const url = await ctx.storage.getUrl(upload.storageId);
-					return url ? { mediaType: upload.mediaType, url } : null;
-				})
-			)
-		).filter((attachment) => attachment !== null);
-		if (promptPart.prompt.imageUploads.length !== promptAttachments.length) {
-			throw new Error('One or more image attachments are unavailable.');
-		}
-
 		return getContextResult({
 			run,
 			threadRecord,
 			prompt: promptPart.prompt.text,
-			promptAttachments,
 			contextBudget,
 			contextTokens
 		});
@@ -646,7 +637,7 @@ export const finalizeFailedStart = mutation({
 		submissionId: v.string(),
 		threadId: v.optional(v.id('threadRecords')),
 		prompt: v.string(),
-		imageUploadIds: v.array(v.id('imageUploads')),
+		storageIds: v.array(v.id('_storage')),
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
 		serviceTier: vServiceTier,

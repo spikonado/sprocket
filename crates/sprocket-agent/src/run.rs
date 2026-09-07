@@ -1,6 +1,7 @@
 use anyhow::anyhow;
+use futures::StreamExt;
 use rig::completion::Message;
-use rig::message::{ImageMediaType, UserContent};
+use rig::message::UserContent;
 use sprocket_workspace::{
     BUILTIN_SKILLS, WorkspaceInstruction, WorkspaceInstructionSource, WorkspaceSkill,
     default_user_skills_dirs, load_workspace_instructions, load_workspace_skills,
@@ -12,13 +13,14 @@ use std::time::Duration;
 use tokio::time::{Instant, sleep, sleep_until, timeout};
 use uuid::Uuid;
 
-use crate::catalog::context_budget_for_model;
+use crate::attachments::cache_prompt_attachments;
+use crate::catalog::catalog_capabilities_for_model;
 use crate::convex::{FailedStartCleanup, RuntimeClient};
 use crate::live::LiveCompletionHub;
 use crate::provider::{AgentProvider, AgentProviderRequest, AgentProviderResult};
 use crate::transcript::{
     TranscriptStore, agent_history_from_parts, apply_remote_state, current_run_has_finished_turns,
-    fetch_missing_parts, fetch_parts_by_numbers, parse_remote_parts,
+    fetch_missing_parts, fetch_parts_by_numbers, parse_remote_parts, prompt_text_with_attachments,
 };
 use crate::types::{RunAgentRequest, RunContextResponse, deserialize_agent_history};
 
@@ -728,6 +730,7 @@ pub async fn finalize_failed_start(
 struct PriorHistory {
     messages: Vec<Message>,
     continue_from_finished_turns: bool,
+    current_prompt: Option<String>,
 }
 
 async fn load_prior_history(
@@ -735,6 +738,7 @@ async fn load_prior_history(
     store: &TranscriptStore,
     context: &RunContextResponse,
     run_id: &str,
+    supports_images: bool,
 ) -> anyhow::Result<PriorHistory> {
     let user_id = &context.run.user_id;
     let thread_id = &context.run.thread_id;
@@ -777,7 +781,7 @@ async fn load_prior_history(
             missing
         );
     }
-    let parts = match fetch_parts_by_numbers(&numbers, |batch| {
+    let mut parts = match fetch_parts_by_numbers(&numbers, |batch| {
         let runtime = runtime.clone();
         let run_id = run_id.to_string();
         async move { runtime.transcript_parts_for_run(&run_id, &batch).await }
@@ -793,12 +797,16 @@ async fn load_prior_history(
         }
         Ok(_) | Err(_) => local_parts,
     };
+    cache_prompt_attachments(store, user_id, thread_id, &mut parts).await?;
+    let mut history = agent_history_from_parts(&state, &parts, Some(run_id));
+    crate::tools::hydrate_parse_file_history(&mut history, &parts, supports_images).await;
     Ok(PriorHistory {
-        messages: deserialize_agent_history(agent_history_from_parts(
-            &state,
-            &parts,
-            Some(run_id),
-        ))?,
+        current_prompt: parts
+            .iter()
+            .find(|part| part.run_id == run_id && part.prompt.is_some())
+            .and_then(|part| part.prompt.as_ref())
+            .map(prompt_text_with_attachments),
+        messages: deserialize_agent_history(history)?,
         continue_from_finished_turns: context.run.continuation_of_run_id.is_some()
             || current_run_was_compacted
             || current_run_has_finished_turns(&parts, run_id),
@@ -824,12 +832,46 @@ pub async fn run_agent(run: AgentRun, live: Arc<LiveCompletionHub>) -> anyhow::R
 
     let reasoning_effort = context.run.reasoning_effort.clone();
     let service_tier = context.run.service_tier.clone();
-    let context_budget =
-        match context_budget_for_model(&gateway_url, &context.run.selected_model).await {
+    let capabilities =
+        match catalog_capabilities_for_model(&gateway_url, &context.run.selected_model).await {
             Ok(budget) => budget,
             Err(error) => return abort_before_start(&runtime, &run_id, error).await,
         };
 
+    let store = TranscriptStore::new(request.transcript_root.clone());
+    let prepare_history = load_prior_history(
+        &runtime,
+        &store,
+        &context,
+        &run_id,
+        capabilities.supports_images,
+    );
+    let prior_history = {
+        let mut updates = match runtime.run_finished_subscription(&run_id).await {
+            Ok(updates) => updates,
+            Err(error) => return abort_before_start(&runtime, &run_id, error).await,
+        };
+        tokio::pin!(prepare_history);
+        loop {
+            tokio::select! {
+                biased;
+                update = updates.next() => {
+                    match update.map(RuntimeClient::decode_run_finished_update) {
+                        Some(Ok(true)) => return Ok(()),
+                        Some(Ok(false)) => {},
+                        Some(Err(error)) => return abort_before_start(&runtime, &run_id, error).await,
+                        None => return abort_before_start(&runtime, &run_id, anyhow!("run status subscription closed during history preparation")).await,
+                    }
+                }
+                history = &mut prepare_history => {
+                    match history {
+                        Ok(history) => break history,
+                        Err(error) => return abort_before_start(&runtime, &run_id, error).await,
+                    }
+                }
+            }
+        }
+    };
     let prepared = (|| {
         let workspace_instructions = load_workspace_instructions(&workspace_root)?;
         let workspace_skills =
@@ -840,20 +882,18 @@ pub async fn run_agent(run: AgentRun, live: Arc<LiveCompletionHub>) -> anyhow::R
         let skills: Arc<[WorkspaceSkill]> = workspace_skills.skills.into();
         let is_continuation = context.run.continuation_of_run_id.is_some()
             || request.continuation_of_run_id.is_some();
-        let prompt_text = context.prompt.trim();
-        if prompt_text.is_empty() && context.prompt_attachments.is_empty() && !is_continuation {
+        let prompt_text = prior_history
+            .current_prompt
+            .as_deref()
+            .unwrap_or(&context.prompt)
+            .trim();
+        if prompt_text.is_empty() && !is_continuation && !prior_history.continue_from_finished_turns
+        {
             return Err(anyhow!("run does not contain a user prompt"));
         }
         let mut prompt_contents = Vec::new();
         if !prompt_text.is_empty() {
             prompt_contents.push(UserContent::text(prompt_text));
-        }
-        for attachment in &context.prompt_attachments {
-            prompt_contents.push(UserContent::image_url(
-                attachment.url.clone(),
-                Some(image_media_type(&attachment.media_type)?),
-                None,
-            ));
         }
         let prompt = Message::User {
             content: prompt_contents,
@@ -869,11 +909,6 @@ pub async fn run_agent(run: AgentRun, live: Arc<LiveCompletionHub>) -> anyhow::R
 
     let (prompt, provider, prompt_context, skills) = match prepared {
         Ok(values) => values,
-        Err(error) => return abort_before_start(&runtime, &run_id, error).await,
-    };
-    let store = TranscriptStore::new(request.transcript_root.clone());
-    let prior_history = match load_prior_history(&runtime, &store, &context, &run_id).await {
-        Ok(history) => history,
         Err(error) => return abort_before_start(&runtime, &run_id, error).await,
     };
     let prompt =
@@ -929,7 +964,11 @@ pub async fn run_agent(run: AgentRun, live: Arc<LiveCompletionHub>) -> anyhow::R
                     skills,
                     reasoning_effort,
                     service_tier,
-                    context_budget,
+                    context_budget: capabilities.context_budget,
+                    supports_images: capabilities.supports_images,
+                    parse_file_cache_dir: crate::tools::parse_file_cache_dir(
+                        store.thread_dir(&context.run.user_id, &context.run.thread_id),
+                    ),
                     context_tokens: context.context_tokens,
                     defer_prompt_for_compaction: !prior_history.continue_from_finished_turns
                         && context.run.continuation_of_run_id.is_none()
@@ -959,16 +998,6 @@ pub async fn run_agent(run: AgentRun, live: Arc<LiveCompletionHub>) -> anyhow::R
 
 fn collapse_whitespace(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn image_media_type(media_type: &str) -> anyhow::Result<ImageMediaType> {
-    match media_type {
-        "image/jpeg" => Ok(ImageMediaType::JPEG),
-        "image/png" => Ok(ImageMediaType::PNG),
-        "image/gif" => Ok(ImageMediaType::GIF),
-        "image/webp" => Ok(ImageMediaType::WEBP),
-        _ => Err(anyhow!("unsupported image media type: {media_type}")),
-    }
 }
 
 #[cfg(test)]

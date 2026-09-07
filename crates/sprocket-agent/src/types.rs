@@ -20,7 +20,7 @@ pub struct RunAgentRequest {
     pub thread_id: String,
     pub repository_key: Option<String>,
     pub prompt: String,
-    pub image_upload_ids: Vec<String>,
+    pub storage_ids: Vec<String>,
     pub selected_model: String,
     pub reasoning_effort: String,
     pub service_tier: String,
@@ -72,7 +72,6 @@ pub struct RunContextResponse {
     pub run: RunSnapshot,
     pub thread_record: ThreadRecordSnapshot,
     pub prompt: String,
-    pub prompt_attachments: Vec<ResolvedImageAttachment>,
     pub agent_history: Vec<AgentHistoryMessage>,
     pub context_budget: ContextBudget,
     #[serde(default, deserialize_with = "deserialize_convex_u64")]
@@ -88,11 +87,11 @@ pub struct ContextBudget {
     pub auto_compact_token_limit: u64,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ResolvedImageAttachment {
-    pub media_type: String,
-    pub url: String,
+/// Live catalog fields for the selected model. Fetched once with the budget.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CatalogModelCapabilities {
+    pub context_budget: ContextBudget,
+    pub supports_images: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -509,7 +508,6 @@ mod tests {
                 "prompt": {
                     "text": "hello",
                     "imageUploads": [{
-                        "imageUploadId": "image_1",
                         "name": "robot.png",
                         "mediaType": "image/png",
                         "size": 42.0,

@@ -141,17 +141,7 @@ impl RuntimeClient {
             args.insert("repositoryKey".to_string(), repository_key.clone().into());
         }
         args.insert("prompt".to_string(), request.prompt.clone().into());
-        args.insert(
-            "imageUploadIds".to_string(),
-            Value::Array(
-                request
-                    .image_upload_ids
-                    .iter()
-                    .cloned()
-                    .map(Value::from)
-                    .collect(),
-            ),
-        );
+        args.insert("storageIds".to_string(), string_array(&request.storage_ids));
         args.insert(
             "selectedModel".to_string(),
             request.selected_model.clone().into(),
@@ -285,17 +275,7 @@ impl RuntimeClient {
             args.insert("threadId".to_string(), request.thread_id.clone().into());
         }
         args.insert("prompt".to_string(), request.prompt.clone().into());
-        args.insert(
-            "imageUploadIds".to_string(),
-            Value::Array(
-                request
-                    .image_upload_ids
-                    .iter()
-                    .cloned()
-                    .map(Value::from)
-                    .collect(),
-            ),
-        );
+        args.insert("storageIds".to_string(), string_array(&request.storage_ids));
         args.insert(
             "selectedModel".to_string(),
             request.selected_model.clone().into(),
@@ -485,4 +465,8 @@ impl RuntimeClient {
         args.insert("claimId".to_string(), claim_id.to_string().into());
         args
     }
+}
+
+fn string_array(ids: &[String]) -> Value {
+    Value::Array(ids.iter().cloned().map(Value::from).collect())
 }

@@ -14,6 +14,7 @@ const app = defineApp({
 	env: {
 		CONTEXT_DEV_API_KEY: v.string(),
 		EXA_API_KEY: v.string(),
+		FIRECRAWL_API_KEY: v.optional(v.string()),
 		WORKOS_CLIENT_ID: v.string(),
 		OPENAI_API_KEY: v.optional(v.string()),
 		BROWSERBASE_API_KEY: v.optional(v.string()),

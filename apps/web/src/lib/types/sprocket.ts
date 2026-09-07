@@ -77,7 +77,7 @@ export type RunState = {
 };
 
 export type MessageAttachment = {
-	imageUploadId: Id<'imageUploads'>;
+	storageId: Id<'_storage'>;
 	name: string;
 	mediaType: string;
 	size: number;
@@ -108,7 +108,7 @@ export type AgentRunRequest = {
 	threadId?: Id<'threadRecords'>;
 	repositoryKey?: string;
 	prompt: string;
-	imageUploadIds: Id<'imageUploads'>[];
+	storageIds: Id<'_storage'>[];
 	selectedModel: string;
 	reasoningEffort: string;
 	serviceTier: string;
@@ -122,11 +122,10 @@ export type AgentRunStart = {
 };
 
 export type LocalTranscriptAttachment = {
-	imageUploadId: Id<'imageUploads'>;
+	storageId: Id<'_storage'>;
 	name: string;
 	mediaType: string;
 	size: number;
-	storageId: string;
 	url?: string;
 };
 
@@ -179,6 +178,29 @@ export type ThreadCacheUserRequest = {
 
 export type LiveCompletionWatchEvent =
 	{ eventType: 'updated'; live: LiveCompletionOverlay } | { eventType: 'cleared' };
+
+export type TranscriptUploadRequest = {
+	userId: string;
+	name: string;
+	file: File;
+	threadId?: Id<'threadRecords'>;
+};
+
+export type TranscriptUploadResult =
+	| {
+			storageId: Id<'_storage'>;
+			name: string;
+			mediaType: string;
+			size: number;
+			url: string;
+	  }
+	| { error: string };
+
+export type TranscriptDiscardRequest = {
+	userId: string;
+	storageId: Id<'_storage'>;
+	threadId?: Id<'threadRecords'>;
+};
 
 export type TranscriptScopeRequest = {
 	userId: string;
@@ -252,8 +274,10 @@ export type DesktopApi = {
 	) => Promise<void>;
 	clearTranscriptReplica: (request: TranscriptScopeRequest) => Promise<void>;
 	fetchTranscriptAttachment: (
-		request: TranscriptScopeRequest & { imageUploadId: Id<'imageUploads'> }
+		request: TranscriptScopeRequest & { storageId: Id<'_storage'> }
 	) => Promise<Blob | null>;
+	uploadTranscriptAttachment: (request: TranscriptUploadRequest) => Promise<TranscriptUploadResult>;
+	discardTranscriptAttachment: (request: TranscriptDiscardRequest) => Promise<boolean>;
 	registerThreadCache: (request: ThreadCacheUserRequest) => Promise<ThreadCacheWatchEvent>;
 	fetchThreadSnapshot: (request: ThreadCacheUserRequest) => Promise<ThreadCacheSnapshot>;
 	watchThreadCache: (

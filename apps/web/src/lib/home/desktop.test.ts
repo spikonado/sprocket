@@ -11,9 +11,9 @@ import {
 import { RUN_ABANDONED_BY_AGENT } from '$convex/lib/agentErrors';
 import type { DesktopApi, RunState } from '$lib/types/sprocket';
 
-function imageUploadId(value: string): Id<'imageUploads'> {
+function storageId(value: string): Id<'_storage'> {
 	// SAFETY: fixture strings are only compared as opaque Convex document ids.
-	return value as Id<'imageUploads'>;
+	return value as Id<'_storage'>;
 }
 
 function threadRecordId(value: string): Id<'threadRecords'> {
@@ -32,7 +32,7 @@ function unusedDesktopCall(): Promise<never> {
 
 const recoveredSubmission = {
 	prompt: 'Inspect the robot',
-	imageUploadIds: [imageUploadId('image-1')],
+	storageIds: [storageId('storage-1')],
 	reasoningEffort: 'medium' as const,
 	serviceTier: 'standard' as const,
 	selectedModel: 'gpt-5.6-sol' as const,
@@ -53,6 +53,8 @@ function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 		watchLiveCompletion: unusedDesktopCall,
 		clearTranscriptReplica: unusedDesktopCall,
 		fetchTranscriptAttachment: unusedDesktopCall,
+		uploadTranscriptAttachment: unusedDesktopCall,
+		discardTranscriptAttachment: unusedDesktopCall,
 		registerThreadCache: unusedDesktopCall,
 		fetchThreadSnapshot: unusedDesktopCall,
 		watchThreadCache: unusedDesktopCall,
@@ -75,7 +77,7 @@ function launchArgs(
 		onStarted: vi.fn(),
 		threadId: threadRecordId('thread-1'),
 		prompt: 'Inspect src/lib.rs',
-		imageUploadIds: [imageUploadId('image-1')],
+		storageIds: [storageId('storage-1')],
 		selectedModel: 'gpt-5.6-sol',
 		reasoningEffort: 'medium',
 		serviceTier: 'standard',
@@ -92,7 +94,7 @@ function resolveRecoveredSubmission(
 		latestRun: null,
 		newSubmissionId: 'new-id',
 		prompt: recoveredSubmission.prompt,
-		imageUploadIds: recoveredSubmission.imageUploadIds,
+		storageIds: recoveredSubmission.storageIds,
 		reasoningEffort: recoveredSubmission.reasoningEffort,
 		serviceTier: recoveredSubmission.serviceTier,
 		recoveredSubmission,
@@ -113,7 +115,7 @@ describe('launchAgentRun', () => {
 			userId: 'user-1',
 			threadId: 'thread-1',
 			prompt: 'Inspect src/lib.rs',
-			imageUploadIds: ['image-1'],
+			storageIds: ['storage-1'],
 			selectedModel: 'gpt-5.6-sol',
 			submissionId: 'submission-1',
 			reasoningEffort: 'medium',
@@ -131,7 +133,7 @@ describe('launchAgentRun', () => {
 			launchArgs({
 				desktopApi,
 				prompt: '',
-				imageUploadIds: [],
+				storageIds: [],
 				continuationOfRunId: runId('run-1')
 			})
 		);
@@ -140,7 +142,7 @@ describe('launchAgentRun', () => {
 			userId: 'user-1',
 			threadId: 'thread-1',
 			prompt: '',
-			imageUploadIds: [],
+			storageIds: [],
 			selectedModel: 'gpt-5.6-sol',
 			submissionId: 'submission-1',
 			reasoningEffort: 'medium',
@@ -169,14 +171,12 @@ describe('resolveSubmissionId', () => {
 		expect(resolveRecoveredSubmission({ serviceTier: 'fast' })).toBe('new-id');
 	});
 
-	it('reuses a submission only when its image attachments are unchanged', () => {
-		expect(resolveRecoveredSubmission({ imageUploadIds: [] })).toBe('new-id');
-		expect(resolveRecoveredSubmission({ imageUploadIds: [imageUploadId('image-2')] })).toBe(
-			'new-id'
-		);
+	it('reuses a submission only when its attachments are unchanged', () => {
+		expect(resolveRecoveredSubmission({ storageIds: [] })).toBe('new-id');
+		expect(resolveRecoveredSubmission({ storageIds: [storageId('storage-2')] })).toBe('new-id');
 		expect(
 			resolveRecoveredSubmission({
-				imageUploadIds: [imageUploadId('image-1'), imageUploadId('image-2')]
+				storageIds: [storageId('storage-1'), storageId('storage-2')]
 			})
 		).toBe('new-id');
 	});

@@ -3,8 +3,9 @@ import { v } from 'convex/values';
 import type { Id } from '@convex/_generated/dataModel';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getExecutionRun, getUserId } from '@convex/lib/auth';
+import { imageUploadByStorageId } from '@convex/lib/imageUploads';
 import {
-	vAttachmentDownloadResult,
+	vAttachmentFileDownloadResult,
 	vTranscriptPartsResult,
 	vTranscriptStateResult
 } from '@convex/lib/docs';
@@ -12,8 +13,8 @@ import { transcriptHistoryFromNumber } from '@convex/lib/contextHandoff';
 import {
 	getOrCreateTranscriptState,
 	getTranscriptState,
-	hydrateTranscriptPartUrls,
-	loadTranscriptPartsByNumbers
+	loadTranscriptPartsByNumbers,
+	transcriptPartsForClient
 } from '@convex/lib/transcriptParts';
 
 async function transcriptStateResult(
@@ -83,7 +84,7 @@ export const getParts = query({
 	returns: vTranscriptPartsResult,
 	handler: async (ctx, args) => {
 		await requireOwnedThread(ctx, args.threadId);
-		const parts = await hydrateTranscriptPartUrls(
+		const parts = await transcriptPartsForClient(
 			ctx,
 			await loadTranscriptPartsByNumbers(ctx, args.threadId, args.numbers)
 		);
@@ -112,7 +113,7 @@ export const getPartsForRun = query({
 	returns: vTranscriptPartsResult,
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		const parts = await hydrateTranscriptPartUrls(
+		const parts = await transcriptPartsForClient(
 			ctx,
 			await loadTranscriptPartsByNumbers(ctx, run.threadId, args.numbers)
 		);
@@ -120,14 +121,14 @@ export const getPartsForRun = query({
 	}
 });
 
-export const attachmentDownload = query({
+export const attachmentDownloadByStorageId = query({
 	args: {
-		imageUploadId: v.id('imageUploads')
+		storageId: v.id('_storage')
 	},
-	returns: vAttachmentDownloadResult,
+	returns: vAttachmentFileDownloadResult,
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
-		const upload = await ctx.db.get('imageUploads', args.imageUploadId);
+		const upload = await imageUploadByStorageId(ctx, args.storageId);
 		if (!upload || upload.userId !== userId) {
 			return null;
 		}
@@ -136,11 +137,10 @@ export const attachmentDownload = query({
 			return null;
 		}
 		return {
-			imageUploadId: upload._id,
+			storageId: upload.storageId,
 			name: upload.name,
 			mediaType: upload.mediaType,
 			size: upload.size,
-			storageId: upload.storageId,
 			url
 		};
 	}

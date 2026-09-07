@@ -219,6 +219,18 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         }
     }
 
+    let cleanup_store = Arc::clone(&state.transcript);
+    let cleanup = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            let cutoff = std::time::SystemTime::now() - Duration::from_secs(24 * 60 * 60);
+            if let Err(error) = cleanup_store.prune_pending_attachments(cutoff).await {
+                eprintln!("sprocket-server: failed to expire pending attachments: {error}");
+            }
+        }
+    });
     let router = build_router(state, static_dir);
 
     let result = axum::serve(
@@ -227,6 +239,8 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
     )
     .with_graceful_shutdown(shutdown_signal())
     .await;
+    cleanup.abort();
+    let _ = cleanup.await;
     machines.shutdown().await;
     result?;
     Ok(())

@@ -58,13 +58,36 @@ const agentRunStartSchema = z.object({
 	threadId: z.string()
 });
 const localTranscriptAttachmentSchema = z.object({
-	imageUploadId: z.string(),
+	storageId: z.string(),
 	name: z.string(),
 	mediaType: z.string(),
 	size: z.int(),
-	storageId: z.string(),
 	url: z.url().optional()
 });
+const transcriptUploadSuccessSchema = z.object({
+	storageId: z.string(),
+	name: z.string(),
+	mediaType: z.string(),
+	size: z.number(),
+	url: z.string()
+});
+const transcriptUploadResultSchema = z.union([
+	transcriptUploadSuccessSchema,
+	z.object({ error: z.string() })
+]);
+
+export function transcriptUploadPath(args: {
+	userId: string;
+	name: string;
+	threadId?: string;
+}): string {
+	let query = `userId=${encodeURIComponent(args.userId)}&name=${encodeURIComponent(args.name)}`;
+	if (args.threadId) {
+		query += `&threadId=${encodeURIComponent(args.threadId)}`;
+	}
+	return `/api/transcript/upload?${query}`;
+}
+
 const transcriptMessageSchema = z.object({
 	id: z.string(),
 	threadId: z.string(),
@@ -138,7 +161,7 @@ const threadCacheSnapshotSchema = threadCacheWatchEventSchema.extend({
 	threads: z.array(threadSummarySchema)
 });
 
-function asConvexId<TableName extends TableNamesInDataModel<DataModel>>(
+function asConvexId<TableName extends TableNamesInDataModel<DataModel> | '_storage'>(
 	value: string
 ): Id<TableName> {
 	// SAFETY: the local API returns Convex document ids; branding is compile-time only.
@@ -183,7 +206,7 @@ function parseTranscriptMessage(message: z.infer<typeof transcriptMessageSchema>
 		type: message.type,
 		text: message.text,
 		attachments: message.attachments.map((attachment) => ({
-			imageUploadId: asConvexId(attachment.imageUploadId),
+			storageId: asConvexId<'_storage'>(attachment.storageId),
 			name: attachment.name,
 			mediaType: attachment.mediaType,
 			size: attachment.size,
@@ -643,6 +666,42 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 			}
 			return await response.blob();
 		},
+		uploadTranscriptAttachment: async (requestBody) => {
+			const result = await request(
+				transcriptUploadPath({
+					userId: requestBody.userId,
+					name: requestBody.name,
+					threadId: requestBody.threadId
+				}),
+				transcriptUploadResultSchema,
+				{
+					method: 'POST',
+					headers: {
+						'content-type': requestBody.file.type.trim() || 'application/octet-stream'
+					},
+					body: requestBody.file
+				}
+			);
+			if ('error' in result) {
+				return result;
+			}
+			return {
+				storageId: asConvexId<'_storage'>(result.storageId),
+				name: result.name,
+				mediaType: result.mediaType,
+				size: result.size,
+				url: result.url
+			};
+		},
+		discardTranscriptAttachment: async (requestBody) =>
+			await request('/api/transcript/discard', z.boolean(), {
+				method: 'POST',
+				body: JSON.stringify({
+					userId: requestBody.userId,
+					storageId: requestBody.storageId,
+					threadId: requestBody.threadId
+				})
+			}),
 		registerThreadCache: async (requestBody) =>
 			parseThreadCacheWatchEvent(
 				await request('/api/threads/register', threadCacheWatchEventSchema, {

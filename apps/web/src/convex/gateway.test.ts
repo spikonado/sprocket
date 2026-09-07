@@ -24,7 +24,7 @@ describe('gateway quota', () => {
 			submissionId: 'gateway-run',
 			threadId,
 			prompt: 'Ship it',
-			imageUploadIds: [],
+			storageIds: [],
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
 			serviceTier: 'standard',

@@ -51,6 +51,7 @@ export function toolKindIcon(kind: string): LucideIcon {
 		case 'scrape_url':
 			return Globe;
 		case 'update_artifact':
+		case 'parse_file':
 			return FileText;
 		case 'web_search':
 			return Search;

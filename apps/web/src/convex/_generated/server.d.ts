@@ -37,6 +37,7 @@ type Env = {
   readonly DODO_PAYMENTS_API_KEY: string | undefined;
   readonly DODO_PAYMENTS_ENVIRONMENT: "live_mode" | "test_mode" | undefined;
   readonly EXA_API_KEY: string;
+  readonly FIRECRAWL_API_KEY: string | undefined;
   readonly MODEL_GATEWAY_TOKEN_SECRET: string | undefined;
   readonly MODEL_GATEWAY_URL: string | undefined;
   readonly OPENAI_API_KEY: string | undefined;

@@ -136,13 +136,14 @@ pub struct TranscriptPromptBody {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptAttachmentMeta {
-    pub image_upload_id: String,
     pub name: String,
     pub media_type: String,
     pub size: u64,
     pub storage_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -225,6 +226,7 @@ impl TranscriptPart {
         if let Some(prompt) = part.prompt.as_mut() {
             for upload in &mut prompt.image_uploads {
                 upload.url = None;
+                upload.local_path = None;
             }
         }
         part

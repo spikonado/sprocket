@@ -39,7 +39,7 @@ struct RunAgentApiRequest {
     #[serde(default)]
     repository_key: Option<String>,
     prompt: String,
-    image_upload_ids: Vec<String>,
+    storage_ids: Vec<String>,
     selected_model: String,
     reasoning_effort: String,
     service_tier: String,
@@ -98,7 +98,7 @@ async fn run_agent_handler(
         thread_id: payload.thread_id.unwrap_or_default(),
         repository_key: payload.repository_key,
         prompt: payload.prompt,
-        image_upload_ids: payload.image_upload_ids,
+        storage_ids: payload.storage_ids,
         selected_model: payload.selected_model,
         reasoning_effort: payload.reasoning_effort,
         service_tier: payload.service_tier,
@@ -332,5 +332,42 @@ mod tests {
         assert!(error.to_string().contains("timed out starting agent run"));
         assert!(dropped.load(Ordering::SeqCst));
         assert!(reconciled.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn run_request_requires_storage_ids_and_rejects_legacy_upload_ids() {
+        fn parse(extra: serde_json::Value) -> Result<RunAgentApiRequest, serde_json::Error> {
+            let mut body = serde_json::json!({
+                "userId": "user-1",
+                "submissionId": "sub-1",
+                "prompt": "hello",
+                "selectedModel": "gpt",
+                "reasoningEffort": "medium",
+                "serviceTier": "standard",
+                "workspacePath": "/tmp"
+            });
+            if let serde_json::Value::Object(extra) = extra {
+                for (key, value) in extra {
+                    body[key] = value;
+                }
+            }
+            serde_json::from_value(body)
+        }
+
+        let storage = parse(serde_json::json!({"storageIds": ["storage-1"]})).unwrap();
+        assert_eq!(storage.storage_ids, vec!["storage-1".to_string()]);
+
+        let empty = parse(serde_json::json!({"storageIds": []})).unwrap();
+        assert!(empty.storage_ids.is_empty());
+
+        assert!(parse(serde_json::json!({})).is_err());
+        assert!(
+            parse(serde_json::json!({
+                "storageIds": ["storage-1"],
+                "imageUploadIds": ["upload-1"]
+            }))
+            .is_err()
+        );
+        assert!(parse(serde_json::json!({"imageUploadIds": ["upload-1"]})).is_err());
     }
 }

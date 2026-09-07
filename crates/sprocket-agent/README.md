@@ -34,6 +34,51 @@ the on-disk layout.
 
 ## Tools
 
+Message attachments can contain any file type, with no application size or count
+limit. The UI streams them through Rust to Convex storage. Each thread keeps its
+local copies in `attachments/` under the transcript cache. Prompts list those
+local paths; attaching an image does not put its pixels in model context.
+
+`parse_file` accepts a local path or an HTTP URL. Firecrawl's AnyDoc Rust library
+converts supported office documents and PDFs to Markdown locally. UTF-8 text is
+returned as text. Failed local document conversions automatically upload a
+temporary copy to Firecrawl's hosted Parse API, including OCR for scanned PDFs.
+There is no permission prompt or Firecrawl charge to the user. The backend uses
+its `FIRECRAWL_API_KEY`; when it is not configured, the tool reports that hosted
+fallback is unavailable. Long parsed results include a preview and the path to
+the full text in the thread's `parse_file/` cache.
+
+Document conversion and URL downloads accept at most 64 MiB per call to bound
+input buffering. Larger attachments remain available through shell tools. This
+does not sandbox AnyDoc's memory or CPU use for compressed documents. HTTP
+requests use the local process's network access, including localhost and LAN
+devices, just like shell commands. `parse_file` is not a network isolation boundary.
+
+Firecrawl accepts at most 50 MB per uploaded file. Hosted calls are tied to the
+existing executor job, do not retry the paid provider request automatically, and
+keep their API key server-side. Temporary cloud inputs and results expire after
+one hour; completed results are copied into the local parsed-file cache. A daily
+age limit also collects unregistered cloud blobs left by lost upload responses
+or action callbacks. Local
+file access errors, image capability checks, safety limits, and cancellation do
+not trigger hosted uploads. Cancellation stops the local wait, but cannot undo a
+request already accepted by Firecrawl.
+
+The server expires pending local uploads after 24 hours, sweeping on startup and
+hourly while running. Submitted local thread attachments are not expired. If a pending
+copy expires after submission but before caching, the agent downloads it from Convex.
+
+Convex deletes attached file bytes when the owning thread's `lastMessageAt` is
+older than one week. The owner is the thread that first attached the upload.
+Assistant activity, reads, and downloads do not extend that window. Transcript metadata and
+local copies remain. If an old file is unavailable both locally and in Convex,
+the thread still opens and the agent asks for the file to be attached again.
+
+The tool is available to every model. It returns image content only for models
+whose gateway catalog entry supports images. Image decoding has separate safety
+limits, which do not limit attachment uploads. Rebuilding history omits prior
+image results when the selected model cannot accept them.
+
 The agent currently offers command execution, command-session input, workspace
 patching, skill loading (`read_skill`), web search, and web-page scraping. Every
 tool call is wrapped in a durable executor-job record and observes run

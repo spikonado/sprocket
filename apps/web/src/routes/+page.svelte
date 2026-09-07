@@ -49,7 +49,13 @@
 	} from '$lib/home/desktop';
 	import { formatElapsedDuration } from '$lib/format';
 	import { convexClientErrorMessage } from '$lib/convex-error';
-	import { validateImageAttachmentAddition, type ComposerAttachment } from '$lib/chat/attachments';
+	import {
+		attachmentMediaType,
+		fallbackAttachmentName,
+		isPreviewableImageMediaType,
+		revokeAttachmentPreview,
+		type ComposerAttachment
+	} from '$lib/chat/attachments';
 	import { defaultModelId, defaultReasoningEffort, defaultServiceTier } from '$convex/lib/models';
 	import {
 		CATALOG_UNAVAILABLE_MESSAGE,
@@ -148,9 +154,6 @@
 	const setThreadSelectedModel = useMutation(api.threads.setSelectedModel);
 	const answerAgentQuestion = useMutation(api.agentQuestions.answer);
 	const setThemePreference = useMutation(api.uiPreferences.setTheme);
-	const generateImageUploadUrl = useMutation(api.imageUploads.generateUploadUrl);
-	const registerImageUpload = useMutation(api.imageUploads.register);
-	const discardImageUpload = useMutation(api.imageUploads.discard);
 	const ensureMySubscription = useMutation(api.billing.ensureMySubscription);
 	let modelCatalog = $state<ModelCatalog | undefined>(undefined);
 	let catalogError = $state<string | null>(null);
@@ -189,7 +192,7 @@
 		message: string;
 		prompt: string;
 		attachments?: ComposerAttachment[];
-		imageUploadIds?: Id<'imageUploads'>[];
+		storageIds?: Id<'_storage'>[];
 		reasoningEffort?: string;
 		serviceTier?: string;
 		selectedModel?: CatalogModelId;
@@ -216,7 +219,7 @@
 		string,
 		{
 			prompt: string;
-			imageUploadIds: Id<'imageUploads'>[];
+			storageIds: Id<'_storage'>[];
 			reasoningEffort: string;
 			serviceTier: string;
 			selectedModel: CatalogModelId;
@@ -269,33 +272,67 @@
 		return true;
 	}
 
-	async function uploadComposerAttachment(localId: string, file: File, name: string) {
+	function discardComposerUpload(args: {
+		api?: DesktopApi | null;
+		userId?: string | null;
+		threadId?: Id<'threadRecords'> | null;
+		storageId: Id<'_storage'>;
+	}) {
 		try {
-			const uploadUrl = await generateImageUploadUrl({});
-			const response = await fetch(uploadUrl, {
-				method: 'POST',
-				headers: { 'Content-Type': file.type },
-				body: file
-			});
-			if (!response.ok) {
-				throw new Error(`Upload failed (${response.status}).`);
+			const api = args.api ?? desktopApi;
+			const userId = args.userId ?? getCurrentUserId();
+			if (!api || !userId) {
+				return;
 			}
-			const { storageId } = await response.json();
-			const registered = await registerImageUpload({ storageId, name });
+			void api
+				.discardTranscriptAttachment({
+					userId,
+					storageId: args.storageId,
+					threadId: args.threadId ?? undefined
+				})
+				.catch(() => {});
+		} catch {
+			return;
+		}
+	}
+
+	async function uploadComposerAttachment(localId: string, file: File, name: string) {
+		const api = desktopApi;
+		const userId = getCurrentUserId();
+		const threadId = currentThreadId;
+		try {
+			if (!api) {
+				throw new Error(localServerRequiredMessage);
+			}
+			if (!userId) {
+				throw new Error('Sign in to attach files.');
+			}
+			const registered = await api.uploadTranscriptAttachment({
+				userId,
+				name,
+				file,
+				threadId: threadId ?? undefined
+			});
 			if ('error' in registered) {
 				throw new Error(registered.error);
 			}
 			const attachment = composerAttachments.find((entry) => entry.localId === localId);
-			if (attachment) {
-				URL.revokeObjectURL(attachment.previewUrl);
-			}
+			revokeAttachmentPreview(attachment?.previewUrl);
 			const stillAttached = updateComposerAttachment(localId, {
 				status: 'ready',
-				imageUploadId: registered.imageUploadId,
-				previewUrl: registered.url
+				storageId: registered.storageId,
+				name: registered.name,
+				mediaType: registered.mediaType,
+				size: registered.size,
+				previewUrl: isPreviewableImageMediaType(registered.mediaType) ? registered.url : undefined
 			});
 			if (!stillAttached) {
-				void discardImageUpload({ imageUploadId: registered.imageUploadId }).catch(() => {});
+				discardComposerUpload({
+					api,
+					userId,
+					threadId,
+					storageId: registered.storageId
+				});
 			}
 		} catch (error) {
 			const message = error instanceof Error ? error.message : 'Upload failed.';
@@ -309,21 +346,19 @@
 
 	function addComposerAttachments(files: File[]) {
 		for (const file of files) {
-			const validationError = validateImageAttachmentAddition(composerAttachments.length, file);
-			if (validationError) {
-				currentError = validationError;
-				continue;
-			}
 			const localId = crypto.randomUUID();
-			const name = file.name || 'Pasted image';
+			const name = fallbackAttachmentName(file);
+			const mediaType = attachmentMediaType(file.type);
 			composerAttachments = [
 				...composerAttachments,
 				{
 					localId,
 					name,
-					mediaType: file.type,
+					mediaType,
 					size: file.size,
-					previewUrl: URL.createObjectURL(file),
+					previewUrl: isPreviewableImageMediaType(mediaType)
+						? URL.createObjectURL(file)
+						: undefined,
 					status: 'uploading'
 				}
 			];
@@ -336,18 +371,32 @@
 		if (!attachment) {
 			return;
 		}
-		URL.revokeObjectURL(attachment.previewUrl);
+		revokeAttachmentPreview(attachment.previewUrl);
 		composerAttachments = composerAttachments.filter((entry) => entry.localId !== localId);
-		if (attachment.imageUploadId) {
-			void discardImageUpload({ imageUploadId: attachment.imageUploadId }).catch(() => {});
+		if (attachment.storageId) {
+			discardComposerUpload({
+				storageId: attachment.storageId,
+				userId: getCurrentUserId(),
+				threadId: currentThreadId
+			});
 		}
 	}
 
-	function clearComposerAttachments(options: { discard: boolean }) {
+	function clearComposerAttachments(options: {
+		discard: boolean;
+		userId?: string | null;
+		threadId?: Id<'threadRecords'> | null;
+	}) {
+		const discardUserId = options.userId === undefined ? getCurrentUserId() : options.userId;
+		const discardThreadId = options.threadId === undefined ? currentThreadId : options.threadId;
 		for (const attachment of composerAttachments) {
-			URL.revokeObjectURL(attachment.previewUrl);
-			if (options.discard && attachment.imageUploadId) {
-				void discardImageUpload({ imageUploadId: attachment.imageUploadId }).catch(() => {});
+			revokeAttachmentPreview(attachment.previewUrl);
+			if (options.discard && attachment.storageId) {
+				discardComposerUpload({
+					userId: discardUserId,
+					threadId: discardThreadId,
+					storageId: attachment.storageId
+				});
 			}
 		}
 		composerAttachments = [];
@@ -1319,7 +1368,7 @@
 		await transcriptHistory?.loadOlder();
 	}
 
-	async function loadTranscriptAttachment(imageUploadId: Id<'imageUploads'>) {
+	async function loadTranscriptAttachment(storageId: Id<'_storage'>) {
 		const api = desktopApi;
 		const threadId = currentThreadId;
 		const userId = getCurrentUserId();
@@ -1329,7 +1378,7 @@
 		const blob = await api.fetchTranscriptAttachment({
 			userId,
 			threadId,
-			imageUploadId
+			storageId
 		});
 		return blob ? URL.createObjectURL(blob) : null;
 	}
@@ -1473,7 +1522,7 @@
 		}
 
 		if (composerAttachments.some((attachment) => attachment.status !== 'ready')) {
-			currentError = 'Wait for image uploads to finish, or remove failed images before sending.';
+			currentError = 'Wait for file uploads to finish, or remove failed files before sending.';
 			return;
 		}
 
@@ -1518,8 +1567,8 @@
 		const isSubmittedUserCurrent = () => getCurrentUserId() === submittedUserId;
 		const submittedPrompt = prompt.trim();
 		const submittedAttachments = composerAttachments.map((attachment) => ({ ...attachment }));
-		const submittedImageUploadIds = submittedAttachments.flatMap((attachment) =>
-			attachment.imageUploadId ? [attachment.imageUploadId] : []
+		const submittedStorageIds = submittedAttachments.flatMap((attachment) =>
+			attachment.storageId ? [attachment.storageId] : []
 		);
 		const submittedModel = selectedModel;
 		const submittedReasoningEffort = selectedReasoningEffort;
@@ -1546,7 +1595,7 @@
 						},
 			newSubmissionId: freshSubmissionId,
 			prompt: submittedPrompt,
-			imageUploadIds: submittedImageUploadIds,
+			storageIds: submittedStorageIds,
 			reasoningEffort: submittedReasoningEffort,
 			serviceTier: submittedServiceTier,
 			recoveredSubmission: recoveredSubmission
@@ -1575,7 +1624,7 @@
 				message,
 				prompt: submittedPrompt,
 				attachments: submittedAttachments,
-				imageUploadIds: submittedImageUploadIds,
+				storageIds: submittedStorageIds,
 				reasoningEffort: submittedReasoningEffort,
 				serviceTier: submittedServiceTier,
 				selectedModel: submittedModel,
@@ -1727,7 +1776,7 @@
 				threadId: threadId ?? undefined,
 				repositoryKey: threadId ? undefined : submittedRepositoryKey,
 				prompt: submittedPrompt,
-				imageUploadIds: submittedImageUploadIds,
+				storageIds: submittedStorageIds,
 				selectedModel: submittedModel,
 				submissionId: runSubmissionId,
 				reasoningEffort: submittedReasoningEffort,
@@ -1824,7 +1873,7 @@
 				onStarted: () => {},
 				threadId,
 				prompt: '',
-				imageUploadIds: [],
+				storageIds: [],
 				selectedModel,
 				reasoningEffort: selectedReasoningEffort,
 				serviceTier: selectedServiceTier,
@@ -1844,6 +1893,8 @@
 			return;
 		}
 
+		const previousUserId = selectionUserId;
+		const previousThreadId = currentThreadId;
 		selectionUserId = userId;
 		hasResolvedInitialSelection = false;
 		currentWorkspacePath = null;
@@ -1861,7 +1912,11 @@
 		threadSnapshotPullGeneration += 1;
 		projectSelectionGeneration += 1;
 		prompt = '';
-		clearComposerAttachments({ discard: true });
+		clearComposerAttachments({
+			discard: true,
+			userId: previousUserId,
+			threadId: previousThreadId
+		});
 		currentError = null;
 		selectedModel = modelCatalog?.defaultModelId ?? defaultModelId;
 		selectedReasoningEffort = modelCatalog?.defaultReasoningEffort ?? defaultReasoningEffort;
@@ -1959,13 +2014,13 @@
 		if (prompt === recovery.prompt) {
 			if (
 				recovery.submissionId &&
-				(recovery.prompt || recovery.imageUploadIds?.length) &&
+				(recovery.prompt || recovery.storageIds?.length) &&
 				recovery.reasoningEffort &&
 				recovery.selectedModel
 			) {
 				recoveredSubmissionIds.set(recoveryKey, {
 					prompt: recovery.prompt,
-					imageUploadIds: recovery.imageUploadIds ?? [],
+					storageIds: recovery.storageIds ?? [],
 					reasoningEffort: recovery.reasoningEffort,
 					serviceTier:
 						recovery.serviceTier ?? modelCatalog?.defaultServiceTier ?? defaultServiceTier,

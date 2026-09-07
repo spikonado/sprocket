@@ -2,8 +2,10 @@ mod artifacts;
 mod browser;
 mod commands;
 mod context;
+mod hosted_parse;
 mod job;
 mod mandates;
+mod parse_file;
 mod patch;
 mod questions;
 mod skills;
@@ -21,6 +23,7 @@ use self::context::AgentToolContext;
 use self::mandates::{
     MandateChargeTool, MandateListTool, MandateReportTool, MandateSetupTool, MandateStatusTool,
 };
+use self::parse_file::ParseFileTool;
 use self::patch::ApplyPatchTool;
 use self::questions::{AskQuestionTool, AwaitQuestionTool};
 use self::skills::ReadSkillTool;
@@ -56,6 +59,7 @@ pub(crate) struct AgentToolSet {
     pub(crate) await_question: AwaitQuestionTool,
     pub(crate) command_sessions: CommandSessionManager,
     pub(crate) exec_command: ExecCommandTool,
+    pub(crate) parse_file: ParseFileTool,
     pub(crate) read_skill: ReadSkillTool,
     pub(crate) scrape_url: ScrapeUrlTool,
     pub(crate) web_search: WebSearchTool,
@@ -72,11 +76,72 @@ pub(crate) struct AgentToolSet {
     pub(crate) mandate_report: MandateReportTool,
 }
 
+pub(crate) async fn hydrate_parse_file_history(
+    history: &mut [crate::types::AgentHistoryMessage],
+    parts: &[crate::transcript::TranscriptPart],
+    supports_images: bool,
+) {
+    use crate::types::{AgentHistoryContent, AgentHistoryToolResultItem};
+    let mut results = std::collections::HashMap::new();
+    for tool in parts.iter().filter_map(|part| part.tool.as_ref()) {
+        if parse_file::is_parse_file_tool(&tool.name) && tool.status != "started" {
+            results.entry(tool.call_id.as_str()).or_insert(tool);
+        }
+    }
+    for message in history {
+        for content in &mut message.contents {
+            let AgentHistoryContent::ToolResult { id, items, .. } = content else {
+                continue;
+            };
+            let Some(tool) = results.get(id.as_str()) else {
+                continue;
+            };
+            if tool.status != "completed" {
+                continue;
+            }
+            let Some(output) = &tool.output else { continue };
+            if !supports_images
+                && output.get("outputType").and_then(serde_json::Value::as_str) == Some("image")
+            {
+                *items = vec![AgentHistoryToolResultItem::Text {
+                    text: format!(
+                        "Image omitted because the selected model does not support images. Original parse_file result: {output}"
+                    ),
+                }];
+                continue;
+            }
+            *items = match parse_file::replay_parse_file_history_items(output).await {
+                Ok(items) => items,
+                Err(error) => vec![AgentHistoryToolResultItem::Text {
+                    text: format!(
+                        "Previously parsed file is not available in the local cache: {error}. Use parse_file again if needed. Original result: {output}"
+                    ),
+                }],
+            };
+            if !supports_images {
+                for item in items {
+                    if matches!(item, AgentHistoryToolResultItem::Image { .. }) {
+                        *item = AgentHistoryToolResultItem::Text {
+                            text: format!(
+                                "Image omitted because the selected model does not support images. Original parse_file result: {output}"
+                            ),
+                        };
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub(crate) use parse_file::parse_file_cache_dir;
+
 pub(crate) fn agent_tools(
     runtime: RuntimeClient,
     run_id: String,
     claim_id: String,
     workspace_root: PathBuf,
+    parse_file_cache_dir: PathBuf,
+    supports_images: bool,
     tool_call_tracker: ToolCallTracker,
     skills: Arc<[WorkspaceSkill]>,
 ) -> AgentToolSet {
@@ -86,6 +151,8 @@ pub(crate) fn agent_tools(
         run_id,
         claim_id,
         workspace_root,
+        parse_file_cache_dir,
+        supports_images,
         tool_call_tracker,
         command_sessions.clone(),
     );
@@ -95,6 +162,7 @@ pub(crate) fn agent_tools(
         await_question: AwaitQuestionTool(context.clone()),
         command_sessions,
         exec_command: ExecCommandTool(context.clone()),
+        parse_file: ParseFileTool(context.clone()),
         read_skill: ReadSkillTool {
             context: context.clone(),
             skills,
@@ -124,6 +192,37 @@ mod tests {
     };
 
     use super::*;
+
+    #[tokio::test]
+    async fn text_only_models_do_not_replay_cached_image_results() {
+        use crate::types::{
+            AgentHistoryContent, AgentHistoryMessage, AgentHistoryRole, AgentHistoryToolResultItem,
+        };
+        let output = serde_json::json!({
+            "outputType": "image", "path": "/missing-image.png", "mediaType": "image/png",
+            "source": {"type": "path", "path": "photo.png"}, "byteSize": 1.0, "width": 1.0, "height": 1.0
+        });
+        let part = serde_json::from_value(serde_json::json!({
+            "number": 1, "sourceKey": "tool:1", "kind": "tool", "runId": "run",
+            "tool": {"callId": "call", "name": "parse_file", "status": "completed", "output": output}
+        })).unwrap();
+        let mut history = vec![AgentHistoryMessage {
+            role: AgentHistoryRole::User,
+            assistant_id: None,
+            contents: vec![AgentHistoryContent::ToolResult {
+                id: "call".into(),
+                call_id: Some("call".into()),
+                items: vec![AgentHistoryToolResultItem::Text {
+                    text: "old output".into(),
+                }],
+            }],
+        }];
+        hydrate_parse_file_history(&mut history, &[part], false).await;
+        let serialized = serde_json::to_string(&history).unwrap();
+        assert!(serialized.contains("Image omitted"));
+        assert!(!serialized.contains("not available"));
+        assert!(!serialized.contains("imageJson"));
+    }
 
     #[test]
     fn tool_error_includes_anyhow_context_chain() {

@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use anyhow::Context;
 use convex::{FunctionResult, QuerySubscription, Value};
 use sprocket_agent::{
     RemoteTranscriptState, TranscriptPart, TranscriptStore, fetch_missing_parts, parse_remote_parts,
@@ -71,16 +70,14 @@ impl UserConvexClient {
         self.client.subscribe("threads:listRecent", args).await
     }
 
-    pub async fn attachment_download(
+    pub async fn attachment_download_by_storage_id(
         &self,
-        image_upload_id: &str,
+        storage_id: &str,
     ) -> anyhow::Result<Option<RemoteAttachmentDownload>> {
         let mut args = BTreeMap::new();
-        args.insert(
-            "imageUploadId".to_string(),
-            image_upload_id.to_string().into(),
-        );
-        self.query_json("transcript:attachmentDownload", args).await
+        args.insert("storageId".to_string(), storage_id.to_string().into());
+        self.query_json("transcript:attachmentDownloadByStorageId", args)
+            .await
     }
 
     async fn query_json<T: for<'de> serde::Deserialize<'de>>(
@@ -123,6 +120,8 @@ pub struct RemoteAttachmentDownload {
     pub media_type: String,
     pub storage_id: String,
     pub url: String,
+    #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u64")]
+    pub size: u64,
 }
 
 fn thread_id_args(thread_id: &str) -> BTreeMap<String, Value> {
@@ -156,41 +155,6 @@ pub async fn sync_range(
     })
     .await?;
     Ok(())
-}
-
-pub async fn download_attachment_bytes(url: &str) -> anyhow::Result<Vec<u8>> {
-    let mut builder = reqwest::Client::builder()
-        .no_proxy()
-        .timeout(Duration::from_secs(60));
-    if let Some(host) = reqwest::Url::parse(url)
-        .ok()
-        .and_then(|parsed| parsed.host_str().map(str::to_owned))
-    {
-        builder = builder.retry(reqwest::retry::for_host(host).classify_fn(|req_rep| {
-            if *req_rep.method() != reqwest::Method::GET {
-                return req_rep.success();
-            }
-            match req_rep.status().map(|status| status.as_u16()) {
-                Some(429 | 502 | 503 | 504) => req_rep.retryable(),
-                _ => req_rep.success(),
-            }
-        }));
-    }
-    let client = builder
-        .build()
-        .context("failed to build attachment HTTP client")?;
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .context("attachment download")?;
-    if !response.status().is_success() {
-        anyhow::bail!(
-            "attachment download failed with status {}",
-            response.status()
-        );
-    }
-    Ok(response.bytes().await?.to_vec())
 }
 
 pub async fn retry_after_failure() {

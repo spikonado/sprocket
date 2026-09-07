@@ -2,7 +2,7 @@ use std::convert::Infallible;
 
 use anyhow::anyhow;
 use axum::Json;
-use axum::body::Bytes;
+use axum::body::Body;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -11,12 +11,16 @@ use axum::routing::post;
 use axum_extra::extract::CookieJar;
 use futures::stream::unfold;
 use serde::Deserialize;
-use sprocket_agent::{TRANSCRIPT_CHUNK_SIZE, TRANSCRIPT_PAGE_SIZE, parts_window};
+use sprocket_agent::{
+    AttachmentUnavailable, TRANSCRIPT_CHUNK_SIZE, TRANSCRIPT_PAGE_SIZE, TranscriptAttachmentMeta,
+    cache_attachment, parts_window,
+};
 use tokio::sync::broadcast;
+use tokio_util::io::ReaderStream;
 
 use crate::AppState;
 use crate::routes::api_error::ApiError;
-use crate::transcript_client::{UserConvexClient, download_attachment_bytes};
+use crate::transcript_client::UserConvexClient;
 use crate::transcript_watch::TranscriptWatchEvent;
 
 #[derive(Debug, Deserialize)]
@@ -55,7 +59,7 @@ struct TranscriptAttachmentRequest {
     user_id: String,
     #[serde(deserialize_with = "deserialize_thread_id")]
     thread_id: String,
-    image_upload_id: String,
+    storage_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -73,6 +77,7 @@ fn deserialize_thread_id<'de, D: serde::Deserializer<'de>>(
     let id = String::deserialize(deserializer)?;
     if id.is_empty()
         || id.eq_ignore_ascii_case("blobs")
+        || id.eq_ignore_ascii_case("pending-attachments")
         || !id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
@@ -92,6 +97,14 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/transcript/part-details", post(part_details_handler))
         .route("/transcript/clear", post(clear_handler))
         .route("/transcript/attachment", post(attachment_handler))
+        .route(
+            "/transcript/upload",
+            post(super::attachment_upload::upload_handler),
+        )
+        .route(
+            "/transcript/discard",
+            post(super::attachment_upload::discard_handler),
+        )
 }
 
 async fn legacy_page_handler(
@@ -442,21 +455,15 @@ async fn attachment_handler(
     Json(payload): Json<TranscriptAttachmentRequest>,
 ) -> Result<Response, ApiError> {
     require_session_user(&state, &headers, &jar, &payload.user_id).await?;
-    if let Some(blob) = state
-        .transcript
-        .blob_for_upload(&payload.user_id, &payload.image_upload_id)
-        .await
-        .map_err(|error| {
-            ApiError::internal_with(
-                &format!(
-                    "failed to read cached attachment for thread {}",
-                    payload.thread_id
-                ),
-                error,
-            )
-        })?
+    if let Some(response) = serve_cached_attachment(
+        &state,
+        &payload.user_id,
+        &payload.thread_id,
+        &payload.storage_id,
+    )
+    .await?
     {
-        return Ok(blob_response(blob.media_type, blob.bytes));
+        return Ok(response);
     }
 
     let client = UserConvexClient::connect_with_fetcher(
@@ -468,7 +475,7 @@ async fn attachment_handler(
     .await
     .map_err(|error| ApiError::internal_with("failed to connect to Convex", error))?;
     let Some(remote) = client
-        .attachment_download(&payload.image_upload_id)
+        .attachment_download_by_storage_id(&payload.storage_id)
         .await
         .map_err(|error| ApiError::internal_with("failed to resolve attachment", error))?
     else {
@@ -477,30 +484,77 @@ async fn attachment_handler(
             anyhow!("attachment not found"),
         ));
     };
-    let bytes = download_attachment_bytes(&remote.url)
-        .await
-        .map_err(|error| ApiError::internal_with("failed to download attachment", error))?;
-    state
-        .transcript
-        .write_blob(
-            &payload.user_id,
-            &remote.storage_id,
-            &payload.image_upload_id,
-            &remote.media_type,
-            &remote.name,
-            &bytes,
-        )
-        .await
-        .map_err(|error| ApiError::internal_with("failed to cache attachment", error))?;
-    Ok(blob_response(remote.media_type, bytes))
+    let attachment = TranscriptAttachmentMeta {
+        storage_id: remote.storage_id,
+        name: remote.name,
+        media_type: remote.media_type,
+        size: remote.size,
+        url: Some(remote.url),
+        local_path: None,
+    };
+    let path = match cache_attachment(
+        &state.transcript,
+        &payload.user_id,
+        &payload.thread_id,
+        &attachment,
+    )
+    .await
+    {
+        Ok(path) => path,
+        Err(error) if error.is::<AttachmentUnavailable>() => {
+            return Err(ApiError::with_status(
+                StatusCode::NOT_FOUND,
+                anyhow!("attachment not found"),
+            ));
+        }
+        Err(error) => {
+            return Err(ApiError::internal_with("failed to cache attachment", error));
+        }
+    };
+    attachment_response(&path, &attachment.media_type).await
 }
 
-fn blob_response(media_type: String, bytes: Vec<u8>) -> Response {
-    (
+async fn serve_cached_attachment(
+    state: &AppState,
+    user_id: &str,
+    thread_id: &str,
+    storage_id: &str,
+) -> Result<Option<Response>, ApiError> {
+    let meta = state
+        .transcript
+        .attachment_metadata(user_id, thread_id, storage_id)
+        .await
+        .map_err(|error| {
+            ApiError::internal_with(
+                &format!("failed to read cached attachment for thread {thread_id}"),
+                error,
+            )
+        })?;
+    let Some(meta) = meta else {
+        return Ok(None);
+    };
+    match cache_attachment(&state.transcript, user_id, thread_id, &meta).await {
+        Ok(path) => attachment_response(&path, &meta.media_type).await.map(Some),
+        Err(error) if error.is::<AttachmentUnavailable>() => Ok(None),
+        Err(error) => Err(ApiError::internal_with(
+            "failed to migrate cached attachment",
+            error,
+        )),
+    }
+}
+
+async fn attachment_response(
+    path: &std::path::Path,
+    media_type: &str,
+) -> Result<Response, ApiError> {
+    let file = tokio::fs::File::open(path)
+        .await
+        .map_err(|error| ApiError::internal(error.into()))?;
+    Ok((
         [
             (
                 header::CONTENT_TYPE,
-                header::HeaderValue::from_str(&media_type).unwrap_or_else(|_| {
+                header::HeaderValue::from_str(media_type).unwrap_or_else(|_| {
                     header::HeaderValue::from_static("application/octet-stream")
                 }),
             ),
@@ -508,10 +562,18 @@ fn blob_response(media_type: String, bytes: Vec<u8>) -> Response {
                 header::CACHE_CONTROL,
                 header::HeaderValue::from_static("private, max-age=31536000, immutable"),
             ),
+            (
+                header::CONTENT_DISPOSITION,
+                header::HeaderValue::from_static("attachment"),
+            ),
+            (
+                header::X_CONTENT_TYPE_OPTIONS,
+                header::HeaderValue::from_static("nosniff"),
+            ),
         ],
-        Bytes::from(bytes),
+        Body::from_stream(ReaderStream::new(file)),
     )
-        .into_response()
+        .into_response())
 }
 
 #[cfg(test)]
@@ -536,10 +598,7 @@ mod tests {
             assert_eq!(parse::<TranscriptScope>(thread_id, json!({})), valid);
             assert_eq!(parse::<TranscriptPageRequest>(thread_id, json!({})), valid);
             assert_eq!(
-                parse::<TranscriptAttachmentRequest>(
-                    thread_id,
-                    json!({"imageUploadId": "upload-1"})
-                ),
+                parse::<TranscriptAttachmentRequest>(thread_id, json!({"storageId": "storage-1"})),
                 valid
             );
             assert_eq!(
@@ -547,6 +606,42 @@ mod tests {
                 valid
             );
         }
+    }
+
+    #[test]
+    fn attachment_request_requires_storage_id_and_rejects_legacy_upload_id() {
+        let storage: TranscriptAttachmentRequest = serde_json::from_value(serde_json::json!({
+            "userId": "user-1",
+            "threadId": "thread-1",
+            "storageId": "storage-1"
+        }))
+        .unwrap();
+        assert_eq!(storage.storage_id, "storage-1");
+
+        assert!(
+            serde_json::from_value::<TranscriptAttachmentRequest>(serde_json::json!({
+                "userId": "user-1",
+                "threadId": "thread-1",
+                "imageUploadId": "upload-1"
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<TranscriptAttachmentRequest>(serde_json::json!({
+                "userId": "user-1",
+                "threadId": "thread-1",
+                "storageId": "storage-1",
+                "imageUploadId": "upload-1"
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<TranscriptAttachmentRequest>(serde_json::json!({
+                "userId": "user-1",
+                "threadId": "thread-1"
+            }))
+            .is_err()
+        );
     }
 
     #[test]
