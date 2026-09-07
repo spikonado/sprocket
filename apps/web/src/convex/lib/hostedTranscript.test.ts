@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Id } from '@convex/_generated/dataModel';
 import {
-	HOSTED_TRANSCRIPT_PAGE_SIZE,
 	UNKNOWN_RUN_STARTED_AT,
-	messagePageStart,
 	projectTranscriptMessages,
 	type ProjectableTranscriptPart
 } from '@convex/lib/hostedTranscript';
@@ -77,34 +75,6 @@ function project(parts: ProjectableTranscriptPart[], includeDetails = false) {
 		includeDetails
 	});
 }
-
-describe('messagePageStart', () => {
-	it('returns the start of the oldest included message once the limit is filled', () => {
-		const parts = [
-			prompt(0, 'first', 'run-0'),
-			completion(1, [{ type: 'text', id: 'a', text: 'old' }], 'run-0'),
-			prompt(2, 'second', 'run-2'),
-			completion(3, [{ type: 'text', id: 'b', text: 'new ' }], 'run-2'),
-			completion(4, [{ type: 'text', id: 'c', text: 'answer' }], 'run-2')
-		];
-		expect(messagePageStart(parts, 1, false)).toBe(3);
-		expect(messagePageStart(parts, 2, false)).toBe(2);
-		expect(messagePageStart(parts, 4, true)).toBe(0);
-		expect(messagePageStart(parts.slice(3), 1, false)).toBeUndefined();
-		expect(HOSTED_TRANSCRIPT_PAGE_SIZE).toBe(40);
-	});
-
-	it('keeps a 301-part run as one message and pages from its start', () => {
-		const parts = Array.from({ length: 301 }, (_, index) =>
-			completion(index, [{ type: 'text', id: `t${index}`, text: 'x' }])
-		);
-		expect(messagePageStart(parts, 1, false)).toBeUndefined();
-		expect(messagePageStart(parts, 1, true)).toBe(0);
-		const messages = project(parts);
-		expect(messages).toHaveLength(1);
-		expect(messages[0]?.sourceNumbers).toHaveLength(301);
-	});
-});
 
 describe('projectTranscriptMessages', () => {
 	it('groups completion and tool parts onto one response and preserves tool order', () => {

@@ -15,9 +15,9 @@ import {
 import {
 	HOSTED_TRANSCRIPT_DETAIL_CHUNK_SIZE,
 	HOSTED_TRANSCRIPT_PAGE_SIZE,
-	messagePageStart,
 	projectTranscriptMessages,
-	projectablePartFromDoc
+	projectablePartFromDoc,
+	type ProjectableTranscriptPart
 } from '@convex/lib/hostedTranscript';
 import { vAssistantMessagePart, vRunStatus } from '@convex/lib/validators';
 
@@ -49,12 +49,18 @@ export const vHostedTranscriptMessage = v.object({
 	detailsLoaded: v.optional(v.boolean())
 });
 
+export const vHostedTranscriptPart = v.object({
+	number: v.number(),
+	kind: v.union(v.literal('prompt'), v.literal('completion'), v.literal('tool')),
+	message: v.union(vHostedTranscriptMessage, v.null())
+});
+
 export const vHostedTranscriptPage = v.object({
 	threadId: v.id('threadRecords'),
 	totalParts: v.number(),
 	historyFromNumber: v.number(),
 	stale: v.boolean(),
-	messages: v.array(vHostedTranscriptMessage),
+	parts: v.array(vHostedTranscriptPart),
 	nextBefore: v.optional(v.number())
 });
 
@@ -111,7 +117,8 @@ export const listPage = query({
 async function loadPartsEndingAt(
 	ctx: QueryCtx,
 	threadId: Id<'threadRecords'>,
-	endExclusive: number
+	endExclusive: number,
+	limit: number
 ): Promise<Doc<'threadTranscriptParts'>[]> {
 	if (endExclusive <= 0) {
 		return [];
@@ -123,11 +130,25 @@ async function loadPartsEndingAt(
 		)
 		.order('desc')
 		.paginate({
-			numItems: MAX_TRANSCRIPT_PARTS_PER_QUERY,
+			numItems: limit,
 			cursor: null,
 			maximumBytesRead: 4 * 1024 * 1024
 		});
 	return rows.page.reverse();
+}
+
+function projectHostedParts(
+	userId: string,
+	threadId: Id<'threadRecords'>,
+	parts: ProjectableTranscriptPart[],
+	includeDetails: boolean
+) {
+	return parts.map((part) => ({
+		number: part.number,
+		kind: part.kind,
+		message:
+			projectTranscriptMessages({ userId, threadId, parts: [part], includeDetails })[0] ?? null
+	}));
 }
 
 export const transcriptPage = query({
@@ -153,28 +174,26 @@ export const transcriptPage = query({
 				totalParts,
 				historyFromNumber,
 				stale: false,
-				messages: []
+				parts: []
 			};
 		}
 
-		const loaded = await loadPartsEndingAt(ctx, args.threadId, endExclusive);
-		const oldestNumber = loaded[0]?.number ?? 0;
-		const pageStart = messagePageStart(loaded, limit, oldestNumber === 0) ?? oldestNumber;
-		const sliced = loaded.filter((part) => part.number >= pageStart);
-		const hydrated = await hydrateTranscriptPartUrls(ctx, sliced);
-		const messages = projectTranscriptMessages({
+		const loaded = await loadPartsEndingAt(ctx, args.threadId, endExclusive, limit);
+		const pageStart = loaded[0]?.number ?? 0;
+		const hydrated = await hydrateTranscriptPartUrls(ctx, loaded);
+		const parts = projectHostedParts(
 			userId,
-			threadId: args.threadId,
-			parts: hydrated.map(projectablePartFromDoc),
-			includeDetails: false
-		});
+			args.threadId,
+			hydrated.map(projectablePartFromDoc),
+			false
+		);
 		if (pageStart > 0) {
 			return {
 				threadId: args.threadId,
 				totalParts,
 				historyFromNumber,
 				stale: false,
-				messages,
+				parts,
 				nextBefore: pageStart
 			};
 		}
@@ -183,7 +202,7 @@ export const transcriptPage = query({
 			totalParts,
 			historyFromNumber,
 			stale: false,
-			messages
+			parts
 		};
 	}
 });
@@ -193,7 +212,7 @@ export const transcriptDetails = query({
 		threadId: v.id('threadRecords'),
 		numbers: v.array(v.number())
 	},
-	returns: v.union(vHostedTranscriptMessage, v.null()),
+	returns: v.array(vHostedTranscriptPart),
 	handler: async (ctx, args) => {
 		const { userId } = await requireOwnedThread(ctx, args.threadId);
 		if (args.numbers.length === 0 || args.numbers.length > HOSTED_TRANSCRIPT_DETAIL_CHUNK_SIZE) {
@@ -207,15 +226,9 @@ export const transcriptDetails = query({
 			await loadTranscriptPartsByNumbers(ctx, args.threadId, args.numbers)
 		);
 		if (parts.length !== args.numbers.length) {
-			return null;
+			throw new Error('Transcript part not found.');
 		}
-		const messages = projectTranscriptMessages({
-			userId,
-			threadId: args.threadId,
-			parts: parts.map(projectablePartFromDoc),
-			includeDetails: true
-		});
-		return messages.length === 1 ? messages[0] : null;
+		return projectHostedParts(userId, args.threadId, parts.map(projectablePartFromDoc), true);
 	}
 });
 

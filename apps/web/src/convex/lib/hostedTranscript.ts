@@ -41,8 +41,6 @@ export type HostedTranscriptMessage = {
 	detailsLoaded?: boolean;
 };
 
-/** Matches sprocket-agent TRANSCRIPT_CHUNK_SIZE / local getParts cap. */
-export const HOSTED_TRANSCRIPT_CHUNK_SIZE = 100;
 // Individual transcript documents can approach Convex's 1 MiB document limit.
 export const HOSTED_TRANSCRIPT_DETAIL_CHUNK_SIZE = 8;
 /** Matches sprocket-agent TRANSCRIPT_PAGE_SIZE. */
@@ -70,44 +68,6 @@ export type ProjectableTranscriptPart = {
 	completion?: TranscriptCompletionBody;
 	tool?: TranscriptToolBody;
 };
-
-export function messagePageStart(
-	parts: readonly Pick<ProjectableTranscriptPart, 'number' | 'kind' | 'runId'>[],
-	messageLimit: number,
-	reachedHistoryStart: boolean
-): number | undefined {
-	const ordered = [...parts].sort((left, right) => left.number - right.number);
-	let currentKey: string | undefined;
-	let currentStart: number | undefined;
-	let completed = 0;
-	const limit = Math.max(1, messageLimit);
-
-	for (let index = ordered.length - 1; index >= 0; index -= 1) {
-		const part = ordered[index];
-		if (!part) continue;
-		const key = part.kind === 'prompt' ? `prompt:${part.runId}` : `response:${part.runId}`;
-		if (currentKey === undefined) {
-			currentKey = key;
-			currentStart = part.number;
-			continue;
-		}
-		if (currentKey === key) {
-			currentStart = part.number;
-			continue;
-		}
-		completed += 1;
-		if (completed >= limit) {
-			return currentStart;
-		}
-		currentKey = key;
-		currentStart = part.number;
-	}
-
-	if (reachedHistoryStart && currentKey !== undefined) {
-		return currentStart ?? 0;
-	}
-	return undefined;
-}
 
 function promptMessageId(runId: Id<'runs'>): string {
 	return `prompt:${runId}`;

@@ -11,6 +11,7 @@ import {
 	type HostedConvexClient
 } from '$lib/hosted/client';
 import type { AgentRunRequest, ThreadMessage } from '$lib/types/sprocket';
+import { assembleTranscriptParts } from '$lib/project/transcript-parts';
 
 type MachineRequestGet = FunctionReturnType<typeof api.machineRequests.get>;
 type HostedLiveGet = FunctionReturnType<typeof api.hostedLive.get>;
@@ -461,10 +462,14 @@ describe('createHostedApi subscriptions', () => {
 });
 
 describe('createHostedApi transcript details', () => {
-	it('loads long-run details in bounded chunks and merges the same response', async () => {
+	it('loads numbered details in bounded chunks for the shared transcript assembler', async () => {
 		const numbers = Array.from({ length: 250 }, (_, index) => index);
 		const query = vi.fn(async (_query, args: TranscriptDetailsArgs) =>
-			detailsMessage(args.numbers)
+			args.numbers.map((number) => ({
+				number,
+				kind: 'completion' as const,
+				message: detailsMessage([number])
+			}))
 		);
 		const { client } = mockClient({ query });
 		const details = await createHostedApi(client, () => null).fetchTranscriptDetails({
@@ -474,9 +479,31 @@ describe('createHostedApi transcript details', () => {
 		});
 		expect(query).toHaveBeenCalledTimes(32);
 		expect(query.mock.calls.every(([, args]) => args.numbers.length <= 8)).toBe(true);
-		expect(details._id).toBe('response:run-1');
-		expect(details.sourceNumbers).toEqual(numbers);
-		expect(details.parts).toHaveLength(250);
-		expect(details.detailsLoaded).toBe(true);
+		expect(details.map((part) => part.number)).toEqual(numbers);
+		const [message] = assembleTranscriptParts(details);
+		expect(message?._id).toBe('response:run-1');
+		expect(message?.sourceNumbers).toEqual(numbers);
+		expect(message?.parts).toHaveLength(250);
+		expect(message?.detailsLoaded).toBe(true);
+	});
+
+	it('stops loading subsequent detail chunks when the transcript is abandoned', async () => {
+		const controller = new AbortController();
+		const query = vi.fn(async () => {
+			controller.abort();
+			return [];
+		});
+		const { client } = mockClient({ query });
+		await expect(
+			createHostedApi(client, () => null).fetchTranscriptDetails(
+				{
+					userId: 'user_alice',
+					threadId: threadId('thread-1'),
+					numbers: Array.from({ length: 20 }, (_, index) => index)
+				},
+				controller.signal
+			)
+		).rejects.toMatchObject({ name: 'AbortError' });
+		expect(query).toHaveBeenCalledTimes(1);
 	});
 });

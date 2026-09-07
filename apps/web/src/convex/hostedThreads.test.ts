@@ -3,6 +3,7 @@ import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { HOSTED_THREAD_PAGE_SIZE } from '@convex/lib/hostedThreadList';
 import { appendTranscriptPart } from '@convex/lib/transcriptParts';
+import { assembleTranscriptParts } from '../lib/project/transcript-parts';
 import { createQueuedRun, initConvexTest, seedOwnedThread, seedThreadRecord } from './test.setup';
 
 describe('hostedThreads.listPage', () => {
@@ -55,14 +56,15 @@ describe('hostedThreads.listPage', () => {
 });
 
 describe('hostedThreads transcript reads', () => {
-	it('projects a bounded message page and refuses other users', async () => {
+	it('projects a bounded part page and refuses other users', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		await createQueuedRun(t, asUser, threadId, 'sub-page', 'secret-page', 'Hello');
 		const page = await asUser.query(api.hostedThreads.transcriptPage, { threadId, limit: 12 });
 		expect(page.stale).toBe(false);
-		expect(page.messages).toHaveLength(1);
-		expect(page.messages[0]).toMatchObject({
+		expect(page.parts).toHaveLength(1);
+		expect(page.parts[0]?.number).toBe(0);
+		expect(page.parts[0]?.message).toMatchObject({
 			type: 'prompt',
 			text: 'Hello',
 			sourceNumbers: [0],
@@ -76,7 +78,7 @@ describe('hostedThreads transcript reads', () => {
 		);
 	});
 
-	it('returns details for one grouped message and watches part identity not only totalParts', async () => {
+	it('returns details by part and watches part identity not only totalParts', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'hosted-watch-secret';
@@ -121,7 +123,9 @@ describe('hostedThreads transcript reads', () => {
 		expect(afterTool.latestRunStatus).toBe('awaiting_executor');
 
 		const page = await asUser.query(api.hostedThreads.transcriptPage, { threadId });
-		const response = page.messages.find((message) => message.type === 'response');
+		const response = assembleTranscriptParts(page.parts).find(
+			(message) => message.type === 'response'
+		);
 		expect(response?.sourceNumbers).toEqual([1]);
 		expect(response?.parts[0]).toMatchObject({ type: 'tool-call', callId: 'c1', input: null });
 
@@ -129,8 +133,13 @@ describe('hostedThreads transcript reads', () => {
 			threadId,
 			numbers: response?.sourceNumbers ?? [1]
 		});
-		expect(details?.detailsLoaded).toBe(true);
-		expect(details?.parts[0]).toMatchObject({ type: 'tool-call', callId: 'c1', input: {} });
+		expect(details[0]?.number).toBe(1);
+		expect(details[0]?.message?.detailsLoaded).toBe(true);
+		expect(details[0]?.message?.parts[0]).toMatchObject({
+			type: 'tool-call',
+			callId: 'c1',
+			input: {}
+		});
 	});
 
 	it('pages older messages with nextBefore', async () => {
@@ -157,16 +166,16 @@ describe('hostedThreads transcript reads', () => {
 			threadId,
 			limit: 2
 		});
-		expect(newest.messages).toHaveLength(2);
+		expect(newest.parts).toHaveLength(2);
 		expect(newest.nextBefore).toBeDefined();
 		const older = await asUser.query(api.hostedThreads.transcriptPage, {
 			threadId,
 			before: newest.nextBefore,
 			limit: 2
 		});
-		expect(older.messages.length).toBeGreaterThan(0);
-		const newestIds = new Set(newest.messages.map((message) => message._id));
-		expect(older.messages.every((message) => !newestIds.has(message._id))).toBe(true);
+		expect(older.parts.length).toBeGreaterThan(0);
+		const newestNumbers = new Set(newest.parts.map((part) => part.number));
+		expect(older.parts.every((part) => !newestNumbers.has(part.number))).toBe(true);
 	});
 
 	it('pages a run longer than 300 parts without changing the response id', async () => {
@@ -208,18 +217,32 @@ describe('hostedThreads transcript reads', () => {
 				}
 			});
 		}
-		const newest = await asUser.query(api.hostedThreads.transcriptPage, { threadId, limit: 1 });
-		const response = newest.messages.find((message) => message.type === 'response');
+		const newest = await asUser.query(api.hostedThreads.transcriptPage, { threadId, limit: 12 });
+		expect(newest.parts).toHaveLength(12);
+		const response = assembleTranscriptParts(newest.parts).find(
+			(message) => message.type === 'response'
+		);
 		expect(response?._id).toBe(`response:${runId}`);
-		expect(response?.sourceNumbers?.length).toBe(100);
+		expect(response?.sourceNumbers?.length).toBe(12);
 		expect(newest.nextBefore).toBeDefined();
-		const older = await asUser.query(api.hostedThreads.transcriptPage, {
-			threadId,
-			before: newest.nextBefore,
-			limit: 1
-		});
-		const olderResponse = older.messages.find((message) => message.type === 'response');
-		expect(olderResponse?._id).toBe(response?._id);
-		expect(olderResponse?.sourceNumbers?.[0]).toBeLessThan(response?.sourceNumbers?.[0] ?? 0);
+		const parts = [...newest.parts];
+		let before = newest.nextBefore;
+		while (before !== undefined) {
+			const older = await asUser.query(api.hostedThreads.transcriptPage, {
+				threadId,
+				before,
+				limit: 40
+			});
+			expect(older.parts.length).toBeLessThanOrEqual(40);
+			if (older.nextBefore !== undefined) expect(older.nextBefore).toBeLessThan(before);
+			parts.push(...older.parts);
+			before = older.nextBefore;
+		}
+		expect(new Set(parts.map((part) => part.number)).size).toBe(302);
+		const messages = assembleTranscriptParts(parts);
+		expect(messages).toHaveLength(2);
+		expect(messages[1]?._id).toBe(response?._id);
+		expect(messages[1]?.parts).toHaveLength(301);
+		expect(messages[1]?.text).toBe('.'.repeat(301));
 	});
 });

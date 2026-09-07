@@ -24,7 +24,6 @@ import {
 	type MachineCommand
 } from '$lib/hosted/machineRequests';
 import { collectThreadSnapshot, type HostedThreadListPage } from '$lib/hosted/threads';
-import { mergeTranscriptMessages } from '$lib/project/transcript';
 import type {
 	AgentRunRequest,
 	AgentRunStart,
@@ -32,11 +31,11 @@ import type {
 	FilesystemBrowseResult,
 	LiveCompletionWatchEvent,
 	LocalTranscriptPage,
+	LocalTranscriptPart,
 	ProjectAttachment,
 	ThreadCacheSnapshot,
 	ThreadCacheUserRequest,
 	ThreadCacheWatchEvent,
-	ThreadMessage,
 	TranscriptPageRequest,
 	TranscriptScopeRequest,
 	WorkspacePathResolution,
@@ -472,29 +471,32 @@ export function createHostedApi(
 			runInFlight.set(requestId, tracked);
 			return await tracked;
 		},
-		fetchTranscriptPage: async (request): Promise<LocalTranscriptPage> => {
-			return await client.query(api.hostedThreads.transcriptPage, transcriptPageArgs(request));
+		fetchTranscriptPage: async (request, signal): Promise<LocalTranscriptPage> => {
+			signal?.throwIfAborted();
+			const page = await client.query(
+				api.hostedThreads.transcriptPage,
+				transcriptPageArgs(request)
+			);
+			signal?.throwIfAborted();
+			return page;
 		},
-		fetchTranscriptDetails: async (request): Promise<ThreadMessage> => {
-			const chunks: ThreadMessage[] = [];
-			let offset = 0;
-			do {
+		fetchTranscriptDetails: async (request, signal): Promise<LocalTranscriptPart[]> => {
+			const parts: LocalTranscriptPart[] = [];
+			for (
+				let offset = 0;
+				offset < request.numbers.length;
+				offset += HOSTED_TRANSCRIPT_DETAIL_CHUNK_SIZE
+			) {
+				signal?.throwIfAborted();
 				const numbers = request.numbers.slice(offset, offset + HOSTED_TRANSCRIPT_DETAIL_CHUNK_SIZE);
 				const details = await client.query(api.hostedThreads.transcriptDetails, {
 					threadId: request.threadId,
 					numbers
 				});
-				if (!details) {
-					throw new Error('Transcript message not found.');
-				}
-				chunks.push(details);
-				offset += HOSTED_TRANSCRIPT_DETAIL_CHUNK_SIZE;
-			} while (offset < request.numbers.length);
-			const merged = mergeTranscriptMessages([], chunks);
-			if (merged.length !== 1 || !merged[0]) {
-				throw new Error('Transcript message not found.');
+				signal?.throwIfAborted();
+				parts.push(...details);
 			}
-			return merged[0];
+			return parts;
 		},
 		watchTranscript: async (request: TranscriptScopeRequest, handlers) => {
 			await watchQuery(

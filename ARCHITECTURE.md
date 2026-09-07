@@ -231,6 +231,8 @@ agent. Claim, attempt, and sequence fences reject stale snapshots; terminal runs
 and persisted streams hide them. The publisher coalesces updates and limits
 payload size and retries rather than blocking execution on a live update. Both
 clients render the authoritative part order through the same transcript components.
+Both transports return numbered projected parts; the shared browser assembler
+joins responses across pages and replaces hydrated details by part number.
 Svelte keeps no cross-thread transcript cache.
 
 ## Authentication and trust boundaries
