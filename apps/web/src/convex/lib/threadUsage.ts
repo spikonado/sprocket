@@ -71,19 +71,7 @@ function pickUsageRow(rows: Array<Doc<'threadUsage'>>): Doc<'threadUsage'> | nul
 	)[0];
 }
 
-async function getUsageRow(
-	db: QueryCtx['db'] | MutationCtx['db'],
-	threadId: Id<'threadRecords'>
-): Promise<Doc<'threadUsage'> | null> {
-	return pickUsageRow(await listUsageRows(db, threadId));
-}
-
-/** Mutation-only: collapse concurrent first-event races onto one row. */
-async function getUsageRowExclusive(
-	ctx: MutationCtx,
-	threadId: Id<'threadRecords'>
-): Promise<Doc<'threadUsage'> | null> {
-	const rows = await listUsageRows(ctx.db, threadId);
+function overlayUsageRow(rows: Array<Doc<'threadUsage'>>): Doc<'threadUsage'> | null {
 	const keep = pickUsageRow(rows);
 	if (!keep) return null;
 	const totalTokensProcessed = Math.max(...rows.map((row) => row.totalTokensProcessed));
@@ -93,24 +81,41 @@ async function getUsageRowExclusive(
 			(found, row) => (row.contextTokens !== undefined ? row.contextTokens : found),
 			keep.contextTokens
 		);
+	if (keep.totalTokensProcessed === totalTokensProcessed && keep.contextTokens === latestContext) {
+		return keep;
+	}
+	return { ...keep, totalTokensProcessed, contextTokens: latestContext };
+}
+
+async function getUsageRow(
+	db: QueryCtx['db'] | MutationCtx['db'],
+	threadId: Id<'threadRecords'>
+): Promise<Doc<'threadUsage'> | null> {
+	return overlayUsageRow(await listUsageRows(db, threadId));
+}
+
+/** Mutation-only: collapse concurrent first-event races onto one row. */
+async function getUsageRowExclusive(
+	ctx: MutationCtx,
+	threadId: Id<'threadRecords'>
+): Promise<Doc<'threadUsage'> | null> {
+	const rows = await listUsageRows(ctx.db, threadId);
+	const keep = pickUsageRow(rows);
+	const overlaid = overlayUsageRow(rows);
+	if (!keep || !overlaid) return null;
 	const needsPatch =
-		keep.totalTokensProcessed !== totalTokensProcessed || keep.contextTokens !== latestContext;
+		keep.totalTokensProcessed !== overlaid.totalTokensProcessed ||
+		keep.contextTokens !== overlaid.contextTokens;
 	if (needsPatch) {
 		await ctx.db.patch('threadUsage', keep._id, {
-			totalTokensProcessed,
-			contextTokens: latestContext
+			totalTokensProcessed: overlaid.totalTokensProcessed,
+			contextTokens: overlaid.contextTokens
 		});
 	}
 	for (const row of rows) {
 		if (row._id !== keep._id) await ctx.db.delete('threadUsage', row._id);
 	}
-	return (
-		(await ctx.db.get('threadUsage', keep._id)) ?? {
-			...keep,
-			totalTokensProcessed,
-			contextTokens: latestContext
-		}
-	);
+	return (await ctx.db.get('threadUsage', keep._id)) ?? overlaid;
 }
 
 async function aggregatedProcessedTokens(
