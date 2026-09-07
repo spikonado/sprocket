@@ -182,6 +182,26 @@ pub struct TranscriptPage {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct TranscriptPartsPage {
+    pub thread_id: String,
+    pub total_parts: u32,
+    pub history_from_number: u32,
+    pub stale: bool,
+    pub parts: Vec<TranscriptPartRecord>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_before: Option<u32>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptPartRecord {
+    pub number: u32,
+    pub kind: TranscriptPartKind,
+    pub message: Option<TranscriptMessage>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct TranscriptMessage {
     pub id: String,
     pub thread_id: String,
@@ -249,5 +269,18 @@ mod tests {
             part.prompt.as_ref().map(|prompt| prompt.text.as_str()),
             Some("hi")
         );
+    }
+
+    #[test]
+    fn part_record_serializes_null_message() {
+        let json = serde_json::to_value(&TranscriptPartRecord {
+            number: 3,
+            kind: TranscriptPartKind::Tool,
+            message: None,
+        })
+        .unwrap();
+        assert_eq!(json["number"], 3);
+        assert_eq!(json["kind"], "tool");
+        assert!(json["message"].is_null());
     }
 }

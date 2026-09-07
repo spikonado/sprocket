@@ -10,7 +10,8 @@ use tokio::sync::Mutex;
 
 use super::types::{
     TRANSCRIPT_CHUNK_SIZE, TRANSCRIPT_PAGE_SIZE, TranscriptMessage, TranscriptPage, TranscriptPart,
-    TranscriptPartKind, TranscriptState, UNKNOWN_RUN_STARTED_AT,
+    TranscriptPartKind, TranscriptPartRecord, TranscriptPartsPage, TranscriptState,
+    UNKNOWN_RUN_STARTED_AT,
 };
 
 fn safe_segment(value: &str) -> String {
@@ -511,6 +512,57 @@ impl TranscriptStore {
         })
     }
 
+    pub async fn parts_page(
+        &self,
+        user_id: &str,
+        thread_id: &str,
+        before: Option<u32>,
+        limit: Option<u32>,
+    ) -> anyhow::Result<TranscriptPartsPage> {
+        let state = self.load_state(user_id, thread_id).await?;
+        let (start, end_exclusive) = parts_window(state.visible_end_exclusive(), before, limit);
+        if start >= end_exclusive {
+            return Ok(TranscriptPartsPage {
+                thread_id: thread_id.to_string(),
+                total_parts: state.remote_total_parts,
+                history_from_number: state.history_from_number,
+                stale: state.stale,
+                parts: Vec::new(),
+                next_before: None,
+            });
+        }
+        let numbers: Vec<u32> = (start..end_exclusive).collect();
+        let parts = self.read_parts(user_id, thread_id, &numbers).await?;
+        anyhow::ensure!(
+            parts.len() == numbers.len(),
+            "incomplete transcript history"
+        );
+        Ok(TranscriptPartsPage {
+            thread_id: thread_id.to_string(),
+            total_parts: state.remote_total_parts,
+            history_from_number: state.history_from_number,
+            stale: state.stale,
+            parts: parts
+                .into_iter()
+                .map(|part| project_part(user_id, thread_id, part, false))
+                .collect(),
+            next_before: if start > 0 { Some(start) } else { None },
+        })
+    }
+
+    pub async fn has_complete_range(
+        &self,
+        user_id: &str,
+        thread_id: &str,
+        start: u32,
+        end_exclusive: u32,
+    ) -> anyhow::Result<bool> {
+        Ok(self
+            .missing_numbers(user_id, thread_id, start, end_exclusive)
+            .await?
+            .is_empty())
+    }
+
     pub async fn has_complete_message_page(
         &self,
         user_id: &str,
@@ -555,6 +607,24 @@ impl TranscriptStore {
             return Ok(None);
         }
         Ok(messages.pop())
+    }
+
+    pub async fn part_details(
+        &self,
+        user_id: &str,
+        thread_id: &str,
+        numbers: &[u32],
+    ) -> anyhow::Result<Option<Vec<TranscriptPartRecord>>> {
+        let parts = self.read_parts(user_id, thread_id, numbers).await?;
+        if parts.len() != numbers.len() {
+            return Ok(None);
+        }
+        Ok(Some(
+            parts
+                .into_iter()
+                .map(|part| project_part(user_id, thread_id, part, true))
+                .collect(),
+        ))
     }
 
     pub async fn missing_numbers(
@@ -726,6 +796,14 @@ impl TranscriptStore {
         }
         Ok(())
     }
+}
+
+pub fn parts_window(visible_end: u32, before: Option<u32>, limit: Option<u32>) -> (u32, u32) {
+    let limit = limit
+        .unwrap_or(TRANSCRIPT_PAGE_SIZE)
+        .clamp(1, TRANSCRIPT_CHUNK_SIZE);
+    let end_exclusive = before.unwrap_or(visible_end).min(visible_end);
+    (end_exclusive.saturating_sub(limit), end_exclusive)
 }
 
 pub fn message_page_start(
@@ -995,6 +1073,26 @@ fn project_messages(
         }
     }
     messages
+}
+
+fn project_part(
+    user_id: &str,
+    thread_id: &str,
+    part: TranscriptPart,
+    include_details: bool,
+) -> TranscriptPartRecord {
+    let number = part.number;
+    let kind = part.kind;
+    let mut messages = project_messages(user_id, thread_id, vec![part], include_details);
+    debug_assert!(
+        messages.len() <= 1,
+        "a single transcript part should project to at most one message"
+    );
+    TranscriptPartRecord {
+        number,
+        kind,
+        message: messages.pop(),
+    }
 }
 
 fn json_str<'a>(item: &'a JsonValue, key: &str) -> Option<&'a str> {
@@ -1818,5 +1916,187 @@ mod tests {
                 .is_none()
         );
         let _ = tokio::fs::remove_dir_all(dir).await;
+    }
+
+    #[test]
+    fn parts_window_takes_a_numeric_slice_inside_five_hundred_parts() {
+        assert_eq!(parts_window(500, None, None), (460, 500));
+        assert_eq!(parts_window(500, Some(200), Some(40)), (160, 200));
+        assert_eq!(parts_window(500, Some(10), Some(40)), (0, 10));
+        assert_eq!(parts_window(100, Some(500), Some(200)), (0, 100));
+    }
+
+    #[tokio::test]
+    async fn cold_pages_fetch_only_requested_parts_of_a_five_hundred_part_response() {
+        let dir =
+            std::env::temp_dir().join(format!("sprocket-parts-window-{}", uuid::Uuid::new_v4()));
+        let store = TranscriptStore::new(dir.clone());
+        store
+            .update_state("user", "thread", |state| state.remote_total_parts = 500)
+            .await
+            .unwrap();
+
+        let mut requests = Vec::new();
+        for before in [None, Some(488), None] {
+            let limit = if before.is_some() { 40 } else { 12 };
+            let (start, end) = parts_window(500, before, Some(limit));
+            crate::transcript::fetch_missing_parts(
+                &store,
+                "user",
+                "thread",
+                start,
+                end,
+                |numbers| {
+                    requests.push(numbers.clone());
+                    async move {
+                        Ok(numbers
+                            .into_iter()
+                            .map(|number| {
+                                completion_for_run(number, "span", &format!("part {number}"))
+                            })
+                            .collect())
+                    }
+                },
+            )
+            .await
+            .unwrap();
+        }
+        assert_eq!(
+            requests,
+            vec![(488..500).collect::<Vec<_>>(), (448..488).collect()]
+        );
+        assert!(
+            store
+                .read_parts("user", "thread", &(0..448).collect::<Vec<_>>())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        let page = store
+            .parts_page("user", "thread", Some(500), Some(12))
+            .await
+            .unwrap();
+        assert_eq!(page.total_parts, 500);
+        assert_eq!(page.parts.len(), 12);
+        assert_eq!(page.parts[0].number, 488);
+        assert_eq!(page.parts[11].number, 499);
+        assert_eq!(page.next_before, Some(488));
+        assert_eq!(page.parts[0].kind, TranscriptPartKind::Completion);
+        let message = page.parts[0].message.as_ref().unwrap();
+        assert_eq!(message.source_numbers, vec![488]);
+        assert_eq!(message.text, "part 488");
+        assert!(!message.details_loaded);
+
+        let older = store
+            .parts_page("user", "thread", page.next_before, Some(40))
+            .await
+            .unwrap();
+        assert_eq!(older.parts[0].number, 448);
+        assert_eq!(older.parts[39].number, 487);
+        assert_eq!(older.next_before, Some(448));
+
+        store
+            .update_state("user", "thread", |state| state.remote_total_parts = 501)
+            .await
+            .unwrap();
+        let frozen = store
+            .parts_page("user", "thread", Some(500), Some(12))
+            .await
+            .unwrap();
+        assert_eq!(frozen.parts, page.parts);
+
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn parts_page_errors_on_cache_holes_without_a_cursor() {
+        let dir =
+            std::env::temp_dir().join(format!("sprocket-parts-hole-{}", uuid::Uuid::new_v4()));
+        let store = TranscriptStore::new(dir.clone());
+        let parts = (0..20)
+            .filter(|number| *number != 10)
+            .map(|number| prompt(number, "x"))
+            .collect::<Vec<_>>();
+        store.append_parts("user", "thread", &parts).await.unwrap();
+        store
+            .update_state("user", "thread", |state| state.remote_total_parts = 20)
+            .await
+            .unwrap();
+
+        assert!(
+            store
+                .parts_page("user", "thread", Some(20), Some(10))
+                .await
+                .is_err()
+        );
+        assert!(
+            !store
+                .has_complete_range("user", "thread", 10, 20)
+                .await
+                .unwrap()
+        );
+
+        let complete = store
+            .parts_page("user", "thread", Some(10), Some(10))
+            .await
+            .unwrap();
+        assert_eq!(complete.parts.len(), 10);
+        assert_eq!(complete.parts[0].number, 0);
+        assert_eq!(complete.next_before, None);
+
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn part_details_project_each_cached_part_with_hidden_payloads() {
+        let dir =
+            std::env::temp_dir().join(format!("sprocket-part-details-{}", uuid::Uuid::new_v4()));
+        let store = TranscriptStore::new(dir.clone());
+        let mut empty_prompt = prompt(1, "hi");
+        empty_prompt.prompt = None;
+        store
+            .append_parts("user", "thread", &[completion(0), empty_prompt])
+            .await
+            .unwrap();
+        store
+            .update_state("user", "thread", |state| state.remote_total_parts = 2)
+            .await
+            .unwrap();
+
+        let page = store
+            .parts_page("user", "thread", None, Some(2))
+            .await
+            .unwrap();
+        assert_eq!(page.parts.len(), 2);
+        assert_eq!(page.parts[0].kind, TranscriptPartKind::Completion);
+        let light = page.parts[0].message.as_ref().unwrap();
+        assert!(!light.details_loaded);
+        assert_eq!(light.source_numbers, vec![0]);
+        assert_eq!(light.parts[0]["text"], "");
+        assert!(light.parts[1]["input"].is_null());
+        assert_eq!(page.parts[1].kind, TranscriptPartKind::Prompt);
+        assert!(page.parts[1].message.is_none());
+
+        let details = store
+            .part_details("user", "thread", &[0, 1])
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(details.len(), 2);
+        let detailed = details[0].message.as_ref().unwrap();
+        assert!(detailed.details_loaded);
+        assert_eq!(detailed.parts[0]["text"], "secret");
+        assert_eq!(detailed.parts[1]["input"]["cmd"], "pwd");
+        assert!(details[1].message.is_none());
+        assert!(
+            store
+                .part_details("user", "thread", &[0, 2])
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        tokio::fs::remove_dir_all(dir).await.unwrap();
     }
 }

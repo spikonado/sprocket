@@ -4,7 +4,7 @@ This file lists shims we still ship. When a removal PR merges, delete its
 entry. Age-out is a prod check for stored rows, or an explicit decision that
 a retired function name can disappear.
 
-Current as of 2026-09-06.
+Current as of 2026-09-07.
 
 ## Transcript projection API
 
@@ -85,10 +85,15 @@ meaning unknown instead of a sequence number. Remove it once supported clients n
 longer read it; the current section timer uses assistant-part timestamps.
 
 PR #295 keeps `/api/transcript/page` returning raw `parts` for released clients.
-The projected-message client uses `/api/transcript/messages`; the legacy route
-reads the same complete message window and returns its original parts. The
-JSONL replica format is unchanged. Remove the legacy route after all supported
-clients use the projected-message endpoint.
+The projected-message client uses `/api/transcript/messages` and `/api/transcript/details`.
+Those routes still page by complete messages and may scan past the requested part
+window to a message boundary. Current UI pages numbered Convex transcript parts
+through `/api/transcript/parts` and `/api/transcript/part-details`. The JSONL
+replica format is unchanged. The transcript watcher applies Convex state metadata
+and does not prefetch numbered part bodies; released clients still download them
+through the preserved paging routes. Remove `/api/transcript/page`,
+`/api/transcript/messages`, and `/api/transcript/details` after all supported
+clients use the part-bounded endpoints.
 
 ## Stored schema
 

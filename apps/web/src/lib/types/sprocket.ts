@@ -129,12 +129,18 @@ export type LocalTranscriptAttachment = {
 	url?: string;
 };
 
+export type LocalTranscriptPart = {
+	number: number;
+	kind: 'prompt' | 'completion' | 'tool';
+	message: ThreadMessage | null;
+};
+
 export type LocalTranscriptPage = {
 	threadId: Id<'threadRecords'>;
 	totalParts: number;
 	historyFromNumber: number;
 	stale: boolean;
-	messages: ThreadMessage[];
+	parts: LocalTranscriptPart[];
 	nextBefore?: number;
 };
 
@@ -244,8 +250,14 @@ export type DesktopApi = {
 	listProjectAttachments: () => Promise<ProjectAttachment[]>;
 	attachProject: (attachment: ProjectAttachmentRequest) => Promise<ProjectAttachment>;
 	runAgent: (request: AgentRunRequest) => Promise<AgentRunStart>;
-	fetchTranscriptPage: (request: TranscriptPageRequest) => Promise<LocalTranscriptPage>;
-	fetchTranscriptDetails: (request: TranscriptDetailsRequest) => Promise<ThreadMessage>;
+	fetchTranscriptPage: (
+		request: TranscriptPageRequest,
+		signal?: AbortSignal
+	) => Promise<LocalTranscriptPage>;
+	fetchTranscriptDetails: (
+		request: TranscriptDetailsRequest,
+		signal?: AbortSignal
+	) => Promise<LocalTranscriptPart[]>;
 	watchTranscript: (
 		request: TranscriptScopeRequest,
 		handlers: {

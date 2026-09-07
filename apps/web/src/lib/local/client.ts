@@ -5,6 +5,7 @@ import type {
 	LiveCompletionOverlay,
 	LiveCompletionWatchEvent,
 	LocalTranscriptPage,
+	LocalTranscriptPart,
 	ProjectAttachment,
 	ThreadMessage,
 	ThreadCacheSnapshot,
@@ -102,12 +103,17 @@ const transcriptMessageSchema = z.object({
 	streamIds: z.array(z.string()),
 	detailsLoaded: z.boolean()
 });
+const localTranscriptPartSchema = z.object({
+	number: z.int().nonnegative(),
+	kind: z.enum(['prompt', 'completion', 'tool']),
+	message: transcriptMessageSchema.nullable()
+});
 const localTranscriptPageSchema = z.object({
 	threadId: z.string(),
 	totalParts: z.int(),
 	historyFromNumber: z.int(),
 	stale: z.boolean(),
-	messages: z.array(transcriptMessageSchema),
+	parts: z.array(localTranscriptPartSchema),
 	nextBefore: z.int().optional()
 });
 const transcriptWatchEventSchema = z.object({
@@ -177,7 +183,17 @@ function parseLocalTranscriptPage(
 		historyFromNumber: page.historyFromNumber,
 		stale: page.stale,
 		nextBefore: page.nextBefore,
-		messages: page.messages.map(parseTranscriptMessage)
+		parts: page.parts.map(parseLocalTranscriptPart)
+	};
+}
+
+function parseLocalTranscriptPart(
+	part: z.infer<typeof localTranscriptPartSchema>
+): LocalTranscriptPart {
+	return {
+		number: part.number,
+		kind: part.kind,
+		message: part.message ? parseTranscriptMessage(part.message) : null
 	};
 }
 
@@ -592,20 +608,22 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 			});
 			return { runId: asConvexId(result.runId), threadId: asConvexId(result.threadId) };
 		},
-		fetchTranscriptPage: async (requestBody) => {
-			const page = await request('/api/transcript/messages', localTranscriptPageSchema, {
+		fetchTranscriptPage: async (requestBody, signal) => {
+			const page = await request('/api/transcript/parts', localTranscriptPageSchema, {
 				method: 'POST',
-				body: JSON.stringify(requestBody)
+				body: JSON.stringify(requestBody),
+				signal
 			});
 			return parseLocalTranscriptPage(page);
 		},
-		fetchTranscriptDetails: async (requestBody) =>
-			parseTranscriptMessage(
-				await request('/api/transcript/details', transcriptMessageSchema, {
+		fetchTranscriptDetails: async (requestBody, signal) =>
+			(
+				await request('/api/transcript/part-details', z.array(localTranscriptPartSchema), {
 					method: 'POST',
-					body: JSON.stringify(requestBody)
+					body: JSON.stringify(requestBody),
+					signal
 				})
-			),
+			).map(parseLocalTranscriptPart),
 		watchTranscript: async (requestBody, handlers) => {
 			await postSse(`${baseUrl}/api/transcript/watch`, requestBody, handlers.signal, (data) => {
 				const parsed = transcriptWatchEventSchema.safeParse(JSON.parse(data));
