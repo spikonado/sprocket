@@ -669,7 +669,7 @@ fn unique_sibling_path(path: &Path, kind: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let instance = sprocket_instance_id();
     let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let nanos = unix_nanos();
+    let nanos = monotonic_nanos();
     let mut name = path
         .file_name()
         .map(|name| name.to_os_string())
@@ -683,6 +683,44 @@ fn unix_nanos() -> u128 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or(0)
+}
+
+/// Ranking stamp for sibling names. Wall time can step backward, which would
+/// make a later write lose a cross-instance comparison. Monotonic time does not.
+fn monotonic_nanos() -> u128 {
+    #[cfg(unix)]
+    {
+        let mut ts = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        // SAFETY: `ts` is a valid timespec out-pointer.
+        if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) } == 0 {
+            let sec = (ts.tv_sec as i128).max(0) as u128;
+            let nsec = (ts.tv_nsec as i128).max(0) as u128;
+            return sec.saturating_mul(1_000_000_000).saturating_add(nsec);
+        }
+    }
+    #[cfg(windows)]
+    {
+        let mut frequency = 0i64;
+        let mut count = 0i64;
+        // SAFETY: both calls write through valid i64 out-pointers.
+        if unsafe { QueryPerformanceFrequency(&mut frequency) } != 0
+            && frequency > 0
+            && unsafe { QueryPerformanceCounter(&mut count) } != 0
+            && count >= 0
+        {
+            return (count as u128).saturating_mul(1_000_000_000) / (frequency as u128);
+        }
+    }
+    unix_nanos()
+}
+
+#[cfg(windows)]
+unsafe extern "system" {
+    fn QueryPerformanceCounter(performance_count: *mut i64) -> i32;
+    fn QueryPerformanceFrequency(frequency: *mut i64) -> i32;
 }
 
 /// Stable for one process lifetime. Mixes first-staging wall time with the OS
@@ -772,8 +810,8 @@ fn parse_sprocket_sibling(name: &str, file_name: &str, kind: &str) -> Option<Spr
 }
 
 /// Newest sibling is unique even when same-instance seq order and cross-instance
-/// timestamps would not form a pairwise ranking. Keep the latest seq per
-/// process instance, then pick the latest timestamp among those winners.
+/// stamps would not form a pairwise ranking. Keep the latest seq per process
+/// instance, then pick the latest monotonic stamp among those winners.
 fn select_newest_sprocket_sibling<T>(
     items: impl IntoIterator<Item = (SprocketSiblingKey, T)>,
 ) -> Option<T> {
