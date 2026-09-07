@@ -214,4 +214,31 @@ describe('transcript viewport paging', () => {
 		expect(anchor.getBoundingClientRect().top).toBe(offset);
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
 	});
+
+	it('keeps a work disclosure open when a page prepends parts into that section', async () => {
+		const response: ThreadMessage = {
+			...message(3),
+			_id: 'response:run',
+			type: 'response',
+			parts: [
+				{ type: 'reasoning', id: 'r3', text: 'Recent reasoning' },
+				{ type: 'text', id: 't4', text: 'Answer' }
+			]
+		};
+		const { props, viewport } = await renderTranscript([response]);
+		const button = viewport.querySelector<HTMLButtonElement>('button[aria-expanded]');
+		if (!button) throw new Error('Missing work disclosure');
+		button.click();
+		await settle();
+		expect(button.getAttribute('aria-expanded')).toBe('true');
+		props.messages = [
+			{
+				...response,
+				parts: [{ type: 'reasoning', id: 'r2', text: 'Older reasoning' }, ...response.parts]
+			}
+		];
+		await settle();
+		expect(button.isConnected).toBe(true);
+		expect(button.getAttribute('aria-expanded')).toBe('true');
+	});
 });

@@ -13,6 +13,7 @@
 		isAssistantResponseStreaming,
 		partitionWorkSectionTools,
 		workSectionTimingAnchor,
+		type AssistantTimelineSection,
 		type AssistantTimelineTool,
 		type AssistantTimelineWorkBlock
 	} from '$lib/chat/assistant-timeline';
@@ -140,6 +141,11 @@
 
 	function isVisibleWorkBlock(block: AssistantTimelineWorkBlock): boolean {
 		return !isArtifactToolGroup(block);
+	}
+
+	function sectionKey(section: AssistantTimelineSection, next?: AssistantTimelineSection) {
+		if (section.type === 'text') return assistantTimelinePartKey(section);
+		return `work:${next?.type === 'text' ? assistantTimelinePartKey(next) : 'tail'}`;
 	}
 
 	const userMessageClass =
@@ -411,7 +417,7 @@
 									{#if !hasPersistedAssistantContent && (message.text || (isStreaming && timeline.length === 0))}
 										<ChatMarkdown content={message.text || '...'} className="text-foreground" />
 									{/if}
-									{#each sections as section, sectionIndex (section.type === 'work' ? `work:${section.key}` : assistantTimelinePartKey(section))}
+									{#each sections as section, sectionIndex (sectionKey(section, sections[sectionIndex + 1]))}
 										{#if section.type === 'text'}
 											<div
 												data-transcript-anchor={`${message._id}:${assistantTimelinePartKey(section)}`}
@@ -442,7 +448,7 @@
 											{#if visibleBlocks.length > 0 || workInProgress || runningTools.length > 0}
 												<div
 													class="space-y-3"
-													data-transcript-anchor={`${message._id}:work:${section.key}`}
+													data-transcript-anchor={`${message._id}:${sectionKey(section, nextSection)}`}
 												>
 													<WorkDisclosure
 														inProgress={workInProgress}
