@@ -511,6 +511,7 @@
 	let replicaError = $state<string | null>(null);
 	let replicaGeneration = 0;
 	let transcriptHistory: TranscriptHistory | null = null;
+	let transcriptAbort: AbortController | null = null;
 	let loadingOlderTranscript = $state(false);
 	const loadingTranscriptDetails = new SvelteMap<string, Promise<void>>();
 	let liveCompletion = $state<LiveCompletionOverlay | null>(null);
@@ -518,6 +519,8 @@
 
 	function showReplicaForThread(threadId: Id<'threadRecords'> | null) {
 		replicaGeneration += 1;
+		transcriptAbort?.abort();
+		transcriptAbort = null;
 		transcriptHistory?.stop();
 		transcriptHistory = null;
 		loadingOlderTranscript = false;
@@ -552,9 +555,11 @@
 		}
 		const ac = new AbortController();
 		const watchedThreadId = threadId;
+		transcriptAbort = ac;
 		const generation = replicaGeneration;
 		const history = new TranscriptHistory(
-			(request) => api.fetchTranscriptPage({ userId, threadId: watchedThreadId, ...request }),
+			(request) =>
+				api.fetchTranscriptPage({ userId, threadId: watchedThreadId, ...request }, ac.signal),
 			() => {
 				if (ac.signal.aborted || replicaGeneration !== generation) return;
 				replicaMessages = history.messages;
@@ -1334,6 +1339,7 @@
 		const threadId = currentThreadId;
 		const userId = getCurrentUserId();
 		const history = transcriptHistory;
+		const signal = transcriptAbort?.signal;
 		const generation = replicaGeneration;
 		if (
 			!api ||
@@ -1345,21 +1351,27 @@
 		) {
 			return;
 		}
-		const key = `${generation}:${message._id}:${message.sourceNumbers.join(',')}`;
+		const numbers = history.detailsNumbers(message);
+		if (!numbers.length) return;
+		const key = `${generation}:${message._id}`;
 		const pending = loadingTranscriptDetails.get(key);
-		if (pending) return pending;
-		const request = api
-			.fetchTranscriptDetails({
-				userId,
-				threadId,
-				numbers: message.sourceNumbers
-			})
-			.then((details) => {
+		if (pending) {
+			await pending;
+			if (replicaGeneration === generation) await loadTranscriptMessageDetails(message);
+			return;
+		}
+		const request = (async () => {
+			for (let offset = 0; offset < numbers.length; offset += 100) {
+				if (replicaGeneration !== generation || signal?.aborted) return;
+				const details = await api.fetchTranscriptDetails(
+					{ userId, threadId, numbers: numbers.slice(offset, offset + 100) },
+					signal
+				);
 				if (replicaGeneration === generation) history.applyDetails(details);
-			})
-			.finally(() => {
-				loadingTranscriptDetails.delete(key);
-			});
+			}
+		})().finally(() => {
+			loadingTranscriptDetails.delete(key);
+		});
 		loadingTranscriptDetails.set(key, request);
 		return request;
 	}

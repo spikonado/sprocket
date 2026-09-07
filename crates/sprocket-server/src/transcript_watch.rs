@@ -2,14 +2,12 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use futures::StreamExt;
-use sprocket_agent::{TRANSCRIPT_PAGE_SIZE, TranscriptStore, apply_remote_state};
+use sprocket_agent::{RemoteTranscriptState, TranscriptStore, apply_remote_state};
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
 use crate::native_auth::NativeAuthManager;
-use crate::transcript_client::{
-    UserConvexClient, decode_state_update, retry_after_failure, sync_range,
-};
+use crate::transcript_client::{UserConvexClient, decode_state_update, retry_after_failure};
 
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -239,61 +237,35 @@ async fn run_watch_loop(start: &WatchStart) -> anyhow::Result<()> {
     )
     .await?;
     let remote = client.ensure_migrated(&start.thread_id).await?;
+    apply_and_publish(start, &remote, false).await?;
+
+    let mut subscription = client.subscribe_state(&start.thread_id).await?;
+    while let Some(update) = subscription.next().await {
+        let remote = decode_state_update(update)?;
+        apply_and_publish(start, &remote, false).await?;
+    }
+    anyhow::bail!("transcript subscription ended")
+}
+
+async fn apply_and_publish(
+    start: &WatchStart,
+    remote: &RemoteTranscriptState,
+    stale: bool,
+) -> anyhow::Result<()> {
     apply_remote_state(
         &start.store,
         &start.user_id,
         &start.thread_id,
-        &remote,
-        false,
-    )
-    .await?;
-    let newest_start = remote.total_parts.saturating_sub(TRANSCRIPT_PAGE_SIZE);
-    sync_range(
-        &start.store,
-        &client,
-        &start.user_id,
-        &start.thread_id,
-        newest_start,
-        remote.total_parts,
+        remote,
+        stale,
     )
     .await?;
     let _ = start.events.send(TranscriptWatchEvent {
         event_type: "updated",
         total_parts: Some(remote.total_parts),
-        stale: false,
+        stale,
     });
-
-    let mut seen_total = remote.total_parts;
-    let mut subscription = client.subscribe_state(&start.thread_id).await?;
-    while let Some(update) = subscription.next().await {
-        let remote = decode_state_update(update)?;
-        apply_remote_state(
-            &start.store,
-            &start.user_id,
-            &start.thread_id,
-            &remote,
-            false,
-        )
-        .await?;
-        if remote.total_parts > seen_total {
-            sync_range(
-                &start.store,
-                &client,
-                &start.user_id,
-                &start.thread_id,
-                seen_total,
-                remote.total_parts,
-            )
-            .await?;
-        }
-        seen_total = remote.total_parts;
-        let _ = start.events.send(TranscriptWatchEvent {
-            event_type: "updated",
-            total_parts: Some(remote.total_parts),
-            stale: false,
-        });
-    }
-    anyhow::bail!("transcript subscription ended")
+    Ok(())
 }
 
 #[cfg(test)]
@@ -370,6 +342,57 @@ mod tests {
         assert_eq!(event.total_parts, Some(4));
         assert!(event.stale);
         drop(session);
+        let _ = tokio::fs::remove_dir_all(dir).await;
+    }
+
+    #[tokio::test]
+    async fn watch_metadata_does_not_fetch_part_bodies() {
+        let dir =
+            std::env::temp_dir().join(format!("sprocket-watch-metadata-{}", uuid::Uuid::new_v4()));
+        let store = TranscriptStore::new(dir.clone());
+        let (events, mut rx) = broadcast::channel(8);
+        let start = WatchStart {
+            deployment_url: "https://example.convex.cloud".into(),
+            store: Arc::clone(&store),
+            native_auth: native_auth(),
+            user_id: "user".into(),
+            thread_id: "thread".into(),
+            events,
+        };
+        apply_and_publish(
+            &start,
+            &RemoteTranscriptState {
+                thread_id: "thread".into(),
+                total_parts: 500,
+                history_from_number: 0,
+                context_summary: None,
+            },
+            false,
+        )
+        .await
+        .unwrap();
+
+        let event = rx.recv().await.expect("metadata update");
+        assert_eq!(event.total_parts, Some(500));
+        assert!(!event.stale);
+
+        let state = store.load_state("user", "thread").await.unwrap();
+        assert_eq!(state.remote_total_parts, 500);
+        assert!(state.downloaded_ranges.is_empty());
+        assert_eq!(
+            store
+                .missing_numbers("user", "thread", 0, 40)
+                .await
+                .unwrap(),
+            (0..40).collect::<Vec<_>>()
+        );
+        assert!(
+            store
+                .read_parts("user", "thread", &(0..40).collect::<Vec<_>>())
+                .await
+                .unwrap()
+                .is_empty()
+        );
         let _ = tokio::fs::remove_dir_all(dir).await;
     }
 }

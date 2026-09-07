@@ -4,6 +4,7 @@
 	import {
 		assistantTimelineToolError,
 		assistantTimelineToolFailureKind,
+		assistantTimelinePartKey,
 		buildAssistantTimeline,
 		buildCommandSessionCommandMap,
 		buildOpenExecCommandSessions,
@@ -16,6 +17,7 @@
 		type AssistantTimelineWorkBlock
 	} from '$lib/chat/assistant-timeline';
 	import { toolKindIcon, toolLogIcon } from '$lib/chat/tool-icons';
+	import { TranscriptSectionKeys } from '$lib/chat/transcript-section-keys';
 	import {
 		changedFileCount,
 		fullToolSummary,
@@ -76,9 +78,10 @@
 	let scrollContent = $state<HTMLDivElement | null>(null);
 	let stickToBottom = $state(true);
 	let adjustingScroll = false;
+	let touchY: number | undefined;
 
 	const SCROLL_EPSILON_PX = 28;
-	const LOAD_OLDER_THRESHOLD_PX = 2_000;
+	const LOAD_OLDER_THRESHOLD_PX = 200;
 
 	function updateStickToBottom() {
 		const viewport = scrollViewport;
@@ -90,8 +93,40 @@
 		}
 		const distanceToBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
 		stickToBottom = distanceToBottom <= SCROLL_EPSILON_PX;
-		if (hasOlder && !loadingOlder && onLoadOlder && viewport.scrollTop <= LOAD_OLDER_THRESHOLD_PX) {
+		if (
+			!stickToBottom &&
+			hasOlder &&
+			!loadingOlder &&
+			onLoadOlder &&
+			viewport.scrollTop <= LOAD_OLDER_THRESHOLD_PX
+		) {
 			onLoadOlder();
+		}
+	}
+
+	function loadOlderOnUpwardIntent() {
+		const viewport = scrollViewport;
+		if (
+			viewport &&
+			hasOlder &&
+			!loadingOlder &&
+			viewport.clientHeight > 0 &&
+			viewport.scrollTop <= LOAD_OLDER_THRESHOLD_PX
+		) {
+			stickToBottom = false;
+			onLoadOlder?.();
+		}
+	}
+
+	function handleHistoryKey(event: KeyboardEvent) {
+		if (
+			event.target instanceof Element &&
+			event.target.closest('input, textarea, button, [contenteditable="true"]')
+		) {
+			return;
+		}
+		if (event.key === 'ArrowUp' || event.key === 'PageUp' || event.key === 'Home') {
+			loadOlderOnUpwardIntent();
 		}
 	}
 
@@ -107,6 +142,9 @@
 	function isVisibleWorkBlock(block: AssistantTimelineWorkBlock): boolean {
 		return !isArtifactToolGroup(block);
 	}
+
+	const sectionKeys = new TranscriptSectionKeys();
+	$effect.pre(() => sectionKeys.retain(messages.map((message) => message._id)));
 
 	const userMessageClass =
 		'user-bubble w-fit max-w-[33rem] rounded-xl border px-5 py-3.5 text-[15.5px] leading-7 text-foreground';
@@ -150,8 +188,8 @@
 		viewport.scrollTop = viewport.scrollHeight;
 	}
 
-	function firstVisibleMessage(viewport: HTMLDivElement) {
-		const elements = viewport.querySelectorAll<HTMLElement>('[data-message-id]');
+	function firstVisibleAnchor(viewport: HTMLDivElement) {
+		const elements = viewport.querySelectorAll<HTMLElement>('[data-transcript-anchor]');
 		const top = viewport.getBoundingClientRect().top;
 		let low = 0;
 		let high = elements.length;
@@ -169,9 +207,10 @@
 		untrack(() => {
 			const viewport = scrollViewport;
 			if (!viewport) return;
-			const anchor = stickToBottom ? undefined : firstVisibleMessage(viewport);
+			const anchor = stickToBottom ? undefined : firstVisibleAnchor(viewport);
 			const offset = anchor?.getBoundingClientRect().top;
 			const scrollTop = viewport.scrollTop;
+			const scrollHeight = viewport.scrollHeight;
 			void tick().then(() => {
 				if (viewport !== scrollViewport) return;
 				adjustingScroll = true;
@@ -183,6 +222,8 @@
 					viewport.scrollTop === scrollTop
 				) {
 					viewport.scrollTop += anchor.getBoundingClientRect().top - offset;
+				} else if (anchor && !anchor.isConnected && viewport.scrollTop === scrollTop) {
+					viewport.scrollTop += viewport.scrollHeight - scrollHeight;
 				}
 				requestAnimationFrame(() => {
 					adjustingScroll = false;
@@ -214,10 +255,28 @@
 </script>
 
 <div class="relative min-h-0 flex-1">
+	<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (Keyboard users must be able to page history even when it does not overflow.) -->
 	<div
 		class="hide-scrollbar h-full overflow-auto"
+		role="region"
+		aria-label="Conversation history"
+		tabindex="0"
 		bind:this={scrollViewport}
 		onscroll={updateStickToBottom}
+		onwheel={(event) => {
+			if (event.deltaY < 0) loadOlderOnUpwardIntent();
+		}}
+		onkeydown={handleHistoryKey}
+		ontouchstart={(event) => {
+			touchY = event.touches[0]?.clientY;
+		}}
+		ontouchmove={(event) => {
+			const nextY = event.touches[0]?.clientY;
+			if (nextY !== undefined && touchY !== undefined && nextY > touchY) {
+				loadOlderOnUpwardIntent();
+			}
+			touchY = nextY;
+		}}
 	>
 		<div
 			bind:this={scrollContent}
@@ -262,7 +321,11 @@
 				<div class="space-y-8 pb-14">
 					{#each messages as message (message._id)}
 						{#if message.type === 'prompt'}
-							<div data-message-id={message._id} class="flex flex-col items-end gap-1.5">
+							<div
+								data-message-id={message._id}
+								data-transcript-anchor={message._id}
+								class="flex flex-col items-end gap-1.5"
+							>
 								{#if message.attachments.length}
 									<ul
 										class="flex max-w-132 flex-wrap justify-end gap-2"
@@ -334,7 +397,10 @@
 							)}
 							{@const sessionCommands = buildCommandSessionCommandMap(timelineTools)}
 							{@const blocks = groupAssistantTimeline(timeline)}
-							{@const sections = groupAssistantTimelineSections(blocks)}
+							{@const sections = sectionKeys.reconcile(
+								message._id,
+								groupAssistantTimelineSections(blocks)
+							)}
 							{@const isStreaming = isAssistantResponseStreaming(message, activeRunId)}
 							{@const openSessions = buildOpenExecCommandSessions(timelineTools, isStreaming)}
 							{@const hasPersistedAssistantContent = timeline.some(
@@ -352,9 +418,13 @@
 									{#if !hasPersistedAssistantContent && (message.text || (isStreaming && timeline.length === 0))}
 										<ChatMarkdown content={message.text || '...'} className="text-foreground" />
 									{/if}
-									{#each sections as section, sectionIndex (`${section.type}-${section.type === 'work' ? section.key : section.id}-${sectionIndex}`)}
+									{#each sections as section, sectionIndex (section.renderKey)}
 										{#if section.type === 'text'}
-											<ChatMarkdown content={section.text || ' '} className="text-foreground" />
+											<div
+												data-transcript-anchor={`${message._id}:${assistantTimelinePartKey(section)}`}
+											>
+												<ChatMarkdown content={section.text || ' '} className="text-foreground" />
+											</div>
 										{:else}
 											{@const { settledBlocks, runningTools } = partitionWorkSectionTools(
 												section.blocks,
@@ -377,104 +447,116 @@
 														: undefined
 											})}
 											{#if visibleBlocks.length > 0 || workInProgress || runningTools.length > 0}
-												<WorkDisclosure
-													inProgress={workInProgress}
-													startedAtMs={timing.startedAtMs}
-													completedAtMs={timing.completedAtMs}
-													detailsKey={`${message.sourceNumbers?.join(',')}:${message.detailsLoaded}`}
-													onExpand={() => onLoadDetails?.(message)}
+												<div
+													class="space-y-3"
+													data-transcript-anchor={`${message._id}:${section.renderKey}`}
 												>
-													{#each visibleBlocks as block, blockIndex (`${block.type}-${block.type === 'tool-group' ? block.tools.map((tool) => tool.callId).join(',') : block.id}-${blockIndex}`)}
-														{#if block.type === 'reasoning'}
-															{@const reasoningInProgress =
-																workInProgress &&
-																runningTools.length === 0 &&
-																blockIndex === visibleBlocks.length - 1}
-															<ReasoningDisclosure
-																text={block.text}
-																inProgress={reasoningInProgress}
-															/>
-														{:else}
-															<ToolCallsDisclosure
-																label={toolGroupLabel(block.toolKey)}
-																icon={toolKindIcon(block.toolKey)}
-																tools={block.tools}
-																defaultExpanded={block.toolKey === 'apply_patch'
-																	? changedFileCount(block.tools) <= 2
-																	: undefined}
-															>
-																{#snippet toolRow(tool)}
-																	{@const toolError = assistantTimelineToolError(tool, isStreaming)}
-																	{@const toolFailureKind = assistantTimelineToolFailureKind(
-																		tool,
-																		isStreaming
-																	)}
-																	{@const toolSummary = toolItemSummary(tool, sessionCommands)}
-																	{#if toolError && toolFailureKind}
-																		<details class="min-w-0">
-																			<summary
-																				class="min-w-0 cursor-pointer text-left"
+													<WorkDisclosure
+														inProgress={workInProgress}
+														startedAtMs={timing.startedAtMs}
+														completedAtMs={timing.completedAtMs}
+														detailsKey={`${message.sourceNumbers?.join(',')}:${message.detailsLoaded}`}
+														onExpand={() => onLoadDetails?.(message)}
+													>
+														{#each visibleBlocks as block, blockIndex (`${block.type}-${block.type === 'tool-group' ? block.tools.map((tool) => tool.callId).join(',') : block.id}-${blockIndex}`)}
+															{#if block.type === 'reasoning'}
+																{@const reasoningInProgress =
+																	workInProgress &&
+																	runningTools.length === 0 &&
+																	blockIndex === visibleBlocks.length - 1}
+																<ReasoningDisclosure
+																	text={block.text}
+																	inProgress={reasoningInProgress}
+																/>
+															{:else}
+																<ToolCallsDisclosure
+																	label={toolGroupLabel(block.toolKey)}
+																	icon={toolKindIcon(block.toolKey)}
+																	tools={block.tools}
+																	defaultExpanded={block.toolKey === 'apply_patch'
+																		? changedFileCount(block.tools) <= 2
+																		: undefined}
+																>
+																	{#snippet toolRow(tool)}
+																		{@const toolError = assistantTimelineToolError(
+																			tool,
+																			isStreaming
+																		)}
+																		{@const toolFailureKind = assistantTimelineToolFailureKind(
+																			tool,
+																			isStreaming
+																		)}
+																		{@const toolSummary = toolItemSummary(tool, sessionCommands)}
+																		{#if toolError && toolFailureKind}
+																			<details class="min-w-0">
+																				<summary
+																					class="min-w-0 cursor-pointer text-left"
+																					title={fullToolSummary(
+																						tool,
+																						isStreaming,
+																						sessionCommands
+																					)}
+																				>
+																					<span class={toolSummaryClass(tool)}>{toolSummary}</span>
+																					<span
+																						class={toolFailureKind === 'failed'
+																							? 'text-destructive'
+																							: 'text-amber-800 dark:text-amber-200'}
+																					>
+																						({toolFailureKind})
+																					</span>
+																				</summary>
+																				<p
+																					class="mt-1.5 text-xs leading-5 wrap-break-word whitespace-pre-wrap {toolFailureKind ===
+																					'failed'
+																						? 'text-destructive'
+																						: 'text-amber-800 dark:text-amber-200'}"
+																					role="status"
+																				>
+																					{toolError}
+																				</p>
+																			</details>
+																		{:else}
+																			<p
+																				class={`min-w-0 ${toolSummaryClass(tool)}`}
 																				title={fullToolSummary(tool, isStreaming, sessionCommands)}
 																			>
-																				<span class={toolSummaryClass(tool)}>{toolSummary}</span>
-																				<span
-																					class={toolFailureKind === 'failed'
-																						? 'text-destructive'
-																						: 'text-amber-800 dark:text-amber-200'}
-																				>
-																					({toolFailureKind})
-																				</span>
-																			</summary>
-																			<p
-																				class="mt-1.5 text-xs leading-5 wrap-break-word whitespace-pre-wrap {toolFailureKind ===
-																				'failed'
-																					? 'text-destructive'
-																					: 'text-amber-800 dark:text-amber-200'}"
-																				role="status"
-																			>
-																				{toolError}
+																				{toolSummary}
 																			</p>
-																		</details>
-																	{:else}
-																		<p
-																			class={`min-w-0 ${toolSummaryClass(tool)}`}
-																			title={fullToolSummary(tool, isStreaming, sessionCommands)}
-																		>
-																			{toolSummary}
-																		</p>
-																	{/if}
-																{/snippet}
-															</ToolCallsDisclosure>
-														{/if}
+																		{/if}
+																	{/snippet}
+																</ToolCallsDisclosure>
+															{/if}
+														{/each}
+													</WorkDisclosure>
+													{#each sectionMandateApprovals as approval (approval.mandateId)}
+														<MandateApprovalForm {approval} />
 													{/each}
-												</WorkDisclosure>
-											{/if}
-											{#each sectionMandateApprovals as approval (approval.mandateId)}
-												<MandateApprovalForm {approval} />
-											{/each}
-											{#if runningTools.length > 0}
-												<ToolCallsDisclosure
-													label="Running"
-													icon={LoaderCircle}
-													iconClass="animate-spin"
-													tools={runningTools}
-													defaultExpanded={true}
-												>
-													{#snippet toolRow(tool)}
-														{@const ToolIcon = toolLogIcon(tool)}
-														{@const toolSummary = toolItemSummary(tool, sessionCommands)}
-														<p
-															class="flex min-w-0 items-start gap-1.5"
-															title={`${toolSummary} (running)`}
+													{#if runningTools.length > 0}
+														<ToolCallsDisclosure
+															label="Running"
+															icon={LoaderCircle}
+															iconClass="animate-spin"
+															tools={runningTools}
+															defaultExpanded={true}
 														>
-															<ToolIcon
-																class="text-muted-foreground mt-1.5 size-3 shrink-0"
-																aria-hidden="true"
-															/>
-															<span class={toolSummaryClass(tool)}>{toolSummary}</span>
-														</p>
-													{/snippet}
-												</ToolCallsDisclosure>
+															{#snippet toolRow(tool)}
+																{@const ToolIcon = toolLogIcon(tool)}
+																{@const toolSummary = toolItemSummary(tool, sessionCommands)}
+																<p
+																	class="flex min-w-0 items-start gap-1.5"
+																	title={`${toolSummary} (running)`}
+																>
+																	<ToolIcon
+																		class="text-muted-foreground mt-1.5 size-3 shrink-0"
+																		aria-hidden="true"
+																	/>
+																	<span class={toolSummaryClass(tool)}>{toolSummary}</span>
+																</p>
+															{/snippet}
+														</ToolCallsDisclosure>
+													{/if}
+												</div>
 											{/if}
 										{/if}
 									{/each}
