@@ -756,7 +756,7 @@ describe('duplicate transcript state rows', () => {
 
 		expect(await asUser.query(api.transcript.getState, { threadId })).toMatchObject({
 			threadId,
-			totalParts: 1
+			totalParts: 3
 		});
 
 		await asUser.mutation(api.transcript.ensureMigrated, { threadId });

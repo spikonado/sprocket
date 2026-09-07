@@ -106,7 +106,12 @@ export async function getTranscriptState(
 	ctx: MutationCtx | QueryCtx,
 	threadId: Id<'threadRecords'>
 ): Promise<Doc<'threadTranscriptStates'> | null> {
-	return pickTranscriptState(await listTranscriptStates(ctx, threadId));
+	const rows = await listTranscriptStates(ctx, threadId);
+	const keep = pickTranscriptState(rows);
+	if (!keep) return null;
+	const totalParts = Math.max(...rows.map((row) => row.totalParts));
+	if (keep.totalParts === totalParts) return keep;
+	return { ...keep, totalParts };
 }
 
 export async function getOrCreateTranscriptState(
