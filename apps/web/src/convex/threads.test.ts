@@ -82,7 +82,7 @@ describe('duplicate threadUsage rows', () => {
 		});
 
 		expect(await asUser.query(api.threads.getByThreadId, { threadId })).toMatchObject({
-			contextTokens: 10
+			contextTokens: 20
 		});
 
 		await t.run(async (ctx) => {
