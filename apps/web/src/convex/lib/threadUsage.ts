@@ -40,14 +40,57 @@ function assertValidTokenCount(value: number): void {
 	}
 }
 
+async function listUsageRows(
+	db: QueryCtx['db'] | MutationCtx['db'],
+	threadId: Id<'threadRecords'>
+): Promise<Doc<'threadUsage'>[]> {
+	return await db
+		.query('threadUsage')
+		.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
+		.collect();
+}
+
+function pickUsageRow(rows: Array<Doc<'threadUsage'>>): Doc<'threadUsage'> | null {
+	if (rows.length === 0) return null;
+	return [...rows].sort(
+		(a, b) => a._creationTime - b._creationTime || a._id.localeCompare(b._id)
+	)[0];
+}
+
 async function getUsageRow(
 	db: QueryCtx['db'] | MutationCtx['db'],
 	threadId: Id<'threadRecords'>
 ): Promise<Doc<'threadUsage'> | null> {
-	return await db
-		.query('threadUsage')
-		.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
-		.unique();
+	return pickUsageRow(await listUsageRows(db, threadId));
+}
+
+async function getUsageRowExclusive(
+	ctx: MutationCtx,
+	threadId: Id<'threadRecords'>
+): Promise<Doc<'threadUsage'> | null> {
+	const rows = await listUsageRows(ctx.db, threadId);
+	const keep = pickUsageRow(rows);
+	if (!keep) return null;
+	const latestContext = [...rows]
+		.sort((a, b) => a._creationTime - b._creationTime || a._id.localeCompare(b._id))
+		.reduce<number | undefined>(
+			(found, row) => (row.contextTokens !== undefined ? row.contextTokens : found),
+			keep.contextTokens
+		);
+	if (keep.contextTokens !== latestContext) {
+		await ctx.db.patch('threadUsage', keep._id, {
+			contextTokens: latestContext
+		});
+	}
+	for (const row of rows) {
+		if (row._id !== keep._id) await ctx.db.delete('threadUsage', row._id);
+	}
+	return (
+		(await ctx.db.get('threadUsage', keep._id)) ?? {
+			...keep,
+			contextTokens: latestContext
+		}
+	);
 }
 
 async function aggregatedProcessedTokens(
@@ -70,7 +113,7 @@ export async function clearThreadContextTokens(
 	ctx: MutationCtx,
 	threadId: Id<'threadRecords'>
 ): Promise<void> {
-	const usageRow = await getUsageRow(ctx.db, threadId);
+	const usageRow = await getUsageRowExclusive(ctx, threadId);
 	if (!usageRow || usageRow.contextTokens === undefined) return;
 	await ctx.db.patch('threadUsage', usageRow._id, { contextTokens: undefined });
 }
@@ -105,7 +148,7 @@ export async function recordThreadUsageEvent(
 		.unique();
 	if (existing) {
 		if (args.contextTokens !== undefined) {
-			const usageRow = await getUsageRow(ctx.db, thread._id);
+			const usageRow = await getUsageRowExclusive(ctx, thread._id);
 			if (usageRow) {
 				await ctx.db.patch('threadUsage', usageRow._id, { contextTokens: args.contextTokens });
 			}
@@ -127,7 +170,7 @@ export async function recordThreadUsageEvent(
 	}
 	await threadProcessedTokens.insertIfDoesNotExist(ctx, inserted);
 
-	const usageRow = await getUsageRow(ctx.db, thread._id);
+	const usageRow = await getUsageRowExclusive(ctx, thread._id);
 	const nextContextTokens = args.contextTokens ?? usageRow?.contextTokens;
 	if (usageRow) {
 		if (nextContextTokens !== undefined) {
