@@ -145,12 +145,11 @@ pub struct TranscriptAttachmentMeta {
     pub url: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptCompletionBody {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream_id: Option<String>,
-    #[serde(default)]
     pub items: Vec<JsonValue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_response_id: Option<String>,
@@ -158,6 +157,19 @@ pub struct TranscriptCompletionBody {
     pub provider_request_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_message_id: Option<String>,
+}
+
+impl TranscriptCompletionBody {
+    #[cfg(test)]
+    pub(crate) fn with_items(stream_id: impl Into<String>, items: Vec<JsonValue>) -> Self {
+        Self {
+            stream_id: Some(stream_id.into()),
+            items,
+            provider_response_id: None,
+            provider_request_id: None,
+            provider_message_id: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -259,11 +271,13 @@ mod tests {
     #[test]
     fn completion_body_round_trips_provider_identity() {
         let body = TranscriptCompletionBody {
-            stream_id: Some("agent:run:claim:1".into()),
-            items: vec![serde_json::json!({ "type": "text", "text": "ok" })],
             provider_response_id: Some("resp_123".into()),
             provider_request_id: Some("req-abc".into()),
             provider_message_id: Some("msg_456".into()),
+            ..TranscriptCompletionBody::with_items(
+                "agent:run:claim:1",
+                vec![serde_json::json!({ "type": "text", "text": "ok" })],
+            )
         };
         let value = serde_json::to_value(&body).unwrap();
         assert_eq!(value["streamId"], "agent:run:claim:1");

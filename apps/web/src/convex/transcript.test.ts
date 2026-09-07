@@ -86,12 +86,18 @@ describe('numbered transcript parts', () => {
 				completedAt: 3_100
 			}
 		];
+		const identity = {
+			providerResponseId: 'resp_123',
+			providerRequestId: 'req-abc',
+			providerMessageId: 'msg_456'
+		};
 		const number = await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
 			runId,
 			claimId: 'claim-complete',
 			attemptSeq: 1,
 			streamId: 'stream-1',
 			items,
+			...identity,
 			executionSecret
 		});
 		expect(number).toBe(1);
@@ -101,6 +107,7 @@ describe('numbered transcript parts', () => {
 			attemptSeq: 1,
 			streamId: 'stream-1',
 			items,
+			...identity,
 			executionSecret
 		});
 		expect(again).toBe(1);
@@ -108,49 +115,10 @@ describe('numbered transcript parts', () => {
 		expect(state.totalParts).toBe(2);
 		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
 		expect(parts.parts.map((part) => part.kind)).toEqual(['prompt', 'completion']);
-		expect(parts.parts[1]?.completion?.items).toEqual(items);
-	});
-
-	it('stores provider completion identity when the agent reports it', async () => {
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
-		const executionSecret = 'transcript-identity-secret';
-		const { runId } = await createQueuedRun(
-			t,
-			asUser,
-			threadId,
-			'sub-identity',
-			executionSecret,
-			'Write code'
-		);
-		await asUser.mutation(api.agentRuntime.start, {
-			claimId: 'claim-identity',
-			runId,
-			executionSecret
-		});
-		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, {
-			runId,
-			claimId: 'claim-identity',
-			attemptSeq: 1,
-			executionSecret
-		});
-		await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
-			runId,
-			claimId: 'claim-identity',
-			attemptSeq: 1,
-			streamId: 'stream-id',
-			items: [{ type: 'text' as const, id: 't', text: 'Done', turnId: 'stream-id' }],
-			providerResponseId: 'resp_123',
-			providerRequestId: 'req-abc',
-			providerMessageId: 'msg_456',
-			executionSecret
-		});
-		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
 		expect(parts.parts[1]?.completion).toMatchObject({
-			streamId: 'stream-id',
-			providerResponseId: 'resp_123',
-			providerRequestId: 'req-abc',
-			providerMessageId: 'msg_456'
+			streamId: 'stream-1',
+			items,
+			...identity
 		});
 	});
 
