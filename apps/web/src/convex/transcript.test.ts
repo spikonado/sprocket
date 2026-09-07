@@ -122,6 +122,49 @@ describe('numbered transcript parts', () => {
 		});
 	});
 
+	it('omits empty provider identity fields from a completion', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'transcript-empty-id-secret';
+		const { runId } = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			'sub-empty-id',
+			executionSecret,
+			'Write code'
+		);
+		await asUser.mutation(api.agentRuntime.start, {
+			claimId: 'claim-empty-id',
+			runId,
+			executionSecret
+		});
+		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, {
+			runId,
+			claimId: 'claim-empty-id',
+			attemptSeq: 1,
+			executionSecret
+		});
+		await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
+			runId,
+			claimId: 'claim-empty-id',
+			attemptSeq: 1,
+			streamId: 'stream-empty',
+			items: [{ type: 'text', id: 'text', text: 'Done', turnId: 'stream-empty' }],
+			providerResponseId: '',
+			providerRequestId: '',
+			providerMessageId: '',
+			executionSecret
+		});
+		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
+		expect(parts.parts[1]?.completion).toMatchObject({
+			streamId: 'stream-empty'
+		});
+		expect(parts.parts[1]?.completion).not.toHaveProperty('providerResponseId');
+		expect(parts.parts[1]?.completion).not.toHaveProperty('providerRequestId');
+		expect(parts.parts[1]?.completion).not.toHaveProperty('providerMessageId');
+	});
+
 	it('normalizes missing timing from older agents on new completion writes', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);

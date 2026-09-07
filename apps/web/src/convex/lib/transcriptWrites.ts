@@ -64,15 +64,9 @@ export async function recordCompletionTranscript(
 		streamId: args.streamId,
 		items: args.items
 	};
-	if (args.providerResponseId !== undefined) {
-		completion.providerResponseId = args.providerResponseId;
-	}
-	if (args.providerRequestId !== undefined) {
-		completion.providerRequestId = args.providerRequestId;
-	}
-	if (args.providerMessageId !== undefined) {
-		completion.providerMessageId = args.providerMessageId;
-	}
+	assignProviderId(completion, 'providerResponseId', args.providerResponseId);
+	assignProviderId(completion, 'providerRequestId', args.providerRequestId);
+	assignProviderId(completion, 'providerMessageId', args.providerMessageId);
 	const result = await appendTranscriptPart(ctx, {
 		threadId: args.threadId,
 		userId: args.userId,
@@ -197,4 +191,15 @@ function settledToolBody(job: TranscriptToolJob): TranscriptToolBody {
 					status
 				};
 	return progressToolBody(job, { status, output });
+}
+
+function assignProviderId(
+	completion: TranscriptCompletionBody,
+	field: 'providerResponseId' | 'providerRequestId' | 'providerMessageId',
+	value: string | undefined
+): void {
+	if (value === undefined || value === '') {
+		return;
+	}
+	completion[field] = value;
 }
