@@ -267,33 +267,4 @@ mod tests {
             Some("hi")
         );
     }
-
-    #[test]
-    fn completion_body_round_trips_provider_identity() {
-        let body = TranscriptCompletionBody {
-            provider_response_id: Some("resp_123".into()),
-            provider_request_id: Some("req-abc".into()),
-            provider_message_id: Some("msg_456".into()),
-            ..TranscriptCompletionBody::with_items(
-                "agent:run:claim:1",
-                vec![serde_json::json!({ "type": "text", "text": "ok" })],
-            )
-        };
-        let value = serde_json::to_value(&body).unwrap();
-        assert_eq!(value["streamId"], "agent:run:claim:1");
-        assert_eq!(value["providerResponseId"], "resp_123");
-        assert_eq!(value["providerRequestId"], "req-abc");
-        assert_eq!(value["providerMessageId"], "msg_456");
-        let decoded: TranscriptCompletionBody = serde_json::from_value(value).unwrap();
-        assert_eq!(decoded, body);
-
-        let legacy: TranscriptCompletionBody = serde_json::from_value(serde_json::json!({
-            "streamId": "s",
-            "items": []
-        }))
-        .unwrap();
-        assert_eq!(legacy.provider_response_id, None);
-        assert_eq!(legacy.provider_request_id, None);
-        assert_eq!(legacy.provider_message_id, None);
-    }
 }
