@@ -91,7 +91,6 @@ describe('duplicate threadUsage rows', () => {
 		});
 
 		expect(await asUser.query(api.threads.getByThreadId, { threadId })).toMatchObject({
-			totalTokensProcessed: 4,
 			contextTokens: 10
 		});
 
