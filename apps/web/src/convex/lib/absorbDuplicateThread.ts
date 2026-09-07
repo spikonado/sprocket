@@ -3,11 +3,17 @@ import type { MutationCtx } from '@convex/_generated/server';
 import { absorbDuplicateArtifact } from '@convex/lib/artifactAbsorb';
 import { threadProcessedTokens } from '@convex/lib/threadUsage';
 
-function pickEarliestThread(rows: Array<Doc<'threadRecords'>>): Doc<'threadRecords'> | null {
+function pickEarliestByCreation<T extends { _creationTime: number; _id: string }>(
+	rows: T[]
+): T | null {
 	if (rows.length === 0) return null;
 	return [...rows].sort(
 		(a, b) => a._creationTime - b._creationTime || a._id.localeCompare(b._id)
 	)[0];
+}
+
+function pickEarliestThread(rows: Array<Doc<'threadRecords'>>): Doc<'threadRecords'> | null {
+	return pickEarliestByCreation(rows);
 }
 
 /** Move every dependent of `dropId` onto `keepId`, then delete `dropId`.
@@ -102,16 +108,25 @@ export async function absorbDuplicateThread(
 		.query('threadTranscriptStates')
 		.withIndex('by_threadId', (query) => query.eq('threadId', dropId))
 		.collect();
-	const keepState = keepStates[0] ?? null;
-	for (const extra of keepStates.slice(1)) {
-		await ctx.db.delete('threadTranscriptStates', extra._id);
+	const keepState = pickEarliestByCreation(keepStates);
+	const keepTotalParts =
+		keepStates.length === 0 ? 0 : Math.max(...keepStates.map((row) => row.totalParts));
+	for (const extra of keepStates) {
+		if (!keepState || extra._id !== keepState._id) {
+			await ctx.db.delete('threadTranscriptStates', extra._id);
+		}
 	}
-	const dropState = dropStates[0] ?? null;
-	for (const extra of dropStates.slice(1)) {
-		await ctx.db.delete('threadTranscriptStates', extra._id);
+	if (keepState && keepState.totalParts !== keepTotalParts) {
+		await ctx.db.patch('threadTranscriptStates', keepState._id, { totalParts: keepTotalParts });
+	}
+	const dropState = pickEarliestByCreation(dropStates);
+	for (const extra of dropStates) {
+		if (!dropState || extra._id !== dropState._id) {
+			await ctx.db.delete('threadTranscriptStates', extra._id);
+		}
 	}
 
-	let nextNumber = keepState?.totalParts ?? 0;
+	let nextNumber = keepTotalParts;
 	const dropParts = await ctx.db
 		.query('threadTranscriptParts')
 		.withIndex('by_threadId_and_number', (query) => query.eq('threadId', dropId))
@@ -137,7 +152,7 @@ export async function absorbDuplicateThread(
 	if (dropState) {
 		if (keepState) {
 			await ctx.db.patch('threadTranscriptStates', keepState._id, {
-				totalParts: Math.max(keepState.totalParts, nextNumber)
+				totalParts: Math.max(keepTotalParts, nextNumber)
 			});
 			await ctx.db.delete('threadTranscriptStates', dropState._id);
 		} else {

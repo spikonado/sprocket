@@ -38,6 +38,11 @@ describe('absorbDuplicateThread', { timeout: 20_000 }, () => {
 			await ctx.db.insert('threadTranscriptStates', {
 				threadId: keepId,
 				userId: subject,
+				totalParts: 0
+			});
+			await ctx.db.insert('threadTranscriptStates', {
+				threadId: keepId,
+				userId: subject,
 				totalParts: 1
 			});
 			await ctx.db.insert('threadTranscriptParts', {
