@@ -197,9 +197,31 @@ export async function absorbDuplicateThread(
 		.query('threadUsage')
 		.withIndex('by_threadId', (query) => query.eq('threadId', keepId))
 		.collect();
-	let keepUsage = keepUsageRows[0] ?? null;
-	for (const extra of keepUsageRows.slice(1)) {
-		await ctx.db.delete('threadUsage', extra._id);
+	let keepUsage = pickEarliestByCreation(keepUsageRows);
+	if (keepUsage) {
+		const totalTokensProcessed = keepUsageRows.reduce(
+			(sum, row) => sum + row.totalTokensProcessed,
+			0
+		);
+		const contextTokens = [...keepUsageRows]
+			.sort((a, b) => a._creationTime - b._creationTime || a._id.localeCompare(b._id))
+			.reduce<number | undefined>(
+				(found, row) => (row.contextTokens !== undefined ? row.contextTokens : found),
+				keepUsage.contextTokens
+			);
+		if (
+			keepUsage.totalTokensProcessed !== totalTokensProcessed ||
+			keepUsage.contextTokens !== contextTokens
+		) {
+			await ctx.db.patch('threadUsage', keepUsage._id, {
+				totalTokensProcessed,
+				contextTokens
+			});
+			keepUsage = { ...keepUsage, totalTokensProcessed, contextTokens };
+		}
+		for (const extra of keepUsageRows) {
+			if (extra._id !== keepUsage._id) await ctx.db.delete('threadUsage', extra._id);
+		}
 	}
 	for (const row of dropUsageRows) {
 		if (keepUsage) {

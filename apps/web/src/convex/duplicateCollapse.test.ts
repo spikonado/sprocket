@@ -85,6 +85,11 @@ describe('absorbDuplicateThread', { timeout: 20_000 }, () => {
 				.unique();
 			if (!keepUsage) throw new Error('keep usage missing');
 			await ctx.db.patch('threadUsage', keepUsage._id, { totalTokensProcessed: 10 });
+			await ctx.db.insert('threadUsage', {
+				threadId: keepId,
+				userId: subject,
+				totalTokensProcessed: 4
+			});
 			await ctx.db.insert('threadUsageEvents', {
 				threadId: keepId,
 				userId: subject,
@@ -144,6 +149,6 @@ describe('absorbDuplicateThread', { timeout: 20_000 }, () => {
 		expect(ids.partNumbers).toEqual([0, 1]);
 		expect(ids.totalParts).toBe(2);
 		expect(ids.eventCount).toBe(2);
-		expect(ids.totalTokensProcessed).toBe(13);
+		expect(ids.totalTokensProcessed).toBe(17);
 	});
 });
