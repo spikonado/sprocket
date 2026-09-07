@@ -223,4 +223,45 @@ describe('agentQuestions', () => {
 
 		vi.useRealTimers();
 	});
+
+	it('keeps an overdue-only head answerable until the timeout write lands', async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date('2026-07-26T12:00:00.000Z'));
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
+		const { executionSecret, claimId, runId } = await startRun(t, threadId);
+
+		const overdue = await t.mutation(api.agentQuestions.create, {
+			runId,
+			claimId,
+			question: 'Still there?',
+			options: [{ id: 'yes', label: 'Yes' }],
+			timeoutMs: 1_000,
+			executionSecret
+		});
+
+		vi.setSystemTime(new Date('2026-07-26T12:00:02.000Z'));
+
+		expect(
+			(
+				await asUser.query(api.agentQuestions.headPendingForThread, {
+					threadId,
+					now: Date.now()
+				})
+			)?.questionId
+		).toBe(overdue.questionId);
+
+		await expect(
+			asUser.mutation(api.agentQuestions.answer, {
+				threadId,
+				questionId: overdue.questionId,
+				optionId: 'yes'
+			})
+		).resolves.toMatchObject({
+			status: 'answered',
+			answer: { optionId: 'yes', optionLabel: 'Yes' }
+		});
+
+		vi.useRealTimers();
+	});
 });

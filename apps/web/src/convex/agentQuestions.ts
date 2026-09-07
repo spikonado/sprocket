@@ -75,32 +75,14 @@ async function headPendingQuestion(
 	return pending[0] ?? null;
 }
 
-/** First pending question that has not yet reached timeoutAt (UI head). */
-async function headLivePendingQuestion(
+/** First live pending question, or the overdue head if nothing is still live. */
+async function headPendingQuestionForUi(
 	ctx: QueryCtx | MutationCtx,
 	threadId: Id<'threadRecords'>,
 	now: number
 ): Promise<Doc<'agentQuestions'> | null> {
 	const pending = await listPendingQuestions(ctx, threadId);
-	return pending.find((question) => question.timeoutAt > now) ?? null;
-}
-
-/** Mark past-due pending questions timedOut so FIFO can advance before the scheduler fires. */
-async function expireOverduePendingQuestions(
-	ctx: MutationCtx,
-	threadId: Id<'threadRecords'>,
-	now: number
-): Promise<void> {
-	const pending = await listPendingQuestions(ctx, threadId);
-	for (const question of pending) {
-		if (question.timeoutAt > now) {
-			continue;
-		}
-		await ctx.db.patch('agentQuestions', question._id, {
-			status: 'timedOut',
-			answeredAt: now
-		});
-	}
+	return pending.find((question) => question.timeoutAt > now) ?? pending[0] ?? null;
 }
 
 export const create = mutation({
@@ -180,7 +162,16 @@ export const answer = mutation({
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 
 		const now = Date.now();
-		await expireOverduePendingQuestions(ctx, args.threadId, now);
+		const pending = await listPendingQuestions(ctx, args.threadId);
+		const liveHead = pending.find((question) => question.timeoutAt > now) ?? null;
+		for (const question of pending) {
+			if (question.timeoutAt > now) continue;
+			if (!liveHead && question._id === args.questionId) continue;
+			await ctx.db.patch('agentQuestions', question._id, {
+				status: 'timedOut',
+				answeredAt: now
+			});
+		}
 
 		const question = await ctx.db.get('agentQuestions', args.questionId);
 		if (!question || question.threadId !== args.threadId) {
@@ -257,15 +248,15 @@ export const getForExecutor = query({
 export const headPendingForThread = query({
 	args: {
 		threadId: v.id('threadRecords'),
-		// Callers that can refresh should pass wall-clock time; omitted `now`
-		// falls back so older clients and tests keep the overdue-skip behavior.
+		// Callers that can refresh should pass wall-clock time so the head can
+		// skip overdue questions when a later one is still live.
 		now: v.optional(v.number())
 	},
 	returns: v.union(vAgentQuestionSnapshot, v.null()),
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
-		const head = await headLivePendingQuestion(ctx, args.threadId, args.now ?? Date.now());
+		const head = await headPendingQuestionForUi(ctx, args.threadId, args.now ?? Date.now());
 		return head ? toSnapshot(head) : null;
 	}
 });
