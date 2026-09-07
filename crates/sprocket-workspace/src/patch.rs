@@ -731,6 +731,7 @@ mod tests {
     use super::{apply_workspace_patch, write_new_file};
     use crate::commands::{WorkspaceCancellation, WorkspaceOperationCancelled};
     use crate::test_support::temp_workspace;
+    use diffy::patch_set::{FileOperation, ParseOptions, PatchSet};
 
     static HOME_ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -867,6 +868,26 @@ mod tests {
             "after\n"
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unidiff_headers_do_not_keep_a_trailing_carriage_return() {
+        let patch = "--- a/file.txt\r\n\
+            +++ b/file.txt\r\n\
+            @@ -1 +1 @@\r\n\
+            -before\r\n\
+            +after\r\n";
+        let parsed = PatchSet::parse(patch, ParseOptions::unidiff())
+            .next()
+            .expect("one file in the patch")
+            .expect("CRLF headers should parse");
+        match parsed.operation() {
+            FileOperation::Modify { original, modified } => {
+                assert_eq!(original.as_ref(), "a/file.txt");
+                assert_eq!(modified.as_ref(), "b/file.txt");
+            }
+            other => panic!("expected modify, got {other:?}"),
+        }
     }
 
     #[tokio::test]
