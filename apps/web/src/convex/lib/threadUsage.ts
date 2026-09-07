@@ -103,19 +103,26 @@ async function getUsageRowExclusive(
 	const keep = pickUsageRow(rows);
 	const overlaid = overlayUsageRow(rows);
 	if (!keep || !overlaid) return null;
+	const aggregated = await aggregatedProcessedTokens(ctx, threadId);
+	const totalTokensProcessed = Math.max(overlaid.totalTokensProcessed, aggregated ?? 0);
 	const needsPatch =
-		keep.totalTokensProcessed !== overlaid.totalTokensProcessed ||
+		keep.totalTokensProcessed !== totalTokensProcessed ||
 		keep.contextTokens !== overlaid.contextTokens;
 	if (needsPatch) {
 		await ctx.db.patch('threadUsage', keep._id, {
-			totalTokensProcessed: overlaid.totalTokensProcessed,
+			totalTokensProcessed,
 			contextTokens: overlaid.contextTokens
 		});
 	}
 	for (const row of rows) {
 		if (row._id !== keep._id) await ctx.db.delete('threadUsage', row._id);
 	}
-	return (await ctx.db.get('threadUsage', keep._id)) ?? overlaid;
+	return (
+		(await ctx.db.get('threadUsage', keep._id)) ?? {
+			...overlaid,
+			totalTokensProcessed
+		}
+	);
 }
 
 async function aggregatedProcessedTokens(
@@ -157,7 +164,7 @@ export async function getThreadUsageValues(
 	const aggregated = await aggregatedProcessedTokens(ctx, thread._id);
 	return {
 		contextTokens: usageRow?.contextTokens,
-		totalTokensProcessed: aggregated ?? fieldTotal
+		totalTokensProcessed: Math.max(fieldTotal, aggregated ?? 0)
 	};
 }
 
@@ -202,9 +209,15 @@ export async function recordThreadUsageEvent(
 	await threadProcessedTokens.insertIfDoesNotExist(ctx, inserted);
 
 	const usageRow = await getUsageRowExclusive(ctx, thread._id);
+	const fieldTotal = usageRow?.totalTokensProcessed ?? 0;
+	const aggregated = await aggregatedProcessedTokens(ctx, thread._id);
+	const totalTokensProcessed =
+		aggregated != null
+			? Math.max(fieldTotal, aggregated)
+			: addTokenCounts(fieldTotal, args.processedTokens);
 	const next: ThreadUsageValues = {
 		contextTokens: args.contextTokens ?? usageRow?.contextTokens,
-		totalTokensProcessed: addTokenCounts(usageRow?.totalTokensProcessed ?? 0, args.processedTokens)
+		totalTokensProcessed
 	};
 	if (usageRow) {
 		await ctx.db.patch('threadUsage', usageRow._id, next);

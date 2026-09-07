@@ -110,7 +110,7 @@ describe('duplicate threadUsage rows', () => {
 		);
 		expect(rows).toHaveLength(1);
 		expect(rows[0]).toMatchObject({
-			totalTokensProcessed: 10,
+			totalTokensProcessed: 9,
 			contextTokens: 20
 		});
 	});
