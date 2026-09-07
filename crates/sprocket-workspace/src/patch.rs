@@ -649,13 +649,13 @@ async fn replace_file(path: &Path, contents: &[u8], permissions: Permissions) ->
     // but before the success-path sweep can leave an old bak beside the file;
     // the next replace would then create a second bak and recovery could compare
     // stamps from different boots.
-    discard_sprocket_bak_siblings(path).await;
+    discard_sprocket_bak_siblings(path).await?;
 
     let tmp = stage_unique_sibling(path, "tmp", contents, Some(permissions)).await?;
 
     match tokio::fs::rename(&tmp, path).await {
         Ok(()) => {
-            discard_sprocket_bak_siblings(path).await;
+            let _ = discard_sprocket_bak_siblings(path).await;
             Ok(())
         }
         Err(error) => {
@@ -881,13 +881,20 @@ async fn list_sprocket_bak_siblings(path: &Path) -> Result<Vec<(SprocketSiblingK
     Ok(found)
 }
 
-async fn discard_sprocket_bak_siblings(path: &Path) {
-    let Ok(found) = list_sprocket_bak_siblings(path).await else {
-        return;
-    };
+async fn discard_sprocket_bak_siblings(path: &Path) -> Result<()> {
+    let found = list_sprocket_bak_siblings(path).await?;
     for (_, bak) in found {
-        let _ = tokio::fs::remove_file(bak).await;
+        match tokio::fs::remove_file(&bak).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("failed to discard leftover backup {}", bak.display())
+                });
+            }
+        }
     }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -906,7 +913,7 @@ async fn replace_existing_windows(path: &Path, tmp: &Path) -> Result<()> {
 
     match tokio::fs::rename(tmp, path).await {
         Ok(()) => {
-            discard_sprocket_bak_siblings(path).await;
+            let _ = discard_sprocket_bak_siblings(path).await;
             Ok(())
         }
         Err(error) => {
