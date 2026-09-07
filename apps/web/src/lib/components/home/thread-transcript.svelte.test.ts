@@ -27,7 +27,7 @@ function message(number: number): ThreadMessage {
 async function settle() {
 	flushSync();
 	await tick();
-	await vi.runOnlyPendingTimersAsync();
+	await vi.advanceTimersByTimeAsync(16);
 }
 
 async function renderTranscript(numbers: number[]) {
@@ -99,7 +99,7 @@ describe('transcript viewport paging', () => {
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
 	});
 
-	it('fills a short viewport silently without loading beyond it or retrying on loading-state changes', async () => {
+	it('fills a short viewport silently without loading beyond it', async () => {
 		const { props, viewport } = await renderTranscript([3]);
 		expect(viewport.textContent).not.toContain('Load earlier messages');
 		expect(viewport.scrollHeight).toBe(viewport.clientHeight);
@@ -107,15 +107,36 @@ describe('transcript viewport paging', () => {
 		props.loadingOlder = true;
 		await settle();
 		expect(viewport.textContent).not.toContain('Loading earlier messages');
-		props.loadingOlder = false;
-		await settle();
-		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
 		props.messages = [message(2), ...props.messages];
+		props.loadingOlder = false;
 		await settle();
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(2);
 		props.messages = [message(1), ...props.messages];
 		await settle();
 		expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
+		expect(props.onLoadOlder).toHaveBeenCalledTimes(2);
+	});
+
+	it('retries failed short-page loads after a delay and cancels the retry on unmount', async () => {
+		const { props } = await renderTranscript([3]);
+		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
+		props.loadingOlder = true;
+		await settle();
+		props.stale = true;
+		props.loadingOlder = false;
+		flushSync();
+		await tick();
+		await vi.advanceTimersByTimeAsync(1_999);
+		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
+		await vi.advanceTimersByTimeAsync(1);
+		expect(props.onLoadOlder).toHaveBeenCalledTimes(2);
+		props.loadingOlder = true;
+		await settle();
+		props.loadingOlder = false;
+		await settle();
+		await cleanup?.();
+		cleanup = undefined;
+		await vi.advanceTimersByTimeAsync(2_000);
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(2);
 	});
 

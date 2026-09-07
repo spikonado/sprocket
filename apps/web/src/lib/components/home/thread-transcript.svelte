@@ -200,20 +200,29 @@
 	$effect(() => {
 		void messages;
 		const viewport = scrollViewport;
-		if (!viewport || !hasOlder) return;
+		if (!viewport || !hasOlder || loadingOlder) return;
+		const retryDelay = stale ? 2_000 : 0;
+		let retryTimer: ReturnType<typeof setTimeout> | undefined;
 		let cancelled = false;
-		void tick().then(() => {
+		function fillViewport() {
 			if (
 				!cancelled &&
+				viewport &&
 				!loadingOlder &&
 				viewport.clientHeight > 0 &&
 				viewport.scrollHeight <= viewport.clientHeight
 			) {
 				onLoadOlder?.();
 			}
+		}
+		void tick().then(() => {
+			if (cancelled) return;
+			if (retryDelay) retryTimer = setTimeout(fillViewport, retryDelay);
+			else fillViewport();
 		});
 		return () => {
 			cancelled = true;
+			clearTimeout(retryTimer);
 		};
 	});
 
