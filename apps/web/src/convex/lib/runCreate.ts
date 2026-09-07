@@ -328,9 +328,7 @@ export async function finalizeFailedQueuedStart(
 	const run =
 		hashedRuns.length === 0
 			? null
-			: [...hashedRuns].sort(
-					(a, b) => a.startedAt - b.startedAt || a._id.localeCompare(b._id)
-				)[0];
+			: [...hashedRuns].sort((a, b) => a.startedAt - b.startedAt || a._id.localeCompare(b._id))[0];
 	if (!run) {
 		// When the caller is still authenticated, distinguish a duplicate
 		// submission owned by another executor from an insert still in flight.
