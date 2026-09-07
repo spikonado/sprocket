@@ -977,7 +977,7 @@ mod tests {
             created_at: None,
             prompt: None,
             completion: Some(TranscriptCompletionBody {
-                stream_id: Some("stream-1".to_string()),
+                stream_id: Some("stream-1".into()),
                 items: vec![
                     serde_json::json!({ "type": "reasoning", "id": "r1", "text": "secret" }),
                     serde_json::json!({ "type": "tool-call", "callId": "c1", "name": "exec_command", "input": { "cmd": "pwd" } }),

@@ -42,7 +42,7 @@ struct RemoteTranscriptPart {
     )]
     created_at: Option<u64>,
     prompt: Option<RemotePrompt>,
-    completion: Option<RemoteCompletion>,
+    completion: Option<TranscriptCompletionBody>,
     tool: Option<RemoteTool>,
 }
 
@@ -65,14 +65,6 @@ struct RemoteAttachment {
     storage_id: String,
     #[serde(default)]
     url: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RemoteCompletion {
-    #[serde(default)]
-    stream_id: Option<String>,
-    items: Vec<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -132,10 +124,7 @@ fn to_local_part(part: RemoteTranscriptPart) -> anyhow::Result<TranscriptPart> {
                 })
                 .collect(),
         }),
-        completion: part.completion.map(|completion| TranscriptCompletionBody {
-            stream_id: completion.stream_id,
-            items: completion.items,
-        }),
+        completion: part.completion,
         tool: part.tool.map(|tool| TranscriptToolBody {
             job_id: tool.job_id,
             tool_invocation_id: tool.tool_invocation_id,

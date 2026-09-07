@@ -551,6 +551,9 @@ export const finalizeCompletionCall = mutation({
 		attemptSeq: v.number(),
 		streamId: v.string(),
 		items: v.array(vTranscriptCompletionItem),
+		providerResponseId: v.optional(v.string()),
+		providerRequestId: v.optional(v.string()),
+		providerMessageId: v.optional(v.string()),
 		executionSecret: v.string()
 	},
 	returns: v.union(v.number(), v.null()),
@@ -568,7 +571,10 @@ export const finalizeCompletionCall = mutation({
 			userId: run.userId,
 			runId: run._id,
 			streamId: args.streamId,
-			items: args.items
+			items: args.items,
+			providerResponseId: args.providerResponseId,
+			providerRequestId: args.providerRequestId,
+			providerMessageId: args.providerMessageId
 		});
 		await recordSettledToolTranscripts(ctx, {
 			threadId: run.threadId,

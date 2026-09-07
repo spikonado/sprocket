@@ -521,7 +521,10 @@ export const vTranscriptPromptBody = v.object({
 
 export const vTranscriptCompletionBody = v.object({
 	streamId: v.optional(v.string()),
-	items: v.array(vTranscriptCompletionItem)
+	items: v.array(vTranscriptCompletionItem),
+	providerResponseId: v.optional(v.string()),
+	providerRequestId: v.optional(v.string()),
+	providerMessageId: v.optional(v.string())
 });
 
 export const vTranscriptToolStatus = v.union(
