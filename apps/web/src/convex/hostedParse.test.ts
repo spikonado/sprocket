@@ -453,7 +453,7 @@ describe('hostedParse', () => {
 			})
 		).rejects.toThrow('dedicated temporary upload');
 		expect(
-			await run.asUser.mutation(api.imageUploads.register, { storageId: inputId, name: '' })
+			await run.asUser.mutation(api.imageUploads.registerFile, { storageId: inputId, name: '' })
 		).toEqual({ error: 'Temporary parse files cannot be registered as attachments.' });
 		expect(await t.run((ctx) => ctx.db.system.get('_storage', inputId))).not.toBeNull();
 	});

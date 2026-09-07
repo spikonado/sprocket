@@ -86,7 +86,7 @@ it('backfills the owner from storageId when the prompt no longer has imageUpload
 });
 
 it.each([false, true])(
-	'migrates attachment IDs without losing orphaned legacy identity (orphaned: %s)',
+	'strips attachment IDs including orphaned rows (orphaned: %s)',
 	async (orphaned) => {
 		const t = initConvexTest();
 		const { subject, threadId } = await seedOwnedThread(t);
@@ -130,10 +130,6 @@ it.each([false, true])(
 			size: 4,
 			storageId: expect.any(String)
 		});
-		if (orphaned) {
-			expect(part?.prompt?.imageUploads[0]?.imageUploadId).toEqual(expect.any(String));
-		} else {
-			expect(part?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
-		}
+		expect(part?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
 	}
 );

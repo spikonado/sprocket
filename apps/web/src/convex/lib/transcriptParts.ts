@@ -1,6 +1,5 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
-import { imageUploadByStorageId } from '@convex/lib/imageUploads';
 import type {
 	TranscriptCompletionBody,
 	TranscriptPromptBody,
@@ -273,57 +272,9 @@ export function stripLegacyAttachmentImageUploadIds(
 	});
 }
 
-export async function hydrateLegacyAttachmentImageUploadIds(
+export async function transcriptPartsForClient(
 	ctx: MutationCtx | QueryCtx,
 	parts: Doc<'threadTranscriptParts'>[]
 ): Promise<Doc<'threadTranscriptParts'>[]> {
-	return await Promise.all(
-		parts.map(async (part) => {
-			if (!part.prompt || part.prompt.imageUploads.length === 0) {
-				return part;
-			}
-			const imageUploads = await Promise.all(
-				part.prompt.imageUploads.map(async (upload) => {
-					if (upload.imageUploadId) return upload;
-					const row = await imageUploadByStorageId(ctx, upload.storageId);
-					return row ? { ...upload, imageUploadId: row._id } : upload;
-				})
-			);
-			return {
-				...part,
-				prompt: { ...part.prompt, imageUploads }
-			};
-		})
-	);
-}
-
-export async function transcriptPartsForClient(
-	ctx: MutationCtx | QueryCtx,
-	parts: Doc<'threadTranscriptParts'>[],
-	storageIdsOnly?: boolean
-): Promise<Doc<'threadTranscriptParts'>[]> {
-	const withUrls = await hydrateTranscriptPartUrls(ctx, parts);
-	if (storageIdsOnly) {
-		return stripLegacyAttachmentImageUploadIds(withUrls);
-	}
-	return await hydrateLegacyAttachmentImageUploadIds(ctx, withUrls);
-}
-
-export function withLegacyImageUploadIds(
-	part: Doc<'threadTranscriptParts'>,
-	imageUploadIds: Id<'imageUploads'>[]
-): Doc<'threadTranscriptParts'> {
-	if (!part.prompt || part.prompt.imageUploads.length === 0 || imageUploadIds.length === 0) {
-		return part;
-	}
-	return {
-		...part,
-		prompt: {
-			...part.prompt,
-			imageUploads: part.prompt.imageUploads.map((upload, index) => {
-				const imageUploadId = imageUploadIds[index];
-				return imageUploadId === undefined ? upload : { ...upload, imageUploadId };
-			})
-		}
-	};
+	return stripLegacyAttachmentImageUploadIds(await hydrateTranscriptPartUrls(ctx, parts));
 }

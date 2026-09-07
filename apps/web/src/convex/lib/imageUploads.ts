@@ -10,15 +10,6 @@ export function areStorageIdsEqual(
 	return leftIds.length === rightIds.length && leftIds.every((id, index) => id === rightIds[index]);
 }
 
-export function assertExclusiveAttachmentIdentity(args: {
-	storageIds?: unknown;
-	imageUploadIds?: unknown;
-}): void {
-	if (args.storageIds !== undefined && args.imageUploadIds !== undefined) {
-		throw new Error('Provide storageIds or imageUploadIds, not both.');
-	}
-}
-
 export async function imageUploadByStorageId(
 	ctx: MutationCtx | QueryCtx,
 	storageId: Id<'_storage'>

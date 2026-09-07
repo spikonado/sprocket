@@ -5,7 +5,6 @@ import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getExecutionRun, getUserId } from '@convex/lib/auth';
 import { imageUploadByStorageId } from '@convex/lib/imageUploads';
 import {
-	vAttachmentDownloadResult,
 	vAttachmentFileDownloadResult,
 	vTranscriptPartsResult,
 	vTranscriptStateResult
@@ -80,16 +79,14 @@ export const getState = query({
 export const getParts = query({
 	args: {
 		threadId: v.id('threadRecords'),
-		numbers: v.array(v.number()),
-		storageIdsOnly: v.optional(v.boolean())
+		numbers: v.array(v.number())
 	},
 	returns: vTranscriptPartsResult,
 	handler: async (ctx, args) => {
 		await requireOwnedThread(ctx, args.threadId);
 		const parts = await transcriptPartsForClient(
 			ctx,
-			await loadTranscriptPartsByNumbers(ctx, args.threadId, args.numbers),
-			args.storageIdsOnly
+			await loadTranscriptPartsByNumbers(ctx, args.threadId, args.numbers)
 		);
 		return { threadId: args.threadId, parts };
 	}
@@ -111,44 +108,16 @@ export const getPartsForRun = query({
 	args: {
 		runId: v.id('runs'),
 		executionSecret: v.string(),
-		numbers: v.array(v.number()),
-		storageIdsOnly: v.optional(v.boolean())
+		numbers: v.array(v.number())
 	},
 	returns: vTranscriptPartsResult,
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		const parts = await transcriptPartsForClient(
 			ctx,
-			await loadTranscriptPartsByNumbers(ctx, run.threadId, args.numbers),
-			args.storageIdsOnly
+			await loadTranscriptPartsByNumbers(ctx, run.threadId, args.numbers)
 		);
 		return { threadId: run.threadId, parts };
-	}
-});
-
-export const attachmentDownload = query({
-	args: {
-		imageUploadId: v.id('imageUploads')
-	},
-	returns: vAttachmentDownloadResult,
-	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-		const upload = await ctx.db.get('imageUploads', args.imageUploadId);
-		if (!upload || upload.userId !== userId) {
-			return null;
-		}
-		const url = await ctx.storage.getUrl(upload.storageId);
-		if (!url) {
-			return null;
-		}
-		return {
-			imageUploadId: upload._id,
-			name: upload.name,
-			mediaType: upload.mediaType,
-			size: upload.size,
-			storageId: upload.storageId,
-			url
-		};
 	}
 });
 

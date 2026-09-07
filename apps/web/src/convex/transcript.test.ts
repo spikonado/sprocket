@@ -621,7 +621,7 @@ describe('numbered transcript parts', () => {
 });
 
 describe('transcript attachment identity', () => {
-	it('hydrates imageUploadId for released getParts and omits it when storageIdsOnly', async () => {
+	it('returns storage-only attachment metadata', async () => {
 		const t = initConvexTest();
 		const { asUser, subject, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'storage-only-parts-secret';
@@ -645,36 +645,23 @@ describe('transcript attachment identity', () => {
 			executionSecret
 		});
 
-		const released = await asUser.query(api.transcript.getParts, {
+		const parts = await asUser.query(api.transcript.getParts, {
 			threadId,
 			numbers: [0]
 		});
-		expect(released.parts[0]?.prompt?.imageUploads[0]).toMatchObject({
-			imageUploadId: file.imageUploadId,
-			storageId: file.storageId,
-			name: 'file.txt',
-			url: expect.any(String)
-		});
-
-		const current = await asUser.query(api.transcript.getParts, {
-			threadId,
-			numbers: [0],
-			storageIdsOnly: true
-		});
-		expect(current.parts[0]?.prompt?.imageUploads[0]).toEqual({
+		expect(parts.parts[0]?.prompt?.imageUploads[0]).toEqual({
 			name: 'file.txt',
 			mediaType: 'text/plain',
 			size: 4,
 			storageId: file.storageId,
 			url: expect.any(String)
 		});
-		expect(current.parts[0]?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
+		expect(parts.parts[0]?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
 
 		const runParts = await t.query(api.transcript.getPartsForRun, {
 			runId: created.runId,
 			executionSecret,
-			numbers: [0],
-			storageIdsOnly: true
+			numbers: [0]
 		});
 		expect(runParts.parts[0]?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
 	});
@@ -708,7 +695,7 @@ describe('transcript attachment identity', () => {
 		);
 	});
 
-	it('strips leftover stored imageUploadId when storageIdsOnly is set', async () => {
+	it('strips leftover stored imageUploadId', async () => {
 		const t = initConvexTest();
 		const { asUser, subject, threadId } = await seedOwnedThread(t);
 		await t.run(async (ctx) => {
@@ -744,11 +731,8 @@ describe('transcript attachment identity', () => {
 		});
 		const current = await asUser.query(api.transcript.getParts, {
 			threadId,
-			numbers: [0],
-			storageIdsOnly: true
+			numbers: [0]
 		});
 		expect(current.parts[0]?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
-		const released = await asUser.query(api.transcript.getParts, { threadId, numbers: [0] });
-		expect(released.parts[0]?.prompt?.imageUploads[0]?.imageUploadId).toBeDefined();
 	});
 });

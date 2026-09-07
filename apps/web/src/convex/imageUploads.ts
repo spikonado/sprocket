@@ -7,7 +7,7 @@ import {
 } from '@convex/_generated/server';
 import { v, type Infer } from 'convex/values';
 import { getUserId } from '@convex/lib/auth';
-import { vRegisterFileResult, vRegisterImageUploadResult } from '@convex/lib/docs';
+import { vRegisterFileResult } from '@convex/lib/docs';
 import { registeredFileUploadError } from '@convex/lib/validators';
 import { registeredParseStorage } from '@convex/lib/hostedParse';
 import { getOwnedImageUploadsByStorageIds, imageUploadByStorageId } from '@convex/lib/imageUploads';
@@ -17,7 +17,6 @@ const ORPHAN_RETENTION_MS = 24 * 60 * 60 * 1_000;
 const ORPHAN_CLEANUP_BATCH_SIZE = 100;
 const ATTACHMENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 
-export type RegisterImageUploadResult = Infer<typeof vRegisterImageUploadResult>;
 export type RegisterFileResult = Infer<typeof vRegisterFileResult>;
 
 export const generateUploadUrl = mutation({
@@ -29,25 +28,6 @@ export const generateUploadUrl = mutation({
 	}
 });
 
-export const register = mutation({
-	args: {
-		storageId: v.id('_storage'),
-		name: v.string()
-	},
-	returns: vRegisterImageUploadResult,
-	handler: async (ctx, args) => {
-		const registered = await registerOwnedUpload(ctx, args);
-		if ('error' in registered) return registered;
-		return {
-			imageUploadId: registered.imageUploadId,
-			name: registered.name,
-			mediaType: registered.mediaType,
-			size: registered.size,
-			url: registered.url
-		};
-	}
-});
-
 export const registerFile = mutation({
 	args: {
 		storageId: v.id('_storage'),
@@ -55,27 +35,7 @@ export const registerFile = mutation({
 	},
 	returns: vRegisterFileResult,
 	handler: async (ctx, args) => {
-		const registered = await registerOwnedUpload(ctx, args);
-		if ('error' in registered) return registered;
-		return {
-			storageId: registered.storageId,
-			name: registered.name,
-			mediaType: registered.mediaType,
-			size: registered.size,
-			url: registered.url
-		};
-	}
-});
-
-export const discard = mutation({
-	args: {
-		imageUploadId: v.id('imageUploads')
-	},
-	returns: v.boolean(),
-	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-		const upload = await ctx.db.get('imageUploads', args.imageUploadId);
-		return await discardOwnedDraft(ctx, userId, upload);
+		return await registerOwnedUpload(ctx, args);
 	}
 });
 
@@ -158,21 +118,10 @@ export const cleanupExpired = internalMutation({
 	}
 });
 
-type RegisteredUpload =
-	| { error: string }
-	| {
-			imageUploadId: Id<'imageUploads'>;
-			storageId: Id<'_storage'>;
-			name: string;
-			mediaType: string;
-			size: number;
-			url: string;
-	  };
-
 async function registerOwnedUpload(
 	ctx: MutationCtx,
 	args: { storageId: Id<'_storage'>; name: string }
-): Promise<RegisteredUpload> {
+): Promise<RegisterFileResult> {
 	const userId = await getUserId(ctx);
 	const existing = await imageUploadByStorageId(ctx, args.storageId);
 	if (existing) {
@@ -182,7 +131,6 @@ async function registerOwnedUpload(
 		const url = await ctx.storage.getUrl(existing.storageId);
 		return url
 			? {
-					imageUploadId: existing._id,
 					storageId: existing.storageId,
 					name: existing.name,
 					mediaType: existing.mediaType,
@@ -225,7 +173,6 @@ async function registerOwnedUpload(
 		return { error: 'Uploaded file is unavailable.' };
 	}
 	return {
-		imageUploadId,
 		storageId: args.storageId,
 		name,
 		mediaType,

@@ -26,7 +26,7 @@ async function storeUpload(
 	});
 }
 
-describe('imageUploads.register', () => {
+describe('imageUploads.registerFile', () => {
 	it('requires authentication', async () => {
 		const t = initConvexTest();
 		const storageId = await storeUpload(t, { bytes: 'hello', type: 'text/plain' });
@@ -34,7 +34,7 @@ describe('imageUploads.register', () => {
 			'Authentication required'
 		);
 		await expect(
-			t.mutation(api.imageUploads.register, {
+			t.mutation(api.imageUploads.registerFile, {
 				storageId,
 				name: 'notes.txt'
 			})
@@ -52,19 +52,20 @@ describe('imageUploads.register', () => {
 			bytes: 'raw'
 		});
 
-		const pdf = await asUser.mutation(api.imageUploads.register, {
+		const pdf = await asUser.mutation(api.imageUploads.registerFile, {
 			storageId: pdfStorageId,
 			name: '  spec.pdf  '
 		});
 		expect(pdf).toMatchObject({
+			storageId: pdfStorageId,
 			name: 'spec.pdf',
 			mediaType: 'application/pdf',
 			size: 9
 		});
-		expect('imageUploadId' in pdf).toBe(true);
+		expect('imageUploadId' in pdf).toBe(false);
 		expect('url' in pdf).toBe(true);
 
-		const blob = await asUser.mutation(api.imageUploads.register, {
+		const blob = await asUser.mutation(api.imageUploads.registerFile, {
 			storageId: blobStorageId,
 			name: 'blob.bin'
 		});
@@ -84,7 +85,7 @@ describe('imageUploads.register', () => {
 		});
 
 		expect(
-			await asUser.mutation(api.imageUploads.register, {
+			await asUser.mutation(api.imageUploads.registerFile, {
 				storageId,
 				name: '   '
 			})
@@ -96,29 +97,41 @@ describe('imageUploads.register', () => {
 		const t = initConvexTest();
 		const size = 11 * 1024 * 1024;
 		const storageId = await storeUpload(t, { bytes: 'x'.repeat(size), type: 'application/zip' });
-		const result = await t.withIdentity({ subject: 'alice' }).mutation(api.imageUploads.register, {
-			storageId,
-			name: 'archive.zip'
-		});
+		const result = await t
+			.withIdentity({ subject: 'alice' })
+			.mutation(api.imageUploads.registerFile, {
+				storageId,
+				name: 'archive.zip'
+			});
 		expect(result).toMatchObject({ name: 'archive.zip', size, mediaType: 'application/zip' });
+	});
+
+	it('returns storageId instead of the row id', async () => {
+		const t = initConvexTest();
+		const asUser = t.withIdentity({ subject: 'user_alice' });
+		const storageId = await storeUpload(t, { bytes: 'hello', type: 'text/plain' });
+		const result = await asUser.mutation(api.imageUploads.registerFile, {
+			storageId,
+			name: 'notes.txt'
+		});
+		expect(result).toMatchObject({
+			storageId,
+			name: 'notes.txt',
+			mediaType: 'text/plain',
+			size: 5
+		});
+		expect('imageUploadId' in result).toBe(false);
+		expect('url' in result).toBe(true);
 	});
 
 	it('does not let another user claim a stored file', async () => {
 		const t = initConvexTest();
 		const alice = t.withIdentity({ subject: 'alice' });
 		const bob = t.withIdentity({ subject: 'bob' });
-		const storageId = await storeUpload(t, {
-			bytes: 'hello',
-			type: 'text/plain'
-		});
-		const registered = await alice.mutation(api.imageUploads.register, {
-			storageId,
-			name: 'notes.txt'
-		});
-		expect('imageUploadId' in registered).toBe(true);
-
+		const storageId = await storeUpload(t, { bytes: 'hello', type: 'text/plain' });
+		await alice.mutation(api.imageUploads.registerFile, { storageId, name: 'notes.txt' });
 		await expect(
-			bob.mutation(api.imageUploads.register, { storageId, name: 'stolen.txt' })
+			bob.mutation(api.imageUploads.registerFile, { storageId, name: 'stolen.txt' })
 		).rejects.toThrow('Uploaded file belongs to another user.');
 	});
 });
@@ -186,47 +199,9 @@ describe('owned file attachments', () => {
 		});
 		const context = await asUser.query(api.agentRuntime.getContext, {
 			runId: created.runId,
-			executionSecret: 'five-files-secret',
-			attachmentsAsPaths: true
+			executionSecret: 'five-files-secret'
 		});
-		expect(context.promptAttachments).toEqual([]);
-		await expect(
-			asUser.query(api.agentRuntime.getContext, {
-				runId: created.runId,
-				executionSecret: 'five-files-secret'
-			})
-		).rejects.toThrow('One or more file attachments are unavailable.');
-	});
-});
-
-describe('imageUploads.registerFile', () => {
-	it('returns storageId instead of the row id', async () => {
-		const t = initConvexTest();
-		const asUser = t.withIdentity({ subject: 'user_alice' });
-		const storageId = await storeUpload(t, { bytes: 'hello', type: 'text/plain' });
-		const result = await asUser.mutation(api.imageUploads.registerFile, {
-			storageId,
-			name: 'notes.txt'
-		});
-		expect(result).toMatchObject({
-			storageId,
-			name: 'notes.txt',
-			mediaType: 'text/plain',
-			size: 5
-		});
-		expect('imageUploadId' in result).toBe(false);
-		expect('url' in result).toBe(true);
-	});
-
-	it('does not let another user claim a stored file', async () => {
-		const t = initConvexTest();
-		const alice = t.withIdentity({ subject: 'alice' });
-		const bob = t.withIdentity({ subject: 'bob' });
-		const storageId = await storeUpload(t, { bytes: 'hello', type: 'text/plain' });
-		await alice.mutation(api.imageUploads.registerFile, { storageId, name: 'notes.txt' });
-		await expect(
-			bob.mutation(api.imageUploads.registerFile, { storageId, name: 'stolen.txt' })
-		).rejects.toThrow('Uploaded file belongs to another user.');
+		expect(context.prompt).toBe('Read these');
 	});
 });
 

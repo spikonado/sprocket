@@ -208,7 +208,6 @@ describe('agentRuntime.insertGatewayRun', () => {
 			submissionId: 'sub-capability-cleanup',
 			threadId,
 			prompt: 'Reconcile me',
-			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol' as const,
 			reasoningEffort: 'medium' as const,
 			serviceTier: 'standard' as const
@@ -221,6 +220,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 		await expect(
 			t.mutation(api.agentRuntime.finalizeFailedStart, {
 				...args,
+				storageIds: [],
 				executionSecret,
 				text: 'Run failed before the model started.',
 				lastError: 'startup timed out'
@@ -240,7 +240,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 				submissionId: 'sub-not-created-yet',
 				threadId,
 				prompt: 'Reconcile me',
-				imageUploadIds: [],
+				storageIds: [],
 				selectedModel: 'gpt-5.6-sol',
 				reasoningEffort: 'medium',
 				serviceTier: 'standard',
@@ -258,7 +258,6 @@ describe('agentRuntime.insertGatewayRun', () => {
 			submissionId: 'sub-rebound-anonymous',
 			threadId,
 			prompt: 'Two launches, one submission',
-			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol' as const,
 			reasoningEffort: 'medium' as const,
 			serviceTier: 'standard' as const
@@ -273,6 +272,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 		await expect(
 			t.mutation(api.agentRuntime.finalizeFailedStart, {
 				...args,
+				storageIds: [],
 				executionSecret: 'loser-secret',
 				text: 'Run failed before the model started.',
 				lastError: 'original launch failed'
@@ -287,7 +287,6 @@ describe('agentRuntime.insertGatewayRun', () => {
 			submissionId: 'sub-raced',
 			threadId,
 			prompt: 'Two launches, one submission',
-			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol' as const,
 			reasoningEffort: 'medium' as const,
 			serviceTier: 'standard' as const
@@ -303,6 +302,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 		await expect(
 			asUser.mutation(api.agentRuntime.finalizeFailedStart, {
 				...args,
+				storageIds: [],
 				executionSecret: 'winner-secret',
 				text: 'Run failed before the model started.',
 				lastError: 'lost the launch race'
@@ -321,7 +321,6 @@ describe('agentRuntime.insertGatewayRun', () => {
 			submissionId: 'sub-claimed',
 			threadId,
 			prompt: 'Already running',
-			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol' as const,
 			reasoningEffort: 'medium' as const,
 			serviceTier: 'standard' as const
@@ -339,6 +338,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 		await expect(
 			asUser.mutation(api.agentRuntime.finalizeFailedStart, {
 				...args,
+				storageIds: [],
 				executionSecret,
 				text: 'Run failed before the model started.',
 				lastError: 'late cleanup'
@@ -572,7 +572,7 @@ describe('agentRuntime.createGatewayRun attachment identity', () => {
 		).resolves.toBe('finalized');
 	}, 15_000);
 
-	it('hydrates imageUploadId on the createGatewayRun promptPart for released clients', async () => {
+	it('strips leftover stored imageUploadId from the returned promptPart', async () => {
 		const t = initConvexTest();
 		const { asUser, subject, threadId } = await seedOwnedThread(t);
 		const file = await t.run(async (ctx) => {
@@ -592,26 +592,23 @@ describe('agentRuntime.createGatewayRun attachment identity', () => {
 			submissionId: 'legacy-ids-run',
 			threadId,
 			prompt: 'Hello',
-			imageUploadIds: [file.imageUploadId],
+			storageIds: [file.storageId],
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
 			serviceTier: 'standard',
 			executionSecret: 'legacy-ids-secret'
 		});
-		expect(created.promptPart?.prompt?.imageUploads[0]).toMatchObject({
-			imageUploadId: file.imageUploadId,
-			storageId: file.storageId,
-			name: 'robot.png'
-		});
-		const stored = await t.run(async (ctx) => {
-			if (!created.promptPart) throw new Error('missing prompt part');
-			return await ctx.db.get('threadTranscriptParts', created.promptPart._id);
-		});
-		expect(stored?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
+		expect(created.promptPart?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
 		await t.run(async (ctx) => {
 			if (!created.promptPart?.prompt) throw new Error('missing prompt part');
 			await ctx.db.patch('threadTranscriptParts', created.promptPart._id, {
-				prompt: created.promptPart.prompt
+				prompt: {
+					...created.promptPart.prompt,
+					imageUploads: created.promptPart.prompt.imageUploads.map((upload) => ({
+						...upload,
+						imageUploadId: file.imageUploadId
+					}))
+				}
 			});
 		});
 		const retried = await asUser.action(api.agentRuntime.createGatewayRun, {
@@ -626,38 +623,5 @@ describe('agentRuntime.createGatewayRun attachment identity', () => {
 		});
 		expect(retried.runId).toBe(created.runId);
 		expect(retried.promptPart?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
-	}, 15_000);
-
-	it('rejects supplying both storageIds and imageUploadIds', async () => {
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
-		await expect(
-			asUser.action(api.agentRuntime.createGatewayRun, {
-				submissionId: 'both-ids-run',
-				threadId,
-				prompt: 'Hello',
-				storageIds: [],
-				imageUploadIds: [],
-				selectedModel: 'gpt-5.6-sol',
-				reasoningEffort: 'medium',
-				serviceTier: 'standard',
-				executionSecret: 'both-ids-secret'
-			})
-		).rejects.toThrow('Provide storageIds or imageUploadIds, not both.');
-		await expect(
-			asUser.mutation(api.agentRuntime.finalizeFailedStart, {
-				submissionId: 'both-ids-run',
-				threadId,
-				prompt: 'Hello',
-				storageIds: [],
-				imageUploadIds: [],
-				selectedModel: 'gpt-5.6-sol',
-				reasoningEffort: 'medium',
-				serviceTier: 'standard',
-				executionSecret: 'both-ids-secret',
-				text: 'failed',
-				lastError: 'failed'
-			})
-		).rejects.toThrow('Provide storageIds or imageUploadIds, not both.');
 	}, 15_000);
 });

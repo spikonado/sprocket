@@ -49,7 +49,6 @@ impl UserConvexClient {
                     .collect(),
             ),
         );
-        args.insert("storageIdsOnly".to_string(), true.into());
         let value: serde_json::Value = self.query_json("transcript:getParts", args).await?;
         parse_remote_parts(value)
     }
@@ -69,18 +68,6 @@ impl UserConvexClient {
             args.insert("selectedThreadId".to_string(), thread_id.to_string().into());
         }
         self.client.subscribe("threads:listRecent", args).await
-    }
-
-    pub async fn attachment_download(
-        &self,
-        image_upload_id: &str,
-    ) -> anyhow::Result<Option<RemoteAttachmentDownload>> {
-        let mut args = BTreeMap::new();
-        args.insert(
-            "imageUploadId".to_string(),
-            image_upload_id.to_string().into(),
-        );
-        self.query_json("transcript:attachmentDownload", args).await
     }
 
     pub async fn attachment_download_by_storage_id(

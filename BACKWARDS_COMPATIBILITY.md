@@ -8,49 +8,37 @@ Current as of 2026-09-06.
 
 ## Transcript projection API
 
-Compatibility in this section covers APIs and stored formats present on `main`
-before the attachment PR. Intermediate formats from that PR are not supported.
+Attachment compatibility covers older stored schemas only. Older-client shims
+introduced by this PR and intermediate PR formats are not supported.
 
 Message attachments keep the `imageUploads` table and `imageUploads` prompt
-field, but current callers identify files by `storageId` / `storageIds`.
-The table's row ID remains an internal database key. `registerFile`,
-`discardFile`, and `attachmentDownloadByStorageId` expose storage identity;
-legacy `register`, `discard`, and `attachmentDownload` retain row-ID contracts.
-Run submission accepts either ID family, rejects requests supplying both, and
-checks ownership when resolving storage IDs. Keep these legacy API shims until
-all supported clients use storage IDs.
+field. Current APIs accept only `storageId` / `storageIds`; the table's row ID
+remains an internal database key. Clients use `registerFile`, `discardFile`,
+and `attachmentDownloadByStorageId`. The old row-ID endpoints and request
+fields are removed. Deploy the updated client and server together.
 
 New transcript attachment metadata omits `imageUploadId`. Stored validators
-still accept it for historical rows. Current transcript readers request
-`storageIdsOnly: true`; legacy readers receive row IDs resolved through the
-storage index. Remove legacy response hydration and the optional stored field
-only after supported clients use storage-only responses and
-`removeTranscriptAttachmentImageUploadIds` has rewritten historical prompts.
-It is included in `migrations:run`; deploy the compatible readers before running
-that migration. Existing local JSONL records remain readable without a rewrite;
-current serialization drops their legacy attachment row IDs.
-The migration retains a legacy ID if its upload row is already gone: otherwise
-released clients could no longer parse that attachment. Current responses still
-omit it. Remove these orphaned legacy IDs when those clients are retired.
+still accept it for historical rows, and readers strip it from responses.
+`removeTranscriptAttachmentImageUploadIds` rewrites historical prompts in the
+default `migrations:run`, including attachments whose upload row is gone.
+Remove the optional stored field only after that migration completes and a
+production scan finds no remaining attachment row IDs. Existing local JSONL
+records remain readable without a rewrite; current serialization drops their
+legacy attachment row IDs.
 
-New clients upload files through Rust. Released clients can still upload to
-Convex directly, so the Rust runtime downloads any missing files before building
-the agent's prompt. Local attachment paths are computed for the current machine,
-never copied from another machine's transcript.
-The optional `getContext.attachmentsAsPaths` flag skips legacy image-URL
-resolution for these agents. Keep the default URL response until all supported
-agents resolve attachment paths from the transcript cache.
+The Rust runtime downloads missing file bytes before building the agent's
+prompt. Attachment paths are computed for the current machine, never copied
+from another machine's transcript. `getContext` always uses path-oriented
+attachment handling, without an older-client inline-image branch.
 
 Attachments now live under each thread's `attachments/<storageId>/` directory.
 Reading an old attachment copies any existing user-level blob into that directory
 before exposing its path. This works offline using the existing storage ID.
 New `metadata.json` files contain no row ID. Row-ID-keyed thread directories
-were an intermediate PR format and are not migrated. The new local discard
-endpoint accepts only storage IDs; the pre-existing Convex discard endpoint
-still accepts row IDs.
+were an intermediate PR format and are not migrated.
 Missing files download from Convex. This on-access migration
 also runs when rebuilding agent history. Legacy blob reads and cleanup remain
-until supported installations have migrated their cached threads or cleared
+until installations have migrated their cached threads or cleared
 those caches. New uploads never write to the legacy blob store. Draft uploads
 are staged temporarily and moved into the destination thread cache when their
 message is submitted. They are not bound to the thread selected during upload.
@@ -58,8 +46,8 @@ message is submitted. They are not bound to the thread selected during upload.
 Convex deletes attached file bytes when the owning thread's `lastMessageAt` is
 older than one week. Ownership is `imageUploads.threadId`, set on first attach.
 Shared references, run exceptions, and a separate activity clock are not part of
-retention. Transcript metadata and local copies stay. Released clients still
-read storage URLs; a missing URL means the bytes are gone.
+retention. Transcript metadata and local copies stay; a missing storage URL
+means the cloud bytes are gone.
 
 Assistant text, reasoning, and tool calls accept optional `startedAt` and
 `completedAt` timestamps. Released agents and old stored completions lack them.

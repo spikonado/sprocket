@@ -30,18 +30,6 @@ export const vTranscriptPartsResult = v.object({
 	parts: v.array(schema.doc('threadTranscriptParts'))
 });
 
-export const vAttachmentDownloadResult = v.union(
-	v.null(),
-	v.object({
-		imageUploadId: v.id('imageUploads'),
-		name: v.string(),
-		mediaType: v.string(),
-		size: v.number(),
-		storageId: v.id('_storage'),
-		url: v.string()
-	})
-);
-
 export const vRegisterFileSuccess = v.object({
 	storageId: v.id('_storage'),
 	name: v.string(),
@@ -51,6 +39,8 @@ export const vRegisterFileSuccess = v.object({
 });
 
 export const vAttachmentFileDownloadResult = v.union(v.null(), vRegisterFileSuccess);
+
+export const vRegisterFileResult = v.union(vRegisterFileSuccess, v.object({ error: v.string() }));
 
 export const vAgentQuestionSnapshot = v.object({
 	threadId: v.id('threadRecords'),
@@ -65,21 +55,6 @@ export const vAgentQuestionSnapshot = v.object({
 	answeredAt: v.optional(v.number())
 });
 
-export const vRegisterImageUploadSuccess = v.object({
-	imageUploadId: v.id('imageUploads'),
-	name: v.string(),
-	mediaType: v.string(),
-	size: v.number(),
-	url: v.string()
-});
-
-export const vRegisterImageUploadResult = v.union(
-	vRegisterImageUploadSuccess,
-	v.object({ error: v.string() })
-);
-
-export const vRegisterFileResult = v.union(vRegisterFileSuccess, v.object({ error: v.string() }));
-
 export const vCheckoutResponse = v.object({
 	checkout_url: v.string()
 });
@@ -88,16 +63,10 @@ export const vCustomerPortalResponse = v.object({
 	portal_url: v.string()
 });
 
-export const vRuntimePromptAttachment = v.object({
-	mediaType: v.string(),
-	url: v.string()
-});
-
 export const vGetContextResult = v.object({
 	run: schema.doc('runs'),
 	threadRecord: schema.doc('threadRecords'),
 	prompt: v.string(),
-	promptAttachments: v.array(vRuntimePromptAttachment),
 	agentHistory: v.array(vAgentHistoryMessage),
 	contextBudget: v.object({
 		contextWindowTokens: v.number(),

@@ -25,7 +25,6 @@ use uuid::Uuid;
 use crate::AppState;
 use crate::auth::require_session_user;
 use crate::routes::api_error::ApiError;
-use crate::routes::{ExclusiveId, exclusive_id_or_storage_default};
 
 const AGENT_START_TIMEOUT: Duration = Duration::from_secs(20);
 const AGENT_START_CLEANUP_TIMEOUT: Duration = Duration::from_secs(12);
@@ -40,10 +39,7 @@ struct RunAgentApiRequest {
     #[serde(default)]
     repository_key: Option<String>,
     prompt: String,
-    #[serde(default)]
-    storage_ids: Option<Vec<String>>,
-    #[serde(default)]
-    image_upload_ids: Option<Vec<String>>,
+    storage_ids: Vec<String>,
     selected_model: String,
     reasoning_effort: String,
     service_tier: String,
@@ -80,14 +76,6 @@ async fn run_agent_handler(
         .await
         .map_err(ApiError::unauthorized)?;
 
-    let attachments = exclusive_id_or_storage_default(
-        payload.storage_ids,
-        payload.image_upload_ids,
-        "storageIds",
-        "imageUploadIds",
-    )
-    .map_err(ApiError::bad_request)?;
-
     let workspace_path = state
         .project_attachments
         .workspace_path(&payload.workspace_path)
@@ -102,10 +90,6 @@ async fn run_agent_handler(
     let auth_token_fetcher = state
         .native_auth
         .auth_token_fetcher_for_user(payload.user_id.clone());
-    let (storage_ids, image_upload_ids) = match attachments {
-        ExclusiveId::Storage(ids) => (ids, None),
-        ExclusiveId::LegacyUpload(ids) => (Vec::new(), Some(ids)),
-    };
     let request = RunAgentRequest {
         deployment_url: state.convex_deployment_url.clone(),
         auth_token_fetcher: auth_token_fetcher.clone(),
@@ -114,8 +98,7 @@ async fn run_agent_handler(
         thread_id: payload.thread_id.unwrap_or_default(),
         repository_key: payload.repository_key,
         prompt: payload.prompt,
-        storage_ids,
-        image_upload_ids,
+        storage_ids: payload.storage_ids,
         selected_model: payload.selected_model,
         reasoning_effort: payload.reasoning_effort,
         service_tier: payload.service_tier,
@@ -352,7 +335,7 @@ mod tests {
     }
 
     #[test]
-    fn run_request_accepts_storage_ids_or_legacy_upload_ids_but_not_both() {
+    fn run_request_requires_storage_ids_and_rejects_legacy_upload_ids() {
         fn parse(extra: serde_json::Value) -> Result<RunAgentApiRequest, serde_json::Error> {
             let mut body = serde_json::json!({
                 "userId": "user-1",
@@ -372,44 +355,19 @@ mod tests {
         }
 
         let storage = parse(serde_json::json!({"storageIds": ["storage-1"]})).unwrap();
-        assert_eq!(
-            storage.storage_ids.as_deref(),
-            Some(["storage-1".to_string()].as_slice())
-        );
-        assert!(storage.image_upload_ids.is_none());
+        assert_eq!(storage.storage_ids, vec!["storage-1".to_string()]);
 
-        let legacy = parse(serde_json::json!({"imageUploadIds": ["upload-1"]})).unwrap();
-        assert!(legacy.storage_ids.is_none());
-        assert_eq!(
-            legacy.image_upload_ids.as_deref(),
-            Some(["upload-1".to_string()].as_slice())
-        );
+        let empty = parse(serde_json::json!({"storageIds": []})).unwrap();
+        assert!(empty.storage_ids.is_empty());
 
-        let both = parse(serde_json::json!({
-            "storageIds": ["storage-1"],
-            "imageUploadIds": ["upload-1"]
-        }))
-        .unwrap();
+        assert!(parse(serde_json::json!({})).is_err());
         assert!(
-            exclusive_id_or_storage_default(
-                both.storage_ids,
-                both.image_upload_ids,
-                "storageIds",
-                "imageUploadIds",
-            )
+            parse(serde_json::json!({
+                "storageIds": ["storage-1"],
+                "imageUploadIds": ["upload-1"]
+            }))
             .is_err()
         );
-
-        let neither = parse(serde_json::json!({})).unwrap();
-        assert!(matches!(
-            exclusive_id_or_storage_default(
-                neither.storage_ids,
-                neither.image_upload_ids,
-                "storageIds",
-                "imageUploadIds",
-            )
-            .unwrap(),
-            ExclusiveId::Storage(ids) if ids.is_empty()
-        ));
+        assert!(parse(serde_json::json!({"imageUploadIds": ["upload-1"]})).is_err());
     }
 }

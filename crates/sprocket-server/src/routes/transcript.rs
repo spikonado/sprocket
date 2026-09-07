@@ -20,7 +20,6 @@ use tokio_util::io::ReaderStream;
 
 use crate::AppState;
 use crate::routes::api_error::ApiError;
-use crate::routes::{ExclusiveId, exclusive_id};
 use crate::transcript_client::UserConvexClient;
 use crate::transcript_watch::TranscriptWatchEvent;
 
@@ -60,10 +59,7 @@ struct TranscriptAttachmentRequest {
     user_id: String,
     #[serde(deserialize_with = "deserialize_thread_id")]
     thread_id: String,
-    #[serde(default)]
-    storage_id: Option<String>,
-    #[serde(default)]
-    image_upload_id: Option<String>,
+    storage_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -358,15 +354,13 @@ async fn attachment_handler(
     Json(payload): Json<TranscriptAttachmentRequest>,
 ) -> Result<Response, ApiError> {
     require_session_user(&state, &headers, &jar, &payload.user_id).await?;
-    let identity = exclusive_id(
-        payload.storage_id,
-        payload.image_upload_id,
-        "storageId",
-        "imageUploadId",
+    if let Some(response) = serve_cached_attachment(
+        &state,
+        &payload.user_id,
+        &payload.thread_id,
+        &payload.storage_id,
     )
-    .map_err(ApiError::bad_request)?;
-    if let Some(response) =
-        serve_cached_attachment(&state, &payload.user_id, &payload.thread_id, &identity).await?
+    .await?
     {
         return Ok(response);
     }
@@ -379,16 +373,11 @@ async fn attachment_handler(
     )
     .await
     .map_err(|error| ApiError::internal_with("failed to connect to Convex", error))?;
-    let Some(remote) = (match &identity {
-        ExclusiveId::Storage(storage_id) => client
-            .attachment_download_by_storage_id(storage_id)
-            .await
-            .map_err(|error| ApiError::internal_with("failed to resolve attachment", error))?,
-        ExclusiveId::LegacyUpload(image_upload_id) => client
-            .attachment_download(image_upload_id)
-            .await
-            .map_err(|error| ApiError::internal_with("failed to resolve attachment", error))?,
-    }) else {
+    let Some(remote) = client
+        .attachment_download_by_storage_id(&payload.storage_id)
+        .await
+        .map_err(|error| ApiError::internal_with("failed to resolve attachment", error))?
+    else {
         return Err(ApiError::with_status(
             StatusCode::NOT_FOUND,
             anyhow!("attachment not found"),
@@ -428,28 +417,18 @@ async fn serve_cached_attachment(
     state: &AppState,
     user_id: &str,
     thread_id: &str,
-    identity: &ExclusiveId<String>,
+    storage_id: &str,
 ) -> Result<Option<Response>, ApiError> {
-    let meta = match identity {
-        ExclusiveId::Storage(storage_id) => {
-            state
-                .transcript
-                .attachment_metadata(user_id, thread_id, storage_id)
-                .await
-        }
-        ExclusiveId::LegacyUpload(image_upload_id) => {
-            state
-                .transcript
-                .legacy_attachment_metadata(user_id, image_upload_id)
-                .await
-        }
-    }
-    .map_err(|error| {
-        ApiError::internal_with(
-            &format!("failed to read cached attachment for thread {thread_id}"),
-            error,
-        )
-    })?;
+    let meta = state
+        .transcript
+        .attachment_metadata(user_id, thread_id, storage_id)
+        .await
+        .map_err(|error| {
+            ApiError::internal_with(
+                &format!("failed to read cached attachment for thread {thread_id}"),
+                error,
+            )
+        })?;
     let Some(meta) = meta else {
         return Ok(None);
     };
@@ -522,13 +501,6 @@ mod tests {
                 valid
             );
             assert_eq!(
-                parse::<TranscriptAttachmentRequest>(
-                    thread_id,
-                    json!({"imageUploadId": "upload-1"})
-                ),
-                valid
-            );
-            assert_eq!(
                 parse::<TranscriptDetailsRequest>(thread_id, json!({"numbers": [1]})),
                 valid
             );
@@ -536,74 +508,38 @@ mod tests {
     }
 
     #[test]
-    fn attachment_request_accepts_storage_id_or_legacy_upload_id_but_not_both() {
+    fn attachment_request_requires_storage_id_and_rejects_legacy_upload_id() {
         let storage: TranscriptAttachmentRequest = serde_json::from_value(serde_json::json!({
             "userId": "user-1",
             "threadId": "thread-1",
             "storageId": "storage-1"
         }))
         .unwrap();
-        assert!(matches!(
-            exclusive_id(
-                storage.storage_id,
-                storage.image_upload_id,
-                "storageId",
-                "imageUploadId"
-            )
-            .unwrap(),
-            ExclusiveId::Storage(id) if id == "storage-1"
-        ));
+        assert_eq!(storage.storage_id, "storage-1");
 
-        let legacy: TranscriptAttachmentRequest = serde_json::from_value(serde_json::json!({
-            "userId": "user-1",
-            "threadId": "thread-1",
-            "imageUploadId": "upload-1"
-        }))
-        .unwrap();
-        assert!(matches!(
-            exclusive_id(
-                legacy.storage_id,
-                legacy.image_upload_id,
-                "storageId",
-                "imageUploadId"
-            )
-            .unwrap(),
-            ExclusiveId::LegacyUpload(id) if id == "upload-1"
-        ));
-
-        let both: TranscriptAttachmentRequest = serde_json::from_value(serde_json::json!({
-            "userId": "user-1",
-            "threadId": "thread-1",
-            "storageId": "storage-1",
-            "imageUploadId": "upload-1"
-        }))
-        .unwrap();
         assert!(
-            exclusive_id(
-                both.storage_id,
-                both.image_upload_id,
-                "storageId",
-                "imageUploadId"
-            )
-            .unwrap_err()
-            .to_string()
-            .contains("not both")
+            serde_json::from_value::<TranscriptAttachmentRequest>(serde_json::json!({
+                "userId": "user-1",
+                "threadId": "thread-1",
+                "imageUploadId": "upload-1"
+            }))
+            .is_err()
         );
-
+        assert!(
+            serde_json::from_value::<TranscriptAttachmentRequest>(serde_json::json!({
+                "userId": "user-1",
+                "threadId": "thread-1",
+                "storageId": "storage-1",
+                "imageUploadId": "upload-1"
+            }))
+            .is_err()
+        );
         assert!(
             serde_json::from_value::<TranscriptAttachmentRequest>(serde_json::json!({
                 "userId": "user-1",
                 "threadId": "thread-1"
             }))
-            .ok()
-            .and_then(|request| exclusive_id(
-                request.storage_id,
-                request.image_upload_id,
-                "storageId",
-                "imageUploadId"
-            )
-            .ok())
-            .is_none()
+            .is_err()
         );
     }
 }

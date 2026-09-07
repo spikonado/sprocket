@@ -54,7 +54,6 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			executionSecret: 'continue-secret'
 		});
 		expect(context.prompt).toBe('');
-		expect(context.promptAttachments).toEqual([]);
 		expect(context.run.continuationOfRunId).toBe(parent.runId);
 	});
 
@@ -202,7 +201,6 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			submissionId: 'sub-cleanup-continue',
 			threadId,
 			prompt: '',
-			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol' as const,
 			reasoningEffort: 'medium' as const,
 			serviceTier: 'standard' as const
@@ -215,6 +213,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 		await expect(
 			t.mutation(api.agentRuntime.finalizeFailedStart, {
 				...args,
+				storageIds: [],
 				executionSecret: 'cleanup-continue',
 				text: 'Run failed before the model started.',
 				lastError: 'startup timed out'

@@ -208,37 +208,35 @@ impl TranscriptStore {
                     .iter()
                     .flat_map(|range| range.start..=range.end)
                     .collect::<Vec<_>>();
-                Ok(self
+                let meta = self
                     .read_parts(user_id, thread_id, &numbers)
                     .await?
                     .into_iter()
                     .filter_map(|part| part.prompt)
                     .flat_map(|prompt| prompt.image_uploads)
-                    .find(|attachment| attachment.storage_id == storage_id))
+                    .find(|attachment| attachment.storage_id == storage_id);
+                match meta {
+                    Some(meta) => Ok(Some(meta)),
+                    None => self.legacy_blob_metadata(user_id, storage_id).await,
+                }
             }
             Err(error) => Err(error.into()),
         }
     }
 
-    pub async fn legacy_attachment_metadata(
+    async fn legacy_blob_metadata(
         &self,
         user_id: &str,
-        upload_id: &str,
+        storage_id: &str,
     ) -> anyhow::Result<Option<super::types::TranscriptAttachmentMeta>> {
-        let storage_id =
-            match tokio::fs::read_to_string(self.upload_index_path(user_id, upload_id)).await {
-                Ok(id) => id.trim().to_string(),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-                Err(error) => return Err(error.into()),
-            };
-        let file = match tokio::fs::metadata(self.blob_data_path(user_id, &storage_id)).await {
+        let file = match tokio::fs::metadata(self.blob_data_path(user_id, storage_id)).await {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error.into()),
         };
-        let meta = self.read_blob_meta(user_id, &storage_id).await?;
+        let meta = self.read_blob_meta(user_id, storage_id).await?;
         Ok(Some(super::types::TranscriptAttachmentMeta {
-            storage_id,
+            storage_id: storage_id.to_string(),
             name: meta
                 .as_ref()
                 .map(|meta| meta.name.clone())
@@ -655,6 +653,7 @@ impl TranscriptStore {
             .with_extension("json")
     }
 
+    #[cfg(test)]
     fn upload_index_path(&self, user_id: &str, image_upload_id: &str) -> PathBuf {
         self.blobs_dir(user_id)
             .join("uploads")
@@ -1796,7 +1795,7 @@ mod tests {
             .await
             .unwrap();
         let meta = store
-            .legacy_attachment_metadata("user", "upload-1")
+            .attachment_metadata("user", "thread", "storage-1")
             .await
             .unwrap()
             .unwrap();
@@ -1813,7 +1812,7 @@ mod tests {
         store.clear_thread("user", "thread").await.unwrap();
         assert!(
             store
-                .legacy_attachment_metadata("user", "upload-1")
+                .attachment_metadata("user", "thread", "storage-1")
                 .await
                 .unwrap()
                 .is_none()

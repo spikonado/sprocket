@@ -332,6 +332,13 @@ mod tests {
             )
             .await
             .unwrap();
+        let meta = store
+            .attachment_metadata("user", "first", &meta.storage_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(meta.name, "../notes.txt");
+        assert_eq!(meta.size, 4);
         let first = cache_attachment(&store, "user", "first", &meta)
             .await
             .unwrap();

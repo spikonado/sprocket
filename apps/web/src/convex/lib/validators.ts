@@ -533,7 +533,7 @@ export const vTranscriptPartKind = v.union(
 );
 
 export const vTranscriptAttachmentMeta = v.object({
-	// Historical rows and responses to released row-ID clients only.
+	// Historical rows. New writes omit it; readers strip it from responses.
 	imageUploadId: v.optional(v.id('imageUploads')),
 	name: v.string(),
 	mediaType: v.string(),

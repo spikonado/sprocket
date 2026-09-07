@@ -37,7 +37,7 @@ export const backfillImageUploadThreadId = migrations.define({
 
 export const removeTranscriptAttachmentImageUploadIds = migrations.define({
 	table: 'threadTranscriptParts',
-	migrateOne: async (ctx, part) => {
+	migrateOne: (_ctx, part) => {
 		if (part.kind !== 'prompt' || !part.prompt) return;
 		if (!part.prompt.imageUploads.some((attachment) => attachment.imageUploadId !== undefined)) {
 			return;
@@ -45,19 +45,11 @@ export const removeTranscriptAttachmentImageUploadIds = migrations.define({
 		return {
 			prompt: {
 				text: part.prompt.text,
-				imageUploads: await Promise.all(
-					part.prompt.imageUploads.map(async (attachment) => {
-						if (
-							!attachment.imageUploadId ||
-							!(await imageUploadByStorageId(ctx, attachment.storageId))
-						) {
-							return attachment;
-						}
-						const migrated = { ...attachment };
-						delete migrated.imageUploadId;
-						return migrated;
-					})
-				)
+				imageUploads: part.prompt.imageUploads.map((attachment) => {
+					const migrated = { ...attachment };
+					delete migrated.imageUploadId;
+					return migrated;
+				})
 			}
 		};
 	}
