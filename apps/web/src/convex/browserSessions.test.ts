@@ -137,4 +137,45 @@ describe('browserSessions', () => {
 			asUser.query(api.browserSessions.liveViewForThread, { threadId })
 		).resolves.toMatchObject({ ended: true, url: null, interactiveUrl: null, lastUsedRunId: null });
 	});
+
+	it('collapses duplicate session rows onto the latest startedAt', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId, runId, userId } = await seedRun(t, 'user_browser_dup');
+		await t.run(async (ctx) => {
+			await ctx.db.insert('browserSessions', {
+				threadId,
+				runId,
+				lastUsedRunId: runId,
+				userId,
+				browserbaseSessionId: 'bb-stale',
+				liveViewUrl: 'https://live.browserbase.test/stale',
+				startedAt: 1
+			});
+			await ctx.db.insert('browserSessions', {
+				threadId,
+				runId,
+				lastUsedRunId: runId,
+				userId,
+				browserbaseSessionId: 'bb-live',
+				liveViewUrl: 'https://live.browserbase.test/live',
+				startedAt: 2
+			});
+		});
+
+		const live = await asUser.query(api.browserSessions.liveViewForThread, { threadId });
+		expect(live).toMatchObject({
+			url: 'https://live.browserbase.test/live',
+			startedAt: 2
+		});
+
+		await t.mutation(internal.browserSessions.touchForThread, { threadId, runId });
+		const rows = await t.run(async (ctx) =>
+			ctx.db
+				.query('browserSessions')
+				.withIndex('by_thread', (query) => query.eq('threadId', threadId))
+				.collect()
+		);
+		expect(rows).toHaveLength(1);
+		expect(rows[0]?.browserbaseSessionId).toBe('bb-live');
+	});
 });
