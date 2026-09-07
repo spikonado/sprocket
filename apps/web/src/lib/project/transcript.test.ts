@@ -195,4 +195,32 @@ describe('mergeTranscriptMessages', () => {
 
 		expect(mergeTranscriptMessages([lightweight], [detailed])).toEqual([detailed]);
 	});
+
+	it('merges disjoint pages of the same long-run response instead of dropping it', () => {
+		const newer = message({
+			sourceNumbers: Array.from({ length: 201 }, (_, index) => index + 100),
+			parts: Array.from({ length: 201 }, (_, index) => ({
+				type: 'text' as const,
+				id: `n${index + 100}`,
+				text: 'n'
+			}))
+		});
+		const older = message({
+			sourceNumbers: Array.from({ length: 100 }, (_, index) => index),
+			parts: Array.from({ length: 100 }, (_, index) => ({
+				type: 'text' as const,
+				id: `n${index}`,
+				text: 'o'
+			})),
+			detailsLoaded: true
+		});
+		const merged = mergeTranscriptMessages([newer], [older]);
+		expect(merged).toHaveLength(1);
+		expect(merged[0]?.sourceNumbers).toHaveLength(301);
+		expect(merged[0]?.sourceNumbers?.[0]).toBe(0);
+		expect(merged[0]?.sourceNumbers?.at(-1)).toBe(300);
+		expect(merged[0]?.parts).toHaveLength(301);
+		expect(merged[0]?.parts[0]).toMatchObject({ id: 'n0' });
+		expect(merged[0]?.detailsLoaded).toBe(false);
+	});
 });

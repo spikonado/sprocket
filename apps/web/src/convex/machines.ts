@@ -1,8 +1,16 @@
 import { mutation, query, type MutationCtx } from '@convex/_generated/server';
 import type { Doc } from '@convex/_generated/dataModel';
 import { v } from 'convex/values';
-import { constantTimeEqual, executionSecretHash, getUserId } from '@convex/lib/auth';
-import { getOwnedMachine, isMachineActive, MAX_ACTIVE_MACHINE_RUNS } from '@convex/lib/machineRuns';
+import { internal } from '@convex/_generated/api';
+import { constantTimeEqual, getUserId } from '@convex/lib/auth';
+import {
+	getOwnedMachine,
+	isMachineActive,
+	MAX_ACTIVE_MACHINE_RUNS,
+	REMOTE_PROTOCOL_VERSION,
+	requireMachineProcess
+} from '@convex/lib/machineRuns';
+import { MACHINE_REQUEST_STOPPED } from '@convex/lib/machineRequests';
 import { finalizeRunRecord } from '@convex/lib/runFinalize';
 
 const MACHINE_ENDED = 'The machine stopped before this run finished.';
@@ -16,7 +24,8 @@ const vMachinePresence = v.object({
 	hostname: v.optional(v.string()),
 	appVersion: v.string(),
 	lastSeenAt: v.optional(v.number()),
-	online: v.boolean()
+	online: v.boolean(),
+	remoteProtocolVersion: v.optional(v.literal(REMOTE_PROTOCOL_VERSION))
 });
 
 export const listMine = query({
@@ -29,17 +38,23 @@ export const listMine = query({
 			.query('machines')
 			.withIndex('by_userId_and_machineId', (query) => query.eq('userId', userId))
 			.collect();
-		return machines.map((machine) => ({
-			machineId: machine.machineId,
-			friendlyName: machine.friendlyName,
-			platform: machine.platform,
-			platformVersion: machine.platformVersion,
-			architecture: machine.architecture,
-			hostname: machine.hostname,
-			appVersion: machine.appVersion,
-			lastSeenAt: machine.lastSeenAt,
-			online: isMachineActive(machine, now)
-		}));
+		return machines.map((machine) => {
+			const presence = {
+				machineId: machine.machineId,
+				friendlyName: machine.friendlyName,
+				platform: machine.platform,
+				platformVersion: machine.platformVersion,
+				architecture: machine.architecture,
+				hostname: machine.hostname,
+				appVersion: machine.appVersion,
+				lastSeenAt: machine.lastSeenAt,
+				online: isMachineActive(machine, now)
+			};
+			if (machine.remoteProtocolVersion === REMOTE_PROTOCOL_VERSION) {
+				return { ...presence, remoteProtocolVersion: REMOTE_PROTOCOL_VERSION };
+			}
+			return presence;
+		});
 	}
 });
 
@@ -58,24 +73,12 @@ async function failMachineRuns(ctx: MutationCtx, machine: Doc<'machines'>): Prom
 		}
 	}
 	await ctx.db.patch('machines', machine._id, { runIds: [] });
-}
-
-async function requireMachine(
-	ctx: MutationCtx,
-	userId: string,
-	machineId: string,
-	credential: string
-): Promise<Doc<'machines'>> {
-	const machine = await getOwnedMachine(ctx, userId, machineId);
-	const candidateHash = await executionSecretHash(credential);
-	if (
-		!machine ||
-		machine.lastSeenAt === undefined ||
-		!constantTimeEqual(candidateHash, machine.credentialHash)
-	) {
-		throw new Error('Machine is not active.');
-	}
-	return machine;
+	await ctx.runMutation(internal.machineRequests.failOpenPage, {
+		userId: machine.userId,
+		machineId: machine.machineId,
+		credentialHash: machine.credentialHash,
+		error: MACHINE_REQUEST_STOPPED
+	});
 }
 
 export const register = mutation({
@@ -87,7 +90,8 @@ export const register = mutation({
 		platformVersion: v.optional(v.string()),
 		architecture: v.string(),
 		hostname: v.optional(v.string()),
-		appVersion: v.string()
+		appVersion: v.string(),
+		remoteProtocolVersion: v.optional(v.literal(REMOTE_PROTOCOL_VERSION))
 	},
 	returns: v.object({ machineId: v.string(), userId: v.string() }),
 	handler: async (ctx, args) => {
@@ -113,6 +117,7 @@ export const register = mutation({
 			architecture: args.architecture,
 			hostname: args.hostname,
 			appVersion: args.appVersion,
+			remoteProtocolVersion: args.remoteProtocolVersion,
 			credentialHash: args.credentialHash,
 			lastSeenAt: now,
 			updatedAt: now
@@ -143,7 +148,7 @@ export const heartbeat = mutation({
 	args: { userId: v.string(), machineId: v.string(), credential: v.string() },
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const machine = await requireMachine(ctx, args.userId, args.machineId, args.credential);
+		const machine = await requireMachineProcess(ctx, args.userId, args.machineId, args.credential);
 		await ctx.db.patch('machines', machine._id, { lastSeenAt: Date.now(), updatedAt: Date.now() });
 		return null;
 	}
@@ -153,7 +158,7 @@ export const end = mutation({
 	args: { userId: v.string(), machineId: v.string(), credential: v.string() },
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const machine = await requireMachine(ctx, args.userId, args.machineId, args.credential);
+		const machine = await requireMachineProcess(ctx, args.userId, args.machineId, args.credential);
 		await failMachineRuns(ctx, machine);
 		await ctx.db.patch('machines', machine._id, {
 			lastSeenAt: undefined,

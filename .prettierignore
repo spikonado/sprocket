@@ -4,6 +4,9 @@ _generated/
 # Package Managers
 bun.lock
 
+# Vercel build output
+.vercel/
+
 # Nix
 flake*
 

@@ -93,6 +93,7 @@ impl MachineManager {
     }
 
     pub async fn end(&self, user_id: &str) -> anyhow::Result<()> {
+        let _registration = self.registration.lock().await;
         let account = self.account_lock(user_id, true).await?;
         let _account = account.lock().await;
         let Some(presence) = self.accounts.lock().await.remove(user_id) else {
@@ -103,19 +104,21 @@ impl MachineManager {
     }
 
     pub async fn shutdown(&self) {
+        let _registration = self.registration.lock().await;
         let locks = {
             let mut lifecycle = self.lifecycle.lock().await;
             lifecycle.shutting_down = true;
             lifecycle.locks.values().cloned().collect::<Vec<_>>()
         };
+        let mut guards = Vec::with_capacity(locks.len());
         for lock in locks {
-            let _lock = lock.lock().await;
-            let accounts = self.accounts.lock().await.drain().collect::<Vec<_>>();
-            for (user_id, presence) in accounts {
-                presence.heartbeat.abort();
-                if let Err(error) = self.end_remote(&user_id).await {
-                    tracing::warn!("failed to end machine presence during shutdown: {error:#}");
-                }
+            guards.push(lock.lock_owned().await);
+        }
+        let accounts = self.accounts.lock().await.drain().collect::<Vec<_>>();
+        for (user_id, presence) in accounts {
+            presence.heartbeat.abort();
+            if let Err(error) = self.end_remote(&user_id).await {
+                tracing::warn!("failed to end machine presence during shutdown: {error:#}");
             }
         }
     }
@@ -203,6 +206,7 @@ impl MachineManager {
 
     fn registration_args(&self) -> BTreeMap<String, Value> {
         BTreeMap::from([
+            ("remoteProtocolVersion".into(), Value::Float64(1.0)),
             (
                 "machineId".into(),
                 self.identity.installation_id.clone().into(),
@@ -278,6 +282,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn shutdown_ends_presence_before_its_first_heartbeat() {
+        let (dir, manager) = manager_for_test();
+        let heartbeat = tokio::spawn(std::future::pending::<()>());
+        let aborted = heartbeat.abort_handle();
+        manager
+            .accounts
+            .lock()
+            .await
+            .insert("user-a".into(), AccountPresence { heartbeat });
+        assert!(manager.lifecycle.lock().await.locks.is_empty());
+
+        manager.shutdown().await;
+
+        assert!(manager.accounts.lock().await.is_empty());
+        tokio::task::yield_now().await;
+        assert!(aborted.is_finished());
+        let _ = tokio::fs::remove_dir_all(dir).await;
+    }
+
+    #[tokio::test]
     async fn failed_registration_keeps_an_existing_presence() {
         let (dir, manager) = manager_for_test();
         {
@@ -304,6 +328,28 @@ mod tests {
             presence.heartbeat.abort();
         }
 
+        let _ = tokio::fs::remove_dir_all(dir).await;
+    }
+
+    #[tokio::test]
+    async fn end_waits_for_registration_before_removing_presence() {
+        let (dir, manager) = manager_for_test();
+        let registering = manager.registration.lock().await;
+        let ending = tokio::spawn({
+            let manager = Arc::clone(&manager);
+            async move { manager.end("user-a").await }
+        });
+        tokio::task::yield_now().await;
+        assert!(!ending.is_finished());
+        manager.accounts.lock().await.insert(
+            "user-a".into(),
+            AccountPresence {
+                heartbeat: tokio::spawn(std::future::pending()),
+            },
+        );
+        drop(registering);
+        let _ = ending.await.expect("end task");
+        assert!(!manager.accounts.lock().await.contains_key("user-a"));
         let _ = tokio::fs::remove_dir_all(dir).await;
     }
 

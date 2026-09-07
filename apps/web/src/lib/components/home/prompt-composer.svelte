@@ -31,6 +31,8 @@
 		SUPPORTED_IMAGE_MEDIA_TYPES,
 		type ComposerAttachment
 	} from '$lib/chat/attachments';
+	import MachineSelector from '$lib/components/home/machine-selector.svelte';
+	import type { HostedMachineOption } from '$lib/home/hosted-machines';
 	export type PendingAgentQuestion = {
 		questionId: Id<'agentQuestions'>;
 		question: string;
@@ -67,6 +69,14 @@
 			workspacePath: string | null;
 			load: () => Promise<SkillSummary[]>;
 		} | null;
+		hostedMachines?: {
+			options: HostedMachineOption[];
+			selectedMachineId: string | null;
+			onSelect: (machineId: string | null) => void;
+			notice?: string | null;
+			offerFolderPicker?: boolean;
+			onChooseFolder?: () => void;
+		} | null;
 		onSubmit: () => void;
 		onCancel: () => void;
 	};
@@ -92,6 +102,7 @@
 		elapsedLabel,
 		contextUsage,
 		projectSkills = null,
+		hostedMachines = null,
 		onSubmit,
 		onCancel
 	}: Props = $props();
@@ -547,6 +558,19 @@
 				>
 					Continue working
 				</button>
+			</div>
+		{/if}
+
+		{#if hostedMachines}
+			<div class="mb-3 px-4">
+				<MachineSelector
+					options={hostedMachines.options}
+					selectedMachineId={hostedMachines.selectedMachineId}
+					onSelect={hostedMachines.onSelect}
+					notice={hostedMachines.notice}
+					offerFolderPicker={hostedMachines.offerFolderPicker}
+					onChooseFolder={hostedMachines.onChooseFolder}
+				/>
 			</div>
 		{/if}
 

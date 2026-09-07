@@ -4,6 +4,7 @@ mod machine_identity;
 mod machines;
 mod native_auth;
 mod project_attachments;
+mod remote_machine;
 pub mod repo_env;
 mod routes;
 mod static_dir;
@@ -219,6 +220,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         }
     }
 
+    let remote_worker = tokio::spawn(remote_machine::run(state.clone()));
     let router = build_router(state, static_dir);
 
     let result = axum::serve(
@@ -227,6 +229,8 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
     )
     .with_graceful_shutdown(shutdown_signal())
     .await;
+    remote_worker.abort();
+    let _ = remote_worker.await;
     machines.shutdown().await;
     result?;
     Ok(())

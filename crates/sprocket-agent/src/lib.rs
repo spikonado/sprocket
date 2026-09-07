@@ -2,6 +2,7 @@ mod catalog;
 mod compaction;
 mod convex;
 mod hooks;
+mod hosted_live;
 mod live;
 mod provider;
 mod reasoning;

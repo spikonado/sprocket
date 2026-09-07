@@ -117,6 +117,87 @@ function retainDetails(message: ThreadMessage, detailed: ThreadMessage): ThreadM
 	return { ...message, parts };
 }
 
+function pickRicherPart(current: AssistantPart, incoming: AssistantPart): AssistantPart {
+	if (current.type === 'reasoning' && incoming.type === 'reasoning') {
+		return !current.text && incoming.text ? incoming : current;
+	}
+	if (current.type === 'tool-call' && incoming.type === 'tool-call') {
+		const merged = {
+			...current,
+			...incoming,
+			input: current.input == null ? incoming.input : current.input
+		};
+		const startedAt = current.startedAt ?? incoming.startedAt;
+		const completedAt = current.completedAt ?? incoming.completedAt;
+		if (startedAt !== undefined) merged.startedAt = startedAt;
+		if (completedAt !== undefined) merged.completedAt = completedAt;
+		return merged;
+	}
+	if (current.type === 'tool-result' && incoming.type === 'tool-result') {
+		if (isJsonObject(current.output) && isJsonObject(incoming.output)) {
+			return { ...incoming, output: { ...incoming.output, ...current.output } };
+		}
+		return incoming.output != null ? incoming : current;
+	}
+	if (current.type === 'text' && incoming.type === 'text') {
+		return incoming.text.length >= current.text.length ? incoming : current;
+	}
+	return incoming;
+}
+
+function mergeSourceNumbers(left?: number[], right?: number[]): number[] | undefined {
+	if (!left && !right) return undefined;
+	return [...new Set([...(left ?? []), ...(right ?? [])])].sort((a, b) => a - b);
+}
+
+function mergeStreamIds(left?: string[], right?: string[]): string[] | undefined {
+	if (!left && !right) return undefined;
+	const seen = new Set<string>();
+	const ids: string[] = [];
+	for (const id of [...(left ?? []), ...(right ?? [])]) {
+		if (seen.has(id)) continue;
+		seen.add(id);
+		ids.push(id);
+	}
+	return ids;
+}
+
+function mergeSameIdMessages(current: ThreadMessage, incoming: ThreadMessage): ThreadMessage {
+	const currentStart = current.sourceNumbers?.[0] ?? 0;
+	const incomingStart = incoming.sourceNumbers?.[0] ?? 0;
+	const earlier = currentStart <= incomingStart ? current : incoming;
+	const later = currentStart <= incomingStart ? incoming : current;
+	const used = new Set<string>();
+	const parts: AssistantPart[] = [];
+	for (const part of earlier.parts) {
+		const key = partKey(part);
+		used.add(key);
+		const other = later.parts.find((item) => partKey(item) === key);
+		parts.push(other ? pickRicherPart(part, other) : part);
+	}
+	for (const part of later.parts) {
+		const key = partKey(part);
+		if (used.has(key)) continue;
+		parts.push(part);
+	}
+	const merged: ThreadMessage = {
+		...earlier,
+		text: joinAssistantTextParts(parts),
+		parts,
+		runStatus: later.runStatus,
+		sourceNumbers: mergeSourceNumbers(current.sourceNumbers, incoming.sourceNumbers),
+		streamIds: mergeStreamIds(current.streamIds, incoming.streamIds)
+	};
+	if (current.detailsLoaded === true && incoming.detailsLoaded === true) {
+		merged.detailsLoaded = true;
+	} else if (current.detailsLoaded !== undefined || incoming.detailsLoaded !== undefined) {
+		merged.detailsLoaded = false;
+	}
+	if (later.runCompletedAt !== undefined) merged.runCompletedAt = later.runCompletedAt;
+	else if (earlier.runCompletedAt !== undefined) merged.runCompletedAt = earlier.runCompletedAt;
+	return merged;
+}
+
 export function mergeTranscriptMessages(existing: ThreadMessage[], incoming: ThreadMessage[]) {
 	const byId = new Map(existing.map((message) => [message._id, message]));
 	for (const message of incoming) {
@@ -143,7 +224,9 @@ export function mergeTranscriptMessages(existing: ThreadMessage[], incoming: Thr
 		}
 		if (incomingContainsCurrent) {
 			byId.set(message._id, retainDetails(message, current));
+			continue;
 		}
+		byId.set(message._id, mergeSameIdMessages(current, message));
 	}
 	return [...byId.values()].sort(
 		(left, right) => (left.sourceNumbers?.[0] ?? 0) - (right.sourceNumbers?.[0] ?? 0)

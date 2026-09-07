@@ -6,7 +6,7 @@ import type {
 	TranscriptToolBody
 } from '@convex/lib/validators';
 
-const MAX_TRANSCRIPT_PARTS_PER_QUERY = 100;
+export const MAX_TRANSCRIPT_PARTS_PER_QUERY = 100;
 
 export function normalizeCompletionTiming(
 	completion: TranscriptCompletionBody

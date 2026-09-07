@@ -6,6 +6,7 @@
 	import type { SprocketTheme } from '$lib/theme';
 	import type { ThreadSummary, ProjectThreadGroup } from '$lib/types/sprocket';
 	import { isAgentLaunchPending, type PendingAgentLaunches } from '$lib/project/threads';
+	import { isHostedVirtualWorkspacePath } from '$lib/home/hosted-projects';
 
 	type Props = {
 		currentWorkspacePath: string | null;
@@ -139,6 +140,9 @@
 	}
 
 	function projectStatusLabel(group: ProjectThreadGroup) {
+		if (isHostedVirtualWorkspacePath(group.project.workspacePath)) {
+			return 'Cloud';
+		}
 		if (group.project.localAttachmentAvailability === 'unavailable') {
 			return 'Missing';
 		}
@@ -276,7 +280,7 @@
 
 								<button
 									type="button"
-									class="text-muted-foreground hover:text-foreground hover:bg-hover-fill absolute top-0.5 right-1 inline-flex h-6 w-6 items-center justify-center rounded-md opacity-0 transition group-hover:opacity-100 focus-visible:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
+									class="text-muted-foreground hover:text-foreground hover:bg-hover-fill absolute top-0.5 right-1 inline-flex h-6 w-6 items-center justify-center rounded-md opacity-100 transition group-hover:opacity-100 focus-visible:opacity-100 disabled:cursor-not-allowed disabled:opacity-40 md:opacity-0 [@media(pointer:coarse)]:opacity-100"
 									onclick={() => {
 										if (project.localAttachmentAvailability === 'available') {
 											onStartThreadDraft(project.workspacePath);

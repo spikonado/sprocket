@@ -15,6 +15,14 @@ pub struct UserConvexClient {
 }
 
 impl UserConvexClient {
+    pub async fn subscribe(
+        &self,
+        function: &str,
+        args: BTreeMap<String, Value>,
+    ) -> anyhow::Result<QuerySubscription> {
+        self.client.subscribe(function, args).await
+    }
+
     pub async fn connect_with_fetcher(
         deployment_url: &str,
         fetcher: AuthTokenFetcher,

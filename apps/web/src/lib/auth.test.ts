@@ -11,11 +11,13 @@ import {
 	getConvexAccessToken,
 	initializeAuth,
 	resetAuthRuntime,
+	retryConvexAuthentication,
 	setAuthRuntime,
 	signIn,
 	signOut,
 	type AuthRuntime
 } from './auth';
+import { hostedLoginFailureMessage } from './hosted-login';
 
 const createAuthKitClient = vi.fn<AuthRuntime['createAuthKitClient']>();
 const ensureLocalSession = vi.fn<AuthRuntime['ensureLocalSession']>();
@@ -539,6 +541,240 @@ describe('installed and hosted auth', () => {
 		expect(get(authState).user).toBeNull();
 		expect(get(authState).error).toBe('Session refresh failed. Sign in again.');
 	});
+
+	it('uses the hosted session endpoint instead of AuthKit JS when PUBLIC_SPROCKET_HOSTED is true', async () => {
+		const { localStorage, location } = stubHostedWindow();
+		setAuthRuntime({
+			createAuthKitClient,
+			resolveLocalApiBaseUrl,
+			readDesktopBootstrap,
+			ensureLocalSession,
+			isHostedWeb: () => true
+		});
+		const fetch = stubFetch({
+			hostedToken: () => jsonResponse(200, { accessToken: 'hosted-token', user: nativeUser })
+		});
+
+		await initializeAuth(convexClient);
+
+		expect(createAuthKitClient).not.toHaveBeenCalled();
+		expect(convexClient.query).not.toHaveBeenCalled();
+		expect(ensureLocalSession).not.toHaveBeenCalled();
+		expect(fetch).toHaveBeenCalledWith(
+			'/api/auth/session/token',
+			expect.objectContaining({ method: 'POST', credentials: 'include' })
+		);
+		expect(hostedTokenBodies(fetch)).toEqual([{ forceRefreshToken: false }]);
+		expect(localStorage.setItem).not.toHaveBeenCalled();
+		expect(get(authState)).toMatchObject({
+			isReady: true,
+			user: nativeUser,
+			nativeSession: 'notRequired',
+			error: null
+		});
+
+		const token = await getAccessToken({ forceRefreshToken: true });
+		expect(token).toBe('hosted-token');
+		expect(hostedTokenBodies(fetch)).toEqual([
+			{ forceRefreshToken: false },
+			{ forceRefreshToken: true }
+		]);
+		expect(get(authState)).not.toHaveProperty('accessToken');
+
+		await signIn();
+		expect(location.assign).toHaveBeenCalledWith('/api/auth/sign-in');
+	});
+
+	it('retries a hosted 503 session token without starting a new OAuth', async () => {
+		stubHostedWindow();
+		setAuthRuntime({
+			createAuthKitClient,
+			resolveLocalApiBaseUrl,
+			readDesktopBootstrap,
+			ensureLocalSession,
+			isHostedWeb: () => true
+		});
+		let unavailable = true;
+		const fetch = stubFetch({
+			hostedToken: () =>
+				unavailable
+					? jsonResponse(503, { error: 'Temporarily unavailable' })
+					: jsonResponse(200, { accessToken: 'hosted-token', user: nativeUser })
+		});
+
+		await initializeAuth(convexClient);
+		expect(get(authState)).toMatchObject({
+			isReady: true,
+			user: null,
+			nativeSession: 'retryable',
+			error: 'Temporarily unavailable'
+		});
+
+		unavailable = false;
+		await retryConvexAuthentication();
+		expect(get(authState)).toMatchObject({
+			user: nativeUser,
+			nativeSession: 'notRequired',
+			error: null
+		});
+		expect(hostedTokenBodies(fetch)).toEqual([
+			{ forceRefreshToken: false },
+			{ forceRefreshToken: true }
+		]);
+		expect(createAuthKitClient).not.toHaveBeenCalled();
+	});
+
+	it('keeps a hosted signed-out 200 null as sign-in, not retryable', async () => {
+		stubHostedWindow();
+		setAuthRuntime({
+			createAuthKitClient,
+			resolveLocalApiBaseUrl,
+			readDesktopBootstrap,
+			ensureLocalSession,
+			isHostedWeb: () => true
+		});
+		stubFetch({
+			hostedToken: () => jsonResponse(200, null)
+		});
+
+		await initializeAuth(convexClient);
+		expect(get(authState)).toMatchObject({
+			user: null,
+			nativeSession: 'notRequired',
+			error: null
+		});
+	});
+
+	it('shows a hosted callback retry message and strips the login query', async () => {
+		const { location, history } = stubHostedWindow('?login=failed&error_description=invalid_grant');
+		setAuthRuntime({
+			createAuthKitClient,
+			resolveLocalApiBaseUrl,
+			readDesktopBootstrap,
+			ensureLocalSession,
+			isHostedWeb: () => true
+		});
+		stubFetch({
+			hostedToken: () => jsonResponse(200, null)
+		});
+
+		await initializeAuth(convexClient);
+
+		expect(get(authState)).toMatchObject({
+			isReady: true,
+			user: null,
+			nativeSession: 'notRequired',
+			error: hostedLoginFailureMessage('failed')
+		});
+		expect(get(authState).error).not.toMatch(/invalid_grant|error_description/);
+		expect(history.replaceState).toHaveBeenCalled();
+		expect(location.search).toBe('');
+		expect(location.search).not.toContain('error_description');
+	});
+
+	it('strips unknown hosted login query values without showing them', async () => {
+		const { location } = stubHostedWindow('?login=invalid_grant');
+		setAuthRuntime({
+			createAuthKitClient,
+			resolveLocalApiBaseUrl,
+			readDesktopBootstrap,
+			ensureLocalSession,
+			isHostedWeb: () => true
+		});
+		stubFetch({
+			hostedToken: () => jsonResponse(200, null)
+		});
+
+		await initializeAuth(convexClient);
+
+		expect(get(authState).error).toBeNull();
+		expect(location.search).toBe('');
+	});
+
+	it('clears the hosted session cookie through the same-origin sign-out route', async () => {
+		stubHostedWindow();
+		setAuthRuntime({
+			createAuthKitClient,
+			resolveLocalApiBaseUrl,
+			readDesktopBootstrap,
+			ensureLocalSession,
+			isHostedWeb: () => true
+		});
+		const fetch = stubFetch({
+			hostedToken: () => jsonResponse(200, { accessToken: 'hosted-token', user: nativeUser }),
+			hostedSignOut: () => jsonResponse(200, { ok: true })
+		});
+		await initializeAuth(convexClient);
+		await signOut();
+		expect(fetch).toHaveBeenCalledWith(
+			'/api/auth/sign-out',
+			expect.objectContaining({ method: 'POST', credentials: 'include' })
+		);
+		expect(createAuthKitClient).not.toHaveBeenCalled();
+		expect(get(authState).user).toBeNull();
+	});
+
+	it('keeps the hosted user after a failed sign-out so sign-out can be retried', async () => {
+		stubHostedWindow();
+		setAuthRuntime({
+			createAuthKitClient,
+			resolveLocalApiBaseUrl,
+			readDesktopBootstrap,
+			ensureLocalSession,
+			isHostedWeb: () => true
+		});
+		let signOutOk = false;
+		const fetch = stubFetch({
+			hostedToken: () => jsonResponse(200, { accessToken: 'hosted-token', user: nativeUser }),
+			hostedSignOut: () =>
+				signOutOk
+					? jsonResponse(200, { ok: true })
+					: jsonResponse(503, { error: 'Sign-out unavailable' })
+		});
+		await initializeAuth(convexClient);
+		await signOut();
+		expect(get(authState)).toMatchObject({
+			user: nativeUser,
+			nativeSession: 'notRequired',
+			error: 'Sign-out unavailable'
+		});
+		signOutOk = true;
+		await signOut();
+		expect(get(authState)).toMatchObject({
+			user: null,
+			nativeSession: 'notRequired',
+			error: null
+		});
+		expect(
+			fetch.mock.calls.filter(([input]) => requestUrl(input).endsWith('/api/auth/sign-out'))
+		).toHaveLength(2);
+	});
+
+	it('keeps the hosted user when a Convex token refresh is transient', async () => {
+		vi.useFakeTimers();
+		stubHostedWindow();
+		setAuthRuntime({
+			createAuthKitClient,
+			resolveLocalApiBaseUrl,
+			readDesktopBootstrap,
+			ensureLocalSession,
+			isHostedWeb: () => true
+		});
+		let unavailable = false;
+		stubFetch({
+			hostedToken: () =>
+				unavailable
+					? jsonResponse(503, { error: 'Temporarily unavailable' })
+					: jsonResponse(200, { accessToken: 'hosted-token', user: nativeUser })
+		});
+		await initializeAuth(convexClient);
+		unavailable = true;
+		const version = get(convexAuthRetryVersion);
+		await expect(getConvexAccessToken({ forceRefreshToken: true })).resolves.toBeNull();
+		expect(get(authState).user).toEqual(nativeUser);
+		await vi.advanceTimersByTimeAsync(5_000);
+		expect(get(convexAuthRetryVersion)).toBe(version + 1);
+	});
 });
 
 function jsonResponse(status: number, payload: TestJsonPayload) {
@@ -558,10 +794,10 @@ function requestUrl(input: RequestInfo | URL): string {
 	return input;
 }
 
-function tokenBodies(fetch: ReturnType<typeof stubFetch>) {
+function tokenBodies(fetch: ReturnType<typeof stubFetch>, path = '/api/auth/native-session/token') {
 	const bodies: NativeSessionTokenRequest[] = [];
 	for (const [input, init] of fetch.mock.calls) {
-		if (!requestUrl(input).includes('/api/auth/native-session/token')) {
+		if (!requestUrl(input).endsWith(path)) {
 			continue;
 		}
 		if ((init?.method ?? 'GET').toUpperCase() !== 'POST') {
@@ -575,6 +811,10 @@ function tokenBodies(fetch: ReturnType<typeof stubFetch>) {
 	return bodies;
 }
 
+function hostedTokenBodies(fetch: ReturnType<typeof stubFetch>) {
+	return tokenBodies(fetch, '/api/auth/session/token');
+}
+
 function unhandled(input: RequestInfo | URL, init?: RequestInit) {
 	return jsonResponse(500, {
 		error: `unhandled ${init?.method ?? 'GET'} ${requestUrl(input)}`
@@ -583,6 +823,8 @@ function unhandled(input: RequestInfo | URL, init?: RequestInit) {
 
 function stubFetch(handlers: {
 	token?: (request: NativeSessionTokenRequest) => Response | Promise<Response>;
+	hostedToken?: (request: NativeSessionTokenRequest) => Response | Promise<Response>;
+	hostedSignOut?: () => Response | Promise<Response>;
 	nativeSessionGet?: () => Response | Promise<Response>;
 	nativeSessionDelete?: () => Response | Promise<Response>;
 	desktopStart?: () => Response | Promise<Response>;
@@ -592,6 +834,16 @@ function stubFetch(handlers: {
 	const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 		const url = requestUrl(input);
 		const method = (init?.method ?? 'GET').toUpperCase();
+		if (url.endsWith('/api/auth/session/token') && method === 'POST') {
+			const parsed = nativeTokenRequestSchema.safeParse(JSON.parse(String(init?.body ?? '{}')));
+			if (!parsed.success) {
+				return jsonResponse(400, { error: 'invalid token request' });
+			}
+			return handlers.hostedToken?.(parsed.data) ?? unhandled(input, init);
+		}
+		if (url.endsWith('/api/auth/sign-out') && method === 'POST') {
+			return handlers.hostedSignOut?.() ?? unhandled(input, init);
+		}
 		if (url.includes('/api/auth/native-session/token') && method === 'POST') {
 			const parsed = nativeTokenRequestSchema.safeParse(JSON.parse(String(init?.body ?? '{}')));
 			if (!parsed.success) {
@@ -624,30 +876,50 @@ function stubInstalledWindow() {
 	return stubWindow('localhost');
 }
 
-function stubHostedWindow() {
-	return stubWindow('sprocket.dev');
+function stubHostedWindow(search = '') {
+	return stubWindow('sprocket.dev', search);
 }
 
-function stubWindow(hostname: string) {
+function stubWindow(hostname: string, search = '') {
 	const localStorage = {
 		getItem: vi.fn(),
 		setItem: vi.fn(),
 		removeItem: vi.fn()
 	};
 	const origin = hostname === 'localhost' ? 'http://localhost:17731' : `https://${hostname}`;
+	const query = search && !search.startsWith('?') ? `?${search}` : search;
 	const location = {
 		hostname,
 		origin,
-		href: `${origin}/`,
-		replace: vi.fn()
+		href: `${origin}/${query}`,
+		pathname: '/',
+		search: query,
+		hash: '',
+		replace: vi.fn(),
+		assign: vi.fn()
+	};
+	const history = {
+		state: null,
+		replaceState: vi.fn((state: null, _title: string, url?: string) => {
+			history.state = state;
+			if (url === undefined) {
+				return;
+			}
+			const parsed = new URL(url, origin);
+			location.href = parsed.href;
+			location.pathname = parsed.pathname;
+			location.search = parsed.search;
+			location.hash = parsed.hash;
+		})
 	};
 	vi.stubGlobal('window', {
 		location,
 		localStorage,
+		history,
 		open: vi.fn(() => ({ opener: {} })),
 		sprocketDesktopBridge: undefined
 	});
-	return { location, localStorage };
+	return { location, localStorage, history };
 }
 
 function mockAuthKitClient(currentUser: User | null) {

@@ -225,6 +225,22 @@ and a production scan finds no rows that still have
 `contextSummaryThroughRunId` without `contextSummaryThroughPartNumber`. Unset
 remaining run-id values in that same PR, then drop the field.
 
+### 11. Optional machine remote protocol version
+
+`machines.register` accepts optional `remoteProtocolVersion: 1`. Released
+agents that only heartbeat and end omit it. `machines.listMine` returns the
+field only when the machine registered version 1. Existing presence rows
+without the field stay valid.
+
+Hosted command delivery (`machineRequests.*`) requires an owned online machine
+that registered version 1. Older machines stay listable and keep local agent
+runs. Heartbeat and end stay on the unauthenticated `userId` plus credential
+contract.
+
+Remove the optionality after all supported agents send version 1 and hosted
+command delivery no longer needs to distinguish them. A later protocol version
+is a new literal, not a reason to require today's field.
+
 ## Client APIs
 
 ### Local sessions created before account binding
@@ -317,6 +333,15 @@ lifecycle UI reads `chat.selectedThreadLifecycle`. The local `/threads/lifecycle
 route is a one-shot command-time relay, not a replacement subscription. Move
 lifecycle reads behind Rust only if Rust gains an equivalent ordered reactive
 stream.
+
+## Hosted live completion fields
+
+`completionStreamStates.liveOverlayJson`, `liveEpochClaimId`, and
+`liveEpochAttemptSeq` are optional. Older agents and stored stream states do not
+publish hosted snapshots; hosted readers show durable transcript updates instead.
+Keep these fields optional while supported agents can omit them. No historical
+snapshot can be reconstructed. Requiring them would need both producer age-out
+and a rewrite or deletion of old stream states.
 
 ## Removal checklist
 
