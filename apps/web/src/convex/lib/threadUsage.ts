@@ -194,6 +194,9 @@ export async function recordThreadUsageEvent(
 		return false;
 	}
 
+	const usageRow = await getUsageRowExclusive(ctx, thread._id);
+	const fieldTotal = usageRow?.totalTokensProcessed ?? 0;
+
 	const event: UsageEventInsert = {
 		threadId: thread._id,
 		userId: thread.userId,
@@ -208,16 +211,13 @@ export async function recordThreadUsageEvent(
 	}
 	await threadProcessedTokens.insertIfDoesNotExist(ctx, inserted);
 
-	const usageRow = await getUsageRowExclusive(ctx, thread._id);
-	const fieldTotal = usageRow?.totalTokensProcessed ?? 0;
 	const aggregated = await aggregatedProcessedTokens(ctx, thread._id);
-	const totalTokensProcessed =
-		aggregated != null
-			? Math.max(fieldTotal, aggregated)
-			: addTokenCounts(fieldTotal, args.processedTokens);
 	const next: ThreadUsageValues = {
 		contextTokens: args.contextTokens ?? usageRow?.contextTokens,
-		totalTokensProcessed
+		totalTokensProcessed: Math.max(
+			addTokenCounts(fieldTotal, args.processedTokens),
+			aggregated ?? 0
+		)
 	};
 	if (usageRow) {
 		await ctx.db.patch('threadUsage', usageRow._id, next);
