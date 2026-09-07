@@ -667,20 +667,30 @@ async fn replace_file(path: &Path, contents: &[u8], permissions: Permissions) ->
 
 fn unique_sibling_path(path: &Path, kind: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let instance = sprocket_instance_id();
     let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
+    let nanos = unix_nanos();
     let mut name = path
         .file_name()
         .map(|name| name.to_os_string())
         .unwrap_or_else(|| "file".into());
-    name.push(format!(
-        ".sprocket-{kind}.{}.{seq}.{nanos}",
-        std::process::id()
-    ));
+    name.push(format!(".sprocket-{kind}.{instance}.{seq}.{nanos}"));
     path.with_file_name(name)
+}
+
+fn unix_nanos() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0)
+}
+
+/// Stable for one process lifetime. Mixes first-staging wall time with the OS
+/// pid so a later process that reuses that pid does not share a grouping key
+/// with leftover siblings from the previous occupant.
+fn sprocket_instance_id() -> u128 {
+    static ID: OnceLock<u128> = OnceLock::new();
+    *ID.get_or_init(|| (unix_nanos() << 32) | u128::from(std::process::id()))
 }
 
 async fn stage_unique_sibling(
@@ -736,39 +746,49 @@ async fn recover_stranded_sprocket_bak(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Matches `unique_sibling_path`: `{file_name}.sprocket-{kind}.{pid}.{seq}.{nanos}`.
-fn parse_sprocket_sibling(name: &str, file_name: &str, kind: &str) -> Option<(u128, u64, u32)> {
+/// Parsed `{file_name}.sprocket-{kind}.{instance}.{seq}.{nanos}` key.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SprocketSiblingKey {
+    nanos: u128,
+    seq: u64,
+    instance: u128,
+}
+
+fn parse_sprocket_sibling(name: &str, file_name: &str, kind: &str) -> Option<SprocketSiblingKey> {
     let prefix = format!("{file_name}.sprocket-{kind}.");
     let rest = name.strip_prefix(&prefix)?;
     let mut parts = rest.split('.');
-    let pid: u32 = parts.next()?.parse().ok()?;
-    let seq: u64 = parts.next()?.parse().ok()?;
-    let nanos: u128 = parts.next()?.parse().ok()?;
+    let instance = parts.next()?.parse().ok()?;
+    let seq = parts.next()?.parse().ok()?;
+    let nanos = parts.next()?.parse().ok()?;
     if parts.next().is_some() {
         return None;
     }
-    Some((nanos, seq, pid))
+    Some(SprocketSiblingKey {
+        nanos,
+        seq,
+        instance,
+    })
 }
 
-/// Newest sibling is unique even when same-pid seq order and cross-pid
-/// timestamps would not form a pairwise ranking. Keep the latest seq per pid,
-/// then pick the latest timestamp among those per-process winners.
+/// Newest sibling is unique even when same-instance seq order and cross-instance
+/// timestamps would not form a pairwise ranking. Keep the latest seq per
+/// process instance, then pick the latest timestamp among those winners.
 fn select_newest_sprocket_sibling<T>(
-    items: impl IntoIterator<Item = ((u128, u64, u32), T)>,
+    items: impl IntoIterator<Item = (SprocketSiblingKey, T)>,
 ) -> Option<T> {
-    let mut newest_by_pid: HashMap<u32, ((u128, u64, u32), T)> = HashMap::new();
+    let mut newest_by_instance: HashMap<u128, (SprocketSiblingKey, T)> = HashMap::new();
     for (key, value) in items {
-        let pid = key.2;
-        if newest_by_pid
-            .get(&pid)
-            .is_none_or(|(best, _)| (key.1, key.0) > (best.1, best.0))
+        if newest_by_instance
+            .get(&key.instance)
+            .is_none_or(|(best, _)| (key.seq, key.nanos) > (best.seq, best.nanos))
         {
-            newest_by_pid.insert(pid, (key, value));
+            newest_by_instance.insert(key.instance, (key, value));
         }
     }
-    newest_by_pid
+    newest_by_instance
         .into_values()
-        .max_by(|(left, _), (right, _)| left.cmp(right))
+        .max_by_key(|(key, _)| (key.nanos, key.instance))
         .map(|(_, value)| value)
 }
 
@@ -923,8 +943,8 @@ mod tests {
     use std::sync::Mutex;
 
     use super::{
-        apply_workspace_patch, normalize_unified_diff_hunk_counts, recover_stranded_sprocket_bak,
-        replace_file, select_newest_sprocket_sibling, write_new_file,
+        SprocketSiblingKey, apply_workspace_patch, recover_stranded_sprocket_bak, replace_file,
+        select_newest_sprocket_sibling, write_new_file,
     };
     use crate::commands::{WorkspaceCancellation, WorkspaceOperationCancelled};
     use crate::test_support::temp_workspace;
@@ -933,8 +953,16 @@ mod tests {
 
     #[test]
     fn same_process_bak_prefers_later_seq_if_clock_jumps_back() {
-        let older = (200_u128, 1_u64, 10_u32);
-        let newer = (50_u128, 2_u64, 10_u32);
+        let older = SprocketSiblingKey {
+            nanos: 200,
+            seq: 1,
+            instance: 10,
+        };
+        let newer = SprocketSiblingKey {
+            nanos: 50,
+            seq: 2,
+            instance: 10,
+        };
         assert_eq!(
             select_newest_sprocket_sibling([(older, "old"), (newer, "new")]),
             Some("new")
@@ -942,10 +970,22 @@ mod tests {
     }
 
     #[test]
-    fn mixed_pid_bak_selection_is_order_independent() {
-        let a = (10_u128, 2_u64, 1_u32);
-        let b = (20_u128, 1_u64, 1_u32);
-        let c = (15_u128, 0_u64, 2_u32);
+    fn mixed_instance_bak_selection_is_order_independent() {
+        let a = SprocketSiblingKey {
+            nanos: 10,
+            seq: 2,
+            instance: 1,
+        };
+        let b = SprocketSiblingKey {
+            nanos: 20,
+            seq: 1,
+            instance: 1,
+        };
+        let c = SprocketSiblingKey {
+            nanos: 15,
+            seq: 0,
+            instance: 2,
+        };
         let keys = [a, b, c];
         assert_eq!(
             select_newest_sprocket_sibling(keys.into_iter().map(|key| (key, key))),
@@ -954,6 +994,45 @@ mod tests {
         assert_eq!(
             select_newest_sprocket_sibling(keys.into_iter().rev().map(|key| (key, key))),
             Some(c)
+        );
+    }
+
+    #[test]
+    fn reused_pid_bak_prefers_later_process_timestamp() {
+        // Two process lifetimes can share an OS pid. Their instance ids differ,
+        // so a leftover high-seq backup from the earlier occupant must lose to
+        // a seq-0 backup from the later process.
+        let leftover = SprocketSiblingKey {
+            nanos: 100,
+            seq: 5,
+            instance: 10,
+        };
+        let current = SprocketSiblingKey {
+            nanos: 200,
+            seq: 0,
+            instance: 11,
+        };
+        assert_eq!(
+            select_newest_sprocket_sibling([(leftover, "stale"), (current, "fresh")]),
+            Some("fresh")
+        );
+    }
+
+    #[test]
+    fn equal_timestamp_prefers_later_instance_not_higher_seq() {
+        let leftover = SprocketSiblingKey {
+            nanos: 100,
+            seq: 5,
+            instance: 10,
+        };
+        let current = SprocketSiblingKey {
+            nanos: 100,
+            seq: 0,
+            instance: 11,
+        };
+        assert_eq!(
+            select_newest_sprocket_sibling([(leftover, "stale"), (current, "fresh")]),
+            Some("fresh")
         );
     }
 
@@ -1001,6 +1080,25 @@ mod tests {
         assert!(!newest.exists());
         assert_eq!(fs::read_to_string(&user_notes).unwrap(), "user notes\n");
         assert_eq!(fs::read_to_string(&stale).unwrap(), "stale original\n");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn recovery_prefers_later_instance_over_leftover_high_seq() {
+        let root = temp_workspace();
+        let target = root.join("file.txt");
+        let leftover = root.join("file.txt.sprocket-bak.10.5.100");
+        let current = root.join("file.txt.sprocket-bak.11.0.200");
+        fs::write(&leftover, "stale original\n").unwrap();
+        fs::write(&current, "latest original\n").unwrap();
+        assert!(!target.exists());
+
+        recover_stranded_sprocket_bak(&target)
+            .await
+            .expect("later instance should restore");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "latest original\n");
+        assert!(!current.exists());
+        assert_eq!(fs::read_to_string(&leftover).unwrap(), "stale original\n");
         fs::remove_dir_all(root).unwrap();
     }
 
