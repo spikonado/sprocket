@@ -74,7 +74,6 @@ describe('attachment retention', () => {
 		await t.run(async (ctx) => {
 			await ctx.db.patch('threadRecords', threadId, {
 				lastMessageAt: Date.now() - WEEK,
-				updatedAt: Date.now(),
 				status: 'running'
 			});
 		});

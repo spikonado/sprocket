@@ -17,9 +17,6 @@ export const run = migrations.runner([
 	internal.migrations.backfillTranscriptTiming,
 	internal.migrations.backfillContextSummaryThroughPartNumber,
 	internal.migrations.backfillImageUploadThreadId,
-	internal.migrations.removeThreadUpdatedAt,
-	internal.migrations.removeImageUploadThreadRefsMigratedAt,
-	internal.migrations.removeThreadAttachmentRefs,
 	internal.migrations.removeTranscriptAttachmentImageUploadIds
 ]);
 
@@ -35,27 +32,6 @@ export const backfillImageUploadThreadId = migrations.define({
 				await ctx.db.patch('imageUploads', upload._id, { threadId: part.threadId });
 			}
 		}
-	}
-});
-
-export const removeThreadUpdatedAt = migrations.define({
-	table: 'threadRecords',
-	migrateOne: (_ctx, thread) => {
-		if (thread.updatedAt !== undefined) return { updatedAt: undefined };
-	}
-});
-
-export const removeImageUploadThreadRefsMigratedAt = migrations.define({
-	table: 'imageUploads',
-	migrateOne: (_ctx, upload) => {
-		if (upload.threadRefsMigratedAt !== undefined) return { threadRefsMigratedAt: undefined };
-	}
-});
-
-export const removeThreadAttachmentRefs = migrations.define({
-	table: 'threadAttachmentRefs',
-	migrateOne: async (ctx, ref) => {
-		await ctx.db.delete('threadAttachmentRefs', ref._id);
 	}
 });
 

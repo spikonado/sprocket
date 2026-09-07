@@ -440,7 +440,7 @@ async fn serve_cached_attachment(
         ExclusiveId::LegacyUpload(image_upload_id) => {
             state
                 .transcript
-                .legacy_attachment_metadata(user_id, thread_id, image_upload_id)
+                .legacy_attachment_metadata(user_id, image_upload_id)
                 .await
         }
     }

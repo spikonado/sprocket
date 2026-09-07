@@ -8,6 +8,9 @@ Current as of 2026-09-06.
 
 ## Transcript projection API
 
+Compatibility in this section covers APIs and stored formats present on `main`
+before the attachment PR. Intermediate formats from that PR are not supported.
+
 Message attachments keep the `imageUploads` table and `imageUploads` prompt
 field, but current callers identify files by `storageId` / `storageIds`.
 The table's row ID remains an internal database key. `registerFile`,
@@ -39,12 +42,12 @@ resolution for these agents. Keep the default URL response until all supported
 agents resolve attachment paths from the transcript cache.
 
 Attachments now live under each thread's `attachments/<storageId>/` directory.
-Reading an old attachment copies any existing user-level blob or row-ID-keyed
-thread file into that directory before exposing its path. Legacy thread
-metadata is matched by its storage ID, so migration works offline without a
-cloud row lookup. New `metadata.json` files contain no row ID. Old thread
-directories remain readable for legacy requests until their cache is cleared;
-discard removes both layouts for the requested storage ID.
+Reading an old attachment copies any existing user-level blob into that directory
+before exposing its path. This works offline using the existing storage ID.
+New `metadata.json` files contain no row ID. Row-ID-keyed thread directories
+were an intermediate PR format and are not migrated. The new local discard
+endpoint accepts only storage IDs; the pre-existing Convex discard endpoint
+still accepts row IDs.
 Missing files download from Convex. This on-access migration
 also runs when rebuilding agent history. Legacy blob reads and cleanup remain
 until supported installations have migrated their cached threads or cleared
@@ -54,7 +57,7 @@ message is submitted. They are not bound to the thread selected during upload.
 
 Convex deletes attached file bytes when the owning thread's `lastMessageAt` is
 older than one week. Ownership is `imageUploads.threadId`, set on first attach.
-Shared references, run exceptions, and `threadRecords.updatedAt` are not part of
+Shared references, run exceptions, and a separate activity clock are not part of
 retention. Transcript metadata and local copies stay. Released clients still
 read storage URLs; a missing URL means the bytes are gone.
 
@@ -276,19 +279,14 @@ Uploads missing `threadId` get an owner from the first historical prompt that
 attached them. Unattached drafts are still removed after 24 hours, including
 their documents.
 
-`threadRecords.updatedAt`, `imageUploads.threadRefsMigratedAt`, and the
-`threadAttachmentRefs` table stay as leftover until migrations clear stored
-values and rows. Runtime cleanup does not read them.
-
-These backfills are in the default `migrations:run` cron. After deploy they run
+The owner backfill is in the default `migrations:run` cron. After deploy it runs
 automatically. To run once from `apps/web`:
 
 ```sh
 bun convex run migrations:run
 ```
 
-Use `--prod` for the production deployment. Drop the leftover fields and table
-after a production scan finds no remaining values or rows.
+Use `--prod` for the production deployment.
 
 ## Client APIs
 

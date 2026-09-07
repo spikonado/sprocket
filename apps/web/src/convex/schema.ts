@@ -112,8 +112,6 @@ export default defineSchema({
 		// runId:claimId:attemptSeq that wrote the current part-number cutoff.
 		contextSummaryHandoffKey: v.optional(v.string()),
 		lastMessageAt: v.number(),
-		// Deprecated preview field, removed by removeThreadUpdatedAt.
-		updatedAt: v.optional(v.number()),
 		archivedAt: v.optional(v.number())
 	})
 		.index('by_userId_submissionId', ['userId', 'submissionId'])
@@ -220,18 +218,11 @@ export default defineSchema({
 		messageIds: v.optional(v.array(v.string())),
 		attached: v.boolean(),
 		threadId: v.optional(v.id('threadRecords')),
-		// Deprecated preview field, removed by removeImageUploadThreadRefsMigratedAt.
-		threadRefsMigratedAt: v.optional(v.number()),
 		storageDeletedAt: v.optional(v.number())
 	})
 		.index('by_userId', ['userId'])
 		.index('by_storageId', ['storageId'])
 		.index('by_attached_and_storageDeletedAt', ['attached', 'storageDeletedAt']),
-	// Deprecated preview table, emptied by removeThreadAttachmentRefs.
-	threadAttachmentRefs: defineTable({
-		threadId: v.id('threadRecords'),
-		imageUploadId: v.id('imageUploads')
-	}),
 	hostedParseRequests: defineTable({
 		jobId: v.id('executorJobs'),
 		runId: v.id('runs'),

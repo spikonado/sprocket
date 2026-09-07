@@ -202,12 +202,6 @@ impl TranscriptStore {
                 Ok(Some(meta))
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                if let Some((_, meta)) = self
-                    .legacy_thread_attachment(user_id, thread_id, storage_id)
-                    .await?
-                {
-                    return Ok(Some(meta));
-                }
                 let state = self.load_state(user_id, thread_id).await?;
                 let numbers = state
                     .downloaded_ranges
@@ -226,60 +220,11 @@ impl TranscriptStore {
         }
     }
 
-    pub(crate) async fn legacy_thread_attachment(
-        &self,
-        user_id: &str,
-        thread_id: &str,
-        storage_id: &str,
-    ) -> anyhow::Result<Option<(PathBuf, super::types::TranscriptAttachmentMeta)>> {
-        let dir = self.thread_dir(user_id, thread_id).join("attachments");
-        let mut entries = match tokio::fs::read_dir(&dir).await {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error.into()),
-        };
-        while let Some(entry) = entries.next_entry().await? {
-            if !entry.file_type().await?.is_dir()
-                || entry.file_name() == safe_segment(storage_id).as_str()
-            {
-                continue;
-            }
-            let bytes = match tokio::fs::read(entry.path().join("metadata.json")).await {
-                Ok(bytes) => bytes,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(error) => return Err(error.into()),
-            };
-            let Ok(meta) = serde_json::from_slice::<super::types::TranscriptAttachmentMeta>(&bytes)
-            else {
-                continue;
-            };
-            if meta.storage_id == storage_id {
-                let current = self.attachment_path(user_id, thread_id, &meta);
-                let path = entry
-                    .path()
-                    .join(current.file_name().context("invalid attachment filename")?);
-                return Ok(Some((path, meta)));
-            }
-        }
-        Ok(None)
-    }
-
     pub async fn legacy_attachment_metadata(
         &self,
         user_id: &str,
-        thread_id: &str,
         upload_id: &str,
     ) -> anyhow::Result<Option<super::types::TranscriptAttachmentMeta>> {
-        let path = self
-            .thread_dir(user_id, thread_id)
-            .join("attachments")
-            .join(safe_segment(upload_id))
-            .join("metadata.json");
-        match tokio::fs::read(path).await {
-            Ok(bytes) => return Ok(Some(serde_json::from_slice(&bytes)?)),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
         let storage_id =
             match tokio::fs::read_to_string(self.upload_index_path(user_id, upload_id)).await {
                 Ok(id) => id.trim().to_string(),
@@ -323,13 +268,6 @@ impl TranscriptStore {
             }
         }
         if let Some(thread_id) = thread_id {
-            if let Some((path, _)) = self
-                .legacy_thread_attachment(user_id, thread_id, storage_id)
-                .await?
-            {
-                tokio::fs::remove_dir_all(path.parent().context("invalid attachment directory")?)
-                    .await?;
-            }
             let dir = self
                 .thread_dir(user_id, thread_id)
                 .join("attachments")
@@ -1858,7 +1796,7 @@ mod tests {
             .await
             .unwrap();
         let meta = store
-            .legacy_attachment_metadata("user", "thread", "upload-1")
+            .legacy_attachment_metadata("user", "upload-1")
             .await
             .unwrap()
             .unwrap();
@@ -1875,7 +1813,7 @@ mod tests {
         store.clear_thread("user", "thread").await.unwrap();
         assert!(
             store
-                .legacy_attachment_metadata("user", "thread", "upload-1")
+                .legacy_attachment_metadata("user", "upload-1")
                 .await
                 .unwrap()
                 .is_none()

@@ -74,12 +74,6 @@ pub async fn cache_attachment(
             tokio::fs::copy(&staged, temp.path()).await?;
         } else if tokio::fs::try_exists(&legacy).await? {
             tokio::fs::copy(&legacy, temp.path()).await?;
-        } else if let Some((legacy_path, _)) = store
-            .legacy_thread_attachment(user_id, thread_id, &attachment.storage_id)
-            .await?
-            && tokio::fs::try_exists(&legacy_path).await?
-        {
-            tokio::fs::copy(&legacy_path, temp.path()).await?;
         } else {
             let url = attachment.url.as_deref().ok_or(AttachmentUnavailable)?;
             download_attachment_to_file(url, temp.path(), attachment.size)
@@ -355,33 +349,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reads_row_id_caches_offline_and_writes_only_storage_identity() {
+    async fn writes_metadata_with_storage_identity_only() {
         let dir = tempfile::tempdir().unwrap();
         let store = TranscriptStore::new(dir.path().into());
-        let meta = attachment("legacy-thread", 4);
+        let meta = attachment("metadata", 4);
         let current = store.attachment_path("user", "thread", &meta);
-        let old_dir = store
-            .thread_dir("user", "thread")
-            .join("attachments/upload-old");
-        tokio::fs::create_dir_all(&old_dir).await.unwrap();
-        let old_path = old_dir.join(current.file_name().unwrap());
-        tokio::fs::write(&old_path, b"data").await.unwrap();
-        let mut old_meta = serde_json::to_value(&meta).unwrap();
-        old_meta["imageUploadId"] = "upload-old".into();
-        tokio::fs::write(
-            old_dir.join("metadata.json"),
-            serde_json::to_vec(&old_meta).unwrap(),
-        )
-        .await
-        .unwrap();
-
-        let found = store
-            .attachment_metadata("user", "thread", &meta.storage_id)
+        let staged = store.pending_attachment_path("user", &meta.storage_id);
+        tokio::fs::create_dir_all(staged.parent().unwrap())
             .await
-            .unwrap()
             .unwrap();
-        assert_eq!(found, meta);
-        let path = cache_attachment(&store, "user", "thread", &found)
+        tokio::fs::write(&staged, b"data").await.unwrap();
+        let path = cache_attachment(&store, "user", "thread", &meta)
             .await
             .unwrap();
         assert_eq!(path, current);
@@ -398,7 +376,7 @@ mod tests {
         assert!(written.get("localPath").is_none());
         assert_eq!(
             store
-                .legacy_attachment_metadata("user", "thread", "upload-old")
+                .attachment_metadata("user", "thread", &meta.storage_id)
                 .await
                 .unwrap(),
             Some(meta.clone())
@@ -408,7 +386,6 @@ mod tests {
             .await
             .unwrap();
         assert!(!current.exists());
-        assert!(!old_path.exists());
     }
 
     #[tokio::test]
