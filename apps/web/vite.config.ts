@@ -52,8 +52,17 @@ export default defineConfig({
 				test: {
 					name: 'frontend',
 					include: ['src/**/*.test.{ts,js}'],
-					exclude: ['src/convex/**'],
+					exclude: ['src/convex/**', 'src/**/*.svelte.test.{ts,js}'],
 					environment: 'node'
+				}
+			},
+			{
+				extends: true,
+				resolve: { conditions: ['browser'] },
+				test: {
+					name: 'components',
+					include: ['src/**/*.svelte.test.{ts,js}'],
+					environment: 'jsdom'
 				}
 			}
 		]
