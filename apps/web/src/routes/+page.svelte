@@ -554,7 +554,8 @@
 		const watchedThreadId = threadId;
 		const generation = replicaGeneration;
 		const history = new TranscriptHistory(
-			(request) => api.fetchTranscriptPage({ userId, threadId: watchedThreadId, ...request }),
+			(request) =>
+				api.fetchTranscriptPage({ userId, threadId: watchedThreadId, ...request }, ac.signal),
 			() => {
 				if (ac.signal.aborted || replicaGeneration !== generation) return;
 				replicaMessages = history.messages;

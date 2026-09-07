@@ -569,10 +569,11 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 			});
 			return { runId: asConvexId(result.runId), threadId: asConvexId(result.threadId) };
 		},
-		fetchTranscriptPage: async (requestBody) => {
+		fetchTranscriptPage: async (requestBody, signal) => {
 			const page = await request('/api/transcript/messages', localTranscriptPageSchema, {
 				method: 'POST',
-				body: JSON.stringify(requestBody)
+				body: JSON.stringify(requestBody),
+				signal
 			});
 			return parseLocalTranscriptPage(page);
 		},

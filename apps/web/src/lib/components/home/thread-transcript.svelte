@@ -78,7 +78,7 @@
 	let adjustingScroll = false;
 
 	const SCROLL_EPSILON_PX = 28;
-	const LOAD_OLDER_THRESHOLD_PX = 2_000;
+	const LOAD_OLDER_THRESHOLD_PX = 200;
 
 	function updateStickToBottom() {
 		const viewport = scrollViewport;
@@ -90,7 +90,13 @@
 		}
 		const distanceToBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
 		stickToBottom = distanceToBottom <= SCROLL_EPSILON_PX;
-		if (hasOlder && !loadingOlder && onLoadOlder && viewport.scrollTop <= LOAD_OLDER_THRESHOLD_PX) {
+		if (
+			!stickToBottom &&
+			hasOlder &&
+			!loadingOlder &&
+			onLoadOlder &&
+			viewport.scrollTop <= LOAD_OLDER_THRESHOLD_PX
+		) {
 			onLoadOlder();
 		}
 	}
@@ -223,6 +229,20 @@
 			bind:this={scrollContent}
 			class="mx-auto flex min-h-full w-full max-w-5xl flex-col px-4 py-8"
 		>
+			{#if hasOlder && onLoadOlder}
+				<button
+					type="button"
+					class="text-muted-foreground hover:text-foreground mb-6 self-center text-sm disabled:opacity-50"
+					disabled={loadingOlder}
+					onclick={() => {
+						stickToBottom = false;
+						onLoadOlder?.();
+					}}
+				>
+					{loadingOlder ? 'Loading earlier messages...' : 'Load earlier messages'}
+				</button>
+			{/if}
+
 			{#if currentError}
 				<div
 					role="alert"

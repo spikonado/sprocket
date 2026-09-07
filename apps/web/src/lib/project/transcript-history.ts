@@ -3,6 +3,10 @@ import { mergeTranscriptMessages } from '$lib/project/transcript';
 
 type PageRequest = { before?: number; limit: number };
 
+const RECENT_PAGE_LIMIT = 12;
+const OLDER_PAGE_LIMIT = 40;
+const REFRESH_RETRY_MS = 2_000;
+
 export class TranscriptHistory {
 	messages: ThreadMessage[] = [];
 	nextBefore: number | undefined;
@@ -13,7 +17,7 @@ export class TranscriptHistory {
 	private stopped = false;
 	private refreshing = false;
 	private refreshPending = false;
-	private prefetchTimer: ReturnType<typeof setTimeout> | undefined;
+	private loadOlderPending = false;
 	private refreshRetryTimer: ReturnType<typeof setTimeout> | undefined;
 
 	constructor(
@@ -23,15 +27,8 @@ export class TranscriptHistory {
 
 	stop() {
 		this.stopped = true;
-		clearTimeout(this.prefetchTimer);
+		this.loadOlderPending = false;
 		clearTimeout(this.refreshRetryTimer);
-	}
-
-	private prefetch(delay = 25) {
-		clearTimeout(this.prefetchTimer);
-		if (!this.stopped && this.nextBefore !== undefined) {
-			this.prefetchTimer = setTimeout(() => void this.loadOlder(), delay);
-		}
 	}
 
 	async refresh() {
@@ -50,7 +47,7 @@ export class TranscriptHistory {
 				let newestPage: LocalTranscriptPage | undefined;
 				let before: number | undefined;
 				do {
-					const page = await this.fetchPage({ before, limit: this.loading ? 12 : 40 });
+					const page = await this.fetchPage({ before, limit: RECENT_PAGE_LIMIT });
 					if (this.stopped) return;
 					newestPage ??= page;
 					incoming = mergeTranscriptMessages(incoming, page.messages);
@@ -73,26 +70,29 @@ export class TranscriptHistory {
 				this.loading = false;
 				this.error = this.messages.length ? null : 'Could not load conversation history.';
 				this.changed();
-				this.refreshRetryTimer = setTimeout(() => void this.refresh(), 2_000);
+				this.refreshRetryTimer = setTimeout(() => void this.refresh(), REFRESH_RETRY_MS);
 			}
 		} finally {
 			this.refreshing = false;
-			this.prefetch();
+			if (this.loadOlderPending && !this.stopped) {
+				this.loadOlderPending = false;
+				void this.loadOlder();
+			}
 		}
 	}
 
 	async loadOlder() {
-		if (this.stopped || this.loadingOlder || this.nextBefore === undefined) return;
+		if (this.stopped || this.loadingOlder) return;
 		if (this.refreshing) {
-			this.prefetch();
+			this.loadOlderPending = true;
 			return;
 		}
+		if (this.nextBefore === undefined) return;
 		const before = this.nextBefore;
 		this.loadingOlder = true;
 		this.changed();
-		let retryDelay = 25;
 		try {
-			const page = await this.fetchPage({ before, limit: 40 });
+			const page = await this.fetchPage({ before, limit: OLDER_PAGE_LIMIT });
 			if (this.stopped) return;
 			if (page.nextBefore !== undefined && page.nextBefore >= before) {
 				throw new Error('Transcript history cursor did not advance');
@@ -101,14 +101,10 @@ export class TranscriptHistory {
 			this.nextBefore = page.nextBefore;
 			this.stale = page.stale;
 		} catch {
-			this.stale = true;
-			retryDelay = 2_000;
+			if (!this.stopped) this.stale = true;
 		} finally {
 			this.loadingOlder = false;
-			if (!this.stopped) {
-				this.changed();
-				this.prefetch(retryDelay);
-			}
+			if (!this.stopped) this.changed();
 		}
 	}
 

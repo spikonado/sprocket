@@ -222,7 +222,10 @@ export type DesktopApi = {
 	listProjectAttachments: () => Promise<ProjectAttachment[]>;
 	attachProject: (attachment: ProjectAttachmentRequest) => Promise<ProjectAttachment>;
 	runAgent: (request: AgentRunRequest) => Promise<AgentRunStart>;
-	fetchTranscriptPage: (request: TranscriptPageRequest) => Promise<LocalTranscriptPage>;
+	fetchTranscriptPage: (
+		request: TranscriptPageRequest,
+		signal?: AbortSignal
+	) => Promise<LocalTranscriptPage>;
 	fetchTranscriptDetails: (request: TranscriptDetailsRequest) => Promise<ThreadMessage>;
 	watchTranscript: (
 		request: TranscriptScopeRequest,

@@ -59,6 +59,27 @@ describe('workspace launch fragments', () => {
 });
 
 describe('projected transcript pages', () => {
+	it('cancels an in-flight page request when its thread is left', async () => {
+		const fetch = vi.fn(
+			(_url: string, init: RequestInit) =>
+				new Promise<Response>((_resolve, reject) => {
+					init.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+				})
+		);
+		vi.stubGlobal('fetch', fetch);
+		const controller = new AbortController();
+		const pending = createLocalClient('http://127.0.0.1:7731').fetchTranscriptPage(
+			{ userId: 'user-1', threadId: threadRecordId('thread-1'), limit: 12 },
+			controller.signal
+		);
+		controller.abort();
+		await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+		expect(fetch).toHaveBeenCalledWith(
+			'http://127.0.0.1:7731/api/transcript/messages',
+			expect.objectContaining({ signal: controller.signal })
+		);
+	});
+
 	it('uses the message endpoint without changing the legacy parts endpoint', async () => {
 		const fetch = vi.fn(async () =>
 			Response.json({
