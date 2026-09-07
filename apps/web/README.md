@@ -15,6 +15,8 @@ Sign-in goes to `/api/auth/sign-in`. The callback is `/api/auth/callback`. Sign-
 
 `isHostedWeb` from `$lib/runtime-mode` is the build-time switch other code should use.
 
+Sign-out returns a retryable error if WorkOS revocation cannot be confirmed. It keeps the session cookie, including any token-refresh rotation, so the user can retry.
+
 ### Installed browser and Electron
 
 Rust owns a native WorkOS session for agent runs and machine registration. It owns PKCE, state, code exchange, access-token refresh, and the persisted refresh token.

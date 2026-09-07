@@ -124,6 +124,9 @@ Browser submissions carry a deadline that also bounds offline mutation delivery.
 Queued commands expire rather than replay after a reconnect. A claimed command
 executes once. Its result receipt has a deadline, but filesystem work cannot be
 cancelled safely, so the worker waits for it before accepting another command.
+Receipt expiry means the outcome is unknown, not that local side effects were
+rolled back. It never requeues the command; the UI asks the user to check the
+machine before retrying. Claims are not renewed indefinitely by a hung filesystem.
 For agent submissions, the hosted client can recover the run ID from the durable
 submission record even if the machine's result acknowledgement never arrives.
 

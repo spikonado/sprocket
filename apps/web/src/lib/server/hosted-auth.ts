@@ -8,6 +8,9 @@ export const HOSTED_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 400;
 export const HOSTED_LOGIN_MAX_AGE_SECONDS = 10 * 60;
 export const HOSTED_CALLBACK_PATH = '/api/auth/callback';
 export const TRANSIENT_HOSTED_AUTH_ERROR = 'Hosted sign-in is temporarily unavailable. Try again.';
+export const HOSTED_SIGN_OUT_ERROR = 'Could not confirm sign-out. Please try again.';
+
+export type HostedSignOutResult = { ok: true } | { ok: false; sealedSession?: string };
 
 export type HostedAuthUser = {
 	id: string;
@@ -386,10 +389,11 @@ export async function readHostedAccessToken(
 export async function revokeHostedSession(
 	workos: HostedWorkOS,
 	args: { env: HostedAuthEnv; sessionCookie: string | undefined }
-): Promise<void> {
+): Promise<HostedSignOutResult> {
 	if (!args.sessionCookie) {
-		return;
+		return { ok: true };
 	}
+	let sealedSession: string | undefined;
 	try {
 		const session = workos.userManagement.loadSealedSession({
 			sessionData: args.sessionCookie,
@@ -398,8 +402,28 @@ export async function revokeHostedSession(
 		const authenticated = await session.authenticate();
 		if (authenticated.authenticated) {
 			await workos.userManagement.revokeSession({ sessionId: authenticated.sessionId });
+			return { ok: true };
 		}
+		if (authenticated.reason !== 'invalid_jwt') {
+			return {
+				ok:
+					authenticated.reason === 'invalid_session_cookie' ||
+					authenticated.reason === 'no_session_cookie_provided'
+			};
+		}
+		const refreshed = await session.refresh();
+		if (!refreshed.authenticated) {
+			return {
+				ok:
+					refreshed.reason === 'invalid_grant' ||
+					refreshed.reason === 'invalid_session_cookie' ||
+					refreshed.reason === 'no_session_cookie_provided'
+			};
+		}
+		sealedSession = refreshed.sealedSession;
+		await workos.userManagement.revokeSession({ sessionId: refreshed.sessionId });
+		return { ok: true };
 	} catch {
-		return;
+		return sealedSession ? { ok: false, sealedSession } : { ok: false };
 	}
 }

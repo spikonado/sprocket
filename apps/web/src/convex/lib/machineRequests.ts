@@ -17,7 +17,7 @@ export const MACHINE_REQUEST_FAIL_PAGE_SIZE = 16;
 export const MACHINE_REQUEST_STOPPED = 'The machine stopped before this request finished.';
 export const MACHINE_REQUEST_EXPIRED = 'This hosted command expired before the machine claimed it.';
 export const MACHINE_REQUEST_CLAIM_EXPIRED =
-	'The machine claimed this hosted command but did not finish it.';
+	'The machine did not acknowledge this command before its deadline. It may still be running or have taken effect. Check the machine before retrying.';
 export const MACHINE_REQUEST_NOT_CAPABLE = 'This machine cannot accept hosted commands.';
 
 export const vMachineRequestStatus = v.union(

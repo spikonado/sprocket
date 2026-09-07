@@ -367,7 +367,7 @@ describe('hosted WorkOS session operations', () => {
 		});
 	});
 
-	it('revokes a valid session and ignores revoke failures', async () => {
+	it('revokes a valid session and reports retryable revocation failures', async () => {
 		const workos = fakeWorkOS({
 			authenticate: {
 				authenticated: true,
@@ -376,10 +376,12 @@ describe('hosted WorkOS session operations', () => {
 				sessionId: 'session_1'
 			}
 		});
-		await revokeHostedSession(workos, {
-			env: readHostedAuthEnv(env),
-			sessionCookie: 'sealed-1'
-		});
+		expect(
+			await revokeHostedSession(workos, {
+				env: readHostedAuthEnv(env),
+				sessionCookie: 'sealed-1'
+			})
+		).toEqual({ ok: true });
 		expect(workos.revokeSession).toHaveBeenCalledWith({ sessionId: 'session_1' });
 
 		workos.revokeSession.mockRejectedValue(new Error('offline'));
@@ -388,7 +390,69 @@ describe('hosted WorkOS session operations', () => {
 				env: readHostedAuthEnv(env),
 				sessionCookie: 'sealed-1'
 			})
-		).resolves.toBeUndefined();
+		).resolves.toEqual({ ok: false });
+		workos.authenticate.mockRejectedValue(new Error('private SDK diagnostics'));
+		await expect(
+			revokeHostedSession(workos, {
+				env: readHostedAuthEnv(env),
+				sessionCookie: 'sealed-1'
+			})
+		).resolves.toEqual({ ok: false });
+	});
+
+	it('refreshes an expired access token and preserves the rotated cookie when revocation fails', async () => {
+		const workos = fakeWorkOS({
+			authenticate: { authenticated: false, reason: 'invalid_jwt' },
+			refresh: { authenticated: true, sessionId: 'session_1', sealedSession: 'rotated-seal' }
+		});
+		workos.revokeSession.mockRejectedValueOnce(new Error('offline'));
+		await expect(
+			revokeHostedSession(workos, {
+				env: readHostedAuthEnv(env),
+				sessionCookie: 'expired-access-token-seal'
+			})
+		).resolves.toEqual({ ok: false, sealedSession: 'rotated-seal' });
+		expect(workos.revokeSession).toHaveBeenCalledWith({ sessionId: 'session_1' });
+		await expect(
+			revokeHostedSession(workos, {
+				env: readHostedAuthEnv(env),
+				sessionCookie: 'rotated-seal'
+			})
+		).resolves.toEqual({ ok: true });
+	});
+
+	it('does not treat a transient refresh failure as a revoked session', async () => {
+		const workos = fakeWorkOS({
+			authenticate: { authenticated: false, reason: 'invalid_jwt' },
+			refresh: { authenticated: false, retryable: true, reason: 'network_error' }
+		});
+		await expect(
+			revokeHostedSession(workos, {
+				env: readHostedAuthEnv(env),
+				sessionCookie: 'sealed-1'
+			})
+		).resolves.toEqual({ ok: false });
+		expect(workos.revokeSession).not.toHaveBeenCalled();
+	});
+
+	it('allows cookie cleanup when no usable session remains', async () => {
+		const workos = fakeWorkOS({
+			authenticate: { authenticated: false, reason: 'invalid_jwt' },
+			refresh: { authenticated: false, retryable: false, reason: 'invalid_grant' }
+		});
+		await expect(
+			revokeHostedSession(workos, {
+				env: readHostedAuthEnv(env),
+				sessionCookie: 'sealed-1'
+			})
+		).resolves.toEqual({ ok: true });
+		await expect(
+			revokeHostedSession(workos, {
+				env: readHostedAuthEnv(env),
+				sessionCookie: undefined
+			})
+		).resolves.toEqual({ ok: true });
+		expect(workos.revokeSession).not.toHaveBeenCalled();
 	});
 });
 
@@ -403,6 +467,7 @@ function fakeWorkOS(options: {
 	};
 	refresh?: {
 		authenticated: boolean;
+		sessionId?: string;
 		retryable?: boolean;
 		reason?: string;
 		sealedSession?: string;
