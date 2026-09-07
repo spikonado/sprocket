@@ -16,6 +16,40 @@ function pickEarliestThread(rows: Array<Doc<'threadRecords'>>): Doc<'threadRecor
 	return pickEarliestByCreation(rows);
 }
 
+async function densifyKeepTranscriptParts(
+	ctx: MutationCtx,
+	keepId: Id<'threadRecords'>
+): Promise<number> {
+	const parts = await ctx.db
+		.query('threadTranscriptParts')
+		.withIndex('by_threadId_and_number', (query) => query.eq('threadId', keepId))
+		.collect();
+	const bySourceKey = new Map<string, Doc<'threadTranscriptParts'>[]>();
+	for (const part of parts) {
+		const group = bySourceKey.get(part.sourceKey) ?? [];
+		group.push(part);
+		bySourceKey.set(part.sourceKey, group);
+	}
+	const surviving: Doc<'threadTranscriptParts'>[] = [];
+	for (const group of bySourceKey.values()) {
+		const keep = pickEarliestByCreation(group);
+		if (!keep) continue;
+		surviving.push(keep);
+		for (const extra of group) {
+			if (extra._id !== keep._id) await ctx.db.delete('threadTranscriptParts', extra._id);
+		}
+	}
+	surviving.sort(
+		(a, b) => a.number - b.number || a._creationTime - b._creationTime || a._id.localeCompare(b._id)
+	);
+	for (const [index, part] of surviving.entries()) {
+		if (part.number !== index) {
+			await ctx.db.patch('threadTranscriptParts', part._id, { number: index });
+		}
+	}
+	return surviving.length;
+}
+
 /** Move every dependent of `dropId` onto `keepId`, then delete `dropId`.
  * Used when concurrent create races leave two threadRecords for one submission. */
 export async function absorbDuplicateThread(
@@ -109,15 +143,10 @@ export async function absorbDuplicateThread(
 		.withIndex('by_threadId', (query) => query.eq('threadId', dropId))
 		.collect();
 	const keepState = pickEarliestByCreation(keepStates);
-	const keepTotalParts =
-		keepStates.length === 0 ? 0 : Math.max(...keepStates.map((row) => row.totalParts));
 	for (const extra of keepStates) {
 		if (!keepState || extra._id !== keepState._id) {
 			await ctx.db.delete('threadTranscriptStates', extra._id);
 		}
-	}
-	if (keepState && keepState.totalParts !== keepTotalParts) {
-		await ctx.db.patch('threadTranscriptStates', keepState._id, { totalParts: keepTotalParts });
 	}
 	const dropState = pickEarliestByCreation(dropStates);
 	for (const extra of dropStates) {
@@ -126,7 +155,7 @@ export async function absorbDuplicateThread(
 		}
 	}
 
-	let nextNumber = keepTotalParts;
+	let nextNumber = await densifyKeepTranscriptParts(ctx, keepId);
 	const dropParts = await ctx.db
 		.query('threadTranscriptParts')
 		.withIndex('by_threadId_and_number', (query) => query.eq('threadId', dropId))
@@ -149,18 +178,16 @@ export async function absorbDuplicateThread(
 			number
 		});
 	}
-	if (dropState) {
-		if (keepState) {
-			await ctx.db.patch('threadTranscriptStates', keepState._id, {
-				totalParts: Math.max(keepTotalParts, nextNumber)
-			});
-			await ctx.db.delete('threadTranscriptStates', dropState._id);
-		} else {
-			await ctx.db.patch('threadTranscriptStates', dropState._id, {
-				threadId: keepId,
-				totalParts: nextNumber
-			});
+	if (keepState) {
+		if (keepState.totalParts !== nextNumber) {
+			await ctx.db.patch('threadTranscriptStates', keepState._id, { totalParts: nextNumber });
 		}
+		if (dropState) await ctx.db.delete('threadTranscriptStates', dropState._id);
+	} else if (dropState) {
+		await ctx.db.patch('threadTranscriptStates', dropState._id, {
+			threadId: keepId,
+			totalParts: nextNumber
+		});
 	}
 
 	let droppedDuplicateTokens = 0;

@@ -54,6 +54,17 @@ describe('absorbDuplicateThread', { timeout: 20_000 }, () => {
 				runId: keepRun._id,
 				prompt: { text: 'keep', imageUploads: [] }
 			});
+			await ctx.db.insert('threadTranscriptParts', {
+				threadId: keepId,
+				userId: subject,
+				number: 0,
+				sourceKey: 'completion:keep-race',
+				kind: 'completion',
+				runId: keepRun._id,
+				completion: {
+					items: [{ type: 'text', id: 'keep-race', text: 'raced number' }]
+				}
+			});
 			await ctx.db.insert('threadTranscriptStates', {
 				threadId: dropId,
 				userId: subject,
@@ -145,9 +156,9 @@ describe('absorbDuplicateThread', { timeout: 20_000 }, () => {
 		});
 
 		expect(ids.dropped).toBeNull();
-		expect(ids.partCount).toBe(2);
-		expect(ids.partNumbers).toEqual([0, 1]);
-		expect(ids.totalParts).toBe(2);
+		expect(ids.partCount).toBe(3);
+		expect(ids.partNumbers).toEqual([0, 1, 2]);
+		expect(ids.totalParts).toBe(3);
 		expect(ids.eventCount).toBe(2);
 		expect(ids.totalTokensProcessed).toBe(17);
 	});
