@@ -849,6 +849,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn applies_unified_diff_with_crlf_headers() {
+        let root = temp_workspace();
+        fs::write(root.join("file.txt"), "before\n").unwrap();
+        let patch = "--- a/file.txt\r\n\
+            +++ b/file.txt\r\n\
+            @@ -1 +1 @@\r\n\
+            -before\r\n\
+            +after\r\n";
+
+        apply_workspace_patch(root.clone(), WorkspaceCancellation::new(), patch)
+            .await
+            .expect("CRLF unified diff headers should apply");
+
+        assert_eq!(
+            fs::read_to_string(root.join("file.txt")).unwrap(),
+            "after\n"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
     async fn applies_multi_file_patch() {
         let root = temp_workspace();
         fs::write(root.join("modify.txt"), "before\n").unwrap();
