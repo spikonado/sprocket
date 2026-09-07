@@ -2,6 +2,7 @@ import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
 import { ConvexError, type Infer } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
+import { collapseDuplicateSubmissionThreads } from '@convex/lib/absorbDuplicateThread';
 import { executionSecretHash } from '@convex/lib/auth';
 import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
 import {
@@ -84,13 +85,25 @@ export async function createQueuedRunRecord(
 		}
 	}
 
-	const existingRun = await ctx.db
+	const existingRuns = await ctx.db
 		.query('runs')
 		.withIndex('by_userId_submissionId', (query) =>
 			query.eq('userId', args.userId).eq('submissionId', args.submissionId)
 		)
-		.unique();
+		.collect();
+	const existingRun =
+		existingRuns.length === 0
+			? null
+			: [...existingRuns].sort(
+					(a, b) => a.startedAt - b.startedAt || a._id.localeCompare(b._id)
+				)[0];
 	if (existingRun) {
+		await collapseDuplicateSubmissionThreads(
+			ctx,
+			args.userId,
+			args.submissionId,
+			existingRun.threadId
+		);
 		return await reconcileExistingQueuedRun(ctx, args, existingRun, secretHash, prompt);
 	}
 	const fallbackTitle = (prompt || imageUploads[0]?.name || 'New thread').slice(0, 72);
@@ -118,6 +131,12 @@ export async function createQueuedRunRecord(
 			totalTokensProcessed: 0
 		});
 		threadRecord = (await ctx.db.get('threadRecords', threadId))!;
+		threadRecord = await collapseDuplicateSubmissionThreads(
+			ctx,
+			args.userId,
+			args.submissionId,
+			threadRecord._id
+		);
 	}
 	let latestRun = await ctx.db
 		.query('runs')
