@@ -645,6 +645,11 @@ async fn replace_file(path: &Path, contents: &[u8], permissions: Permissions) ->
     // Windows replace moves the original to `*.sprocket-bak.*` before installing
     // the staged file; if that process dies mid-way, restore the backup first.
     recover_stranded_sprocket_bak(path).await?;
+    // Drop leftovers while the target exists. Otherwise a crash after install
+    // but before the success-path sweep can leave an old bak beside the file;
+    // the next replace would then create a second bak and recovery could compare
+    // stamps from different boots.
+    discard_sprocket_bak_siblings(path).await;
 
     let tmp = stage_unique_sibling(path, "tmp", contents, Some(permissions)).await?;
 
@@ -783,7 +788,7 @@ async fn recover_stranded_sprocket_bak(path: &Path) -> Result<()> {
     }
     let found = list_sprocket_bak_siblings(path).await?;
     let Some(bak) =
-        select_newest_sprocket_sibling(found.iter().map(|(key, path)| (*key, path.clone())))
+        select_newest_sprocket_sibling(found.iter().map(|(key, bak)| (*key, bak.clone())))
     else {
         return Ok(());
     };
@@ -1159,6 +1164,26 @@ mod tests {
             .expect("later instance should restore");
         assert_eq!(fs::read_to_string(&target).unwrap(), "latest original\n");
         assert!(!current.exists());
+        assert!(!leftover.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn replace_discards_leftover_bak_while_target_exists() {
+        let root = temp_workspace();
+        let target = root.join("file.txt");
+        let leftover = root.join("file.txt.sprocket-bak.1.0.9");
+        fs::write(&target, "current\n").unwrap();
+        fs::write(&leftover, "old bak\n").unwrap();
+
+        replace_file(
+            &target,
+            b"next\n",
+            fs::metadata(&target).unwrap().permissions(),
+        )
+        .await
+        .expect("replace should ignore leftover bak");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "next\n");
         assert!(!leftover.exists());
         fs::remove_dir_all(root).unwrap();
     }
