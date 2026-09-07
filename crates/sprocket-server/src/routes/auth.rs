@@ -10,7 +10,8 @@ use serde::Deserialize;
 
 use crate::auth::{
     AuthSessionResponse, AuthState, BootstrapRequest, BootstrapResponse, DesktopLoginStartResponse,
-    extract_session_token, peer_may_complete_desktop_login_callback, require_session,
+    extract_session_token, origin_host_is_loopback, origin_matches_host,
+    peer_may_complete_desktop_login_callback, require_session,
 };
 use crate::native_auth::{NativeLoginFlow, NativeLoginStart, NativeLoginStatus};
 use crate::routes::api_error::ApiError;
@@ -374,24 +375,7 @@ async fn native_session_token_response(
 }
 
 fn is_loopback_same_origin(headers: &HeaderMap) -> bool {
-    let Some(host) = headers
-        .get(header::HOST)
-        .and_then(|value| value.to_str().ok())
-    else {
-        return false;
-    };
-    let Some(origin) = headers
-        .get(header::ORIGIN)
-        .and_then(|value| value.to_str().ok())
-    else {
-        return false;
-    };
-    let Ok(url) = url::Url::parse(origin) else {
-        return false;
-    };
-    matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))
-        && matches!(url.scheme(), "http" | "https")
-        && origin == format!("{}://{host}", url.scheme())
+    origin_matches_host(headers) && origin_host_is_loopback(headers)
 }
 
 fn desktop_bootstrap_response(state: &AppState) -> Json<DesktopBootstrapResponse> {
@@ -469,7 +453,6 @@ mod tests {
 
     use super::*;
     use crate::auth;
-    use crate::project_attachments::ProjectAttachmentStore;
 
     async fn test_state(loopback_supported: bool) -> (AppState, String, String) {
         let temp_dir =
@@ -477,51 +460,19 @@ mod tests {
         let auth = auth::AuthState::load(&temp_dir).expect("auth state");
         let credential = auth.pairing_credential().to_string();
         let (_, session_token) = auth.bootstrap(&credential).await.expect("bootstrap");
-
-        let project_attachments = ProjectAttachmentStore::new(temp_dir.clone());
-        let transcript = sprocket_agent::TranscriptStore::new(temp_dir.join("transcripts"));
         let native_auth = crate::native_auth::NativeAuthManager::configured_for_test(
             crate::native_auth::NativeAuthConfig {
                 workos_client_id: "client_test".to_string(),
             },
             auth::desktop_login_callback_url(7731),
         );
-        let transcript_watchers = crate::transcript_watch::TranscriptWatchers::new(
-            "https://example.convex.cloud".to_string(),
-            transcript.clone(),
-            Arc::clone(&native_auth),
-        );
-        let thread_cache = crate::thread_sync::ThreadCacheSync::new(
-            "https://example.convex.cloud".to_string(),
-            crate::thread_cache::ThreadCacheStore::new(temp_dir.clone()),
-            Arc::clone(&native_auth),
-        );
-
-        let machine_identity = Arc::new(
-            crate::machine_identity::MachineIdentity::load(&temp_dir).expect("machine identity"),
-        );
-        let state = AppState {
+        let state = AppState::for_test(
             auth,
-            native_auth: Arc::clone(&native_auth),
-            project_attachments,
-            transcript,
-            transcript_watchers,
-            thread_cache,
-            machines: crate::machines::MachineManager::new(
-                "https://example.convex.cloud".to_string(),
-                Arc::clone(&native_auth),
-                Arc::clone(&machine_identity),
-            ),
-            live_completions: Arc::new(sprocket_agent::LiveCompletionHub::new()),
-            http_base_url: "http://127.0.0.1:7731".to_string(),
-            desktop_login_callback_url: auth::desktop_login_callback_url(7731),
-            loopback_desktop_login_supported: loopback_supported,
-            convex_deployment_url: "https://example.convex.cloud".to_string(),
-            web_ui_enabled: true,
-            desktop_bootstrap_token: None,
-            machine_identity,
-        };
-
+            native_auth,
+            temp_dir,
+            loopback_supported,
+            crate::package_update::PackageUpdateManager::disabled(),
+        );
         (state, session_token, credential)
     }
 

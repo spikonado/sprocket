@@ -62,3 +62,14 @@ Install the newest development build with:
 ```sh
 npx @spikonado/sprocket@dev --web
 ```
+
+## Updating published installs
+
+`sprocket update` and `sprocket upgrade` follow the dist-tag that matches the
+installed version: `latest`, `canary`, or `dev`. Stable and canary installs only
+move forward, so an older tag is left alone. A `dev` install follows the current
+`dev` tag whenever the commit hash changes.
+
+Only a global npm, bun, pnpm, or yarn copy of `@spikonado/sprocket` can be
+updated this way. After the package manager finishes, stop Sprocket and launch
+it again. The running process does not reload itself.

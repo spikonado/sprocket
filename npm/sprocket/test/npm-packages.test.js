@@ -64,6 +64,8 @@ test('assembles version-matched root and native packages', async () => {
 		);
 		assert.equal(rootManifest.engines.node, sourceManifest.engines.node);
 		await access(path.join(output, 'sprocket/bin/sprocket.js'), constants.X_OK);
+		await access(path.join(output, 'sprocket/lib/update-api.js'));
+		await access(path.join(output, 'sprocket/lib/update.js'));
 		await access(path.join(output, 'linux-x64-gnu/bin/sprocket'), constants.X_OK);
 	} finally {
 		await rm(temporary, { recursive: true, force: true });

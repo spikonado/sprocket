@@ -7812,6 +7812,7 @@ dependencies = [
  "gix",
  "hmac 0.13.0",
  "keyring",
+ "libc",
  "open",
  "reqwest 0.13.4",
  "serde",

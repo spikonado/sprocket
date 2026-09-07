@@ -4,7 +4,14 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { ensureExecutable, nativePackage, run } from '../lib/launcher.js';
+import {
+	ensureExecutable,
+	launch,
+	nativeChildEnvironment,
+	nativePackage,
+	run
+} from '../lib/launcher.js';
+import { createHost } from '../lib/update.js';
 
 test('selects the native package for supported platforms', () => {
 	assert.deepEqual(nativePackage('linux', 'x64'), [
@@ -52,4 +59,66 @@ test('runs the native executable with unchanged arguments and environment', () =
 		options: { stdio: 'inherit', env: expectedEnv }
 	});
 	assert.equal(status, 0);
+});
+
+test('overrides inherited update helper environment for the native child', async () => {
+	let invocation;
+	await launch(['--web'], {
+		env: {
+			SPROCKET_STATIC_DIR: '/tmp/web',
+			SPROCKET_UPDATE_NODE: '/evil/node',
+			SPROCKET_UPDATE_SCRIPT: '/evil/update-api.js',
+			SPROCKET_UPDATE_MANAGED: '1'
+		},
+		execPath: '/usr/bin/node',
+		libDir: '/pkg/lib',
+		resolveBinary: () => '/tmp/sprocket',
+		ensureExecutable: () => {},
+		spawn(binary, args, options) {
+			invocation = { binary, args, options };
+			return { status: 0 };
+		}
+	});
+	assert.equal(invocation.options.env.SPROCKET_UPDATE_NODE, '/usr/bin/node');
+	assert.equal(
+		invocation.options.env.SPROCKET_UPDATE_SCRIPT,
+		path.resolve('/pkg/lib', 'update-api.js')
+	);
+	assert.equal(invocation.options.env.SPROCKET_STATIC_DIR, '/tmp/web');
+	assert.equal(Object.hasOwn(invocation.options.env, 'SPROCKET_UPDATE_MANAGED'), false);
+});
+
+test('update and upgrade do not spawn the native binary', async () => {
+	let stdout = '';
+	const code = await launch(['upgrade', '--help'], {
+		host: createHost({
+			writeStdout(text) {
+				stdout += text;
+			},
+			writeStderr() {}
+		}),
+		spawn() {
+			throw new Error('native binary should not run');
+		}
+	});
+	assert.equal(code, 0);
+	assert.match(stdout, /sprocket update/);
+});
+
+test('native child environment always overwrites helper paths', () => {
+	const env = nativeChildEnvironment(
+		{
+			SPROCKET_STATIC_DIR: '/custom/web',
+			SPROCKET_UPDATE_NODE: '/evil/node',
+			SPROCKET_UPDATE_SCRIPT: '/evil/update-api.js',
+			SPROCKET_UPDATE_MANAGED: '1'
+		},
+		'/pkg/web',
+		'/usr/bin/node',
+		'/pkg/lib/update-api.js'
+	);
+	assert.equal(env.SPROCKET_STATIC_DIR, '/custom/web');
+	assert.equal(env.SPROCKET_UPDATE_NODE, '/usr/bin/node');
+	assert.equal(env.SPROCKET_UPDATE_SCRIPT, '/pkg/lib/update-api.js');
+	assert.equal(Object.hasOwn(env, 'SPROCKET_UPDATE_MANAGED'), false);
 });

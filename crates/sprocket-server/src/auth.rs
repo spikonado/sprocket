@@ -4,7 +4,7 @@ use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, header};
 use axum_extra::extract::CookieJar;
 use cookie::{Cookie, SameSite};
 use hmac::{Hmac, KeyInit, Mac};
@@ -342,15 +342,78 @@ struct PersistedSessionRecord {
 }
 
 pub fn extract_session_token(headers: &HeaderMap, jar: &CookieJar) -> Option<String> {
-    if let Some(auth_header) = headers.get(axum::http::header::AUTHORIZATION)
-        && let Ok(value) = auth_header.to_str()
-        && let Some(token) = value.strip_prefix("Bearer ")
-    {
-        return Some(token.trim().to_string());
+    if let Some(token) = bearer_token(headers) {
+        return Some(token);
     }
 
     jar.get(SESSION_COOKIE_NAME)
         .map(|cookie| cookie.value().to_string())
+}
+
+pub(crate) fn bearer_token(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+pub(crate) fn origin_matches_host(headers: &HeaderMap) -> bool {
+    let Some(host) = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return false;
+    };
+    let Some(origin) = headers
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return false;
+    };
+    let Ok(url) = url::Url::parse(origin) else {
+        return false;
+    };
+    matches!(url.scheme(), "http" | "https") && origin == format!("{}://{host}", url.scheme())
+}
+
+pub(crate) fn origin_host_is_loopback(headers: &HeaderMap) -> bool {
+    let Some(origin) = headers
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return false;
+    };
+    let Ok(url) = url::Url::parse(origin) else {
+        return false;
+    };
+    matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))
+}
+
+pub(crate) fn cookie_request_is_csrf_safe(headers: &HeaderMap) -> bool {
+    bearer_token(headers).is_some() || origin_matches_host(headers)
+}
+
+pub(crate) fn cookie_get_is_csrf_safe(headers: &HeaderMap) -> bool {
+    if bearer_token(headers).is_some() {
+        return true;
+    }
+    match headers
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        None => true,
+        Some(_) => origin_matches_host(headers),
+    }
+}
+
+pub(crate) fn cookie_request_is_loopback_csrf_safe(headers: &HeaderMap) -> bool {
+    cookie_request_is_csrf_safe(headers)
+        && (bearer_token(headers).is_some() || origin_host_is_loopback(headers))
 }
 
 pub async fn require_session(
@@ -588,5 +651,41 @@ mod tests {
         assert!(!host_supports_loopback_desktop_login("[::]"));
         assert!(!host_supports_loopback_desktop_login("::1"));
         assert!(!host_supports_loopback_desktop_login("192.168.1.10"));
+    }
+
+    #[test]
+    fn origin_matching_rejects_cross_origin_and_missing_headers() {
+        let mut headers = HeaderMap::new();
+        assert!(!origin_matches_host(&headers));
+        assert!(!origin_host_is_loopback(&headers));
+        headers.insert(header::HOST, "127.0.0.1:7731".parse().unwrap());
+        assert!(!origin_matches_host(&headers));
+        assert!(cookie_get_is_csrf_safe(&headers));
+        assert!(!cookie_request_is_csrf_safe(&headers));
+        headers.insert(header::ORIGIN, "http://127.0.0.1:7731".parse().unwrap());
+        assert!(origin_matches_host(&headers));
+        assert!(origin_host_is_loopback(&headers));
+        assert!(cookie_get_is_csrf_safe(&headers));
+        assert!(cookie_request_is_csrf_safe(&headers));
+        assert!(cookie_request_is_loopback_csrf_safe(&headers));
+
+        headers.insert(header::ORIGIN, "https://attacker.example".parse().unwrap());
+        assert!(!origin_matches_host(&headers));
+        assert!(!cookie_get_is_csrf_safe(&headers));
+        assert!(!cookie_request_is_csrf_safe(&headers));
+
+        headers.insert(header::ORIGIN, "null".parse().unwrap());
+        assert!(!cookie_get_is_csrf_safe(&headers));
+
+        headers.insert(header::HOST, "192.168.1.10:7731".parse().unwrap());
+        headers.insert(header::ORIGIN, "http://192.168.1.10:7731".parse().unwrap());
+        assert!(origin_matches_host(&headers));
+        assert!(cookie_request_is_csrf_safe(&headers));
+        assert!(!origin_host_is_loopback(&headers));
+        assert!(!cookie_request_is_loopback_csrf_safe(&headers));
+
+        headers.insert(header::AUTHORIZATION, "Bearer secret".parse().unwrap());
+        assert!(cookie_request_is_csrf_safe(&headers));
+        assert!(cookie_request_is_loopback_csrf_safe(&headers));
     }
 }

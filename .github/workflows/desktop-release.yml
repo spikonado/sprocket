@@ -16,6 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.value }}
+      channel: ${{ steps.version.outputs.channel }}
     steps:
       - id: version
         name: Resolve version
@@ -29,6 +30,11 @@ jobs:
             exit 1
           fi
           echo "value=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$version" == *-canary.* ]]; then
+            echo "channel=canary" >> "$GITHUB_OUTPUT"
+          else
+            echo "channel=latest" >> "$GITHUB_OUTPUT"
+          fi
 
   web:
     needs: prepare
@@ -53,23 +59,18 @@ jobs:
           - id: linux-x64
             runner: ubuntu-latest
             electron_args: --linux AppImage --x64
-            artifact_glob: 'sprocket-desktop-*.AppImage'
           - id: linux-arm64
             runner: ubuntu-24.04-arm
             electron_args: --linux AppImage --arm64
-            artifact_glob: 'sprocket-desktop-*.AppImage'
           - id: darwin-arm64
             runner: macos-latest
-            electron_args: --mac dmg --arm64
-            artifact_glob: 'sprocket-desktop-*.dmg'
+            electron_args: --mac --arm64
           - id: darwin-x64
             runner: macos-15-intel
-            electron_args: --mac dmg --x64
-            artifact_glob: 'sprocket-desktop-*.dmg'
+            electron_args: --mac --x64
           - id: win32-x64
             runner: windows-2022
             electron_args: --win nsis --x64
-            artifact_glob: 'sprocket-desktop-*.exe'
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7.0.1
@@ -92,12 +93,14 @@ jobs:
         working-directory: apps/desktop
         shell: bash
         env:
+          CHANNEL: ${{ needs.prepare.outputs.channel }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           bun -e '
             const fs = require("node:fs");
             const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
             pkg.version = process.env.VERSION;
+            pkg.build.publish.channel = process.env.CHANNEL;
             fs.writeFileSync("package.json", `${JSON.stringify(pkg, null, "\t")}\n`);
           '
       - name: Build Rust CLI
@@ -105,16 +108,73 @@ jobs:
         env:
           SPROCKET_VERSION: ${{ needs.prepare.outputs.version }}
         run: cargo build --locked --release -p sprocket-cli
+      - name: Load optional Apple API key
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_API_KEY_VALUE: ${{ secrets.APPLE_API_KEY }}
+          KEY_FILE: ${{ runner.temp }}/AuthKey.p8
+        run: |
+          if [[ -z "$APPLE_API_KEY_VALUE" ]]; then
+            exit 0
+          fi
+          node -e '
+            const fs = require("node:fs");
+            const value = process.env.APPLE_API_KEY_VALUE;
+            const compact = value.replace(/\s+/g, "");
+            const body = value.includes("BEGIN")
+              ? value
+              : Buffer.from(compact, "base64");
+            fs.writeFileSync(process.env.KEY_FILE, body);
+          '
+          chmod 600 "$KEY_FILE"
+          echo "APPLE_API_KEY=$KEY_FILE" >> "$GITHUB_ENV"
       - name: Package desktop installer
         working-directory: apps/desktop
         shell: bash
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          APPLE_API_ISSUER: ${{ runner.os == 'macOS' && secrets.APPLE_API_ISSUER || '' }}
+          APPLE_API_KEY_ID: ${{ runner.os == 'macOS' && secrets.APPLE_API_KEY_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_ID: ${{ runner.os == 'macOS' && secrets.APPLE_ID || '' }}
+          APPLE_TEAM_ID: ${{ runner.os == 'macOS' && secrets.APPLE_TEAM_ID || '' }}
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ ((runner.os == 'macOS' && secrets.CSC_LINK != '') || (runner.os == 'Windows' && secrets.WIN_CSC_LINK != '')) && 'true' || 'false' }}
+          CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.CSC_KEY_PASSWORD || '' }}
+          CSC_LINK: ${{ runner.os == 'macOS' && secrets.CSC_LINK || '' }}
+          WIN_CSC_KEY_PASSWORD: ${{ runner.os == 'Windows' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
+          WIN_CSC_LINK: ${{ runner.os == 'Windows' && secrets.WIN_CSC_LINK || '' }}
         run: bunx electron-builder ${{ matrix.electron_args }} --publish never
+      - name: Drop builder debug files
+        working-directory: apps/desktop/dist
+        shell: bash
+        run: rm -f builder-debug.yml builder-effective-config.yaml
+      - name: Require updater artifacts
+        working-directory: apps/desktop/dist
+        shell: bash
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const files = fs.readdirSync(".");
+            const yml = files.filter((name) => name.endsWith(".yml") && !name.startsWith("builder"));
+            if (yml.length === 0) {
+              throw new Error("electron-builder did not write update metadata yml");
+            }
+            if (process.platform === "darwin") {
+              if (!files.some((name) => name.endsWith(".zip"))) {
+                throw new Error("macOS auto-update requires a zip artifact");
+              }
+              if (!files.some((name) => name.endsWith(".zip.blockmap"))) {
+                throw new Error("macOS auto-update requires a zip blockmap");
+              }
+            }
+          '
       - uses: actions/upload-artifact@v7
         with:
           name: desktop-${{ matrix.id }}
-          path: apps/desktop/dist/${{ matrix.artifact_glob }}
+          path: |
+            apps/desktop/dist/sprocket-desktop-*
+            apps/desktop/dist/*.yml
+            apps/desktop/dist/*.blockmap
           if-no-files-found: error
 
   publish:
@@ -123,19 +183,25 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
       - uses: actions/download-artifact@v8
         with:
           pattern: desktop-*
           path: release-assets
-          merge-multiple: true
+      - name: Merge updater metadata
+        shell: bash
+        run: bun apps/desktop/scripts/merge-update-metadata.mjs --input release-assets --output release-publish
       - name: Generate checksums
-        working-directory: release-assets
-        run: sha256sum sprocket-desktop-* | tee SHA256SUMS
+        working-directory: release-publish
+        run: sha256sum * | tee SHA256SUMS
       - name: Upload assets to GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           prerelease: ${{ contains(github.ref_name, '-canary.') }}
           files: |
-            release-assets/sprocket-desktop-*
-            release-assets/SHA256SUMS
+            release-publish/sprocket-desktop-*
+            release-publish/*.yml
+            release-publish/SHA256SUMS
           fail_on_unmatched_files: true
