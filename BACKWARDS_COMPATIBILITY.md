@@ -8,11 +8,27 @@ Current as of 2026-09-06.
 
 ## Transcript projection API
 
-Message attachments keep the `imageUploads` table, its public mutation names,
-and the `imageUploadIds` / `imageUploads` wire fields. They now hold any file
-type. Keeping these names avoids rewriting stored messages and lets released
-clients continue submitting images. Remove them only after supported clients
-use a replacement API and a migration rewrites all referencing records.
+Message attachments keep the `imageUploads` table and `imageUploads` prompt
+field, but current callers identify files by `storageId` / `storageIds`.
+The table's row ID remains an internal database key. `registerFile`,
+`discardFile`, and `attachmentDownloadByStorageId` expose storage identity;
+legacy `register`, `discard`, and `attachmentDownload` retain row-ID contracts.
+Run submission accepts either ID family, rejects requests supplying both, and
+checks ownership when resolving storage IDs. Keep these legacy API shims until
+all supported clients use storage IDs.
+
+New transcript attachment metadata omits `imageUploadId`. Stored validators
+still accept it for historical rows. Current transcript readers request
+`storageIdsOnly: true`; legacy readers receive row IDs resolved through the
+storage index. Remove legacy response hydration and the optional stored field
+only after supported clients use storage-only responses and
+`removeTranscriptAttachmentImageUploadIds` has rewritten historical prompts.
+It is included in `migrations:run`; deploy the compatible readers before running
+that migration. Existing local JSONL records remain readable without a rewrite;
+current serialization drops their legacy attachment row IDs.
+The migration retains a legacy ID if its upload row is already gone: otherwise
+released clients could no longer parse that attachment. Current responses still
+omit it. Remove these orphaned legacy IDs when those clients are retired.
 
 New clients upload files through Rust. Released clients can still upload to
 Convex directly, so the Rust runtime downloads any missing files before building
@@ -22,9 +38,14 @@ The optional `getContext.attachmentsAsPaths` flag skips legacy image-URL
 resolution for these agents. Keep the default URL response until all supported
 agents resolve attachment paths from the transcript cache.
 
-Attachments now live under each thread's `attachments/` directory. Reading an
-old attachment copies any existing user-level blob into that directory before
-exposing its path. Missing files download from Convex. This on-access migration
+Attachments now live under each thread's `attachments/<storageId>/` directory.
+Reading an old attachment copies any existing user-level blob or row-ID-keyed
+thread file into that directory before exposing its path. Legacy thread
+metadata is matched by its storage ID, so migration works offline without a
+cloud row lookup. New `metadata.json` files contain no row ID. Old thread
+directories remain readable for legacy requests until their cache is cleared;
+discard removes both layouts for the requested storage ID.
+Missing files download from Convex. This on-access migration
 also runs when rebuilding agent history. Legacy blob reads and cleanup remain
 until supported installations have migrated their cached threads or cleared
 those caches. New uploads never write to the legacy blob store. Draft uploads

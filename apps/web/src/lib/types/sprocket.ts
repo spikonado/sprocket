@@ -77,7 +77,7 @@ export type RunState = {
 };
 
 export type MessageAttachment = {
-	imageUploadId: Id<'imageUploads'>;
+	storageId: Id<'_storage'>;
 	name: string;
 	mediaType: string;
 	size: number;
@@ -108,7 +108,7 @@ export type AgentRunRequest = {
 	threadId?: Id<'threadRecords'>;
 	repositoryKey?: string;
 	prompt: string;
-	imageUploadIds: Id<'imageUploads'>[];
+	storageIds: Id<'_storage'>[];
 	selectedModel: string;
 	reasoningEffort: string;
 	serviceTier: string;
@@ -122,11 +122,10 @@ export type AgentRunStart = {
 };
 
 export type LocalTranscriptAttachment = {
-	imageUploadId: Id<'imageUploads'>;
+	storageId: Id<'_storage'>;
 	name: string;
 	mediaType: string;
 	size: number;
-	storageId: string;
 	url?: string;
 };
 
@@ -183,7 +182,7 @@ export type TranscriptUploadRequest = {
 
 export type TranscriptUploadResult =
 	| {
-			imageUploadId: Id<'imageUploads'>;
+			storageId: Id<'_storage'>;
 			name: string;
 			mediaType: string;
 			size: number;
@@ -193,7 +192,7 @@ export type TranscriptUploadResult =
 
 export type TranscriptDiscardRequest = {
 	userId: string;
-	imageUploadId: Id<'imageUploads'>;
+	storageId: Id<'_storage'>;
 	threadId?: Id<'threadRecords'>;
 };
 
@@ -263,7 +262,7 @@ export type DesktopApi = {
 	) => Promise<void>;
 	clearTranscriptReplica: (request: TranscriptScopeRequest) => Promise<void>;
 	fetchTranscriptAttachment: (
-		request: TranscriptScopeRequest & { imageUploadId: Id<'imageUploads'> }
+		request: TranscriptScopeRequest & { storageId: Id<'_storage'> }
 	) => Promise<Blob | null>;
 	uploadTranscriptAttachment: (request: TranscriptUploadRequest) => Promise<TranscriptUploadResult>;
 	discardTranscriptAttachment: (request: TranscriptDiscardRequest) => Promise<boolean>;

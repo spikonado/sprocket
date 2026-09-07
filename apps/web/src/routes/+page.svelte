@@ -192,7 +192,7 @@
 		message: string;
 		prompt: string;
 		attachments?: ComposerAttachment[];
-		imageUploadIds?: Id<'imageUploads'>[];
+		storageIds?: Id<'_storage'>[];
 		reasoningEffort?: string;
 		serviceTier?: string;
 		selectedModel?: CatalogModelId;
@@ -219,7 +219,7 @@
 		string,
 		{
 			prompt: string;
-			imageUploadIds: Id<'imageUploads'>[];
+			storageIds: Id<'_storage'>[];
 			reasoningEffort: string;
 			serviceTier: string;
 			selectedModel: CatalogModelId;
@@ -276,7 +276,7 @@
 		api?: DesktopApi | null;
 		userId?: string | null;
 		threadId?: Id<'threadRecords'> | null;
-		imageUploadId: Id<'imageUploads'>;
+		storageId: Id<'_storage'>;
 	}) {
 		try {
 			const api = args.api ?? desktopApi;
@@ -287,7 +287,7 @@
 			void api
 				.discardTranscriptAttachment({
 					userId,
-					imageUploadId: args.imageUploadId,
+					storageId: args.storageId,
 					threadId: args.threadId ?? undefined
 				})
 				.catch(() => {});
@@ -320,7 +320,7 @@
 			revokeAttachmentPreview(attachment?.previewUrl);
 			const stillAttached = updateComposerAttachment(localId, {
 				status: 'ready',
-				imageUploadId: registered.imageUploadId,
+				storageId: registered.storageId,
 				name: registered.name,
 				mediaType: registered.mediaType,
 				size: registered.size,
@@ -331,7 +331,7 @@
 					api,
 					userId,
 					threadId,
-					imageUploadId: registered.imageUploadId
+					storageId: registered.storageId
 				});
 			}
 		} catch (error) {
@@ -373,9 +373,9 @@
 		}
 		revokeAttachmentPreview(attachment.previewUrl);
 		composerAttachments = composerAttachments.filter((entry) => entry.localId !== localId);
-		if (attachment.imageUploadId) {
+		if (attachment.storageId) {
 			discardComposerUpload({
-				imageUploadId: attachment.imageUploadId,
+				storageId: attachment.storageId,
 				userId: getCurrentUserId(),
 				threadId: currentThreadId
 			});
@@ -391,11 +391,11 @@
 		const discardThreadId = options.threadId === undefined ? currentThreadId : options.threadId;
 		for (const attachment of composerAttachments) {
 			revokeAttachmentPreview(attachment.previewUrl);
-			if (options.discard && attachment.imageUploadId) {
+			if (options.discard && attachment.storageId) {
 				discardComposerUpload({
 					userId: discardUserId,
 					threadId: discardThreadId,
-					imageUploadId: attachment.imageUploadId
+					storageId: attachment.storageId
 				});
 			}
 		}
@@ -1363,7 +1363,7 @@
 		await transcriptHistory?.loadOlder();
 	}
 
-	async function loadTranscriptAttachment(imageUploadId: Id<'imageUploads'>) {
+	async function loadTranscriptAttachment(storageId: Id<'_storage'>) {
 		const api = desktopApi;
 		const threadId = currentThreadId;
 		const userId = getCurrentUserId();
@@ -1373,7 +1373,7 @@
 		const blob = await api.fetchTranscriptAttachment({
 			userId,
 			threadId,
-			imageUploadId
+			storageId
 		});
 		return blob ? URL.createObjectURL(blob) : null;
 	}
@@ -1555,8 +1555,8 @@
 		const isSubmittedUserCurrent = () => getCurrentUserId() === submittedUserId;
 		const submittedPrompt = prompt.trim();
 		const submittedAttachments = composerAttachments.map((attachment) => ({ ...attachment }));
-		const submittedImageUploadIds = submittedAttachments.flatMap((attachment) =>
-			attachment.imageUploadId ? [attachment.imageUploadId] : []
+		const submittedStorageIds = submittedAttachments.flatMap((attachment) =>
+			attachment.storageId ? [attachment.storageId] : []
 		);
 		const submittedModel = selectedModel;
 		const submittedReasoningEffort = selectedReasoningEffort;
@@ -1583,7 +1583,7 @@
 						},
 			newSubmissionId: freshSubmissionId,
 			prompt: submittedPrompt,
-			imageUploadIds: submittedImageUploadIds,
+			storageIds: submittedStorageIds,
 			reasoningEffort: submittedReasoningEffort,
 			serviceTier: submittedServiceTier,
 			recoveredSubmission: recoveredSubmission
@@ -1612,7 +1612,7 @@
 				message,
 				prompt: submittedPrompt,
 				attachments: submittedAttachments,
-				imageUploadIds: submittedImageUploadIds,
+				storageIds: submittedStorageIds,
 				reasoningEffort: submittedReasoningEffort,
 				serviceTier: submittedServiceTier,
 				selectedModel: submittedModel,
@@ -1764,7 +1764,7 @@
 				threadId: threadId ?? undefined,
 				repositoryKey: threadId ? undefined : submittedRepositoryKey,
 				prompt: submittedPrompt,
-				imageUploadIds: submittedImageUploadIds,
+				storageIds: submittedStorageIds,
 				selectedModel: submittedModel,
 				submissionId: runSubmissionId,
 				reasoningEffort: submittedReasoningEffort,
@@ -1861,7 +1861,7 @@
 				onStarted: () => {},
 				threadId,
 				prompt: '',
-				imageUploadIds: [],
+				storageIds: [],
 				selectedModel,
 				reasoningEffort: selectedReasoningEffort,
 				serviceTier: selectedServiceTier,
@@ -2002,13 +2002,13 @@
 		if (prompt === recovery.prompt) {
 			if (
 				recovery.submissionId &&
-				(recovery.prompt || recovery.imageUploadIds?.length) &&
+				(recovery.prompt || recovery.storageIds?.length) &&
 				recovery.reasoningEffort &&
 				recovery.selectedModel
 			) {
 				recoveredSubmissionIds.set(recoveryKey, {
 					prompt: recovery.prompt,
-					imageUploadIds: recovery.imageUploadIds ?? [],
+					storageIds: recovery.storageIds ?? [],
 					reasoningEffort: recovery.reasoningEffort,
 					serviceTier:
 						recovery.serviceTier ?? modelCatalog?.defaultServiceTier ?? defaultServiceTier,

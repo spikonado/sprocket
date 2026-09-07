@@ -44,7 +44,15 @@ import {
 	type QueuedRunRequest
 } from '@convex/lib/runCreate';
 import { beginExecutorJob } from '@convex/lib/toolJobs';
-import { getPromptPart } from '@convex/lib/transcriptParts';
+import {
+	getPromptPart,
+	stripLegacyAttachmentImageUploadIds,
+	withLegacyImageUploadIds
+} from '@convex/lib/transcriptParts';
+import {
+	assertExclusiveAttachmentIdentity,
+	storageIdsForImageUploadIds
+} from '@convex/lib/imageUploads';
 import {
 	canRegisterCompletionAttempt,
 	canFinalizeAfterClaimFailure,
@@ -139,7 +147,8 @@ export const createGatewayRun = action({
 		threadId: v.optional(v.id('threadRecords')),
 		repositoryKey: v.optional(v.string()),
 		prompt: v.string(),
-		imageUploadIds: v.array(v.id('imageUploads')),
+		storageIds: v.optional(v.array(v.id('_storage'))),
+		imageUploadIds: v.optional(v.array(v.id('imageUploads'))),
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
 		serviceTier: vServiceTier,
@@ -151,6 +160,15 @@ export const createGatewayRun = action({
 	returns: vCreateGatewayRunResult,
 	handler: async (ctx, args): Promise<Infer<typeof vCreateGatewayRunResult>> => {
 		const userId = await getUserId(ctx);
+		assertExclusiveAttachmentIdentity(args);
+		const imageUploadIds =
+			args.imageUploadIds ??
+			(args.storageIds
+				? await ctx.runQuery(internal.imageUploads.ownedIdsForStorageIds, {
+						userId,
+						storageIds: args.storageIds
+					})
+				: []);
 		const gatewayUrl = modelGatewayUrl();
 		const request: QueuedRunRequest = {
 			userId,
@@ -158,7 +176,7 @@ export const createGatewayRun = action({
 			threadId: args.threadId,
 			repositoryKey: args.repositoryKey,
 			prompt: args.prompt,
-			imageUploadIds: args.imageUploadIds,
+			imageUploadIds,
 			selectedModel: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
 			serviceTier: args.serviceTier,
@@ -169,6 +187,12 @@ export const createGatewayRun = action({
 		};
 		if (args.continuationOfRunId) request.continuationOfRunId = args.continuationOfRunId;
 		const created = await ctx.runMutation(internal.agentRuntime.insertGatewayRun, request);
+		if (created.promptPart) {
+			created.promptPart =
+				args.imageUploadIds !== undefined
+					? withLegacyImageUploadIds(created.promptPart, imageUploadIds)
+					: stripLegacyAttachmentImageUploadIds([created.promptPart])[0];
+		}
 		return {
 			...created,
 			gatewayUrl,
@@ -652,7 +676,8 @@ export const finalizeFailedStart = mutation({
 		submissionId: v.string(),
 		threadId: v.optional(v.id('threadRecords')),
 		prompt: v.string(),
-		imageUploadIds: v.array(v.id('imageUploads')),
+		storageIds: v.optional(v.array(v.id('_storage'))),
+		imageUploadIds: v.optional(v.array(v.id('imageUploads'))),
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
 		serviceTier: vServiceTier,
@@ -666,7 +691,24 @@ export const finalizeFailedStart = mutation({
 	// stage, so the caller stops without terminalizing it.
 	returns: v.union(v.literal('finalized'), v.literal('pending'), v.literal('standDown')),
 	handler: async (ctx, args) => {
-		return await finalizeFailedQueuedStart(ctx, args);
+		assertExclusiveAttachmentIdentity(args);
+		const storageIds =
+			args.storageIds ?? (await storageIdsForImageUploadIds(ctx, args.imageUploadIds ?? []));
+		if (storageIds === null) {
+			return 'standDown';
+		}
+		return await finalizeFailedQueuedStart(ctx, {
+			submissionId: args.submissionId,
+			threadId: args.threadId,
+			prompt: args.prompt,
+			storageIds,
+			selectedModel: args.selectedModel,
+			reasoningEffort: args.reasoningEffort,
+			serviceTier: args.serviceTier,
+			text: args.text,
+			lastError: args.lastError,
+			executionSecret: args.executionSecret
+		});
 	}
 });
 

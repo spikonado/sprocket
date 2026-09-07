@@ -15,6 +15,7 @@ use tokio_util::io::ReaderStream;
 use crate::AppState;
 use crate::auth::require_session_user;
 use crate::routes::api_error::ApiError;
+use crate::routes::{ExclusiveId, exclusive_id};
 use crate::transcript_client::UserConvexClient;
 
 #[derive(Deserialize)]
@@ -28,7 +29,7 @@ pub(super) struct UploadQuery {
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct UploadedAttachment {
-    image_upload_id: String,
+    storage_id: String,
     name: String,
     media_type: String,
     #[serde(deserialize_with = "deserialize_convex_u64")]
@@ -117,7 +118,7 @@ async fn upload(
     let uploaded: StorageUpload = serde_json::from_slice(&response.bytes().await?)?;
     let result: RegistrationResult = client
         .mutate(
-            "imageUploads:register",
+            "imageUploads:registerFile",
             BTreeMap::from([
                 ("storageId".into(), uploaded.storage_id.clone().into()),
                 ("name".into(), query.name.into()),
@@ -128,6 +129,10 @@ async fn upload(
         RegistrationResult::Success(result) => result,
         RegistrationResult::Error { error } => anyhow::bail!(error),
     };
+    anyhow::ensure!(
+        result.storage_id == uploaded.storage_id,
+        "uploaded attachment identity mismatch"
+    );
     anyhow::ensure!(result.size == size, "uploaded attachment size mismatch");
     temp.as_file().set_modified(std::time::SystemTime::now())?;
     temp.persist(
@@ -156,7 +161,10 @@ async fn stage_body(body: axum::body::Body, path: &std::path::Path) -> anyhow::R
 pub(super) struct DiscardRequest {
     user_id: String,
     thread_id: Option<String>,
-    image_upload_id: String,
+    #[serde(default)]
+    storage_id: Option<String>,
+    #[serde(default)]
+    image_upload_id: Option<String>,
 }
 
 pub(super) async fn discard_handler(
@@ -173,41 +181,64 @@ pub(super) async fn discard_handler(
         .require_user(&payload.user_id)
         .await
         .map_err(ApiError::unauthorized)?;
-    discard(&state, payload)
-        .await
-        .map(Json)
-        .map_err(|error| ApiError::internal_with("attachment discard failed", error))
+    let identity = exclusive_id(
+        payload.storage_id,
+        payload.image_upload_id,
+        "storageId",
+        "imageUploadId",
+    )
+    .map_err(ApiError::bad_request)?;
+    discard(
+        &state,
+        &payload.user_id,
+        payload.thread_id.as_deref(),
+        identity,
+    )
+    .await
+    .map(Json)
+    .map_err(|error| ApiError::internal_with("attachment discard failed", error))
 }
 
-async fn discard(state: &AppState, payload: DiscardRequest) -> anyhow::Result<bool> {
+async fn discard(
+    state: &AppState,
+    user_id: &str,
+    thread_id: Option<&str>,
+    identity: ExclusiveId<String>,
+) -> anyhow::Result<bool> {
     let client = UserConvexClient::connect_with_fetcher(
         &state.convex_deployment_url,
         state
             .native_auth
-            .auth_token_fetcher_for_user(payload.user_id.clone()),
+            .auth_token_fetcher_for_user(user_id.to_string()),
     )
     .await?;
-    let Some(attachment) = client.attachment_download(&payload.image_upload_id).await? else {
-        return Ok(false);
+    let (deleted, storage_id) = match identity {
+        ExclusiveId::Storage(storage_id) => {
+            let deleted: bool = client
+                .mutate(
+                    "imageUploads:discardFile",
+                    BTreeMap::from([("storageId".into(), storage_id.clone().into())]),
+                )
+                .await?;
+            (deleted, storage_id)
+        }
+        ExclusiveId::LegacyUpload(image_upload_id) => {
+            let Some(attachment) = client.attachment_download(&image_upload_id).await? else {
+                return Ok(false);
+            };
+            let deleted: bool = client
+                .mutate(
+                    "imageUploads:discard",
+                    BTreeMap::from([("imageUploadId".into(), image_upload_id.into())]),
+                )
+                .await?;
+            (deleted, attachment.storage_id)
+        }
     };
-    let deleted: bool = client
-        .mutate(
-            "imageUploads:discard",
-            BTreeMap::from([(
-                "imageUploadId".into(),
-                payload.image_upload_id.clone().into(),
-            )]),
-        )
-        .await?;
     if deleted {
         state
             .transcript
-            .discard_attachment(
-                &payload.user_id,
-                payload.thread_id.as_deref(),
-                &payload.image_upload_id,
-                &attachment.storage_id,
-            )
+            .discard_attachment(user_id, thread_id, &storage_id)
             .await?;
     }
     Ok(deleted)
@@ -242,6 +273,64 @@ mod tests {
             stage_body(Body::from_stream(chunks), temp.path())
                 .await
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn upload_success_returns_storage_id_without_an_upload_row_alias() {
+        let json = serde_json::to_value(UploadedAttachment {
+            storage_id: "storage-1".into(),
+            name: "notes.txt".into(),
+            media_type: "text/plain".into(),
+            size: 5,
+            url: "https://example.com/notes.txt".into(),
+        })
+        .unwrap();
+        assert_eq!(json["storageId"], "storage-1");
+        assert!(json.get("imageUploadId").is_none());
+    }
+
+    #[test]
+    fn discard_request_accepts_storage_id_or_legacy_upload_id_but_not_both() {
+        let storage: DiscardRequest = serde_json::from_value(serde_json::json!({
+            "userId": "user-1",
+            "storageId": "storage-1"
+        }))
+        .unwrap();
+        assert!(matches!(
+            exclusive_id(storage.storage_id, storage.image_upload_id, "storageId", "imageUploadId")
+                .unwrap(),
+            ExclusiveId::Storage(id) if id == "storage-1"
+        ));
+
+        let legacy: DiscardRequest = serde_json::from_value(serde_json::json!({
+            "userId": "user-1",
+            "imageUploadId": "upload-1",
+            "threadId": "thread-1"
+        }))
+        .unwrap();
+        assert!(matches!(
+            exclusive_id(legacy.storage_id, legacy.image_upload_id, "storageId", "imageUploadId")
+                .unwrap(),
+            ExclusiveId::LegacyUpload(id) if id == "upload-1"
+        ));
+
+        let both: DiscardRequest = serde_json::from_value(serde_json::json!({
+            "userId": "user-1",
+            "storageId": "storage-1",
+            "imageUploadId": "upload-1"
+        }))
+        .unwrap();
+        assert!(
+            exclusive_id(
+                both.storage_id,
+                both.image_upload_id,
+                "storageId",
+                "imageUploadId"
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("not both")
         );
     }
 }

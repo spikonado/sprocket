@@ -12,7 +12,7 @@
 
 	type Props = {
 		attachment: MessageAttachment;
-		loadAttachment?: (imageUploadId: MessageAttachment['imageUploadId']) => Promise<string | null>;
+		loadAttachment?: (storageId: MessageAttachment['storageId']) => Promise<string | null>;
 		onOpen: (image: ViewerImage) => void;
 	};
 
@@ -34,7 +34,7 @@
 	});
 
 	$effect(() => {
-		const imageUploadId = attachment.imageUploadId;
+		const storageId = attachment.storageId;
 		const mediaType = attachment.mediaType;
 		const existingUrl = attachment.url;
 		if (!shouldEagerLoadAttachmentPreview({ mediaType, url: existingUrl })) {
@@ -46,7 +46,7 @@
 		}
 		let cancelled = false;
 		loadFailed = false;
-		void loader(imageUploadId)
+		void loader(storageId)
 			.then((next) => {
 				if (cancelled) {
 					revokeAttachmentPreview(next ?? undefined);
@@ -90,7 +90,7 @@
 		try {
 			let next: string | null = null;
 			if (loadAttachment) {
-				next = await loadAttachment(attachment.imageUploadId);
+				next = await loadAttachment(attachment.storageId);
 			} else if (existing) {
 				const response = await fetch(existing);
 				if (!response.ok) throw new Error('Download failed');

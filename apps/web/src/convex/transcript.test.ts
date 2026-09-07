@@ -619,3 +619,136 @@ describe('numbered transcript parts', () => {
 		]);
 	});
 });
+
+describe('transcript attachment identity', () => {
+	it('hydrates imageUploadId for released getParts and omits it when storageIdsOnly', async () => {
+		const t = initConvexTest();
+		const { asUser, subject, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'storage-only-parts-secret';
+		const file = await t.run(async (ctx) => {
+			const storageId = await ctx.storage.store(new Blob(['file'], { type: 'text/plain' }));
+			const imageUploadId = await ctx.db.insert('imageUploads', {
+				userId: subject,
+				storageId,
+				name: 'file.txt',
+				mediaType: 'text/plain',
+				size: 4,
+				attached: false
+			});
+			return { storageId, imageUploadId };
+		});
+		const created = await insertQueuedRun(t, asUser, {
+			submissionId: 'storage-only-parts',
+			threadId,
+			prompt: 'Read this',
+			imageUploadIds: [file.imageUploadId],
+			executionSecret
+		});
+
+		const released = await asUser.query(api.transcript.getParts, {
+			threadId,
+			numbers: [0]
+		});
+		expect(released.parts[0]?.prompt?.imageUploads[0]).toMatchObject({
+			imageUploadId: file.imageUploadId,
+			storageId: file.storageId,
+			name: 'file.txt',
+			url: expect.any(String)
+		});
+
+		const current = await asUser.query(api.transcript.getParts, {
+			threadId,
+			numbers: [0],
+			storageIdsOnly: true
+		});
+		expect(current.parts[0]?.prompt?.imageUploads[0]).toEqual({
+			name: 'file.txt',
+			mediaType: 'text/plain',
+			size: 4,
+			storageId: file.storageId,
+			url: expect.any(String)
+		});
+		expect(current.parts[0]?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
+
+		const runParts = await t.query(api.transcript.getPartsForRun, {
+			runId: created.runId,
+			executionSecret,
+			numbers: [0],
+			storageIdsOnly: true
+		});
+		expect(runParts.parts[0]?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
+	});
+
+	it('downloads an owned file by storageId and hides foreign files', async () => {
+		const t = initConvexTest();
+		const { asUser, subject } = await seedOwnedThread(t);
+		const bob = t.withIdentity({ subject: 'bob' });
+		const file = await t.run(async (ctx) => {
+			const storageId = await ctx.storage.store(new Blob(['file'], { type: 'text/plain' }));
+			await ctx.db.insert('imageUploads', {
+				userId: subject,
+				storageId,
+				name: 'file.txt',
+				mediaType: 'text/plain',
+				size: 4,
+				attached: false
+			});
+			return storageId;
+		});
+		expect(
+			await asUser.query(api.transcript.attachmentDownloadByStorageId, { storageId: file })
+		).toMatchObject({
+			storageId: file,
+			name: 'file.txt',
+			mediaType: 'text/plain',
+			size: 4
+		});
+		expect(await bob.query(api.transcript.attachmentDownloadByStorageId, { storageId: file })).toBe(
+			null
+		);
+	});
+
+	it('strips leftover stored imageUploadId when storageIdsOnly is set', async () => {
+		const t = initConvexTest();
+		const { asUser, subject, threadId } = await seedOwnedThread(t);
+		await t.run(async (ctx) => {
+			const storageId = await ctx.storage.store(new Blob(['file'], { type: 'text/plain' }));
+			const imageUploadId = await ctx.db.insert('imageUploads', {
+				userId: subject,
+				storageId,
+				name: 'file.txt',
+				mediaType: 'text/plain',
+				size: 4,
+				attached: true,
+				threadId
+			});
+			const run = await ctx.db
+				.query('runs')
+				.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', threadId))
+				.first();
+			if (!run) throw new Error('Missing fixture run');
+			await ctx.db.insert('threadTranscriptParts', {
+				threadId,
+				userId: subject,
+				number: 0,
+				sourceKey: `prompt:${run._id}`,
+				kind: 'prompt',
+				runId: run._id,
+				prompt: {
+					text: 'Read',
+					imageUploads: [
+						{ storageId, imageUploadId, name: 'file.txt', mediaType: 'text/plain', size: 4 }
+					]
+				}
+			});
+		});
+		const current = await asUser.query(api.transcript.getParts, {
+			threadId,
+			numbers: [0],
+			storageIdsOnly: true
+		});
+		expect(current.parts[0]?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
+		const released = await asUser.query(api.transcript.getParts, { threadId, numbers: [0] });
+		expect(released.parts[0]?.prompt?.imageUploads[0]?.imageUploadId).toBeDefined();
+	});
+});

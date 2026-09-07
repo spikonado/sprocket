@@ -11,7 +11,7 @@ mod tools;
 mod transcript;
 mod types;
 
-pub use attachments::{cache_attachment, download_attachment_to_file};
+pub use attachments::{AttachmentUnavailable, cache_attachment, download_attachment_to_file};
 pub use live::{
     LiveAssistantPart, LiveCompletionHub, LiveCompletionOverlay, LiveCompletionSubscription,
     LiveCompletionWatchEvent,

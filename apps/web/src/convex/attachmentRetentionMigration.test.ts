@@ -57,3 +57,93 @@ it('backfills the original owner and removes the superseded retention data', asy
 	expect(await t.run((ctx) => ctx.db.query('threadAttachmentRefs').take(1))).toEqual([]);
 	expect(await t.run((ctx) => ctx.db.system.get('_storage', file.storageId))).not.toBeNull();
 });
+
+it('backfills the owner from storageId when the prompt no longer has imageUploadId', async () => {
+	const t = initConvexTest();
+	const { subject, threadId } = await seedOwnedThread(t);
+	const file = await t.run(async (ctx) => {
+		const storageId = await ctx.storage.store(new Blob(['file']));
+		const imageUploadId = await ctx.db.insert('imageUploads', {
+			userId: subject,
+			storageId,
+			name: 'file.txt',
+			mediaType: 'text/plain',
+			size: 4,
+			attached: true
+		});
+		const run = await ctx.db
+			.query('runs')
+			.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', threadId))
+			.first();
+		if (!run) throw new Error('Missing fixture run');
+		await ctx.db.insert('threadTranscriptParts', {
+			threadId,
+			userId: subject,
+			number: 0,
+			sourceKey: `prompt:${threadId}`,
+			kind: 'prompt',
+			runId: run._id,
+			prompt: {
+				text: 'Read',
+				imageUploads: [{ storageId, name: 'file.txt', mediaType: 'text/plain', size: 4 }]
+			}
+		});
+		return { imageUploadId, storageId };
+	});
+	await t.mutation(internal.migrations.backfillImageUploadThreadId, oneBatch);
+	const upload = await t.run((ctx) => ctx.db.get('imageUploads', file.imageUploadId));
+	expect(upload?.threadId).toBe(threadId);
+});
+
+it.each([false, true])(
+	'migrates attachment IDs without losing orphaned legacy identity (orphaned: %s)',
+	async (orphaned) => {
+		const t = initConvexTest();
+		const { subject, threadId } = await seedOwnedThread(t);
+		const partId = await t.run(async (ctx) => {
+			const storageId = await ctx.storage.store(new Blob(['file']));
+			const imageUploadId = await ctx.db.insert('imageUploads', {
+				userId: subject,
+				storageId,
+				name: 'file.txt',
+				mediaType: 'text/plain',
+				size: 4,
+				attached: true,
+				threadId
+			});
+			if (orphaned) await ctx.db.delete('imageUploads', imageUploadId);
+			const run = await ctx.db
+				.query('runs')
+				.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', threadId))
+				.first();
+			if (!run) throw new Error('Missing fixture run');
+			return await ctx.db.insert('threadTranscriptParts', {
+				threadId,
+				userId: subject,
+				number: 0,
+				sourceKey: `prompt:${threadId}`,
+				kind: 'prompt',
+				runId: run._id,
+				prompt: {
+					text: 'Read',
+					imageUploads: [
+						{ storageId, imageUploadId, name: 'file.txt', mediaType: 'text/plain', size: 4 }
+					]
+				}
+			});
+		});
+		await t.mutation(internal.migrations.removeTranscriptAttachmentImageUploadIds, oneBatch);
+		const part = await t.run((ctx) => ctx.db.get('threadTranscriptParts', partId));
+		expect(part?.prompt?.imageUploads[0]).toMatchObject({
+			name: 'file.txt',
+			mediaType: 'text/plain',
+			size: 4,
+			storageId: expect.any(String)
+		});
+		if (orphaned) {
+			expect(part?.prompt?.imageUploads[0]?.imageUploadId).toEqual(expect.any(String));
+		} else {
+			expect(part?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
+		}
+	}
+);

@@ -3,8 +3,10 @@ import { v } from 'convex/values';
 import type { Id } from '@convex/_generated/dataModel';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getExecutionRun, getUserId } from '@convex/lib/auth';
+import { imageUploadByStorageId } from '@convex/lib/imageUploads';
 import {
 	vAttachmentDownloadResult,
+	vAttachmentFileDownloadResult,
 	vTranscriptPartsResult,
 	vTranscriptStateResult
 } from '@convex/lib/docs';
@@ -12,8 +14,8 @@ import { transcriptHistoryFromNumber } from '@convex/lib/contextHandoff';
 import {
 	getOrCreateTranscriptState,
 	getTranscriptState,
-	hydrateTranscriptPartUrls,
-	loadTranscriptPartsByNumbers
+	loadTranscriptPartsByNumbers,
+	transcriptPartsForClient
 } from '@convex/lib/transcriptParts';
 
 async function transcriptStateResult(
@@ -78,14 +80,16 @@ export const getState = query({
 export const getParts = query({
 	args: {
 		threadId: v.id('threadRecords'),
-		numbers: v.array(v.number())
+		numbers: v.array(v.number()),
+		storageIdsOnly: v.optional(v.boolean())
 	},
 	returns: vTranscriptPartsResult,
 	handler: async (ctx, args) => {
 		await requireOwnedThread(ctx, args.threadId);
-		const parts = await hydrateTranscriptPartUrls(
+		const parts = await transcriptPartsForClient(
 			ctx,
-			await loadTranscriptPartsByNumbers(ctx, args.threadId, args.numbers)
+			await loadTranscriptPartsByNumbers(ctx, args.threadId, args.numbers),
+			args.storageIdsOnly
 		);
 		return { threadId: args.threadId, parts };
 	}
@@ -107,14 +111,16 @@ export const getPartsForRun = query({
 	args: {
 		runId: v.id('runs'),
 		executionSecret: v.string(),
-		numbers: v.array(v.number())
+		numbers: v.array(v.number()),
+		storageIdsOnly: v.optional(v.boolean())
 	},
 	returns: vTranscriptPartsResult,
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		const parts = await hydrateTranscriptPartUrls(
+		const parts = await transcriptPartsForClient(
 			ctx,
-			await loadTranscriptPartsByNumbers(ctx, run.threadId, args.numbers)
+			await loadTranscriptPartsByNumbers(ctx, run.threadId, args.numbers),
+			args.storageIdsOnly
 		);
 		return { threadId: run.threadId, parts };
 	}
@@ -141,6 +147,31 @@ export const attachmentDownload = query({
 			mediaType: upload.mediaType,
 			size: upload.size,
 			storageId: upload.storageId,
+			url
+		};
+	}
+});
+
+export const attachmentDownloadByStorageId = query({
+	args: {
+		storageId: v.id('_storage')
+	},
+	returns: vAttachmentFileDownloadResult,
+	handler: async (ctx, args) => {
+		const userId = await getUserId(ctx);
+		const upload = await imageUploadByStorageId(ctx, args.storageId);
+		if (!upload || upload.userId !== userId) {
+			return null;
+		}
+		const url = await ctx.storage.getUrl(upload.storageId);
+		if (!url) {
+			return null;
+		}
+		return {
+			storageId: upload.storageId,
+			name: upload.name,
+			mediaType: upload.mediaType,
+			size: upload.size,
 			url
 		};
 	}

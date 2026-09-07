@@ -20,7 +20,8 @@ pub struct RunAgentRequest {
     pub thread_id: String,
     pub repository_key: Option<String>,
     pub prompt: String,
-    pub image_upload_ids: Vec<String>,
+    pub storage_ids: Vec<String>,
+    pub image_upload_ids: Option<Vec<String>>,
     pub selected_model: String,
     pub reasoning_effort: String,
     pub service_tier: String,
@@ -516,7 +517,6 @@ mod tests {
                 "prompt": {
                     "text": "hello",
                     "imageUploads": [{
-                        "imageUploadId": "image_1",
                         "name": "robot.png",
                         "mediaType": "image/png",
                         "size": 42.0,

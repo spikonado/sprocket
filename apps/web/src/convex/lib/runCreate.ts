@@ -5,9 +5,10 @@ import { getOwnedThreadRecord } from '@convex/lib/access';
 import { executionSecretHash } from '@convex/lib/auth';
 import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
 import {
-	areImageUploadIdsEqual,
 	getOwnedImageUploads,
-	markImageUploadsAttached
+	markImageUploadsAttached,
+	areStorageIdsEqual,
+	storageIdsForImageUploadIds
 } from '@convex/lib/imageUploads';
 import {
 	attachRunToMachine,
@@ -255,12 +256,14 @@ async function reconcileExistingQueuedRun(
 	}
 
 	const existingPrompt = await getPromptPart(ctx, existingRun.threadId, existingRun._id);
+	const requestedStorageIds = await storageIdsForImageUploadIds(ctx, args.imageUploadIds);
 	if (
 		!existingPrompt?.prompt ||
 		existingPrompt.prompt.text !== prompt ||
-		!areImageUploadIdsEqual(
-			existingPrompt.prompt.imageUploads.map((upload) => upload.imageUploadId),
-			args.imageUploadIds
+		requestedStorageIds === null ||
+		!areStorageIdsEqual(
+			existingPrompt.prompt.imageUploads.map((upload) => upload.storageId),
+			requestedStorageIds
 		)
 	) {
 		throw new Error('Submission prompt does not match the existing run.');
@@ -288,7 +291,7 @@ export async function finalizeFailedQueuedStart(
 		submissionId: string;
 		threadId?: Id<'threadRecords'>;
 		prompt: string;
-		imageUploadIds: Id<'imageUploads'>[];
+		storageIds: Id<'_storage'>[];
 		selectedModel: string;
 		reasoningEffort: Infer<typeof vReasoningEffort>;
 		serviceTier: Infer<typeof vServiceTier>;
@@ -337,9 +340,9 @@ export async function finalizeFailedQueuedStart(
 		if (
 			!promptPart?.prompt ||
 			promptPart.prompt.text !== args.prompt.trim() ||
-			!areImageUploadIdsEqual(
-				promptPart.prompt.imageUploads.map((upload) => upload.imageUploadId),
-				args.imageUploadIds
+			!areStorageIdsEqual(
+				promptPart.prompt.imageUploads.map((upload) => upload.storageId),
+				args.storageIds
 			)
 		) {
 			return 'standDown';

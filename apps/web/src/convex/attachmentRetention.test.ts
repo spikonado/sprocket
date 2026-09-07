@@ -63,7 +63,8 @@ describe('attachment retention', () => {
 				.withIndex('by_threadId_and_number', (q) => q.eq('threadId', threadId))
 				.take(8)
 		);
-		expect(parts[0].prompt?.imageUploads[0].imageUploadId).toBe(file.imageUploadId);
+		expect(parts[0].prompt?.imageUploads[0].storageId).toBe(file.storageId);
+		expect(parts[0].prompt?.imageUploads[0].imageUploadId).toBeUndefined();
 	});
 
 	it('uses lastMessageAt alone, including the strict one-week boundary', async () => {

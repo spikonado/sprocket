@@ -627,7 +627,6 @@ mod tests {
                     prompt: Some(TranscriptPromptBody {
                         text: "see this".into(),
                         image_uploads: vec![TranscriptAttachmentMeta {
-                            image_upload_id: "up".into(),
                             name: "shot.png".into(),
                             media_type: "image/png".into(),
                             size: 12,

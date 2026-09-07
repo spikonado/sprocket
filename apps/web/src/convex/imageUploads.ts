@@ -1,10 +1,16 @@
-import type { Doc } from '@convex/_generated/dataModel';
-import { internalMutation, mutation, type MutationCtx } from '@convex/_generated/server';
+import type { Doc, Id } from '@convex/_generated/dataModel';
+import {
+	internalMutation,
+	internalQuery,
+	mutation,
+	type MutationCtx
+} from '@convex/_generated/server';
 import { v, type Infer } from 'convex/values';
 import { getUserId } from '@convex/lib/auth';
-import { vRegisterImageUploadResult } from '@convex/lib/docs';
+import { vRegisterFileResult, vRegisterImageUploadResult } from '@convex/lib/docs';
 import { registeredFileUploadError } from '@convex/lib/validators';
 import { registeredParseStorage } from '@convex/lib/hostedParse';
+import { getOwnedImageUploadsByStorageIds, imageUploadByStorageId } from '@convex/lib/imageUploads';
 import { internal } from '@convex/_generated/api';
 
 const ORPHAN_RETENTION_MS = 24 * 60 * 60 * 1_000;
@@ -12,6 +18,7 @@ const ORPHAN_CLEANUP_BATCH_SIZE = 100;
 const ATTACHMENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 
 export type RegisterImageUploadResult = Infer<typeof vRegisterImageUploadResult>;
+export type RegisterFileResult = Infer<typeof vRegisterFileResult>;
 
 export const generateUploadUrl = mutation({
 	args: {},
@@ -29,51 +36,34 @@ export const register = mutation({
 	},
 	returns: vRegisterImageUploadResult,
 	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-		const existing = await ctx.db
-			.query('imageUploads')
-			.withIndex('by_storageId', (query) => query.eq('storageId', args.storageId))
-			.unique();
-		if (existing) {
-			if (existing.userId !== userId) {
-				throw new Error('Uploaded file belongs to another user.');
-			}
-			return await uploadResult(ctx, existing);
-		}
+		const registered = await registerOwnedUpload(ctx, args);
+		if ('error' in registered) return registered;
+		return {
+			imageUploadId: registered.imageUploadId,
+			name: registered.name,
+			mediaType: registered.mediaType,
+			size: registered.size,
+			url: registered.url
+		};
+	}
+});
 
-		if (await registeredParseStorage(ctx, args.storageId)) {
-			return { error: 'Temporary parse files cannot be registered as attachments.' };
-		}
-		const metadata = await ctx.db.system.get('_storage', args.storageId);
-		if (!metadata) {
-			return { error: 'Uploaded file was not found.' };
-		}
-
-		const name = args.name.trim();
-		const mediaType = (metadata.contentType?.trim() || 'application/octet-stream').toLowerCase();
-		// Validation failures return (instead of throw) so the storage delete
-		// commits; throwing would roll back the whole mutation, delete included.
-		const validationError = registeredFileUploadError(name);
-		if (validationError) {
-			await ctx.storage.delete(args.storageId);
-			return { error: validationError };
-		}
-
-		const imageUploadId = await ctx.db.insert('imageUploads', {
-			userId,
-			storageId: args.storageId,
-			name,
-			mediaType,
-			size: metadata.size,
-			attached: false
-		});
-		const url = await ctx.storage.getUrl(args.storageId);
-		if (!url) {
-			await ctx.storage.delete(args.storageId);
-			await ctx.db.delete('imageUploads', imageUploadId);
-			return { error: 'Uploaded file is unavailable.' };
-		}
-		return { imageUploadId, name, mediaType, size: metadata.size, url };
+export const registerFile = mutation({
+	args: {
+		storageId: v.id('_storage'),
+		name: v.string()
+	},
+	returns: vRegisterFileResult,
+	handler: async (ctx, args) => {
+		const registered = await registerOwnedUpload(ctx, args);
+		if ('error' in registered) return registered;
+		return {
+			storageId: registered.storageId,
+			name: registered.name,
+			mediaType: registered.mediaType,
+			size: registered.size,
+			url: registered.url
+		};
 	}
 });
 
@@ -85,12 +75,31 @@ export const discard = mutation({
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		const upload = await ctx.db.get('imageUploads', args.imageUploadId);
-		if (!upload || upload.userId !== userId || upload.attached) {
-			return false;
-		}
-		await ctx.storage.delete(upload.storageId);
-		await ctx.db.delete('imageUploads', upload._id);
-		return true;
+		return await discardOwnedDraft(ctx, userId, upload);
+	}
+});
+
+export const discardFile = mutation({
+	args: {
+		storageId: v.id('_storage')
+	},
+	returns: v.boolean(),
+	handler: async (ctx, args) => {
+		const userId = await getUserId(ctx);
+		const upload = await imageUploadByStorageId(ctx, args.storageId);
+		return await discardOwnedDraft(ctx, userId, upload);
+	}
+});
+
+export const ownedIdsForStorageIds = internalQuery({
+	args: {
+		userId: v.string(),
+		storageIds: v.array(v.id('_storage'))
+	},
+	returns: v.array(v.id('imageUploads')),
+	handler: async (ctx, args) => {
+		const uploads = await getOwnedImageUploadsByStorageIds(ctx, args.userId, args.storageIds);
+		return uploads.map((upload) => upload._id);
 	}
 });
 
@@ -149,18 +158,91 @@ export const cleanupExpired = internalMutation({
 	}
 });
 
-async function uploadResult(
+type RegisteredUpload =
+	| { error: string }
+	| {
+			imageUploadId: Id<'imageUploads'>;
+			storageId: Id<'_storage'>;
+			name: string;
+			mediaType: string;
+			size: number;
+			url: string;
+	  };
+
+async function registerOwnedUpload(
 	ctx: MutationCtx,
-	upload: Doc<'imageUploads'>
-): Promise<RegisterImageUploadResult> {
-	const url = await ctx.storage.getUrl(upload.storageId);
-	return url
-		? {
-				imageUploadId: upload._id,
-				name: upload.name,
-				mediaType: upload.mediaType,
-				size: upload.size,
-				url
-			}
-		: { error: 'Uploaded file is unavailable.' };
+	args: { storageId: Id<'_storage'>; name: string }
+): Promise<RegisteredUpload> {
+	const userId = await getUserId(ctx);
+	const existing = await imageUploadByStorageId(ctx, args.storageId);
+	if (existing) {
+		if (existing.userId !== userId) {
+			throw new Error('Uploaded file belongs to another user.');
+		}
+		const url = await ctx.storage.getUrl(existing.storageId);
+		return url
+			? {
+					imageUploadId: existing._id,
+					storageId: existing.storageId,
+					name: existing.name,
+					mediaType: existing.mediaType,
+					size: existing.size,
+					url
+				}
+			: { error: 'Uploaded file is unavailable.' };
+	}
+
+	if (await registeredParseStorage(ctx, args.storageId)) {
+		return { error: 'Temporary parse files cannot be registered as attachments.' };
+	}
+	const metadata = await ctx.db.system.get('_storage', args.storageId);
+	if (!metadata) {
+		return { error: 'Uploaded file was not found.' };
+	}
+
+	const name = args.name.trim();
+	const mediaType = (metadata.contentType?.trim() || 'application/octet-stream').toLowerCase();
+	// Validation failures return (instead of throw) so the storage delete
+	// commits; throwing would roll back the whole mutation, delete included.
+	const validationError = registeredFileUploadError(name);
+	if (validationError) {
+		await ctx.storage.delete(args.storageId);
+		return { error: validationError };
+	}
+
+	const imageUploadId = await ctx.db.insert('imageUploads', {
+		userId,
+		storageId: args.storageId,
+		name,
+		mediaType,
+		size: metadata.size,
+		attached: false
+	});
+	const url = await ctx.storage.getUrl(args.storageId);
+	if (!url) {
+		await ctx.storage.delete(args.storageId);
+		await ctx.db.delete('imageUploads', imageUploadId);
+		return { error: 'Uploaded file is unavailable.' };
+	}
+	return {
+		imageUploadId,
+		storageId: args.storageId,
+		name,
+		mediaType,
+		size: metadata.size,
+		url
+	};
+}
+
+async function discardOwnedDraft(
+	ctx: MutationCtx,
+	userId: string,
+	upload: Doc<'imageUploads'> | null
+): Promise<boolean> {
+	if (!upload || upload.userId !== userId || upload.attached) {
+		return false;
+	}
+	await ctx.storage.delete(upload.storageId);
+	await ctx.db.delete('imageUploads', upload._id);
+	return true;
 }

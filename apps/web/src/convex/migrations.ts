@@ -3,6 +3,7 @@ import { components, internal } from '@convex/_generated/api';
 import { internalMutation } from '@convex/_generated/server';
 import schema from '@convex/schema';
 import { throughPartNumberForRunId } from '@convex/lib/contextHandoff';
+import { imageUploadByStorageId } from '@convex/lib/imageUploads';
 import { normalizeCompletionTiming } from '@convex/lib/transcriptParts';
 
 export const migrations = new Migrations(components.migrations, {
@@ -18,7 +19,8 @@ export const run = migrations.runner([
 	internal.migrations.backfillImageUploadThreadId,
 	internal.migrations.removeThreadUpdatedAt,
 	internal.migrations.removeImageUploadThreadRefsMigratedAt,
-	internal.migrations.removeThreadAttachmentRefs
+	internal.migrations.removeThreadAttachmentRefs,
+	internal.migrations.removeTranscriptAttachmentImageUploadIds
 ]);
 
 export const runTranscriptTiming = migrations.runner(internal.migrations.backfillTranscriptTiming);
@@ -28,7 +30,7 @@ export const backfillImageUploadThreadId = migrations.define({
 	migrateOne: async (ctx, part) => {
 		if (part.kind !== 'prompt' || !part.prompt) return;
 		for (const attachment of part.prompt.imageUploads) {
-			const upload = await ctx.db.get('imageUploads', attachment.imageUploadId);
+			const upload = await imageUploadByStorageId(ctx, attachment.storageId);
 			if (upload && upload.threadId === undefined) {
 				await ctx.db.patch('imageUploads', upload._id, { threadId: part.threadId });
 			}
@@ -54,6 +56,34 @@ export const removeThreadAttachmentRefs = migrations.define({
 	table: 'threadAttachmentRefs',
 	migrateOne: async (ctx, ref) => {
 		await ctx.db.delete('threadAttachmentRefs', ref._id);
+	}
+});
+
+export const removeTranscriptAttachmentImageUploadIds = migrations.define({
+	table: 'threadTranscriptParts',
+	migrateOne: async (ctx, part) => {
+		if (part.kind !== 'prompt' || !part.prompt) return;
+		if (!part.prompt.imageUploads.some((attachment) => attachment.imageUploadId !== undefined)) {
+			return;
+		}
+		return {
+			prompt: {
+				text: part.prompt.text,
+				imageUploads: await Promise.all(
+					part.prompt.imageUploads.map(async (attachment) => {
+						if (
+							!attachment.imageUploadId ||
+							!(await imageUploadByStorageId(ctx, attachment.storageId))
+						) {
+							return attachment;
+						}
+						const migrated = { ...attachment };
+						delete migrated.imageUploadId;
+						return migrated;
+					})
+				)
+			}
+		};
 	}
 });
 

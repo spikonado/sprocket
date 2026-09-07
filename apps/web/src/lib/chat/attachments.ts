@@ -1,7 +1,6 @@
 import type { Id } from '$convex/_generated/dataModel';
-import { areImageUploadIdsEqual } from '$convex/lib/imageUploads';
 
-export { areImageUploadIdsEqual };
+export { areStorageIdsEqual } from '$convex/lib/imageUploads';
 
 const PREVIEWABLE_IMAGE_MEDIA_TYPES = new Set([
 	'image/jpeg',
@@ -17,7 +16,7 @@ export type ComposerAttachment = {
 	size: number;
 	previewUrl?: string;
 	status: 'uploading' | 'ready' | 'error';
-	imageUploadId?: Id<'imageUploads'>;
+	storageId?: Id<'_storage'>;
 	error?: string;
 };
 

@@ -136,7 +136,6 @@ pub struct TranscriptPromptBody {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptAttachmentMeta {
-    pub image_upload_id: String,
     pub name: String,
     pub media_type: String,
     pub size: u64,

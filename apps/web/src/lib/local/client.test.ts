@@ -13,9 +13,9 @@ function threadRecordId(value: string): Id<'threadRecords'> {
 	return value as Id<'threadRecords'>;
 }
 
-function imageUploadId(value: string): Id<'imageUploads'> {
+function storageId(value: string): Id<'_storage'> {
 	// SAFETY: fixture strings are only compared as opaque Convex document ids.
-	return value as Id<'imageUploads'>;
+	return value as Id<'_storage'>;
 }
 
 function runId(value: string): Id<'runs'> {
@@ -86,6 +86,59 @@ describe('projected transcript pages', () => {
 			'http://127.0.0.1:7731/api/transcript/messages',
 			expect.objectContaining({ method: 'POST' })
 		);
+	});
+
+	it('maps storageId attachment metadata and ignores leftover imageUploadId', async () => {
+		const fetch = vi.fn(async () =>
+			Response.json({
+				threadId: 'thread-1',
+				totalParts: 1,
+				historyFromNumber: 0,
+				stale: false,
+				messages: [
+					{
+						id: 'prompt:1',
+						threadId: 'thread-1',
+						runId: 'run-1',
+						userId: 'user-1',
+						type: 'prompt',
+						text: 'Inspect this',
+						attachments: [
+							{
+								imageUploadId: 'upload-1',
+								storageId: 'storage-1',
+								name: 'shot.png',
+								mediaType: 'image/png',
+								size: 12,
+								url: 'http://127.0.0.1:7731/files/shot.png'
+							}
+						],
+						parts: [],
+						runStatus: 'completed',
+						runStartedAt: 1,
+						sourceNumbers: [1],
+						streamIds: [],
+						detailsLoaded: true
+					}
+				]
+			})
+		);
+		vi.stubGlobal('fetch', fetch);
+
+		const page = await createLocalClient('http://127.0.0.1:7731').fetchTranscriptPage({
+			userId: 'user-1',
+			threadId: threadRecordId('thread-1')
+		});
+
+		expect(page.messages[0]?.attachments).toEqual([
+			{
+				storageId: 'storage-1',
+				name: 'shot.png',
+				mediaType: 'image/png',
+				size: 12,
+				url: 'http://127.0.0.1:7731/files/shot.png'
+			}
+		]);
 	});
 });
 
@@ -252,7 +305,7 @@ describe('transcript file upload', () => {
 		const file = new File(['hello'], 'notes.txt', { type: 'text/plain' });
 		const fetch = vi.fn(async () =>
 			Response.json({
-				imageUploadId: 'upload-1',
+				storageId: 'storage-1',
 				name: 'notes.txt',
 				mediaType: 'text/plain',
 				size: 5,
@@ -269,7 +322,7 @@ describe('transcript file upload', () => {
 		});
 
 		expect(result).toEqual({
-			imageUploadId: 'upload-1',
+			storageId: 'storage-1',
 			name: 'notes.txt',
 			mediaType: 'text/plain',
 			size: 5,
@@ -326,7 +379,7 @@ describe('transcript attachment discard', () => {
 		await expect(
 			createLocalClient('http://127.0.0.1:7731').discardTranscriptAttachment({
 				userId: 'user-1',
-				imageUploadId: imageUploadId('upload-1'),
+				storageId: storageId('storage-1'),
 				threadId: threadRecordId('thread-1')
 			})
 		).resolves.toBe(true);
@@ -341,7 +394,7 @@ describe('transcript attachment discard', () => {
 		expect(fetch).toHaveBeenCalledWith(
 			expect.any(String),
 			expect.objectContaining({
-				body: JSON.stringify({ userId: 'user-1', imageUploadId: 'upload-1', threadId: 'thread-1' })
+				body: JSON.stringify({ userId: 'user-1', storageId: 'storage-1', threadId: 'thread-1' })
 			})
 		);
 	});
@@ -359,14 +412,41 @@ describe('transcript attachment discard', () => {
 		await expect(
 			createLocalClient('http://127.0.0.1:7731').discardTranscriptAttachment({
 				userId: 'user-1',
-				imageUploadId: imageUploadId('upload-1')
+				storageId: storageId('storage-1')
 			})
 		).resolves.toBe(false);
 
 		expect(fetch).toHaveBeenCalledWith(
 			expect.any(String),
 			expect.objectContaining({
-				body: JSON.stringify({ userId: 'user-1', imageUploadId: 'upload-1' })
+				body: JSON.stringify({ userId: 'user-1', storageId: 'storage-1' })
+			})
+		);
+	});
+});
+
+describe('transcript attachment fetch', () => {
+	it('posts storageId with the thread scope', async () => {
+		const fetch = vi.fn(async () => new Response(new Blob(['png']), { status: 200 }));
+		vi.stubGlobal('fetch', fetch);
+
+		const blob = await createLocalClient('http://127.0.0.1:7731').fetchTranscriptAttachment({
+			userId: 'user-1',
+			threadId: threadRecordId('thread-1'),
+			storageId: storageId('storage-1')
+		});
+
+		expect(blob).toBeInstanceOf(Blob);
+		expect(fetch).toHaveBeenCalledWith(
+			'http://127.0.0.1:7731/api/transcript/attachment',
+			expect.objectContaining({
+				method: 'POST',
+				credentials: 'include',
+				body: JSON.stringify({
+					userId: 'user-1',
+					threadId: 'thread-1',
+					storageId: 'storage-1'
+				})
 			})
 		);
 	});

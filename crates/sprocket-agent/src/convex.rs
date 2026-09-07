@@ -122,6 +122,7 @@ impl RuntimeClient {
                     .collect(),
             ),
         );
+        args.insert("storageIdsOnly".to_string(), true.into());
         let value: serde_json::Value = self.query_json("transcript:getPartsForRun", args).await?;
         crate::transcript::parse_remote_parts(value)
     }
@@ -142,17 +143,11 @@ impl RuntimeClient {
             args.insert("repositoryKey".to_string(), repository_key.clone().into());
         }
         args.insert("prompt".to_string(), request.prompt.clone().into());
-        args.insert(
-            "imageUploadIds".to_string(),
-            Value::Array(
-                request
-                    .image_upload_ids
-                    .iter()
-                    .cloned()
-                    .map(Value::from)
-                    .collect(),
-            ),
-        );
+        insert_attachment_ids(
+            &mut args,
+            &request.storage_ids,
+            request.image_upload_ids.as_deref(),
+        )?;
         args.insert(
             "selectedModel".to_string(),
             request.selected_model.clone().into(),
@@ -286,17 +281,11 @@ impl RuntimeClient {
             args.insert("threadId".to_string(), request.thread_id.clone().into());
         }
         args.insert("prompt".to_string(), request.prompt.clone().into());
-        args.insert(
-            "imageUploadIds".to_string(),
-            Value::Array(
-                request
-                    .image_upload_ids
-                    .iter()
-                    .cloned()
-                    .map(Value::from)
-                    .collect(),
-            ),
-        );
+        insert_attachment_ids(
+            &mut args,
+            &request.storage_ids,
+            request.image_upload_ids.as_deref(),
+        )?;
         args.insert(
             "selectedModel".to_string(),
             request.selected_model.clone().into(),
@@ -485,5 +474,69 @@ impl RuntimeClient {
         let mut args = self.run_args(run_id);
         args.insert("claimId".to_string(), claim_id.to_string().into());
         args
+    }
+}
+
+fn insert_attachment_ids(
+    args: &mut BTreeMap<String, Value>,
+    storage_ids: &[String],
+    image_upload_ids: Option<&[String]>,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        storage_ids.is_empty() || image_upload_ids.is_none(),
+        "mixed attachment identity families"
+    );
+    if let Some(ids) = image_upload_ids {
+        args.insert("imageUploadIds".to_string(), string_array(ids));
+    } else {
+        args.insert("storageIds".to_string(), string_array(storage_ids));
+    }
+    Ok(())
+}
+
+fn string_array(ids: &[String]) -> Value {
+    Value::Array(ids.iter().cloned().map(Value::from).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn keys_of(storage_ids: &[&str], image_upload_ids: Option<&[&str]>) -> Vec<String> {
+        let storage = storage_ids
+            .iter()
+            .map(|id| (*id).to_string())
+            .collect::<Vec<_>>();
+        let legacy =
+            image_upload_ids.map(|ids| ids.iter().map(|id| (*id).to_string()).collect::<Vec<_>>());
+        let mut args = BTreeMap::new();
+        insert_attachment_ids(&mut args, &storage, legacy.as_deref()).unwrap();
+        args.into_keys().collect()
+    }
+
+    #[test]
+    fn create_run_sends_storage_ids_unless_legacy_upload_ids_were_supplied() {
+        assert_eq!(keys_of(&["storage-1"], None), vec!["storageIds"]);
+        assert_eq!(keys_of(&[], None), vec!["storageIds"]);
+        assert_eq!(keys_of(&[], Some(&["upload-1"])), vec!["imageUploadIds"]);
+    }
+
+    #[test]
+    fn create_run_does_not_alias_row_ids_as_storage_ids() {
+        let mut args = BTreeMap::new();
+        insert_attachment_ids(&mut args, &[], Some(&["upload-1".into()][..])).unwrap();
+        assert!(args.get("storageIds").is_none());
+        let Value::Array(ids) = args.get("imageUploadIds").expect("legacy key") else {
+            panic!("expected array");
+        };
+        assert_eq!(ids, &vec![Value::from("upload-1".to_string())]);
+        assert!(
+            insert_attachment_ids(
+                &mut BTreeMap::new(),
+                &["storage-1".into()],
+                Some(&["upload-1".into()])
+            )
+            .is_err()
+        );
     }
 }

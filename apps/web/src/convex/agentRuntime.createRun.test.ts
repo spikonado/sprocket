@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
 import { createQueuedRun, initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
 
@@ -96,7 +96,6 @@ describe('agentRuntime.insertGatewayRun', () => {
 				text: 'Hello',
 				imageUploads: [
 					{
-						imageUploadId,
 						name: 'robot.png',
 						mediaType: 'image/png',
 						size: 5,
@@ -106,6 +105,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			}
 		});
 
+		expect(created.promptPart?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
 		const run = await t.run(async (ctx) => ctx.db.get('runs', created.runId));
 		expect(run).toMatchObject({
 			status: 'queued',
@@ -502,4 +502,162 @@ describe('agentRuntime.insertGatewayRun', () => {
 		expect(second.created).toBe(true);
 		expect(second.runId).not.toBe(first.runId);
 	});
+});
+
+describe('agentRuntime.createGatewayRun attachment identity', () => {
+	const gatewayUrl = 'https://preview.gateway.example';
+
+	beforeEach(() => {
+		process.env.MODEL_GATEWAY_URL = gatewayUrl;
+		process.env.MODEL_GATEWAY_TOKEN_SECRET = 'test-gateway-token-secret';
+	});
+
+	afterEach(() => {
+		delete process.env.MODEL_GATEWAY_URL;
+		delete process.env.MODEL_GATEWAY_TOKEN_SECRET;
+	});
+
+	it('resolves storageIds and stores storage-only prompt metadata', async () => {
+		const t = initConvexTest();
+		const { asUser, subject, threadId } = await seedOwnedThread(t);
+		const storageId = await t.run(async (ctx) => {
+			const storageId = await ctx.storage.store(new Blob(['image'], { type: 'image/png' }));
+			await ctx.db.insert('imageUploads', {
+				userId: subject,
+				storageId,
+				name: 'robot.png',
+				mediaType: 'image/png',
+				size: 5,
+				attached: false
+			});
+			return storageId;
+		});
+
+		const created = await asUser.action(api.agentRuntime.createGatewayRun, {
+			submissionId: 'storage-ids-run',
+			threadId,
+			prompt: 'Hello',
+			storageIds: [storageId],
+			selectedModel: 'gpt-5.6-sol',
+			reasoningEffort: 'medium',
+			serviceTier: 'standard',
+			executionSecret: 'storage-ids-secret'
+		});
+		expect(created.promptPart?.prompt?.imageUploads).toEqual([
+			{
+				name: 'robot.png',
+				mediaType: 'image/png',
+				size: 5,
+				storageId
+			}
+		]);
+		const stored = await t.run(async (ctx) => {
+			if (!created.promptPart) throw new Error('missing prompt part');
+			return await ctx.db.get('threadTranscriptParts', created.promptPart._id);
+		});
+		expect(stored?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
+		await expect(
+			asUser.mutation(api.agentRuntime.finalizeFailedStart, {
+				submissionId: 'storage-ids-run',
+				threadId,
+				prompt: 'Hello',
+				storageIds: [storageId],
+				selectedModel: 'gpt-5.6-sol',
+				reasoningEffort: 'medium',
+				serviceTier: 'standard',
+				executionSecret: 'storage-ids-secret',
+				text: 'Run failed before the model started.',
+				lastError: 'startup timed out'
+			})
+		).resolves.toBe('finalized');
+	}, 15_000);
+
+	it('hydrates imageUploadId on the createGatewayRun promptPart for released clients', async () => {
+		const t = initConvexTest();
+		const { asUser, subject, threadId } = await seedOwnedThread(t);
+		const file = await t.run(async (ctx) => {
+			const storageId = await ctx.storage.store(new Blob(['image'], { type: 'image/png' }));
+			const imageUploadId = await ctx.db.insert('imageUploads', {
+				userId: subject,
+				storageId,
+				name: 'robot.png',
+				mediaType: 'image/png',
+				size: 5,
+				attached: false
+			});
+			return { storageId, imageUploadId };
+		});
+
+		const created = await asUser.action(api.agentRuntime.createGatewayRun, {
+			submissionId: 'legacy-ids-run',
+			threadId,
+			prompt: 'Hello',
+			imageUploadIds: [file.imageUploadId],
+			selectedModel: 'gpt-5.6-sol',
+			reasoningEffort: 'medium',
+			serviceTier: 'standard',
+			executionSecret: 'legacy-ids-secret'
+		});
+		expect(created.promptPart?.prompt?.imageUploads[0]).toMatchObject({
+			imageUploadId: file.imageUploadId,
+			storageId: file.storageId,
+			name: 'robot.png'
+		});
+		const stored = await t.run(async (ctx) => {
+			if (!created.promptPart) throw new Error('missing prompt part');
+			return await ctx.db.get('threadTranscriptParts', created.promptPart._id);
+		});
+		expect(stored?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
+		await t.run(async (ctx) => {
+			if (!created.promptPart?.prompt) throw new Error('missing prompt part');
+			await ctx.db.patch('threadTranscriptParts', created.promptPart._id, {
+				prompt: created.promptPart.prompt
+			});
+		});
+		const retried = await asUser.action(api.agentRuntime.createGatewayRun, {
+			submissionId: 'legacy-ids-run',
+			threadId,
+			prompt: 'Hello',
+			storageIds: [file.storageId],
+			selectedModel: 'gpt-5.6-sol',
+			reasoningEffort: 'medium',
+			serviceTier: 'standard',
+			executionSecret: 'legacy-ids-secret'
+		});
+		expect(retried.runId).toBe(created.runId);
+		expect(retried.promptPart?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
+	}, 15_000);
+
+	it('rejects supplying both storageIds and imageUploadIds', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		await expect(
+			asUser.action(api.agentRuntime.createGatewayRun, {
+				submissionId: 'both-ids-run',
+				threadId,
+				prompt: 'Hello',
+				storageIds: [],
+				imageUploadIds: [],
+				selectedModel: 'gpt-5.6-sol',
+				reasoningEffort: 'medium',
+				serviceTier: 'standard',
+				executionSecret: 'both-ids-secret'
+			})
+		).rejects.toThrow('Provide storageIds or imageUploadIds, not both.');
+		await expect(
+			asUser.mutation(api.agentRuntime.finalizeFailedStart, {
+				submissionId: 'both-ids-run',
+				threadId,
+				prompt: 'Hello',
+				storageIds: [],
+				imageUploadIds: [],
+				selectedModel: 'gpt-5.6-sol',
+				reasoningEffort: 'medium',
+				serviceTier: 'standard',
+				executionSecret: 'both-ids-secret',
+				text: 'failed',
+				lastError: 'failed'
+			})
+		).rejects.toThrow('Provide storageIds or imageUploadIds, not both.');
+	}, 15_000);
 });

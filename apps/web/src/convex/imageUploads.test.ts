@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { api } from '@convex/_generated/api';
+import { api, internal } from '@convex/_generated/api';
 import type { GenericDatabaseWriter, GenericDataModel } from 'convex/server';
 import type { Id } from '@convex/_generated/dataModel';
 import { initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
@@ -196,5 +196,116 @@ describe('owned file attachments', () => {
 				executionSecret: 'five-files-secret'
 			})
 		).rejects.toThrow('One or more file attachments are unavailable.');
+	});
+});
+
+describe('imageUploads.registerFile', () => {
+	it('returns storageId instead of the row id', async () => {
+		const t = initConvexTest();
+		const asUser = t.withIdentity({ subject: 'user_alice' });
+		const storageId = await storeUpload(t, { bytes: 'hello', type: 'text/plain' });
+		const result = await asUser.mutation(api.imageUploads.registerFile, {
+			storageId,
+			name: 'notes.txt'
+		});
+		expect(result).toMatchObject({
+			storageId,
+			name: 'notes.txt',
+			mediaType: 'text/plain',
+			size: 5
+		});
+		expect('imageUploadId' in result).toBe(false);
+		expect('url' in result).toBe(true);
+	});
+
+	it('does not let another user claim a stored file', async () => {
+		const t = initConvexTest();
+		const alice = t.withIdentity({ subject: 'alice' });
+		const bob = t.withIdentity({ subject: 'bob' });
+		const storageId = await storeUpload(t, { bytes: 'hello', type: 'text/plain' });
+		await alice.mutation(api.imageUploads.registerFile, { storageId, name: 'notes.txt' });
+		await expect(
+			bob.mutation(api.imageUploads.registerFile, { storageId, name: 'stolen.txt' })
+		).rejects.toThrow('Uploaded file belongs to another user.');
+	});
+});
+
+describe('imageUploads.discardFile', () => {
+	it('deletes an owned draft by storageId and refuses other users or attached files', async () => {
+		const t = initConvexTest();
+		const { asUser, subject, threadId } = await seedOwnedThread(t);
+		const bob = t.withIdentity({ subject: 'bob' });
+		const file = await t.run(async (ctx) => {
+			const storageId = await ctx.storage.store(new Blob(['draft'], { type: 'text/plain' }));
+			await ctx.db.insert('imageUploads', {
+				userId: subject,
+				storageId,
+				name: 'draft.txt',
+				mediaType: 'text/plain',
+				size: 5,
+				attached: false
+			});
+			return storageId;
+		});
+		await expect(bob.mutation(api.imageUploads.discardFile, { storageId: file })).resolves.toBe(
+			false
+		);
+		expect(await asUser.mutation(api.imageUploads.discardFile, { storageId: file })).toBe(true);
+		expect(await t.run(async (ctx) => ctx.db.system.get('_storage', file))).toBeNull();
+
+		const attached = await t.run(async (ctx) => {
+			const storageId = await ctx.storage.store(new Blob(['kept'], { type: 'text/plain' }));
+			await ctx.db.insert('imageUploads', {
+				userId: subject,
+				storageId,
+				name: 'kept.txt',
+				mediaType: 'text/plain',
+				size: 4,
+				attached: true,
+				threadId
+			});
+			return storageId;
+		});
+		expect(await asUser.mutation(api.imageUploads.discardFile, { storageId: attached })).toBe(
+			false
+		);
+		expect(await t.run(async (ctx) => ctx.db.system.get('_storage', attached))).not.toBeNull();
+	});
+});
+
+describe('imageUploads.ownedIdsForStorageIds', () => {
+	it('resolves owned storage ids and rejects duplicates or foreign files', async () => {
+		const t = initConvexTest();
+		const { subject } = await seedOwnedThread(t);
+		const file = await t.run(async (ctx) => {
+			const storageId = await ctx.storage.store(new Blob(['file'], { type: 'text/plain' }));
+			const imageUploadId = await ctx.db.insert('imageUploads', {
+				userId: subject,
+				storageId,
+				name: 'file.txt',
+				mediaType: 'text/plain',
+				size: 4,
+				attached: false
+			});
+			return { storageId, imageUploadId };
+		});
+		expect(
+			await t.query(internal.imageUploads.ownedIdsForStorageIds, {
+				userId: subject,
+				storageIds: [file.storageId]
+			})
+		).toEqual([file.imageUploadId]);
+		await expect(
+			t.query(internal.imageUploads.ownedIdsForStorageIds, {
+				userId: subject,
+				storageIds: [file.storageId, file.storageId]
+			})
+		).rejects.toThrow('The same file cannot be attached more than once.');
+		await expect(
+			t.query(internal.imageUploads.ownedIdsForStorageIds, {
+				userId: 'user_bob',
+				storageIds: [file.storageId]
+			})
+		).rejects.toThrow('File attachment was not found.');
 	});
 });

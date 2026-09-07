@@ -157,7 +157,7 @@ impl TranscriptStore {
         let name = name.trim_end_matches(['.', ' ']);
         self.thread_dir(user_id, thread_id)
             .join("attachments")
-            .join(safe_segment(&attachment.image_upload_id))
+            .join(safe_segment(&attachment.storage_id))
             .join(format!("file-{name}"))
     }
 
@@ -170,7 +170,7 @@ impl TranscriptStore {
         let dir = self
             .thread_dir(user_id, thread_id)
             .join("attachments")
-            .join(safe_segment(&attachment.image_upload_id));
+            .join(safe_segment(&attachment.storage_id));
         tokio::fs::create_dir_all(&dir).await?;
         let mut meta = attachment.clone();
         meta.url = None;
@@ -185,16 +185,29 @@ impl TranscriptStore {
         &self,
         user_id: &str,
         thread_id: &str,
-        upload_id: &str,
+        storage_id: &str,
     ) -> anyhow::Result<Option<super::types::TranscriptAttachmentMeta>> {
         let path = self
             .thread_dir(user_id, thread_id)
             .join("attachments")
-            .join(safe_segment(upload_id))
+            .join(safe_segment(storage_id))
             .join("metadata.json");
         match tokio::fs::read(path).await {
-            Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
+            Ok(bytes) => {
+                let meta: super::types::TranscriptAttachmentMeta = serde_json::from_slice(&bytes)?;
+                anyhow::ensure!(
+                    meta.storage_id == storage_id,
+                    "cached attachment identity mismatch"
+                );
+                Ok(Some(meta))
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if let Some((_, meta)) = self
+                    .legacy_thread_attachment(user_id, thread_id, storage_id)
+                    .await?
+                {
+                    return Ok(Some(meta));
+                }
                 let state = self.load_state(user_id, thread_id).await?;
                 let numbers = state
                     .downloaded_ranges
@@ -207,17 +220,97 @@ impl TranscriptStore {
                     .into_iter()
                     .filter_map(|part| part.prompt)
                     .flat_map(|prompt| prompt.image_uploads)
-                    .find(|attachment| attachment.image_upload_id == upload_id))
+                    .find(|attachment| attachment.storage_id == storage_id))
             }
             Err(error) => Err(error.into()),
         }
+    }
+
+    pub(crate) async fn legacy_thread_attachment(
+        &self,
+        user_id: &str,
+        thread_id: &str,
+        storage_id: &str,
+    ) -> anyhow::Result<Option<(PathBuf, super::types::TranscriptAttachmentMeta)>> {
+        let dir = self.thread_dir(user_id, thread_id).join("attachments");
+        let mut entries = match tokio::fs::read_dir(&dir).await {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        while let Some(entry) = entries.next_entry().await? {
+            if !entry.file_type().await?.is_dir()
+                || entry.file_name() == safe_segment(storage_id).as_str()
+            {
+                continue;
+            }
+            let bytes = match tokio::fs::read(entry.path().join("metadata.json")).await {
+                Ok(bytes) => bytes,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error.into()),
+            };
+            let Ok(meta) = serde_json::from_slice::<super::types::TranscriptAttachmentMeta>(&bytes)
+            else {
+                continue;
+            };
+            if meta.storage_id == storage_id {
+                let current = self.attachment_path(user_id, thread_id, &meta);
+                let path = entry
+                    .path()
+                    .join(current.file_name().context("invalid attachment filename")?);
+                return Ok(Some((path, meta)));
+            }
+        }
+        Ok(None)
+    }
+
+    pub async fn legacy_attachment_metadata(
+        &self,
+        user_id: &str,
+        thread_id: &str,
+        upload_id: &str,
+    ) -> anyhow::Result<Option<super::types::TranscriptAttachmentMeta>> {
+        let path = self
+            .thread_dir(user_id, thread_id)
+            .join("attachments")
+            .join(safe_segment(upload_id))
+            .join("metadata.json");
+        match tokio::fs::read(path).await {
+            Ok(bytes) => return Ok(Some(serde_json::from_slice(&bytes)?)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        let storage_id =
+            match tokio::fs::read_to_string(self.upload_index_path(user_id, upload_id)).await {
+                Ok(id) => id.trim().to_string(),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(error) => return Err(error.into()),
+            };
+        let file = match tokio::fs::metadata(self.blob_data_path(user_id, &storage_id)).await {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        let meta = self.read_blob_meta(user_id, &storage_id).await?;
+        Ok(Some(super::types::TranscriptAttachmentMeta {
+            storage_id,
+            name: meta
+                .as_ref()
+                .map(|meta| meta.name.clone())
+                .unwrap_or_default(),
+            media_type: meta
+                .map(|meta| meta.media_type)
+                .unwrap_or_else(|| "application/octet-stream".into()),
+            size: file.len(),
+            url: None,
+            local_path: None,
+        }))
     }
 
     pub async fn discard_attachment(
         &self,
         user_id: &str,
         thread_id: Option<&str>,
-        upload_id: &str,
         storage_id: &str,
     ) -> anyhow::Result<()> {
         let lock = self.lock_attachment(user_id, storage_id).await;
@@ -230,10 +323,17 @@ impl TranscriptStore {
             }
         }
         if let Some(thread_id) = thread_id {
+            if let Some((path, _)) = self
+                .legacy_thread_attachment(user_id, thread_id, storage_id)
+                .await?
+            {
+                tokio::fs::remove_dir_all(path.parent().context("invalid attachment directory")?)
+                    .await?;
+            }
             let dir = self
                 .thread_dir(user_id, thread_id)
                 .join("attachments")
-                .join(safe_segment(upload_id));
+                .join(safe_segment(storage_id));
             if let Err(error) = tokio::fs::remove_dir_all(dir).await {
                 if error.kind() != std::io::ErrorKind::NotFound {
                     return Err(error.into());
@@ -546,18 +646,7 @@ impl TranscriptStore {
         Ok(missing)
     }
 
-    pub async fn read_blob(
-        &self,
-        user_id: &str,
-        storage_id: &str,
-    ) -> anyhow::Result<Option<Vec<u8>>> {
-        let path = self.blob_data_path(user_id, storage_id);
-        if !tokio::fs::try_exists(&path).await? {
-            return Ok(None);
-        }
-        Ok(Some(tokio::fs::read(&path).await?))
-    }
-
+    #[cfg(test)]
     pub async fn write_blob(
         &self,
         user_id: &str,
@@ -591,31 +680,6 @@ impl TranscriptStore {
         )
         .await?;
         Ok(())
-    }
-
-    pub async fn blob_for_upload(
-        &self,
-        user_id: &str,
-        image_upload_id: &str,
-    ) -> anyhow::Result<Option<StoredBlob>> {
-        let index = self.upload_index_path(user_id, image_upload_id);
-        if !tokio::fs::try_exists(&index).await? {
-            return Ok(None);
-        }
-        let storage_id = tokio::fs::read_to_string(&index).await?;
-        let Some(bytes) = self.read_blob(user_id, storage_id.trim()).await? else {
-            return Ok(None);
-        };
-        let meta = self.read_blob_meta(user_id, storage_id.trim()).await?;
-        Ok(Some(StoredBlob {
-            storage_id: storage_id.trim().to_string(),
-            media_type: meta
-                .as_ref()
-                .map(|meta| meta.media_type.clone())
-                .unwrap_or_else(|| "application/octet-stream".to_string()),
-            name: meta.map(|meta| meta.name).unwrap_or_default(),
-            bytes,
-        }))
     }
 
     pub async fn clear_thread(&self, user_id: &str, thread_id: &str) -> anyhow::Result<()> {
@@ -1075,14 +1139,6 @@ struct BlobMeta {
     storage_id: String,
     media_type: String,
     name: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct StoredBlob {
-    pub storage_id: String,
-    pub media_type: String,
-    pub name: String,
-    pub bytes: Vec<u8>,
 }
 
 fn chunk_path(dir: &Path, number: u32) -> PathBuf {
@@ -1781,7 +1837,6 @@ mod tests {
         let mut part = prompt(0, "pic");
         part.prompt.as_mut().unwrap().image_uploads.push(
             crate::transcript::types::TranscriptAttachmentMeta {
-                image_upload_id: "upload-1".into(),
                 name: "a.png".into(),
                 media_type: "image/png".into(),
                 size: 4,
@@ -1802,16 +1857,25 @@ mod tests {
             )
             .await
             .unwrap();
-        let blob = store
-            .blob_for_upload("user", "upload-1")
+        let meta = store
+            .legacy_attachment_metadata("user", "thread", "upload-1")
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(blob.bytes, b"data");
+        assert_eq!(meta.storage_id, "storage-1");
+        assert_eq!(meta.name, "a.png");
+        assert_eq!(meta.media_type, "image/png");
+        assert_eq!(meta.size, 4);
+        assert_eq!(
+            tokio::fs::read(store.blob_data_path("user", &meta.storage_id))
+                .await
+                .unwrap(),
+            b"data"
+        );
         store.clear_thread("user", "thread").await.unwrap();
         assert!(
             store
-                .blob_for_upload("user", "upload-1")
+                .legacy_attachment_metadata("user", "thread", "upload-1")
                 .await
                 .unwrap()
                 .is_none()

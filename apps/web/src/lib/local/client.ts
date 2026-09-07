@@ -57,15 +57,14 @@ const agentRunStartSchema = z.object({
 	threadId: z.string()
 });
 const localTranscriptAttachmentSchema = z.object({
-	imageUploadId: z.string(),
+	storageId: z.string(),
 	name: z.string(),
 	mediaType: z.string(),
 	size: z.int(),
-	storageId: z.string(),
 	url: z.url().optional()
 });
 const transcriptUploadSuccessSchema = z.object({
-	imageUploadId: z.string(),
+	storageId: z.string(),
 	name: z.string(),
 	mediaType: z.string(),
 	size: z.number(),
@@ -156,7 +155,7 @@ const threadCacheSnapshotSchema = threadCacheWatchEventSchema.extend({
 	threads: z.array(threadSummarySchema)
 });
 
-function asConvexId<TableName extends TableNamesInDataModel<DataModel>>(
+function asConvexId<TableName extends TableNamesInDataModel<DataModel> | '_storage'>(
 	value: string
 ): Id<TableName> {
 	// SAFETY: the local API returns Convex document ids; branding is compile-time only.
@@ -191,7 +190,7 @@ function parseTranscriptMessage(message: z.infer<typeof transcriptMessageSchema>
 		type: message.type,
 		text: message.text,
 		attachments: message.attachments.map((attachment) => ({
-			imageUploadId: asConvexId(attachment.imageUploadId),
+			storageId: asConvexId<'_storage'>(attachment.storageId),
 			name: attachment.name,
 			mediaType: attachment.mediaType,
 			size: attachment.size,
@@ -669,7 +668,7 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				return result;
 			}
 			return {
-				imageUploadId: asConvexId(result.imageUploadId),
+				storageId: asConvexId<'_storage'>(result.storageId),
 				name: result.name,
 				mediaType: result.mediaType,
 				size: result.size,
@@ -681,7 +680,7 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				method: 'POST',
 				body: JSON.stringify({
 					userId: requestBody.userId,
-					imageUploadId: requestBody.imageUploadId,
+					storageId: requestBody.storageId,
 					threadId: requestBody.threadId
 				})
 			}),

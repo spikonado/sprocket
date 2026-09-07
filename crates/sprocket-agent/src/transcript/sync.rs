@@ -57,7 +57,6 @@ struct RemotePrompt {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RemoteAttachment {
-    image_upload_id: String,
     name: String,
     media_type: String,
     #[serde(deserialize_with = "deserialize_convex_u64")]
@@ -123,7 +122,6 @@ fn to_local_part(part: RemoteTranscriptPart) -> anyhow::Result<TranscriptPart> {
                 .image_uploads
                 .into_iter()
                 .map(|upload| TranscriptAttachmentMeta {
-                    image_upload_id: upload.image_upload_id,
                     name: upload.name,
                     media_type: upload.media_type,
                     size: upload.size,
@@ -263,6 +261,34 @@ mod tests {
             vec![0, 1, 2]
         );
         let _ = tokio::fs::remove_dir_all(dir).await;
+    }
+
+    #[test]
+    fn attachment_wire_formats_serialize_with_storage_identity_only() {
+        for legacy in [false, true] {
+            let mut attachment = serde_json::json!({
+                "storageId": "storage", "name": "file.txt",
+                "mediaType": "text/plain", "size": 4.0
+            });
+            if legacy {
+                attachment["imageUploadId"] = "upload".into();
+            }
+            let parts = parse_remote_parts(serde_json::json!({"parts": [{
+                "number": 0.0, "sourceKey": "prompt:0", "kind": "prompt", "runId": "run",
+                "prompt": {"text": "hi", "imageUploads": [attachment]}
+            }]}))
+            .unwrap();
+            let meta = &parts[0].prompt.as_ref().unwrap().image_uploads[0];
+            assert_eq!(meta.storage_id, "storage");
+            let json = serde_json::to_value(meta).unwrap();
+            assert!(json.get("imageUploadId").is_none());
+            let mut old_local = json.clone();
+            old_local["imageUploadId"] = "upload".into();
+            assert_eq!(
+                serde_json::from_value::<TranscriptAttachmentMeta>(old_local).unwrap(),
+                *meta
+            );
+        }
     }
 
     #[test]

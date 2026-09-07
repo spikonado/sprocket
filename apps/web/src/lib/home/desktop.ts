@@ -12,7 +12,7 @@ import { isClaimedRunStatus, isRunClaimLeaseActive } from '$convex/lib/runLease'
 import { RUN_ABANDONED_BY_AGENT } from '$convex/lib/agentErrors';
 import { isRunFinalStatus } from '$convex/lib/validators';
 import type { SelectedThreadLifecyclePhase } from '$convex/lib/runCancellation';
-import { areImageUploadIdsEqual } from '$lib/chat/attachments';
+import { areStorageIdsEqual } from '$lib/chat/attachments';
 
 export type ProjectState = Project & {
 	localAttachmentAvailability: LocalAttachmentAvailability;
@@ -31,12 +31,12 @@ export function projectFromAttachment(attachment: ProjectAttachment): ProjectSta
 export function resolveSubmissionId(args: {
 	newSubmissionId: string;
 	prompt: string;
-	imageUploadIds: Id<'imageUploads'>[];
+	storageIds: Id<'_storage'>[];
 	reasoningEffort: AgentRunRequest['reasoningEffort'];
 	serviceTier: AgentRunRequest['serviceTier'];
 	recoveredSubmission?: {
 		prompt: string;
-		imageUploadIds?: Id<'imageUploads'>[];
+		storageIds?: Id<'_storage'>[];
 		reasoningEffort: AgentRunRequest['reasoningEffort'];
 		serviceTier: AgentRunRequest['serviceTier'];
 		selectedModel: AgentRunRequest['selectedModel'];
@@ -59,7 +59,7 @@ export function resolveSubmissionId(args: {
 		recoveredSubmission.selectedModel === args.selectedModel &&
 		recoveredSubmission.reasoningEffort === args.reasoningEffort &&
 		recoveredSubmission.serviceTier === args.serviceTier &&
-		areImageUploadIdsEqual(recoveredSubmission.imageUploadIds, args.imageUploadIds)
+		areStorageIdsEqual(recoveredSubmission.storageIds, args.storageIds)
 		? recoveredSubmission.submissionId
 		: args.newSubmissionId;
 }
@@ -119,7 +119,7 @@ export function launchAgentRun(args: {
 	threadId?: Id<'threadRecords'>;
 	repositoryKey?: string;
 	prompt: string;
-	imageUploadIds: Id<'imageUploads'>[];
+	storageIds: Id<'_storage'>[];
 	selectedModel: AgentRunRequest['selectedModel'];
 	reasoningEffort: AgentRunRequest['reasoningEffort'];
 	serviceTier: AgentRunRequest['serviceTier'];
@@ -130,7 +130,7 @@ export function launchAgentRun(args: {
 	const request: AgentRunRequest = {
 		userId: args.userId,
 		prompt: args.prompt,
-		imageUploadIds: args.imageUploadIds,
+		storageIds: args.storageIds,
 		selectedModel: args.selectedModel,
 		reasoningEffort: args.reasoningEffort,
 		serviceTier: args.serviceTier,

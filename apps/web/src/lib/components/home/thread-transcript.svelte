@@ -48,7 +48,7 @@
 		loadingOlder?: boolean;
 		hasOlder?: boolean;
 		onLoadOlder?: () => void;
-		loadAttachment?: (imageUploadId: MessageAttachment['imageUploadId']) => Promise<string | null>;
+		loadAttachment?: (storageId: MessageAttachment['storageId']) => Promise<string | null>;
 		onLoadDetails?: (message: ThreadMessage) => Promise<void>;
 	};
 
@@ -268,7 +268,7 @@
 										class="flex max-w-132 flex-wrap justify-end gap-2"
 										aria-label="Attached files"
 									>
-										{#each message.attachments as attachment (attachment.imageUploadId)}
+										{#each message.attachments as attachment (attachment.storageId)}
 											<li>
 												<TranscriptAttachment
 													{attachment}

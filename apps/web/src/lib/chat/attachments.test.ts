@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Id } from '$convex/_generated/dataModel';
 import {
+	areStorageIdsEqual,
 	attachmentMediaType,
 	fallbackAttachmentName,
 	formatAttachmentSize,
@@ -7,6 +9,11 @@ import {
 	shouldEagerLoadAttachmentPreview,
 	triggerAttachmentDownload
 } from '$lib/chat/attachments';
+
+function storageId(value: string): Id<'_storage'> {
+	// SAFETY: fixture strings are only compared as opaque Convex document ids.
+	return value as Id<'_storage'>;
+}
 
 afterEach(() => {
 	vi.unstubAllGlobals();
@@ -76,5 +83,19 @@ describe('attachment presentation', () => {
 		expect(append).toHaveBeenCalledWith(link);
 		expect(click).toHaveBeenCalledTimes(1);
 		expect(remove).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('areStorageIdsEqual', () => {
+	it('compares ordered storage ids and treats missing lists as empty', () => {
+		expect(areStorageIdsEqual(undefined, [])).toBe(true);
+		expect(areStorageIdsEqual([storageId('storage-1')], [storageId('storage-1')])).toBe(true);
+		expect(areStorageIdsEqual([storageId('storage-1')], [storageId('storage-2')])).toBe(false);
+		expect(
+			areStorageIdsEqual(
+				[storageId('storage-1'), storageId('storage-2')],
+				[storageId('storage-2'), storageId('storage-1')]
+			)
+		).toBe(false);
 	});
 });
