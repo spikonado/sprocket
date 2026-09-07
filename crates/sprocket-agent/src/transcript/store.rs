@@ -984,6 +984,7 @@ mod tests {
                     serde_json::json!({ "type": "tool-result", "callId": "c1", "name": "exec_command", "output": "secret output" }),
                     serde_json::json!({ "type": "text", "id": "t1", "text": "answer" }),
                 ],
+                ..Default::default()
             }),
             tool: None,
         }
@@ -1002,6 +1003,7 @@ mod tests {
                 items: vec![
                     serde_json::json!({ "type": "text", "id": format!("t-{number}"), "text": text }),
                 ],
+                ..Default::default()
             }),
             tool: None,
         }
@@ -1341,6 +1343,7 @@ mod tests {
                     "input": {},
                     "startedAt": 700
                 })],
+                ..Default::default()
             }),
             tool: None,
         };

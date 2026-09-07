@@ -111,6 +111,49 @@ describe('numbered transcript parts', () => {
 		expect(parts.parts[1]?.completion?.items).toEqual(items);
 	});
 
+	it('stores provider completion identity when the agent reports it', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'transcript-identity-secret';
+		const { runId } = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			'sub-identity',
+			executionSecret,
+			'Write code'
+		);
+		await asUser.mutation(api.agentRuntime.start, {
+			claimId: 'claim-identity',
+			runId,
+			executionSecret
+		});
+		await asUser.mutation(api.agentRuntime.registerCompletionAttempt, {
+			runId,
+			claimId: 'claim-identity',
+			attemptSeq: 1,
+			executionSecret
+		});
+		await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
+			runId,
+			claimId: 'claim-identity',
+			attemptSeq: 1,
+			streamId: 'stream-id',
+			items: [{ type: 'text' as const, id: 't', text: 'Done', turnId: 'stream-id' }],
+			providerResponseId: 'resp_123',
+			providerRequestId: 'req-abc',
+			providerMessageId: 'msg_456',
+			executionSecret
+		});
+		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
+		expect(parts.parts[1]?.completion).toMatchObject({
+			streamId: 'stream-id',
+			providerResponseId: 'resp_123',
+			providerRequestId: 'req-abc',
+			providerMessageId: 'msg_456'
+		});
+	});
+
 	it('normalizes missing timing from older agents on new completion writes', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);

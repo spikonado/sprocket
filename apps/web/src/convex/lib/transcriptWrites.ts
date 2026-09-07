@@ -9,7 +9,11 @@ import {
 	toolSourceKey
 } from '@convex/lib/transcriptParts';
 import { isSettledExecutorJobStatus } from '@convex/lib/runs';
-import type { TranscriptCompletionItem, TranscriptToolBody } from '@convex/lib/validators';
+import type {
+	TranscriptCompletionBody,
+	TranscriptCompletionItem,
+	TranscriptToolBody
+} from '@convex/lib/validators';
 
 type TranscriptToolJob = Pick<
 	Doc<'executorJobs'>,
@@ -48,10 +52,26 @@ export async function recordCompletionTranscript(
 		runId: Id<'runs'>;
 		streamId: string;
 		items: TranscriptCompletionItem[];
+		providerResponseId?: string;
+		providerRequestId?: string;
+		providerMessageId?: string;
 	}
 ): Promise<number | null> {
 	if (args.items.length === 0) {
 		return null;
+	}
+	const completion: TranscriptCompletionBody = {
+		streamId: args.streamId,
+		items: args.items
+	};
+	if (args.providerResponseId !== undefined) {
+		completion.providerResponseId = args.providerResponseId;
+	}
+	if (args.providerRequestId !== undefined) {
+		completion.providerRequestId = args.providerRequestId;
+	}
+	if (args.providerMessageId !== undefined) {
+		completion.providerMessageId = args.providerMessageId;
 	}
 	const result = await appendTranscriptPart(ctx, {
 		threadId: args.threadId,
@@ -59,7 +79,7 @@ export async function recordCompletionTranscript(
 		sourceKey: completionSourceKey(args.runId, args.streamId),
 		kind: 'completion',
 		runId: args.runId,
-		completion: { streamId: args.streamId, items: args.items }
+		completion
 	});
 	return result.part.number;
 }

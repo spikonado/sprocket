@@ -73,6 +73,12 @@ struct RemoteCompletion {
     #[serde(default)]
     stream_id: Option<String>,
     items: Vec<serde_json::Value>,
+    #[serde(default)]
+    provider_response_id: Option<String>,
+    #[serde(default)]
+    provider_request_id: Option<String>,
+    #[serde(default)]
+    provider_message_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -135,6 +141,9 @@ fn to_local_part(part: RemoteTranscriptPart) -> anyhow::Result<TranscriptPart> {
         completion: part.completion.map(|completion| TranscriptCompletionBody {
             stream_id: completion.stream_id,
             items: completion.items,
+            provider_response_id: completion.provider_response_id,
+            provider_request_id: completion.provider_request_id,
+            provider_message_id: completion.provider_message_id,
         }),
         tool: part.tool.map(|tool| TranscriptToolBody {
             job_id: tool.job_id,

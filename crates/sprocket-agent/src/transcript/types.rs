@@ -145,12 +145,19 @@ pub struct TranscriptAttachmentMeta {
     pub url: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptCompletionBody {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream_id: Option<String>,
+    #[serde(default)]
     pub items: Vec<JsonValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_response_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_request_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_message_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -247,5 +254,32 @@ mod tests {
             part.prompt.as_ref().map(|prompt| prompt.text.as_str()),
             Some("hi")
         );
+    }
+
+    #[test]
+    fn completion_body_round_trips_provider_identity() {
+        let body = TranscriptCompletionBody {
+            stream_id: Some("agent:run:claim:1".into()),
+            items: vec![serde_json::json!({ "type": "text", "text": "ok" })],
+            provider_response_id: Some("resp_123".into()),
+            provider_request_id: Some("req-abc".into()),
+            provider_message_id: Some("msg_456".into()),
+        };
+        let value = serde_json::to_value(&body).unwrap();
+        assert_eq!(value["streamId"], "agent:run:claim:1");
+        assert_eq!(value["providerResponseId"], "resp_123");
+        assert_eq!(value["providerRequestId"], "req-abc");
+        assert_eq!(value["providerMessageId"], "msg_456");
+        let decoded: TranscriptCompletionBody = serde_json::from_value(value).unwrap();
+        assert_eq!(decoded, body);
+
+        let legacy: TranscriptCompletionBody = serde_json::from_value(serde_json::json!({
+            "streamId": "s",
+            "items": []
+        }))
+        .unwrap();
+        assert_eq!(legacy.provider_response_id, None);
+        assert_eq!(legacy.provider_request_id, None);
+        assert_eq!(legacy.provider_message_id, None);
     }
 }
