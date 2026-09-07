@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 use tokio::time::sleep;
 
+use crate::hosted_live::HostedLiveSnapshot;
 use crate::types::{
     CreateRunResponse, GatewayCredential, RenewClaimResponse, RunAgentRequest, RunContextResponse,
     StartRunResponse,
@@ -247,6 +248,26 @@ impl RuntimeClient {
         args.insert("attemptSeq".to_string(), Value::Float64(attempt_seq as f64));
         self.mutation_unit("agentRuntime:registerCompletionAttempt", args)
             .await
+    }
+
+    pub(crate) async fn publish_hosted_live(
+        &self,
+        snapshot: &HostedLiveSnapshot,
+        sequence: u64,
+    ) -> anyhow::Result<()> {
+        let mut args = self.run_args_with_claim(&snapshot.run_id, &snapshot.claim_id);
+        args.insert(
+            "attemptSeq".to_string(),
+            Value::Float64(snapshot.attempt_seq as f64),
+        );
+        args.insert("streamId".to_string(), snapshot.stream_id.clone().into());
+        args.insert("sequence".to_string(), Value::Float64(sequence as f64));
+        args.insert("text".to_string(), snapshot.text.clone().into());
+        args.insert(
+            "parts".to_string(),
+            Value::try_from(serde_json::to_value(&snapshot.parts)?)?,
+        );
+        self.mutation_unit("hostedLive:publish", args).await
     }
 
     pub(crate) async fn finalize_completion_call(

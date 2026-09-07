@@ -26,6 +26,7 @@ import {
 	vTranscriptPromptBody,
 	vTranscriptToolBody
 } from '@convex/lib/validators';
+import { vMachineCommand, vMachineRequestStatus } from '@convex/lib/machineRequests';
 
 export default defineSchema({
 	users: defineTable({
@@ -46,10 +47,33 @@ export default defineSchema({
 		appVersion: v.string(),
 		credentialHash: v.string(),
 		lastSeenAt: v.optional(v.number()),
+		remoteProtocolVersion: v.optional(v.literal(1)),
 		runIds: v.array(v.id('runs')),
 		createdAt: v.number(),
 		updatedAt: v.number()
 	}).index('by_userId_and_machineId', ['userId', 'machineId']),
+	machineRequests: defineTable({
+		userId: v.string(),
+		machineId: v.string(),
+		requestId: v.string(),
+		credentialHash: v.string(),
+		command: vMachineCommand,
+		status: vMachineRequestStatus,
+		expiresAt: v.number(),
+		claimedAt: v.optional(v.number()),
+		claimExpiresAt: v.optional(v.number()),
+		completedAt: v.optional(v.number()),
+		result: v.optional(v.string()),
+		error: v.optional(v.string())
+	})
+		.index('by_userId_and_requestId', ['userId', 'requestId'])
+		.index('by_userId_and_machineId_and_status', ['userId', 'machineId', 'status'])
+		.index('by_userId_and_machineId_and_credentialHash_and_status', [
+			'userId',
+			'machineId',
+			'credentialHash',
+			'status'
+		]),
 	billingCustomers: defineTable({
 		userId: v.string(),
 		dodoCustomerId: v.string()
@@ -206,7 +230,12 @@ export default defineSchema({
 		runId: v.id('runs'),
 		userId: v.string(),
 		sequence: v.number(),
-		streamAttemptId: v.optional(v.string())
+		streamAttemptId: v.optional(v.string()),
+		// Hosted live overlay snapshot. Older rows omit it; missing means no overlay.
+		liveOverlayJson: v.optional(v.string()),
+		// Sequence is monotonic only within this claim+attempt epoch.
+		liveEpochClaimId: v.optional(v.string()),
+		liveEpochAttemptSeq: v.optional(v.number())
 	}),
 	imageUploads: defineTable({
 		userId: v.string(),

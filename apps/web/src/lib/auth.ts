@@ -8,6 +8,8 @@ import {
 	resolveLocalApiBaseUrl,
 	type LocalBootstrap
 } from '$lib/local/client';
+import { consumeHostedLoginSearch, hostedLoginFailureMessage } from '$lib/hosted-login';
+import { isHostedWeb } from '$lib/runtime-mode';
 import { derived, get, writable } from 'svelte/store';
 
 export type AuthUser = Pick<User, 'id' | 'email' | 'firstName' | 'lastName' | 'profilePictureUrl'>;
@@ -19,7 +21,8 @@ type AuthStatus = {
 	isWaitingForBrowserSignIn: boolean;
 	browserSignInUrl: string | null;
 	user: AuthUser | null;
-	nativeSession: 'notRequired' | 'loading' | 'ready' | 'missing' | 'mismatch' | 'unavailable';
+	nativeSession:
+		'notRequired' | 'loading' | 'ready' | 'missing' | 'mismatch' | 'unavailable' | 'retryable';
 	error: string | null;
 };
 
@@ -74,6 +77,7 @@ const MISMATCH_ERROR =
 	'The browser and native sessions use different accounts. Sign out, then sign in with the same account.';
 const NATIVE_SETUP_ERROR = 'Finish setting up sign-in before starting an agent.';
 const TRANSIENT_AUTH_ERROR = 'Native sign-in is temporarily unavailable. Try again.';
+const HOSTED_TRANSIENT_AUTH_ERROR = 'Hosted sign-in is temporarily unavailable. Try again.';
 let convexRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
 const ACCOUNT_BINDING_ERROR =
 	'This device is signed in with a different account. Sign out, then sign in with the same account.';
@@ -83,19 +87,21 @@ export type AuthRuntime = {
 	resolveLocalApiBaseUrl: () => string | null;
 	readDesktopBootstrap: (baseUrl: string) => Promise<LocalBootstrap | null>;
 	ensureLocalSession: (baseUrl: string, bootstrap?: LocalBootstrap | null) => Promise<void>;
+	isHostedWeb: () => boolean;
 };
 
 const productionAuthRuntime: AuthRuntime = {
 	createAuthKitClient: createClient,
 	resolveLocalApiBaseUrl,
 	readDesktopBootstrap,
-	ensureLocalSession
+	ensureLocalSession,
+	isHostedWeb: () => isHostedWeb
 };
 
 let authRuntime: AuthRuntime = productionAuthRuntime;
 
-export function setAuthRuntime(nextRuntime: AuthRuntime) {
-	authRuntime = nextRuntime;
+export function setAuthRuntime(nextRuntime: Partial<AuthRuntime>) {
+	authRuntime = { ...productionAuthRuntime, ...nextRuntime };
 }
 
 function currentWindow() {
@@ -110,7 +116,7 @@ let desktopSignInAttempt: DesktopSignInAttempt | null = null;
 let desktopLoginStartQueue: Promise<void> = Promise.resolve();
 let installedAuthMode: InstalledAuthMode = 'undecided';
 let authGeneration = 0;
-let nativeTokenInflight: {
+let tokenInflight: {
 	generation: number;
 	forceRefreshToken: boolean;
 	promise: Promise<NativeTokenOutcome>;
@@ -127,7 +133,7 @@ export function resetAuthRuntime() {
 	isSigningOut = false;
 	installedAuthMode = 'undecided';
 	authGeneration = 0;
-	nativeTokenInflight = null;
+	tokenInflight = null;
 	authRuntime = productionAuthRuntime;
 	convexAuthRetryVersion.set(0);
 	convexAuthRetryPending.set(false);
@@ -206,13 +212,16 @@ function isLegacyMissingEndpoint(status: number) {
 }
 
 function isInstalledApp() {
+	if (authRuntime.isHostedWeb()) {
+		return false;
+	}
 	return Boolean(getDesktopBridge() || isInstalledBrowserApp());
 }
 
 function invalidateAuthGeneration() {
 	clearConvexRecovery();
 	authGeneration += 1;
-	nativeTokenInflight = null;
+	tokenInflight = null;
 }
 
 function getAuthBootstrapClient() {
@@ -354,6 +363,11 @@ export async function initializeAuth(convexClient: AuthBootstrapClient) {
 	});
 
 	try {
+		if (authRuntime.isHostedWeb()) {
+			await initializeHostedSessionAuth(generation);
+			return;
+		}
+
 		if (isInstalledApp()) {
 			await pairLocalSession();
 			if (generation !== authGeneration) {
@@ -377,6 +391,78 @@ export async function initializeAuth(convexClient: AuthBootstrapClient) {
 			nativeSession: current.nativeSession === 'loading' ? 'unavailable' : current.nativeSession,
 			error: error instanceof Error ? error.message : 'Failed to initialize authentication.'
 		}));
+	}
+}
+
+async function initializeHostedSessionAuth(generation: number) {
+	const loginError = takeHostedLoginFailureMessage();
+	const outcome = await requestHostedSessionToken(false, generation);
+	if (generation !== authGeneration) {
+		return;
+	}
+	applyHostedInitializeOutcome(outcome, loginError);
+}
+
+function takeHostedLoginFailureMessage(): string | null {
+	const appWindow = currentWindow();
+	if (!appWindow) {
+		return null;
+	}
+	const consumed = consumeHostedLoginSearch(appWindow.location.search ?? '');
+	if (!consumed) {
+		return null;
+	}
+	appWindow.history.replaceState(
+		appWindow.history.state,
+		'',
+		`${appWindow.location.pathname}${consumed.search}${appWindow.location.hash}`
+	);
+	return consumed.reason ? hostedLoginFailureMessage(consumed.reason) : null;
+}
+
+function applyHostedInitializeOutcome(outcome: NativeTokenOutcome, loginError: string | null) {
+	switch (outcome.kind) {
+		case 'session':
+			authState.set({
+				isLoading: false,
+				isReady: true,
+				isConfigured: true,
+				isWaitingForBrowserSignIn: false,
+				browserSignInUrl: null,
+				user: outcome.user,
+				nativeSession: 'notRequired',
+				error: null
+			});
+			return;
+		case 'signedOut':
+			authState.set(signedOutState({ error: loginError }));
+			return;
+		case 'transient':
+			authState.update((current) => ({
+				...current,
+				isLoading: false,
+				isReady: true,
+				isConfigured: true,
+				isWaitingForBrowserSignIn: false,
+				browserSignInUrl: null,
+				nativeSession: 'retryable',
+				error: loginError ?? outcome.error
+			}));
+			return;
+		case 'error':
+			authState.update((current) => ({
+				...current,
+				isLoading: false,
+				isReady: true,
+				nativeSession: 'notRequired',
+				error: loginError ?? outcome.error
+			}));
+			return;
+		case 'stale':
+		case 'pairing':
+		case 'mismatch':
+		case 'legacyUnavailable':
+			return;
 	}
 }
 
@@ -669,15 +755,16 @@ export async function reconcileNativeAuthentication() {
 	await repairLegacyNativeSessionWithoutBrowserUser();
 }
 
-async function requestNativeSessionToken(
+async function requestSessionToken(
 	forceRefreshToken: boolean,
-	generation: number
+	generation: number,
+	load: (forceRefreshToken: boolean) => Promise<NativeTokenOutcome>
 ): Promise<NativeTokenOutcome> {
 	if (generation !== authGeneration) {
 		return { kind: 'stale' };
 	}
 
-	const inflight = nativeTokenInflight;
+	const inflight = tokenInflight;
 	if (inflight && inflight.generation === generation) {
 		const shared = await inflight.promise;
 		if (generation !== authGeneration) {
@@ -688,8 +775,8 @@ async function requestNativeSessionToken(
 		}
 	}
 
-	const promise = fetchNativeSessionToken(forceRefreshToken);
-	nativeTokenInflight = { generation, forceRefreshToken, promise };
+	const promise = load(forceRefreshToken);
+	tokenInflight = { generation, forceRefreshToken, promise };
 	try {
 		const outcome = await promise;
 		if (generation !== authGeneration) {
@@ -697,10 +784,17 @@ async function requestNativeSessionToken(
 		}
 		return outcome;
 	} finally {
-		if (nativeTokenInflight?.promise === promise) {
-			nativeTokenInflight = null;
+		if (tokenInflight?.promise === promise) {
+			tokenInflight = null;
 		}
 	}
+}
+
+async function requestNativeSessionToken(
+	forceRefreshToken: boolean,
+	generation: number
+): Promise<NativeTokenOutcome> {
+	return await requestSessionToken(forceRefreshToken, generation, fetchNativeSessionToken);
 }
 
 async function fetchNativeSessionToken(forceRefreshToken: boolean): Promise<NativeTokenOutcome> {
@@ -754,6 +848,57 @@ async function fetchNativeSessionToken(forceRefreshToken: boolean): Promise<Nati
 	const parsed = nativeSessionTokenSchema.safeParse(await response.json().catch(() => undefined));
 	if (!parsed.success) {
 		return { kind: 'error', error: 'Local server returned an invalid native session.' };
+	}
+	if (parsed.data === null) {
+		return { kind: 'signedOut' };
+	}
+	return {
+		kind: 'session',
+		accessToken: parsed.data.accessToken,
+		user: toAuthUser(parsed.data.user)
+	};
+}
+
+async function requestHostedSessionToken(
+	forceRefreshToken: boolean,
+	generation: number
+): Promise<NativeTokenOutcome> {
+	return await requestSessionToken(forceRefreshToken, generation, fetchHostedSessionToken);
+}
+
+async function fetchHostedSessionToken(forceRefreshToken: boolean): Promise<NativeTokenOutcome> {
+	let response: Response;
+	try {
+		response = await fetch('/api/auth/session/token', {
+			method: 'POST',
+			credentials: 'include',
+			signal: AbortSignal.timeout(30_000),
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ forceRefreshToken })
+		});
+	} catch {
+		return {
+			kind: 'transient',
+			error: HOSTED_TRANSIENT_AUTH_ERROR
+		};
+	}
+
+	if (isTransientHttpStatus(response.status)) {
+		return {
+			kind: 'transient',
+			error: await errorMessageFromFailedResponse(response, HOSTED_TRANSIENT_AUTH_ERROR)
+		};
+	}
+	if (!response.ok) {
+		return {
+			kind: 'error',
+			error: await errorMessageFromFailedResponse(response, 'Failed to read the hosted session.')
+		};
+	}
+
+	const parsed = nativeSessionTokenSchema.safeParse(await response.json().catch(() => undefined));
+	if (!parsed.success) {
+		return { kind: 'error', error: 'Hosted server returned an invalid session.' };
 	}
 	if (parsed.data === null) {
 		return { kind: 'signedOut' };
@@ -1165,6 +1310,11 @@ export function clearDesktopSignInOpenError() {
 }
 
 async function authenticate(flow: AuthFlow) {
+	if (authRuntime.isHostedWeb()) {
+		window.location.assign(flow === 'signUp' ? '/api/auth/sign-up' : '/api/auth/sign-in');
+		return;
+	}
+
 	if (isInstalledApp()) {
 		await authenticateWithLoopbackBrowser(flow);
 		return;
@@ -1197,6 +1347,7 @@ export async function signUp() {
 }
 
 export async function signOut() {
+	const previousUser = get(authState).user;
 	cancelDesktopSignIn();
 	isSigningOut = true;
 	invalidateAuthGeneration();
@@ -1206,7 +1357,21 @@ export async function signOut() {
 	let browserSignOutFailed = false;
 	let remainingBrowserUser: AuthUser | null = null;
 	try {
-		if (isInstalledApp()) {
+		if (authRuntime.isHostedWeb()) {
+			try {
+				const response = await fetch('/api/auth/sign-out', {
+					method: 'POST',
+					credentials: 'include'
+				});
+				if (!response.ok) {
+					errors.push(
+						await errorMessageFromFailedResponse(response, 'Failed to clear hosted session.')
+					);
+				}
+			} catch (error) {
+				errors.push(error instanceof Error ? error.message : 'Failed to clear hosted session.');
+			}
+		} else if (isInstalledApp()) {
 			try {
 				await clearNativeSession();
 			} catch (error) {
@@ -1243,6 +1408,17 @@ export async function signOut() {
 			}
 		}
 		convexAuthRetryPending.set(false);
+		if (errors.length > 0 && authRuntime.isHostedWeb()) {
+			authState.update((current) => ({
+				...current,
+				isLoading: false,
+				isReady: true,
+				user: current.user ?? previousUser,
+				nativeSession: 'notRequired',
+				error: errors.join(' ')
+			}));
+			return;
+		}
 		authState.set(
 			signedOutState({
 				user: browserSignOutFailed ? remainingBrowserUser : null,
@@ -1264,6 +1440,15 @@ export async function signOut() {
 export async function getAccessToken({
 	forceRefreshToken = false
 }: { forceRefreshToken?: boolean } = {}) {
+	if (authRuntime.isHostedWeb()) {
+		const generation = authGeneration;
+		const outcome = await requestHostedSessionToken(forceRefreshToken, generation);
+		if (generation !== authGeneration || outcome.kind === 'stale') {
+			return null;
+		}
+		return applyHostedAccessTokenOutcome(outcome, generation);
+	}
+
 	if (isInstalledApp() && installedAuthMode !== 'legacy') {
 		const generation = authGeneration;
 		const outcome = await requestNativeSessionToken(forceRefreshToken, generation);
@@ -1359,6 +1544,40 @@ function applyNativeAccessTokenOutcome(outcome: NativeTokenOutcome, generation: 
 			throw new Error(outcome.error);
 		case 'error':
 			throw new Error(outcome.error);
+		case 'legacyUnavailable':
+		case 'stale':
+			return null;
+	}
+}
+
+function applyHostedAccessTokenOutcome(outcome: NativeTokenOutcome, generation: number) {
+	if (generation !== authGeneration) {
+		return null;
+	}
+
+	switch (outcome.kind) {
+		case 'session':
+			authState.update((current) => ({
+				...current,
+				user: outcome.user,
+				nativeSession: 'notRequired',
+				error: null
+			}));
+			return outcome.accessToken;
+		case 'signedOut':
+			authState.update((current) => ({
+				...current,
+				user: null,
+				nativeSession: 'notRequired',
+				error: null
+			}));
+			return null;
+		case 'transient':
+			throw new Error(outcome.error);
+		case 'error':
+			throw new Error(outcome.error);
+		case 'pairing':
+		case 'mismatch':
 		case 'legacyUnavailable':
 		case 'stale':
 			return null;

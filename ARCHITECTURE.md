@@ -54,7 +54,7 @@ The system has three main planes:
 
 WorkOS establishes cloud user identity. Installed clients share one Rust-owned
 WorkOS session across the renderer, agent runs, and machine registration.
-Hosted web clients use AuthKit JS. A separate local
+The hosted website uses a Vercel-managed WorkOS session. A separate local
 pairing mechanism authorizes the browser or Electron renderer to access the
 machine-facing API.
 
@@ -102,6 +102,34 @@ Vite serves the web app while the Rust process serves only the local API.
 Vite proxies API requests during development so the application code uses the
 same paths in every runtime mode.
 
+### Hosted website
+
+The Vercel build serves the same Svelte interface at
+`https://sprocket.spikonado.com`. Its server routes handle WorkOS login and a
+secure, HTTP-only browser session. The browser obtains short-lived access tokens
+for Convex through the same origin; it never receives a WorkOS refresh token.
+
+The hosted client reads threads and transcripts from Convex, without depending
+on a running machine. A composer selection determines which signed-in machine
+handles filesystem requests and the next agent submission. Machine-specific
+workspace paths are resolved again when that selection changes.
+
+Rust maintains an outbound Convex subscription while signed in. The hosted
+client queues typed requests for an owned, online machine, and that machine
+claims and executes them. No inbound ports, Tailscale access, or per-machine
+OAuth redirects are required. Vercel does not execute agents or proxy arbitrary
+requests to the local HTTP server.
+
+Browser submissions carry a deadline that also bounds offline mutation delivery.
+Queued commands expire rather than replay after a reconnect. A claimed command
+executes once. Its result receipt has a deadline, but filesystem work cannot be
+cancelled safely, so the worker waits for it before accepting another command.
+Receipt expiry means the outcome is unknown, not that local side effects were
+rolled back. It never requeues the command; the UI asks the user to check the
+machine before retrying. Claims are not renewed indefinitely by a hung filesystem.
+For agent submissions, the hosted client can recover the run ID from the durable
+submission record even if the machine's result acknowledgement never arrives.
+
 ## State ownership
 
 Sprocket deliberately separates cloud and machine-local state.
@@ -113,6 +141,7 @@ Sprocket deliberately separates cloud and machine-local state.
 | Local thread summary cache (active per attached project, archived on demand) | Local server         |
 | Local transcript replica                                                     | Local server         |
 | Current assistant stream                                                     | Local process memory |
+| Bounded hosted live snapshot                                                 | Convex               |
 | Local folder list (`workspacePath` + `repositoryKey`)                        | Local server         |
 | Installation identity and this process’s machine credential                  | Local server         |
 | Machine presence                                                             | Convex               |
@@ -126,13 +155,14 @@ Sprocket deliberately separates cloud and machine-local state.
 The local server owns this machine’s folder list and the account-isolated
 thread summary cache. Convex threads store a `repositoryKey`. When a folder is
 attached here, Rust watches that key’s active snapshot and writes it locally;
-archived threads download when the UI asks. The web app reads the cache, not
+archived threads download when the UI asks. The installed web app reads the cache, not
 `threads.listMine`. Folders that are not attached here stay hidden until they
-are added.
+are added. The hosted client instead reads paginated, owner-authorized cloud
+records so an offline machine cannot hide existing conversations.
 
-Rename, archive, restore, rekey, and cancellation go through the local server
+In installed clients, rename, archive, restore, rekey, and cancellation go through the local server
 so it can refresh the affected cache files before the UI reads them again.
-Thread creation and selected-thread lifecycle still talk to Convex directly.
+The hosted client sends these operations directly to Convex.
 
 ## Agent run flow
 
@@ -194,16 +224,23 @@ The agent persists model output incrementally to Convex. Stream attempt and
 ordering metadata prevent a delayed completion attempt from replacing a newer
 one.
 
-The transcript renderer never reads transcript content from Convex. It pages
-durable parts from the Rust replica and overlays the current Rust
-live-completion stream. Convex assigns durable part numbers; Svelte renders
-that order and keeps no cross-thread transcript cache.
+The installed transcript renderer pages durable parts from the Rust replica and
+overlays the current Rust live-completion stream. The hosted adapter pages
+durable parts from Convex and overlays a bounded cloud snapshot published by the
+agent. Claim, attempt, and sequence fences reject stale snapshots; terminal runs
+and persisted streams hide them. The publisher coalesces updates and limits
+payload size and retries rather than blocking execution on a live update. Both
+clients render the authoritative part order through the same transcript components.
+Both transports return numbered projected parts; the shared browser assembler
+joins responses across pages and replaces hydrated details by part number.
+Svelte keeps no cross-thread transcript cache.
 
 ## Authentication and trust boundaries
 
 Cloud and local authorization solve different problems:
 
-- **Browser cloud identity:** AuthKit JS owns the hosted web session. Installed
+- **Browser cloud identity:** Vercel owns the hosted WorkOS session and stores it
+  in an encrypted, HTTP-only cookie. Installed
   renderers obtain short-lived access tokens from the Rust-owned session through
   the paired, same-origin, loopback-only native token endpoint. Convex validates them
   as JWTs (`apps/web/src/convex/auth.config.ts`) and checks ownership before
@@ -231,6 +268,13 @@ Cloud and local authorization solve different problems:
   goes stale.
 - **Desktop trust:** Electron isolates the renderer, validates its origin, and
   exposes only a small set of IPC calls to the renderer.
+- **Remote machine requests:** Convex derives the requester from its validated
+  user JWT and checks machine ownership and protocol support. Requests bind to
+  the current process credential, expire if not started promptly, and can be
+  claimed only once. The machine authenticates with its native account and
+  process credential before claiming or acknowledging work. A lost claim
+  acknowledgement never permits speculative execution. A browser session ending
+  does not sign out the machine or cancel an already-started run.
 
 The local server binds to loopback by default. Exposing it on another interface
 changes the trust model and should be treated as a security-sensitive

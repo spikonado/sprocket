@@ -19,7 +19,7 @@ use sprocket_agent::{
 };
 use tokio::sync::broadcast;
 use tokio::sync::oneshot;
-use tokio::time::timeout;
+use tokio::time::{Instant, timeout};
 use uuid::Uuid;
 
 use crate::AppState;
@@ -31,26 +31,26 @@ const AGENT_START_CLEANUP_TIMEOUT: Duration = Duration::from_secs(12);
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct RunAgentApiRequest {
-    user_id: String,
-    submission_id: String,
+pub(crate) struct RunAgentApiRequest {
+    pub(crate) user_id: String,
+    pub(crate) submission_id: String,
     #[serde(default)]
-    thread_id: Option<String>,
+    pub(crate) thread_id: Option<String>,
     #[serde(default)]
-    repository_key: Option<String>,
-    prompt: String,
-    image_upload_ids: Vec<String>,
-    selected_model: String,
-    reasoning_effort: String,
-    service_tier: String,
-    workspace_path: String,
+    pub(crate) repository_key: Option<String>,
+    pub(crate) prompt: String,
+    pub(crate) image_upload_ids: Vec<String>,
+    pub(crate) selected_model: String,
+    pub(crate) reasoning_effort: String,
+    pub(crate) service_tier: String,
+    pub(crate) workspace_path: String,
     #[serde(default)]
-    continuation_of_run_id: Option<String>,
+    pub(crate) continuation_of_run_id: Option<String>,
 }
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-struct RunAgentStartResponse {
+pub(crate) struct RunAgentStartResponse {
     run_id: String,
     thread_id: String,
 }
@@ -70,6 +70,15 @@ async fn run_agent_handler(
     require_session_user(&state.auth, &headers, &jar, &payload.user_id)
         .await
         .map_err(ApiError::unauthorized)?;
+    let started = launch_agent_run(state, payload, None).await?;
+    Ok((StatusCode::ACCEPTED, Json(started)))
+}
+
+pub(crate) async fn launch_agent_run(
+    state: AppState,
+    payload: RunAgentApiRequest,
+    launch_deadline: Option<Instant>,
+) -> Result<RunAgentStartResponse, ApiError> {
     state
         .native_auth
         .require_user(&payload.user_id)
@@ -113,6 +122,12 @@ async fn run_agent_handler(
     let transcript = Arc::clone(&state.transcript);
     let transcript_watchers = Arc::clone(&state.transcript_watchers);
     let (start_result_sender, start_result_receiver) = oneshot::channel();
+
+    if launch_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+        return Err(ApiError::bad_request(anyhow!(
+            "The hosted launch expired while checking the workspace. No agent was started."
+        )));
+    }
 
     // Detach the complete launch before waiting for its acknowledgement. Hyper
     // may drop this handler when the browser closes the tab; the executor must
@@ -180,10 +195,7 @@ async fn run_agent_handler(
             )
         })?
         .map_err(|error| ApiError::internal_with("failed to start agent run", anyhow!(error)))?;
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(RunAgentStartResponse { run_id, thread_id }),
-    ))
+    Ok(RunAgentStartResponse { run_id, thread_id })
 }
 
 #[derive(Debug, Deserialize)]

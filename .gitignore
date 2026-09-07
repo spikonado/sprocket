@@ -23,6 +23,7 @@ node_modules
 
 # Svelte
 .svelte-kit
+.vercel
 
 # Testing
 coverage

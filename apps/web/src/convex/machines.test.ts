@@ -154,6 +154,29 @@ describe('machines', () => {
 		expect(await asOtherUser.query(api.machines.listMine, {})).toHaveLength(1);
 	});
 
+	it('reports remote protocol version only when the machine registered it', async () => {
+		const t = initConvexTest();
+		const { asUser } = await seedOwnedThread(t);
+		await asUser.mutation(api.machines.register, {
+			...machine,
+			credentialHash: await executionSecretHash('credential-a')
+		});
+		expect((await asUser.query(api.machines.listMine, {}))[0]).not.toHaveProperty(
+			'remoteProtocolVersion'
+		);
+
+		await asUser.mutation(api.machines.register, {
+			...machine,
+			remoteProtocolVersion: 1,
+			credentialHash: await executionSecretHash('credential-a')
+		});
+		expect((await asUser.query(api.machines.listMine, {}))[0]).toMatchObject({
+			machineId: machine.machineId,
+			online: true,
+			remoteProtocolVersion: 1
+		});
+	});
+
 	it('reports only recently heartbeated machines as online', async () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));

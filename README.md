@@ -82,6 +82,8 @@ Common Sprocket server overrides are available as environment variables:
 
 ## Development
 
+Hosted web deployment and WorkOS setup are documented in [apps/web/README.md](apps/web/README.md#hosted-vercel-deployment). The hosted site uses the same UI as the installed app, with outbound Convex coordination to signed-in machines rather than inbound tunnels.
+
 ### Requirements
 
 - Bun 1.x, version 1.3.9 or newer

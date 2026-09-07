@@ -15,6 +15,7 @@ use tokio::time::{sleep, timeout};
 use crate::compaction::{ContextCompactionHook, HANDOFF_PROMPT, context_summary_text};
 use crate::convex::RuntimeClient;
 use crate::hooks::{AgentPromptHook, GatewayRequestHook, ToolCallTracker};
+use crate::hosted_live::{HostedLivePublisher, HostedLiveSnapshot};
 use crate::live::{
     LiveAssistantPart, LiveAssistantParts, LiveCompletionHub, LiveCompletionOverlay,
     join_assistant_text_parts, now_ms,
@@ -500,6 +501,7 @@ fn transcript_error(
 struct TranscriptSink {
     runtime: RuntimeClient,
     live: Arc<LiveCompletionHub>,
+    hosted_live: HostedLivePublisher,
     run_id: String,
     claim_id: String,
     thread_id: String,
@@ -525,10 +527,26 @@ impl TranscriptSink {
         runtime
             .register_completion_attempt(&run_id, &claim_id, 1)
             .await?;
+        let hosted_live = HostedLivePublisher::spawn({
+            let runtime = runtime.clone();
+            move |snapshot, sequence| {
+                let runtime = runtime.clone();
+                async move {
+                    match runtime.publish_hosted_live(&snapshot, sequence).await {
+                        Ok(()) => true,
+                        Err(error) => {
+                            eprintln!("sprocket-agent: hosted live snapshot failed: {error:#}");
+                            false
+                        }
+                    }
+                }
+            }
+        });
         Ok(Self {
             stream_id: format!("agent:{run_id}:{claim_id}:1"),
             runtime,
             live,
+            hosted_live,
             run_id,
             claim_id,
             thread_id,
@@ -659,7 +677,7 @@ impl TranscriptSink {
     fn publish(&mut self) {
         self.unpublished = 0;
         self.last_publish = Instant::now();
-        self.live.publish(LiveCompletionOverlay {
+        let overlay = LiveCompletionOverlay {
             thread_id: self.thread_id.clone(),
             run_id: self.run_id.clone(),
             run_status: "running".to_string(),
@@ -667,6 +685,15 @@ impl TranscriptSink {
             text: join_assistant_text_parts(&self.parts.parts),
             parts: visible_live_parts(&self.parts.parts),
             run_started_at: self.run_started_at,
+        };
+        self.live.publish(overlay.clone());
+        self.hosted_live.publish(HostedLiveSnapshot {
+            run_id: overlay.run_id,
+            claim_id: self.claim_id.clone(),
+            attempt_seq: self.attempt_seq,
+            stream_id: self.stream_id.clone(),
+            text: overlay.text,
+            parts: overlay.parts,
         });
     }
 

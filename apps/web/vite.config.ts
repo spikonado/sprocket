@@ -4,7 +4,12 @@ import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vitest/config';
 import { DEV_API_URL, WEB_DEV_PORT } from '../desktop/local-config.mjs';
 
+const hosted = process.env.PUBLIC_SPROCKET_HOSTED === 'true';
+
 export default defineConfig({
+	define: {
+		'import.meta.env.PUBLIC_SPROCKET_HOSTED': JSON.stringify(hosted ? 'true' : 'false')
+	},
 	resolve: {
 		alias: {
 			'@convex': path.resolve('./src/convex'),
@@ -14,12 +19,14 @@ export default defineConfig({
 	server: {
 		port: WEB_DEV_PORT,
 		strictPort: true,
-		proxy: {
-			'/api': {
-				target: DEV_API_URL,
-				changeOrigin: false
-			}
-		}
+		proxy: hosted
+			? undefined
+			: {
+					'/api': {
+						target: DEV_API_URL,
+						changeOrigin: false
+					}
+				}
 	},
 	plugins: [tailwindcss(), sveltekit()],
 	test: {

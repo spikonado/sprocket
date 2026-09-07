@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { CornerLeftUp, Folder, FolderPlus, LoaderCircle } from '@lucide/svelte';
 	import type { DesktopApi, FilesystemBrowseEntry } from '$lib/types/sprocket';
 	import {
@@ -51,6 +52,11 @@
 	let errorMessage = $state<string | null>(null);
 	let browseRequestId = 0;
 	let opened = $state(false);
+	let destroyed = false;
+	onDestroy(() => {
+		destroyed = true;
+		browseRequestId += 1;
+	});
 
 	const browseFilterQuery = $derived(getBrowseLeafPathSegment(query).toLowerCase());
 	const filteredEntries = $derived.by(() => {
@@ -212,7 +218,7 @@
 	}
 
 	async function confirmSelection() {
-		if (volumeList) {
+		if (volumeList || isSubmitting || destroyed || !open) {
 			return;
 		}
 
@@ -230,14 +236,16 @@
 				workspacePath,
 				createIfMissing: willCreateDirectory
 			});
+			if (destroyed || !open) return;
 
 			await onSelect({
 				workspacePath: resolution.workspacePath,
 				displayName: resolution.displayName,
 				repositoryKey: resolution.repositoryKey
 			});
-			onClose();
+			if (!destroyed && open) onClose();
 		} catch (error) {
+			if (destroyed || !open) return;
 			errorMessage =
 				error instanceof Error ? error.message : 'Failed to open the selected project.';
 		} finally {

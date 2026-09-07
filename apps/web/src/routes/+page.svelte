@@ -2,9 +2,10 @@
 	import { onMount, untrack } from 'svelte';
 	import { elapsedSeconds, tickingNow } from '$lib/chat/elapsed-time';
 	import { page } from '$app/state';
-	import { PanelRight } from '@lucide/svelte';
+	import { browser } from '$app/environment';
+	import { Menu, PanelRight } from '@lucide/svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-	import { useAuth, useMutation, useQuery } from 'convex-svelte';
+	import { useAuth, useMutation, useQuery, getConvexClient } from 'convex-svelte';
 	import type { Doc, Id } from '$convex/_generated/dataModel';
 	import { api } from '$convex/_generated/api';
 	import {
@@ -36,6 +37,7 @@
 	import { DEFAULT_SIDE_PANEL_SNAPSHOT, type SidePanelSnapshot } from '$lib/chat/side-panel';
 	import ProjectPicker, { type ProjectSelection } from '$lib/components/home/project-picker.svelte';
 	import ProjectSidebar from '$lib/components/home/project-sidebar.svelte';
+	import WorkspaceNav from '$lib/components/home/workspace-nav.svelte';
 	import Button from '$lib/components/ui/button/button.svelte';
 	import {
 		attachLocalProject as attachLocalProjectForPath,
@@ -86,6 +88,32 @@
 		readWorkspaceLaunchFromHash,
 		resolveDesktopApi
 	} from '$lib/local/client';
+	import { isHostedWeb } from '$lib/runtime-mode';
+	import { createHostedApi } from '$lib/hosted/client';
+	import {
+		advanceHostedEpoch,
+		applyHostedAttachmentRefresh,
+		beginHostedOp,
+		hostedComposerNotice,
+		hostedMachineFromListRow,
+		hostedMachineSelectorOptions,
+		hostedNavUsesDrawer,
+		hostedOpIsCurrent,
+		isSelectedHostedMachineReady,
+		selectedHostedMachine,
+		type HostedMachinePresence,
+		type HostedOp
+	} from '$lib/home/hosted-machines';
+	import {
+		hostedExecutionProject,
+		hostedInitialSelectionReady,
+		hostedLaunchWorkspaceIsSafe,
+		hostedThreadWorkspacePath,
+		isHostedVirtualWorkspacePath,
+		mergeHostedBrowsableProjects,
+		shouldVerifyHostedWorkspace,
+		workspaceAfterHostedMachineChange
+	} from '$lib/home/hosted-projects';
 	import { resolve } from '$app/paths';
 	import { applyTheme, resolveTheme, type SprocketTheme } from '$lib/theme';
 	import type {
@@ -110,6 +138,7 @@
 			$authState.nativeSession === 'mismatch' ||
 			$authState.nativeSession === 'unavailable'
 	);
+	const hostedAuthRetryable = $derived($authState.nativeSession === 'retryable');
 	const nativeSignInRequired = $derived(
 		$authState.nativeSession === 'missing' || $authState.nativeSession === 'mismatch'
 	);
@@ -129,7 +158,9 @@
 			!convexAuth.isLoading &&
 			!convexAuth.isAuthenticated
 	);
-	const authGateBlocked = $derived(authConnectionFailed || nativeAuthBlocked);
+	const authGateBlocked = $derived(
+		authConnectionFailed || nativeAuthBlocked || hostedAuthRetryable
+	);
 
 	$effect(() => {
 		const next = advanceConvexAuthRetryPending({
@@ -197,6 +228,12 @@
 	};
 	let desktopApi = $state<DesktopApi | null>(null);
 	let desktopApiResolved = $state(false);
+	let selectedHostedMachineId = $state<string | null>(null);
+	let hostedSelectionEpoch = $state(0);
+	let hostedNavOpen = $state(false);
+	let hostedViewportWidth = $state(browser ? window.innerWidth : 1024);
+	let hostedWorkspaceError = $state<string | null>(null);
+	const hostedNavDrawer = $derived(hostedNavUsesDrawer(isHostedWeb, hostedViewportWidth));
 	let currentWorkspacePath = $state<string | null>(null);
 	let currentRepositoryKey = $state<string | null>(null);
 	let currentThreadId = $state<Id<'threadRecords'> | null>(null);
@@ -382,6 +419,9 @@
 	}
 
 	const uiPreferencesQuery = useQuery(api.uiPreferences.getMine, getAuthenticatedQueryArgs);
+	const hostedMachinesQuery = useQuery(api.machines.listMine, () =>
+		isHostedWeb && getAuthenticatedQueryArgs() !== 'skip' ? {} : 'skip'
+	);
 	let workspaceTheme = $state<SprocketTheme>(resolveTheme(null));
 	let hasHydratedTheme = false;
 	let lastServerTheme: SprocketTheme | null | undefined = undefined;
@@ -480,12 +520,29 @@
 
 		return null;
 	});
-	const projects = $derived.by<ProjectState[]>(() =>
+	const threads = $derived(threadSnapshotThreads.map(threadRecordToSummary));
+	const hostedMachines = $derived.by<HostedMachinePresence[]>(() =>
+		(hostedMachinesQuery.data ?? []).map(hostedMachineFromListRow)
+	);
+	const hostedMachineNow = $derived(isHostedWeb ? tickingNow() : 0);
+	const selectedHostedMachineReady = $derived(
+		isSelectedHostedMachineReady(hostedMachines, selectedHostedMachineId, hostedMachineNow)
+	);
+	const attachedProjects = $derived.by<ProjectState[]>(() =>
 		Object.values(desktopProjectAttachmentsByPath)
 			.sort((left, right) => right.lastUsedAt - left.lastUsedAt)
 			.map(projectFromAttachment)
 	);
-	const threads = $derived(threadSnapshotThreads.map(threadRecordToSummary));
+	const projects = $derived.by<ProjectState[]>(() => {
+		if (!isHostedWeb) {
+			return attachedProjects;
+		}
+		return mergeHostedBrowsableProjects({
+			attachedProjects,
+			threads,
+			hasReadyMachine: selectedHostedMachineReady
+		});
+	});
 	const currentActiveThread = $derived(dataForThread(activeThreadQuery.data, currentThreadId));
 	const contextUsage = $derived.by(() => {
 		const model = modelCatalog
@@ -705,7 +762,12 @@
 		return {
 			workspacePath,
 			load: async () => {
-				if (!api || !workspacePath) {
+				if (
+					!api ||
+					!workspacePath ||
+					isHostedVirtualWorkspacePath(workspacePath) ||
+					(isHostedWeb && !selectedHostedMachineReady)
+				) {
 					return [];
 				}
 				const result = await api.listWorkspaceSkills({ workspacePath });
@@ -877,14 +939,55 @@
 	);
 	const canSend = $derived(
 		Boolean(
+			(!isHostedWeb || selectedHostedMachineReady) &&
 			currentProjectPath &&
 			currentProject?.localAttachmentAvailability === 'available' &&
+			!isHostedVirtualWorkspacePath(currentProjectPath) &&
 			!isSubmittingPrompt &&
 			!answeringAgentQuestion &&
 			!hasPendingAgentLaunch &&
 			((!isRunInProgress && isLatestRunReady) || pendingAgentQuestion)
 		)
 	);
+	const hostedMachineOptions = $derived(
+		hostedMachineSelectorOptions(hostedMachines, selectedHostedMachineId, hostedMachineNow)
+	);
+	const hostedNeedsFolder = $derived(
+		Boolean(
+			isHostedWeb &&
+			selectedHostedMachineReady &&
+			hasLoadedDesktopProjectAttachments &&
+			(currentThreadId || currentWorkspacePath) &&
+			!hostedExecutionProject({
+				repositoryKey: currentRepositoryKey,
+				attachedProjects
+			})
+		)
+	);
+	const hostedNotice = $derived.by(() => {
+		if (!isHostedWeb) {
+			return null;
+		}
+		const machinesError = hostedMachinesQuery.error;
+		if (hostedMachinesQuery.data === undefined && !machinesError) {
+			return { text: 'Loading machines…', offerFolderPicker: false };
+		}
+		return hostedComposerNotice({
+			machines: hostedMachines,
+			selectedMachineId: selectedHostedMachineId,
+			now: hostedMachineNow,
+			machinesQueryError:
+				machinesError instanceof Error
+					? (convexClientErrorMessage(machinesError) ?? machinesError.message)
+					: machinesError
+						? 'Could not load machines.'
+						: null,
+			workspaceLoadError: hostedWorkspaceError,
+			needsFolder: hostedNeedsFolder,
+			selectedMachineName: selectedHostedMachine(hostedMachines, selectedHostedMachineId)
+				?.friendlyName
+		});
+	});
 	const recentProjectDirectories = $derived.by(() => {
 		const seen = new SvelteSet<string>();
 		const recents: Array<{ workspacePath: string; displayName: string }> = [];
@@ -906,24 +1009,149 @@
 		return recents.sort((left, right) => right.displayName.localeCompare(left.displayName));
 	});
 
-	async function refreshDesktopProjectAttachments() {
-		const refreshGeneration = ++desktopProjectAttachmentsGeneration;
-		const nextAttachments = await refreshDesktopProjectAttachmentsFromDesktop(desktopApi);
-		if (refreshGeneration !== desktopProjectAttachmentsGeneration) {
-			return;
-		}
-
-		desktopProjectAttachmentsByPath = nextAttachments;
-		hasLoadedDesktopProjectAttachments = true;
-		await rekeyChangedLocalRepositories(nextAttachments);
-		await registerThreadCacheForCurrentUser();
+	function invalidateHostedOps() {
+		hostedSelectionEpoch = advanceHostedEpoch(hostedSelectionEpoch);
 	}
 
-	async function rekeyChangedLocalRepositories(next: Record<string, ProjectAttachment>) {
+	function beginLiveHostedOp(): HostedOp {
+		return beginHostedOp(hostedSelectionEpoch);
+	}
+
+	function isLiveHostedOp(op: HostedOp): boolean {
+		return !isHostedWeb || hostedOpIsCurrent(op, hostedSelectionEpoch);
+	}
+
+	function closeHostedNav() {
+		hostedNavOpen = false;
+	}
+
+	$effect(() => {
+		if (!isHostedWeb) {
+			return;
+		}
+		const sync = () => {
+			hostedViewportWidth = window.innerWidth;
+		};
+		sync();
+		window.addEventListener('resize', sync);
+		return () => {
+			window.removeEventListener('resize', sync);
+		};
+	});
+
+	$effect(() => {
+		if (!hostedNavDrawer && hostedNavOpen) {
+			hostedNavOpen = false;
+		}
+	});
+
+	async function refreshDesktopProjectAttachments() {
+		if (isHostedWeb && !selectedHostedMachineId) {
+			desktopProjectAttachmentsByPath = {};
+			hasLoadedDesktopProjectAttachments = true;
+			return;
+		}
+		const op = beginLiveHostedOp();
+		const refreshGeneration = ++desktopProjectAttachmentsGeneration;
+		try {
+			const nextAttachments = await refreshDesktopProjectAttachmentsFromDesktop(desktopApi);
+			if (
+				applyHostedAttachmentRefresh({
+					op,
+					currentEpoch: hostedSelectionEpoch,
+					selectionGeneration: refreshGeneration,
+					currentGeneration: desktopProjectAttachmentsGeneration,
+					attachments: nextAttachments
+				}) === null
+			) {
+				return;
+			}
+
+			desktopProjectAttachmentsByPath = nextAttachments;
+			hasLoadedDesktopProjectAttachments = true;
+			hostedWorkspaceError = null;
+			await rekeyChangedLocalRepositories(nextAttachments, op);
+			if (!isHostedWeb) {
+				await registerThreadCacheForCurrentUser();
+			}
+		} catch (error) {
+			if (refreshGeneration !== desktopProjectAttachmentsGeneration) {
+				return;
+			}
+			if (!isLiveHostedOp(op)) {
+				return;
+			}
+			hasLoadedDesktopProjectAttachments = true;
+			if (isHostedWeb) {
+				hostedWorkspaceError =
+					error instanceof Error ? error.message : 'Could not load projects from this machine.';
+				return;
+			}
+			throw error;
+		}
+	}
+
+	async function reloadHostedMachineProjects() {
+		desktopProjectAttachmentsGeneration += 1;
+		desktopProjectAttachmentsByPath = {};
+		hostedWorkspaceError = null;
+		if (!selectedHostedMachineId) {
+			hasLoadedDesktopProjectAttachments = true;
+			return;
+		}
+		hasLoadedDesktopProjectAttachments = false;
+		await refreshDesktopProjectAttachments();
+	}
+
+	function selectHostedMachine(machineId: string | null) {
+		const nextMachineId = machineId;
+		if (nextMachineId && nextMachineId !== selectedHostedMachineId) {
+			const option = hostedMachineOptions.find((entry) => entry.id === nextMachineId);
+			if (option && !option.selectable) {
+				return;
+			}
+		}
+		if (nextMachineId === selectedHostedMachineId) {
+			return;
+		}
+		invalidateHostedOps();
+		selectedHostedMachineId = nextMachineId;
+		projectPickerOpen = false;
+		projectPickerReconnectWorkspacePath = null;
+		projectPickerExpectedDisplayName = undefined;
+		const nextWorkspace = workspaceAfterHostedMachineChange({
+			currentThreadId,
+			currentRepositoryKey
+		});
+		if (nextWorkspace.workspacePath) {
+			setProjectSelection(
+				nextWorkspace.workspacePath,
+				nextWorkspace.keepThread ? currentThreadId : null,
+				false,
+				true
+			);
+		} else {
+			projectSelectionGeneration += 1;
+			currentWorkspacePath = null;
+			currentRepositoryKey = null;
+			currentThreadId = null;
+			draftWorkspacePath = null;
+			pendingCreatedThreadId = null;
+		}
+		void reloadHostedMachineProjects();
+	}
+
+	async function rekeyChangedLocalRepositories(
+		next: Record<string, ProjectAttachment>,
+		op: HostedOp = beginLiveHostedOp()
+	) {
 		if (getAuthenticatedQueryArgs() === 'skip') {
 			return;
 		}
 		for (const attachment of Object.values(next)) {
+			if (!isLiveHostedOp(op)) {
+				return;
+			}
 			const previousKey = attachment.previousRepositoryKey;
 			if (!previousKey || previousKey === attachment.repositoryKey) {
 				continue;
@@ -939,7 +1167,7 @@
 			if (currentWorkspacePath === attachment.workspacePath) {
 				currentRepositoryKey = attachment.repositoryKey;
 			}
-			await attachLocalProject(attachment.workspacePath);
+			await attachLocalProject(attachment.workspacePath, undefined, op);
 		}
 	}
 
@@ -952,10 +1180,23 @@
 		return { api, userId };
 	}
 
+	function hostedLaunchStillSafe(workspacePath: string, op: HostedOp): boolean {
+		if (!isHostedWeb) {
+			return true;
+		}
+		return hostedLaunchWorkspaceIsSafe({
+			op,
+			currentEpoch: hostedSelectionEpoch,
+			machineId: selectedHostedMachineId,
+			workspacePath,
+			attachedProjects
+		});
+	}
+
 	async function signOut() {
 		const api = desktopApi;
 		const userId = getCurrentUserId();
-		if (api && userId) {
+		if (api && userId && !isHostedWeb) {
 			await api.endAccountSession({ userId }).catch(() => {});
 		}
 		await authSignOut();
@@ -994,6 +1235,7 @@
 	async function registerThreadCacheForCurrentUser(
 		selectedThreadId: Id<'threadRecords'> | null = currentThreadId
 	) {
+		const op = beginLiveHostedOp();
 		const api = desktopApi;
 		const userId = getCurrentUserId();
 		if (!api || !userId) {
@@ -1007,7 +1249,7 @@
 			request.selectedThreadId = selectedThreadId;
 		}
 		const event = await api.registerThreadCache(request);
-		if (getCurrentUserId() !== userId) {
+		if (getCurrentUserId() !== userId || !isLiveHostedOp(op)) {
 			return;
 		}
 		applyThreadCacheEvent(event);
@@ -1099,9 +1341,19 @@
 		applyProjectSelection(workspacePath, threadId, draft);
 	}
 
-	async function attachLocalProject(workspacePath: string, replaceWorkspacePath?: string) {
+	async function attachLocalProject(
+		workspacePath: string,
+		replaceWorkspacePath?: string,
+		op: HostedOp = beginLiveHostedOp()
+	) {
 		if (!desktopApi) {
 			throw new Error(localServerRequiredMessage);
+		}
+		if (
+			isHostedVirtualWorkspacePath(workspacePath) ||
+			isHostedVirtualWorkspacePath(replaceWorkspacePath)
+		) {
+			throw new Error('Choose a folder on the selected machine.');
 		}
 
 		const attachment = await attachLocalProjectForPath({
@@ -1109,7 +1361,12 @@
 			workspacePath,
 			replaceWorkspacePath
 		});
-		desktopProjectAttachmentsGeneration += 1;
+		if (!isLiveHostedOp(op)) {
+			return attachment;
+		}
+		if (!isHostedWeb) {
+			desktopProjectAttachmentsGeneration += 1;
+		}
 		const nextAttachments = {
 			...desktopProjectAttachmentsByPath,
 			[attachment.workspacePath]: attachment
@@ -1126,6 +1383,7 @@
 		workspacePath: string,
 		selection: { threadId?: Id<'threadRecords'> | null; draft?: boolean } = {}
 	) {
+		closeHostedNav();
 		const project = findProjectByWorkspacePath(projects, workspacePath);
 		if (!project) {
 			currentError = 'Choose a project first.';
@@ -1133,11 +1391,19 @@
 		}
 
 		setProjectSelection(workspacePath, selection.threadId, selection.draft);
+		if (!shouldVerifyHostedWorkspace(project) && isHostedWeb) {
+			return;
+		}
 		const selectionGeneration = projectSelectionGeneration;
+		const op = beginLiveHostedOp();
 		void verifyProject(project.workspacePath).catch((error) => {
-			if (selectionGeneration === projectSelectionGeneration) {
-				currentError = error instanceof Error ? error.message : 'Failed to attach project.';
+			if (selectionGeneration !== projectSelectionGeneration) {
+				return;
 			}
+			if (!isLiveHostedOp(op)) {
+				return;
+			}
+			currentError = error instanceof Error ? error.message : 'Failed to attach project.';
 		});
 	}
 
@@ -1145,8 +1411,13 @@
 		mode: 'add' | 'reconnect' = 'add',
 		workspacePath: string | null = null
 	) {
+		closeHostedNav();
 		if (!desktopApi) {
 			currentError = localServerRequiredMessage;
+			return;
+		}
+		if (isHostedWeb && !selectedHostedMachineReady) {
+			hostedWorkspaceError = 'Choose a running, up-to-date machine before attaching a folder.';
 			return;
 		}
 
@@ -1159,6 +1430,7 @@
 		projectPickerExpectedDisplayName = reconnectProject?.displayName;
 		projectPickerOpen = true;
 		currentError = null;
+		hostedWorkspaceError = null;
 	}
 
 	async function handleProjectSelected(selection: ProjectSelection) {
@@ -1171,20 +1443,25 @@
 			currentError = 'User session is not ready.';
 			return;
 		}
+		const op = beginLiveHostedOp();
 
 		try {
 			if (projectPickerMode === 'reconnect' && projectPickerReconnectWorkspacePath) {
 				await reconnectProjectSelection(
 					selection,
 					projectPickerReconnectWorkspacePath,
-					pickerUserId
+					pickerUserId,
+					op
 				);
 				return;
 			}
 
-			await addProjectSelection(selection, pickerUserId);
+			await addProjectSelection(selection, pickerUserId, op);
 		} catch (error) {
 			if (getCurrentUserId() !== pickerUserId) {
+				return;
+			}
+			if (!isLiveHostedOp(op)) {
 				return;
 			}
 			currentError = error instanceof Error ? error.message : 'Failed to attach project.';
@@ -1192,9 +1469,16 @@
 		}
 	}
 
-	async function addProjectSelection(selection: ProjectSelection, expectedUserId: string) {
-		await attachLocalProject(selection.workspacePath);
+	async function addProjectSelection(
+		selection: ProjectSelection,
+		expectedUserId: string,
+		op: HostedOp = beginLiveHostedOp()
+	) {
+		await attachLocalProject(selection.workspacePath, undefined, op);
 		if (getCurrentUserId() !== expectedUserId) {
+			return;
+		}
+		if (!isLiveHostedOp(op)) {
 			return;
 		}
 		setProjectSelection(selection.workspacePath, null, true);
@@ -1204,14 +1488,23 @@
 	async function reconnectProjectSelection(
 		selection: ProjectSelection,
 		previousWorkspacePath: string,
-		expectedUserId: string
+		expectedUserId: string,
+		op: HostedOp = beginLiveHostedOp()
 	) {
+		if (isHostedVirtualWorkspacePath(previousWorkspacePath)) {
+			await addProjectSelection(selection, expectedUserId, op);
+			return;
+		}
 		const previousProject = findProjectByWorkspacePath(projects, previousWorkspacePath);
 		await attachLocalProject(
 			selection.workspacePath,
-			previousWorkspacePath === selection.workspacePath ? undefined : previousWorkspacePath
+			previousWorkspacePath === selection.workspacePath ? undefined : previousWorkspacePath,
+			op
 		);
 		if (getCurrentUserId() !== expectedUserId) {
+			return;
+		}
+		if (!isLiveHostedOp(op)) {
 			return;
 		}
 		if (
@@ -1225,6 +1518,9 @@
 			)
 		) {
 			await rekeyLocalRepository(previousProject.repositoryKey, selection.repositoryKey);
+		}
+		if (!isLiveHostedOp(op)) {
+			return;
 		}
 		const keepThread =
 			previousProject?.repositoryKey === selection.repositoryKey ? currentThreadId : null;
@@ -1265,6 +1561,9 @@
 	}
 
 	async function verifyProject(workspacePath: string) {
+		if (isHostedVirtualWorkspacePath(workspacePath)) {
+			return;
+		}
 		await verifyProjectAttachmentForExecution({
 			desktopApi,
 			refreshDesktopProjectAttachments,
@@ -1273,6 +1572,10 @@
 	}
 
 	function reconnectProject(workspacePath: string) {
+		if (isHostedVirtualWorkspacePath(workspacePath)) {
+			openProjectPicker('add');
+			return;
+		}
 		openProjectPicker('reconnect', workspacePath);
 	}
 
@@ -1482,6 +1785,15 @@
 			currentError = 'Choose a project first.';
 			return;
 		}
+		if (isHostedWeb && !selectedHostedMachineReady) {
+			currentError = 'Choose a running machine before sending.';
+			return;
+		}
+		if (isHostedVirtualWorkspacePath(workspacePath)) {
+			currentError = 'Attach a folder on the selected machine before sending.';
+			return;
+		}
+		const submittedOp = beginLiveHostedOp();
 
 		if (!desktopApi) {
 			currentError = localServerRequiredMessage;
@@ -1515,7 +1827,8 @@
 			currentError = 'User session is not ready.';
 			return;
 		}
-		const isSubmittedUserCurrent = () => getCurrentUserId() === submittedUserId;
+		const isSubmittedUserCurrent = () =>
+			getCurrentUserId() === submittedUserId && isLiveHostedOp(submittedOp);
 		const submittedPrompt = prompt.trim();
 		const submittedAttachments = composerAttachments.map((attachment) => ({ ...attachment }));
 		const submittedImageUploadIds = submittedAttachments.flatMap((attachment) =>
@@ -1568,6 +1881,8 @@
 			latestSubmissionSequencesByRecoveryScope.get(submissionTrackingKey) === submissionSequence;
 		const sessionChangedMessage =
 			'Your session changed before the agent started. Return to this account and send the prompt again.';
+		const machineChangedMessage =
+			'The selected machine changed before the agent started. Send the prompt again.';
 		const submissionDelayMessage =
 			'This request is still preparing. Wait for it to finish before trying again.';
 		const recoverSubmission = (message: string) => {
@@ -1607,14 +1922,26 @@
 		submittingPromptScopes.set(submissionScope, submissionSequence);
 
 		try {
+			if (!hostedLaunchStillSafe(workspacePath, submittedOp)) {
+				recoverSubmission(machineChangedMessage);
+				return;
+			}
 			if (!selectedThreadId) {
 				const resolution = await desktopApi.resolveWorkspacePath({ workspacePath });
 				if (!isSubmissionCurrent()) {
 					return;
 				}
+				if (!hostedLaunchStillSafe(workspacePath, submittedOp)) {
+					recoverSubmission(machineChangedMessage);
+					return;
+				}
 				if (resolution.repositoryKey !== submittedRepositoryKey) {
-					await attachLocalProject(resolution.workspacePath);
+					await attachLocalProject(resolution.workspacePath, undefined, submittedOp);
 					if (!isSubmissionCurrent()) {
+						return;
+					}
+					if (!hostedLaunchStillSafe(workspacePath, submittedOp)) {
+						recoverSubmission(machineChangedMessage);
 						return;
 					}
 					const siblingStillHasPreviousKey = projects.some(
@@ -1648,6 +1975,10 @@
 			}
 			if (!isSubmittedUserCurrent()) {
 				recoverSubmission(sessionChangedMessage);
+				return;
+			}
+			if (!hostedLaunchStillSafe(workspacePath, submittedOp)) {
+				recoverSubmission(machineChangedMessage);
 				return;
 			}
 			clearSubmissionDelay();
@@ -1764,6 +2095,7 @@
 	}
 
 	async function cancelRun() {
+		const op = beginLiveHostedOp();
 		if (!runState?.runId || !isRunInProgress) {
 			return;
 		}
@@ -1775,7 +2107,9 @@
 				runId: runState.runId
 			});
 		} catch (error) {
-			currentError = error instanceof Error ? error.message : 'Failed to cancel run.';
+			if (isLiveHostedOp(op)) {
+				currentError = error instanceof Error ? error.message : 'Failed to cancel run.';
+			}
 		}
 	}
 
@@ -1800,6 +2134,20 @@
 		if (!workspacePath || !userId) {
 			return;
 		}
+		if (isHostedWeb && !selectedHostedMachineReady) {
+			currentError = 'Choose a running machine before continuing.';
+			return;
+		}
+		if (isHostedVirtualWorkspacePath(workspacePath)) {
+			currentError = 'Attach a folder on the selected machine before continuing.';
+			return;
+		}
+		const submittedOp = beginLiveHostedOp();
+		if (!hostedLaunchStillSafe(workspacePath, submittedOp)) {
+			currentError =
+				'The selected machine changed before the agent started. Send the prompt again.';
+			return;
+		}
 		const previousRunId = runState.runId;
 		const previousStartedAt = runState.startedAt;
 		const launchId = ++nextAgentLaunchId;
@@ -1814,10 +2162,16 @@
 			if (getCurrentUserId() !== userId) {
 				throw new Error('User session is not ready.');
 			}
+			if (!hostedLaunchStillSafe(workspacePath, submittedOp)) {
+				throw new Error(
+					'The selected machine changed before the agent started. Send the prompt again.'
+				);
+			}
 			await launchAgentRun({
 				userId,
 				desktopApi,
 				onError: (error) => {
+					if (getCurrentUserId() !== userId || !isLiveHostedOp(submittedOp)) return;
 					pendingAgentLaunches = clearPendingAgentLaunch(pendingAgentLaunches, threadId, launchId);
 					currentError = error.message;
 				},
@@ -1833,6 +2187,7 @@
 				continuationOfRunId: previousRunId
 			});
 		} catch (error) {
+			if (getCurrentUserId() !== userId || !isLiveHostedOp(submittedOp)) return;
 			pendingAgentLaunches = clearPendingAgentLaunch(pendingAgentLaunches, threadId, launchId);
 			currentError = error instanceof Error ? error.message : 'Failed to continue the run.';
 		}
@@ -1860,6 +2215,15 @@
 		threadSnapshotThreads = [];
 		threadSnapshotPullGeneration += 1;
 		projectSelectionGeneration += 1;
+		invalidateHostedOps();
+		closeHostedNav();
+		selectedHostedMachineId = null;
+		hostedWorkspaceError = null;
+		if (isHostedWeb) {
+			desktopProjectAttachmentsGeneration += 1;
+			desktopProjectAttachmentsByPath = {};
+			hasLoadedDesktopProjectAttachments = true;
+		}
 		prompt = '';
 		clearComposerAttachments({ discard: true });
 		currentError = null;
@@ -1988,33 +2352,53 @@
 			return;
 		}
 
-		if (!hasLoadedDesktopProjectAttachments || !threadSnapshotReady) {
+		if (isHostedWeb) {
+			if (
+				!hostedInitialSelectionReady({
+					threadSnapshotReady,
+					selectedMachineId: selectedHostedMachineId,
+					attachmentsReady: hasLoadedDesktopProjectAttachments
+				})
+			) {
+				return;
+			}
+		} else if (!hasLoadedDesktopProjectAttachments || !threadSnapshotReady) {
 			return;
 		}
 
 		hasResolvedInitialSelection = true;
-		const localRepositoryKeys = new Set(projects.map((project) => project.repositoryKey));
+		const localRepositoryKeys = new Set(attachedProjects.map((project) => project.repositoryKey));
 		const restoredThread = pickThreadToRestore(
-			threads.filter((thread) => localRepositoryKeys.has(thread.repositoryKey))
+			isHostedWeb
+				? threads
+				: threads.filter((thread) => localRepositoryKeys.has(thread.repositoryKey))
 		);
 		if (restoredThread) {
 			const restoredProject = findProjectByRepositoryKey(projects, restoredThread.repositoryKey);
 			if (restoredProject) {
 				setProjectSelection(restoredProject.workspacePath, restoredThread.threadId, false, true);
-				restoredWorkspacePathToAttach = restoredProject.workspacePath;
+				if (shouldVerifyHostedWorkspace(restoredProject)) {
+					restoredWorkspacePathToAttach = restoredProject.workspacePath;
+				}
 				return;
 			}
 		}
 
 		if (projects[0]) {
 			setProjectSelection(projects[0].workspacePath, null, false, true);
-			restoredWorkspacePathToAttach = projects[0].workspacePath;
+			if (shouldVerifyHostedWorkspace(projects[0])) {
+				restoredWorkspacePathToAttach = projects[0].workspacePath;
+			}
 		}
 	});
 
 	$effect(() => {
 		const workspacePath = restoredWorkspacePathToAttach;
 		if (!workspacePath || !desktopApi || !hasLoadedDesktopProjectAttachments) {
+			return;
+		}
+		if (isHostedVirtualWorkspacePath(workspacePath)) {
+			restoredWorkspacePathToAttach = null;
 			return;
 		}
 
@@ -2026,15 +2410,32 @@
 
 		restoredWorkspacePathToAttach = null;
 		const selectionGeneration = projectSelectionGeneration;
+		const op = beginLiveHostedOp();
 		void verifyProject(workspacePath).catch((error) => {
-			if (selectionGeneration === projectSelectionGeneration) {
-				currentError = error instanceof Error ? error.message : 'Failed to attach project.';
+			if (selectionGeneration !== projectSelectionGeneration) {
+				return;
 			}
+			if (!isLiveHostedOp(op)) {
+				return;
+			}
+			currentError = error instanceof Error ? error.message : 'Failed to attach project.';
 		});
 	});
 
 	$effect(() => {
 		const activeThreadSummary = currentThreadId ? findThreadById(threads, currentThreadId) : null;
+		if (isHostedWeb) {
+			const nextPath = hostedThreadWorkspacePath({
+				threadRepositoryKey: activeThreadSummary?.repositoryKey,
+				currentWorkspacePath,
+				attachedProjects,
+				browsableProjects: projects
+			});
+			if (nextPath && nextPath !== currentWorkspacePath) {
+				setProjectSelection(nextPath, currentThreadId, draftWorkspacePath === nextPath, true);
+			}
+			return;
+		}
 		const threadProject =
 			currentProject?.repositoryKey === activeThreadSummary?.repositoryKey
 				? currentProject
@@ -2090,6 +2491,20 @@
 
 	onMount(() => {
 		void loadModelCatalog();
+		if (isHostedWeb) {
+			initialProjectLaunchResolved = true;
+			hasLoadedDesktopProjectAttachments = true;
+			try {
+				desktopApi = createHostedApi(getConvexClient(), () => selectedHostedMachineId);
+				desktopApiResolved = true;
+			} catch (error) {
+				currentError =
+					error instanceof Error ? error.message : 'Failed to start the hosted workspace.';
+				desktopApiResolved = true;
+			}
+			return;
+		}
+
 		const bridge = window.sprocketDesktopBridge;
 		const unsubscribeWorkspaceLaunch = bridge?.onWorkspaceLaunch
 			? bridge.onWorkspaceLaunch(() => {
@@ -2135,17 +2550,24 @@
 
 {#if !desktopApiResolved}
 	<CalmCentered
-		title="Connecting to Sprocket…"
-		description="Looking for a running Sprocket server on this machine."
+		title={isHostedWeb ? 'Loading Sprocket…' : 'Connecting to Sprocket…'}
+		description={isHostedWeb
+			? 'Opening your cloud workspace.'
+			: 'Looking for a running Sprocket server on this machine.'}
 		busy={true}
 	/>
 {:else if !desktopApi}
 	<CalmCentered
-		title="Connect to Sprocket"
-		description={currentError ?? 'Connect to your Sprocket server to continue.'}
+		title={isHostedWeb ? 'Couldn’t start Sprocket' : 'Connect to Sprocket'}
+		description={currentError ??
+			(isHostedWeb
+				? 'The hosted workspace failed to start.'
+				: 'Connect to your Sprocket server to continue.')}
 	>
 		{#snippet actions()}
-			<Button href={resolve('/pair')}>Open pairing</Button>
+			{#if !isHostedWeb}
+				<Button href={resolve('/pair')}>Open pairing</Button>
+			{/if}
 		{/snippet}
 	</CalmCentered>
 {:else if !authReady}
@@ -2181,59 +2603,94 @@
 {:else}
 	<div class="relative h-screen overflow-hidden">
 		<div
-			class="app-workspace-shell grid h-screen grid-cols-[292px_minmax(0,1fr)] overflow-hidden {!settingsOpen &&
+			class="app-workspace-shell h-screen {hostedNavDrawer
+				? 'flex flex-col'
+				: 'grid grid-cols-[292px_minmax(0,1fr)] overflow-hidden'} {!settingsOpen &&
 			sidePanel.open &&
-			!sidePanel.expanded
+			!sidePanel.expanded &&
+			!hostedNavDrawer
 				? 'pr-[20rem]'
 				: ''}"
-			inert={fullscreenArtifact || (sidePanel.open && sidePanel.expanded) ? true : undefined}
+			inert={fullscreenArtifact || (sidePanel.open && (sidePanel.expanded || hostedNavDrawer))
+				? true
+				: undefined}
 		>
-			{#if settingsOpen}
-				<SettingsSidebar
-					activePage={settingsPage}
-					theme={workspaceTheme}
-					onThemeChange={(theme) => void handleThemeChange(theme)}
-					onBack={() => {
-						settingsOpen = false;
-						settingsPage = 'account';
-					}}
-					onNavigate={(page) => {
-						settingsPage = page;
-					}}
-				/>
-			{:else}
-				<ProjectSidebar
-					{currentWorkspacePath}
-					{currentThreadId}
-					groups={groupedProjectThreads}
-					{pendingAgentLaunches}
-					theme={workspaceTheme}
-					onThemeChange={(theme) => void handleThemeChange(theme)}
-					onAddProject={() => {
-						openProjectPicker('add');
-					}}
-					onReconnectProject={(workspacePath) => {
-						void reconnectProject(workspacePath);
-					}}
-					onOpenSettings={() => {
-						settingsPage = 'account';
-						settingsOpen = true;
-					}}
-					onStartThreadDraft={startThreadDraftForProject}
-					onSelectThread={selectThread}
-					onSelectProject={(workspacePath) => {
-						openProject(workspacePath);
-					}}
-					onRenameThread={(threadId, title) => {
-						void renameThread(threadId, title);
-					}}
-					onArchiveThread={(threadId) => {
-						void archiveThread(threadId);
-					}}
-				/>
-			{/if}
+			<WorkspaceNav
+				drawer={hostedNavDrawer}
+				open={hostedNavOpen}
+				onOpenChange={(open) => {
+					hostedNavOpen = open;
+				}}
+			>
+				{#if settingsOpen}
+					<SettingsSidebar
+						activePage={settingsPage}
+						theme={workspaceTheme}
+						onThemeChange={(theme) => void handleThemeChange(theme)}
+						onBack={() => {
+							settingsOpen = false;
+							settingsPage = 'account';
+						}}
+						onNavigate={(page) => {
+							settingsPage = page;
+						}}
+					/>
+				{:else}
+					<ProjectSidebar
+						{currentWorkspacePath}
+						{currentThreadId}
+						groups={groupedProjectThreads}
+						{pendingAgentLaunches}
+						theme={workspaceTheme}
+						onThemeChange={(theme) => void handleThemeChange(theme)}
+						onAddProject={() => {
+							openProjectPicker('add');
+						}}
+						onReconnectProject={(workspacePath) => {
+							void reconnectProject(workspacePath);
+						}}
+						onOpenSettings={() => {
+							settingsPage = 'account';
+							settingsOpen = true;
+						}}
+						onStartThreadDraft={startThreadDraftForProject}
+						onSelectThread={selectThread}
+						onSelectProject={(workspacePath) => {
+							openProject(workspacePath);
+						}}
+						onRenameThread={(threadId, title) => {
+							void renameThread(threadId, title);
+						}}
+						onArchiveThread={(threadId) => {
+							void archiveThread(threadId);
+						}}
+					/>
+				{/if}
+			</WorkspaceNav>
 
-			<main class="relative flex h-screen min-h-0 min-w-0 flex-col overflow-hidden">
+			<main
+				class="relative flex h-screen min-h-0 min-w-0 flex-col overflow-hidden"
+				inert={hostedNavDrawer && hostedNavOpen ? true : undefined}
+			>
+				{#if hostedNavDrawer}
+					<div class="flex h-11 shrink-0 items-center px-1">
+						<button
+							type="button"
+							class="text-muted-foreground hover:text-foreground hover:bg-muted inline-flex size-11 items-center justify-center rounded-md transition"
+							aria-label="Open navigation"
+							aria-expanded={hostedNavOpen}
+							aria-controls="hosted-workspace-nav"
+							onpointerdown={(event) => {
+								event.stopPropagation();
+							}}
+							onclick={() => {
+								hostedNavOpen = !hostedNavOpen;
+							}}
+						>
+							<Menu class="size-4" aria-hidden="true" />
+						</button>
+					</div>
+				{/if}
 				{#if !settingsOpen && !sidePanel.open}
 					<button
 						type="button"
@@ -2350,6 +2807,18 @@
 							: formatElapsedDuration(runElapsedSeconds)}
 						{contextUsage}
 						projectSkills={composerProjectSkills}
+						hostedMachines={isHostedWeb
+							? {
+									options: hostedMachineOptions,
+									selectedMachineId: selectedHostedMachineId,
+									onSelect: selectHostedMachine,
+									notice: hostedNotice?.text,
+									offerFolderPicker: hostedNotice?.offerFolderPicker,
+									onChooseFolder: () => {
+										openProjectPicker('add');
+									}
+								}
+							: null}
 						onSubmit={() => {
 							void submitPrompt();
 						}}
@@ -2363,7 +2832,7 @@
 
 		{#if !settingsOpen && sidePanel.open}
 			<div
-				class={sidePanel.expanded
+				class={sidePanel.expanded || hostedNavDrawer
 					? 'bg-background fixed inset-0 z-50'
 					: 'absolute inset-y-0 right-0 z-40 w-[20rem]'}
 				inert={fullscreenArtifact ? true : undefined}
@@ -2374,7 +2843,7 @@
 					tab={sidePanel.tab}
 					liveView={browserLiveViewQuery.data}
 					liveActive={isRunning && browserLiveViewQuery.data?.lastUsedRunId === runState?.runId}
-					expanded={sidePanel.expanded}
+					expanded={sidePanel.expanded || hostedNavDrawer}
 					onSelect={(key) => {
 						sidePanel = { ...sidePanel, selectedKey: key };
 					}}
