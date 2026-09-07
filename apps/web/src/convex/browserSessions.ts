@@ -34,9 +34,7 @@ async function listBrowserSessions(
 
 function pickBrowserSession(rows: Array<Doc<'browserSessions'>>): Doc<'browserSessions'> | null {
 	if (rows.length === 0) return null;
-	return [...rows].sort(
-		(a, b) => b.startedAt - a.startedAt || b._id.localeCompare(a._id)
-	)[0];
+	return [...rows].sort((a, b) => b.startedAt - a.startedAt || b._id.localeCompare(a._id))[0];
 }
 
 async function getBrowserSession(
