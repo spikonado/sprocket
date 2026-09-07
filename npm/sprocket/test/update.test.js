@@ -96,6 +96,26 @@ async function waitForFile(file) {
 	throw new Error(`missing ${file}`);
 }
 
+async function waitForProcessToStop(pid) {
+	for (let attempt = 0; attempt < 100; attempt += 1) {
+		try {
+			process.kill(pid, 0);
+			if (process.platform === 'linux') {
+				const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+				// A killed orphan may still have a PID until the runner's init reaps it.
+				if (['Z', 'X'].includes(stat[stat.lastIndexOf(')') + 2])) {
+					return;
+				}
+			}
+		} catch (error) {
+			if (error.code === 'ESRCH' || error.code === 'ENOENT') return;
+			throw error;
+		}
+		await new Promise((resolve) => setTimeout(resolve, 20));
+	}
+	assert.fail(`process ${pid} is still running`);
+}
+
 function testHost(options = {}) {
 	const commands = [];
 	const fetched = [];
@@ -786,8 +806,6 @@ test(
 				[path.resolve(import.meta.dirname, 'managed-group-helper.mjs'), pidFile],
 				{ detached: true, stdio: 'ignore' }
 			);
-			await waitForFile(pidFile);
-			const grandchildPid = Number(readFileSync(pidFile, 'utf8').trim());
 			await new Promise((resolve, reject) => {
 				const timer = setTimeout(() => reject(new Error('helper did not exit')), 5000);
 				helper.once('close', () => {
@@ -795,15 +813,10 @@ test(
 					resolve();
 				});
 			});
+			await waitForFile(pidFile);
+			const grandchildPid = Number(readFileSync(pidFile, 'utf8').trim());
 			assert.equal(Number.isInteger(grandchildPid) && grandchildPid > 0, true);
-			let alive = false;
-			try {
-				process.kill(grandchildPid, 0);
-				alive = true;
-			} catch {
-				alive = false;
-			}
-			assert.equal(alive, false);
+			await waitForProcessToStop(grandchildPid);
 		} finally {
 			rmSync(directory, { recursive: true, force: true });
 		}
@@ -846,13 +859,28 @@ test('ignores relative PATH entries and relative npm_execpath', async () => {
 	assert.equal(install.command, '/usr/bin/npm');
 });
 
-test('uses npm_config_registry when it is an http URL', () => {
+test('accepts HTTPS registry URLs and rejects insecure or malformed overrides', () => {
 	assert.equal(registryUrl({}), 'https://registry.npmjs.org');
 	assert.equal(
 		registryUrl({ npm_config_registry: 'https://example.invalid/npm/' }),
 		'https://example.invalid/npm'
 	);
-	assert.equal(registryUrl({ npm_config_registry: 'file:///tmp' }), 'https://registry.npmjs.org');
+	assert.equal(
+		registryUrl({ NPM_CONFIG_REGISTRY: 'https://example.invalid/npm/' }),
+		'https://example.invalid/npm'
+	);
+	for (const value of ['http://example.invalid', 'file:///tmp', 'not a URL', 'https://host/?q=1']) {
+		assert.throws(() => registryUrl({ npm_config_registry: value }), /HTTPS/);
+		assert.throws(() => registryUrl({ NPM_CONFIG_REGISTRY: value }), /HTTPS/);
+	}
+	assert.throws(
+		() =>
+			registryUrl({
+				npm_config_registry: 'https://registry.npmjs.org',
+				NPM_CONFIG_REGISTRY: 'http://example.invalid'
+			}),
+		/HTTPS/
+	);
 	assert.equal(
 		channelManifestUrl('https://registry.npmjs.org', 'latest'),
 		'https://registry.npmjs.org/%40spikonado%2Fsprocket/latest'
@@ -861,6 +889,32 @@ test('uses npm_config_registry when it is an http URL', () => {
 		channelManifestUrl('https://registry.npmjs.org', 'canary'),
 		'https://registry.npmjs.org/%40spikonado%2Fsprocket/canary'
 	);
+});
+
+test('insecure registry overrides cannot fetch a version or run an install', async () => {
+	const { host, commands, fetched } = testHost({
+		env: { PATH: '/usr/bin', npm_config_registry: 'http://example.invalid' },
+		executables: { npm: '/usr/bin/npm' }
+	});
+	const result = await installUpdate(host);
+	assert.equal(result.status, 'error');
+	assert.match(result.error, /HTTPS/);
+	assert.equal(fetched.length, 0);
+	assert.equal(
+		commands.some(({ args }) => isInstallArgs(args)),
+		false
+	);
+});
+
+test('registry checks disallow redirects rather than risk an HTTP downgrade', async () => {
+	const { host } = testHost({
+		executables: { npm: '/usr/bin/npm' },
+		fetch: async (_url, options) => {
+			assert.equal(options.redirect, 'error');
+			return jsonResponse(versionDoc('0.3.5'));
+		}
+	});
+	assert.equal((await checkForUpdate(host)).status, 'available');
 });
 
 test('update-api.js prints only JSON and rejects unknown commands', () => {

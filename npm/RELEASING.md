@@ -73,3 +73,6 @@ move forward, so an older tag is left alone. A `dev` install follows the current
 Only a global npm, bun, pnpm, or yarn copy of `@spikonado/sprocket` can be
 updated this way. After the package manager finishes, stop Sprocket and launch
 it again. The running process does not reload itself.
+
+Custom `npm_config_registry` or `NPM_CONFIG_REGISTRY` overrides must use HTTPS.
+Update checks reject registry redirects rather than allow a downgrade to HTTP.

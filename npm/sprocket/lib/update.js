@@ -641,11 +641,21 @@ export async function runUpdateCli(parsed, host = createHost()) {
 }
 
 export function registryUrl(env = {}) {
-	const value = asText(env.npm_config_registry).trim();
-	if (/^https?:\/\//i.test(value) && !/\s/.test(value)) {
-		return value.replace(/\/$/, '');
+	const values = [env.npm_config_registry, env.NPM_CONFIG_REGISTRY]
+		.map((value) => asText(value).trim())
+		.filter(Boolean);
+	for (const value of values) {
+		let url;
+		try {
+			url = new URL(value);
+		} catch {
+			throw new Error('Package updates require a valid HTTPS npm registry URL.');
+		}
+		if (url.protocol !== 'https:' || /\s/.test(value) || url.search || url.hash) {
+			throw new Error('Package updates require a valid HTTPS npm registry URL.');
+		}
 	}
-	return DEFAULT_REGISTRY;
+	return values[0]?.replace(/\/$/, '') ?? DEFAULT_REGISTRY;
 }
 
 export function channelManifestUrl(registry, channel, name = PACKAGE_NAME) {
@@ -710,6 +720,7 @@ async function fetchChannelVersion(host, channel, currentVersion) {
 	let response;
 	try {
 		response = await host.fetch(url, {
+			redirect: 'error',
 			headers: {
 				accept: 'application/json',
 				'user-agent': `sprocket/${currentVersion || '0'}`
