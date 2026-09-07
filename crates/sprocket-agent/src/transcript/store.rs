@@ -999,7 +999,9 @@ mod tests {
             prompt: None,
             completion: Some(TranscriptCompletionBody::with_items(
                 format!("stream-{number}"),
-                vec![serde_json::json!({ "type": "text", "id": format!("t-{number}"), "text": text })],
+                vec![
+                    serde_json::json!({ "type": "text", "id": format!("t-{number}"), "text": text }),
+                ],
             )),
             tool: None,
         }
