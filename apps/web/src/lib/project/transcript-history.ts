@@ -1,11 +1,30 @@
-import type { LocalTranscriptPage, ThreadMessage } from '$lib/types/sprocket';
-import { mergeTranscriptMessages } from '$lib/project/transcript';
+import type { LocalTranscriptPage, LocalTranscriptPart, ThreadMessage } from '$lib/types/sprocket';
+import { assembleTranscriptParts } from './transcript-parts';
 
 type PageRequest = { before?: number; limit: number };
 
 const RECENT_PAGE_LIMIT = 12;
 const OLDER_PAGE_LIMIT = 40;
 const REFRESH_RETRY_MS = 2_000;
+
+function sameMessage(left: ThreadMessage, right: ThreadMessage): boolean {
+	return (
+		left._id === right._id &&
+		left.text === right.text &&
+		left.detailsLoaded === right.detailsLoaded &&
+		JSON.stringify(left.sourceNumbers) === JSON.stringify(right.sourceNumbers) &&
+		JSON.stringify(left.streamIds) === JSON.stringify(right.streamIds) &&
+		JSON.stringify(left.parts) === JSON.stringify(right.parts)
+	);
+}
+
+function stabilizeMessages(previous: ThreadMessage[], next: ThreadMessage[]): ThreadMessage[] {
+	const byId = new Map(previous.map((message) => [message._id, message]));
+	return next.map((message) => {
+		const current = byId.get(message._id);
+		return current && sameMessage(current, message) ? current : message;
+	});
+}
 
 export class TranscriptHistory {
 	messages: ThreadMessage[] = [];
@@ -14,6 +33,7 @@ export class TranscriptHistory {
 	loadingOlder = false;
 	stale = false;
 	error: string | null = null;
+	private parts = new Map<number, LocalTranscriptPart>();
 	private stopped = false;
 	private refreshing = false;
 	private refreshPending = false;
@@ -31,6 +51,13 @@ export class TranscriptHistory {
 		clearTimeout(this.refreshRetryTimer);
 	}
 
+	detailsNumbers(message: ThreadMessage): number[] {
+		return (message.sourceNumbers ?? []).filter((number) => {
+			const part = this.parts.get(number);
+			return part?.message != null && part.message.detailsLoaded !== true;
+		});
+	}
+
 	async refresh() {
 		if (this.stopped) return;
 		if (this.refreshing) {
@@ -42,23 +69,24 @@ export class TranscriptHistory {
 		try {
 			do {
 				this.refreshPending = false;
-				const newestSource = this.messages.at(-1)?.sourceNumbers?.[0];
-				let incoming: ThreadMessage[] = [];
+				const newestLoaded = this.newestLoadedNumber();
+				const incoming: LocalTranscriptPart[] = [];
 				let newestPage: LocalTranscriptPage | undefined;
 				let before: number | undefined;
 				do {
 					const page = await this.fetchPage({ before, limit: RECENT_PAGE_LIMIT });
 					if (this.stopped) return;
 					newestPage ??= page;
-					incoming = mergeTranscriptMessages(incoming, page.messages);
+					incoming.push(...page.parts);
 					if (page.nextBefore === undefined) break;
 					if (before !== undefined && page.nextBefore >= before) {
 						throw new Error('Transcript history cursor did not advance');
 					}
 					before = page.nextBefore;
-				} while (newestSource !== undefined && before > newestSource);
-				if (this.messages.length === 0) this.nextBefore = newestPage.nextBefore;
-				this.messages = mergeTranscriptMessages(this.messages, incoming);
+				} while (newestLoaded !== undefined && before !== undefined && before > newestLoaded);
+				if (!newestPage) return;
+				if (this.parts.size === 0) this.nextBefore = newestPage.nextBefore;
+				this.commit(incoming);
 				this.stale = newestPage.stale;
 				this.error = null;
 				this.loading = false;
@@ -97,7 +125,7 @@ export class TranscriptHistory {
 			if (page.nextBefore !== undefined && page.nextBefore >= before) {
 				throw new Error('Transcript history cursor did not advance');
 			}
-			this.messages = mergeTranscriptMessages(this.messages, page.messages);
+			this.commit(page.parts);
 			this.nextBefore = page.nextBefore;
 			this.stale = page.stale;
 		} catch {
@@ -108,9 +136,35 @@ export class TranscriptHistory {
 		}
 	}
 
-	applyDetails(message: ThreadMessage) {
+	applyDetails(parts: LocalTranscriptPart[]) {
 		if (this.stopped) return;
-		this.messages = mergeTranscriptMessages(this.messages, [message]);
+		this.commit(parts.filter((part) => this.parts.has(part.number)));
 		this.changed();
+	}
+
+	private newestLoadedNumber(): number | undefined {
+		let newest: number | undefined;
+		for (const number of this.parts.keys()) {
+			newest = newest === undefined ? number : Math.max(newest, number);
+		}
+		return newest;
+	}
+
+	private ingest(parts: LocalTranscriptPart[]) {
+		for (const part of parts) {
+			const current = this.parts.get(part.number);
+			if (current?.message?.detailsLoaded === true && part.message?.detailsLoaded !== true) {
+				continue;
+			}
+			this.parts.set(part.number, part);
+		}
+	}
+
+	private commit(parts: LocalTranscriptPart[]) {
+		this.ingest(parts);
+		this.messages = stabilizeMessages(
+			this.messages,
+			assembleTranscriptParts([...this.parts.values()])
+		);
 	}
 }

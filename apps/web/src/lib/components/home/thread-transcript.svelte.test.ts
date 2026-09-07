@@ -30,11 +30,11 @@ async function settle() {
 	await vi.advanceTimersByTimeAsync(16);
 }
 
-async function renderTranscript(numbers: number[], viewportHeight = 600) {
+async function renderTranscript(messages: ThreadMessage[], viewportHeight = 600) {
 	const props = $state<ComponentProps<typeof ThreadTranscript>>({
 		currentError: null,
 		runError: null,
-		messages: numbers.map(message),
+		messages,
 		actions: [],
 		activeRunId: null,
 		project: null,
@@ -45,7 +45,9 @@ async function renderTranscript(numbers: number[], viewportHeight = 600) {
 	cleanup = () => unmount(component);
 	const viewport = document.querySelector<HTMLDivElement>('.overflow-auto');
 	if (!viewport) throw new Error('Missing transcript viewport');
-	const messageElements = () => [...viewport.querySelectorAll<HTMLElement>('[data-message-id]')];
+	const messageElements = () => [
+		...viewport.querySelectorAll<HTMLElement>('[data-transcript-anchor]')
+	];
 	let scrollTop = 0;
 	// jsdom has no layout. Model fixed-height rows while exercising the real DOM and effects.
 	Object.defineProperties(viewport, {
@@ -90,7 +92,7 @@ afterEach(async () => {
 
 describe('transcript viewport paging', () => {
 	it('loads only near the top, not at the bottom or while an older page is loading', async () => {
-		const { props, viewport, scrollTo } = await renderTranscript([1, 2, 3]);
+		const { props, viewport, scrollTo } = await renderTranscript([1, 2, 3].map(message));
 		expect(props.onLoadOlder).not.toHaveBeenCalled();
 		scrollTo(300);
 		expect(viewport.scrollTop).toBe(300);
@@ -104,56 +106,104 @@ describe('transcript viewport paging', () => {
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
 	});
 
-	it('fills a short viewport silently without loading beyond it', async () => {
-		const { props, viewport } = await renderTranscript([3]);
+	it('loads short history only on upward gestures, never to fill the viewport automatically', async () => {
+		const { props, viewport } = await renderTranscript([message(3)]);
 		expect(viewport.textContent).not.toContain('Load earlier messages');
 		expect(viewport.scrollHeight).toBe(viewport.clientHeight);
+		await vi.advanceTimersByTimeAsync(10_000);
+		expect(props.onLoadOlder).not.toHaveBeenCalled();
+		viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: 100 }));
+		expect(props.onLoadOlder).not.toHaveBeenCalled();
+		viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }));
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
 		props.loadingOlder = true;
 		await settle();
 		expect(viewport.textContent).not.toContain('Loading earlier messages');
+		viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }));
+		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
 		props.messages = [message(2), ...props.messages];
 		props.loadingOlder = false;
 		await settle();
-		expect(props.onLoadOlder).toHaveBeenCalledTimes(2);
-		props.messages = [message(1), ...props.messages];
-		await settle();
-		expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
+		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
+		viewport.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageUp', bubbles: true }));
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(2);
 	});
 
-	it('retries failed short-page loads after a delay and cancels the retry on unmount', async () => {
-		const { props } = await renderTranscript([3]);
+	it('allows retry by touch after a failed short-page load without a background retry loop', async () => {
+		const { props, viewport } = await renderTranscript([message(3)]);
+		const touch = (type: string, clientY: number) => {
+			const event = new Event(type, { bubbles: true });
+			Object.defineProperty(event, 'touches', { value: [{ clientY }] });
+			viewport.dispatchEvent(event);
+		};
+		touch('touchstart', 100);
+		touch('touchmove', 150);
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
 		props.loadingOlder = true;
 		await settle();
 		props.stale = true;
 		props.loadingOlder = false;
-		flushSync();
-		await tick();
-		await vi.advanceTimersByTimeAsync(1_999);
+		await settle();
+		await vi.advanceTimersByTimeAsync(10_000);
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
-		await vi.advanceTimersByTimeAsync(1);
+		touch('touchstart', 100);
+		touch('touchmove', 150);
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(2);
+	});
+
+	it('accepts upward gestures within the bottom-stick tolerance', async () => {
+		const { props, viewport, scrollTo } = await renderTranscript([1, 2, 3].map(message), 880);
+		expect(props.onLoadOlder).not.toHaveBeenCalled();
+		scrollTo(0);
+		viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }));
+		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
+	});
+
+	it('retries from the top of overflowing history without requiring another scroll event', async () => {
+		const { props, viewport, scrollTo } = await renderTranscript([1, 2, 3, 4].map(message));
+		scrollTo(0);
+		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
 		props.loadingOlder = true;
 		await settle();
 		props.loadingOlder = false;
+		props.stale = true;
 		await settle();
-		await cleanup?.();
-		cleanup = undefined;
-		await vi.advanceTimersByTimeAsync(2_000);
+		viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }));
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(2);
 	});
 
-	it('fills pages whose small overflow cannot leave the bottom-stick threshold', async () => {
-		const { props, scrollTo } = await renderTranscript([1, 2, 3], 880);
-		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
-		scrollTo(0);
-		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
+	it('preserves a text section when older parts are prepended inside the same response', async () => {
+		const response: ThreadMessage = {
+			...message(3),
+			_id: 'response:run',
+			type: 'response',
+			parts: [3, 4, 5, 6].map((number) => ({
+				type: 'text',
+				id: `text-${number}`,
+				text: `Part ${number}`
+			}))
+		};
+		const { props, viewport, scrollTo } = await renderTranscript([response]);
+		scrollTo(150);
+		const anchor = viewport.querySelector<HTMLElement>(
+			'[data-transcript-anchor="response:run:text::text-3"]'
+		);
+		if (!anchor) throw new Error('Missing visible response section');
+		const offset = anchor.getBoundingClientRect().top;
+		props.messages = [
+			{
+				...response,
+				parts: [{ type: 'text', id: 'text-2', text: 'Older part' }, ...response.parts]
+			}
+		];
+		await settle();
+		expect(anchor.isConnected).toBe(true);
+		expect(anchor.getBoundingClientRect().top).toBe(offset);
+		expect(viewport.scrollTop).toBe(450);
 	});
 
 	it('preserves the visible message offset when an older page is prepended', async () => {
-		const { props, viewport, scrollTo } = await renderTranscript([3, 4, 5, 6]);
+		const { props, viewport, scrollTo } = await renderTranscript([3, 4, 5, 6].map(message));
 		scrollTo(150);
 		const anchor = viewport.querySelector<HTMLElement>('[data-message-id="prompt:3"]');
 		if (!anchor) throw new Error('Missing visible message');

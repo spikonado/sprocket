@@ -75,19 +75,39 @@ describe('projected transcript pages', () => {
 		controller.abort();
 		await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
 		expect(fetch).toHaveBeenCalledWith(
-			'http://127.0.0.1:7731/api/transcript/messages',
+			'http://127.0.0.1:7731/api/transcript/parts',
 			expect.objectContaining({ signal: controller.signal })
 		);
 	});
 
-	it('uses the message endpoint without changing the legacy parts endpoint', async () => {
+	it('uses the part-bounded endpoint without falling back to message paging', async () => {
+		const message = {
+			id: 'response:run-1',
+			threadId: 'thread-1',
+			runId: 'run-1',
+			userId: 'user-1',
+			type: 'response',
+			text: 'Last completion',
+			attachments: [],
+			parts: [{ type: 'text', id: 'text-499', text: 'Last completion' }],
+			runStatus: 'completed',
+			runStartedAt: 1,
+			sourceNumbers: [499],
+			streamIds: ['stream-499'],
+			detailsLoaded: false
+		};
+		const parts = [
+			{ number: 498, kind: 'completion', message: null },
+			{ number: 499, kind: 'completion', message }
+		];
 		const fetch = vi.fn(async () =>
 			Response.json({
 				threadId: 'thread-1',
-				totalParts: 0,
-				historyFromNumber: 0,
+				totalParts: 500,
+				historyFromNumber: 498,
 				stale: false,
-				messages: []
+				parts,
+				nextBefore: 498
 			})
 		);
 		vi.stubGlobal('fetch', fetch);
@@ -96,10 +116,36 @@ describe('projected transcript pages', () => {
 			threadId: threadRecordId('thread-1'),
 			limit: 12
 		});
-		expect(page.messages).toEqual([]);
+		expect(page.nextBefore).toBe(498);
+		expect(page.parts).toEqual([
+			parts[0],
+			{ ...parts[1], message: { ...message, id: undefined, _id: message.id } }
+		]);
 		expect(fetch).toHaveBeenCalledWith(
-			'http://127.0.0.1:7731/api/transcript/messages',
+			'http://127.0.0.1:7731/api/transcript/parts',
 			expect.objectContaining({ method: 'POST' })
+		);
+	});
+
+	it('requests cancellable per-part details and preserves non-display part numbers', async () => {
+		const fetch = vi.fn(async () =>
+			Response.json([{ number: 498, kind: 'completion', message: null }])
+		);
+		vi.stubGlobal('fetch', fetch);
+		const controller = new AbortController();
+		const request = { userId: 'user-1', threadId: threadRecordId('thread-1'), numbers: [498] };
+		const details = await createLocalClient('http://127.0.0.1:7731').fetchTranscriptDetails(
+			request,
+			controller.signal
+		);
+		expect(details).toEqual([{ number: 498, kind: 'completion', message: null }]);
+		expect(fetch).toHaveBeenCalledWith(
+			'http://127.0.0.1:7731/api/transcript/part-details',
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify(request),
+				signal: controller.signal
+			})
 		);
 	});
 });
