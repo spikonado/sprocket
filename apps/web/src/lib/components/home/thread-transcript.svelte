@@ -198,6 +198,26 @@
 	});
 
 	$effect(() => {
+		void messages;
+		const viewport = scrollViewport;
+		if (!viewport || !hasOlder) return;
+		let cancelled = false;
+		void tick().then(() => {
+			if (
+				!cancelled &&
+				!loadingOlder &&
+				viewport.clientHeight > 0 &&
+				viewport.scrollHeight <= viewport.clientHeight
+			) {
+				onLoadOlder?.();
+			}
+		});
+		return () => {
+			cancelled = true;
+		};
+	});
+
+	$effect(() => {
 		const viewport = scrollViewport;
 		const content = scrollContent;
 		if (!viewport || !content || !globalThis.ResizeObserver) {
@@ -229,20 +249,6 @@
 			bind:this={scrollContent}
 			class="mx-auto flex min-h-full w-full max-w-5xl flex-col px-4 py-8"
 		>
-			{#if hasOlder && onLoadOlder}
-				<button
-					type="button"
-					class="text-muted-foreground hover:text-foreground mb-6 self-center text-sm disabled:opacity-50"
-					disabled={loadingOlder}
-					onclick={() => {
-						stickToBottom = false;
-						onLoadOlder?.();
-					}}
-				>
-					{loadingOlder ? 'Loading earlier messages...' : 'Load earlier messages'}
-				</button>
-			{/if}
-
 			{#if currentError}
 				<div
 					role="alert"

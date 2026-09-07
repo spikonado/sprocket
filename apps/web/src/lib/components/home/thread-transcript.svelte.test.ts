@@ -99,27 +99,24 @@ describe('transcript viewport paging', () => {
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
 	});
 
-	it('offers explicit paging when a short page cannot scroll', async () => {
-		const { props, viewport, scrollTo } = await renderTranscript([1]);
-		scrollTo(0);
+	it('fills a short viewport silently without loading beyond it or retrying on loading-state changes', async () => {
+		const { props, viewport } = await renderTranscript([3]);
+		expect(viewport.textContent).not.toContain('Load earlier messages');
 		expect(viewport.scrollHeight).toBe(viewport.clientHeight);
-		expect(props.onLoadOlder).not.toHaveBeenCalled();
-		const button = [...document.querySelectorAll('button')].find(
-			(element) => element.textContent?.trim() === 'Load earlier messages'
-		);
-		if (!button) throw new Error('Missing earlier messages button');
-		button.click();
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
 		props.loadingOlder = true;
 		await settle();
-		expect(button.disabled).toBe(true);
-		button.click();
-		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
-		props.messages = [message(0), ...props.messages];
+		expect(viewport.textContent).not.toContain('Loading earlier messages');
 		props.loadingOlder = false;
-		props.hasOlder = false;
 		await settle();
-		expect(button.isConnected).toBe(false);
+		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
+		props.messages = [message(2), ...props.messages];
+		await settle();
+		expect(props.onLoadOlder).toHaveBeenCalledTimes(2);
+		props.messages = [message(1), ...props.messages];
+		await settle();
+		expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
+		expect(props.onLoadOlder).toHaveBeenCalledTimes(2);
 	});
 
 	it('preserves the visible message offset when an older page is prepended', async () => {
