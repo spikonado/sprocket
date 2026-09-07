@@ -346,7 +346,6 @@ mod tests {
                     "name": "exec_command",
                     "input": {}
                 })],
-                ..Default::default()
             }),
             tool: None,
         }
@@ -388,7 +387,6 @@ mod tests {
                     completion: Some(TranscriptCompletionBody {
                         stream_id: Some("s".into()),
                         items: vec![serde_json::json!({ "type": "text", "text": "now" })],
-                        ..Default::default()
                     }),
                     tool: None,
                 },
@@ -418,7 +416,6 @@ mod tests {
                     completion: Some(TranscriptCompletionBody {
                         stream_id: Some("s".into()),
                         items: vec![serde_json::json!({ "type": "text", "text": "partial work" })],
-                        ..Default::default()
                     }),
                     tool: None,
                 },
@@ -473,7 +470,6 @@ mod tests {
                             "name": "exec_command",
                             "input": {}
                         })],
-                        ..Default::default()
                     }),
                     tool: None,
                 },
@@ -645,7 +641,6 @@ mod tests {
                                 }
                             }
                         })],
-                        ..Default::default()
                     }),
                     tool: None,
                 },
@@ -670,7 +665,6 @@ mod tests {
             completion: Some(TranscriptCompletionBody {
                 stream_id: Some("s".into()),
                 items: vec![item],
-                ..Default::default()
             }),
             tool: None,
         }
@@ -785,7 +779,6 @@ mod tests {
                         }),
                         serde_json::json!({ "type": "text", "text": "kept answer" }),
                     ],
-                    ..Default::default()
                 }),
                 tool: None,
             }],
