@@ -976,15 +976,16 @@ mod tests {
             run_id: "run-1".to_string(),
             created_at: None,
             prompt: None,
-            completion: Some(TranscriptCompletionBody::with_items(
-                "stream-1",
-                vec![
+            completion: Some(TranscriptCompletionBody {
+                stream_id: Some("stream-1".into()),
+                items: vec![
                     serde_json::json!({ "type": "reasoning", "id": "r1", "text": "secret" }),
                     serde_json::json!({ "type": "tool-call", "callId": "c1", "name": "exec_command", "input": { "cmd": "pwd" } }),
                     serde_json::json!({ "type": "tool-result", "callId": "c1", "name": "exec_command", "output": "secret output" }),
                     serde_json::json!({ "type": "text", "id": "t1", "text": "answer" }),
                 ],
-            )),
+                ..Default::default()
+            }),
             tool: None,
         }
     }
@@ -997,12 +998,13 @@ mod tests {
             run_id: run_id.to_string(),
             created_at: None,
             prompt: None,
-            completion: Some(TranscriptCompletionBody::with_items(
-                format!("stream-{number}"),
-                vec![
+            completion: Some(TranscriptCompletionBody {
+                stream_id: Some(format!("stream-{number}")),
+                items: vec![
                     serde_json::json!({ "type": "text", "id": format!("t-{number}"), "text": text }),
                 ],
-            )),
+                ..Default::default()
+            }),
             tool: None,
         }
     }
@@ -1332,16 +1334,17 @@ mod tests {
             run_id: "run-1".into(),
             created_at: Some(900),
             prompt: None,
-            completion: Some(TranscriptCompletionBody::with_items(
-                "s",
-                vec![serde_json::json!({
+            completion: Some(TranscriptCompletionBody {
+                stream_id: Some("s".into()),
+                items: vec![serde_json::json!({
                     "type": "tool-call",
                     "callId": "c1",
                     "name": "exec_command",
                     "input": {},
                     "startedAt": 700
                 })],
-            )),
+                ..Default::default()
+            }),
             tool: None,
         };
         let messages = project_messages("user", "thread", vec![tool, turn], true);

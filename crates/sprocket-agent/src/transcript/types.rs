@@ -145,7 +145,7 @@ pub struct TranscriptAttachmentMeta {
     pub url: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptCompletionBody {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -157,19 +157,6 @@ pub struct TranscriptCompletionBody {
     pub provider_request_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_message_id: Option<String>,
-}
-
-impl TranscriptCompletionBody {
-    #[cfg(test)]
-    pub(crate) fn with_items(stream_id: impl Into<String>, items: Vec<JsonValue>) -> Self {
-        Self {
-            stream_id: Some(stream_id.into()),
-            items,
-            provider_response_id: None,
-            provider_request_id: None,
-            provider_message_id: None,
-        }
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

@@ -338,15 +338,16 @@ mod tests {
             run_id: "run".into(),
             created_at: None,
             prompt: None,
-            completion: Some(TranscriptCompletionBody::with_items(
-                "s",
-                vec![serde_json::json!({
+            completion: Some(TranscriptCompletionBody {
+                stream_id: Some("s".into()),
+                items: vec![serde_json::json!({
                     "type": "tool-call",
                     "callId": call_id,
                     "name": "exec_command",
                     "input": {}
                 })],
-            )),
+                ..Default::default()
+            }),
             tool: None,
         }
     }
@@ -384,10 +385,11 @@ mod tests {
                     run_id: "current".into(),
                     created_at: None,
                     prompt: None,
-                    completion: Some(TranscriptCompletionBody::with_items(
-                        "s",
-                        vec![serde_json::json!({ "type": "text", "text": "now" })],
-                    )),
+                    completion: Some(TranscriptCompletionBody {
+                        stream_id: Some("s".into()),
+                        items: vec![serde_json::json!({ "type": "text", "text": "now" })],
+                        ..Default::default()
+                    }),
                     tool: None,
                 },
             ],
@@ -413,10 +415,11 @@ mod tests {
                     run_id: "parent".into(),
                     created_at: None,
                     prompt: None,
-                    completion: Some(TranscriptCompletionBody::with_items(
-                        "s",
-                        vec![serde_json::json!({ "type": "text", "text": "partial work" })],
-                    )),
+                    completion: Some(TranscriptCompletionBody {
+                        stream_id: Some("s".into()),
+                        items: vec![serde_json::json!({ "type": "text", "text": "partial work" })],
+                        ..Default::default()
+                    }),
                     tool: None,
                 },
             ],
@@ -462,15 +465,16 @@ mod tests {
                     run_id: "run".into(),
                     created_at: None,
                     prompt: None,
-                    completion: Some(TranscriptCompletionBody::with_items(
-                        "s",
-                        vec![serde_json::json!({
+                    completion: Some(TranscriptCompletionBody {
+                        stream_id: Some("s".into()),
+                        items: vec![serde_json::json!({
                             "type": "tool-call",
                             "callId": "keep",
                             "name": "exec_command",
                             "input": {}
                         })],
-                    )),
+                        ..Default::default()
+                    }),
                     tool: None,
                 },
                 TranscriptPart {
@@ -629,9 +633,9 @@ mod tests {
                     run_id: "run".into(),
                     created_at: None,
                     prompt: None,
-                    completion: Some(TranscriptCompletionBody::with_items(
-                        "s",
-                        vec![serde_json::json!({
+                    completion: Some(TranscriptCompletionBody {
+                        stream_id: Some("s".into()),
+                        items: vec![serde_json::json!({
                             "type": "reasoning",
                             "text": "think",
                             "providerMetadata": {
@@ -641,7 +645,8 @@ mod tests {
                                 }
                             }
                         })],
-                    )),
+                        ..Default::default()
+                    }),
                     tool: None,
                 },
             ],
@@ -662,7 +667,11 @@ mod tests {
             run_id: "run".into(),
             created_at: None,
             prompt: None,
-            completion: Some(TranscriptCompletionBody::with_items("s", vec![item])),
+            completion: Some(TranscriptCompletionBody {
+                stream_id: Some("s".into()),
+                items: vec![item],
+                ..Default::default()
+            }),
             tool: None,
         }
     }
@@ -761,9 +770,9 @@ mod tests {
                 created_at: None,
                 run_id: "run".into(),
                 prompt: None,
-                completion: Some(TranscriptCompletionBody::with_items(
-                    "s",
-                    vec![
+                completion: Some(TranscriptCompletionBody {
+                    stream_id: Some("s".into()),
+                    items: vec![
                         serde_json::json!({
                             "type": "reasoning",
                             "text": "stale",
@@ -776,7 +785,8 @@ mod tests {
                         }),
                         serde_json::json!({ "type": "text", "text": "kept answer" }),
                     ],
-                )),
+                    ..Default::default()
+                }),
                 tool: None,
             }],
             None,
