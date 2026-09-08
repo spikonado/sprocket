@@ -57,6 +57,9 @@ authenticated action. A HEAD request identifies image content types without
 consuming page bodies. Image filename extensions cover servers without useful
 HEAD responses. Downloaded image bytes are validated by signature; a mislabeled
 image fails rather than issuing another GET through the scraper.
+Use `asImage: true` for known image URLs whose servers reject HEAD, have opaque
+paths, or return incorrect MIME metadata. This skips discovery and validates
+the GET response by its bytes, without risking a second page GET.
 Like shell commands and the former `parse_file` URL handling, the image probe
 can reach local devices and private networks. It is not a network isolation
 boundary. It does not attach browser cookies or provider credentials.

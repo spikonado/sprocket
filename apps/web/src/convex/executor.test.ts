@@ -157,7 +157,7 @@ describe('executor', () => {
 			executionSecret,
 			kind: 'scrape_url',
 			localExecution: true,
-			payload: { url: 'https://example.com/pic.png' }
+			payload: { url: 'https://example.com/pic.png', asImage: true }
 		});
 		await expect(
 			asUser.mutation(api.executor.complete, {
