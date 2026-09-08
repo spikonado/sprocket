@@ -88,7 +88,7 @@ models without image support receive a text notice instead of image content.
 
 Scrape outputs above 40,000 serialized characters are saved as JSON in the host's temporary
 directory, such as `/tmp` or Windows `%TEMP%`. The `markdown` output reports
-`The scrape was saved to <file-path>.` These files have the operating system's
+`The scrape was too large to directly output. Instead, it has been saved to <file-path> for you to view.` These files have the operating system's
 temporary-file lifetime. Convex transfer copies expire after one hour. The
 `summary` field remains inline in both short and saved results. Summaries that
 alone exceed the inline budget fail explicitly rather than being truncated.

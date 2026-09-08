@@ -311,13 +311,15 @@ describe('stored scrape_url results', () => {
 			jobId,
 			result: {
 				url: PAGE_URL,
-				markdown: 'The scrape was saved to /tmp/scrape.md.'
+				markdown:
+					'The scrape was too large to directly output. Instead, it has been saved to /tmp/scrape.md for you to view.'
 			}
 		});
 		const job = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
 		expect(job?.result).toEqual({
 			url: PAGE_URL,
-			markdown: 'The scrape was saved to /tmp/scrape.md.'
+			markdown:
+				'The scrape was too large to directly output. Instead, it has been saved to /tmp/scrape.md for you to view.'
 		});
 		expect(job?.result).not.toHaveProperty('truncated');
 		expect(job?.result).not.toHaveProperty('summary');
