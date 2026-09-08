@@ -48,13 +48,22 @@ its `FIRECRAWL_API_KEY`; when it is not configured, the tool reports that hosted
 fallback is unavailable. Long parsed results include a preview and the path to
 the full text in the thread's `parse_file/` cache. Use `scrape_url` for http(s)
 URLs; `parse_file` rejects a `url` argument and URL-shaped paths.
+Hosted parsing still calls Firecrawl's Parse API directly because the official
+Convex component does not expose parsing.
 
 `scrape_url` fetches supported raster images in memory and returns their pixels
 to image-capable models. Images and short scrapes are not saved locally.
-Scrapes exceeding 40,000 characters are saved in full to the host's temporary
+Page scraping uses the official `@firecrawl/firecrawl-convex` component with
+`markdown`, `summary`, `images`, `audio`, and `video` formats. The backend needs
+`FIRECRAWL_API_KEY`; `CONTEXT_DEV_API_KEY` is no longer used. Audio and video are
+returned as provider URLs, not downloaded media files.
+
+Scrape outputs above 40,000 serialized characters are saved as JSON in the host's temporary
 directory, such as `/tmp` or Windows `%TEMP%`. The `markdown` output reports
 `The scrape was saved to <file-path>.` These files have the operating system's
-temporary-file lifetime. Convex transfer copies expire after one hour.
+temporary-file lifetime. Convex transfer copies expire after one hour. The
+`summary` field remains inline in both short and saved results. Summaries that
+alone exceed the inline budget fail explicitly rather than being truncated.
 Rebuilt history keeps image metadata and asks the model to call
 the tool again if it needs the pixels. HTML uses the cloud scraper through an
 authenticated action. A HEAD request identifies image content types without
@@ -102,11 +111,10 @@ tool call is wrapped in a durable executor-job record and observes run
 cancellation while work is active.
 
 Command execution and patch operations both run with the local Sprocket
-process's permissions. Web search and scraping enqueue a Convex Workpool job
-(`webToolPool`) that runs Exa and Context.dev actions, keyed by deployment-side
-environment variables (`EXA_API_KEY`, `CONTEXT_DEV_API_KEY`); only the results
-flow back through the executor job. Released agents that still call the public
-`webTools` actions wait on that same job.
+process's permissions. Web search runs Exa through a Convex Workpool job.
+Current agents orchestrate scraping locally and call an authenticated Firecrawl
+action for pages. Released agents still use the cloud scrape workpool. Provider
+keys (`EXA_API_KEY`, `FIRECRAWL_API_KEY`) stay in the backend.
 
 ## Main areas
 

@@ -187,7 +187,7 @@ export declare const internal: FilterApi<
 >;
 
 export declare const components: {
-  contextDev: import("@context-dot-dev/convex/_generated/component.js").ComponentApi<"contextDev">;
+  firecrawl: import("@firecrawl/firecrawl-convex/_generated/component.js").ComponentApi<"firecrawl">;
   exa: import("@exalabs/convex-exa/_generated/component.js").ComponentApi<"exa">;
   rateLimiter: import("@convex-dev/rate-limiter/_generated/component.js").ComponentApi<"rateLimiter">;
   dodopayments: import("@dodopayments/convex/_generated/component.js").ComponentApi<"dodopayments">;
