@@ -32,14 +32,10 @@ const IMAGE_SNIFF_BYTES: usize = 16;
 pub(crate) struct ParseFileTool(pub(super) AgentToolContext);
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ParseFileArgs {
     /// Relative or absolute path to the file
-    #[serde(default)]
     pub path: String,
-    /// Older callers may still send `url`. Rejected; use `scrape_url`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(skip)]
-    url: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -166,23 +162,10 @@ impl rig::tool::Tool for ParseFileTool {
 }
 
 fn parse_file_parameters() -> serde_json::Value {
-    let mut schema = json!(schemars::schema_for!(ParseFileArgs));
-    schema["required"] = json!(["path"]);
-    if let Some(path) = schema["properties"]["path"].as_object_mut() {
-        path.remove("default");
-    }
-    schema
+    json!(schemars::schema_for!(ParseFileArgs))
 }
 
 fn parse_file_args(args: &ParseFileArgs) -> anyhow::Result<String> {
-    if args
-        .url
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|url| !url.is_empty())
-    {
-        bail!("parse_file no longer accepts url; use scrape_url for http(s) URLs");
-    }
     let path = args.path.trim();
     anyhow::ensure!(!path.is_empty(), "provide a local path");
     reject_embedded_url_as_path(path)?;
@@ -756,10 +739,7 @@ mod tests {
     const SAMPLE_CSV: &str = "name,qty\nwidget,2\ngadget,9\n";
 
     fn args(path: impl Into<String>) -> ParseFileArgs {
-        ParseFileArgs {
-            path: path.into(),
-            url: None,
-        }
+        ParseFileArgs { path: path.into() }
     }
 
     fn tiny_png() -> Vec<u8> {
@@ -906,17 +886,12 @@ mod tests {
         let empty = parse_file_args(&args("  ")).expect_err("empty");
         assert!(empty.to_string().contains("path"), "{empty}");
 
-        let url_arg = parse_file_args(&ParseFileArgs {
-            path: "/tmp/a.png".into(),
-            url: Some("https://example.com/a.png".into()),
-        })
-        .expect_err("url arg");
-        assert!(url_arg.to_string().contains("scrape_url"), "{url_arg}");
-
-        let url_only: ParseFileArgs =
-            serde_json::from_value(json!({ "url": "https://example.com/a.png" })).unwrap();
-        let url_only = parse_file_args(&url_only).expect_err("url only json");
-        assert!(url_only.to_string().contains("scrape_url"), "{url_only}");
+        for value in [
+            json!({"url": "https://example.com/a.png"}),
+            json!({"path": "/tmp/a.png", "url": "https://example.com/a.png"}),
+        ] {
+            assert!(serde_json::from_value::<ParseFileArgs>(value).is_err());
+        }
 
         for path in ["https://example.com/a.png", "http://example.com/a.png"] {
             let error = parse_file_args(&args(path)).expect_err(path);

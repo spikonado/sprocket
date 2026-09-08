@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkId } from '@convex-dev/workpool';
 import { internal } from '@convex/_generated/api';
+import { UNSUPPORTED_CLIENT_MESSAGE } from '@convex/lib/unsupportedClient';
 import { initConvexTest, seedStartedWebJob } from './test.setup';
 
 beforeEach(() => vi.useFakeTimers());
@@ -78,23 +79,47 @@ describe('local scrape_url dispatch', () => {
 		});
 	});
 
-	it('still enqueues scrape_url when localExecution is omitted', async () => {
+	it.each([undefined, false])(
+		'rejects scrape_url with localExecution %s',
+		async (localExecution) => {
+			const t = initConvexTest();
+			await expect(
+				seedStartedWebJob(t, {
+					executionSecret: 'retired-scrape-secret',
+					kind: 'scrape_url',
+					payload: { url: 'https://example.com/page' },
+					localExecution
+				})
+			).rejects.toThrow(UNSUPPORTED_CLIENT_MESSAGE);
+			expect(await t.run(async (ctx) => ctx.db.query('executorJobs').collect())).toEqual([]);
+		}
+	);
+
+	it('preserves stored asImage payloads but rejects new calls with that field', async () => {
 		const t = initConvexTest();
-		const { jobId, runId, claimId, executionSecret } = await seedStartedWebJob(t, {
-			executionSecret: 'legacy-scrape-secret',
-			kind: 'scrape_url',
-			payload: { url: 'https://example.com/legacy' }
-		});
-		const stored = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
-		expect(stored?.cloudWorkId).toEqual(expect.any(String));
-		expect(
-			await t.query(internal.webToolPool.getLocalScrapeJob, {
-				runId,
-				claimId,
-				jobId,
-				executionSecret
+		await expect(
+			seedStartedWebJob(t, {
+				executionSecret: 'retired-image-mode-secret',
+				kind: 'scrape_url',
+				payload: { url: 'https://example.com/image.png', asImage: true },
+				localExecution: true
 			})
-		).toBeNull();
+		).rejects.toThrow(UNSUPPORTED_CLIENT_MESSAGE);
+		const { jobId } = await seedStartedWebJob(t, {
+			executionSecret: 'stored-image-mode-secret',
+			kind: 'scrape_url',
+			payload: { url: 'https://example.com/image.png' },
+			localExecution: true
+		});
+		await t.run(async (ctx) => {
+			await ctx.db.patch('executorJobs', jobId, {
+				payload: { url: 'https://example.com/image.png', asImage: true }
+			});
+		});
+		expect((await t.run(async (ctx) => ctx.db.get('executorJobs', jobId)))?.payload).toEqual({
+			url: 'https://example.com/image.png',
+			asImage: true
+		});
 	});
 
 	it('still enqueues web_search even when localExecution is true', async () => {

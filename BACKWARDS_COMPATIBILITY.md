@@ -315,14 +315,12 @@ Use `--prod` for the production deployment.
 
 `parse_file` now accepts only a local path. Use `scrape_url` for http(s) URLs.
 Stored tool results may still have `source: { "type": "url", "url": "..." }`.
-Replay reads the cached file and never fetches that URL. The live `url`
-argument is still deserialized so callers that send it get an error pointing
-at `scrape_url` instead of a schema failure.
+Replay reads the cached file and never fetches that URL. Live calls require
+`path`; the tool schema rejects the retired `url` argument.
 
 Remove `ParseFilePersistedSource::Url` after a production scan finds no stored
 parse_file outputs with a URL source, and after JSONL replicas from that era
-are gone or rewritten. Drop the rejected `url` argument once supported agents
-no longer send it.
+are gone or rewritten.
 
 ## Client APIs
 
@@ -341,17 +339,16 @@ Remove the legacy endpoint only after all supported local servers use
 
 ### Locally orchestrated URL tools
 
-New agents set `localExecution: true` when starting a `scrape_url` job and
+Agents must set `localExecution: true` when starting a `scrape_url` job and
 finish it after either reading an image in memory or calling the authenticated
-`webTools:scrapeForTool` action. Omitted `localExecution` preserves cloud
-workpool execution for released agents. Keep that default and the existing
-cloud action until all supported agents use local orchestration.
+`webTools:scrapeForTool` action. Older calls without local orchestration are
+rejected; there is no cloud-workpool scrape fallback. `web_search` still uses
+the workpool.
 
-The backend scrape job payload validator still accepts optional `asImage` for
-older agents and stored jobs. Current agents advertise only `url` and use
-automatic image discovery. Remove the optional backend field once all supported
-agents omit it and no stored executor jobs contain it. No stored-data rewrite
-is needed while the field remains accepted.
+Stored scrape payloads retain optional `asImage` so old executor jobs and
+transcripts validate. New calls reject it and use automatic image discovery.
+Remove the stored field only after historical rows and JSONL replicas have
+aged out or been rewritten.
 
 Web image results store URL and image metadata, not bytes or local paths.
 History displays a notice rather than fetching the URL again. Historical

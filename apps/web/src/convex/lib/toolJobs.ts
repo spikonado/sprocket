@@ -4,6 +4,7 @@ import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
 import { newToolInvocationId } from '@convex/lib/transcriptParts';
 import { recordStartedToolTranscript } from '@convex/lib/transcriptWrites';
 import { enqueueWebToolJob, isCloudWebToolKind } from '@convex/webToolPool';
+import { unsupportedClient } from '@convex/lib/unsupportedClient';
 
 export async function beginExecutorJob(
 	ctx: MutationCtx,
@@ -17,6 +18,12 @@ export async function beginExecutorJob(
 		localExecution?: boolean;
 	}
 ): Promise<{ jobId: Id<'executorJobs'>; sequence: number }> {
+	if (args.kind === 'scrape_url' && (args.localExecution !== true || 'asImage' in args.payload)) {
+		unsupportedClient();
+	}
+	if (args.kind === 'parse_file' && !('path' in args.payload)) {
+		unsupportedClient();
+	}
 	const lastJob = await ctx.db
 		.query('executorJobs')
 		.withIndex('by_threadId_sequence', (query) => query.eq('threadId', args.run.threadId))
@@ -39,8 +46,7 @@ export async function beginExecutorJob(
 	};
 	if (args.callId) job.callId = args.callId;
 	const jobId = await ctx.db.insert('executorJobs', job);
-	const skipCloudEnqueue = args.kind === 'scrape_url' && args.localExecution === true;
-	if (isCloudWebToolKind(args.kind) && !skipCloudEnqueue) {
+	if (isCloudWebToolKind(args.kind)) {
 		await enqueueWebToolJob(ctx, {
 			jobId,
 			runId: args.run._id,

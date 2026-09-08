@@ -115,7 +115,11 @@ describe('scrapeForTool auth', () => {
 		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
 			executionSecret: 'cloud-scrape-secret',
 			kind: 'scrape_url',
-			payload: { url: 'https://example.com/cloud' }
+			payload: { url: 'https://example.com/cloud' },
+			localExecution: true
+		});
+		await t.run(async (ctx) => {
+			await ctx.db.patch('executorJobs', jobId, { cloudWorkId: 'historical-cloud-work' });
 		});
 		await expect(
 			asUser.action(api.webTools.scrapeForTool, {

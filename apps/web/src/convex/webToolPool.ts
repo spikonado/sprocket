@@ -29,7 +29,7 @@ const vWebToolContext = v.object({
 const vWebToolJobSnapshot = v.union(
 	v.null(),
 	v.object({
-		kind: v.union(v.literal('web_search'), v.literal('scrape_url')),
+		kind: v.literal('web_search'),
 		payload: vExecutorJobPayload
 	})
 );
@@ -55,8 +55,8 @@ async function claimedJobForActiveRun(
 	return { job, run };
 }
 
-export function isCloudWebToolKind(kind: string): kind is 'web_search' | 'scrape_url' {
-	return kind === 'web_search' || kind === 'scrape_url';
+export function isCloudWebToolKind(kind: string): kind is 'web_search' {
+	return kind === 'web_search';
 }
 
 export async function enqueueWebToolJob(
@@ -65,16 +65,12 @@ export async function enqueueWebToolJob(
 		jobId: Id<'executorJobs'>;
 		runId: Id<'runs'>;
 		claimId: string;
-		kind: 'web_search' | 'scrape_url';
+		kind: 'web_search';
 	}
 ): Promise<void> {
-	const action =
-		args.kind === 'web_search'
-			? internal.webTools.executeWebSearch
-			: internal.webTools.executeScrapeUrl;
 	const workId = await webToolWorkpool.enqueueAction(
 		ctx,
-		action,
+		internal.webTools.executeWebSearch,
 		{ jobId: args.jobId, runId: args.runId, claimId: args.claimId },
 		{
 			onComplete: internal.webToolPool.completeWebTool,
@@ -134,7 +130,10 @@ export const getLocalScrapeJob = internalQuery({
 		...vWebToolContext.fields,
 		executionSecret: v.string()
 	},
-	returns: vWebToolJobSnapshot,
+	returns: v.union(
+		v.null(),
+		v.object({ kind: v.literal('scrape_url'), payload: vExecutorJobPayload })
+	),
 	handler: async (ctx, args) => {
 		await getExecutionRun(ctx, args.runId, args.executionSecret);
 		const active = await claimedJobForActiveRun(ctx, args);

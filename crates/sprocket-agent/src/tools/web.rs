@@ -51,6 +51,7 @@ pub(crate) struct WebSearchArgs {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ScrapeUrlArgs {
     pub(crate) url: String,
 }
@@ -347,12 +348,12 @@ mod tests {
     }
 
     #[test]
-    fn legacy_image_mode_is_ignored() {
-        let args: ScrapeUrlArgs =
-            serde_json::from_value(json!({"url": "https://example.com", "asImage": true})).unwrap();
-        assert_eq!(
-            serde_json::to_value(args).unwrap(),
-            json!({"url": "https://example.com"})
+    fn retired_image_mode_is_rejected() {
+        assert!(
+            serde_json::from_value::<ScrapeUrlArgs>(
+                json!({"url": "https://example.com", "asImage": true})
+            )
+            .is_err()
         );
     }
 }

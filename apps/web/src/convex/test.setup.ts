@@ -174,7 +174,7 @@ export async function seedStartedWebJob(
 	options: {
 		executionSecret: string;
 		kind: 'web_search' | 'scrape_url';
-		payload: { query: string } | { url: string };
+		payload: { query: string } | { url: string; asImage?: boolean };
 		localExecution?: boolean;
 		prompt?: string;
 		claimId?: string;

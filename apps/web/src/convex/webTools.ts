@@ -234,15 +234,6 @@ const executeArgs = {
 	claimId: v.string()
 };
 
-export const executeScrapeUrl = internalAction({
-	args: executeArgs,
-	returns: vScrapeUrlResult,
-	handler: async (ctx, args): Promise<Infer<typeof vScrapeUrlResult>> => {
-		const job: PoolScrapeJob = await ctx.runQuery(internal.webToolPool.getWebToolJob, args);
-		return await scrapeClaimedUrl(ctx, job);
-	}
-});
-
 export const executeWebSearch = internalAction({
 	args: executeArgs,
 	returns: vWebSearchResult,
