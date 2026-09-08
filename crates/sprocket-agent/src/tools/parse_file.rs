@@ -1,6 +1,5 @@
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use anyhow::{Context, anyhow, bail};
 use base64::Engine;
@@ -10,7 +9,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sprocket_workspace::{WorkspaceCancellation, WorkspaceOperationCancelled};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncReadExt;
 
 use super::context::{AgentToolContext, tool_error};
 use super::hosted_parse::HostedParseContext;
@@ -27,7 +26,6 @@ pub(crate) const MAX_PARSE_FILE_IMAGE_PIXELS: u32 = 36_000_000;
 pub(crate) const MAX_PARSE_FILE_PREVIEW_CHARS: usize = 20_000;
 const MAX_PARSE_FILE_DOCUMENT_BYTES: u64 = 64 * 1024 * 1024;
 
-const PARSE_FILE_HTTP_TIMEOUT: Duration = Duration::from_secs(60);
 const IMAGE_SNIFF_BYTES: usize = 16;
 
 #[derive(Clone)]
@@ -35,18 +33,13 @@ pub(crate) struct ParseFileTool(pub(super) AgentToolContext);
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct ParseFileArgs {
-    /// Local filesystem path. Provide this or `url`, not both.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
-    /// http(s) URL. Provide this or `path`, not both.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum ParseFileRequest {
-    Path(String),
-    Url(String),
+    /// Local filesystem path.
+    #[serde(default)]
+    pub path: String,
+    /// Older callers may still send `url`. Rejected; use `scrape_url`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(skip)]
+    url: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -78,6 +71,8 @@ pub(crate) enum ParseFilePersistedOutput {
     },
 }
 
+/// Origin of the parsed bytes. `Url` is historical stored output only; live
+/// calls persist `Path`. Replay reads the cache and never fetches `Url`.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub(crate) enum ParseFilePersistedSource {
@@ -112,7 +107,7 @@ impl rig::tool::Tool for ParseFileTool {
     type Output = ToolOutput;
 
     fn description(&self) -> String {
-        let docs = "Parse a local file or http(s) URL, up to 64 MiB. Converts Word, PowerPoint, Excel, OpenDocument, RTF, EPUB, CSV, and PDF to Markdown, and returns UTF-8 text for source and other text files. If local document conversion fails, automatically uploads the file to Firecrawl for hosted parsing and OCR, up to 50 MB, at no charge to the user. Provide exactly one of path or url. Larger attachments remain available to shell tools.";
+        let docs = "Parse a local file, up to 64 MiB. Converts Word, PowerPoint, Excel, OpenDocument, RTF, EPUB, CSV, and PDF to Markdown, and returns UTF-8 text for source and other text files. If local document conversion fails, automatically uploads the file to Firecrawl for hosted parsing and OCR, up to 50 MB, at no charge to the user. Use scrape_url for http(s) URLs. Larger attachments remain available to shell tools.";
         if self.0.supports_images {
             format!(
                 "{docs} jpeg, png, gif, and webp are returned as the image itself; images larger than 20 MiB or 8192 px on a side are rejected."
@@ -123,7 +118,7 @@ impl rig::tool::Tool for ParseFileTool {
     }
 
     fn parameters(&self) -> serde_json::Value {
-        json!(schemars::schema_for!(ParseFileArgs))
+        parse_file_parameters()
     }
 
     async fn call(
@@ -150,7 +145,7 @@ impl rig::tool::Tool for ParseFileTool {
                     claim_id: &self.0.claim_id,
                     job_id: &job_id,
                 };
-                let output = fetch_and_persist_parse_file(
+                let output = persist_parse_file(
                     &workspace_root,
                     &cache_dir,
                     cancellation,
@@ -170,28 +165,36 @@ impl rig::tool::Tool for ParseFileTool {
     }
 }
 
-fn parse_file_args(args: &ParseFileArgs) -> anyhow::Result<ParseFileRequest> {
-    match (
-        args.path
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty()),
-        args.url.as_deref().map(str::trim).filter(|s| !s.is_empty()),
-    ) {
-        (Some(path), None) => {
-            reject_embedded_url_as_path(path)?;
-            Ok(ParseFileRequest::Path(path.to_string()))
-        }
-        (None, Some(url)) => Ok(ParseFileRequest::Url(validate_http_url(url)?.to_string())),
-        (Some(_), Some(_)) => bail!("provide exactly one of path or url"),
-        (None, None) => bail!("provide a local path or an http(s) url"),
+fn parse_file_parameters() -> serde_json::Value {
+    let mut schema = json!(schemars::schema_for!(ParseFileArgs));
+    schema["required"] = json!(["path"]);
+    if let Some(path) = schema["properties"]["path"].as_object_mut() {
+        path.remove("default");
     }
+    schema
+}
+
+fn parse_file_args(args: &ParseFileArgs) -> anyhow::Result<String> {
+    if args
+        .url
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|url| !url.is_empty())
+    {
+        bail!("parse_file no longer accepts url; use scrape_url for http(s) URLs");
+    }
+    let path = args.path.trim();
+    anyhow::ensure!(!path.is_empty(), "provide a local path");
+    reject_embedded_url_as_path(path)?;
+    Ok(path.to_string())
 }
 
 fn reject_embedded_url_as_path(path: &str) -> anyhow::Result<()> {
     if let Ok(url) = reqwest::Url::parse(path) {
-        if matches!(url.scheme(), "http" | "https" | "file" | "data" | "ftp") {
-            bail!("path looks like a URL; pass it as url instead");
+        match url.scheme() {
+            "http" | "https" => bail!("path looks like a URL; use scrape_url for http(s) URLs"),
+            "file" | "data" | "ftp" => bail!("pass a local filesystem path, not a URL"),
+            _ => {}
         }
     }
     Ok(())
@@ -202,16 +205,6 @@ fn ensure_not_cancelled(cancellation: &WorkspaceCancellation) -> anyhow::Result<
         Err(WorkspaceOperationCancelled.into())
     } else {
         Ok(())
-    }
-}
-
-fn validate_http_url(url: &str) -> anyhow::Result<reqwest::Url> {
-    let parsed = reqwest::Url::parse(url).context("invalid file URL")?;
-    match parsed.scheme() {
-        "http" | "https" => Ok(parsed),
-        "file" => bail!("file:// URLs are not supported; pass a local path"),
-        "data" => bail!("data: URLs are not supported; pass a local path or http(s) URL"),
-        other => bail!("unsupported URL scheme {other}; use http(s) or a local path"),
     }
 }
 
@@ -239,26 +232,10 @@ fn resolve_local_path(workspace_root: &Path, path: &str) -> PathBuf {
     }
 }
 
-fn url_filename(url: &reqwest::Url) -> PathBuf {
-    url.path_segments()
-        .and_then(|mut segments| segments.next_back())
-        .filter(|name| !name.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_default()
-}
-
-fn url_suffix(url: &reqwest::Url) -> String {
-    url_filename(url)
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| format!(".{ext}"))
-        .unwrap_or_default()
-}
-
 fn ensure_image_within_model_bounds(width: u32, height: u32, byte_len: u64) -> anyhow::Result<()> {
     anyhow::ensure!(
         byte_len <= MAX_PARSE_FILE_IMAGE_BYTES as u64,
-        "image is {byte_len} bytes; parse_file accepts at most {MAX_PARSE_FILE_IMAGE_BYTES} bytes for images"
+        "image is {byte_len} bytes; model input accepts at most {MAX_PARSE_FILE_IMAGE_BYTES} bytes for images"
     );
     anyhow::ensure!(width > 0 && height > 0, "image has no pixels");
     anyhow::ensure!(
@@ -268,12 +245,12 @@ fn ensure_image_within_model_bounds(width: u32, height: u32, byte_len: u64) -> a
     let pixels = u64::from(width).saturating_mul(u64::from(height));
     anyhow::ensure!(
         pixels <= u64::from(MAX_PARSE_FILE_IMAGE_PIXELS),
-        "image is {width}x{height}; parse_file accepts at most {MAX_PARSE_FILE_IMAGE_PIXELS} pixels"
+        "image is {width}x{height}; model input accepts at most {MAX_PARSE_FILE_IMAGE_PIXELS} pixels"
     );
     Ok(())
 }
 
-fn sniff_supported_image_format(bytes: &[u8]) -> Option<image::ImageFormat> {
+pub(super) fn sniff_supported_image_format(bytes: &[u8]) -> Option<image::ImageFormat> {
     if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
         return Some(image::ImageFormat::Png);
     }
@@ -299,11 +276,11 @@ fn image_media_type(format: image::ImageFormat) -> anyhow::Result<ImageMediaType
     }
 }
 
-fn decode_image_info(bytes: &[u8]) -> anyhow::Result<(ImageMediaType, u32, u32)> {
+pub(super) fn decode_image_info(bytes: &[u8]) -> anyhow::Result<(ImageMediaType, u32, u32)> {
     anyhow::ensure!(!bytes.is_empty(), "image is empty");
     anyhow::ensure!(
         bytes.len() <= MAX_PARSE_FILE_IMAGE_BYTES,
-        "image is {} bytes; parse_file accepts at most {MAX_PARSE_FILE_IMAGE_BYTES} bytes for images",
+        "image is {} bytes; model input accepts at most {MAX_PARSE_FILE_IMAGE_BYTES} bytes for images",
         bytes.len()
     );
     let format = sniff_supported_image_format(bytes)
@@ -352,10 +329,8 @@ fn anydoc_format_name(format: anydoc::Format) -> &'static str {
     }
 }
 
-fn detect_anydoc_format(bytes: &[u8], path: &Path, name_hint: &Path) -> Option<anydoc::Format> {
-    anydoc::Format::from_bytes(bytes)
-        .or_else(|| anydoc::Format::from_path(path))
-        .or_else(|| anydoc::Format::from_path(name_hint))
+fn detect_anydoc_format(bytes: &[u8], path: &Path) -> Option<anydoc::Format> {
+    anydoc::Format::from_bytes(bytes).or_else(|| anydoc::Format::from_path(path))
 }
 
 fn ocr_unavailable_message(detail: impl std::fmt::Display) -> String {
@@ -394,7 +369,7 @@ fn unsupported_file_error() -> anyhow::Error {
     )
 }
 
-fn tool_output_from_image_bytes(bytes: &[u8], media_type: ImageMediaType) -> ToolOutput {
+pub(super) fn tool_output_from_image_bytes(bytes: &[u8], media_type: ImageMediaType) -> ToolOutput {
     ToolOutput::one(ToolResultContent::image_base64(
         base64::engine::general_purpose::STANDARD.encode(bytes),
         Some(media_type),
@@ -438,7 +413,6 @@ fn persist_parsed_text(
 
 fn convert_non_image_blocking(
     path: PathBuf,
-    name_hint: PathBuf,
     cache_dir: PathBuf,
     cancellation: WorkspaceCancellation,
 ) -> anyhow::Result<ParsedText> {
@@ -455,7 +429,7 @@ fn convert_non_image_blocking(
     ensure_document_size(bytes.len() as u64)?;
     ensure_not_cancelled(&cancellation)?;
     anyhow::ensure!(!bytes.is_empty(), "file is empty");
-    if let Some(format) = detect_anydoc_format(&bytes, &path, &name_hint) {
+    if let Some(format) = detect_anydoc_format(&bytes, &path) {
         let markdown = anydoc::to_markdown_bytes(&bytes, format)
             .map_err(|error| LocalConversionFailed(map_anydoc_error(error).to_string()))?;
         return persist_parsed_text(
@@ -503,8 +477,9 @@ async fn persist_image_bytes(
         .with_context(|| format!("failed to resolve {}", path.display()))
 }
 
-async fn read_image_bytes_bounded(
+async fn read_file_bounded(
     path: &Path,
+    max_bytes: u64,
     cancellation: &WorkspaceCancellation,
 ) -> anyhow::Result<Vec<u8>> {
     ensure_not_cancelled(cancellation)?;
@@ -516,134 +491,42 @@ async fn read_image_bytes_bounded(
         .await
         .with_context(|| format!("failed to stat {}", path.display()))?;
     anyhow::ensure!(metadata.is_file(), "{} is not a file", path.display());
-    let mut limited = file.take(MAX_PARSE_FILE_IMAGE_BYTES as u64 + 1);
+    let mut limited = file.take(max_bytes);
     let mut bytes = Vec::new();
     tokio::select! {
         biased;
         _ = cancellation.cancelled() => Err(WorkspaceOperationCancelled.into()),
         result = limited.read_to_end(&mut bytes) => {
             result.with_context(|| format!("failed to read {}", path.display()))?;
-            anyhow::ensure!(
-                bytes.len() <= MAX_PARSE_FILE_IMAGE_BYTES,
-                "image is {} bytes; parse_file accepts at most {MAX_PARSE_FILE_IMAGE_BYTES} bytes for images",
-                bytes.len()
-            );
             Ok(bytes)
         }
     }
+}
+
+async fn read_image_bytes_bounded(
+    path: &Path,
+    cancellation: &WorkspaceCancellation,
+) -> anyhow::Result<Vec<u8>> {
+    let bytes =
+        read_file_bounded(path, MAX_PARSE_FILE_IMAGE_BYTES as u64 + 1, cancellation).await?;
+    anyhow::ensure!(
+        bytes.len() <= MAX_PARSE_FILE_IMAGE_BYTES,
+        "image is {} bytes; parse_file accepts at most {MAX_PARSE_FILE_IMAGE_BYTES} bytes for images",
+        bytes.len()
+    );
+    Ok(bytes)
 }
 
 async fn peek_file(path: &Path, cancellation: &WorkspaceCancellation) -> anyhow::Result<Vec<u8>> {
-    ensure_not_cancelled(cancellation)?;
-    let file = tokio::fs::File::open(path)
-        .await
-        .with_context(|| format!("failed to open {}", path.display()))?;
-    let metadata = file
-        .metadata()
-        .await
-        .with_context(|| format!("failed to stat {}", path.display()))?;
-    anyhow::ensure!(metadata.is_file(), "{} is not a file", path.display());
-    let mut limited = file.take(IMAGE_SNIFF_BYTES as u64);
-    let mut bytes = Vec::new();
-    tokio::select! {
-        biased;
-        _ = cancellation.cancelled() => Err(WorkspaceOperationCancelled.into()),
-        result = limited.read_to_end(&mut bytes) => {
-            result.with_context(|| format!("failed to read {}", path.display()))?;
-            Ok(bytes)
-        }
-    }
-}
-
-fn http_client() -> anyhow::Result<reqwest::Client> {
-    reqwest::Client::builder()
-        .no_proxy()
-        .timeout(PARSE_FILE_HTTP_TIMEOUT)
-        .redirect(reqwest::redirect::Policy::limited(5))
-        .build()
-        .context("failed to build parse_file HTTP client")
+    read_file_bounded(path, IMAGE_SNIFF_BYTES as u64, cancellation).await
 }
 
 fn ensure_document_size(size: u64) -> anyhow::Result<()> {
     anyhow::ensure!(
         size <= MAX_PARSE_FILE_DOCUMENT_BYTES,
-        "parse_file accepts at most 64 MiB per document or download; use shell tools for larger files. Attachment uploads are not limited"
+        "parse_file accepts at most 64 MiB per document; use shell tools for larger files. Attachment uploads are not limited"
     );
     Ok(())
-}
-
-async fn stream_http_to_path(
-    client: reqwest::Client,
-    url: reqwest::Url,
-    path: &Path,
-    cancellation: &WorkspaceCancellation,
-) -> anyhow::Result<()> {
-    let mut response = client
-        .get(url.clone())
-        .send()
-        .await
-        .with_context(|| format!("failed to fetch {url}"))?
-        .error_for_status()
-        .with_context(|| format!("file URL returned an error status: {url}"))?;
-    if let Some(size) = response.content_length() {
-        ensure_document_size(size)?;
-    }
-    let mut file = tokio::fs::File::create(path)
-        .await
-        .with_context(|| format!("failed to create {}", path.display()))?;
-    let mut received = 0u64;
-    loop {
-        ensure_not_cancelled(cancellation)?;
-        let chunk = tokio::select! {
-            biased;
-            _ = cancellation.cancelled() => {
-                return Err(WorkspaceOperationCancelled.into());
-            }
-            chunk = response.chunk() => {
-                chunk.context("failed to read file body")?
-            }
-        };
-        let Some(chunk) = chunk else {
-            break;
-        };
-        received = received.saturating_add(chunk.len() as u64);
-        ensure_document_size(received)?;
-        file.write_all(&chunk)
-            .await
-            .with_context(|| format!("failed to write {}", path.display()))?;
-    }
-    file.flush()
-        .await
-        .with_context(|| format!("failed to flush {}", path.display()))?;
-    file.sync_all()
-        .await
-        .with_context(|| format!("failed to sync {}", path.display()))?;
-    Ok(())
-}
-
-async fn download_http_to_temp(
-    url: reqwest::Url,
-    cancellation: &WorkspaceCancellation,
-) -> anyhow::Result<tempfile::NamedTempFile> {
-    ensure_not_cancelled(cancellation)?;
-    let suffix = url_suffix(&url);
-    let mut builder = tempfile::Builder::new();
-    builder.prefix("sprocket-parse-file-");
-    if !suffix.is_empty() {
-        builder.suffix(&suffix);
-    }
-    let temp = builder
-        .tempfile()
-        .context("failed to create parse_file download tempfile")?;
-    let client = http_client()?;
-    tokio::select! {
-        biased;
-        _ = cancellation.cancelled() => Err(WorkspaceOperationCancelled.into()),
-        result = stream_http_to_path(client, url, temp.path(), cancellation) => {
-            result?;
-            Ok(temp)
-        }
-    }
 }
 
 async fn run_cancellable_blocking<T: Send + 'static>(
@@ -683,7 +566,6 @@ async fn persist_image_file(
 
 async fn persist_non_image_file(
     path: PathBuf,
-    name_hint: PathBuf,
     source: ParseFilePersistedSource,
     cache_dir: PathBuf,
     cancellation: &WorkspaceCancellation,
@@ -691,15 +573,14 @@ async fn persist_non_image_file(
 ) -> anyhow::Result<ParseFilePersistedOutput> {
     let worker_cancellation = cancellation.clone();
     let worker_path = path.clone();
-    let worker_hint = name_hint.clone();
     let worker_cache = cache_dir.clone();
     let local = run_cancellable_blocking(cancellation, move || {
-        convert_non_image_blocking(worker_path, worker_hint, worker_cache, worker_cancellation)
+        convert_non_image_blocking(worker_path, worker_cache, worker_cancellation)
     })
     .await;
     let parsed = if let Some(hosted) = hosted {
         local_or_hosted(local, cache_dir, cancellation, || {
-            super::hosted_parse::parse(hosted, &path, &name_hint, cancellation)
+            super::hosted_parse::parse(hosted, &path, &path, cancellation)
         })
         .await?
     } else {
@@ -741,7 +622,7 @@ where
     .await
 }
 
-async fn fetch_and_persist_parse_file(
+async fn persist_parse_file(
     workspace_root: &Path,
     cache_dir: &Path,
     cancellation: WorkspaceCancellation,
@@ -749,32 +630,10 @@ async fn fetch_and_persist_parse_file(
     args: ParseFileArgs,
     hosted: Option<&HostedParseContext<'_>>,
 ) -> anyhow::Result<ParseFilePersistedOutput> {
-    let request = parse_file_args(&args)?;
+    let path = parse_file_args(&args)?;
     ensure_not_cancelled(&cancellation)?;
-    let (file_path, name_hint, source, _temp) = match request {
-        ParseFileRequest::Path(path) => {
-            let resolved = resolve_local_path(workspace_root, &path);
-            (
-                resolved.clone(),
-                resolved,
-                ParseFilePersistedSource::Path { path },
-                None,
-            )
-        }
-        ParseFileRequest::Url(url) => {
-            let parsed = validate_http_url(&url)?;
-            let name_hint = url_filename(&parsed);
-            let temp = download_http_to_temp(parsed, &cancellation).await?;
-            let file_path = temp.path().to_path_buf();
-            (
-                file_path,
-                name_hint,
-                ParseFilePersistedSource::Url { url },
-                Some(temp),
-            )
-        }
-    };
-    ensure_not_cancelled(&cancellation)?;
+    let file_path = resolve_local_path(workspace_root, &path);
+    let source = ParseFilePersistedSource::Path { path };
     let prefix = peek_file(&file_path, &cancellation).await?;
     if sniff_supported_image_format(&prefix).is_some() {
         anyhow::ensure!(
@@ -785,7 +644,6 @@ async fn fetch_and_persist_parse_file(
     } else {
         persist_non_image_file(
             file_path,
-            name_hint,
             source,
             cache_dir.to_path_buf(),
             &cancellation,
@@ -892,32 +750,17 @@ pub(crate) async fn replay_parse_file_history_items(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn replay_metadata_accepts_convex_float_numbers() {
-        let output: ParseFilePersistedOutput = serde_json::from_value(json!({
-            "outputType": "image", "mediaType": "image/png", "path": "/cache/image.png",
-            "source": { "type": "path", "path": "image.png" },
-            "byteSize": 123.0, "width": 1.0, "height": 2.0
-        }))
-        .unwrap();
-        assert!(matches!(
-            output,
-            ParseFilePersistedOutput::Image {
-                byte_size: 123,
-                width: 1,
-                height: 2,
-                ..
-            }
-        ));
-    }
-    use rig::message::{DocumentSourceKind, ToolResultContent};
-    use sprocket_workspace::{WorkspaceCancellation, WorkspaceOperationCancelled};
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
+    use rig::message::DocumentSourceKind;
 
     const SAMPLE_RTF: &str = "{\\rtf1\\ansi\\ansicpg1252\\deff0\n{\\fonttbl{\\f0\\fcharset0 Arial;}}\n{\\stylesheet{\\s0 Normal;}}\n\\pard\\plain\\s0 Body before.\\par\n\\pard\\plain\\s0 Hello from RTF.\\par\n}\n"; // codespell:ignore pard
     const SAMPLE_CSV: &str = "name,qty\nwidget,2\ngadget,9\n";
+
+    fn args(path: impl Into<String>) -> ParseFileArgs {
+        ParseFileArgs {
+            path: path.into(),
+            url: None,
+        }
+    }
 
     fn tiny_png() -> Vec<u8> {
         let mut bytes = Vec::new();
@@ -943,33 +786,6 @@ mod tests {
         ));
         std::fs::create_dir_all(&path).expect("temp dir");
         path
-    }
-
-    fn serve_bytes_once(
-        status_line: &str,
-        content_type: &str,
-        body: &[u8],
-        url_path: &str,
-    ) -> String {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
-        let addr = listener.local_addr().expect("addr");
-        let status_line = status_line.to_string();
-        let content_type = content_type.to_string();
-        let body = body.to_vec();
-        std::thread::spawn(move || {
-            let Ok((mut stream, _)) = listener.accept() else {
-                return;
-            };
-            let mut buf = [0u8; 1024];
-            let _ = stream.read(&mut buf);
-            let header = format!(
-                "{status_line}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                body.len()
-            );
-            let _ = stream.write_all(header.as_bytes());
-            let _ = stream.write_all(&body);
-        });
-        format!("http://{addr}{url_path}")
     }
 
     fn assert_png_image_output(output: &ToolOutput, png: &[u8]) {
@@ -1008,89 +824,123 @@ mod tests {
     async fn persist(
         workspace: &Path,
         cache: &Path,
-        args: ParseFileArgs,
+        path: &str,
     ) -> anyhow::Result<ParseFilePersistedOutput> {
-        persist_with_images(workspace, cache, true, args).await
+        persist_with_images(workspace, cache, true, path).await
     }
 
     async fn persist_with_images(
         workspace: &Path,
         cache: &Path,
         supports_images: bool,
-        args: ParseFileArgs,
+        path: &str,
     ) -> anyhow::Result<ParseFilePersistedOutput> {
-        fetch_and_persist_parse_file(
+        persist_parse_file(
             workspace,
             cache,
             WorkspaceCancellation::new(),
             supports_images,
-            args,
+            args(path),
             None,
         )
         .await
     }
 
     #[test]
-    fn args_require_exactly_one_source() {
-        let neither = parse_file_args(&ParseFileArgs {
-            path: None,
-            url: None,
-        })
-        .expect_err("empty");
-        assert!(neither.to_string().contains("path or an http"));
-
-        let both = parse_file_args(&ParseFileArgs {
-            path: Some("/tmp/a.png".into()),
-            url: Some("https://example.com/a.png".into()),
-        })
-        .expect_err("both");
-        assert!(both.to_string().contains("exactly one"));
-
-        let url = parse_file_args(&ParseFileArgs {
-            path: None,
-            url: Some("https://example.com/a.png".into()),
-        })
-        .expect("url");
-        assert_eq!(
-            url,
-            ParseFileRequest::Url("https://example.com/a.png".into())
-        );
-
-        let path = parse_file_args(&ParseFileArgs {
-            path: Some("shots/a.png".into()),
-            url: None,
-        })
-        .expect("path");
-        assert_eq!(path, ParseFileRequest::Path("shots/a.png".into()));
+    fn replay_metadata_accepts_convex_float_numbers() {
+        let output: ParseFilePersistedOutput = serde_json::from_value(json!({
+            "outputType": "image", "mediaType": "image/png", "path": "/cache/image.png",
+            "source": { "type": "path", "path": "image.png" },
+            "byteSize": 123.0, "width": 1.0, "height": 2.0
+        }))
+        .unwrap();
+        assert!(matches!(
+            output,
+            ParseFilePersistedOutput::Image {
+                byte_size: 123,
+                width: 1,
+                height: 2,
+                ..
+            }
+        ));
     }
 
     #[test]
-    fn rejects_non_http_urls_and_url_shaped_paths() {
-        let file = validate_http_url("file:///tmp/a.png").expect_err("file");
-        assert!(file.to_string().contains("file://"));
-        let data = validate_http_url("data:image/png;base64,aaa").expect_err("data");
-        assert!(data.to_string().contains("data:"));
-        let ftp = validate_http_url("ftp://example.com/a.png").expect_err("ftp");
-        assert!(ftp.to_string().contains("ftp"));
-        let as_path = parse_file_args(&ParseFileArgs {
-            path: Some("https://example.com/a.png".into()),
-            url: None,
+    fn historical_url_source_remains_readable() {
+        let output: ParseFilePersistedOutput = serde_json::from_value(json!({
+            "outputType": "text",
+            "path": "/cache/note.md",
+            "source": { "type": "url", "url": "https://example.com/note.csv" },
+            "format": "csv",
+            "charCount": 4.0,
+            "preview": "name",
+            "truncated": false
+        }))
+        .unwrap();
+        match output {
+            ParseFilePersistedOutput::Text {
+                source: ParseFilePersistedSource::Url { url },
+                ..
+            } => assert_eq!(url, "https://example.com/note.csv"),
+            other => panic!("expected historical url source, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tool_schema_requires_path_and_omits_url() {
+        let schema = parse_file_parameters();
+        assert_eq!(schema["required"], json!(["path"]));
+        assert!(schema["properties"].get("path").is_some(), "{schema}");
+        assert!(schema["properties"].get("url").is_none(), "{schema}");
+        assert!(
+            schema["properties"]["path"].get("default").is_none(),
+            "{schema}"
+        );
+    }
+
+    #[test]
+    fn args_require_a_local_path_and_reject_urls() {
+        let empty = parse_file_args(&args("  ")).expect_err("empty");
+        assert!(empty.to_string().contains("path"), "{empty}");
+
+        let url_arg = parse_file_args(&ParseFileArgs {
+            path: "/tmp/a.png".into(),
+            url: Some("https://example.com/a.png".into()),
         })
-        .expect_err("url as path");
-        assert!(as_path.to_string().contains("url instead"));
+        .expect_err("url arg");
+        assert!(url_arg.to_string().contains("scrape_url"), "{url_arg}");
+
+        let url_only: ParseFileArgs =
+            serde_json::from_value(json!({ "url": "https://example.com/a.png" })).unwrap();
+        let url_only = parse_file_args(&url_only).expect_err("url only json");
+        assert!(url_only.to_string().contains("scrape_url"), "{url_only}");
+
+        for path in ["https://example.com/a.png", "http://example.com/a.png"] {
+            let error = parse_file_args(&args(path)).expect_err(path);
+            assert!(error.to_string().contains("scrape_url"), "{path}: {error}");
+        }
+        for path in [
+            "file:///tmp/a.png",
+            "data:image/png;base64,aaa",
+            "ftp://example.com/a.png",
+        ] {
+            let error = parse_file_args(&args(path)).expect_err(path);
+            assert!(
+                error.to_string().contains("local filesystem path"),
+                "{path}: {error}"
+            );
+        }
+
+        assert_eq!(
+            parse_file_args(&args("shots/a.png")).unwrap(),
+            "shots/a.png"
+        );
     }
 
     #[test]
     fn windows_drive_path_is_not_treated_as_a_url() {
-        let parsed = parse_file_args(&ParseFileArgs {
-            path: Some(r"C:\Users\me\shot.png".into()),
-            url: None,
-        })
-        .expect("drive path");
-        assert_eq!(
-            parsed,
-            ParseFileRequest::Path(r"C:\Users\me\shot.png".into())
-        );
+        let parsed = parse_file_args(&args(r"C:\Users\me\shot.png")).expect("drive path");
+        assert_eq!(parsed, r"C:\Users\me\shot.png");
     }
 
     #[test]
@@ -1144,61 +994,12 @@ mod tests {
             .set_len(MAX_PARSE_FILE_DOCUMENT_BYTES + 1)
             .unwrap();
         let cache = dir.path().join("parsed");
-        let error = persist(
-            dir.path(),
-            &cache,
-            ParseFileArgs {
-                path: Some(source.to_string_lossy().into_owned()),
-                url: None,
-            },
-        )
-        .await
-        .unwrap_err();
+        let error = persist(dir.path(), &cache, &source.to_string_lossy())
+            .await
+            .unwrap_err();
         assert!(error.to_string().contains("64 MiB"), "{error}");
         assert!(source.exists());
         assert!(!cache.exists());
-    }
-
-    #[tokio::test]
-    async fn bounds_http_documents_with_and_without_content_length() {
-        for declared in [true, false] {
-            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-            let address = listener.local_addr().unwrap();
-            let server = std::thread::spawn(move || {
-                let (mut stream, _) = listener.accept().unwrap();
-                stream.read(&mut [0; 1024]).unwrap();
-                let length = if declared {
-                    format!("Content-Length: {}\r\n", MAX_PARSE_FILE_DOCUMENT_BYTES + 1)
-                } else {
-                    String::new()
-                };
-                write!(
-                    stream,
-                    "HTTP/1.1 200 OK\r\n{length}Connection: close\r\n\r\n"
-                )
-                .unwrap();
-                if !declared {
-                    let chunk = vec![b'x'; 1024 * 1024];
-                    for _ in 0..=MAX_PARSE_FILE_DOCUMENT_BYTES / chunk.len() as u64 {
-                        if stream.write_all(&chunk).is_err() {
-                            break;
-                        }
-                    }
-                }
-            });
-            let temp = tempfile::NamedTempFile::new().unwrap();
-            let error = stream_http_to_path(
-                http_client().unwrap(),
-                validate_http_url(&format!("http://{address}/large.txt")).unwrap(),
-                temp.path(),
-                &WorkspaceCancellation::new(),
-            )
-            .await
-            .unwrap_err();
-            assert!(error.to_string().contains("64 MiB"), "{error}");
-            assert!(temp.as_file().metadata().unwrap().len() <= MAX_PARSE_FILE_DOCUMENT_BYTES);
-            server.join().unwrap();
-        }
     }
 
     #[test]
@@ -1270,7 +1071,7 @@ mod tests {
         let csv = SAMPLE_CSV.as_bytes();
         assert!(anydoc::Format::from_bytes(csv).is_none());
         assert_eq!(
-            detect_anydoc_format(csv, Path::new("export.bin"), Path::new("data.csv")),
+            detect_anydoc_format(csv, Path::new("data.csv")),
             Some(anydoc::Format::Csv)
         );
     }
@@ -1283,16 +1084,9 @@ mod tests {
         let source = workspace.join("shot.png");
         tokio::fs::write(&source, &png).await.expect("write");
 
-        let persisted = persist(
-            &workspace,
-            &cache,
-            ParseFileArgs {
-                path: Some("shot.png".into()),
-                url: None,
-            },
-        )
-        .await
-        .expect("persist");
+        let persisted = persist(&workspace, &cache, "shot.png")
+            .await
+            .expect("persist");
 
         match &persisted {
             ParseFilePersistedOutput::Image {
@@ -1342,51 +1136,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn http_response_bytes_become_rig_image_output() {
-        let png = tiny_png();
-        let url = serve_bytes_once(
-            "HTTP/1.1 200 OK",
-            "application/octet-stream",
-            &png,
-            "/shot.png",
-        );
-        let workspace = temp_dir("http-workspace");
-        let cache = temp_dir("http-cache");
-
-        let persisted = persist(
-            &workspace,
-            &cache,
-            ParseFileArgs {
-                path: None,
-                url: Some(url),
-            },
-        )
-        .await
-        .expect("http persist");
-
-        let value = serde_json::to_value(&persisted).expect("value");
-        assert!(value.get("data").is_none());
-        assert!(!value.to_string().contains("iVBORw0KGgo"));
-        match &persisted {
-            ParseFilePersistedOutput::Image { source, .. } => match source {
-                ParseFilePersistedSource::Url { .. } => {}
-                other => panic!("expected url source, got {other:?}"),
-            },
-            other => panic!("expected image output, got {other:?}"),
-        }
-
-        let output = replay_parse_file_tool_output(&value).await.expect("replay");
-        assert!(
-            !matches!(output.as_content(), [ToolResultContent::Json { .. }]),
-            "HTTP parse_file image must yield a Rig image, not persisted JSON"
-        );
-        assert_png_image_output(&output, &png);
-
-        let _ = tokio::fs::remove_dir_all(workspace).await;
-        let _ = tokio::fs::remove_dir_all(cache).await;
-    }
-
-    #[tokio::test]
     async fn rtf_converts_through_anydoc() {
         let workspace = temp_dir("rtf");
         let cache = temp_dir("rtf-cache");
@@ -1394,16 +1143,7 @@ mod tests {
             .await
             .expect("write");
 
-        let persisted = persist(
-            &workspace,
-            &cache,
-            ParseFileArgs {
-                path: Some("note.rtf".into()),
-                url: None,
-            },
-        )
-        .await
-        .expect("rtf");
+        let persisted = persist(&workspace, &cache, "note.rtf").await.expect("rtf");
 
         match &persisted {
             ParseFilePersistedOutput::Text {
@@ -1442,26 +1182,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn csv_uses_filename_fallback_over_http() {
-        let url = serve_bytes_once(
-            "HTTP/1.1 200 OK",
-            "application/octet-stream",
-            SAMPLE_CSV.as_bytes(),
-            "/export.csv",
-        );
-        let workspace = temp_dir("csv-http");
-        let cache = temp_dir("csv-http-cache");
+    async fn csv_without_signature_converts_from_a_local_path() {
+        let workspace = temp_dir("csv");
+        let cache = temp_dir("csv-cache");
+        tokio::fs::write(workspace.join("export.csv"), SAMPLE_CSV)
+            .await
+            .expect("write");
 
-        let persisted = persist(
-            &workspace,
-            &cache,
-            ParseFileArgs {
-                path: None,
-                url: Some(url),
-            },
-        )
-        .await
-        .expect("csv http");
+        let persisted = persist(&workspace, &cache, "export.csv")
+            .await
+            .expect("csv");
 
         match &persisted {
             ParseFilePersistedOutput::Text {
@@ -1488,16 +1218,7 @@ mod tests {
             .await
             .expect("write");
 
-        let persisted = persist(
-            &workspace,
-            &cache,
-            ParseFileArgs {
-                path: Some("main.rs".into()),
-                url: None,
-            },
-        )
-        .await
-        .expect("utf8");
+        let persisted = persist(&workspace, &cache, "main.rs").await.expect("utf8");
 
         match persisted {
             ParseFilePersistedOutput::Text {
@@ -1524,33 +1245,17 @@ mod tests {
             .await
             .expect("rtf");
 
-        let image = persist_with_images(
-            &workspace,
-            &cache,
-            false,
-            ParseFileArgs {
-                path: Some("shot.png".into()),
-                url: None,
-            },
-        )
-        .await
-        .expect_err("image");
+        let image = persist_with_images(&workspace, &cache, false, "shot.png")
+            .await
+            .expect_err("image");
         assert!(
             image.to_string().contains("does not support images"),
             "{image}"
         );
 
-        let doc = persist_with_images(
-            &workspace,
-            &cache,
-            false,
-            ParseFileArgs {
-                path: Some("note.rtf".into()),
-                url: None,
-            },
-        )
-        .await
-        .expect("rtf on text model");
+        let doc = persist_with_images(&workspace, &cache, false, "note.rtf")
+            .await
+            .expect("rtf on text model");
         match doc {
             ParseFilePersistedOutput::Text { preview, .. } => {
                 assert!(preview.contains("Hello from RTF"));
@@ -1572,16 +1277,7 @@ mod tests {
             .await
             .expect("write");
 
-        let persisted = persist(
-            &workspace,
-            &cache,
-            ParseFileArgs {
-                path: Some("long.txt".into()),
-                url: None,
-            },
-        )
-        .await
-        .expect("long");
+        let persisted = persist(&workspace, &cache, "long.txt").await.expect("long");
 
         match &persisted {
             ParseFilePersistedOutput::Text {
@@ -1673,16 +1369,9 @@ mod tests {
             .expect("set_len");
         drop(file);
 
-        let live = persist(
-            &workspace,
-            &cache,
-            ParseFileArgs {
-                path: Some("huge.png".into()),
-                url: None,
-            },
-        )
-        .await
-        .expect_err("live oversize");
+        let live = persist(&workspace, &cache, "huge.png")
+            .await
+            .expect_err("live oversize");
         assert!(
             live.to_string()
                 .contains(&MAX_PARSE_FILE_IMAGE_BYTES.to_string())
@@ -1713,31 +1402,15 @@ mod tests {
     async fn local_path_rejects_missing_files_and_directories() {
         let workspace = temp_dir("missing");
         let cache = temp_dir("missing-cache");
-        let missing = persist(
-            &workspace,
-            &cache,
-            ParseFileArgs {
-                path: Some("nope.png".into()),
-                url: None,
-            },
-        )
-        .await
-        .expect_err("missing");
+        let missing = persist(&workspace, &cache, "nope.png")
+            .await
+            .expect_err("missing");
         assert!(
             missing.to_string().contains("failed to open")
                 || missing.to_string().contains("No such")
         );
 
-        let dir_error = persist(
-            &workspace,
-            &cache,
-            ParseFileArgs {
-                path: Some(".".into()),
-                url: None,
-            },
-        )
-        .await
-        .expect_err("dir");
+        let dir_error = persist(&workspace, &cache, ".").await.expect_err("dir");
         assert!(dir_error.to_string().contains("not a file"));
 
         let _ = tokio::fs::remove_dir_all(workspace).await;
@@ -1751,16 +1424,9 @@ mod tests {
         tokio::fs::write(workspace.join("blob.bin"), [0u8, 1, 2, 3, 255])
             .await
             .expect("write");
-        let error = persist(
-            &workspace,
-            &cache,
-            ParseFileArgs {
-                path: Some("blob.bin".into()),
-                url: None,
-            },
-        )
-        .await
-        .expect_err("binary");
+        let error = persist(&workspace, &cache, "blob.bin")
+            .await
+            .expect_err("binary");
         assert!(error.to_string().contains("unsupported file"), "{error}");
 
         let _ = tokio::fs::remove_dir_all(workspace).await;
@@ -1776,15 +1442,12 @@ mod tests {
             .expect("write");
         let cancellation = WorkspaceCancellation::new();
         cancellation.cancel();
-        let error = fetch_and_persist_parse_file(
+        let error = persist_parse_file(
             &workspace,
             &cache,
             cancellation,
             true,
-            ParseFileArgs {
-                path: Some("shot.png".into()),
-                url: None,
-            },
+            args("shot.png"),
             None,
         )
         .await

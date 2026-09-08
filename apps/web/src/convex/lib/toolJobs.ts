@@ -14,6 +14,7 @@ export async function beginExecutorJob(
 		payload: Doc<'executorJobs'>['payload'];
 		callId?: string;
 		hidden?: boolean;
+		localExecution?: boolean;
 	}
 ): Promise<{ jobId: Id<'executorJobs'>; sequence: number }> {
 	const lastJob = await ctx.db
@@ -38,7 +39,8 @@ export async function beginExecutorJob(
 	};
 	if (args.callId) job.callId = args.callId;
 	const jobId = await ctx.db.insert('executorJobs', job);
-	if (isCloudWebToolKind(args.kind)) {
+	const skipCloudEnqueue = args.kind === 'scrape_url' && args.localExecution === true;
+	if (isCloudWebToolKind(args.kind) && !skipCloudEnqueue) {
 		await enqueueWebToolJob(ctx, {
 			jobId,
 			runId: args.run._id,

@@ -1,8 +1,14 @@
 import { Workpool, vOnCompleteArgs, type WorkId } from '@convex-dev/workpool';
 import { v } from 'convex/values';
 import { components, internal } from '@convex/_generated/api';
-import { internalMutation, internalQuery, type MutationCtx } from '@convex/_generated/server';
-import type { Id } from '@convex/_generated/dataModel';
+import {
+	internalMutation,
+	internalQuery,
+	type MutationCtx,
+	type QueryCtx
+} from '@convex/_generated/server';
+import type { Doc, Id } from '@convex/_generated/dataModel';
+import { getExecutionRun } from '@convex/lib/auth';
 import { applyExecutorJobFailure, applyExecutorJobSuccess } from '@convex/lib/executorJobs';
 import { isSettledExecutorJobStatus } from '@convex/lib/runs';
 import { isRunFinalStatus, vExecutorJobPayload } from '@convex/lib/validators';
@@ -19,6 +25,35 @@ const vWebToolContext = v.object({
 	runId: v.id('runs'),
 	claimId: v.string()
 });
+
+const vWebToolJobSnapshot = v.union(
+	v.null(),
+	v.object({
+		kind: v.union(v.literal('web_search'), v.literal('scrape_url')),
+		payload: vExecutorJobPayload
+	})
+);
+
+async function claimedJobForActiveRun(
+	ctx: MutationCtx | QueryCtx,
+	args: { jobId: Id<'executorJobs'>; runId: Id<'runs'>; claimId: string }
+): Promise<{ job: Doc<'executorJobs'>; run: Doc<'runs'> } | null> {
+	const job = await ctx.db.get('executorJobs', args.jobId);
+	if (!job || job.runId !== args.runId) {
+		return null;
+	}
+	if (isSettledExecutorJobStatus(job.status)) {
+		return null;
+	}
+	const run = await ctx.db.get('runs', args.runId);
+	if (!run || isRunFinalStatus(run.status) || run.cancellationRequestedAt !== undefined) {
+		return null;
+	}
+	if (!ownsActiveRunClaim(run, args.claimId, Date.now())) {
+		return null;
+	}
+	return { job, run };
+}
 
 export function isCloudWebToolKind(kind: string): kind is 'web_search' | 'scrape_url' {
 	return kind === 'web_search' || kind === 'scrape_url';
@@ -83,35 +118,35 @@ export async function cancelWebToolWork(ctx: MutationCtx, runId: Id<'runs'>): Pr
 }
 
 export const getWebToolJob = internalQuery({
-	args: {
-		jobId: v.id('executorJobs'),
-		runId: v.id('runs'),
-		claimId: v.string()
-	},
-	returns: v.union(
-		v.null(),
-		v.object({
-			kind: v.union(v.literal('web_search'), v.literal('scrape_url')),
-			payload: vExecutorJobPayload
-		})
-	),
+	args: vWebToolContext.fields,
+	returns: vWebToolJobSnapshot,
 	handler: async (ctx, args) => {
-		const job = await ctx.db.get('executorJobs', args.jobId);
-		if (!job || job.runId !== args.runId || !isCloudWebToolKind(job.kind)) {
+		const active = await claimedJobForActiveRun(ctx, args);
+		if (!active || !isCloudWebToolKind(active.job.kind)) {
 			return null;
 		}
-		if (isSettledExecutorJobStatus(job.status)) {
-			return null;
-		}
-		const run = await ctx.db.get('runs', args.runId);
+		return { kind: active.job.kind, payload: active.job.payload };
+	}
+});
+
+export const getLocalScrapeJob = internalQuery({
+	args: {
+		...vWebToolContext.fields,
+		executionSecret: v.string()
+	},
+	returns: vWebToolJobSnapshot,
+	handler: async (ctx, args) => {
+		await getExecutionRun(ctx, args.runId, args.executionSecret);
+		const active = await claimedJobForActiveRun(ctx, args);
 		if (
-			!run ||
-			!ownsActiveRunClaim(run, args.claimId, Date.now()) ||
-			run.cancellationRequestedAt !== undefined
+			!active ||
+			active.job.kind !== 'scrape_url' ||
+			active.job.status !== 'claimed' ||
+			active.job.cloudWorkId !== undefined
 		) {
 			return null;
 		}
-		return { kind: job.kind, payload: job.payload };
+		return { kind: active.job.kind, payload: active.job.payload };
 	}
 });
 
@@ -119,23 +154,14 @@ export const completeWebTool = internalMutation({
 	args: vOnCompleteArgs(vWebToolContext),
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const job = await ctx.db.get('executorJobs', args.context.jobId);
-		if (!job || job.runId !== args.context.runId) {
-			return null;
-		}
-		if (isSettledExecutorJobStatus(job.status)) {
-			return null;
-		}
-		const run = await ctx.db.get('runs', args.context.runId);
-		if (!run || isRunFinalStatus(run.status) || run.cancellationRequestedAt !== undefined) {
-			return null;
-		}
-		if (!ownsActiveRunClaim(run, args.context.claimId, Date.now())) {
+		const active = await claimedJobForActiveRun(ctx, args.context);
+		if (!active) {
 			return null;
 		}
 		if (args.result.kind === 'canceled') {
 			return null;
 		}
+		const { job, run } = active;
 		if (args.result.kind === 'success') {
 			await applyExecutorJobSuccess(ctx, {
 				job,

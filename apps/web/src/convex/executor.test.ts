@@ -137,6 +137,56 @@ describe('executor', () => {
 		}
 	);
 
+	it('persists scrape_url image metadata without file bytes', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'scrape-image-secret';
+		const claimId = 'claim-image';
+		const { runId } = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			'scrape-image',
+			executionSecret,
+			'Read this image'
+		);
+		await asUser.mutation(api.agentRuntime.start, { runId, claimId, executionSecret });
+		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
+			runId,
+			claimId,
+			executionSecret,
+			kind: 'scrape_url',
+			localExecution: true,
+			payload: { url: 'https://example.com/pic.png' }
+		});
+		await expect(
+			asUser.mutation(api.executor.complete, {
+				runId,
+				claimId,
+				executionSecret,
+				jobId,
+				result: {
+					outputType: 'image',
+					url: 'https://example.com/pic.png',
+					mediaType: 'image/png',
+					byteSize: 80,
+					width: 1,
+					height: 1
+				}
+			})
+		).resolves.toBe(true);
+		const job = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
+		expect(job?.result).toEqual({
+			outputType: 'image',
+			url: 'https://example.com/pic.png',
+			mediaType: 'image/png',
+			byteSize: 80,
+			width: 1,
+			height: 1
+		});
+		expect(job?.result).not.toHaveProperty('path');
+	});
+
 	it('completes the active job and releases the run back to running', async () => {
 		const t = initConvexTest();
 		const { asUser, runId, jobId, claimId, executionSecret } = await seedRunWithJob(t, {

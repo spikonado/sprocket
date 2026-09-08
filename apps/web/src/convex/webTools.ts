@@ -11,6 +11,7 @@ import {
 	vWebSearchResult,
 	type ExecutorJobPayload
 } from '@convex/lib/validators';
+import { RUN_NO_LONGER_ACTIVE, toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { unsupportedClient } from '@convex/lib/unsupportedClient';
 import { NonRetryableError } from '@convex-dev/workpool';
 
@@ -86,6 +87,21 @@ function webSearchFromPayload(payload: ExecutorJobPayload): WebSearchJobArgs {
 		return { query };
 	}
 	return { query, numResults: payload.numResults };
+}
+
+type PoolScrapeJob = {
+	kind: 'web_search' | 'scrape_url';
+	payload: ExecutorJobPayload;
+} | null;
+
+async function scrapeClaimedUrl(
+	ctx: ActionCtx,
+	job: PoolScrapeJob
+): Promise<Infer<typeof vScrapeUrlResult>> {
+	if (!job || job.kind !== 'scrape_url') {
+		throw new NonRetryableError(RUN_NO_LONGER_ACTIVE);
+	}
+	return await runScrape(ctx, scrapeUrlFromPayload(job.payload));
 }
 
 async function runScrape(
@@ -222,11 +238,8 @@ export const executeScrapeUrl = internalAction({
 	args: executeArgs,
 	returns: vScrapeUrlResult,
 	handler: async (ctx, args): Promise<Infer<typeof vScrapeUrlResult>> => {
-		const job = await ctx.runQuery(internal.webToolPool.getWebToolJob, args);
-		if (!job || job.kind !== 'scrape_url') {
-			throw new NonRetryableError('Run is no longer active.');
-		}
-		return await runScrape(ctx, scrapeUrlFromPayload(job.payload));
+		const job: PoolScrapeJob = await ctx.runQuery(internal.webToolPool.getWebToolJob, args);
+		return await scrapeClaimedUrl(ctx, job);
 	}
 });
 
@@ -236,9 +249,27 @@ export const executeWebSearch = internalAction({
 	handler: async (ctx, args): Promise<Infer<typeof vWebSearchResult>> => {
 		const job = await ctx.runQuery(internal.webToolPool.getWebToolJob, args);
 		if (!job || job.kind !== 'web_search') {
-			throw new NonRetryableError('Run is no longer active.');
+			throw new NonRetryableError(RUN_NO_LONGER_ACTIVE);
 		}
 		const search = webSearchFromPayload(job.payload);
 		return await runSearch(ctx, search.query, search.numResults);
+	}
+});
+
+export const scrapeForTool = action({
+	args: {
+		runId: v.id('runs'),
+		claimId: v.string(),
+		jobId: v.id('executorJobs'),
+		executionSecret: v.string()
+	},
+	returns: vScrapeUrlResult,
+	handler: async (ctx, args): Promise<Infer<typeof vScrapeUrlResult>> => {
+		try {
+			const job: PoolScrapeJob = await ctx.runQuery(internal.webToolPool.getLocalScrapeJob, args);
+			return await scrapeClaimedUrl(ctx, job);
+		} catch (error) {
+			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
+		}
 	}
 });

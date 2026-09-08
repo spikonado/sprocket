@@ -242,6 +242,15 @@ export const vScrapeUrlResult = v.object({
 	truncated: v.boolean()
 });
 
+export const vWebImageResult = v.object({
+	outputType: v.literal('image'),
+	url: v.string(),
+	mediaType: v.string(),
+	byteSize: v.number(),
+	width: v.number(),
+	height: v.number()
+});
+
 export const vWebSearchResult = v.object({
 	results: v.array(
 		v.object({
@@ -413,6 +422,7 @@ export const vExecutorJobResult = v.union(
 	vCommandExecResult,
 	vReadSkillResult,
 	vScrapeUrlResult,
+	vWebImageResult,
 	vWebSearchResult,
 	vArtifactResult,
 	vListArtifactsResult,

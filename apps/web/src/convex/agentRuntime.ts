@@ -685,6 +685,7 @@ export const beginToolJob = mutation({
 		callId: v.optional(v.string()),
 		payload: vExecutorJobPayload,
 		hidden: v.optional(v.boolean()),
+		localExecution: v.optional(v.boolean()),
 		executionSecret: v.string()
 	},
 	returns: v.object({
@@ -704,7 +705,8 @@ export const beginToolJob = mutation({
 				kind: args.kind,
 				payload: args.payload,
 				callId: args.callId,
-				hidden: args.hidden
+				hidden: args.hidden,
+				localExecution: args.localExecution
 			});
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));

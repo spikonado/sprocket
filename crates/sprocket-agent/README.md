@@ -39,20 +39,28 @@ limit. The UI streams them through Rust to Convex storage. Each thread keeps its
 local copies in `attachments/` under the transcript cache. Prompts list those
 local paths; attaching an image does not put its pixels in model context.
 
-`parse_file` accepts a local path or an HTTP URL. Firecrawl's AnyDoc Rust library
+`parse_file` accepts a local filesystem path. Firecrawl's AnyDoc Rust library
 converts supported office documents and PDFs to Markdown locally. UTF-8 text is
 returned as text. Failed local document conversions automatically upload a
 temporary copy to Firecrawl's hosted Parse API, including OCR for scanned PDFs.
 There is no permission prompt or Firecrawl charge to the user. The backend uses
 its `FIRECRAWL_API_KEY`; when it is not configured, the tool reports that hosted
 fallback is unavailable. Long parsed results include a preview and the path to
-the full text in the thread's `parse_file/` cache.
+the full text in the thread's `parse_file/` cache. Use `scrape_url` for http(s)
+URLs; `parse_file` rejects a `url` argument and URL-shaped paths.
 
-Document conversion and URL downloads accept at most 64 MiB per call to bound
+`scrape_url` fetches supported raster images in memory and returns their pixels
+to image-capable models. It saves neither the image nor scraped markdown to a
+local file. Rebuilt history keeps image metadata and asks the model to call
+the tool again if it needs the pixels. HTML uses the cloud scraper through an
+authenticated action; image probing failures fall back to that scraper.
+Like shell commands and the former `parse_file` URL handling, the image probe
+can reach local devices and private networks. It is not a network isolation
+boundary. It does not attach browser cookies or provider credentials.
+
+Document conversion accepts at most 64 MiB per call to bound
 input buffering. Larger attachments remain available through shell tools. This
-does not sandbox AnyDoc's memory or CPU use for compressed documents. HTTP
-requests use the local process's network access, including localhost and LAN
-devices, just like shell commands. `parse_file` is not a network isolation boundary.
+does not sandbox AnyDoc's memory or CPU use for compressed documents.
 
 Firecrawl accepts at most 50 MB per uploaded file. Hosted calls are tied to the
 existing executor job, do not retry the paid provider request automatically, and
