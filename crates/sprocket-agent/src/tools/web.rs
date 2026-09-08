@@ -139,10 +139,13 @@ impl rig::tool::Tool for ScrapeUrlTool {
                 let image = tokio::select! {
                     biased;
                     _ = cancellation.cancelled() => return Err(super::context::cancelled_error()),
-                    result = fetch_web_image(url, self.0.supports_images, &self.0.parse_file_cache_dir) => result.map_err(tool_error)?,
+                    result = fetch_web_image(url.clone(), self.0.supports_images, &self.0.parse_file_cache_dir) => result.map_err(tool_error)?,
                 };
                 if let Some(metadata) = image {
                     return Ok(metadata);
+                }
+                if let Some(result) = super::markdown_url::try_markdown_url(url, &cancellation).await.map_err(tool_error)? {
+                    return super::scrape_files::localize_scrape(result, &cancellation, saved_file).await.map_err(tool_error);
                 }
                 let action_args = BTreeMap::from([
                     ("runId".to_string(), self.0.run_id.clone().into()),

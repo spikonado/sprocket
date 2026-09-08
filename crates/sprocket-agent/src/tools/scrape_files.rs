@@ -5,7 +5,8 @@ use serde_json::Value;
 use sprocket_workspace::{WorkspaceCancellation, WorkspaceOperationCancelled};
 use tokio::io::AsyncWriteExt;
 
-const MAX_SCRAPE_BYTES: u64 = 64 * 1024 * 1024;
+pub(super) const MAX_SCRAPE_BYTES: u64 = 64 * 1024 * 1024;
+const SCRAPE_INLINE_MAX_CHARS: usize = 40_000;
 
 pub(super) async fn localize_scrape(
     mut result: Value,
@@ -24,22 +25,48 @@ pub(super) async fn localize_scrape(
             .suffix(".json")
             .tempfile()?;
         let temp = download_scrape(url, temp, cancellation).await?;
-        fields.insert(
-            "markdown".into(),
-            Value::String(format!(
-                "The scrape was saved to {}.",
-                temp.path().display()
-            )),
-        );
-        *saved_file = Some(temp);
+        record_saved_scrape(fields, temp, saved_file);
     } else {
         anyhow::ensure!(
             fields.get("markdown").is_some_and(Value::is_string),
             "scrape response is missing markdown"
         );
+        let archive = serde_json::to_string(fields)?;
+        // Match JSON.stringify(...).length in the backend, including surrogate pairs.
+        if archive.encode_utf16().count() > SCRAPE_INLINE_MAX_CHARS {
+            let temp = tempfile::Builder::new()
+                .prefix("sprocket-scrape-")
+                .suffix(".json")
+                .tempfile()?;
+            let mut file = tokio::fs::File::from_std(temp.reopen()?);
+            tokio::select! {
+                biased;
+                _ = cancellation.cancelled() => return Err(WorkspaceOperationCancelled.into()),
+                result = async {
+                    file.write_all(archive.as_bytes()).await?;
+                    file.flush().await
+                } => result?,
+            }
+            record_saved_scrape(fields, temp, saved_file);
+        }
     }
     fields.remove("truncated");
     Ok(result)
+}
+
+fn record_saved_scrape(
+    fields: &mut serde_json::Map<String, Value>,
+    temp: tempfile::NamedTempFile,
+    saved_file: &mut Option<tempfile::NamedTempFile>,
+) {
+    fields.insert(
+        "markdown".into(),
+        Value::String(format!(
+            "The scrape was saved to {}.",
+            temp.path().display()
+        )),
+    );
+    *saved_file = Some(temp);
 }
 
 async fn download_scrape(
@@ -116,6 +143,57 @@ mod tests {
             result,
             json!({"url": "https://example.com", "markdown": "# Hello", "summary": "A greeting", "images": ["https://example.com/image.png"], "audio": "https://example.com/audio.mp3"})
         );
+    }
+
+    #[tokio::test]
+    async fn direct_scrapes_use_utf16_budget_and_keep_full_json_until_completion() {
+        let short = json!({"url": "https://example.com/page.md", "markdown": "# Short", "summary": "Not generated", "images": []});
+        let mut saved = None;
+        assert_eq!(
+            localize_scrape(short.clone(), &WorkspaceCancellation::new(), &mut saved)
+                .await
+                .unwrap(),
+            short
+        );
+        assert!(saved.is_none());
+
+        let mut full = short;
+        full["markdown"] = json!("😀".repeat(20_000));
+        assert!(full.to_string().chars().count() < SCRAPE_INLINE_MAX_CHARS);
+        let result = localize_scrape(full.clone(), &WorkspaceCancellation::new(), &mut saved)
+            .await
+            .unwrap();
+        let file = saved.unwrap();
+        let path = file.path().to_owned();
+        assert_eq!(path.extension().unwrap(), "json");
+        assert_eq!(
+            serde_json::from_str::<Value>(&tokio::fs::read_to_string(&path).await.unwrap())
+                .unwrap(),
+            full
+        );
+        assert_eq!(result["summary"], full["summary"]);
+        assert_eq!(
+            result["markdown"],
+            format!("The scrape was saved to {}.", path.display())
+        );
+        drop(file);
+        assert!(!path.exists());
+    }
+
+    #[tokio::test]
+    async fn cancelled_direct_saves_do_not_return_a_file() {
+        let cancellation = WorkspaceCancellation::new();
+        cancellation.cancel();
+        let mut saved = None;
+        let error = localize_scrape(
+            json!({"markdown": "x".repeat(40_001)}),
+            &cancellation,
+            &mut saved,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.is::<WorkspaceOperationCancelled>());
+        assert!(saved.is_none());
     }
 
     #[tokio::test]

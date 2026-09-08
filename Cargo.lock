@@ -7755,6 +7755,7 @@ dependencies = [
  "convex",
  "futures",
  "image",
+ "percent-encoding",
  "reqwest 0.13.4",
  "rig",
  "schemars 1.2.2",
