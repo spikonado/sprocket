@@ -2,7 +2,7 @@ use std::path::{Component, Path, PathBuf};
 
 use axum::Router;
 use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::{HeaderValue, Request, StatusCode, header::CACHE_CONTROL};
 use axum::response::{IntoResponse, Response};
 use tower::ServiceExt;
 use tower_http::services::{ServeDir, ServeFile};
@@ -32,18 +32,32 @@ async fn serve_static_request(
     assets: ServeDir,
 ) -> Response {
     let path = req.uri().path();
+    let immutable = path.starts_with("/_app/immutable/");
 
-    if path.starts_with("/_app/") {
-        return match assets.oneshot(req).await {
+    let mut response = if path.starts_with("/_app/") {
+        match assets.oneshot(req).await {
             Ok(response) => response.into_response(),
             Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
-        };
-    }
+        }
+    } else {
+        let file = resolve_static_file(dir, path).unwrap_or_else(|| index.to_path_buf());
+        serve_file(&file, req).await
+    };
 
-    match resolve_static_file(dir, path) {
-        Some(file_path) => serve_file(&file_path).await,
-        None => serve_file(index).await,
-    }
+    let cache_control =
+        if response.status().is_success() || response.status() == StatusCode::NOT_MODIFIED {
+            if immutable {
+                "public, max-age=31536000, immutable"
+            } else {
+                "no-cache"
+            }
+        } else {
+            "no-store"
+        };
+    response
+        .headers_mut()
+        .insert(CACHE_CONTROL, HeaderValue::from_static(cache_control));
+    response
 }
 
 fn resolve_static_file(dir: &Path, path: &str) -> Option<PathBuf> {
@@ -75,45 +89,12 @@ fn resolve_static_file(dir: &Path, path: &str) -> Option<PathBuf> {
     None
 }
 
-async fn serve_file(path: &Path) -> Response {
-    match ServeFile::new(path).try_call(Request::new(())).await {
+async fn serve_file(path: &Path, req: Request<Body>) -> Response {
+    match ServeFile::new(path).try_call(req).await {
         Ok(response) => response.into_response(),
         Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn resolves_prerendered_html_routes() {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apps/web/dist");
-
-        if !dir.join("pair.html").exists() {
-            return;
-        }
-
-        assert_eq!(
-            resolve_static_file(&dir, "/pair"),
-            Some(dir.join("pair.html"))
-        );
-        assert_eq!(
-            resolve_static_file(&dir, "/callback"),
-            Some(dir.join("callback.html"))
-        );
-    }
-
-    #[test]
-    fn rejects_path_traversal_and_absolute_segments() {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apps/web/dist");
-
-        assert_eq!(resolve_static_file(&dir, "/../Cargo.toml"), None);
-        assert_eq!(resolve_static_file(&dir, "/foo/../../Cargo.toml"), None);
-        assert_eq!(resolve_static_file(&dir, "/./pair"), None);
-        // `C:` is a Prefix component only on Windows. On Unix it is a normal
-        // path segment, so drive-style rejection is Windows-only.
-        #[cfg(windows)]
-        assert_eq!(resolve_static_file(&dir, "/C:/Windows/win.ini"), None);
-    }
-}
+mod tests;
