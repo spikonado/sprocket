@@ -51,4 +51,4 @@ jobs:
             exit 0
           fi
 
-          bun ../../scripts/artifact-deploy.mjs --message "$CONVEX_DEPLOY_MESSAGE"
+          bunx convex deploy --message "$CONVEX_DEPLOY_MESSAGE"

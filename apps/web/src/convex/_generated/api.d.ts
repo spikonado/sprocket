@@ -10,7 +10,6 @@
 
 import type * as agentQuestions from "../agentQuestions.js";
 import type * as agentRuntime from "../agentRuntime.js";
-import type * as artifactArchive from "../artifactArchive.js";
 import type * as artifacts from "../artifacts.js";
 import type * as authBootstrap from "../authBootstrap.js";
 import type * as billing from "../billing.js";
@@ -28,7 +27,6 @@ import type * as imageUploads from "../imageUploads.js";
 import type * as lib_access from "../lib/access.js";
 import type * as lib_agentErrors from "../lib/agentErrors.js";
 import type * as lib_agentQuestions from "../lib/agentQuestions.js";
-import type * as lib_artifactArchive from "../lib/artifactArchive.js";
 import type * as lib_assistantParts from "../lib/assistantParts.js";
 import type * as lib_assistantStreamWrites from "../lib/assistantStreamWrites.js";
 import type * as lib_auth from "../lib/auth.js";
@@ -91,7 +89,6 @@ import type {
 declare const fullApi: ApiFromModules<{
   agentQuestions: typeof agentQuestions;
   agentRuntime: typeof agentRuntime;
-  artifactArchive: typeof artifactArchive;
   artifacts: typeof artifacts;
   authBootstrap: typeof authBootstrap;
   billing: typeof billing;
@@ -109,7 +106,6 @@ declare const fullApi: ApiFromModules<{
   "lib/access": typeof lib_access;
   "lib/agentErrors": typeof lib_agentErrors;
   "lib/agentQuestions": typeof lib_agentQuestions;
-  "lib/artifactArchive": typeof lib_artifactArchive;
   "lib/assistantParts": typeof lib_assistantParts;
   "lib/assistantStreamWrites": typeof lib_assistantStreamWrites;
   "lib/auth": typeof lib_auth;

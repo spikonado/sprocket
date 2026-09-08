@@ -1,5 +1,4 @@
 import { defineSchema, defineTable } from 'convex/server';
-import { vOldArtifactDocument } from '@convex/lib/artifactArchive';
 import { v } from 'convex/values';
 import {
 	vMandateChargeStatus,
@@ -289,10 +288,6 @@ export default defineSchema({
 		.index('by_runId_sequence', ['runId', 'sequence'])
 		.index('by_threadId_sequence', ['threadId', 'sequence'])
 		.index('by_threadId_status_sequence', ['threadId', 'status', 'sequence']),
-	oldArtifacts: defineTable(vOldArtifactDocument)
-		.index('by_legacyArtifactId_and_version', ['legacyArtifactId', 'version'])
-		.index('by_threadId', ['threadId'])
-		.index('by_userId', ['userId']),
 	artifactRegistries: defineTable({
 		userId: v.string(),
 		repositoryKey: v.string(),

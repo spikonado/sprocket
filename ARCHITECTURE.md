@@ -177,8 +177,9 @@ absolute. Files must contain UTF-8 text and fit within 500,000 bytes. Missing or
 unreadable files report an error while retaining their last readable content.
 The server does not recreate missing files from the cloud copy.
 
-The previous versioned artifacts are archived in `oldArtifacts`. They are not
-active registrations and do not trigger local file reads.
+The artifact cutover discards the previous versioned data. The operator clears
+`artifacts` and `artifactVersions` before deploying the new schema with the normal
+Convex deployment workflow. There is no archive or automated data migration.
 
 ## Agent run flow
 
