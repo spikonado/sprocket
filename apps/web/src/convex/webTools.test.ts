@@ -58,6 +58,8 @@ function expectedScrapeArgs(url = PAGE_URL) {
 		{
 			formats: ['markdown', 'summary', 'images', 'audio', 'video'],
 			onlyMainContent: true,
+			maxAge: 0,
+			storeInCache: false,
 			timeout: SCRAPE_TIMEOUT_MS
 		}
 	] as const;
@@ -105,7 +107,7 @@ describe('scrape HTTP failures', () => {
 });
 
 describe('scrapeForTool auth', () => {
-	it('scrapes the URL from the authorized job payload with the Firecrawl formats', async () => {
+	it('scrapes the authorized URL with Firecrawl cache reads and writes disabled', async () => {
 		const t = initConvexTest();
 		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
 			executionSecret: 'local-scrape-secret',

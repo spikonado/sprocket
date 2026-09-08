@@ -209,6 +209,8 @@ async function fetchScrape(ctx: ActionCtx, urlValue: string): Promise<ScrapedPag
 			firecrawl.scrape(ctx, url.toString(), {
 				formats: [...SCRAPE_FORMATS],
 				onlyMainContent: true,
+				maxAge: 0,
+				storeInCache: false,
 				timeout: SCRAPE_TIMEOUT_MS
 			})
 		);
