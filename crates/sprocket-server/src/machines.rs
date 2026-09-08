@@ -74,7 +74,6 @@ pub struct MachineManager {
     native_auth: Arc<NativeAuthManager>,
     identity: Arc<MachineIdentity>,
     accounts: Mutex<HashMap<String, AccountPresence>>,
-    registration: Mutex<()>,
     account_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     shutdown: CancellationToken,
 }
@@ -90,14 +89,12 @@ impl MachineManager {
             native_auth,
             identity,
             accounts: Mutex::new(HashMap::new()),
-            registration: Mutex::new(()),
             account_locks: Mutex::new(HashMap::new()),
             shutdown: CancellationToken::new(),
         })
     }
 
     pub async fn register(self: &Arc<Self>, expected_user_id: &str) -> anyhow::Result<()> {
-        let _registration = self.registration.lock().await;
         let account = self.account_lock(expected_user_id, false).await?;
         let _account = account.lock().await;
         self.ensure_running()?;
@@ -414,6 +411,24 @@ mod tests {
             .expect_err("registration after shutdown must fail");
         assert!(error.to_string().contains("shutting down"));
 
+        let _ = tokio::fs::remove_dir_all(dir).await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn registration_for_one_account_does_not_block_other_accounts() {
+        let (dir, manager) = manager_for_test();
+        let account = manager.account_lock("user-a", false).await.unwrap();
+        let guard = account.lock().await;
+        let mut waiting = Box::pin(manager.register("user-a"));
+        assert!(futures::poll!(&mut waiting).is_pending());
+
+        let result = timeout(Duration::from_secs(1), manager.register("user-b"))
+            .await
+            .expect("another account must not wait for user-a's registration");
+        assert!(result.is_err(), "invalid deployment must fail registration");
+
+        drop(waiting);
+        drop(guard);
         let _ = tokio::fs::remove_dir_all(dir).await;
     }
 
