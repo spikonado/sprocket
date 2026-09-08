@@ -57,8 +57,7 @@ describe('web tool workpool fencing', () => {
 		const { jobId } = await seedStartedWebJob(t, {
 			executionSecret: 'webpool-scrape-secret',
 			kind: 'scrape_url',
-			payload: { url: 'https://example.com/legacy' },
-			localExecution: true
+			payload: { url: 'https://example.com/legacy' }
 		});
 		const markdown = 'x'.repeat(40_000);
 		await t.run(async (ctx) => {

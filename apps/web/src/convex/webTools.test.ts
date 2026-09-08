@@ -216,8 +216,7 @@ describe('stored scrape_url results', () => {
 		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
 			executionSecret: 'saved-path-secret',
 			kind: 'scrape_url',
-			payload: { url: 'https://example.com/page' },
-			localExecution: true
+			payload: { url: 'https://example.com/page' }
 		});
 		await asUser.mutation(api.executor.complete, {
 			runId,
@@ -242,8 +241,7 @@ describe('stored scrape_url results', () => {
 		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
 			executionSecret: 'legacy-truncated-secret',
 			kind: 'scrape_url',
-			payload: { url: 'https://example.com/page' },
-			localExecution: true
+			payload: { url: 'https://example.com/page' }
 		});
 		await asUser.mutation(api.executor.complete, {
 			runId,
@@ -270,8 +268,7 @@ async function scrapeLocalMarkdown(markdown: string, url = 'https://example.com/
 	const seeded = await seedStartedWebJob(t, {
 		executionSecret: `local-md-${Math.random()}`,
 		kind: 'scrape_url',
-		payload: { url },
-		localExecution: true
+		payload: { url }
 	});
 	const scrape = mockScrapeMarkdown(markdown, url);
 	try {
@@ -293,8 +290,7 @@ describe('scrapeForTool markdown transport', () => {
 		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
 			executionSecret: 'oversized-markdown-secret',
 			kind: 'scrape_url',
-			payload: { url: 'https://example.com/page' },
-			localExecution: true
+			payload: { url: 'https://example.com/page' }
 		});
 		const scrape = mockScrapeMarkdown(`${'é'.repeat(32 * 1024 * 1024)}x`);
 		try {
