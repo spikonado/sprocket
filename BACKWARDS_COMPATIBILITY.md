@@ -342,12 +342,10 @@ including for historical results.
 
 Firecrawl adds `summary` and `images` fields to new scrape results. Their stored
 validators remain optional so pre-Firecrawl transcript and executor rows still
-load. Stored results also accept the `audio` and `video` fields produced by
-earlier Firecrawl-backed agents, although new scrapes no longer request or
-return those formats. Remove the optional content fields only after those rows
-and local JSONL replicas have aged out or been rewritten. Current agents archive
-large scrapes as JSON and always keep the summary inline. Raw-markdown archive
-negotiation is not supported; deploy the updated client and backend together.
+load. Remove that optionality only after those rows and local JSONL replicas
+have aged out or been rewritten. Current agents archive large scrapes as
+JSON and always keep the summary inline. Raw-markdown archive negotiation
+is not supported; deploy the updated client and backend together.
 
 Web image results store URL and image metadata, not bytes or local paths.
 History displays a notice rather than fetching the URL again. Local-path
