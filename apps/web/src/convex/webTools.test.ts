@@ -288,6 +288,33 @@ async function scrapeLocalMarkdown(markdown: string, url = 'https://example.com/
 }
 
 describe('scrapeForTool markdown transport', () => {
+	it('rejects markdown above the receiver byte limit without storing a blob', async () => {
+		const t = initConvexTest();
+		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
+			executionSecret: 'oversized-markdown-secret',
+			kind: 'scrape_url',
+			payload: { url: 'https://example.com/page' },
+			localExecution: true
+		});
+		const scrape = mockScrapeMarkdown(`${'é'.repeat(32 * 1024 * 1024)}x`);
+		try {
+			await expect(
+				asUser.action(api.webTools.scrapeForTool, { runId, claimId, jobId, executionSecret })
+			).rejects.toThrow('Scrape exceeds the 64 MiB download limit.');
+			expect(await storageBlobs(t)).toEqual([]);
+		} finally {
+			scrape.mockRestore();
+		}
+	});
+
+	it('accepts markdown exactly at the receiver byte limit', async () => {
+		const { t, result } = await scrapeLocalMarkdown('é'.repeat(32 * 1024 * 1024));
+		expect(result).toHaveProperty('markdownUrl');
+		const blobs = await storageBlobs(t);
+		expect(blobs).toHaveLength(1);
+		expect(blobs[0]?.size).toBe(64 * 1024 * 1024);
+	});
+
 	it('returns short markdown inline without truncated or storage', async () => {
 		const markdown = 'x'.repeat(SCRAPE_MARKDOWN_MAX_CHARS);
 		const { t, result, scrapeCalls } = await scrapeLocalMarkdown(markdown);

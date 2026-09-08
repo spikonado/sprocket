@@ -23,6 +23,7 @@ const MAX_SEARCH_RESULTS = 10;
 // Bounds inline markdown; Convex documents are capped at 1 MiB.
 export const SCRAPE_MARKDOWN_MAX_CHARS = 40_000;
 export const SCRAPE_MARKDOWN_STORAGE_TTL_MS = 60 * 60 * 1_000;
+const SCRAPE_MAX_BYTES = 64 * 1024 * 1024;
 const SCRAPE_MARKDOWN_BLOB_TYPE = 'text/markdown; charset=utf-8';
 const SCRAPE_TIMEOUT_MS = 60_000;
 const SEARCH_RESULT_TEXT_MAX_CHARS = 2_000;
@@ -163,9 +164,11 @@ async function localScrapeTransport(
 }
 
 async function storeTemporaryMarkdown(ctx: ActionCtx, markdown: string): Promise<string> {
-	const storageId = await ctx.storage.store(
-		new Blob([markdown], { type: SCRAPE_MARKDOWN_BLOB_TYPE })
-	);
+	const blob = new Blob([markdown], { type: SCRAPE_MARKDOWN_BLOB_TYPE });
+	if (blob.size > SCRAPE_MAX_BYTES) {
+		throw new NonRetryableError('Scrape exceeds the 64 MiB download limit.');
+	}
+	const storageId = await ctx.storage.store(blob);
 	try {
 		await ctx.scheduler.runAfter(
 			SCRAPE_MARKDOWN_STORAGE_TTL_MS,
