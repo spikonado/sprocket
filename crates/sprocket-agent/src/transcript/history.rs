@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::compaction::context_summary_text;
+use crate::context_handoff::context_summary_text;
 use crate::reasoning::{opaque_encrypted, skip_reasoning_on_reload};
 use crate::transcript::types::{TranscriptPart, TranscriptPartKind, TranscriptToolBody};
 use crate::types::{
@@ -719,9 +719,9 @@ mod tests {
     }
 
     #[test]
-    fn compaction_reload_drops_all_loaded_reasoning_regardless_of_part_number() {
+    fn context_handoff_reload_drops_all_loaded_reasoning_regardless_of_part_number() {
         // A context summary is not proof the retained prefix is unchanged.
-        // In-flight old generations can commit later, and in-memory compaction
+        // In-flight old generations can commit later, and in-memory context handoff
         // can replace current-run text while historyFromNumber only drops the
         // prior run. Fail closed: drop every loaded reasoning item.
         let mut state = TranscriptState::new("user".into(), "thread".into());
@@ -769,7 +769,7 @@ mod tests {
     }
 
     #[test]
-    fn compaction_reload_keeps_text_while_dropping_reasoning() {
+    fn context_handoff_reload_keeps_text_while_dropping_reasoning() {
         let mut state = TranscriptState::new("user".into(), "thread".into());
         state.context_summary = Some("Prior work is done.".into());
         state.history_from_number = 1;

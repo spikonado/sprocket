@@ -8,14 +8,14 @@ export type CatalogModel = {
 	provider: string;
 	supportsImages: boolean;
 	contextWindowTokens: number;
-	autoCompactTokenLimit: number;
+	autoHandoffTokenLimit: number;
 	reasoningEfforts: readonly string[];
 	defaultReasoningEffort: string;
 	serviceTiers: readonly string[];
 	usagePolicy?: UsagePolicy;
 };
 
-/** Shape of `sprocket` from `GET /api/v1/models`. */
+/** UI catalog mapped from `sprocket` on `GET /api/v1/models`. */
 export type ModelCatalog = {
 	defaultModelId: string;
 	defaultReasoningEffort: string;

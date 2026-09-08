@@ -19,4 +19,16 @@ describe('gateway model catalog', () => {
 			'gpt-5.6-sol'
 		]);
 	});
+
+	it('maps gateway autoCompactTokenLimit onto autoHandoffTokenLimit', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => new Response(JSON.stringify(catalogFixture), { status: 200 }))
+		);
+		const catalog = await fetchGatewayModelCatalog('https://ai-gateway.spikonado.com');
+		expect(catalog.models.map((model) => model.autoHandoffTokenLimit)).toEqual(
+			catalogFixture.sprocket.models.map((model) => model.autoCompactTokenLimit)
+		);
+		expect(catalog.models[0]).not.toHaveProperty('autoCompactTokenLimit');
+	});
 });

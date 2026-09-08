@@ -83,8 +83,11 @@ pub struct RunContextResponse {
 pub struct ContextBudget {
     #[serde(deserialize_with = "deserialize_convex_u64")]
     pub context_window_tokens: u64,
-    #[serde(deserialize_with = "deserialize_convex_u64")]
-    pub auto_compact_token_limit: u64,
+    #[serde(
+        rename = "autoCompactTokenLimit",
+        deserialize_with = "deserialize_convex_u64"
+    )]
+    pub auto_handoff_token_limit: u64,
 }
 
 /// Live catalog fields for the selected model. Fetched once with the budget.
@@ -533,6 +536,24 @@ mod tests {
         assert_eq!(attachment.name, "robot.png");
         assert_eq!(attachment.size, 42);
         assert_eq!(attachment.storage_id, "storage_1");
+    }
+
+    #[test]
+    fn context_handoff_budget_preserves_the_released_wire_field() {
+        let budget: super::ContextBudget = serde_json::from_value(serde_json::json!({
+            "contextWindowTokens": 272000.0,
+            "autoCompactTokenLimit": 258000.0
+        }))
+        .expect("released context budget");
+
+        assert_eq!(budget.auto_handoff_token_limit, 258000);
+        assert_eq!(
+            serde_json::to_value(budget).expect("serialized context budget"),
+            serde_json::json!({
+                "contextWindowTokens": 272000,
+                "autoCompactTokenLimit": 258000
+            })
+        );
     }
 
     #[test]

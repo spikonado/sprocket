@@ -1,4 +1,4 @@
-//! Rig runner compaction against a local Responses SSE fixture.
+//! Rig runner context handoff against a local Responses SSE fixture.
 
 use std::collections::VecDeque;
 use std::io::{Read, Write};
@@ -17,7 +17,7 @@ use rig::tool::{DynamicTool, Tool, ToolOutput};
 use serde_json::{Value as JsonValue, json};
 
 use super::{
-    ContextCompactionHook, HANDOFF_PROMPT, HANDOFF_REQUESTED, HandoffRequest, HandoffTool,
+    ContextHandoffHook, HANDOFF_PROMPT, HANDOFF_REQUESTED, HandoffRequest, HandoffTool,
     context_summary_text,
 };
 use crate::hooks::AGENT_TOOL_NAMES;
@@ -53,7 +53,7 @@ fn response_json(
     output_tokens: u64,
 ) -> JsonValue {
     let mut response = json!({
-        "id": "resp_compaction",
+        "id": "resp_context_handoff",
         "object": "response",
         "created_at": 0,
         "status": status,
@@ -355,7 +355,7 @@ fn stub_tool(name: &'static str) -> DynamicTool {
     )
 }
 
-fn test_agent(base_url: &str, hook: &ContextCompactionHook) -> rig::Agent {
+fn test_agent(base_url: &str, hook: &ContextHandoffHook) -> rig::Agent {
     let client = openai::Client::builder()
         .api_key("test-key")
         .base_url(base_url)
@@ -363,7 +363,7 @@ fn test_agent(base_url: &str, hook: &ContextCompactionHook) -> rig::Agent {
         .expect("openai responses client");
     let mut builder = client
         .agent(MODEL)
-        .preamble("compaction fixture")
+        .preamble("context handoff fixture")
         .tool(hook.tool());
     for name in AGENT_TOOL_NAMES {
         builder = builder.dynamic_tool(stub_tool(name));
@@ -471,7 +471,7 @@ fn cancelled_reason(error: StreamingError) -> String {
 
 async fn drive(
     agent: &rig::Agent,
-    hook: &ContextCompactionHook,
+    hook: &ContextHandoffHook,
     prompt: Message,
     history: Vec<Message>,
 ) -> DriveEnd {
@@ -512,18 +512,18 @@ async fn drive(
     };
     tokio::time::timeout(DRIVE_TIMEOUT, run)
         .await
-        .expect("rig compaction stream timed out")
+        .expect("rig context handoff stream timed out")
 }
 
-fn take_handoff(hook: &ContextCompactionHook) -> HandoffRequest {
+fn take_handoff(hook: &ContextHandoffHook) -> HandoffRequest {
     hook.take_request()
-        .expect("compaction hook should stash a handoff request")
+        .expect("context handoff hook should stash a handoff request")
 }
 
 #[tokio::test]
 async fn unsolicited_handoff_is_not_executed_or_emitted_as_a_tool_call() {
     let (base_url, server) = spawn_responses_sse(vec![handoff_document_sse(FIRST_SUMMARY)]);
-    let hook = ContextCompactionHook::new(OVER_LIMIT, 0, true);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, true);
     let agent = test_agent(&base_url, &hook);
     tokio::time::timeout(DRIVE_TIMEOUT, async {
         let mut stream = agent
@@ -562,7 +562,7 @@ async fn over_budget_turn_is_replaced_by_the_hidden_handoff_prompt() {
         handoff_document_sse(FIRST_SUMMARY),
         text_sse("continued from handoff", 4, 4),
     ]);
-    let hook = ContextCompactionHook::new(OVER_LIMIT, OVER_LIMIT, true);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, OVER_LIMIT, true);
     let agent = test_agent(&base_url, &hook);
     let history = vec![Message::user(OLD_CONTEXT)];
     let prompt = Message::user(DEFERRED_PROMPT);
@@ -630,7 +630,7 @@ async fn over_budget_turn_is_replaced_by_the_hidden_handoff_prompt() {
     assert!(resume_input.contains(FIRST_SUMMARY));
     assert!(
         !resume_input.contains(OLD_CONTEXT),
-        "fresh runner must not replay pre-compaction history"
+        "fresh runner must not replay pre-handoff history"
     );
     assert!(
         !resume_input.contains(HANDOFF_PROMPT),
@@ -653,7 +653,7 @@ async fn mid_run_handoff_keeps_the_pending_tool_result() {
         exec_command_sse(80, 20),
         handoff_document_sse(FIRST_SUMMARY),
     ]);
-    let hook = ContextCompactionHook::new(50, 0, false);
+    let hook = ContextHandoffHook::new(50, 0, false);
     let agent = test_agent(&base_url, &hook);
     let history = vec![Message::user(OLD_CONTEXT)];
     let prompt = Message::user("run pwd");
@@ -723,13 +723,13 @@ async fn mid_run_handoff_keeps_the_pending_tool_result() {
 }
 
 #[tokio::test]
-async fn compaction_repeats_after_restart() {
+async fn context_handoff_repeats_after_restart() {
     let (base_url, server) = spawn_responses_sse(vec![
         handoff_document_sse(FIRST_SUMMARY),
         exec_command_sse(90, 20),
         handoff_document_sse(SECOND_SUMMARY),
     ]);
-    let hook = ContextCompactionHook::new(OVER_LIMIT, OVER_LIMIT, true);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, OVER_LIMIT, true);
     let agent = test_agent(&base_url, &hook);
     let prompt = Message::user(DEFERRED_PROMPT);
 
@@ -778,7 +778,7 @@ async fn compaction_repeats_after_restart() {
             .history
             .iter()
             .any(|message| message_contains(message, OLD_CONTEXT)),
-        "second handoff must not revive the original pre-compaction context"
+        "second handoff must not revive the original pre-handoff context"
     );
 
     hook.start_handoff();
@@ -801,7 +801,7 @@ async fn compaction_repeats_after_restart() {
 #[tokio::test]
 async fn empty_handoff_document_is_rejected() {
     let (base_url, server) = spawn_responses_sse(vec![handoff_document_sse("   ")]);
-    let hook = ContextCompactionHook::new(OVER_LIMIT, 0, false);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, false);
     let agent = test_agent(&base_url, &hook);
     hook.start_handoff();
 
@@ -819,7 +819,7 @@ async fn empty_handoff_document_is_rejected() {
 #[tokio::test]
 async fn truncated_handoff_turn_is_rejected() {
     let (base_url, server) = spawn_responses_sse(vec![truncated_handoff_sse()]);
-    let hook = ContextCompactionHook::new(OVER_LIMIT, 0, false);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, false);
     let agent = test_agent(&base_url, &hook);
     hook.start_handoff();
 
@@ -834,7 +834,7 @@ async fn truncated_handoff_turn_is_rejected() {
 #[tokio::test]
 async fn text_only_handoff_turn_is_rejected() {
     let (base_url, server) = spawn_responses_sse(vec![text_sse("I will summarise in prose", 8, 8)]);
-    let hook = ContextCompactionHook::new(OVER_LIMIT, 0, false);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, false);
     let agent = test_agent(&base_url, &hook);
     hook.start_handoff();
 
@@ -849,7 +849,7 @@ async fn text_only_handoff_turn_is_rejected() {
 #[tokio::test]
 async fn two_handoff_tool_calls_are_rejected() {
     let (base_url, server) = spawn_responses_sse(vec![two_tool_calls_sse()]);
-    let hook = ContextCompactionHook::new(OVER_LIMIT, 0, false);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, false);
     let agent = test_agent(&base_url, &hook);
     hook.start_handoff();
 

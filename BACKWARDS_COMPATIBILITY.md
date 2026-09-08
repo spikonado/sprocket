@@ -229,7 +229,16 @@ migration runner, its cron, and both schema fields once both migrations report
 `success` and production scans find no remaining values. Historical documents
 in the now-unvalidated `threadMessages` table may be deleted independently.
 
-### 10. Legacy context compaction cutoff
+### 10. Context handoff and legacy compaction cutoff
+
+Active runtime and UI code use context handoff terminology. The gateway catalog
+and released context-budget API still use `autoCompactTokenLimit`; Rust maps it
+to `auto_handoff_token_limit`, and the UI maps it to `autoHandoffTokenLimit`.
+Rust serialization keeps the released wire name. Keep those boundary mappings
+until the gateway protocol and all supported context-budget consumers switch
+to a handoff-named field. Stored run snapshots keep the old optional field under
+the removal gate in section 5. This terminology change does not rewrite stored
+summaries, transcript cutoffs, or usage events.
 
 Released agents still call `saveContextCompaction`, which bills through the
 `compaction:` usage event and stores `contextSummaryThroughRunId` (last fully

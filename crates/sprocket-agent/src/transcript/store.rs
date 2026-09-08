@@ -465,7 +465,7 @@ impl TranscriptStore {
         let limit = limit
             .unwrap_or(TRANSCRIPT_PAGE_SIZE)
             .clamp(1, TRANSCRIPT_CHUNK_SIZE);
-        // Compaction limits model context, not what the user may scroll back to.
+        // Context handoff limits model context, not what the user may scroll back to.
         let history_from = 0;
         let end_exclusive = before
             .unwrap_or_else(|| state.visible_end_exclusive())

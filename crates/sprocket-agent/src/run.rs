@@ -758,7 +758,7 @@ async fn load_prior_history(
     )
     .await?;
     let state = store.load_state(user_id, thread_id).await?;
-    let current_run_was_compacted =
+    let current_run_had_context_handoff =
         if state.context_summary.is_some() && state.history_from_number > 0 {
             runtime
                 .transcript_parts_for_run(run_id, &[state.history_from_number - 1])
@@ -808,7 +808,7 @@ async fn load_prior_history(
             .map(prompt_text_with_attachments),
         messages: deserialize_agent_history(history)?,
         continue_from_finished_turns: context.run.continuation_of_run_id.is_some()
-            || current_run_was_compacted
+            || current_run_had_context_handoff
             || current_run_has_finished_turns(&parts, run_id),
     })
 }
@@ -970,7 +970,7 @@ pub async fn run_agent(run: AgentRun, live: Arc<LiveCompletionHub>) -> anyhow::R
                         store.thread_dir(&context.run.user_id, &context.run.thread_id),
                     ),
                     context_tokens: context.context_tokens,
-                    defer_prompt_for_compaction: !prior_history.continue_from_finished_turns
+                    defer_prompt_for_context_handoff: !prior_history.continue_from_finished_turns
                         && context.run.continuation_of_run_id.is_none()
                         && request.continuation_of_run_id.is_none(),
                 },

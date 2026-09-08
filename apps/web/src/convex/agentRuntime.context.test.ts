@@ -104,7 +104,7 @@ async function appendFinishedToolPart(
 }
 
 describe('agentRuntime context accounting', () => {
-	it('fences compaction and usage writes to the active claim', async () => {
+	it('fences legacy compaction and usage writes to the active claim', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'context-run-secret';
@@ -273,7 +273,7 @@ describe('agentRuntime context accounting', () => {
 		});
 	});
 
-	it('carries a compacted prefix into later runs without replaying covered history', async () => {
+	it('carries a legacy compacted prefix into later runs without replaying covered history', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const firstSecret = 'context-first-secret';

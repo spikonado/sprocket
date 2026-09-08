@@ -1,6 +1,6 @@
 mod attachments;
 mod catalog;
-mod compaction;
+mod context_handoff;
 mod convex;
 mod hooks;
 mod live;
