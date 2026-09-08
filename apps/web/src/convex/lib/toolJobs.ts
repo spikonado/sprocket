@@ -4,6 +4,7 @@ import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
 import { newToolInvocationId } from '@convex/lib/transcriptParts';
 import { recordStartedToolTranscript } from '@convex/lib/transcriptWrites';
 import { enqueueWebToolJob, isCloudWebToolKind } from '@convex/webToolPool';
+import { unsupportedClient } from '@convex/lib/unsupportedClient';
 
 export async function beginExecutorJob(
 	ctx: MutationCtx,
@@ -16,6 +17,9 @@ export async function beginExecutorJob(
 		hidden?: boolean;
 	}
 ): Promise<{ jobId: Id<'executorJobs'>; sequence: number }> {
+	if (args.kind === 'parse_file' && !('path' in args.payload)) {
+		unsupportedClient();
+	}
 	const lastJob = await ctx.db
 		.query('executorJobs')
 		.withIndex('by_threadId_sequence', (query) => query.eq('threadId', args.run.threadId))

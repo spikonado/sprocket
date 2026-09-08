@@ -84,7 +84,9 @@ pub(crate) async fn hydrate_parse_file_history(
     use crate::types::{AgentHistoryContent, AgentHistoryToolResultItem};
     let mut results = std::collections::HashMap::new();
     for tool in parts.iter().filter_map(|part| part.tool.as_ref()) {
-        if parse_file::is_parse_file_tool(&tool.name) && tool.status != "started" {
+        if (parse_file::is_parse_file_tool(&tool.name) || tool.name == "scrape_url")
+            && tool.status != "started"
+        {
             results.entry(tool.call_id.as_str()).or_insert(tool);
         }
     }
@@ -100,6 +102,21 @@ pub(crate) async fn hydrate_parse_file_history(
                 continue;
             }
             let Some(output) = &tool.output else { continue };
+            if tool.name == "scrape_url" {
+                if output.get("outputType").and_then(serde_json::Value::as_str) == Some("image") {
+                    let guidance = if supports_images {
+                        "Use scrape_url again to view it."
+                    } else {
+                        "The selected model cannot view images."
+                    };
+                    *items = vec![AgentHistoryToolResultItem::Text {
+                        text: format!(
+                            "This image was viewed but not saved locally. {guidance} Original result: {output}"
+                        ),
+                    }];
+                }
+                continue;
+            }
             if !supports_images
                 && output.get("outputType").and_then(serde_json::Value::as_str) == Some("image")
             {
@@ -227,6 +244,36 @@ mod tests {
         let serialized = serde_json::to_string(&history).unwrap();
         assert!(serialized.contains("Image omitted"));
         assert!(!serialized.contains("not available"));
+        assert!(!serialized.contains("imageJson"));
+    }
+
+    #[tokio::test]
+    async fn web_image_history_never_fetches_or_reads_a_cache() {
+        use crate::types::{
+            AgentHistoryContent, AgentHistoryMessage, AgentHistoryRole, AgentHistoryToolResultItem,
+        };
+        let part = serde_json::from_value(serde_json::json!({
+            "number": 1, "sourceKey": "tool:1", "kind": "tool", "runId": "run",
+            "tool": {"callId": "call", "name": "scrape_url", "status": "completed", "output": {
+                "outputType": "image", "url": "http://127.0.0.1:1/image", "mediaType": "image/png",
+                "byteSize": 1, "width": 1, "height": 1
+            }}
+        }))
+        .unwrap();
+        let mut history = vec![AgentHistoryMessage {
+            role: AgentHistoryRole::User,
+            assistant_id: None,
+            contents: vec![AgentHistoryContent::ToolResult {
+                id: "call".into(),
+                call_id: Some("call".into()),
+                items: vec![AgentHistoryToolResultItem::Text {
+                    text: "old output".into(),
+                }],
+            }],
+        }];
+        hydrate_parse_file_history(&mut history, &[part], true).await;
+        let serialized = serde_json::to_string(&history).unwrap();
+        assert!(serialized.contains("not saved locally"));
         assert!(!serialized.contains("imageJson"));
     }
 

@@ -53,7 +53,7 @@ export function toolGroupLabel(toolKey: string) {
 		case 'parse_file':
 			return 'Parsed Files';
 		case 'scrape_url':
-			return 'Read Pages';
+			return 'Read URLs';
 		case 'web_search':
 			return 'Searched Web';
 		case 'write_stdin':
@@ -118,7 +118,7 @@ function summarizeTool(name: string, input: JsonValue | undefined) {
 			return name ? `$${name}` : 'Skill';
 		}
 		case 'scrape_url':
-			return jsonString(fields?.url) ?? 'Web page';
+			return jsonString(fields?.url) ?? 'URL';
 		case 'parse_file':
 			return jsonString(fields?.path) ?? jsonString(fields?.url) ?? 'File';
 		case 'update_artifact':

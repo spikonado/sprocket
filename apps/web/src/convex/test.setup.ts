@@ -168,3 +168,44 @@ export async function createQueuedRun(
 		prompt
 	});
 }
+
+export async function seedStartedWebJob(
+	t: ConvexTestInstance,
+	options: {
+		executionSecret: string;
+		kind: 'web_search' | 'scrape_url';
+		payload: { query: string } | { url: string };
+		prompt?: string;
+		claimId?: string;
+	}
+) {
+	const { asUser, threadId } = await seedOwnedThread(t);
+	const claimId = options.claimId ?? 'claim-a';
+	const created = await createQueuedRun(
+		t,
+		asUser,
+		threadId,
+		options.executionSecret,
+		options.executionSecret,
+		options.prompt ?? 'Search'
+	);
+	await asUser.mutation(api.agentRuntime.start, {
+		runId: created.runId,
+		claimId,
+		executionSecret: options.executionSecret
+	});
+	const job = await asUser.mutation(api.agentRuntime.beginToolJob, {
+		runId: created.runId,
+		claimId,
+		kind: options.kind,
+		payload: options.payload,
+		executionSecret: options.executionSecret
+	});
+	return {
+		asUser,
+		runId: created.runId,
+		claimId,
+		jobId: job.jobId,
+		executionSecret: options.executionSecret
+	};
+}

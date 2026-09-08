@@ -4,7 +4,7 @@ This file lists shims we still ship. When a removal PR merges, delete its
 entry. Age-out is a prod check for stored rows, or an explicit decision that
 a retired function name can disappear.
 
-Current as of 2026-09-07.
+Current as of 2026-09-08.
 
 ## In-app updates
 
@@ -325,6 +325,18 @@ error for released clients. Both endpoints use the same registration transaction
 and existing machine rows. No stored-data migration or table deletion is needed.
 Remove the legacy endpoint only after all supported local servers use
 `machines:tryRegister`.
+
+### Locally orchestrated URL tools
+
+`scrape_url` jobs always run locally. Agents finish them after either reading
+an image in memory or calling the authenticated `webTools:scrapeForTool` action.
+There is no execution-mode parameter or cloud-workpool scrape fallback.
+`web_search` still uses the workpool. Deploy the updated client and backend
+together.
+
+Web image results store URL and image metadata, not bytes or local paths.
+History displays a notice rather than fetching the URL again. Local-path
+`parse_file` image results still replay from their existing local cache.
 
 ### Local sessions created before account binding
 

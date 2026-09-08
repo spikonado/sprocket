@@ -1,10 +1,18 @@
-use rig::tool::ToolExecutionError;
+use std::collections::BTreeMap;
+use std::time::Duration;
+
+use anyhow::Context;
+use rig::message::MimeType;
+use rig::tool::{ToolExecutionError, ToolOutput};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::context::{AgentToolContext, tool_error};
-use super::job::execute_cloud_tool_job;
+use super::job::{execute_cloud_tool_job, execute_tool_job_with_id, run_convex_tool_action};
+use super::parse_file::{
+    MAX_PARSE_FILE_IMAGE_BYTES, decode_image_info, tool_output_from_image_bytes,
+};
 
 pub(super) const DEFAULT_WEB_SEARCH_RESULTS: u32 = 5;
 
@@ -43,8 +51,8 @@ pub(crate) struct WebSearchArgs {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ScrapeUrlArgs {
-    /// URL of the web page to read.
     pub(crate) url: String,
 }
 
@@ -85,11 +93,10 @@ impl rig::tool::Tool for ScrapeUrlTool {
     const NAME: &'static str = "scrape_url";
     type Error = ToolExecutionError;
     type Args = ScrapeUrlArgs;
-    type Output = serde_json::Value;
+    type Output = ToolOutput;
 
     fn description(&self) -> String {
-        "Read a web page by URL and return its content converted to markdown. Very long pages are truncated."
-            .to_string()
+        "Use to scrape ANY public HTTP(S) URL into a format easily readable by you.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -101,15 +108,242 @@ impl rig::tool::Tool for ScrapeUrlTool {
         _context: &mut rig::tool::ToolContext,
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
+        let url = validate_web_url(&args.url).map_err(tool_error)?;
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
-        execute_cloud_tool_job(
+        let mut image_output = None;
+        let result = execute_tool_job_with_id(
             &self.0.runtime,
             &self.0.run_id,
             &self.0.claim_id,
             Self::NAME,
             &self.0.tool_call_tracker,
             payload,
+            |cancellation, job_id| async {
+                let image = tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled() => return Err(super::context::cancelled_error()),
+                    result = fetch_web_image(url, self.0.supports_images) => result.map_err(tool_error)?,
+                };
+                if let Some((metadata, output)) = image {
+                    image_output = Some(output);
+                    return Ok(metadata);
+                }
+                let action_args = BTreeMap::from([
+                    ("runId".to_string(), self.0.run_id.clone().into()),
+                    ("claimId".to_string(), self.0.claim_id.clone().into()),
+                    ("jobId".to_string(), job_id.into()),
+                ]);
+                run_convex_tool_action(&self.0.runtime, cancellation, "webTools:scrapeForTool", action_args).await
+            },
         )
-        .await
+        .await?;
+        Ok(image_output.unwrap_or_else(|| ToolOutput::json(result)))
+    }
+}
+
+fn validate_web_url(value: &str) -> anyhow::Result<reqwest::Url> {
+    let url = reqwest::Url::parse(value.trim()).context("invalid URL")?;
+    anyhow::ensure!(
+        matches!(url.scheme(), "http" | "https"),
+        "Only http(s) URLs can be scraped."
+    );
+    Ok(url)
+}
+
+async fn fetch_web_image(
+    url: reqwest::Url,
+    supports_images: bool,
+) -> anyhow::Result<Option<(serde_json::Value, ToolOutput)>> {
+    let client = image_client()?;
+    let Some(image_url) = discover_image_url(&client, url).await else {
+        return Ok(None);
+    };
+    anyhow::ensure!(supports_images, "The selected model cannot view images.");
+    download_image(&client, image_url).await.map(Some)
+}
+
+fn image_client() -> reqwest::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+}
+
+async fn download_image(
+    client: &reqwest::Client,
+    image_url: reqwest::Url,
+) -> anyhow::Result<(serde_json::Value, ToolOutput)> {
+    let mut response = client.get(image_url).send().await?.error_for_status()?;
+    anyhow::ensure!(
+        response
+            .content_length()
+            .is_none_or(|size| size <= MAX_PARSE_FILE_IMAGE_BYTES as u64),
+        "image exceeds the 20 MiB limit"
+    );
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        anyhow::ensure!(
+            bytes.len().saturating_add(chunk.len()) <= MAX_PARSE_FILE_IMAGE_BYTES,
+            "image exceeds the 20 MiB limit"
+        );
+        bytes.extend_from_slice(&chunk);
+    }
+    let (media_type, width, height) = decode_image_info(&bytes)?;
+    let metadata = json!({
+        "outputType": "image", "url": response.url().as_str(),
+        "mediaType": media_type.to_mime_type(), "byteSize": bytes.len(), "width": width, "height": height,
+    });
+    Ok((metadata, tool_output_from_image_bytes(&bytes, media_type)))
+}
+
+async fn discover_image_url(client: &reqwest::Client, url: reqwest::Url) -> Option<reqwest::Url> {
+    // HEAD avoids consuming a single-use page before the cloud scraper's GET.
+    if let Ok(response) = client.head(url.clone()).send().await {
+        if response.status().is_success() {
+            let media_type = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or("")
+                .split(';')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase();
+            return match media_type.as_str() {
+                "image/jpeg" | "image/png" | "image/gif" | "image/webp" => {
+                    Some(response.url().clone())
+                }
+                "" | "application/octet-stream" if has_image_extension(response.url()) => {
+                    Some(response.url().clone())
+                }
+                _ => None,
+            };
+        }
+    }
+    has_image_extension(&url).then_some(url)
+}
+
+fn has_image_extension(url: &reqwest::Url) -> bool {
+    url.path().rsplit('.').next().is_some_and(|extension| {
+        matches!(
+            extension.to_ascii_lowercase().as_str(),
+            "jpeg" | "jpg" | "png" | "gif" | "webp"
+        )
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    async fn serve(content_type: &str, bytes: Vec<u8>) -> reqwest::Url {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let header = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            bytes.len()
+        );
+        tokio::spawn(async move {
+            for _ in 0..2 {
+                let Ok(Ok((mut stream, _))) =
+                    tokio::time::timeout(Duration::from_secs(2), listener.accept()).await
+                else {
+                    break;
+                };
+                let mut request = [0; 4096];
+                stream.read(&mut request).await.unwrap();
+                stream.write_all(header.as_bytes()).await.unwrap();
+                if !request.starts_with(b"HEAD ") {
+                    let _ = stream.write_all(&bytes).await;
+                }
+            }
+        });
+        reqwest::Url::parse(&format!("http://{address}/without-extension")).unwrap()
+    }
+
+    fn png() -> Vec<u8> {
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(1, 1)
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .unwrap();
+        bytes.into_inner()
+    }
+
+    #[tokio::test]
+    async fn image_without_extension_is_returned_in_memory_and_validated_by_signature() {
+        let url = serve("image/jpeg", png()).await;
+        let (metadata, output) = fetch_web_image(url, true).await.unwrap().unwrap();
+        assert_eq!(metadata["mediaType"], "image/png");
+        assert!(metadata.get("path").is_none());
+        assert!(matches!(
+            output.into_content().first(),
+            Some(rig::message::ToolResultContent::Image(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn html_is_left_to_the_scraper() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = reqwest::Url::parse(&format!("http://{}/page", listener.local_addr().unwrap()))
+            .unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            stream.read(&mut request).await.unwrap();
+            assert!(request.starts_with(b"HEAD "));
+            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 50\r\nConnection: close\r\n\r\n").await.unwrap();
+            listener
+        });
+        assert!(fetch_web_image(url, true).await.unwrap().is_none());
+        let listener = server.await.unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), listener.accept())
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn image_extension_handles_generic_content_types() {
+        let mut url = serve("application/octet-stream", png()).await;
+        url.set_path("/image.PNG");
+        assert!(fetch_web_image(url, true).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn unrecognized_content_is_scraped_but_text_only_models_reject_images() {
+        let url = serve("image/svg+xml", b"<svg></svg>".to_vec()).await;
+        assert!(fetch_web_image(url, true).await.unwrap().is_none());
+        let url = serve("image/jpeg", b"<html>mislabelled</html>".to_vec()).await;
+        assert!(fetch_web_image(url, true).await.is_err());
+        let url = serve("image/png", png()).await;
+        assert!(
+            fetch_web_image(url, false)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("cannot view")
+        );
+    }
+
+    #[test]
+    fn urls_must_be_http() {
+        for url in [
+            "file:///tmp/file",
+            "data:image/png;base64,abc",
+            "ftp://example.com",
+        ] {
+            assert!(validate_web_url(url).is_err());
+        }
+    }
+
+    #[test]
+    fn scrape_schema_only_advertises_a_required_url() {
+        let schema = json!(schemars::schema_for!(ScrapeUrlArgs));
+        assert_eq!(schema["properties"], json!({"url": {"type": "string"}}));
+        assert_eq!(schema["required"], json!(["url"]));
     }
 }
