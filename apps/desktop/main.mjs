@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { DEV_API_PORT, DEV_WEB_URL, INSTALLED_APP_PORT } from './local-config.mjs';
-import { DesktopUpdater, stopUpdateProcess } from './updater.mjs';
+import { createAppImageUpdater, DesktopUpdater, stopUpdateProcess } from './updater.mjs';
 
 const { app, BrowserWindow, dialog, Menu, ipcMain, shell } = electron;
 
@@ -31,7 +31,9 @@ let mainWindowRef = null;
 let serverReadyPromise = null;
 let isQuitting = false;
 const updates = new DesktopUpdater(
-	electronUpdater.autoUpdater,
+	process.platform === 'linux' && process.env.APPIMAGE
+		? createAppImageUpdater(electronUpdater.AppImageUpdater)
+		: electronUpdater.autoUpdater,
 	app.getVersion(),
 	app.isPackaged && (process.platform !== 'linux' || Boolean(process.env.APPIMAGE))
 );

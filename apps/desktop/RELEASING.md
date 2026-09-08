@@ -75,6 +75,19 @@ Windows SmartScreen warns on the unsigned NSIS installer.
 
 Linux AppImage updates do not need a signature for the GitHub provider.
 
+### Linux relaunch
+
+AppImage relaunch uses a detached shell that waits for the replacement process.
+NixOS `appimage-run` starts Bubblewrap with `--die-with-parent`, so launching the
+replacement directly from Electron would kill its launcher as the old app exits.
+The shell forwards the executable and arguments as positional parameters, not
+shell source, and exits when the replacement closes.
+
+Test updates with both the published filename and a custom name such as
+`sprocket.AppImage`. A custom name without a version number is preserved by
+`electron-updater`. Verify that the replacement opens and displays the new UI,
+not just that the update download finishes.
+
 ## Local package
 
 ```sh

@@ -1,3 +1,17 @@
+export function createAppImageUpdater(AppImageUpdater) {
+	return new (class extends AppImageUpdater {
+		spawnLog(command, args = [], env, stdio) {
+			// appimage-run uses bwrap --die-with-parent. Keep its parent alive after Electron exits.
+			return super.spawnLog(
+				'/bin/sh',
+				['-c', '"$@" <&0 & child=$!; wait "$child"', 'sprocket-update-relaunch', command, ...args],
+				env,
+				stdio
+			);
+		}
+	})();
+}
+
 export class DesktopUpdater {
 	#updater;
 	#state;
