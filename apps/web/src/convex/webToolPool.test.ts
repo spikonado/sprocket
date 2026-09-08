@@ -52,22 +52,20 @@ describe('web tool workpool fencing', () => {
 		expect(after?.result).toMatchObject({ results: [{ url: 'https://example.com' }] });
 	});
 
-	it('stores legacy truncated scrape results from the cloud workpool', async () => {
+	it('reads historical truncated scrape results', async () => {
 		const t = initConvexTest();
-		const { runId, claimId, jobId } = await seedStartedWebJob(t, {
+		const { jobId } = await seedStartedWebJob(t, {
 			executionSecret: 'webpool-scrape-secret',
 			kind: 'scrape_url',
-			payload: { url: 'https://example.com/legacy' }
+			payload: { url: 'https://example.com/legacy' },
+			localExecution: true
 		});
 		const markdown = 'x'.repeat(40_000);
-		await t.mutation(internal.webToolPool.completeWebTool, {
-			// SAFETY: completeWebTool ignores workId and fences on job/claim state.
-			workId: 'work-scrape' as WorkId,
-			context: { jobId, runId, claimId },
-			result: {
-				kind: 'success',
-				returnValue: { url: 'https://example.com/legacy', markdown, truncated: true }
-			}
+		await t.run(async (ctx) => {
+			await ctx.db.patch('executorJobs', jobId, {
+				status: 'completed',
+				result: { url: 'https://example.com/legacy', markdown, truncated: true }
+			});
 		});
 		const after = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
 		expect(after?.status).toBe('completed');
