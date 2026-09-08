@@ -38,6 +38,9 @@ url = "2.5.8"
 uuid = { version = "1.21.0", features = ["v4"] }
 workos = "3.4.0"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.186"
+
 [build-dependencies]
 dotenvy = "0.15.7"
 

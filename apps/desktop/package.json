@@ -8,10 +8,16 @@
 	"type": "module",
 	"main": "./main.mjs",
 	"desktopName": "com.spikonado.sprocket.desktop",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/spikonado/sprocket.git",
+		"directory": "apps/desktop"
+	},
 	"scripts": {
 		"dev": "cargo build -q -p sprocket-cli && node ./launch.cjs",
 		"build": "cargo build -p sprocket-cli",
-		"build:release": "cargo build --release -p sprocket-cli && electron-builder --publish never"
+		"build:release": "cargo build --release -p sprocket-cli && electron-builder --publish never",
+		"test": "node --test test/*.test.mjs"
 	},
 	"build": {
 		"appId": "com.spikonado.sprocket",
@@ -23,6 +29,7 @@
 		},
 		"files": [
 			"main.mjs",
+			"updater.mjs",
 			"preload.cjs",
 			"local-config.mjs",
 			"package.json"
@@ -44,6 +51,11 @@
 				]
 			}
 		],
+		"publish": {
+			"provider": "github",
+			"owner": "spikonado",
+			"repo": "sprocket"
+		},
 		"linux": {
 			"target": [
 				"AppImage"
@@ -54,7 +66,8 @@
 		},
 		"mac": {
 			"target": [
-				"dmg"
+				"dmg",
+				"zip"
 			],
 			"category": "public.app-category.developer-tools",
 			"forceCodeSigning": false,
@@ -72,8 +85,12 @@
 			"allowToChangeInstallationDirectory": true
 		}
 	},
+	"dependencies": {
+		"electron-updater": "^6.8.9"
+	},
 	"devDependencies": {
 		"electron": "^44.0.0",
-		"electron-builder": "^26.15.3"
+		"electron-builder": "^26.15.3",
+		"js-yaml": "^4.1.0"
 	}
 }

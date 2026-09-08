@@ -3,6 +3,7 @@ mod config;
 mod machine_identity;
 mod machines;
 mod native_auth;
+mod package_update;
 mod project_attachments;
 pub mod repo_env;
 mod routes;
@@ -97,6 +98,56 @@ pub struct AppState {
     pub web_ui_enabled: bool,
     pub desktop_bootstrap_token: Option<Arc<Mutex<Option<String>>>>,
     pub(crate) machine_identity: Arc<machine_identity::MachineIdentity>,
+    pub package_updates: Arc<package_update::PackageUpdateManager>,
+}
+
+#[cfg(test)]
+impl AppState {
+    pub(crate) fn for_test(
+        auth: Arc<auth::AuthState>,
+        native_auth: Arc<native_auth::NativeAuthManager>,
+        data_dir: PathBuf,
+        loopback_desktop_login_supported: bool,
+        package_updates: Arc<package_update::PackageUpdateManager>,
+    ) -> Self {
+        let project_attachments =
+            project_attachments::ProjectAttachmentStore::new(data_dir.clone());
+        let transcript = TranscriptStore::new(data_dir.join("transcripts"));
+        let transcript_watchers = TranscriptWatchers::new(
+            "https://example.convex.cloud".to_string(),
+            transcript.clone(),
+            Arc::clone(&native_auth),
+        );
+        let thread_cache = thread_sync::ThreadCacheSync::new(
+            "https://example.convex.cloud".to_string(),
+            thread_cache::ThreadCacheStore::new(data_dir.clone()),
+            Arc::clone(&native_auth),
+        );
+        let machine_identity =
+            Arc::new(machine_identity::MachineIdentity::load(&data_dir).expect("machine identity"));
+        Self {
+            auth,
+            native_auth: Arc::clone(&native_auth),
+            project_attachments,
+            transcript,
+            transcript_watchers,
+            thread_cache,
+            machines: machines::MachineManager::new(
+                "https://example.convex.cloud".to_string(),
+                Arc::clone(&native_auth),
+                Arc::clone(&machine_identity),
+            ),
+            live_completions: Arc::new(LiveCompletionHub::new()),
+            http_base_url: "http://127.0.0.1:7731".to_string(),
+            desktop_login_callback_url: auth::desktop_login_callback_url(7731),
+            loopback_desktop_login_supported,
+            convex_deployment_url: "https://example.convex.cloud".to_string(),
+            web_ui_enabled: true,
+            desktop_bootstrap_token: None,
+            machine_identity,
+            package_updates,
+        }
+    }
 }
 
 pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
@@ -108,6 +159,7 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .merge(routes::agent::routes())
         .merge(routes::transcript::routes())
         .merge(routes::threads::routes())
+        .merge(routes::update::routes())
         .fallback(api_not_found)
         .with_state(state);
 
@@ -173,6 +225,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         web_ui_enabled,
         desktop_bootstrap_token,
         machine_identity,
+        package_updates: package_update::PackageUpdateManager::from_env(),
     };
 
     let startup = StartupInfo {

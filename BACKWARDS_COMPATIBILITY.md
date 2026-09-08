@@ -6,6 +6,16 @@ a retired function name can disappear.
 
 Current as of 2026-09-07.
 
+## In-app updates
+
+The desktop preload's `updates` capability is optional so a newer web bundle can
+still run inside a released desktop shell. A missing capability hides the update
+action, without falling through to updating an unrelated npm installation.
+Browser clients also accept a 404 from `/api/update` as unsupported for released
+local servers. Remove these fallbacks when every supported desktop shell exposes
+`updates` and every supported local server implements `/api/update`. No stored
+data changes are required.
+
 ## Transcript projection API
 
 Attachment compatibility covers older stored schemas only. Older-client shims

@@ -2,7 +2,8 @@ import { spawnSync } from 'node:child_process';
 import { accessSync, chmodSync, constants, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+
+import { createHost, parseUpdateArgs, runUpdateCli, UPDATE_API_FILENAME } from './update.js';
 
 const require = createRequire(import.meta.url);
 
@@ -74,20 +75,45 @@ export function run(binary, args, options = {}) {
 	return result.status ?? 1;
 }
 
-export function launch(args) {
+export function nativeChildEnvironment(env, staticDir, updateNode, updateScript) {
+	const next = {
+		...env,
+		SPROCKET_STATIC_DIR: env.SPROCKET_STATIC_DIR || staticDir,
+		SPROCKET_UPDATE_NODE: updateNode,
+		SPROCKET_UPDATE_SCRIPT: updateScript
+	};
+	delete next.SPROCKET_UPDATE_MANAGED;
+	return next;
+}
+
+export async function launch(args, options = {}) {
+	const env = { ...(options.env ?? process.env) };
+	delete env.SPROCKET_UPDATE_MANAGED;
+	const parsed = parseUpdateArgs(args);
+	if (parsed.kind !== 'none') {
+		const code = await runUpdateCli(parsed, options.host ?? createHost({ env }));
+		process.exitCode = code;
+		return code;
+	}
+
 	try {
-		const packageRoot = path.dirname(fileURLToPath(import.meta.url));
-		const staticDir = path.resolve(packageRoot, '../web');
-		const binary = resolveNativeBinary();
-		ensureExecutable(binary);
+		const libDir = options.libDir ?? import.meta.dirname;
+		const staticDir = path.resolve(libDir, '../web');
+		const binary = (options.resolveBinary ?? resolveNativeBinary)();
+		(options.ensureExecutable ?? ensureExecutable)(binary);
 		process.exitCode = run(binary, args, {
-			env: {
-				...process.env,
-				SPROCKET_STATIC_DIR: process.env.SPROCKET_STATIC_DIR || staticDir
-			}
+			env: nativeChildEnvironment(
+				env,
+				staticDir,
+				options.execPath ?? process.execPath,
+				path.resolve(libDir, UPDATE_API_FILENAME)
+			),
+			spawn: options.spawn
 		});
+		return process.exitCode;
 	} catch (error) {
 		console.error(`sprocket: ${error.message}`);
 		process.exitCode = 1;
+		return 1;
 	}
 }

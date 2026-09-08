@@ -63,6 +63,9 @@ Override with `SPROCKET_DATA_DIR`.
 
 | Command                     | Behavior                                                                       |
 | --------------------------- | ------------------------------------------------------------------------------ |
+| `sprocket update`           | Update a global npm, bun, pnpm, or yarn install on the current channel.        |
+| `sprocket update --check`   | Report whether an update is available without installing.                      |
+| `sprocket upgrade`          | Alias for `update`.                                                            |
 | `sprocket serve`            | Run the local server in the foreground without launching a client.             |
 | `sprocket serve --api-only` | Serve only `/api`; intended for development (see [Development](#development)). |
 

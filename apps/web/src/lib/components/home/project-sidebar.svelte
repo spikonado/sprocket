@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Archive, ChevronRight, Folder, FolderOpen, Settings, SquarePen } from '@lucide/svelte';
 	import BrandMark from '$lib/components/brand-mark.svelte';
+	import AppUpdate from '$lib/components/home/app-update.svelte';
 	import SidebarTopActions from '$lib/components/home/sidebar-top-actions.svelte';
 	import type { Id } from '$convex/_generated/dataModel';
 	import type { SprocketTheme } from '$lib/theme';
@@ -424,6 +425,7 @@
 		</div>
 
 		<div class="px-3.5 pt-2 pb-4">
+			<AppUpdate />
 			<button type="button" class={sidebarActionButtonClass} onclick={onOpenSettings}>
 				<Settings class={sidebarActionIconClass} aria-hidden="true" />
 				Settings
