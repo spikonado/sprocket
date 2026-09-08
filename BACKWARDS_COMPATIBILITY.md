@@ -16,6 +16,17 @@ local servers. Remove these fallbacks when every supported desktop shell exposes
 `updates` and every supported local server implements `/api/update`. No stored
 data changes are required.
 
+## Historical artifact tool history
+
+The cloud artifact API with local bindings does not support older clients. The old create and
+update endpoints are removed, and `beginToolJob` rejects the retired tool names.
+
+Stored executor jobs still validate the old artifact tool names, payloads, and
+results so existing conversation history remains readable. Remove these stored
+validators once no executor jobs contain the retired names. At the user's
+request, old artifact data is discarded rather than migrated: the operator
+clears `artifacts` and `artifactVersions` before the normal schema deployment.
+
 ## Transcript projection API
 
 Attachment compatibility covers older stored schemas only. Older-client shims

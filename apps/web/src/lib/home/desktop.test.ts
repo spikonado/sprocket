@@ -58,6 +58,7 @@ function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 		registerThreadCache: unusedDesktopCall,
 		fetchThreadSnapshot: unusedDesktopCall,
 		watchThreadCache: unusedDesktopCall,
+		watchArtifacts: unusedDesktopCall,
 		renameThread: unusedDesktopCall,
 		archiveThread: unusedDesktopCall,
 		restoreThread: unusedDesktopCall,

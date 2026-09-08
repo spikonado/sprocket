@@ -86,6 +86,7 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) context_budget: ContextBudget,
     pub(crate) supports_images: bool,
     pub(crate) parse_file_cache_dir: PathBuf,
+    pub(crate) artifact_bindings: crate::artifact_bindings::ArtifactBindings,
     pub(crate) context_tokens: u64,
     pub(crate) defer_prompt_for_context_handoff: bool,
 }
@@ -157,6 +158,8 @@ where
         request.claim_id.clone(),
         request.workspace_root.clone(),
         request.parse_file_cache_dir.clone(),
+        request.artifact_bindings.clone(),
+        request.thread_id.clone(),
         request.supports_images,
         tool_call_tracker.clone(),
         request.skills.clone(),
@@ -178,8 +181,10 @@ where
         .tool(tools.scrape_url)
         .tool(tools.web_search)
         .tool(tools.write_stdin)
-        .tool(tools.create_artifact)
-        .tool(tools.update_artifact)
+        .tool(tools.add_artifact)
+        .tool(tools.list_artifacts)
+        .tool(tools.edit_artifact)
+        .tool(tools.save_artifact)
         .tool(tools.browser_act)
         .tool(tools.browser_observe)
         .tool(tools.browser_extract)

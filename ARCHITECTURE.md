@@ -70,7 +70,7 @@ machine-facing API.
 | Workspace crate   | Paths, commands, patches, workspace instructions                                                                     | Authentication or networking                                                          |
 | Convex RPC client | Generic Convex query/mutation/action/subscribe                                                                       | Completion translation                                                                |
 | AI gateway        | Provider routing, OpenAI API, catalog, usage rates                                                                   | Subscription limits or remaining quota                                                |
-| Convex backend    | User data, run coordination, transcript, remaining quota                                                             | Local paths, process execution, rates                                                 |
+| Convex backend    | User data, run coordination, transcript, artifact registry, remaining quota                                          | Local filesystem access, process execution, rates                                     |
 
 The Rust dependency direction follows these boundaries:
 
@@ -121,6 +121,9 @@ Sprocket deliberately separates cloud and machine-local state.
 | Native WorkOS refresh token                                                  | OS credential store  |
 | Active commands, cancellation tokens, and run execution capabilities         | Local process memory |
 | Source files and build artifacts                                             | User workspace       |
+| Artifact identity, scope, and synced content                                 | Convex               |
+| Artifact/file bindings and synchronization baselines                         | Sprocket data dir    |
+| Artifact file reads, change detection, and preview feed                      | Local server         |
 | Model and authentication provider secrets                                    | Cloud deployment     |
 
 The local server owns this machine’s folder list and the account-isolated
@@ -133,6 +136,50 @@ are added.
 Rename, archive, restore, rekey, and cancellation go through the local server
 so it can refresh the affected cache files before the UI reads them again.
 Thread creation and selected-thread lifecycle still talk to Convex directly.
+
+### Artifacts and local bindings
+
+The agent writes a file with its normal tools, then publishes it through
+`add_artifact`. `edit_artifact` binds another existing file and explicitly replaces
+the artifact's content. `list_artifacts` returns metadata for the current thread
+and project. `save_artifact({artifactId, path})` saves cloud content and binds the
+destination for future edits. It accepts an existing file only when its content
+is identical; differing content is never overwritten.
+
+The `artifacts` table stores content, scope, and an opaque registration ID, not local paths.
+Project identity is the same `repositoryKey` used by threads, not an ID from the
+retired cloud project catalog. Thread artifacts also store `threadId`.
+
+Bindings live under `artifact-bindings` in Sprocket's data directory, isolated by
+deployment, account, and workspace. Each binding records the artifact ID, path,
+and last synchronized content hash. File locking serializes saves, retargets,
+and sync acknowledgements; atomic replacement persists binding changes. A
+registration ID is reserved locally before publication so a lost response can
+be retried without creating duplicate artifacts.
+
+Rust polls a lightweight repository revision and loads artifacts in byte-bounded
+pages. The browser subscribes to that revision directly and can load cloud
+artifacts without a local server or workspace. Readers retry if the revision changes between pages; tool
+list results contain metadata only. Repository renames move registrations in
+bounded batches and follow subsequent renames while those batches drain.
+
+Rust reads only bound files in the selected scope. A watch lives while a UI connection
+or active agent run needs it. A headless run makes a final, bounded sync attempt
+before releasing its watch. Local previews arrive over `/api/artifacts/watch`
+before cloud synchronization finishes; unbound artifacts render from Convex.
+An unchanged local copy never overwrites newer cloud content. If both sides
+changed from the persisted baseline, the preview reports a conflict and pauses
+sync. Revision CAS and a locked binding check protect in-flight writes from
+concurrent cloud edits and local retargets.
+
+Relative paths resolve against the attached workspace. Absolute paths remain
+absolute. Files must contain UTF-8 text and fit within 500,000 bytes. Missing or
+unreadable files report an error while retaining their last readable content.
+The server does not recreate missing files from the cloud copy.
+
+The artifact cutover discards the previous versioned data. The operator clears
+`artifacts` and `artifactVersions` before deploying the new schema with the normal
+Convex deployment workflow. There is no archive or automated data migration.
 
 ## Agent run flow
 

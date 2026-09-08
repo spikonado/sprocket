@@ -137,6 +137,16 @@ impl ProjectAttachmentStore {
     }
 
     pub async fn workspace_path(&self, workspace_path: &str) -> Result<String> {
+        Ok(self
+            .require_available_workspace(workspace_path)
+            .await?
+            .workspace_path)
+    }
+
+    pub async fn require_available_workspace(
+        &self,
+        workspace_path: &str,
+    ) -> Result<ProjectAttachmentRecord> {
         self.ensure_loaded().await?;
         let session = self.get_or_error(workspace_path).await?;
         let validated = validate_session_async(session).await?;
@@ -147,7 +157,19 @@ impl ProjectAttachmentStore {
                     .unwrap_or_else(|| "workspace path is unavailable".to_string())
             );
         }
-        Ok(validated.workspace_path)
+        Ok(validated)
+    }
+
+    pub async fn require_matching_workspace(
+        &self,
+        workspace_path: &str,
+        repository_key: &str,
+    ) -> Result<ProjectAttachmentRecord> {
+        let attachment = self.require_available_workspace(workspace_path).await?;
+        if !repository_key_matches(&attachment, repository_key) {
+            anyhow::bail!("repositoryKey does not match the attached workspace");
+        }
+        Ok(attachment)
     }
 
     async fn get_or_error(&self, workspace_path: &str) -> Result<ProjectAttachmentRecord> {
@@ -304,6 +326,13 @@ fn mark_available(
         unavailable_reason: None,
         last_used_at: session.last_used_at,
     }
+}
+
+pub(crate) fn repository_key_matches(record: &ProjectAttachmentRecord, requested: &str) -> bool {
+    let requested = requested.trim();
+    !requested.is_empty()
+        && (record.repository_key == requested
+            || record.previous_repository_key.as_deref() == Some(requested))
 }
 
 fn previous_repository_key_after_resolve(

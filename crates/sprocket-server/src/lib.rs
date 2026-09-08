@@ -1,3 +1,4 @@
+mod artifact_watch;
 mod auth;
 mod config;
 mod machine_identity;
@@ -32,6 +33,7 @@ use sprocket_agent::{LiveCompletionHub, TranscriptStore};
 use tokio::sync::Mutex;
 use tokio::time::{Duration, sleep};
 
+use crate::artifact_watch::ArtifactWatchers;
 use crate::transcript_watch::TranscriptWatchers;
 
 pub(crate) fn now_ms() -> u64 {
@@ -88,6 +90,7 @@ pub struct AppState {
     pub project_attachments: Arc<project_attachments::ProjectAttachmentStore>,
     pub transcript: Arc<TranscriptStore>,
     pub transcript_watchers: Arc<TranscriptWatchers>,
+    pub artifact_watchers: Arc<ArtifactWatchers>,
     pub thread_cache: Arc<thread_sync::ThreadCacheSync>,
     pub machines: Arc<machines::MachineManager>,
     pub live_completions: Arc<LiveCompletionHub>,
@@ -118,6 +121,11 @@ impl AppState {
             transcript.clone(),
             Arc::clone(&native_auth),
         );
+        let artifact_watchers = ArtifactWatchers::new(
+            "https://example.convex.cloud".to_string(),
+            Arc::clone(&native_auth),
+            data_dir.join("artifact-bindings"),
+        );
         let thread_cache = thread_sync::ThreadCacheSync::new(
             "https://example.convex.cloud".to_string(),
             thread_cache::ThreadCacheStore::new(data_dir.clone()),
@@ -131,6 +139,7 @@ impl AppState {
             project_attachments,
             transcript,
             transcript_watchers,
+            artifact_watchers,
             thread_cache,
             machines: machines::MachineManager::new(
                 "https://example.convex.cloud".to_string(),
@@ -160,6 +169,7 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .merge(routes::transcript::routes())
         .merge(routes::threads::routes())
         .merge(routes::update::routes())
+        .merge(routes::artifacts::routes())
         .fallback(api_not_found)
         .with_state(state);
 
@@ -192,6 +202,11 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         Arc::clone(&transcript),
         Arc::clone(&native_auth),
     );
+    let artifact_watchers = ArtifactWatchers::new(
+        convex_deployment_url.clone(),
+        Arc::clone(&native_auth),
+        data_dir.join("artifact-bindings"),
+    );
     let thread_cache = thread_sync::ThreadCacheSync::new(
         convex_deployment_url.clone(),
         thread_cache::ThreadCacheStore::new(data_dir.clone()),
@@ -215,6 +230,7 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         project_attachments,
         transcript,
         transcript_watchers,
+        artifact_watchers,
         thread_cache,
         machines: Arc::clone(&machines),
         live_completions: Arc::new(LiveCompletionHub::new()),

@@ -9,10 +9,11 @@ import {
 } from '@convex/lib/validators';
 import {
 	vAgentQuestionStatus,
+	vArtifactScope,
 	vArtifactType,
 	vAskQuestionAnswer,
 	vAskQuestionOption,
-	vExecutorJobKind,
+	vStoredExecutorJobKind,
 	vExecutorJobPayload,
 	vExecutorJobResult,
 	vExecutorJobStatus,
@@ -251,7 +252,7 @@ export default defineSchema({
 		runId: v.id('runs'),
 		// Deprecated: leftover on rows written when jobs belonged to a cloud project.
 		projectId: v.optional(v.id('projects')),
-		kind: vExecutorJobKind,
+		kind: vStoredExecutorJobKind,
 		callId: v.optional(v.string()),
 		// Set on jobs created after tool progress events. Legacy rows omit it;
 		// transcript writes fall back to the job document id.
@@ -287,25 +288,28 @@ export default defineSchema({
 		.index('by_runId_sequence', ['runId', 'sequence'])
 		.index('by_threadId_sequence', ['threadId', 'sequence'])
 		.index('by_threadId_status_sequence', ['threadId', 'status', 'sequence']),
-	artifacts: defineTable({
-		threadId: v.id('threadRecords'),
+	artifactRegistries: defineTable({
 		userId: v.string(),
-		title: v.string(),
+		repositoryKey: v.string(),
+		revision: v.number(),
+		rekeyTo: v.optional(v.string())
+	}).index('by_userId_and_repositoryKey', ['userId', 'repositoryKey']),
+	artifacts: defineTable({
+		userId: v.string(),
+		scope: vArtifactScope,
+		repositoryKey: v.string(),
+		// Present only for thread-scoped artifacts.
+		threadId: v.optional(v.id('threadRecords')),
+		registrationId: v.string(),
+		content: v.string(),
 		type: vArtifactType,
-		currentVersion: v.number(),
-		createdById: v.id('runs'),
+		title: v.string(),
+		revision: v.number(),
 		createdAt: v.number(),
 		updatedAt: v.number()
 	})
-		.index('by_threadId', ['threadId'])
-		.index('by_threadId_title', ['threadId', 'title']),
-	artifactVersions: defineTable({
-		artifactId: v.id('artifacts'),
-		userId: v.string(),
-		version: v.number(),
-		content: v.string(),
-		createdAt: v.number()
-	}).index('by_artifactId_version', ['artifactId', 'version']),
+		.index('by_userId_and_registrationId', ['userId', 'registrationId'])
+		.index('by_userId_and_repositoryKey_and_scope', ['userId', 'repositoryKey', 'scope']),
 	mandates: defineTable({
 		userId: v.string(),
 		// Present only after the owner approves in Prava.

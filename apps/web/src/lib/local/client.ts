@@ -1,9 +1,12 @@
 import type { AssistantPart } from '$convex/lib/assistantParts';
 import type { DataModel, Id } from '$convex/_generated/dataModel';
 import type {
+	ArtifactsWatchEvent,
+	ArtifactsWatchRequest,
 	DesktopApi,
 	LiveCompletionOverlay,
 	LiveCompletionWatchEvent,
+	LocalArtifact,
 	LocalTranscriptPage,
 	LocalTranscriptPart,
 	ProjectAttachment,
@@ -160,6 +163,27 @@ const threadCacheWatchEventSchema = z.object({
 const threadCacheSnapshotSchema = threadCacheWatchEventSchema.extend({
 	threads: z.array(threadSummarySchema)
 });
+const artifactScopeSchema = z.enum(['thread', 'project']);
+const localArtifactSchema = z.object({
+	_id: z.string(),
+	userId: z.string(),
+	scope: artifactScopeSchema,
+	repositoryKey: z.string(),
+	threadId: z.string().optional(),
+	localPath: z.string().optional(),
+	content: z.string(),
+	type: z.enum(['markdown', 'html', 'react']),
+	title: z.string(),
+	revision: z.number(),
+	createdAt: z.number(),
+	updatedAt: z.number(),
+	localError: z.string().optional()
+});
+const artifactsWatchEventSchema = z.object({
+	artifacts: z.array(localArtifactSchema),
+	stale: z.boolean(),
+	error: z.string().optional()
+});
 
 function asConvexId<TableName extends TableNamesInDataModel<DataModel> | '_storage'>(
 	value: string
@@ -277,6 +301,24 @@ function parseLiveCompletionWatchEvent(
 	return { eventType: 'cleared' };
 }
 
+function parseLocalArtifact(artifact: z.infer<typeof localArtifactSchema>): LocalArtifact {
+	const { threadId, ...rest } = artifact;
+	if (artifact.scope === 'thread' && threadId) {
+		return { ...rest, threadId };
+	}
+	return rest;
+}
+
+function parseArtifactsWatchEvent(
+	event: z.infer<typeof artifactsWatchEventSchema>
+): ArtifactsWatchEvent {
+	return {
+		artifacts: event.artifacts.map(parseLocalArtifact),
+		stale: event.stale,
+		error: event.error
+	};
+}
+
 async function readSseEvents(
 	response: Response,
 	signal: AbortSignal,
@@ -315,6 +357,7 @@ async function readSseEvents(
 		}
 		throw error;
 	} finally {
+		await reader.cancel().catch(() => undefined);
 		reader.releaseLock();
 	}
 }
@@ -333,7 +376,7 @@ async function errorFromFailedResponse(response: Response): Promise<Error> {
 
 async function postSse(
 	url: string,
-	requestBody: TranscriptScopeRequest | ThreadCacheUserRequest,
+	requestBody: TranscriptScopeRequest | ThreadCacheUserRequest | ArtifactsWatchRequest,
 	signal: AbortSignal,
 	onData: (data: string) => void
 ) {
@@ -722,6 +765,12 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				if (parsed.success) {
 					handlers.onEvent(parseThreadCacheWatchEvent(parsed.data));
 				}
+			});
+		},
+		watchArtifacts: async (requestBody, handlers) => {
+			await postSse(`${baseUrl}/api/artifacts/watch`, requestBody, handlers.signal, (data) => {
+				const parsed = artifactsWatchEventSchema.parse(JSON.parse(data));
+				handlers.onEvent(parseArtifactsWatchEvent(parsed));
 			});
 		},
 		renameThread: async (requestBody) =>

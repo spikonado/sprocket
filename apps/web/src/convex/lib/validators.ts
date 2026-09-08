@@ -62,6 +62,17 @@ export const vWriteStdinPayload = v.object({
 
 export const vArtifactType = v.union(v.literal('markdown'), v.literal('html'), v.literal('react'));
 
+export const vArtifactScope = v.union(v.literal('thread'), v.literal('project'));
+
+export const vAddArtifactPayload = v.object({
+	scope: vArtifactScope
+});
+
+export const vEditArtifactPayload = v.object({
+	artifactId: v.string()
+});
+
+// Stored leftover executorJobs from create_artifact / update_artifact.
 export const vCreateArtifactPayload = v.object({
 	title: v.string(),
 	contentType: vArtifactType,
@@ -186,6 +197,8 @@ export const vExecutorJobPayload = v.union(
 	vScrapeUrlPayload,
 	vWebSearchPayload,
 	vWriteStdinPayload,
+	vAddArtifactPayload,
+	vEditArtifactPayload,
 	vCreateArtifactPayload,
 	vUpdateArtifactPayload,
 	vBrowserActPayload,
@@ -341,9 +354,28 @@ export const vAskQuestionResult = v.object({
 
 export const vArtifactResult = v.object({
 	artifactId: v.string(),
-	version: v.number(),
+	revision: v.optional(v.number()),
+	scope: v.optional(vArtifactScope),
 	title: v.optional(v.string()),
-	contentType: v.optional(vArtifactType)
+	contentType: v.optional(vArtifactType),
+	// Stored leftover create_artifact / update_artifact job results.
+	version: v.optional(v.number())
+});
+
+export const vListArtifactsResult = v.object({
+	artifacts: v.array(
+		v.object({
+			artifactId: v.string(),
+			scope: vArtifactScope,
+			repositoryKey: v.string(),
+			threadId: v.optional(v.id('threadRecords')),
+			type: vArtifactType,
+			title: v.string(),
+			revision: v.number(),
+			createdAt: v.number(),
+			updatedAt: v.number()
+		})
+	)
 });
 
 const vParsedFileSource = v.union(
@@ -383,6 +415,7 @@ export const vExecutorJobResult = v.union(
 	vScrapeUrlResult,
 	vWebSearchResult,
 	vArtifactResult,
+	vListArtifactsResult,
 	vBrowserTaskResult,
 	vBrowserObserveResult,
 	vMandateSetupResult,
@@ -430,6 +463,14 @@ export const vExecutorJobKind = v.union(
 	v.literal('scrape_url'),
 	v.literal('web_search'),
 	v.literal('write_stdin'),
+	v.literal('add_artifact'),
+	v.literal('list_artifacts'),
+	v.literal('edit_artifact'),
+	v.literal('save_artifact')
+);
+
+export const vStoredExecutorJobKind = v.union(
+	vExecutorJobKind,
 	v.literal('create_artifact'),
 	v.literal('update_artifact')
 );
@@ -657,3 +698,4 @@ export type AssistantToolResultErrorStatus = Infer<typeof vAssistantToolResultEr
 export type AssistantToolResultErrorOutput = Infer<typeof vAssistantToolResultErrorOutput>;
 export type WorkspaceInstruction = Infer<typeof vWorkspaceInstruction>;
 export type ArtifactType = Infer<typeof vArtifactType>;
+export type ArtifactScope = Infer<typeof vArtifactScope>;

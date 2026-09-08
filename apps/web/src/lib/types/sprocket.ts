@@ -5,6 +5,7 @@ import {
 	vExecutorJobKind,
 	vExecutorJobStatus,
 	vRunStatus,
+	type ArtifactType,
 	type ExecutorJobPayload,
 	type ExecutorJobResult,
 	type WorkspaceInstruction
@@ -237,6 +238,39 @@ export type WorkspaceSkillsResult = {
 	warnings: string[];
 };
 
+export type ArtifactScope = 'thread' | 'project';
+
+/** Local file-backed artifact snapshot from POST /api/artifacts/watch. */
+export type LocalArtifact = {
+	_id: string;
+	userId: string;
+	scope: ArtifactScope;
+	repositoryKey: string;
+	/** Present only for thread-scoped artifacts. */
+	threadId?: string;
+	localPath?: string;
+	content: string;
+	type: ArtifactType;
+	title: string;
+	revision: number;
+	createdAt: number;
+	updatedAt: number;
+	localError?: string;
+};
+
+export type ArtifactsWatchRequest = {
+	userId: string;
+	repositoryKey: string;
+	workspacePath: string;
+	threadId?: string;
+};
+
+export type ArtifactsWatchEvent = {
+	artifacts: LocalArtifact[];
+	stale: boolean;
+	error?: string;
+};
+
 export type DesktopApi = {
 	browseFilesystem: (input: {
 		partialPath: string;
@@ -284,6 +318,13 @@ export type DesktopApi = {
 		request: ThreadCacheUserRequest,
 		handlers: {
 			onEvent: (event: ThreadCacheWatchEvent) => void;
+			signal: AbortSignal;
+		}
+	) => Promise<void>;
+	watchArtifacts: (
+		request: ArtifactsWatchRequest,
+		handlers: {
+			onEvent: (event: ArtifactsWatchEvent) => void;
 			signal: AbortSignal;
 		}
 	) => Promise<void>;

@@ -47,40 +47,18 @@ pub(super) async fn run_convex_tool_mutation(
     }
 }
 
-/// Merge run claim fields with a serialized tool-args object for a Convex mutation.
+/// Merge run claim fields with a serialized tool-args object for a Convex call.
 pub(super) fn mutation_args_from_payload(
     run_id: &str,
     claim_id: &str,
     payload: &serde_json::Value,
-) -> Result<BTreeMap<String, Value>, ToolExecutionError> {
-    tool_args_from_payload(
-        run_id,
-        claim_id,
-        payload,
-        "artifact tool payload must be an object",
-    )
-}
-
-pub(super) fn action_args_from_payload(
-    run_id: &str,
-    claim_id: &str,
-    payload: &serde_json::Value,
-) -> Result<BTreeMap<String, Value>, ToolExecutionError> {
-    tool_args_from_payload(run_id, claim_id, payload, "tool payload must be an object")
-}
-
-fn tool_args_from_payload(
-    run_id: &str,
-    claim_id: &str,
-    payload: &serde_json::Value,
-    non_object_message: &str,
 ) -> Result<BTreeMap<String, Value>, ToolExecutionError> {
     let mut args = BTreeMap::new();
     args.insert("runId".to_string(), run_id.to_string().into());
     args.insert("claimId".to_string(), claim_id.to_string().into());
     let fields = payload
         .as_object()
-        .ok_or_else(|| tool_failure(non_object_message))?;
+        .ok_or_else(|| tool_failure("tool payload must be an object"))?;
     for (key, value) in fields {
         args.insert(
             key.clone(),
@@ -88,6 +66,14 @@ fn tool_args_from_payload(
         );
     }
     Ok(args)
+}
+
+pub(super) fn action_args_from_payload(
+    run_id: &str,
+    claim_id: &str,
+    payload: &serde_json::Value,
+) -> Result<BTreeMap<String, Value>, ToolExecutionError> {
+    mutation_args_from_payload(run_id, claim_id, payload)
 }
 
 #[derive(Debug, Deserialize)]
@@ -113,9 +99,15 @@ pub(super) async fn begin_executor_job(
     if let Some(call_id) = tool_call_tracker.claim(kind, payload) {
         begin_args.insert("callId".to_string(), call_id.into());
     }
+    let mut stored_payload = payload.clone();
+    if matches!(kind, "add_artifact" | "edit_artifact" | "save_artifact") {
+        if let Some(fields) = stored_payload.as_object_mut() {
+            fields.remove("path");
+        }
+    }
     begin_args.insert(
         "payload".to_string(),
-        Value::try_from(payload.clone()).map_err(tool_error)?,
+        Value::try_from(stored_payload).map_err(tool_error)?,
     );
     let begin_result: serde_json::Value = runtime
         .mutation_json("agentRuntime:beginToolJob", begin_args)

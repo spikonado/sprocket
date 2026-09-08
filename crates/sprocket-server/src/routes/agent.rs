@@ -76,11 +76,20 @@ async fn run_agent_handler(
         .await
         .map_err(ApiError::unauthorized)?;
 
-    let workspace_path = state
+    let attachment = state
         .project_attachments
-        .workspace_path(&payload.workspace_path)
+        .require_available_workspace(&payload.workspace_path)
         .await
         .map_err(ApiError::bad_request)?;
+    let workspace_path = attachment.workspace_path.clone();
+    let artifact_workspace_path = workspace_path.clone();
+    let artifact_repository_key = payload
+        .repository_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|key| crate::project_attachments::repository_key_matches(&attachment, key))
+        .unwrap_or(attachment.repository_key.as_str())
+        .to_string();
 
     state
         .machines
@@ -112,6 +121,7 @@ async fn run_agent_handler(
     let live = Arc::clone(&state.live_completions);
     let transcript = Arc::clone(&state.transcript);
     let transcript_watchers = Arc::clone(&state.transcript_watchers);
+    let artifact_watchers = Arc::clone(&state.artifact_watchers);
     let (start_result_sender, start_result_receiver) = oneshot::channel();
 
     // Detach the complete launch before waiting for its acknowledgement. Hyper
@@ -157,8 +167,29 @@ async fn run_agent_handler(
                         }
                     }
                 }
-                let _ = start_result_sender.send(Ok((run_id, thread_id)));
-                if let Err(error) = run_agent(run, live).await {
+                let artifact_watch = if artifact_repository_key.is_empty() {
+                    None
+                } else {
+                    Some(
+                        artifact_watchers
+                            .open(
+                                &user_id,
+                                &artifact_repository_key,
+                                &artifact_workspace_path,
+                                (!thread_id.is_empty()).then_some(thread_id.as_str()),
+                            )
+                            .await,
+                    )
+                };
+                let _ = start_result_sender.send(Ok((run_id.clone(), thread_id.clone())));
+                let result = run_agent(run, live).await;
+                if let Some(watch) = &artifact_watch {
+                    if let Err(error) = watch.flush().await {
+                        tracing::warn!("artifact sync after run {run_id} failed: {error:#}");
+                    }
+                }
+                drop(artifact_watch);
+                if let Err(error) = result {
                     eprintln!("sprocket-server: agent run failed: {error:#}");
                 }
             }
