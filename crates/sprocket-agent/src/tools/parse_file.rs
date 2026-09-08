@@ -67,12 +67,9 @@ pub(crate) enum ParseFilePersistedOutput {
     },
 }
 
-/// Origin of the parsed bytes. `Url` is historical stored output only; live
-/// calls persist `Path`. Replay reads the cache and never fetches `Url`.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub(crate) enum ParseFilePersistedSource {
-    Url { url: String },
     Path { path: String },
 }
 
@@ -682,8 +679,7 @@ async fn replay_text_output(
     )))
 }
 
-/// Rebuild the model-visible Rig output from persisted metadata plus the local cache file.
-/// Missing cache is an error so the caller can fall back to text; this never fetches `source`.
+/// Missing cache is an error so history hydration can fall back to text.
 pub(crate) async fn replay_parse_file_tool_output(
     output: &serde_json::Value,
 ) -> anyhow::Result<ToolOutput> {
@@ -843,27 +839,6 @@ mod tests {
                 ..
             }
         ));
-    }
-
-    #[test]
-    fn historical_url_source_remains_readable() {
-        let output: ParseFilePersistedOutput = serde_json::from_value(json!({
-            "outputType": "text",
-            "path": "/cache/note.md",
-            "source": { "type": "url", "url": "https://example.com/note.csv" },
-            "format": "csv",
-            "charCount": 4.0,
-            "preview": "name",
-            "truncated": false
-        }))
-        .unwrap();
-        match output {
-            ParseFilePersistedOutput::Text {
-                source: ParseFilePersistedSource::Url { url },
-                ..
-            } => assert_eq!(url, "https://example.com/note.csv"),
-            other => panic!("expected historical url source, got {other:?}"),
-        }
     }
 
     #[test]
@@ -1082,10 +1057,8 @@ mod tests {
                     Path::new(path).parent(),
                     Some(std::fs::canonicalize(&cache).expect("cache").as_path())
                 );
-                match source {
-                    ParseFilePersistedSource::Path { path } => assert_eq!(path, "shot.png"),
-                    other => panic!("expected path source, got {other:?}"),
-                }
+                let ParseFilePersistedSource::Path { path } = source;
+                assert_eq!(path, "shot.png");
             }
             other => panic!("expected image output, got {other:?}"),
         }
@@ -1294,12 +1267,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_replay_cache_does_not_fetch_the_original_url() {
+    async fn missing_replay_cache_reports_missing_files() {
         let value = serde_json::json!({
             "outputType": "image",
             "mediaType": "image/png",
             "path": "/tmp/sprocket-parse-file-missing-cache.png",
-            "source": { "type": "url", "url": "http://127.0.0.1:1/should-not-fetch.png" },
+            "source": { "type": "path", "path": "image.png" },
             "byteSize": 16,
             "width": 1,
             "height": 1
@@ -1312,12 +1285,11 @@ mod tests {
             message.contains("cached image") || message.contains("failed to open"),
             "{message}"
         );
-        assert!(!message.contains("failed to fetch"));
 
         let text = serde_json::json!({
             "outputType": "text",
             "path": "/tmp/sprocket-parse-file-missing-text.md",
-            "source": { "type": "url", "url": "http://127.0.0.1:1/should-not-fetch.csv" },
+            "source": { "type": "path", "path": "note.csv" },
             "format": "csv",
             "charCount": 4,
             "preview": "name",
@@ -1328,7 +1300,6 @@ mod tests {
             .expect_err("missing text cache");
         let text_message = format!("{text_error:#}");
         assert!(text_message.contains("cached text"), "{text_message}");
-        assert!(!text_message.contains("failed to fetch"));
     }
 
     #[tokio::test]

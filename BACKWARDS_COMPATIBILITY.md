@@ -311,17 +311,6 @@ bun convex run migrations:run
 
 Use `--prod` for the production deployment.
 
-### 12. Historical `parse_file` URL sources
-
-`parse_file` now accepts only a local path. Use `scrape_url` for http(s) URLs.
-Stored tool results may still have `source: { "type": "url", "url": "..." }`.
-Replay reads the cached file and never fetches that URL. Live calls require
-`path`; the tool schema rejects the retired `url` argument.
-
-Remove `ParseFilePersistedSource::Url` after a production scan finds no stored
-parse_file outputs with a URL source, and after JSONL replicas from that era
-are gone or rewritten.
-
 ## Client APIs
 
 ### Machine registration retries
@@ -351,7 +340,7 @@ Remove the stored field only after historical rows and JSONL replicas have
 aged out or been rewritten.
 
 Web image results store URL and image metadata, not bytes or local paths.
-History displays a notice rather than fetching the URL again. Historical
+History displays a notice rather than fetching the URL again. Local-path
 `parse_file` image results still replay from their existing local cache.
 
 ### Local sessions created before account binding
