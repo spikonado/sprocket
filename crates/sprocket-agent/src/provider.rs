@@ -194,8 +194,13 @@ where
         .tool(tools.mandate_charge)
         .tool(tools.mandate_report)
         .tool(tools.parse_file)
-        .tool(context_handoff_hook.tool())
-        .build();
+        .tool(context_handoff_hook.tool());
+    let agent = if request.supports_images {
+        agent.tool(tools.screenshot_url)
+    } else {
+        agent
+    }
+    .build();
 
     eprintln!("sprocket-agent: built agent {}", request.run_id);
     eprintln!("sprocket-agent: prompting model {}", request.run_id);

@@ -1,5 +1,6 @@
 import {
 	BookOpen,
+	Camera,
 	CircleDollarSign,
 	CircleQuestionMark,
 	CreditCard,
@@ -54,6 +55,8 @@ export function toolKindIcon(kind: string): LucideIcon {
 			return NotebookPen;
 		case 'scrape_url':
 			return Globe;
+		case 'screenshot_url':
+			return Camera;
 		case 'edit_artifact':
 		case 'list_artifacts':
 		case 'update_artifact':

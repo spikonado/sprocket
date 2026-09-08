@@ -427,14 +427,14 @@ fn convert_non_image_blocking(
     persist_parsed_text(&cache_dir, &text, "text", &cancellation)
 }
 
-async fn persist_image_bytes(
+pub(super) async fn persist_image_bytes(
     cache_dir: &Path,
     bytes: &[u8],
     media_type: &ImageMediaType,
 ) -> anyhow::Result<PathBuf> {
     anyhow::ensure!(
         !cache_dir.as_os_str().is_empty(),
-        "parse_file cache directory is not configured"
+        "image cache directory is not configured"
     );
     tokio::fs::create_dir_all(cache_dir)
         .await
@@ -642,13 +642,13 @@ async fn replay_image_output(
 ) -> anyhow::Result<ToolOutput> {
     anyhow::ensure!(
         !path.is_empty(),
-        "parse_file tool output is missing a cached path"
+        "image tool output is missing a cached path"
     );
     let bytes = read_image_bytes_bounded(Path::new(path), &WorkspaceCancellation::new())
         .await
         .with_context(|| format!("failed to read cached image {path}"))?;
     let media_type = ImageMediaType::from_mime_type(media_type)
-        .ok_or_else(|| anyhow!("parse_file tool output has unsupported media type {media_type}"))?;
+        .ok_or_else(|| anyhow!("image tool output has unsupported media type {media_type}"))?;
     let (decoded_type, decoded_width, decoded_height) = decode_image_info(&bytes)?;
     anyhow::ensure!(
         decoded_type == media_type
@@ -704,10 +704,43 @@ pub(crate) async fn replay_parse_file_tool_output(
     }
 }
 
-pub(crate) async fn replay_parse_file_history_items(
+pub(super) async fn replay_image_tool_output(
+    output: &serde_json::Value,
+) -> anyhow::Result<ToolOutput> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ImageReference {
+        media_type: String,
+        path: String,
+        #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u64")]
+        byte_size: u64,
+        #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u32")]
+        width: u32,
+        #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u32")]
+        height: u32,
+    }
+
+    let image: ImageReference = serde_json::from_value(output.clone())
+        .context("image tool output is not replay metadata")?;
+    replay_image_output(
+        &image.media_type,
+        &image.path,
+        image.byte_size,
+        image.width,
+        image.height,
+    )
+    .await
+}
+
+pub(crate) async fn replay_local_tool_history_items(
     output: &serde_json::Value,
 ) -> anyhow::Result<Vec<AgentHistoryToolResultItem>> {
-    let tool_output = replay_parse_file_tool_output(output).await?;
+    let tool_output =
+        if output.get("outputType").and_then(serde_json::Value::as_str) == Some("image") {
+            replay_image_tool_output(output).await?
+        } else {
+            replay_parse_file_tool_output(output).await?
+        };
     tool_output
         .into_content()
         .into_iter()
@@ -1071,7 +1104,7 @@ mod tests {
         let output = replay_parse_file_tool_output(&value).await.expect("replay");
         assert_png_image_output(&output, &png);
 
-        let history = replay_parse_file_history_items(&value)
+        let history = replay_local_tool_history_items(&value)
             .await
             .expect("history");
         assert_eq!(history.len(), 1);
@@ -1118,7 +1151,7 @@ mod tests {
         let output = replay_parse_file_tool_output(&value).await.expect("replay");
         assert_text_contains(&output, "Hello from RTF");
 
-        let history = replay_parse_file_history_items(&value)
+        let history = replay_local_tool_history_items(&value)
             .await
             .expect("history");
         match &history[0] {

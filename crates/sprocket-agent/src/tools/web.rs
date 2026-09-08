@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -8,16 +9,19 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::context::{AgentToolContext, tool_error};
+use super::context::{AgentToolContext, tool_error, tool_failure};
 use super::job::{execute_cloud_tool_job, execute_tool_job_with_id, run_convex_tool_action};
 use super::parse_file::{
-    MAX_PARSE_FILE_IMAGE_BYTES, decode_image_info, tool_output_from_image_bytes,
+    MAX_PARSE_FILE_IMAGE_BYTES, decode_image_info, persist_image_bytes, replay_image_tool_output,
 };
 
 pub(super) const DEFAULT_WEB_SEARCH_RESULTS: u32 = 5;
 
 #[derive(Clone)]
 pub(crate) struct ScrapeUrlTool(pub(super) AgentToolContext);
+
+#[derive(Clone)]
+pub(crate) struct ScreenshotUrlTool(pub(super) AgentToolContext);
 
 #[derive(Clone)]
 pub(crate) struct WebSearchTool(pub(super) AgentToolContext);
@@ -54,6 +58,18 @@ pub(crate) struct WebSearchArgs {
 #[serde(deny_unknown_fields)]
 pub(crate) struct ScrapeUrlArgs {
     pub(crate) url: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct ScreenshotUrlArgs {
+    pub(crate) url: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ScreenshotTransport {
+    url: String,
+    screenshot_url: String,
 }
 
 impl rig::tool::Tool for WebSearchTool {
@@ -110,8 +126,6 @@ impl rig::tool::Tool for ScrapeUrlTool {
     ) -> Result<Self::Output, Self::Error> {
         let url = validate_web_url(&args.url).map_err(tool_error)?;
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
-        let mut image_output = None;
-        let image_result = &mut image_output;
         let mut scrape_file = None;
         let saved_file = &mut scrape_file;
         let result = execute_tool_job_with_id(
@@ -125,10 +139,9 @@ impl rig::tool::Tool for ScrapeUrlTool {
                 let image = tokio::select! {
                     biased;
                     _ = cancellation.cancelled() => return Err(super::context::cancelled_error()),
-                    result = fetch_web_image(url, self.0.supports_images) => result.map_err(tool_error)?,
+                    result = fetch_web_image(url, self.0.supports_images, &self.0.parse_file_cache_dir) => result.map_err(tool_error)?,
                 };
-                if let Some((metadata, output)) = image {
-                    *image_result = Some(output);
+                if let Some(metadata) = image {
                     return Ok(metadata);
                 }
                 let action_args = BTreeMap::from([
@@ -144,8 +157,81 @@ impl rig::tool::Tool for ScrapeUrlTool {
         if let Some(file) = scrape_file.as_mut() {
             file.disable_cleanup(true);
         }
-        Ok(image_output.unwrap_or_else(|| ToolOutput::json(result)))
+        if result.get("outputType").and_then(serde_json::Value::as_str) == Some("image") {
+            replay_image_tool_output(&result).await.map_err(tool_error)
+        } else {
+            Ok(ToolOutput::json(result))
+        }
     }
+}
+
+impl rig::tool::Tool for ScreenshotUrlTool {
+    const NAME: &'static str = "screenshot_url";
+    type Error = ToolExecutionError;
+    type Args = ScreenshotUrlArgs;
+    type Output = ToolOutput;
+
+    fn description(&self) -> String {
+        "Use to take a viewport screenshot of ANY public HTTP(S) URL".to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!(schemars::schema_for!(ScreenshotUrlArgs))
+    }
+
+    async fn call(
+        &self,
+        _context: &mut rig::tool::ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
+        if !self.0.supports_images {
+            return Err(tool_failure("The selected model cannot view images."));
+        }
+        validate_web_url(&args.url).map_err(tool_error)?;
+        let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
+        let result = execute_tool_job_with_id(
+            &self.0.runtime,
+            &self.0.run_id,
+            &self.0.claim_id,
+            Self::NAME,
+            &self.0.tool_call_tracker,
+            payload,
+            |cancellation, job_id| async move {
+                let action_args = BTreeMap::from([
+                    ("runId".to_string(), self.0.run_id.clone().into()),
+                    ("claimId".to_string(), self.0.claim_id.clone().into()),
+                    ("jobId".to_string(), job_id.into()),
+                ]);
+                let result = run_convex_tool_action(
+                    &self.0.runtime,
+                    cancellation.clone(),
+                    "webTools:screenshotForTool",
+                    action_args,
+                )
+                .await?;
+                tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled() => return Err(super::context::cancelled_error()),
+                    result = fetch_screenshot(result, &self.0.parse_file_cache_dir) => result.map_err(tool_error),
+                }
+            },
+        )
+        .await?;
+        replay_image_tool_output(&result).await.map_err(tool_error)
+    }
+}
+
+async fn fetch_screenshot(
+    result: serde_json::Value,
+    cache_dir: &Path,
+) -> anyhow::Result<serde_json::Value> {
+    let transport: ScreenshotTransport =
+        serde_json::from_value(result).context("invalid screenshot response")?;
+    let page_url = validate_web_url(&transport.url)?;
+    let screenshot_url = validate_web_url(&transport.screenshot_url)?;
+    let mut metadata = download_image(&image_client()?, screenshot_url, cache_dir).await?;
+    metadata["url"] = json!(page_url.as_str());
+    Ok(metadata)
 }
 
 fn validate_web_url(value: &str) -> anyhow::Result<reqwest::Url> {
@@ -160,13 +246,16 @@ fn validate_web_url(value: &str) -> anyhow::Result<reqwest::Url> {
 async fn fetch_web_image(
     url: reqwest::Url,
     supports_images: bool,
-) -> anyhow::Result<Option<(serde_json::Value, ToolOutput)>> {
+    cache_dir: &Path,
+) -> anyhow::Result<Option<serde_json::Value>> {
     let client = image_client()?;
     let Some(image_url) = discover_image_url(&client, url).await else {
         return Ok(None);
     };
     anyhow::ensure!(supports_images, "The selected model cannot view images.");
-    download_image(&client, image_url).await.map(Some)
+    download_image(&client, image_url, cache_dir)
+        .await
+        .map(Some)
 }
 
 fn image_client() -> reqwest::Result<reqwest::Client> {
@@ -180,7 +269,8 @@ fn image_client() -> reqwest::Result<reqwest::Client> {
 async fn download_image(
     client: &reqwest::Client,
     image_url: reqwest::Url,
-) -> anyhow::Result<(serde_json::Value, ToolOutput)> {
+    cache_dir: &Path,
+) -> anyhow::Result<serde_json::Value> {
     let mut response = client.get(image_url).send().await?.error_for_status()?;
     anyhow::ensure!(
         response
@@ -197,11 +287,12 @@ async fn download_image(
         bytes.extend_from_slice(&chunk);
     }
     let (media_type, width, height) = decode_image_info(&bytes)?;
-    let metadata = json!({
+    let path = persist_image_bytes(cache_dir, &bytes, &media_type).await?;
+    Ok(json!({
         "outputType": "image", "url": response.url().as_str(),
+        "path": path,
         "mediaType": media_type.to_mime_type(), "byteSize": bytes.len(), "width": width, "height": height,
-    });
-    Ok((metadata, tool_output_from_image_bytes(&bytes, media_type)))
+    }))
 }
 
 async fn discover_image_url(client: &reqwest::Client, url: reqwest::Url) -> Option<reqwest::Url> {
@@ -280,19 +371,148 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn image_without_extension_is_returned_in_memory_and_validated_by_signature() {
-        let url = serve("image/jpeg", png()).await;
-        let (metadata, output) = fetch_web_image(url, true).await.unwrap().unwrap();
+    async fn screenshot_saves_pixels_locally_for_history() {
+        let cache = tempfile::tempdir().unwrap();
+        let mut download = serve("application/octet-stream", png()).await;
+        download.set_query(Some("signature=temporary-secret"));
+        let metadata = fetch_screenshot(
+            json!({
+                "url": "https://example.com/page", "screenshotUrl": download.as_str(),
+            }),
+            cache.path(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(metadata["url"], "https://example.com/page");
         assert_eq!(metadata["mediaType"], "image/png");
-        assert!(metadata.get("path").is_none());
-        assert!(matches!(
-            output.into_content().first(),
-            Some(rig::message::ToolResultContent::Image(_))
-        ));
+        assert_eq!(metadata["width"], 1);
+        assert!(!metadata.to_string().contains("temporary-secret"));
+        assert_image_history("screenshot_url", metadata, cache.path()).await;
+    }
+
+    #[tokio::test]
+    async fn screenshot_rejects_missing_fields_and_non_http_downloads() {
+        let cache = tempfile::tempdir().unwrap();
+        for result in [
+            json!({"url": "https://example.com"}),
+            json!({"url": "https://example.com", "screenshotUrl": "file:///tmp/image.png"}),
+            json!({"url": "file:///tmp/page.html", "screenshotUrl": "https://example.com/image.png"}),
+        ] {
+            assert!(fetch_screenshot(result, cache.path()).await.is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn screenshot_rejects_non_images_and_oversized_dimensions() {
+        let cache = tempfile::tempdir().unwrap();
+        let mut oversized = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(8193, 1)
+            .write_to(&mut oversized, image::ImageFormat::Png)
+            .unwrap();
+        for bytes in [
+            b"<html>not a screenshot</html>".to_vec(),
+            oversized.into_inner(),
+        ] {
+            let download = serve("image/png", bytes).await;
+            assert!(
+                fetch_screenshot(
+                    json!({
+                        "url": "https://example.com", "screenshotUrl": download.as_str(),
+                    }),
+                    cache.path()
+                )
+                .await
+                .is_err()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn image_without_extension_is_saved_locally_and_validated_by_signature() {
+        let cache = tempfile::tempdir().unwrap();
+        let url = serve("image/jpeg", png()).await;
+        let metadata = fetch_web_image(url, true, cache.path())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(metadata["mediaType"], "image/png");
+        assert_image_history("scrape_url", metadata, cache.path()).await;
+    }
+
+    async fn assert_image_history(name: &str, mut metadata: serde_json::Value, cache: &Path) {
+        use crate::types::{
+            AgentHistoryContent, AgentHistoryMessage, AgentHistoryRole, AgentHistoryToolResultItem,
+        };
+        use base64::Engine;
+
+        let path = Path::new(metadata["path"].as_str().unwrap());
+        assert_eq!(path.parent().unwrap(), cache.canonicalize().unwrap());
+        assert_eq!(tokio::fs::read(path).await.unwrap(), png());
+        assert!(!metadata.to_string().contains("iVBORw0KGgo"));
+        let output = replay_image_tool_output(&metadata).await.unwrap();
+        let expected = rig::message::ToolResultContent::image_base64(
+            base64::engine::general_purpose::STANDARD.encode(png()),
+            Some(rig::message::ImageMediaType::PNG),
+            None,
+        );
+        assert_eq!(
+            serde_json::to_value(output.into_content()).unwrap(),
+            json!([expected])
+        );
+
+        metadata["url"] = json!("http://127.0.0.1:1/unavailable");
+        let part = serde_json::from_value(json!({
+            "number": 1, "sourceKey": "tool:1", "kind": "tool", "runId": "run",
+            "tool": {"callId": "call", "name": name, "status": "completed", "output": metadata}
+        }))
+        .unwrap();
+        let mut history = vec![AgentHistoryMessage {
+            role: AgentHistoryRole::User,
+            assistant_id: None,
+            contents: vec![AgentHistoryContent::ToolResult {
+                id: "call".into(),
+                call_id: Some("call".into()),
+                items: vec![AgentHistoryToolResultItem::Text {
+                    text: metadata.to_string(),
+                }],
+            }],
+        }];
+        super::super::hydrate_tool_history(&mut history, std::slice::from_ref(&part), true).await;
+        let AgentHistoryContent::ToolResult { items, .. } = &history[0].contents[0] else {
+            panic!("missing result")
+        };
+        let [AgentHistoryToolResultItem::Image { image_json }] = items.as_slice() else {
+            panic!("missing image")
+        };
+        let rig::message::ToolResultContent::Image(expected) = expected else {
+            unreachable!()
+        };
+        assert_eq!(image_json, &serde_json::to_string(&expected).unwrap());
+
+        super::super::hydrate_tool_history(&mut history, std::slice::from_ref(&part), false).await;
+        let serialized = serde_json::to_string(&history).unwrap();
+        assert!(serialized.contains("Image omitted"));
+        assert!(!serialized.contains("imageJson"));
+
+        tokio::fs::remove_file(metadata["path"].as_str().unwrap())
+            .await
+            .unwrap();
+        super::super::hydrate_tool_history(&mut history, &[part], true).await;
+        let serialized = serde_json::to_string(&history).unwrap();
+        assert!(serialized.contains("not available in the local cache"));
+        assert!(!serialized.contains("imageJson"));
+    }
+
+    #[tokio::test]
+    async fn image_download_fails_when_local_persistence_fails() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let url = serve("image/png", png()).await;
+        assert!(fetch_web_image(url, true, file.path()).await.is_err());
     }
 
     #[tokio::test]
     async fn html_is_left_to_the_scraper() {
+        let cache = tempfile::tempdir().unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = reqwest::Url::parse(&format!("http://{}/page", listener.local_addr().unwrap()))
             .unwrap();
@@ -304,7 +524,12 @@ mod tests {
             stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 50\r\nConnection: close\r\n\r\n").await.unwrap();
             listener
         });
-        assert!(fetch_web_image(url, true).await.unwrap().is_none());
+        assert!(
+            fetch_web_image(url, true, cache.path())
+                .await
+                .unwrap()
+                .is_none()
+        );
         let listener = server.await.unwrap();
         assert!(
             tokio::time::timeout(Duration::from_millis(50), listener.accept())
@@ -315,20 +540,32 @@ mod tests {
 
     #[tokio::test]
     async fn image_extension_handles_generic_content_types() {
+        let cache = tempfile::tempdir().unwrap();
         let mut url = serve("application/octet-stream", png()).await;
         url.set_path("/image.PNG");
-        assert!(fetch_web_image(url, true).await.unwrap().is_some());
+        assert!(
+            fetch_web_image(url, true, cache.path())
+                .await
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[tokio::test]
     async fn unrecognized_content_is_scraped_but_text_only_models_reject_images() {
+        let cache = tempfile::tempdir().unwrap();
         let url = serve("image/svg+xml", b"<svg></svg>".to_vec()).await;
-        assert!(fetch_web_image(url, true).await.unwrap().is_none());
+        assert!(
+            fetch_web_image(url, true, cache.path())
+                .await
+                .unwrap()
+                .is_none()
+        );
         let url = serve("image/jpeg", b"<html>mislabelled</html>".to_vec()).await;
-        assert!(fetch_web_image(url, true).await.is_err());
+        assert!(fetch_web_image(url, true, cache.path()).await.is_err());
         let url = serve("image/png", png()).await;
         assert!(
-            fetch_web_image(url, false)
+            fetch_web_image(url, false, cache.path())
                 .await
                 .unwrap_err()
                 .to_string()
@@ -347,10 +584,45 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn screenshot_download_reads_extensionless_images_without_head() {
+        let cache = tempfile::tempdir().unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = reqwest::Url::parse(&format!("http://{}/opaque", listener.local_addr().unwrap()))
+            .unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            stream.read(&mut request).await.unwrap();
+            assert!(request.starts_with(b"GET "));
+            let bytes = png();
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                bytes.len()
+            );
+            stream.write_all(headers.as_bytes()).await.unwrap();
+            stream.write_all(&bytes).await.unwrap();
+        });
+        let metadata = fetch_screenshot(
+            json!({
+                "url": "https://example.com/page", "screenshotUrl": url.as_str(),
+            }),
+            cache.path(),
+        )
+        .await
+        .unwrap();
+        server.await.unwrap();
+        assert_eq!(metadata["mediaType"], "image/png");
+    }
+
     #[test]
-    fn scrape_schema_only_advertises_a_required_url() {
-        let schema = json!(schemars::schema_for!(ScrapeUrlArgs));
-        assert_eq!(schema["properties"], json!({"url": {"type": "string"}}));
-        assert_eq!(schema["required"], json!(["url"]));
+    fn url_tool_schemas_only_advertise_a_required_url() {
+        for schema in [
+            json!(schemars::schema_for!(ScrapeUrlArgs)),
+            json!(schemars::schema_for!(ScreenshotUrlArgs)),
+        ] {
+            assert_eq!(schema["properties"], json!({"url": {"type": "string"}}));
+            assert_eq!(schema["required"], json!(["url"]));
+        }
     }
 }

@@ -51,12 +51,25 @@ URLs; `parse_file` rejects a `url` argument and URL-shaped paths.
 Hosted parsing still calls Firecrawl's Parse API directly because the official
 Convex component does not expose parsing.
 
-`scrape_url` fetches supported raster images in memory and returns their pixels
-to image-capable models. Images and short scrapes are not saved locally.
+`scrape_url` downloads supported raster images and returns their pixels
+to image-capable models. Short text scrapes are not saved locally.
 Page scraping uses the official `@firecrawl/firecrawl-convex` component with
 `markdown`, `summary`, `images`, `audio`, and `video` formats. The backend needs
 `FIRECRAWL_API_KEY`; `CONTEXT_DEV_API_KEY` is no longer used. Audio and video are
 returned as provider URLs, not downloaded media files.
+
+`screenshot_url` captures a public page's viewport through Firecrawl's
+`screenshot` format with `maxAge: 0` for a fresh capture. It shares `scrape_url`'s
+image size limits. The tool is not registered for models without image support.
+History stores the page URL, not the signed screenshot URL. Captures do
+not share the user's browser session; use browser tools for signed-in pages.
+
+Image results from `parse_file`, `scrape_url`, and `screenshot_url` keep their
+original bytes in the thread's local `parse_file/` directory. Convex stores only
+the local path and image metadata. Both the initial tool response and later runs
+read that saved copy and return native image content to the model. History does
+not fetch the source again. Missing or invalid local copies produce a text notice;
+models without image support receive a text notice instead of image content.
 
 Scrape outputs above 40,000 serialized characters are saved as JSON in the host's temporary
 directory, such as `/tmp` or Windows `%TEMP%`. The `markdown` output reports
@@ -64,8 +77,7 @@ directory, such as `/tmp` or Windows `%TEMP%`. The `markdown` output reports
 temporary-file lifetime. Convex transfer copies expire after one hour. The
 `summary` field remains inline in both short and saved results. Summaries that
 alone exceed the inline budget fail explicitly rather than being truncated.
-Rebuilt history keeps image metadata and asks the model to call
-the tool again if it needs the pixels. HTML uses the cloud scraper through an
+HTML uses the cloud scraper through an
 authenticated action. A HEAD request identifies image content types without
 consuming page bodies. Image filename extensions cover servers without useful
 HEAD responses. Downloaded image bytes are validated by signature; a mislabeled

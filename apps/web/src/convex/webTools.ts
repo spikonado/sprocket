@@ -2,12 +2,13 @@
 
 import { ConvexError, v, type Infer } from 'convex/values';
 import { z } from 'zod';
-import { FirecrawlClient } from '@firecrawl/firecrawl-convex';
+import { FirecrawlClient, type ScrapeOptions } from '@firecrawl/firecrawl-convex';
 import { ExaClient } from '@exalabs/convex-exa';
 import { action, internalAction, type ActionCtx } from '@convex/_generated/server';
 import { components, internal } from '@convex/_generated/api';
 import {
 	vScrapeUrlTransport,
+	vScreenshotUrlTransport,
 	vWebSearchResult,
 	type ExecutorJobPayload
 } from '@convex/lib/validators';
@@ -25,6 +26,7 @@ export const SCRAPE_INLINE_MAX_CHARS = 40_000;
 export const SCRAPE_STORAGE_TTL_MS = 60 * 60 * 1_000;
 export const SCRAPE_TIMEOUT_MS = 60_000;
 export const SCRAPE_FORMATS = ['markdown', 'summary', 'images', 'audio', 'video'] as const;
+export const SCREENSHOT_FORMATS = ['screenshot'] as const;
 export const DEFAULT_SCRAPE_SUMMARY = 'No summary was returned for this page.';
 const SCRAPE_JSON_BLOB_TYPE = 'application/json; charset=utf-8';
 const CONVEX_ARRAY_MAX_LENGTH = 8_192;
@@ -55,6 +57,7 @@ const firecrawlDocumentSchema = z.object({
 	images: z.array(z.string()).nullish(),
 	audio: z.string().nullish(),
 	video: z.string().nullish(),
+	screenshot: z.string().nullish(),
 	metadata: z
 		.object({
 			url: z.string().optional(),
@@ -65,6 +68,7 @@ const firecrawlDocumentSchema = z.object({
 		.passthrough()
 		.optional()
 });
+type FirecrawlDocument = z.infer<typeof firecrawlDocumentSchema>;
 
 export type ScrapedPage = {
 	url: string;
@@ -164,7 +168,7 @@ type WebSearchJobArgs = {
 	numResults?: number;
 };
 
-function scrapeUrlFromPayload(payload: ExecutorJobPayload): string {
+function urlFromPayload(payload: ExecutorJobPayload): string {
 	if (!('url' in payload)) return '';
 	return payload.url;
 }
@@ -178,19 +182,17 @@ function webSearchFromPayload(payload: ExecutorJobPayload): WebSearchJobArgs {
 	return { query, numResults: payload.numResults };
 }
 
-type PoolScrapeJob = {
-	kind: 'web_search' | 'scrape_url';
+type LocalScrapeJob = {
+	kind: 'scrape_url';
 	payload: ExecutorJobPayload;
 } | null;
 
-async function scrapeClaimedUrl(ctx: ActionCtx, job: PoolScrapeJob): Promise<ScrapedPage> {
-	if (!job || job.kind !== 'scrape_url') {
-		throw new NonRetryableError(RUN_NO_LONGER_ACTIVE);
-	}
-	return await fetchScrape(ctx, scrapeUrlFromPayload(job.payload));
-}
+type LocalScreenshotJob = {
+	kind: 'screenshot_url';
+	payload: ExecutorJobPayload;
+} | null;
 
-async function fetchScrape(ctx: ActionCtx, urlValue: string): Promise<ScrapedPage> {
+function requireHttpUrl(urlValue: string): URL {
 	let url: URL;
 	try {
 		url = new URL(urlValue.trim());
@@ -200,15 +202,21 @@ async function fetchScrape(ctx: ActionCtx, urlValue: string): Promise<ScrapedPag
 	if (url.protocol !== 'http:' && url.protocol !== 'https:') {
 		throw new NonRetryableError('Only http(s) URLs can be scraped.');
 	}
+	return url;
+}
 
+async function requestFirecrawlScrape(
+	ctx: ActionCtx,
+	url: URL,
+	options: ScrapeOptions
+): Promise<FirecrawlDocument> {
 	let document: unknown;
 	try {
 		document = await withTimeout(
 			'Firecrawl scrape',
 			SCRAPE_TIMEOUT_MS,
 			firecrawl.scrape(ctx, url.toString(), {
-				formats: [...SCRAPE_FORMATS],
-				onlyMainContent: true,
+				...options,
 				maxAge: 0,
 				storeInCache: false,
 				timeout: SCRAPE_TIMEOUT_MS
@@ -226,26 +234,72 @@ async function fetchScrape(ctx: ActionCtx, urlValue: string): Promise<ScrapedPag
 		}
 		throw error;
 	}
-
 	const parsed = firecrawlDocumentSchema.safeParse(document);
 	if (!parsed.success) {
 		throw new NonRetryableError('Firecrawl scrape returned an invalid response.');
 	}
-
 	const statusCode = parsed.data.metadata?.statusCode;
 	if (statusCode !== undefined && !isCleanPageStatus(statusCode)) {
 		throwHttpFailure(`This webpage returned a ${statusCode} error.`, statusCode);
 	}
+	return parsed.data;
+}
 
+async function scrapeClaimedUrl(ctx: ActionCtx, job: LocalScrapeJob): Promise<ScrapedPage> {
+	if (!job || job.kind !== 'scrape_url') {
+		throw new NonRetryableError(RUN_NO_LONGER_ACTIVE);
+	}
+	return await fetchScrape(ctx, urlFromPayload(job.payload));
+}
+
+async function screenshotClaimedUrl(
+	ctx: ActionCtx,
+	job: LocalScreenshotJob
+): Promise<Infer<typeof vScreenshotUrlTransport>> {
+	if (!job || job.kind !== 'screenshot_url') {
+		throw new NonRetryableError(RUN_NO_LONGER_ACTIVE);
+	}
+	return await fetchScreenshot(ctx, urlFromPayload(job.payload));
+}
+
+async function fetchScrape(ctx: ActionCtx, urlValue: string): Promise<ScrapedPage> {
+	const url = requireHttpUrl(urlValue);
+	const document = await requestFirecrawlScrape(ctx, url, {
+		formats: [...SCRAPE_FORMATS],
+		onlyMainContent: true
+	});
 	const page: ScrapedPage = {
-		url: parsed.data.metadata?.sourceURL ?? parsed.data.metadata?.url ?? url.toString(),
-		markdown: parsed.data.markdown ?? '',
-		summary: scrapeSummary(parsed.data.summary),
-		images: parsed.data.images ?? []
+		url: document.metadata?.sourceURL ?? document.metadata?.url ?? url.toString(),
+		markdown: document.markdown ?? '',
+		summary: scrapeSummary(document.summary),
+		images: document.images ?? []
 	};
-	if (parsed.data.audio) page.audio = parsed.data.audio;
-	if (parsed.data.video) page.video = parsed.data.video;
+	if (document.audio) page.audio = document.audio;
+	if (document.video) page.video = document.video;
 	return page;
+}
+
+async function fetchScreenshot(
+	ctx: ActionCtx,
+	urlValue: string
+): Promise<Infer<typeof vScreenshotUrlTransport>> {
+	const url = requireHttpUrl(urlValue);
+	const document = await requestFirecrawlScrape(ctx, url, {
+		formats: [...SCREENSHOT_FORMATS]
+	});
+	const screenshot = document.screenshot?.trim() ?? '';
+	if (!screenshot) {
+		throw new NonRetryableError('Firecrawl screenshot is unavailable.');
+	}
+	try {
+		requireHttpUrl(screenshot);
+	} catch {
+		throw new NonRetryableError('Firecrawl screenshot returned an invalid URL.');
+	}
+	return {
+		url: url.toString(),
+		screenshotUrl: screenshot
+	};
 }
 
 async function localScrapeTransport(
@@ -386,8 +440,29 @@ export const scrapeForTool = action({
 	returns: vScrapeUrlTransport,
 	handler: async (ctx, args): Promise<Infer<typeof vScrapeUrlTransport>> => {
 		try {
-			const job: PoolScrapeJob = await ctx.runQuery(internal.webToolPool.getLocalScrapeJob, args);
+			const job: LocalScrapeJob = await ctx.runQuery(internal.webToolPool.getLocalScrapeJob, args);
 			return await localScrapeTransport(ctx, await scrapeClaimedUrl(ctx, job));
+		} catch (error) {
+			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
+		}
+	}
+});
+
+export const screenshotForTool = action({
+	args: {
+		runId: v.id('runs'),
+		claimId: v.string(),
+		jobId: v.id('executorJobs'),
+		executionSecret: v.string()
+	},
+	returns: vScreenshotUrlTransport,
+	handler: async (ctx, args): Promise<Infer<typeof vScreenshotUrlTransport>> => {
+		try {
+			const job: LocalScreenshotJob = await ctx.runQuery(
+				internal.webToolPool.getLocalScreenshotJob,
+				args
+			);
+			return await screenshotClaimedUrl(ctx, job);
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}

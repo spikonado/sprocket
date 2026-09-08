@@ -26,6 +26,7 @@ pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
     "read_skill",
     "save_artifact",
     "scrape_url",
+    "screenshot_url",
     "web_search",
     "write_stdin",
 ];

@@ -112,6 +112,76 @@ describe('local scrape_url dispatch', () => {
 	});
 });
 
+describe('local screenshot_url dispatch', () => {
+	it('never enqueues screenshot_url in the cloud workpool', async () => {
+		const t = initConvexTest();
+		const { jobId, runId, claimId, executionSecret } = await seedStartedWebJob(t, {
+			executionSecret: 'screenshot-dispatch-secret',
+			kind: 'screenshot_url',
+			payload: { url: 'https://example.com/page' }
+		});
+		const stored = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
+		expect(stored?.cloudWorkId).toBeUndefined();
+		expect(stored?.status).toBe('claimed');
+		expect(stored?.kind).toBe('screenshot_url');
+
+		expect(
+			await t.query(internal.webToolPool.getLocalScreenshotJob, {
+				runId,
+				claimId,
+				jobId,
+				executionSecret
+			})
+		).toEqual({
+			kind: 'screenshot_url',
+			payload: { url: 'https://example.com/page' }
+		});
+		expect(
+			await t.query(internal.webToolPool.getLocalScrapeJob, {
+				runId,
+				claimId,
+				jobId,
+				executionSecret
+			})
+		).toBeNull();
+		expect(
+			await t.query(internal.webToolPool.getWebToolJob, {
+				runId,
+				claimId,
+				jobId
+			})
+		).toBeNull();
+	});
+
+	it('does not return scrape jobs from getLocalScreenshotJob', async () => {
+		const t = initConvexTest();
+		const { jobId, runId, claimId, executionSecret } = await seedStartedWebJob(t, {
+			executionSecret: 'scrape-not-screenshot-secret',
+			kind: 'scrape_url',
+			payload: { url: 'https://example.com/page' }
+		});
+		expect(
+			await t.query(internal.webToolPool.getLocalScreenshotJob, {
+				runId,
+				claimId,
+				jobId,
+				executionSecret
+			})
+		).toBeNull();
+		expect(
+			await t.query(internal.webToolPool.getLocalScrapeJob, {
+				runId,
+				claimId,
+				jobId,
+				executionSecret
+			})
+		).toEqual({
+			kind: 'scrape_url',
+			payload: { url: 'https://example.com/page' }
+		});
+	});
+});
+
 describe('temporary scrape storage', () => {
 	it('deletes unregistered blobs and is a no-op after they are gone', async () => {
 		const t = initConvexTest();

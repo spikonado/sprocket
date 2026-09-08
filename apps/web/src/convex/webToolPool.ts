@@ -126,27 +126,59 @@ export const getWebToolJob = internalQuery({
 	}
 });
 
-export const getLocalScrapeJob = internalQuery({
+const vLocalJobArgs = {
+	...vWebToolContext.fields,
+	executionSecret: v.string()
+};
+
+async function claimedLocalWebJob<K extends 'scrape_url' | 'screenshot_url'>(
+	ctx: QueryCtx,
 	args: {
-		...vWebToolContext.fields,
-		executionSecret: v.string()
+		jobId: Id<'executorJobs'>;
+		runId: Id<'runs'>;
+		claimId: string;
+		executionSecret: string;
 	},
+	kind: K
+): Promise<{ kind: K; payload: Doc<'executorJobs'>['payload'] } | null> {
+	await getExecutionRun(ctx, args.runId, args.executionSecret);
+	const active = await claimedJobForActiveRun(ctx, args);
+	if (
+		!active ||
+		active.job.kind !== kind ||
+		active.job.status !== 'claimed' ||
+		active.job.cloudWorkId !== undefined
+	) {
+		return null;
+	}
+	return { kind, payload: active.job.payload };
+}
+
+export const getLocalScrapeJob = internalQuery({
+	args: vLocalJobArgs,
 	returns: v.union(
 		v.null(),
-		v.object({ kind: v.literal('scrape_url'), payload: vExecutorJobPayload })
+		v.object({
+			kind: v.literal('scrape_url'),
+			payload: vExecutorJobPayload
+		})
 	),
 	handler: async (ctx, args) => {
-		await getExecutionRun(ctx, args.runId, args.executionSecret);
-		const active = await claimedJobForActiveRun(ctx, args);
-		if (
-			!active ||
-			active.job.kind !== 'scrape_url' ||
-			active.job.status !== 'claimed' ||
-			active.job.cloudWorkId !== undefined
-		) {
-			return null;
-		}
-		return { kind: active.job.kind, payload: active.job.payload };
+		return await claimedLocalWebJob(ctx, args, 'scrape_url');
+	}
+});
+
+export const getLocalScreenshotJob = internalQuery({
+	args: vLocalJobArgs,
+	returns: v.union(
+		v.null(),
+		v.object({
+			kind: v.literal('screenshot_url'),
+			payload: vExecutorJobPayload
+		})
+	),
+	handler: async (ctx, args) => {
+		return await claimedLocalWebJob(ctx, args, 'screenshot_url');
 	}
 });
 
