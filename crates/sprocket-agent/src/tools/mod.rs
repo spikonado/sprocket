@@ -87,7 +87,10 @@ pub(crate) async fn hydrate_tool_history(
     let mut results = std::collections::HashMap::new();
     for tool in parts.iter().filter_map(|part| part.tool.as_ref()) {
         if (parse_file::is_parse_file_tool(&tool.name)
-            || matches!(tool.name.as_str(), "scrape_url" | "screenshot_url"))
+            || matches!(
+                tool.name.as_str(),
+                "scrape_url" | "screenshot_url" | "browser_screenshot"
+            ))
             && tool.status != "started"
         {
             results.entry(tool.call_id.as_str()).or_insert(tool);

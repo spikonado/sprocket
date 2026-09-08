@@ -1,16 +1,18 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 
+use anyhow::Context;
+use base64::Engine;
 use convex::Value;
-use rig::message::{DocumentSourceKind, Image, ImageMediaType, ToolResultContent};
-use rig::tool::ToolExecutionError;
+use rig::message::{ImageMediaType, MimeType};
+use rig::tool::{ToolExecutionError, ToolOutput};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::context::{AgentToolContext, tool_error, tool_failure};
-use super::job::{
-    execute_tool_job, execute_tool_job_with_persisted_result, run_convex_tool_action,
-};
+use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure};
+use super::job::{execute_tool_job, run_convex_tool_action};
+use super::parse_file::{decode_image_info, persist_image_bytes, replay_image_tool_output};
 
 #[derive(Clone)]
 pub(crate) struct BrowserInteractTool(pub(super) AgentToolContext);
@@ -39,11 +41,14 @@ pub(crate) struct BrowserScreenshotArgs {
     disable_saving: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+const MAX_SCREENSHOT_BYTES: usize = 600_000;
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BrowserScreenshotResult {
     media_type: String,
     data_base64: String,
+    #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u64")]
     byte_length: u64,
     truncated: bool,
 }
@@ -123,11 +128,11 @@ impl rig::tool::Tool for BrowserScreenshotTool {
     const NAME: &'static str = "browser_screenshot";
     type Error = ToolExecutionError;
     type Args = BrowserScreenshotArgs;
-    type Output = rig::tool::ToolOutput;
+    type Output = ToolOutput;
 
     fn description(&self) -> String {
         format!(
-            "Take a screenshot of the current browser page and attach it as an image, so you can see the page like the user does. Prefer `snapshot -i` via browser_interact when you only need structure or text. {DISABLE_SAVING_DOC}"
+            "Take a screenshot of the current browser page, save it locally, and attach it as an image. Prefer `snapshot -i` via browser_interact when you only need structure or text. {DISABLE_SAVING_DOC}"
         )
     }
 
@@ -140,26 +145,40 @@ impl rig::tool::Tool for BrowserScreenshotTool {
         _context: &mut rig::tool::ToolContext,
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
+        if !self.0.supports_images {
+            return Err(tool_failure("The selected model cannot view images."));
+        }
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
-        execute_tool_job_with_persisted_result(
+        let result = execute_tool_job(
             &self.0.runtime,
             &self.0.run_id,
             &self.0.claim_id,
             Self::NAME,
             &self.0.tool_call_tracker,
             payload,
-            |cancellation| {
-                run_convex_tool_action(
+            |cancellation| async move {
+                let result = run_convex_tool_action(
                     &self.0.runtime,
-                    cancellation,
+                    cancellation.clone(),
                     "browserAgent:screenshot",
                     browser_action_args(&self.0.run_id, &self.0.claim_id, args.disable_saving),
                 )
+                .await?;
+                tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled() => Err(cancelled_error()),
+                    result = save_screenshot(result, &self.0.parse_file_cache_dir) => result.map_err(tool_error),
+                }
             },
-            screenshot_persisted_result,
         )
-        .await
-        .and_then(screenshot_tool_output)
+        .await?;
+        if result.get("truncated").and_then(serde_json::Value::as_bool) == Some(true) {
+            return Ok(ToolOutput::text(format!(
+                "Screenshot captured ({} bytes); too large to attach or save",
+                result["byteLength"]
+            )));
+        }
+        replay_image_tool_output(&result).await.map_err(tool_error)
     }
 }
 
@@ -177,113 +196,48 @@ fn browser_action_args(
     action_args
 }
 
-fn screenshot_persisted_result(output: &serde_json::Value) -> serde_json::Value {
-    let mut persisted = output.clone();
-    if let Some(object) = persisted.as_object_mut() {
-        object.insert(
-            "dataBase64".to_string(),
-            serde_json::Value::String(String::new()),
-        );
-        object.remove("url");
-    }
-    persisted
-}
-
-fn parse_screenshot_result(
-    value: &serde_json::Value,
-) -> Result<BrowserScreenshotResult, ToolExecutionError> {
-    let object = value
-        .as_object()
-        .ok_or_else(|| tool_failure("browser_screenshot returned a non-object result"))?;
-    let media_type = required_screenshot_str(object, "mediaType")?.to_string();
-    image_media_type(&media_type)?;
-    let data_base64 = required_screenshot_str(object, "dataBase64")?.to_string();
-    let byte_length = required_screenshot_u64(object, "byteLength")?;
-    let truncated = required_screenshot_bool(object, "truncated")?;
-    if !truncated && data_base64.is_empty() {
-        return Err(tool_failure("browser_screenshot returned no image data"));
-    }
-    Ok(BrowserScreenshotResult {
-        media_type,
-        data_base64,
-        byte_length,
-        truncated,
-    })
-}
-
-fn required_screenshot_str<'a>(
-    object: &'a serde_json::Map<String, serde_json::Value>,
-    field: &str,
-) -> Result<&'a str, ToolExecutionError> {
-    object
-        .get(field)
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| tool_failure(format!("screenshot result missing {field}")))
-}
-
-fn required_screenshot_bool(
-    object: &serde_json::Map<String, serde_json::Value>,
-    field: &str,
-) -> Result<bool, ToolExecutionError> {
-    object
-        .get(field)
-        .and_then(serde_json::Value::as_bool)
-        .ok_or_else(|| tool_failure(format!("screenshot result missing {field}")))
-}
-
-fn required_screenshot_u64(
-    object: &serde_json::Map<String, serde_json::Value>,
-    field: &str,
-) -> Result<u64, ToolExecutionError> {
-    let value = object
-        .get(field)
-        .ok_or_else(|| tool_failure(format!("screenshot result missing {field}")))?;
-    if let Some(n) = value.as_u64() {
-        return Ok(n);
-    }
-    if let Some(n) = value.as_f64() {
-        if n.is_finite() && n >= 0.0 && n.fract() == 0.0 {
-            return Ok(n as u64);
-        }
-    }
-    Err(tool_failure(format!(
-        "screenshot result has invalid {field}"
-    )))
-}
-
-/// Convert the Convex screenshot result into model content: a compact text
-/// block plus the image itself. Durable results omit pixels and page URLs.
-fn screenshot_tool_output(
+async fn save_screenshot(
     value: serde_json::Value,
-) -> Result<rig::tool::ToolOutput, ToolExecutionError> {
-    let shot = parse_screenshot_result(&value)?;
-    let mut summary = format!("Screenshot captured ({} bytes)", shot.byte_length);
+    cache_dir: &Path,
+) -> anyhow::Result<serde_json::Value> {
+    let shot: BrowserScreenshotResult =
+        serde_json::from_value(value).context("invalid browser screenshot response")?;
+    anyhow::ensure!(
+        shot.media_type == "image/png",
+        "browser screenshot must be a PNG"
+    );
     if shot.truncated {
-        summary.push_str("; too large to attach");
-    }
-
-    let mut content = vec![ToolResultContent::Text(rig::message::Text::new(summary))];
-    if !shot.truncated {
-        content.push(ToolResultContent::Image(Image {
-            data: DocumentSourceKind::Base64(shot.data_base64),
-            media_type: Some(image_media_type(&shot.media_type)?),
-            detail: None,
-            additional_params: None,
+        anyhow::ensure!(
+            shot.byte_length > MAX_SCREENSHOT_BYTES as u64 && shot.data_base64.is_empty(),
+            "invalid truncated browser screenshot"
+        );
+        return Ok(json!({
+            "mediaType": shot.media_type, "dataBase64": "",
+            "byteLength": shot.byte_length, "truncated": true,
         }));
     }
-    rig::tool::ToolOutput::content(content).map_err(|e| tool_failure(e.to_string()))
-}
-
-fn image_media_type(media_type: &str) -> Result<ImageMediaType, ToolExecutionError> {
-    match media_type {
-        "image/jpeg" => Ok(ImageMediaType::JPEG),
-        "image/png" => Ok(ImageMediaType::PNG),
-        "image/gif" => Ok(ImageMediaType::GIF),
-        "image/webp" => Ok(ImageMediaType::WEBP),
-        other => Err(tool_failure(format!(
-            "unsupported screenshot media type: {other}"
-        ))),
-    }
+    anyhow::ensure!(
+        shot.byte_length <= MAX_SCREENSHOT_BYTES as u64
+            && shot.data_base64.len() <= MAX_SCREENSHOT_BYTES.div_ceil(3) * 4,
+        "browser screenshot exceeds the 600,000 byte limit"
+    );
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&shot.data_base64)
+        .context("invalid browser screenshot base64")?;
+    anyhow::ensure!(
+        bytes.len() as u64 == shot.byte_length,
+        "browser screenshot size mismatch"
+    );
+    let (media_type, width, height) = decode_image_info(&bytes)?;
+    anyhow::ensure!(
+        media_type == ImageMediaType::PNG,
+        "browser screenshot must be a PNG"
+    );
+    let path = persist_image_bytes(cache_dir, &bytes, &media_type).await?;
+    Ok(json!({
+        "outputType": "image", "path": path,
+        "mediaType": media_type.to_mime_type(), "byteSize": bytes.len(), "width": width, "height": height,
+    }))
 }
 
 #[cfg(test)]
@@ -314,77 +268,148 @@ mod tests {
         assert!(!screenshot_subcommand("find text \"screenshot\" click"));
     }
 
-    #[test]
-    fn screenshot_persistence_strips_image_payload_and_page_url() {
-        let output = serde_json::json!({
-            "dataBase64": "aGVsbG8=",
-            "mediaType": "image/png",
-            "byteLength": 5,
-            "truncated": false,
-            "url": "https://shop.example/reset?token=secret#credential"
-        });
-
-        let persisted = screenshot_persisted_result(&output);
-
-        assert_eq!(output["dataBase64"], "aGVsbG8=");
-        assert_eq!(persisted["dataBase64"], "");
-        assert_eq!(persisted["mediaType"], output["mediaType"]);
-        assert_eq!(persisted["byteLength"], output["byteLength"]);
-        assert_eq!(persisted["truncated"], output["truncated"]);
-        assert!(persisted.get("url").is_none());
+    fn png() -> Vec<u8> {
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(1, 1)
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .unwrap();
+        bytes.into_inner()
     }
 
-    #[test]
-    fn screenshot_output_requires_image_bytes_unless_truncated() {
-        let attached = screenshot_tool_output(serde_json::json!({
-            "dataBase64": "aGVsbG8=",
+    fn screenshot_response() -> serde_json::Value {
+        json!({
+            "dataBase64": base64::engine::general_purpose::STANDARD.encode(png()),
             "mediaType": "image/png",
-            "byteLength": 5.0,
+            "byteLength": png().len() as f64,
             "truncated": false,
             "url": "https://shop.example/reset?token=secret#credential"
+        })
+    }
+
+    #[tokio::test]
+    async fn screenshot_saves_validated_pixels_and_replays_them_without_page_urls() {
+        use crate::types::{AgentHistoryContent, AgentHistoryToolResultItem};
+
+        let cache = tempfile::tempdir().unwrap();
+        let metadata = save_screenshot(screenshot_response(), cache.path())
+            .await
+            .unwrap();
+        let path = Path::new(metadata["path"].as_str().unwrap());
+        assert_eq!(path.parent().unwrap(), cache.path().canonicalize().unwrap());
+        assert_eq!(tokio::fs::read(path).await.unwrap(), png());
+        assert_eq!(metadata["width"], 1);
+        assert_eq!(metadata["height"], 1);
+        assert_eq!(metadata["byteSize"], png().len());
+        assert!(metadata.get("url").is_none());
+        assert!(metadata.get("dataBase64").is_none());
+
+        let output = replay_image_tool_output(&metadata).await.unwrap();
+        let expected = ToolResultContent::image_base64(
+            base64::engine::general_purpose::STANDARD.encode(png()),
+            Some(ImageMediaType::PNG),
+            None,
+        );
+        assert_eq!(
+            serde_json::to_value(output.into_content()).unwrap(),
+            json!([expected])
+        );
+
+        let part = serde_json::from_value(json!({
+            "number": 1, "sourceKey": "tool:1", "kind": "tool", "runId": "run",
+            "tool": {"callId": "call", "name": "browser_screenshot", "status": "completed", "output": metadata}
         }))
-        .expect("valid screenshot");
-        assert!(matches!(
-            attached.as_content(),
-            [ToolResultContent::Text(_), ToolResultContent::Image(_)]
-        ));
-        let ToolResultContent::Text(summary) = &attached.as_content()[0] else {
-            panic!("expected screenshot summary");
+        .unwrap();
+        let mut history: Vec<crate::types::AgentHistoryMessage> = serde_json::from_value(json!([{
+            "role": "user", "contents": [{
+                "type": "toolResult", "id": "call", "callId": "call",
+                "items": [{"type": "text", "text": metadata.to_string()}]
+            }]
+        }]))
+        .unwrap();
+        super::super::hydrate_tool_history(&mut history, std::slice::from_ref(&part), true).await;
+        let AgentHistoryContent::ToolResult { items, .. } = &history[0].contents[0] else {
+            panic!("missing tool result")
         };
-        assert!(!summary.text.contains("secret"));
+        let [AgentHistoryToolResultItem::Image { image_json }] = items.as_slice() else {
+            panic!("missing replayed screenshot")
+        };
+        let ToolResultContent::Image(expected) = expected else {
+            unreachable!()
+        };
+        assert_eq!(image_json, &serde_json::to_string(&expected).unwrap());
+        assert!(!serde_json::to_string(&history).unwrap().contains("secret"));
 
-        let truncated = screenshot_tool_output(serde_json::json!({
-            "dataBase64": "",
-            "mediaType": "image/png",
-            "byteLength": 2_000_000,
-            "truncated": true
-        }))
-        .expect("truncated screenshot");
-        assert!(matches!(
-            truncated.as_content(),
-            [ToolResultContent::Text(_)]
-        ));
-
-        let missing = screenshot_tool_output(serde_json::json!({
-            "dataBase64": "",
-            "mediaType": "image/png",
-            "byteLength": 0,
-            "truncated": false
-        }))
-        .expect_err("empty non-truncated screenshot");
-        assert!(missing.to_string().contains("no image data"));
-
-        let bad_type = screenshot_tool_output(serde_json::json!({
-            "dataBase64": "aGVsbG8=",
-            "mediaType": "image/tiff",
-            "byteLength": 5,
-            "truncated": false
-        }))
-        .expect_err("unsupported media type");
+        super::super::hydrate_tool_history(&mut history, std::slice::from_ref(&part), false).await;
         assert!(
-            bad_type
-                .to_string()
-                .contains("unsupported screenshot media type")
+            serde_json::to_string(&history)
+                .unwrap()
+                .contains("Image omitted")
+        );
+        tokio::fs::remove_file(path).await.unwrap();
+        super::super::hydrate_tool_history(&mut history, &[part], true).await;
+        assert!(
+            serde_json::to_string(&history)
+                .unwrap()
+                .contains("not available in the local cache")
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_screenshots_are_not_saved() {
+        let cache = tempfile::tempdir().unwrap();
+        for (field, value) in [
+            ("mediaType", json!("image/tiff")),
+            ("dataBase64", json!("not base64!")),
+            ("dataBase64", json!("")),
+            ("byteLength", json!(0)),
+            ("byteLength", json!(1.5)),
+            ("byteLength", json!(-1)),
+            ("byteLength", json!(MAX_SCREENSHOT_BYTES + 1)),
+            ("truncated", json!(true)),
+        ] {
+            let mut response = screenshot_response();
+            response[field] = value;
+            assert!(
+                save_screenshot(response, cache.path()).await.is_err(),
+                "{field}"
+            );
+        }
+        let bytes = b"not a PNG";
+        let mut response = screenshot_response();
+        response["dataBase64"] = json!(base64::engine::general_purpose::STANDARD.encode(bytes));
+        response["byteLength"] = json!(bytes.len());
+        assert!(save_screenshot(response, cache.path()).await.is_err());
+        assert!(
+            tokio::fs::read_dir(cache.path())
+                .await
+                .unwrap()
+                .next_entry()
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn truncated_screenshots_keep_only_size_metadata() {
+        let cache = tempfile::tempdir().unwrap();
+        let mut response = screenshot_response();
+        response["dataBase64"] = json!("");
+        response["byteLength"] = json!(MAX_SCREENSHOT_BYTES + 1);
+        response["truncated"] = json!(true);
+        let metadata = save_screenshot(response, cache.path()).await.unwrap();
+        assert_eq!(
+            metadata,
+            json!({"dataBase64": "", "mediaType": "image/png", "byteLength": MAX_SCREENSHOT_BYTES + 1, "truncated": true})
+        );
+        assert!(
+            tokio::fs::read_dir(cache.path())
+                .await
+                .unwrap()
+                .next_entry()
+                .await
+                .unwrap()
+                .is_none()
         );
     }
 

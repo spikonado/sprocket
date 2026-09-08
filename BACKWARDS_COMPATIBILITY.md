@@ -33,6 +33,8 @@ Browserbase client support is explicitly retired. Its actions, provider dependen
 
 Production still contains historical Browserbase executor jobs. Their stored kind, payload and result validators remain so deployment and conversation history do not break. Remove these validators only after a migration rewrites or removes every historical Browserbase job. This does not preserve Browserbase endpoints or allow old clients to start browser jobs.
 
+Browser screenshot results now add local image-cache metadata without changing the `browserAgent.screenshot` transport. The result validator still accepts the older size-only screenshot records, which cannot replay pixels. Keep that result shape while the transport and oversized captures use it, and until stored records and clients no longer depend on it.
+
 ## Transcript projection API
 
 Attachment compatibility covers older stored schemas only. Older-client shims

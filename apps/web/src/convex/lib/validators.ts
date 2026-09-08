@@ -377,6 +377,10 @@ export const vBrowserScreenshotResult = v.object({
 	url: v.optional(v.string())
 });
 
+const vCachedBrowserScreenshotResult = vWebImageResult.omit('url').extend({
+	mediaType: v.literal('image/png')
+});
+
 const vHistoricalBrowserObservedAction = v.object({
 	selector: v.string(),
 	description: v.string(),
@@ -480,6 +484,7 @@ export const vExecutorJobResult = v.union(
 	vListArtifactsResult,
 	vBrowserTaskResult,
 	vBrowserScreenshotResult,
+	vCachedBrowserScreenshotResult,
 	vHistoricalBrowserObserveResult,
 	vMandateSetupResult,
 	vMandateStatusResult,
@@ -532,17 +537,17 @@ export const vCurrentExecutorJobKind = v.union(
 	v.literal('save_artifact')
 );
 
-export const vStoredExecutorJobKind = v.union(
-	vExecutorJobKind,
-	v.literal('create_artifact'),
-	v.literal('update_artifact')
-);
-
 export const vExecutorJobKind = v.union(
 	vCurrentExecutorJobKind,
 	v.literal('browser_observe'),
 	v.literal('browser_act'),
 	v.literal('browser_extract')
+);
+
+export const vStoredExecutorJobKind = v.union(
+	vExecutorJobKind,
+	v.literal('create_artifact'),
+	v.literal('update_artifact')
 );
 
 export const vAgentQuestionStatus = v.union(
