@@ -246,7 +246,7 @@ export const vScrapeUrlResult = v.object({
 	markdown: v.string(),
 	truncated: v.optional(v.boolean()),
 	summary: v.optional(v.string()),
-	images: v.optional(v.array(v.string())),
+	images: v.optional(v.array(v.string()))
 });
 
 /** Local scrapeForTool transport. Oversized pages return a temporary JSON download URL. */

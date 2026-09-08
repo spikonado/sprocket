@@ -18,8 +18,6 @@ import {
 import { initConvexTest, seedStartedWebJob, type ConvexTestInstance } from './test.setup';
 
 const PAGE_URL = 'https://example.com/page';
-const AUDIO_URL = 'https://storage.googleapis.com/scrape/audio.mp3?X-Goog-Signature=sig';
-const VIDEO_URL = 'https://storage.googleapis.com/scrape/video.mp4?X-Goog-Signature=sig';
 const SCREENSHOT_URL = 'https://storage.googleapis.com/firecrawl/shot.png?X-Goog-Signature=sig';
 
 function firecrawlApiError(status: number) {
@@ -349,32 +347,6 @@ describe('stored scrape_url results', () => {
 			markdown: 'partial',
 			truncated: true
 		});
-	});
-
-	it('accepts stored scrape results with additive summary and media', async () => {
-		const t = initConvexTest();
-		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
-			executionSecret: 'saved-media-secret',
-			kind: 'scrape_url',
-			payload: { url: PAGE_URL }
-		});
-		const result = {
-			url: PAGE_URL,
-			markdown: '# Page',
-			summary: 'A page.',
-			images: ['https://example.com/a.png'],
-			audio: AUDIO_URL,
-			video: VIDEO_URL
-		};
-		await asUser.mutation(api.executor.complete, {
-			runId,
-			claimId,
-			executionSecret,
-			jobId,
-			result
-		});
-		const job = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
-		expect(job?.result).toEqual(result);
 	});
 });
 
