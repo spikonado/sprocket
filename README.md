@@ -46,31 +46,6 @@ To always open a tab in your browser when using Sprocket, use the `--web` flag:
 sprocket --web
 ```
 
-### Updating
-
-When an update is available, an action appears above Settings. In the desktop
-app, click it to download the update, then choose **Restart to update** when
-active work has finished. Native macOS updates require a signed desktop build.
-
-For a supported global package-manager installation, use the same action in the
-browser app or run either command:
-
-```sh
-sprocket update
-sprocket upgrade
-```
-
-Both commands use the package manager that owns the installation and keep its
-release channel. Stable and canary installs only move forward. A `dev` install
-follows the current `dev` tag when the commit hash changes. Add `--check` to
-check without installing. After a browser-app update, stop the running server
-and launch Sprocket again to use the new version. Package updates do not restart
-or interrupt active agents automatically.
-
-For temporary runs, request the current release explicitly, for example
-`npx @spikonado/sprocket@latest`. Local project dependencies should be updated
-through that project's package manager, not converted into a global install.
-
 ### Workspaces
 
 Pass a directory to open or reconnect that workspace in a new thread:
