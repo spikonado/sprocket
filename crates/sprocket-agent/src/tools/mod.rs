@@ -5,6 +5,7 @@ mod context;
 mod hosted_parse;
 mod job;
 mod mandates;
+mod markdown_url;
 mod parse_file;
 mod patch;
 mod questions;

@@ -53,7 +53,22 @@ Convex component does not expose parsing.
 
 `scrape_url` downloads supported raster images and returns their pixels
 to image-capable models. Short text scrapes are not saved locally.
-Page scraping uses the official `@firecrawl/firecrawl-convex` component with
+For extensionless paths, the agent first requests the URL path with `.md`
+appended, preserving query parameters and dropping the fragment. It removes
+trailing slashes before checking the last path segment. Paths with any file
+extension, including `.html`, skip the probe. Existing `.md` URLs are read
+directly without appending again. Extension detection decodes percent escapes;
+dots in parent directories, query parameters, and fragments do not count.
+A successful UTF-8 markdown or plain-text response bypasses Firecrawl. Failed
+requests, non-200 responses, HTML, binary content, and empty responses fall back
+to Firecrawl using the original URL supplied by the model. The probe has a
+10-second timeout, five-redirect limit, and 64 MiB download limit. Image requests
+retain their existing handling before this probe.
+Direct markdown returns an explicit "summary not generated" value and an empty
+image list; it does not extract media. Long direct results use the same JSON
+temporary-file behavior as Firecrawl results, without a Convex transfer blob.
+
+Fallback page scraping uses the official `@firecrawl/firecrawl-convex` component with
 `markdown`, `summary`, `images`, `audio`, and `video` formats. The backend needs
 `FIRECRAWL_API_KEY`; `CONTEXT_DEV_API_KEY` is no longer used. Audio and video are
 returned as provider URLs, not downloaded media files.
@@ -84,7 +99,7 @@ HEAD responses. Downloaded image bytes are validated by signature; a mislabeled
 image fails rather than issuing another GET through the scraper.
 Image URLs that cannot be identified from HEAD or their filename follow the
 normal scraping path. There is no explicit image mode.
-Like shell commands and the former `parse_file` URL handling, the image probe
+Like shell commands and the former `parse_file` URL handling, the image and markdown probes
 can reach local devices and private networks. It is not a network isolation
 boundary. It does not attach browser cookies or provider credentials.
 
