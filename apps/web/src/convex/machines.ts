@@ -1,8 +1,13 @@
 import { mutation, query, type MutationCtx } from '@convex/_generated/server';
 import type { Doc } from '@convex/_generated/dataModel';
-import { v } from 'convex/values';
+import { v, type Infer } from 'convex/values';
 import { constantTimeEqual, executionSecretHash, getUserId } from '@convex/lib/auth';
-import { getOwnedMachine, isMachineActive, MAX_ACTIVE_MACHINE_RUNS } from '@convex/lib/machineRuns';
+import {
+	getOwnedMachine,
+	isMachineActive,
+	MACHINE_ONLINE_THRESHOLD_MS,
+	MAX_ACTIVE_MACHINE_RUNS
+} from '@convex/lib/machineRuns';
 import { finalizeRunRecord } from '@convex/lib/runFinalize';
 
 const MACHINE_ENDED = 'The machine stopped before this run finished.';
@@ -78,64 +83,91 @@ async function requireMachine(
 	return machine;
 }
 
+const vRegistration = v.object({
+	machineId: v.string(),
+	credentialHash: v.string(),
+	friendlyName: v.string(),
+	platform: v.string(),
+	platformVersion: v.optional(v.string()),
+	architecture: v.string(),
+	hostname: v.optional(v.string()),
+	appVersion: v.string()
+});
+
+const vRegistrationResult = v.union(
+	v.object({ status: v.literal('registered'), machineId: v.string(), userId: v.string() }),
+	v.object({ status: v.literal('busy'), retryAfterMs: v.number() })
+);
+
+async function registerMachine(
+	ctx: MutationCtx,
+	args: Infer<typeof vRegistration>
+): Promise<Infer<typeof vRegistrationResult>> {
+	const userId = await getUserId(ctx);
+	const now = Date.now();
+	for (const value of [
+		args.machineId,
+		args.friendlyName,
+		args.platform,
+		args.architecture,
+		args.appVersion
+	]) {
+		if (!value.trim()) throw new Error('Machine registration fields cannot be empty.');
+	}
+	if (!/^[0-9a-f]{64}$/.test(args.credentialHash)) {
+		throw new Error('Machine credential digest is invalid.');
+	}
+	const existing = await getOwnedMachine(ctx, userId, args.machineId);
+	const metadata = {
+		friendlyName: args.friendlyName,
+		platform: args.platform,
+		platformVersion: args.platformVersion,
+		architecture: args.architecture,
+		hostname: args.hostname,
+		appVersion: args.appVersion,
+		credentialHash: args.credentialHash,
+		lastSeenAt: now,
+		updatedAt: now
+	};
+	if (existing) {
+		const sameProcess = constantTimeEqual(existing.credentialHash, args.credentialHash);
+		if (!sameProcess && existing.lastSeenAt !== undefined && isMachineActive(existing, now)) {
+			return {
+				status: 'busy',
+				retryAfterMs: existing.lastSeenAt + MACHINE_ONLINE_THRESHOLD_MS + 1 - now
+			};
+		}
+		if (!sameProcess) {
+			await failMachineRuns(ctx, existing);
+		}
+		await ctx.db.patch('machines', existing._id, metadata);
+	} else {
+		await ctx.db.insert('machines', {
+			userId,
+			machineId: args.machineId,
+			runIds: [],
+			createdAt: now,
+			...metadata
+		});
+	}
+	return { status: 'registered', machineId: args.machineId, userId };
+}
+
+export const tryRegister = mutation({
+	args: vRegistration.fields,
+	returns: vRegistrationResult,
+	handler: registerMachine
+});
+
 export const register = mutation({
-	args: {
-		machineId: v.string(),
-		credentialHash: v.string(),
-		friendlyName: v.string(),
-		platform: v.string(),
-		platformVersion: v.optional(v.string()),
-		architecture: v.string(),
-		hostname: v.optional(v.string()),
-		appVersion: v.string()
-	},
+	args: vRegistration.fields,
 	returns: v.object({ machineId: v.string(), userId: v.string() }),
 	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-		const now = Date.now();
-		for (const value of [
-			args.machineId,
-			args.friendlyName,
-			args.platform,
-			args.architecture,
-			args.appVersion
-		]) {
-			if (!value.trim()) throw new Error('Machine registration fields cannot be empty.');
+		const result = await registerMachine(ctx, args);
+		if (result.status === 'busy') {
+			throw new Error('Machine is already active on another process.');
 		}
-		if (!/^[0-9a-f]{64}$/.test(args.credentialHash)) {
-			throw new Error('Machine credential digest is invalid.');
-		}
-		const existing = await getOwnedMachine(ctx, userId, args.machineId);
-		const metadata = {
-			friendlyName: args.friendlyName,
-			platform: args.platform,
-			platformVersion: args.platformVersion,
-			architecture: args.architecture,
-			hostname: args.hostname,
-			appVersion: args.appVersion,
-			credentialHash: args.credentialHash,
-			lastSeenAt: now,
-			updatedAt: now
-		};
-		if (existing) {
-			const sameProcess = constantTimeEqual(existing.credentialHash, args.credentialHash);
-			if (!sameProcess && isMachineActive(existing, now)) {
-				throw new Error('Machine is already active on another process.');
-			}
-			if (!sameProcess) {
-				await failMachineRuns(ctx, existing);
-			}
-			await ctx.db.patch('machines', existing._id, metadata);
-		} else {
-			await ctx.db.insert('machines', {
-				userId,
-				machineId: args.machineId,
-				runIds: [],
-				createdAt: now,
-				...metadata
-			});
-		}
-		return { machineId: args.machineId, userId };
+		return { machineId: result.machineId, userId: result.userId };
 	}
 });
 

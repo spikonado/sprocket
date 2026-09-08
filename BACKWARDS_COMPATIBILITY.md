@@ -302,6 +302,19 @@ Use `--prod` for the production deployment.
 
 ## Client APIs
 
+### Machine registration retries
+
+New local servers call `machines:tryRegister`, which returns a typed busy result
+and a retry delay while another process's heartbeat lease is valid. They retry
+within a bounded wait instead of leaving startup stuck after a crash. Deploy the
+Convex endpoint before releasing the updated local server.
+
+`machines:register` retains its original arguments, success result, and conflict
+error for released clients. Both endpoints use the same registration transaction
+and existing machine rows. No stored-data migration or table deletion is needed.
+Remove the legacy endpoint only after all supported local servers use
+`machines:tryRegister`.
+
 ### Local sessions created before account binding
 
 Persisted local sessions created before native WorkOS account binding have no

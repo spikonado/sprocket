@@ -285,12 +285,16 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         }
     });
     let router = build_router(state, static_dir);
+    let shutdown_machines = Arc::clone(&machines);
 
     let result = axum::serve(
         listener,
         router.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal())
+    .with_graceful_shutdown(async move {
+        shutdown_signal().await;
+        shutdown_machines.stop_registration();
+    })
     .await;
     cleanup.abort();
     let _ = cleanup.await;
