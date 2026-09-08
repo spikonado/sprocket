@@ -62,7 +62,7 @@ fn record_saved_scrape(
     fields.insert(
         "markdown".into(),
         Value::String(format!(
-            "The scrape was saved to {}.",
+            "The scrape was too large to directly output. Instead, it has been saved to {} for you to view.",
             temp.path().display()
         )),
     );
@@ -174,7 +174,10 @@ mod tests {
         assert_eq!(result["summary"], full["summary"]);
         assert_eq!(
             result["markdown"],
-            format!("The scrape was saved to {}.", path.display())
+            format!(
+                "The scrape was too large to directly output. Instead, it has been saved to {} for you to view.",
+                path.display()
+            )
         );
         drop(file);
         assert!(!path.exists());
@@ -212,9 +215,11 @@ mod tests {
         let path = result["markdown"]
             .as_str()
             .unwrap()
-            .strip_prefix("The scrape was saved to ")
+            .strip_prefix(
+                "The scrape was too large to directly output. Instead, it has been saved to ",
+            )
             .unwrap()
-            .strip_suffix('.')
+            .strip_suffix(" for you to view.")
             .unwrap();
         assert_eq!(tokio::fs::read_to_string(path).await.unwrap(), text);
         assert_eq!(result["summary"], "Full summary");
