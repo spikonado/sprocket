@@ -13,7 +13,7 @@ pub(super) async fn localize_scrape(
     saved_file: &mut Option<tempfile::NamedTempFile>,
 ) -> anyhow::Result<Value> {
     let fields = result.as_object_mut().context("invalid scrape response")?;
-    if let Some(download) = fields.remove("markdownUrl") {
+    if let Some(download) = fields.remove("scrapeUrl") {
         let url = reqwest::Url::parse(download.as_str().context("invalid scrape download URL")?)?;
         anyhow::ensure!(
             matches!(url.scheme(), "http" | "https"),
@@ -21,7 +21,7 @@ pub(super) async fn localize_scrape(
         );
         let temp = tempfile::Builder::new()
             .prefix("sprocket-scrape-")
-            .suffix(".md")
+            .suffix(".json")
             .tempfile()?;
         let temp = download_scrape(url, temp, cancellation).await?;
         fields.insert(
@@ -104,9 +104,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn short_scrapes_stay_inline_without_a_truncation_flag() {
+    async fn short_scrapes_preserve_summary_and_media_without_a_truncation_flag() {
         let result = localize_scrape(
-            json!({"url": "https://example.com", "markdown": "# Hello", "truncated": false}),
+            json!({"url": "https://example.com", "markdown": "# Hello", "summary": "A greeting", "images": ["https://example.com/image.png"], "audio": "https://example.com/audio.mp3", "truncated": false}),
             &WorkspaceCancellation::new(),
             &mut None,
         )
@@ -114,17 +114,18 @@ mod tests {
         .unwrap();
         assert_eq!(
             result,
-            json!({"url": "https://example.com", "markdown": "# Hello"})
+            json!({"url": "https://example.com", "markdown": "# Hello", "summary": "A greeting", "images": ["https://example.com/image.png"], "audio": "https://example.com/audio.mp3"})
         );
     }
 
     #[tokio::test]
-    async fn full_unicode_scrape_is_saved_and_only_the_notice_is_returned() {
-        let text = "é\n".repeat(40_001);
+    async fn full_scrape_is_saved_while_summary_stays_in_the_output() {
+        let scrape = json!({"markdown": "é\n".repeat(40_001), "summary": "Full summary", "images": ["https://example.com/image.png"], "audio": "https://example.com/audio.mp3", "video": "https://example.com/video.mp4"});
+        let text = scrape.to_string();
         let url = serve(&text, text.len()).await;
         let mut saved_file = None;
         let result = localize_scrape(
-            json!({"url": "https://example.com", "markdownUrl": url.as_str()}),
+            json!({"url": "https://example.com", "scrapeUrl": url.as_str(), "summary": "Full summary"}),
             &WorkspaceCancellation::new(),
             &mut saved_file,
         )
@@ -138,11 +139,13 @@ mod tests {
             .strip_suffix('.')
             .unwrap();
         assert_eq!(tokio::fs::read_to_string(path).await.unwrap(), text);
+        assert_eq!(result["summary"], "Full summary");
+        assert_eq!(std::path::Path::new(path).extension().unwrap(), "json");
         assert_eq!(
             std::path::Path::new(path).parent(),
             Some(std::env::temp_dir().as_path())
         );
-        assert!(result.get("markdownUrl").is_none());
+        assert!(result.get("scrapeUrl").is_none());
         assert!(result.get("truncated").is_none());
         tokio::fs::remove_file(path).await.unwrap();
     }

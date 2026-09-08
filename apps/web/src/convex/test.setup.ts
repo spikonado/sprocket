@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import contextDevTest from '@context-dot-dev/convex/test';
+import firecrawlTest from '@firecrawl/firecrawl-convex/test';
 import rateLimiterTest from '@convex-dev/rate-limiter/test';
 import exaTest from '@exalabs/convex-exa/test';
 import migrationsTest from '@convex-dev/migrations/test';
@@ -39,7 +39,7 @@ export function initConvexTest(): ConvexTestInstance {
 	// TestConvex variance; the convex-test backend object is the same instance.
 	const backend = t as never;
 	rateLimiterTest.register(backend);
-	contextDevTest.register(backend);
+	firecrawlTest.register(backend);
 	exaTest.register(backend);
 	migrationsTest.register(backend);
 	aggregateTest.register(backend);

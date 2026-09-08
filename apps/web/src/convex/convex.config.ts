@@ -1,6 +1,6 @@
 import { defineApp } from 'convex/server';
 import { v } from 'convex/values';
-import contextDev from '@context-dot-dev/convex/convex.config';
+import firecrawl from '@firecrawl/firecrawl-convex/convex.config';
 import rateLimiter from '@convex-dev/rate-limiter/convex.config';
 import dodopayments from '@dodopayments/convex/convex.config';
 import exa from '@exalabs/convex-exa/convex.config';
@@ -12,9 +12,8 @@ import workpool from '@convex-dev/workpool/convex.config';
 
 const app = defineApp({
 	env: {
-		CONTEXT_DEV_API_KEY: v.string(),
 		EXA_API_KEY: v.string(),
-		FIRECRAWL_API_KEY: v.optional(v.string()),
+		FIRECRAWL_API_KEY: v.string(),
 		WORKOS_CLIENT_ID: v.string(),
 		OPENAI_API_KEY: v.optional(v.string()),
 		BROWSERBASE_API_KEY: v.optional(v.string()),
@@ -32,7 +31,7 @@ const app = defineApp({
 	}
 });
 
-app.use(contextDev, { env: { CONTEXT_DEV_API_KEY: app.env.CONTEXT_DEV_API_KEY } });
+app.use(firecrawl, { env: { FIRECRAWL_API_KEY: app.env.FIRECRAWL_API_KEY } });
 app.use(exa, { env: { EXA_API_KEY: app.env.EXA_API_KEY } });
 app.use(rateLimiter);
 app.use(dodopayments);

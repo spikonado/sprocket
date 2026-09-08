@@ -236,22 +236,35 @@ export const vCommandExecResult = v.object({
 	error: v.optional(v.string())
 });
 
-/** Stored scrape_url job result. Historical cloud rows include `truncated`. */
+const vScrapeMediaFields = {
+	summary: v.optional(v.string()),
+	images: v.optional(v.array(v.string())),
+	audio: v.optional(v.string()),
+	video: v.optional(v.string())
+};
+
+/** Stored scrape_url job result. Historical rows omit summary/media; cloud rows may include `truncated`. */
 export const vScrapeUrlResult = v.object({
 	url: v.string(),
 	markdown: v.string(),
-	truncated: v.optional(v.boolean())
+	truncated: v.optional(v.boolean()),
+	...vScrapeMediaFields
 });
 
-/** Local scrapeForTool transport. Long pages return a temporary download URL. */
+/** Local scrapeForTool transport. Oversized pages return a temporary JSON download URL. */
 export const vScrapeUrlTransport = v.union(
 	v.object({
 		url: v.string(),
-		markdown: v.string()
+		markdown: v.string(),
+		summary: v.string(),
+		images: v.array(v.string()),
+		audio: v.optional(v.string()),
+		video: v.optional(v.string())
 	}),
 	v.object({
 		url: v.string(),
-		markdownUrl: v.string()
+		summary: v.string(),
+		scrapeUrl: v.string()
 	})
 );
 

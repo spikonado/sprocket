@@ -33,11 +33,10 @@ type Env = {
   readonly BROWSERBASE_API_KEY: string | undefined;
   readonly BROWSERBASE_PROJECT_ID: string | undefined;
   readonly BROWSER_TASK_MODEL: string | undefined;
-  readonly CONTEXT_DEV_API_KEY: string;
   readonly DODO_PAYMENTS_API_KEY: string | undefined;
   readonly DODO_PAYMENTS_ENVIRONMENT: "live_mode" | "test_mode" | undefined;
   readonly EXA_API_KEY: string;
-  readonly FIRECRAWL_API_KEY: string | undefined;
+  readonly FIRECRAWL_API_KEY: string;
   readonly MODEL_GATEWAY_TOKEN_SECRET: string | undefined;
   readonly MODEL_GATEWAY_URL: string | undefined;
   readonly OPENAI_API_KEY: string | undefined;

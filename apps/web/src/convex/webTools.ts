@@ -2,7 +2,7 @@
 
 import { ConvexError, v, type Infer } from 'convex/values';
 import { z } from 'zod';
-import { ContextDev } from '@context-dot-dev/convex';
+import { FirecrawlClient } from '@firecrawl/firecrawl-convex';
 import { ExaClient } from '@exalabs/convex-exa';
 import { action, internalAction, type ActionCtx } from '@convex/_generated/server';
 import { components, internal } from '@convex/_generated/api';
@@ -15,47 +15,133 @@ import { RUN_NO_LONGER_ACTIVE, toAgentToolConvexError } from '@convex/lib/agentE
 import { unsupportedClient } from '@convex/lib/unsupportedClient';
 import { NonRetryableError } from '@convex-dev/workpool';
 
-const contextDev = new ContextDev(components.contextDev);
+const firecrawl = new FirecrawlClient(components.firecrawl);
 const exa = new ExaClient(components.exa);
 
 const DEFAULT_SEARCH_RESULTS = 5;
 const MAX_SEARCH_RESULTS = 10;
-// Bounds inline markdown; Convex documents are capped at 1 MiB.
-export const SCRAPE_MARKDOWN_MAX_CHARS = 40_000;
-export const SCRAPE_MARKDOWN_STORAGE_TTL_MS = 60 * 60 * 1_000;
 const SCRAPE_MAX_BYTES = 64 * 1024 * 1024;
-const SCRAPE_MARKDOWN_BLOB_TYPE = 'text/markdown; charset=utf-8';
-const SCRAPE_TIMEOUT_MS = 60_000;
+export const SCRAPE_INLINE_MAX_CHARS = 40_000;
+export const SCRAPE_STORAGE_TTL_MS = 60 * 60 * 1_000;
+export const SCRAPE_TIMEOUT_MS = 60_000;
+export const SCRAPE_FORMATS = ['markdown', 'summary', 'images', 'audio', 'video'] as const;
+export const DEFAULT_SCRAPE_SUMMARY = 'No summary was returned for this page.';
+const SCRAPE_JSON_BLOB_TYPE = 'application/json; charset=utf-8';
+const CONVEX_ARRAY_MAX_LENGTH = 8_192;
 const SEARCH_RESULT_TEXT_MAX_CHARS = 2_000;
 const SEARCH_TIMEOUT_MS = 30_000;
+const SCRAPE_URL_SIZE_PLACEHOLDER = 'https://example.convex.cloud/api/storage/scrape.json';
 
 class WebToolTimeout extends Error {}
 
-// Context.dev validates its scrape result against a bounded-depth JSON schema,
-// so pages whose metadata nests deeper than the bound fail inside the component
-// before any content reaches us (#208).
-export function isUnparseablePageFailure(error: Error): boolean {
-	return error.message.includes('ReturnsValidationError');
-}
-
-const UNPARSEABLE_PAGE_ERROR = 'The webpage is too complex and could not be parsed as Markdown.';
 const UNCAUGHT_CONVEX_ERROR_PREFIX = 'Uncaught ConvexError: ';
+const firecrawlApiErrorSchema = z.object({
+	code: z.literal('firecrawl_request_failed'),
+	status: z.int().min(400).max(599)
+});
+const firecrawlMissingKeySchema = z.object({
+	code: z.literal('firecrawl_missing_api_key')
+});
 const scrapeHttpErrorSchema = z.object({ status: z.int().min(400).max(599) });
+const providerErrorSchema = z.union([
+	firecrawlApiErrorSchema,
+	firecrawlMissingKeySchema,
+	scrapeHttpErrorSchema
+]);
+type ProviderError = z.infer<typeof providerErrorSchema>;
+const firecrawlDocumentSchema = z.object({
+	markdown: z.string().nullish(),
+	summary: z.string().nullish(),
+	images: z.array(z.string()).nullish(),
+	audio: z.string().nullish(),
+	video: z.string().nullish(),
+	metadata: z
+		.object({
+			url: z.string().optional(),
+			sourceURL: z.string().optional(),
+			statusCode: z.number().optional(),
+			error: z.string().optional()
+		})
+		.passthrough()
+		.optional()
+});
 
-export function scrapeHttpErrorStatus(error: Error): number | undefined {
+export type ScrapedPage = {
+	url: string;
+	markdown: string;
+	summary: string;
+	images: string[];
+	audio?: string;
+	video?: string;
+};
+
+function convexErrorData(error: Error): ProviderError | undefined {
+	if (error instanceof ConvexError) {
+		return providerErrorSchema.safeParse(error.data).data;
+	}
 	let message = error.message.split('\n', 1)[0] ?? '';
 	while (message.startsWith(UNCAUGHT_CONVEX_ERROR_PREFIX)) {
 		message = message.slice(UNCAUGHT_CONVEX_ERROR_PREFIX.length);
 	}
-
-	let payload: unknown;
 	try {
-		payload = JSON.parse(message);
+		return providerErrorSchema.safeParse(JSON.parse(message)).data;
 	} catch {
 		return undefined;
 	}
-	const result = scrapeHttpErrorSchema.safeParse(payload);
+}
+
+/** Firecrawl API HTTP status, not the scraped page's `metadata.statusCode`. */
+export function scrapeHttpErrorStatus(error: Error): number | undefined {
+	const data = convexErrorData(error);
+	const firecrawlError = firecrawlApiErrorSchema.safeParse(data);
+	if (firecrawlError.success) {
+		return firecrawlError.data.status;
+	}
+	const result = scrapeHttpErrorSchema.safeParse(data);
 	return result.success ? result.data.status : undefined;
+}
+
+export function isCleanPageStatus(status: number): boolean {
+	return status === 304 || (status >= 200 && status < 300);
+}
+
+function isRetryableHttpStatus(status: number): boolean {
+	return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+function throwHttpFailure(message: string, status: number, cause?: Error): never {
+	if (isRetryableHttpStatus(status)) {
+		throw new ConvexError(message);
+	}
+	throw new NonRetryableError(message, cause ? { cause } : undefined);
+}
+
+export function summaryFitsTransport(page: ScrapedPage): boolean {
+	return (
+		JSON.stringify({
+			url: page.url,
+			summary: page.summary,
+			scrapeUrl: SCRAPE_URL_SIZE_PLACEHOLDER
+		}).length <= SCRAPE_INLINE_MAX_CHARS
+	);
+}
+
+export function localInlineFits(page: ScrapedPage): boolean {
+	return (
+		page.images.length <= CONVEX_ARRAY_MAX_LENGTH &&
+		JSON.stringify(page).length <= SCRAPE_INLINE_MAX_CHARS
+	);
+}
+
+function rejectOversizedSummary(): never {
+	throw new NonRetryableError('Scrape summary is too large.');
+}
+
+function scrapeSummary(value: string | null | undefined): string {
+	if (value === undefined || value === null || value.trim() === '') {
+		return DEFAULT_SCRAPE_SUMMARY;
+	}
+	return value;
 }
 
 async function withTimeout<T>(label: string, timeoutMs: number, promise: Promise<T>): Promise<T> {
@@ -97,11 +183,6 @@ type PoolScrapeJob = {
 	payload: ExecutorJobPayload;
 } | null;
 
-type ScrapedPage = {
-	url: string;
-	markdown: string;
-};
-
 async function scrapeClaimedUrl(ctx: ActionCtx, job: PoolScrapeJob): Promise<ScrapedPage> {
 	if (!job || job.kind !== 'scrape_url') {
 		throw new NonRetryableError(RUN_NO_LONGER_ACTIVE);
@@ -120,58 +201,75 @@ async function fetchScrape(ctx: ActionCtx, urlValue: string): Promise<ScrapedPag
 		throw new NonRetryableError('Only http(s) URLs can be scraped.');
 	}
 
-	let response: Awaited<ReturnType<typeof contextDev.scrapeMarkdown>>;
+	let document: unknown;
 	try {
-		response = await withTimeout(
-			'Context.dev scrape',
+		document = await withTimeout(
+			'Firecrawl scrape',
 			SCRAPE_TIMEOUT_MS,
-			contextDev.scrapeMarkdown(ctx, {
-				params: {
-					url: url.toString(),
-					useMainContentOnly: true,
-					timeoutMS: SCRAPE_TIMEOUT_MS
-				}
+			firecrawl.scrape(ctx, url.toString(), {
+				formats: [...SCRAPE_FORMATS],
+				onlyMainContent: true,
+				maxAge: 0,
+				storeInCache: false,
+				timeout: SCRAPE_TIMEOUT_MS
 			})
 		);
 	} catch (error) {
 		if (error instanceof Error) {
+			if (firecrawlMissingKeySchema.safeParse(convexErrorData(error)).success) {
+				throw new NonRetryableError('FIRECRAWL_API_KEY is not configured.', { cause: error });
+			}
 			const status = scrapeHttpErrorStatus(error);
 			if (status !== undefined) {
-				const message = `This webpage returned a ${status} error.`;
-				if (status === 408 || status === 429 || status >= 500) {
-					throw new ConvexError(message);
-				}
-				throw new NonRetryableError(message, { cause: error });
-			}
-			if (isUnparseablePageFailure(error)) {
-				throw new NonRetryableError(UNPARSEABLE_PAGE_ERROR, { cause: error });
+				throwHttpFailure(`Firecrawl scrape failed (${status}).`, status, error);
 			}
 		}
 		throw error;
 	}
 
-	return { url: response.url, markdown: response.markdown };
+	const parsed = firecrawlDocumentSchema.safeParse(document);
+	if (!parsed.success) {
+		throw new NonRetryableError('Firecrawl scrape returned an invalid response.');
+	}
+
+	const statusCode = parsed.data.metadata?.statusCode;
+	if (statusCode !== undefined && !isCleanPageStatus(statusCode)) {
+		throwHttpFailure(`This webpage returned a ${statusCode} error.`, statusCode);
+	}
+
+	const page: ScrapedPage = {
+		url: parsed.data.metadata?.sourceURL ?? parsed.data.metadata?.url ?? url.toString(),
+		markdown: parsed.data.markdown ?? '',
+		summary: scrapeSummary(parsed.data.summary),
+		images: parsed.data.images ?? []
+	};
+	if (parsed.data.audio) page.audio = parsed.data.audio;
+	if (parsed.data.video) page.video = parsed.data.video;
+	return page;
 }
 
 async function localScrapeTransport(
 	ctx: ActionCtx,
 	page: ScrapedPage
 ): Promise<Infer<typeof vScrapeUrlTransport>> {
-	if (page.markdown.length <= SCRAPE_MARKDOWN_MAX_CHARS) {
-		return { url: page.url, markdown: page.markdown };
+	if (!summaryFitsTransport(page)) {
+		rejectOversizedSummary();
 	}
-	return { url: page.url, markdownUrl: await storeTemporaryMarkdown(ctx, page.markdown) };
+	if (localInlineFits(page)) {
+		return page;
+	}
+	return { url: page.url, summary: page.summary, scrapeUrl: await storeTemporaryScrape(ctx, page) };
 }
 
-async function storeTemporaryMarkdown(ctx: ActionCtx, markdown: string): Promise<string> {
-	const blob = new Blob([markdown], { type: SCRAPE_MARKDOWN_BLOB_TYPE });
+async function storeTemporaryScrape(ctx: ActionCtx, page: ScrapedPage): Promise<string> {
+	const blob = new Blob([JSON.stringify(page)], { type: SCRAPE_JSON_BLOB_TYPE });
 	if (blob.size > SCRAPE_MAX_BYTES) {
 		throw new NonRetryableError('Scrape exceeds the 64 MiB download limit.');
 	}
 	const storageId = await ctx.storage.store(blob);
 	try {
 		await ctx.scheduler.runAfter(
-			SCRAPE_MARKDOWN_STORAGE_TTL_MS,
+			SCRAPE_STORAGE_TTL_MS,
 			internal.webToolPool.deleteTemporaryStorage,
 			{ storageId }
 		);
@@ -179,12 +277,12 @@ async function storeTemporaryMarkdown(ctx: ActionCtx, markdown: string): Promise
 		await ctx.storage.delete(storageId);
 		throw error;
 	}
-	const markdownUrl = await ctx.storage.getUrl(storageId);
-	if (!markdownUrl) {
+	const scrapeUrl = await ctx.storage.getUrl(storageId);
+	if (!scrapeUrl) {
 		await ctx.storage.delete(storageId);
 		throw new Error('Stored scrape is unavailable.');
 	}
-	return markdownUrl;
+	return scrapeUrl;
 }
 
 async function runSearch(
