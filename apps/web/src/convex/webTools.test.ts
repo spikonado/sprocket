@@ -428,22 +428,49 @@ describe('scrape size budget', () => {
 });
 
 describe('scrapeForTool markdown transport', () => {
-	it('rejects markdown above the receiver byte limit without storing a blob', async () => {
-		const t = initConvexTest();
-		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
-			executionSecret: 'oversized-markdown-secret',
-			kind: 'scrape_url',
-			payload: { url: 'https://example.com/page' }
-		});
-		const scrape = mockScrape({ markdown: `${'é'.repeat(32 * 1024 * 1024)}x` });
-		try {
-			await expect(
-				asUser.action(api.webTools.scrapeForTool, { runId, claimId, jobId, executionSecret })
-			).rejects.toThrow('Scrape exceeds the 64 MiB download limit.');
-			expect(await storageBlobs(t)).toEqual([]);
-		} finally {
-			scrape.mockRestore();
+	it.each([undefined, 'json'] as const)(
+		'rejects oversized %s archives without storing a blob',
+		async (archiveFormat) => {
+			const t = initConvexTest();
+			const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
+				executionSecret: 'oversized-markdown-secret',
+				kind: 'scrape_url',
+				payload: { url: 'https://example.com/page' }
+			});
+			const scrape = mockScrape({ markdown: `${'é'.repeat(32 * 1024 * 1024)}x` });
+			try {
+				await expect(
+					asUser.action(api.webTools.scrapeForTool, {
+						runId,
+						claimId,
+						jobId,
+						executionSecret,
+						archiveFormat
+					})
+				).rejects.toThrow('Scrape exceeds the 64 MiB download limit.');
+				expect(await storageBlobs(t)).toEqual([]);
+			} finally {
+				scrape.mockRestore();
+			}
 		}
+	);
+
+	it('counts JSON escaping toward the receiver byte limit', async () => {
+		await expect(
+			scrapeLocalPage({ markdown: '\n'.repeat(32 * 1024 * 1024), summary: 'Summary' })
+		).rejects.toThrow('Scrape exceeds the 64 MiB download limit.');
+	});
+
+	it('accepts raw markdown exactly at the receiver byte limit', async () => {
+		const { t, result } = await scrapeLocalPage(
+			{ markdown: 'é'.repeat(32 * 1024 * 1024) },
+			PAGE_URL,
+			null
+		);
+		expect(result).toHaveProperty('markdownUrl');
+		const blobs = await storageBlobs(t);
+		expect(blobs).toHaveLength(1);
+		expect(blobs[0]?.size).toBe(64 * 1024 * 1024);
 	});
 
 	it('accepts a JSON archive exactly at the receiver byte limit', async () => {
