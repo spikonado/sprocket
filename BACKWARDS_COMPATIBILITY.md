@@ -340,7 +340,7 @@ jobs and transcripts; remove it only after stored results and JSONL replicas
 have aged out or been migrated. The UI no longer displays a truncation badge,
 including for historical results.
 
-Firecrawl adds `summary` and media fields to new scrape results. Their stored
+Firecrawl adds `summary` and `images` fields to new scrape results. Their stored
 validators remain optional so pre-Firecrawl transcript and executor rows still
 load. Remove that optionality only after those rows and local JSONL replicas
 have aged out or been rewritten. Current agents archive large scrapes as

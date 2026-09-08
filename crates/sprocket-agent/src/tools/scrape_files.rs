@@ -131,9 +131,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn short_scrapes_preserve_summary_and_media_without_a_truncation_flag() {
+    async fn short_scrapes_preserve_summary_and_images_without_a_truncation_flag() {
         let result = localize_scrape(
-            json!({"url": "https://example.com", "markdown": "# Hello", "summary": "A greeting", "images": ["https://example.com/image.png"], "audio": "https://example.com/audio.mp3", "truncated": false}),
+            json!({"url": "https://example.com", "markdown": "# Hello", "summary": "A greeting", "images": ["https://example.com/image.png"], "truncated": false}),
             &WorkspaceCancellation::new(),
             &mut None,
         )
@@ -141,7 +141,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             result,
-            json!({"url": "https://example.com", "markdown": "# Hello", "summary": "A greeting", "images": ["https://example.com/image.png"], "audio": "https://example.com/audio.mp3"})
+            json!({"url": "https://example.com", "markdown": "# Hello", "summary": "A greeting", "images": ["https://example.com/image.png"]})
         );
     }
 
@@ -198,7 +198,7 @@ mod tests {
 
     #[tokio::test]
     async fn full_scrape_is_saved_while_summary_stays_in_the_output() {
-        let scrape = json!({"markdown": "é\n".repeat(40_001), "summary": "Full summary", "images": ["https://example.com/image.png"], "audio": "https://example.com/audio.mp3", "video": "https://example.com/video.mp4"});
+        let scrape = json!({"markdown": "é\n".repeat(40_001), "summary": "Full summary", "images": ["https://example.com/image.png"]});
         let text = scrape.to_string();
         let url = serve(&text, text.len()).await;
         let mut saved_file = None;

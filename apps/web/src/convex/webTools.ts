@@ -25,7 +25,7 @@ const SCRAPE_MAX_BYTES = 64 * 1024 * 1024;
 export const SCRAPE_INLINE_MAX_CHARS = 40_000;
 export const SCRAPE_STORAGE_TTL_MS = 60 * 60 * 1_000;
 export const SCRAPE_TIMEOUT_MS = 60_000;
-export const SCRAPE_FORMATS = ['markdown', 'summary', 'images', 'audio', 'video'] as const;
+export const SCRAPE_FORMATS = ['markdown', 'summary', 'images'] as const;
 export const SCREENSHOT_FORMATS = ['screenshot'] as const;
 export const DEFAULT_SCRAPE_SUMMARY = 'No summary was returned for this page.';
 const SCRAPE_JSON_BLOB_TYPE = 'application/json; charset=utf-8';
@@ -55,8 +55,6 @@ const firecrawlDocumentSchema = z.object({
 	markdown: z.string().nullish(),
 	summary: z.string().nullish(),
 	images: z.array(z.string()).nullish(),
-	audio: z.string().nullish(),
-	video: z.string().nullish(),
 	screenshot: z.string().nullish(),
 	metadata: z
 		.object({
@@ -75,8 +73,6 @@ export type ScrapedPage = {
 	markdown: string;
 	summary: string;
 	images: string[];
-	audio?: string;
-	video?: string;
 };
 
 function convexErrorData(error: Error): ProviderError | undefined {
@@ -274,8 +270,6 @@ async function fetchScrape(ctx: ActionCtx, urlValue: string): Promise<ScrapedPag
 		summary: scrapeSummary(document.summary),
 		images: document.images ?? []
 	};
-	if (document.audio) page.audio = document.audio;
-	if (document.video) page.video = document.video;
 	return page;
 }
 
