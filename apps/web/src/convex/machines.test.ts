@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '@convex/_generated/api';
 import { executionSecretHash } from '@convex/lib/auth';
+import { MACHINE_ONLINE_THRESHOLD_MS } from '@convex/lib/machineRuns';
 import { initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
 
 const machine = {
@@ -14,6 +15,109 @@ const machine = {
 afterEach(() => vi.useRealTimers());
 
 describe('machines', () => {
+	it('returns a retry delay without changing the live process or its runs', async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		await asUser.mutation(api.machines.register, {
+			...machine,
+			credentialHash: await executionSecretHash('credential-a')
+		});
+		const run = await insertQueuedRun(t, asUser, {
+			threadId,
+			submissionId: 'busy-run',
+			executionSecret: 'run-secret',
+			prompt: 'Run locally',
+			machineId: machine.machineId
+		});
+		const original = await t.run((ctx) => ctx.db.query('machines').unique());
+		const args = { ...machine, credentialHash: await executionSecretHash('credential-b') };
+
+		vi.advanceTimersByTime(30_000);
+		expect(await asUser.mutation(api.machines.tryRegister, args)).toEqual({
+			status: 'busy',
+			retryAfterMs: MACHINE_ONLINE_THRESHOLD_MS - 30_000 + 1
+		});
+		expect(await t.run((ctx) => ctx.db.query('machines').unique())).toEqual(original);
+		expect(await t.run((ctx) => ctx.db.get('runs', run.runId))).toMatchObject({ status: 'queued' });
+
+		await t.mutation(api.machines.heartbeat, {
+			userId: 'user_alice',
+			machineId: machine.machineId,
+			credential: 'credential-a'
+		});
+		vi.advanceTimersByTime(MACHINE_ONLINE_THRESHOLD_MS);
+		expect(await asUser.mutation(api.machines.tryRegister, args)).toEqual({
+			status: 'busy',
+			retryAfterMs: 1
+		});
+		vi.advanceTimersByTime(1);
+		expect(await asUser.mutation(api.machines.tryRegister, args)).toEqual({
+			status: 'registered',
+			machineId: machine.machineId,
+			userId: 'user_alice'
+		});
+		expect(await t.run((ctx) => ctx.db.get('runs', run.runId))).toMatchObject({ status: 'failed' });
+		expect(await t.run((ctx) => ctx.db.query('machines').unique())).toMatchObject({
+			_id: original?._id,
+			credentialHash: args.credentialHash,
+			runIds: []
+		});
+
+		for (const mutation of [api.machines.heartbeat, api.machines.end]) {
+			await expect(
+				t.mutation(mutation, {
+					userId: 'user_alice',
+					machineId: machine.machineId,
+					credential: 'credential-a'
+				})
+			).rejects.toThrow('Machine is not active.');
+		}
+		await expect(
+			t.mutation(api.machines.heartbeat, {
+				userId: 'user_alice',
+				machineId: machine.machineId,
+				credential: 'credential-b'
+			})
+		).resolves.toBeNull();
+	});
+
+	it('keeps registration retries from the same process idempotent', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const args = { ...machine, credentialHash: await executionSecretHash('credential-a') };
+		const registered = await asUser.mutation(api.machines.tryRegister, args);
+		const run = await insertQueuedRun(t, asUser, {
+			threadId,
+			submissionId: 'retry-run',
+			executionSecret: 'run-secret',
+			prompt: 'Run locally',
+			machineId: machine.machineId
+		});
+
+		expect(await asUser.mutation(api.machines.tryRegister, args)).toEqual(registered);
+		expect(await t.run((ctx) => ctx.db.get('runs', run.runId))).toMatchObject({ status: 'queued' });
+		expect(await t.run((ctx) => ctx.db.query('machines').unique())).toMatchObject({
+			runIds: [run.runId]
+		});
+	});
+
+	it('requires authentication before reporting a registration conflict', async () => {
+		const t = initConvexTest();
+		const { asUser } = await seedOwnedThread(t);
+		await asUser.mutation(api.machines.tryRegister, {
+			...machine,
+			credentialHash: await executionSecretHash('credential-a')
+		});
+		await expect(
+			t.mutation(api.machines.tryRegister, {
+				...machine,
+				credentialHash: await executionSecretHash('credential-b')
+			})
+		).rejects.toThrow('Authentication required.');
+	});
+
 	it('rejects a second process while the machine is still online', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);

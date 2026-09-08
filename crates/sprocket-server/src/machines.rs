@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -6,6 +7,7 @@ use convex::Value;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::{sleep, timeout};
+use tokio_util::sync::CancellationToken;
 
 use crate::machine_identity::MachineIdentity;
 use crate::native_auth::NativeAuthManager;
@@ -13,12 +15,54 @@ use crate::transcript_client::UserConvexClient;
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 const RPC_TIMEOUT: Duration = Duration::from_secs(10);
+// Covers a 90-second lease plus two RPCs.
+const REGISTRATION_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RegisteredMachine {
     machine_id: String,
     user_id: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+enum RegistrationResult {
+    Registered(RegisteredMachine),
+    Busy {
+        #[serde(
+            rename = "retryAfterMs",
+            deserialize_with = "sprocket_convex::deserialize_convex_u64"
+        )]
+        retry_after_ms: u64,
+    },
+}
+
+async fn register_when_available<F, Fut>(
+    shutdown: &CancellationToken,
+    mut attempt: F,
+) -> anyhow::Result<RegisteredMachine>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = anyhow::Result<RegistrationResult>>,
+{
+    let registration = timeout(REGISTRATION_TIMEOUT, async {
+        loop {
+            match attempt().await? {
+                RegistrationResult::Registered(machine) => return Ok(machine),
+                RegistrationResult::Busy { retry_after_ms } => {
+                    sleep(Duration::from_millis(retry_after_ms.max(1))).await;
+                }
+            }
+        }
+    });
+    tokio::select! {
+        biased;
+        _ = shutdown.cancelled() => anyhow::bail!("machine manager is shutting down"),
+        result = registration => result.map_err(|_| anyhow::anyhow!(
+            "Machine is still active in another Sprocket process. Close that process and try again."
+        ))?,
+    }
 }
 
 struct AccountPresence {
@@ -31,13 +75,8 @@ pub struct MachineManager {
     identity: Arc<MachineIdentity>,
     accounts: Mutex<HashMap<String, AccountPresence>>,
     registration: Mutex<()>,
-    lifecycle: Mutex<LifecycleState>,
-}
-
-#[derive(Default)]
-struct LifecycleState {
-    shutting_down: bool,
-    locks: HashMap<String, Arc<Mutex<()>>>,
+    account_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    shutdown: CancellationToken,
 }
 
 impl MachineManager {
@@ -52,13 +91,16 @@ impl MachineManager {
             identity,
             accounts: Mutex::new(HashMap::new()),
             registration: Mutex::new(()),
-            lifecycle: Mutex::new(LifecycleState::default()),
+            account_locks: Mutex::new(HashMap::new()),
+            shutdown: CancellationToken::new(),
         })
     }
 
     pub async fn register(self: &Arc<Self>, expected_user_id: &str) -> anyhow::Result<()> {
         let _registration = self.registration.lock().await;
-        self.ensure_running().await?;
+        let account = self.account_lock(expected_user_id, false).await?;
+        let _account = account.lock().await;
+        self.ensure_running()?;
         let registered = self.register_remote(expected_user_id).await?;
         if registered.machine_id != self.identity.installation_id {
             anyhow::bail!("machine registration returned a different installation");
@@ -102,20 +144,22 @@ impl MachineManager {
         self.end_remote(user_id).await
     }
 
+    pub(crate) fn stop_registration(&self) {
+        self.shutdown.cancel();
+    }
+
     pub async fn shutdown(&self) {
-        let locks = {
-            let mut lifecycle = self.lifecycle.lock().await;
-            lifecycle.shutting_down = true;
-            lifecycle.locks.values().cloned().collect::<Vec<_>>()
-        };
-        for lock in locks {
-            let _lock = lock.lock().await;
-            let accounts = self.accounts.lock().await.drain().collect::<Vec<_>>();
-            for (user_id, presence) in accounts {
-                presence.heartbeat.abort();
-                if let Err(error) = self.end_remote(&user_id).await {
-                    tracing::warn!("failed to end machine presence during shutdown: {error:#}");
-                }
+        self.stop_registration();
+        let users = self
+            .account_locks
+            .lock()
+            .await
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        for user_id in users {
+            if let Err(error) = self.end(&user_id).await {
+                tracing::warn!("failed to end machine presence during shutdown: {error:#}");
             }
         }
     }
@@ -125,19 +169,18 @@ impl MachineManager {
         user_id: &str,
         allow_shutdown: bool,
     ) -> anyhow::Result<Arc<Mutex<()>>> {
-        let mut lifecycle = self.lifecycle.lock().await;
-        if lifecycle.shutting_down && !allow_shutdown {
-            anyhow::bail!("machine manager is shutting down");
+        let mut locks = self.account_locks.lock().await;
+        if !allow_shutdown {
+            self.ensure_running()?;
         }
-        Ok(lifecycle
-            .locks
+        Ok(locks
             .entry(user_id.to_string())
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone())
     }
 
-    async fn ensure_running(&self) -> anyhow::Result<()> {
-        if self.lifecycle.lock().await.shutting_down {
+    fn ensure_running(&self) -> anyhow::Result<()> {
+        if self.shutdown.is_cancelled() {
             anyhow::bail!("machine manager is shutting down");
         }
         Ok(())
@@ -173,19 +216,23 @@ impl MachineManager {
     }
 
     async fn register_remote(&self, expected_user_id: &str) -> anyhow::Result<RegisteredMachine> {
-        timeout(RPC_TIMEOUT, async {
-            let client = UserConvexClient::connect_with_fetcher(
-                &self.deployment_url,
-                self.native_auth
-                    .auth_token_fetcher_for_user(expected_user_id.to_string()),
-            )
-            .await?;
-            client
-                .mutate("machines:register", self.registration_args())
-                .await
+        register_when_available(&self.shutdown, || async {
+            self.ensure_running()?;
+            timeout(RPC_TIMEOUT, async {
+                let client = UserConvexClient::connect_with_fetcher(
+                    &self.deployment_url,
+                    self.native_auth
+                        .auth_token_fetcher_for_user(expected_user_id.to_string()),
+                )
+                .await?;
+                client
+                    .mutate("machines:tryRegister", self.registration_args())
+                    .await
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("machine registration timed out"))?
         })
         .await
-        .map_err(|_| anyhow::anyhow!("machine registration timed out"))?
     }
 
     async fn end_remote(&self, user_id: &str) -> anyhow::Result<()> {
@@ -247,6 +294,99 @@ impl MachineManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn registration_recovers_after_a_crashed_process_lease_expires() {
+        let started = tokio::time::Instant::now();
+        let mut attempts = 0;
+        let registered = register_when_available(&CancellationToken::new(), || {
+            attempts += 1;
+            let result = if attempts == 1 {
+                serde_json::from_value::<RegistrationResult>(serde_json::json!({
+                    "status": "busy",
+                    "retryAfterMs": 90001.0,
+                }))
+                .unwrap()
+            } else {
+                serde_json::from_value(serde_json::json!({
+                    "status": "registered",
+                    "machineId": "machine-a",
+                    "userId": "user-a",
+                }))
+                .unwrap()
+            };
+            std::future::ready(Ok(result))
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(attempts, 2);
+        assert_eq!(started.elapsed(), Duration::from_millis(90_001));
+        assert_eq!(registered.machine_id, "machine-a");
+        assert_eq!(registered.user_id, "user-a");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn registration_does_not_wait_forever_for_a_live_process() {
+        let started = tokio::time::Instant::now();
+        let mut attempts = 0;
+        let result = register_when_available(&CancellationToken::new(), || {
+            attempts += 1;
+            std::future::ready(Ok(RegistrationResult::Busy {
+                retry_after_ms: 90_001,
+            }))
+        })
+        .await;
+
+        assert!(
+            result
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("Close that process")
+        );
+        assert_eq!(attempts, 2);
+        assert_eq!(started.elapsed(), REGISTRATION_TIMEOUT);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn registration_does_not_retry_other_errors() {
+        let started = tokio::time::Instant::now();
+        let mut attempts = 0;
+        let result = register_when_available(&CancellationToken::new(), || {
+            attempts += 1;
+            std::future::ready(Err(anyhow::anyhow!("authentication failed")))
+        })
+        .await;
+
+        assert_eq!(result.err().unwrap().to_string(), "authentication failed");
+        assert_eq!(attempts, 1);
+        assert_eq!(started.elapsed(), Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_interrupts_registration_waiting_for_a_stale_lease() {
+        let shutdown = CancellationToken::new();
+        let task_shutdown = shutdown.clone();
+        let started = tokio::time::Instant::now();
+        let (attempted, attempt_received) = tokio::sync::oneshot::channel();
+        let registration = tokio::spawn(async move {
+            let mut attempted = Some(attempted);
+            register_when_available(&task_shutdown, || {
+                attempted.take().unwrap().send(()).unwrap();
+                std::future::ready(Ok(RegistrationResult::Busy {
+                    retry_after_ms: 90_001,
+                }))
+            })
+            .await
+        });
+
+        attempt_received.await.unwrap();
+        shutdown.cancel();
+        let error = registration.await.unwrap().err().unwrap();
+        assert!(error.to_string().contains("shutting down"));
+        assert_eq!(started.elapsed(), Duration::ZERO);
+    }
 
     fn manager_for_test() -> (std::path::PathBuf, Arc<MachineManager>) {
         let dir = std::env::temp_dir().join(format!("sprocket-machine-{}", uuid::Uuid::new_v4()));
