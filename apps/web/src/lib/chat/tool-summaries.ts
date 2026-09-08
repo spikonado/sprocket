@@ -273,9 +273,6 @@ function summarizeWebToolResult(kind: string, result: JsonValue | undefined) {
 		const count = result.results.length;
 		return ` (${count} result${count === 1 ? '' : 's'})`;
 	}
-	if (kind === 'scrape_url' && isJsonObject(result) && result.truncated === true) {
-		return ' (truncated)';
-	}
 	return '';
 }
 

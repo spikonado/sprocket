@@ -111,6 +111,7 @@ impl rig::tool::Tool for ScrapeUrlTool {
         let url = validate_web_url(&args.url).map_err(tool_error)?;
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         let mut image_output = None;
+        let image_result = &mut image_output;
         let result = execute_tool_job_with_id(
             &self.0.runtime,
             &self.0.run_id,
@@ -118,14 +119,14 @@ impl rig::tool::Tool for ScrapeUrlTool {
             Self::NAME,
             &self.0.tool_call_tracker,
             payload,
-            |cancellation, job_id| async {
+            |cancellation, job_id| async move {
                 let image = tokio::select! {
                     biased;
                     _ = cancellation.cancelled() => return Err(super::context::cancelled_error()),
                     result = fetch_web_image(url, self.0.supports_images) => result.map_err(tool_error)?,
                 };
                 if let Some((metadata, output)) = image {
-                    image_output = Some(output);
+                    *image_result = Some(output);
                     return Ok(metadata);
                 }
                 let action_args = BTreeMap::from([
@@ -133,7 +134,8 @@ impl rig::tool::Tool for ScrapeUrlTool {
                     ("claimId".to_string(), self.0.claim_id.clone().into()),
                     ("jobId".to_string(), job_id.into()),
                 ]);
-                run_convex_tool_action(&self.0.runtime, cancellation, "webTools:scrapeForTool", action_args).await
+                let result = run_convex_tool_action(&self.0.runtime, cancellation.clone(), "webTools:scrapeForTool", action_args).await?;
+                super::scrape_files::localize_scrape(result, &cancellation).await.map_err(tool_error)
             },
         )
         .await?;

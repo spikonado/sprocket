@@ -10,6 +10,7 @@ import {
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { getExecutionRun } from '@convex/lib/auth';
 import { applyExecutorJobFailure, applyExecutorJobSuccess } from '@convex/lib/executorJobs';
+import { registeredParseStorage } from '@convex/lib/hostedParse';
 import { isSettledExecutorJobStatus } from '@convex/lib/runs';
 import { isRunFinalStatus, vExecutorJobPayload } from '@convex/lib/validators';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
@@ -176,6 +177,30 @@ export const completeWebTool = internalMutation({
 			error: args.result.error,
 			claimId: args.context.claimId
 		});
+		return null;
+	}
+});
+
+async function deleteUnregisteredStorage(
+	ctx: MutationCtx,
+	storageId: Id<'_storage'>
+): Promise<void> {
+	const attached = await ctx.db
+		.query('imageUploads')
+		.withIndex('by_storageId', (query) => query.eq('storageId', storageId))
+		.unique();
+	if (attached) return;
+	if (await registeredParseStorage(ctx, storageId)) return;
+	if (await ctx.db.system.get('_storage', storageId)) {
+		await ctx.storage.delete(storageId);
+	}
+}
+
+export const deleteTemporaryStorage = internalMutation({
+	args: { storageId: v.id('_storage') },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		await deleteUnregisteredStorage(ctx, args.storageId);
 		return null;
 	}
 });

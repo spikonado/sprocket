@@ -334,6 +334,12 @@ There is no execution-mode parameter or cloud-workpool scrape fallback.
 `web_search` still uses the workpool. Deploy the updated client and backend
 together.
 
+New scrape results omit `truncated` and save oversized content to a local
+temporary file. Stored validators retain the optional flag for old executor
+jobs and transcripts; remove it only after stored results and JSONL replicas
+have aged out or been migrated. The UI no longer displays a truncation badge,
+including for historical results.
+
 Web image results store URL and image metadata, not bytes or local paths.
 History displays a notice rather than fetching the URL again. Local-path
 `parse_file` image results still replay from their existing local cache.

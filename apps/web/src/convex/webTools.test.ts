@@ -3,8 +3,26 @@ import { ContextDev } from '@context-dot-dev/convex';
 import { api, internal } from '@convex/_generated/api';
 import { RUN_NO_LONGER_ACTIVE } from '@convex/lib/agentErrors';
 import { UNSUPPORTED_CLIENT_MESSAGE } from '@convex/lib/unsupportedClient';
-import { isUnparseablePageFailure, scrapeHttpErrorStatus } from '@convex/webTools';
-import { initConvexTest, seedStartedWebJob } from './test.setup';
+import {
+	isUnparseablePageFailure,
+	scrapeHttpErrorStatus,
+	SCRAPE_MARKDOWN_MAX_CHARS,
+	SCRAPE_MARKDOWN_STORAGE_TTL_MS
+} from '@convex/webTools';
+import { initConvexTest, seedStartedWebJob, type ConvexTestInstance } from './test.setup';
+
+function mockScrapeMarkdown(markdown: string, url = 'https://example.com/page') {
+	return vi.spyOn(ContextDev.prototype, 'scrapeMarkdown').mockResolvedValue({
+		success: true,
+		url,
+		markdown,
+		metadata: { sourceUrl: url, finalUrl: url }
+	});
+}
+
+async function storageBlobs(t: ConvexTestInstance) {
+	return await t.run(async (ctx) => ctx.db.system.query('_storage').collect());
+}
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
@@ -47,12 +65,7 @@ describe('scrapeForTool auth', () => {
 			kind: 'scrape_url',
 			payload: { url: 'https://example.com/page' }
 		});
-		const scrape = vi.spyOn(ContextDev.prototype, 'scrapeMarkdown').mockResolvedValue({
-			success: true,
-			url: 'https://example.com/page',
-			markdown: '# Page',
-			metadata: { sourceUrl: 'https://example.com/page', finalUrl: 'https://example.com/page' }
-		});
+		const scrape = mockScrapeMarkdown('# Page');
 		try {
 			expect(
 				await asUser.action(api.webTools.scrapeForTool, {
@@ -61,7 +74,7 @@ describe('scrapeForTool auth', () => {
 					jobId,
 					executionSecret
 				})
-			).toEqual({ url: 'https://example.com/page', markdown: '# Page', truncated: false });
+			).toEqual({ url: 'https://example.com/page', markdown: '# Page' });
 			expect(scrape).toHaveBeenCalledWith(
 				expect.anything(),
 				expect.objectContaining({
@@ -184,7 +197,7 @@ describe('scrapeForTool auth', () => {
 			claimId,
 			executionSecret,
 			jobId,
-			result: { url: 'https://example.com/page', markdown: 'done', truncated: false }
+			result: { url: 'https://example.com/page', markdown: 'done' }
 		});
 		await expect(
 			asUser.action(api.webTools.scrapeForTool, {
@@ -196,3 +209,128 @@ describe('scrapeForTool auth', () => {
 		).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
 	});
 });
+
+describe('stored scrape_url results', () => {
+	it('stores scrape results without truncated', async () => {
+		const t = initConvexTest();
+		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
+			executionSecret: 'saved-path-secret',
+			kind: 'scrape_url',
+			payload: { url: 'https://example.com/page' },
+			localExecution: true
+		});
+		await asUser.mutation(api.executor.complete, {
+			runId,
+			claimId,
+			executionSecret,
+			jobId,
+			result: {
+				url: 'https://example.com/page',
+				markdown: 'The scrape was saved to /tmp/scrape.md.'
+			}
+		});
+		const job = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
+		expect(job?.result).toEqual({
+			url: 'https://example.com/page',
+			markdown: 'The scrape was saved to /tmp/scrape.md.'
+		});
+		expect(job?.result).not.toHaveProperty('truncated');
+	});
+
+	it('still accepts stored scrape results with truncated', async () => {
+		const t = initConvexTest();
+		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
+			executionSecret: 'legacy-truncated-secret',
+			kind: 'scrape_url',
+			payload: { url: 'https://example.com/page' },
+			localExecution: true
+		});
+		await asUser.mutation(api.executor.complete, {
+			runId,
+			claimId,
+			executionSecret,
+			jobId,
+			result: {
+				url: 'https://example.com/page',
+				markdown: 'partial',
+				truncated: true
+			}
+		});
+		const job = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
+		expect(job?.result).toEqual({
+			url: 'https://example.com/page',
+			markdown: 'partial',
+			truncated: true
+		});
+	});
+});
+
+async function scrapeLocalMarkdown(markdown: string, url = 'https://example.com/page') {
+	const t = initConvexTest();
+	const seeded = await seedStartedWebJob(t, {
+		executionSecret: `local-md-${Math.random()}`,
+		kind: 'scrape_url',
+		payload: { url },
+		localExecution: true
+	});
+	const scrape = mockScrapeMarkdown(markdown, url);
+	try {
+		const result = await seeded.asUser.action(api.webTools.scrapeForTool, {
+			runId: seeded.runId,
+			claimId: seeded.claimId,
+			jobId: seeded.jobId,
+			executionSecret: seeded.executionSecret
+		});
+		return { t, result, scrapeCalls: scrape.mock.calls.length };
+	} finally {
+		scrape.mockRestore();
+	}
+}
+
+describe('scrapeForTool markdown transport', () => {
+	it('returns short markdown inline without truncated or storage', async () => {
+		const markdown = 'x'.repeat(SCRAPE_MARKDOWN_MAX_CHARS);
+		const { t, result, scrapeCalls } = await scrapeLocalMarkdown(markdown);
+		expect(result).toEqual({ url: 'https://example.com/page', markdown });
+		expect(result).not.toHaveProperty('truncated');
+		expect(result).not.toHaveProperty('markdownUrl');
+		expect(scrapeCalls).toBe(1);
+		expect(await storageBlobs(t)).toEqual([]);
+	});
+
+	it('stores full long markdown bytes and returns markdownUrl', async () => {
+		const markdown = `${'x'.repeat(SCRAPE_MARKDOWN_MAX_CHARS)}é`;
+		const expectedBytes = new TextEncoder().encode(markdown);
+		const { t, result, scrapeCalls } = await scrapeLocalMarkdown(markdown);
+		expect(result).toEqual({
+			url: 'https://example.com/page',
+			markdownUrl: expect.any(String)
+		});
+		expect(result).not.toHaveProperty('truncated');
+		expect(result).not.toHaveProperty('markdown');
+		expect(scrapeCalls).toBe(1);
+		if (!('markdownUrl' in result)) throw new Error('expected markdownUrl');
+		const blobs = await storageBlobs(t);
+		expect(blobs).toHaveLength(1);
+		expect(blobs[0]?.size).toBe(expectedBytes.byteLength);
+		const storedUrl = await t.run(async (ctx) => {
+			if (!blobs[0]) return null;
+			return await ctx.storage.getUrl(blobs[0]._id);
+		});
+		expect(storedUrl).toBe(result.markdownUrl);
+	});
+
+	it('deletes stored markdown after one hour', async () => {
+		const markdown = `${'x'.repeat(SCRAPE_MARKDOWN_MAX_CHARS)}y`;
+		const { t } = await scrapeLocalMarkdown(markdown);
+		const blobs = await storageBlobs(t);
+		expect(blobs).toHaveLength(1);
+		const storageId = blobs[0]?._id;
+		expect(storageId).toBeDefined();
+		await t.finishAllScheduledFunctions(() => {
+			vi.advanceTimersByTime(SCRAPE_MARKDOWN_STORAGE_TTL_MS);
+		});
+		expect(await t.run(async (ctx) => ctx.db.system.get('_storage', storageId!))).toBeNull();
+	});
+});
+
