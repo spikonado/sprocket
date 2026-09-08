@@ -78,14 +78,28 @@ export async function deployArtifacts({ schemaPath, command, deployArgs, runArgs
 			);
 			cursor = result.continueCursor;
 		}
-		const check = JSON.parse(
-			await command(['run', ...runArgs, 'artifactArchive:leftoverLegacyPresent', '{}'])
-		);
-		assert.equal(
-			check.leftover,
-			false,
-			'Legacy artifact versions remain; refusing the final deploy.'
-		);
+		cursor = null;
+		for (let page = 0; ; page += 1) {
+			assert.ok(page < 100_000, 'Archive verification page limit exceeded; rerun to resume.');
+			const check = JSON.parse(
+				await command([
+					'run',
+					...runArgs,
+					'artifactArchive:leftoverLegacyPresent',
+					JSON.stringify({ cursor })
+				])
+			);
+			assert.equal(check.leftover, false, 'Legacy artifacts remain; refusing the final deploy.');
+			assert.ok([true, false].includes(check.isDone), 'Invalid archive verification result.');
+			if (check.isDone) break;
+			assert.ok(
+				check.continueCursor &&
+					String(check.continueCursor) === check.continueCursor &&
+					check.continueCursor !== cursor,
+				'Archive verification made no progress; refusing the final deploy.'
+			);
+			cursor = check.continueCursor;
+		}
 	} finally {
 		const current = await readFile(schemaPath, 'utf8');
 		assert.ok(

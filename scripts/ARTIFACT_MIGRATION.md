@@ -22,8 +22,9 @@ Each batch copies and deletes rows in one transaction. Rerunning resumes safely;
 new file-backed registrations stay untouched. Metadata without versions and
 orphaned versions are archived too.
 
-After the archive finishes, the script restores the final schema and deploys
-it with type checking enabled. That schema contains the file-backed `artifacts`
+After the archive finishes, a second bounded pass checks every active row for
+legacy metadata and confirms no versions remain. The script restores the final
+schema and deploys it with type checking enabled. That schema contains the file-backed `artifacts`
 table and `oldArtifacts`, but no `artifactVersions` definition. Convex validation
 rejects the final deploy if legacy metadata remains in the active table.
 

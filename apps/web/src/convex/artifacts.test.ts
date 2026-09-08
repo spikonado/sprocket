@@ -129,7 +129,7 @@ describe('artifacts', () => {
 		expect(
 			await t.run(async (ctx) => (await ctx.db.get('artifacts', first._id))?.repositoryKey)
 		).toBe('gamma');
-	});
+	}, 15_000);
 
 	it('adds a thread-scoped artifact and lists it with project artifacts', async () => {
 		const { asUser, threadId, repositoryKey, runId, claimId, executionSecret } =

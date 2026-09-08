@@ -280,11 +280,17 @@ export async function runArchivePage(
 	};
 }
 
-export async function leftoverLegacyPresent(db: ArchiveReader): Promise<boolean> {
-	if (await db.query('artifactVersions').first()) return true;
+export async function leftoverLegacyPresent(db: ArchiveReader, cursor: string | null) {
+	if (await db.query('artifactVersions').first()) {
+		return { leftover: true, isDone: true, continueCursor: null };
+	}
 	const page = await db.query('artifacts').paginate({
-		cursor: null,
+		cursor,
 		...paginationBound
 	});
-	return page.page.some((artifact) => !isFileBackedArtifact(artifact));
+	return {
+		leftover: page.page.some((artifact) => !isFileBackedArtifact(artifact)),
+		isDone: page.isDone,
+		continueCursor: page.isDone ? null : page.continueCursor
+	};
 }

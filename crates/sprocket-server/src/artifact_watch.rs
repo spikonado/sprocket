@@ -1440,13 +1440,16 @@ mod tests {
     #[tokio::test]
     async fn final_flush_syncs_readable_files_before_reporting_missing_ones() {
         let dir = tempfile::tempdir().unwrap();
-        tokio::fs::write(dir.path().join("present.md"), "saved").await.unwrap();
+        tokio::fs::write(dir.path().join("present.md"), "saved")
+            .await
+            .unwrap();
         let registry = Mutex::new(vec![
             remote("a", ArtifactScope::Project, None, "missing.md", "cloud", 1),
             remote("b", ArtifactScope::Project, None, "present.md", "old", 1),
         ]);
         let mut feed = ArtifactFeed::new("user".into(), "repo".into(), dir.path().into(), None);
-        let result = flush_feed(&mut feed,
+        let result = flush_feed(
+            &mut feed,
             || future::ready(Ok(registry.lock().unwrap().clone())),
             |request| {
                 let mut registry = registry.lock().unwrap();
@@ -1454,7 +1457,8 @@ mod tests {
                 registry[1].revision += 1;
                 future::ready((request, Ok(true)))
             },
-        ).await;
+        )
+        .await;
         assert!(result.unwrap_err().to_string().contains("could not read"));
         assert_eq!(registry.lock().unwrap()[1].content, "saved");
         assert!(!dir.path().join("missing.md").exists());

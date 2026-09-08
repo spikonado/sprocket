@@ -16,9 +16,13 @@ export const archiveLegacyArtifactsPage = internalMutation({
 });
 
 export const leftoverLegacyPresent = internalQuery({
-	args: {},
-	returns: v.object({ leftover: v.boolean() }),
-	handler: async (ctx) => {
-		return { leftover: await leftoverRowsExist(asArchiveDb(ctx.db)) };
+	args: { cursor: v.optional(v.union(v.string(), v.null())) },
+	returns: v.object({
+		leftover: v.boolean(),
+		isDone: v.boolean(),
+		continueCursor: v.union(v.string(), v.null())
+	}),
+	handler: async (ctx, args) => {
+		return await leftoverRowsExist(asArchiveDb(ctx.db), args.cursor ?? null);
 	}
 });
