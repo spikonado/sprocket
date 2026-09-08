@@ -45,8 +45,7 @@ export const vExecCommandPayload = v.object({
 });
 
 export const vScrapeUrlPayload = v.object({
-	url: v.string(),
-	asImage: v.optional(v.boolean())
+	url: v.string()
 });
 
 export const vWebSearchPayload = v.object({

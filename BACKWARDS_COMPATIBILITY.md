@@ -328,16 +328,11 @@ Remove the legacy endpoint only after all supported local servers use
 
 ### Locally orchestrated URL tools
 
-Agents must set `localExecution: true` when starting a `scrape_url` job and
-finish it after either reading an image in memory or calling the authenticated
-`webTools:scrapeForTool` action. Older calls without local orchestration are
-rejected; there is no cloud-workpool scrape fallback. `web_search` still uses
-the workpool.
-
-Stored scrape payloads retain optional `asImage` so old executor jobs and
-transcripts validate. New calls reject it and use automatic image discovery.
-Remove the stored field only after historical rows and JSONL replicas have
-aged out or been rewritten.
+`scrape_url` jobs always run locally. Agents finish them after either reading
+an image in memory or calling the authenticated `webTools:scrapeForTool` action.
+There is no execution-mode parameter or cloud-workpool scrape fallback.
+`web_search` still uses the workpool. Deploy the updated client and backend
+together.
 
 Web image results store URL and image metadata, not bytes or local paths.
 History displays a notice rather than fetching the URL again. Local-path

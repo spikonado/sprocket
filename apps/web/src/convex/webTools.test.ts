@@ -45,8 +45,7 @@ describe('scrapeForTool auth', () => {
 		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
 			executionSecret: 'local-scrape-secret',
 			kind: 'scrape_url',
-			payload: { url: 'https://example.com/page' },
-			localExecution: true
+			payload: { url: 'https://example.com/page' }
 		});
 		const scrape = vi.spyOn(ContextDev.prototype, 'scrapeMarkdown').mockResolvedValue({
 			success: true,
@@ -79,8 +78,7 @@ describe('scrapeForTool auth', () => {
 		const { asUser, runId, claimId, executionSecret } = await seedStartedWebJob(t, {
 			executionSecret: 'retired-scrape-secret',
 			kind: 'scrape_url',
-			payload: { url: 'https://example.com' },
-			localExecution: true
+			payload: { url: 'https://example.com' }
 		});
 		await expect(
 			asUser.action(api.webTools.scrapeUrl, {
@@ -97,8 +95,7 @@ describe('scrapeForTool auth', () => {
 		const { asUser, runId, claimId, jobId } = await seedStartedWebJob(t, {
 			executionSecret: 'scrape-auth-secret',
 			kind: 'scrape_url',
-			payload: { url: 'https://example.com/page' },
-			localExecution: true
+			payload: { url: 'https://example.com/page' }
 		});
 		await expect(
 			asUser.action(api.webTools.scrapeForTool, {
@@ -115,8 +112,7 @@ describe('scrapeForTool auth', () => {
 		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
 			executionSecret: 'cloud-scrape-secret',
 			kind: 'scrape_url',
-			payload: { url: 'https://example.com/cloud' },
-			localExecution: true
+			payload: { url: 'https://example.com/cloud' }
 		});
 		await t.run(async (ctx) => {
 			await ctx.db.patch('executorJobs', jobId, { cloudWorkId: 'historical-cloud-work' });
@@ -153,8 +149,7 @@ describe('scrapeForTool auth', () => {
 		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
 			executionSecret: 'expired-scrape-secret',
 			kind: 'scrape_url',
-			payload: { url: 'https://example.com/page' },
-			localExecution: true
+			payload: { url: 'https://example.com/page' }
 		});
 		await t.run(async (ctx) => {
 			await ctx.db.patch('runs', runId, { claimExpiresAt: Date.now() - 1 });
@@ -182,8 +177,7 @@ describe('scrapeForTool auth', () => {
 		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
 			executionSecret: 'settled-scrape-secret',
 			kind: 'scrape_url',
-			payload: { url: 'https://example.com/page' },
-			localExecution: true
+			payload: { url: 'https://example.com/page' }
 		});
 		await asUser.mutation(api.executor.complete, {
 			runId,

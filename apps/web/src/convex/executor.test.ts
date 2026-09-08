@@ -156,7 +156,6 @@ describe('executor', () => {
 			claimId,
 			executionSecret,
 			kind: 'scrape_url',
-			localExecution: true,
 			payload: { url: 'https://example.com/pic.png' }
 		});
 		await expect(

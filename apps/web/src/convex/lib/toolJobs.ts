@@ -15,12 +15,8 @@ export async function beginExecutorJob(
 		payload: Doc<'executorJobs'>['payload'];
 		callId?: string;
 		hidden?: boolean;
-		localExecution?: boolean;
 	}
 ): Promise<{ jobId: Id<'executorJobs'>; sequence: number }> {
-	if (args.kind === 'scrape_url' && (args.localExecution !== true || 'asImage' in args.payload)) {
-		unsupportedClient();
-	}
 	if (args.kind === 'parse_file' && !('path' in args.payload)) {
 		unsupportedClient();
 	}

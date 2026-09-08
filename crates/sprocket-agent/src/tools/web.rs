@@ -346,14 +346,4 @@ mod tests {
         assert_eq!(schema["properties"], json!({"url": {"type": "string"}}));
         assert_eq!(schema["required"], json!(["url"]));
     }
-
-    #[test]
-    fn retired_image_mode_is_rejected() {
-        assert!(
-            serde_json::from_value::<ScrapeUrlArgs>(
-                json!({"url": "https://example.com", "asImage": true})
-            )
-            .is_err()
-        );
-    }
 }

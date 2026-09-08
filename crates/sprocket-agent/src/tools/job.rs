@@ -91,12 +91,8 @@ pub(super) async fn begin_executor_job(
     kind: &str,
     tool_call_tracker: &ToolCallTracker,
     payload: &serde_json::Value,
-    local_execution: bool,
 ) -> Result<String, ToolExecutionError> {
     let mut begin_args = BTreeMap::new();
-    if local_execution {
-        begin_args.insert("localExecution".to_string(), true.into());
-    }
     begin_args.insert("runId".to_string(), run_id.to_string().into());
     begin_args.insert("claimId".to_string(), claim_id.to_string().into());
     begin_args.insert("kind".to_string(), kind.to_string().into());
@@ -148,16 +144,8 @@ pub(super) async fn execute_cloud_tool_job(
         return Err(cancelled_error());
     }
 
-    let job_id = begin_executor_job(
-        runtime,
-        run_id,
-        claim_id,
-        kind,
-        tool_call_tracker,
-        &payload,
-        false,
-    )
-    .await?;
+    let job_id =
+        begin_executor_job(runtime, run_id, claim_id, kind, tool_call_tracker, &payload).await?;
     let mut job_args = BTreeMap::new();
     job_args.insert("runId".to_string(), run_id.to_string().into());
     job_args.insert("jobId".to_string(), job_id.clone().into());
@@ -267,16 +255,8 @@ where
         return Err(cancelled_error());
     }
 
-    let job_id = begin_executor_job(
-        runtime,
-        run_id,
-        claim_id,
-        kind,
-        tool_call_tracker,
-        &payload,
-        kind == "scrape_url",
-    )
-    .await?;
+    let job_id =
+        begin_executor_job(runtime, run_id, claim_id, kind, tool_call_tracker, &payload).await?;
 
     let cancellation = WorkspaceCancellation::new();
     let operation = operation(cancellation.clone(), job_id.clone());

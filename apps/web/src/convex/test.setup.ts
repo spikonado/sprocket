@@ -174,8 +174,7 @@ export async function seedStartedWebJob(
 	options: {
 		executionSecret: string;
 		kind: 'web_search' | 'scrape_url';
-		payload: { query: string } | { url: string; asImage?: boolean };
-		localExecution?: boolean;
+		payload: { query: string } | { url: string };
 		prompt?: string;
 		claimId?: string;
 	}
@@ -200,8 +199,7 @@ export async function seedStartedWebJob(
 		claimId,
 		kind: options.kind,
 		payload: options.payload,
-		executionSecret: options.executionSecret,
-		localExecution: options.localExecution
+		executionSecret: options.executionSecret
 	});
 	return {
 		asUser,
