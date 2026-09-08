@@ -12,7 +12,7 @@ use rig::streaming::{StreamedAssistantContent, StreamingPrompt};
 use sprocket_workspace::{CommandSessionManager, WorkspaceSkill};
 use tokio::time::{sleep, timeout};
 
-use crate::compaction::{ContextCompactionHook, HANDOFF_PROMPT, context_summary_text};
+use crate::context_handoff::{ContextHandoffHook, HANDOFF_PROMPT, context_summary_text};
 use crate::convex::RuntimeClient;
 use crate::hooks::{AgentPromptHook, GatewayRequestHook, ToolCallTracker};
 use crate::live::{
@@ -87,7 +87,7 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) supports_images: bool,
     pub(crate) parse_file_cache_dir: PathBuf,
     pub(crate) context_tokens: u64,
-    pub(crate) defer_prompt_for_compaction: bool,
+    pub(crate) defer_prompt_for_context_handoff: bool,
 }
 
 pub(crate) enum AgentProviderResult {
@@ -162,10 +162,10 @@ where
         request.skills.clone(),
     );
     let session_shutdown = CommandSessionShutdown::new(tools.command_sessions.clone());
-    let compaction_hook = ContextCompactionHook::new(
-        request.context_budget.auto_compact_token_limit,
+    let context_handoff_hook = ContextHandoffHook::new(
+        request.context_budget.auto_handoff_token_limit,
         request.context_tokens,
-        request.defer_prompt_for_compaction,
+        request.defer_prompt_for_context_handoff,
     );
     let agent = completion_client
         .agent(model)
@@ -189,7 +189,7 @@ where
         .tool(tools.mandate_charge)
         .tool(tools.mandate_report)
         .tool(tools.parse_file)
-        .tool(compaction_hook.tool())
+        .tool(context_handoff_hook.tool())
         .build();
 
     eprintln!("sprocket-agent: built agent {}", request.run_id);
@@ -262,7 +262,7 @@ where
                 .max_turns(AGENT_MAX_TURNS)
                 .add_hook(prompt_hook.clone())
                 .add_hook(gateway_hook.clone())
-                .add_hook(compaction_hook.clone())
+                .add_hook(context_handoff_hook.clone())
                 .max_invalid_tool_call_retries(MAX_INVALID_TOOL_CALL_RETRIES)
                 .await;
             loop {
@@ -300,7 +300,7 @@ where
                         }
                     }
                     item = stream.next() => {
-                        let calls = compaction_hook.completion_calls();
+                        let calls = context_handoff_hook.completion_calls();
                         if calls != observed_calls {
                             if recorded_attempt == Some(transcript.attempt_seq) {
                                 if let Err(error) = transcript.advance_attempt().await {
@@ -312,10 +312,10 @@ where
                         match item {
                             Some(Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(_)))
                             | Some(Ok(rig::agent::MultiTurnStreamItem::FinalResponse(_)))
-                                if compaction_hook.is_writing() => {}
+                                if context_handoff_hook.is_writing() => {}
                             Some(Ok(rig::agent::MultiTurnStreamItem::CompletionCall(call))) => {
                                 recorded_attempt = Some(transcript.attempt_seq);
-                                let tokens = compaction_hook.record_usage(call.usage);
+                                let tokens = context_handoff_hook.record_usage(call.usage);
                                 if tokens == 0 {
                                     continue;
                                 }
@@ -368,8 +368,8 @@ where
                                 );
                             }
                             Some(Ok(rig::agent::MultiTurnStreamItem::ToolExecutionCommitted { .. })) => {
-                                if compaction_hook.is_writing() {
-                                    let Some(summary) = compaction_hook.take_summary() else {
+                                if context_handoff_hook.is_writing() {
+                                    let Some(summary) = context_handoff_hook.take_summary() else {
                                         break 'agent_run AgentProviderResult::Failed {
                                             text: streamed_text,
                                             error: anyhow!("Context handoff failed: no valid document was submitted."),
@@ -392,7 +392,7 @@ where
                                         Some(pending) => { history.push(handoff); pending }
                                         None => handoff,
                                     };
-                                    compaction_hook.restart();
+                                    context_handoff_hook.restart();
                                     final_text.clear();
                                     streamed_text.clear();
                                     completion_error = None;
@@ -410,15 +410,15 @@ where
                             | Some(Ok(rig::agent::MultiTurnStreamItem::ModelTurnRetried { .. }))
                             | Some(Ok(rig::agent::MultiTurnStreamItem::StreamUserItem(_))) => {}
                             Some(Err(error)) => {
-                                if let Some(handoff) = compaction_hook.take_request() {
+                                if let Some(handoff) = context_handoff_hook.take_request() {
                                     history = handoff.history;
                                     prompt = Message::user(HANDOFF_PROMPT);
                                     deferred_prompt = handoff.deferred_prompt;
                                     before_prompt = handoff.before_prompt;
-                                    compaction_hook.start_handoff();
+                                    context_handoff_hook.start_handoff();
                                     continue 'generations;
                                 }
-                                if compaction_hook.is_writing() {
+                                if context_handoff_hook.is_writing() {
                                     break 'agent_run AgentProviderResult::Failed {
                                         text: streamed_text,
                                         error: anyhow!("Context handoff failed. Retry to continue the conversation."),
@@ -444,7 +444,7 @@ where
                                 break 'agent_run result;
                             }
                             None => {
-                                if compaction_hook.is_writing() {
+                                if context_handoff_hook.is_writing() {
                                     break 'agent_run AgentProviderResult::Failed {
                                         text: streamed_text,
                                         error: anyhow!("Context handoff ended without submitting a document."),

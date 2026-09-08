@@ -17,7 +17,7 @@ const MAX_COMPLETION_CALLS: usize = 1_000;
 
 pub(crate) fn context_summary_text(summary: &str) -> String {
     format!(
-        "The conversation context was automatically compacted. Treat this summary as authoritative, continue the current task from this state, and do not redo completed work.\n\n<conversation_summary>\n{summary}\n</conversation_summary>"
+        "A handoff document was created automatically from the conversation context. Treat this document as authoritative, continue the current task from this state, and do not redo completed work.\n\n<handoff_document>\n{summary}\n</handoff_document>"
     )
 }
 
@@ -28,7 +28,7 @@ pub(crate) struct HandoffRequest {
 }
 
 #[derive(Default)]
-struct CompactionState {
+struct HandoffState {
     context_tokens: u64,
     first_call: bool,
     defer_prompt: bool,
@@ -38,7 +38,7 @@ struct CompactionState {
     calls: usize,
 }
 
-impl CompactionState {
+impl HandoffState {
     fn prepare(&mut self, event: CompletionCallEvent<'_>, limit: u64) -> CompletionCallAction {
         if self.writing {
             return CompletionCallAction::patch(
@@ -84,16 +84,16 @@ impl CompactionState {
 }
 
 #[derive(Clone)]
-pub(crate) struct ContextCompactionHook {
+pub(crate) struct ContextHandoffHook {
     token_limit: u64,
-    state: Arc<Mutex<CompactionState>>,
+    state: Arc<Mutex<HandoffState>>,
 }
 
-impl ContextCompactionHook {
+impl ContextHandoffHook {
     pub(crate) fn new(token_limit: u64, context_tokens: u64, defer_prompt: bool) -> Self {
         Self {
             token_limit,
-            state: Arc::new(Mutex::new(CompactionState {
+            state: Arc::new(Mutex::new(HandoffState {
                 context_tokens,
                 first_call: true,
                 defer_prompt,
@@ -133,7 +133,7 @@ impl ContextCompactionHook {
     pub(crate) fn restart(&self) {
         if let Ok(mut state) = self.state.lock() {
             let calls = state.calls;
-            *state = CompactionState {
+            *state = HandoffState {
                 calls,
                 ..Default::default()
             };
@@ -151,7 +151,7 @@ impl ContextCompactionHook {
     }
 }
 
-impl AgentHook for ContextCompactionHook {
+impl AgentHook for ContextHandoffHook {
     async fn on_completion_call(
         &self,
         _context: &HookContext,
@@ -217,7 +217,7 @@ fn context_tokens(usage: Usage) -> u64 {
 
 #[derive(Clone)]
 pub(crate) struct HandoffTool {
-    state: Arc<Mutex<CompactionState>>,
+    state: Arc<Mutex<HandoffState>>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -254,7 +254,7 @@ impl Tool for HandoffTool {
 }
 
 #[cfg(test)]
-#[path = "compaction_integration_tests.rs"]
+#[path = "context_handoff_integration_tests.rs"]
 mod integration_tests;
 
 #[cfg(test)]
@@ -277,7 +277,7 @@ mod tests {
 
     #[test]
     fn missing_usage_preserves_the_last_observation_until_restart() {
-        let hook = ContextCompactionHook::new(100, 120, true);
+        let hook = ContextHandoffHook::new(100, 120, true);
         assert_eq!(hook.record_usage(Usage::default()), 0);
         assert_eq!(hook.state.lock().unwrap().context_tokens, 120);
         hook.restart();
@@ -288,7 +288,7 @@ mod tests {
     fn defers_the_new_prompt_without_putting_it_in_the_handoff_history() {
         let history = vec![Message::user("old work")];
         let prompt = Message::user("new task");
-        let mut state = CompactionState {
+        let mut state = HandoffState {
             context_tokens: 100,
             first_call: true,
             defer_prompt: true,
@@ -315,7 +315,7 @@ mod tests {
     fn mid_run_handoff_includes_the_pending_tool_result() {
         let history = vec![Message::user("old work")];
         let prompt = Message::user("tool result");
-        let mut state = CompactionState {
+        let mut state = HandoffState {
             context_tokens: 100,
             ..Default::default()
         };
@@ -337,7 +337,7 @@ mod tests {
     fn does_not_estimate_tokens_from_large_messages() {
         let history = vec![Message::user("x".repeat(100_000))];
         let prompt = Message::user("next");
-        let mut state = CompactionState::default();
+        let mut state = HandoffState::default();
         assert!(matches!(
             state.prepare(
                 CompletionCallEvent {
@@ -354,7 +354,7 @@ mod tests {
 
     #[test]
     fn handoff_submission_requires_a_pending_request_and_nonempty_document() {
-        let mut state = CompactionState::default();
+        let mut state = HandoffState::default();
         assert!(state.submit("handoff".into()).is_err());
         state.writing = true;
         assert!(state.submit("  ".into()).is_err());

@@ -545,7 +545,7 @@
 			inputTokens: currentActiveThread?.contextTokens ?? 0,
 			totalTokensProcessed: currentActiveThread ? currentActiveThread.totalTokensProcessed : 0,
 			contextWindowTokens: model?.contextWindowTokens ?? 0,
-			autoCompactTokenLimit: model?.autoCompactTokenLimit ?? 0
+			autoHandoffTokenLimit: model?.autoHandoffTokenLimit ?? 0
 		};
 	});
 	const currentLifecycle = $derived(dataForThread(lifecycleQuery.data, currentThreadId));

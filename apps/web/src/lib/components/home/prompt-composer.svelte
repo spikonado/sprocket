@@ -60,7 +60,7 @@
 			inputTokens: number;
 			totalTokensProcessed: number;
 			contextWindowTokens: number;
-			autoCompactTokenLimit: number;
+			autoHandoffTokenLimit: number;
 		};
 		/** Project-path skill loader; cache invalidates when `workspacePath` changes. */
 		projectSkills?: {
@@ -216,9 +216,9 @@
 				)
 			: 0
 	);
-	const contextCompactPercent = $derived(
+	const contextHandoffPercent = $derived(
 		contextUsage.contextWindowTokens > 0
-			? Math.round((contextUsage.autoCompactTokenLimit / contextUsage.contextWindowTokens) * 100)
+			? Math.round((contextUsage.autoHandoffTokenLimit / contextUsage.contextWindowTokens) * 100)
 			: 0
 	);
 	const dollarQuery = $derived(getActiveDollarQuery(prompt, caretPosition));
@@ -834,8 +834,8 @@
 										<span>{formatTokens(contextUsage.totalTokensProcessed)}</span>
 									</div>
 									<p class="text-muted-foreground mt-4 text-[12px] leading-5">
-										Sprocket automatically compacts context at about {contextCompactPercent}% so
-										long-running work can continue.
+										At about {contextHandoffPercent}% of the context window, Sprocket writes a
+										handoff document and continues the work in a fresh context.
 									</p>
 								</div>
 							</div>

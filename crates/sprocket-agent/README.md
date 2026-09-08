@@ -94,9 +94,9 @@ flow back through the executor job. Released agents that still call the public
 ## Main areas
 
 - `run.rs`: ownership, preparation, and finalization.
-- `catalog.rs`: context window and auto-compact limits from `GET /api/v1/models`.
+- `catalog.rs`: context window and automatic context handoff limits from `GET /api/v1/models`.
 - `provider.rs`: gateway completion loop, transcript sink, and provider outcomes.
-- `compaction.rs`: hidden in-run `handoff_context` turn followed by a fresh agent context. Provider usage only.
+- `context_handoff.rs`: hidden in-run `handoff_context` turn followed by a fresh agent context. Provider usage only.
 - `tools/`: model tools and durable job coordination.
 - `convex.rs`: run-control communication.
 - `types.rs`: history and context wire types.

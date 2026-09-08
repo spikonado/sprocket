@@ -49,7 +49,8 @@ struct GatewayCatalogModel {
     id: String,
     supports_images: bool,
     context_window_tokens: u64,
-    auto_compact_token_limit: u64,
+    #[serde(rename = "autoCompactTokenLimit")]
+    auto_handoff_token_limit: u64,
 }
 
 fn select_catalog_model(
@@ -71,7 +72,7 @@ fn select_catalog_model(
     Ok(CatalogModelCapabilities {
         context_budget: ContextBudget {
             context_window_tokens: model.context_window_tokens,
-            auto_compact_token_limit: model.auto_compact_token_limit,
+            auto_handoff_token_limit: model.auto_handoff_token_limit,
         },
         supports_images: model.supports_images,
     })
@@ -132,7 +133,7 @@ mod tests {
             select_catalog_model(catalog_payload(true), "gpt-5.6-sol").expect("vision model");
         assert!(vision.supports_images);
         assert_eq!(vision.context_budget.context_window_tokens, 272000);
-        assert_eq!(vision.context_budget.auto_compact_token_limit, 258000);
+        assert_eq!(vision.context_budget.auto_handoff_token_limit, 258000);
 
         let text = select_catalog_model(catalog_payload(true), "deepseek-v4-pro-0813")
             .expect("text model");

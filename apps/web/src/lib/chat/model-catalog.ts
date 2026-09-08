@@ -196,7 +196,7 @@ function catalogFromGatewayPayload(
 			provider: model.provider,
 			supportsImages: model.supportsImages,
 			contextWindowTokens: model.contextWindowTokens,
-			autoCompactTokenLimit: model.autoCompactTokenLimit,
+			autoHandoffTokenLimit: model.autoCompactTokenLimit,
 			reasoningEfforts: model.reasoningEfforts,
 			defaultReasoningEffort: model.defaultReasoningEffort,
 			serviceTiers: model.serviceTiers,

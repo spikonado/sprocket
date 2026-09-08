@@ -162,6 +162,7 @@ export default defineSchema({
 		completionTransport: v.optional(v.union(v.literal('convex-action'), v.literal('gateway'))),
 		gatewayProtocolVersion: v.optional(v.number()),
 		agentVersion: v.optional(v.string()),
+		// Historical catalog snapshot. Current inserts leave these unset.
 		contextWindowTokens: v.optional(v.number()),
 		autoCompactTokenLimit: v.optional(v.number()),
 		startedAt: v.number(),
