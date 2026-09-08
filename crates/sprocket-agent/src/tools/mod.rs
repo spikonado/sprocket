@@ -228,45 +228,6 @@ mod tests {
         assert!(!serialized.contains("imageJson"));
     }
 
-    #[tokio::test]
-    async fn unavailable_web_images_fall_back_to_text_without_refetching() {
-        use crate::types::{
-            AgentHistoryContent, AgentHistoryMessage, AgentHistoryRole, AgentHistoryToolResultItem,
-        };
-        for name in ["scrape_url", "screenshot_url"] {
-            for supports_images in [true, false] {
-                let part = serde_json::from_value(serde_json::json!({
-                "number": 1, "sourceKey": "tool:1", "kind": "tool", "runId": "run",
-                "tool": {"callId": "call", "name": name, "status": "completed", "output": {
-                    "outputType": "image", "url": "http://127.0.0.1:1/image", "mediaType": "image/png",
-                    "byteSize": 1, "width": 1, "height": 1
-                }}
-            }))
-            .unwrap();
-                let mut history = vec![AgentHistoryMessage {
-                    role: AgentHistoryRole::User,
-                    assistant_id: None,
-                    contents: vec![AgentHistoryContent::ToolResult {
-                        id: "call".into(),
-                        call_id: Some("call".into()),
-                        items: vec![AgentHistoryToolResultItem::Text {
-                            text: "old output".into(),
-                        }],
-                    }],
-                }];
-                hydrate_tool_history(&mut history, &[part], supports_images).await;
-                let serialized = serde_json::to_string(&history).unwrap();
-                if supports_images {
-                    assert!(serialized.contains("not available in the local cache"));
-                } else {
-                    assert!(serialized.contains("Image omitted"));
-                }
-                assert!(!serialized.contains(&format!("Use {name} again")));
-                assert!(!serialized.contains("imageJson"));
-            }
-        }
-    }
-
     #[test]
     fn tool_error_includes_anyhow_context_chain() {
         let error =

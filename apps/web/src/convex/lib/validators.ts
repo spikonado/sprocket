@@ -281,7 +281,7 @@ export const vScreenshotUrlTransport = v.object({
 export const vWebImageResult = v.object({
 	outputType: v.literal('image'),
 	url: v.string(),
-	path: v.optional(v.string()),
+	path: v.string(),
 	mediaType: v.string(),
 	byteSize: v.number(),
 	width: v.number(),

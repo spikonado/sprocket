@@ -446,15 +446,6 @@ route is a one-shot command-time relay, not a replacement subscription. Move
 lifecycle reads behind Rust only if Rust gains an equivalent ordered reactive
 stream.
 
-## Historical web image results
-
-Web image results now store a local file path alongside their metadata. The
-path remains optional in Convex for stored results from before local image
-persistence. Those images cannot be recovered from metadata, so history reports
-them as unavailable without fetching the URL again. Make the path required
-once no stored web image results lack it. There are no image bytes to migrate
-for those records.
-
 ## Removal checklist
 
 1. Confirm the gate with prod numbers (schema) or an explicit decision that

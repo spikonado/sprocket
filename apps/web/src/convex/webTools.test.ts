@@ -729,6 +729,7 @@ describe('scrape errors', () => {
 const screenshotImageResult = {
 	outputType: 'image' as const,
 	url: PAGE_URL,
+	path: '/threads/thread/parse_file/screenshot.png',
 	mediaType: 'image/png',
 	byteSize: 80,
 	width: 1280,
@@ -1099,7 +1100,7 @@ describe('screenshotForTool', () => {
 		}
 	});
 
-	it('stores screenshot image metadata with the page URL and without file bytes', async () => {
+	it('stores a local screenshot reference with the page URL and without file bytes', async () => {
 		const { t, asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
 			executionSecret: 'saved-screenshot-secret'
 		});
@@ -1112,7 +1113,6 @@ describe('screenshotForTool', () => {
 		});
 		const job = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
 		expect(job?.result).toEqual(screenshotImageResult);
-		expect(job?.result).not.toHaveProperty('path');
 		expect(job?.result).not.toHaveProperty('screenshotUrl');
 		expect(await storageBlobs(t)).toEqual([]);
 	});
