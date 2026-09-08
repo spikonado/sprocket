@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -11,6 +10,7 @@ const MAX_SCRAPE_BYTES: u64 = 64 * 1024 * 1024;
 pub(super) async fn localize_scrape(
     mut result: Value,
     cancellation: &WorkspaceCancellation,
+    saved_file: &mut Option<tempfile::NamedTempFile>,
 ) -> anyhow::Result<Value> {
     let fields = result.as_object_mut().context("invalid scrape response")?;
     if let Some(download) = fields.remove("markdownUrl") {
@@ -23,11 +23,15 @@ pub(super) async fn localize_scrape(
             .prefix("sprocket-scrape-")
             .suffix(".md")
             .tempfile()?;
-        let path = download_scrape(url, temp, cancellation).await?;
+        let temp = download_scrape(url, temp, cancellation).await?;
         fields.insert(
             "markdown".into(),
-            Value::String(format!("The scrape was saved to {}.", path.display())),
+            Value::String(format!(
+                "The scrape was saved to {}.",
+                temp.path().display()
+            )),
         );
+        *saved_file = Some(temp);
     } else {
         anyhow::ensure!(
             fields.get("markdown").is_some_and(Value::is_string),
@@ -42,7 +46,7 @@ async fn download_scrape(
     url: reqwest::Url,
     temp: tempfile::NamedTempFile,
     cancellation: &WorkspaceCancellation,
-) -> anyhow::Result<PathBuf> {
+) -> anyhow::Result<tempfile::NamedTempFile> {
     let transfer = async {
         let client = reqwest::Client::builder()
             .no_proxy()
@@ -74,9 +78,7 @@ async fn download_scrape(
         _ = cancellation.cancelled() => return Err(WorkspaceOperationCancelled.into()),
         result = transfer => result.context("failed to save the scrape")?,
     }
-    let (file, path) = temp.keep().context("failed to keep the saved scrape")?;
-    drop(file);
-    Ok(path)
+    Ok(temp)
 }
 
 #[cfg(test)]
@@ -106,6 +108,7 @@ mod tests {
         let result = localize_scrape(
             json!({"url": "https://example.com", "markdown": "# Hello", "truncated": false}),
             &WorkspaceCancellation::new(),
+            &mut None,
         )
         .await
         .unwrap();
@@ -119,9 +122,11 @@ mod tests {
     async fn full_unicode_scrape_is_saved_and_only_the_notice_is_returned() {
         let text = "é\n".repeat(40_001);
         let url = serve(&text, text.len()).await;
+        let mut saved_file = None;
         let result = localize_scrape(
             json!({"url": "https://example.com", "markdownUrl": url.as_str()}),
             &WorkspaceCancellation::new(),
+            &mut saved_file,
         )
         .await
         .unwrap();
@@ -140,6 +145,19 @@ mod tests {
         assert!(result.get("markdownUrl").is_none());
         assert!(result.get("truncated").is_none());
         tokio::fs::remove_file(path).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn successful_download_is_removed_unless_completion_is_accepted() {
+        let url = serve("scrape", 6).await;
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        let path = temp.path().to_path_buf();
+        let file = download_scrape(url, temp, &WorkspaceCancellation::new())
+            .await
+            .unwrap();
+        assert!(path.exists());
+        drop(file);
+        assert!(!path.exists());
     }
 
     #[tokio::test]

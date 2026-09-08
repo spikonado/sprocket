@@ -112,6 +112,8 @@ impl rig::tool::Tool for ScrapeUrlTool {
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         let mut image_output = None;
         let image_result = &mut image_output;
+        let mut scrape_file = None;
+        let saved_file = &mut scrape_file;
         let result = execute_tool_job_with_id(
             &self.0.runtime,
             &self.0.run_id,
@@ -135,10 +137,13 @@ impl rig::tool::Tool for ScrapeUrlTool {
                     ("jobId".to_string(), job_id.into()),
                 ]);
                 let result = run_convex_tool_action(&self.0.runtime, cancellation.clone(), "webTools:scrapeForTool", action_args).await?;
-                super::scrape_files::localize_scrape(result, &cancellation).await.map_err(tool_error)
+                super::scrape_files::localize_scrape(result, &cancellation, saved_file).await.map_err(tool_error)
             },
         )
         .await?;
+        if let Some(file) = scrape_file.as_mut() {
+            file.disable_cleanup(true);
+        }
         Ok(image_output.unwrap_or_else(|| ToolOutput::json(result)))
     }
 }
