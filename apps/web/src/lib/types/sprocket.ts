@@ -248,7 +248,7 @@ export type LocalArtifact = {
 	repositoryKey: string;
 	/** Present only for thread-scoped artifacts. */
 	threadId?: string;
-	localPath: string;
+	localPath?: string;
 	content: string;
 	type: ArtifactType;
 	title: string;

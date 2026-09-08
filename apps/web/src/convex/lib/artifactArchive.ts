@@ -28,17 +28,17 @@ const vLegacyArtifactDocument = v.object({
 	updatedAt: v.number(),
 	scope: v.optional(vArtifactScope),
 	repositoryKey: v.optional(v.string()),
-	localPath: v.optional(v.string()),
+	registrationId: v.optional(v.string()),
 	content: v.optional(v.string()),
 	revision: v.optional(v.number())
 });
 
-const vFileBackedArtifactDocument = v.object({
+const vActiveArtifactDocument = v.object({
 	userId: v.string(),
 	scope: vArtifactScope,
 	repositoryKey: v.string(),
 	threadId: v.optional(v.id('threadRecords')),
-	localPath: v.string(),
+	registrationId: v.string(),
 	content: v.string(),
 	type: vArtifactType,
 	title: v.string(),
@@ -77,17 +77,12 @@ export const vArchivePageResult = v.object({
 export type ArchivePageResult = Infer<typeof vArchivePageResult>;
 
 export const stagingArtifactsTable = defineTable(
-	v.union(vLegacyArtifactDocument, vFileBackedArtifactDocument)
+	v.union(vLegacyArtifactDocument, vActiveArtifactDocument)
 )
 	.index('by_threadId', ['threadId'])
 	.index('by_threadId_title', ['threadId', 'title'])
-	.index('by_userId_and_threadId_and_localPath', ['userId', 'threadId', 'localPath'])
-	.index('by_userId_and_repositoryKey_and_scope_and_localPath', [
-		'userId',
-		'repositoryKey',
-		'scope',
-		'localPath'
-	]);
+	.index('by_userId_and_registrationId', ['userId', 'registrationId'])
+	.index('by_userId_and_repositoryKey_and_scope', ['userId', 'repositoryKey', 'scope']);
 
 export const artifactVersionsTable = defineTable({
 	artifactId: v.id('artifacts'),
@@ -119,16 +114,16 @@ export function asArchiveDb(db: DatabaseReader): GenericDatabaseReader<ArchiveDa
 export function asArchiveDb(
 	db: DatabaseWriter | DatabaseReader
 ): GenericDatabaseWriter<ArchiveDataModel> | GenericDatabaseReader<ArchiveDataModel> {
-	// SAFETY: staging overlay (and overlay tests) union leftover/file-backed
+	// SAFETY: staging overlay (and overlay tests) union legacy/active
 	// `artifacts` and add `artifactVersions`. Generated DataModel is the
 	// post-migration schema. This is the only conversion from DatabaseWriter/Reader.
 	return db as GenericDatabaseWriter<ArchiveDataModel>;
 }
 
-function isFileBackedArtifact(artifact: ArchiveArtifact): boolean {
+function isActiveArtifact(artifact: ArchiveArtifact): boolean {
 	return (
 		artifact.scope !== undefined &&
-		artifact.localPath !== undefined &&
+		artifact.registrationId !== undefined &&
 		artifact.repositoryKey !== undefined &&
 		artifact.revision !== undefined &&
 		artifact.content !== undefined
@@ -250,7 +245,7 @@ export async function runArchivePage(
 	let incomplete = false;
 
 	for (const artifact of page.page) {
-		if (isFileBackedArtifact(artifact)) continue;
+		if (isActiveArtifact(artifact)) continue;
 		if (budget < 1) {
 			incomplete = true;
 			break;
@@ -289,7 +284,7 @@ export async function leftoverLegacyPresent(db: ArchiveReader, cursor: string | 
 		...paginationBound
 	});
 	return {
-		leftover: page.page.some((artifact) => !isFileBackedArtifact(artifact)),
+		leftover: page.page.some((artifact) => !isActiveArtifact(artifact)),
 		isDone: page.isDone,
 		continueCursor: page.isDone ? null : page.continueCursor
 	};

@@ -97,14 +97,14 @@ async function insertLeftover(
 	});
 }
 
-async function insertFileBacked(t: ArchiveTest, threadId: ThreadSeed['threadId']) {
+async function insertActiveArtifact(t: ArchiveTest, threadId: ThreadSeed['threadId']) {
 	return await t.run(async (ctx) => {
 		return await ctx.db.insert('artifacts', {
 			userId: 'user_alice',
 			scope: 'thread',
 			repositoryKey: 'alpha',
 			threadId,
-			localPath: 'notes.md',
+			registrationId: 'registration',
 			content: '# hello',
 			type: 'markdown',
 			title: 'notes.md',
@@ -167,7 +167,7 @@ describe('artifactArchive', () => {
 	it('checks later pages for legacy metadata without exceeding read limits', async () => {
 		const t = initArchiveTest();
 		const { threadId, runId } = await seedThread(t);
-		for (let i = 0; i < 9; i += 1) await insertFileBacked(t, threadId);
+		for (let i = 0; i < 9; i += 1) await insertActiveArtifact(t, threadId);
 		await insertLeftover(t, { threadId, runId });
 		const first = await t.query(archiveApi().leftoverLegacyPresent, {});
 		expect(first).toMatchObject({ leftover: false, isDone: false });
@@ -176,7 +176,7 @@ describe('artifactArchive', () => {
 		).toMatchObject({ leftover: true });
 	});
 
-	it('archives leftover versions, keeps file-backed docs, and is idle on rerun', async () => {
+	it('archives leftover versions, keeps active artifacts, and is idle on rerun', async () => {
 		const t = initArchiveTest();
 		const { threadId, runId } = await seedThread(t);
 		const leftoverId = await insertLeftover(t, { threadId, runId, currentVersion: 2 });
@@ -189,7 +189,7 @@ describe('artifactArchive', () => {
 			}),
 			await insertVersion(t, { artifactId: leftoverId, version: 2, content: '# v2', createdAt: 12 })
 		];
-		const fileBackedId = await insertFileBacked(t, threadId);
+		const activeId = await insertActiveArtifact(t, threadId);
 
 		expect(await t.query(archiveApi().leftoverLegacyPresent, {})).toMatchObject({ leftover: true });
 		const result = await archiveUntilDone(t);
@@ -197,7 +197,7 @@ describe('artifactArchive', () => {
 
 		const after = await tableSnapshot(t);
 		expect(after.versions).toEqual([]);
-		expect(after.artifacts.map((row) => row._id)).toEqual([fileBackedId]);
+		expect(after.artifacts.map((row) => row._id)).toEqual([activeId]);
 		expect(after.archived).toHaveLength(2);
 		expect(after.archived.map((row) => row.legacyArtifactId)).toEqual([leftoverId, leftoverId]);
 		expect(after.archived.map((row) => row.legacyVersionId).sort()).toEqual([...versionIds].sort());
@@ -242,10 +242,10 @@ describe('artifactArchive', () => {
 		expect(after.artifacts).toEqual([]);
 	});
 
-	it('advances past full file-backed pages and archives large versions within transaction limits', async () => {
+	it('advances past full active-artifact pages and archives large versions within transaction limits', async () => {
 		const t = initArchiveTest();
 		const { threadId, runId } = await seedThread(t);
-		for (let i = 0; i < 10; i += 1) await insertFileBacked(t, threadId);
+		for (let i = 0; i < 10; i += 1) await insertActiveArtifact(t, threadId);
 		const leftoverId = await insertLeftover(t, { threadId, runId, currentVersion: 9 });
 		for (let version = 1; version <= 9; version += 1) {
 			await insertVersion(t, { artifactId: leftoverId, version, content: 'x'.repeat(500_000) });
@@ -290,13 +290,13 @@ describe('artifactArchive', () => {
 		await t.run(async (ctx) => {
 			await ctx.db.delete('artifacts', leftoverId);
 		});
-		const fileBackedId = await insertFileBacked(t, threadId);
+		const activeId = await insertActiveArtifact(t, threadId);
 
 		const result = await archiveUntilDone(t);
 		expect(result).toMatchObject({ isDone: true, archivedVersions: 1, deletedArtifacts: 0 });
 		const after = await tableSnapshot(t);
 		expect(after.versions).toEqual([]);
-		expect(after.artifacts.map((row) => row._id)).toEqual([fileBackedId]);
+		expect(after.artifacts.map((row) => row._id)).toEqual([activeId]);
 		expect(after.archived).toEqual([
 			expect.objectContaining({
 				legacyArtifactId: leftoverId,

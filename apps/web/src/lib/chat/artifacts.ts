@@ -11,7 +11,7 @@ export type ArtifactEntry = {
 	title: string;
 	artifactType: ArtifactType;
 	content: string;
-	localPath: string;
+	localPath?: string;
 	scope: ArtifactScope;
 	localError?: string;
 };
@@ -45,7 +45,7 @@ export type ArtifactRevision = {
 	/** Local file body; compared so edits are visible before cloud ack. */
 	content: string;
 	/** A retargeted path counts as a change even when content is identical. */
-	localPath: string;
+	localPath?: string;
 };
 
 /**
@@ -148,4 +148,19 @@ export function applyArtifactsWatchEvent(event: ArtifactsWatchEvent): ArtifactWa
 
 export function markArtifactWatchStale(previous: ArtifactWatchState): ArtifactWatchState {
 	return { ...previous, stale: true };
+}
+
+export function mergeArtifactSources(
+	cloud: ArtifactWatchState,
+	local: ArtifactWatchState | null
+): ArtifactWatchState {
+	const artifacts = new Map(cloud.artifacts.map((artifact) => [artifact._id, artifact]));
+	for (const artifact of local?.artifacts ?? []) {
+		if (artifact.localPath || !artifacts.has(artifact._id)) artifacts.set(artifact._id, artifact);
+	}
+	return {
+		artifacts: [...artifacts.values()],
+		stale: cloud.stale && (!local || local.stale),
+		error: local?.error ?? cloud.error
+	};
 }

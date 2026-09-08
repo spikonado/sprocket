@@ -305,7 +305,7 @@ export default defineSchema({
 		repositoryKey: v.string(),
 		// Present only for thread-scoped artifacts.
 		threadId: v.optional(v.id('threadRecords')),
-		localPath: v.string(),
+		registrationId: v.string(),
 		content: v.string(),
 		type: vArtifactType,
 		title: v.string(),
@@ -313,13 +313,8 @@ export default defineSchema({
 		createdAt: v.number(),
 		updatedAt: v.number()
 	})
-		.index('by_userId_and_threadId_and_localPath', ['userId', 'threadId', 'localPath'])
-		.index('by_userId_and_repositoryKey_and_scope_and_localPath', [
-			'userId',
-			'repositoryKey',
-			'scope',
-			'localPath'
-		]),
+		.index('by_userId_and_registrationId', ['userId', 'registrationId'])
+		.index('by_userId_and_repositoryKey_and_scope', ['userId', 'repositoryKey', 'scope']),
 	mandates: defineTable({
 		userId: v.string(),
 		// Present only after the owner approves in Prava.

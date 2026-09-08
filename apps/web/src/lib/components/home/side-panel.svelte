@@ -202,7 +202,7 @@
 										</span>
 									</span>
 									<span class="text-muted-foreground min-w-0 truncate text-[11px]">
-										{artifact.localPath}
+										{artifact.localPath ?? 'Stored in cloud'}
 									</span>
 									{#if artifact.localError}
 										<span class="text-[11px] text-amber-800 dark:text-amber-200">

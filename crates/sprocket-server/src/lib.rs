@@ -124,6 +124,7 @@ impl AppState {
         let artifact_watchers = ArtifactWatchers::new(
             "https://example.convex.cloud".to_string(),
             Arc::clone(&native_auth),
+            data_dir.join("artifact-bindings"),
         );
         let thread_cache = thread_sync::ThreadCacheSync::new(
             "https://example.convex.cloud".to_string(),
@@ -201,8 +202,11 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         Arc::clone(&transcript),
         Arc::clone(&native_auth),
     );
-    let artifact_watchers =
-        ArtifactWatchers::new(convex_deployment_url.clone(), Arc::clone(&native_auth));
+    let artifact_watchers = ArtifactWatchers::new(
+        convex_deployment_url.clone(),
+        Arc::clone(&native_auth),
+        data_dir.join("artifact-bindings"),
+    );
     let thread_cache = thread_sync::ThreadCacheSync::new(
         convex_deployment_url.clone(),
         thread_cache::ThreadCacheStore::new(data_dir.clone()),

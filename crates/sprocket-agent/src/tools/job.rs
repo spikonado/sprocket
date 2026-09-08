@@ -99,9 +99,15 @@ pub(super) async fn begin_executor_job(
     if let Some(call_id) = tool_call_tracker.claim(kind, payload) {
         begin_args.insert("callId".to_string(), call_id.into());
     }
+    let mut stored_payload = payload.clone();
+    if matches!(kind, "add_artifact" | "edit_artifact" | "save_artifact") {
+        if let Some(fields) = stored_payload.as_object_mut() {
+            fields.remove("path");
+        }
+    }
     begin_args.insert(
         "payload".to_string(),
-        Value::try_from(payload.clone()).map_err(tool_error)?,
+        Value::try_from(stored_payload).map_err(tool_error)?,
     );
     let begin_result: serde_json::Value = runtime
         .mutation_json("agentRuntime:beginToolJob", begin_args)

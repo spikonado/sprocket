@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use sprocket_workspace::{CommandSessionManager, WorkspaceSkill};
 
-use self::artifacts::{AddArtifactTool, EditArtifactTool, ListArtifactsTool};
+use self::artifacts::{AddArtifactTool, EditArtifactTool, ListArtifactsTool, SaveArtifactTool};
 use self::browser::{BrowserActTool, BrowserExtractTool, BrowserObserveTool};
 use self::commands::{ExecCommandTool, WriteStdinTool};
 use self::context::AgentToolContext;
@@ -65,6 +65,7 @@ pub(crate) struct AgentToolSet {
     pub(crate) add_artifact: AddArtifactTool,
     pub(crate) list_artifacts: ListArtifactsTool,
     pub(crate) edit_artifact: EditArtifactTool,
+    pub(crate) save_artifact: SaveArtifactTool,
     pub(crate) browser_observe: BrowserObserveTool,
     pub(crate) browser_act: BrowserActTool,
     pub(crate) browser_extract: BrowserExtractTool,
@@ -140,6 +141,8 @@ pub(crate) fn agent_tools(
     claim_id: String,
     workspace_root: PathBuf,
     parse_file_cache_dir: PathBuf,
+    artifact_bindings: crate::artifact_bindings::ArtifactBindings,
+    thread_id: String,
     supports_images: bool,
     tool_call_tracker: ToolCallTracker,
     skills: Arc<[WorkspaceSkill]>,
@@ -151,6 +154,8 @@ pub(crate) fn agent_tools(
         claim_id,
         workspace_root,
         parse_file_cache_dir,
+        artifact_bindings,
+        thread_id,
         supports_images,
         tool_call_tracker,
         command_sessions.clone(),
@@ -172,6 +177,7 @@ pub(crate) fn agent_tools(
         add_artifact: AddArtifactTool(context.clone()),
         list_artifacts: ListArtifactsTool(context.clone()),
         edit_artifact: EditArtifactTool(context.clone()),
+        save_artifact: SaveArtifactTool(context.clone()),
         browser_observe: BrowserObserveTool(context.clone()),
         browser_act: BrowserActTool(context.clone()),
         browser_extract: BrowserExtractTool(context.clone()),

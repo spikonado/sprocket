@@ -71,17 +71,20 @@ impl UserConvexClient {
         self.client.subscribe("threads:listRecent", args).await
     }
 
-    pub async fn subscribe_artifacts(
+    pub async fn artifact_revision(
         &self,
         repository_key: &str,
         thread_id: Option<&str>,
-    ) -> anyhow::Result<QuerySubscription> {
-        self.client
-            .subscribe(
+    ) -> anyhow::Result<u64> {
+        let revision: f64 = tokio::time::timeout(
+            Duration::from_secs(10),
+            self.query_json(
                 "artifacts:getArtifactState",
                 artifacts_list_args(repository_key, thread_id),
-            )
-            .await
+            ),
+        )
+        .await??;
+        Ok(revision as u64)
     }
 
     pub(crate) async fn list_artifacts(
@@ -121,7 +124,6 @@ impl UserConvexClient {
         repository_key: &str,
         thread_id: Option<&str>,
         expected_revision: u64,
-        local_path: &str,
         content: &str,
     ) -> anyhow::Result<bool> {
         let mut args = artifacts_list_args(repository_key, thread_id);
@@ -130,7 +132,6 @@ impl UserConvexClient {
             "expectedRevision".to_string(),
             Value::Float64(expected_revision as f64),
         );
-        args.insert("localPath".to_string(), local_path.to_string().into());
         args.insert("content".to_string(), content.to_string().into());
         self.mutation_json("artifacts:syncArtifact", args).await
     }

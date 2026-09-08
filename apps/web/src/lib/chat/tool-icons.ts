@@ -11,6 +11,7 @@ import {
 	ListChecks,
 	NotebookPen,
 	ScrollText,
+	Save,
 	Search,
 	SquareTerminal,
 	Terminal,
@@ -33,6 +34,8 @@ export function toolKindIcon(kind: string): LucideIcon {
 		case 'add_artifact':
 		case 'create_artifact':
 			return FileCode;
+		case 'save_artifact':
+			return Save;
 		case 'exec_command':
 			return Terminal;
 		case 'get_workspace_instructions':

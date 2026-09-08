@@ -170,7 +170,7 @@ const localArtifactSchema = z.object({
 	scope: artifactScopeSchema,
 	repositoryKey: z.string(),
 	threadId: z.string().optional(),
-	localPath: z.string(),
+	localPath: z.string().optional(),
 	content: z.string(),
 	type: z.enum(['markdown', 'html', 'react']),
 	title: z.string(),

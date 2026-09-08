@@ -4,7 +4,8 @@
 	import { page } from '$app/state';
 	import { PanelRight } from '@lucide/svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-	import { useAuth, useMutation, useQuery } from 'convex-svelte';
+	import { useAuth, useConvexClient, useMutation, useQuery } from 'convex-svelte';
+	import { watchCloudArtifacts, type CloudArtifactScope } from '$lib/chat/cloud-artifacts';
 	import type { Doc, Id } from '$convex/_generated/dataModel';
 	import { api } from '$convex/_generated/api';
 	import {
@@ -40,7 +41,7 @@
 		artifactWatchScopeKey,
 		artifactsWatchRequest,
 		isCurrentArtifactsWatch,
-		markArtifactWatchStale,
+		mergeArtifactSources,
 		nextArtifactRevisionWatch,
 		type ArtifactRevision,
 		type ArtifactWatchState
@@ -118,6 +119,7 @@
 	} from '$lib/types/sprocket';
 
 	const convexAuth = useAuth();
+	const artifactClient = useConvexClient();
 	let sawAuthLoadingDuringRetry = $state(false);
 	const signedInUserId = $derived($convexAuthUserId);
 	const isSignedIn = $derived(Boolean(signedInUserId));
@@ -814,8 +816,13 @@
 		const workspacePath = currentWorkspacePath;
 		const userId = signedInUserId;
 		const scopeKey =
-			userId && repositoryKey && workspacePath
-				? artifactWatchScopeKey({ userId, repositoryKey, workspacePath, threadId })
+			userId && repositoryKey
+				? artifactWatchScopeKey({
+						userId,
+						repositoryKey,
+						workspacePath: workspacePath ?? '',
+						threadId
+					})
 				: null;
 		if (scopeKey === sidePanelScopeKey) return;
 		if (sidePanelScopeKey) {
@@ -829,32 +836,49 @@
 	});
 
 	$effect(() => {
-		const api = desktopApi;
+		const localApi = desktopApi;
 		const repositoryKey = currentRepositoryKey;
 		const workspacePath = currentWorkspacePath;
 		const threadId = currentThreadId;
 		const userId = signedInUserId;
+		const cloudReady = convexAuth.isAuthenticated && !convexAuth.isLoading;
 		const generation = ++artifactWatchGeneration;
 		artifactWatchHasSnapshot = false;
 		artifactWatchState = { ...EMPTY_ARTIFACT_WATCH_STATE };
 		artifactRevisionWatch = null;
-		if (!api || !repositoryKey || !workspacePath || !userId) {
+		if (!repositoryKey || !userId) {
 			artifactWatchScope = null;
 			return;
 		}
 		const scope = {
 			userId,
 			repositoryKey,
-			workspacePath,
+			workspacePath: workspacePath ?? '',
 			threadId
 		};
 		const scopeKey = artifactWatchScopeKey(scope);
 		artifactWatchScope = scopeKey;
 		const ac = new AbortController();
 		const request = artifactsWatchRequest(scope);
+		let cloud: ArtifactWatchState = { artifacts: [], stale: true, error: null };
+		let local: ArtifactWatchState | null = null;
+		const publish = () => {
+			if (ac.signal.aborted || generation !== artifactWatchGeneration) return;
+			artifactWatchState = mergeArtifactSources(cloud, local);
+			if (!artifactWatchState.stale || artifactWatchState.artifacts.length > 0)
+				artifactWatchHasSnapshot = true;
+		};
+		const cloudScope: CloudArtifactScope = { userId, repositoryKey };
+		if (threadId) cloudScope.threadId = threadId;
+		const stopCloud = cloudReady
+			? watchCloudArtifacts(artifactClient, cloudScope, (snapshot) => {
+					cloud = snapshot;
+					publish();
+				})
+			: () => {};
 		void (async () => {
-			while (!ac.signal.aborted) {
-				await api
+			while (localApi && workspacePath && !ac.signal.aborted) {
+				await localApi
 					.watchArtifacts(request, {
 						signal: ac.signal,
 						onEvent: (event) => {
@@ -869,8 +893,8 @@
 							) {
 								return;
 							}
-							artifactWatchState = applyArtifactsWatchEvent(event);
-							if (!event.stale || event.artifacts.length > 0) artifactWatchHasSnapshot = true;
+							local = applyArtifactsWatchEvent(event);
+							publish();
 						}
 					})
 					.catch(() => undefined);
@@ -879,13 +903,15 @@
 					generation === artifactWatchGeneration &&
 					artifactWatchScope === scopeKey
 				) {
-					artifactWatchState = markArtifactWatchStale(untrack(() => artifactWatchState));
+					local = null;
+					publish();
 				}
 				if (!ac.signal.aborted) await new Promise((resolve) => setTimeout(resolve, 1_000));
 			}
 		})();
 		return () => {
 			ac.abort();
+			stopCloud();
 		};
 	});
 

@@ -65,13 +65,11 @@ export const vArtifactType = v.union(v.literal('markdown'), v.literal('html'), v
 export const vArtifactScope = v.union(v.literal('thread'), v.literal('project'));
 
 export const vAddArtifactPayload = v.object({
-	scope: vArtifactScope,
-	path: v.string()
+	scope: vArtifactScope
 });
 
 export const vEditArtifactPayload = v.object({
-	artifactId: v.string(),
-	path: v.string()
+	artifactId: v.string()
 });
 
 // Stored leftover executorJobs from create_artifact / update_artifact.
@@ -357,7 +355,6 @@ export const vAskQuestionResult = v.object({
 export const vArtifactResult = v.object({
 	artifactId: v.string(),
 	revision: v.optional(v.number()),
-	localPath: v.optional(v.string()),
 	scope: v.optional(vArtifactScope),
 	title: v.optional(v.string()),
 	contentType: v.optional(vArtifactType),
@@ -372,7 +369,6 @@ export const vListArtifactsResult = v.object({
 			scope: vArtifactScope,
 			repositoryKey: v.string(),
 			threadId: v.optional(v.id('threadRecords')),
-			localPath: v.string(),
 			type: vArtifactType,
 			title: v.string(),
 			revision: v.number(),
@@ -469,7 +465,8 @@ export const vExecutorJobKind = v.union(
 	v.literal('write_stdin'),
 	v.literal('add_artifact'),
 	v.literal('list_artifacts'),
-	v.literal('edit_artifact')
+	v.literal('edit_artifact'),
+	v.literal('save_artifact')
 );
 
 export const vStoredExecutorJobKind = v.union(

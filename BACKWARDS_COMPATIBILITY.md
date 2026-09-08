@@ -18,7 +18,7 @@ data changes are required.
 
 ## Archived artifact tool history
 
-The file-backed artifact API does not support older clients. The old create and
+The cloud artifact API with local bindings does not support older clients. The old create and
 update endpoints are removed, and `beginToolJob` rejects the retired tool names.
 
 Stored executor jobs still validate the old artifact tool names, payloads, and

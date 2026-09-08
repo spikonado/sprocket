@@ -8,7 +8,7 @@ import { stageArtifactSchema } from './artifact-stage-source.mjs';
 
 const schema = `export default defineSchema({
 	oldArtifacts: defineTable(vOldArtifactDocument),
-	artifacts: defineTable({ localPath: v.string() })
+	artifacts: defineTable({ registrationId: v.string() })
 });`;
 
 test('staging overlays the table definitions without duplicating their validators', () => {

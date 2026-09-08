@@ -1,41 +1,21 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::future::{self, Future};
-use std::io::ErrorKind;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use convex::{FunctionResult, QuerySubscription};
-use futures::StreamExt;
+use futures::{StreamExt, stream};
 use serde::{Deserialize, Serialize};
+use sprocket_agent::artifact_bindings::{ArtifactBindings, content_hash};
 use sprocket_convex::deserialize_convex_u64;
-use sprocket_workspace::{ArtifactContentType, ArtifactFile, read_artifact_file};
+use sprocket_workspace::{ArtifactContentType, read_artifact_file};
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
-use tokio::time::{Instant, MissedTickBehavior, interval, sleep, timeout};
+use tokio::time::{MissedTickBehavior, interval, timeout};
 
 use crate::native_auth::NativeAuthManager;
 use crate::transcript_client::UserConvexClient;
 
-const LOCAL_POLL_INTERVAL: Duration = Duration::from_millis(500);
-const AUTH_CHECK_INTERVAL: Duration = Duration::from_secs(15);
 const NETWORK_TIMEOUT: Duration = Duration::from_secs(10);
-const RECONNECT_INTERVAL: Duration = Duration::from_secs(2);
-const SYNC_RETRY_INTERVAL: Duration = Duration::from_secs(2);
-const ATOMIC_SAVE_RETRY_DELAY: Duration = Duration::from_millis(50);
-const ATOMIC_SAVE_RETRIES: u32 = 4;
-
-type ConnectFuture = Pin<
-    Box<
-        dyn Future<Output = anyhow::Result<(UserConvexClient, QuerySubscription)>> + Send + 'static,
-    >,
->;
-type SyncFuture =
-    Pin<Box<dyn Future<Output = (ArtifactSyncRequest, Result<bool, String>)> + Send + 'static>>;
-type AuthFuture = Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>>;
-type RegistryFuture =
-    Pin<Box<dyn Future<Output = anyhow::Result<Vec<RemoteArtifact>>> + Send + 'static>>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -44,29 +24,7 @@ pub enum ArtifactScope {
     Project,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LocalArtifact {
-    #[serde(rename = "_id")]
-    pub id: String,
-    pub user_id: String,
-    pub scope: ArtifactScope,
-    pub repository_key: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub thread_id: Option<String>,
-    pub local_path: String,
-    pub content: String,
-    #[serde(rename = "type")]
-    pub content_type: ArtifactContentType,
-    pub title: String,
-    pub revision: u64,
-    pub created_at: u64,
-    pub updated_at: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub local_error: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RemoteArtifact {
     #[serde(rename = "_id")]
@@ -74,9 +32,8 @@ pub(crate) struct RemoteArtifact {
     pub user_id: String,
     pub scope: ArtifactScope,
     pub repository_key: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread_id: Option<String>,
-    pub local_path: String,
     pub content: String,
     #[serde(rename = "type")]
     pub content_type: ArtifactContentType,
@@ -87,6 +44,17 @@ pub(crate) struct RemoteArtifact {
     pub created_at: u64,
     #[serde(deserialize_with = "deserialize_convex_u64")]
     pub updated_at: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalArtifact {
+    #[serde(flatten)]
+    remote: RemoteArtifact,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    local_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    local_error: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -113,24 +81,11 @@ struct WatchSlot {
     task: JoinHandle<()>,
 }
 
-type WatchStarter = Arc<dyn Fn(WatchStart) -> JoinHandle<()> + Send + Sync>;
-
-struct WatchStart {
-    deployment_url: String,
-    native_auth: Arc<NativeAuthManager>,
-    user_id: String,
-    repository_key: String,
-    workspace_path: String,
-    thread_id: Option<String>,
-    events: broadcast::Sender<ArtifactWatchEvent>,
-    latest: Arc<Mutex<Option<ArtifactWatchEvent>>>,
-}
-
 pub struct ArtifactWatchers {
     deployment_url: String,
     native_auth: Arc<NativeAuthManager>,
+    bindings_root: PathBuf,
     inner: Mutex<HashMap<WatchKey, WatchSlot>>,
-    start: WatchStarter,
 }
 
 pub struct ArtifactWatchSession {
@@ -141,21 +96,26 @@ pub struct ArtifactWatchSession {
 }
 
 impl ArtifactWatchers {
-    pub(crate) fn new(deployment_url: String, native_auth: Arc<NativeAuthManager>) -> Arc<Self> {
-        Self::with_starter(deployment_url, native_auth, Arc::new(spawn_convex_watch))
-    }
-
-    fn with_starter(
+    pub(crate) fn new(
         deployment_url: String,
         native_auth: Arc<NativeAuthManager>,
-        start: WatchStarter,
+        bindings_root: PathBuf,
     ) -> Arc<Self> {
         Arc::new(Self {
             deployment_url,
             native_auth,
+            bindings_root,
             inner: Mutex::new(HashMap::new()),
-            start,
         })
+    }
+
+    fn bindings(&self, key: &WatchKey) -> ArtifactBindings {
+        ArtifactBindings::new(
+            &self.bindings_root,
+            &self.deployment_url,
+            &key.user_id,
+            Path::new(&key.workspace_path),
+        )
     }
 
     pub async fn open(
@@ -166,60 +126,37 @@ impl ArtifactWatchers {
         thread_id: Option<&str>,
     ) -> ArtifactWatchSession {
         let key = WatchKey {
-            user_id: user_id.to_string(),
-            repository_key: repository_key.to_string(),
-            workspace_path: workspace_path.to_string(),
+            user_id: user_id.into(),
+            repository_key: repository_key.into(),
+            workspace_path: workspace_path.into(),
             thread_id: thread_id.map(str::to_string),
         };
         let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
-        if let Some(slot) = inner.get_mut(&key) {
-            slot.refs += 1;
-            return ArtifactWatchSession {
-                watchers: Arc::clone(self),
-                key,
-                rx: slot.events.subscribe(),
-                latest: Arc::clone(&slot.latest),
-            };
-        }
-        let (events, rx) = broadcast::channel(1);
-        let latest = Arc::new(Mutex::new(None));
-        let task = (self.start)(WatchStart {
-            deployment_url: self.deployment_url.clone(),
-            native_auth: Arc::clone(&self.native_auth),
-            user_id: user_id.to_string(),
-            repository_key: repository_key.to_string(),
-            workspace_path: workspace_path.to_string(),
-            thread_id: thread_id.map(str::to_string),
-            events: events.clone(),
-            latest: Arc::clone(&latest),
-        });
-        inner.insert(
-            key.clone(),
+        let slot = inner.entry(key.clone()).or_insert_with(|| {
+            let (events, _) = broadcast::channel(1);
+            let latest = Arc::new(Mutex::new(None));
+            // The task must not own the registry: the last session drop aborts it.
+            let task = tokio::spawn(watch(
+                self.deployment_url.clone(),
+                Arc::clone(&self.native_auth),
+                key.clone(),
+                self.bindings(&key),
+                events.clone(),
+                Arc::clone(&latest),
+            ));
             WatchSlot {
-                refs: 1,
+                refs: 0,
                 events,
-                latest: Arc::clone(&latest),
+                latest,
                 task,
-            },
-        );
+            }
+        });
+        slot.refs += 1;
         ArtifactWatchSession {
             watchers: Arc::clone(self),
             key,
-            rx,
-            latest,
-        }
-    }
-
-    fn close(&self, key: &WatchKey) {
-        let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
-        let Some(slot) = inner.get_mut(key) else {
-            return;
-        };
-        slot.refs = slot.refs.saturating_sub(1);
-        if slot.refs == 0 {
-            if let Some(slot) = inner.remove(key) {
-                slot.task.abort();
-            }
+            rx: slot.events.subscribe(),
+            latest: Arc::clone(&slot.latest),
         }
     }
 
@@ -233,385 +170,253 @@ impl ArtifactWatchers {
 }
 
 impl ArtifactWatchSession {
-    pub async fn flush(&self) -> anyhow::Result<()> {
-        timeout(Duration::from_secs(30), async {
-            self.watchers
-                .native_auth
-                .require_user(&self.key.user_id)
-                .await?;
-            let client = UserConvexClient::connect_with_fetcher(
-                &self.watchers.deployment_url,
-                self.watchers
-                    .native_auth
-                    .auth_token_fetcher_for_user(self.key.user_id.clone()),
-            )
-            .await?;
-            let mut feed = ArtifactFeed::new(
-                self.key.user_id.clone(),
-                self.key.repository_key.clone(),
-                PathBuf::from(&self.key.workspace_path),
-                self.key.thread_id.clone(),
-            );
-            flush_feed(
-                &mut feed,
-                || client.list_artifacts(&self.key.repository_key, self.key.thread_id.as_deref()),
-                |request| sync_with_timeout(client.clone(), request),
-            )
-            .await
-        })
-        .await
-        .map_err(|_| anyhow::anyhow!("Artifact flush timed out; local files remain unsynced"))?
-    }
-
     pub fn receiver(&mut self) -> &mut broadcast::Receiver<ArtifactWatchEvent> {
         &mut self.rx
     }
-
     pub fn latest_event(&self) -> Option<ArtifactWatchEvent> {
         self.latest
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .clone()
     }
-}
 
-impl Drop for ArtifactWatchSession {
-    fn drop(&mut self) {
-        self.watchers.close(&self.key);
+    pub async fn flush(&self) -> anyhow::Result<()> {
+        timeout(Duration::from_secs(30), async {
+            let client = connect(
+                &self.watchers.deployment_url,
+                &self.watchers.native_auth,
+                &self.key,
+            )
+            .await?;
+            let bindings = self.watchers.bindings(&self.key);
+            let mut feed = ArtifactFeed::new(self.key.clone(), bindings.clone());
+            flush_feed(
+                &mut feed,
+                || client.list_artifacts(&self.key.repository_key, self.key.thread_id.as_deref()),
+                |request| {
+                    let client = &client;
+                    let bindings = &bindings;
+                    async move { sync(client, bindings, &request).await }
+                },
+            )
+            .await
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("Artifact flush timed out; local files remain unsynced"))?
     }
 }
 
 async fn flush_feed<L, LF, S, SF>(
     feed: &mut ArtifactFeed,
     mut load: L,
-    mut sync: S,
+    mut synchronize: S,
 ) -> anyhow::Result<()>
 where
     L: FnMut() -> LF,
-    LF: Future<Output = anyhow::Result<Vec<RemoteArtifact>>>,
-    S: FnMut(ArtifactSyncRequest) -> SF,
-    SF: Future<Output = (ArtifactSyncRequest, Result<bool, String>)>,
+    LF: std::future::Future<Output = anyhow::Result<Vec<RemoteArtifact>>>,
+    S: FnMut(SyncRequest) -> SF,
+    SF: std::future::Future<Output = anyhow::Result<()>>,
 {
     loop {
-        feed.apply_remote_registry(load().await?);
-        feed.refresh_local_files().await;
-        let requests = feed.sync_requests();
-        if requests.is_empty() {
+        feed.apply_registry(load().await?);
+        if !feed.refresh().await? {
+            continue;
+        }
+        if feed.pending.is_empty() {
             if let Some(error) = feed
-                .artifacts
+                .local
                 .values()
-                .find_map(|tracked| tracked.artifact.local_error.as_ref())
+                .find_map(|artifact| artifact.local_error.as_ref())
             {
-                anyhow::bail!("Artifact flush could not read a registered file: {error}");
+                anyhow::bail!("Artifact flush failed: {error}");
             }
             return Ok(());
         }
-        for request in requests {
-            let (request, outcome) = sync(request).await;
-            if let Err(error) = &outcome {
-                anyhow::bail!("Artifact flush failed: {error}");
-            }
-            feed.apply_sync_outcome(&request, outcome);
+        for request in std::mem::take(&mut feed.pending) {
+            synchronize(request).await?;
         }
     }
 }
 
-fn spawn_convex_watch(start: WatchStart) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut feed = ArtifactFeed::new(
-            start.user_id.clone(),
-            start.repository_key.clone(),
-            PathBuf::from(&start.workspace_path),
-            start.thread_id.clone(),
-        );
-        run_watch_loop(&start, &mut feed).await;
-    })
-}
-
-struct RemoteSession {
-    client: UserConvexClient,
-    subscription: QuerySubscription,
-}
-
-async fn run_watch_loop(start: &WatchStart, feed: &mut ArtifactFeed) {
-    let mut remote: Option<RemoteSession> = None;
-    let mut connect_op: Option<ConnectFuture> = None;
-    let mut sync_op: Option<SyncFuture> = None;
-    let mut auth_op: Option<AuthFuture> = None;
-    let mut registry_op: Option<RegistryFuture> = None;
-    let mut registry_retry_at: Option<Instant> = None;
-    let mut reconnect_at = Instant::now();
-    let mut next_sync_at = Instant::now();
-    let mut last_auth = Instant::now();
-    let mut poll = interval(LOCAL_POLL_INTERVAL);
-    poll.set_missed_tick_behavior(MissedTickBehavior::Skip);
-
-    loop {
-        if remote.is_none() && connect_op.is_none() && Instant::now() >= reconnect_at {
-            connect_op = Some(Box::pin(connect_remote(
-                start.deployment_url.clone(),
-                Arc::clone(&start.native_auth),
-                start.user_id.clone(),
-                start.repository_key.clone(),
-                start.thread_id.clone(),
-            )));
-        }
-        if auth_op.is_none() && last_auth.elapsed() >= AUTH_CHECK_INTERVAL {
-            auth_op = Some(Box::pin(check_native_auth(
-                Arc::clone(&start.native_auth),
-                start.user_id.clone(),
-            )));
-        }
-
-        tokio::select! {
-            update = recv_subscription(&mut remote) => {
-                let Some(update) = update else {
-                    remote = None;
-                    feed.note_transport_error("artifact subscription ended".to_string());
-                    publish(start, feed);
-                    reconnect_at = Instant::now();
-                    continue;
-                };
-                match sprocket_convex::decode_labeled_function_result::<serde_json::Value>(update, "artifacts:getArtifactState") {
-                    Ok(_) => {},
-                    Err(error) => {
-                        feed.note_transport_error(error.to_string());
-                        publish(start, feed);
-                        continue;
-                    }
-                }
-                if let Some(session) = remote.as_ref() {
-                    registry_op = Some(load_registry(session.client.clone(), start));
-                    registry_retry_at = None;
-                }
-            }
-            result = poll_optional(&mut registry_op) => {
-                registry_op = None;
-                let remotes = match result {
-                    Ok(remotes) => remotes,
-                    Err(error) => {
-                        feed.note_transport_error(error.to_string());
-                        publish(start, feed);
-                        registry_retry_at = Some(Instant::now() + RECONNECT_INTERVAL);
-                        continue;
-                    }
-                };
-                let had_transport_error = feed.error.is_some() || feed.stale;
-                feed.clear_transport_error();
-                let registry_changed = feed.apply_remote_registry(remotes);
-                let local_changed = feed.refresh_local_files().await;
-                if had_transport_error || registry_changed || local_changed {
-                    publish(start, feed);
-                }
-                if let Some(session) = remote.as_ref() {
-                    maybe_start_sync(session, feed, &mut sync_op, next_sync_at);
-                }
-            }
-            result = poll_optional(&mut connect_op) => {
-                connect_op = None;
-                match result {
-                    Ok((client, subscription)) => {
-                        last_auth = Instant::now();
-                        remote = Some(RemoteSession { client, subscription });
-                        if let Some(session) = remote.as_ref() {
-                            maybe_start_sync(session, feed, &mut sync_op, next_sync_at);
-                        }
-                    }
-                    Err(error) if is_native_account_revoked(&error) => {
-                        feed.clear_revoked(error.to_string());
-                        publish(start, feed);
-                        return;
-                    }
-                    Err(error) => {
-                        tracing::warn!(
-                            "artifact watch for {} {} failed; retrying: {error:#}",
-                            start.repository_key,
-                            start.thread_id.as_deref().unwrap_or("-")
-                        );
-                        feed.note_transport_error(error.to_string());
-                        publish(start, feed);
-                        reconnect_at = Instant::now() + RECONNECT_INTERVAL;
-                    }
-                }
-            }
-            (request, outcome) = poll_optional(&mut sync_op) => {
-                sync_op = None;
-                let failed = outcome.is_err();
-                let applied = feed.apply_sync_outcome(&request, outcome);
-                if applied {
-                    if failed {
-                        next_sync_at = Instant::now() + SYNC_RETRY_INTERVAL;
-                    }
-                    publish(start, feed);
-                }
-                if let Some(session) = remote.as_ref() {
-                    maybe_start_sync(session, feed, &mut sync_op, next_sync_at);
-                }
-            }
-            result = poll_optional(&mut auth_op) => {
-                auth_op = None;
-                last_auth = Instant::now();
-                match result {
-                    Ok(()) => {}
-                    Err(error) if is_native_account_revoked(&error) => {
-                        feed.clear_revoked(error.to_string());
-                        publish(start, feed);
-                        return;
-                    }
-                    Err(error) => {
-                        feed.note_transport_error(error.to_string());
-                        publish(start, feed);
-                    }
-                }
-            }
-            _ = poll.tick() => {
-                if registry_op.is_none() && registry_retry_at.is_some_and(|at| Instant::now() >= at) {
-                    if let Some(session) = remote.as_ref() {
-                        registry_op = Some(load_registry(session.client.clone(), start));
-                        registry_retry_at = None;
-                    }
-                }
-                let local_changed = feed.refresh_local_files().await;
-                if local_changed {
-                    publish(start, feed);
-                }
-                if let Some(session) = remote.as_ref() {
-                    maybe_start_sync(session, feed, &mut sync_op, next_sync_at);
+impl Drop for ArtifactWatchSession {
+    fn drop(&mut self) {
+        let mut inner = self
+            .watchers
+            .inner
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(slot) = inner.get_mut(&self.key) {
+            slot.refs -= 1;
+            if slot.refs == 0 {
+                if let Some(slot) = inner.remove(&self.key) {
+                    slot.task.abort();
                 }
             }
         }
     }
 }
 
-fn load_registry(client: UserConvexClient, start: &WatchStart) -> RegistryFuture {
-    let repository_key = start.repository_key.clone();
-    let thread_id = start.thread_id.clone();
-    Box::pin(async move {
-        client
-            .list_artifacts(&repository_key, thread_id.as_deref())
-            .await
-    })
-}
-
-fn maybe_start_sync(
-    remote: &RemoteSession,
-    feed: &ArtifactFeed,
-    sync_op: &mut Option<SyncFuture>,
-    next_sync_at: Instant,
-) {
-    if sync_op.is_some() || Instant::now() < next_sync_at {
-        return;
-    }
-    let Some(request) = feed.sync_requests().into_iter().next() else {
-        return;
-    };
-    let client = remote.client.clone();
-    *sync_op = Some(Box::pin(sync_with_timeout(client, request)));
-}
-
-async fn recv_subscription(remote: &mut Option<RemoteSession>) -> Option<FunctionResult> {
-    match remote.as_mut() {
-        Some(session) => session.subscription.next().await,
-        None => future::pending().await,
-    }
-}
-
-async fn poll_optional<T>(
-    fut: &mut Option<Pin<Box<dyn Future<Output = T> + Send + 'static>>>,
-) -> T {
-    match fut.as_mut() {
-        Some(fut) => fut.await,
-        None => future::pending().await,
-    }
-}
-
-async fn connect_remote(
-    deployment_url: String,
-    native_auth: Arc<NativeAuthManager>,
-    user_id: String,
-    repository_key: String,
-    thread_id: Option<String>,
-) -> anyhow::Result<(UserConvexClient, QuerySubscription)> {
-    timeout(NETWORK_TIMEOUT, async {
-        native_auth.require_user(&user_id).await?;
-        let client = UserConvexClient::connect_with_fetcher(
-            &deployment_url,
-            native_auth.auth_token_fetcher_for_user(user_id),
-        )
-        .await?;
-        let subscription = client
-            .subscribe_artifacts(&repository_key, thread_id.as_deref())
-            .await?;
-        Ok((client, subscription))
-    })
-    .await
-    .map_err(|_| anyhow::anyhow!("artifact watch connect timed out"))?
-}
-
-async fn check_native_auth(
-    native_auth: Arc<NativeAuthManager>,
-    user_id: String,
-) -> anyhow::Result<()> {
-    timeout(NETWORK_TIMEOUT, native_auth.require_user(&user_id))
-        .await
-        .map_err(|_| anyhow::anyhow!("artifact watch auth check timed out"))?
-}
-
-async fn sync_with_timeout(
-    client: UserConvexClient,
-    request: ArtifactSyncRequest,
-) -> (ArtifactSyncRequest, Result<bool, String>) {
-    let result = timeout(
-        NETWORK_TIMEOUT,
-        client.sync_artifact(
-            &request.id,
-            &request.repository_key,
-            request.thread_id.as_deref(),
-            request.expected_revision,
-            &request.local_path,
-            &request.content,
-        ),
+async fn connect(
+    url: &str,
+    auth: &Arc<NativeAuthManager>,
+    key: &WatchKey,
+) -> anyhow::Result<UserConvexClient> {
+    auth.require_user(&key.user_id).await?;
+    UserConvexClient::connect_with_fetcher(
+        url,
+        auth.auth_token_fetcher_for_user(key.user_id.clone()),
     )
-    .await;
-    let outcome = match result {
-        Ok(Ok(applied)) => Ok(applied),
-        Ok(Err(error)) => Err(error.to_string()),
-        Err(_) => Err("artifact sync timed out".to_string()),
-    };
-    (request, outcome)
+    .await
 }
 
-fn publish(start: &WatchStart, feed: &ArtifactFeed) -> bool {
-    let event = feed.snapshot();
-    let mut latest = start
-        .latest
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    if latest.as_ref() == Some(&event) {
-        return false;
-    }
-    *latest = Some(event.clone());
-    let _ = start.events.send(event);
-    true
+struct CloudSnapshot {
+    artifacts: Vec<RemoteArtifact>,
+    revision: u64,
 }
 
-pub(crate) fn artifact_in_scope(
-    artifact: &RemoteArtifact,
-    user_id: &str,
-    repository_key: &str,
-    thread_id: Option<&str>,
-) -> bool {
-    if artifact.user_id != user_id || artifact.repository_key != repository_key {
-        return false;
+async fn cloud_snapshot(
+    client: &UserConvexClient,
+    key: &WatchKey,
+    known_revision: Option<u64>,
+    bindings: &ArtifactBindings,
+    pending: Vec<SyncRequest>,
+) -> anyhow::Result<Option<CloudSnapshot>> {
+    for request in pending {
+        timeout(NETWORK_TIMEOUT, sync(client, bindings, &request)).await??;
     }
-    match artifact.scope {
-        ArtifactScope::Project => true,
-        ArtifactScope::Thread => {
-            let Some(selected) = thread_id else {
-                return false;
-            };
-            artifact.thread_id.as_deref() == Some(selected)
+    let revision = client
+        .artifact_revision(&key.repository_key, key.thread_id.as_deref())
+        .await?;
+    if known_revision == Some(revision) {
+        return Ok(None);
+    }
+    let artifacts = client
+        .list_artifacts(&key.repository_key, key.thread_id.as_deref())
+        .await?;
+    // A later revision requires another read rather than labeling an older body as current.
+    let after = client
+        .artifact_revision(&key.repository_key, key.thread_id.as_deref())
+        .await?;
+    if revision != after {
+        anyhow::bail!("Artifact registry changed during refresh; retrying");
+    }
+    Ok(Some(CloudSnapshot {
+        artifacts,
+        revision,
+    }))
+}
+
+async fn watch(
+    url: String,
+    auth: Arc<NativeAuthManager>,
+    key: WatchKey,
+    bindings: ArtifactBindings,
+    events: broadcast::Sender<ArtifactWatchEvent>,
+    latest: Arc<Mutex<Option<ArtifactWatchEvent>>>,
+) {
+    let mut feed = ArtifactFeed::new(key.clone(), bindings.clone());
+    let mut stale = true;
+    let mut error = None;
+    let (pending_tx, pending_rx) = tokio::sync::watch::channel(Vec::new());
+    let (cloud_tx, mut cloud_rx) = tokio::sync::mpsc::channel(1);
+    let mut tasks = tokio::task::JoinSet::new();
+    tasks.spawn(check_auth(
+        Arc::clone(&auth),
+        key.user_id.clone(),
+        cloud_tx.clone(),
+    ));
+    tasks.spawn(cloud_worker(url, auth, key, bindings, pending_rx, cloud_tx));
+    let mut poll = interval(Duration::from_millis(500));
+    poll.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            result = cloud_rx.recv() => {
+                match result {
+                    Some(Ok(snapshot)) => {
+                        if let Some(snapshot) = snapshot { feed.apply_registry(snapshot.artifacts); }
+                        stale = false;
+                        error = None;
+                    }
+                    Some(Err(failure)) if is_native_account_revoked(&failure) => {
+                        publish(&events, &latest, ArtifactWatchEvent { artifacts: vec![], stale: true, error: Some(failure.to_string()) });
+                        return;
+                    }
+                    Some(Err(failure)) => { stale = true; error = Some(failure.to_string()); }
+                    None => return,
+                }
+            }
+            _ = poll.tick() => {}
         }
+        if let Err(failure) = feed.refresh().await {
+            stale = true;
+            error = Some(failure.to_string());
+        }
+        pending_tx.send_replace(feed.pending.clone());
+        publish(&events, &latest, feed.snapshot(stale, error.clone()));
+    }
+}
+
+async fn cloud_worker(
+    url: String,
+    auth: Arc<NativeAuthManager>,
+    key: WatchKey,
+    bindings: ArtifactBindings,
+    pending: tokio::sync::watch::Receiver<Vec<SyncRequest>>,
+    output: tokio::sync::mpsc::Sender<anyhow::Result<Option<CloudSnapshot>>>,
+) {
+    let mut client = None;
+    let mut revision = None;
+    let mut poll = interval(Duration::from_secs(1));
+    poll.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    loop {
+        poll.tick().await;
+        let requests = pending.borrow().clone();
+        let outcome = async {
+            timeout(NETWORK_TIMEOUT, auth.require_user(&key.user_id)).await??;
+            let connection = match &client {
+                Some(client) => client,
+                None => client.insert(timeout(NETWORK_TIMEOUT, connect(&url, &auth, &key)).await??),
+            };
+            cloud_snapshot(connection, &key, revision, &bindings, requests).await
+        }
+        .await;
+        if let Ok(Some(snapshot)) = &outcome {
+            revision = Some(snapshot.revision);
+        }
+        if outcome.is_err() {
+            client = None;
+        }
+        if output.send(outcome).await.is_err() {
+            return;
+        }
+    }
+}
+
+async fn check_auth(
+    auth: Arc<NativeAuthManager>,
+    user_id: String,
+    output: tokio::sync::mpsc::Sender<anyhow::Result<Option<CloudSnapshot>>>,
+) {
+    loop {
+        tokio::time::sleep(Duration::from_secs(15)).await;
+        if let Ok(Err(error)) = timeout(NETWORK_TIMEOUT, auth.require_user(&user_id)).await {
+            if is_native_account_revoked(&error) {
+                let _ = output.send(Err(error)).await;
+                return;
+            }
+        }
+    }
+}
+
+fn publish(
+    events: &broadcast::Sender<ArtifactWatchEvent>,
+    latest: &Mutex<Option<ArtifactWatchEvent>>,
+    event: ArtifactWatchEvent,
+) {
+    let mut current = latest.lock().unwrap_or_else(|error| error.into_inner());
+    if current.as_ref() != Some(&event) {
+        *current = Some(event.clone());
+        let _ = events.send(event);
     }
 }
 
@@ -627,752 +432,226 @@ pub(crate) fn is_native_account_revoked(error: &anyhow::Error) -> bool {
     })
 }
 
-struct TrackedArtifact {
-    artifact: LocalArtifact,
-    registry_content: String,
-    has_local: bool,
-    dirty: bool,
-    awaiting_cas: bool,
-    last_synced_content: Option<String>,
-}
-
-impl TrackedArtifact {
-    fn recompute_dirty(&mut self) {
-        self.dirty = self.has_local
-            && match &self.last_synced_content {
-                Some(synced) => synced != &self.artifact.content,
-                None => self.artifact.content != self.registry_content,
-            };
-    }
-
-    fn reset_from_remote(&mut self, remote: RemoteArtifact) {
-        self.registry_content = remote.content.clone();
-        self.artifact = local_from_remote(remote);
-        self.has_local = false;
-        self.dirty = false;
-        self.awaiting_cas = false;
-        self.last_synced_content = None;
-    }
-}
-
-struct ArtifactFeed {
-    user_id: String,
-    repository_key: String,
-    workspace_root: PathBuf,
-    thread_id: Option<String>,
-    artifacts: BTreeMap<String, TrackedArtifact>,
-    stale: bool,
-    error: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct ArtifactSyncRequest {
-    id: String,
-    repository_key: String,
-    thread_id: Option<String>,
-    expected_revision: u64,
-    local_path: String,
+#[derive(Clone)]
+struct SyncRequest {
+    artifact: RemoteArtifact,
+    path: String,
+    baseline: String,
     content: String,
 }
 
+async fn sync(
+    client: &UserConvexClient,
+    bindings: &ArtifactBindings,
+    request: &SyncRequest,
+) -> anyhow::Result<()> {
+    let mut guard = bindings.lock().await?;
+    let Some(binding) = guard.get(&request.artifact.id) else {
+        return Ok(());
+    };
+    if binding.local_path != request.path || binding.content_hash != request.baseline {
+        return Ok(());
+    }
+    if client
+        .sync_artifact(
+            &request.artifact.id,
+            &request.artifact.repository_key,
+            request.artifact.thread_id.as_deref(),
+            request.artifact.revision,
+            &request.content,
+        )
+        .await?
+    {
+        let mut binding = binding.clone();
+        binding.content_hash = content_hash(&request.content);
+        guard.bind(binding)?;
+        guard.persist().await?;
+    }
+    Ok(())
+}
+
+struct ArtifactFeed {
+    key: WatchKey,
+    bindings: ArtifactBindings,
+    remote: BTreeMap<String, RemoteArtifact>,
+    local: BTreeMap<String, LocalArtifact>,
+    pending: Vec<SyncRequest>,
+}
+
 impl ArtifactFeed {
-    fn new(
-        user_id: String,
-        repository_key: String,
-        workspace_root: PathBuf,
-        thread_id: Option<String>,
-    ) -> Self {
+    fn new(key: WatchKey, bindings: ArtifactBindings) -> Self {
         Self {
-            user_id,
-            repository_key,
-            workspace_root,
-            thread_id,
-            artifacts: BTreeMap::new(),
-            stale: true,
-            error: None,
+            key,
+            bindings,
+            remote: BTreeMap::new(),
+            local: BTreeMap::new(),
+            pending: Vec::new(),
         }
     }
 
-    fn snapshot(&self) -> ArtifactWatchEvent {
-        ArtifactWatchEvent {
-            artifacts: self
-                .artifacts
-                .values()
-                .map(|tracked| tracked.artifact.clone())
-                .collect(),
-            stale: self.stale,
-            error: self.error.clone(),
-        }
-    }
-
-    fn note_transport_error(&mut self, error: String) {
-        self.stale = true;
-        self.error = Some(error);
-    }
-
-    fn clear_transport_error(&mut self) {
-        self.error = None;
-        self.stale = false;
-    }
-
-    fn clear_revoked(&mut self, error: String) {
-        self.artifacts.clear();
-        self.stale = true;
-        self.error = Some(error);
-    }
-
-    fn apply_remote_registry(&mut self, remotes: Vec<RemoteArtifact>) -> bool {
-        let scoped: Vec<RemoteArtifact> = remotes
+    fn apply_registry(&mut self, artifacts: Vec<RemoteArtifact>) {
+        self.remote = artifacts
             .into_iter()
             .filter(|artifact| {
-                artifact_in_scope(
-                    artifact,
-                    &self.user_id,
-                    &self.repository_key,
-                    self.thread_id.as_deref(),
-                )
+                artifact.user_id == self.key.user_id
+                    && artifact.repository_key == self.key.repository_key
+                    && (artifact.scope == ArtifactScope::Project
+                        || (self.key.thread_id.is_some()
+                            && artifact.thread_id == self.key.thread_id))
+            })
+            .map(|artifact| (artifact.id.clone(), artifact))
+            .collect();
+        self.local.retain(|id, _| self.remote.contains_key(id));
+        self.pending.clear();
+    }
+
+    fn snapshot(&self, stale: bool, error: Option<String>) -> ArtifactWatchEvent {
+        ArtifactWatchEvent {
+            artifacts: self.local.values().cloned().collect(),
+            stale,
+            error,
+        }
+    }
+
+    async fn refresh(&mut self) -> anyhow::Result<bool> {
+        let Ok(guard) = timeout(Duration::from_millis(50), self.bindings.lock()).await else {
+            return Ok(false);
+        };
+        let mut guard = guard?;
+        let mut pending = Vec::new();
+        let mut local = BTreeMap::new();
+        let mut baseline_changed = false;
+        let workspace = PathBuf::from(&self.key.workspace_path);
+        let reads: Vec<_> = self
+            .remote
+            .keys()
+            .filter_map(|id| {
+                guard
+                    .get(id)
+                    .map(|binding| (id.clone(), binding.local_path.clone()))
             })
             .collect();
-        let live_ids: HashSet<String> = scoped.iter().map(|artifact| artifact.id.clone()).collect();
-        let mut changed = self.artifacts.len() != live_ids.len()
-            || self
-                .artifacts
-                .keys()
-                .any(|id| !live_ids.contains(id.as_str()));
-        self.artifacts.retain(|id, _| live_ids.contains(id));
-        for remote in scoped {
-            match self.artifacts.get_mut(&remote.id) {
-                Some(tracked) => {
-                    if tracked.artifact.local_path != remote.local_path {
-                        tracked.reset_from_remote(remote);
-                        changed = true;
-                        continue;
-                    }
-                    let revision_changed = tracked.artifact.revision != remote.revision;
-                    changed |= assign(&mut tracked.registry_content, remote.content.clone());
-                    changed |= assign(&mut tracked.artifact.user_id, remote.user_id);
-                    changed |= tracked.artifact.scope != remote.scope;
-                    tracked.artifact.scope = remote.scope;
-                    changed |= assign(&mut tracked.artifact.repository_key, remote.repository_key);
-                    let thread_id = thread_id_for_scope(remote.scope, remote.thread_id);
-                    changed |= tracked.artifact.thread_id != thread_id;
-                    tracked.artifact.thread_id = thread_id;
-                    if !tracked.has_local {
-                        changed |= assign(&mut tracked.artifact.title, remote.title);
-                        changed |= tracked.artifact.content_type != remote.content_type;
-                        tracked.artifact.content_type = remote.content_type;
-                    }
-                    changed |= tracked.artifact.revision != remote.revision;
-                    tracked.artifact.revision = remote.revision;
-                    changed |= tracked.artifact.created_at != remote.created_at;
-                    tracked.artifact.created_at = remote.created_at;
-                    changed |= tracked.artifact.updated_at != remote.updated_at;
-                    tracked.artifact.updated_at = remote.updated_at;
-                    if !tracked.dirty && !tracked.has_local {
-                        changed |= assign(&mut tracked.artifact.content, remote.content);
-                    }
-                    if revision_changed {
-                        tracked.awaiting_cas = false;
-                    }
-                    let was_dirty = tracked.dirty;
-                    tracked.recompute_dirty();
-                    changed |= was_dirty != tracked.dirty;
-                }
-                None => {
-                    let id = remote.id.clone();
-                    self.artifacts.insert(
-                        id,
-                        TrackedArtifact {
-                            artifact: local_from_remote(remote.clone()),
-                            registry_content: remote.content,
-                            has_local: false,
-                            dirty: false,
-                            awaiting_cas: false,
-                            last_synced_content: None,
-                        },
-                    );
-                    changed = true;
-                }
-            }
-        }
-        changed
-    }
-
-    async fn refresh_local_files(&mut self) -> bool {
-        let mut changed = false;
-        let workspace_root = self.workspace_root.clone();
-        for tracked in self.artifacts.values_mut() {
-            let path = tracked.artifact.local_path.clone();
-            match read_with_atomic_retry(&workspace_root, &path).await {
-                Ok(file) => {
-                    changed |= apply_local_file(tracked, file);
-                }
-                Err(error) => {
-                    changed |= apply_local_read_error(tracked, error.to_string());
-                }
-            }
-        }
-        changed
-    }
-
-    fn has_pending_sync(&self) -> bool {
-        self.artifacts
-            .values()
-            .any(|tracked| tracked.dirty && !tracked.awaiting_cas)
-    }
-
-    fn sync_requests(&self) -> Vec<ArtifactSyncRequest> {
-        self.artifacts
-            .values()
-            .filter(|tracked| tracked.dirty && !tracked.awaiting_cas)
-            .map(|tracked| ArtifactSyncRequest {
-                id: tracked.artifact.id.clone(),
-                repository_key: tracked.artifact.repository_key.clone(),
-                thread_id: tracked.artifact.thread_id.clone(),
-                expected_revision: tracked.artifact.revision,
-                local_path: tracked.artifact.local_path.clone(),
-                content: tracked.artifact.content.clone(),
+        let mut files = stream::iter(reads)
+            .map(move |(id, path)| {
+                let workspace = workspace.clone();
+                async move { (id, read_artifact_file(&workspace, &path).await) }
             })
-            .collect()
-    }
-
-    fn apply_sync_outcome(
-        &mut self,
-        request: &ArtifactSyncRequest,
-        outcome: Result<bool, String>,
-    ) -> bool {
-        let Some(tracked) = self.artifacts.get_mut(&request.id) else {
-            return false;
-        };
-        if tracked.artifact.local_path != request.local_path
-            || tracked.artifact.revision != request.expected_revision
-        {
-            return false;
-        }
-        match &outcome {
-            Ok(true) => {
-                tracked.last_synced_content = Some(request.content.clone());
-                tracked.recompute_dirty();
-            }
-            Ok(false) => {
-                tracked.awaiting_cas = true;
-            }
-            Err(_) => {
-                tracked.recompute_dirty();
-            }
-        }
-        match outcome {
-            Ok(true) => {
-                if !self.has_pending_sync()
-                    && !self.artifacts.values().any(|tracked| tracked.awaiting_cas)
+            .buffer_unordered(16)
+            .collect::<HashMap<_, _>>()
+            .await;
+        for artifact in self.remote.values() {
+            let mut view = LocalArtifact {
+                remote: artifact.clone(),
+                local_path: None,
+                local_error: None,
+            };
+            if let Some(binding) = guard.get(&artifact.id).cloned() {
+                view.local_path = Some(binding.local_path.clone());
+                match files
+                    .remove(&artifact.id)
+                    .expect("every bound artifact was read")
                 {
-                    self.stale = false;
-                    self.error = None;
+                    Ok(file) => {
+                        let disk = content_hash(&file.content);
+                        let cloud = content_hash(&artifact.content);
+                        if disk == cloud {
+                            if binding.content_hash != cloud {
+                                let mut binding = binding;
+                                binding.content_hash = cloud;
+                                guard.bind(binding)?;
+                                baseline_changed = true;
+                            }
+                        } else if disk == binding.content_hash {
+                            view.local_error = Some("The cloud artifact is newer than this local file. Showing the cloud version; save to a new path to bind it.".into());
+                        } else {
+                            view.remote.content = file.content.clone();
+                            if cloud == binding.content_hash {
+                                pending.push(SyncRequest {
+                                    artifact: artifact.clone(),
+                                    path: binding.local_path,
+                                    baseline: binding.content_hash,
+                                    content: file.content,
+                                });
+                            } else {
+                                view.local_error = Some("Both the local file and cloud artifact changed. Local preview retained; sync paused until you explicitly resolve the conflict.".into());
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        if let Some(previous) = self
+                            .local
+                            .get(&artifact.id)
+                            .filter(|previous| previous.local_path == view.local_path)
+                        {
+                            view.remote.content = previous.remote.content.clone();
+                        }
+                        view.local_error = Some(error.to_string());
+                    }
                 }
             }
-            Ok(false) => {
-                self.stale = true;
-            }
-            Err(error) => {
-                self.stale = true;
-                self.error = Some(error);
-            }
+            local.insert(artifact.id.clone(), view);
         }
-        true
-    }
-}
-
-fn assign<T: PartialEq>(slot: &mut T, value: T) -> bool {
-    if *slot == value {
-        false
-    } else {
-        *slot = value;
-        true
-    }
-}
-
-fn local_from_remote(remote: RemoteArtifact) -> LocalArtifact {
-    LocalArtifact {
-        id: remote.id,
-        user_id: remote.user_id,
-        scope: remote.scope,
-        repository_key: remote.repository_key,
-        thread_id: thread_id_for_scope(remote.scope, remote.thread_id),
-        local_path: remote.local_path,
-        content: remote.content,
-        content_type: remote.content_type,
-        title: remote.title,
-        revision: remote.revision,
-        created_at: remote.created_at,
-        updated_at: remote.updated_at,
-        local_error: None,
-    }
-}
-
-fn thread_id_for_scope(scope: ArtifactScope, thread_id: Option<String>) -> Option<String> {
-    match scope {
-        ArtifactScope::Thread => thread_id,
-        ArtifactScope::Project => None,
-    }
-}
-
-fn apply_local_file(tracked: &mut TrackedArtifact, file: ArtifactFile) -> bool {
-    let mut changed = tracked.artifact.local_error.take().is_some();
-    if tracked.artifact.title != file.title {
-        tracked.artifact.title = file.title;
-        changed = true;
-    }
-    if tracked.artifact.content_type != file.content_type {
-        tracked.artifact.content_type = file.content_type;
-        changed = true;
-    }
-    tracked.has_local = true;
-    if tracked.artifact.content != file.content {
-        tracked.artifact.content = file.content;
-        changed = true;
-    }
-    let was_dirty = tracked.dirty;
-    tracked.recompute_dirty();
-    changed || was_dirty != tracked.dirty
-}
-
-fn apply_local_read_error(tracked: &mut TrackedArtifact, error: String) -> bool {
-    let changed = tracked.artifact.local_error.as_deref() != Some(error.as_str());
-    tracked.artifact.local_error = Some(error);
-    changed
-}
-
-async fn read_with_atomic_retry(
-    workspace_root: &Path,
-    local_path: &str,
-) -> anyhow::Result<ArtifactFile> {
-    let mut last_error = None;
-    for attempt in 0..=ATOMIC_SAVE_RETRIES {
-        match read_artifact_file(workspace_root, local_path).await {
-            Ok(file) => return Ok(file),
-            Err(error) => {
-                let retry = attempt < ATOMIC_SAVE_RETRIES && is_transient_read_error(&error);
-                last_error = Some(error);
-                if !retry {
-                    break;
-                }
-                sleep(ATOMIC_SAVE_RETRY_DELAY).await;
-            }
+        if baseline_changed {
+            guard.persist().await?;
         }
+        self.pending = pending;
+        self.local = local;
+        Ok(true)
     }
-    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("failed to read artifact {local_path}")))
-}
-
-fn is_transient_read_error(error: &anyhow::Error) -> bool {
-    error.chain().any(|cause| {
-        cause.downcast_ref::<std::io::Error>().is_some_and(|io| {
-            matches!(
-                io.kind(),
-                ErrorKind::NotFound
-                    | ErrorKind::Interrupted
-                    | ErrorKind::WouldBlock
-                    | ErrorKind::TimedOut
-            )
-        })
-    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use sprocket_agent::artifact_bindings::ArtifactBinding;
 
-    fn native_auth() -> Arc<NativeAuthManager> {
-        NativeAuthManager::configured_for_test(
+    #[tokio::test]
+    async fn last_consumer_releases_shared_watch() {
+        let dir = tempfile::tempdir().unwrap();
+        let auth = NativeAuthManager::configured_for_test(
             crate::native_auth::NativeAuthConfig {
-                workos_client_id: "client_test".to_string(),
+                workos_client_id: "client_test".into(),
             },
-            "http://127.0.0.1/callback".to_string(),
-        )
-    }
-
-    fn remote(
-        id: &str,
-        scope: ArtifactScope,
-        thread_id: Option<&str>,
-        path: &str,
-        content: &str,
-        revision: u64,
-    ) -> RemoteArtifact {
-        RemoteArtifact {
-            id: id.into(),
-            user_id: "user".into(),
-            scope,
-            repository_key: "repo".into(),
-            thread_id: thread_id.map(str::to_string),
-            local_path: path.into(),
-            content: content.into(),
-            content_type: ArtifactContentType::Markdown,
-            title: Path::new(path)
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or(path)
-                .into(),
-            revision,
-            created_at: 1,
-            updated_at: revision,
-        }
-    }
-
-    fn watch_start() -> (WatchStart, broadcast::Receiver<ArtifactWatchEvent>) {
-        let (events, rx) = broadcast::channel(8);
-        (
-            WatchStart {
-                deployment_url: "https://example.convex.cloud".into(),
-                native_auth: native_auth(),
-                user_id: "user".into(),
-                repository_key: "repo".into(),
-                workspace_path: "/workspace".into(),
-                thread_id: None,
-                events,
-                latest: Arc::new(Mutex::new(None)),
-            },
-            rx,
-        )
-    }
-
-    fn mark_local(feed: &mut ArtifactFeed, id: &str, path: &str, content: &str) {
-        apply_local_file(
-            feed.artifacts.get_mut(id).unwrap(),
-            ArtifactFile {
-                local_path: path.into(),
-                content: content.into(),
-                title: Path::new(path)
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or(path)
-                    .into(),
-                content_type: ArtifactContentType::Markdown,
-            },
+            "http://127.0.0.1/callback".into(),
         );
+        let watchers = ArtifactWatchers::new(
+            "https://example.convex.cloud".into(),
+            auth,
+            dir.path().into(),
+        );
+        let first = watchers.open("alice", "repo", "/workspace", None).await;
+        let second = watchers.open("alice", "repo", "/workspace", None).await;
+        let other = watchers.open("bob", "repo", "/workspace", None).await;
+        let task = watchers
+            .inner
+            .lock()
+            .unwrap()
+            .get(&first.key)
+            .unwrap()
+            .task
+            .abort_handle();
+        assert_eq!(watchers.active_count(), 2);
+        drop(first);
+        assert_eq!(watchers.active_count(), 2);
+        drop(second);
+        assert_eq!(watchers.active_count(), 1);
+        drop(other);
+        assert_eq!(watchers.active_count(), 0);
+        tokio::task::yield_now().await;
+        assert!(task.is_finished());
     }
 
     #[test]
-    fn filter_keeps_project_and_selected_thread_artifacts() {
-        let project = remote("p", ArtifactScope::Project, None, "docs.md", "p", 1);
-        let selected = remote("t", ArtifactScope::Thread, Some("thread-a"), "a.md", "a", 1);
-        let other = remote("o", ArtifactScope::Thread, Some("thread-b"), "b.md", "b", 1);
-        let foreign = RemoteArtifact {
-            repository_key: "other".into(),
-            ..remote("x", ArtifactScope::Project, None, "x.md", "x", 1)
+    fn duplicate_snapshots_do_not_fill_the_event_channel() {
+        let (events, mut rx) = broadcast::channel(1);
+        let latest = Mutex::new(None);
+        let event = ArtifactWatchEvent {
+            artifacts: vec![],
+            stale: false,
+            error: None,
         };
-        assert!(artifact_in_scope(
-            &project,
-            "user",
-            "repo",
-            Some("thread-a")
-        ));
-        assert!(artifact_in_scope(
-            &selected,
-            "user",
-            "repo",
-            Some("thread-a")
-        ));
-        assert!(!artifact_in_scope(&other, "user", "repo", Some("thread-a")));
-        assert!(!artifact_in_scope(&selected, "user", "repo", None));
-        assert!(artifact_in_scope(&project, "user", "repo", None));
-        assert!(!artifact_in_scope(&foreign, "user", "repo", None));
-        assert!(!artifact_in_scope(&project, "other-user", "repo", None));
-    }
-
-    #[tokio::test]
-    async fn missing_and_atomic_saves_keep_cached_content() {
-        let dir = std::env::temp_dir().join(format!("sprocket-artifacts-{}", uuid::Uuid::new_v4()));
-        tokio::fs::create_dir_all(&dir).await.unwrap();
-        let path = dir.join("note.md");
-        tokio::fs::write(&path, "one").await.unwrap();
-
-        let mut feed = ArtifactFeed::new(
-            "user".into(),
-            "repo".into(),
-            dir.clone(),
-            Some("thread-a".into()),
-        );
-        feed.apply_remote_registry(vec![
-            remote(
-                "a",
-                ArtifactScope::Thread,
-                Some("thread-a"),
-                "note.md",
-                "cloud",
-                1,
-            ),
-            remote(
-                "missing",
-                ArtifactScope::Project,
-                None,
-                "gone.md",
-                "remote-only",
-                1,
-            ),
-        ]);
-        assert!(feed.refresh_local_files().await);
-        let snapshot = feed.snapshot();
-        let note = snapshot
-            .artifacts
-            .iter()
-            .find(|artifact| artifact.id == "a")
-            .unwrap();
-        assert_eq!(note.content, "one");
-        assert!(note.local_error.is_none());
-        let missing = snapshot
-            .artifacts
-            .iter()
-            .find(|artifact| artifact.id == "missing")
-            .unwrap();
-        assert_eq!(missing.content, "remote-only");
-        assert!(missing.local_error.is_some());
-        assert!(feed.has_pending_sync());
-        assert!(!feed.refresh_local_files().await);
-
-        let staging = dir.join("note.md.tmp");
-        tokio::fs::write(&staging, "two").await.unwrap();
-        tokio::fs::rename(&staging, &path).await.unwrap();
-        assert!(feed.refresh_local_files().await);
-        let note = feed
-            .snapshot()
-            .artifacts
-            .into_iter()
-            .find(|artifact| artifact.id == "a")
-            .unwrap();
-        assert_eq!(note.content, "two");
-
-        tokio::fs::remove_file(&path).await.unwrap();
-        assert!(feed.refresh_local_files().await);
-        let note = feed
-            .snapshot()
-            .artifacts
-            .into_iter()
-            .find(|artifact| artifact.id == "a")
-            .unwrap();
-        assert_eq!(note.content, "two");
-        assert!(note.local_error.is_some());
-        assert!(!feed.refresh_local_files().await);
-
-        let _ = tokio::fs::remove_dir_all(dir).await;
-    }
-
-    #[tokio::test]
-    async fn retarget_to_missing_path_does_not_sync_previous_file() {
-        let dir = std::env::temp_dir().join(format!(
-            "sprocket-artifacts-retarget-{}",
-            uuid::Uuid::new_v4()
-        ));
-        tokio::fs::create_dir_all(&dir).await.unwrap();
-        tokio::fs::write(dir.join("note.md"), "dirty-local")
-            .await
-            .unwrap();
-
-        let mut feed = ArtifactFeed::new(
-            "user".into(),
-            "repo".into(),
-            dir.clone(),
-            Some("thread-a".into()),
-        );
-        feed.apply_remote_registry(vec![remote(
-            "a",
-            ArtifactScope::Thread,
-            Some("thread-a"),
-            "note.md",
-            "cloud",
-            1,
-        )]);
-        assert!(feed.refresh_local_files().await);
-        assert_eq!(feed.snapshot().artifacts[0].content, "dirty-local");
-        assert!(feed.has_pending_sync());
-        let in_flight = feed.sync_requests()[0].clone();
-        assert_eq!(in_flight.local_path, "note.md");
-        assert_eq!(in_flight.content, "dirty-local");
-
-        assert!(feed.apply_remote_registry(vec![remote(
-            "a",
-            ArtifactScope::Thread,
-            Some("thread-a"),
-            "moved.md",
-            "cloud-new",
-            2,
-        )]));
-        let snapshot = feed.snapshot();
-        assert_eq!(snapshot.artifacts[0].local_path, "moved.md");
-        assert_eq!(snapshot.artifacts[0].content, "cloud-new");
-        assert!(snapshot.artifacts[0].local_error.is_none());
-        assert!(!feed.has_pending_sync());
-        assert!(feed.sync_requests().is_empty());
-
-        assert!(feed.refresh_local_files().await);
-        let snapshot = feed.snapshot();
-        assert_eq!(snapshot.artifacts[0].content, "cloud-new");
-        assert!(snapshot.artifacts[0].local_error.is_some());
-        assert!(!feed.has_pending_sync());
-
-        assert!(!feed.apply_sync_outcome(&in_flight, Ok(true)));
-        assert_eq!(feed.snapshot().artifacts[0].content, "cloud-new");
-        assert!(!feed.has_pending_sync());
-
-        tokio::fs::write(dir.join("moved.md"), "from-disk")
-            .await
-            .unwrap();
-        assert!(feed.refresh_local_files().await);
-        assert_eq!(feed.snapshot().artifacts[0].content, "from-disk");
-        assert!(feed.has_pending_sync());
-        assert_eq!(feed.sync_requests()[0].local_path, "moved.md");
-        assert_eq!(feed.sync_requests()[0].content, "from-disk");
-
-        let _ = tokio::fs::remove_dir_all(dir).await;
-    }
-
-    #[test]
-    fn failed_sync_retries_without_losing_local_updates() {
-        let mut feed = ArtifactFeed::new(
-            "user".into(),
-            "repo".into(),
-            PathBuf::from("/tmp"),
-            Some("thread-a".into()),
-        );
-        feed.apply_remote_registry(vec![remote(
-            "a",
-            ArtifactScope::Thread,
-            Some("thread-a"),
-            "note.md",
-            "cloud",
-            1,
-        )]);
-        mark_local(&mut feed, "a", "note.md", "local");
-        assert_eq!(feed.sync_requests().len(), 1);
-        let request = feed.sync_requests()[0].clone();
-        assert!(feed.apply_sync_outcome(&request, Err("offline".into())));
-        assert_eq!(feed.snapshot().artifacts[0].content, "local");
-        assert!(feed.snapshot().stale);
-        assert_eq!(feed.snapshot().error.as_deref(), Some("offline"));
-        assert_eq!(feed.sync_requests().len(), 1);
-
-        assert!(feed.apply_sync_outcome(&request, Ok(false)));
-        assert!(feed.sync_requests().is_empty());
-        assert_eq!(feed.snapshot().artifacts[0].content, "local");
-
-        feed.apply_remote_registry(vec![remote(
-            "a",
-            ArtifactScope::Thread,
-            Some("thread-a"),
-            "note.md",
-            "other",
-            2,
-        )]);
-        assert_eq!(feed.snapshot().artifacts[0].content, "local");
-        assert_eq!(feed.sync_requests()[0].expected_revision, 2);
-        let request = feed.sync_requests()[0].clone();
-        assert!(feed.apply_sync_outcome(&request, Ok(true)));
-        assert!(!feed.has_pending_sync());
-        assert!(!feed.snapshot().stale);
-    }
-
-    #[test]
-    fn late_cas_miss_does_not_stick_after_newer_revision() {
-        let mut feed = ArtifactFeed::new(
-            "user".into(),
-            "repo".into(),
-            PathBuf::from("/tmp"),
-            Some("thread-a".into()),
-        );
-        feed.apply_remote_registry(vec![remote(
-            "a",
-            ArtifactScope::Thread,
-            Some("thread-a"),
-            "note.md",
-            "cloud",
-            1,
-        )]);
-        mark_local(&mut feed, "a", "note.md", "local");
-        let stale_request = feed.sync_requests()[0].clone();
-        assert_eq!(stale_request.expected_revision, 1);
-
-        feed.apply_remote_registry(vec![remote(
-            "a",
-            ArtifactScope::Thread,
-            Some("thread-a"),
-            "note.md",
-            "other",
-            2,
-        )]);
-        assert_eq!(feed.sync_requests()[0].expected_revision, 2);
-        assert!(feed.has_pending_sync());
-
-        assert!(!feed.apply_sync_outcome(&stale_request, Ok(false)));
-        assert!(feed.has_pending_sync());
-        assert_eq!(feed.sync_requests()[0].expected_revision, 2);
-        assert_eq!(feed.snapshot().artifacts[0].content, "local");
-    }
-
-    #[test]
-    fn transport_error_keeps_local_content_revoke_clears_it() {
-        let mut feed = ArtifactFeed::new(
-            "user".into(),
-            "repo".into(),
-            PathBuf::from("/tmp"),
-            Some("thread-a".into()),
-        );
-        feed.apply_remote_registry(vec![remote(
-            "a",
-            ArtifactScope::Thread,
-            Some("thread-a"),
-            "note.md",
-            "cloud",
-            1,
-        )]);
-        mark_local(&mut feed, "a", "note.md", "secret");
-        feed.note_transport_error("connect timed out".into());
-        assert_eq!(feed.snapshot().artifacts[0].content, "secret");
-        assert!(feed.snapshot().stale);
-
-        feed.clear_revoked("native WorkOS session is signed out".into());
-        let snapshot = feed.snapshot();
-        assert!(snapshot.artifacts.is_empty());
-        assert!(snapshot.stale);
-        assert_eq!(
-            snapshot.error.as_deref(),
-            Some("native WorkOS session is signed out")
-        );
-    }
-
-    #[test]
-    fn identical_registry_snapshot_is_noop() {
-        let mut feed = ArtifactFeed::new(
-            "user".into(),
-            "repo".into(),
-            PathBuf::from("/tmp"),
-            Some("thread-a".into()),
-        );
-        assert!(feed.apply_remote_registry(vec![remote(
-            "a",
-            ArtifactScope::Thread,
-            Some("thread-a"),
-            "note.md",
-            "cloud",
-            1,
-        )]));
-        let snapshot = feed.snapshot();
-        assert!(!feed.apply_remote_registry(vec![remote(
-            "a",
-            ArtifactScope::Thread,
-            Some("thread-a"),
-            "note.md",
-            "cloud",
-            1,
-        )]));
-        assert_eq!(feed.snapshot(), snapshot);
-    }
-
-    #[test]
-    fn publish_skips_duplicate_snapshots() {
-        let (start, mut rx) = watch_start();
-        let feed = ArtifactFeed::new("user".into(), "repo".into(), PathBuf::from("/tmp"), None);
-        assert!(publish(&start, &feed));
-        assert!(!publish(&start, &feed));
+        publish(&events, &latest, event.clone());
+        publish(&events, &latest, event);
         assert!(rx.try_recv().is_ok());
         assert!(matches!(
             rx.try_recv(),
@@ -1380,152 +659,199 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn detects_revoked_native_account() {
-        assert!(is_native_account_revoked(&anyhow::anyhow!(
-            sprocket_convex::AuthSignedOut
-        )));
-        assert!(is_native_account_revoked(&anyhow::anyhow!(
-            "native WorkOS session is signed out"
-        )));
-        assert!(is_native_account_revoked(&anyhow::anyhow!(
-            "native WorkOS session expired"
-        )));
-        assert!(!is_native_account_revoked(&anyhow::anyhow!(
-            "Native sign-in is temporarily unavailable. Try again."
-        )));
-        assert!(!is_native_account_revoked(&anyhow::anyhow!(
-            "artifact watch connect timed out"
-        )));
+    fn remote() -> RemoteArtifact {
+        RemoteArtifact {
+            id: "artifact".into(),
+            user_id: "alice".into(),
+            scope: ArtifactScope::Project,
+            repository_key: "repo".into(),
+            thread_id: None,
+            content: "initial".into(),
+            content_type: ArtifactContentType::Markdown,
+            title: "Notes".into(),
+            revision: 1,
+            created_at: 1,
+            updated_at: 1,
+        }
+    }
+
+    async fn setup() -> (tempfile::TempDir, ArtifactFeed) {
+        let dir = tempfile::tempdir().unwrap();
+        let key = WatchKey {
+            user_id: "alice".into(),
+            repository_key: "repo".into(),
+            workspace_path: dir.path().to_str().unwrap().into(),
+            thread_id: None,
+        };
+        let bindings =
+            ArtifactBindings::new(&dir.path().join("data"), "deployment", "alice", dir.path());
+        let mut feed = ArtifactFeed::new(key, bindings);
+        feed.apply_registry(vec![remote()]);
+        (dir, feed)
+    }
+
+    async fn bind(feed: &ArtifactFeed) {
+        let mut guard = feed.bindings.lock().await.unwrap();
+        guard
+            .bind(ArtifactBinding {
+                registration_id: "registration".into(),
+                artifact_id: Some("artifact".into()),
+                scope: "project".into(),
+                thread_id: None,
+                local_path: "notes.md".into(),
+                content_hash: content_hash("initial"),
+            })
+            .unwrap();
+        guard.persist().await.unwrap();
     }
 
     #[tokio::test]
-    async fn final_flush_loads_new_registrations_and_retries_a_conflicting_sync() {
-        let dir = tempfile::tempdir().unwrap();
-        tokio::fs::write(dir.path().join("final.md"), "final edit")
-            .await
-            .unwrap();
-        let registry = Mutex::new(vec![remote(
-            "a",
-            ArtifactScope::Project,
-            None,
-            "final.md",
-            "initial",
-            1,
-        )]);
-        let mut feed = ArtifactFeed::new("user".into(), "repo".into(), dir.path().into(), None);
-        let mut writes = 0;
-        flush_feed(
-            &mut feed,
-            || future::ready(Ok(registry.lock().unwrap().clone())),
-            |request| {
-                writes += 1;
-                let mut registry = registry.lock().unwrap();
-                registry[0].revision += 1;
-                if writes == 1 {
-                    future::ready((request, Ok(false)))
-                } else {
-                    registry[0].content = request.content.clone();
-                    future::ready((request, Ok(true)))
-                }
-            },
-        )
-        .await
-        .unwrap();
-        assert_eq!(writes, 2);
-        assert_eq!(registry.lock().unwrap()[0].content, "final edit");
-        assert!(!feed.has_pending_sync());
+    async fn unbound_artifacts_use_cloud_without_creating_files() {
+        let (dir, mut feed) = setup().await;
+        feed.refresh().await.unwrap();
+        let view = &feed.local["artifact"];
+        assert_eq!(view.remote.content, "initial");
+        assert_eq!(view.local_path, None);
+        assert!(feed.pending.is_empty());
+        assert!(!dir.path().join("notes.md").exists());
     }
 
     #[tokio::test]
-    async fn final_flush_syncs_readable_files_before_reporting_missing_ones() {
-        let dir = tempfile::tempdir().unwrap();
-        tokio::fs::write(dir.path().join("present.md"), "saved")
+    async fn baseline_survives_restart_and_detects_conflicts() {
+        let (dir, mut feed) = setup().await;
+        bind(&feed).await;
+        tokio::fs::write(dir.path().join("notes.md"), "initial")
             .await
             .unwrap();
-        let registry = Mutex::new(vec![
-            remote("a", ArtifactScope::Project, None, "missing.md", "cloud", 1),
-            remote("b", ArtifactScope::Project, None, "present.md", "old", 1),
-        ]);
-        let mut feed = ArtifactFeed::new("user".into(), "repo".into(), dir.path().into(), None);
+        let mut newer = remote();
+        newer.content = "cloud edit".into();
+        newer.revision = 2;
+        feed.apply_registry(vec![newer]);
+        feed.refresh().await.unwrap();
+        assert_eq!(feed.local["artifact"].remote.content, "cloud edit");
+        assert!(feed.pending.is_empty());
+        tokio::fs::write(dir.path().join("notes.md"), "local edit")
+            .await
+            .unwrap();
+        feed.refresh().await.unwrap();
+        assert_eq!(feed.local["artifact"].remote.content, "local edit");
+        assert!(
+            feed.local["artifact"]
+                .local_error
+                .as_ref()
+                .unwrap()
+                .contains("Both")
+        );
+        assert!(feed.pending.is_empty());
+    }
+
+    #[tokio::test]
+    async fn local_edits_sync_but_missing_files_are_not_recreated() {
+        let (dir, mut feed) = setup().await;
+        bind(&feed).await;
+        let path = dir.path().join("notes.md");
+        tokio::fs::write(&path, "local edit").await.unwrap();
+        feed.refresh().await.unwrap();
+        assert_eq!(feed.pending.len(), 1);
+        assert_eq!(feed.pending[0].artifact.revision, 1);
+        tokio::fs::remove_file(&path).await.unwrap();
+        feed.refresh().await.unwrap();
+        assert!(feed.pending.is_empty());
+        assert_eq!(feed.local["artifact"].remote.content, "local edit");
+        assert!(feed.local["artifact"].local_error.is_some());
+        assert!(!path.exists());
+    }
+
+    #[tokio::test]
+    async fn interrupted_sync_ack_reconciles_baseline() {
+        let (dir, mut feed) = setup().await;
+        bind(&feed).await;
+        tokio::fs::write(dir.path().join("notes.md"), "synced")
+            .await
+            .unwrap();
+        let mut synced = remote();
+        synced.content = "synced".into();
+        feed.apply_registry(vec![synced]);
+        feed.refresh().await.unwrap();
+        assert_eq!(
+            feed.bindings
+                .lock()
+                .await
+                .unwrap()
+                .get("artifact")
+                .unwrap()
+                .content_hash,
+            content_hash("synced")
+        );
+        tokio::fs::write(dir.path().join("notes.md"), "next")
+            .await
+            .unwrap();
+        feed.refresh().await.unwrap();
+        assert_eq!(feed.pending.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn flush_saves_readable_files_before_reporting_missing_ones() {
+        let (dir, mut feed) = setup().await;
+        bind(&feed).await;
+        tokio::fs::write(dir.path().join("notes.md"), "final edit")
+            .await
+            .unwrap();
+        let missing = RemoteArtifact {
+            id: "missing".into(),
+            ..remote()
+        };
+        let mut guard = feed.bindings.lock().await.unwrap();
+        guard
+            .bind(ArtifactBinding {
+                registration_id: "missing".into(),
+                artifact_id: Some("missing".into()),
+                scope: "project".into(),
+                thread_id: None,
+                local_path: "missing.md".into(),
+                content_hash: content_hash("initial"),
+            })
+            .unwrap();
+        guard.persist().await.unwrap();
+        drop(guard);
+        let registry = Mutex::new(vec![remote(), missing]);
         let result = flush_feed(
             &mut feed,
-            || future::ready(Ok(registry.lock().unwrap().clone())),
+            || std::future::ready(Ok(registry.lock().unwrap().clone())),
             |request| {
                 let mut registry = registry.lock().unwrap();
-                registry[1].content = request.content.clone();
-                registry[1].revision += 1;
-                future::ready((request, Ok(true)))
+                registry[0].content = request.content;
+                registry[0].revision += 1;
+                std::future::ready(Ok(()))
             },
         )
         .await;
-        assert!(result.unwrap_err().to_string().contains("could not read"));
-        assert_eq!(registry.lock().unwrap()[1].content, "saved");
+        assert!(result.is_err());
+        assert_eq!(registry.lock().unwrap()[0].content, "final edit");
         assert!(!dir.path().join("missing.md").exists());
     }
 
     #[tokio::test]
-    async fn final_flush_can_be_cancelled_while_the_registry_is_offline() {
-        let mut feed = ArtifactFeed::new(
-            "user".into(),
-            "repo".into(),
-            PathBuf::from("/workspace"),
-            None,
-        );
-        let result = timeout(
-            Duration::from_millis(20),
-            flush_feed(
-                &mut feed,
-                || future::pending::<anyhow::Result<Vec<RemoteArtifact>>>(),
-                |request| future::ready((request, Ok(true))),
-            ),
-        )
-        .await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn last_close_cancels_the_watch_task() {
-        let live = Arc::new(AtomicUsize::new(0));
-        let live_task = live.clone();
-        let watchers = ArtifactWatchers::with_starter(
-            "https://example.convex.cloud".into(),
-            native_auth(),
-            Arc::new(move |_start| {
-                let live_task = live_task.clone();
-                live_task.fetch_add(1, Ordering::SeqCst);
-                tokio::spawn(async move {
-                    struct DropLive(Arc<AtomicUsize>);
-                    impl Drop for DropLive {
-                        fn drop(&mut self) {
-                            self.0.fetch_sub(1, Ordering::SeqCst);
-                        }
-                    }
-                    let _live = DropLive(live_task);
-                    std::future::pending::<()>().await;
-                })
-            }),
-        );
-
-        let first = watchers
-            .open("user", "repo", "/workspace", Some("thread"))
-            .await;
-        let second = watchers
-            .open("user", "repo", "/workspace", Some("thread"))
-            .await;
-        let other = watchers.open("user", "repo", "/workspace", None).await;
-        assert_eq!(watchers.active_count(), 2);
-        assert_eq!(live.load(Ordering::SeqCst), 2);
-        drop(first);
-        tokio::time::sleep(Duration::from_millis(20)).await;
-        assert_eq!(watchers.active_count(), 2);
-        drop(second);
-        tokio::time::sleep(Duration::from_millis(40)).await;
-        assert_eq!(watchers.active_count(), 1);
-        assert_eq!(live.load(Ordering::SeqCst), 1);
-        drop(other);
-        tokio::time::sleep(Duration::from_millis(40)).await;
-        assert_eq!(watchers.active_count(), 0);
-        assert_eq!(live.load(Ordering::SeqCst), 0);
+    async fn registry_filters_account_repository_and_thread() {
+        let (_dir, mut feed) = setup().await;
+        for artifact in [
+            RemoteArtifact {
+                user_id: "bob".into(),
+                ..remote()
+            },
+            RemoteArtifact {
+                repository_key: "other".into(),
+                ..remote()
+            },
+            RemoteArtifact {
+                scope: ArtifactScope::Thread,
+                thread_id: Some("private".into()),
+                ..remote()
+            },
+        ] {
+            feed.apply_registry(vec![artifact]);
+            feed.refresh().await.unwrap();
+            assert!(feed.local.is_empty());
+        }
     }
 }

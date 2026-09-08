@@ -1,3 +1,4 @@
+pub mod artifact_bindings;
 mod attachments;
 mod catalog;
 mod context_handoff;
