@@ -351,6 +351,10 @@ Web image results store URL and image metadata, not bytes or local paths.
 History displays a notice rather than fetching the URL again. Local-path
 `parse_file` image results still replay from their existing local cache.
 
+`screenshot_url` is an additive tool kind using the same image metadata result
+shape. It stores the target page URL for explicit re-capture, never the expiring
+provider URL. No stored-row migration is needed.
+
 ### Local sessions created before account binding
 
 Persisted local sessions created before native WorkOS account binding have no

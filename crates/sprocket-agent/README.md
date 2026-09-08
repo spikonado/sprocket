@@ -58,6 +58,14 @@ Page scraping uses the official `@firecrawl/firecrawl-convex` component with
 `FIRECRAWL_API_KEY`; `CONTEXT_DEV_API_KEY` is no longer used. Audio and video are
 returned as provider URLs, not downloaded media files.
 
+`screenshot_url` captures a public page's viewport through Firecrawl's
+`screenshot` format with `maxAge: 0` for a fresh capture and returns its pixels
+in memory. It shares `scrape_url`'s
+image size limits and never writes the screenshot to disk. The tool is not
+registered for models without image support. History stores the page URL
+and image metadata, not the signed screenshot URL or image bytes. Captures do
+not share the user's browser session; use browser tools for signed-in pages.
+
 Scrape outputs above 40,000 serialized characters are saved as JSON in the host's temporary
 directory, such as `/tmp` or Windows `%TEMP%`. The `markdown` output reports
 `The scrape was saved to <file-path>.` These files have the operating system's

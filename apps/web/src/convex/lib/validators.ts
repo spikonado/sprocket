@@ -48,6 +48,9 @@ export const vScrapeUrlPayload = v.object({
 	url: v.string()
 });
 
+/** screenshot_url job payload. */
+export const vScreenshotUrlPayload = vScrapeUrlPayload.pick('url');
+
 export const vWebSearchPayload = v.object({
 	query: v.string(),
 	numResults: v.optional(v.number())
@@ -195,6 +198,7 @@ export const vExecutorJobPayload = v.union(
 	vExecCommandPayload,
 	vReadSkillPayload,
 	vScrapeUrlPayload,
+	vScreenshotUrlPayload,
 	vWebSearchPayload,
 	vWriteStdinPayload,
 	vAddArtifactPayload,
@@ -267,6 +271,12 @@ export const vScrapeUrlTransport = v.union(
 		scrapeUrl: v.string()
 	})
 );
+
+/** Local screenshotForTool transport. `url` is the page; `screenshotUrl` is the provider image. */
+export const vScreenshotUrlTransport = v.object({
+	url: v.string(),
+	screenshotUrl: v.string()
+});
 
 export const vWebImageResult = v.object({
 	outputType: v.literal('image'),
@@ -497,6 +507,7 @@ export const vExecutorJobKind = v.union(
 	v.literal('read_skill'),
 	v.literal('parse_file'),
 	v.literal('scrape_url'),
+	v.literal('screenshot_url'),
 	v.literal('web_search'),
 	v.literal('write_stdin'),
 	v.literal('add_artifact'),

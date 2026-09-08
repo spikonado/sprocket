@@ -20,6 +20,7 @@ import { initConvexTest, seedStartedWebJob, type ConvexTestInstance } from './te
 const PAGE_URL = 'https://example.com/page';
 const AUDIO_URL = 'https://storage.googleapis.com/scrape/audio.mp3?X-Goog-Signature=sig';
 const VIDEO_URL = 'https://storage.googleapis.com/scrape/video.mp4?X-Goog-Signature=sig';
+const SCREENSHOT_URL = 'https://storage.googleapis.com/firecrawl/shot.png?X-Goog-Signature=sig';
 
 function firecrawlApiError(status: number) {
 	return new ConvexError({
@@ -37,6 +38,7 @@ function mockScrape(
 		images?: string[];
 		audio?: string;
 		video?: string;
+		screenshot?: string;
 		metadata?: { sourceURL?: string; url?: string; statusCode?: number };
 	},
 	url = PAGE_URL
@@ -47,6 +49,7 @@ function mockScrape(
 		images: document.images,
 		audio: document.audio,
 		video: document.video,
+		screenshot: document.screenshot,
 		metadata: document.metadata ?? { sourceURL: url, statusCode: 200 }
 	});
 }
@@ -58,6 +61,19 @@ function expectedScrapeArgs(url = PAGE_URL) {
 		{
 			formats: ['markdown', 'summary', 'images', 'audio', 'video'],
 			onlyMainContent: true,
+			maxAge: 0,
+			storeInCache: false,
+			timeout: SCRAPE_TIMEOUT_MS
+		}
+	] as const;
+}
+
+function expectedScreenshotArgs(url = PAGE_URL) {
+	return [
+		expect.anything(),
+		url,
+		{
+			formats: ['screenshot'],
 			maxAge: 0,
 			storeInCache: false,
 			timeout: SCRAPE_TIMEOUT_MS
@@ -208,6 +224,29 @@ describe('scrapeForTool auth', () => {
 				executionSecret
 			})
 		).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
+	});
+
+	it('rejects screenshot_url jobs before calling Firecrawl', async () => {
+		const t = initConvexTest();
+		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
+			executionSecret: 'screenshot-as-scrape-secret',
+			kind: 'screenshot_url',
+			payload: { url: PAGE_URL }
+		});
+		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
+		try {
+			await expect(
+				asUser.action(api.webTools.scrapeForTool, {
+					runId,
+					claimId,
+					jobId,
+					executionSecret
+				})
+			).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
+			expect(scrape).not.toHaveBeenCalled();
+		} finally {
+			scrape.mockRestore();
+		}
 	});
 
 	it('rejects an expired claim', async () => {
@@ -684,5 +723,397 @@ describe('scrape errors', () => {
 		} finally {
 			scrape.mockRestore();
 		}
+	});
+});
+
+const screenshotImageResult = {
+	outputType: 'image' as const,
+	url: PAGE_URL,
+	mediaType: 'image/png',
+	byteSize: 80,
+	width: 1280,
+	height: 720
+};
+
+async function screenshotToolArgs(options: {
+	executionSecret: string;
+	kind?: 'screenshot_url' | 'scrape_url' | 'web_search';
+	payload?: { url: string } | { query: string };
+}) {
+	const t = initConvexTest();
+	const seeded = await seedStartedWebJob(t, {
+		executionSecret: options.executionSecret,
+		kind: options.kind ?? 'screenshot_url',
+		payload: options.payload ?? { url: PAGE_URL }
+	});
+	return { t, ...seeded };
+}
+
+describe('screenshotForTool', () => {
+	it('requests a viewport screenshot and returns the page URL, not the signed image URL', async () => {
+		const { t, asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
+			executionSecret: 'screenshot-format-secret'
+		});
+		const scrape = mockScrape({
+			screenshot: SCREENSHOT_URL,
+			metadata: { sourceURL: PAGE_URL, url: SCREENSHOT_URL, statusCode: 200 }
+		});
+		try {
+			expect(
+				await asUser.action(api.webTools.screenshotForTool, {
+					runId,
+					claimId,
+					jobId,
+					executionSecret
+				})
+			).toEqual({ url: PAGE_URL, screenshotUrl: SCREENSHOT_URL });
+			expect(scrape).toHaveBeenCalledWith(...expectedScreenshotArgs());
+			expect(scrape.mock.calls[0]?.[2]).not.toEqual(
+				expect.objectContaining({ formats: [{ type: 'screenshot', fullPage: true }] })
+			);
+			expect(await storageBlobs(t)).toEqual([]);
+		} finally {
+			scrape.mockRestore();
+		}
+	});
+
+	it('keeps the requested page URL when Firecrawl metadata only repeats the screenshot URL', async () => {
+		const { asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
+			executionSecret: 'screenshot-page-url-secret'
+		});
+		const scrape = mockScrape({
+			screenshot: SCREENSHOT_URL,
+			metadata: { url: SCREENSHOT_URL, statusCode: 200 }
+		});
+		try {
+			expect(
+				await asUser.action(api.webTools.screenshotForTool, {
+					runId,
+					claimId,
+					jobId,
+					executionSecret
+				})
+			).toEqual({ url: PAGE_URL, screenshotUrl: SCREENSHOT_URL });
+		} finally {
+			scrape.mockRestore();
+		}
+	});
+
+	it('rejects a wrong execution secret before calling Firecrawl', async () => {
+		const { asUser, runId, claimId, jobId } = await screenshotToolArgs({
+			executionSecret: 'screenshot-auth-secret'
+		});
+		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
+		try {
+			await expect(
+				asUser.action(api.webTools.screenshotForTool, {
+					runId,
+					claimId,
+					jobId,
+					executionSecret: 'wrong-secret'
+				})
+			).rejects.toThrow('Run not found.');
+			expect(scrape).not.toHaveBeenCalled();
+		} finally {
+			scrape.mockRestore();
+		}
+	});
+
+	it('rejects an expired claim before calling Firecrawl', async () => {
+		const { t, asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
+			executionSecret: 'expired-screenshot-secret'
+		});
+		await t.run(async (ctx) => {
+			await ctx.db.patch('runs', runId, { claimExpiresAt: Date.now() - 1 });
+		});
+		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
+		try {
+			await expect(
+				asUser.action(api.webTools.screenshotForTool, {
+					runId,
+					claimId,
+					jobId,
+					executionSecret
+				})
+			).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
+			expect(scrape).not.toHaveBeenCalled();
+			expect(
+				await t.query(internal.webToolPool.getLocalScreenshotJob, {
+					runId,
+					claimId,
+					jobId,
+					executionSecret
+				})
+			).toBeNull();
+		} finally {
+			scrape.mockRestore();
+		}
+	});
+
+	it('rejects a cancelled run before calling Firecrawl', async () => {
+		const { t, asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
+			executionSecret: 'cancelled-screenshot-secret'
+		});
+		await t.run(async (ctx) => {
+			await ctx.db.patch('runs', runId, { cancellationRequestedAt: Date.now() });
+		});
+		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
+		try {
+			await expect(
+				asUser.action(api.webTools.screenshotForTool, {
+					runId,
+					claimId,
+					jobId,
+					executionSecret
+				})
+			).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
+			expect(scrape).not.toHaveBeenCalled();
+		} finally {
+			scrape.mockRestore();
+		}
+	});
+
+	it('rejects scrape_url jobs before calling Firecrawl', async () => {
+		const { asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
+			executionSecret: 'scrape-as-screenshot-secret',
+			kind: 'scrape_url',
+			payload: { url: PAGE_URL }
+		});
+		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
+		try {
+			await expect(
+				asUser.action(api.webTools.screenshotForTool, {
+					runId,
+					claimId,
+					jobId,
+					executionSecret
+				})
+			).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
+			expect(scrape).not.toHaveBeenCalled();
+		} finally {
+			scrape.mockRestore();
+		}
+	});
+
+	it('rejects web_search jobs before calling Firecrawl', async () => {
+		const { asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
+			executionSecret: 'search-as-screenshot-secret',
+			kind: 'web_search',
+			payload: { query: 'sprocket' }
+		});
+		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
+		try {
+			await expect(
+				asUser.action(api.webTools.screenshotForTool, {
+					runId,
+					claimId,
+					jobId,
+					executionSecret
+				})
+			).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
+			expect(scrape).not.toHaveBeenCalled();
+		} finally {
+			scrape.mockRestore();
+		}
+	});
+
+	it('rejects a non-http target URL before calling Firecrawl', async () => {
+		const { asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
+			executionSecret: 'ftp-screenshot-secret',
+			payload: { url: 'ftp://example.com' }
+		});
+		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
+		try {
+			await expect(
+				asUser.action(api.webTools.screenshotForTool, {
+					runId,
+					claimId,
+					jobId,
+					executionSecret
+				})
+			).rejects.toThrow('Only http(s) URLs can be scraped.');
+			expect(scrape).not.toHaveBeenCalled();
+		} finally {
+			scrape.mockRestore();
+		}
+	});
+
+	it('rejects cloud-enqueued scrape jobs before calling Firecrawl', async () => {
+		const { t, asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
+			executionSecret: 'cloud-scrape-as-screenshot-secret',
+			kind: 'scrape_url',
+			payload: { url: PAGE_URL }
+		});
+		await t.run(async (ctx) => {
+			await ctx.db.patch('executorJobs', jobId, { cloudWorkId: 'historical-cloud-work' });
+		});
+		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
+		try {
+			await expect(
+				asUser.action(api.webTools.screenshotForTool, {
+					runId,
+					claimId,
+					jobId,
+					executionSecret
+				})
+			).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
+			expect(scrape).not.toHaveBeenCalled();
+		} finally {
+			scrape.mockRestore();
+		}
+	});
+
+	it('rejects a screenshot job that has a cloud work id before calling Firecrawl', async () => {
+		const { t, asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
+			executionSecret: 'cloud-id-screenshot-secret'
+		});
+		await t.run(async (ctx) => {
+			await ctx.db.patch('executorJobs', jobId, { cloudWorkId: 'work-screenshot' });
+		});
+		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
+		try {
+			await expect(
+				asUser.action(api.webTools.screenshotForTool, {
+					runId,
+					claimId,
+					jobId,
+					executionSecret
+				})
+			).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
+			expect(scrape).not.toHaveBeenCalled();
+		} finally {
+			scrape.mockRestore();
+		}
+	});
+
+	it('rejects a settled screenshot job before calling Firecrawl', async () => {
+		const { asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
+			executionSecret: 'settled-screenshot-secret'
+		});
+		await asUser.mutation(api.executor.complete, {
+			runId,
+			claimId,
+			executionSecret,
+			jobId,
+			result: screenshotImageResult
+		});
+		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
+		try {
+			await expect(
+				asUser.action(api.webTools.screenshotForTool, {
+					runId,
+					claimId,
+					jobId,
+					executionSecret
+				})
+			).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
+			expect(scrape).not.toHaveBeenCalled();
+		} finally {
+			scrape.mockRestore();
+		}
+	});
+
+	it.each([undefined, '', '   '])(
+		'rejects a missing screenshot (%j) without storing bytes',
+		async (screenshot) => {
+			const { t, asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
+				executionSecret: `missing-screenshot-${String(screenshot)}-secret`
+			});
+			const scrape = mockScrape(screenshot === undefined ? { markdown: '# Page' } : { screenshot });
+			try {
+				await expect(
+					asUser.action(api.webTools.screenshotForTool, {
+						runId,
+						claimId,
+						jobId,
+						executionSecret
+					})
+				).rejects.toThrow('Firecrawl screenshot is unavailable.');
+				expect(scrape).toHaveBeenCalledWith(...expectedScreenshotArgs());
+				expect(await storageBlobs(t)).toEqual([]);
+			} finally {
+				scrape.mockRestore();
+			}
+		}
+	);
+
+	it('rejects a non-http screenshot URL', async () => {
+		const { asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
+			executionSecret: 'invalid-screenshot-url-secret'
+		});
+		const scrape = mockScrape({ screenshot: 'data:image/png;base64,abc' });
+		try {
+			await expect(
+				asUser.action(api.webTools.screenshotForTool, {
+					runId,
+					claimId,
+					jobId,
+					executionSecret
+				})
+			).rejects.toThrow('Firecrawl screenshot returned an invalid URL.');
+		} finally {
+			scrape.mockRestore();
+		}
+	});
+
+	it('maps page metadata.statusCode 404 separately from Firecrawl API errors', async () => {
+		const { asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
+			executionSecret: 'screenshot-page-404-secret'
+		});
+		const scrape = mockScrape({
+			screenshot: SCREENSHOT_URL,
+			metadata: { sourceURL: PAGE_URL, statusCode: 404 }
+		});
+		try {
+			await expect(
+				asUser.action(api.webTools.screenshotForTool, {
+					runId,
+					claimId,
+					jobId,
+					executionSecret
+				})
+			).rejects.toThrow('This webpage returned a 404 error.');
+		} finally {
+			scrape.mockRestore();
+		}
+	});
+
+	it('maps Firecrawl API 404 to a non-retryable failure', async () => {
+		const { asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
+			executionSecret: 'screenshot-api-404-secret'
+		});
+		const scrape = vi
+			.spyOn(FirecrawlClient.prototype, 'scrape')
+			.mockRejectedValue(firecrawlApiError(404));
+		try {
+			await expect(
+				asUser.action(api.webTools.screenshotForTool, {
+					runId,
+					claimId,
+					jobId,
+					executionSecret
+				})
+			).rejects.toThrow('Firecrawl scrape failed (404).');
+		} finally {
+			scrape.mockRestore();
+		}
+	});
+
+	it('stores screenshot image metadata with the page URL and without file bytes', async () => {
+		const { t, asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
+			executionSecret: 'saved-screenshot-secret'
+		});
+		await asUser.mutation(api.executor.complete, {
+			runId,
+			claimId,
+			executionSecret,
+			jobId,
+			result: screenshotImageResult
+		});
+		const job = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
+		expect(job?.result).toEqual(screenshotImageResult);
+		expect(job?.result).not.toHaveProperty('path');
+		expect(job?.result).not.toHaveProperty('screenshotUrl');
+		expect(await storageBlobs(t)).toEqual([]);
 	});
 });

@@ -28,7 +28,7 @@ use self::parse_file::ParseFileTool;
 use self::patch::ApplyPatchTool;
 use self::questions::{AskQuestionTool, AwaitQuestionTool};
 use self::skills::ReadSkillTool;
-use self::web::{ScrapeUrlTool, WebSearchTool};
+use self::web::{ScrapeUrlTool, ScreenshotUrlTool, WebSearchTool};
 use crate::convex::RuntimeClient;
 use crate::hooks::ToolCallTracker;
 
@@ -61,6 +61,7 @@ pub(crate) struct AgentToolSet {
     pub(crate) parse_file: ParseFileTool,
     pub(crate) read_skill: ReadSkillTool,
     pub(crate) scrape_url: ScrapeUrlTool,
+    pub(crate) screenshot_url: ScreenshotUrlTool,
     pub(crate) web_search: WebSearchTool,
     pub(crate) write_stdin: WriteStdinTool,
     pub(crate) add_artifact: AddArtifactTool,
@@ -77,7 +78,7 @@ pub(crate) struct AgentToolSet {
     pub(crate) mandate_report: MandateReportTool,
 }
 
-pub(crate) async fn hydrate_parse_file_history(
+pub(crate) async fn hydrate_tool_history(
     history: &mut [crate::types::AgentHistoryMessage],
     parts: &[crate::transcript::TranscriptPart],
     supports_images: bool,
@@ -85,7 +86,8 @@ pub(crate) async fn hydrate_parse_file_history(
     use crate::types::{AgentHistoryContent, AgentHistoryToolResultItem};
     let mut results = std::collections::HashMap::new();
     for tool in parts.iter().filter_map(|part| part.tool.as_ref()) {
-        if (parse_file::is_parse_file_tool(&tool.name) || tool.name == "scrape_url")
+        if (parse_file::is_parse_file_tool(&tool.name)
+            || matches!(tool.name.as_str(), "scrape_url" | "screenshot_url"))
             && tool.status != "started"
         {
             results.entry(tool.call_id.as_str()).or_insert(tool);
@@ -103,12 +105,12 @@ pub(crate) async fn hydrate_parse_file_history(
                 continue;
             }
             let Some(output) = &tool.output else { continue };
-            if tool.name == "scrape_url" {
+            if matches!(tool.name.as_str(), "scrape_url" | "screenshot_url") {
                 if output.get("outputType").and_then(serde_json::Value::as_str) == Some("image") {
                     let guidance = if supports_images {
-                        "Use scrape_url again to view it."
+                        format!("Use {} again to view it.", tool.name)
                     } else {
-                        "The selected model cannot view images."
+                        "The selected model cannot view images.".to_string()
                     };
                     *items = vec![AgentHistoryToolResultItem::Text {
                         text: format!(
@@ -190,6 +192,7 @@ pub(crate) fn agent_tools(
             skills,
         },
         scrape_url: ScrapeUrlTool(context.clone()),
+        screenshot_url: ScreenshotUrlTool(context.clone()),
         web_search: WebSearchTool(context.clone()),
         write_stdin: WriteStdinTool(context.clone()),
         add_artifact: AddArtifactTool(context.clone()),
@@ -241,7 +244,7 @@ mod tests {
                 }],
             }],
         }];
-        hydrate_parse_file_history(&mut history, &[part], false).await;
+        hydrate_tool_history(&mut history, &[part], false).await;
         let serialized = serde_json::to_string(&history).unwrap();
         assert!(serialized.contains("Image omitted"));
         assert!(!serialized.contains("not available"));
@@ -253,29 +256,38 @@ mod tests {
         use crate::types::{
             AgentHistoryContent, AgentHistoryMessage, AgentHistoryRole, AgentHistoryToolResultItem,
         };
-        let part = serde_json::from_value(serde_json::json!({
-            "number": 1, "sourceKey": "tool:1", "kind": "tool", "runId": "run",
-            "tool": {"callId": "call", "name": "scrape_url", "status": "completed", "output": {
-                "outputType": "image", "url": "http://127.0.0.1:1/image", "mediaType": "image/png",
-                "byteSize": 1, "width": 1, "height": 1
-            }}
-        }))
-        .unwrap();
-        let mut history = vec![AgentHistoryMessage {
-            role: AgentHistoryRole::User,
-            assistant_id: None,
-            contents: vec![AgentHistoryContent::ToolResult {
-                id: "call".into(),
-                call_id: Some("call".into()),
-                items: vec![AgentHistoryToolResultItem::Text {
-                    text: "old output".into(),
-                }],
-            }],
-        }];
-        hydrate_parse_file_history(&mut history, &[part], true).await;
-        let serialized = serde_json::to_string(&history).unwrap();
-        assert!(serialized.contains("not saved locally"));
-        assert!(!serialized.contains("imageJson"));
+        for name in ["scrape_url", "screenshot_url"] {
+            for supports_images in [true, false] {
+                let part = serde_json::from_value(serde_json::json!({
+                "number": 1, "sourceKey": "tool:1", "kind": "tool", "runId": "run",
+                "tool": {"callId": "call", "name": name, "status": "completed", "output": {
+                    "outputType": "image", "url": "http://127.0.0.1:1/image", "mediaType": "image/png",
+                    "byteSize": 1, "width": 1, "height": 1
+                }}
+            }))
+            .unwrap();
+                let mut history = vec![AgentHistoryMessage {
+                    role: AgentHistoryRole::User,
+                    assistant_id: None,
+                    contents: vec![AgentHistoryContent::ToolResult {
+                        id: "call".into(),
+                        call_id: Some("call".into()),
+                        items: vec![AgentHistoryToolResultItem::Text {
+                            text: "old output".into(),
+                        }],
+                    }],
+                }];
+                hydrate_tool_history(&mut history, &[part], supports_images).await;
+                let serialized = serde_json::to_string(&history).unwrap();
+                assert!(serialized.contains("not saved locally"));
+                if supports_images {
+                    assert!(serialized.contains(&format!("Use {name} again")));
+                } else {
+                    assert!(serialized.contains("cannot view images"));
+                }
+                assert!(!serialized.contains("imageJson"));
+            }
+        }
     }
 
     #[test]

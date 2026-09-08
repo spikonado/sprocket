@@ -186,6 +186,56 @@ describe('executor', () => {
 		expect(job?.result).not.toHaveProperty('path');
 	});
 
+	it('persists screenshot_url image metadata without file bytes', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'screenshot-image-secret';
+		const claimId = 'claim-screenshot';
+		const { runId } = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			'screenshot-image',
+			executionSecret,
+			'Capture this page'
+		);
+		await asUser.mutation(api.agentRuntime.start, { runId, claimId, executionSecret });
+		const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
+			runId,
+			claimId,
+			executionSecret,
+			kind: 'screenshot_url',
+			payload: { url: 'https://example.com/page' }
+		});
+		await expect(
+			asUser.mutation(api.executor.complete, {
+				runId,
+				claimId,
+				executionSecret,
+				jobId,
+				result: {
+					outputType: 'image',
+					url: 'https://example.com/page',
+					mediaType: 'image/png',
+					byteSize: 80,
+					width: 1280,
+					height: 720
+				}
+			})
+		).resolves.toBe(true);
+		const job = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
+		expect(job?.result).toEqual({
+			outputType: 'image',
+			url: 'https://example.com/page',
+			mediaType: 'image/png',
+			byteSize: 80,
+			width: 1280,
+			height: 720
+		});
+		expect(job?.result).not.toHaveProperty('path');
+		expect(job?.result).not.toHaveProperty('screenshotUrl');
+	});
+
 	it('completes the active job and releases the run back to running', async () => {
 		const t = initConvexTest();
 		const { asUser, runId, jobId, claimId, executionSecret } = await seedRunWithJob(t, {

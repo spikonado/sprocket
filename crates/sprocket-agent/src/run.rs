@@ -799,7 +799,7 @@ async fn load_prior_history(
     };
     cache_prompt_attachments(store, user_id, thread_id, &mut parts).await?;
     let mut history = agent_history_from_parts(&state, &parts, Some(run_id));
-    crate::tools::hydrate_parse_file_history(&mut history, &parts, supports_images).await;
+    crate::tools::hydrate_tool_history(&mut history, &parts, supports_images).await;
     Ok(PriorHistory {
         current_prompt: parts
             .iter()
