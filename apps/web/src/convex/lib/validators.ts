@@ -236,11 +236,24 @@ export const vCommandExecResult = v.object({
 	error: v.optional(v.string())
 });
 
+/** Stored scrape_url job result. Historical cloud rows include `truncated`. */
 export const vScrapeUrlResult = v.object({
 	url: v.string(),
 	markdown: v.string(),
-	truncated: v.boolean()
+	truncated: v.optional(v.boolean())
 });
+
+/** Local scrapeForTool transport. Long pages return a temporary download URL. */
+export const vScrapeUrlTransport = v.union(
+	v.object({
+		url: v.string(),
+		markdown: v.string()
+	}),
+	v.object({
+		url: v.string(),
+		markdownUrl: v.string()
+	})
+);
 
 export const vWebImageResult = v.object({
 	outputType: v.literal('image'),

@@ -50,8 +50,12 @@ the full text in the thread's `parse_file/` cache. Use `scrape_url` for http(s)
 URLs; `parse_file` rejects a `url` argument and URL-shaped paths.
 
 `scrape_url` fetches supported raster images in memory and returns their pixels
-to image-capable models. It saves neither the image nor scraped markdown to a
-local file. Rebuilt history keeps image metadata and asks the model to call
+to image-capable models. Images and short scrapes are not saved locally.
+Scrapes exceeding 40,000 characters are saved in full to the host's temporary
+directory, such as `/tmp` or Windows `%TEMP%`. The `markdown` output reports
+`The scrape was saved to <file-path>.` These files have the operating system's
+temporary-file lifetime. Convex transfer copies expire after one hour.
+Rebuilt history keeps image metadata and asks the model to call
 the tool again if it needs the pixels. HTML uses the cloud scraper through an
 authenticated action. A HEAD request identifies image content types without
 consuming page bodies. Image filename extensions cover servers without useful

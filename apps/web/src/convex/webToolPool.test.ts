@@ -51,6 +51,29 @@ describe('web tool workpool fencing', () => {
 		expect(after?.status).toBe('completed');
 		expect(after?.result).toMatchObject({ results: [{ url: 'https://example.com' }] });
 	});
+
+	it('reads historical truncated scrape results', async () => {
+		const t = initConvexTest();
+		const { jobId } = await seedStartedWebJob(t, {
+			executionSecret: 'webpool-scrape-secret',
+			kind: 'scrape_url',
+			payload: { url: 'https://example.com/legacy' }
+		});
+		const markdown = 'x'.repeat(40_000);
+		await t.run(async (ctx) => {
+			await ctx.db.patch('executorJobs', jobId, {
+				status: 'completed',
+				result: { url: 'https://example.com/legacy', markdown, truncated: true }
+			});
+		});
+		const after = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
+		expect(after?.status).toBe('completed');
+		expect(after?.result).toEqual({
+			url: 'https://example.com/legacy',
+			markdown,
+			truncated: true
+		});
+	});
 });
 
 describe('local scrape_url dispatch', () => {
@@ -86,5 +109,33 @@ describe('local scrape_url dispatch', () => {
 		});
 		const stored = await t.run(async (ctx) => ctx.db.get('executorJobs', jobId));
 		expect(stored?.cloudWorkId).toEqual(expect.any(String));
+	});
+});
+
+describe('temporary scrape storage', () => {
+	it('deletes unregistered blobs and is a no-op after they are gone', async () => {
+		const t = initConvexTest();
+		const storageId = await t.run(async (ctx) => ctx.storage.store(new Blob(['scrape markdown'])));
+		expect(await t.mutation(internal.webToolPool.deleteTemporaryStorage, { storageId })).toBeNull();
+		expect(await t.run(async (ctx) => ctx.db.system.get('_storage', storageId))).toBeNull();
+		expect(await t.mutation(internal.webToolPool.deleteTemporaryStorage, { storageId })).toBeNull();
+	});
+
+	it('leaves registered attachments in place', async () => {
+		const t = initConvexTest();
+		const storageId = await t.run(async (ctx) => {
+			const storageId = await ctx.storage.store(new Blob(['attached']));
+			await ctx.db.insert('imageUploads', {
+				userId: 'owner',
+				storageId,
+				name: 'file.txt',
+				mediaType: 'text/plain',
+				size: 8,
+				attached: true
+			});
+			return storageId;
+		});
+		expect(await t.mutation(internal.webToolPool.deleteTemporaryStorage, { storageId })).toBeNull();
+		expect(await t.run(async (ctx) => ctx.db.system.get('_storage', storageId))).not.toBeNull();
 	});
 });

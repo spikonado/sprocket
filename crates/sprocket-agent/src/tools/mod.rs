@@ -8,6 +8,7 @@ mod mandates;
 mod parse_file;
 mod patch;
 mod questions;
+mod scrape_files;
 mod skills;
 mod web;
 

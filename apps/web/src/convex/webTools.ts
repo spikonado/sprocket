@@ -7,7 +7,7 @@ import { ExaClient } from '@exalabs/convex-exa';
 import { action, internalAction, type ActionCtx } from '@convex/_generated/server';
 import { components, internal } from '@convex/_generated/api';
 import {
-	vScrapeUrlResult,
+	vScrapeUrlTransport,
 	vWebSearchResult,
 	type ExecutorJobPayload
 } from '@convex/lib/validators';
@@ -20,8 +20,11 @@ const exa = new ExaClient(components.exa);
 
 const DEFAULT_SEARCH_RESULTS = 5;
 const MAX_SEARCH_RESULTS = 10;
-// Bounds the persisted executor-job result; Convex documents are capped at 1 MiB.
-const SCRAPE_MARKDOWN_MAX_CHARS = 40_000;
+// Bounds inline markdown; Convex documents are capped at 1 MiB.
+export const SCRAPE_MARKDOWN_MAX_CHARS = 40_000;
+export const SCRAPE_MARKDOWN_STORAGE_TTL_MS = 60 * 60 * 1_000;
+const SCRAPE_MAX_BYTES = 64 * 1024 * 1024;
+const SCRAPE_MARKDOWN_BLOB_TYPE = 'text/markdown; charset=utf-8';
 const SCRAPE_TIMEOUT_MS = 60_000;
 const SEARCH_RESULT_TEXT_MAX_CHARS = 2_000;
 const SEARCH_TIMEOUT_MS = 30_000;
@@ -94,20 +97,19 @@ type PoolScrapeJob = {
 	payload: ExecutorJobPayload;
 } | null;
 
-async function scrapeClaimedUrl(
-	ctx: ActionCtx,
-	job: PoolScrapeJob
-): Promise<Infer<typeof vScrapeUrlResult>> {
+type ScrapedPage = {
+	url: string;
+	markdown: string;
+};
+
+async function scrapeClaimedUrl(ctx: ActionCtx, job: PoolScrapeJob): Promise<ScrapedPage> {
 	if (!job || job.kind !== 'scrape_url') {
 		throw new NonRetryableError(RUN_NO_LONGER_ACTIVE);
 	}
-	return await runScrape(ctx, scrapeUrlFromPayload(job.payload));
+	return await fetchScrape(ctx, scrapeUrlFromPayload(job.payload));
 }
 
-async function runScrape(
-	ctx: ActionCtx,
-	urlValue: string
-): Promise<Infer<typeof vScrapeUrlResult>> {
+async function fetchScrape(ctx: ActionCtx, urlValue: string): Promise<ScrapedPage> {
 	let url: URL;
 	try {
 		url = new URL(urlValue.trim());
@@ -148,12 +150,41 @@ async function runScrape(
 		throw error;
 	}
 
-	const truncated = response.markdown.length > SCRAPE_MARKDOWN_MAX_CHARS;
-	return {
-		url: response.url,
-		markdown: truncated ? response.markdown.slice(0, SCRAPE_MARKDOWN_MAX_CHARS) : response.markdown,
-		truncated
-	};
+	return { url: response.url, markdown: response.markdown };
+}
+
+async function localScrapeTransport(
+	ctx: ActionCtx,
+	page: ScrapedPage
+): Promise<Infer<typeof vScrapeUrlTransport>> {
+	if (page.markdown.length <= SCRAPE_MARKDOWN_MAX_CHARS) {
+		return { url: page.url, markdown: page.markdown };
+	}
+	return { url: page.url, markdownUrl: await storeTemporaryMarkdown(ctx, page.markdown) };
+}
+
+async function storeTemporaryMarkdown(ctx: ActionCtx, markdown: string): Promise<string> {
+	const blob = new Blob([markdown], { type: SCRAPE_MARKDOWN_BLOB_TYPE });
+	if (blob.size > SCRAPE_MAX_BYTES) {
+		throw new NonRetryableError('Scrape exceeds the 64 MiB download limit.');
+	}
+	const storageId = await ctx.storage.store(blob);
+	try {
+		await ctx.scheduler.runAfter(
+			SCRAPE_MARKDOWN_STORAGE_TTL_MS,
+			internal.webToolPool.deleteTemporaryStorage,
+			{ storageId }
+		);
+	} catch (error) {
+		await ctx.storage.delete(storageId);
+		throw error;
+	}
+	const markdownUrl = await ctx.storage.getUrl(storageId);
+	if (!markdownUrl) {
+		await ctx.storage.delete(storageId);
+		throw new Error('Stored scrape is unavailable.');
+	}
+	return markdownUrl;
 }
 
 async function runSearch(
@@ -254,11 +285,11 @@ export const scrapeForTool = action({
 		jobId: v.id('executorJobs'),
 		executionSecret: v.string()
 	},
-	returns: vScrapeUrlResult,
-	handler: async (ctx, args): Promise<Infer<typeof vScrapeUrlResult>> => {
+	returns: vScrapeUrlTransport,
+	handler: async (ctx, args): Promise<Infer<typeof vScrapeUrlTransport>> => {
 		try {
 			const job: PoolScrapeJob = await ctx.runQuery(internal.webToolPool.getLocalScrapeJob, args);
-			return await scrapeClaimedUrl(ctx, job);
+			return await localScrapeTransport(ctx, await scrapeClaimedUrl(ctx, job));
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
