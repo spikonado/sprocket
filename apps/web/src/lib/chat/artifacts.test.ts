@@ -1,9 +1,48 @@
 import { describe, expect, it } from 'vitest';
-import { nextArtifactRevisionWatch, type ArtifactRevision } from './artifacts';
+import {
+	applyArtifactsWatchEvent,
+	artifactWatchScopeKey,
+	artifactsWatchRequest,
+	isCurrentArtifactsWatch,
+	markArtifactWatchStale,
+	nextArtifactRevisionWatch,
+	type ArtifactRevision,
+	type ArtifactWatchState
+} from './artifacts';
+import type { LocalArtifact } from '$lib/types/sprocket';
 
-function revision(id: string, currentVersion: number, updatedAt: number): ArtifactRevision {
-	return { id, currentVersion, updatedAt };
+function revision(
+	id: string,
+	currentVersion: number,
+	updatedAt: number,
+	content = id,
+	localPath = `${id}.md`
+): ArtifactRevision {
+	return { id, currentVersion, updatedAt, content, localPath };
 }
+
+function localArtifact(overrides: Partial<LocalArtifact> = {}): LocalArtifact {
+	return {
+		_id: 'a',
+		userId: 'user-1',
+		scope: 'project',
+		repositoryKey: 'repo-1',
+		localPath: 'docs/a.md',
+		content: 'hello',
+		type: 'markdown',
+		title: 'A',
+		revision: 1,
+		createdAt: 10,
+		updatedAt: 10,
+		...overrides
+	};
+}
+
+const seeded: ArtifactWatchState = {
+	artifacts: [localArtifact()],
+	stale: false,
+	error: null
+};
 
 describe('nextArtifactRevisionWatch', () => {
 	it('seeds without reporting a change on first observation', () => {
@@ -24,7 +63,7 @@ describe('nextArtifactRevisionWatch', () => {
 		expect(changedId).toBe('b');
 	});
 
-	it('reports an updated artifact version', () => {
+	it('does not report a second change when the cloud acknowledges the local content', () => {
 		const previous = new Map([
 			['a', revision('a', 1, 10)],
 			['b', revision('b', 1, 20)]
@@ -34,7 +73,25 @@ describe('nextArtifactRevisionWatch', () => {
 			revision('b', 2, 40)
 		]);
 
-		expect(changedId).toBe('b');
+		expect(changedId).toBeNull();
+	});
+
+	it('reports a local content change before the cloud revision bumps', () => {
+		const previous = new Map([['a', revision('a', 1, 10, 'hello')]]);
+		const { changedId } = nextArtifactRevisionWatch(previous, [
+			revision('a', 1, 40, 'hello from disk')
+		]);
+
+		expect(changedId).toBe('a');
+	});
+
+	it('reports a local path change at the same revision', () => {
+		const previous = new Map([['a', revision('a', 1, 10, 'hello', 'a.md')]]);
+		const { changedId } = nextArtifactRevisionWatch(previous, [
+			revision('a', 1, 40, 'hello', 'renamed.md')
+		]);
+
+		expect(changedId).toBe('a');
 	});
 
 	it('picks the most recently updated artifact when several change', () => {
@@ -43,8 +100,8 @@ describe('nextArtifactRevisionWatch', () => {
 			['b', revision('b', 1, 20)]
 		]);
 		const { changedId } = nextArtifactRevisionWatch(previous, [
-			revision('a', 2, 50),
-			revision('b', 2, 45)
+			revision('a', 2, 50, 'new a'),
+			revision('b', 2, 45, 'new b')
 		]);
 
 		expect(changedId).toBe('a');
@@ -66,5 +123,161 @@ describe('nextArtifactRevisionWatch', () => {
 
 		expect(changedId).toBeNull();
 		expect([...revisions.keys()]).toEqual(['a']);
+	});
+
+	it('does not treat the first snapshot after a scope reset as a live change', () => {
+		const { changedId } = nextArtifactRevisionWatch(null, [
+			revision('from-other-thread', 4, 80, 'other', 'other.md')
+		]);
+
+		expect(changedId).toBeNull();
+	});
+});
+
+describe('artifact watch snapshots', () => {
+	it('omits threadId from the request until a thread is selected', () => {
+		expect(
+			artifactsWatchRequest({
+				userId: 'user-1',
+				repositoryKey: 'repo-1',
+				workspacePath: '/ws'
+			})
+		).toEqual({
+			userId: 'user-1',
+			repositoryKey: 'repo-1',
+			workspacePath: '/ws'
+		});
+		expect(
+			artifactsWatchRequest({
+				userId: 'user-1',
+				repositoryKey: 'repo-1',
+				workspacePath: '/ws',
+				threadId: 'thread-1'
+			}).threadId
+		).toBe('thread-1');
+	});
+
+	it('distinguishes project and thread watch scopes', () => {
+		const project = artifactWatchScopeKey({
+			userId: 'user-1',
+			repositoryKey: 'repo-1',
+			workspacePath: '/ws'
+		});
+		const thread = artifactWatchScopeKey({
+			userId: 'user-1',
+			repositoryKey: 'repo-1',
+			workspacePath: '/ws',
+			threadId: 'thread-1'
+		});
+		const otherWorkspace = artifactWatchScopeKey({
+			userId: 'user-1',
+			repositoryKey: 'repo-1',
+			workspacePath: '/other'
+		});
+
+		expect(project).not.toBe(thread);
+		expect(project).not.toBe(otherWorkspace);
+	});
+
+	it('honors an empty stale snapshot from the local authority', () => {
+		const next = applyArtifactsWatchEvent({
+			artifacts: [],
+			stale: true
+		});
+
+		expect(next.artifacts).toEqual([]);
+		expect(next.stale).toBe(true);
+		expect(next.error).toBeNull();
+	});
+
+	it('clears artifacts when the native session is revoked', () => {
+		const next = applyArtifactsWatchEvent({
+			artifacts: [],
+			stale: false,
+			error: 'native WorkOS session is signed out'
+		});
+
+		expect(next.artifacts).toEqual([]);
+		expect(next.error).toBe('native WorkOS session is signed out');
+	});
+
+	it('applies an empty snapshot when the watch is current', () => {
+		const next = applyArtifactsWatchEvent({
+			artifacts: [],
+			stale: false
+		});
+
+		expect(next.artifacts).toEqual([]);
+		expect(next.stale).toBe(false);
+	});
+
+	it('applies stale snapshots that still include artifacts', () => {
+		const updated = localArtifact({ content: 'from disk', updatedAt: 40 });
+		const next = applyArtifactsWatchEvent({
+			artifacts: [updated],
+			stale: true
+		});
+
+		expect(next.artifacts).toEqual([updated]);
+		expect(next.stale).toBe(true);
+	});
+
+	it('marks reconnects stale without clearing last good content', () => {
+		expect(markArtifactWatchStale(seeded)).toEqual({
+			artifacts: seeded.artifacts,
+			stale: true,
+			error: null
+		});
+	});
+
+	it('ignores late events after abort, generation bump, or scope switch', () => {
+		const projectScope = artifactWatchScopeKey({
+			userId: 'user-1',
+			repositoryKey: 'repo-1',
+			workspacePath: '/ws'
+		});
+		const threadScope = artifactWatchScopeKey({
+			userId: 'user-1',
+			repositoryKey: 'repo-1',
+			workspacePath: '/ws',
+			threadId: 'thread-1'
+		});
+
+		expect(
+			isCurrentArtifactsWatch({
+				aborted: true,
+				generation: 1,
+				currentGeneration: 1,
+				eventScopeKey: projectScope,
+				currentScopeKey: projectScope
+			})
+		).toBe(false);
+		expect(
+			isCurrentArtifactsWatch({
+				aborted: false,
+				generation: 1,
+				currentGeneration: 2,
+				eventScopeKey: projectScope,
+				currentScopeKey: projectScope
+			})
+		).toBe(false);
+		expect(
+			isCurrentArtifactsWatch({
+				aborted: false,
+				generation: 2,
+				currentGeneration: 2,
+				eventScopeKey: projectScope,
+				currentScopeKey: threadScope
+			})
+		).toBe(false);
+		expect(
+			isCurrentArtifactsWatch({
+				aborted: false,
+				generation: 2,
+				currentGeneration: 2,
+				eventScopeKey: threadScope,
+				currentScopeKey: threadScope
+			})
+		).toBe(true);
 	});
 });

@@ -23,7 +23,7 @@ mod tests {
     }
 
     #[test]
-    fn artifacts_skill_teaches_create_artifact_tool() {
+    fn artifacts_skill_teaches_file_registration() {
         let (_, contents) = BUILTIN_SKILLS
             .iter()
             .copied()
@@ -36,12 +36,14 @@ mod tests {
             "description should mention react/design so the agent selects it"
         );
         assert!(
-            parsed.body.contains("create_artifact"),
-            "skill body must instruct use of create_artifact"
+            ["add_artifact", "list_artifacts", "edit_artifact"]
+                .iter()
+                .all(|name| parsed.body.contains(name)),
+            "skill body must teach all artifact registration tools"
         );
         assert!(
-            parsed.body.contains("contentType"),
-            "skill body must document contentType including react"
+            parsed.body.contains(".jsx") && parsed.body.contains("edit the file normally"),
+            "skill body must teach file-backed React previews and normal file edits"
         );
         assert!(
             parsed.body.contains("App"),

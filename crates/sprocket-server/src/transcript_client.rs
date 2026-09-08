@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use convex::{FunctionResult, QuerySubscription, Value};
+use serde::Deserialize;
 use sprocket_agent::{
     RemoteTranscriptState, TranscriptPart, TranscriptStore, fetch_missing_parts, parse_remote_parts,
 };
@@ -70,6 +71,70 @@ impl UserConvexClient {
         self.client.subscribe("threads:listRecent", args).await
     }
 
+    pub async fn subscribe_artifacts(
+        &self,
+        repository_key: &str,
+        thread_id: Option<&str>,
+    ) -> anyhow::Result<QuerySubscription> {
+        self.client
+            .subscribe(
+                "artifacts:getArtifactState",
+                artifacts_list_args(repository_key, thread_id),
+            )
+            .await
+    }
+
+    pub(crate) async fn list_artifacts(
+        &self,
+        repository_key: &str,
+        thread_id: Option<&str>,
+    ) -> anyhow::Result<Vec<crate::artifact_watch::RemoteArtifact>> {
+        let mut args = artifacts_list_args(repository_key, thread_id);
+        let mut artifacts = Vec::new();
+        let mut revision = None;
+        loop {
+            let page: ArtifactPage = tokio::time::timeout(
+                Duration::from_secs(10),
+                self.query("artifacts:listArtifacts", args.clone()),
+            )
+            .await
+            .map_err(|_| anyhow::anyhow!("artifact page timed out"))??;
+            if revision.is_some_and(|revision| revision != page.revision) {
+                anyhow::bail!("Artifact registry changed during paging; retrying.");
+            }
+            revision = Some(page.revision);
+            artifacts.extend(page.page);
+            if page.is_done {
+                return Ok(artifacts);
+            }
+            let cursor = Value::String(page.continue_cursor);
+            if args.get("cursor") == Some(&cursor) {
+                anyhow::bail!("Artifact page cursor did not advance");
+            }
+            args.insert("cursor".to_string(), cursor);
+        }
+    }
+
+    pub async fn sync_artifact(
+        &self,
+        artifact_id: &str,
+        repository_key: &str,
+        thread_id: Option<&str>,
+        expected_revision: u64,
+        local_path: &str,
+        content: &str,
+    ) -> anyhow::Result<bool> {
+        let mut args = artifacts_list_args(repository_key, thread_id);
+        args.insert("artifactId".to_string(), artifact_id.to_string().into());
+        args.insert(
+            "expectedRevision".to_string(),
+            Value::Float64(expected_revision as f64),
+        );
+        args.insert("localPath".to_string(), local_path.to_string().into());
+        args.insert("content".to_string(), content.to_string().into());
+        self.mutation_json("artifacts:syncArtifact", args).await
+    }
+
     pub async fn attachment_download_by_storage_id(
         &self,
         storage_id: &str,
@@ -127,6 +192,28 @@ pub struct RemoteAttachmentDownload {
 fn thread_id_args(thread_id: &str) -> BTreeMap<String, Value> {
     let mut args = BTreeMap::new();
     args.insert("threadId".to_string(), thread_id.to_string().into());
+    args
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ArtifactPage {
+    page: Vec<crate::artifact_watch::RemoteArtifact>,
+    is_done: bool,
+    continue_cursor: String,
+    #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u64")]
+    revision: u64,
+}
+
+fn artifacts_list_args(repository_key: &str, thread_id: Option<&str>) -> BTreeMap<String, Value> {
+    let mut args = BTreeMap::new();
+    args.insert(
+        "repositoryKey".to_string(),
+        repository_key.to_string().into(),
+    );
+    if let Some(thread_id) = thread_id {
+        args.insert("threadId".to_string(), thread_id.to_string().into());
+    }
     args
 }
 

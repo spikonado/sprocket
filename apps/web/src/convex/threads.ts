@@ -1,6 +1,7 @@
 import type { Id } from '@convex/_generated/dataModel';
 import { mutation, query, type MutationCtx } from '@convex/_generated/server';
 import { v } from 'convex/values';
+import { rekeyOwnedArtifacts } from '@convex/artifacts';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
 import schema from '@convex/schema';
@@ -59,6 +60,7 @@ async function rekeyOwnedThreads(ctx: MutationCtx, fromArg: string, toArg: strin
 	for (const thread of threads) {
 		await ctx.db.patch('threadRecords', thread._id, { repositoryKey: to });
 	}
+	await rekeyOwnedArtifacts(ctx, userId, from, to);
 	return { userId, from, to, count: threads.length };
 }
 

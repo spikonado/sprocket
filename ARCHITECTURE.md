@@ -70,7 +70,7 @@ machine-facing API.
 | Workspace crate   | Paths, commands, patches, workspace instructions                                                                     | Authentication or networking                                                          |
 | Convex RPC client | Generic Convex query/mutation/action/subscribe                                                                       | Completion translation                                                                |
 | AI gateway        | Provider routing, OpenAI API, catalog, usage rates                                                                   | Subscription limits or remaining quota                                                |
-| Convex backend    | User data, run coordination, transcript, remaining quota                                                             | Local paths, process execution, rates                                                 |
+| Convex backend    | User data, run coordination, transcript, artifact registry, remaining quota                                          | Local filesystem access, process execution, rates                                     |
 
 The Rust dependency direction follows these boundaries:
 
@@ -121,6 +121,8 @@ Sprocket deliberately separates cloud and machine-local state.
 | Native WorkOS refresh token                                                  | OS credential store  |
 | Active commands, cancellation tokens, and run execution capabilities         | Local process memory |
 | Source files and build artifacts                                             | User workspace       |
+| Registered artifact paths, scope, and last synced content                    | Convex               |
+| Artifact file reads, change detection, and preview feed                      | Local server         |
 | Model and authentication provider secrets                                    | Cloud deployment     |
 
 The local server owns this machine’s folder list and the account-isolated
@@ -133,6 +135,38 @@ are added.
 Rename, archive, restore, rekey, and cancellation go through the local server
 so it can refresh the affected cache files before the UI reads them again.
 Thread creation and selected-thread lifecycle still talk to Convex directly.
+
+### File-backed artifacts
+
+The agent writes a file with its normal tools, then registers its path through
+`add_artifact`. `edit_artifact` retargets that registration to another file;
+content edits happen on disk. `list_artifacts` returns the current thread's
+registrations and the project's shared registrations.
+
+The `artifacts` table stores each registration's content, local path, and scope.
+Project identity is the same `repositoryKey` used by threads, not an ID from the
+retired cloud project catalog. Thread artifacts also store `threadId`.
+
+Rust subscribes to a lightweight repository revision and loads registrations in
+byte-bounded pages. Readers retry if the revision changes between pages; tool
+list results contain metadata only. Repository renames move registrations in
+bounded batches and follow subsequent renames while those batches drain.
+
+Rust reads only files in the selected scope. A watch lives while a UI connection
+or active agent run needs it. A headless run makes a final, bounded sync attempt
+before releasing its watch. The
+UI receives artifact content over the local `/api/artifacts/watch` stream;
+it does not query Convex for artifact details. Local changes update the preview
+before cloud synchronization finishes. Revision and path checks prevent an
+in-flight sync from overwriting a registration that was retargeted.
+
+Relative paths resolve against the attached workspace. Absolute paths remain
+absolute. Files must contain UTF-8 text and fit within 500,000 bytes. Missing or
+unreadable files report an error while retaining their last readable content.
+The server does not recreate missing files from the cloud copy.
+
+The previous versioned artifacts are archived in `oldArtifacts`. They are not
+active registrations and do not trigger local file reads.
 
 ## Agent run flow
 

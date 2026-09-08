@@ -333,6 +333,134 @@ describe('thread cache local API', () => {
 	});
 });
 
+describe('watchArtifacts', () => {
+	const artifact = {
+		_id: 'artifact-1',
+		userId: 'user-1',
+		scope: 'project' as const,
+		repositoryKey: 'repo-1',
+		localPath: 'docs/spec.md',
+		content: '# Spec',
+		type: 'markdown' as const,
+		title: 'Spec',
+		revision: 1,
+		createdAt: 10,
+		updatedAt: 20
+	};
+
+	function sseResponse(events: unknown[]) {
+		const encoder = new TextEncoder();
+		return new ReadableStream({
+			start(controller) {
+				for (const event of events) {
+					controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+				}
+				controller.close();
+			}
+		});
+	}
+
+	it('posts the watch request and parses full-snapshot SSE events', async () => {
+		const fetch = vi.fn(
+			async () =>
+				new Response(sseResponse([{ artifacts: [artifact], stale: false }]), { status: 200 })
+		);
+		vi.stubGlobal('fetch', fetch);
+
+		const events: unknown[] = [];
+		const request = {
+			userId: 'user-1',
+			repositoryKey: 'repo-1',
+			workspacePath: '/ws'
+		};
+		await createLocalClient('http://127.0.0.1:7731').watchArtifacts(request, {
+			signal: new AbortController().signal,
+			onEvent: (event) => {
+				events.push(event);
+			}
+		});
+
+		expect(fetch).toHaveBeenCalledWith(
+			'http://127.0.0.1:7731/api/artifacts/watch',
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify(request)
+			})
+		);
+		expect(events).toEqual([{ artifacts: [artifact], stale: false }]);
+	});
+
+	it('rejects malformed snapshots so callers can reconnect', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(
+				async () =>
+					new Response(
+						sseResponse([{ artifacts: [{ ...artifact, revision: 'invalid' }], stale: false }])
+					)
+			)
+		);
+		const onEvent = vi.fn();
+		await expect(
+			createLocalClient('http://127.0.0.1:7731').watchArtifacts(
+				{ userId: 'user-1', repositoryKey: 'repo-1', workspacePath: '/ws' },
+				{ signal: new AbortController().signal, onEvent }
+			)
+		).rejects.toThrow();
+		expect(onEvent).not.toHaveBeenCalled();
+	});
+
+	it('strips threadId from project-scoped artifacts and keeps stale snapshots', async () => {
+		const threadArtifact = {
+			...artifact,
+			_id: 'artifact-2',
+			scope: 'thread' as const,
+			threadId: 'thread-1',
+			localPath: 'notes.md'
+		};
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(
+				async () =>
+					new Response(
+						sseResponse([
+							{
+								artifacts: [{ ...artifact, threadId: 'thread-1' }, threadArtifact],
+								stale: true,
+								error: 'cloud lag'
+							}
+						]),
+						{ status: 200 }
+					)
+			)
+		);
+
+		const events: unknown[] = [];
+		await createLocalClient('http://127.0.0.1:7731').watchArtifacts(
+			{
+				userId: 'user-1',
+				repositoryKey: 'repo-1',
+				workspacePath: '/ws',
+				threadId: 'thread-1'
+			},
+			{
+				signal: new AbortController().signal,
+				onEvent: (event) => {
+					events.push(event);
+				}
+			}
+		);
+
+		expect(events).toEqual([
+			{
+				artifacts: [artifact, threadArtifact],
+				stale: true,
+				error: 'cloud lag'
+			}
+		]);
+	});
+});
+
 describe('run cancellation local API', () => {
 	it('accepts the boolean returned by the cancellation mutation', async () => {
 		vi.stubGlobal(

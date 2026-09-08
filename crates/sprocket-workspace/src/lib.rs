@@ -1,5 +1,6 @@
 mod agents;
 mod apply_patch_format;
+mod artifacts;
 mod browse;
 mod builtin_skills;
 mod commands;
@@ -16,6 +17,7 @@ mod unified_diff;
 mod workspace;
 
 pub use agents::{WorkspaceInstruction, WorkspaceInstructionSource, load_workspace_instructions};
+pub use artifacts::{ArtifactContentType, ArtifactFile, MAX_ARTIFACT_BYTES, read_artifact_file};
 pub use browse::{
     FilesystemBrowseEntry, FilesystemBrowseResult, browse_filesystem,
     resolve_or_create_workspace_root,

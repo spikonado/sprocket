@@ -30,6 +30,7 @@ export function toolKindIcon(kind: string): LucideIcon {
 			return Hourglass;
 		case 'check_docs':
 			return BookOpen;
+		case 'add_artifact':
 		case 'create_artifact':
 			return FileCode;
 		case 'exec_command':
@@ -50,6 +51,8 @@ export function toolKindIcon(kind: string): LucideIcon {
 			return NotebookPen;
 		case 'scrape_url':
 			return Globe;
+		case 'edit_artifact':
+		case 'list_artifacts':
 		case 'update_artifact':
 		case 'parse_file':
 			return FileText;

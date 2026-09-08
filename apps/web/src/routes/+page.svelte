@@ -32,7 +32,19 @@
 	import ThreadTranscript from '$lib/components/home/thread-transcript.svelte';
 	import SidePanel from '$lib/components/home/side-panel.svelte';
 	import ArtifactScreenFullscreen from '$lib/components/home/artifact-screen-fullscreen.svelte';
-	import { nextArtifactRevisionWatch, type ArtifactRevision } from '$lib/chat/artifacts';
+	import {
+		EMPTY_ARTIFACT_WATCH_STATE,
+		applyArtifactsWatchEvent,
+		artifactEntryFromLocal,
+		artifactRevisionFromLocal,
+		artifactWatchScopeKey,
+		artifactsWatchRequest,
+		isCurrentArtifactsWatch,
+		markArtifactWatchStale,
+		nextArtifactRevisionWatch,
+		type ArtifactRevision,
+		type ArtifactWatchState
+	} from '$lib/chat/artifacts';
 	import { DEFAULT_SIDE_PANEL_SNAPSHOT, type SidePanelSnapshot } from '$lib/chat/side-panel';
 	import ProjectPicker, { type ProjectSelection } from '$lib/components/home/project-picker.svelte';
 	import ProjectSidebar from '$lib/components/home/project-sidebar.svelte';
@@ -502,10 +514,6 @@
 			: 'skip';
 	const activeThreadQuery = useQuery(api.threads.getByThreadId, authenticatedThreadQueryArgs);
 	const lifecycleQuery = useQuery(api.chat.selectedThreadLifecycle, authenticatedThreadQueryArgs);
-	const artifactsQuery = useQuery(
-		api.artifacts.listArtifactsForThread,
-		authenticatedThreadQueryArgs
-	);
 	const browserLiveViewQuery = useQuery(
 		api.browserSessions.liveViewForThread,
 		authenticatedThreadQueryArgs
@@ -780,22 +788,18 @@
 
 	const runState = $derived(currentLifecycle?.run ?? null);
 	const visibleActions: ExecutorJob[] = [];
-	const threadArtifacts = $derived(
-		(artifactsQuery.data ?? []).map((entry) => ({
-			key: entry.artifact._id,
-			title: entry.artifact.title,
-			artifactType: entry.artifact.type,
-			content: entry.currentContent
-		}))
-	);
-	// Panel state snapshots survive thread switches; the live thread always has
-	// an entry after the restore effect below runs.
-	const sidePanelSnapshots = new SvelteMap<Id<'threadRecords'>, SidePanelSnapshot>();
+	let artifactWatchGeneration = 0;
+	let artifactWatchState = $state<ArtifactWatchState>({ ...EMPTY_ARTIFACT_WATCH_STATE });
+	let artifactWatchHasSnapshot = $state(false);
+	let artifactWatchScope = $state<string | null>(null);
+	const threadArtifacts = $derived(artifactWatchState.artifacts.map(artifactEntryFromLocal));
+	// Panel state snapshots survive thread and project switches.
+	const sidePanelSnapshots = new SvelteMap<string, SidePanelSnapshot>();
 	let sidePanel = $state<SidePanelSnapshot>({ ...DEFAULT_SIDE_PANEL_SNAPSHOT });
-	let sidePanelThreadId: Id<'threadRecords'> | null = null;
+	let sidePanelScopeKey: string | null = null;
 	// Baseline for create/update detection; null means the next observation only seeds.
 	let artifactRevisionWatch: {
-		threadId: Id<'threadRecords'>;
+		scopeKey: string;
 		revisions: Map<string, ArtifactRevision>;
 	} | null = null;
 	// Baseline for browser-activity detection; same seeding rule as artifacts.
@@ -806,39 +810,103 @@
 
 	$effect(() => {
 		const threadId = currentThreadId;
-		if (threadId === sidePanelThreadId) return;
-		if (sidePanelThreadId) {
-			sidePanelSnapshots.set(sidePanelThreadId, sidePanel);
+		const repositoryKey = currentRepositoryKey;
+		const workspacePath = currentWorkspacePath;
+		const userId = signedInUserId;
+		const scopeKey =
+			userId && repositoryKey && workspacePath
+				? artifactWatchScopeKey({ userId, repositoryKey, workspacePath, threadId })
+				: null;
+		if (scopeKey === sidePanelScopeKey) return;
+		if (sidePanelScopeKey) {
+			sidePanelSnapshots.set(sidePanelScopeKey, sidePanel);
 		}
-		sidePanelThreadId = threadId;
+		sidePanelScopeKey = scopeKey;
 		artifactFullscreenKey = null;
 		sidePanel = {
-			...((threadId && sidePanelSnapshots.get(threadId)) || DEFAULT_SIDE_PANEL_SNAPSHOT)
+			...((scopeKey && sidePanelSnapshots.get(scopeKey)) || DEFAULT_SIDE_PANEL_SNAPSHOT)
 		};
 	});
 
 	$effect(() => {
+		const api = desktopApi;
+		const repositoryKey = currentRepositoryKey;
+		const workspacePath = currentWorkspacePath;
 		const threadId = currentThreadId;
-		const data = artifactsQuery.data;
-		if (!threadId) {
-			artifactRevisionWatch = null;
+		const userId = signedInUserId;
+		const generation = ++artifactWatchGeneration;
+		artifactWatchHasSnapshot = false;
+		artifactWatchState = { ...EMPTY_ARTIFACT_WATCH_STATE };
+		artifactRevisionWatch = null;
+		if (!api || !repositoryKey || !workspacePath || !userId) {
+			artifactWatchScope = null;
 			return;
 		}
-		// Drop the prior thread's baseline immediately on switch, even while loading,
-		// so A→B(loading)→A re-seeds instead of treating away-updates as live changes.
-		if (artifactRevisionWatch && artifactRevisionWatch.threadId !== threadId) {
+		const scope = {
+			userId,
+			repositoryKey,
+			workspacePath,
+			threadId
+		};
+		const scopeKey = artifactWatchScopeKey(scope);
+		artifactWatchScope = scopeKey;
+		const ac = new AbortController();
+		const request = artifactsWatchRequest(scope);
+		void (async () => {
+			while (!ac.signal.aborted) {
+				await api
+					.watchArtifacts(request, {
+						signal: ac.signal,
+						onEvent: (event) => {
+							if (
+								!isCurrentArtifactsWatch({
+									aborted: ac.signal.aborted,
+									generation,
+									currentGeneration: artifactWatchGeneration,
+									eventScopeKey: scopeKey,
+									currentScopeKey: artifactWatchScope
+								})
+							) {
+								return;
+							}
+							artifactWatchState = applyArtifactsWatchEvent(event);
+							if (!event.stale || event.artifacts.length > 0) artifactWatchHasSnapshot = true;
+						}
+					})
+					.catch(() => undefined);
+				if (
+					!ac.signal.aborted &&
+					generation === artifactWatchGeneration &&
+					artifactWatchScope === scopeKey
+				) {
+					artifactWatchState = markArtifactWatchStale(untrack(() => artifactWatchState));
+				}
+				if (!ac.signal.aborted) await new Promise((resolve) => setTimeout(resolve, 1_000));
+			}
+		})();
+		return () => {
+			ac.abort();
+		};
+	});
+
+	$effect(() => {
+		const scopeKey = artifactWatchScope;
+		const hasSnapshot = artifactWatchHasSnapshot;
+		const artifacts = artifactWatchState.artifacts;
+		if (!scopeKey || !hasSnapshot) {
+			if (artifactRevisionWatch && artifactRevisionWatch.scopeKey !== scopeKey) {
+				artifactRevisionWatch = null;
+			}
+			return;
+		}
+		if (artifactRevisionWatch && artifactRevisionWatch.scopeKey !== scopeKey) {
 			artifactRevisionWatch = null;
 		}
-		if (data === undefined) return;
 
-		const current: ArtifactRevision[] = data.map((entry) => ({
-			id: entry.artifact._id,
-			currentVersion: entry.artifact.currentVersion,
-			updatedAt: entry.artifact.updatedAt
-		}));
+		const current = artifacts.map(artifactRevisionFromLocal);
 		const previous = artifactRevisionWatch?.revisions ?? null;
 		const { revisions, changedId } = nextArtifactRevisionWatch(previous, current);
-		artifactRevisionWatch = { threadId, revisions };
+		artifactRevisionWatch = { scopeKey, revisions };
 
 		if (!changedId) return;
 		// Avoid depending on panel UI state for re-runs; only follow selection when
@@ -1924,6 +1992,11 @@
 		projectPickerOpen = false;
 		projectPickerReconnectWorkspacePath = null;
 		projectPickerExpectedDisplayName = undefined;
+		sidePanelSnapshots.clear();
+		sidePanelScopeKey = null;
+		sidePanel = { ...DEFAULT_SIDE_PANEL_SNAPSHOT };
+		artifactFullscreenKey = null;
+		artifactRevisionWatch = null;
 	});
 
 	$effect(() => {
@@ -2427,9 +2500,11 @@
 					artifacts={threadArtifacts}
 					selectedKey={sidePanel.selectedKey}
 					tab={sidePanel.tab}
-					liveView={browserLiveViewQuery.data}
+					liveView={currentThreadId ? browserLiveViewQuery.data : null}
 					liveActive={isRunning && browserLiveViewQuery.data?.lastUsedRunId === runState?.runId}
 					expanded={sidePanel.expanded}
+					stale={artifactWatchState.stale}
+					error={artifactWatchState.error}
 					onSelect={(key) => {
 						sidePanel = { ...sidePanel, selectedKey: key };
 					}}

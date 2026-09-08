@@ -7,14 +7,16 @@ use rig::agent::{
 };
 
 pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
+    "add_artifact",
     "apply_patch",
     "ask_question",
     "await_question",
     "browser_act",
     "browser_extract",
     "browser_observe",
-    "create_artifact",
+    "edit_artifact",
     "exec_command",
+    "list_artifacts",
     "mandate_charge",
     "mandate_list",
     "mandate_report",
@@ -23,7 +25,6 @@ pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
     "parse_file",
     "read_skill",
     "scrape_url",
-    "update_artifact",
     "web_search",
     "write_stdin",
 ];

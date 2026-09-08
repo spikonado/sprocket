@@ -9,7 +9,7 @@
 		"dev:prod": "bun scripts/run-dev.mjs --env-file=apps/web/.env.prod",
 		"dev:desktop": "bun scripts/run-dev.mjs --env-file=apps/web/.env.local --desktop --data-dir=.sprocket-dev",
 		"dev:prod:desktop": "bun scripts/run-dev.mjs --env-file=apps/web/.env.prod --desktop",
-		"test": "turbo run test && node --test npm/sprocket/test/*.test.js",
+		"test": "turbo run test && node --test npm/sprocket/test/*.test.js scripts/artifact*.test.mjs",
 		"lint:oxlint": "oxlint",
 		"lint:mermaid": "mermaid-lint --quiet"
 	},

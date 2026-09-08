@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use sprocket_workspace::{CommandSessionManager, WorkspaceSkill};
 
-use self::artifacts::{CreateArtifactTool, UpdateArtifactTool};
+use self::artifacts::{AddArtifactTool, EditArtifactTool, ListArtifactsTool};
 use self::browser::{BrowserActTool, BrowserExtractTool, BrowserObserveTool};
 use self::commands::{ExecCommandTool, WriteStdinTool};
 use self::context::AgentToolContext;
@@ -32,8 +32,6 @@ use crate::convex::RuntimeClient;
 use crate::hooks::ToolCallTracker;
 
 // Helpers/constants brought into this module so `tests` can reach them via `super::*`.
-#[cfg(test)]
-use self::artifacts::{ArtifactContentType, CreateArtifactArgs, UpdateArtifactArgs};
 #[cfg(test)]
 use self::commands::{
     DEFAULT_COMMAND_MAX_OUTPUT_CHARS, DEFAULT_COMMAND_TIMEOUT_MS, DEFAULT_COMMAND_YIELD_MS,
@@ -64,8 +62,9 @@ pub(crate) struct AgentToolSet {
     pub(crate) scrape_url: ScrapeUrlTool,
     pub(crate) web_search: WebSearchTool,
     pub(crate) write_stdin: WriteStdinTool,
-    pub(crate) create_artifact: CreateArtifactTool,
-    pub(crate) update_artifact: UpdateArtifactTool,
+    pub(crate) add_artifact: AddArtifactTool,
+    pub(crate) list_artifacts: ListArtifactsTool,
+    pub(crate) edit_artifact: EditArtifactTool,
     pub(crate) browser_observe: BrowserObserveTool,
     pub(crate) browser_act: BrowserActTool,
     pub(crate) browser_extract: BrowserExtractTool,
@@ -170,8 +169,9 @@ pub(crate) fn agent_tools(
         scrape_url: ScrapeUrlTool(context.clone()),
         web_search: WebSearchTool(context.clone()),
         write_stdin: WriteStdinTool(context.clone()),
-        create_artifact: CreateArtifactTool(context.clone()),
-        update_artifact: UpdateArtifactTool(context.clone()),
+        add_artifact: AddArtifactTool(context.clone()),
+        list_artifacts: ListArtifactsTool(context.clone()),
+        edit_artifact: EditArtifactTool(context.clone()),
         browser_observe: BrowserObserveTool(context.clone()),
         browser_act: BrowserActTool(context.clone()),
         browser_extract: BrowserExtractTool(context.clone()),
@@ -422,63 +422,31 @@ mod tests {
     }
 
     #[test]
-    fn create_artifact_args_round_trip() {
-        let args: CreateArtifactArgs = serde_json::from_value(serde_json::json!({
-            "title": "Landing mock",
-            "contentType": "react",
-            "content": "function App() { return null; }"
-        }))
-        .expect("create artifact args should deserialize");
-
-        assert_eq!(args.title, "Landing mock");
-        assert_eq!(args.content_type, ArtifactContentType::React);
-        assert_eq!(args.content, "function App() { return null; }");
-
-        let value = serde_json::to_value(&args).unwrap();
-        assert_eq!(value["title"], "Landing mock");
-        assert_eq!(value["contentType"], "react");
-        assert_eq!(value["content"], "function App() { return null; }");
-    }
-
-    #[test]
-    fn update_artifact_args_round_trip() {
-        let args: UpdateArtifactArgs = serde_json::from_value(serde_json::json!({
-            "artifactId": "abc123",
-            "content": "updated content"
-        }))
-        .expect("update artifact args should deserialize");
-
-        assert_eq!(args.artifact_id, "abc123");
-        assert_eq!(args.content, "updated content");
-
-        let value = serde_json::to_value(&args).unwrap();
-        assert_eq!(value["artifactId"], "abc123");
-        assert_eq!(value["content"], "updated content");
-    }
-
-    #[test]
-    fn create_artifact_rejects_unknown_content_type() {
-        let error = serde_json::from_value::<CreateArtifactArgs>(serde_json::json!({
-            "title": "Notes",
-            "contentType": "jsx",
-            "content": "x"
-        }))
-        .expect_err("unknown content type must be rejected before reaching Convex");
-
-        assert!(error.to_string().contains("unknown variant"));
-    }
-
-    #[test]
     fn mutation_args_from_payload_merges_run_claim() {
-        let payload = serde_json::json!({
-            "title": "Landing",
-            "contentType": "react",
-            "content": "function App() { return null; }"
+        let job_payload = serde_json::json!({"path": "doc.md", "scope": "thread"});
+        let job_args = mutation_args_from_payload("run-1", "claim-1", &job_payload).unwrap();
+        assert_eq!(job_args.get("runId"), Some(&Value::from("run-1")));
+        assert_eq!(job_args.get("claimId"), Some(&Value::from("claim-1")));
+        assert_eq!(job_args.get("path"), Some(&Value::from("doc.md")));
+        assert_eq!(job_args.get("scope"), Some(&Value::from("thread")));
+        assert!(job_args.get("content").is_none());
+
+        let mutation_payload = serde_json::json!({
+            "scope": "thread",
+            "localPath": "doc.md",
+            "content": "function App() { return null; }",
+            "title": "doc.md",
+            "contentType": "react"
         });
-        let args = mutation_args_from_payload("run-1", "claim-1", &payload).unwrap();
-        assert_eq!(args.get("runId"), Some(&Value::from("run-1")));
-        assert_eq!(args.get("claimId"), Some(&Value::from("claim-1")));
-        assert_eq!(args.get("title"), Some(&Value::from("Landing")));
-        assert_eq!(args.get("contentType"), Some(&Value::from("react")));
+        let mutation_args =
+            mutation_args_from_payload("run-1", "claim-1", &mutation_payload).unwrap();
+        assert_eq!(mutation_args.get("localPath"), Some(&Value::from("doc.md")));
+        assert_eq!(
+            mutation_args.get("content"),
+            Some(&Value::from("function App() { return null; }"))
+        );
+        assert!(
+            mutation_args_from_payload("run-1", "claim-1", &serde_json::json!("nope")).is_err()
+        );
     }
 }

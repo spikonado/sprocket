@@ -16,6 +16,8 @@
 		liveActive: boolean;
 		/** When true, the panel covers the full Sprocket workspace UI (not browser fullscreen). */
 		expanded: boolean;
+		stale?: boolean;
+		error?: string | null;
 		onSelect: (key: string) => void;
 		onBack: () => void;
 		onTabChange: (tab: SidePanelTab) => void;
@@ -32,6 +34,8 @@
 		liveView,
 		liveActive,
 		expanded,
+		stale = false,
+		error = null,
 		onSelect,
 		onBack,
 		onTabChange,
@@ -150,46 +154,78 @@
 	>
 		{#if tab === 'live'}
 			<BrowserLiveView {liveView} active={liveActive} />
-		{:else if selected}
-			<div class="flex min-h-0 flex-1 flex-col p-3">
-				<ArtifactDisplay
-					title={selected.title}
-					artifactType={selected.artifactType}
-					content={selected.content}
-					variant="full"
-					onOpenFullscreen={() => onOpenFullscreen(selected.key)}
-					{onBack}
-				/>
-			</div>
 		{:else}
-			<div class="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2">
-				{#each artifacts as artifact (artifact.key)}
-					{@const TypeIcon = TYPE_ICONS[artifact.artifactType]}
-					<div
-						class="group hover:bg-muted focus-within:bg-muted flex items-center gap-2 rounded-md px-2 py-1.5"
-					>
-						<button
-							type="button"
-							class="flex min-w-0 flex-1 items-center gap-2 text-left"
-							onclick={() => onSelect(artifact.key)}
+			{#if error || stale}
+				<div class="space-y-1 border-b px-3 py-2">
+					{#if error}
+						<p role="alert" class="text-xs text-amber-800 dark:text-amber-200">{error}</p>
+					{/if}
+					{#if stale}
+						<p role="status" class="text-muted-foreground text-xs">
+							Showing last known artifacts while Sprocket reconnects.
+						</p>
+					{/if}
+				</div>
+			{/if}
+			{#if selected}
+				<div class="flex min-h-0 flex-1 flex-col p-3">
+					<ArtifactDisplay
+						title={selected.title}
+						artifactType={selected.artifactType}
+						content={selected.content}
+						localPath={selected.localPath}
+						scope={selected.scope}
+						localError={selected.localError}
+						variant="full"
+						onOpenFullscreen={() => onOpenFullscreen(selected.key)}
+						{onBack}
+					/>
+				</div>
+			{:else}
+				<div class="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2">
+					{#each artifacts as artifact (artifact.key)}
+						{@const TypeIcon = TYPE_ICONS[artifact.artifactType]}
+						<div
+							class="group hover:bg-muted focus-within:bg-muted flex items-center gap-2 rounded-md px-2 py-1.5"
 						>
-							<TypeIcon class="text-muted-foreground size-3.5 shrink-0" aria-hidden="true" />
-							<span class="text-foreground min-w-0 truncate text-sm">{artifact.title}</span>
-						</button>
-						<button
-							type="button"
-							class="text-muted-foreground hover:text-foreground shrink-0 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 focus:opacity-100"
-							onclick={() => onOpenFullscreen(artifact.key)}
-							aria-label={`Open ${artifact.title} fullscreen`}
-							title="Open fullscreen"
-						>
-							<Fullscreen class="size-3.5" aria-hidden="true" />
-						</button>
-					</div>
-				{:else}
-					<p class="text-muted-foreground p-3 text-sm">No artifacts yet.</p>
-				{/each}
-			</div>
+							<button
+								type="button"
+								class="flex min-w-0 flex-1 items-center gap-2 text-left"
+								onclick={() => onSelect(artifact.key)}
+							>
+								<TypeIcon class="text-muted-foreground size-3.5 shrink-0" aria-hidden="true" />
+								<span class="flex min-w-0 flex-1 flex-col">
+									<span class="flex min-w-0 items-center gap-2">
+										<span class="text-foreground min-w-0 truncate text-sm">{artifact.title}</span>
+										<span class="text-muted-foreground shrink-0 text-[11px]">
+											{artifact.scope === 'project' ? 'Project' : 'Thread'}
+										</span>
+									</span>
+									<span class="text-muted-foreground min-w-0 truncate text-[11px]">
+										{artifact.localPath}
+									</span>
+									{#if artifact.localError}
+										<span class="text-[11px] text-amber-800 dark:text-amber-200">
+											{artifact.localError}
+										</span>
+									{/if}
+								</span>
+							</button>
+							<button
+								type="button"
+								class="text-muted-foreground hover:text-foreground shrink-0 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 focus:opacity-100"
+								onclick={() => onOpenFullscreen(artifact.key)}
+								aria-label={`Open ${artifact.title} fullscreen`}
+								title="Open fullscreen"
+							>
+								<Fullscreen class="size-3.5" aria-hidden="true" />
+							</button>
+						</div>
+					{:else}
+						<p class="text-muted-foreground p-3 text-sm">No artifacts yet.</p>
+					{/each}
+				</div>
+			{/if}
 		{/if}
 	</div>
 </aside>

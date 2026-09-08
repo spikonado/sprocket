@@ -16,6 +16,17 @@ local servers. Remove these fallbacks when every supported desktop shell exposes
 `updates` and every supported local server implements `/api/update`. No stored
 data changes are required.
 
+## Archived artifact tool history
+
+The file-backed artifact API does not support older clients. The old create and
+update endpoints are removed, and `beginToolJob` rejects the retired tool names.
+
+Stored executor jobs still validate the old artifact tool names, payloads, and
+results so existing conversation history remains readable. Remove these stored
+validators once no executor jobs contain the retired names. The `oldArtifacts`
+table is a user-requested archive, not a client compatibility API, and has no
+scheduled removal.
+
 ## Transcript projection API
 
 Attachment compatibility covers older stored schemas only. Older-client shims

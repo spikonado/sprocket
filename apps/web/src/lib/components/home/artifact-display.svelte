@@ -2,12 +2,16 @@
 	import { ArrowLeft, Check, Code2, Copy, Eye, Fullscreen } from '@lucide/svelte';
 	import ChatMarkdown from '$lib/components/chat-markdown.svelte';
 	import type { ArtifactType } from '$convex/lib/validators';
+	import type { ArtifactScope } from '$lib/types/sprocket';
 	import { buildArtifactPreviewDocument } from '$lib/chat/artifact-preview';
 
 	type Props = {
 		title: string;
 		artifactType: ArtifactType;
 		content: string;
+		localPath?: string;
+		scope?: ArtifactScope;
+		localError?: string;
 		variant?: 'card' | 'full';
 		/** Enter true browser fullscreen for this artifact (content only). */
 		onOpenFullscreen?: () => void;
@@ -18,6 +22,9 @@
 		title,
 		artifactType,
 		content,
+		localPath,
+		scope,
+		localError,
 		variant = 'card',
 		onOpenFullscreen,
 		onBack
@@ -69,9 +76,19 @@
 				<ArrowLeft class="size-4" aria-hidden="true" />
 			</button>
 		{/if}
-		<div class="flex min-w-0 flex-1 items-center gap-2">
-			<span class="text-foreground min-w-0 truncate text-sm font-medium">{title}</span>
-			<span class="text-muted-foreground shrink-0 text-[11px]">{artifactType}</span>
+		<div class="flex min-w-0 flex-1 flex-col gap-0.5">
+			<div class="flex min-w-0 items-center gap-2">
+				<span class="text-foreground min-w-0 truncate text-sm font-medium">{title}</span>
+				<span class="text-muted-foreground shrink-0 text-[11px]">{artifactType}</span>
+				{#if scope}
+					<span class="text-muted-foreground shrink-0 text-[11px]">
+						{scope === 'project' ? 'Project' : 'Thread'}
+					</span>
+				{/if}
+			</div>
+			{#if localPath}
+				<span class="text-muted-foreground min-w-0 truncate text-[11px]">{localPath}</span>
+			{/if}
 		</div>
 		{#if previewDocument}
 			<button
@@ -101,6 +118,11 @@
 			</button>
 		{/if}
 	</div>
+	{#if localError}
+		<p role="alert" class="px-3 pb-2 text-[11px] text-amber-800 dark:text-amber-200">
+			{localError}
+		</p>
+	{/if}
 	{#snippet body(frameClass: string)}
 		<div class="relative min-h-0 flex-1 border-t">
 			{#if previewDocument && !showSource}
