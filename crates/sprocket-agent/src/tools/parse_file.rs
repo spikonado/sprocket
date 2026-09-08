@@ -33,7 +33,7 @@ pub(crate) struct ParseFileTool(pub(super) AgentToolContext);
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct ParseFileArgs {
-    /// Local filesystem path.
+    /// Relative or absolute path to the file
     #[serde(default)]
     pub path: String,
     /// Older callers may still send `url`. Rejected; use `scrape_url`.
@@ -107,13 +107,13 @@ impl rig::tool::Tool for ParseFileTool {
     type Output = ToolOutput;
 
     fn description(&self) -> String {
-        let docs = "Parse a local file, up to 64 MiB. Converts Word, PowerPoint, Excel, OpenDocument, RTF, EPUB, CSV, and PDF to Markdown, and returns UTF-8 text for source and other text files. If local document conversion fails, automatically uploads the file to Firecrawl for hosted parsing and OCR, up to 50 MB, at no charge to the user. Use scrape_url for http(s) URLs. Larger attachments remain available to shell tools.";
+        let docs = "Use to parse ANY type of file into a format easily readable by you.";
         if self.0.supports_images {
-            format!(
-                "{docs} jpeg, png, gif, and webp are returned as the image itself; images larger than 20 MiB or 8192 px on a side are rejected."
-            )
+            docs.to_string()
         } else {
-            format!("{docs} This model cannot view images; image files are rejected.")
+            format!(
+                "{docs} Your model architecture doesn't support images, so you can't read image files using this tool"
+            )
         }
     }
 
@@ -890,7 +890,10 @@ mod tests {
     fn tool_schema_requires_path_and_omits_url() {
         let schema = parse_file_parameters();
         assert_eq!(schema["required"], json!(["path"]));
-        assert!(schema["properties"].get("path").is_some(), "{schema}");
+        assert_eq!(
+            schema["properties"]["path"]["description"],
+            "Relative or absolute path to the file"
+        );
         assert!(schema["properties"].get("url").is_none(), "{schema}");
         assert!(
             schema["properties"]["path"].get("default").is_none(),

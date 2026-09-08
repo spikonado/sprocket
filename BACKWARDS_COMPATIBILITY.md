@@ -347,6 +347,12 @@ finish it after either reading an image in memory or calling the authenticated
 workpool execution for released agents. Keep that default and the existing
 cloud action until all supported agents use local orchestration.
 
+The backend scrape job payload validator still accepts optional `asImage` for
+older agents and stored jobs. Current agents advertise only `url` and use
+automatic image discovery. Remove the optional backend field once all supported
+agents omit it and no stored executor jobs contain it. No stored-data rewrite
+is needed while the field remains accepted.
+
 Web image results store URL and image metadata, not bytes or local paths.
 History displays a notice rather than fetching the URL again. Historical
 `parse_file` image results still replay from their existing local cache.
