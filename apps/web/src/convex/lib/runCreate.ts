@@ -2,6 +2,7 @@ import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
 import { ConvexError, type Infer } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
+import { collapseDuplicateSubmissionThreads } from '@convex/lib/absorbDuplicateThread';
 import { executionSecretHash } from '@convex/lib/auth';
 import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
 import {
@@ -85,14 +86,27 @@ export async function createQueuedRunRecord(
 		}
 	}
 
-	const existingRun = await ctx.db
+	const existingRuns = await ctx.db
 		.query('runs')
 		.withIndex('by_userId_submissionId', (query) =>
 			query.eq('userId', args.userId).eq('submissionId', args.submissionId)
 		)
-		.unique();
+		.collect();
+	const existingRun =
+		existingRuns.length === 0
+			? null
+			: [...existingRuns].sort(
+					(a, b) => a.startedAt - b.startedAt || a._id.localeCompare(b._id)
+				)[0];
 	if (existingRun) {
-		return await reconcileExistingQueuedRun(ctx, args, existingRun, secretHash, prompt);
+		await collapseDuplicateSubmissionThreads(
+			ctx,
+			args.userId,
+			args.submissionId,
+			existingRun.threadId
+		);
+		const collapsedRun = (await ctx.db.get('runs', existingRun._id)) ?? existingRun;
+		return await reconcileExistingQueuedRun(ctx, args, collapsedRun, secretHash, prompt);
 	}
 	const fallbackTitle = (prompt || imageUploads[0]?.name || 'New thread').slice(0, 72);
 	let threadRecord: Doc<'threadRecords'>;
@@ -119,6 +133,12 @@ export async function createQueuedRunRecord(
 			totalTokensProcessed: 0
 		});
 		threadRecord = (await ctx.db.get('threadRecords', threadId))!;
+		threadRecord = await collapseDuplicateSubmissionThreads(
+			ctx,
+			args.userId,
+			args.submissionId,
+			threadRecord._id
+		);
 	}
 	let latestRun = await ctx.db
 		.query('runs')
@@ -304,22 +324,26 @@ export async function finalizeFailedQueuedStart(
 	// execution secret is the capability. A secret match on a still-queued
 	// run means it is waiting on this executor, so terminalizing is safe.
 	const secretHash = await executionSecretHash(args.executionSecret);
-	const run = await ctx.db
+	const hashedRuns = await ctx.db
 		.query('runs')
 		.withIndex('by_executionSecretHash', (query) => query.eq('executionSecretHash', secretHash))
-		.unique();
+		.collect();
+	const run =
+		hashedRuns.length === 0
+			? null
+			: [...hashedRuns].sort((a, b) => a.startedAt - b.startedAt || a._id.localeCompare(b._id))[0];
 	if (!run) {
 		// When the caller is still authenticated, distinguish a duplicate
 		// submission owned by another executor from an insert still in flight.
 		const identity = await ctx.auth.getUserIdentity();
 		if (identity !== null) {
-			const submittedRun = await ctx.db
+			const submittedRuns = await ctx.db
 				.query('runs')
 				.withIndex('by_userId_submissionId', (query) =>
 					query.eq('userId', identity.subject).eq('submissionId', args.submissionId)
 				)
-				.unique();
-			if (submittedRun) {
+				.collect();
+			if (submittedRuns.length > 0) {
 				return 'standDown';
 			}
 		}
