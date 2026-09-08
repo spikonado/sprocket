@@ -53,7 +53,10 @@ URLs; `parse_file` rejects a `url` argument and URL-shaped paths.
 to image-capable models. It saves neither the image nor scraped markdown to a
 local file. Rebuilt history keeps image metadata and asks the model to call
 the tool again if it needs the pixels. HTML uses the cloud scraper through an
-authenticated action; image probing failures fall back to that scraper.
+authenticated action. A HEAD request identifies image content types without
+consuming page bodies. Image filename extensions cover servers without useful
+HEAD responses. Downloaded image bytes are validated by signature; a mislabeled
+image fails rather than issuing another GET through the scraper.
 Like shell commands and the former `parse_file` URL handling, the image probe
 can reach local devices and private networks. It is not a network isolation
 boundary. It does not attach browser cookies or provider credentials.

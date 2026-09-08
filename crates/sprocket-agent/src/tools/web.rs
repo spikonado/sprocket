@@ -11,8 +11,7 @@ use serde_json::json;
 use super::context::{AgentToolContext, tool_error};
 use super::job::{execute_cloud_tool_job, execute_tool_job_with_id, run_convex_tool_action};
 use super::parse_file::{
-    MAX_PARSE_FILE_IMAGE_BYTES, decode_image_info, sniff_supported_image_format,
-    tool_output_from_image_bytes,
+    MAX_PARSE_FILE_IMAGE_BYTES, decode_image_info, tool_output_from_image_bytes,
 };
 
 pub(super) const DEFAULT_WEB_SEARCH_RESULTS: u32 = 5;
@@ -143,7 +142,7 @@ impl rig::tool::Tool for ScrapeUrlTool {
             },
         )
         .await?;
-        Ok(image_output.unwrap_or_else(|| ToolOutput::text(result.to_string())))
+        Ok(image_output.unwrap_or_else(|| ToolOutput::json(result)))
     }
 }
 
@@ -165,43 +164,18 @@ async fn fetch_web_image(
         .timeout(Duration::from_secs(30))
         .redirect(reqwest::redirect::Policy::limited(5))
         .build()?;
-    // The provider may reach pages blocked to this machine. Probe failures must not prevent scraping.
-    let Ok(mut response) = client.get(url).send().await else {
+    let Some(image_url) = discover_image_url(&client, url).await else {
         return Ok(None);
     };
-    if !response.status().is_success() {
-        return Ok(None);
-    }
-    let mut bytes = Vec::new();
-    while bytes.len() < 16 {
-        let chunk = match response.chunk().await {
-            Ok(Some(chunk)) => chunk,
-            Ok(None) => break,
-            Err(_) => return Ok(None),
-        };
-        let prefix_len = (16 - bytes.len()).min(chunk.len());
-        bytes.extend_from_slice(&chunk[..prefix_len]);
-        if bytes.len() == 16 {
-            if sniff_supported_image_format(&bytes).is_none() {
-                return Ok(None);
-            }
-            anyhow::ensure!(
-                bytes.len().saturating_add(chunk.len() - prefix_len) <= MAX_PARSE_FILE_IMAGE_BYTES,
-                "image exceeds the 20 MiB limit"
-            );
-            bytes.extend_from_slice(&chunk[prefix_len..]);
-        }
-    }
-    if sniff_supported_image_format(&bytes).is_none() {
-        return Ok(None);
-    }
     anyhow::ensure!(supports_images, "The selected model cannot view images.");
+    let mut response = client.get(image_url).send().await?.error_for_status()?;
     anyhow::ensure!(
         response
             .content_length()
             .is_none_or(|size| size <= MAX_PARSE_FILE_IMAGE_BYTES as u64),
         "image exceeds the 20 MiB limit"
     );
+    let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await? {
         anyhow::ensure!(
             bytes.len().saturating_add(chunk.len()) <= MAX_PARSE_FILE_IMAGE_BYTES,
@@ -220,6 +194,43 @@ async fn fetch_web_image(
     )))
 }
 
+async fn discover_image_url(client: &reqwest::Client, url: reqwest::Url) -> Option<reqwest::Url> {
+    // HEAD avoids consuming a single-use page before the cloud scraper's GET.
+    if let Ok(response) = client.head(url.clone()).send().await {
+        if response.status().is_success() {
+            let media_type = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or("")
+                .split(';')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase();
+            return match media_type.as_str() {
+                "image/jpeg" | "image/png" | "image/gif" | "image/webp" => {
+                    Some(response.url().clone())
+                }
+                "" | "application/octet-stream" if has_image_extension(response.url()) => {
+                    Some(response.url().clone())
+                }
+                _ => None,
+            };
+        }
+    }
+    has_image_extension(&url).then_some(url)
+}
+
+fn has_image_extension(url: &reqwest::Url) -> bool {
+    url.path().rsplit('.').next().is_some_and(|extension| {
+        matches!(
+            extension.to_ascii_lowercase().as_str(),
+            "jpeg" | "jpg" | "png" | "gif" | "webp"
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,11 +244,19 @@ mod tests {
             bytes.len()
         );
         tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let mut request = [0; 4096];
-            stream.read(&mut request).await.unwrap();
-            stream.write_all(header.as_bytes()).await.unwrap();
-            let _ = stream.write_all(&bytes).await;
+            for _ in 0..2 {
+                let Ok(Ok((mut stream, _))) =
+                    tokio::time::timeout(Duration::from_secs(2), listener.accept()).await
+                else {
+                    break;
+                };
+                let mut request = [0; 4096];
+                stream.read(&mut request).await.unwrap();
+                stream.write_all(header.as_bytes()).await.unwrap();
+                if !request.starts_with(b"HEAD ") {
+                    let _ = stream.write_all(&bytes).await;
+                }
+            }
         });
         reqwest::Url::parse(&format!("http://{address}/without-extension")).unwrap()
     }
@@ -251,8 +270,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn image_without_extension_or_image_content_type_is_returned_in_memory() {
-        let url = serve("application/octet-stream", png()).await;
+    async fn image_without_extension_is_returned_in_memory_and_validated_by_signature() {
+        let url = serve("image/jpeg", png()).await;
         let (metadata, output) = fetch_web_image(url, true).await.unwrap().unwrap();
         assert_eq!(metadata["mediaType"], "image/png");
         assert!(metadata.get("path").is_none());
@@ -264,8 +283,31 @@ mod tests {
 
     #[tokio::test]
     async fn html_is_left_to_the_scraper() {
-        let url = serve("text/html", b"<html>hello</html>".to_vec()).await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = reqwest::Url::parse(&format!("http://{}/page", listener.local_addr().unwrap()))
+            .unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            stream.read(&mut request).await.unwrap();
+            assert!(request.starts_with(b"HEAD "));
+            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 50\r\nConnection: close\r\n\r\n").await.unwrap();
+            listener
+        });
         assert!(fetch_web_image(url, true).await.unwrap().is_none());
+        let listener = server.await.unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), listener.accept())
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn image_extension_handles_generic_content_types() {
+        let mut url = serve("application/octet-stream", png()).await;
+        url.set_path("/image.PNG");
+        assert!(fetch_web_image(url, true).await.unwrap().is_some());
     }
 
     #[tokio::test]
@@ -273,7 +315,7 @@ mod tests {
         let url = serve("image/svg+xml", b"<svg></svg>".to_vec()).await;
         assert!(fetch_web_image(url, true).await.unwrap().is_none());
         let url = serve("image/jpeg", b"<html>mislabelled</html>".to_vec()).await;
-        assert!(fetch_web_image(url, true).await.unwrap().is_none());
+        assert!(fetch_web_image(url, true).await.is_err());
         let url = serve("image/png", png()).await;
         assert!(
             fetch_web_image(url, false)
