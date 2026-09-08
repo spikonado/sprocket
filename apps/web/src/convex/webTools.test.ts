@@ -36,8 +36,6 @@ function mockScrape(
 		markdown?: string;
 		summary?: string;
 		images?: string[];
-		audio?: string;
-		video?: string;
 		screenshot?: string;
 		metadata?: { sourceURL?: string; url?: string; statusCode?: number };
 	},
@@ -47,8 +45,6 @@ function mockScrape(
 		markdown: document.markdown,
 		summary: document.summary,
 		images: document.images,
-		audio: document.audio,
-		video: document.video,
 		screenshot: document.screenshot,
 		metadata: document.metadata ?? { sourceURL: url, statusCode: 200 }
 	});
@@ -59,7 +55,7 @@ function expectedScrapeArgs(url = PAGE_URL) {
 		expect.anything(),
 		url,
 		{
-			formats: ['markdown', 'summary', 'images', 'audio', 'video'],
+			formats: ['markdown', 'summary', 'images'],
 			onlyMainContent: true,
 			maxAge: 0,
 			storeInCache: false,
@@ -387,8 +383,6 @@ async function scrapeLocalPage(
 		markdown?: string;
 		summary?: string;
 		images?: string[];
-		audio?: string;
-		video?: string;
 	},
 	url = PAGE_URL
 ) {
@@ -413,15 +407,13 @@ async function scrapeLocalPage(
 }
 
 describe('scrape size budget', () => {
-	it('keeps short markdown plus media inline', () => {
+	it('keeps short markdown plus images inline', () => {
 		expect(
 			localInlineFits({
 				url: PAGE_URL,
 				markdown: 'x'.repeat(SCRAPE_INLINE_MAX_CHARS - 1_000),
 				summary: 'Short page.',
-				images: ['https://example.com/a.png'],
-				audio: AUDIO_URL,
-				video: VIDEO_URL
+				images: ['https://example.com/a.png']
 			})
 		).toBe(true);
 	});
@@ -508,22 +500,18 @@ describe('scrapeForTool markdown transport', () => {
 		expect(blobs[0]?.size).toBe(64 * 1024 * 1024);
 	});
 
-	it('returns short markdown, summary, and media inline without truncated or storage', async () => {
+	it('returns short markdown, summary, and images inline without truncated or storage', async () => {
 		const markdown = 'x'.repeat(SCRAPE_INLINE_MAX_CHARS - 1_000);
 		const { t, result, scrapeCalls } = await scrapeLocalPage({
 			markdown,
 			summary: 'A long but inline page.',
-			images: ['https://example.com/a.png'],
-			audio: AUDIO_URL,
-			video: VIDEO_URL
+			images: ['https://example.com/a.png']
 		});
 		expect(result).toEqual({
 			url: PAGE_URL,
 			markdown,
 			summary: 'A long but inline page.',
-			images: ['https://example.com/a.png'],
-			audio: AUDIO_URL,
-			video: VIDEO_URL
+			images: ['https://example.com/a.png']
 		});
 		expect(result).not.toHaveProperty('truncated');
 		expect(result).not.toHaveProperty('scrapeUrl');
@@ -541,24 +529,20 @@ describe('scrapeForTool markdown transport', () => {
 		});
 	});
 
-	it('stores the full scrape JSON including all media and returns scrapeUrl', async () => {
+	it('stores the full scrape JSON including images and returns scrapeUrl', async () => {
 		const markdown = `${'x'.repeat(SCRAPE_INLINE_MAX_CHARS)}é`;
 		const images = ['https://example.com/a.png', 'https://example.com/b.png'];
 		const archive = {
 			url: PAGE_URL,
 			markdown,
 			summary: 'Huge page.',
-			images,
-			audio: AUDIO_URL,
-			video: VIDEO_URL
+			images
 		};
 		const expectedBytes = new TextEncoder().encode(JSON.stringify(archive));
 		const { t, result, scrapeCalls } = await scrapeLocalPage({
 			markdown,
 			summary: 'Huge page.',
-			images,
-			audio: AUDIO_URL,
-			video: VIDEO_URL
+			images
 		});
 		expect(result).toEqual({
 			url: PAGE_URL,
