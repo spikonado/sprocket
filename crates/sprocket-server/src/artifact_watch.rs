@@ -219,15 +219,19 @@ where
 {
     loop {
         feed.apply_registry(load().await?);
-        if !feed.refresh().await? {
-            continue;
-        }
+        feed.refresh().await?;
         if feed.pending.is_empty() {
             if let Some(error) = feed
                 .local
                 .values()
                 .find_map(|artifact| artifact.local_error.as_ref())
+                .cloned()
             {
+                let previous = feed.remote.clone();
+                feed.apply_registry(load().await?);
+                if feed.remote != previous {
+                    continue;
+                }
                 anyhow::bail!("Artifact flush failed: {error}");
             }
             return Ok(());
@@ -513,20 +517,23 @@ impl ArtifactFeed {
         }
     }
 
-    async fn refresh(&mut self) -> anyhow::Result<bool> {
-        let Ok(guard) = timeout(Duration::from_millis(50), self.bindings.lock()).await else {
-            return Ok(false);
-        };
-        let mut guard = guard?;
+    async fn refresh(&mut self) -> anyhow::Result<()> {
+        let bindings: HashMap<_, _> = self
+            .bindings
+            .snapshot()
+            .await?
+            .into_iter()
+            .filter_map(|binding| binding.artifact_id.clone().map(|id| (id, binding)))
+            .collect();
         let mut pending = Vec::new();
         let mut local = BTreeMap::new();
-        let mut baseline_changed = false;
+        let mut baseline_updates = Vec::new();
         let workspace = PathBuf::from(&self.key.workspace_path);
         let reads: Vec<_> = self
             .remote
             .keys()
             .filter_map(|id| {
-                guard
+                bindings
                     .get(id)
                     .map(|binding| (id.clone(), binding.local_path.clone()))
             })
@@ -545,7 +552,7 @@ impl ArtifactFeed {
                 local_path: None,
                 local_error: None,
             };
-            if let Some(binding) = guard.get(&artifact.id).cloned() {
+            if let Some(binding) = bindings.get(&artifact.id).cloned() {
                 view.local_path = Some(binding.local_path.clone());
                 match files
                     .remove(&artifact.id)
@@ -556,10 +563,7 @@ impl ArtifactFeed {
                         let cloud = content_hash(&artifact.content);
                         if disk == cloud {
                             if binding.content_hash != cloud {
-                                let mut binding = binding;
-                                binding.content_hash = cloud;
-                                guard.bind(binding)?;
-                                baseline_changed = true;
+                                baseline_updates.push((artifact.id.clone(), binding, cloud));
                             }
                         } else if disk == binding.content_hash {
                             view.local_error = Some("The cloud artifact is newer than this local file. Showing the cloud version; save to a new path to bind it.".into());
@@ -591,12 +595,32 @@ impl ArtifactFeed {
             }
             local.insert(artifact.id.clone(), view);
         }
-        if baseline_changed {
-            guard.persist().await?;
-        }
         self.pending = pending;
         self.local = local;
-        Ok(true)
+        if !baseline_updates.is_empty() {
+            let Ok(guard) = timeout(Duration::from_millis(50), self.bindings.lock()).await else {
+                return Ok(());
+            };
+            let mut guard = guard?;
+            let mut changed = false;
+            for (id, previous, hash) in baseline_updates {
+                if let Some(current) = guard.get(&id) {
+                    if current.local_path == previous.local_path
+                        && current.content_hash == previous.content_hash
+                        && current.registration_id == previous.registration_id
+                    {
+                        let mut binding = current.clone();
+                        binding.content_hash = hash;
+                        guard.bind(binding)?;
+                        changed = true;
+                    }
+                }
+            }
+            if changed {
+                guard.persist().await?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -791,6 +815,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn previews_continue_while_a_sync_holds_the_binding_lock() {
+        let (dir, mut feed) = setup().await;
+        bind(&feed).await;
+        let _in_flight = feed.bindings.lock().await.unwrap();
+        for content in ["first edit", "second edit"] {
+            tokio::fs::write(dir.path().join("notes.md"), content)
+                .await
+                .unwrap();
+            timeout(Duration::from_millis(500), feed.refresh())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(feed.local["artifact"].remote.content, content);
+            assert_eq!(feed.pending[0].content, content);
+        }
+    }
+
+    #[tokio::test]
     async fn flush_saves_readable_files_before_reporting_missing_ones() {
         let (dir, mut feed) = setup().await;
         bind(&feed).await;
@@ -829,6 +871,46 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(registry.lock().unwrap()[0].content, "final edit");
         assert!(!dir.path().join("missing.md").exists());
+    }
+
+    #[tokio::test]
+    async fn flush_reloads_if_another_watcher_advanced_the_baseline() {
+        let (dir, mut feed) = setup().await;
+        bind(&feed).await;
+        tokio::fs::write(dir.path().join("notes.md"), "synced")
+            .await
+            .unwrap();
+        let mut guard = feed.bindings.lock().await.unwrap();
+        let mut binding = guard.get("artifact").unwrap().clone();
+        binding.content_hash = content_hash("synced");
+        guard.bind(binding).unwrap();
+        guard.persist().await.unwrap();
+        drop(guard);
+        let mut loads = 0;
+        flush_feed(
+            &mut feed,
+            || {
+                loads += 1;
+                let artifact = if loads == 1 {
+                    remote()
+                } else {
+                    RemoteArtifact {
+                        content: "synced".into(),
+                        revision: 2,
+                        ..remote()
+                    }
+                };
+                std::future::ready(Ok(vec![artifact]))
+            },
+            |_| {
+                std::future::ready(Err(anyhow::anyhow!(
+                    "Already synced; no write should be needed"
+                )))
+            },
+        )
+        .await
+        .unwrap();
+        assert!(loads >= 2);
     }
 
     #[tokio::test]

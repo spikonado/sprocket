@@ -32,10 +32,12 @@ afterEach(() => {
 describe('cloud artifact subscriptions', () => {
 	it('filters a cached response from the previous account during auth handoff', async () => {
 		const fixture = clientFixture();
+		// SAFETY: this mocked response uses the ID only as an opaque string, never in a Convex request.
+		const artifactId = 'artifact' as Id<'artifacts'>;
 		fixture.query.mockResolvedValue({
 			page: [
 				{
-					_id: 'artifact' as Id<'artifacts'>,
+					_id: artifactId,
 					_creationTime: 1,
 					userId: 'bob',
 					repositoryKey: 'repo',

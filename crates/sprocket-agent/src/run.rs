@@ -961,7 +961,7 @@ pub async fn run_agent(run: AgentRun, live: Arc<LiveCompletionHub>) -> anyhow::R
                     initial_context: vec![prompt_context.initial_context],
                     prior_history: prior_history.messages,
                     artifact_bindings: crate::artifact_bindings::ArtifactBindings::new(
-                        &store.root().join("../artifact-bindings"),
+                        &store.root().with_file_name("artifact-bindings"),
                         &request.deployment_url,
                         &context.run.user_id,
                         &workspace_root,

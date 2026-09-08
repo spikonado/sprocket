@@ -67,17 +67,21 @@ impl ArtifactBindings {
                 Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
             }
         }
-        let bindings = match tokio::fs::read(self.directory.join("bindings.json")).await {
-            Ok(bytes) => serde_json::from_slice(&bytes)
-                .context("Invalid artifact bindings; refusing to overwrite them")?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-            Err(error) => return Err(error.into()),
-        };
+        let bindings = self.snapshot().await?;
         Ok(BindingGuard {
             _lock: lock,
             directory: self.directory.clone(),
             bindings,
         })
+    }
+
+    pub async fn snapshot(&self) -> anyhow::Result<Vec<ArtifactBinding>> {
+        match tokio::fs::read(self.directory.join("bindings.json")).await {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .context("Invalid artifact bindings; refusing to overwrite them"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(error) => Err(error.into()),
+        }
     }
 }
 
