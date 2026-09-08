@@ -105,50 +105,27 @@ pub(crate) async fn hydrate_tool_history(
                 continue;
             }
             let Some(output) = &tool.output else { continue };
-            if matches!(tool.name.as_str(), "scrape_url" | "screenshot_url") {
-                if output.get("outputType").and_then(serde_json::Value::as_str) == Some("image") {
-                    let guidance = if supports_images {
-                        format!("Use {} again to view it.", tool.name)
-                    } else {
-                        "The selected model cannot view images.".to_string()
-                    };
-                    *items = vec![AgentHistoryToolResultItem::Text {
-                        text: format!(
-                            "This image was viewed but not saved locally. {guidance} Original result: {output}"
-                        ),
-                    }];
-                }
+            let is_image =
+                output.get("outputType").and_then(serde_json::Value::as_str) == Some("image");
+            if !is_image && !parse_file::is_parse_file_tool(&tool.name) {
                 continue;
             }
-            if !supports_images
-                && output.get("outputType").and_then(serde_json::Value::as_str) == Some("image")
-            {
+            if !supports_images && is_image {
                 *items = vec![AgentHistoryToolResultItem::Text {
                     text: format!(
-                        "Image omitted because the selected model does not support images. Original parse_file result: {output}"
+                        "Image omitted because the selected model does not support images. Original result: {output}"
                     ),
                 }];
                 continue;
             }
-            *items = match parse_file::replay_parse_file_history_items(output).await {
+            *items = match parse_file::replay_local_tool_history_items(output).await {
                 Ok(items) => items,
                 Err(error) => vec![AgentHistoryToolResultItem::Text {
                     text: format!(
-                        "Previously parsed file is not available in the local cache: {error}. Use parse_file again if needed. Original result: {output}"
+                        "Previous tool output is not available in the local cache: {error}. Original result: {output}"
                     ),
                 }],
             };
-            if !supports_images {
-                for item in items {
-                    if matches!(item, AgentHistoryToolResultItem::Image { .. }) {
-                        *item = AgentHistoryToolResultItem::Text {
-                            text: format!(
-                                "Image omitted because the selected model does not support images. Original parse_file result: {output}"
-                            ),
-                        };
-                    }
-                }
-            }
         }
     }
 }
@@ -252,7 +229,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn web_image_history_never_fetches_or_reads_a_cache() {
+    async fn unavailable_web_images_fall_back_to_text_without_refetching() {
         use crate::types::{
             AgentHistoryContent, AgentHistoryMessage, AgentHistoryRole, AgentHistoryToolResultItem,
         };
@@ -279,12 +256,12 @@ mod tests {
                 }];
                 hydrate_tool_history(&mut history, &[part], supports_images).await;
                 let serialized = serde_json::to_string(&history).unwrap();
-                assert!(serialized.contains("not saved locally"));
                 if supports_images {
-                    assert!(serialized.contains(&format!("Use {name} again")));
+                    assert!(serialized.contains("not available in the local cache"));
                 } else {
-                    assert!(serialized.contains("cannot view images"));
+                    assert!(serialized.contains("Image omitted"));
                 }
+                assert!(!serialized.contains(&format!("Use {name} again")));
                 assert!(!serialized.contains("imageJson"));
             }
         }
