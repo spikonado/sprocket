@@ -31,6 +31,7 @@ export class TranscriptHistory {
 	nextBefore: number | undefined;
 	loading = true;
 	loadingOlder = false;
+	windowVersion = 0;
 	stale = false;
 	error: string | null = null;
 	private parts = new Map<number, LocalTranscriptPart>();
@@ -70,24 +71,16 @@ export class TranscriptHistory {
 			do {
 				this.refreshPending = false;
 				const newestLoaded = this.newestLoadedNumber();
-				const incoming: LocalTranscriptPart[] = [];
-				let newestPage: LocalTranscriptPage | undefined;
-				let before: number | undefined;
-				do {
-					const page = await this.fetchPage({ before, limit: RECENT_PAGE_LIMIT });
-					if (this.stopped) return;
-					newestPage ??= page;
-					incoming.push(...page.parts);
-					if (page.nextBefore === undefined) break;
-					if (before !== undefined && page.nextBefore >= before) {
-						throw new Error('Transcript history cursor did not advance');
-					}
-					before = page.nextBefore;
-				} while (newestLoaded !== undefined && before !== undefined && before > newestLoaded);
-				if (!newestPage) return;
-				if (this.parts.size === 0) this.nextBefore = newestPage.nextBefore;
-				this.commit(incoming);
-				this.stale = newestPage.stale;
+				const page = await this.fetchPage({ limit: RECENT_PAGE_LIMIT });
+				if (this.stopped) return;
+				// Do not download an entire offline gap just to display the latest output.
+				if (newestLoaded !== undefined && (page.nextBefore ?? 0) > newestLoaded + 1) {
+					this.parts.clear();
+					this.windowVersion += 1;
+				}
+				if (this.parts.size === 0) this.nextBefore = page.nextBefore;
+				this.commit(page.parts);
+				this.stale = page.stale;
 				this.error = null;
 				this.loading = false;
 				this.changed();
@@ -117,11 +110,12 @@ export class TranscriptHistory {
 		}
 		if (this.nextBefore === undefined) return;
 		const before = this.nextBefore;
+		const version = this.windowVersion;
 		this.loadingOlder = true;
 		this.changed();
 		try {
 			const page = await this.fetchPage({ before, limit: OLDER_PAGE_LIMIT });
-			if (this.stopped) return;
+			if (this.stopped || version !== this.windowVersion) return;
 			if (page.nextBefore !== undefined && page.nextBefore >= before) {
 				throw new Error('Transcript history cursor did not advance');
 			}
@@ -129,7 +123,7 @@ export class TranscriptHistory {
 			this.nextBefore = page.nextBefore;
 			this.stale = page.stale;
 		} catch {
-			if (!this.stopped) this.stale = true;
+			if (!this.stopped && version === this.windowVersion) this.stale = true;
 		} finally {
 			this.loadingOlder = false;
 			if (!this.stopped) this.changed();

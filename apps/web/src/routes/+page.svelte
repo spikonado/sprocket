@@ -564,6 +564,7 @@
 	);
 	let replicaMessages = $state<ThreadMessage[]>([]);
 	let replicaNextBefore = $state<number | null>(null);
+	let replicaWindowVersion = $state(0);
 	let replicaStale = $state(false);
 	let replicaThreadId = $state<Id<'threadRecords'> | null>(null);
 	let replicaLoading = $state(false);
@@ -590,6 +591,7 @@
 		replicaError = null;
 		replicaMessages = [];
 		replicaNextBefore = null;
+		replicaWindowVersion = 0;
 		replicaStale = false;
 		replicaLoading = threadId !== null;
 	}
@@ -621,8 +623,10 @@
 				api.fetchTranscriptPage({ userId, threadId: watchedThreadId, ...request }, ac.signal),
 			() => {
 				if (ac.signal.aborted || replicaGeneration !== generation) return;
+				if (replicaWindowVersion !== history.windowVersion) pendingCompletions = [];
 				replicaMessages = history.messages;
 				replicaNextBefore = history.nextBefore ?? null;
+				replicaWindowVersion = history.windowVersion;
 				replicaStale = history.stale;
 				replicaLoading = history.loading;
 				loadingOlderTranscript = history.loadingOlder;
@@ -2417,7 +2421,7 @@
 						<SettingsAccount user={$authState.user} onSignOut={() => void signOut()} />
 					{/if}
 				{:else}
-					{#key currentThreadId}
+					{#key `${currentThreadId}:${replicaWindowVersion}`}
 						<ThreadTranscript
 							currentError={replicaError ??
 								currentError ??
@@ -2441,7 +2445,7 @@
 							}}
 							stale={replicaStale}
 							loadingOlder={loadingOlderTranscript}
-							hasOlder={replicaNextBefore != null}
+							nextBefore={replicaNextBefore ?? undefined}
 							emptyStateMessage={currentThreadId &&
 							(replicaLoading || replicaThreadId !== currentThreadId)
 								? ''

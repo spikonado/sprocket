@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Id } from '$convex/_generated/dataModel';
 import type { LiveCompletionOverlay, ThreadMessage } from '$lib/types/sprocket';
-import { mergePagedTranscriptWithLive, mergeTranscriptMessages } from '$lib/project/transcript';
+import { mergePagedTranscriptWithLive } from '$lib/project/transcript';
 import { buildAssistantTimeline } from '$lib/chat/assistant-timeline';
 
 // SAFETY: Tests use stable opaque strings where only ID equality matters.
@@ -153,46 +153,5 @@ describe('mergePagedTranscriptWithLive', () => {
 			threadId
 		});
 		expect(messages.map((entry) => entry.text)).toEqual(['working']);
-	});
-});
-
-describe('mergeTranscriptMessages', () => {
-	it('does not re-render immutable messages when the same source snapshot is refreshed', () => {
-		const current = message();
-		expect(mergeTranscriptMessages([current], [message()])[0]).toBe(current);
-	});
-
-	it('hydrates an older snapshot without erasing new output, and retains it on later refreshes', () => {
-		const reasoning = { type: 'reasoning' as const, id: 'reasoning', text: '' };
-		const latest = message({ sourceNumbers: [1, 2], parts: [reasoning, ...message().parts] });
-		const details = message({
-			sourceNumbers: [1],
-			detailsLoaded: true,
-			parts: [{ ...reasoning, text: 'details' }]
-		});
-		const merged = mergeTranscriptMessages([latest], [details]);
-		expect(merged[0].parts).toEqual([{ ...reasoning, text: 'details' }, ...message().parts]);
-		expect(merged[0].sourceNumbers).toEqual([1, 2]);
-		expect(merged[0].detailsLoaded).toBe(false);
-		expect(mergeTranscriptMessages(merged, [latest])[0].parts).toEqual(merged[0].parts);
-	});
-	it('merges pages by message id and source order', () => {
-		const newer = message({ _id: 'prompt:run-2', type: 'prompt', sourceNumbers: [4] });
-		const older = message({ _id: 'prompt:run-1', type: 'prompt', sourceNumbers: [0] });
-		expect(mergeTranscriptMessages([newer], [older]).map((entry) => entry._id)).toEqual([
-			'prompt:run-1',
-			'prompt:run-2'
-		]);
-	});
-
-	it('replaces a lightweight message with its detailed version', () => {
-		const lightweight = message({ parts: [], detailsLoaded: false, sourceNumbers: [1, 2] });
-		const detailed = message({
-			parts: [{ type: 'reasoning', id: 'reasoning-1', text: 'details' }],
-			detailsLoaded: true,
-			sourceNumbers: [1, 2]
-		});
-
-		expect(mergeTranscriptMessages([lightweight], [detailed])).toEqual([detailed]);
 	});
 });

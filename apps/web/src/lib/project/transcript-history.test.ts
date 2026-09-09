@@ -244,20 +244,68 @@ describe('TranscriptHistory', () => {
 		expect(texts(history)).toEqual([]);
 	});
 
-	it('fills every gap after reconnecting beyond the newest page', async () => {
+	it('shows the newest window without downloading an offline gap', async () => {
 		const fetchPage = vi
 			.fn()
 			.mockResolvedValueOnce(page([0, 1]))
-			.mockResolvedValueOnce(page([6, 7], 6))
-			.mockResolvedValueOnce(page([4, 5], 4))
-			.mockResolvedValueOnce(page([1, 2, 3], 1));
+			.mockResolvedValueOnce(page([998, 999], 998))
+			.mockResolvedValueOnce(page([996, 997], 996));
 		const history = new TranscriptHistory(fetchPage, () => {});
 		await history.refresh();
 		await history.refresh();
-		expect(texts(history)).toEqual(['0', '1', '2', '3', '4', '5', '6', '7']);
-		expect(history.nextBefore).toBeUndefined();
+		expect(texts(history)).toEqual(['998', '999']);
+		expect(history.nextBefore).toBe(998);
+		expect(history.windowVersion).toBe(1);
+		expect(fetchPage).toHaveBeenCalledTimes(2);
+		await history.loadOlder();
+		expect(texts(history)).toEqual(['996', '997', '998', '999']);
 		history.stop();
 	});
+
+	it('retains loaded history when the recent window is adjacent', async () => {
+		const fetchPage = vi
+			.fn()
+			.mockResolvedValueOnce(page([0, 1]))
+			.mockResolvedValueOnce(page([2, 3], 2));
+		const history = new TranscriptHistory(fetchPage, () => {});
+		await history.refresh();
+		await history.refresh();
+		expect(texts(history)).toEqual(['0', '1', '2', '3']);
+		expect(history.nextBefore).toBeUndefined();
+		expect(history.windowVersion).toBe(0);
+		history.stop();
+	});
+
+	it.each([false, true])(
+		'ignores an older-page result from a replaced window: failure=%s',
+		async (fail) => {
+			let resolveOlder: (value: LocalTranscriptPage) => void = () => {};
+			let rejectOlder: (reason: Error) => void = () => {};
+			const fetchPage = vi
+				.fn()
+				.mockResolvedValueOnce(page([10, 11], 10))
+				.mockImplementationOnce(
+					() =>
+						new Promise<LocalTranscriptPage>((resolve, reject) => {
+							resolveOlder = resolve;
+							rejectOlder = reject;
+						})
+				)
+				.mockResolvedValueOnce(page([98, 99], 98));
+			const history = new TranscriptHistory(fetchPage, () => {});
+			await history.refresh();
+			const older = history.loadOlder();
+			await history.refresh();
+			if (fail) rejectOlder(new Error('offline'));
+			else resolveOlder(page([8, 9], 8));
+			await older;
+			expect(texts(history)).toEqual(['98', '99']);
+			expect(history.nextBefore).toBe(98);
+			expect(history.stale).toBe(false);
+			expect(history.loadingOlder).toBe(false);
+			history.stop();
+		}
+	);
 
 	it('coalesces concurrent refreshes and ignores requests completed after a thread switch', async () => {
 		let resolve: (value: LocalTranscriptPage) => void = () => {};
@@ -278,22 +326,22 @@ describe('TranscriptHistory', () => {
 		expect(changed).not.toHaveBeenCalled();
 	});
 
-	it('retries a failed catch-up without committing a gap in history', async () => {
+	it('keeps cached output on refresh failure, then retries the latest window', async () => {
 		vi.useFakeTimers();
 		const fetchPage = vi
 			.fn()
 			.mockResolvedValueOnce(page([0, 1]))
-			.mockResolvedValueOnce(page([4, 5], 4))
 			.mockRejectedValueOnce(new Error('offline'))
-			.mockResolvedValueOnce(page([4, 5], 4))
-			.mockResolvedValueOnce(page([1, 2, 3], 1));
+			.mockResolvedValueOnce(page([4, 5], 4));
 		const history = new TranscriptHistory(fetchPage, () => {});
 		await history.refresh();
 		await history.refresh();
 		expect(texts(history)).toEqual(['0', '1']);
 		expect(history.stale).toBe(true);
 		await vi.runAllTimersAsync();
-		expect(texts(history)).toEqual(['0', '1', '2', '3', '4', '5']);
+		expect(texts(history)).toEqual(['4', '5']);
+		expect(history.nextBefore).toBe(4);
+		expect(fetchPage).toHaveBeenCalledTimes(3);
 		history.stop();
 	});
 
@@ -330,22 +378,6 @@ describe('TranscriptHistory', () => {
 		expect(
 			history.messages[0]?.parts.map((part) => (part.type === 'text' ? part.text : ''))
 		).toEqual(parts.map((part) => part.message?.text));
-		expect(fetchPage.mock.calls.map(([request]) => request)).toEqual([
-			{ limit: 12 },
-			{ before: 40, limit: 40 },
-			{ limit: 12 }
-		]);
-		history.stop();
-	});
-
-	it('uses the newest raw part as the catch-up cursor so a loaded response is not rescanned', async () => {
-		const runId = 'run-long';
-		const parts = Array.from({ length: 52 }, (_, number) => completionPart(number, runId));
-		const fetchPage = vi.fn(windowedFetch(parts));
-		const history = new TranscriptHistory(fetchPage, () => {});
-		await history.refresh();
-		await history.loadOlder();
-		await history.refresh();
 		expect(fetchPage.mock.calls.map(([request]) => request)).toEqual([
 			{ limit: 12 },
 			{ before: 40, limit: 40 },
