@@ -5,6 +5,7 @@ import type { ThreadMessage } from '$lib/types/sprocket';
 import ThreadTranscript from './thread-transcript.svelte';
 
 let cleanup: (() => Promise<void>) | undefined;
+let resize: () => void;
 
 function message(number: number): ThreadMessage {
 	return {
@@ -38,7 +39,7 @@ async function renderTranscript(messages: ThreadMessage[], viewportHeight = 600)
 		actions: [],
 		activeRunId: null,
 		project: null,
-		hasOlder: true,
+		nextBefore: messages.length ? 3 : undefined,
 		onLoadOlder: vi.fn()
 	});
 	const component = mount(ThreadTranscript, { target: document.body, props });
@@ -82,23 +83,89 @@ async function renderTranscript(messages: ThreadMessage[], viewportHeight = 600)
 	};
 }
 
-beforeEach(() => vi.useFakeTimers());
+beforeEach(() => {
+	vi.useFakeTimers();
+	vi.stubGlobal(
+		'ResizeObserver',
+		class {
+			constructor(callback: () => void) {
+				resize = callback;
+			}
+			observe = vi.fn();
+			disconnect = vi.fn();
+		}
+	);
+});
 afterEach(async () => {
 	await cleanup?.();
 	cleanup = undefined;
 	vi.restoreAllMocks();
+	vi.unstubAllGlobals();
 	vi.useRealTimers();
 });
 
 describe('transcript viewport paging', () => {
-	it('loads only near the top, not at the bottom or while an older page is loading', async () => {
-		const { props, viewport, scrollTo } = await renderTranscript([1, 2, 3].map(message));
+	it('fills an initially empty thread after its first page arrives, and stops once it scrolls', async () => {
+		const { props, viewport } = await renderTranscript([]);
 		expect(props.onLoadOlder).not.toHaveBeenCalled();
-		scrollTo(300);
+		props.messages = [message(3)];
+		props.nextBefore = 3;
+		await settle();
+		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
+		props.messages = [1, 2, 3].map(message);
+		props.nextBefore = 1;
+		await settle();
+		resize();
+		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
 		expect(viewport.scrollTop).toBe(300);
-		scrollTo(201);
+	});
+
+	it('does not drop an upward scroll just after a resize notification', async () => {
+		const { props, viewport, scrollTo } = await renderTranscript([1, 2, 3, 4, 5].map(message));
+		resize();
+		scrollTo(500);
+		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
+		props.messages = [...props.messages, message(6)];
+		await settle();
+		resize();
+		expect(viewport.scrollTop).toBe(500);
+	});
+
+	it('follows new output only at the bottom, and resumes after scrolling back down', async () => {
+		const { props, viewport, scrollTo } = await renderTranscript([1, 2, 3, 4].map(message));
+		props.messages = [...props.messages, message(5)];
+		await settle();
+		expect(viewport.scrollTop).toBe(900);
+		scrollTo(500);
+		props.messages = [...props.messages, message(6)];
+		await settle();
+		expect(viewport.scrollTop).toBe(500);
+		scrollTo(1200);
+		props.messages = [...props.messages, message(7)];
+		await settle();
+		expect(viewport.scrollTop).toBe(1500);
+	});
+
+	it('opens a newly mounted thread at the bottom rather than reusing the previous reading position', async () => {
+		const first = await renderTranscript([1, 2, 3, 4].map(message));
+		first.scrollTo(100);
+		await cleanup?.();
+		const second = await renderTranscript([]);
+		second.props.messages = [11, 12, 13, 14, 15].map(message);
+		await settle();
+		expect(second.viewport.scrollTop).toBe(900);
+		expect(second.viewport.textContent).not.toContain('Message 4');
+	});
+
+	it('starts loading a viewport ahead of the top, only while scrolling upward', async () => {
+		const { props, viewport, scrollTo } = await renderTranscript([1, 2, 3, 4, 5].map(message));
 		expect(props.onLoadOlder).not.toHaveBeenCalled();
-		scrollTo(200);
+		expect(viewport.scrollTop).toBe(900);
+		scrollTo(601);
+		expect(props.onLoadOlder).not.toHaveBeenCalled();
+		scrollTo(600);
+		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
+		scrollTo(650);
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
 		props.loadingOlder = true;
 		await settle();
@@ -106,27 +173,24 @@ describe('transcript viewport paging', () => {
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
 	});
 
-	it('loads short history only on upward gestures, never to fill the viewport automatically', async () => {
+	it('fills short history with at most two older pages, even when collapsed work adds no height', async () => {
 		const { props, viewport } = await renderTranscript([message(3)]);
 		expect(viewport.textContent).not.toContain('Load earlier messages');
 		expect(viewport.scrollHeight).toBe(viewport.clientHeight);
-		await vi.advanceTimersByTimeAsync(10_000);
-		expect(props.onLoadOlder).not.toHaveBeenCalled();
-		viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: 100 }));
-		expect(props.onLoadOlder).not.toHaveBeenCalled();
-		viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }));
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
 		props.loadingOlder = true;
 		await settle();
 		expect(viewport.textContent).not.toContain('Loading earlier messages');
-		viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }));
-		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
-		props.messages = [message(2), ...props.messages];
+		props.nextBefore = 2;
 		props.loadingOlder = false;
 		await settle();
-		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
-		viewport.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageUp', bubbles: true }));
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(2);
+		props.nextBefore = 1;
+		await settle();
+		await vi.advanceTimersByTimeAsync(10_000);
+		expect(props.onLoadOlder).toHaveBeenCalledTimes(2);
+		viewport.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageUp', bubbles: true }));
+		expect(props.onLoadOlder).toHaveBeenCalledTimes(3);
 	});
 
 	it('allows retry by touch after a failed short-page load without a background retry loop', async () => {
@@ -136,8 +200,6 @@ describe('transcript viewport paging', () => {
 			Object.defineProperty(event, 'touches', { value: [{ clientY }] });
 			viewport.dispatchEvent(event);
 		};
-		touch('touchstart', 100);
-		touch('touchmove', 150);
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
 		props.loadingOlder = true;
 		await settle();
@@ -153,10 +215,13 @@ describe('transcript viewport paging', () => {
 
 	it('accepts upward gestures within the bottom-stick tolerance', async () => {
 		const { props, viewport, scrollTo } = await renderTranscript([1, 2, 3].map(message), 880);
-		expect(props.onLoadOlder).not.toHaveBeenCalled();
+		props.loadingOlder = true;
+		await settle();
 		scrollTo(0);
+		props.loadingOlder = false;
+		await settle();
 		viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }));
-		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
+		expect(props.onLoadOlder).toHaveBeenCalledTimes(2);
 	});
 
 	it('retries from the top of overflowing history without requiring another scroll event', async () => {
@@ -210,6 +275,7 @@ describe('transcript viewport paging', () => {
 		const offset = anchor.getBoundingClientRect().top;
 		props.messages = [message(1), message(2), ...props.messages];
 		await settle();
+		viewport.dispatchEvent(new Event('scroll'));
 		expect(viewport.scrollTop).toBe(750);
 		expect(anchor.getBoundingClientRect().top).toBe(offset);
 		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);

@@ -48,7 +48,7 @@
 		emptyStateMessage?: string;
 		stale?: boolean;
 		loadingOlder?: boolean;
-		hasOlder?: boolean;
+		nextBefore?: number;
 		onLoadOlder?: () => void;
 		loadAttachment?: (storageId: MessageAttachment['storageId']) => Promise<string | null>;
 		onLoadDetails?: (message: ThreadMessage) => Promise<void>;
@@ -68,7 +68,7 @@
 			: 'Add a project to begin.',
 		stale = false,
 		loadingOlder = false,
-		hasOlder = false,
+		nextBefore,
 		onLoadOlder,
 		loadAttachment,
 		onLoadDetails
@@ -77,46 +77,63 @@
 	let scrollViewport = $state<HTMLDivElement | null>(null);
 	let scrollContent = $state<HTMLDivElement | null>(null);
 	let stickToBottom = $state(true);
-	let adjustingScroll = false;
+	let lastScrollTop = 0;
 	let touchY: number | undefined;
+	let automaticPagesRemaining = 2;
+	let lastAutomaticBefore: number | undefined;
 
 	const SCROLL_EPSILON_PX = 28;
-	const LOAD_OLDER_THRESHOLD_PX = 200;
 
 	function updateStickToBottom() {
 		const viewport = scrollViewport;
-		if (!viewport) {
-			return;
-		}
-		if (adjustingScroll) {
-			return;
-		}
+		if (!viewport || viewport.scrollTop === lastScrollTop) return;
+		const movingUp = viewport.scrollTop < lastScrollTop;
+		lastScrollTop = viewport.scrollTop;
 		const distanceToBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
 		stickToBottom = distanceToBottom <= SCROLL_EPSILON_PX;
-		if (
-			!stickToBottom &&
-			hasOlder &&
-			!loadingOlder &&
-			onLoadOlder &&
-			viewport.scrollTop <= LOAD_OLDER_THRESHOLD_PX
-		) {
-			onLoadOlder();
-		}
+		if (movingUp) loadOlderOnUpwardIntent();
 	}
 
 	function loadOlderOnUpwardIntent() {
 		const viewport = scrollViewport;
 		if (
 			viewport &&
-			hasOlder &&
+			nextBefore !== undefined &&
 			!loadingOlder &&
 			viewport.clientHeight > 0 &&
-			viewport.scrollTop <= LOAD_OLDER_THRESHOLD_PX
+			viewport.scrollTop <= viewport.clientHeight
 		) {
 			stickToBottom = false;
 			onLoadOlder?.();
 		}
 	}
+
+	function fillViewport() {
+		const viewport = scrollViewport;
+		if (
+			viewport &&
+			nextBefore !== undefined &&
+			nextBefore !== lastAutomaticBefore &&
+			!loadingOlder &&
+			onLoadOlder &&
+			automaticPagesRemaining > 0 &&
+			viewport.clientHeight > 0 &&
+			viewport.scrollHeight <= viewport.clientHeight + SCROLL_EPSILON_PX
+		) {
+			// Collapsed work can consume many pages without making the viewport taller.
+			automaticPagesRemaining -= 1;
+			lastAutomaticBefore = nextBefore;
+			onLoadOlder();
+		}
+	}
+
+	$effect(() => {
+		void messages;
+		void nextBefore;
+		void loadingOlder;
+		void scrollViewport;
+		untrack(fillViewport);
+	});
 
 	function handleHistoryKey(event: KeyboardEvent) {
 		if (
@@ -189,7 +206,12 @@
 		if (!viewport || !stickToBottom) {
 			return;
 		}
-		viewport.scrollTop = viewport.scrollHeight;
+		setScrollTop(viewport, viewport.scrollHeight);
+	}
+
+	function setScrollTop(viewport: HTMLDivElement, top: number) {
+		viewport.scrollTop = top;
+		lastScrollTop = viewport.scrollTop;
 	}
 
 	function firstVisibleAnchor(viewport: HTMLDivElement) {
@@ -208,6 +230,7 @@
 	$effect.pre(() => {
 		void messages;
 		void actions;
+		void scrollViewport;
 		untrack(() => {
 			const viewport = scrollViewport;
 			if (!viewport) return;
@@ -217,7 +240,6 @@
 			const scrollHeight = viewport.scrollHeight;
 			void tick().then(() => {
 				if (viewport !== scrollViewport) return;
-				adjustingScroll = true;
 				if (stickToBottom) {
 					scrollToBottom();
 				} else if (
@@ -225,13 +247,10 @@
 					offset !== undefined &&
 					viewport.scrollTop === scrollTop
 				) {
-					viewport.scrollTop += anchor.getBoundingClientRect().top - offset;
+					setScrollTop(viewport, scrollTop + anchor.getBoundingClientRect().top - offset);
 				} else if (anchor && !anchor.isConnected && viewport.scrollTop === scrollTop) {
-					viewport.scrollTop += viewport.scrollHeight - scrollHeight;
+					setScrollTop(viewport, scrollTop + viewport.scrollHeight - scrollHeight);
 				}
-				requestAnimationFrame(() => {
-					adjustingScroll = false;
-				});
 			});
 		});
 	});
@@ -244,11 +263,8 @@
 		}
 
 		const observer = new ResizeObserver(() => {
-			adjustingScroll = true;
 			scrollToBottom();
-			requestAnimationFrame(() => {
-				adjustingScroll = false;
-			});
+			fillViewport();
 		});
 		observer.observe(viewport);
 		observer.observe(content);
