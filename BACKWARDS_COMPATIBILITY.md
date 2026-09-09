@@ -347,13 +347,20 @@ have aged out or been rewritten. Current agents archive large scrapes as
 JSON and always keep the summary inline. Raw-markdown archive negotiation
 is not supported; deploy the updated client and backend together.
 
-Web image results store URL and image metadata, not bytes or local paths.
-History displays a notice rather than fetching the URL again. Local-path
-`parse_file` image results still replay from their existing local cache.
+Web image results store the local path, URL, and image metadata, not image
+bytes. History reloads the local file without fetching the URL again. Missing
+files produce a text notice.
 
 `screenshot_url` is an additive tool kind using the same image metadata result
 shape. It stores the target page URL for explicit re-capture, never the expiring
 provider URL. No stored-row migration is needed.
+
+Image outputs live in `transcripts/<user>/<thread>/<tool>/`, using separate
+directories for `parse_file`, `scrape_url`, and `screenshot_url`. Parsed text
+stays in `parse_file/`. Model-visible image results include the saved path
+alongside the image, both on capture and when replaying history. Replay still
+reads the recorded path; this change adds no compatibility shim or migration
+and does not change the persisted result shape.
 
 ### Local sessions created before account binding
 

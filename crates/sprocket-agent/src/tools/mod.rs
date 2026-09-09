@@ -131,14 +131,12 @@ pub(crate) async fn hydrate_tool_history(
     }
 }
 
-pub(crate) use parse_file::parse_file_cache_dir;
-
 pub(crate) fn agent_tools(
     runtime: RuntimeClient,
     run_id: String,
     claim_id: String,
     workspace_root: PathBuf,
-    parse_file_cache_dir: PathBuf,
+    transcript_dir: PathBuf,
     artifact_bindings: crate::artifact_bindings::ArtifactBindings,
     thread_id: String,
     supports_images: bool,
@@ -151,7 +149,7 @@ pub(crate) fn agent_tools(
         run_id,
         claim_id,
         workspace_root,
-        parse_file_cache_dir,
+        transcript_dir,
         artifact_bindings,
         thread_id,
         supports_images,

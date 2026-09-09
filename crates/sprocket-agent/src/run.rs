@@ -972,9 +972,7 @@ pub async fn run_agent(run: AgentRun, live: Arc<LiveCompletionHub>) -> anyhow::R
                     service_tier,
                     context_budget: capabilities.context_budget,
                     supports_images: capabilities.supports_images,
-                    parse_file_cache_dir: crate::tools::parse_file_cache_dir(
-                        store.thread_dir(&context.run.user_id, &context.run.thread_id),
-                    ),
+                    transcript_dir: store.thread_dir(&context.run.user_id, &context.run.thread_id),
                     context_tokens: context.context_tokens,
                     defer_prompt_for_context_handoff: !prior_history.continue_from_finished_turns
                         && context.run.continuation_of_run_id.is_none()
