@@ -1,3 +1,4 @@
+import { runInNewContext } from 'node:vm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
 import '@convex/browserAgent';
@@ -166,7 +167,9 @@ describe('Firecrawl browser lifecycle', () => {
 		const args = { runId, claimId, executionSecret, command: 'get url' };
 		await t.action(api.browserAgent.interact, args);
 		await asUser.mutation(api.browserProfiles.setHumanControl, { threadId, enabled: true });
-		await expect(t.action(api.browserAgent.interact, args)).rejects.toThrow('browser_in_use');
+		await expect(t.action(api.browserAgent.interact, args)).rejects.toThrow(
+			/^The user has control of this browser\. Ask them to give control back before browsing\.$/
+		);
 		expect(fetch).toHaveBeenCalledTimes(2);
 		await asUser.mutation(api.browserProfiles.setHumanControl, { threadId, enabled: false });
 		await t.action(api.browserAgent.interact, args);
@@ -306,7 +309,51 @@ describe('Firecrawl browser lifecycle', () => {
 		expect(fetch).not.toHaveBeenCalled();
 	});
 
-	it('returns screenshot image data only within the serialized-value budget', async () => {
+	it.each([68, 600_000, 600_001])(
+		'writes screenshot JSON to captured stdout for a %i-byte image',
+		async (byteLength) => {
+			const fetch = remote();
+			const t = initConvexTest();
+			const { runId, claimId, executionSecret } = await fixture(t);
+			const args = { runId, claimId, executionSecret };
+			await t.action(api.browserAgent.interact, { ...args, command: 'get url' });
+			const image = Buffer.alloc(byteLength);
+			image.set(Buffer.from('89504e470d0a1a0a', 'hex'));
+			fetch.mockImplementation(async (_url, options) => {
+				const { code, language } = JSON.parse(String(options.body));
+				expect(language).toBe('node');
+				let stdout = '';
+				await runInNewContext(`(async () => { ${code} })()`, {
+					page: {
+						screenshot: async () => image,
+						url: () => 'https://example.com/'
+					},
+					console: { log: vi.fn() },
+					process: {
+						stdout: {
+							write: (text: string, callback?: () => void) => {
+								setTimeout(() => {
+									stdout += text;
+									callback?.();
+								}, 0);
+								return false;
+							}
+						}
+					}
+				});
+				return new Response(JSON.stringify({ success: true, stdout, result: '' }));
+			});
+			expect(await t.action(api.browserAgent.screenshot, args)).toEqual({
+				byteLength,
+				url: 'https://example.com/',
+				dataBase64: byteLength <= 600_000 ? image.toString('base64') : '',
+				mediaType: 'image/png',
+				truncated: byteLength > 600_000
+			});
+		}
+	);
+
+	it('accepts screenshot JSON from stdout or a result with empty or absent stdout', async () => {
 		const fetch = remote();
 		const t = initConvexTest();
 		const { runId, claimId, executionSecret } = await fixture(t);
@@ -314,38 +361,42 @@ describe('Firecrawl browser lifecycle', () => {
 		await t.action(api.browserAgent.interact, { ...args, command: 'get url' });
 		const dataBase64 =
 			'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jBf8AAAAASUVORK5CYII=';
-		fetch.mockImplementation(
-			async () =>
-				new Response(
-					JSON.stringify({
-						success: true,
-						stdout: JSON.stringify({ dataBase64, byteLength: 68, url: 'https://example.com' })
-					})
-				)
-		);
-		expect(await t.action(api.browserAgent.screenshot, args)).toMatchObject({
-			mediaType: 'image/png',
-			dataBase64,
-			truncated: false
-		});
-		fetch.mockImplementation(
-			async () =>
-				new Response(
-					JSON.stringify({
-						success: true,
-						stdout: JSON.stringify({
-							dataBase64: '',
-							byteLength: 700_000,
-							url: 'https://example.com'
-						})
-					})
-				)
-		);
-		expect(await t.action(api.browserAgent.screenshot, args)).toMatchObject({
-			dataBase64: '',
-			truncated: true
-		});
+		const output = JSON.stringify({ dataBase64, byteLength: 68, url: 'https://example.com' });
+		for (const response of [
+			{ stdout: output, result: 'undefined' },
+			{ result: output },
+			{ stdout: null, result: output },
+			{ stdout: '', result: output }
+		]) {
+			fetch.mockImplementation(
+				async () => new Response(JSON.stringify({ success: true, ...response }))
+			);
+			expect(await t.action(api.browserAgent.screenshot, args)).toMatchObject({
+				mediaType: 'image/png',
+				dataBase64,
+				truncated: false
+			});
+		}
 	});
+
+	it.each([
+		['', 'Firecrawl returned empty screenshot output.'],
+		[' \n', 'Firecrawl returned empty screenshot output.'],
+		['{"byteLength":68,', 'Firecrawl returned malformed screenshot JSON.'],
+		['{}', 'Firecrawl returned an invalid screenshot.']
+	])(
+		'rejects unusable screenshot output %j without replaying the capture',
+		async (stdout, error) => {
+			const fetch = remote();
+			const t = initConvexTest();
+			const { runId, claimId, executionSecret } = await fixture(t);
+			const args = { runId, claimId, executionSecret };
+			await t.action(api.browserAgent.interact, { ...args, command: 'get url' });
+			fetch.mockImplementation(async () => new Response(JSON.stringify({ success: true, stdout })));
+			await expect(t.action(api.browserAgent.screenshot, args)).rejects.toThrow(error);
+			expect(fetch).toHaveBeenCalledTimes(3);
+		}
+	);
 
 	it('does not infer session death from an incomplete provider list', async () => {
 		const fetch = remote();

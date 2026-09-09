@@ -1,9 +1,16 @@
 <script lang="ts">
-	import { Archive, ArrowLeft, ChartNoAxesColumn, CreditCard, UserRound } from '@lucide/svelte';
+	import {
+		Archive,
+		ArrowLeft,
+		ChartNoAxesColumn,
+		CreditCard,
+		Globe,
+		UserRound
+	} from '@lucide/svelte';
 	import SidebarTopActions from '$lib/components/home/sidebar-top-actions.svelte';
 	import type { SprocketTheme } from '$lib/theme';
 
-	export type SettingsPage = 'account' | 'usage' | 'payments' | 'archived';
+	export type SettingsPage = 'account' | 'usage' | 'browser' | 'payments' | 'archived';
 
 	type Props = {
 		activePage: SettingsPage;
@@ -18,6 +25,7 @@
 	const navItems: ReadonlyArray<{ id: SettingsPage; label: string; icon: typeof UserRound }> = [
 		{ id: 'account', label: 'Account', icon: UserRound },
 		{ id: 'usage', label: 'Usage', icon: ChartNoAxesColumn },
+		{ id: 'browser', label: "Agent's Browser", icon: Globe },
 		{ id: 'payments', label: 'Payments', icon: CreditCard },
 		{ id: 'archived', label: 'Archived Threads', icon: Archive }
 	];

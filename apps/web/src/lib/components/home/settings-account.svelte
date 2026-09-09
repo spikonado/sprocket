@@ -4,7 +4,6 @@
 	import { api } from '$convex/_generated/api';
 	import { tierLabels } from '$convex/lib/tiers';
 	import type { AuthUser } from '$lib/auth';
-	import SettingsBrowser from '$lib/components/home/settings-browser.svelte';
 	import Button from '$lib/components/ui/button/button.svelte';
 
 	type Props = {
@@ -77,21 +76,11 @@
 				{/if}
 			</div>
 
-			<SettingsBrowser />
-
 			<div>
-				<p class="text-muted-foreground font-mono text-[11px] tracking-[0.18em] uppercase">
-					Session
-				</p>
-				<p class="text-muted-foreground mt-2 text-sm leading-6">
-					Sign out of this device. You’ll need to authenticate again to open your projects.
-				</p>
-				<div class="mt-4">
-					<Button variant="outline" onclick={onSignOut}>
-						<LogOut class="mr-2 size-4" aria-hidden="true" />
-						Sign Out
-					</Button>
-				</div>
+				<Button variant="outline" onclick={onSignOut}>
+					<LogOut class="mr-2 size-4" aria-hidden="true" />
+					Sign Out
+				</Button>
 			</div>
 		</div>
 	</div>

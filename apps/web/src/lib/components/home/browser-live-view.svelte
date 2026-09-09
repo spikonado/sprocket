@@ -3,6 +3,7 @@
 	import { useMutation } from 'convex-svelte';
 	import { api } from '$convex/_generated/api';
 	import type { BrowserLiveViewState } from '$lib/chat/side-panel';
+	import { convexClientErrorMessage } from '$lib/convex-error';
 
 	type Props = {
 		/** undefined while the query is loading, null when no session exists. */
@@ -28,15 +29,11 @@
 	const expired = $derived(liveView?.expiresAt != null && liveView.expiresAt <= now);
 	const canTakeover = $derived(threadId != null);
 	const controlDisabled = $derived(pending || expired || (interactiveUrl == null && !humanControl));
-	const savingLabel = $derived(
-		liveView?.saving === undefined ? null : liveView.saving ? 'Saving' : 'Not saving'
-	);
 	const expiryLabel = $derived(
 		liveView?.expiresAt == null ? null : formatExpiry(liveView.expiresAt, now)
 	);
 	const metaLabel = $derived.by(() => {
 		const parts: string[] = [];
-		if (savingLabel) parts.push(savingLabel);
 		if (expiryLabel) parts.push(expiryLabel);
 		if (humanControl && !iframeInteractive) parts.push('Waiting for the interactive view');
 		return parts.join(' · ') || null;
@@ -66,13 +63,8 @@
 		actionError = null;
 	});
 
-	function friendlyError(error: Error, fallback: string): string {
-		const match = error.message.match(/Uncaught Error: ([^(\n]+)/);
-		return (match?.[1] ?? error.message).trim() || fallback;
-	}
-
 	function catchMessage<T>(error: T, fallback: string): string {
-		return error instanceof Error ? friendlyError(error, fallback) : fallback;
+		return (error instanceof Error && convexClientErrorMessage(error)) || fallback;
 	}
 
 	function formatExpiry(expiresAt: number, current: number): string {

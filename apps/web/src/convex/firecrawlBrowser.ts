@@ -230,7 +230,7 @@ function commandFailure(result: z.infer<typeof executionSchema>): string | undef
 }
 
 function outputText(result: z.infer<typeof executionSchema>): string | undefined {
-	return result.stdout ?? result.result ?? undefined;
+	return result.stdout || result.result || undefined;
 }
 
 type BrowserArgs = {
@@ -368,19 +368,30 @@ export async function interact(ctx: ActionCtx, args: BrowserArgs & { command: st
 
 export async function screenshot(ctx: ActionCtx, args: BrowserArgs) {
 	try {
+		// Firecrawl drops console.log output and can truncate stdout unless the write finishes.
 		const result = await execute(
 			ctx,
 			args,
-			"var image = await page.screenshot({ type: 'png' }); console.log(JSON.stringify({ byteLength: image.length, url: page.url(), dataBase64: image.length <= 600000 ? image.toString('base64') : '' }));",
+			"var image = await page.screenshot({ type: 'png' }); await new Promise((resolve, reject) => process.stdout.write(JSON.stringify({ byteLength: image.length, url: page.url(), dataBase64: image.length <= 600000 ? image.toString('base64') : '' }), error => error ? reject(error) : resolve()));",
 			'node'
 		);
-		const image = z
+		const output = outputText(result);
+		if (!output?.trim()) throw new Error('Firecrawl returned empty screenshot output.');
+		let decoded: unknown;
+		try {
+			decoded = JSON.parse(output);
+		} catch {
+			throw new Error('Firecrawl returned malformed screenshot JSON.');
+		}
+		const parsed = z
 			.object({
 				byteLength: z.number().int().nonnegative(),
 				url: z.string().max(MAX_RESULT_CHARS),
 				dataBase64: z.string().max(800_000)
 			})
-			.parse(JSON.parse(outputText(result) ?? ''));
+			.safeParse(decoded);
+		if (!parsed.success) throw new Error('Firecrawl returned an invalid screenshot.');
+		const image = parsed.data;
 		if (image.byteLength <= MAX_SCREENSHOT_BYTES) {
 			const bytes = Buffer.from(image.dataBase64, 'base64');
 			if (
