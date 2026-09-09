@@ -39,13 +39,7 @@
 		return parts.join(' · ') || null;
 	});
 	const statusLabel = $derived(
-		expired
-			? 'Browser session ended'
-			: humanControl
-				? 'You have control'
-				: active
-					? 'The agent is browsing'
-					: 'Browser session'
+		humanControl ? 'You have control' : active ? 'The agent is browsing' : 'Browser session'
 	);
 
 	$effect(() => {
@@ -97,12 +91,10 @@
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col">
-	{#if liveView}
+	{#if liveView && !expired}
 		<div class="flex flex-wrap items-center gap-x-2 gap-y-1 border-b px-3 py-1.5">
 			<span class="relative flex size-2 shrink-0" aria-hidden="true">
-				{#if expired}
-					<span class="bg-muted-foreground/40 relative inline-flex size-2 rounded-full"></span>
-				{:else if humanControl}
+				{#if humanControl}
 					<span class="relative inline-flex size-2 rounded-full bg-amber-500"></span>
 				{:else if active}
 					<span
@@ -175,11 +167,12 @@
 				<p class="text-muted-foreground text-xs">The agent is browsing in the meantime.</p>
 			</div>
 		{/if}
-	{:else if liveView === null}
+	{:else if expired || liveView === null}
 		<div class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
 			<Globe class="text-muted-foreground size-5" aria-hidden="true" />
-			<p class="text-muted-foreground text-sm">
-				No active browser session. When the agent browses again, a new session will appear here.
+			<p class="text-muted-foreground text-sm" role="status">
+				{expired ? 'Browser session ended.' : 'No active browser session.'}
+				When the agent browses again, a new session will appear here.
 			</p>
 		</div>
 	{:else}
