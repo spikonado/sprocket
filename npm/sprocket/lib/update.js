@@ -24,18 +24,6 @@ const OUTPUT_LIMIT = 1_000_000;
 
 export const PACKAGE_ROOT = path.resolve(import.meta.dirname, '..');
 
-const HELP = `Usage: sprocket update [--check]
-
-Update a global ${PACKAGE_NAME} install.
-
-  --check   Report whether an update is available, without installing
-
-\`sprocket upgrade\` is the same command.
-
-Updates stay on the current channel: latest, canary, or dev.
-Only global installs from npm, bun, pnpm, or yarn can be updated this way.
-`;
-
 const MANAGERS = [
 	{
 		name: 'bun',
@@ -170,7 +158,7 @@ export function parseUpdateArgs(args) {
 	let check = false;
 	for (const arg of args.slice(1)) {
 		if (arg === '--help' || arg === '-h') {
-			return { kind: 'help' };
+			return { kind: 'native' };
 		}
 		if (arg === '--check') {
 			check = true;
@@ -618,10 +606,6 @@ export async function runUpdateApi(command, host = createHost()) {
 }
 
 export async function runUpdateCli(parsed, host = createHost()) {
-	if (parsed.kind === 'help') {
-		host.writeStdout(HELP);
-		return 0;
-	}
 	if (parsed.kind === 'invalid') {
 		host.writeStderr(`sprocket: ${parsed.error}\nTry \`sprocket update --help\`.\n`);
 		return 1;

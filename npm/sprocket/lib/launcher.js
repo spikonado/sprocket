@@ -90,7 +90,7 @@ export async function launch(args, options = {}) {
 	const env = { ...(options.env ?? process.env) };
 	delete env.SPROCKET_UPDATE_MANAGED;
 	const parsed = parseUpdateArgs(args);
-	if (parsed.kind !== 'none') {
+	if (parsed.kind !== 'none' && parsed.kind !== 'native') {
 		const code = await runUpdateCli(parsed, options.host ?? createHost({ env }));
 		process.exitCode = code;
 		return code;

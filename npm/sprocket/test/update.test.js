@@ -249,7 +249,7 @@ test('parses update, upgrade, --check, and help', () => {
 	assert.deepEqual(parseUpdateArgs(['serve']), { kind: 'none' });
 	assert.deepEqual(parseUpdateArgs(['update']), { kind: 'run', check: false });
 	assert.deepEqual(parseUpdateArgs(['upgrade', '--check']), { kind: 'run', check: true });
-	assert.equal(parseUpdateArgs(['update', '--help']).kind, 'help');
+	assert.equal(parseUpdateArgs(['update', '--help']).kind, 'native');
 	assert.equal(parseUpdateArgs(['update', '--force']).kind, 'invalid');
 });
 
@@ -603,23 +603,6 @@ test('upgrade --check is the same as update --check', async () => {
 	const code = await runUpdateCli(parseUpdateArgs(['upgrade', '--check']), host);
 	assert.equal(code, 0);
 	assert.match(stdout, /0\.3\.5 is available/);
-});
-
-test('CLI help does not query the registry', async () => {
-	let stdout = '';
-	let fetched = false;
-	const host = testHost({
-		fetch: async () => {
-			fetched = true;
-			return jsonResponse(versionDoc('0.3.5'));
-		},
-		writeStdout(text) {
-			stdout += text;
-		}
-	}).host;
-	assert.equal(await runUpdateCli(parseUpdateArgs(['update', '--help']), host), 0);
-	assert.match(stdout, /sprocket update/);
-	assert.equal(fetched, false);
 });
 
 test('refuses to install when the lock cannot be created', async () => {
