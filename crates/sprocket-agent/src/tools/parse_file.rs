@@ -85,10 +85,6 @@ struct ParsedText {
 #[error("{0}")]
 struct LocalConversionFailed(String);
 
-pub(crate) fn parse_file_cache_dir(thread_dir: impl AsRef<Path>) -> PathBuf {
-    thread_dir.as_ref().join("parse_file")
-}
-
 pub(crate) fn is_parse_file_tool(name: &str) -> bool {
     name == PARSE_FILE_TOOL_NAME
 }
@@ -122,7 +118,7 @@ impl rig::tool::Tool for ParseFileTool {
         parse_file_args(&args).map_err(tool_error)?;
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         let workspace_root = self.0.workspace_root.clone();
-        let cache_dir = self.0.parse_file_cache_dir.clone();
+        let cache_dir = self.0.transcript_dir.join(Self::NAME);
         let supports_images = self.0.supports_images;
         let persisted = execute_tool_job_with_id(
             &self.0.runtime,
@@ -347,14 +343,6 @@ fn unsupported_file_error() -> anyhow::Error {
     anyhow!(
         "unsupported file; parse_file reads jpeg, png, gif, webp, office documents (Word, PowerPoint, Excel, OpenDocument, RTF, EPUB, CSV, PDF), and UTF-8 text"
     )
-}
-
-pub(super) fn tool_output_from_image_bytes(bytes: &[u8], media_type: ImageMediaType) -> ToolOutput {
-    ToolOutput::one(ToolResultContent::image_base64(
-        base64::engine::general_purpose::STANDARD.encode(bytes),
-        Some(media_type),
-        None,
-    ))
 }
 
 fn persist_parsed_text(
@@ -657,7 +645,14 @@ async fn replay_image_output(
             && bytes.len() as u64 == byte_size,
         "cached image {path} does not match persisted metadata"
     );
-    Ok(tool_output_from_image_bytes(&bytes, media_type))
+    Ok(ToolOutput::content(vec![
+        ToolResultContent::text(format!("Image saved to: {path}")),
+        ToolResultContent::image_base64(
+            base64::engine::general_purpose::STANDARD.encode(bytes),
+            Some(media_type),
+            None,
+        ),
+    ])?)
 }
 
 async fn replay_text_output(
@@ -799,7 +794,7 @@ mod tests {
 
     fn assert_png_image_output(output: &ToolOutput, png: &[u8]) {
         match output.as_content() {
-            [ToolResultContent::Image(image)] => {
+            [ToolResultContent::Text(_), ToolResultContent::Image(image)] => {
                 assert_eq!(image.media_type, Some(ImageMediaType::PNG));
                 match &image.data {
                     DocumentSourceKind::Base64(data) => {
@@ -813,7 +808,7 @@ mod tests {
                     other => panic!("expected base64 image, got {other:?}"),
                 }
             }
-            other => panic!("expected one Rig image block, got {other:?}"),
+            other => panic!("expected saved path and Rig image block, got {other:?}"),
         }
     }
 
@@ -1103,12 +1098,23 @@ mod tests {
 
         let output = replay_parse_file_tool_output(&value).await.expect("replay");
         assert_png_image_output(&output, &png);
+        let ToolResultContent::Text(saved_path) = &output.as_content()[0] else {
+            panic!("missing image path");
+        };
+        assert_eq!(
+            saved_path.text,
+            format!("Image saved to: {}", value["path"].as_str().unwrap())
+        );
 
         let history = replay_local_tool_history_items(&value)
             .await
             .expect("history");
-        assert_eq!(history.len(), 1);
-        match &history[0] {
+        assert_eq!(history.len(), 2);
+        let AgentHistoryToolResultItem::Text { text } = &history[0] else {
+            panic!("missing history image path");
+        };
+        assert_eq!(text, &saved_path.text);
+        match &history[1] {
             AgentHistoryToolResultItem::Image { image_json } => {
                 assert!(image_json.contains("base64") || image_json.contains("iVBORw0KGgo"));
             }
@@ -1442,12 +1448,30 @@ mod tests {
         let _ = tokio::fs::remove_dir_all(cache).await;
     }
 
+    #[tokio::test]
+    async fn parsed_images_and_text_share_the_parse_file_transcript_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let store = crate::transcript::TranscriptStore::new(root.path().join("transcripts"));
+        let thread = store.thread_dir("user", "thread");
+        tokio::fs::write(root.path().join("shot.png"), tiny_png())
+            .await
+            .unwrap();
+        tokio::fs::write(root.path().join("note.txt"), "hello")
+            .await
+            .unwrap();
+        let directory = thread.join(PARSE_FILE_TOOL_NAME);
+        for source in ["shot.png", "note.txt"] {
+            let output = persist(root.path(), &directory, source).await.unwrap();
+            let value = serde_json::to_value(output).unwrap();
+            let path = Path::new(value["path"].as_str().unwrap());
+            assert_eq!(path.parent().unwrap(), directory.canonicalize().unwrap());
+        }
+        assert!(!store.thread_dir("user", "another-thread").exists());
+        assert!(!store.thread_dir("another-user", "thread").exists());
+    }
+
     #[test]
-    fn cache_dir_lives_beside_user_attachments() {
-        assert_eq!(
-            parse_file_cache_dir(Path::new("/threads/u/t")),
-            PathBuf::from("/threads/u/t/parse_file")
-        );
+    fn identifies_only_parse_file() {
         assert!(is_parse_file_tool("parse_file"));
         assert!(!is_parse_file_tool("read_skill"));
         assert!(!is_parse_file_tool("read_image"));

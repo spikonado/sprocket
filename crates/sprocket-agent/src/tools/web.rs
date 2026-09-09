@@ -128,6 +128,7 @@ impl rig::tool::Tool for ScrapeUrlTool {
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         let mut scrape_file = None;
         let saved_file = &mut scrape_file;
+        let cache_dir = self.0.transcript_dir.join(Self::NAME);
         let result = execute_tool_job_with_id(
             &self.0.runtime,
             &self.0.run_id,
@@ -139,7 +140,7 @@ impl rig::tool::Tool for ScrapeUrlTool {
                 let image = tokio::select! {
                     biased;
                     _ = cancellation.cancelled() => return Err(super::context::cancelled_error()),
-                    result = fetch_web_image(url.clone(), self.0.supports_images, &self.0.parse_file_cache_dir) => result.map_err(tool_error)?,
+                    result = fetch_web_image(url.clone(), self.0.supports_images, &cache_dir) => result.map_err(tool_error)?,
                 };
                 if let Some(metadata) = image {
                     return Ok(metadata);
@@ -175,7 +176,7 @@ impl rig::tool::Tool for ScreenshotUrlTool {
     type Output = ToolOutput;
 
     fn description(&self) -> String {
-        "Use to take a viewport screenshot of ANY public HTTP(S) URL".to_string()
+        "Use to take a viewport screenshot of ANY public HTTP(S) URL. Returns the saved local path and the image.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -191,6 +192,7 @@ impl rig::tool::Tool for ScreenshotUrlTool {
             return Err(tool_failure("The selected model cannot view images."));
         }
         validate_web_url(&args.url).map_err(tool_error)?;
+        let cache_dir = self.0.transcript_dir.join(Self::NAME);
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         let result = execute_tool_job_with_id(
             &self.0.runtime,
@@ -215,7 +217,7 @@ impl rig::tool::Tool for ScreenshotUrlTool {
                 tokio::select! {
                     biased;
                     _ = cancellation.cancelled() => return Err(super::context::cancelled_error()),
-                    result = fetch_screenshot(result, &self.0.parse_file_cache_dir) => result.map_err(tool_error),
+                    result = fetch_screenshot(result, &cache_dir) => result.map_err(tool_error),
                 }
             },
         )
@@ -376,13 +378,15 @@ mod tests {
     #[tokio::test]
     async fn screenshot_saves_pixels_locally_for_history() {
         let cache = tempfile::tempdir().unwrap();
+        let store = crate::transcript::TranscriptStore::new(cache.path().join("transcripts"));
+        let directory = store.thread_dir("user", "thread").join("screenshot_url");
         let mut download = serve("application/octet-stream", png()).await;
         download.set_query(Some("signature=temporary-secret"));
         let metadata = fetch_screenshot(
             json!({
                 "url": "https://example.com/page", "screenshotUrl": download.as_str(),
             }),
-            cache.path(),
+            &directory,
         )
         .await
         .unwrap();
@@ -390,7 +394,8 @@ mod tests {
         assert_eq!(metadata["mediaType"], "image/png");
         assert_eq!(metadata["width"], 1);
         assert!(!metadata.to_string().contains("temporary-secret"));
-        assert_image_history("screenshot_url", metadata, cache.path()).await;
+        assert_image_history("screenshot_url", metadata, &directory).await;
+        assert!(!directory.with_file_name("parse_file").exists());
     }
 
     #[tokio::test]
@@ -433,13 +438,14 @@ mod tests {
     #[tokio::test]
     async fn image_without_extension_is_saved_locally_and_validated_by_signature() {
         let cache = tempfile::tempdir().unwrap();
+        let directory = cache.path().join("scrape_url");
         let url = serve("image/jpeg", png()).await;
-        let metadata = fetch_web_image(url, true, cache.path())
+        let metadata = fetch_web_image(url, true, &directory)
             .await
             .unwrap()
             .unwrap();
         assert_eq!(metadata["mediaType"], "image/png");
-        assert_image_history("scrape_url", metadata, cache.path()).await;
+        assert_image_history("scrape_url", metadata, &directory).await;
     }
 
     async fn assert_image_history(name: &str, mut metadata: serde_json::Value, cache: &Path) {
@@ -453,6 +459,7 @@ mod tests {
         assert_eq!(tokio::fs::read(path).await.unwrap(), png());
         assert!(!metadata.to_string().contains("iVBORw0KGgo"));
         let output = replay_image_tool_output(&metadata).await.unwrap();
+        let saved_path = format!("Image saved to: {}", path.display());
         let expected = rig::message::ToolResultContent::image_base64(
             base64::engine::general_purpose::STANDARD.encode(png()),
             Some(rig::message::ImageMediaType::PNG),
@@ -460,7 +467,10 @@ mod tests {
         );
         assert_eq!(
             serde_json::to_value(output.into_content()).unwrap(),
-            json!([expected])
+            json!([
+                rig::message::ToolResultContent::text(saved_path.clone()),
+                expected
+            ])
         );
 
         metadata["url"] = json!("http://127.0.0.1:1/unavailable");
@@ -484,9 +494,14 @@ mod tests {
         let AgentHistoryContent::ToolResult { items, .. } = &history[0].contents[0] else {
             panic!("missing result")
         };
-        let [AgentHistoryToolResultItem::Image { image_json }] = items.as_slice() else {
-            panic!("missing image")
+        let [
+            AgentHistoryToolResultItem::Text { text },
+            AgentHistoryToolResultItem::Image { image_json },
+        ] = items.as_slice()
+        else {
+            panic!("missing saved path and image")
         };
+        assert_eq!(text, &saved_path);
         let rig::message::ToolResultContent::Image(expected) = expected else {
             unreachable!()
         };
