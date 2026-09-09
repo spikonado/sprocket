@@ -31,6 +31,8 @@ export type BrowserLiveViewState = {
 	saving: boolean;
 	/** Hard deadline for the Firecrawl session. */
 	expiresAt: number;
+	/** Backend expiry, reset, or quarantine has made the session unavailable. */
+	ended: boolean;
 	/** True after the user takes control; agent browser calls are blocked. */
 	humanControl: boolean;
 	threadId: Id<'threadRecords'>;

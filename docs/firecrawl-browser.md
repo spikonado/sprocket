@@ -16,6 +16,8 @@ Convex operation leases serialize commands and fence stale runs. Unknown executi
 
 Reconciliation removes only sessions explicitly reported destroyed, never sessions merely absent from a list. Hard-expiry jobs retry close failures.
 
+The live-view panel follows backend session state, not the viewer's clock. Once the backend marks a session closing, the panel replaces its iframe and controls with an ended notice. Deleted sessions show no active session. Opening the panel does not create or extend a session.
+
 Screenshots are limited to 600,000 bytes before base64 encoding; larger images return size metadata without pixels. The agent validates the image and saves it in `transcripts/<user>/<thread>/browser_screenshot/` before completing the tool job. Each image tool uses its own directory. Durable results contain the saved path, media type, byte size, and dimensions, never pixels or page URLs. Like `screenshot_url`, the agent returns both the saved absolute path and the image, including when replaying conversation history. Missing files fall back to a text notice without recapturing the page. Text-only models cannot call the screenshot tool and receive a text notice instead of replayed images.
 
 Screenshot code writes JSON with `process.stdout.write` and waits for its callback before finishing. Live Firecrawl checks returned empty output for `console.log` and intermittently truncated large images for an unawaited stdout write. Waiting for the write returned complete PNGs. The parser also accepts `result` when `stdout` is empty or absent. Empty or malformed output fails explicitly without replaying the capture.

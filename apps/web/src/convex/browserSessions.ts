@@ -23,6 +23,7 @@ export const liveViewForThread = query({
 			interactiveUrl: v.union(v.string(), v.null()),
 			saving: v.boolean(),
 			humanControl: v.boolean(),
+			ended: v.boolean(),
 			threadId: v.id('threadRecords'),
 			expiresAt: v.number(),
 			/** Run that most recently drove the browser; the client compares it
@@ -39,15 +40,16 @@ export const liveViewForThread = query({
 			.query('browserSessions')
 			.withIndex('by_threadId', (q) => q.eq('threadId', args.threadId))
 			.unique();
-		if (!session || session.closing) return null;
+		if (!session) return null;
 		return {
-			url: session.liveViewUrl ?? null,
-			interactiveUrl: session.interactiveLiveViewUrl ?? null,
+			url: session.closing ? null : (session.liveViewUrl ?? null),
+			interactiveUrl: session.closing ? null : (session.interactiveLiveViewUrl ?? null),
 			saving: session.saveChanges,
 			humanControl: session.humanControl ?? false,
+			ended: session.closing,
 			threadId: session.threadId,
 			expiresAt: session.expiresAt,
-			lastUsedRunId: session.lastUsedRunId,
+			lastUsedRunId: session.closing ? null : session.lastUsedRunId,
 			startedAt: session.startedAt
 		};
 	}

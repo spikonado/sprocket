@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { api } from '@convex/_generated/api';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { api, internal } from '@convex/_generated/api';
 import {
 	createQueuedRun,
 	initConvexTest,
@@ -18,7 +18,7 @@ async function insertSession(
 	}
 ) {
 	const startedAt = Date.now();
-	await t.run((ctx) =>
+	const id = await t.run((ctx) =>
 		ctx.db.insert('browserSessions', {
 			threadId: args.threadId,
 			userId: args.userId,
@@ -35,15 +35,17 @@ async function insertSession(
 			humanControl: args.humanControl
 		})
 	);
-	return startedAt;
+	return { id, startedAt };
 }
+
+afterEach(() => vi.useRealTimers());
 
 describe('browserSessions', () => {
 	it('serves Firecrawl live-view fields to the thread owner only', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_browser_live');
 		const { runId } = await createQueuedRun(t, asUser, threadId, 'sub', 'secret', 'Browse');
-		const startedAt = await insertSession(t, {
+		const { startedAt } = await insertSession(t, {
 			threadId,
 			userId: 'user_browser_live',
 			runId,
@@ -57,6 +59,7 @@ describe('browserSessions', () => {
 			interactiveUrl: 'https://view.example/interactive',
 			saving: true,
 			humanControl: true,
+			ended: false,
 			threadId,
 			expiresAt: startedAt + 3_600_000,
 			lastUsedRunId: runId,
@@ -69,7 +72,7 @@ describe('browserSessions', () => {
 		).rejects.toThrow('Thread not found.');
 	});
 
-	it('returns null when the session is missing or closing', async () => {
+	it('distinguishes missing sessions from ended sessions without exposing ended URLs', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_browser_missing');
 		const { runId } = await createQueuedRun(t, asUser, threadId, 'sub', 'secret', 'Browse');
@@ -86,6 +89,27 @@ describe('browserSessions', () => {
 		});
 		await expect(
 			asUser.query(api.browserSessions.liveViewForThread, { threadId })
-		).resolves.toBeNull();
+		).resolves.toMatchObject({ ended: true, url: null, interactiveUrl: null, lastUsedRunId: null });
+	});
+
+	it('publishes the ended state when the backend hard-expiry mutation runs', async () => {
+		vi.useFakeTimers();
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t, 'user_browser_expiry');
+		const { runId } = await createQueuedRun(t, asUser, threadId, 'sub', 'secret', 'Browse');
+		const { id, startedAt } = await insertSession(t, {
+			threadId,
+			userId: 'user_browser_expiry',
+			runId
+		});
+		await t.mutation(internal.browserSessions.expire, { id });
+		await expect(
+			asUser.query(api.browserSessions.liveViewForThread, { threadId })
+		).resolves.toMatchObject({ ended: false });
+		vi.setSystemTime(startedAt + 3_600_000);
+		await t.mutation(internal.browserSessions.expire, { id });
+		await expect(
+			asUser.query(api.browserSessions.liveViewForThread, { threadId })
+		).resolves.toMatchObject({ ended: true, url: null, interactiveUrl: null, lastUsedRunId: null });
 	});
 });

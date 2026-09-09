@@ -16,7 +16,6 @@
 
 	const setHumanControl = useMutation(api.browserProfiles.setHumanControl);
 
-	let now = $state(Date.now());
 	let pending = $state(false);
 	let actionError = $state<string | null>(null);
 
@@ -26,12 +25,10 @@
 	const interactiveUrl = $derived(liveView?.interactiveUrl ?? null);
 	const iframeInteractive = $derived(humanControl && interactiveUrl !== null);
 	const iframeUrl = $derived(iframeInteractive ? interactiveUrl : passiveUrl);
-	const expired = $derived(liveView?.expiresAt != null && liveView.expiresAt <= now);
+	const ended = $derived(liveView?.ended === true);
 	const canTakeover = $derived(threadId != null);
-	const controlDisabled = $derived(pending || expired || (interactiveUrl == null && !humanControl));
-	const expiryLabel = $derived(
-		liveView?.expiresAt == null ? null : formatExpiry(liveView.expiresAt, now)
-	);
+	const controlDisabled = $derived(pending || ended || (interactiveUrl == null && !humanControl));
+	const expiryLabel = $derived(liveView == null ? null : formatExpiry(liveView.expiresAt));
 	const metaLabel = $derived.by(() => {
 		const parts: string[] = [];
 		if (expiryLabel) parts.push(expiryLabel);
@@ -43,16 +40,6 @@
 	);
 
 	$effect(() => {
-		const expiresAt = liveView?.expiresAt;
-		if (expiresAt == null) return;
-		now = Date.now();
-		const id = window.setInterval(() => {
-			now = Date.now();
-		}, 1_000);
-		return () => window.clearInterval(id);
-	});
-
-	$effect(() => {
 		void threadId;
 		actionError = null;
 	});
@@ -61,16 +48,13 @@
 		return (error instanceof Error && convexClientErrorMessage(error)) || fallback;
 	}
 
-	function formatExpiry(expiresAt: number, current: number): string {
-		if (expiresAt <= current) return 'Expired';
-		const expires = new Date(expiresAt);
-		const sameDay = expires.toDateString() === new Date(current).toDateString();
-		return `Closes by ${expires.toLocaleString(
-			undefined,
-			sameDay
-				? { hour: 'numeric', minute: '2-digit' }
-				: { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }
-		)}`;
+	function formatExpiry(expiresAt: number): string {
+		return `Closes by ${new Date(expiresAt).toLocaleString(undefined, {
+			month: 'short',
+			day: 'numeric',
+			hour: 'numeric',
+			minute: '2-digit'
+		})}`;
 	}
 
 	async function setControl(enabled: boolean) {
@@ -91,7 +75,7 @@
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col">
-	{#if liveView && !expired}
+	{#if liveView && !ended}
 		<div class="flex flex-wrap items-center gap-x-2 gap-y-1 border-b px-3 py-1.5">
 			<span class="relative flex size-2 shrink-0" aria-hidden="true">
 				{#if humanControl}
@@ -167,11 +151,11 @@
 				<p class="text-muted-foreground text-xs">The agent is browsing in the meantime.</p>
 			</div>
 		{/if}
-	{:else if expired || liveView === null}
+	{:else if ended || liveView === null}
 		<div class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
 			<Globe class="text-muted-foreground size-5" aria-hidden="true" />
 			<p class="text-muted-foreground text-sm" role="status">
-				{expired ? 'Browser session ended.' : 'No active browser session.'}
+				{ended ? 'Browser session ended.' : 'No active browser session.'}
 				When the agent browses again, a new session will appear here.
 			</p>
 		</div>

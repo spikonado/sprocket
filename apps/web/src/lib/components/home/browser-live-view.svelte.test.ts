@@ -11,13 +11,14 @@ afterEach(async () => {
 	vi.useRealTimers();
 });
 
-function session(expiresAt: number): BrowserLiveViewState {
+function session(expiresAt: number, ended = false): BrowserLiveViewState {
 	return {
 		url: 'https://example.com/passive',
 		interactiveUrl: 'https://example.com/interactive',
 		saving: true,
 		humanControl: true,
 		expiresAt,
+		ended,
 		// SAFETY: This ID is only used by the mounted test component.
 		threadId: 'thread' as Id<'threadRecords'>,
 		lastUsedRunId: null,
@@ -26,9 +27,9 @@ function session(expiresAt: number): BrowserLiveViewState {
 }
 
 it.each([true, false])(
-	'does not load an expired session when reopening the panel, with URLs=%s',
+	'does not load an ended session when reopening the panel, with URLs=%s',
 	(hasUrls) => {
-		const liveView = session(Date.now() - 1);
+		const liveView = session(Date.now() + 60_000, true);
 		if (!hasUrls) {
 			liveView.url = null;
 			liveView.interactiveUrl = null;
@@ -44,14 +45,13 @@ it.each([true, false])(
 	}
 );
 
-it('unmounts the live view at expiry and shows a later session without reopening the panel', async () => {
-	vi.useFakeTimers();
+it('unmounts an ended live view and shows a later session without reopening the panel', () => {
 	const props = $state({ active: true, liveView: session(Date.now() + 1_000) });
 	const component = mount(BrowserLiveView, { target: document.body, props });
 	cleanup = () => unmount(component);
 	flushSync();
 	expect(document.querySelector('iframe')).not.toBeNull();
-	await vi.advanceTimersByTimeAsync(1_000);
+	props.liveView.ended = true;
 	flushSync();
 	expect(document.querySelector('iframe, button, a, .animate-spin')).toBeNull();
 	expect(document.body.textContent).toContain('Browser session ended.');
@@ -60,6 +60,27 @@ it('unmounts the live view at expiry and shows a later session without reopening
 	expect(document.querySelector('iframe')).not.toBeNull();
 	expect(document.body.textContent).not.toContain('Browser session ended.');
 });
+
+it.each([-3_600_000, 3_600_000])(
+	'uses backend status when the client clock is skewed by %s milliseconds',
+	(skew) => {
+		vi.useFakeTimers();
+		const serverNow = Date.now();
+		const props = $state({ active: true, liveView: session(serverNow + 60_000) });
+		vi.setSystemTime(serverNow + skew);
+		const component = mount(BrowserLiveView, { target: document.body, props });
+		cleanup = () => unmount(component);
+		flushSync();
+		expect(document.querySelector('iframe')).not.toBeNull();
+		expect(document.querySelector('button')?.disabled).toBe(false);
+		expect(document.querySelector('a')).not.toBeNull();
+		expect(document.body.textContent).not.toMatch(/Expired|Browser session ended/);
+		props.liveView.ended = true;
+		flushSync();
+		expect(document.querySelector('iframe, button, a, .animate-spin')).toBeNull();
+		expect(document.body.textContent).toContain('Browser session ended.');
+	}
+);
 
 it('removes the iframe when provider timeout cleanup clears the session', () => {
 	const props = $state<{ active: boolean; liveView: BrowserLiveViewState | null }>({
