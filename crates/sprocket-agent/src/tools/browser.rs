@@ -132,7 +132,7 @@ impl rig::tool::Tool for BrowserScreenshotTool {
 
     fn description(&self) -> String {
         format!(
-            "Take a screenshot of the current browser page, save it locally, and attach it as an image. Prefer `snapshot -i` via browser_interact when you only need structure or text. {DISABLE_SAVING_DOC}"
+            "Take a screenshot of the current browser page and return its saved local path and image. Prefer `snapshot -i` via browser_interact when you only need structure or text. {DISABLE_SAVING_DOC}"
         )
     }
 
@@ -148,6 +148,7 @@ impl rig::tool::Tool for BrowserScreenshotTool {
         if !self.0.supports_images {
             return Err(tool_failure("The selected model cannot view images."));
         }
+        let cache_dir = self.0.transcript_dir.join(Self::NAME);
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         let result = execute_tool_job(
             &self.0.runtime,
@@ -167,7 +168,7 @@ impl rig::tool::Tool for BrowserScreenshotTool {
                 tokio::select! {
                     biased;
                     _ = cancellation.cancelled() => Err(cancelled_error()),
-                    result = save_screenshot(result, &self.0.parse_file_cache_dir) => result.map_err(tool_error),
+                    result = save_screenshot(result, &cache_dir) => result.map_err(tool_error),
                 }
             },
         )
@@ -291,11 +292,16 @@ mod tests {
         use crate::types::{AgentHistoryContent, AgentHistoryToolResultItem};
 
         let cache = tempfile::tempdir().unwrap();
-        let metadata = save_screenshot(screenshot_response(), cache.path())
+        let store = crate::transcript::TranscriptStore::new(cache.path().join("transcripts"));
+        let directory = store
+            .thread_dir("user", "thread")
+            .join("browser_screenshot");
+        let metadata = save_screenshot(screenshot_response(), &directory)
             .await
             .unwrap();
         let path = Path::new(metadata["path"].as_str().unwrap());
-        assert_eq!(path.parent().unwrap(), cache.path().canonicalize().unwrap());
+        assert_eq!(path.parent().unwrap(), directory.canonicalize().unwrap());
+        assert!(!directory.with_file_name("parse_file").exists());
         assert_eq!(tokio::fs::read(path).await.unwrap(), png());
         assert_eq!(metadata["width"], 1);
         assert_eq!(metadata["height"], 1);
@@ -304,6 +310,7 @@ mod tests {
         assert!(metadata.get("dataBase64").is_none());
 
         let output = replay_image_tool_output(&metadata).await.unwrap();
+        let saved_path = format!("Image saved to: {}", path.display());
         let expected = ToolResultContent::image_base64(
             base64::engine::general_purpose::STANDARD.encode(png()),
             Some(ImageMediaType::PNG),
@@ -311,7 +318,7 @@ mod tests {
         );
         assert_eq!(
             serde_json::to_value(output.into_content()).unwrap(),
-            json!([expected])
+            json!([ToolResultContent::text(saved_path.clone()), expected])
         );
 
         let part = serde_json::from_value(json!({
@@ -330,9 +337,14 @@ mod tests {
         let AgentHistoryContent::ToolResult { items, .. } = &history[0].contents[0] else {
             panic!("missing tool result")
         };
-        let [AgentHistoryToolResultItem::Image { image_json }] = items.as_slice() else {
-            panic!("missing replayed screenshot")
+        let [
+            AgentHistoryToolResultItem::Text { text },
+            AgentHistoryToolResultItem::Image { image_json },
+        ] = items.as_slice()
+        else {
+            panic!("missing saved path and replayed screenshot")
         };
+        assert_eq!(text, &saved_path);
         let ToolResultContent::Image(expected) = expected else {
             unreachable!()
         };
