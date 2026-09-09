@@ -101,6 +101,8 @@ fn build_workspace_prompt_context(
     workspace_path: &str,
     workspace_instructions: &[WorkspaceInstruction],
     skills: &[WorkspaceSkill],
+    model_label: &str,
+    model_id: &str,
 ) -> WorkspacePromptContext {
     let user_instructions = workspace_instructions
         .iter()
@@ -145,12 +147,14 @@ fn build_workspace_prompt_context(
         format!("<SKILLS>\n{entries}\n</SKILLS>")
     };
 
+    let model_identity = format!("Your model is {model_label} ({model_id}).");
     let base_instructions = [
         "# System Instructions",
         "",
         "## Identity",
         "",
         "Your name is Sprocket.",
+        model_identity.as_str(),
         "You are an engineering agent operating in the user's real local workspace.",
         "You are a careful senior engineer.",
         "You like debating with the user when you feel there is a better way to achieve an end goal.",
@@ -903,6 +907,8 @@ pub async fn run_agent(run: AgentRun, live: Arc<LiveCompletionHub>) -> anyhow::R
             &request.workspace_path,
             &workspace_instructions,
             &skills,
+            &capabilities.label,
+            &context.run.selected_model,
         );
         Ok((prompt, provider, prompt_context, skills))
     })();
@@ -1016,6 +1022,9 @@ mod tests {
 
     use super::{build_workspace_prompt_context, submission_owned_by_another_executor};
 
+    const MODEL_LABEL: &str = "GPT-5.6 Sol";
+    const MODEL_ID: &str = "gpt-5.6-sol";
+
     fn initial_context_text(message: &Message) -> &str {
         match message {
             Message::User { content } => match content.first() {
@@ -1024,6 +1033,19 @@ mod tests {
             },
             other => panic!("expected initial context user message, got {other:?}"),
         }
+    }
+
+    fn build_test_prompt_context(
+        workspace_instructions: &[WorkspaceInstruction],
+        skills: &[WorkspaceSkill],
+    ) -> super::WorkspacePromptContext {
+        build_workspace_prompt_context(
+            "/tmp/project",
+            workspace_instructions,
+            skills,
+            MODEL_LABEL,
+            MODEL_ID,
+        )
     }
 
     #[test]
@@ -1043,6 +1065,20 @@ mod tests {
     }
 
     #[test]
+    fn base_instructions_include_the_selected_model_identity() {
+        let prompt_context =
+            build_workspace_prompt_context("/tmp/project", &[], &[], MODEL_LABEL, MODEL_ID);
+
+        assert!(
+            prompt_context
+                .base_instructions
+                .contains(
+                    "Your name is Sprocket.\nYour model is GPT-5.6 Sol (gpt-5.6-sol).\nYou are an engineering agent"
+                )
+        );
+    }
+
+    #[test]
     fn initial_context_renders_skills_block() {
         let skills = [WorkspaceSkill {
             name: "pdf-processing".to_string(),
@@ -1051,7 +1087,7 @@ mod tests {
                 contents: "---\nname: pdf-processing\ndescription: Handle PDFs\n---\n",
             },
         }];
-        let prompt_context = build_workspace_prompt_context("/tmp/project", &[], &skills);
+        let prompt_context = build_test_prompt_context(&[], &skills);
         let initial_context = initial_context_text(&prompt_context.initial_context);
         assert!(initial_context.starts_with("# Thread-Scoped Workspace Context\n"));
         assert!(initial_context.contains("## Available Skills"));
@@ -1064,7 +1100,7 @@ mod tests {
 
     #[test]
     fn initial_context_renders_empty_skills_line() {
-        let prompt_context = build_workspace_prompt_context("/tmp/project", &[], &[]);
+        let prompt_context = build_test_prompt_context(&[], &[]);
         let initial_context = initial_context_text(&prompt_context.initial_context);
         assert!(initial_context.contains("## Available Skills"));
         assert!(initial_context.contains("No skills are installed."));
@@ -1080,7 +1116,7 @@ mod tests {
                 contents: "---\nname: demo\ndescription: Line one\n---\n",
             },
         }];
-        let prompt_context = build_workspace_prompt_context("/tmp/project", &[], &skills);
+        let prompt_context = build_test_prompt_context(&[], &skills);
         let initial_context = initial_context_text(&prompt_context.initial_context);
         assert!(initial_context.contains("description: Line one line two"));
         assert!(!initial_context.contains("description: Line one\n"));
@@ -1105,7 +1141,7 @@ mod tests {
             },
         ];
 
-        let prompt_context = build_workspace_prompt_context("/tmp/project", &instructions, &[]);
+        let prompt_context = build_test_prompt_context(&instructions, &[]);
         let initial_context = initial_context_text(&prompt_context.initial_context);
 
         let user_heading = "### The user's AGENTS.md";

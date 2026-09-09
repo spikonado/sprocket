@@ -93,6 +93,7 @@ pub struct ContextBudget {
 /// Live catalog fields for the selected model. Fetched once with the budget.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CatalogModelCapabilities {
+    pub label: String,
     pub context_budget: ContextBudget,
     pub supports_images: bool,
 }
