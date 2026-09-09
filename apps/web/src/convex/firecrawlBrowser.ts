@@ -344,7 +344,7 @@ async function execute(ctx: ActionCtx, args: BrowserArgs, code: string, language
 				operationId
 			});
 			throw new ConvexError(
-				'browser_outcome_unknown: The provider did not confirm whether the command completed. The session is closing. Do not repeat purchases, messages, or other actions without checking their outcome first.'
+				'The provider did not confirm whether the command completed. The session is closing. Do not repeat purchases, messages, or other actions without checking their outcome first.'
 			);
 		}
 		throw error;

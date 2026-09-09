@@ -436,11 +436,18 @@ describe('Firecrawl browser lifecycle', () => {
 		await t.action(api.browserAgent.interact, args);
 		fetch.mockRejectedValue(new Error('Connection reset'));
 		await expect(t.action(api.browserAgent.interact, args)).rejects.toThrow(
-			'browser_outcome_unknown'
+			/^The provider did not confirm whether the command completed\. The session is closing\. Do not repeat purchases, messages, or other actions without checking their outcome first\.$/
 		);
 		expect(fetch).toHaveBeenCalledTimes(3);
 		expect(await t.run((ctx) => ctx.db.query('browserSessions').first())).toMatchObject({
 			closing: true
 		});
+		await expect(t.action(api.browserAgent.interact, args)).rejects.toThrow(
+			/^The browser is closing\. Retry shortly\.$/
+		);
+		await expect(
+			t.action(api.browserAgent.screenshot, { runId, claimId, executionSecret })
+		).rejects.toThrow(/^The browser is closing\. Retry shortly\.$/);
+		expect(fetch.mock.calls.filter(([, options]) => options.method === 'POST')).toHaveLength(3);
 	});
 });

@@ -95,7 +95,7 @@ export const acquire = internalMutation({
 					'The user has control of this browser. Ask them to give control back before browsing.'
 				);
 			if (existing.closing || existing.expiresAt <= now) {
-				throw new ConvexError('browser_closing: The browser is closing. Retry shortly.');
+				throw new ConvexError('The browser is closing. Retry shortly.');
 			}
 			if (existing.operationId && existing.operationExpiresAt > now) {
 				throw new ConvexError(
