@@ -47,6 +47,7 @@ struct GatewaySprocketCatalog {
 #[serde(rename_all = "camelCase")]
 struct GatewayCatalogModel {
     id: String,
+    label: String,
     supports_images: bool,
     context_window_tokens: u64,
     #[serde(rename = "autoCompactTokenLimit")]
@@ -70,6 +71,7 @@ fn select_catalog_model(
         .find(|model| model.id == model_id)
         .ok_or_else(|| anyhow!("model {model_id} is not in the AI gateway catalog"))?;
     Ok(CatalogModelCapabilities {
+        label: model.label.clone(),
         context_budget: ContextBudget {
             context_window_tokens: model.context_window_tokens,
             auto_handoff_token_limit: model.auto_handoff_token_limit,
@@ -111,12 +113,14 @@ mod tests {
                 "models": [
                     {
                         "id": "gpt-5.6-sol",
+                        "label": "GPT-5.6 Sol",
                         "supportsImages": supports_images,
                         "contextWindowTokens": 272000,
                         "autoCompactTokenLimit": 258000
                     },
                     {
                         "id": "deepseek-v4-pro-0813",
+                        "label": "DeepSeek V4 Pro",
                         "supportsImages": false,
                         "contextWindowTokens": 1000000,
                         "autoCompactTokenLimit": 967000
@@ -128,10 +132,11 @@ mod tests {
     }
 
     #[test]
-    fn fixture_reports_image_capability_with_budget_from_one_payload() {
+    fn fixture_reports_selected_model_metadata_from_one_payload() {
         let vision =
             select_catalog_model(catalog_payload(true), "gpt-5.6-sol").expect("vision model");
         assert!(vision.supports_images);
+        assert_eq!(vision.label, "GPT-5.6 Sol");
         assert_eq!(vision.context_budget.context_window_tokens, 272000);
         assert_eq!(vision.context_budget.auto_handoff_token_limit, 258000);
 
@@ -153,6 +158,7 @@ mod tests {
     fn catalog_model_requires_supports_images() {
         let error = serde_json::from_value::<GatewayCatalogModel>(serde_json::json!({
             "id": "gpt-5.6-sol",
+            "label": "GPT-5.6 Sol",
             "contextWindowTokens": 272000,
             "autoCompactTokenLimit": 258000
         }))
