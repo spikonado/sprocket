@@ -11,7 +11,6 @@ import {
 	nativePackage,
 	run
 } from '../lib/launcher.js';
-import { createHost } from '../lib/update.js';
 
 test('selects the native package for supported platforms', () => {
 	assert.deepEqual(nativePackage('linux', 'x64'), [
@@ -88,21 +87,23 @@ test('overrides inherited update helper environment for the native child', async
 	assert.equal(Object.hasOwn(invocation.options.env, 'SPROCKET_UPDATE_MANAGED'), false);
 });
 
-test('update and upgrade do not spawn the native binary', async () => {
-	let stdout = '';
-	const code = await launch(['upgrade', '--help'], {
-		host: createHost({
-			writeStdout(text) {
-				stdout += text;
-			},
-			writeStderr() {}
-		}),
-		spawn() {
-			throw new Error('native binary should not run');
-		}
-	});
-	assert.equal(code, 0);
-	assert.match(stdout, /sprocket update/);
+test('update and upgrade help is delegated to the native CLI', async () => {
+	for (const args of [
+		['update', '--help'],
+		['upgrade', '-h']
+	]) {
+		let invocation;
+		const code = await launch(args, {
+			resolveBinary: () => '/tmp/sprocket',
+			ensureExecutable: () => {},
+			spawn(binary, childArgs) {
+				invocation = { binary, args: childArgs };
+				return { status: 0 };
+			}
+		});
+		assert.equal(code, 0);
+		assert.deepEqual(invocation, { binary: '/tmp/sprocket', args });
+	}
 });
 
 test('native child environment always overwrites helper paths', () => {

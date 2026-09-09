@@ -4,7 +4,7 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use anyhow::Context;
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use sprocket_server::{
     INSTALLED_WEB_DIR, PairingProofRequest, PairingProofResponse, RunOptions, ServerConfig,
     browser_launch_url, load_repo_env, pairing_proof_message, read_pairing_credential, run,
@@ -24,7 +24,7 @@ const VERSION: &str = match option_env!("SPROCKET_VERSION") {
 #[derive(Debug, Parser)]
 #[command(
     name = "sprocket",
-    about = "Agentic platform for streamlining hardware and software development",
+    about = "The best and only AI agent for developing both hardware and software",
     version = VERSION,
     arg_required_else_help = false
 )]
@@ -45,9 +45,13 @@ struct Cli {
 enum Commands {
     /// Start only the local Sprocket server
     Serve(ServeArgs),
+
+    /// Update a global npm, bun, pnpm, or yarn installation on its current channel
+    #[command(visible_alias = "upgrade")]
+    Update(UpdateArgs),
 }
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct ServeArgs {
     #[command(flatten)]
     server: ServerConfig,
@@ -55,6 +59,13 @@ struct ServeArgs {
     /// Only print machine-readable startup output
     #[arg(long, env = "SPROCKET_QUIET")]
     quiet: bool,
+}
+
+#[derive(Debug, Args)]
+struct UpdateArgs {
+    /// Report whether an update is available without installing it
+    #[arg(long)]
+    check: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -84,6 +95,9 @@ fn main() -> anyhow::Result<()> {
                 anyhow::bail!("a workspace directory cannot be combined with `serve`");
             }
             serve_local(serve.server, serve.quiet, false, None)
+        }
+        Some(Commands::Update(_)) => {
+            anyhow::bail!("`sprocket update` requires the @spikonado/sprocket package launcher")
         }
         None if cli.web => {
             let server = ServerConfig::try_parse_from(["sprocket"])?;
@@ -293,9 +307,40 @@ fn find_dev_desktop_launcher() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::error::ErrorKind;
+
+    fn help_for(args: &[&str]) -> String {
+        let error = Cli::try_parse_from(std::iter::once("sprocket").chain(args.iter().copied()))
+            .expect_err("help should exit before parsing a command");
+        assert_eq!(error.kind(), ErrorKind::DisplayHelp);
+        error.to_string()
+    }
 
     #[test]
-    fn parses_desktop_web_and_server_modes() {
+    fn root_help_covers_current_commands() {
+        let help = help_for(&["--help"]);
+        assert_eq!(help, help_for(&["help"]));
+
+        for expected in [
+            "developing both hardware and software",
+            "Start only the local Sprocket server",
+            "Update a global npm, bun, pnpm, or yarn installation on its current channel",
+            "alias: upgrade",
+        ] {
+            assert!(help.contains(expected), "help is missing {expected:?}");
+        }
+    }
+
+    #[test]
+    fn update_help_describes_check_option() {
+        let help = help_for(&["help", "update"]);
+
+        assert!(help.contains("--check"));
+        assert!(help.contains("without installing it"));
+    }
+
+    #[test]
+    fn parses_launch_server_and_update_modes() {
         let desktop = Cli::try_parse_from(["sprocket"]).unwrap();
         assert!(!desktop.web);
         assert!(desktop.directory.is_none());
@@ -314,5 +359,11 @@ mod tests {
         assert!(!server.web);
         assert!(server.directory.is_none());
         assert!(matches!(server.command, Some(Commands::Serve(_))));
+
+        let update = Cli::try_parse_from(["sprocket", "upgrade", "--check"]).unwrap();
+        assert!(matches!(
+            update.command,
+            Some(Commands::Update(UpdateArgs { check: true }))
+        ));
     }
 }
