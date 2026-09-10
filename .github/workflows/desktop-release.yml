@@ -143,7 +143,22 @@ jobs:
           CSC_LINK: ${{ runner.os == 'macOS' && secrets.CSC_LINK || '' }}
           WIN_CSC_KEY_PASSWORD: ${{ runner.os == 'Windows' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
           WIN_CSC_LINK: ${{ runner.os == 'Windows' && secrets.WIN_CSC_LINK || '' }}
-        run: bunx electron-builder ${{ matrix.electron_args }} --publish never
+        run: |
+          for name in \
+            APPLE_API_ISSUER \
+            APPLE_API_KEY_ID \
+            APPLE_APP_SPECIFIC_PASSWORD \
+            APPLE_ID \
+            APPLE_TEAM_ID \
+            CSC_KEY_PASSWORD \
+            CSC_LINK \
+            WIN_CSC_KEY_PASSWORD \
+            WIN_CSC_LINK; do
+            if [[ -z "${!name}" ]]; then
+              unset "$name"
+            fi
+          done
+          bunx electron-builder ${{ matrix.electron_args }} --publish never
       - name: Drop builder debug files
         working-directory: apps/desktop/dist
         shell: bash
