@@ -8,17 +8,21 @@ function clientFixture() {
 	let fail: (error: Error) => void = () => {};
 	const unsubscribe = vi.fn();
 	const query = vi.fn<Parameters<typeof watchCloudArtifacts>[0]['query']>();
-	const client: Parameters<typeof watchCloudArtifacts>[0] = {
-		query,
-		onUpdate: (_query, _scope, onUpdate, onError) => {
+	const onUpdate = vi.fn<Parameters<typeof watchCloudArtifacts>[0]['onUpdate']>(
+		(_query, _scope, onUpdate, onError) => {
 			update = onUpdate;
 			fail = onError;
 			return unsubscribe;
 		}
+	);
+	const client: Parameters<typeof watchCloudArtifacts>[0] = {
+		query,
+		onUpdate
 	};
 	return {
 		client,
 		query,
+		onUpdate,
 		unsubscribe,
 		update: () => update(1),
 		fail: () => fail(new Error('Denied'))
@@ -30,6 +34,27 @@ afterEach(() => {
 });
 
 describe('cloud artifact subscriptions', () => {
+	it('subscribes by repository but reads artifacts in the selected thread', async () => {
+		const fixture = clientFixture();
+		fixture.query.mockResolvedValue({ page: [], isDone: true, continueCursor: '', revision: 1 });
+		// SAFETY: the mock records this ID without sending a Convex request.
+		const threadId = 'thread' as Id<'threadRecords'>;
+		const stop = watchCloudArtifacts(
+			fixture.client,
+			{ userId: 'alice', repositoryKey: 'repo', threadId },
+			vi.fn()
+		);
+		expect(fixture.onUpdate.mock.calls[0]?.[1]).toEqual({ repositoryKey: 'repo' });
+		fixture.update();
+		await Promise.resolve();
+		expect(fixture.query.mock.calls[0]?.[1]).toEqual({
+			repositoryKey: 'repo',
+			threadId,
+			cursor: null
+		});
+		stop();
+	});
+
 	it('filters a cached response from the previous account during auth handoff', async () => {
 		const fixture = clientFixture();
 		// SAFETY: this mocked response uses the ID only as an opaque string, never in a Convex request.

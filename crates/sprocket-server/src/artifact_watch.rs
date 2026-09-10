@@ -3,17 +3,17 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use futures::{StreamExt, stream};
+use futures::{Stream, StreamExt, stream};
 use serde::{Deserialize, Serialize};
 use sprocket_agent::artifact_bindings::{ArtifactBindings, content_hash};
-use sprocket_convex::deserialize_convex_u64;
+use sprocket_convex::{decode_labeled_function_result, deserialize_convex_u64};
 use sprocket_workspace::{ArtifactContentType, read_artifact_file};
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 use tokio::time::{MissedTickBehavior, interval, timeout};
 
 use crate::native_auth::NativeAuthManager;
-use crate::transcript_client::UserConvexClient;
+use crate::transcript_client::{ArtifactSnapshot, UserConvexClient};
 
 const NETWORK_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -192,7 +192,12 @@ impl ArtifactWatchSession {
             let mut feed = ArtifactFeed::new(self.key.clone(), bindings.clone());
             flush_feed(
                 &mut feed,
-                || client.list_artifacts(&self.key.repository_key, self.key.thread_id.as_deref()),
+                || async {
+                    Ok(client
+                        .list_artifacts(&self.key.repository_key, self.key.thread_id.as_deref())
+                        .await?
+                        .artifacts)
+                },
                 |request| {
                     let client = &client;
                     let bindings = &bindings;
@@ -273,43 +278,6 @@ async fn connect(
     .await
 }
 
-struct CloudSnapshot {
-    artifacts: Vec<RemoteArtifact>,
-    revision: u64,
-}
-
-async fn cloud_snapshot(
-    client: &UserConvexClient,
-    key: &WatchKey,
-    known_revision: Option<u64>,
-    bindings: &ArtifactBindings,
-    pending: Vec<SyncRequest>,
-) -> anyhow::Result<Option<CloudSnapshot>> {
-    for request in pending {
-        timeout(NETWORK_TIMEOUT, sync(client, bindings, &request)).await??;
-    }
-    let revision = client
-        .artifact_revision(&key.repository_key, key.thread_id.as_deref())
-        .await?;
-    if known_revision == Some(revision) {
-        return Ok(None);
-    }
-    let artifacts = client
-        .list_artifacts(&key.repository_key, key.thread_id.as_deref())
-        .await?;
-    // A later revision requires another read rather than labeling an older body as current.
-    let after = client
-        .artifact_revision(&key.repository_key, key.thread_id.as_deref())
-        .await?;
-    if revision != after {
-        anyhow::bail!("Artifact registry changed during refresh; retrying");
-    }
-    Ok(Some(CloudSnapshot {
-        artifacts,
-        revision,
-    }))
-}
-
 async fn watch(
     url: String,
     auth: Arc<NativeAuthManager>,
@@ -337,7 +305,7 @@ async fn watch(
             result = cloud_rx.recv() => {
                 match result {
                     Some(Ok(snapshot)) => {
-                        if let Some(snapshot) = snapshot { feed.apply_registry(snapshot.artifacts); }
+                        feed.apply_registry(snapshot.artifacts);
                         stale = false;
                         error = None;
                     }
@@ -366,32 +334,96 @@ async fn cloud_worker(
     key: WatchKey,
     bindings: ArtifactBindings,
     pending: tokio::sync::watch::Receiver<Vec<SyncRequest>>,
-    output: tokio::sync::mpsc::Sender<anyhow::Result<Option<CloudSnapshot>>>,
+    output: tokio::sync::mpsc::Sender<anyhow::Result<ArtifactSnapshot>>,
 ) {
-    let mut client = None;
-    let mut revision = None;
+    loop {
+        let outcome = async {
+            let client = timeout(NETWORK_TIMEOUT, connect(&url, &auth, &key)).await??;
+            let updates = timeout(
+                NETWORK_TIMEOUT,
+                client.subscribe_artifact_state(&key.repository_key),
+            )
+            .await??;
+            cloud_session(
+                updates.map(|result| {
+                    let revision: f64 =
+                        decode_labeled_function_result(result, "artifacts:getArtifactState")?;
+                    Ok(revision as u64)
+                }),
+                &pending,
+                &output,
+                || client.list_artifacts(&key.repository_key, key.thread_id.as_deref()),
+                |request| {
+                    let client = &client;
+                    let bindings = &bindings;
+                    async move { sync(client, bindings, &request).await }
+                },
+            )
+            .await
+        }
+        .await;
+        match outcome {
+            Ok(()) => return,
+            Err(error) => {
+                if output.send(Err(error)).await.is_err() {
+                    return;
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
+async fn cloud_session<U, L, LF, S, SF>(
+    mut updates: U,
+    pending: &tokio::sync::watch::Receiver<Vec<SyncRequest>>,
+    output: &tokio::sync::mpsc::Sender<anyhow::Result<ArtifactSnapshot>>,
+    mut load: L,
+    mut synchronize: S,
+) -> anyhow::Result<()>
+where
+    U: Stream<Item = anyhow::Result<u64>> + Unpin,
+    L: FnMut() -> LF,
+    LF: std::future::Future<Output = anyhow::Result<ArtifactSnapshot>>,
+    S: FnMut(SyncRequest) -> SF,
+    SF: std::future::Future<Output = anyhow::Result<()>>,
+{
+    let first = timeout(NETWORK_TIMEOUT, updates.next())
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Artifact subscription ended"))??;
+    let mut observed_revision = Some(first);
+    let mut loaded_revision = None;
+    let mut requests = Vec::new();
     let mut poll = interval(Duration::from_secs(1));
     poll.set_missed_tick_behavior(MissedTickBehavior::Skip);
     loop {
-        poll.tick().await;
-        let requests = pending.borrow().clone();
-        let outcome = async {
-            timeout(NETWORK_TIMEOUT, auth.require_user(&key.user_id)).await??;
-            let connection = match &client {
-                Some(client) => client,
-                None => client.insert(timeout(NETWORK_TIMEOUT, connect(&url, &auth, &key)).await??),
-            };
-            cloud_snapshot(connection, &key, revision, &bindings, requests).await
+        let had_pending = !requests.is_empty();
+        for request in requests.drain(..) {
+            timeout(NETWORK_TIMEOUT, synchronize(request)).await??;
         }
-        .await;
-        if let Ok(Some(snapshot)) = &outcome {
-            revision = Some(snapshot.revision);
+        // A page load can read ahead of buffered subscription updates.
+        if had_pending
+            || observed_revision
+                .is_some_and(|next| loaded_revision.is_none_or(|loaded| next > loaded))
+        {
+            let snapshot = load().await?;
+            if observed_revision.is_some_and(|revision| snapshot.revision < revision) {
+                anyhow::bail!("Artifact registry changed during refresh; retrying");
+            }
+            loaded_revision = Some(snapshot.revision);
+            if output.send(Ok(snapshot)).await.is_err() {
+                return Ok(());
+            }
         }
-        if outcome.is_err() {
-            client = None;
-        }
-        if output.send(outcome).await.is_err() {
-            return;
+        tokio::select! {
+            update = updates.next() => {
+                observed_revision = Some(update.ok_or_else(|| anyhow::anyhow!("Artifact subscription ended"))??);
+            }
+            _ = poll.tick() => {
+                requests = pending.borrow().clone();
+                observed_revision = None;
+            }
+            _ = output.closed() => return Ok(()),
         }
     }
 }
@@ -399,7 +431,7 @@ async fn cloud_worker(
 async fn check_auth(
     auth: Arc<NativeAuthManager>,
     user_id: String,
-    output: tokio::sync::mpsc::Sender<anyhow::Result<Option<CloudSnapshot>>>,
+    output: tokio::sync::mpsc::Sender<anyhow::Result<ArtifactSnapshot>>,
 ) {
     loop {
         tokio::time::sleep(Duration::from_secs(15)).await;
@@ -628,6 +660,124 @@ impl ArtifactFeed {
 mod tests {
     use super::*;
     use sprocket_agent::artifact_bindings::ArtifactBinding;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[tokio::test(start_paused = true)]
+    async fn cloud_subscription_does_not_poll_or_reload_already_loaded_revisions() {
+        let (updates, subscription) = futures::channel::mpsc::unbounded();
+        let (_pending, pending) = tokio::sync::watch::channel(Vec::new());
+        let (output, mut snapshots) = tokio::sync::mpsc::channel(1);
+        let loads = Arc::new(AtomicUsize::new(0));
+        let task_loads = Arc::clone(&loads);
+        let task = tokio::spawn(async move {
+            cloud_session(
+                subscription,
+                &pending,
+                &output,
+                || {
+                    let revision = task_loads.fetch_add(1, Ordering::SeqCst) as u64 + 2;
+                    std::future::ready(Ok(ArtifactSnapshot {
+                        artifacts: vec![],
+                        revision,
+                    }))
+                },
+                |_| async { panic!("idle watcher must not sync") },
+            )
+            .await
+        });
+        updates.unbounded_send(Ok(1)).unwrap();
+        assert_eq!(snapshots.recv().await.unwrap().unwrap().revision, 2);
+        updates.unbounded_send(Ok(1)).unwrap();
+        updates.unbounded_send(Ok(2)).unwrap();
+        tokio::time::advance(Duration::from_secs(60)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(loads.load(Ordering::SeqCst), 1);
+        assert!(snapshots.try_recv().is_err());
+
+        updates.unbounded_send(Ok(3)).unwrap();
+        assert_eq!(snapshots.recv().await.unwrap().unwrap().revision, 3);
+        assert_eq!(loads.load(Ordering::SeqCst), 2);
+        drop(snapshots);
+        task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn local_changes_sync_without_a_cloud_revision_event() {
+        let (updates, subscription) = futures::channel::mpsc::unbounded();
+        let (pending_tx, pending) = tokio::sync::watch::channel(Vec::new());
+        let (output, mut snapshots) = tokio::sync::mpsc::channel(1);
+        let syncs = Arc::new(AtomicUsize::new(0));
+        let task_syncs = Arc::clone(&syncs);
+        let task = tokio::spawn(async move {
+            cloud_session(
+                subscription,
+                &pending,
+                &output,
+                || async {
+                    Ok(ArtifactSnapshot {
+                        artifacts: vec![],
+                        revision: 1,
+                    })
+                },
+                |request| {
+                    assert_eq!(request.content, "local edit");
+                    task_syncs.fetch_add(1, Ordering::SeqCst);
+                    std::future::ready(Ok(()))
+                },
+            )
+            .await
+        });
+        updates.unbounded_send(Ok(1)).unwrap();
+        snapshots.recv().await.unwrap().unwrap();
+        pending_tx.send_replace(vec![SyncRequest {
+            artifact: remote(),
+            path: "notes.md".into(),
+            baseline: content_hash("initial"),
+            content: "local edit".into(),
+        }]);
+        tokio::time::advance(Duration::from_secs(1)).await;
+        snapshots.recv().await.unwrap().unwrap();
+        assert_eq!(syncs.load(Ordering::SeqCst), 1);
+        drop(snapshots);
+        task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cloud_subscription_failures_exit_for_reconnect() {
+        for updates in [
+            vec![],
+            vec![Err(anyhow::anyhow!("Denied"))],
+            vec![Ok(1), Err(anyhow::anyhow!("Disconnected"))],
+        ] {
+            let (_pending_tx, pending) = tokio::sync::watch::channel(Vec::new());
+            let (output, _snapshots) = tokio::sync::mpsc::channel(1);
+            let result = cloud_session(
+                stream::iter(updates),
+                &pending,
+                &output,
+                || async {
+                    Ok(ArtifactSnapshot {
+                        artifacts: vec![],
+                        revision: 1,
+                    })
+                },
+                |_| async { Ok(()) },
+            )
+            .await;
+            assert!(result.is_err());
+        }
+        let (_pending_tx, pending) = tokio::sync::watch::channel(Vec::new());
+        let (output, _snapshots) = tokio::sync::mpsc::channel(1);
+        let result = cloud_session(
+            stream::pending(),
+            &pending,
+            &output,
+            || async { panic!("must receive the first revision before loading") },
+            |_| async { Ok(()) },
+        )
+        .await;
+        assert!(result.unwrap_err().is::<tokio::time::error::Elapsed>());
+    }
 
     #[tokio::test]
     async fn last_consumer_releases_shared_watch() {
