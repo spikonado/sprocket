@@ -9,8 +9,6 @@ crons.interval(
 	internal.imageUploads.cleanupOrphans
 );
 
-crons.interval('run convex component migrations', { minutes: 10 }, internal.migrations.run, {});
-
 crons.interval(
 	'delete inactive attached file bytes',
 	{ hours: 1 },

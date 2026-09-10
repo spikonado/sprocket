@@ -23,12 +23,13 @@ describe('agentRuntime.start', () => {
 			runId,
 			executionSecret
 		});
-		await asUser.mutation(api.agentRuntime.finalizeRun, {
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId,
 			expectedStatus: 'running',
 			expectedClaimId: 'claim-revision',
 			text: 'done',
-			status: 'completed'
+			status: 'completed',
+			executionSecret
 		});
 		expect(await t.run(async (ctx) => (await ctx.db.get('threadRecords', threadId))?.status)).toBe(
 			'completed'
@@ -114,12 +115,13 @@ describe('agentRuntime.start', () => {
 			)
 		).toMatchObject({ _id: newerRunId, status: 'queued' });
 
-		await asUser.mutation(api.agentRuntime.finalizeRun, {
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId: older.runId,
 			expectedStatus: 'running',
 			expectedClaimId: 'older-claim',
 			text: 'older finished',
-			status: 'completed'
+			status: 'completed',
+			executionSecret: 'older-secret'
 		});
 
 		expect(await t.run(async (ctx) => (await ctx.db.get('threadRecords', threadId))?.status)).toBe(

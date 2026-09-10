@@ -521,10 +521,10 @@
 		api.browserSessions.liveViewForThread,
 		authenticatedThreadQueryArgs
 	);
-	const pendingAgentQuestionQuery = useQuery(
-		api.agentQuestions.headPendingForThread,
-		authenticatedThreadQueryArgs
-	);
+	const pendingAgentQuestionQuery = useQuery(api.agentQuestions.headPendingForThread, () => {
+		const args = authenticatedThreadQueryArgs();
+		return args === 'skip' ? args : { ...args, now: tickingNow() };
+	});
 	const queryError = $derived.by(() => {
 		for (const query of [
 			uiPreferencesQuery,

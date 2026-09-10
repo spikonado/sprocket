@@ -21,7 +21,7 @@ import { finalizeRunRecord } from '@convex/lib/runFinalize';
 import { assertContinuableParent } from '@convex/lib/runResume';
 import { assertThreadCanStartRun } from '@convex/lib/runs';
 import { startRunLifecycle } from '@convex/runLifecycle';
-import { getPromptPart, promptSourceKey } from '@convex/lib/transcriptParts';
+import { getPromptPart } from '@convex/lib/transcriptParts';
 import { recordPromptTranscript } from '@convex/lib/transcriptWrites';
 import { isRunFinalStatus, type vReasoningEffort, type vServiceTier } from '@convex/lib/validators';
 
@@ -47,12 +47,10 @@ type CreatedGatewayRun = {
 	runId: Id<'runs'>;
 	threadId: Id<'threadRecords'>;
 	userId: string;
-	promptMessageId?: string;
 	promptPart?: Doc<'threadTranscriptParts'>;
 };
 
 type GatewayRunTelemetry = {
-	completionTransport: 'gateway';
 	gatewayProtocolVersion: number;
 	agentVersion?: string;
 };
@@ -113,11 +111,7 @@ export async function createQueuedRunRecord(
 			serviceTier: args.serviceTier,
 			lastMessageAt: now
 		});
-		await ctx.db.insert('threadUsage', {
-			threadId,
-			userId: args.userId,
-			totalTokensProcessed: 0
-		});
+		await ctx.db.insert('threadUsage', { threadId, userId: args.userId });
 		threadRecord = (await ctx.db.get('threadRecords', threadId))!;
 	}
 	let latestRun = await ctx.db
@@ -150,7 +144,6 @@ export async function createQueuedRunRecord(
 	}
 
 	const gatewayFields: GatewayRunTelemetry = {
-		completionTransport: 'gateway',
 		gatewayProtocolVersion: args.protocolVersion
 	};
 	if (args.agentVersion) {
@@ -188,7 +181,6 @@ export async function createQueuedRunRecord(
 	};
 	if (!continuationOfRunId) {
 		await markImageUploadsAttached(ctx, imageUploads, threadRecord._id);
-		created.promptMessageId = promptSourceKey(runId);
 		created.promptPart = await recordPromptTranscript(ctx, {
 			threadId: threadRecord._id,
 			userId: args.userId,
@@ -235,7 +227,6 @@ async function reconcileExistingQueuedRun(
 		existingRun.reasoningEffort !== args.reasoningEffort ||
 		existingRun.serviceTier !== args.serviceTier ||
 		!existingRun.completionStreamStateId ||
-		existingRun.completionTransport !== 'gateway' ||
 		!continuationMatches
 	) {
 		throw new ConvexError('Submission belongs to a different or incomplete run.');
@@ -279,7 +270,6 @@ async function reconcileExistingQueuedRun(
 		created: false,
 		runId: existingRun._id,
 		threadId: existingRun.threadId,
-		promptMessageId: promptSourceKey(existingRun._id),
 		userId: args.userId,
 		promptPart
 	};

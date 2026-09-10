@@ -64,7 +64,7 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/auth/desktop-login/cancel", post(desktop_login_cancel))
         .route(
             "/auth/native-session",
-            get(desktop_login_result).delete(native_sign_out),
+            axum::routing::delete(native_sign_out),
         )
         .route("/auth/native-session/token", post(native_session_token))
 }

@@ -117,7 +117,7 @@ describe('attachment retention', () => {
 			expect(await t.run((ctx) => ctx.db.system.get('_storage', file.storageId))).toBeNull();
 	});
 
-	it('waits for an owner backfill and retains the separate one-day draft cleanup', async () => {
+	it('removes ownerless attached uploads and retains the separate one-day draft cleanup', async () => {
 		const t = initConvexTest();
 		const legacy = await attachment(t);
 		const draft = await attachment(t);
@@ -125,9 +125,9 @@ describe('attachment retention', () => {
 			await ctx.db.patch('imageUploads', legacy.imageUploadId, { attached: true });
 		});
 		vi.setSystemTime(Date.now() + WEEK + 1);
-		expect(await t.mutation(internal.imageUploads.cleanupExpired, {})).toBe(0);
+		expect(await t.mutation(internal.imageUploads.cleanupExpired, {})).toBe(1);
 		expect(await t.mutation(internal.imageUploads.cleanupOrphans, {})).toBe(1);
-		expect(await t.run((ctx) => ctx.db.system.get('_storage', legacy.storageId))).not.toBeNull();
+		expect(await t.run((ctx) => ctx.db.system.get('_storage', legacy.storageId))).toBeNull();
 		expect(await t.run((ctx) => ctx.db.system.get('_storage', draft.storageId))).toBeNull();
 	});
 });

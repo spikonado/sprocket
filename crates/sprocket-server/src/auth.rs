@@ -75,8 +75,15 @@ pub fn peer_may_complete_desktop_login_callback(peer: std::net::SocketAddr) -> b
 struct SessionRecord {
     role: String,
     created_at: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "deserialize_session_user_id")]
     user_id: Option<String>,
+}
+
+fn deserialize_session_user_id<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::deserialize(deserializer)
 }
 
 impl AuthState {
@@ -570,6 +577,27 @@ mod tests {
         let reloaded = AuthState::load(&temp_dir).expect("reloaded auth state");
         let session = reloaded.session_state(Some(&session_token)).await;
         assert!(session.authenticated);
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[tokio::test]
+    async fn rejects_persisted_sessions_without_an_account_binding_field() {
+        let temp_dir = std::env::temp_dir().join(format!("sprocket-auth-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&temp_dir).unwrap();
+        fs::write(
+            temp_dir.join(SESSIONS_FILE),
+            serde_json::json!([{
+                "token": "old-session",
+                "role": "owner",
+                "createdAt": crate::now_ms()
+            }])
+            .to_string(),
+        )
+        .unwrap();
+
+        let auth = AuthState::load(&temp_dir).expect("auth state");
+        assert!(!auth.session_state(Some("old-session")).await.authenticated);
 
         let _ = fs::remove_dir_all(temp_dir);
     }

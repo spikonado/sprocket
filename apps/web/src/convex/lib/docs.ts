@@ -1,7 +1,6 @@
 import { v } from 'convex/values';
 import schema from '@convex/schema';
 import {
-	vAgentHistoryMessage,
 	vAgentQuestionStatus,
 	vAskQuestionAnswer,
 	vAskQuestionOption,
@@ -65,13 +64,7 @@ export const vCustomerPortalResponse = v.object({
 
 export const vGetContextResult = v.object({
 	run: schema.doc('runs'),
-	threadRecord: schema.doc('threadRecords'),
 	prompt: v.string(),
-	agentHistory: v.array(vAgentHistoryMessage),
-	contextBudget: v.object({
-		contextWindowTokens: v.number(),
-		autoCompactTokenLimit: v.number()
-	}),
 	contextTokens: v.optional(v.number())
 });
 

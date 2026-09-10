@@ -1,7 +1,7 @@
 declare global {
 	interface Window {
 		sprocketDesktopBridge?: {
-			updates?: import('$lib/updates').DesktopUpdates;
+			updates: import('$lib/updates').DesktopUpdates;
 			getLocalBootstrap: () => Promise<{
 				httpBaseUrl: string;
 				desktopLoginCallbackUrl: string;

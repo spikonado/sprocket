@@ -78,12 +78,13 @@ describe('run lifecycle workflow', () => {
 			payload: { cmd: 'true' },
 			executionSecret
 		});
-		await asUser.mutation(api.agentRuntime.finalizeRun, {
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId: created.runId,
 			expectedStatus: 'awaiting_executor',
 			expectedClaimId: 'claim-r',
 			text: 'done',
-			status: 'completed'
+			status: 'completed',
+			executionSecret
 		});
 		const stored = await t.run(async (ctx) => ctx.db.get('executorJobs', job.jobId));
 		expect(stored?.status).toBe('cancelled');

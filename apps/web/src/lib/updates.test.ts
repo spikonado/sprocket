@@ -39,10 +39,10 @@ describe('package update requests', () => {
 		);
 	});
 
-	it('treats a missing route on an older server as unsupported only for checks', async () => {
+	it('reports a missing update route as an error', async () => {
 		vi.stubGlobal('window', { location: { origin: 'http://127.0.0.1:1234' } });
 		vi.stubGlobal('fetch', async () => new Response('', { status: 404 }));
-		expect(await requestPackageUpdate(false)).toBeNull();
+		await expect(requestPackageUpdate(false)).rejects.toThrow('Update request failed (404)');
 		await expect(requestPackageUpdate(true)).rejects.toThrow('Update request failed (404)');
 	});
 

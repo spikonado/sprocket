@@ -9,7 +9,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
 use super::types::{
-    TRANSCRIPT_CHUNK_SIZE, TRANSCRIPT_PAGE_SIZE, TranscriptMessage, TranscriptPage, TranscriptPart,
+    TRANSCRIPT_CHUNK_SIZE, TRANSCRIPT_PAGE_SIZE, TranscriptMessage, TranscriptPart,
     TranscriptPartKind, TranscriptPartRecord, TranscriptPartsPage, TranscriptState,
     UNKNOWN_RUN_STARTED_AT,
 };
@@ -481,64 +481,6 @@ impl TranscriptStore {
             .collect())
     }
 
-    pub async fn page(
-        &self,
-        user_id: &str,
-        thread_id: &str,
-        before: Option<u32>,
-        limit: Option<u32>,
-    ) -> anyhow::Result<TranscriptPage> {
-        let state = self.load_state(user_id, thread_id).await?;
-        let limit = limit
-            .unwrap_or(TRANSCRIPT_PAGE_SIZE)
-            .clamp(1, TRANSCRIPT_CHUNK_SIZE);
-        // Context handoff limits model context, not what the user may scroll back to.
-        let history_from = 0;
-        let end_exclusive = before
-            .unwrap_or_else(|| state.visible_end_exclusive())
-            .min(state.visible_end_exclusive());
-        if end_exclusive <= history_from {
-            return Ok(TranscriptPage {
-                thread_id: thread_id.to_string(),
-                total_parts: state.remote_total_parts,
-                history_from_number: state.history_from_number,
-                stale: state.stale,
-                messages: Vec::new(),
-                next_before: None,
-            });
-        }
-        let mut scan_end = end_exclusive;
-        let mut parts = Vec::new();
-        let start = loop {
-            let scan_start = scan_end.saturating_sub(TRANSCRIPT_CHUNK_SIZE);
-            let numbers: Vec<u32> = (scan_start..scan_end).collect();
-            let mut batch = self.read_parts(user_id, thread_id, &numbers).await?;
-            batch.append(&mut parts);
-            parts = batch;
-            if let Some(start) = message_page_start(&parts, limit, scan_start == history_from) {
-                break start;
-            }
-            if scan_start == history_from {
-                break history_from;
-            }
-            scan_end = scan_start;
-        };
-        parts.retain(|part| part.number >= start);
-        let messages = project_messages(user_id, thread_id, parts, false);
-        Ok(TranscriptPage {
-            thread_id: thread_id.to_string(),
-            total_parts: state.remote_total_parts,
-            history_from_number: state.history_from_number,
-            stale: state.stale,
-            messages,
-            next_before: if start > history_from {
-                Some(start)
-            } else {
-                None
-            },
-        })
-    }
-
     pub async fn parts_page(
         &self,
         user_id: &str,
@@ -588,52 +530,6 @@ impl TranscriptStore {
             .missing_numbers(user_id, thread_id, start, end_exclusive)
             .await?
             .is_empty())
-    }
-
-    pub async fn has_complete_message_page(
-        &self,
-        user_id: &str,
-        thread_id: &str,
-        before: Option<u32>,
-        limit: u32,
-    ) -> anyhow::Result<bool> {
-        let state = self.load_state(user_id, thread_id).await?;
-        let mut scan_end = before
-            .unwrap_or_else(|| state.visible_end_exclusive())
-            .min(state.visible_end_exclusive());
-        let mut parts = Vec::new();
-        while scan_end > 0 {
-            let scan_start = scan_end.saturating_sub(TRANSCRIPT_CHUNK_SIZE);
-            let numbers = (scan_start..scan_end).collect::<Vec<_>>();
-            let mut batch = self.read_parts(user_id, thread_id, &numbers).await?;
-            if batch.len() != numbers.len() {
-                return Ok(false);
-            }
-            batch.append(&mut parts);
-            parts = batch;
-            if message_page_start(&parts, limit, scan_start == 0).is_some() {
-                return Ok(true);
-            }
-            scan_end = scan_start;
-        }
-        Ok(true)
-    }
-
-    pub async fn message_details(
-        &self,
-        user_id: &str,
-        thread_id: &str,
-        numbers: &[u32],
-    ) -> anyhow::Result<Option<TranscriptMessage>> {
-        let parts = self.read_parts(user_id, thread_id, numbers).await?;
-        if parts.len() != numbers.len() {
-            return Ok(None);
-        }
-        let mut messages = project_messages(user_id, thread_id, parts, true);
-        if messages.len() != 1 {
-            return Ok(None);
-        }
-        Ok(messages.pop())
     }
 
     pub async fn part_details(
@@ -833,48 +729,6 @@ pub fn parts_window(visible_end: u32, before: Option<u32>, limit: Option<u32>) -
     (end_exclusive.saturating_sub(limit), end_exclusive)
 }
 
-pub fn message_page_start(
-    parts: &[TranscriptPart],
-    message_limit: u32,
-    reached_history_start: bool,
-) -> Option<u32> {
-    let mut ordered = parts.iter().collect::<Vec<_>>();
-    ordered.sort_by_key(|part| part.number);
-    let mut current_key: Option<(bool, &str)> = None;
-    let mut current_start = None;
-    let mut completed = 0;
-
-    for part in ordered.into_iter().rev() {
-        let key = match part.kind {
-            TranscriptPartKind::Prompt => (true, part.run_id.as_str()),
-            TranscriptPartKind::Completion | TranscriptPartKind::Tool => {
-                (false, part.run_id.as_str())
-            }
-        };
-        match current_key {
-            None => {
-                current_key = Some(key);
-                current_start = Some(part.number);
-            }
-            Some(existing) if existing == key => current_start = Some(part.number),
-            Some(_) => {
-                completed += 1;
-                if completed >= message_limit.max(1) {
-                    return current_start;
-                }
-                current_key = Some(key);
-                current_start = Some(part.number);
-            }
-        }
-    }
-
-    if reached_history_start && current_key.is_some() {
-        Some(current_start.unwrap_or(0))
-    } else {
-        None
-    }
-}
-
 fn project_messages(
     user_id: &str,
     thread_id: &str,
@@ -971,14 +825,8 @@ fn project_messages(
                         }
                     }
                     for mut item in completion.items {
-                        // Released UIs understand omitted timestamps, but not explicit nulls.
                         if let Some(object) = item.as_object_mut() {
                             object.remove("providerMetadata");
-                            for key in ["startedAt", "completedAt"] {
-                                if object.get(key).is_some_and(JsonValue::is_null) {
-                                    object.remove(key);
-                                }
-                            }
                         }
                         match json_type(&item) {
                             Some("text") => {
@@ -1149,7 +997,7 @@ fn copy_missing_timing(target: &mut JsonValue, source: &JsonValue) {
         return;
     };
     for key in ["startedAt", "completedAt"] {
-        if object.get(key).is_none() {
+        if object.get(key).is_none_or(JsonValue::is_null) {
             if let Some(value) = source.get(key) {
                 object.insert(key.to_string(), value.clone());
             }
@@ -1491,7 +1339,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn message_details_omit_ciphertext_and_leave_stored_reasoning_intact() {
+    async fn part_details_omit_ciphertext_and_leave_stored_reasoning_intact() {
         const ENVELOPE: &str = "stored-opaque-envelope";
         let dir = std::env::temp_dir().join(format!(
             "sprocket-reasoning-privacy-{}",
@@ -1515,11 +1363,12 @@ mod tests {
         ];
         store.append_parts("user", "thread", &[part]).await.unwrap();
 
-        let details = store
-            .message_details("user", "thread", &[0])
+        let records = store
+            .part_details("user", "thread", &[0])
             .await
             .unwrap()
             .unwrap();
+        let details = records[0].message.as_ref().unwrap();
         let rendered = serde_json::to_string(&details).unwrap();
         assert_eq!(details.parts.len(), 1);
         assert_eq!(details.parts[0]["type"], "text");
@@ -1668,7 +1517,7 @@ mod tests {
     }
 
     #[test]
-    fn migrated_null_timing_projects_as_missing_for_released_clients() {
+    fn null_timing_remains_explicit_in_projection() {
         let mut part = completion(4);
         for item in &mut part.completion.as_mut().unwrap().items {
             item["startedAt"] = JsonValue::Null;
@@ -1677,8 +1526,8 @@ mod tests {
         for include_details in [false, true] {
             let messages = project_messages("user", "thread", vec![part.clone()], include_details);
             for item in &messages[0].parts {
-                assert!(item.get("startedAt").is_none());
-                assert!(item.get("completedAt").is_none());
+                assert!(item["startedAt"].is_null());
+                assert!(item["completedAt"].is_null());
             }
         }
     }
@@ -1743,47 +1592,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pages_by_complete_messages_instead_of_parts() {
-        let dir =
-            std::env::temp_dir().join(format!("sprocket-page-messages-{}", uuid::Uuid::new_v4()));
-        let store = TranscriptStore::new(dir.clone());
-        store
-            .append_parts(
-                "user",
-                "thread",
-                &[
-                    prompt(0, "first"),
-                    completion_for_run(1, "run-0", "old answer"),
-                    prompt(2, "second"),
-                    completion_for_run(3, "run-2", "new "),
-                    completion_for_run(4, "run-2", "answer"),
-                ],
-            )
-            .await
-            .unwrap();
-        store
-            .update_state("user", "thread", |state| state.remote_total_parts = 5)
-            .await
-            .unwrap();
-
-        let newest = store.page("user", "thread", None, Some(1)).await.unwrap();
-        assert_eq!(newest.messages.len(), 1);
-        assert_eq!(newest.messages[0].text, "new answer");
-        assert_eq!(newest.messages[0].source_numbers, vec![3, 4]);
-        assert_eq!(newest.next_before, Some(3));
-
-        let older = store
-            .page("user", "thread", newest.next_before, Some(1))
-            .await
-            .unwrap();
-        assert_eq!(older.messages.len(), 1);
-        assert_eq!(older.messages[0].text, "second");
-        assert_eq!(older.next_before, Some(2));
-
-        tokio::fs::remove_dir_all(dir).await.unwrap();
-    }
-
-    #[tokio::test]
     async fn preserves_created_at_on_disk() {
         let dir =
             std::env::temp_dir().join(format!("sprocket-created-at-{}", uuid::Uuid::new_v4()));
@@ -1806,7 +1614,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn appends_and_pages_newest_first() {
+    async fn appends_reads_and_clears_parts() {
         let dir =
             std::env::temp_dir().join(format!("sprocket-transcript-{}", uuid::Uuid::new_v4()));
         let store = TranscriptStore::new(dir.clone());
@@ -1826,11 +1634,14 @@ mod tests {
             })
             .await
             .unwrap();
-        let page = store.page("user", "thread", None, Some(2)).await.unwrap();
+        let page = store
+            .parts_page("user", "thread", None, Some(2))
+            .await
+            .unwrap();
         assert_eq!(
-            page.messages
+            page.parts
                 .iter()
-                .map(|message| message.text.as_str())
+                .map(|part| part.message.as_ref().unwrap().text.as_str())
                 .collect::<Vec<_>>(),
             vec!["b", "c"]
         );
@@ -1871,11 +1682,14 @@ mod tests {
             })
             .await
             .unwrap();
-        let page = store.page("user", "thread", None, None).await.unwrap();
+        let page = store
+            .parts_page("user", "thread", None, None)
+            .await
+            .unwrap();
         assert_eq!(
-            page.messages
+            page.parts
                 .iter()
-                .map(|message| message.text.as_str())
+                .map(|part| part.message.as_ref().unwrap().text.as_str())
                 .collect::<Vec<_>>(),
             vec!["a", "b", "c"]
         );

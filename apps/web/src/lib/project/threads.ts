@@ -16,7 +16,7 @@ export type ThreadSummaryRow = {
 export function toThreadSummary(row: ThreadSummaryRow): ThreadSummary {
 	return {
 		threadId: row.threadId,
-		repositoryKey: row.repositoryKey ?? '',
+		repositoryKey: row.repositoryKey,
 		title: row.title,
 		selectedModel: row.selectedModel,
 		reasoningEffort: row.reasoningEffort,
@@ -30,14 +30,14 @@ export function toThreadSummary(row: ThreadSummaryRow): ThreadSummary {
 export function threadRecordToSummary(record: Doc<'threadRecords'>): ThreadSummary {
 	return toThreadSummary({
 		threadId: record._id,
-		repositoryKey: record.repositoryKey ?? '',
+		repositoryKey: record.repositoryKey,
 		title: record.title ?? 'New thread',
 		selectedModel: record.selectedModel,
 		reasoningEffort: record.reasoningEffort,
 		serviceTier: record.serviceTier,
 		lastMessageAt: record.lastMessageAt,
 		threadStatus: record.archivedAt === undefined ? 'active' : 'archived',
-		status: record.status ?? 'completed'
+		status: record.status
 	});
 }
 

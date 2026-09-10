@@ -179,10 +179,7 @@ export const start = mutation({
 					}
 				}
 			);
-			await ctx.db.patch('executorJobs', job._id, {
-				cloudWorkId: workId,
-				cloudWorkPool: 'firecrawlScrape'
-			});
+			await ctx.db.patch('executorJobs', job._id, { cloudWorkId: workId });
 			return null;
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));

@@ -266,7 +266,6 @@ describe('hostedParse', () => {
 		const secondJob = await t.run(async (ctx) => ctx.db.get('executorJobs', run.jobId));
 		expect(secondJob?.cloudWorkId).toBe(firstJob?.cloudWorkId);
 		expect(secondJob?.cloudWorkId).toEqual(expect.any(String));
-		expect(secondJob?.cloudWorkPool).toBe('firecrawlScrape');
 		const request = await t.run(async (ctx) =>
 			ctx.db.get('hostedParseRequests', created.requestId)
 		);

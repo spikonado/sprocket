@@ -78,7 +78,10 @@ describe('agentQuestions', () => {
 			executionSecret
 		});
 
-		const head = await asUser.query(api.agentQuestions.headPendingForThread, { threadId });
+		const head = await asUser.query(api.agentQuestions.headPendingForThread, {
+			threadId,
+			now: Date.now()
+		});
 		expect(head?.questionId).toBe(first.questionId);
 
 		await expect(
@@ -106,7 +109,12 @@ describe('agentQuestions', () => {
 		});
 
 		expect(
-			(await asUser.query(api.agentQuestions.headPendingForThread, { threadId }))?.questionId
+			(
+				await asUser.query(api.agentQuestions.headPendingForThread, {
+					threadId,
+					now: Date.now()
+				})
+			)?.questionId
 		).toBe(second.questionId);
 
 		const timed = await t.mutation(api.agentQuestions.create, {
@@ -151,10 +159,11 @@ describe('agentQuestions', () => {
 			executionSecret
 		});
 
-		await asUser.mutation(api.agentRuntime.finalizeRun, {
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId,
 			text: '',
-			status: 'cancelled'
+			status: 'cancelled',
+			executionSecret
 		});
 
 		const snapshot = await t.query(api.agentQuestions.getForExecutor, {
@@ -192,7 +201,12 @@ describe('agentQuestions', () => {
 		vi.setSystemTime(new Date('2026-07-26T12:00:02.000Z'));
 
 		expect(
-			(await asUser.query(api.agentQuestions.headPendingForThread, { threadId }))?.questionId
+			(
+				await asUser.query(api.agentQuestions.headPendingForThread, {
+					threadId,
+					now: Date.now()
+				})
+			)?.questionId
 		).toBe(next.questionId);
 
 		await expect(

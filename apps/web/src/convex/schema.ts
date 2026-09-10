@@ -41,9 +41,9 @@ export default defineSchema({
 		machineId: v.string(),
 		friendlyName: v.string(),
 		platform: v.string(),
-		platformVersion: v.optional(v.string()),
+		platformVersion: v.string(),
 		architecture: v.string(),
-		hostname: v.optional(v.string()),
+		hostname: v.string(),
 		appVersion: v.string(),
 		credentialHash: v.string(),
 		lastSeenAt: v.optional(v.number()),
@@ -67,39 +67,11 @@ export default defineSchema({
 		userId: v.string(),
 		theme: v.union(v.literal('light'), v.literal('dark'))
 	}).index('by_userId', ['userId']),
-	// Stored-only. New clients do not write these tables. Kept so existing
-	// documents and leftover `projectId` fields validate until the rewrite
-	// unsets them. See BACKWARDS_COMPATIBILITY.md.
-	projects: defineTable({
-		userId: v.string(),
-		repositoryKey: v.string(),
-		displayName: v.string(),
-		lastHeartbeatAt: v.optional(v.number()),
-		connectedClientId: v.optional(v.string()),
-		nextExecutorSequence: v.number(),
-		lastSeenAt: v.number()
-	})
-		.index('by_userId', ['userId'])
-		.index('by_user_repositoryKey', ['userId', 'repositoryKey']),
-	projectConnections: defineTable({
-		projectId: v.id('projects'),
-		userId: v.string(),
-		clientId: v.string(),
-		lastHeartbeatAt: v.number()
-	})
-		.index('by_projectId', ['projectId'])
-		.index('by_userId', ['userId']),
 	threadRecords: defineTable({
 		userId: v.string(),
 		submissionId: v.string(),
-		// Optional until migrations:backfillThreadStatus has removed runless rows
-		// and populated existing threads. New threads always write this field.
-		status: v.optional(vRunStatus),
-		// Leftover optionality after the repository-key backfill. Current
-		// inserts always write it.
-		repositoryKey: v.optional(v.string()),
-		// Deprecated: present on rows written before threads stored repositoryKey.
-		projectId: v.optional(v.id('projects')),
+		status: vRunStatus,
+		repositoryKey: v.string(),
 		title: v.optional(v.string()),
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
@@ -127,12 +99,7 @@ export default defineSchema({
 	threadUsage: defineTable({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
-		contextTokens: v.optional(v.number()),
-		// Denormalized cache of the Aggregate ledger. See
-		// BACKWARDS_COMPATIBILITY.md (stored schema, usage ledger).
-		totalTokensProcessed: v.number(),
-		// Leftover after the usage-ledger backfill.
-		usageLedgerMigratedAt: v.optional(v.number())
+		contextTokens: v.optional(v.number())
 	}).index('by_threadId', ['threadId']),
 	threadUsageEvents: defineTable({
 		threadId: v.id('threadRecords'),
@@ -145,8 +112,6 @@ export default defineSchema({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
 		submissionId: v.string(),
-		// Deprecated: leftover on rows written when runs belonged to a cloud project.
-		projectId: v.optional(v.id('projects')),
 		status: vRunStatus,
 		// Hash of the bearer capability held only by the local executor.
 		executionSecretHash: v.string(),
@@ -158,22 +123,14 @@ export default defineSchema({
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
 		serviceTier: vServiceTier,
-		catalogVersion: v.optional(v.string()),
-		// Stored historical rows may still say `convex-action`; new inserts are `gateway`.
-		completionTransport: v.optional(v.union(v.literal('convex-action'), v.literal('gateway'))),
 		gatewayProtocolVersion: v.optional(v.number()),
 		agentVersion: v.optional(v.string()),
-		// Historical catalog snapshot. Current inserts leave these unset.
-		contextWindowTokens: v.optional(v.number()),
-		autoCompactTokenLimit: v.optional(v.number()),
 		startedAt: v.number(),
 		completedAt: v.optional(v.number()),
 		lastError: v.optional(v.string()),
 		cancellationRequestedAt: v.optional(v.number()),
 		cancellationDeadlineAt: v.optional(v.number()),
 		activeJobId: v.optional(v.id('executorJobs')),
-		// Deprecated: prompts now live in threadTranscriptParts.
-		promptMessageId: v.optional(v.string()),
 		completionStreamStateId: v.optional(v.id('completionStreamStates')),
 		lifecycleWorkflowId: v.optional(v.string())
 	})
@@ -186,9 +143,7 @@ export default defineSchema({
 	threadTranscriptStates: defineTable({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
-		totalParts: v.number(),
-		// Leftover after the numbered-transcript backfill.
-		migratedAt: v.optional(v.number())
+		totalParts: v.number()
 	}).index('by_threadId', ['threadId']),
 	threadTranscriptParts: defineTable({
 		threadId: v.id('threadRecords'),
@@ -216,8 +171,6 @@ export default defineSchema({
 		name: v.string(),
 		mediaType: v.string(),
 		size: v.number(),
-		// Deprecated: removed by removeImageUploadMessageIds.
-		messageIds: v.optional(v.array(v.string())),
 		attached: v.boolean(),
 		threadId: v.optional(v.id('threadRecords')),
 		storageDeletedAt: v.optional(v.number())
@@ -281,8 +234,6 @@ export default defineSchema({
 	executorJobs: defineTable({
 		threadId: v.id('threadRecords'),
 		runId: v.id('runs'),
-		// Deprecated: leftover on rows written when jobs belonged to a cloud project.
-		projectId: v.optional(v.id('projects')),
 		kind: vStoredExecutorJobKind,
 		callId: v.optional(v.string()),
 		// Set on jobs created after tool progress events. Legacy rows omit it;
@@ -297,8 +248,7 @@ export default defineSchema({
 		result: v.optional(vExecutorJobResult),
 		error: v.optional(v.string()),
 		sequence: v.number(),
-		cloudWorkId: v.optional(v.string()),
-		cloudWorkPool: v.optional(v.literal('firecrawlScrape'))
+		cloudWorkId: v.optional(v.string())
 	})
 		.index('by_threadId_sequence', ['threadId', 'sequence'])
 		.index('by_runId_sequence', ['runId', 'sequence'])

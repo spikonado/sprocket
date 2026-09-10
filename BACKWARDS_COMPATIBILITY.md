@@ -1,483 +1,154 @@
 # Backwards compatibility
 
-This file lists shims we still ship. When a removal PR merges, delete its
-entry. Age-out is a prod check for stored rows, or an explicit decision that
-a retired function name can disappear.
-
-Current as of 2026-09-08.
-
-## In-app updates
-
-The desktop preload's `updates` capability is optional so a newer web bundle can
-still run inside a released desktop shell. A missing capability hides the update
-action, without falling through to updating an unrelated npm installation.
-Browser clients also accept a 404 from `/api/update` as unsupported for released
-local servers. Remove these fallbacks when every supported desktop shell exposes
-`updates` and every supported local server implements `/api/update`. No stored
-data changes are required.
-
-## Historical artifact tool history
-
-The cloud artifact API with local bindings does not support older clients. The old create and
-update endpoints are removed, and `beginToolJob` rejects the retired tool names.
-
-Stored executor jobs still validate the old artifact tool names, payloads, and
-results so existing conversation history remains readable. Remove these stored
-validators once no executor jobs contain the retired names. At the user's
-request, old artifact data is discarded rather than migrated: the operator
-clears `artifacts` and `artifactVersions` before the normal schema deployment.
-
-## Firecrawl queue transports
-
-Released agents still call `webTools.scrapeForTool` and `webTools.screenshotForTool`.
-These actions now enqueue on the scrape pool and wait for the result. Current agents
-use `firecrawlRequests:start` and a result subscription instead. Remove the waiting
-actions once all supported agents use the subscription transport.
-
-Hosted parse jobs created before the pool split have no `cloudWorkPool` field.
-Their cancellation still targets `webToolWorkpool`; new jobs record `firecrawlScrape`.
-Remove the cancellation fallback after every legacy in-flight job has settled.
-Completed job history may continue to omit the field.
-
-## Historical Browserbase executor jobs
-
-Browserbase client support is explicitly retired. Its actions, provider dependencies, configuration and session schema are removed. New tool jobs accept only current tool kinds. Firecrawl uses the cleared `browserSessions` table directly.
-
-Production still contains historical Browserbase executor jobs. Their stored kind, payload and result validators remain so deployment and conversation history do not break. Remove these validators only after a migration rewrites or removes every historical Browserbase job. This does not preserve Browserbase endpoints or allow old clients to start browser jobs.
-
-Browser screenshot results now add local image-cache metadata without changing the `browserAgent.screenshot` transport. The result validator still accepts the older size-only screenshot records, which cannot replay pixels. Keep that result shape while the transport and oversized captures use it, and until stored records and clients no longer depend on it.
-
-## Transcript projection API
-
-Attachment compatibility covers older stored schemas only. Older-client shims
-introduced by this PR and intermediate PR formats are not supported.
-
-Message attachments keep the `imageUploads` table and `imageUploads` prompt
-field. Current APIs accept only `storageId` / `storageIds`; the table's row ID
-remains an internal database key. Clients use `registerFile`, `discardFile`,
-and `attachmentDownloadByStorageId`. The old row-ID endpoints and request
-fields are removed. Deploy the updated client and server together.
-
-New transcript attachment metadata omits `imageUploadId`. Stored validators
-still accept it for historical rows, and readers strip it from responses.
-`removeTranscriptAttachmentImageUploadIds` rewrites historical prompts in the
-default `migrations:run`, including attachments whose upload row is gone.
-Remove the optional stored field only after that migration completes and a
-production scan finds no remaining attachment row IDs. Existing local JSONL
-records remain readable without a rewrite; current serialization drops their
-legacy attachment row IDs.
-
-The Rust runtime downloads missing file bytes before building the agent's
-prompt. Attachment paths are computed for the current machine, never copied
-from another machine's transcript. `getContext` always uses path-oriented
-attachment handling, without an older-client inline-image branch.
-
-Attachments now live under each thread's `attachments/<storageId>/` directory.
-Reading an old attachment copies any existing user-level blob into that directory
-before exposing its path. This works offline using the existing storage ID.
-New `metadata.json` files contain no row ID. Row-ID-keyed thread directories
-were an intermediate PR format and are not migrated.
-Missing files download from Convex. This on-access migration
-also runs when rebuilding agent history. Legacy blob reads and cleanup remain
-until installations have migrated their cached threads or cleared
-those caches. New uploads never write to the legacy blob store. Draft uploads
-are staged temporarily and moved into the destination thread cache when their
-message is submitted. They are not bound to the thread selected during upload.
-
-Convex deletes attached file bytes when the owning thread's `lastMessageAt` is
-older than one week. Ownership is `imageUploads.threadId`, set on first attach.
-Shared references, run exceptions, and a separate activity clock are not part of
-retention. Transcript metadata and local copies stay; a missing storage URL
-means the cloud bytes are gone.
-
-Assistant text, reasoning, and tool calls accept optional `startedAt` and
-`completedAt` timestamps. Released agents and old stored completions lack them.
-The UI omits durations when section boundaries are unknown rather than inferring
-them from the run start or transcript sequence numbers. New local replicas also
-retain the transcript record creation time for tool-event timing. Existing JSONL
-records remain readable without it; historical reasoning timing cannot be recovered.
-New completion writes normalize missing timestamps to explicit `null`, including
-writes from older agents. `backfillTranscriptTiming` in `convex/migrations.ts`
-does the same for stored completion items without changing known timestamps.
-It is included in the default migration runner. After deploying the nullable
-validators, write normalization, and null-aware UI, run from `apps/web`:
-
-```sh
-bun convex run migrations:runTranscriptTiming
-```
-
-Pass `'{"dryRun":true}'` to preview one batch without writes.
-Use `--prod` for the production deployment. This is a resumable, idempotent
-backfill; verify its status is complete in the migrations component before
-tightening the stored validators to `v.union(v.number(), v.null())`.
-No historical timing is invented and untimed history need not be deleted.
-Keep optional input validators separate for supported agents that omit timing.
-Removing optional timing from the shared wire validators additionally requires
-all supported producers to emit explicit nulls and old JSONL replicas to be
-normalized at the read boundary. Tool results are projected, not stored as
-completion items, so their wire validator has that separate removal gate.
-Both Convex transcript read endpoints omit null timestamps for released agents
-and UIs; stored records still contain explicit nulls. The local projected-message
-API also omits nulls from replicas populated before that read adapter was deployed.
-Remove these adapters once all supported consumers handle explicit nulls, keeping
-stored and wire validators separate until then.
-The projected `runStartedAt` field remains numeric for released clients, with `0`
-meaning unknown instead of a sequence number. Remove it once supported clients no
-longer read it; the current section timer uses assistant-part timestamps.
+We ship breaking changes ahead of our users' installed clients and keep the old behavior working until those clients age out. That debt is easy to accumulate and easier to forget. This file lists every backwards-compatibility layer we currently ship, what it protects, how to remove it, and the signal that says removal is safe. When a removal PR merges, remove its entry from this document.
 
-PR #295 keeps `/api/transcript/page` returning raw `parts` for released clients.
-The projected-message client uses `/api/transcript/messages` and `/api/transcript/details`.
-Those routes still page by complete messages and may scan past the requested part
-window to a message boundary. Current UI pages numbered Convex transcript parts
-through `/api/transcript/parts` and `/api/transcript/part-details`. The JSONL
-replica format is unchanged. The transcript watcher applies Convex state metadata
-and does not prefetch numbered part bodies; released clients still download them
-through the preserved paging routes. Remove `/api/transcript/page`,
-`/api/transcript/messages`, and `/api/transcript/details` after all supported
-clients use the part-bounded endpoints.
-
-## Stored schema
-
-Optional fields, dual-writes, and leftover tables that keep documents written
-under an older schema valid. Current clients do not depend on these shims.
-Fold a rewrite into the PR that introduces the next breaking schema change
-instead of leaving a coerce path behind.
+Current as of 2026-09-10.
 
-`@convex-dev/migrations` stays mounted so future one-off jobs can use
-`migrations.runner()`. Completed series members are gone.
-
-### Thread status backfill
+## Stored executor jobs
 
-`threadRecords.status` is temporarily optional while
-`migrations:backfillThreadStatus` populates it from each thread's latest run
-and deletes legacy runless threads and their usage row. Cache consumers accept
-the field as absent only while this migration is rolling out.
+### Historical artifact tools
 
-Deploy this compatibility schema and code, run the migration to completion,
-verify every thread has a status, then make the field required and remove the
-optional cache handling in a follow-up deployment.
+The artifact API no longer exposes the old create and update endpoints, and
+`beginToolJob` rejects their retired names. Stored executor jobs still validate
+the old artifact tool names, payloads, and results so existing conversation
+history remains readable. Remove those validators when no executor jobs contain
+the retired names.
 
-### 1. Legacy project tables and references
+### Historical Browserbase tools
 
-The `projects` and `projectConnections` tables stay in the schema so existing
-rows and leftover `projectId` fields validate. Threads store `repositoryKey`
-(still optional in the validator). `projectId` on `threadRecords` / `runs` /
-`executorJobs` is optional leftover. Local `project-attachments.json` rows
-that still have `projectId` are rewritten on load to `workspacePath` +
-`repositoryKey`. Older clients that still call `projects.listMine` /
-`upsertSelected` / `heartbeatAttached` get the unsupported-client update
-error.
-
-The repository-key backfill and `projectId` unset passes are done. Remove the
-leftover tables and `projectId` fields after a later unset rewrite, then drop
-`repositoryKey` optionality.
-
-### 2. Mandate job payloads still accept `userEmail`
-
-Up to v0.3.2, mandate setup stored the caller email on
-`executorJobs.payload`. `vMandateSetupPayload.userEmail` stays optional so
-those rows validate. Live callers that still send `userEmail` are rejected as
-an unsupported client (see below).
-
-Remove by dropping the field after a prod sweep shows no stored mandate-setup
-jobs carrying it.
-
-### 3. Aggregate usage ledger leftovers
-
-Processed-token totals live in `threadUsageEvents` plus a namespaced
-Aggregate. `getThreadUsageValues` reads that sum. `recordThreadUsageEvent`
-still dual-writes `threadUsage.totalTokensProcessed` as a denormalized cache.
-
-`usageLedgerMigratedAt` is unused leftover after the backfill. It is not a
-read gate.
-
-Remove the dual-write (and then the required field) after an unset rewrite.
-Drop `usageLedgerMigratedAt` after a separate unset, or in the same rewrite.
-
-### 4. Historical `runs.completionTransport`
-
-Stored runs may still say `convex-action`. New inserts are `gateway`. The
-field stays optional so those rows validate.
-
-Remove the `convex-action` union member after a rewrite or a prod check shows
-none remain.
-
-### 5. Catalog snapshot fields on `runs`
-
-Earlier gateway work stored `catalogVersion`, `contextWindowTokens`, and
-`autoCompactTokenLimit` on new runs. Current inserts leave those unset. The
-agent reads context budget from `GET /api/v1/models`; `getContext` returns
-`0` when the snapshot is missing.
-
-Keep the optional fields so rows that still have them validate. Unset them in
-a later rewrite, then drop them from the schema.
-
-### 6. Numbered transcript `migratedAt`
-
-`threadTranscriptStates.migratedAt` is leftover after the numbered-transcript
-backfill. Current writes do not set it.
-
-Remove after an unset rewrite, then drop it from the schema.
-
-### 7. Transcript tool `jobId`
-
-Sources: append-only tool progress events.
-
-New tool transcript parts pair by `toolInvocationId` and source keys
-`tool:<id>:started` / `tool:<id>:finished`. They do not write `tool.jobId`.
-Stored parts from before this change still carry `jobId` (and the un-suffixed
-`tool:<jobId>` source key). Readers keep using `jobId` as a fallback pairing
-key until those rows are gone.
-
-`executorJobs.toolInvocationId` is optional for the same reason: in-flight jobs
-created before this change have no stored id, and finished-event writes fall
-back to the job document id.
-
-Remove `vTranscriptToolBody.jobId` after a rewrite copies `jobId` onto
-`toolInvocationId` where missing and unsets `jobId`. Drop executor-job
-optionality after a production scan finds no jobs without `toolInvocationId`.
+Browserbase endpoints and provider code are gone. Stored executor jobs may
+still use `browser_observe`, `browser_act`, or `browser_extract`, along with
+their old payload and result shapes. Their validators remain so conversation
+history can load.
 
-Safe when a prod check shows zero transcript tool parts carrying `jobId`.
-
-### 8. Legacy installation identity and machine metadata
+Remove these validators when no executor jobs contain the retired Browserbase
+tool names.
 
-Local servers now persist a versioned `installation.json`. On first launch
-after upgrade they preserve the UUID from the legacy plain-text
-`installation-id` file and write the JSON identity. The old file is left in
-place for rollback safety but is no longer read once the JSON file exists.
-
-`machines.platformVersion` and `machines.hostname` are optional so
-rows and released agents without the expanded normalized machine metadata
-remain valid. Remove their optionality after all supported agents send both
-fields and a production scan finds no machine rows missing either one.
-
-Delete legacy `installation-id` files only after all supported installations
-have launched a JSON-aware server and rollback to an older release is no
-longer supported.
-
-### 9. Thread-message references
-
-Prompts and attachment metadata now live in `threadTranscriptParts`; current
-code neither reads nor writes `threadMessages`. The table is no longer in the
-validated schema. Historical `runs.promptMessageId` and
-`imageUploads.messageIds` remain optional so existing documents validate.
-Gateway run creation still returns a synthetic `promptMessageId` for released
-agents that require the response field; current code does not consume it.
-
-`migrations.removeRunPromptMessageIds` and
-`migrations.removeImageUploadMessageIds` unset both fields. Remove the pinned
-migration runner, its cron, and both schema fields once both migrations report
-`success` and production scans find no remaining values. Historical documents
-in the now-unvalidated `threadMessages` table may be deleted independently.
-
-### 10. Context handoff and legacy compaction cutoff
-
-Active runtime and UI code use context handoff terminology. The gateway catalog
-and released context-budget API still use `autoCompactTokenLimit`; Rust maps it
-to `auto_handoff_token_limit`, and the UI maps it to `autoHandoffTokenLimit`.
-Rust serialization keeps the released wire name. Keep those boundary mappings
-until the gateway protocol and all supported context-budget consumers switch
-to a handoff-named field. Stored run snapshots keep the old optional field under
-the removal gate in section 5. This terminology change does not rewrite stored
-summaries, transcript cutoffs, or usage events.
-
-Released agents still call `saveContextCompaction`, which bills through the
-`compaction:` usage event and stores `contextSummaryThroughRunId` (last fully
-covered prior run). Transcript reads keep that run-id lookup so old rows skip
-the covered prefix. A legacy persist clears `contextSummaryThroughPartNumber`
-so a coarser run-id cutoff cannot sit under a leftover precise boundary.
-
-New agents call `saveContextHandoff` and store
-`contextSummaryThroughPartNumber`, the inclusive last covered transcript part
-(`-1` when the prefix is empty). Reads prefer the part-number cutoff when it
-is present so a mid-run handoff does not replay work that a run-scoped cutoff
-would leave in context. Parts are not deleted; UI paging still starts at part 0. `saveContextHandoff` unsets `contextSummaryThroughRunId`.
-
-Handoff usage is recorded by `recordContextUsage`, not by `saveContextHandoff`.
-
-Agents still omit encrypted reasoning on reload when a summary exists, because
-legacy compaction can leave reasoning tied to replaced context. Remove this
-reload filter when legacy writers have aged out and all cutoffs are precise.
-
-`migrations.backfillContextSummaryThroughPartNumber` copies a run-id cutoff
-onto `contextSummaryThroughPartNumber` when that field is missing. It is in
-the default `migrations:run` cron. From `apps/web`:
-
-```sh
-bun convex run migrations:run
-```
-
-Use `--prod` for the production deployment. Leave the run-id fallback in
-place while released agents still write `saveContextCompaction`.
-
-Remove `saveContextCompaction`, the run-id field, and the fallback read after
-all supported agents call `saveContextHandoff`, the backfill reports `success`,
-and a production scan finds no rows that still have
-`contextSummaryThroughRunId` without `contextSummaryThroughPartNumber`. Unset
-remaining run-id values in that same PR, then drop the field.
-
-### 11. Attachment storage retention
-
-Uploads missing `threadId` get an owner from the first historical prompt that
-attached them. Unattached drafts are still removed after 24 hours, including
-their documents.
-
-The owner backfill is in the default `migrations:run` cron. After deploy it runs
-automatically. To run once from `apps/web`:
-
-```sh
-bun convex run migrations:run
-```
-
-Use `--prod` for the production deployment.
-
-## Client APIs
-
-### Machine registration retries
-
-New local servers call `machines:tryRegister`, which returns a typed busy result
-and a retry delay while another process's heartbeat lease is valid. They retry
-within a bounded wait instead of leaving startup stuck after a crash. Deploy the
-Convex endpoint before releasing the updated local server.
-
-`machines:register` retains its original arguments, success result, and conflict
-error for released clients. Both endpoints use the same registration transaction
-and existing machine rows. No stored-data migration or table deletion is needed.
-Remove the legacy endpoint only after all supported local servers use
-`machines:tryRegister`.
-
-### Locally orchestrated URL tools
-
-`scrape_url` jobs always run locally. Agents finish them after either reading
-an image in memory or calling the authenticated `webTools:scrapeForTool` action.
-There is no execution-mode parameter or cloud-workpool scrape fallback.
-`web_search` still uses the workpool. Deploy the updated client and backend
-together.
-
-New scrape results omit `truncated` and save oversized content to a local
-temporary file. Stored validators retain the optional flag for old executor
-jobs and transcripts; remove it only after stored results and JSONL replicas
-have aged out or been migrated. The UI no longer displays a truncation badge,
-including for historical results.
-
-Firecrawl adds `summary` and `images` fields to new scrape results. Their stored
-validators remain optional so pre-Firecrawl transcript and executor rows still
-load. Remove that optionality only after those rows and local JSONL replicas
-have aged out or been rewritten. Current agents archive large scrapes as
-JSON and always keep the summary inline. Raw-markdown archive negotiation
-is not supported; deploy the updated client and backend together.
-
-Web image results store the local path, URL, and image metadata, not image
-bytes. History reloads the local file without fetching the URL again. Missing
-files produce a text notice.
-
-`screenshot_url` is an additive tool kind using the same image metadata result
-shape. It stores the target page URL for explicit re-capture, never the expiring
-provider URL. No stored-row migration is needed.
-
-Image outputs live in `transcripts/<user>/<thread>/<tool>/`, using separate
-directories for `parse_file`, `scrape_url`, and `screenshot_url`. Parsed text
-stays in `parse_file/`. Model-visible image results include the saved path
-alongside the image, both on capture and when replaying history. Replay still
-reads the recorded path; this change adds no compatibility shim or migration
-and does not change the persisted result shape.
-
-### Local sessions created before account binding
-
-Persisted local sessions created before native WorkOS account binding have no
-`userId`. They continue to deserialize without losing the pairing credential.
-The paired, same-origin, loopback-only native token endpoint now resumes a
-valid native WorkOS session and persists its user binding on first use.
-Account-scoped routes still reject unbound sessions. Desktop login callbacks
-also bind the authenticated WorkOS user to the session that started the flow.
-
-Remove `SessionRecord.user_id` optionality after all supported installations
-have completed a native sign-in or resume on a version that writes the binding.
-
-### Installed authentication session consolidation
-
-New installed renderers use `POST /api/auth/native-session/token` instead of
-maintaining a second AuthKit JS session. The existing keyring service and account
-derivation are unchanged, so valid native refresh tokens resume in place. Old
-browser cookies are ignored, not copied into native storage. Users whose native
-credentials were already deleted must sign in once to restore them.
-
-The renderer retains the legacy dual-session flow only when the token endpoint
-returns HTTP 404 or 405. Network, pairing, and provider errors do not trigger
-fallback or delete credentials. Existing login/status/sign-out endpoints remain
-available to released clients. Remove the legacy renderer path once supported
-local servers all provide the native token endpoint.
-
-Released desktop/CLI builds that still call retired Convex functions get a
-`ConvexError`: "This Sprocket version is no longer supported. Update to the
-latest Sprocket release." Production does not mask that text.
-
-How that sentence reaches the user:
-
-- Installed desktop UI already surfaces Convex query failures in the
-  transcript banner. Retired queries such as `messages.listHistoryForThread`
-  fail as soon as an old UI opens a thread.
-- Current UI prefers ConvexError `.data` (`convexClientErrorMessage`) so the
-  banner is just that sentence.
-- Local agent/CLI prints it on stderr (`sprocket-server: agent run failed`)
-  and stores it on `runs.lastError` when a run already exists.
-
-There is no behavior shim for those clients. The functions below exist only
-to deliver the update sentence; current code never calls them.
-
-| Function                                                       | Old caller                                                |
-| -------------------------------------------------------------- | --------------------------------------------------------- |
-| `agentRuntime.createRun`                                       | Agent run creation before the gateway path                |
-| `agentRuntime.mergeAssistantStreamEvents`                      | Agents that streamed tokens onto `threadMessages`         |
-| `agentRuntime.reopenRun`                                       | Desktop UI that reopened a failed run in place            |
-| `chat.latestRunForThread`                                      | UI lifecycle from the latest Convex run document          |
-| `completion.complete` / `completion.summarize`                 | Convex-hosted model calls                                 |
-| `messages.listHistoryForThread` / `messages.listLiveForThread` | UI transcript from Convex                                 |
-| `modelCatalog.get`                                             | Static bundled catalog                                    |
-| `threads.listMine`                                             | UI thread list from Convex                                |
-| `threads.rename` / `archive` / `restore` / `rekeyRepository`   | UI thread commands that mutated Convex directly           |
-| `uiPreferences.setLastThread` / `setPaymentsEmail`             | Session restore and mandate email writes                  |
-| `webTools.scrapeUrl` / `webTools.webSearch`                    | Direct tool actions; current agents enqueue executor jobs |
-| `payments` mandate setup with `userEmail`                      | Agents that sent the customer email themselves            |
-| `machineSessions.register` / `heartbeat` / `end` / `listMine`  | Local servers that registered process sessions            |
-
-Remove a stub when we are willing to let that function name disappear (old
-installs then see a missing-function error instead of the update sentence).
-
-### Live leftover name: `transcript.ensureMigrated`
-
-Current desktop/server still call this (`transcript_client.rs` /
-`transcript_watch.rs`). It only ensures `threadTranscriptStates` exists. It
-does not read `threadMessages` and is not an unsupported-client stub.
-
-Remove after rust/desktop stop calling it, then delete the Convex export.
-
-### Local thread commands
-
-Current UI sends rename, archive, restore, repository-rekey, and cancellation
-through the authenticated local Rust API. The public Convex names those older
-bundles called (`threads.rename`, `archive`, `restore`, `rekeyRepository`,
-`threads.listMine`, `chat.latestRunForThread`, `agentRuntime.reopenRun`) are
-unsupported-client stubs.
-
-The local command routes call `threads.renameForLocalCache`,
-`archiveForLocalCache`, `restoreForLocalCache`, and
-`rekeyRepositoryForLocalCache`. These variants return the authenticated user
-and affected repository/category metadata so Rust can refresh the cache before
-acknowledging a command. Remove the `ForLocalCache` variants only when Rust no
-longer needs synchronous cache-refresh metadata from Convex.
-
-Current thread navigation reads the Rust-owned summary cache. Current
-lifecycle UI reads `chat.selectedThreadLifecycle`. The local `/threads/lifecycle`
-route is a one-shot command-time relay, not a replacement subscription. Move
-lifecycle reads behind Rust only if Rust gains an equivalent ordered reactive
-stream.
-
-## Removal checklist
-
-1. Confirm the gate with prod numbers (schema) or an explicit decision that
-   the function name can vanish (clients).
-2. Land any data rewrite before shrinking validators.
-3. Delete the shim, validator changes, and tests that only pin compat
-   behavior, in one PR.
-4. Remove the entry from this document.
+### Mandate setup email
+
+Mandate setup jobs written through v0.3.2 may contain `payload.userEmail`.
+`vMandateSetupPayload` accepts that field for stored jobs. Live calls carrying
+it fail through `unsupportedClient()`.
+
+Early `mandate_status` results may also omit `description`, so the stored result
+validator keeps that field optional. Current status calls always return it.
+
+Remove these variants after a production scan finds no mandate setup jobs with
+`userEmail` and no mandate status results without `description`.
+
+### Web tool result fields
+
+Stored `scrape_url` results may contain `truncated`. Results written before the
+Firecrawl integration may omit `summary` and `images`. The validators accept
+both shapes so executor history and local JSONL transcripts remain readable.
+
+Remove these variants after the old jobs and local replicas have aged out or
+been rewritten.
+
+### Hosted parse files
+
+Historical `parse_file` jobs and results may identify their source with a URL.
+The stored payload and result validators retain that shape so job history and
+local transcripts load. Live jobs carrying a URL fail through
+`unsupportedClient()`.
+
+Remove the URL variants after those jobs and local replicas have aged out or
+been rewritten.
+
+## Stored transcript formats
+
+### Local transcript state
+
+Early local `state.json` files may omit `downloadedRanges` or `stale`. The
+replica reader supplies the empty or false value. Prompt bodies that predate
+attachments may omit `imageUploads`; readers treat them as having no
+attachments.
+
+Remove these defaults after old local transcript caches have aged out or been
+rewritten.
+
+### Attachment metadata and cache layout
+
+Historical prompt attachments may contain `imageUploadId`; current writes use
+only `storageId`. Convex and local JSONL readers accept the old field and remove
+it from projected responses.
+
+Old local attachment bytes may live in the user-level blob directory. Reading
+one copies it into the thread's `attachments/<storageId>/` directory before
+returning its path. New uploads use only the thread directory.
+
+Remove these readers after old Convex rows and local transcript caches have
+aged out or been rewritten.
+
+### Completion timing
+
+Historical completion items and local JSONL records may omit `startedAt` and
+`completedAt`. Readers preserve those records without inventing timing. Current
+Convex writes normalize missing values to `null`.
+
+Historical completion bodies may omit `streamId`, and older local transcript
+parts may omit `createdAt`. Readers leave stream identity and tool-event timing
+unknown when those fields are absent.
+
+Remove optional stored timing only after old rows and local replicas have aged
+out or been rewritten. Input validators may remain optional when current model
+providers do not supply a timestamp.
+
+### Tool invocation IDs
+
+Historical tool parts use `jobId` and source keys of the form `tool:<jobId>`.
+Current parts use `toolInvocationId` and phase-specific source keys. Readers use
+`jobId` as the fallback pairing key, and `executorJobs.toolInvocationId` remains
+optional for old jobs.
+
+Remove this fallback when a production scan finds no transcript tool parts with
+`jobId` and no executor jobs without `toolInvocationId`.
+
+### Context handoff cutoffs
+
+Historical summaries may use `contextSummaryThroughRunId`. Current writes use
+the more precise `contextSummaryThroughPartNumber`; transcript reads retain the
+run-ID fallback so old summaries still skip their covered prefix.
+
+When any summary exists, history reload also omits stored encrypted reasoning.
+Old run-level summaries can replace context that the reasoning depended on, so
+replaying that ciphertext is unsafe.
+
+Remove the fallback after every summarized thread has a part-number cutoff and
+no row retains only `contextSummaryThroughRunId`. The reasoning filter can be
+removed at the same point.
+
+## Unsupported client errors
+
+Released clients that call retired Convex functions get a `ConvexError` with:
+
+> This Sprocket version is no longer supported. Update to the latest Sprocket release.
+
+These exports and retired argument branches exist only to return that message.
+Current code does not use them.
+
+| Function                                                       | Retired caller                                          |
+| -------------------------------------------------------------- | ------------------------------------------------------- |
+| `agentRuntime.createRun`                                       | Agent run creation before the gateway path              |
+| `agentRuntime.finalizeRun`                                     | User-authenticated agent run finalization               |
+| `agentRuntime.mergeAssistantStreamEvents`                      | Agents that streamed tokens onto `threadMessages`       |
+| `agentRuntime.reopenRun`                                       | Desktop UI that reopened a failed run in place          |
+| `agentRuntime.saveContextCompaction`                           | Agents that stored run-bounded context summaries        |
+| `chat.latestRunForThread`                                      | UI lifecycle from the latest Convex run document        |
+| `completion.complete` / `completion.summarize`                 | Convex-hosted model calls                               |
+| `messages.listHistoryForThread` / `messages.listLiveForThread` | UI transcript from Convex                               |
+| `modelCatalog.get`                                             | Static bundled catalog                                  |
+| `projects.listMine` / `upsertSelected` / `heartbeatAttached`   | Cloud project selection and heartbeat                   |
+| `threads.create` / `listMine`                                  | Direct thread creation and UI listing through Convex    |
+| `threads.rename` / `archive` / `restore` / `rekeyRepository`   | UI thread commands that mutated Convex directly         |
+| `uiPreferences.setLastThread` / `setPaymentsEmail`             | Session restore and mandate email writes                |
+| `webTools.scrapeUrl` / `webTools.webSearch`                    | Direct tool actions before executor jobs                |
+| `webTools.scrapeForTool` / `screenshotForTool`                 | Blocking Firecrawl actions before request subscriptions |
+| `browserAgent.interact` / `browserAgent.screenshot`            | Blocking browser actions before request subscriptions   |
+| `agentRuntime.beginToolJob` with `parse_file.payload.url`      | Agents that sent remote files to the hosted parser      |
+| `payments` mandate setup with `userEmail`                      | Agents that sent the customer email themselves          |
+| `machineSessions.register` / `heartbeat` / `end` / `listMine`  | Local servers that registered process sessions          |
+| `machines.register`                                            | Local servers without typed registration retries        |
+
+Remove a stub when its retired function name no longer needs to return the
+upgrade message.

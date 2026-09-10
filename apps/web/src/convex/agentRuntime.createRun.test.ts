@@ -74,8 +74,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 
 		const created = await insertQueuedRun(t, asUser, args);
 		expect(created).toMatchObject({
-			created: true,
-			promptMessageId: `prompt:${created.runId}`
+			created: true
 		});
 
 		const again = await insertQueuedRun(t, asUser, args);
@@ -83,7 +82,6 @@ describe('agentRuntime.insertGatewayRun', () => {
 			created: false,
 			runId: created.runId,
 			threadId: created.threadId,
-			promptMessageId: `prompt:${created.runId}`,
 			userId: created.userId,
 			promptPart: created.promptPart
 		});
@@ -109,8 +107,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 		const run = await t.run(async (ctx) => ctx.db.get('runs', created.runId));
 		expect(run).toMatchObject({
 			status: 'queued',
-			submissionId: 'sub-1',
-			completionTransport: 'gateway'
+			submissionId: 'sub-1'
 		});
 		expect(await t.run(async (ctx) => ctx.db.get('imageUploads', imageUploadId))).toMatchObject({
 			attached: true

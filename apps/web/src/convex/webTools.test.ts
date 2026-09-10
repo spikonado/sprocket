@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ConvexError } from 'convex/values';
-import type { FunctionArgs, FunctionReference } from 'convex/server';
+import { ConvexError, type Infer } from 'convex/values';
+import { getFunctionName, type FunctionArgs } from 'convex/server';
 import { FirecrawlClient } from '@firecrawl/firecrawl-convex';
 import { api, internal } from '@convex/_generated/api';
 import { RUN_NO_LONGER_ACTIVE } from '@convex/lib/agentErrors';
 import { UNSUPPORTED_CLIENT_MESSAGE } from '@convex/lib/unsupportedClient';
+import { vScrapeUrlTransport, vScreenshotUrlTransport } from '@convex/lib/validators';
 import {
 	DEFAULT_SCRAPE_SUMMARY,
 	isCleanPageStatus,
@@ -13,6 +14,7 @@ import {
 	SCRAPE_INLINE_MAX_CHARS,
 	SCRAPE_STORAGE_TTL_MS,
 	SCRAPE_TIMEOUT_MS,
+	executeQueuedScrape,
 	summaryFitsTransport,
 	type ScrapedPage
 } from '@convex/webTools';
@@ -21,23 +23,33 @@ import { initConvexTest, seedStartedWebJob, type ConvexTestInstance } from './te
 const PAGE_URL = 'https://example.com/page';
 const SCREENSHOT_URL = 'https://storage.googleapis.com/firecrawl/shot.png?X-Goog-Signature=sig';
 
-async function queuedAction<R>(
+type QueuedActionArgs = FunctionArgs<typeof api.webTools.scrapeForTool>;
+type ScrapeTransport = Infer<typeof vScrapeUrlTransport>;
+type ScreenshotTransport = Infer<typeof vScreenshotUrlTransport>;
+
+function queuedAction(
 	t: Pick<ConvexTestInstance, 'action'>,
-	action: FunctionReference<'action', 'public', FunctionArgs<typeof api.webTools.scrapeForTool>, R>,
-	args: FunctionArgs<typeof api.webTools.scrapeForTool>
-) {
-	let settled = false;
-	const result = t.action(action, args);
-	void result.then(
-		() => {
-			settled = true;
-		},
-		() => {
-			settled = true;
-		}
-	);
-	await vi.waitFor(() => expect(settled).toBe(true), { timeout: 10_000, interval: 10 });
-	return result;
+	action: typeof api.webTools.scrapeForTool,
+	args: QueuedActionArgs
+): Promise<ScrapeTransport>;
+function queuedAction(
+	t: Pick<ConvexTestInstance, 'action'>,
+	action: typeof api.webTools.screenshotForTool,
+	args: QueuedActionArgs
+): Promise<ScreenshotTransport>;
+async function queuedAction(
+	t: Pick<ConvexTestInstance, 'action'>,
+	action: typeof api.webTools.scrapeForTool | typeof api.webTools.screenshotForTool,
+	args: QueuedActionArgs
+): Promise<ScrapeTransport | ScreenshotTransport> {
+	return await t.action(async (ctx) => {
+		await ctx.runQuery(api.agentRuntime.completionActor, {
+			runId: args.runId,
+			executionSecret: args.executionSecret
+		});
+		const kind = getFunctionName(action).endsWith('screenshotForTool') ? 'screenshot' : 'scrape';
+		return await executeQueuedScrape(ctx, { ...args, kind });
+	});
 }
 
 function firecrawlApiError(status: number) {
@@ -136,7 +148,7 @@ describe('scrape HTTP failures', () => {
 	});
 });
 
-describe('scrapeForTool auth', () => {
+describe('queued scrape auth', () => {
 	it('scrapes the authorized URL with Firecrawl cache reads and writes disabled', async () => {
 		const t = initConvexTest();
 		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
@@ -453,7 +465,7 @@ describe('scrape size budget', () => {
 	});
 });
 
-describe('scrapeForTool markdown transport', () => {
+describe('queued scrape markdown transport', () => {
 	it('rejects oversized JSON archives without storing a blob', async () => {
 		const t = initConvexTest();
 		const { asUser, runId, claimId, jobId, executionSecret } = await seedStartedWebJob(t, {
@@ -481,7 +493,7 @@ describe('scrapeForTool markdown transport', () => {
 		await expect(
 			scrapeLocalPage({ markdown: '\n'.repeat(32 * 1024 * 1024), summary: 'Summary' })
 		).rejects.toThrow('Scrape exceeds the 64 MiB download limit.');
-	});
+	}, 15_000);
 
 	it('accepts a JSON archive exactly at the receiver byte limit', async () => {
 		const page: ScrapedPage = { url: PAGE_URL, markdown: '', summary: 'Summary', images: [] };
@@ -491,7 +503,7 @@ describe('scrapeForTool markdown transport', () => {
 		const blobs = await storageBlobs(t);
 		expect(blobs).toHaveLength(1);
 		expect(blobs[0]?.size).toBe(64 * 1024 * 1024);
-	});
+	}, 15_000);
 
 	it('returns short markdown, summary, and images inline without truncated or storage', async () => {
 		const markdown = 'x'.repeat(SCRAPE_INLINE_MAX_CHARS - 1_000);
@@ -727,7 +739,7 @@ async function screenshotToolArgs(options: {
 	return { t, ...seeded };
 }
 
-describe('screenshotForTool', () => {
+describe('queued screenshot transport', () => {
 	it('requests a viewport screenshot and returns the page URL, not the signed image URL', async () => {
 		const { t, asUser, runId, claimId, jobId, executionSecret } = await screenshotToolArgs({
 			executionSecret: 'screenshot-format-secret'

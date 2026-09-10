@@ -31,7 +31,7 @@
 			acceptUpdate(next);
 		});
 		async function refresh() {
-			if (polling || disposed || busy || unsupported || (bridge && !updates)) return;
+			if (polling || disposed || busy || unsupported) return;
 			polling = true;
 			const startedRevision = revision;
 			try {

@@ -51,10 +51,37 @@ describe('retired client APIs', () => {
 				appVersion: '0.1.0'
 			})
 		).rejects.toThrow(UNSUPPORTED_CLIENT_MESSAGE);
+		await expect(
+			asUser.mutation(api.machines.register, {
+				machineId: 'old-machine',
+				credentialHash: 'a'.repeat(64),
+				friendlyName: 'Old',
+				platform: 'linux',
+				architecture: 'x86_64',
+				appVersion: '0.1.0'
+			})
+		).rejects.toThrow(UNSUPPORTED_CLIENT_MESSAGE);
 		await expect(asUser.query(api.chat.latestRunForThread, { threadId })).rejects.toThrow(
 			UNSUPPORTED_CLIENT_MESSAGE
 		);
 		const { runId } = await createQueuedRun(t, asUser, threadId, 'old-reopen', 'old-reopen-secret');
+		await expect(
+			asUser.mutation(api.agentRuntime.finalizeRun, {
+				runId,
+				text: '',
+				status: 'cancelled'
+			})
+		).rejects.toThrow(UNSUPPORTED_CLIENT_MESSAGE);
+		await expect(
+			asUser.mutation(api.agentRuntime.saveContextCompaction, {
+				runId,
+				claimId: 'old-claim',
+				executionSecret: 'old-reopen-secret',
+				summary: 'Old summary',
+				processedTokens: 1,
+				persistForFutureRuns: true
+			})
+		).rejects.toThrow(UNSUPPORTED_CLIENT_MESSAGE);
 		await expect(asUser.mutation(api.agentRuntime.reopenRun, { runId })).rejects.toThrow(
 			UNSUPPORTED_CLIENT_MESSAGE
 		);
@@ -72,6 +99,35 @@ describe('retired client APIs', () => {
 		).rejects.toThrow(UNSUPPORTED_CLIENT_MESSAGE);
 
 		await expect(asUser.mutation(api.agentRuntime.mergeAssistantStreamEvents, {})).rejects.toThrow(
+			UNSUPPORTED_CLIENT_MESSAGE
+		);
+		const request = {
+			runId,
+			claimId: 'old-claim',
+			executionSecret: 'old-reopen-secret'
+		};
+		const jobId = await t.run((ctx) =>
+			ctx.db.insert('executorJobs', {
+				threadId,
+				runId,
+				kind: 'scrape_url',
+				payload: { url: 'https://example.com' },
+				hidden: false,
+				status: 'pending',
+				enqueuedAt: Date.now(),
+				sequence: 0
+			})
+		);
+		await expect(asUser.action(api.webTools.scrapeForTool, { ...request, jobId })).rejects.toThrow(
+			UNSUPPORTED_CLIENT_MESSAGE
+		);
+		await expect(
+			asUser.action(api.webTools.screenshotForTool, { ...request, jobId })
+		).rejects.toThrow(UNSUPPORTED_CLIENT_MESSAGE);
+		await expect(
+			asUser.action(api.browserAgent.interact, { ...request, command: 'snapshot -i' })
+		).rejects.toThrow(UNSUPPORTED_CLIENT_MESSAGE);
+		await expect(asUser.action(api.browserAgent.screenshot, request)).rejects.toThrow(
 			UNSUPPORTED_CLIENT_MESSAGE
 		);
 	});

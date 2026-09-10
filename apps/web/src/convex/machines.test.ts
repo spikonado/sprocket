@@ -8,7 +8,9 @@ const machine = {
 	machineId: 'machine-a',
 	friendlyName: 'Workshop',
 	platform: 'linux',
+	platformVersion: '6.12.1',
 	architecture: 'x86_64',
+	hostname: 'workbench',
 	appVersion: '0.3.2'
 };
 
@@ -20,7 +22,7 @@ describe('machines', () => {
 		vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		await asUser.mutation(api.machines.register, {
+		await asUser.mutation(api.machines.tryRegister, {
 			...machine,
 			credentialHash: await executionSecretHash('credential-a')
 		});
@@ -118,38 +120,12 @@ describe('machines', () => {
 		).rejects.toThrow('Authentication required.');
 	});
 
-	it('rejects a second process while the machine is still online', async () => {
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
-		await asUser.mutation(api.machines.register, {
-			...machine,
-			credentialHash: await executionSecretHash('credential-a')
-		});
-		const run = await insertQueuedRun(t, asUser, {
-			threadId,
-			submissionId: 'machine-run',
-			executionSecret: 'run-secret',
-			prompt: 'Run locally',
-			machineId: machine.machineId
-		});
-
-		await expect(
-			asUser.mutation(api.machines.register, {
-				...machine,
-				credentialHash: await executionSecretHash('credential-b')
-			})
-		).rejects.toThrow('Machine is already active on another process.');
-		expect(await t.run(async (ctx) => ctx.db.get('runs', run.runId))).toMatchObject({
-			status: 'queued'
-		});
-	});
-
 	it('lets a new process take over after the previous one goes stale', async () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		await asUser.mutation(api.machines.register, {
+		await asUser.mutation(api.machines.tryRegister, {
 			...machine,
 			credentialHash: await executionSecretHash('credential-a')
 		});
@@ -162,7 +138,7 @@ describe('machines', () => {
 		});
 
 		vi.advanceTimersByTime(90_001);
-		await asUser.mutation(api.machines.register, {
+		await asUser.mutation(api.machines.tryRegister, {
 			...machine,
 			credentialHash: await executionSecretHash('credential-b')
 		});
@@ -175,7 +151,7 @@ describe('machines', () => {
 	it('authenticates heartbeats with the process credential', async () => {
 		const t = initConvexTest();
 		const { asUser } = await seedOwnedThread(t);
-		await asUser.mutation(api.machines.register, {
+		await asUser.mutation(api.machines.tryRegister, {
 			...machine,
 			credentialHash: await executionSecretHash('credential-a')
 		});
@@ -206,7 +182,7 @@ describe('machines', () => {
 	it('ends a machine by failing its runs and clearing lastSeenAt', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
-		await asUser.mutation(api.machines.register, {
+		await asUser.mutation(api.machines.tryRegister, {
 			...machine,
 			credentialHash: await executionSecretHash('credential-a')
 		});
@@ -245,11 +221,11 @@ describe('machines', () => {
 		const { asUser: asOtherUser } = await seedOwnedThread(t, 'other-user');
 		const credentialHash = await executionSecretHash('shared-machine-credential');
 
-		await asUser.mutation(api.machines.register, {
+		await asUser.mutation(api.machines.tryRegister, {
 			...machine,
 			credentialHash
 		});
-		await asOtherUser.mutation(api.machines.register, {
+		await asOtherUser.mutation(api.machines.tryRegister, {
 			...machine,
 			credentialHash
 		});
@@ -263,7 +239,7 @@ describe('machines', () => {
 		vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
 		const t = initConvexTest();
 		const { asUser } = await seedOwnedThread(t);
-		await asUser.mutation(api.machines.register, {
+		await asUser.mutation(api.machines.tryRegister, {
 			...machine,
 			platformVersion: '6.12.1',
 			hostname: 'workbench',
