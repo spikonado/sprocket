@@ -37,7 +37,7 @@ impl RuntimeClient {
         let client = ConvexRpcClient::new(&request.deployment_url).await?;
         client
             .set_auth_token_fetcher(request.auth_token_fetcher.clone())
-            .await;
+            .await?;
         eprintln!(
             "sprocket-agent: Convex client ready for thread {}",
             request.thread_id

@@ -142,7 +142,7 @@ async fn clear_cancels_a_hung_sdk_token_fetch() {
 #[tokio::test(start_paused = true)]
 async fn retries_back_off_and_cap_the_delay() {
     let auth = AuthState::new();
-    let mut outcomes: Vec<_> = (0..8)
+    let mut outcomes: Vec<_> = (0..7)
         .map(|_| Err(anyhow::anyhow!("provider unavailable")))
         .collect();
     outcomes.push(Ok("user-token".into()));
@@ -157,9 +157,9 @@ async fn retries_back_off_and_cap_the_delay() {
     );
     assert_eq!(
         start.elapsed(),
-        Duration::from_secs(1 + 2 + 4 + 8 + 16 + 30 + 30 + 30)
+        Duration::from_secs(1 + 2 + 4 + 8 + 16 + 30 + 30)
     );
-    assert_eq!(*calls.lock().await, vec![true; 9]);
+    assert_eq!(*calls.lock().await, vec![true; 8]);
     auth.shutdown();
 }
 
@@ -216,4 +216,139 @@ async fn last_client_drop_cancels_a_hung_sdk_token_fetch() {
         .expect("join")
         .expect_err("client dropped");
     assert!(auth.upgrade().is_none());
+}
+
+#[tokio::test(start_paused = true)]
+async fn persistent_auth_failure_closes_the_connection_and_fails_all_pending_operations() {
+    let client = Client::new("http://127.0.0.1:1").await.expect("client");
+    client
+        .set_auth_token_fetcher(Arc::new(|_| {
+            Box::pin(async { anyhow::bail!("credential store unavailable") })
+        }))
+        .await
+        .expect("install fetcher");
+    let start = time::Instant::now();
+
+    let (query, mutation, action, subscription) = tokio::join!(
+        client.query("transcript:getState", BTreeMap::new()),
+        client.mutation("transcript:ensureMigrated", BTreeMap::new()),
+        client.action("example:action", BTreeMap::new()),
+        client.subscribe("transcript:getState", BTreeMap::new()),
+    );
+
+    for error in [
+        query.expect_err("query must fail locally"),
+        mutation.expect_err("mutation must fail locally"),
+        action.expect_err("action must fail locally"),
+        subscription.expect_err("subscription must fail locally"),
+    ] {
+        assert!(error.to_string().contains("credential store unavailable"));
+        assert!(error.to_string().contains("120 seconds"));
+    }
+    assert_eq!(start.elapsed(), Duration::from_secs(120));
+    assert!(client.inner.convex.lock().await.is_none());
+    let start = time::Instant::now();
+    client
+        .query("transcript:getState", BTreeMap::new())
+        .await
+        .expect_err("closed connection must reject new work");
+    assert_eq!(start.elapsed(), Duration::ZERO);
+    client.clear_auth().await;
+    assert!(client.inner.convex.lock().await.is_none());
+    client
+        .set_auth_token_fetcher(Arc::new(|_| Box::pin(async { Ok("new-token".into()) })))
+        .await
+        .expect_err("recovery requires a new connection");
+}
+
+#[tokio::test(start_paused = true)]
+async fn auth_deadline_never_releases_the_sdk_to_send_anonymous_requests() {
+    let client = Client::new("http://127.0.0.1:1").await.expect("client");
+    let generation = client
+        .inner
+        .auth
+        .install(Arc::new(|_| Box::pin(std::future::pending())))
+        .await;
+    let mut sdk = BaseConvexClient::new();
+    let error = {
+        let mut authenticate = Box::pin(sdk.set_auth_fetcher(Some(sdk_fetcher(
+            Arc::downgrade(&client.inner.auth),
+            generation,
+        ))));
+        let error = time::timeout(Duration::from_secs(121), async {
+            tokio::select! {
+                error = client.inner.auth.wait_for_failure() => error,
+                _ = &mut authenticate => panic!("failed auth resumed the SDK worker"),
+            }
+        })
+        .await
+        .expect("auth failure deadline");
+        client.clear_auth().await;
+        assert!(
+            time::timeout(Duration::from_secs(1), authenticate)
+                .await
+                .is_err(),
+            "clearing failed auth must not release queued requests"
+        );
+        error
+    };
+    assert!(sdk.pop_next_message().is_none());
+    assert!(client.inner.convex.lock().await.is_none());
+    assert!(error.contains("token fetch did not complete"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn scheduled_auth_failure_closes_the_idle_connection() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let client = Client::new("http://127.0.0.1:1").await.expect("client");
+    let calls = Arc::new(AtomicUsize::new(0));
+    let fetcher: AuthTokenFetcher = {
+        let calls = Arc::clone(&calls);
+        Arc::new(move |_| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { anyhow::bail!("provider misconfigured") })
+        })
+    };
+    let generation = client.inner.auth.install(fetcher).await;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("unix time")
+        .as_secs();
+    use base64::Engine as _;
+    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(json!({ "iat": now, "exp": now + 11 }).to_string());
+    client
+        .inner
+        .auth
+        .arm(generation, &format!("header.{payload}.sig"))
+        .await;
+    let error = client.inner.auth.wait_for_failure().await;
+
+    assert!(error.contains("provider misconfigured"));
+    assert!(client.inner.convex.lock().await.is_none());
+    let attempts = calls.load(Ordering::SeqCst);
+    time::advance(Duration::from_secs(300)).await;
+    assert_eq!(calls.load(Ordering::SeqCst), attempts);
+}
+
+#[tokio::test(start_paused = true)]
+async fn stale_auth_failure_cannot_close_a_replacement_session() {
+    let client = Client::new("http://127.0.0.1:1").await.expect("client");
+    let fetcher: AuthTokenFetcher = Arc::new(|_| Box::pin(async { Ok("user-token".into()) }));
+    let previous = client.inner.auth.install(Arc::clone(&fetcher)).await;
+    client.inner.auth.install(fetcher).await;
+
+    crate::close_failed_connection(
+        Arc::downgrade(&client.inner),
+        previous,
+        "old failure".into(),
+    )
+    .await;
+
+    assert!(client.inner.convex.lock().await.is_some());
+    client
+        .with_auth_failure(async { Ok(()) })
+        .await
+        .expect("current session is healthy");
 }

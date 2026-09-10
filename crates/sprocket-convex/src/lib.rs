@@ -39,7 +39,7 @@ impl std::fmt::Display for AuthSignedOut {
 impl std::error::Error for AuthSignedOut {}
 
 struct Inner {
-    convex: Mutex<ConvexClient>,
+    convex: Mutex<Option<ConvexClient>>,
     auth: Arc<AuthState>,
 }
 
@@ -61,7 +61,7 @@ impl Client {
             .await
             .context("failed to initialize Convex client")?;
         let inner = Arc::new(Inner {
-            convex: Mutex::new(client),
+            convex: Mutex::new(Some(client)),
             auth: AuthState::new(),
         });
         let inner_weak = Arc::downgrade(&inner);
@@ -71,11 +71,22 @@ impl Client {
                 apply_pending_token(inner_weak, generation).await;
             })
         }));
+        let inner_weak = Arc::downgrade(&inner);
+        inner
+            .auth
+            .set_on_failure(Arc::new(move |generation, error| {
+                Box::pin(close_failed_connection(
+                    inner_weak.clone(),
+                    generation,
+                    error,
+                ))
+            }));
         Ok(Self { inner })
     }
 
-    pub async fn set_auth_token_fetcher(&self, fetcher: AuthTokenFetcher) {
+    pub async fn set_auth_token_fetcher(&self, fetcher: AuthTokenFetcher) -> anyhow::Result<()> {
         let mut convex = self.inner.convex.lock().await;
+        let convex = convex.as_mut().context("Convex connection is closed")?;
         let generation = self.inner.auth.install(fetcher).await;
         convex
             .set_auth_callback(Some(sdk_fetcher(
@@ -83,12 +94,15 @@ impl Client {
                 generation,
             )))
             .await;
+        Ok(())
     }
 
     pub async fn clear_auth(&self) {
         let mut convex = self.inner.convex.lock().await;
         self.inner.auth.clear().await;
-        convex.set_auth_callback(None).await;
+        if let Some(convex) = convex.as_mut() {
+            convex.set_auth_callback(None).await;
+        }
     }
 
     pub async fn query(
@@ -96,11 +110,14 @@ impl Client {
         function: &str,
         args: BTreeMap<String, Value>,
     ) -> anyhow::Result<FunctionResult> {
-        let mut convex = clone_locked(&self.inner.convex).await;
-        timeout(CONVEX_RPC_TIMEOUT, convex.query(function, args))
-            .await
-            .with_context(|| format!("query timed out for {function}"))?
-            .map_err(Into::into)
+        self.with_auth_failure(async {
+            let mut convex = self.connected_client().await?;
+            timeout(CONVEX_RPC_TIMEOUT, convex.query(function, args))
+                .await
+                .with_context(|| format!("query timed out for {function}"))?
+                .map_err(Into::into)
+        })
+        .await
     }
 
     pub async fn subscribe(
@@ -108,11 +125,14 @@ impl Client {
         function: &str,
         args: BTreeMap<String, Value>,
     ) -> anyhow::Result<QuerySubscription> {
-        let mut convex = clone_locked(&self.inner.convex).await;
-        timeout(CONVEX_RPC_TIMEOUT, convex.subscribe(function, args))
-            .await
-            .with_context(|| format!("subscription timed out for {function}"))?
-            .map_err(Into::into)
+        self.with_auth_failure(async {
+            let mut convex = self.connected_client().await?;
+            timeout(CONVEX_RPC_TIMEOUT, convex.subscribe(function, args))
+                .await
+                .with_context(|| format!("subscription timed out for {function}"))?
+                .map_err(Into::into)
+        })
+        .await
     }
 
     pub async fn mutation(
@@ -120,11 +140,14 @@ impl Client {
         function: &str,
         args: BTreeMap<String, Value>,
     ) -> anyhow::Result<FunctionResult> {
-        let mut convex = clone_locked(&self.inner.convex).await;
-        timeout(CONVEX_RPC_TIMEOUT, convex.mutation(function, args))
-            .await
-            .with_context(|| format!("mutation timed out for {function}"))?
-            .map_err(Into::into)
+        self.with_auth_failure(async {
+            let mut convex = self.connected_client().await?;
+            timeout(CONVEX_RPC_TIMEOUT, convex.mutation(function, args))
+                .await
+                .with_context(|| format!("mutation timed out for {function}"))?
+                .map_err(Into::into)
+        })
+        .await
     }
 
     pub async fn action(
@@ -132,16 +155,35 @@ impl Client {
         function: &str,
         args: BTreeMap<String, Value>,
     ) -> anyhow::Result<FunctionResult> {
-        let mut convex = clone_locked(&self.inner.convex).await;
-        timeout(CONVEX_RPC_TIMEOUT, convex.action(function, args))
-            .await
-            .with_context(|| format!("action timed out for {function}"))?
-            .map_err(Into::into)
+        self.with_auth_failure(async {
+            let mut convex = self.connected_client().await?;
+            timeout(CONVEX_RPC_TIMEOUT, convex.action(function, args))
+                .await
+                .with_context(|| format!("action timed out for {function}"))?
+                .map_err(Into::into)
+        })
+        .await
     }
-}
 
-async fn clone_locked<T: Clone>(inner: &Mutex<T>) -> T {
-    inner.lock().await.clone()
+    async fn connected_client(&self) -> anyhow::Result<ConvexClient> {
+        self.inner
+            .convex
+            .lock()
+            .await
+            .clone()
+            .context("Convex connection is closed")
+    }
+
+    async fn with_auth_failure<T>(
+        &self,
+        operation: impl Future<Output = anyhow::Result<T>>,
+    ) -> anyhow::Result<T> {
+        tokio::select! {
+            biased;
+            error = self.inner.auth.wait_for_failure() => Err(anyhow::anyhow!(error)),
+            result = operation => result,
+        }
+    }
 }
 
 fn sdk_fetcher(auth: Weak<AuthState>, generation: u64) -> convex::AuthTokenFetcher {
@@ -168,7 +210,23 @@ async fn apply_pending_token(inner: Weak<Inner>, generation: u64) {
     if inner.auth.generation() != generation {
         return;
     }
+    let Some(convex) = convex.as_mut() else {
+        return;
+    };
     convex
         .set_auth_callback(Some(sdk_fetcher(Arc::downgrade(&inner.auth), generation)))
         .await;
+}
+
+async fn close_failed_connection(inner: Weak<Inner>, generation: u64, error: String) -> bool {
+    let Some(inner) = inner.upgrade() else {
+        return false;
+    };
+    let mut convex = inner.convex.lock().await;
+    if inner.auth.generation() == generation {
+        inner.auth.report_failure(error);
+        convex.take();
+        return true;
+    }
+    false
 }

@@ -20,7 +20,7 @@ impl UserConvexClient {
         fetcher: AuthTokenFetcher,
     ) -> anyhow::Result<Self> {
         let client = ConvexClient::new(deployment_url).await?;
-        client.set_auth_token_fetcher(fetcher).await;
+        client.set_auth_token_fetcher(fetcher).await?;
         Ok(Self { client })
     }
 
