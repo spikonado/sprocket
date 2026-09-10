@@ -46,38 +46,6 @@ struct BrowserScreenshotResult {
     truncated: bool,
 }
 
-/// Screenshots must go through browser_screenshot; capture them from here and
-/// the transcript loses the image block and the size cap that comes with it.
-fn screenshot_subcommand(command: &str) -> bool {
-    let mut tokens = command.split_whitespace();
-    tokens.next() == Some("agent-browser") && tokens.next() == Some("screenshot")
-}
-
-fn is_json_command(command: &str) -> bool {
-    command.trim_start().starts_with('{')
-}
-
-fn has_agent_browser_prefix(command: &str) -> bool {
-    command.split_whitespace().next() == Some("agent-browser")
-}
-
-fn validate_browser_command(command: &str) -> Result<(), &'static str> {
-    if is_json_command(command) {
-        return Err(
-            "command must be a plain agent-browser command string like 'agent-browser open https://example.com' or 'agent-browser snapshot -i', not JSON.",
-        );
-    }
-    if !has_agent_browser_prefix(command) {
-        return Err(
-            "command must start with `agent-browser`, for example `agent-browser open https://example.com`.",
-        );
-    }
-    if screenshot_subcommand(command) {
-        return Err("Use the browser_screenshot tool instead of `agent-browser screenshot`.");
-    }
-    Ok(())
-}
-
 impl rig::tool::Tool for BrowserInteractTool {
     const NAME: &'static str = "browser_interact";
     type Error = ToolExecutionError;
@@ -97,7 +65,6 @@ impl rig::tool::Tool for BrowserInteractTool {
         _context: &mut rig::tool::ToolContext,
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
-        validate_browser_command(&args.command).map_err(tool_failure)?;
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         let action_args = action_args_from_payload(&self.0.run_id, &self.0.claim_id, &payload)?;
         execute_tool_job(
@@ -228,62 +195,6 @@ mod tests {
     use rig::message::ToolResultContent;
 
     use super::*;
-
-    #[test]
-    fn json_object_commands_are_detected_for_guidance_errors() {
-        for command in [
-            r#"{"instruction": "go to robu.in"}"#,
-            "  {\"startUrl\": \"https://x\"}",
-        ] {
-            assert_eq!(
-                validate_browser_command(command),
-                Err(
-                    "command must be a plain agent-browser command string like 'agent-browser open https://example.com' or 'agent-browser snapshot -i', not JSON."
-                )
-            );
-        }
-    }
-
-    #[test]
-    fn agent_browser_prefix_is_required() {
-        assert_eq!(validate_browser_command("agent-browser help"), Ok(()));
-        assert_eq!(
-            validate_browser_command("  agent-browser snapshot -i"),
-            Ok(())
-        );
-        for command in [
-            "help",
-            "browser open https://example.com",
-            "agent-browserish help",
-        ] {
-            assert_eq!(
-                validate_browser_command(command),
-                Err(
-                    "command must start with `agent-browser`, for example `agent-browser open https://example.com`."
-                )
-            );
-        }
-    }
-
-    #[test]
-    fn screenshot_subcommand_is_detected_after_cli_prefix() {
-        for command in [
-            "agent-browser screenshot",
-            "agent-browser screenshot --full-page",
-        ] {
-            assert_eq!(
-                validate_browser_command(command),
-                Err("Use the browser_screenshot tool instead of `agent-browser screenshot`.")
-            );
-        }
-        for command in [
-            "agent-browser snapshot",
-            "agent-browser open https://example.com",
-            "agent-browser find text \"screenshot\" click",
-        ] {
-            assert_eq!(validate_browser_command(command), Ok(()));
-        }
-    }
 
     fn png() -> Vec<u8> {
         let mut bytes = std::io::Cursor::new(Vec::new());

@@ -14,13 +14,10 @@ const EXECUTE_TIMEOUT_SECONDS = 120;
 const FETCH_TIMEOUT_MS = 140_000;
 const MAX_RESPONSE_BYTES = 2_000_000;
 const MAX_RESULT_CHARS = 8_000;
-const MAX_COMMAND_CHARS = 100_000;
 const MAX_SCREENSHOT_BYTES = 600_000;
 const SAVING_IN_USE_ERROR =
 	"Saving can't be enforced currently as the main browser session is in use by another agent. Ask the user whether they want the cookies and login state saved for future use. If yes, they have to stop the other agent and its browser session.";
 const GONE_STATUSES = new Set([404, 410]);
-const MANAGED_SUBCOMMANDS = new Set(['close', 'connect', 'state', 'cookies', 'session']);
-const MANAGED_FLAG = /^(--(?:cdp|session|profile|state|session-name))(=|$)/;
 
 const envelopeSchema = z.object({
 	success: z.boolean(),
@@ -190,71 +187,6 @@ async function destroy(ctx: ActionCtx, sessionId: string): Promise<void> {
 		if (!isGone(error)) throw error;
 	}
 	await ctx.runMutation(internal.browserCapacity.releaseSession, { sessionId });
-}
-
-function tokenizeCommand(command: string): string[] {
-	if (command.length > MAX_COMMAND_CHARS || /[\0\r\n]/.test(command)) {
-		throw new Error('Browser commands must be a single line, at most 100,000 characters.');
-	}
-	const words: string[] = [];
-	let word = '';
-	let quote = '';
-	let escaped = false;
-	let started = false;
-	for (const char of command) {
-		if (escaped) {
-			word += char;
-			escaped = false;
-			continue;
-		}
-		if (char === '\\' && quote !== "'") {
-			escaped = true;
-			started = true;
-			continue;
-		}
-		if (quote) {
-			if (char === quote) quote = '';
-			else word += char;
-			continue;
-		}
-		if (char === '"' || char === "'") {
-			quote = char;
-			started = true;
-			continue;
-		}
-		if (/\s/.test(char)) {
-			if (started) words.push(word);
-			word = '';
-			started = false;
-			continue;
-		}
-		word += char;
-		started = true;
-	}
-	if (quote || escaped) throw new Error('Browser command has an incomplete quote or escape.');
-	if (started) words.push(word);
-	return words;
-}
-
-function commandCode(command: string): string {
-	const words = tokenizeCommand(command);
-	if (words[0] === 'agent-browser') words.shift();
-	const help = words[0] === 'help';
-	if (!words.length || words[0].startsWith('-')) {
-		throw new Error('Provide an agent-browser command without global options.');
-	}
-	if (MANAGED_SUBCOMMANDS.has(words[0]) || words.some((word) => MANAGED_FLAG.test(word))) {
-		throw new Error('Browser session and profile management are handled by Sprocket.');
-	}
-	if (words[0] === 'screenshot') throw new Error('Use browser_screenshot to receive an image.');
-	if (help) words[0] = '--help';
-	const code = ['agent-browser', ...words]
-		.map((word) => `'${word.replaceAll("'", "'\\''")}'`)
-		.join(' ');
-	if (code.length > MAX_COMMAND_CHARS) {
-		throw new Error('Browser commands must be a single line, at most 100,000 characters.');
-	}
-	return code;
 }
 
 function commandFailure(result: z.infer<typeof executionSchema>): string | undefined {
@@ -439,7 +371,7 @@ export async function interact(
 	args: BrowserArgs & { command: string; enforce_saving?: boolean }
 ) {
 	try {
-		const result = await execute(ctx, args, commandCode(args.command), 'bash', args.enforce_saving);
+		const result = await execute(ctx, args, args.command, 'bash', args.enforce_saving);
 		return clip([outputText(result), result.stderr].filter(Boolean).join('\n'));
 	} catch (error) {
 		toolError(error);
