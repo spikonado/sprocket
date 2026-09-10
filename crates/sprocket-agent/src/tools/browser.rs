@@ -472,10 +472,7 @@ mod tests {
         assert_eq!(args.get("enforce_saving"), Some(&Value::Boolean(true)));
         let schema = json!(schemars::schema_for!(BrowserInteractArgs));
         assert!(schema["properties"].get("disable_saving").is_none());
-        assert_eq!(
-            schema["properties"]["command"]["description"],
-            "Full agent-browser command, including the `agent-browser` prefix."
-        );
+        assert!(schema["properties"]["command"].get("description").is_none());
         assert_eq!(schema["required"], json!(["command"]));
         let screenshot_schema = json!(schemars::schema_for!(BrowserScreenshotArgs));
         assert!(
