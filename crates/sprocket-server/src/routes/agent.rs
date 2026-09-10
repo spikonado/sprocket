@@ -112,7 +112,6 @@ async fn run_agent_handler(
         reasoning_effort: payload.reasoning_effort,
         service_tier: payload.service_tier,
         workspace_path,
-        transcript_root: state.transcript.root(),
         installation_id: state.machine_identity.installation_id.clone(),
         continuation_of_run_id: payload.continuation_of_run_id,
     };
@@ -182,7 +181,7 @@ async fn run_agent_handler(
                     )
                 };
                 let _ = start_result_sender.send(Ok((run_id.clone(), thread_id.clone())));
-                let result = run_agent(run, live).await;
+                let result = run_agent(run, live, transcript).await;
                 if let Some(watch) = &artifact_watch {
                     if let Err(error) = watch.flush().await {
                         tracing::warn!("artifact sync after run {run_id} failed: {error:#}");

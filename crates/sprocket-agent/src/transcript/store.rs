@@ -298,16 +298,20 @@ impl TranscriptStore {
         thread_id: &str,
     ) -> anyhow::Result<TranscriptState> {
         let path = self.thread_dir(user_id, thread_id).join("state.json");
-        if !tokio::fs::try_exists(&path).await? {
-            return Ok(TranscriptState::new(
-                user_id.to_string(),
-                thread_id.to_string(),
-            ));
-        }
-        let contents = tokio::fs::read_to_string(&path)
-            .await
-            .with_context(|| format!("failed to read {}", path.display()))?;
-        serde_json::from_str(&contents).with_context(|| "failed to parse transcript state")
+        let contents = match tokio::fs::read_to_string(&path).await {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(TranscriptState::new(
+                    user_id.to_string(),
+                    thread_id.to_string(),
+                ));
+            }
+            Err(error) => {
+                return Err(error).with_context(|| format!("failed to read {}", path.display()));
+            }
+        };
+        serde_json::from_str(&contents)
+            .with_context(|| format!("failed to parse transcript state {}", path.display()))
     }
 
     async fn write_state(
@@ -317,12 +321,35 @@ impl TranscriptStore {
         state: &TranscriptState,
     ) -> anyhow::Result<()> {
         let dir = self.thread_dir(user_id, thread_id);
-        tokio::fs::create_dir_all(dir.join("parts")).await?;
+        let parts_dir = dir.join("parts");
+        tokio::fs::create_dir_all(&parts_dir)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to create transcript directory {}",
+                    parts_dir.display()
+                )
+            })?;
         let path = dir.join("state.json");
-        let tmp = dir.join("state.json.tmp");
         let payload = serde_json::to_vec_pretty(state)?;
-        tokio::fs::write(&tmp, payload).await?;
-        tokio::fs::rename(&tmp, &path).await?;
+        let temporary = tempfile::NamedTempFile::new_in(&dir).with_context(|| {
+            format!(
+                "failed to create temporary transcript state in {}",
+                dir.display()
+            )
+        })?;
+        let (file, temporary_path) = temporary.into_parts();
+        let mut file = tokio::fs::File::from_std(file);
+        file.write_all(&payload)
+            .await
+            .with_context(|| format!("failed to write transcript state {}", path.display()))?;
+        file.flush()
+            .await
+            .with_context(|| format!("failed to flush transcript state {}", path.display()))?;
+        drop(file);
+        temporary_path
+            .persist(&path)
+            .with_context(|| format!("failed to publish transcript state {}", path.display()))?;
         Ok(())
     }
 
@@ -1397,6 +1424,70 @@ mod tests {
             part.completion.as_ref().unwrap().items[0]["providerMetadata"]["openai"]["reasoningEncryptedContent"],
             ENVELOPE
         );
+    }
+
+    #[tokio::test]
+    async fn only_missing_state_is_treated_as_an_empty_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::new(dir.path().to_path_buf());
+        assert_eq!(
+            store.load_state("user", "thread").await.unwrap(),
+            TranscriptState::new("user".into(), "thread".into())
+        );
+        let path = store.thread_dir("user", "thread").join("state.json");
+        std::fs::create_dir_all(&path).unwrap();
+        let error = store.load_state("user", "thread").await.unwrap_err();
+        assert!(error.to_string().contains(path.to_str().unwrap()));
+        std::fs::remove_dir(&path).unwrap();
+        std::fs::write(&path, "invalid JSON").unwrap();
+        let error = store.load_state("user", "thread").await.unwrap_err();
+        assert!(error.to_string().contains(path.to_str().unwrap()));
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "invalid JSON");
+    }
+
+    #[tokio::test]
+    async fn independent_state_writers_do_not_share_temporary_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let writes = (0..32).map(|number| {
+            let store = TranscriptStore::new(dir.path().to_path_buf());
+            async move {
+                let mut state = TranscriptState::new("user".into(), "thread".into());
+                state.remote_total_parts = number;
+                store.save_state("user", "thread", &state).await
+            }
+        });
+        for result in futures::future::join_all(writes).await {
+            result.expect("concurrent state publication should succeed");
+        }
+        let store = TranscriptStore::new(dir.path().to_path_buf());
+        let state = store.load_state("user", "thread").await.unwrap();
+        assert!(state.remote_total_parts < 32);
+        let files = std::fs::read_dir(store.thread_dir("user", "thread"))
+            .unwrap()
+            .count();
+        assert_eq!(files, 2, "only state.json and parts should remain");
+    }
+
+    #[tokio::test]
+    async fn shared_store_preserves_concurrent_part_updates() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::new(dir.path().to_path_buf());
+        let writes = (0..32).map(|number| {
+            let store = Arc::clone(&store);
+            async move {
+                store
+                    .append_parts("user", "thread", &[prompt(number, "hello")])
+                    .await
+            }
+        });
+        for result in futures::future::join_all(writes).await {
+            result.unwrap();
+        }
+        let numbers = (0..32).collect::<Vec<_>>();
+        let parts = store.read_parts("user", "thread", &numbers).await.unwrap();
+        assert_eq!(parts.len(), numbers.len());
+        let state = store.load_state("user", "thread").await.unwrap();
+        assert!(numbers.iter().all(|number| state.covers(*number)));
     }
 
     #[tokio::test]
