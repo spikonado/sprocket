@@ -478,7 +478,7 @@ describe('Firecrawl browser lifecycle', () => {
 
 	it.each([
 		'agent-browser help',
-		'agent-browser --json screenshot',
+		'agent-browser --json get url',
 		'agent-browser fill @e1 "$(touch /tmp/owned); echo secret"'
 	])('forwards %s to Firecrawl unchanged', async (command) => {
 		const fetch = remote();

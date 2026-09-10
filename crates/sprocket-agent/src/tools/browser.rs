@@ -46,6 +46,11 @@ struct BrowserScreenshotResult {
     truncated: bool,
 }
 
+fn is_screenshot_command(command: &str) -> bool {
+    let mut tokens = command.split_whitespace();
+    tokens.next() == Some("agent-browser") && tokens.next() == Some("screenshot")
+}
+
 impl rig::tool::Tool for BrowserInteractTool {
     const NAME: &'static str = "browser_interact";
     type Error = ToolExecutionError;
@@ -65,6 +70,11 @@ impl rig::tool::Tool for BrowserInteractTool {
         _context: &mut rig::tool::ToolContext,
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
+        if is_screenshot_command(&args.command) {
+            return Err(tool_failure(
+                "Use the browser_screenshot tool instead of `agent-browser screenshot`.",
+            ));
+        }
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
         let action_args = action_args_from_payload(&self.0.run_id, &self.0.claim_id, &payload)?;
         execute_tool_job(
@@ -195,6 +205,23 @@ mod tests {
     use rig::message::ToolResultContent;
 
     use super::*;
+
+    #[test]
+    fn screenshot_commands_use_the_dedicated_tool() {
+        for command in [
+            "agent-browser screenshot",
+            "agent-browser screenshot --full-page",
+        ] {
+            assert!(is_screenshot_command(command));
+        }
+        for command in [
+            "agent-browser snapshot",
+            "agent-browser open https://example.com",
+            "agent-browser find text \"screenshot\" click",
+        ] {
+            assert!(!is_screenshot_command(command));
+        }
+    }
 
     fn png() -> Vec<u8> {
         let mut bytes = std::io::Cursor::new(Vec::new());
