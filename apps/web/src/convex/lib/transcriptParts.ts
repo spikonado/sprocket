@@ -21,22 +21,6 @@ export function normalizeCompletionTiming(
 	};
 }
 
-function transcriptPartForClient(part: Doc<'threadTranscriptParts'>): Doc<'threadTranscriptParts'> {
-	if (!part.completion) return part;
-	return {
-		...part,
-		completion: {
-			...part.completion,
-			items: part.completion.items.map((item) => {
-				const projected = { ...item };
-				if (projected.startedAt == null) delete projected.startedAt;
-				if (projected.completedAt == null) delete projected.completedAt;
-				return projected;
-			})
-		}
-	};
-}
-
 export function promptSourceKey(runId: Id<'runs'>): string {
 	return `prompt:${runId}`;
 }
@@ -199,7 +183,7 @@ export async function loadTranscriptPartsByNumbers(
 	);
 	return numbers.flatMap((number) => {
 		const part = byNumber.get(number);
-		return part ? [transcriptPartForClient(part)] : [];
+		return part ? [part] : [];
 	});
 }
 

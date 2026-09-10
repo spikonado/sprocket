@@ -77,9 +77,10 @@ export async function cancelWebToolWork(ctx: MutationCtx, runId: Id<'runs'>): Pr
 			}
 			try {
 				// SAFETY: cloudWorkId is the WorkId returned by enqueueAction.
-				await (
-					job.cloudWorkPool === 'firecrawlScrape' ? firecrawlScrapePool : webToolWorkpool
-				).cancel(ctx, job.cloudWorkId as WorkId);
+				await (job.kind === 'web_search' ? webToolWorkpool : firecrawlScrapePool).cancel(
+					ctx,
+					job.cloudWorkId as WorkId
+				);
 			} catch {
 				// Best-effort; callbacks are fenced on job/claim state.
 			}

@@ -12,10 +12,9 @@ import {
 	vWebSearchResult,
 	type ExecutorJobPayload
 } from '@convex/lib/validators';
-import { RUN_NO_LONGER_ACTIVE, toAgentToolConvexError } from '@convex/lib/agentErrors';
+import { RUN_NO_LONGER_ACTIVE } from '@convex/lib/agentErrors';
 import { unsupportedClient } from '@convex/lib/unsupportedClient';
 import { NonRetryableError } from '@convex-dev/workpool';
-import { runFirecrawlRequest } from '@convex/lib/firecrawlQueue';
 import type { Doc } from '@convex/_generated/dataModel';
 
 const firecrawl = new FirecrawlClient(components.firecrawl);
@@ -399,6 +398,7 @@ export const executeWebSearch = internalAction({
 	}
 });
 
+/** Retired blocking scrape action. Current agents use the Firecrawl request subscription. */
 export const scrapeForTool = action({
 	args: {
 		runId: v.id('runs'),
@@ -407,15 +407,12 @@ export const scrapeForTool = action({
 		executionSecret: v.string()
 	},
 	returns: vScrapeUrlTransport,
-	handler: async (ctx, args): Promise<Infer<typeof vScrapeUrlTransport>> => {
-		try {
-			return await runFirecrawlRequest(ctx, { ...args, kind: 'scrape' }, vScrapeUrlTransport);
-		} catch (error) {
-			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
-		}
+	handler: async () => {
+		unsupportedClient();
 	}
 });
 
+/** Retired blocking screenshot action. Current agents use the Firecrawl request subscription. */
 export const screenshotForTool = action({
 	args: {
 		runId: v.id('runs'),
@@ -424,20 +421,15 @@ export const screenshotForTool = action({
 		executionSecret: v.string()
 	},
 	returns: vScreenshotUrlTransport,
-	handler: async (ctx, args): Promise<Infer<typeof vScreenshotUrlTransport>> => {
-		try {
-			return await runFirecrawlRequest(
-				ctx,
-				{ ...args, kind: 'screenshot' },
-				vScreenshotUrlTransport
-			);
-		} catch (error) {
-			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
-		}
+	handler: async () => {
+		unsupportedClient();
 	}
 });
 
-export async function executeQueuedScrape(ctx: ActionCtx, request: Doc<'firecrawlRequests'>) {
+export async function executeQueuedScrape(
+	ctx: ActionCtx,
+	request: Pick<Doc<'firecrawlRequests'>, 'runId' | 'claimId' | 'jobId' | 'kind'>
+) {
 	const job = request.jobId
 		? await ctx.runMutation(internal.firecrawlRequests.scrapeJob, {
 				jobId: request.jobId,

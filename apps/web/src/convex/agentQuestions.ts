@@ -257,15 +257,13 @@ export const getForExecutor = query({
 export const headPendingForThread = query({
 	args: {
 		threadId: v.id('threadRecords'),
-		// Callers that can refresh should pass wall-clock time; omitted `now`
-		// falls back so older clients and tests keep the overdue-skip behavior.
-		now: v.optional(v.number())
+		now: v.number()
 	},
 	returns: v.union(vAgentQuestionSnapshot, v.null()),
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
-		const head = await headLivePendingQuestion(ctx, args.threadId, args.now ?? Date.now());
+		const head = await headLivePendingQuestion(ctx, args.threadId, args.now);
 		return head ? toSnapshot(head) : null;
 	}
 });

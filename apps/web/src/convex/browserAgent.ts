@@ -1,8 +1,8 @@
 'use node';
 
-import { v, type Infer } from 'convex/values';
+import { v } from 'convex/values';
 import { action } from '@convex/_generated/server';
-import { runFirecrawlRequest } from '@convex/lib/firecrawlQueue';
+import { unsupportedClient } from '@convex/lib/unsupportedClient';
 import { vBrowserScreenshotResult, vBrowserTaskResult } from '@convex/lib/validators';
 
 const browserArgs = {
@@ -11,16 +11,20 @@ const browserArgs = {
 	executionSecret: v.string()
 };
 
+/** Retired blocking browser action. Current agents use the Firecrawl request subscription. */
 export const interact = action({
 	args: { ...browserArgs, command: v.string(), enforce_saving: v.optional(v.boolean()) },
 	returns: vBrowserTaskResult,
-	handler: (ctx, args): Promise<Infer<typeof vBrowserTaskResult>> =>
-		runFirecrawlRequest(ctx, { ...args, kind: 'browser_interact' }, vBrowserTaskResult)
+	handler: async () => {
+		unsupportedClient();
+	}
 });
 
+/** Retired blocking screenshot action. Current agents use the Firecrawl request subscription. */
 export const screenshot = action({
 	args: browserArgs,
 	returns: vBrowserScreenshotResult,
-	handler: (ctx, args): Promise<Infer<typeof vBrowserScreenshotResult>> =>
-		runFirecrawlRequest(ctx, { ...args, kind: 'browser_screenshot' }, vBrowserScreenshotResult)
+	handler: async () => {
+		unsupportedClient();
+	}
 });

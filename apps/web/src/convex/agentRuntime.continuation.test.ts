@@ -9,11 +9,12 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const parent = await createQueuedRun(t, asUser, threadId, 'sub-parent', 'parent-secret');
-		await asUser.mutation(api.agentRuntime.finalizeRun, {
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId: parent.runId,
 			text: '',
 			status: 'failed',
-			lastError: 'boom'
+			lastError: 'boom',
+			executionSecret: 'parent-secret'
 		});
 
 		const args = {
@@ -71,10 +72,11 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			})
 		).rejects.toThrow('Finish or cancel the active run before sending another message.');
 
-		await asUser.mutation(api.agentRuntime.finalizeRun, {
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId: active.runId,
 			text: '',
-			status: 'completed'
+			status: 'completed',
+			executionSecret: 'active-secret'
 		});
 		await expect(
 			insertQueuedRun(t, asUser, {
@@ -87,11 +89,12 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 		).rejects.toThrow(RUN_CANNOT_CONTINUE);
 
 		const failed = await createQueuedRun(t, asUser, threadId, 'sub-failed', 'failed-secret');
-		await asUser.mutation(api.agentRuntime.finalizeRun, {
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId: failed.runId,
 			text: '',
 			status: 'failed',
-			lastError: 'boom'
+			lastError: 'boom',
+			executionSecret: 'failed-secret'
 		});
 		const first = await insertQueuedRun(t, asUser, {
 			threadId,
@@ -100,10 +103,11 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			prompt: '',
 			continuationOfRunId: failed.runId
 		});
-		await asUser.mutation(api.agentRuntime.finalizeRun, {
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId: first.runId,
 			text: '',
-			status: 'cancelled'
+			status: 'cancelled',
+			executionSecret: 'continue-first-secret'
 		});
 		await expect(
 			insertQueuedRun(t, asUser, {
@@ -120,10 +124,11 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const parent = await createQueuedRun(t, asUser, threadId, 'sub-race-parent', 'race-parent');
-		await asUser.mutation(api.agentRuntime.finalizeRun, {
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId: parent.runId,
 			text: '',
-			status: 'cancelled'
+			status: 'cancelled',
+			executionSecret: 'race-parent'
 		});
 		await insertQueuedRun(t, asUser, {
 			threadId,
@@ -191,11 +196,12 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			'sub-cleanup-parent',
 			'cleanup-parent'
 		);
-		await asUser.mutation(api.agentRuntime.finalizeRun, {
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId: parent.runId,
 			text: '',
 			status: 'failed',
-			lastError: 'boom'
+			lastError: 'boom',
+			executionSecret: 'cleanup-parent'
 		});
 		const args = {
 			submissionId: 'sub-cleanup-continue',

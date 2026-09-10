@@ -58,7 +58,6 @@ export async function requestPackageUpdate(install: boolean): Promise<UpdateStat
 		headers: { 'content-type': 'application/json' },
 		signal: AbortSignal.timeout(30_000)
 	});
-	if (!install && response.status === 404) return null;
 	if (!response.ok) {
 		const error = z
 			.object({ error: z.string() })

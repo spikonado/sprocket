@@ -101,8 +101,7 @@ export async function seedThreadRecord(
 		});
 		await ctx.db.insert('threadUsage', {
 			threadId,
-			userId,
-			totalTokensProcessed: 0
+			userId
 		});
 		await ctx.db.insert('runs', {
 			threadId,

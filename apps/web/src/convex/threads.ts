@@ -25,7 +25,7 @@ async function archiveOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'
 	const userId = await getUserId(ctx);
 	const record = await getOwnedThreadRecord(ctx.db, userId, threadId);
 
-	if (record.status && ['queued', 'running', 'awaiting_executor'].includes(record.status)) {
+	if (['queued', 'running', 'awaiting_executor'].includes(record.status)) {
 		throw new Error('Cannot archive a thread while a run is active.');
 	}
 
@@ -169,7 +169,7 @@ export const renameForLocalCache = mutation({
 		const { userId, record } = await renameOwnedThread(ctx, args.threadId, args.title);
 		return {
 			userId,
-			repositoryKey: record.repositoryKey ?? ''
+			repositoryKey: record.repositoryKey
 		};
 	}
 });
@@ -192,7 +192,7 @@ export const archiveForLocalCache = mutation({
 	returns: v.object({ userId: v.string(), repositoryKey: v.string() }),
 	handler: async (ctx, args) => {
 		const { userId, record } = await archiveOwnedThread(ctx, args.threadId);
-		return { userId, repositoryKey: record.repositoryKey ?? '' };
+		return { userId, repositoryKey: record.repositoryKey };
 	}
 });
 
@@ -214,7 +214,7 @@ export const restoreForLocalCache = mutation({
 	returns: v.object({ userId: v.string(), repositoryKey: v.string() }),
 	handler: async (ctx, args) => {
 		const { userId, record } = await restoreOwnedThread(ctx, args.threadId);
-		return { userId, repositoryKey: record.repositoryKey ?? '' };
+		return { userId, repositoryKey: record.repositoryKey };
 	}
 });
 

@@ -1,4 +1,4 @@
-import type { Doc, Id } from '@convex/_generated/dataModel';
+import type { Doc } from '@convex/_generated/dataModel';
 import { action, internalMutation, mutation, query } from '@convex/_generated/server';
 import { internal } from '@convex/_generated/api';
 import schema from '@convex/schema';
@@ -36,7 +36,6 @@ import {
 	toAgentToolConvexError
 } from '@convex/lib/agentErrors';
 import { unsupportedClient } from '@convex/lib/unsupportedClient';
-import { compareRunStartedAt } from '@convex/lib/runs';
 import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
 import {
 	createQueuedRunRecord,
@@ -58,7 +57,6 @@ import {
 import { COMPLETION_STREAM_SUPERSEDED, vCompletionStreamEvent } from '@convex/lib/completionStream';
 import {
 	isRunFinalStatus,
-	runFinalStatus,
 	vCurrentExecutorJobKind,
 	vCurrentExecutorJobPayload,
 	vReasoningEffort,
@@ -100,7 +98,6 @@ const vCreatedGatewayRun = v.object({
 	created: v.boolean(),
 	runId: v.id('runs'),
 	threadId: v.id('threadRecords'),
-	promptMessageId: v.optional(v.string()),
 	userId: v.string(),
 	promptPart: v.optional(schema.doc('threadTranscriptParts'))
 });
@@ -268,17 +265,12 @@ export const renewClaim = mutation({
 
 function getContextResult(args: {
 	run: Doc<'runs'>;
-	threadRecord: Doc<'threadRecords'>;
 	prompt: string;
-	contextBudget: Infer<typeof vGetContextResult>['contextBudget'];
 	contextTokens: number | undefined;
 }): Infer<typeof vGetContextResult> {
 	const result: Infer<typeof vGetContextResult> = {
 		run: args.run,
-		threadRecord: args.threadRecord,
-		prompt: args.prompt,
-		agentHistory: [],
-		contextBudget: args.contextBudget
+		prompt: args.prompt
 	};
 	if (args.contextTokens !== undefined) {
 		result.contextTokens = args.contextTokens;
@@ -294,13 +286,7 @@ export const getContext = query({
 	returns: vGetContextResult,
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		const userId = run.userId;
-		const threadRecord = await getOwnedThreadRecord(ctx.db, userId, run.threadId);
-		const contextTokens = await getThreadContextTokens(ctx, threadRecord._id);
-		const contextBudget = {
-			contextWindowTokens: run.contextWindowTokens ?? 0,
-			autoCompactTokenLimit: run.autoCompactTokenLimit ?? 0
-		};
+		const contextTokens = await getThreadContextTokens(ctx, run.threadId);
 		const promptPart = await getPromptPart(ctx, run.threadId, run._id);
 		if (!promptPart?.prompt) {
 			if (!run.continuationOfRunId) {
@@ -308,17 +294,13 @@ export const getContext = query({
 			}
 			return getContextResult({
 				run,
-				threadRecord,
 				prompt: '',
-				contextBudget,
 				contextTokens
 			});
 		}
 		return getContextResult({
 			run,
-			threadRecord,
 			prompt: promptPart.prompt.text,
-			contextBudget,
 			contextTokens
 		});
 	}
@@ -360,7 +342,7 @@ export const completionActor = query({
 	}
 });
 
-/** Legacy previous-run cutoff for released agents. New agents call saveContextHandoff. */
+/** Retired run-scoped compaction API. Current agents save part-bounded handoffs. */
 export const saveContextCompaction = mutation({
 	args: {
 		runId: v.id('runs'),
@@ -371,55 +353,8 @@ export const saveContextCompaction = mutation({
 		persistForFutureRuns: v.boolean()
 	},
 	returns: v.boolean(),
-	handler: async (ctx, args) => {
-		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		if (!ownsActiveRunClaim(run, args.claimId, Date.now())) return false;
-		if (!args.summary.trim()) {
-			throw new Error('Invalid context compaction.');
-		}
-		const thread = await getOwnedThreadRecord(ctx.db, run.userId, run.threadId);
-		await recordThreadUsageEvent(ctx, thread, {
-			eventId: usageEventId('compaction', run._id, args.claimId, run.completionAttemptSeq),
-			processedTokens: args.processedTokens
-		});
-		let durableSummary:
-			{ contextSummary: string; contextSummaryThroughRunId: Id<'runs'> } | undefined;
-		if (args.persistForFutureRuns) {
-			const previousRun = (
-				await Promise.all(
-					runFinalStatus.map((status) =>
-						ctx.db
-							.query('runs')
-							.withIndex('by_threadId_status_startedAt', (query) =>
-								query
-									.eq('threadId', run.threadId)
-									.eq('status', status)
-									.lte('startedAt', run.startedAt)
-							)
-							.order('desc')
-							.take(4)
-					)
-				)
-			)
-				.flat()
-				.filter((candidate) => compareRunStartedAt(candidate, run) < 0)
-				.sort((left, right) => compareRunStartedAt(right, left))[0];
-			// Require a real cutoff run so transcript reads can skip covered parts.
-			if (previousRun) {
-				durableSummary = {
-					contextSummary: args.summary,
-					contextSummaryThroughRunId: previousRun._id
-				};
-			}
-		}
-		if (durableSummary) {
-			await ctx.db.patch('threadRecords', thread._id, {
-				...durableSummary,
-				contextSummaryThroughPartNumber: undefined,
-				contextSummaryHandoffKey: undefined
-			});
-		}
-		return true;
+	handler: async () => {
+		unsupportedClient();
 	}
 });
 
@@ -571,6 +506,7 @@ export const finalizeCompletionCall = mutation({
 	}
 });
 
+/** Retired user-authenticated finalizer. Current agents use finalizeExecutorRun. */
 export const finalizeRun = mutation({
 	args: {
 		expectedStatus: v.optional(vRunStatus),
@@ -581,13 +517,8 @@ export const finalizeRun = mutation({
 		lastError: v.optional(v.string())
 	},
 	returns: v.boolean(),
-	handler: async (ctx, args) => {
-		const userId = await getUserId(ctx);
-		const run = await getOwnedRun(ctx.db, userId, args.runId);
-		if (!matchesFinalizeExpectations(run, args)) {
-			return false;
-		}
-		return finalizeRunRecord(ctx, run, args);
+	handler: async () => {
+		unsupportedClient();
 	}
 });
 

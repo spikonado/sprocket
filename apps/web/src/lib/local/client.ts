@@ -142,8 +142,7 @@ const threadSummarySchema = z.object({
 	_creationTime: z.number(),
 	userId: z.string(),
 	submissionId: z.string(),
-	repositoryKey: z.string().optional(),
-	projectId: z.string().optional(),
+	repositoryKey: z.string(),
 	title: z.string().optional(),
 	selectedModel: z.string(),
 	reasoningEffort: z.enum(['none', 'low', 'medium', 'high', 'xhigh', 'max']),
@@ -152,9 +151,7 @@ const threadSummarySchema = z.object({
 	contextSummaryThroughRunId: z.string().optional(),
 	lastMessageAt: z.number(),
 	archivedAt: z.number().optional(),
-	status: z
-		.enum(['queued', 'running', 'awaiting_executor', 'completed', 'failed', 'cancelled'])
-		.optional()
+	status: z.enum(['queued', 'running', 'awaiting_executor', 'completed', 'failed', 'cancelled'])
 });
 const threadCacheWatchEventSchema = z.object({
 	status: z.enum(['loading', 'live', 'reconnecting', 'offline', 'error']),
@@ -267,7 +264,6 @@ function parseThreadRecord(
 	return {
 		...thread,
 		_id: asConvexId(thread._id),
-		projectId: thread.projectId ? asConvexId(thread.projectId) : undefined,
 		contextSummaryThroughRunId: thread.contextSummaryThroughRunId
 			? asConvexId(thread.contextSummaryThroughRunId)
 			: undefined

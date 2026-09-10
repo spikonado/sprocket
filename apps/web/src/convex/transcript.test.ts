@@ -111,7 +111,7 @@ describe('numbered transcript parts', () => {
 		expect(parts.parts[1]?.completion?.items).toEqual(items);
 	});
 
-	it('normalizes missing timing from older agents on new completion writes', async () => {
+	it('normalizes missing timing on completion writes', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const executionSecret = 'transcript-no-begin-secret';
@@ -148,12 +148,11 @@ describe('numbered transcript parts', () => {
 		const stored = await t.run(
 			async (ctx) => await ctx.db.get('threadTranscriptParts', parts.parts[1]!._id)
 		);
-		expect(stored?.completion?.items).toEqual([
+		const expectedItems = [
 			{ type: 'text', id: 't', text: 'Hi', turnId: 'stream-1', startedAt: null, completedAt: null }
-		]);
-		expect(parts.parts[1]?.completion?.items).toEqual([
-			{ type: 'text', id: 't', text: 'Hi', turnId: 'stream-1' }
-		]);
+		];
+		expect(stored?.completion?.items).toEqual(expectedItems);
+		expect(parts.parts[1]?.completion?.items).toEqual(expectedItems);
 		const agentParts = await t.query(api.transcript.getPartsForRun, {
 			runId,
 			executionSecret,
@@ -303,12 +302,13 @@ describe('numbered transcript parts', () => {
 		});
 		const started = await asUser.query(api.transcript.getParts, { threadId, numbers: [1] });
 		const invocationId = started.parts[0]?.tool?.toolInvocationId;
-		await asUser.mutation(api.agentRuntime.finalizeRun, {
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId,
 			expectedStatus: 'awaiting_executor',
 			expectedClaimId: 'claim-tool-cancel',
 			text: '',
-			status: 'cancelled'
+			status: 'cancelled',
+			executionSecret
 		});
 		const afterCancel = await asUser.query(api.transcript.getState, { threadId });
 		expect(afterCancel.totalParts).toBe(3);
@@ -449,11 +449,12 @@ describe('numbered transcript parts', () => {
 			runId,
 			executionSecret
 		});
-		await asUser.mutation(api.agentRuntime.finalizeRun, {
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId,
 			text: 'partial',
 			status: 'failed',
-			lastError: 'boom'
+			lastError: 'boom',
+			executionSecret
 		});
 		const state = await asUser.query(api.transcript.getState, { threadId });
 		expect(state.totalParts).toBe(1);
@@ -499,11 +500,12 @@ describe('numbered transcript parts', () => {
 			],
 			executionSecret
 		});
-		await asUser.mutation(api.agentRuntime.finalizeRun, {
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId,
 			text: '',
 			status: 'failed',
-			lastError: 'boom'
+			lastError: 'boom',
+			executionSecret
 		});
 		const continuation = await insertQueuedRun(t, asUser, {
 			threadId,
@@ -522,10 +524,11 @@ describe('numbered transcript parts', () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const first = await createQueuedRun(t, asUser, threadId, 'sub-a', 'secret-a', 'A');
-		await asUser.mutation(api.agentRuntime.finalizeRun, {
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId: first.runId,
 			text: '',
-			status: 'cancelled'
+			status: 'cancelled',
+			executionSecret: 'secret-a'
 		});
 		await createQueuedRun(t, asUser, threadId, 'sub-b', 'secret-b', 'B');
 		const parts = await asUser.query(api.transcript.getParts, {

@@ -54,13 +54,12 @@ describe('gateway quota', () => {
 		);
 	}, 15_000);
 
-	it('snapshots gateway transport on new runs', async () => {
+	it('snapshots the gateway protocol on new runs', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const created = await createQueuedRun(t, asUser, threadId, 'gateway-run', 'gateway-secret');
 		expect(created.created).toBe(true);
 		const run = await t.run(async (ctx) => ctx.db.get('runs', created.runId));
-		expect(run?.completionTransport).toBe('gateway');
 		expect(run?.gatewayProtocolVersion).toBe(1);
 	});
 });

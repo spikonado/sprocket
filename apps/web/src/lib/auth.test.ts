@@ -190,32 +190,6 @@ describe('installed and hosted auth', () => {
 		expect(get(authState).nativeSession).toBe('notRequired');
 	});
 
-	it('does not delete a native session when legacy AuthKit JS has no user', async () => {
-		stubInstalledWindow();
-		const fetch = stubFetch({
-			token: () => jsonResponse(404, { error: 'not found' }),
-			nativeSessionGet: () =>
-				jsonResponse(200, {
-					status: 'authenticated',
-					user: { id: nativeUser.id, email: nativeUser.email }
-				})
-		});
-		createAuthKitClient.mockResolvedValue(mockAuthKitClient(null));
-
-		await initializeAuth(convexClient);
-
-		expect(createAuthKitClient).toHaveBeenCalled();
-		expect(fetch).not.toHaveBeenCalledWith(
-			'/api/auth/native-session',
-			expect.objectContaining({ method: 'DELETE' })
-		);
-		expect(get(authState)).toMatchObject({
-			user: null,
-			nativeSession: 'missing',
-			error: 'Finish setting up sign-in before starting an agent.'
-		});
-	});
-
 	it('keeps the current native user when a later token refresh is transient', async () => {
 		stubInstalledWindow();
 		const fetch = stubFetch({
@@ -238,30 +212,6 @@ describe('installed and hosted auth', () => {
 			nativeSession: 'ready',
 			isReady: true,
 			isLoading: false
-		});
-	});
-
-	it('keeps a legacy native session on a transient startup status call', async () => {
-		stubInstalledWindow();
-		createAuthKitClient.mockResolvedValue(mockAuthKitClient(user));
-		stubFetch({
-			token: () => jsonResponse(404, { error: 'not found' }),
-			nativeSessionGet: () => jsonResponse(503, { error: 'temporarily unavailable' })
-		});
-		authState.set({
-			...get(authState),
-			user,
-			nativeSession: 'ready',
-			isReady: true,
-			isLoading: false
-		});
-
-		await initializeAuth(convexClient);
-
-		expect(get(authState)).toMatchObject({
-			user: { id: 'user-a' },
-			nativeSession: 'ready',
-			isReady: true
 		});
 	});
 
@@ -457,31 +407,6 @@ describe('installed and hosted auth', () => {
 		});
 	});
 
-	it.each([404, 405])(
-		'falls back to AuthKit JS when the native token endpoint is %s',
-		async (status) => {
-			stubInstalledWindow();
-			createAuthKitClient.mockResolvedValue(mockAuthKitClient(user));
-			stubFetch({
-				token: () => jsonResponse(status, { error: 'missing' }),
-				nativeSessionGet: () =>
-					jsonResponse(200, {
-						status: 'authenticated',
-						user: { id: user.id, email: user.email }
-					})
-			});
-
-			await initializeAuth(convexClient);
-
-			expect(createAuthKitClient).toHaveBeenCalled();
-			expect(get(authState)).toMatchObject({
-				user: { id: 'user-a', email: 'a@example.com' },
-				nativeSession: 'ready',
-				error: null
-			});
-		}
-	);
-
 	it('surfaces pairing failure and account mismatch without treating them as signed out', async () => {
 		stubInstalledWindow();
 		stubFetch({
@@ -583,7 +508,6 @@ function unhandled(input: RequestInfo | URL, init?: RequestInit) {
 
 function stubFetch(handlers: {
 	token?: (request: NativeSessionTokenRequest) => Response | Promise<Response>;
-	nativeSessionGet?: () => Response | Promise<Response>;
 	nativeSessionDelete?: () => Response | Promise<Response>;
 	desktopStart?: () => Response | Promise<Response>;
 	desktopResult?: () => Response | Promise<Response>;
@@ -601,9 +525,6 @@ function stubFetch(handlers: {
 		}
 		if (url.endsWith('/api/auth/native-session') && method === 'DELETE') {
 			return handlers.nativeSessionDelete?.() ?? unhandled(input, init);
-		}
-		if (url.endsWith('/api/auth/native-session') && method === 'GET') {
-			return handlers.nativeSessionGet?.() ?? unhandled(input, init);
 		}
 		if (url.includes('/api/auth/desktop-login/start') && method === 'POST') {
 			return handlers.desktopStart?.() ?? unhandled(input, init);

@@ -140,8 +140,8 @@ cancellation while work is active.
 Command execution and patch operations both run with the local Sprocket
 process's permissions. Web search runs Exa through a Convex Workpool job.
 Current agents orchestrate scraping locally and call an authenticated Firecrawl
-action for pages. Released agents still use the cloud scrape workpool. Provider
-keys (`EXA_API_KEY`, `FIRECRAWL_API_KEY`) stay in the backend.
+request queue for pages. Provider keys (`EXA_API_KEY`, `FIRECRAWL_API_KEY`) stay
+in the backend.
 
 ## Main areas
 

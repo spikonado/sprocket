@@ -29,24 +29,6 @@ pub struct ProjectAttachmentRecord {
     pub previous_repository_key: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct StoredProjectAttachment {
-    #[serde(default)]
-    workspace_path: String,
-    #[serde(default)]
-    repository_key: Option<String>,
-    #[serde(default)]
-    display_name: Option<String>,
-    availability: WorkspaceAvailability,
-    last_validated_at: u64,
-    last_used_at: u64,
-    #[serde(default)]
-    unavailable_reason: Option<String>,
-    #[serde(default)]
-    previous_repository_key: Option<String>,
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum WorkspaceAvailability {
@@ -191,14 +173,14 @@ impl ProjectAttachmentStore {
             let contents = tokio::fs::read_to_string(&store_path)
                 .await
                 .with_context(|| format!("failed to read {}", store_path.display()))?;
-            let stored: Vec<StoredProjectAttachment> = serde_json::from_str(&contents)
+            let stored: Vec<ProjectAttachmentRecord> = serde_json::from_str(&contents)
                 .with_context(|| "failed to parse project attachments")?;
             let mut sessions = self.attachments.write().await;
-            for entry in stored {
-                if entry.workspace_path.trim().is_empty() {
+            for attachment in stored {
+                if attachment.workspace_path.trim().is_empty() {
                     continue;
                 }
-                let record = hydrate_stored_attachment(entry);
+                let record = validate_session_path(attachment);
                 sessions.insert(record.workspace_path.clone(), record);
             }
         }
@@ -284,20 +266,6 @@ impl ProjectAttachmentStore {
             store.insert(session.workspace_path.clone(), session);
         }
     }
-}
-
-fn hydrate_stored_attachment(stored: StoredProjectAttachment) -> ProjectAttachmentRecord {
-    let fallback_name = directory_name(&stored.workspace_path);
-    validate_session_path(ProjectAttachmentRecord {
-        workspace_path: stored.workspace_path,
-        repository_key: stored.repository_key.unwrap_or_default(),
-        display_name: stored.display_name.unwrap_or(fallback_name),
-        availability: stored.availability,
-        last_validated_at: stored.last_validated_at,
-        last_used_at: stored.last_used_at,
-        unavailable_reason: stored.unavailable_reason,
-        previous_repository_key: stored.previous_repository_key,
-    })
 }
 
 fn directory_name(workspace_path: &str) -> String {
@@ -524,43 +492,6 @@ mod tests {
         let listed = store.list().await.expect("list");
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].workspace_path, attached_second.workspace_path);
-
-        let _ = fs::remove_dir_all(temp_root);
-    }
-
-    #[tokio::test]
-    async fn load_rewrites_legacy_project_id_rows() {
-        let temp_root = std::env::temp_dir().join(format!(
-            "sprocket-project-attachments-legacy-{}",
-            crate::now_ms()
-        ));
-        fs::create_dir_all(&temp_root).expect("temp dir");
-        let workspace = temp_root.join("checkout");
-        fs::create_dir_all(&workspace).expect("workspace dir");
-        let store_path = temp_root.join(PROJECT_ATTACHMENTS_FILE);
-        fs::write(
-            store_path,
-            serde_json::json!([{
-                "projectId": "obsolete-convex-id",
-                "workspacePath": workspace.to_string_lossy(),
-                "availability": "available",
-                "lastValidatedAt": 1,
-                "lastUsedAt": 2
-            }])
-            .to_string(),
-        )
-        .expect("write legacy attachments");
-
-        let listed = ProjectAttachmentStore::new(temp_root.clone())
-            .list()
-            .await
-            .expect("list");
-        let expected =
-            resolve_workspace_path(&workspace.to_string_lossy(), false).expect("resolve");
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].workspace_path, expected.workspace_path);
-        assert_eq!(listed[0].repository_key, expected.repository_key);
-        assert_eq!(listed[0].display_name, expected.display_name);
 
         let _ = fs::remove_dir_all(temp_root);
     }

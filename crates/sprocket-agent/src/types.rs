@@ -35,8 +35,6 @@ pub struct CreateRunResponse {
     pub created: bool,
     pub run_id: String,
     pub thread_id: String,
-    #[serde(default)]
-    pub prompt_message_id: Option<String>,
     pub user_id: String,
     #[serde(default)]
     pub prompt_part: Option<serde_json::Value>,
@@ -69,10 +67,7 @@ pub struct RenewClaimResponse {
 #[serde(rename_all = "camelCase")]
 pub struct RunContextResponse {
     pub run: RunSnapshot,
-    pub thread_record: ThreadRecordSnapshot,
     pub prompt: String,
-    pub agent_history: Vec<AgentHistoryMessage>,
-    pub context_budget: ContextBudget,
     #[serde(default, deserialize_with = "deserialize_convex_u64")]
     pub context_tokens: u64,
 }
@@ -187,16 +182,6 @@ pub struct RunSnapshot {
     pub started_at: u64,
     #[serde(default)]
     pub continuation_of_run_id: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ThreadRecordSnapshot {
-    #[serde(rename = "_id")]
-    pub id: String,
-    #[serde(default)]
-    pub repository_key: String,
-    pub title: Option<String>,
 }
 
 fn require_non_empty<T>(items: Vec<T>, what: &str) -> anyhow::Result<Vec<T>> {
@@ -501,7 +486,6 @@ mod tests {
             "created": true,
             "runId": "jd7run",
             "threadId": "jd7thread",
-            "promptMessageId": "prompt:jd7run",
             "userId": "user_1",
             "promptPart": {
                 "number": 0.0,
@@ -571,7 +555,6 @@ mod tests {
         .expect("continuation create run response");
 
         assert_eq!(created.run_id, "jd7cont");
-        assert!(created.prompt_message_id.is_none());
         assert!(created.prompt_part.is_none());
     }
 

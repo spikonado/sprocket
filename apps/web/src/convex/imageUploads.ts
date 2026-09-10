@@ -102,7 +102,12 @@ export const cleanupExpired = internalMutation({
 				cursor: args.cursor ?? null
 			});
 		for (const upload of page.page) {
-			if (!upload.threadId) continue;
+			if (!upload.threadId) {
+				await ctx.storage.delete(upload.storageId);
+				await ctx.db.delete('imageUploads', upload._id);
+				deleted += 1;
+				continue;
+			}
 			const thread = await ctx.db.get('threadRecords', upload.threadId);
 			if (!thread || thread.lastMessageAt >= now - ATTACHMENT_RETENTION_MS) continue;
 			await ctx.storage.delete(upload.storageId);

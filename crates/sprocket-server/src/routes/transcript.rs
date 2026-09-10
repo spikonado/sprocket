@@ -12,8 +12,8 @@ use axum_extra::extract::CookieJar;
 use futures::stream::unfold;
 use serde::Deserialize;
 use sprocket_agent::{
-    AttachmentUnavailable, TRANSCRIPT_CHUNK_SIZE, TRANSCRIPT_PAGE_SIZE, TranscriptAttachmentMeta,
-    cache_attachment, parts_window,
+    AttachmentUnavailable, TRANSCRIPT_CHUNK_SIZE, TranscriptAttachmentMeta, cache_attachment,
+    parts_window,
 };
 use tokio::sync::broadcast;
 use tokio_util::io::ReaderStream;
@@ -33,24 +33,12 @@ struct TranscriptScope {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct TranscriptPageRequest {
+struct TranscriptPartsRequest {
     user_id: String,
     #[serde(deserialize_with = "deserialize_thread_id")]
     thread_id: String,
     before: Option<u32>,
     limit: Option<u32>,
-}
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct LegacyTranscriptPage {
-    thread_id: String,
-    total_parts: u32,
-    history_from_number: u32,
-    stale: bool,
-    parts: Vec<sprocket_agent::TranscriptPart>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    next_before: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -89,11 +77,8 @@ fn deserialize_thread_id<'de, D: serde::Deserializer<'de>>(
 
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
-        .route("/transcript/page", post(legacy_page_handler))
-        .route("/transcript/messages", post(page_handler))
         .route("/transcript/parts", post(parts_handler))
         .route("/transcript/watch", post(watch_handler))
-        .route("/transcript/details", post(details_handler))
         .route("/transcript/part-details", post(part_details_handler))
         .route("/transcript/clear", post(clear_handler))
         .route("/transcript/attachment", post(attachment_handler))
@@ -105,52 +90,6 @@ pub fn routes() -> axum::Router<AppState> {
             "/transcript/discard",
             post(super::attachment_upload::discard_handler),
         )
-}
-
-async fn legacy_page_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(payload): Json<TranscriptPageRequest>,
-) -> Result<Json<LegacyTranscriptPage>, ApiError> {
-    let user_id = payload.user_id.clone();
-    let thread_id = payload.thread_id.clone();
-    let Json(page) = page_handler(State(state.clone()), headers, jar, Json(payload)).await?;
-    let numbers = page
-        .messages
-        .iter()
-        .flat_map(|message| message.source_numbers.iter().copied())
-        .collect::<Vec<_>>();
-    let parts = state
-        .transcript
-        .read_parts(&user_id, &thread_id, &numbers)
-        .await
-        .map_err(|error| ApiError::internal_with("failed to read legacy transcript", error))?;
-    Ok(Json(LegacyTranscriptPage {
-        thread_id: page.thread_id,
-        total_parts: page.total_parts,
-        history_from_number: page.history_from_number,
-        stale: page.stale,
-        parts,
-        next_before: page.next_before,
-    }))
-}
-
-async fn details_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(payload): Json<TranscriptDetailsRequest>,
-) -> Result<Json<sprocket_agent::TranscriptMessage>, ApiError> {
-    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
-    require_transcript_numbers(&payload.numbers, None)?;
-    let message = state
-        .transcript
-        .message_details(&payload.user_id, &payload.thread_id, &payload.numbers)
-        .await
-        .map_err(|error| ApiError::internal_with("failed to read transcript details", error))?
-        .ok_or_else(|| ApiError::bad_request(anyhow!("transcript message not found")))?;
-    Ok(Json(message))
 }
 
 async fn part_details_handler(
@@ -209,95 +148,11 @@ async fn require_session_user(
     require_user(state, user_id).await
 }
 
-async fn page_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(payload): Json<TranscriptPageRequest>,
-) -> Result<Json<sprocket_agent::TranscriptPage>, ApiError> {
-    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
-    let transcript_state =
-        load_transcript_state(&state, &payload.user_id, &payload.thread_id).await?;
-    let limit = payload
-        .limit
-        .unwrap_or(TRANSCRIPT_PAGE_SIZE)
-        .clamp(1, TRANSCRIPT_CHUNK_SIZE);
-    let end = payload
-        .before
-        .unwrap_or_else(|| transcript_state.visible_end_exclusive())
-        .min(transcript_state.visible_end_exclusive());
-    if !state
-        .transcript
-        .has_complete_message_page(&payload.user_id, &payload.thread_id, Some(end), limit)
-        .await
-        .map_err(|error| ApiError::internal_with("failed to inspect transcript history", error))?
-    {
-        let client = UserConvexClient::connect_with_fetcher(
-            &state.convex_deployment_url,
-            state
-                .native_auth
-                .auth_token_fetcher_for_user(payload.user_id.clone()),
-        )
-        .await
-        .map_err(|error| {
-            ApiError::internal_with("failed to connect while loading transcript history", error)
-        })?;
-        let mut scan_end = end;
-        let mut parts = Vec::new();
-        loop {
-            let start = scan_end.saturating_sub(TRANSCRIPT_CHUNK_SIZE);
-            crate::transcript_client::sync_range(
-                &state.transcript,
-                &client,
-                &payload.user_id,
-                &payload.thread_id,
-                start,
-                scan_end,
-            )
-            .await
-            .map_err(|error| ApiError::internal_with("failed to load transcript history", error))?;
-            let numbers = (start..scan_end).collect::<Vec<_>>();
-            let mut batch = state
-                .transcript
-                .read_parts(&payload.user_id, &payload.thread_id, &numbers)
-                .await
-                .map_err(|error| {
-                    ApiError::internal_with("failed to read transcript history", error)
-                })?;
-            if batch.len() != numbers.len() {
-                return Err(ApiError::internal_with(
-                    "incomplete transcript history",
-                    anyhow!("transcript parts are not yet available; retry the page"),
-                ));
-            }
-            batch.append(&mut parts);
-            parts = batch;
-            if sprocket_agent::message_page_start(&parts, limit, start == 0).is_some() || start == 0
-            {
-                break;
-            }
-            scan_end = start;
-        }
-    }
-
-    let page = state
-        .transcript
-        .page(
-            &payload.user_id,
-            &payload.thread_id,
-            Some(end),
-            payload.limit,
-        )
-        .await
-        .map_err(|error| ApiError::internal_with("failed to read transcript replica", error))?;
-    Ok(Json(page))
-}
-
 async fn parts_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     jar: CookieJar,
-    Json(payload): Json<TranscriptPageRequest>,
+    Json(payload): Json<TranscriptPartsRequest>,
 ) -> Result<Json<sprocket_agent::TranscriptPartsPage>, ApiError> {
     require_session_user(&state, &headers, &jar, &payload.user_id).await?;
     let transcript_state =
@@ -596,7 +451,7 @@ mod tests {
         ] {
             let valid = thread_id == "thread-1";
             assert_eq!(parse::<TranscriptScope>(thread_id, json!({})), valid);
-            assert_eq!(parse::<TranscriptPageRequest>(thread_id, json!({})), valid);
+            assert_eq!(parse::<TranscriptPartsRequest>(thread_id, json!({})), valid);
             assert_eq!(
                 parse::<TranscriptAttachmentRequest>(thread_id, json!({"storageId": "storage-1"})),
                 valid

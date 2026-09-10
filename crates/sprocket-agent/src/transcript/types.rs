@@ -170,18 +170,6 @@ pub struct TranscriptToolBody {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct TranscriptPage {
-    pub thread_id: String,
-    pub total_parts: u32,
-    pub history_from_number: u32,
-    pub stale: bool,
-    pub messages: Vec<TranscriptMessage>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_before: Option<u32>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct TranscriptPartsPage {
     pub thread_id: String,
     pub total_parts: u32,
