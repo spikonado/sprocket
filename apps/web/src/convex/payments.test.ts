@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { api } from '@convex/_generated/api';
+import { api, internal } from '@convex/_generated/api';
 import type { JsonObject, JsonValue } from '@convex/lib/json';
 import {
 	createQueuedRun,
@@ -307,12 +307,68 @@ describe('payments mandates', () => {
 			userId: 'user_alice',
 			pravaTransactionId: 'txn_9',
 			amount: 4_000,
-			status: 'awaiting_result'
+			status: 'awaiting_result',
+			claimGeneration: 1
 		});
 		expect(stored).not.toHaveProperty('token');
 		expect(stored).not.toHaveProperty('dynamicCvv');
 		expect(stored).not.toHaveProperty('expiryMonth');
 		expect(stored).not.toHaveProperty('expiryYear');
+	});
+
+	it('rejects markChargeProviderRequested after a stale reclaim bumps claimGeneration', async () => {
+		process.env.PRAVA_SECRET_KEY = 'sk_test_secret';
+		const t = initConvexTest();
+		const run = await startRun(t, 'user_alice');
+		const { setup } = await createApprovedMandate(t, run);
+
+		const first = await t.mutation(internal.payments.reserveCharge, {
+			mandateId: setup.mandateId,
+			runId: run.runId,
+			userId: 'user_alice',
+			amount: '40.00',
+			currency: 'USD',
+			description: 'Order 8842',
+			reference: 'order-gen'
+		});
+		expect(first).toMatchObject({ kind: 'reserved', claimGeneration: 1 });
+
+		await t.run(async (ctx) => {
+			if (first.kind !== 'reserved') throw new Error('expected reserved');
+			await ctx.db.patch('mandateCharges', first.chargeId, {
+				chargingStartedAt: Date.now() - 120_000
+			});
+		});
+
+		const reclaimed = await t.mutation(internal.payments.reserveCharge, {
+			mandateId: setup.mandateId,
+			runId: run.runId,
+			userId: 'user_alice',
+			amount: '40.00',
+			currency: 'USD',
+			description: 'Order 8842 retry',
+			reference: 'order-gen'
+		});
+		expect(reclaimed).toMatchObject({ kind: 'reserved', claimGeneration: 2 });
+		if (reclaimed.kind !== 'reserved' || first.kind !== 'reserved') {
+			throw new Error('expected reserved generations');
+		}
+
+		await expect(
+			t.mutation(internal.payments.markChargeProviderRequested, {
+				chargeId: first.chargeId,
+				userId: 'user_alice',
+				claimGeneration: first.claimGeneration
+			})
+		).rejects.toThrow(/taken over by another attempt/);
+
+		await expect(
+			t.mutation(internal.payments.markChargeProviderRequested, {
+				chargeId: reclaimed.chargeId,
+				userId: 'user_alice',
+				claimGeneration: reclaimed.claimGeneration
+			})
+		).resolves.toBeNull();
 	});
 
 	it('reuses a completed charge handle without replaying credentials', async () => {

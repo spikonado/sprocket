@@ -24,6 +24,7 @@ export const chargeDoc = v.object({
 	reportingStartedAt: v.optional(v.number()),
 	chargingStartedAt: v.optional(v.number()),
 	providerRequestedAt: v.optional(v.number()),
+	claimGeneration: v.optional(v.number()),
 	reportRetrierRunId: v.optional(v.string()),
 	createdAt: v.number(),
 	updatedAt: v.number()
