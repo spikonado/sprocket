@@ -87,18 +87,9 @@ Common Sprocket server overrides are available as environment variables:
 
 ### Requirements
 
-- Nix with flakes enabled
-
-Enter the default development shell and keep it open for the commands below:
-
-```sh
-nix develop
-```
-
-The shell runs Rust builds through [Kache](https://kunobi.ninja/docs/kache),
-whose local cache is shared by all worktrees. Do not run Rust commands outside
-the shell against this repository's `target` directory. Use `kache stats` to
-inspect cache usage.
+- Bun 1.x, version 1.3.9 or newer
+- Node.js 24.x, version 24.14 or newer
+- A current stable Rust toolchain
 
 Install dependencies:
 
