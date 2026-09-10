@@ -49,6 +49,18 @@
 				"filter": [
 					"**/*"
 				]
+			},
+			{
+				"from": "../../LICENSE.md",
+				"to": "LICENSE"
+			},
+			{
+				"from": "../../README.md",
+				"to": "README.md"
+			},
+			{
+				"from": "../../THIRD_PARTY_NOTICES.md",
+				"to": "THIRD_PARTY_NOTICES.md"
 			}
 		],
 		"publish": {
