@@ -1,6 +1,8 @@
 import { makeFunctionReference } from 'convex/server';
+import { validate } from 'convex-helpers/validators';
 import { describe, expect, it } from 'vitest';
 import { api } from '@convex/_generated/api';
+import { vExecutorJobPayload } from '@convex/lib/validators';
 import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 
 describe('browser screenshot results', () => {
@@ -41,7 +43,7 @@ describe('browser screenshot results', () => {
 
 describe('retired browser clients', () => {
 	it.each(['browser_interact', 'browser_screenshot'] as const)(
-		'rejects disable_saving on new %s jobs but preserves recorded calls',
+		'rejects disable_saving on new and stored %s jobs',
 		async (kind) => {
 			const t = initConvexTest();
 			const { asUser, threadId } = await seedOwnedThread(t);
@@ -62,19 +64,7 @@ describe('retired browser clients', () => {
 					payload
 				})
 			).rejects.toThrow();
-			const jobId = await t.run((ctx) =>
-				ctx.db.insert('executorJobs', {
-					threadId,
-					runId,
-					kind,
-					payload,
-					status: 'completed',
-					hidden: false,
-					enqueuedAt: 1,
-					sequence: 0
-				})
-			);
-			expect((await t.run((ctx) => ctx.db.get('executorJobs', jobId)))?.payload).toEqual(payload);
+			expect(validate(vExecutorJobPayload, payload)).toBe(false);
 		}
 	);
 

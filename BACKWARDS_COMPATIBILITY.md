@@ -47,8 +47,6 @@ Production still contains historical Browserbase executor jobs. Their stored kin
 
 Browser screenshot results now add local image-cache metadata without changing the `browserAgent.screenshot` transport. The result validator still accepts the older size-only screenshot records, which cannot replay pixels. Keep that result shape while the transport and oversized captures use it, and until stored records and clients no longer depend on it.
 
-Stored browser tool payloads still accept `disable_saving` to preserve historical calls. Current tool inputs and browser actions do not accept it; the unreleased Firecrawl clients must update together. Remove `vHistoricalBrowserSavingPayload` once no stored executor jobs contain that field. It is not reinterpreted as `enforce_saving`, which has different semantics.
-
 ## Transcript projection API
 
 Attachment compatibility covers older stored schemas only. Older-client shims
