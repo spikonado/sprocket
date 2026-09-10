@@ -24,7 +24,6 @@ fn is_false(value: &bool) -> bool {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct BrowserInteractArgs {
-    /// Full agent-browser command, including the `agent-browser` prefix.
     command: String,
     /// Set to true to ensure that cookies and login state that you change are preserved across the user's conversations with other agents in Sprocket. Recommended when you know for sure you are going to be changing login state on websites.
     #[serde(default, skip_serializing_if = "is_false")]
