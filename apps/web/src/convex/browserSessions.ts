@@ -1,6 +1,12 @@
 import { v } from 'convex/values';
-import type { Id } from '@convex/_generated/dataModel';
-import { internalMutation, internalQuery, query } from '@convex/_generated/server';
+import type { Doc, Id } from '@convex/_generated/dataModel';
+import {
+	internalMutation,
+	internalQuery,
+	query,
+	type MutationCtx,
+	type QueryCtx
+} from '@convex/_generated/server';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
 
@@ -25,14 +31,48 @@ const browserSessionDoc = v.object({
 	startedAt: v.number()
 });
 
+async function listBrowserSessions(
+	ctx: QueryCtx | MutationCtx,
+	threadId: Id<'threadRecords'>
+): Promise<Doc<'browserSessions'>[]> {
+	return await ctx.db
+		.query('browserSessions')
+		.withIndex('by_thread', (query) => query.eq('threadId', threadId))
+		.collect();
+}
+
+/** Latest startedAt wins so a rotated session beats a leftover older row. */
+function pickBrowserSession(rows: Array<Doc<'browserSessions'>>): Doc<'browserSessions'> | null {
+	if (rows.length === 0) return null;
+	return [...rows].sort((a, b) => b.startedAt - a.startedAt || b._id.localeCompare(a._id))[0];
+}
+
+async function getBrowserSession(
+	ctx: QueryCtx | MutationCtx,
+	threadId: Id<'threadRecords'>
+): Promise<Doc<'browserSessions'> | null> {
+	return pickBrowserSession(await listBrowserSessions(ctx, threadId));
+}
+
+/** Mutation-only: collapse concurrent upsert races onto the latest session. */
+async function getBrowserSessionExclusive(
+	ctx: MutationCtx,
+	threadId: Id<'threadRecords'>
+): Promise<Doc<'browserSessions'> | null> {
+	const rows = await listBrowserSessions(ctx, threadId);
+	const keep = pickBrowserSession(rows);
+	if (!keep) return null;
+	for (const row of rows) {
+		if (row._id !== keep._id) await ctx.db.delete('browserSessions', row._id);
+	}
+	return keep;
+}
+
 export const getForThread = internalQuery({
 	args: { threadId: v.id('threadRecords'), userId: v.string() },
 	returns: v.union(browserSessionDoc, v.null()),
 	handler: async (ctx, args) => {
-		const session = await ctx.db
-			.query('browserSessions')
-			.withIndex('by_thread', (query) => query.eq('threadId', args.threadId))
-			.first();
+		const session = await getBrowserSession(ctx, args.threadId);
 		return session?.userId === args.userId ? session : null;
 	}
 });
@@ -53,10 +93,7 @@ export const liveViewForThread = query({
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
-		const session = await ctx.db
-			.query('browserSessions')
-			.withIndex('by_thread', (query) => query.eq('threadId', args.threadId))
-			.first();
+		const session = await getBrowserSession(ctx, args.threadId);
 		if (!session) return null;
 		return {
 			url: session.liveViewUrl ?? null,
@@ -67,8 +104,8 @@ export const liveViewForThread = query({
 });
 
 /** Record the live Browserbase session for a thread, replacing any prior one.
- * Transactional, so concurrent runs in a thread can't leave duplicate rows
- * pointing at different sessions. runId tracks which run (re)created it. */
+ * Concurrent upserts can still insert extras; mutations collapse them onto
+ * the latest row. runId tracks which run (re)created it. */
 export const upsertForThread = internalMutation({
 	args: {
 		threadId: v.id('threadRecords'),
@@ -79,10 +116,7 @@ export const upsertForThread = internalMutation({
 	},
 	returns: v.id('browserSessions'),
 	handler: async (ctx, args) => {
-		const existing = await ctx.db
-			.query('browserSessions')
-			.withIndex('by_thread', (query) => query.eq('threadId', args.threadId))
-			.first();
+		const existing = await getBrowserSessionExclusive(ctx, args.threadId);
 		if (existing) {
 			// A rotated session must not keep the dead session's URL when its own
 			// live view URL is not known yet: patching undefined clears the field.
@@ -113,10 +147,7 @@ export const touchForThread = internalMutation({
 	args: { threadId: v.id('threadRecords'), runId: v.id('runs') },
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const existing = await ctx.db
-			.query('browserSessions')
-			.withIndex('by_thread', (query) => query.eq('threadId', args.threadId))
-			.first();
+		const existing = await getBrowserSessionExclusive(ctx, args.threadId);
 		if (existing && existing.lastUsedRunId !== args.runId) {
 			await ctx.db.patch('browserSessions', existing._id, { lastUsedRunId: args.runId });
 		}
@@ -135,10 +166,7 @@ export const setLiveViewUrl = internalMutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const existing = await ctx.db
-			.query('browserSessions')
-			.withIndex('by_thread', (query) => query.eq('threadId', args.threadId))
-			.first();
+		const existing = await getBrowserSessionExclusive(ctx, args.threadId);
 		// The session may have rotated while the URL was being fetched; stamping
 		// the old session's URL onto the new row would point the live view at a
 		// dead browser.
