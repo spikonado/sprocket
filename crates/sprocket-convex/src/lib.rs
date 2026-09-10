@@ -12,6 +12,8 @@ use tokio::time::timeout;
 
 mod auth;
 mod decode;
+#[cfg(test)]
+mod tests;
 
 use auth::AuthState;
 pub use decode::{
@@ -76,7 +78,10 @@ impl Client {
         let mut convex = self.inner.convex.lock().await;
         let generation = self.inner.auth.install(fetcher).await;
         convex
-            .set_auth_callback(Some(sdk_fetcher(Arc::downgrade(&self.inner), generation)))
+            .set_auth_callback(Some(sdk_fetcher(
+                Arc::downgrade(&self.inner.auth),
+                generation,
+            )))
             .await;
     }
 
@@ -139,14 +144,11 @@ async fn clone_locked<T: Clone>(inner: &Mutex<T>) -> T {
     inner.lock().await.clone()
 }
 
-fn sdk_fetcher(inner: Weak<Inner>, generation: u64) -> convex::AuthTokenFetcher {
+fn sdk_fetcher(auth: Weak<AuthState>, generation: u64) -> convex::AuthTokenFetcher {
     Box::new(move |force_refresh| {
-        let inner = inner.clone();
+        let auth = auth.clone();
         Box::pin(async move {
-            let auth = {
-                let inner = inner.upgrade().context("convex client dropped")?;
-                Arc::clone(&inner.auth)
-            };
+            let auth = auth.upgrade().context("convex client dropped")?;
             let token = match auth.resolve(generation, force_refresh).await {
                 Ok(token) => token,
                 Err(error) if error.is::<AuthSignedOut>() => return Ok(AuthenticationToken::None),
@@ -167,6 +169,6 @@ async fn apply_pending_token(inner: Weak<Inner>, generation: u64) {
         return;
     }
     convex
-        .set_auth_callback(Some(sdk_fetcher(Arc::downgrade(&inner), generation)))
+        .set_auth_callback(Some(sdk_fetcher(Arc::downgrade(&inner.auth), generation)))
         .await;
 }
