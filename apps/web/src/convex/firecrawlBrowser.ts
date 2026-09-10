@@ -44,9 +44,31 @@ const sessionsSchema = envelopeSchema.extend({
 });
 
 class FirecrawlError extends Error {
-	constructor(readonly status: number) {
-		super(`Firecrawl request failed (HTTP ${status}).`);
+	constructor(
+		readonly status: number,
+		detail?: string,
+		retryAfterSeconds?: number
+	) {
+		super(
+			[
+				`Firecrawl request failed (HTTP ${status}).`,
+				detail || (status === 429 ? 'A request-rate or concurrency limit was reached.' : ''),
+				retryAfterSeconds === undefined
+					? ''
+					: `Wait at least ${retryAfterSeconds} seconds before retrying.`
+			]
+				.filter(Boolean)
+				.join(' ')
+		);
 	}
+}
+
+function retryAfterSeconds(response: Response): number | undefined {
+	const value = response.headers.get('retry-after')?.trim();
+	if (!value) return undefined;
+	const numeric = Number(value);
+	const seconds = Number.isFinite(numeric) ? numeric : (Date.parse(value) - Date.now()) / 1_000;
+	return Number.isFinite(seconds) && seconds >= 0 ? Math.ceil(seconds) : undefined;
 }
 
 function isGone<T>(error: T): error is T & FirecrawlError {
@@ -138,7 +160,15 @@ async function request(
 		body: body === undefined ? undefined : JSON.stringify(body),
 		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
 	});
-	if (!response.ok) throw new FirecrawlError(response.status);
+	if (!response.ok) {
+		const retryAfter = retryAfterSeconds(response);
+		const data = await readJson(response, 'reject').catch(() => null);
+		throw new FirecrawlError(
+			response.status,
+			data?.error?.trim().slice(0, MAX_RESULT_CHARS),
+			retryAfter
+		);
+	}
 	return readJson(response, method === 'DELETE' ? 'success' : 'reject');
 }
 
@@ -362,6 +392,9 @@ async function execute(
 			throw new ConvexError(
 				'browser_expired: The browser session ended. No action was replayed. Retry to open a new session from the saved profile. Unsaved browser state may be lost.'
 			);
+		}
+		if (executing && error instanceof FirecrawlError && error.status === 429) {
+			throw new ConvexError(`${error.message} The command did not run.`);
 		}
 		if (executing) {
 			await ctx.runMutation(internal.browserSessions.quarantine, {

@@ -135,29 +135,34 @@ describe('Firecrawl browser lifecycle', () => {
 		).toHaveLength(3);
 	});
 
-	it('leaves the reader intact when a saving replacement cannot be opened', async () => {
-		const fetch = remote().mockResolvedValueOnce(new Response('{}', { status: 409 }));
-		const t = initConvexTest();
-		const { runId, claimId, executionSecret } = await fixture(t);
-		const args = { runId, claimId, executionSecret, command: 'get url' };
-		await t.action(api.browserAgent.interact, args);
-		fetch.mockResolvedValueOnce(new Response('{}', { status: 409 }));
-		await expect(
-			t.action(api.browserAgent.interact, { ...args, enforce_saving: true })
-		).rejects.toThrow(
-			"Saving can't be enforced currently as the main browser session is in use by another agent. Ask the user whether they want the cookies and login state saved for future use. If yes, they have to stop the other agent and its browser session."
-		);
-		expect(fetch).toHaveBeenCalledTimes(4);
-		expect(await t.run((ctx) => ctx.db.query('browserSessions').unique())).toMatchObject({
-			sessionId: 'session-1',
-			saveChanges: false,
-			closing: false,
-			operationExpiresAt: 0
-		});
-		await t.action(api.browserAgent.interact, args);
-		expect(fetch.mock.lastCall?.[0]).toContain('/session-1/execute');
-		expect(fetch.mock.calls.some(([, options]) => options.method === 'DELETE')).toBe(false);
-	});
+	it.each([409, 429])(
+		'leaves the reader intact when a saving replacement returns %s',
+		async (status) => {
+			const fetch = remote().mockResolvedValueOnce(new Response('{}', { status: 409 }));
+			const t = initConvexTest();
+			const { runId, claimId, executionSecret } = await fixture(t);
+			const args = { runId, claimId, executionSecret, command: 'get url' };
+			await t.action(api.browserAgent.interact, args);
+			fetch.mockResolvedValueOnce(new Response('{}', { status }));
+			await expect(
+				t.action(api.browserAgent.interact, { ...args, enforce_saving: true })
+			).rejects.toThrow(
+				status === 409
+					? "Saving can't be enforced currently as the main browser session is in use by another agent. Ask the user whether they want the cookies and login state saved for future use. If yes, they have to stop the other agent and its browser session."
+					: 'A request-rate or concurrency limit was reached.'
+			);
+			expect(fetch).toHaveBeenCalledTimes(4);
+			expect(await t.run((ctx) => ctx.db.query('browserSessions').unique())).toMatchObject({
+				sessionId: 'session-1',
+				saveChanges: false,
+				closing: false,
+				operationExpiresAt: 0
+			});
+			await t.action(api.browserAgent.interact, args);
+			expect(fetch.mock.lastCall?.[0]).toContain('/session-1/execute');
+			expect(fetch.mock.calls.some(([, options]) => options.method === 'DELETE')).toBe(false);
+		}
+	);
 
 	it.each(['saving disabled', 'cancelled', 'reset'])(
 		'discards an upgrade without executing when %s during creation',
@@ -800,26 +805,105 @@ describe('Firecrawl browser lifecycle', () => {
 		expect(await t.run((ctx) => ctx.db.query('browserSessions').collect())).toHaveLength(0);
 	});
 
-	it('quarantines uncertain execution without replaying it', async () => {
+	it('reports the provider concurrency limit without retrying creation or falling back to a reader', async () => {
+		const detail = 'You have reached the maximum number of concurrent jobs (2).';
+		const fetch = remote().mockResolvedValueOnce(
+			new Response(JSON.stringify({ success: false, error: detail }), { status: 429 })
+		);
+		const t = initConvexTest();
+		const { runId, claimId, executionSecret } = await fixture(t);
+		await expect(
+			t.action(api.browserAgent.interact, { runId, claimId, executionSecret, command: 'get url' })
+		).rejects.toThrow(`Firecrawl request failed (HTTP 429). ${detail}`);
+		expect(fetch).toHaveBeenCalledTimes(1);
+		expect(await t.run((ctx) => ctx.db.query('browserSessions').unique())).toBeNull();
+	});
+
+	it.each(['seconds', 'date'])(
+		'keeps a rate-limited session open and reports Retry-After as %s without replaying the command',
+		async (format) => {
+			vi.useFakeTimers();
+			vi.setSystemTime(new Date('2026-09-10T12:00:00Z'));
+			const fetch = remote();
+			const t = initConvexTest();
+			const { runId, claimId, executionSecret } = await fixture(t);
+			const args = { runId, claimId, executionSecret, command: 'click @e1' };
+			await t.action(api.browserAgent.interact, args);
+			const session = await t.run((ctx) => ctx.db.query('browserSessions').unique());
+			fetch.mockResolvedValueOnce(
+				new Response(JSON.stringify({ success: false, error: 'Rate limit exceeded.' }), {
+					status: 429,
+					headers: {
+						'Retry-After': format === 'seconds' ? '30' : 'Thu, 10 Sep 2026 12:00:30 GMT'
+					}
+				})
+			);
+			await expect(t.action(api.browserAgent.interact, args)).rejects.toThrow(
+				'Firecrawl request failed (HTTP 429). Rate limit exceeded. Wait at least 30 seconds before retrying. The command did not run.'
+			);
+			await vi.advanceTimersByTimeAsync(0);
+			await t.finishInProgressScheduledFunctions();
+			expect(fetch).toHaveBeenCalledTimes(3);
+			expect(await t.run((ctx) => ctx.db.query('browserSessions').unique())).toEqual(session);
+			await t.action(api.browserAgent.interact, args);
+			expect(fetch).toHaveBeenCalledTimes(4);
+			expect(fetch.mock.lastCall?.[0]).toContain('/session-1/execute');
+		}
+	);
+
+	it.each([
+		['<html>Too many requests</html>', 'invalid'],
+		[JSON.stringify({ success: false, error: { unexpected: true } }), '-1'],
+		['', ''],
+		['x'.repeat(2_000_001), 'Infinity']
+	])('preserves the 429 status when error data is unusable, case %#', async (body, retryAfter) => {
 		const fetch = remote();
 		const t = initConvexTest();
 		const { runId, claimId, executionSecret } = await fixture(t);
-		const args = { runId, claimId, executionSecret, command: 'click @e1' };
+		const args = { runId, claimId, executionSecret, command: 'get url' };
 		await t.action(api.browserAgent.interact, args);
-		fetch.mockRejectedValue(new Error('Connection reset'));
+		fetch.mockResolvedValueOnce(
+			new Response(body, { status: 429, headers: { 'Retry-After': retryAfter } })
+		);
 		await expect(t.action(api.browserAgent.interact, args)).rejects.toThrow(
-			/^The provider did not confirm whether the command completed\. The session is closing\. Do not repeat purchases, messages, or other actions without checking their outcome first\.$/
+			/^Firecrawl request failed \(HTTP 429\)\. A request-rate or concurrency limit was reached\. The command did not run\.$/
 		);
 		expect(fetch).toHaveBeenCalledTimes(3);
-		expect(await t.run((ctx) => ctx.db.query('browserSessions').first())).toMatchObject({
-			closing: true
+		expect(await t.run((ctx) => ctx.db.query('browserSessions').unique())).toMatchObject({
+			closing: false,
+			operationExpiresAt: 0
 		});
-		await expect(t.action(api.browserAgent.interact, args)).rejects.toThrow(
-			/^The browser is closing\. Retry shortly\.$/
-		);
-		await expect(
-			t.action(api.browserAgent.screenshot, { runId, claimId, executionSecret })
-		).rejects.toThrow(/^The browser is closing\. Retry shortly\.$/);
-		expect(fetch.mock.calls.filter(([, options]) => options.method === 'POST')).toHaveLength(3);
 	});
+
+	it.each(['connection reset', 503] as const)(
+		'quarantines uncertain execution after %s without replaying it',
+		async (failure) => {
+			const fetch = remote();
+			const t = initConvexTest();
+			const { runId, claimId, executionSecret } = await fixture(t);
+			const args = { runId, claimId, executionSecret, command: 'click @e1' };
+			await t.action(api.browserAgent.interact, args);
+			if (failure === 'connection reset') fetch.mockRejectedValue(new Error('Connection reset'));
+			else
+				fetch.mockResolvedValue(
+					new Response(JSON.stringify({ success: false, error: 'Unavailable' }), {
+						status: failure
+					})
+				);
+			await expect(t.action(api.browserAgent.interact, args)).rejects.toThrow(
+				/^The provider did not confirm whether the command completed\. The session is closing\. Do not repeat purchases, messages, or other actions without checking their outcome first\.$/
+			);
+			expect(fetch).toHaveBeenCalledTimes(3);
+			expect(await t.run((ctx) => ctx.db.query('browserSessions').first())).toMatchObject({
+				closing: true
+			});
+			await expect(t.action(api.browserAgent.interact, args)).rejects.toThrow(
+				/^The browser is closing\. Retry shortly\.$/
+			);
+			await expect(
+				t.action(api.browserAgent.screenshot, { runId, claimId, executionSecret })
+			).rejects.toThrow(/^The browser is closing\. Retry shortly\.$/);
+			expect(fetch.mock.calls.filter(([, options]) => options.method === 'POST')).toHaveLength(3);
+		}
+	);
 });
