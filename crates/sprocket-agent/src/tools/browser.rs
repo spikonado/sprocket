@@ -46,18 +46,9 @@ struct BrowserScreenshotResult {
     truncated: bool,
 }
 
-/// Screenshots must go through browser_screenshot; capture them from here and
-/// the transcript loses the image block and the size cap that comes with it.
-fn screenshot_subcommand(command: &str) -> bool {
+fn is_screenshot_command(command: &str) -> bool {
     let mut tokens = command.split_whitespace();
-    if tokens.next() == Some("agent-browser") {
-        return tokens.next() == Some("screenshot");
-    }
-    command.split_whitespace().next() == Some("screenshot")
-}
-
-fn is_json_command(command: &str) -> bool {
-    command.trim_start().starts_with('{')
+    tokens.next() == Some("agent-browser") && tokens.next() == Some("screenshot")
 }
 
 impl rig::tool::Tool for BrowserInteractTool {
@@ -67,7 +58,7 @@ impl rig::tool::Tool for BrowserInteractTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Run an agent-browser (a CLI tool) command in a persistent browser session in the cloud. Omit the `agent-browser` prefix. Run `help` to learn more about the CLI. This session may retain cookies and login state on websites used by the user with other agents in Sprocket.".to_string()
+        "Run an agent-browser CLI command in a persistent browser session in the cloud. Run `agent-browser help` to learn more about the CLI. This session may retain cookies and login state on websites used by the user with other agents in Sprocket.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -79,19 +70,12 @@ impl rig::tool::Tool for BrowserInteractTool {
         _context: &mut rig::tool::ToolContext,
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
+        if is_screenshot_command(&args.command) {
+            return Err(tool_failure(
+                "Use the browser_screenshot tool instead of `agent-browser screenshot`.",
+            ));
+        }
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
-        if is_json_command(&args.command) {
-            return Err(tool_failure(
-                "command must be a plain agent-browser command string like 'open https://example.com' or 'snapshot -i', not JSON."
-                    .to_string(),
-            ));
-        }
-        if screenshot_subcommand(&args.command) {
-            return Err(tool_failure(
-                "Use the browser_screenshot tool instead of `agent-browser screenshot`."
-                    .to_string(),
-            ));
-        }
         let action_args = action_args_from_payload(&self.0.run_id, &self.0.claim_id, &payload)?;
         execute_tool_job(
             &self.0.runtime,
@@ -223,24 +207,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn json_object_commands_are_detected_for_guidance_errors() {
-        assert!(is_json_command(r#"{"instruction": "go to robu.in"}"#));
-        assert!(is_json_command("  {\"startUrl\": \"https://x\"}"));
-        assert!(!is_json_command("open https://example.com"));
-        assert!(!is_json_command("snapshot -i"));
-    }
-
-    #[test]
-    fn screenshot_subcommand_is_detected_with_or_without_cli_prefix() {
-        assert!(screenshot_subcommand("screenshot"));
-        assert!(screenshot_subcommand("screenshot --full-page"));
-        assert!(screenshot_subcommand("agent-browser screenshot"));
-        assert!(!screenshot_subcommand("snapshot -i"));
-        assert!(!screenshot_subcommand("agent-browser snapshot"));
-        assert!(!screenshot_subcommand("open https://example.com"));
-        // Only the dedicated subcommand is routed away; other commands may
-        // legitimately mention the word in an argument.
-        assert!(!screenshot_subcommand("find text \"screenshot\" click"));
+    fn screenshot_commands_use_the_dedicated_tool() {
+        for command in [
+            "agent-browser screenshot",
+            "agent-browser screenshot --full-page",
+        ] {
+            assert!(is_screenshot_command(command));
+        }
+        for command in [
+            "agent-browser snapshot",
+            "agent-browser open https://example.com",
+            "agent-browser find text \"screenshot\" click",
+        ] {
+            assert!(!is_screenshot_command(command));
+        }
     }
 
     fn png() -> Vec<u8> {
@@ -402,12 +382,12 @@ mod tests {
     #[test]
     fn saving_enforcement_is_opt_in_and_only_on_interact() {
         let interact: BrowserInteractArgs =
-            serde_json::from_value(serde_json::json!({ "command": "snapshot -i" }))
+            serde_json::from_value(serde_json::json!({ "command": "agent-browser snapshot -i" }))
                 .expect("minimal interact args");
         assert!(!interact.enforce_saving);
         assert_eq!(
             serde_json::to_value(&interact).unwrap(),
-            serde_json::json!({ "command": "snapshot -i" })
+            serde_json::json!({ "command": "agent-browser snapshot -i" })
         );
 
         let screenshot: BrowserScreenshotArgs =
@@ -418,11 +398,14 @@ mod tests {
         );
 
         let interact = BrowserInteractArgs {
-            command: "help".to_string(),
+            command: "agent-browser help".to_string(),
             enforce_saving: true,
         };
         let payload = serde_json::to_value(interact).unwrap();
-        assert_eq!(payload, json!({"command": "help", "enforce_saving": true}));
+        assert_eq!(
+            payload,
+            json!({"command": "agent-browser help", "enforce_saving": true})
+        );
         let args = action_args_from_payload("run-1", "claim-1", &payload).unwrap();
         assert_eq!(args.get("enforce_saving"), Some(&Value::Boolean(true)));
         let schema = json!(schemars::schema_for!(BrowserInteractArgs));
@@ -437,7 +420,7 @@ mod tests {
         );
         assert!(
             serde_json::from_value::<BrowserInteractArgs>(
-                json!({"command": "help", "disable_saving": true})
+                json!({"command": "agent-browser help", "disable_saving": true})
             )
             .is_err()
         );

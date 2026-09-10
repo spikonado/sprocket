@@ -91,9 +91,9 @@ describe('Firecrawl browser lifecycle', () => {
 		const first = await fixture(t, 'first');
 		const second = await fixture(t, 'second');
 		const third = await fixture(t, 'third');
-		await interact(t, { ...first, command: 'get url' });
-		await interact(t, { ...second, command: 'get url' });
-		await expect(interact(t, { ...third, command: 'get url' })).rejects.toThrow(
+		await interact(t, { ...first, command: 'agent-browser get url' });
+		await interact(t, { ...second, command: 'agent-browser get url' });
+		await expect(interact(t, { ...third, command: 'agent-browser get url' })).rejects.toThrow(
 			'Both browser session slots are in use'
 		);
 		expect(fetch).toHaveBeenCalledTimes(4);
@@ -112,13 +112,13 @@ describe('Firecrawl browser lifecycle', () => {
 		await vi.advanceTimersByTimeAsync(0);
 		await t.finishInProgressScheduledFunctions();
 		expect(await t.run((ctx) => ctx.db.query('browserCapacity').collect())).toHaveLength(2);
-		await expect(interact(t, { ...third, command: 'get url' })).rejects.toThrow(
+		await expect(interact(t, { ...third, command: 'agent-browser get url' })).rejects.toThrow(
 			'Both browser session slots are in use'
 		);
 		await vi.advanceTimersByTimeAsync(60_000);
 		await t.finishInProgressScheduledFunctions();
 		expect(await t.run((ctx) => ctx.db.query('browserCapacity').collect())).toHaveLength(1);
-		await interact(t, { ...third, command: 'get url' });
+		await interact(t, { ...third, command: 'agent-browser get url' });
 		expect(await t.run((ctx) => ctx.db.query('browserCapacity').collect())).toHaveLength(2);
 	});
 
@@ -128,8 +128,8 @@ describe('Firecrawl browser lifecycle', () => {
 		const t = initConvexTest();
 		const auth = await fixture(t);
 		for (let i = 0; i < 2; i++)
-			await expect(interact(t, { ...auth, command: 'click @e1' })).rejects.toThrow();
-		await expect(interact(t, { ...auth, command: 'click @e1' })).rejects.toThrow(
+			await expect(interact(t, { ...auth, command: 'agent-browser click @e1' })).rejects.toThrow();
+		await expect(interact(t, { ...auth, command: 'agent-browser click @e1' })).rejects.toThrow(
 			'Both browser session slots are in use'
 		);
 		expect(fetch).toHaveBeenCalledTimes(2);
@@ -153,10 +153,10 @@ describe('Firecrawl browser lifecycle', () => {
 		const t = initConvexTest();
 		const first = await fixture(t, 'reader');
 		const second = await fixture(t, 'other');
-		await interact(t, { ...first, command: 'get url' });
-		await interact(t, { ...second, command: 'get url' });
+		await interact(t, { ...first, command: 'agent-browser get url' });
+		await interact(t, { ...second, command: 'agent-browser get url' });
 		await expect(
-			interact(t, { ...first, command: 'click @e1', enforce_saving: true })
+			interact(t, { ...first, command: 'agent-browser click @e1', enforce_saving: true })
 		).rejects.toThrow('Both browser session slots are in use');
 		expect(fetch).toHaveBeenCalledTimes(5);
 		expect(fetch.mock.calls.some(([, options]) => options.method === 'DELETE')).toBe(false);
@@ -178,7 +178,7 @@ describe('Firecrawl browser lifecycle', () => {
 			runId,
 			claimId,
 			executionSecret,
-			command: 'get url'
+			command: 'agent-browser get url'
 		});
 		const requests = fetch.mock.calls.map(([, options]) => JSON.parse(String(options.body)));
 		expect(requests.map((body) => body.profile?.saveChanges)).toEqual([true, false, undefined]);
@@ -200,7 +200,7 @@ describe('Firecrawl browser lifecycle', () => {
 					runId,
 					claimId,
 					executionSecret,
-					command: 'click @e1'
+					command: 'agent-browser click @e1'
 				})
 			).rejects.toThrow();
 			expect(fetch).toHaveBeenCalledTimes(1);
@@ -217,7 +217,7 @@ describe('Firecrawl browser lifecycle', () => {
 				runId,
 				claimId,
 				executionSecret,
-				command: 'open https://example.com',
+				command: 'agent-browser open https://example.com',
 				enforce_saving: true
 			})
 		).rejects.toThrow('browser saving is disabled in Settings');
@@ -229,7 +229,7 @@ describe('Firecrawl browser lifecycle', () => {
 		const fetch = remote().mockResolvedValueOnce(new Response('{}', { status: 409 }));
 		const t = initConvexTest();
 		const { runId, claimId, executionSecret } = await fixture(t);
-		const args = { runId, claimId, executionSecret, command: 'get url' };
+		const args = { runId, claimId, executionSecret, command: 'agent-browser get url' };
 		await interact(t, args);
 		const reader = await t.run((ctx) => ctx.db.query('browserSessions').unique());
 		vi.setSystemTime(Date.now() + 1_000);
@@ -257,7 +257,7 @@ describe('Firecrawl browser lifecycle', () => {
 			const fetch = remote().mockResolvedValueOnce(new Response('{}', { status: 409 }));
 			const t = initConvexTest();
 			const { runId, claimId, executionSecret } = await fixture(t);
-			const args = { runId, claimId, executionSecret, command: 'get url' };
+			const args = { runId, claimId, executionSecret, command: 'agent-browser get url' };
 			await interact(t, args);
 			fetch.mockResolvedValueOnce(new Response('{}', { status }));
 			await expect(interact(t, { ...args, enforce_saving: true })).rejects.toThrow(
@@ -285,7 +285,7 @@ describe('Firecrawl browser lifecycle', () => {
 			const fetch = remote().mockResolvedValueOnce(new Response('{}', { status: 409 }));
 			const t = initConvexTest();
 			const { asUser, runId, claimId, executionSecret } = await fixture(t);
-			const args = { runId, claimId, executionSecret, command: 'get url' };
+			const args = { runId, claimId, executionSecret, command: 'agent-browser get url' };
 			await interact(t, args);
 			fetch.mockImplementationOnce(async () => {
 				if (change === 'saving disabled')
@@ -318,7 +318,7 @@ describe('Firecrawl browser lifecycle', () => {
 		const fetch = remote().mockResolvedValueOnce(new Response('{}', { status: 409 }));
 		const t = initConvexTest();
 		const { runId, claimId, executionSecret } = await fixture(t);
-		const args = { runId, claimId, executionSecret, command: 'get url' };
+		const args = { runId, claimId, executionSecret, command: 'agent-browser get url' };
 		await interact(t, args);
 		fetch.mockResolvedValueOnce(new Response(JSON.stringify({ success: true, id: 'writer' })));
 		await interact(t, { ...args, enforce_saving: true });
@@ -346,7 +346,7 @@ describe('Firecrawl browser lifecycle', () => {
 		const fetch = remote();
 		const t = initConvexTest();
 		const { asUser, runId, claimId, executionSecret } = await fixture(t);
-		const args = { runId, claimId, executionSecret, command: 'click @e1' };
+		const args = { runId, claimId, executionSecret, command: 'agent-browser click @e1' };
 		if (replacing) {
 			fetch.mockResolvedValueOnce(new Response('{}', { status: 409 }));
 			await interact(t, args);
@@ -381,7 +381,7 @@ describe('Firecrawl browser lifecycle', () => {
 		const fetch = remote();
 		const t = initConvexTest();
 		const { asUser, runId, claimId, executionSecret } = await fixture(t);
-		const args = { runId, claimId, executionSecret, command: 'get url' };
+		const args = { runId, claimId, executionSecret, command: 'agent-browser get url' };
 		await interact(t, args);
 		const session = await t.run((ctx) => ctx.db.query('browserSessions').unique());
 		fetch.mockImplementationOnce(async () => {
@@ -415,7 +415,7 @@ describe('Firecrawl browser lifecycle', () => {
 			const fetch = remote();
 			const t = initConvexTest();
 			const { asUser, userId, threadId, runId, claimId, executionSecret } = await fixture(t);
-			const args = { runId, claimId, executionSecret, command: 'get url' };
+			const args = { runId, claimId, executionSecret, command: 'agent-browser get url' };
 			const replacing = transition === 'saving upgrade';
 			if (replacing) {
 				fetch.mockResolvedValueOnce(new Response('{}', { status: 409 }));
@@ -476,12 +476,19 @@ describe('Firecrawl browser lifecycle', () => {
 		}
 	);
 
-	it('maps the advertised help command to CLI help', async () => {
+	it.each([
+		'agent-browser help',
+		'agent-browser --json get url',
+		'agent-browser fill @e1 "$(touch /tmp/owned); echo secret"'
+	])('forwards %s to Firecrawl unchanged', async (command) => {
 		const fetch = remote();
 		const t = initConvexTest();
 		const { runId, claimId, executionSecret } = await fixture(t);
-		await interact(t, { runId, claimId, executionSecret, command: 'help' });
-		expect(JSON.parse(String(fetch.mock.calls[1][1].body)).code).toBe("'agent-browser' '--help'");
+		await interact(t, { runId, claimId, executionSecret, command });
+		expect(JSON.parse(String(fetch.mock.calls[1][1].body))).toMatchObject({
+			code: command,
+			language: 'bash'
+		});
 	});
 
 	it('does not discard an attached session when its attachment acknowledgement is lost', async () => {
@@ -493,7 +500,7 @@ describe('Firecrawl browser lifecycle', () => {
 			runId,
 			claimId,
 			executionSecret,
-			command: 'get url'
+			command: 'agent-browser get url'
 		});
 		const session = await t.run((ctx) => ctx.db.query('browserSessions').unique());
 		await t.mutation(internal.browserSessions.discardUnattached, {
@@ -564,7 +571,7 @@ describe('Firecrawl browser lifecycle', () => {
 					runId,
 					claimId,
 					executionSecret,
-					command: 'get url'
+					command: 'agent-browser get url'
 				})
 			).toEqual({ text: 'Done', truncated: false });
 		}
@@ -593,7 +600,7 @@ describe('Firecrawl browser lifecycle', () => {
 			runId,
 			claimId,
 			executionSecret,
-			command: 'get url'
+			command: 'agent-browser get url'
 		});
 		const session = await t.run((ctx) => ctx.db.query('browserSessions').unique());
 		expect(session?.expiresAt).toBe((session?.startedAt ?? 0) + 3_600_000);
@@ -608,7 +615,7 @@ describe('Firecrawl browser lifecycle', () => {
 				runId,
 				claimId,
 				executionSecret,
-				command: 'click @e1',
+				command: 'agent-browser click @e1',
 				enforce_saving: true
 			})
 		).rejects.toThrow(
@@ -622,7 +629,7 @@ describe('Firecrawl browser lifecycle', () => {
 		const fetch = remote();
 		const t = initConvexTest();
 		const { asUser, runId, claimId, executionSecret } = await fixture(t);
-		const args = { runId, claimId, executionSecret, command: 'get url' };
+		const args = { runId, claimId, executionSecret, command: 'agent-browser get url' };
 		await interact(t, args);
 		await asUser.mutation(api.browserProfiles.setSaving, { enabled: false });
 		await interact(t, args);
@@ -639,7 +646,7 @@ describe('Firecrawl browser lifecycle', () => {
 		const fetch = remote();
 		const t = initConvexTest();
 		const { asUser, threadId, runId, claimId, executionSecret } = await fixture(t);
-		const args = { runId, claimId, executionSecret, command: 'get url' };
+		const args = { runId, claimId, executionSecret, command: 'agent-browser get url' };
 		await interact(t, args);
 		await asUser.mutation(api.browserProfiles.setHumanControl, { threadId, enabled: true });
 		await expect(interact(t, args)).rejects.toThrow(
@@ -655,7 +662,7 @@ describe('Firecrawl browser lifecycle', () => {
 		const fetch = remote();
 		const t = initConvexTest();
 		const { runId, claimId, executionSecret } = await fixture(t);
-		const args = { runId, claimId, executionSecret, command: 'get url' };
+		const args = { runId, claimId, executionSecret, command: 'agent-browser get url' };
 		await interact(t, args);
 		fetch.mockResolvedValue(
 			new Response(JSON.stringify({ success: true, exitCode: 1, stderr: 'Command failed' }))
@@ -749,21 +756,6 @@ describe('Firecrawl browser lifecycle', () => {
 		).rejects.toThrow();
 	});
 
-	it('keeps commands shell-quoted and does not execute shell substitutions', async () => {
-		const fetch = remote();
-		const t = initConvexTest();
-		const { runId, claimId, executionSecret } = await fixture(t);
-		await interact(t, {
-			runId,
-			claimId,
-			executionSecret,
-			command: 'fill @e1 "$(touch /tmp/owned); echo secret"'
-		});
-		expect(JSON.parse(String(fetch.mock.calls[1][1].body)).code).toBe(
-			"'agent-browser' 'fill' '@e1' '$(touch /tmp/owned); echo secret'"
-		);
-	});
-
 	it('starts non-saving when the preference is disabled, without discarding the saved profile', async () => {
 		const fetch = remote();
 		const t = initConvexTest();
@@ -774,24 +766,12 @@ describe('Firecrawl browser lifecycle', () => {
 			runId,
 			claimId,
 			executionSecret,
-			command: 'get url'
+			command: 'agent-browser get url'
 		});
 		expect(JSON.parse(String(fetch.mock.calls[0][1].body)).profile).toEqual({
 			name: profile!.name,
 			saveChanges: false
 		});
-	});
-
-	it('rejects global options with or without the CLI prefix before creating a session', async () => {
-		const fetch = remote();
-		const t = initConvexTest();
-		const { runId, claimId, executionSecret } = await fixture(t);
-		for (const command of ['--help', 'agent-browser --help', 'agent-browser --json screenshot']) {
-			await expect(interact(t, { runId, claimId, executionSecret, command })).rejects.toThrow(
-				'without global options'
-			);
-		}
-		expect(fetch).not.toHaveBeenCalled();
 	});
 
 	it.each([68, 600_000, 600_001])(
@@ -801,7 +781,7 @@ describe('Firecrawl browser lifecycle', () => {
 			const t = initConvexTest();
 			const { runId, claimId, executionSecret } = await fixture(t);
 			const args = { runId, claimId, executionSecret };
-			await interact(t, { ...args, command: 'get url' });
+			await interact(t, { ...args, command: 'agent-browser get url' });
 			const image = Buffer.alloc(byteLength);
 			image.set(Buffer.from('89504e470d0a1a0a', 'hex'));
 			fetch.mockImplementation(async (_url, options) => {
@@ -843,7 +823,7 @@ describe('Firecrawl browser lifecycle', () => {
 		const t = initConvexTest();
 		const { runId, claimId, executionSecret } = await fixture(t);
 		const args = { runId, claimId, executionSecret };
-		await interact(t, { ...args, command: 'get url' });
+		await interact(t, { ...args, command: 'agent-browser get url' });
 		const dataBase64 =
 			'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jBf8AAAAASUVORK5CYII=';
 		const output = JSON.stringify({ dataBase64, byteLength: 68, url: 'https://example.com' });
@@ -876,7 +856,7 @@ describe('Firecrawl browser lifecycle', () => {
 			const t = initConvexTest();
 			const { runId, claimId, executionSecret } = await fixture(t);
 			const args = { runId, claimId, executionSecret };
-			await interact(t, { ...args, command: 'get url' });
+			await interact(t, { ...args, command: 'agent-browser get url' });
 			fetch.mockImplementation(async () => new Response(JSON.stringify({ success: true, stdout })));
 			await expect(screenshot(t, args)).rejects.toThrow(error);
 			expect(fetch).toHaveBeenCalledTimes(3);
@@ -891,7 +871,7 @@ describe('Firecrawl browser lifecycle', () => {
 			runId,
 			claimId,
 			executionSecret,
-			command: 'get url'
+			command: 'agent-browser get url'
 		});
 		fetch.mockImplementation(
 			async () => new Response(JSON.stringify({ success: true, sessions: [] }))
@@ -921,7 +901,7 @@ describe('Firecrawl browser lifecycle', () => {
 		const t = initConvexTest();
 		const { runId, claimId, executionSecret } = await fixture(t);
 		await expect(
-			interact(t, { runId, claimId, executionSecret, command: 'get url' })
+			interact(t, { runId, claimId, executionSecret, command: 'agent-browser get url' })
 		).rejects.toThrow(`Firecrawl request failed (HTTP 429). ${detail}`);
 		expect(fetch).toHaveBeenCalledTimes(1);
 		expect(await t.run((ctx) => ctx.db.query('browserSessions').unique())).toBeNull();
@@ -935,7 +915,12 @@ describe('Firecrawl browser lifecycle', () => {
 			const fetch = remote();
 			const t = initConvexTest();
 			const { runId, claimId, executionSecret } = await fixture(t);
-			const args = { runId, claimId, executionSecret, command: 'click @e1' };
+			const args = {
+				runId,
+				claimId,
+				executionSecret,
+				command: 'agent-browser click @e1'
+			};
 			await interact(t, args);
 			const session = await t.run((ctx) => ctx.db.query('browserSessions').unique());
 			fetch.mockResolvedValueOnce(
@@ -968,7 +953,7 @@ describe('Firecrawl browser lifecycle', () => {
 		const fetch = remote();
 		const t = initConvexTest();
 		const { runId, claimId, executionSecret } = await fixture(t);
-		const args = { runId, claimId, executionSecret, command: 'get url' };
+		const args = { runId, claimId, executionSecret, command: 'agent-browser get url' };
 		await interact(t, args);
 		fetch.mockResolvedValueOnce(
 			new Response(body, { status: 429, headers: { 'Retry-After': retryAfter } })
@@ -989,7 +974,12 @@ describe('Firecrawl browser lifecycle', () => {
 			const fetch = remote();
 			const t = initConvexTest();
 			const { runId, claimId, executionSecret } = await fixture(t);
-			const args = { runId, claimId, executionSecret, command: 'click @e1' };
+			const args = {
+				runId,
+				claimId,
+				executionSecret,
+				command: 'agent-browser click @e1'
+			};
 			await interact(t, args);
 			if (failure === 'connection reset') fetch.mockRejectedValue(new Error('Connection reset'));
 			else
