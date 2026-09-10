@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkId } from '@convex-dev/workpool';
-import { internal } from '@convex/_generated/api';
+import { api, internal } from '@convex/_generated/api';
 import { initConvexTest, seedStartedWebJob } from './test.setup';
 
 beforeEach(() => vi.useFakeTimers());
@@ -79,7 +79,7 @@ describe('web tool workpool fencing', () => {
 describe('local scrape_url dispatch', () => {
 	it('dispatches scrape_url locally without an execution-mode flag', async () => {
 		const t = initConvexTest();
-		const { jobId, runId, claimId, executionSecret } = await seedStartedWebJob(t, {
+		const { jobId, runId, claimId } = await seedStartedWebJob(t, {
 			executionSecret: 'local-scrape-secret',
 			kind: 'scrape_url',
 			payload: { url: 'https://example.com/page' }
@@ -88,11 +88,10 @@ describe('local scrape_url dispatch', () => {
 		expect(stored?.cloudWorkId).toBeUndefined();
 		expect(stored?.status).toBe('claimed');
 
-		const local = await t.query(internal.webToolPool.getLocalScrapeJob, {
+		const local = await t.mutation(internal.firecrawlRequests.scrapeJob, {
 			runId,
 			claimId,
-			jobId,
-			executionSecret
+			jobId
 		});
 		expect(local).toEqual({
 			kind: 'scrape_url',
@@ -113,7 +112,7 @@ describe('local scrape_url dispatch', () => {
 });
 
 describe('local screenshot_url dispatch', () => {
-	it('never enqueues screenshot_url in the cloud workpool', async () => {
+	it('dispatches screenshot_url locally before the agent requests Firecrawl work', async () => {
 		const t = initConvexTest();
 		const { jobId, runId, claimId, executionSecret } = await seedStartedWebJob(t, {
 			executionSecret: 'screenshot-dispatch-secret',
@@ -126,26 +125,26 @@ describe('local screenshot_url dispatch', () => {
 		expect(stored?.kind).toBe('screenshot_url');
 
 		expect(
-			await t.query(internal.webToolPool.getLocalScreenshotJob, {
+			await t.mutation(internal.firecrawlRequests.scrapeJob, {
 				runId,
 				claimId,
-				jobId,
-				executionSecret
+				jobId
 			})
 		).toEqual({
 			kind: 'screenshot_url',
 			payload: { url: 'https://example.com/page' }
 		});
-		expect(
-			await t.query(internal.webToolPool.getLocalScrapeJob, {
+		await expect(
+			t.mutation(api.firecrawlRequests.start, {
 				runId,
 				claimId,
 				jobId,
-				executionSecret
+				executionSecret,
+				kind: 'scrape'
 			})
-		).toBeNull();
+		).rejects.toThrow('Run is no longer active');
 		expect(
-			await t.query(internal.webToolPool.getWebToolJob, {
+			await t.mutation(internal.webToolPool.getWebToolJob, {
 				runId,
 				claimId,
 				jobId
@@ -153,27 +152,27 @@ describe('local screenshot_url dispatch', () => {
 		).toBeNull();
 	});
 
-	it('does not return scrape jobs from getLocalScreenshotJob', async () => {
+	it('does not allow screenshot requests for scrape jobs', async () => {
 		const t = initConvexTest();
 		const { jobId, runId, claimId, executionSecret } = await seedStartedWebJob(t, {
 			executionSecret: 'scrape-not-screenshot-secret',
 			kind: 'scrape_url',
 			payload: { url: 'https://example.com/page' }
 		});
-		expect(
-			await t.query(internal.webToolPool.getLocalScreenshotJob, {
+		await expect(
+			t.mutation(api.firecrawlRequests.start, {
 				runId,
 				claimId,
 				jobId,
-				executionSecret
+				executionSecret,
+				kind: 'screenshot'
 			})
-		).toBeNull();
+		).rejects.toThrow('Run is no longer active');
 		expect(
-			await t.query(internal.webToolPool.getLocalScrapeJob, {
+			await t.mutation(internal.firecrawlRequests.scrapeJob, {
 				runId,
 				claimId,
-				jobId,
-				executionSecret
+				jobId
 			})
 		).toEqual({
 			kind: 'scrape_url',

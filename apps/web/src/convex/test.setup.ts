@@ -46,6 +46,8 @@ export function initConvexTest(): ConvexTestInstance {
 	workflowTest.register(backend);
 	actionRetrierTest.register(backend);
 	workpoolTest.register(backend, 'webToolWorkpool');
+	workpoolTest.register(backend, 'firecrawlScrapeWorkpool');
+	workpoolTest.register(backend, 'firecrawlBrowserWorkpool');
 	return t;
 }
 

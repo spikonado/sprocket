@@ -1,13 +1,43 @@
 import { runInNewContext } from 'node:vm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
-import '@convex/browserAgent';
+import {
+	interact as executeInteract,
+	screenshot as executeScreenshot
+} from '@convex/firecrawlBrowser';
+import type { FunctionArgs } from 'convex/server';
 import {
 	createQueuedRun,
 	initConvexTest,
 	seedOwnedThread,
 	type ConvexTestInstance
 } from '@convex/test.setup';
+
+async function interact(
+	t: ConvexTestInstance,
+	args: FunctionArgs<typeof api.browserAgent.interact>
+) {
+	return t.action(async (ctx) => {
+		const actor = await ctx.runQuery(api.agentRuntime.completionActor, {
+			runId: args.runId,
+			executionSecret: args.executionSecret
+		});
+		return executeInteract(ctx, { ...args, ...actor });
+	});
+}
+
+async function screenshot(
+	t: ConvexTestInstance,
+	args: FunctionArgs<typeof api.browserAgent.screenshot>
+) {
+	return t.action(async (ctx) => {
+		const actor = await ctx.runQuery(api.agentRuntime.completionActor, {
+			runId: args.runId,
+			executionSecret: args.executionSecret
+		});
+		return executeScreenshot(ctx, { ...args, ...actor });
+	});
+}
 
 async function fixture(t: ConvexTestInstance, userId = 'browser-user') {
 	const { asUser, threadId } = await seedOwnedThread(t, userId);
@@ -25,7 +55,7 @@ async function fixture(t: ConvexTestInstance, userId = 'browser-user') {
 }
 
 function remote() {
-	process.env.FIRECRAWL_API_KEY = 'test-key';
+	process.env.FIRECRAWL_BROWSER_API_KEY = 'test-key';
 	let sequence = 0;
 	const fetch = vi.fn(async (_url: string, options: RequestInit) => {
 		const body = options.body ? JSON.parse(String(options.body)) : {};
@@ -50,15 +80,101 @@ function remote() {
 afterEach(() => {
 	vi.unstubAllGlobals();
 	vi.useRealTimers();
-	delete process.env.FIRECRAWL_API_KEY;
+	delete process.env.FIRECRAWL_BROWSER_API_KEY;
 });
 
 describe('Firecrawl browser lifecycle', () => {
+	it('holds both slots across idle sessions and releases a slot only after confirmed deletion', async () => {
+		vi.useFakeTimers();
+		const fetch = remote();
+		const t = initConvexTest();
+		const first = await fixture(t, 'first');
+		const second = await fixture(t, 'second');
+		const third = await fixture(t, 'third');
+		await interact(t, { ...first, command: 'get url' });
+		await interact(t, { ...second, command: 'get url' });
+		await expect(interact(t, { ...third, command: 'get url' })).rejects.toThrow(
+			'Both browser session slots are in use'
+		);
+		expect(fetch).toHaveBeenCalledTimes(4);
+		expect(await t.run((ctx) => ctx.db.query('browserCapacity').collect())).toHaveLength(2);
+		const session = await t.run((ctx) =>
+			ctx.db
+				.query('browserSessions')
+				.withIndex('by_threadId', (q) => q.eq('threadId', first.threadId))
+				.unique()
+		);
+		fetch.mockResolvedValueOnce(new Response('{}', { status: 503 }));
+		await first.asUser.mutation(api.browserSessions.stop, {
+			id: session!._id,
+			providerSessionId: session!.sessionId!
+		});
+		await vi.advanceTimersByTimeAsync(0);
+		await t.finishInProgressScheduledFunctions();
+		expect(await t.run((ctx) => ctx.db.query('browserCapacity').collect())).toHaveLength(2);
+		await expect(interact(t, { ...third, command: 'get url' })).rejects.toThrow(
+			'Both browser session slots are in use'
+		);
+		await vi.advanceTimersByTimeAsync(60_000);
+		await t.finishInProgressScheduledFunctions();
+		expect(await t.run((ctx) => ctx.db.query('browserCapacity').collect())).toHaveLength(1);
+		await interact(t, { ...third, command: 'get url' });
+		expect(await t.run((ctx) => ctx.db.query('browserCapacity').collect())).toHaveLength(2);
+	});
+
+	it('keeps unknown creations reserved until the provider hard lifetime has passed', async () => {
+		vi.useFakeTimers();
+		const fetch = remote().mockRejectedValue(new Error('connection lost'));
+		const t = initConvexTest();
+		const auth = await fixture(t);
+		for (let i = 0; i < 2; i++)
+			await expect(interact(t, { ...auth, command: 'click @e1' })).rejects.toThrow();
+		await expect(interact(t, { ...auth, command: 'click @e1' })).rejects.toThrow(
+			'Both browser session slots are in use'
+		);
+		expect(fetch).toHaveBeenCalledTimes(2);
+		const slots = await t.run((ctx) => ctx.db.query('browserCapacity').collect());
+		expect(slots).toHaveLength(2);
+		expect(slots.every((slot) => slot.sessionId === undefined)).toBe(true);
+		vi.setSystemTime(slots[0].expiresAt - 1);
+		await expect(
+			t.mutation(internal.browserCapacity.reserve, {
+				reservationId: 'new',
+				expiresAt: Date.now() + 1_000
+			})
+		).rejects.toThrow('Both browser session slots are in use');
+		vi.setSystemTime(slots[0].expiresAt);
+		await t.mutation(internal.browserCapacity.expire, {});
+		expect(await t.run((ctx) => ctx.db.query('browserCapacity').collect())).toEqual([]);
+	});
+
+	it('leaves a reader intact when no slot is available for a saving replacement', async () => {
+		const fetch = remote().mockResolvedValueOnce(new Response('{}', { status: 409 }));
+		const t = initConvexTest();
+		const first = await fixture(t, 'reader');
+		const second = await fixture(t, 'other');
+		await interact(t, { ...first, command: 'get url' });
+		await interact(t, { ...second, command: 'get url' });
+		await expect(
+			interact(t, { ...first, command: 'click @e1', enforce_saving: true })
+		).rejects.toThrow('Both browser session slots are in use');
+		expect(fetch).toHaveBeenCalledTimes(5);
+		expect(fetch.mock.calls.some(([, options]) => options.method === 'DELETE')).toBe(false);
+		expect(
+			await t.run((ctx) =>
+				ctx.db
+					.query('browserSessions')
+					.withIndex('by_threadId', (q) => q.eq('threadId', first.threadId))
+					.unique()
+			)
+		).toMatchObject({ sessionId: 'session-1', saveChanges: false, closing: false });
+	});
+
 	it('falls back to a reader only after a confirmed writer conflict', async () => {
 		const fetch = remote().mockResolvedValueOnce(new Response('{}', { status: 409 }));
 		const t = initConvexTest();
 		const { runId, claimId, executionSecret } = await fixture(t);
-		await t.action(api.browserAgent.interact, {
+		await interact(t, {
 			runId,
 			claimId,
 			executionSecret,
@@ -80,7 +196,7 @@ describe('Firecrawl browser lifecycle', () => {
 			const t = initConvexTest();
 			const { runId, claimId, executionSecret } = await fixture(t);
 			await expect(
-				t.action(api.browserAgent.interact, {
+				interact(t, {
 					runId,
 					claimId,
 					executionSecret,
@@ -97,7 +213,7 @@ describe('Firecrawl browser lifecycle', () => {
 		const { asUser, runId, claimId, executionSecret } = await fixture(t);
 		await asUser.mutation(api.browserProfiles.setSaving, { enabled: false });
 		await expect(
-			t.action(api.browserAgent.interact, {
+			interact(t, {
 				runId,
 				claimId,
 				executionSecret,
@@ -114,10 +230,10 @@ describe('Firecrawl browser lifecycle', () => {
 		const t = initConvexTest();
 		const { runId, claimId, executionSecret } = await fixture(t);
 		const args = { runId, claimId, executionSecret, command: 'get url' };
-		await t.action(api.browserAgent.interact, args);
+		await interact(t, args);
 		const reader = await t.run((ctx) => ctx.db.query('browserSessions').unique());
 		vi.setSystemTime(Date.now() + 1_000);
-		await t.action(api.browserAgent.interact, { ...args, enforce_saving: true });
+		await interact(t, { ...args, enforce_saving: true });
 		const writer = await t.run((ctx) => ctx.db.query('browserSessions').unique());
 		expect(writer).toMatchObject({ _id: reader!._id, sessionId: 'session-2', saveChanges: true });
 		expect(writer!.startedAt).toBeGreaterThan(reader!.startedAt);
@@ -129,7 +245,7 @@ describe('Firecrawl browser lifecycle', () => {
 		expect(
 			fetch.mock.calls.filter(([, options]) => options.method === 'DELETE').map(([url]) => url)
 		).toEqual(['https://api.firecrawl.dev/v2/interact/session-1']);
-		await t.action(api.browserAgent.interact, { ...args, enforce_saving: true });
+		await interact(t, { ...args, enforce_saving: true });
 		expect(
 			fetch.mock.calls.filter(([, options]) => options.body?.toString().includes('"profile"'))
 		).toHaveLength(3);
@@ -142,11 +258,9 @@ describe('Firecrawl browser lifecycle', () => {
 			const t = initConvexTest();
 			const { runId, claimId, executionSecret } = await fixture(t);
 			const args = { runId, claimId, executionSecret, command: 'get url' };
-			await t.action(api.browserAgent.interact, args);
+			await interact(t, args);
 			fetch.mockResolvedValueOnce(new Response('{}', { status }));
-			await expect(
-				t.action(api.browserAgent.interact, { ...args, enforce_saving: true })
-			).rejects.toThrow(
+			await expect(interact(t, { ...args, enforce_saving: true })).rejects.toThrow(
 				status === 409
 					? "Saving can't be enforced currently as the main browser session is in use by another agent. Ask the user whether they want the cookies and login state saved for future use. If yes, they have to stop the other agent and its browser session."
 					: 'A request-rate or concurrency limit was reached.'
@@ -158,7 +272,7 @@ describe('Firecrawl browser lifecycle', () => {
 				closing: false,
 				operationExpiresAt: 0
 			});
-			await t.action(api.browserAgent.interact, args);
+			await interact(t, args);
 			expect(fetch.mock.lastCall?.[0]).toContain('/session-1/execute');
 			expect(fetch.mock.calls.some(([, options]) => options.method === 'DELETE')).toBe(false);
 		}
@@ -172,7 +286,7 @@ describe('Firecrawl browser lifecycle', () => {
 			const t = initConvexTest();
 			const { asUser, runId, claimId, executionSecret } = await fixture(t);
 			const args = { runId, claimId, executionSecret, command: 'get url' };
-			await t.action(api.browserAgent.interact, args);
+			await interact(t, args);
 			fetch.mockImplementationOnce(async () => {
 				if (change === 'saving disabled')
 					await asUser.mutation(api.browserProfiles.setSaving, { enabled: false });
@@ -183,9 +297,7 @@ describe('Firecrawl browser lifecycle', () => {
 					);
 				return new Response(JSON.stringify({ success: true, id: 'unwanted-writer' }));
 			});
-			await expect(
-				t.action(api.browserAgent.interact, { ...args, enforce_saving: true })
-			).rejects.toThrow('No action ran');
+			await expect(interact(t, { ...args, enforce_saving: true })).rejects.toThrow('No action ran');
 			expect(await t.run((ctx) => ctx.db.query('browserSessions').unique())).toMatchObject({
 				sessionId: 'session-1',
 				saveChanges: false
@@ -207,9 +319,9 @@ describe('Firecrawl browser lifecycle', () => {
 		const t = initConvexTest();
 		const { runId, claimId, executionSecret } = await fixture(t);
 		const args = { runId, claimId, executionSecret, command: 'get url' };
-		await t.action(api.browserAgent.interact, args);
+		await interact(t, args);
 		fetch.mockResolvedValueOnce(new Response(JSON.stringify({ success: true, id: 'writer' })));
-		await t.action(api.browserAgent.interact, { ...args, enforce_saving: true });
+		await interact(t, { ...args, enforce_saving: true });
 		const writer = await t.run((ctx) => ctx.db.query('browserSessions').unique());
 		expect(writer?.liveViewUrl).toBeUndefined();
 		expect(writer?.interactiveLiveViewUrl).toBeUndefined();
@@ -237,7 +349,7 @@ describe('Firecrawl browser lifecycle', () => {
 		const args = { runId, claimId, executionSecret, command: 'click @e1' };
 		if (replacing) {
 			fetch.mockResolvedValueOnce(new Response('{}', { status: 409 }));
-			await t.action(api.browserAgent.interact, args);
+			await interact(t, args);
 		}
 		fetch.mockImplementationOnce(async () => {
 			const session = await t.run((ctx) => ctx.db.query('browserSessions').unique());
@@ -247,9 +359,7 @@ describe('Firecrawl browser lifecycle', () => {
 			});
 			return new Response(JSON.stringify({ success: true, id: 'late-session' }));
 		});
-		await expect(
-			t.action(api.browserAgent.interact, { ...args, enforce_saving: true })
-		).rejects.toThrow('No action ran');
+		await expect(interact(t, { ...args, enforce_saving: true })).rejects.toThrow('No action ran');
 		await vi.advanceTimersByTimeAsync(0);
 		await t.finishInProgressScheduledFunctions();
 		expect(fetch.mock.calls.filter(([url]) => url.endsWith('/execute'))).toHaveLength(
@@ -272,7 +382,7 @@ describe('Firecrawl browser lifecycle', () => {
 		const t = initConvexTest();
 		const { asUser, runId, claimId, executionSecret } = await fixture(t);
 		const args = { runId, claimId, executionSecret, command: 'get url' };
-		await t.action(api.browserAgent.interact, args);
+		await interact(t, args);
 		const session = await t.run((ctx) => ctx.db.query('browserSessions').unique());
 		fetch.mockImplementationOnce(async () => {
 			await asUser.mutation(api.browserSessions.stop, {
@@ -281,16 +391,14 @@ describe('Firecrawl browser lifecycle', () => {
 			});
 			throw new Error('Browser disconnected');
 		});
-		await expect(t.action(api.browserAgent.interact, args)).rejects.toThrow(
-			'Do not repeat purchases'
-		);
+		await expect(interact(t, args)).rejects.toThrow('Do not repeat purchases');
 		await vi.advanceTimersByTimeAsync(0);
 		await t.finishInProgressScheduledFunctions();
 		expect(await t.run((ctx) => ctx.db.get('browserSessions', session!._id))).toBeNull();
 		expect(
 			(await t.run((ctx) => ctx.db.get('runs', runId)))?.cancellationRequestedAt
 		).toBeUndefined();
-		await t.action(api.browserAgent.interact, args);
+		await interact(t, args);
 		const next = await t.run((ctx) => ctx.db.query('browserSessions').unique());
 		expect(next?.sessionId).toBe('session-2');
 		await asUser.mutation(api.browserSessions.stop, {
@@ -311,7 +419,7 @@ describe('Firecrawl browser lifecycle', () => {
 			const replacing = transition === 'saving upgrade';
 			if (replacing) {
 				fetch.mockResolvedValueOnce(new Response('{}', { status: 409 }));
-				await t.action(api.browserAgent.interact, args);
+				await interact(t, args);
 			} else {
 				await t.mutation(internal.browserSessions.acquire, {
 					userId,
@@ -324,7 +432,7 @@ describe('Firecrawl browser lifecycle', () => {
 			const displayed = await asUser.query(api.browserSessions.liveViewForThread, { threadId });
 			expect(displayed!.providerSessionId).toBe(replacing ? 'session-1' : null);
 			if (replacing) {
-				await t.action(api.browserAgent.interact, { ...args, enforce_saving: true });
+				await interact(t, { ...args, enforce_saving: true });
 			} else {
 				expect(
 					await t.mutation(internal.browserSessions.attach, {
@@ -372,7 +480,7 @@ describe('Firecrawl browser lifecycle', () => {
 		const fetch = remote();
 		const t = initConvexTest();
 		const { runId, claimId, executionSecret } = await fixture(t);
-		await t.action(api.browserAgent.interact, { runId, claimId, executionSecret, command: 'help' });
+		await interact(t, { runId, claimId, executionSecret, command: 'help' });
 		expect(JSON.parse(String(fetch.mock.calls[1][1].body)).code).toBe("'agent-browser' '--help'");
 	});
 
@@ -381,7 +489,7 @@ describe('Firecrawl browser lifecycle', () => {
 		const fetch = remote();
 		const t = initConvexTest();
 		const { runId, claimId, executionSecret } = await fixture(t);
-		await t.action(api.browserAgent.interact, {
+		await interact(t, {
 			runId,
 			claimId,
 			executionSecret,
@@ -452,7 +560,7 @@ describe('Firecrawl browser lifecycle', () => {
 		for (const run of [first, second]) {
 			const { runId, claimId, executionSecret } = run;
 			expect(
-				await t.action(api.browserAgent.interact, {
+				await interact(t, {
 					runId,
 					claimId,
 					executionSecret,
@@ -481,7 +589,7 @@ describe('Firecrawl browser lifecycle', () => {
 		);
 		const t = initConvexTest();
 		const { runId, claimId, executionSecret } = await fixture(t);
-		await t.action(api.browserAgent.interact, {
+		await interact(t, {
 			runId,
 			claimId,
 			executionSecret,
@@ -496,7 +604,7 @@ describe('Firecrawl browser lifecycle', () => {
 		const t = initConvexTest();
 		const { runId, claimId, executionSecret } = await fixture(t);
 		await expect(
-			t.action(api.browserAgent.interact, {
+			interact(t, {
 				runId,
 				claimId,
 				executionSecret,
@@ -515,12 +623,12 @@ describe('Firecrawl browser lifecycle', () => {
 		const t = initConvexTest();
 		const { asUser, runId, claimId, executionSecret } = await fixture(t);
 		const args = { runId, claimId, executionSecret, command: 'get url' };
-		await t.action(api.browserAgent.interact, args);
+		await interact(t, args);
 		await asUser.mutation(api.browserProfiles.setSaving, { enabled: false });
-		await t.action(api.browserAgent.interact, args);
-		await expect(
-			t.action(api.browserAgent.interact, { ...args, enforce_saving: true })
-		).rejects.toThrow('browser saving is disabled in Settings');
+		await interact(t, args);
+		await expect(interact(t, { ...args, enforce_saving: true })).rejects.toThrow(
+			'browser saving is disabled in Settings'
+		);
 		expect(fetch).toHaveBeenCalledTimes(3);
 		expect(await t.run((ctx) => ctx.db.query('browserSessions').first())).toMatchObject({
 			saveChanges: true
@@ -532,14 +640,14 @@ describe('Firecrawl browser lifecycle', () => {
 		const t = initConvexTest();
 		const { asUser, threadId, runId, claimId, executionSecret } = await fixture(t);
 		const args = { runId, claimId, executionSecret, command: 'get url' };
-		await t.action(api.browserAgent.interact, args);
+		await interact(t, args);
 		await asUser.mutation(api.browserProfiles.setHumanControl, { threadId, enabled: true });
-		await expect(t.action(api.browserAgent.interact, args)).rejects.toThrow(
+		await expect(interact(t, args)).rejects.toThrow(
 			/^The user has control of this browser\. Ask them to give control back before browsing\.$/
 		);
 		expect(fetch).toHaveBeenCalledTimes(2);
 		await asUser.mutation(api.browserProfiles.setHumanControl, { threadId, enabled: false });
-		await t.action(api.browserAgent.interact, args);
+		await interact(t, args);
 		expect(fetch).toHaveBeenCalledTimes(3);
 	});
 
@@ -548,11 +656,11 @@ describe('Firecrawl browser lifecycle', () => {
 		const t = initConvexTest();
 		const { runId, claimId, executionSecret } = await fixture(t);
 		const args = { runId, claimId, executionSecret, command: 'get url' };
-		await t.action(api.browserAgent.interact, args);
+		await interact(t, args);
 		fetch.mockResolvedValue(
 			new Response(JSON.stringify({ success: true, exitCode: 1, stderr: 'Command failed' }))
 		);
-		await expect(t.action(api.browserAgent.interact, args)).rejects.toThrow('Command failed');
+		await expect(interact(t, args)).rejects.toThrow('Command failed');
 	});
 
 	it('fences in-flight creation when the profile is reset', async () => {
@@ -645,7 +753,7 @@ describe('Firecrawl browser lifecycle', () => {
 		const fetch = remote();
 		const t = initConvexTest();
 		const { runId, claimId, executionSecret } = await fixture(t);
-		await t.action(api.browserAgent.interact, {
+		await interact(t, {
 			runId,
 			claimId,
 			executionSecret,
@@ -662,7 +770,7 @@ describe('Firecrawl browser lifecycle', () => {
 		const { asUser, runId, claimId, executionSecret } = await fixture(t);
 		await asUser.mutation(api.browserProfiles.setSaving, { enabled: false });
 		const profile = await t.run((ctx) => ctx.db.query('browserProfiles').first());
-		await t.action(api.browserAgent.interact, {
+		await interact(t, {
 			runId,
 			claimId,
 			executionSecret,
@@ -679,9 +787,9 @@ describe('Firecrawl browser lifecycle', () => {
 		const t = initConvexTest();
 		const { runId, claimId, executionSecret } = await fixture(t);
 		for (const command of ['--help', 'agent-browser --help', 'agent-browser --json screenshot']) {
-			await expect(
-				t.action(api.browserAgent.interact, { runId, claimId, executionSecret, command })
-			).rejects.toThrow('without global options');
+			await expect(interact(t, { runId, claimId, executionSecret, command })).rejects.toThrow(
+				'without global options'
+			);
 		}
 		expect(fetch).not.toHaveBeenCalled();
 	});
@@ -693,7 +801,7 @@ describe('Firecrawl browser lifecycle', () => {
 			const t = initConvexTest();
 			const { runId, claimId, executionSecret } = await fixture(t);
 			const args = { runId, claimId, executionSecret };
-			await t.action(api.browserAgent.interact, { ...args, command: 'get url' });
+			await interact(t, { ...args, command: 'get url' });
 			const image = Buffer.alloc(byteLength);
 			image.set(Buffer.from('89504e470d0a1a0a', 'hex'));
 			fetch.mockImplementation(async (_url, options) => {
@@ -720,7 +828,7 @@ describe('Firecrawl browser lifecycle', () => {
 				});
 				return new Response(JSON.stringify({ success: true, stdout, result: '' }));
 			});
-			expect(await t.action(api.browserAgent.screenshot, args)).toEqual({
+			expect(await screenshot(t, args)).toEqual({
 				byteLength,
 				url: 'https://example.com/',
 				dataBase64: byteLength <= 600_000 ? image.toString('base64') : '',
@@ -735,7 +843,7 @@ describe('Firecrawl browser lifecycle', () => {
 		const t = initConvexTest();
 		const { runId, claimId, executionSecret } = await fixture(t);
 		const args = { runId, claimId, executionSecret };
-		await t.action(api.browserAgent.interact, { ...args, command: 'get url' });
+		await interact(t, { ...args, command: 'get url' });
 		const dataBase64 =
 			'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jBf8AAAAASUVORK5CYII=';
 		const output = JSON.stringify({ dataBase64, byteLength: 68, url: 'https://example.com' });
@@ -748,7 +856,7 @@ describe('Firecrawl browser lifecycle', () => {
 			fetch.mockImplementation(
 				async () => new Response(JSON.stringify({ success: true, ...response }))
 			);
-			expect(await t.action(api.browserAgent.screenshot, args)).toMatchObject({
+			expect(await screenshot(t, args)).toMatchObject({
 				mediaType: 'image/png',
 				dataBase64,
 				truncated: false
@@ -768,9 +876,9 @@ describe('Firecrawl browser lifecycle', () => {
 			const t = initConvexTest();
 			const { runId, claimId, executionSecret } = await fixture(t);
 			const args = { runId, claimId, executionSecret };
-			await t.action(api.browserAgent.interact, { ...args, command: 'get url' });
+			await interact(t, { ...args, command: 'get url' });
 			fetch.mockImplementation(async () => new Response(JSON.stringify({ success: true, stdout })));
-			await expect(t.action(api.browserAgent.screenshot, args)).rejects.toThrow(error);
+			await expect(screenshot(t, args)).rejects.toThrow(error);
 			expect(fetch).toHaveBeenCalledTimes(3);
 		}
 	);
@@ -779,7 +887,7 @@ describe('Firecrawl browser lifecycle', () => {
 		const fetch = remote();
 		const t = initConvexTest();
 		const { runId, claimId, executionSecret } = await fixture(t);
-		await t.action(api.browserAgent.interact, {
+		await interact(t, {
 			runId,
 			claimId,
 			executionSecret,
@@ -813,7 +921,7 @@ describe('Firecrawl browser lifecycle', () => {
 		const t = initConvexTest();
 		const { runId, claimId, executionSecret } = await fixture(t);
 		await expect(
-			t.action(api.browserAgent.interact, { runId, claimId, executionSecret, command: 'get url' })
+			interact(t, { runId, claimId, executionSecret, command: 'get url' })
 		).rejects.toThrow(`Firecrawl request failed (HTTP 429). ${detail}`);
 		expect(fetch).toHaveBeenCalledTimes(1);
 		expect(await t.run((ctx) => ctx.db.query('browserSessions').unique())).toBeNull();
@@ -828,7 +936,7 @@ describe('Firecrawl browser lifecycle', () => {
 			const t = initConvexTest();
 			const { runId, claimId, executionSecret } = await fixture(t);
 			const args = { runId, claimId, executionSecret, command: 'click @e1' };
-			await t.action(api.browserAgent.interact, args);
+			await interact(t, args);
 			const session = await t.run((ctx) => ctx.db.query('browserSessions').unique());
 			fetch.mockResolvedValueOnce(
 				new Response(JSON.stringify({ success: false, error: 'Rate limit exceeded.' }), {
@@ -838,14 +946,14 @@ describe('Firecrawl browser lifecycle', () => {
 					}
 				})
 			);
-			await expect(t.action(api.browserAgent.interact, args)).rejects.toThrow(
+			await expect(interact(t, args)).rejects.toThrow(
 				'Firecrawl request failed (HTTP 429). Rate limit exceeded. Wait at least 30 seconds before retrying. The command did not run.'
 			);
 			await vi.advanceTimersByTimeAsync(0);
 			await t.finishInProgressScheduledFunctions();
 			expect(fetch).toHaveBeenCalledTimes(3);
 			expect(await t.run((ctx) => ctx.db.query('browserSessions').unique())).toEqual(session);
-			await t.action(api.browserAgent.interact, args);
+			await interact(t, args);
 			expect(fetch).toHaveBeenCalledTimes(4);
 			expect(fetch.mock.lastCall?.[0]).toContain('/session-1/execute');
 		}
@@ -861,11 +969,11 @@ describe('Firecrawl browser lifecycle', () => {
 		const t = initConvexTest();
 		const { runId, claimId, executionSecret } = await fixture(t);
 		const args = { runId, claimId, executionSecret, command: 'get url' };
-		await t.action(api.browserAgent.interact, args);
+		await interact(t, args);
 		fetch.mockResolvedValueOnce(
 			new Response(body, { status: 429, headers: { 'Retry-After': retryAfter } })
 		);
-		await expect(t.action(api.browserAgent.interact, args)).rejects.toThrow(
+		await expect(interact(t, args)).rejects.toThrow(
 			/^Firecrawl request failed \(HTTP 429\)\. A request-rate or concurrency limit was reached\. The command did not run\.$/
 		);
 		expect(fetch).toHaveBeenCalledTimes(3);
@@ -882,7 +990,7 @@ describe('Firecrawl browser lifecycle', () => {
 			const t = initConvexTest();
 			const { runId, claimId, executionSecret } = await fixture(t);
 			const args = { runId, claimId, executionSecret, command: 'click @e1' };
-			await t.action(api.browserAgent.interact, args);
+			await interact(t, args);
 			if (failure === 'connection reset') fetch.mockRejectedValue(new Error('Connection reset'));
 			else
 				fetch.mockResolvedValue(
@@ -890,19 +998,17 @@ describe('Firecrawl browser lifecycle', () => {
 						status: failure
 					})
 				);
-			await expect(t.action(api.browserAgent.interact, args)).rejects.toThrow(
+			await expect(interact(t, args)).rejects.toThrow(
 				/^The provider did not confirm whether the command completed\. The session is closing\. Do not repeat purchases, messages, or other actions without checking their outcome first\.$/
 			);
 			expect(fetch).toHaveBeenCalledTimes(3);
 			expect(await t.run((ctx) => ctx.db.query('browserSessions').first())).toMatchObject({
 				closing: true
 			});
-			await expect(t.action(api.browserAgent.interact, args)).rejects.toThrow(
+			await expect(interact(t, args)).rejects.toThrow(/^The browser is closing\. Retry shortly\.$/);
+			await expect(screenshot(t, { runId, claimId, executionSecret })).rejects.toThrow(
 				/^The browser is closing\. Retry shortly\.$/
 			);
-			await expect(
-				t.action(api.browserAgent.screenshot, { runId, claimId, executionSecret })
-			).rejects.toThrow(/^The browser is closing\. Retry shortly\.$/);
 			expect(fetch.mock.calls.filter(([, options]) => options.method === 'POST')).toHaveLength(3);
 		}
 	);

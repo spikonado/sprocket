@@ -5,6 +5,7 @@ import type { WorkId } from '@convex-dev/workpool';
 import type { GenericDatabaseWriter, GenericDataModel, SystemDataModel } from 'convex/server';
 import { api, internal } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
+import { cancelWebToolWork } from '@convex/webToolPool';
 import {
 	FIRECRAWL_PARSE_URL,
 	HOSTED_PARSE_MAX_OUTPUT_BYTES,
@@ -265,11 +266,34 @@ describe('hostedParse', () => {
 		const secondJob = await t.run(async (ctx) => ctx.db.get('executorJobs', run.jobId));
 		expect(secondJob?.cloudWorkId).toBe(firstJob?.cloudWorkId);
 		expect(secondJob?.cloudWorkId).toEqual(expect.any(String));
+		expect(secondJob?.cloudWorkPool).toBe('firecrawlScrape');
 		const request = await t.run(async (ctx) =>
 			ctx.db.get('hostedParseRequests', created.requestId)
 		);
 		expect(request?.inputStorageId).toBe(firstStorage);
 		expect(request?.filename).toBe('one.pdf');
+	});
+
+	it('cancels queued parsing in the scrape pool rather than the Exa pool', async () => {
+		const t = initConvexTest();
+		const run = await seedParseJob(t, { executionSecret: 'hosted-pool-cancel' });
+		const created = await run.asUser.mutation(api.hostedParse.createUpload, {
+			...auth(run),
+			jobId: run.jobId
+		});
+		const storageId = await storeBlob(t, { bytes: 'pdf', type: 'application/pdf' });
+		await run.asUser.mutation(api.hostedParse.start, {
+			...auth(run),
+			requestId: created.requestId,
+			storageId,
+			filename: 'file.pdf'
+		});
+		const fetch = vi.fn();
+		vi.stubGlobal('fetch', fetch);
+		await t.run((ctx) => cancelWebToolWork(ctx, run.runId));
+		await vi.advanceTimersByTimeAsync(1_000);
+		await t.finishInProgressScheduledFunctions();
+		expect(fetch).not.toHaveBeenCalled();
 	});
 
 	it('rejects uploads over 50 MB and deletes the temporary blob', async () => {

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure};
-use super::job::{action_args_from_payload, execute_tool_job, run_convex_tool_action};
+use super::job::{action_args_from_payload, execute_tool_job};
 use super::parse_file::{decode_image_info, persist_image_bytes, replay_image_tool_output};
 
 #[derive(Clone)]
@@ -101,11 +101,11 @@ impl rig::tool::Tool for BrowserInteractTool {
             &self.0.tool_call_tracker,
             payload,
             |cancellation| {
-                run_convex_tool_action(
+                super::firecrawl::run(
                     &self.0.runtime,
                     cancellation,
-                    "browserAgent:interact",
                     action_args,
+                    "browser_interact",
                 )
             },
         )
@@ -146,11 +146,11 @@ impl rig::tool::Tool for BrowserScreenshotTool {
             &self.0.tool_call_tracker,
             payload,
             |cancellation| async move {
-                let result = run_convex_tool_action(
+                let result = super::firecrawl::run(
                     &self.0.runtime,
                     cancellation.clone(),
-                    "browserAgent:screenshot",
                     action_args,
+                    "browser_screenshot",
                 )
                 .await?;
                 tokio::select! {

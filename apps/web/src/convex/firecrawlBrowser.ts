@@ -2,7 +2,7 @@
 
 import { z } from 'zod';
 import { ConvexError, v } from 'convex/values';
-import { api, internal } from '@convex/_generated/api';
+import { internal } from '@convex/_generated/api';
 import { env, internalAction, type ActionCtx } from '@convex/_generated/server';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { PaginationResult } from 'convex/server';
@@ -152,8 +152,8 @@ async function request(
 	path: string,
 	body?: RequestBody
 ): Promise<z.infer<typeof providerResponseSchema>> {
-	const key = env.FIRECRAWL_API_KEY?.trim();
-	if (!key) throw new Error('FIRECRAWL_API_KEY is not configured.');
+	const key = env.FIRECRAWL_BROWSER_API_KEY?.trim();
+	if (!key) throw new Error('FIRECRAWL_BROWSER_API_KEY is not configured.');
 	const response = await fetch(`https://api.firecrawl.dev/v2/interact${path}`, {
 		method,
 		headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
@@ -183,12 +183,13 @@ async function provider(
 	return data;
 }
 
-async function destroy(sessionId: string): Promise<void> {
+async function destroy(ctx: ActionCtx, sessionId: string): Promise<void> {
 	try {
 		await provider('DELETE', `/${encodeURIComponent(sessionId)}`);
 	} catch (error) {
 		if (!isGone(error)) throw error;
 	}
+	await ctx.runMutation(internal.browserCapacity.releaseSession, { sessionId });
 }
 
 function tokenizeCommand(command: string): string[] {
@@ -270,16 +271,37 @@ function outputText(result: z.infer<typeof executionSchema>): string | undefined
 type BrowserArgs = {
 	runId: Id<'runs'>;
 	claimId: string;
-	executionSecret: string;
+	userId: string;
+	threadId: Id<'threadRecords'>;
 };
 
-async function createSession(profileName: string, saveChanges: boolean) {
-	return provider('POST', '', {
-		ttl: SESSION_TTL_SECONDS,
-		activityTtl: ACTIVITY_TTL_SECONDS,
-		recordSession: false,
-		profile: { name: profileName, saveChanges }
+async function createSession(ctx: ActionCtx, profileName: string, saveChanges: boolean) {
+	if (!env.FIRECRAWL_BROWSER_API_KEY?.trim())
+		throw new Error('FIRECRAWL_BROWSER_API_KEY is not configured.');
+	const reservationId = crypto.randomUUID();
+	await ctx.runMutation(internal.browserCapacity.reserve, {
+		reservationId,
+		expiresAt: Date.now() + SESSION_TTL_SECONDS * 1_000 + FETCH_TIMEOUT_MS
 	});
+	try {
+		const data = await provider('POST', '', {
+			ttl: SESSION_TTL_SECONDS,
+			activityTtl: ACTIVITY_TTL_SECONDS,
+			recordSession: false,
+			profile: { name: profileName, saveChanges }
+		});
+		const { id } = z.object({ id: z.string().min(1) }).parse(data);
+		await ctx.runMutation(internal.browserCapacity.attach, { reservationId, sessionId: id });
+		return data;
+	} catch (error) {
+		if (
+			error instanceof FirecrawlError &&
+			[400, 401, 402, 403, 404, 409, 422, 429].includes(error.status)
+		) {
+			await ctx.runMutation(internal.browserCapacity.releaseReservation, { reservationId });
+		}
+		throw error;
+	}
 }
 
 async function execute(
@@ -289,14 +311,10 @@ async function execute(
 	language: 'bash' | 'node',
 	enforceSaving = false
 ) {
-	const actor = await ctx.runQuery(api.agentRuntime.completionActor, {
-		runId: args.runId,
-		executionSecret: args.executionSecret
-	});
 	const operationId = crypto.randomUUID();
 	const session = await ctx.runMutation(internal.browserSessions.acquire, {
-		threadId: actor.threadId,
-		userId: actor.userId,
+		threadId: args.threadId,
+		userId: args.userId,
 		runId: args.runId,
 		claimId: args.claimId,
 		operationId,
@@ -313,7 +331,7 @@ async function execute(
 			let saveChanges = enforceSaving || session.saveChanges;
 			let data: unknown;
 			try {
-				data = await createSession(session.profileName, saveChanges);
+				data = await createSession(ctx, session.profileName, saveChanges);
 			} catch (error) {
 				if (!(error instanceof FirecrawlError && error.status === 409 && saveChanges)) {
 					throw error;
@@ -326,7 +344,7 @@ async function execute(
 					claimId: args.claimId
 				});
 				saveChanges = false;
-				data = await createSession(session.profileName, saveChanges);
+				data = await createSession(ctx, session.profileName, saveChanges);
 			}
 			createdId = z.object({ id: z.string().min(1) }).parse(data).id;
 			const created = createdSchema.parse(data);
@@ -388,6 +406,7 @@ async function execute(
 			});
 		}
 		if (executing && isGone(error)) {
+			await ctx.runMutation(internal.browserCapacity.releaseSession, { sessionId: sessionId! });
 			destroyed = true;
 			throw new ConvexError(
 				'browser_expired: The browser session ended. No action was replayed. Retry to open a new session from the saved profile. Unsaved browser state may be lost.'
@@ -478,7 +497,7 @@ export const closeDetached = internalAction({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		try {
-			await destroy(args.sessionId);
+			await destroy(ctx, args.sessionId);
 		} catch {
 			if (Date.now() < args.expiresAt) {
 				await ctx.scheduler.runAfter(60_000, internal.firecrawlBrowser.closeDetached, args);
@@ -499,7 +518,7 @@ export const close = internalAction({
 		});
 		if (!session) return null;
 		try {
-			if (session.sessionId) await destroy(session.sessionId);
+			if (session.sessionId) await destroy(ctx, session.sessionId);
 			await ctx.runMutation(internal.browserSessions.release, {
 				id,
 				operationId,
@@ -517,7 +536,8 @@ export const reconcile = internalAction({
 	args: {},
 	returns: v.null(),
 	handler: async (ctx) => {
-		if (!env.FIRECRAWL_API_KEY?.trim()) return null;
+		await ctx.runMutation(internal.browserCapacity.expire, {});
+		if (!env.FIRECRAWL_BROWSER_API_KEY?.trim()) return null;
 		const before = Date.now();
 		const listed = sessionsSchema.safeParse(await provider('GET', '?status=destroyed'));
 		if (!listed.success) {
@@ -528,6 +548,13 @@ export const reconcile = internalAction({
 				.filter((session) => session.status === 'destroyed')
 				.map((session) => session.id)
 		);
+		for (const slot of await ctx.runQuery(internal.browserCapacity.active, {})) {
+			if (slot.sessionId && destroyed.has(slot.sessionId)) {
+				await ctx.runMutation(internal.browserCapacity.releaseSession, {
+					sessionId: slot.sessionId
+				});
+			}
+		}
 		let cursor: string | null = null;
 		for (;;) {
 			const batch: PaginationResult<Doc<'browserSessions'>> = await ctx.runQuery(

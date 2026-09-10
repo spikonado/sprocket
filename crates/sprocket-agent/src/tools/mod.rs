@@ -2,6 +2,7 @@ mod artifacts;
 mod browser;
 mod commands;
 mod context;
+mod firecrawl;
 mod hosted_parse;
 mod job;
 mod mandates;

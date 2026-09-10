@@ -14,6 +14,7 @@ const app = defineApp({
 	env: {
 		EXA_API_KEY: v.string(),
 		FIRECRAWL_API_KEY: v.string(),
+		FIRECRAWL_BROWSER_API_KEY: v.optional(v.string()),
 		WORKOS_CLIENT_ID: v.string(),
 		PRAVA_SECRET_KEY: v.optional(v.string()),
 		PRAVA_BACKEND_URL: v.union(
@@ -36,5 +37,7 @@ app.use(aggregate);
 app.use(workflow);
 app.use(actionRetrier);
 app.use(workpool, { name: 'webToolWorkpool' });
+app.use(workpool, { name: 'firecrawlScrapeWorkpool' });
+app.use(workpool, { name: 'firecrawlBrowserWorkpool' });
 
 export default app;
