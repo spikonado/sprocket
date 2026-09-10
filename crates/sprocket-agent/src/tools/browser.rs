@@ -1,9 +1,7 @@
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::Context;
 use base64::Engine;
-use convex::Value;
 use rig::message::{ImageMediaType, MimeType};
 use rig::tool::{ToolExecutionError, ToolOutput};
 use schemars::JsonSchema;
@@ -11,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::context::{AgentToolContext, cancelled_error, tool_error, tool_failure};
-use super::job::{execute_tool_job, run_convex_tool_action};
+use super::job::{action_args_from_payload, execute_tool_job, run_convex_tool_action};
 use super::parse_file::{decode_image_info, persist_image_bytes, replay_image_tool_output};
 
 #[derive(Clone)]
@@ -23,23 +21,18 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
-const DISABLE_SAVING_DOC: &str = "Each conversation has a live session sharing your user's saved profile. Saving is chosen at creation; a non-saving session stays non-saving. The user's saving-off preference overrides requests for new sessions. profile_in_use means another conversation holds the writer. Retry with disable_saving: true to load the last saved profile without saving changes, or wait. disable_saving: true on an existing saving session is rejected. Non-saving does not undo purchases, messages, or website changes. Sessions survive runs, with a 7.5-minute provider idle timeout and one-hour hard limit. Unsaved state and tabs are lost on expiry. When the user has control, ask them to give it back before browsing.";
-
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct BrowserInteractArgs {
-    /// An agent-browser command to run in the current browser session, without the `agent-browser` prefix. Examples: 'open https://example.com', 'snapshot -i', 'click @e5', 'fill @e3 "search query"', 'get url'. Run `snapshot -i` first to discover element refs.
     command: String,
-    /// Saving is chosen when the browser session is created. A non-saving session stays non-saving. profile_in_use means another conversation holds the writer; retry with disable_saving true to load the last saved profile without persisting changes. disable_saving true on an existing saving session is rejected rather than ignored.
+    /// Set to true to ensure that cookies and login state that you change are preserved across the user's conversations with other agents in Sprocket. Recommended when you know for sure you are going to be changing login state on websites.
     #[serde(default, skip_serializing_if = "is_false")]
-    disable_saving: bool,
+    enforce_saving: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct BrowserScreenshotArgs {
-    /// Saving is chosen when the browser session is created. A non-saving session stays non-saving. profile_in_use means another conversation holds the writer; retry with disable_saving true to load the last saved profile without persisting changes. disable_saving true on an existing saving session is rejected rather than ignored.
-    #[serde(default, skip_serializing_if = "is_false")]
-    disable_saving: bool,
-}
+#[serde(deny_unknown_fields)]
+pub(crate) struct BrowserScreenshotArgs {}
 
 const MAX_SCREENSHOT_BYTES: usize = 600_000;
 
@@ -74,9 +67,7 @@ impl rig::tool::Tool for BrowserInteractTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        format!(
-            "Run an agent-browser command in a persistent browser session. Use `snapshot -i` to get an accessibility tree with element refs (@e1, @e2, ...), then act on refs (`click @e5`, `fill @e3 \"text\"`, `press Enter`, `scroll down 500`, `get text @e1`, `get url`, `wait --load networkidle`). Use for all web browsing and checkout steps, including typing the payment credential returned by mandate_charge. Screenshots must go through browser_screenshot. {DISABLE_SAVING_DOC}"
-        )
+        "Run an agent-browser (a CLI tool) command in a persistent browser session in the cloud. Omit the `agent-browser` prefix. Run `help` to learn more about the CLI. This session may retain cookies and login state on websites used by the user with other agents in Sprocket.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -101,6 +92,7 @@ impl rig::tool::Tool for BrowserInteractTool {
                     .to_string(),
             ));
         }
+        let action_args = action_args_from_payload(&self.0.run_id, &self.0.claim_id, &payload)?;
         execute_tool_job(
             &self.0.runtime,
             &self.0.run_id,
@@ -109,9 +101,6 @@ impl rig::tool::Tool for BrowserInteractTool {
             &self.0.tool_call_tracker,
             payload,
             |cancellation| {
-                let mut action_args =
-                    browser_action_args(&self.0.run_id, &self.0.claim_id, args.disable_saving);
-                action_args.insert("command".to_string(), args.command.clone().into());
                 run_convex_tool_action(
                     &self.0.runtime,
                     cancellation,
@@ -131,9 +120,7 @@ impl rig::tool::Tool for BrowserScreenshotTool {
     type Output = ToolOutput;
 
     fn description(&self) -> String {
-        format!(
-            "Take a screenshot of the current browser page and return its saved local path and image. Prefer `snapshot -i` via browser_interact when you only need structure or text. {DISABLE_SAVING_DOC}"
-        )
+        "Take a screenshot of the current browser page in the persistent browser session controlled through `browser_interact`. Prefer `snapshot -i` via `browser_interact` when you don't need the image.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -150,6 +137,7 @@ impl rig::tool::Tool for BrowserScreenshotTool {
         }
         let cache_dir = self.0.transcript_dir.join(Self::NAME);
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
+        let action_args = action_args_from_payload(&self.0.run_id, &self.0.claim_id, &payload)?;
         let result = execute_tool_job(
             &self.0.runtime,
             &self.0.run_id,
@@ -162,7 +150,7 @@ impl rig::tool::Tool for BrowserScreenshotTool {
                     &self.0.runtime,
                     cancellation.clone(),
                     "browserAgent:screenshot",
-                    browser_action_args(&self.0.run_id, &self.0.claim_id, args.disable_saving),
+                    action_args,
                 )
                 .await?;
                 tokio::select! {
@@ -181,20 +169,6 @@ impl rig::tool::Tool for BrowserScreenshotTool {
         }
         replay_image_tool_output(&result).await.map_err(tool_error)
     }
-}
-
-fn browser_action_args(
-    run_id: &str,
-    claim_id: &str,
-    disable_saving: bool,
-) -> BTreeMap<String, Value> {
-    let mut action_args = BTreeMap::new();
-    action_args.insert("runId".to_string(), run_id.to_string().into());
-    action_args.insert("claimId".to_string(), claim_id.to_string().into());
-    if disable_saving {
-        action_args.insert("disable_saving".to_string(), Value::Boolean(true));
-    }
-    action_args
 }
 
 async fn save_screenshot(
@@ -426,11 +400,11 @@ mod tests {
     }
 
     #[test]
-    fn disable_saving_is_omitted_from_payload_unless_set() {
+    fn saving_enforcement_is_opt_in_and_only_on_interact() {
         let interact: BrowserInteractArgs =
             serde_json::from_value(serde_json::json!({ "command": "snapshot -i" }))
                 .expect("minimal interact args");
-        assert!(!interact.disable_saving);
+        assert!(!interact.enforce_saving);
         assert_eq!(
             serde_json::to_value(&interact).unwrap(),
             serde_json::json!({ "command": "snapshot -i" })
@@ -438,18 +412,37 @@ mod tests {
 
         let screenshot: BrowserScreenshotArgs =
             serde_json::from_value(serde_json::json!({})).expect("minimal screenshot args");
-        assert!(!screenshot.disable_saving);
         assert_eq!(
             serde_json::to_value(&screenshot).unwrap(),
             serde_json::json!({})
         );
 
-        let args = browser_action_args("run-1", "claim-1", true);
-        assert_eq!(args.get("disable_saving"), Some(&Value::Boolean(true)));
+        let interact = BrowserInteractArgs {
+            command: "help".to_string(),
+            enforce_saving: true,
+        };
+        let payload = serde_json::to_value(interact).unwrap();
+        assert_eq!(payload, json!({"command": "help", "enforce_saving": true}));
+        let args = action_args_from_payload("run-1", "claim-1", &payload).unwrap();
+        assert_eq!(args.get("enforce_saving"), Some(&Value::Boolean(true)));
+        let schema = json!(schemars::schema_for!(BrowserInteractArgs));
+        assert!(schema["properties"].get("disable_saving").is_none());
+        assert!(schema["properties"]["command"].get("description").is_none());
+        assert_eq!(schema["required"], json!(["command"]));
+        let screenshot_schema = json!(schemars::schema_for!(BrowserScreenshotArgs));
         assert!(
-            browser_action_args("run-1", "claim-1", false)
-                .get("disable_saving")
-                .is_none()
+            screenshot_schema
+                .get("properties")
+                .is_none_or(|properties| properties == &json!({}))
         );
+        assert!(
+            serde_json::from_value::<BrowserInteractArgs>(
+                json!({"command": "help", "disable_saving": true})
+            )
+            .is_err()
+        );
+        for field in ["enforce_saving", "disable_saving"] {
+            assert!(serde_json::from_value::<BrowserScreenshotArgs>(json!({field: true})).is_err());
+        }
     }
 }

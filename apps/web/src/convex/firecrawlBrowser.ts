@@ -16,6 +16,8 @@ const MAX_RESPONSE_BYTES = 2_000_000;
 const MAX_RESULT_CHARS = 8_000;
 const MAX_COMMAND_CHARS = 100_000;
 const MAX_SCREENSHOT_BYTES = 600_000;
+const SAVING_IN_USE_ERROR =
+	"Saving can't be enforced currently as the main browser session is in use by another agent. Ask the user whether they want the cookies and login state saved for future use. If yes, they have to stop the other agent and its browser session.";
 const GONE_STATUSES = new Set([404, 410]);
 const MANAGED_SUBCOMMANDS = new Set(['close', 'connect', 'state', 'cookies', 'session']);
 const MANAGED_FLAG = /^(--(?:cdp|session|profile|state|session-name))(=|$)/;
@@ -206,6 +208,7 @@ function tokenizeCommand(command: string): string[] {
 function commandCode(command: string): string {
 	const words = tokenizeCommand(command);
 	if (words[0] === 'agent-browser') words.shift();
+	const help = words[0] === 'help';
 	if (!words.length || words[0].startsWith('-')) {
 		throw new Error('Provide an agent-browser command without global options.');
 	}
@@ -213,6 +216,7 @@ function commandCode(command: string): string {
 		throw new Error('Browser session and profile management are handled by Sprocket.');
 	}
 	if (words[0] === 'screenshot') throw new Error('Use browser_screenshot to receive an image.');
+	if (help) words[0] = '--help';
 	const code = ['agent-browser', ...words]
 		.map((word) => `'${word.replaceAll("'", "'\\''")}'`)
 		.join(' ');
@@ -237,10 +241,24 @@ type BrowserArgs = {
 	runId: Id<'runs'>;
 	claimId: string;
 	executionSecret: string;
-	disable_saving?: boolean;
 };
 
-async function execute(ctx: ActionCtx, args: BrowserArgs, code: string, language: 'bash' | 'node') {
+async function createSession(profileName: string, saveChanges: boolean) {
+	return provider('POST', '', {
+		ttl: SESSION_TTL_SECONDS,
+		activityTtl: ACTIVITY_TTL_SECONDS,
+		recordSession: false,
+		profile: { name: profileName, saveChanges }
+	});
+}
+
+async function execute(
+	ctx: ActionCtx,
+	args: BrowserArgs,
+	code: string,
+	language: 'bash' | 'node',
+	enforceSaving = false
+) {
 	const actor = await ctx.runQuery(api.agentRuntime.completionActor, {
 		runId: args.runId,
 		executionSecret: args.executionSecret
@@ -252,53 +270,57 @@ async function execute(ctx: ActionCtx, args: BrowserArgs, code: string, language
 		runId: args.runId,
 		claimId: args.claimId,
 		operationId,
-		disable_saving: args.disable_saving
+		enforce_saving: enforceSaving
 	});
 	let sessionId = session.sessionId;
 	let createdId: string | undefined;
+	const startedAt = sessionId ? Date.now() : session.startedAt;
+	const creationDeadline = startedAt + SESSION_TTL_SECONDS * 1_000;
 	let destroyed = false;
 	let executing = false;
 	try {
-		if (!sessionId) {
+		if (!sessionId || (enforceSaving && !session.saveChanges)) {
+			let saveChanges = enforceSaving || session.saveChanges;
 			let data: unknown;
 			try {
-				data = await provider('POST', '', {
-					ttl: SESSION_TTL_SECONDS,
-					activityTtl: ACTIVITY_TTL_SECONDS,
-					recordSession: false,
-					profile: { name: session.profileName, saveChanges: session.saveChanges }
-				});
+				data = await createSession(session.profileName, saveChanges);
 			} catch (error) {
-				if (error instanceof FirecrawlError && error.status === 409) {
-					throw new ConvexError(
-						'profile_in_use: Another conversation is saving to your browser profile. No browser action ran. Retry with disable_saving: true to use the last saved profile without saving changes, or wait for the other session to close.'
-					);
+				if (!(error instanceof FirecrawlError && error.status === 409 && saveChanges)) {
+					throw error;
 				}
-				throw error;
+				if (enforceSaving) throw new ConvexError(SAVING_IN_USE_ERROR);
+				await ctx.runMutation(internal.browserSessions.beforeExecute, {
+					id: session._id,
+					operationId,
+					runId: args.runId,
+					claimId: args.claimId
+				});
+				saveChanges = false;
+				data = await createSession(session.profileName, saveChanges);
 			}
 			createdId = z.object({ id: z.string().min(1) }).parse(data).id;
 			const created = createdSchema.parse(data);
-			sessionId = created.id;
 			const expiresAt = Date.parse(created.expiresAt ?? '');
 			const attached = await ctx.runMutation(internal.browserSessions.attach, {
 				id: session._id,
 				operationId,
-				sessionId,
+				claimId: args.claimId,
+				sessionId: created.id,
+				saveChanges,
+				startedAt,
 				expiresAt: Number.isFinite(expiresAt)
-					? Math.min(expiresAt, session.expiresAt)
-					: session.expiresAt,
+					? Math.min(expiresAt, creationDeadline)
+					: creationDeadline,
 				liveViewUrl: optionalHttpUrl(created.liveViewUrl),
 				interactiveLiveViewUrl: optionalHttpUrl(created.interactiveLiveViewUrl)
 			});
+			createdId = undefined;
 			if (!attached) {
-				await destroy(sessionId);
-				destroyed = true;
-				createdId = undefined;
 				throw new Error(
-					'The browser was reset or its creation lease expired. No action ran. Retry.'
+					'The browser session or saving preference changed before creation completed. No action ran. Retry.'
 				);
 			}
-			createdId = undefined;
+			sessionId = created.id;
 		}
 		await ctx.runMutation(internal.browserSessions.beforeExecute, {
 			id: session._id,
@@ -329,10 +351,13 @@ async function execute(ctx: ActionCtx, args: BrowserArgs, code: string, language
 		return parsed.data;
 	} catch (error) {
 		if (createdId) {
-			await destroy(createdId);
-			destroyed = true;
+			await ctx.runMutation(internal.browserSessions.discardUnattached, {
+				id: session._id,
+				sessionId: createdId,
+				expiresAt: creationDeadline
+			});
 		}
-		if (isGone(error)) {
+		if (executing && isGone(error)) {
 			destroyed = true;
 			throw new ConvexError(
 				'browser_expired: The browser session ended. No action was replayed. Retry to open a new session from the saved profile. Unsaved browser state may be lost.'
@@ -357,9 +382,12 @@ async function execute(ctx: ActionCtx, args: BrowserArgs, code: string, language
 	}
 }
 
-export async function interact(ctx: ActionCtx, args: BrowserArgs & { command: string }) {
+export async function interact(
+	ctx: ActionCtx,
+	args: BrowserArgs & { command: string; enforce_saving?: boolean }
+) {
 	try {
-		const result = await execute(ctx, args, commandCode(args.command), 'bash');
+		const result = await execute(ctx, args, commandCode(args.command), 'bash', args.enforce_saving);
 		return clip([outputText(result), result.stderr].filter(Boolean).join('\n'));
 	} catch (error) {
 		toolError(error);
@@ -411,6 +439,21 @@ export async function screenshot(ctx: ActionCtx, args: BrowserArgs) {
 		toolError(error);
 	}
 }
+
+export const closeDetached = internalAction({
+	args: { sessionId: v.string(), expiresAt: v.number() },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		try {
+			await destroy(args.sessionId);
+		} catch {
+			if (Date.now() < args.expiresAt) {
+				await ctx.scheduler.runAfter(60_000, internal.firecrawlBrowser.closeDetached, args);
+			}
+		}
+		return null;
+	}
+});
 
 export const close = internalAction({
 	args: { id: v.id('browserSessions') },

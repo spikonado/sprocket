@@ -1,5 +1,8 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { flushSync, mount, unmount } from 'svelte';
+import { flushSync, mount, tick, unmount } from 'svelte';
+import { closeConvex } from 'convex-svelte';
+import { initConvex } from 'convex-svelte/sveltekit';
+import { getFunctionName } from 'convex/server';
 import type { Id } from '$convex/_generated/dataModel';
 import type { BrowserLiveViewState } from '$lib/chat/side-panel';
 import BrowserLiveView from './browser-live-view.svelte';
@@ -9,10 +12,62 @@ afterEach(async () => {
 	await cleanup();
 	document.body.replaceChildren();
 	vi.useRealTimers();
+	vi.restoreAllMocks();
+	await closeConvex();
+});
+
+it('stops the displayed session, prevents duplicate requests, and shows an ended view', async () => {
+	const client = initConvex('https://example.convex.cloud', { disabled: true });
+	const result = Promise.withResolvers<null>();
+	const mutation = vi.spyOn(client, 'mutation').mockReturnValue(result.promise);
+	const props = $state({ active: true, liveView: session(Date.now() + 60_000) });
+	const component = mount(BrowserLiveView, { target: document.body, props });
+	cleanup = () => unmount(component);
+	flushSync();
+	const button = document.querySelector<HTMLButtonElement>(
+		'button[aria-label="Stop browser session"]'
+	);
+	expect(button).not.toBeNull();
+	button!.click();
+	flushSync();
+	expect(button!.disabled).toBe(true);
+	expect(button!.getAttribute('aria-busy')).toBe('true');
+	button!.click();
+	expect(mutation).toHaveBeenCalledTimes(1);
+	expect(getFunctionName(mutation.mock.calls[0][0])).toBe('browserSessions:stop');
+	expect(mutation.mock.calls[0][1]).toEqual({ id: props.liveView.id });
+	result.resolve(null);
+	await tick();
+	props.liveView.ended = true;
+	flushSync();
+	expect(document.querySelector('iframe, button')).toBeNull();
+	expect(document.body.textContent).toContain('Browser session ended.');
+});
+
+it('keeps the session visible and allows retry when stopping fails', async () => {
+	const client = initConvex('https://example.convex.cloud', { disabled: true });
+	vi.spyOn(client, 'mutation').mockRejectedValue(new Error('Connection lost'));
+	const component = mount(BrowserLiveView, {
+		target: document.body,
+		props: { active: false, liveView: session(Date.now() + 60_000) }
+	});
+	cleanup = () => unmount(component);
+	flushSync();
+	const button = document.querySelector<HTMLButtonElement>(
+		'button[aria-label="Stop browser session"]'
+	);
+	button!.click();
+	await tick();
+	flushSync();
+	expect(document.querySelector('[role="alert"]')?.textContent).toContain('Connection lost');
+	expect(button!.disabled).toBe(false);
+	expect(document.querySelector('iframe')).not.toBeNull();
 });
 
 function session(expiresAt: number, ended = false): BrowserLiveViewState {
 	return {
+		// SAFETY: This ID is only used by the mounted test component.
+		id: 'session' as Id<'browserSessions'>,
 		url: 'https://example.com/passive',
 		interactiveUrl: 'https://example.com/interactive',
 		saving: true,

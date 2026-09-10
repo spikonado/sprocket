@@ -6,7 +6,7 @@ import {
 } from 'convex/server';
 import type { Doc } from '@convex/_generated/dataModel';
 import { internal } from '@convex/_generated/api';
-import { internalMutation, internalQuery, query } from '@convex/_generated/server';
+import { internalMutation, internalQuery, mutation, query } from '@convex/_generated/server';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
@@ -19,6 +19,7 @@ export const liveViewForThread = query({
 	args: { threadId: v.id('threadRecords') },
 	returns: v.union(
 		v.object({
+			id: v.id('browserSessions'),
 			url: v.union(v.string(), v.null()),
 			interactiveUrl: v.union(v.string(), v.null()),
 			saving: v.boolean(),
@@ -42,6 +43,7 @@ export const liveViewForThread = query({
 			.unique();
 		if (!session) return null;
 		return {
+			id: session._id,
 			url: session.closing ? null : (session.liveViewUrl ?? null),
 			interactiveUrl: session.closing ? null : (session.interactiveLiveViewUrl ?? null),
 			saving: session.saveChanges,
@@ -55,6 +57,25 @@ export const liveViewForThread = query({
 	}
 });
 
+export const stop = mutation({
+	args: { id: v.id('browserSessions') },
+	returns: v.null(),
+	handler: async (ctx, { id }) => {
+		const userId = await getUserId(ctx);
+		const session = await ctx.db.get('browserSessions', id);
+		if (!session) return null;
+		await getOwnedThreadRecord(ctx.db, userId, session.threadId);
+		if (session.closing) return null;
+		await ctx.db.patch('browserSessions', id, {
+			closing: true,
+			operationId: undefined,
+			operationExpiresAt: 0
+		});
+		await ctx.scheduler.runAfter(0, internal.firecrawlBrowser.close, { id });
+		return null;
+	}
+});
+
 export const acquire = internalMutation({
 	args: {
 		threadId: v.id('threadRecords'),
@@ -62,7 +83,7 @@ export const acquire = internalMutation({
 		runId: v.id('runs'),
 		claimId: v.string(),
 		operationId: v.string(),
-		disable_saving: v.optional(v.boolean())
+		enforce_saving: v.optional(v.boolean())
 	},
 	returns: schema.doc('browserSessions'),
 	handler: async (ctx, args) => {
@@ -82,23 +103,28 @@ export const acquire = internalMutation({
 			.query('browserSessions')
 			.withIndex('by_threadId', (q) => q.eq('threadId', args.threadId))
 			.unique();
+		let profile = await ctx.db
+			.query('browserProfiles')
+			.withIndex('by_userId', (q) => q.eq('userId', args.userId))
+			.unique();
+		if (args.enforce_saving && profile?.savingEnabled === false) {
+			throw new ConvexError(
+				"Saving can't be enforced because browser saving is disabled in Settings. Ask the user to enable it in Agent's Browser settings."
+			);
+		}
 		if (existing) {
-			const profile = await ctx.db
-				.query('browserProfiles')
-				.withIndex('by_userId', (q) => q.eq('userId', args.userId))
-				.unique();
 			if (profile?.name !== existing.profileName) {
 				throw new ConvexError(
 					'browser_reset: This browser is being closed after a profile reset. Retry shortly.'
 				);
 			}
+			if (existing.closing || existing.expiresAt <= now) {
+				throw new ConvexError('The browser is closing. Retry shortly.');
+			}
 			if (existing.humanControl)
 				throw new ConvexError(
 					'The user has control of this browser. Ask them to give control back before browsing.'
 				);
-			if (existing.closing || existing.expiresAt <= now) {
-				throw new ConvexError('The browser is closing. Retry shortly.');
-			}
 			if (existing.operationId && existing.operationExpiresAt > now) {
 				throw new ConvexError(
 					"browser_busy: Another action is using this conversation's browser. Retry after it finishes."
@@ -107,11 +133,6 @@ export const acquire = internalMutation({
 			if (!existing.sessionId) {
 				throw new ConvexError(
 					'browser_starting: Session creation has not completed. Retry shortly.'
-				);
-			}
-			if (args.disable_saving && existing.saveChanges) {
-				throw new ConvexError(
-					'saving_mode_fixed: This browser was opened with saving enabled. disable_saving applies only when opening a new session. No action was executed.'
 				);
 			}
 			await ctx.db.patch('browserSessions', existing._id, {
@@ -126,10 +147,6 @@ export const acquire = internalMutation({
 				lastUsedRunId: args.runId
 			};
 		}
-		let profile = await ctx.db
-			.query('browserProfiles')
-			.withIndex('by_userId', (q) => q.eq('userId', args.userId))
-			.unique();
 		if (!profile) {
 			const id = await ctx.db.insert('browserProfiles', {
 				userId: args.userId,
@@ -151,7 +168,7 @@ export const acquire = internalMutation({
 			threadId: args.threadId,
 			userId: args.userId,
 			profileName: profile.name,
-			saveChanges: profile.savingEnabled && !args.disable_saving,
+			saveChanges: profile.savingEnabled,
 			lastUsedRunId: args.runId,
 			startedAt: now,
 			expiresAt: now + 3_600_000,
@@ -172,23 +189,70 @@ export const attach = internalMutation({
 	args: {
 		id: v.id('browserSessions'),
 		operationId: v.string(),
+		claimId: v.string(),
 		sessionId: v.string(),
+		saveChanges: v.boolean(),
+		startedAt: v.number(),
 		expiresAt: v.number(),
 		liveViewUrl: v.optional(v.string()),
 		interactiveLiveViewUrl: v.optional(v.string())
 	},
 	returns: v.boolean(),
-	handler: async (ctx, { id, operationId, ...remote }) => {
+	handler: async (ctx, { id, operationId, claimId, ...remote }) => {
+		const now = Date.now();
 		const session = await ctx.db.get('browserSessions', id);
-		if (!session || session.operationId !== operationId) return false;
-		await ctx.db.patch('browserSessions', id, { ...remote, attachedAt: Date.now() });
-		if (session.closing || session.operationExpiresAt <= Date.now()) {
-			await ctx.db.patch('browserSessions', id, { closing: true });
-			await ctx.scheduler.runAfter(0, internal.firecrawlBrowser.close, { id });
+		const profile = session
+			? await ctx.db
+					.query('browserProfiles')
+					.withIndex('by_userId', (q) => q.eq('userId', session.userId))
+					.unique()
+			: null;
+		const run = session ? await ctx.db.get('runs', session.lastUsedRunId) : null;
+		if (
+			!session ||
+			session.operationId !== operationId ||
+			session.closing ||
+			session.operationExpiresAt <= now ||
+			session.expiresAt <= now ||
+			profile?.name !== session.profileName ||
+			(remote.saveChanges && !profile?.savingEnabled) ||
+			!run ||
+			run.claimId !== claimId ||
+			run.cancellationRequestedAt !== undefined ||
+			!isRunClaimLeaseActive(run, now)
+		) {
+			await ctx.scheduler.runAfter(0, internal.firecrawlBrowser.closeDetached, {
+				sessionId: remote.sessionId,
+				expiresAt: remote.expiresAt
+			});
 			return false;
+		}
+		await ctx.db.patch('browserSessions', id, {
+			...remote,
+			liveViewUrl: remote.liveViewUrl,
+			interactiveLiveViewUrl: remote.interactiveLiveViewUrl,
+			attachedAt: now
+		});
+		if (session.sessionId && session.sessionId !== remote.sessionId) {
+			await ctx.scheduler.runAfter(0, internal.firecrawlBrowser.closeDetached, {
+				sessionId: session.sessionId,
+				expiresAt: session.expiresAt
+			});
 		}
 		await ctx.scheduler.runAt(remote.expiresAt, internal.browserSessions.expire, { id });
 		return true;
+	}
+});
+
+export const discardUnattached = internalMutation({
+	args: { id: v.id('browserSessions'), sessionId: v.string(), expiresAt: v.number() },
+	returns: v.null(),
+	handler: async (ctx, { id, ...remote }) => {
+		const session = await ctx.db.get('browserSessions', id);
+		if (session?.sessionId !== remote.sessionId) {
+			await ctx.scheduler.runAfter(0, internal.firecrawlBrowser.closeDetached, remote);
+		}
+		return null;
 	}
 });
 

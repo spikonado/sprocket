@@ -11,12 +11,11 @@ import { vBrowserScreenshotResult, vBrowserTaskResult } from '@convex/lib/valida
 const browserArgs = {
 	runId: v.id('runs'),
 	claimId: v.string(),
-	executionSecret: v.string(),
-	disable_saving: v.optional(v.boolean())
+	executionSecret: v.string()
 };
 
 export const interact = action({
-	args: { ...browserArgs, command: v.string() },
+	args: { ...browserArgs, command: v.string(), enforce_saving: v.optional(v.boolean()) },
 	returns: vBrowserTaskResult,
 	handler: firecrawlInteract
 });

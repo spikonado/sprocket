@@ -41,11 +41,34 @@ async function insertSession(
 afterEach(() => vi.useRealTimers());
 
 describe('browserSessions', () => {
+	it('only lets the session owner stop it and leaves the run untouched', async () => {
+		vi.useFakeTimers();
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t, 'browser-owner');
+		const other = await seedOwnedThread(t, 'browser-stranger');
+		const { runId } = await createQueuedRun(t, asUser, threadId, 'sub', 'secret', 'Browse');
+		const { id } = await insertSession(t, { threadId, userId: 'browser-owner', runId });
+		const run = await t.run((ctx) => ctx.db.get('runs', runId));
+		await expect(other.asUser.mutation(api.browserSessions.stop, { id })).rejects.toThrow(
+			'Thread not found.'
+		);
+		expect((await t.run((ctx) => ctx.db.get('browserSessions', id)))?.closing).toBe(false);
+		await asUser.mutation(api.browserSessions.stop, { id });
+		await asUser.mutation(api.browserSessions.stop, { id });
+		expect(await asUser.query(api.browserSessions.liveViewForThread, { threadId })).toMatchObject({
+			id,
+			ended: true,
+			url: null,
+			interactiveUrl: null
+		});
+		expect(await t.run((ctx) => ctx.db.get('runs', runId))).toEqual(run);
+	});
+
 	it('serves Firecrawl live-view fields to the thread owner only', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_browser_live');
 		const { runId } = await createQueuedRun(t, asUser, threadId, 'sub', 'secret', 'Browse');
-		const { startedAt } = await insertSession(t, {
+		const { id, startedAt } = await insertSession(t, {
 			threadId,
 			userId: 'user_browser_live',
 			runId,
@@ -55,6 +78,7 @@ describe('browserSessions', () => {
 		await expect(
 			asUser.query(api.browserSessions.liveViewForThread, { threadId })
 		).resolves.toEqual({
+			id,
 			url: 'https://view.example/firecrawl',
 			interactiveUrl: 'https://view.example/interactive',
 			saving: true,

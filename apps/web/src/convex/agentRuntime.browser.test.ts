@@ -40,6 +40,44 @@ describe('browser screenshot results', () => {
 });
 
 describe('retired browser clients', () => {
+	it.each(['browser_interact', 'browser_screenshot'] as const)(
+		'rejects disable_saving on new %s jobs but preserves recorded calls',
+		async (kind) => {
+			const t = initConvexTest();
+			const { asUser, threadId } = await seedOwnedThread(t);
+			const executionSecret = 'saving-secret';
+			const claimId = 'saving-claim';
+			const { runId } = await createQueuedRun(t, asUser, threadId, 'sub', executionSecret);
+			await asUser.mutation(api.agentRuntime.start, { runId, claimId, executionSecret });
+			const payload =
+				kind === 'browser_interact'
+					? { command: 'get url', disable_saving: true }
+					: { disable_saving: true };
+			await expect(
+				asUser.mutation(makeFunctionReference<'mutation'>('agentRuntime:beginToolJob'), {
+					runId,
+					claimId,
+					executionSecret,
+					kind,
+					payload
+				})
+			).rejects.toThrow();
+			const jobId = await t.run((ctx) =>
+				ctx.db.insert('executorJobs', {
+					threadId,
+					runId,
+					kind,
+					payload,
+					status: 'completed',
+					hidden: false,
+					enqueuedAt: 1,
+					sequence: 0
+				})
+			);
+			expect((await t.run((ctx) => ctx.db.get('executorJobs', jobId)))?.payload).toEqual(payload);
+		}
+	);
+
 	it.each(['browser_act', 'browser_observe', 'browser_extract'])(
 		'rejects new %s jobs while preserving stored history',
 		async (kind) => {

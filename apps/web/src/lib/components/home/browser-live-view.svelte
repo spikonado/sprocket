@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ExternalLink, Globe, LoaderCircle } from '@lucide/svelte';
+	import { ExternalLink, Globe, LoaderCircle, Square } from '@lucide/svelte';
 	import { useMutation } from 'convex-svelte';
 	import { api } from '$convex/_generated/api';
 	import type { BrowserLiveViewState } from '$lib/chat/side-panel';
@@ -15,11 +15,13 @@
 	let { liveView, active }: Props = $props();
 
 	const setHumanControl = useMutation(api.browserProfiles.setHumanControl);
+	const stopSession = useMutation(api.browserSessions.stop);
 
-	let pending = $state(false);
+	let pending = $state<'control' | 'stop' | null>(null);
 	let actionError = $state<string | null>(null);
 
 	const threadId = $derived(liveView?.threadId);
+	const sessionId = $derived(liveView?.id);
 	const humanControl = $derived(liveView?.humanControl === true);
 	const passiveUrl = $derived(liveView?.url ?? null);
 	const interactiveUrl = $derived(liveView?.interactiveUrl ?? null);
@@ -27,7 +29,9 @@
 	const iframeUrl = $derived(iframeInteractive ? interactiveUrl : passiveUrl);
 	const ended = $derived(liveView?.ended === true);
 	const canTakeover = $derived(threadId != null);
-	const controlDisabled = $derived(pending || ended || (interactiveUrl == null && !humanControl));
+	const controlDisabled = $derived(
+		pending !== null || ended || (interactiveUrl == null && !humanControl)
+	);
 	const expiryLabel = $derived(liveView == null ? null : formatExpiry(liveView.expiresAt));
 	const metaLabel = $derived.by(() => {
 		const parts: string[] = [];
@@ -40,7 +44,7 @@
 	);
 
 	$effect(() => {
-		void threadId;
+		void sessionId;
 		actionError = null;
 	});
 
@@ -59,17 +63,33 @@
 
 	async function setControl(enabled: boolean) {
 		if (threadId == null || controlDisabled) return;
-		pending = true;
+		const id = sessionId;
+		pending = 'control';
 		actionError = null;
 		try {
 			await setHumanControl({ threadId, enabled });
 		} catch (error) {
-			actionError = catchMessage(
-				error,
-				enabled ? 'Couldn’t take control.' : 'Couldn’t give control back.'
-			);
+			if (sessionId === id)
+				actionError = catchMessage(
+					error,
+					enabled ? 'Couldn’t take control.' : 'Couldn’t give control back.'
+				);
 		} finally {
-			pending = false;
+			pending = null;
+		}
+	}
+
+	async function stopBrowser() {
+		if (sessionId == null || ended || pending !== null) return;
+		const id = sessionId;
+		pending = 'stop';
+		actionError = null;
+		try {
+			await stopSession({ id });
+		} catch (error) {
+			if (sessionId === id) actionError = catchMessage(error, 'Couldn’t stop the browser session.');
+		} finally {
+			pending = null;
 		}
 	}
 </script>
@@ -102,12 +122,12 @@
 					type="button"
 					class="text-foreground hover:bg-muted rounded-md px-2 py-0.5 text-xs font-medium transition disabled:pointer-events-none disabled:opacity-50"
 					disabled={controlDisabled}
-					aria-busy={pending}
+					aria-busy={pending === 'control'}
 					onclick={() => {
 						void setControl(!humanControl);
 					}}
 				>
-					{#if pending}
+					{#if pending === 'control'}
 						{humanControl ? 'Giving control back…' : 'Taking control…'}
 					{:else if humanControl}
 						Give control back
@@ -130,6 +150,23 @@
 				</a>
 				<!-- eslint-enable svelte/no-navigation-without-resolve -->
 			{/if}
+			<button
+				type="button"
+				class="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:scale-105 hover:bg-rose-500 disabled:pointer-events-none disabled:opacity-60 disabled:hover:scale-100"
+				aria-label="Stop browser session"
+				title="Stop browser session"
+				aria-busy={pending === 'stop'}
+				disabled={pending !== null}
+				onclick={() => {
+					void stopBrowser();
+				}}
+			>
+				{#if pending === 'stop'}
+					<LoaderCircle class="size-3.5 animate-spin" aria-hidden="true" />
+				{:else}
+					<Square class="size-3 fill-current" aria-hidden="true" />
+				{/if}
+			</button>
 		</div>
 		{#if actionError}
 			<p class="text-destructive border-b px-3 py-1.5 text-xs" role="alert">{actionError}</p>

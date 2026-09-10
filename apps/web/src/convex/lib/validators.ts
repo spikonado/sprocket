@@ -106,11 +106,12 @@ const vHistoricalBrowserActPayload = v.object({
 
 export const vBrowserInteractPayload = v.object({
 	command: v.string(),
-	disable_saving: v.optional(v.boolean())
+	enforce_saving: v.optional(v.boolean())
 });
 
-export const vBrowserScreenshotPayload = v.object({
-	disable_saving: v.optional(v.boolean())
+const vHistoricalBrowserSavingPayload = v.object({
+	command: v.optional(v.string()),
+	disable_saving: v.boolean()
 });
 
 const mandateFrequencies = ['one_time', 'weekly', 'monthly', 'yearly'] as const;
@@ -215,7 +216,6 @@ export const vCurrentExecutorJobPayload = v.union(
 	vCreateArtifactPayload,
 	vUpdateArtifactPayload,
 	vBrowserInteractPayload,
-	vBrowserScreenshotPayload,
 	vMandateSetupPayload,
 	vMandateIdPayload,
 	vMandateChargePayload,
@@ -224,6 +224,7 @@ export const vCurrentExecutorJobPayload = v.union(
 
 export const vExecutorJobPayload = v.union(
 	vCurrentExecutorJobPayload,
+	vHistoricalBrowserSavingPayload,
 	vHistoricalBrowserActPayload
 );
 
