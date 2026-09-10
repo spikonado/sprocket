@@ -27,6 +27,26 @@ validators once no executor jobs contain the retired names. At the user's
 request, old artifact data is discarded rather than migrated: the operator
 clears `artifacts` and `artifactVersions` before the normal schema deployment.
 
+## Firecrawl queue transports
+
+Released agents still call `webTools.scrapeForTool` and `webTools.screenshotForTool`.
+These actions now enqueue on the scrape pool and wait for the result. Current agents
+use `firecrawlRequests:start` and a result subscription instead. Remove the waiting
+actions once all supported agents use the subscription transport.
+
+Hosted parse jobs created before the pool split have no `cloudWorkPool` field.
+Their cancellation still targets `webToolWorkpool`; new jobs record `firecrawlScrape`.
+Remove the cancellation fallback after every legacy in-flight job has settled.
+Completed job history may continue to omit the field.
+
+## Historical Browserbase executor jobs
+
+Browserbase client support is explicitly retired. Its actions, provider dependencies, configuration and session schema are removed. New tool jobs accept only current tool kinds. Firecrawl uses the cleared `browserSessions` table directly.
+
+Production still contains historical Browserbase executor jobs. Their stored kind, payload and result validators remain so deployment and conversation history do not break. Remove these validators only after a migration rewrites or removes every historical Browserbase job. This does not preserve Browserbase endpoints or allow old clients to start browser jobs.
+
+Browser screenshot results now add local image-cache metadata without changing the `browserAgent.screenshot` transport. The result validator still accepts the older size-only screenshot records, which cannot replay pixels. Keep that result shape while the transport and oversized captures use it, and until stored records and clients no longer depend on it.
+
 ## Transcript projection API
 
 Attachment compatibility covers older stored schemas only. Older-client shims

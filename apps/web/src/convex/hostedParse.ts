@@ -28,7 +28,7 @@ import {
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
 import { isSettledExecutorJobStatus } from '@convex/lib/runs';
 import { isRunFinalStatus, registeredFileUploadError } from '@convex/lib/validators';
-import { webToolWorkpool } from '@convex/webToolPool';
+import { firecrawlScrapePool } from '@convex/lib/firecrawlPools';
 
 const CLEANUP_BATCH_SIZE = 100;
 
@@ -159,7 +159,7 @@ export const start = mutation({
 				filename,
 				uploadUrl: undefined
 			});
-			const workId = await webToolWorkpool.enqueueAction(
+			const workId = await firecrawlScrapePool.enqueueAction(
 				ctx,
 				internal.hostedParseActions.executeHostedParse,
 				{
@@ -179,7 +179,10 @@ export const start = mutation({
 					}
 				}
 			);
-			await ctx.db.patch('executorJobs', job._id, { cloudWorkId: workId });
+			await ctx.db.patch('executorJobs', job._id, {
+				cloudWorkId: workId,
+				cloudWorkPool: 'firecrawlScrape'
+			});
 			return null;
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));

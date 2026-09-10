@@ -247,6 +247,37 @@ export default defineSchema({
 		.index('by_inputStorageId', ['inputStorageId'])
 		.index('by_resultStorageId', ['resultStorageId'])
 		.index('by_expiresAt', ['expiresAt']),
+	firecrawlRequests: defineTable({
+		runId: v.id('runs'),
+		claimId: v.string(),
+		jobId: v.optional(v.id('executorJobs')),
+		kind: v.union(
+			v.literal('scrape'),
+			v.literal('screenshot'),
+			v.literal('browser_interact'),
+			v.literal('browser_screenshot')
+		),
+		command: v.optional(v.string()),
+		enforce_saving: v.optional(v.boolean()),
+		status: v.union(
+			v.literal('queued'),
+			v.literal('running'),
+			v.literal('completed'),
+			v.literal('failed')
+		),
+		workId: v.optional(v.string()),
+		resultStorageId: v.optional(v.id('_storage')),
+		error: v.optional(v.string()),
+		expiresAt: v.number()
+	}).index('by_runId', ['runId']),
+	browserCapacity: defineTable({
+		reservationId: v.string(),
+		sessionId: v.optional(v.string()),
+		expiresAt: v.number()
+	})
+		.index('by_reservationId', ['reservationId'])
+		.index('by_sessionId', ['sessionId'])
+		.index('by_expiresAt', ['expiresAt']),
 	executorJobs: defineTable({
 		threadId: v.id('threadRecords'),
 		runId: v.id('runs'),
@@ -266,7 +297,8 @@ export default defineSchema({
 		result: v.optional(vExecutorJobResult),
 		error: v.optional(v.string()),
 		sequence: v.number(),
-		cloudWorkId: v.optional(v.string())
+		cloudWorkId: v.optional(v.string()),
+		cloudWorkPool: v.optional(v.literal('firecrawlScrape'))
 	})
 		.index('by_threadId_sequence', ['threadId', 'sequence'])
 		.index('by_runId_sequence', ['runId', 'sequence'])
@@ -359,13 +391,29 @@ export default defineSchema({
 	})
 		.index('by_mandate_reference', ['mandateId', 'reference'])
 		.index('by_reportRetrierRunId', ['reportRetrierRunId']),
-	browserSessions: defineTable({
-		threadId: v.id('threadRecords'),
-		runId: v.id('runs'),
-		lastUsedRunId: v.id('runs'),
+	browserProfiles: defineTable({
 		userId: v.string(),
-		browserbaseSessionId: v.string(),
+		name: v.string(),
+		savingEnabled: v.boolean()
+	}).index('by_userId', ['userId']),
+	browserSessions: defineTable({
+		humanControl: v.optional(v.boolean()),
+		attachedAt: v.optional(v.number()),
+		threadId: v.id('threadRecords'),
+		userId: v.string(),
+		profileName: v.string(),
+		saveChanges: v.boolean(),
+		lastUsedRunId: v.id('runs'),
+		startedAt: v.number(),
+		expiresAt: v.number(),
+		sessionId: v.optional(v.string()),
 		liveViewUrl: v.optional(v.string()),
-		startedAt: v.number()
-	}).index('by_thread', ['threadId'])
+		interactiveLiveViewUrl: v.optional(v.string()),
+		operationId: v.optional(v.string()),
+		operationExpiresAt: v.number(),
+		closing: v.boolean()
+	})
+		.index('by_threadId', ['threadId'])
+		.index('by_userId', ['userId'])
+		.index('by_expiresAt', ['expiresAt'])
 });

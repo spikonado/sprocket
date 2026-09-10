@@ -91,7 +91,7 @@ export const vReadSkillPayload = v.object({
 	name: v.string()
 });
 
-export const vBrowserActPayload = v.object({
+const vHistoricalBrowserActPayload = v.object({
 	instruction: v.optional(v.string()),
 	action: v.optional(
 		v.object({
@@ -102,6 +102,11 @@ export const vBrowserActPayload = v.object({
 		})
 	),
 	startUrl: v.optional(v.string())
+});
+
+export const vBrowserInteractPayload = v.object({
+	command: v.string(),
+	enforce_saving: v.optional(v.boolean())
 });
 
 const mandateFrequencies = ['one_time', 'weekly', 'monthly', 'yearly'] as const;
@@ -189,7 +194,7 @@ export const vParseFilePayload = v.union(
 	v.object({ url: v.string() })
 );
 
-export const vExecutorJobPayload = v.union(
+export const vCurrentExecutorJobPayload = v.union(
 	v.object({}),
 	vParseFilePayload,
 	vApplyPatchPayload,
@@ -205,11 +210,16 @@ export const vExecutorJobPayload = v.union(
 	vEditArtifactPayload,
 	vCreateArtifactPayload,
 	vUpdateArtifactPayload,
-	vBrowserActPayload,
+	vBrowserInteractPayload,
 	vMandateSetupPayload,
 	vMandateIdPayload,
 	vMandateChargePayload,
 	vMandateReportPayload
+);
+
+export const vExecutorJobPayload = v.union(
+	vCurrentExecutorJobPayload,
+	vHistoricalBrowserActPayload
 );
 
 export const vApplyPatchResult = v.object({
@@ -354,15 +364,27 @@ export const vBrowserTaskResult = v.object({
 	truncated: v.boolean()
 });
 
-export const vBrowserObservedAction = v.object({
+export const vBrowserScreenshotResult = v.object({
+	mediaType: v.literal('image/png'),
+	dataBase64: v.string(),
+	byteLength: v.number(),
+	truncated: v.boolean(),
+	url: v.optional(v.string())
+});
+
+const vCachedBrowserScreenshotResult = vWebImageResult.omit('url').extend({
+	mediaType: v.literal('image/png')
+});
+
+const vHistoricalBrowserObservedAction = v.object({
 	selector: v.string(),
 	description: v.string(),
 	method: v.optional(v.string()),
 	arguments: v.optional(v.array(v.string()))
 });
 
-export const vBrowserObserveResult = v.object({
-	actions: v.array(vBrowserObservedAction),
+const vHistoricalBrowserObserveResult = v.object({
+	actions: v.array(vHistoricalBrowserObservedAction),
 	text: v.string(),
 	truncated: v.boolean()
 });
@@ -456,7 +478,9 @@ export const vExecutorJobResult = v.union(
 	vArtifactResult,
 	vListArtifactsResult,
 	vBrowserTaskResult,
-	vBrowserObserveResult,
+	vBrowserScreenshotResult,
+	vCachedBrowserScreenshotResult,
+	vHistoricalBrowserObserveResult,
 	vMandateSetupResult,
 	vMandateStatusResult,
 	vMandateListResult,
@@ -483,13 +507,12 @@ export function isRunFinalStatus(
 	return runFinalStatus.some((allowed) => allowed === status);
 }
 
-export const vExecutorJobKind = v.union(
+export const vCurrentExecutorJobKind = v.union(
 	v.literal('apply_patch'),
 	v.literal('ask_question'),
 	v.literal('await_question'),
-	v.literal('browser_observe'),
-	v.literal('browser_act'),
-	v.literal('browser_extract'),
+	v.literal('browser_interact'),
+	v.literal('browser_screenshot'),
 	v.literal('exec_command'),
 	v.literal('get_workspace_instructions'),
 	v.literal('mandate_setup'),
@@ -507,6 +530,13 @@ export const vExecutorJobKind = v.union(
 	v.literal('list_artifacts'),
 	v.literal('edit_artifact'),
 	v.literal('save_artifact')
+);
+
+export const vExecutorJobKind = v.union(
+	vCurrentExecutorJobKind,
+	v.literal('browser_observe'),
+	v.literal('browser_act'),
+	v.literal('browser_extract')
 );
 
 export const vStoredExecutorJobKind = v.union(

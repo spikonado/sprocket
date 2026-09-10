@@ -31,4 +31,10 @@ crons.interval(
 	{}
 );
 
+crons.interval(
+	'reconcile Firecrawl browser sessions',
+	{ minutes: 1 },
+	internal.firecrawlBrowser.reconcile
+);
+
 export default crons;

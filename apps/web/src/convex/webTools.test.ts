@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConvexError } from 'convex/values';
+import type { FunctionArgs, FunctionReference } from 'convex/server';
 import { FirecrawlClient } from '@firecrawl/firecrawl-convex';
 import { api, internal } from '@convex/_generated/api';
 import { RUN_NO_LONGER_ACTIVE } from '@convex/lib/agentErrors';
@@ -19,6 +20,25 @@ import { initConvexTest, seedStartedWebJob, type ConvexTestInstance } from './te
 
 const PAGE_URL = 'https://example.com/page';
 const SCREENSHOT_URL = 'https://storage.googleapis.com/firecrawl/shot.png?X-Goog-Signature=sig';
+
+async function queuedAction<R>(
+	t: Pick<ConvexTestInstance, 'action'>,
+	action: FunctionReference<'action', 'public', FunctionArgs<typeof api.webTools.scrapeForTool>, R>,
+	args: FunctionArgs<typeof api.webTools.scrapeForTool>
+) {
+	let settled = false;
+	const result = t.action(action, args);
+	void result.then(
+		() => {
+			settled = true;
+		},
+		() => {
+			settled = true;
+		}
+	);
+	await vi.waitFor(() => expect(settled).toBe(true), { timeout: 10_000, interval: 10 });
+	return result;
+}
 
 function firecrawlApiError(status: number) {
 	return new ConvexError({
@@ -131,7 +151,7 @@ describe('scrapeForTool auth', () => {
 		});
 		try {
 			expect(
-				await asUser.action(api.webTools.scrapeForTool, {
+				await queuedAction(asUser, api.webTools.scrapeForTool, {
 					runId,
 					claimId,
 					jobId,
@@ -174,7 +194,7 @@ describe('scrapeForTool auth', () => {
 			payload: { url: PAGE_URL }
 		});
 		await expect(
-			asUser.action(api.webTools.scrapeForTool, {
+			queuedAction(asUser, api.webTools.scrapeForTool, {
 				runId,
 				claimId,
 				jobId,
@@ -194,7 +214,7 @@ describe('scrapeForTool auth', () => {
 			await ctx.db.patch('executorJobs', jobId, { cloudWorkId: 'historical-cloud-work' });
 		});
 		await expect(
-			asUser.action(api.webTools.scrapeForTool, {
+			queuedAction(asUser, api.webTools.scrapeForTool, {
 				runId,
 				claimId,
 				jobId,
@@ -211,7 +231,7 @@ describe('scrapeForTool auth', () => {
 			payload: { query: 'sprocket' }
 		});
 		await expect(
-			asUser.action(api.webTools.scrapeForTool, {
+			queuedAction(asUser, api.webTools.scrapeForTool, {
 				runId,
 				claimId,
 				jobId,
@@ -230,7 +250,7 @@ describe('scrapeForTool auth', () => {
 		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
 		try {
 			await expect(
-				asUser.action(api.webTools.scrapeForTool, {
+				queuedAction(asUser, api.webTools.scrapeForTool, {
 					runId,
 					claimId,
 					jobId,
@@ -254,7 +274,7 @@ describe('scrapeForTool auth', () => {
 			await ctx.db.patch('runs', runId, { claimExpiresAt: Date.now() - 1 });
 		});
 		await expect(
-			asUser.action(api.webTools.scrapeForTool, {
+			queuedAction(asUser, api.webTools.scrapeForTool, {
 				runId,
 				claimId,
 				jobId,
@@ -262,11 +282,10 @@ describe('scrapeForTool auth', () => {
 			})
 		).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
 		expect(
-			await t.query(internal.webToolPool.getLocalScrapeJob, {
+			await t.mutation(internal.firecrawlRequests.scrapeJob, {
 				runId,
 				claimId,
-				jobId,
-				executionSecret
+				jobId
 			})
 		).toBeNull();
 	});
@@ -286,7 +305,7 @@ describe('scrapeForTool auth', () => {
 			result: { url: PAGE_URL, markdown: 'done', summary: 'Done.' }
 		});
 		await expect(
-			asUser.action(api.webTools.scrapeForTool, {
+			queuedAction(asUser, api.webTools.scrapeForTool, {
 				runId,
 				claimId,
 				jobId,
@@ -368,7 +387,7 @@ async function scrapeLocalPage(
 	});
 	const scrape = mockScrape(document, url);
 	try {
-		const result = await seeded.asUser.action(api.webTools.scrapeForTool, {
+		const result = await queuedAction(seeded.asUser, api.webTools.scrapeForTool, {
 			runId: seeded.runId,
 			claimId: seeded.claimId,
 			jobId: seeded.jobId,
@@ -445,7 +464,7 @@ describe('scrapeForTool markdown transport', () => {
 		const scrape = mockScrape({ markdown: `${'é'.repeat(32 * 1024 * 1024)}x` });
 		try {
 			await expect(
-				asUser.action(api.webTools.scrapeForTool, {
+				queuedAction(asUser, api.webTools.scrapeForTool, {
 					runId,
 					claimId,
 					jobId,
@@ -596,7 +615,7 @@ describe('scrape errors', () => {
 		);
 		try {
 			await expect(
-				asUser.action(api.webTools.scrapeForTool, {
+				queuedAction(asUser, api.webTools.scrapeForTool, {
 					runId,
 					claimId,
 					jobId,
@@ -620,7 +639,7 @@ describe('scrape errors', () => {
 			.mockRejectedValue(firecrawlApiError(404));
 		try {
 			await expect(
-				asUser.action(api.webTools.scrapeForTool, {
+				queuedAction(asUser, api.webTools.scrapeForTool, {
 					runId,
 					claimId,
 					jobId,
@@ -646,7 +665,7 @@ describe('scrape errors', () => {
 		});
 		try {
 			await expect(
-				asUser.action(api.webTools.scrapeForTool, {
+				queuedAction(asUser, api.webTools.scrapeForTool, {
 					runId,
 					claimId,
 					jobId,
@@ -671,7 +690,7 @@ describe('scrape errors', () => {
 		);
 		try {
 			await expect(
-				asUser.action(api.webTools.scrapeForTool, {
+				queuedAction(asUser, api.webTools.scrapeForTool, {
 					runId,
 					claimId,
 					jobId,
@@ -719,7 +738,7 @@ describe('screenshotForTool', () => {
 		});
 		try {
 			expect(
-				await asUser.action(api.webTools.screenshotForTool, {
+				await queuedAction(asUser, api.webTools.screenshotForTool, {
 					runId,
 					claimId,
 					jobId,
@@ -746,7 +765,7 @@ describe('screenshotForTool', () => {
 		});
 		try {
 			expect(
-				await asUser.action(api.webTools.screenshotForTool, {
+				await queuedAction(asUser, api.webTools.screenshotForTool, {
 					runId,
 					claimId,
 					jobId,
@@ -765,7 +784,7 @@ describe('screenshotForTool', () => {
 		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
 		try {
 			await expect(
-				asUser.action(api.webTools.screenshotForTool, {
+				queuedAction(asUser, api.webTools.screenshotForTool, {
 					runId,
 					claimId,
 					jobId,
@@ -788,7 +807,7 @@ describe('screenshotForTool', () => {
 		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
 		try {
 			await expect(
-				asUser.action(api.webTools.screenshotForTool, {
+				queuedAction(asUser, api.webTools.screenshotForTool, {
 					runId,
 					claimId,
 					jobId,
@@ -797,11 +816,10 @@ describe('screenshotForTool', () => {
 			).rejects.toThrow(RUN_NO_LONGER_ACTIVE);
 			expect(scrape).not.toHaveBeenCalled();
 			expect(
-				await t.query(internal.webToolPool.getLocalScreenshotJob, {
+				await t.mutation(internal.firecrawlRequests.scrapeJob, {
 					runId,
 					claimId,
-					jobId,
-					executionSecret
+					jobId
 				})
 			).toBeNull();
 		} finally {
@@ -819,7 +837,7 @@ describe('screenshotForTool', () => {
 		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
 		try {
 			await expect(
-				asUser.action(api.webTools.screenshotForTool, {
+				queuedAction(asUser, api.webTools.screenshotForTool, {
 					runId,
 					claimId,
 					jobId,
@@ -841,7 +859,7 @@ describe('screenshotForTool', () => {
 		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
 		try {
 			await expect(
-				asUser.action(api.webTools.screenshotForTool, {
+				queuedAction(asUser, api.webTools.screenshotForTool, {
 					runId,
 					claimId,
 					jobId,
@@ -863,7 +881,7 @@ describe('screenshotForTool', () => {
 		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
 		try {
 			await expect(
-				asUser.action(api.webTools.screenshotForTool, {
+				queuedAction(asUser, api.webTools.screenshotForTool, {
 					runId,
 					claimId,
 					jobId,
@@ -884,7 +902,7 @@ describe('screenshotForTool', () => {
 		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
 		try {
 			await expect(
-				asUser.action(api.webTools.screenshotForTool, {
+				queuedAction(asUser, api.webTools.screenshotForTool, {
 					runId,
 					claimId,
 					jobId,
@@ -909,7 +927,7 @@ describe('screenshotForTool', () => {
 		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
 		try {
 			await expect(
-				asUser.action(api.webTools.screenshotForTool, {
+				queuedAction(asUser, api.webTools.screenshotForTool, {
 					runId,
 					claimId,
 					jobId,
@@ -932,7 +950,7 @@ describe('screenshotForTool', () => {
 		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
 		try {
 			await expect(
-				asUser.action(api.webTools.screenshotForTool, {
+				queuedAction(asUser, api.webTools.screenshotForTool, {
 					runId,
 					claimId,
 					jobId,
@@ -959,7 +977,7 @@ describe('screenshotForTool', () => {
 		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
 		try {
 			await expect(
-				asUser.action(api.webTools.screenshotForTool, {
+				queuedAction(asUser, api.webTools.screenshotForTool, {
 					runId,
 					claimId,
 					jobId,
@@ -981,7 +999,7 @@ describe('screenshotForTool', () => {
 			const scrape = mockScrape(screenshot === undefined ? { markdown: '# Page' } : { screenshot });
 			try {
 				await expect(
-					asUser.action(api.webTools.screenshotForTool, {
+					queuedAction(asUser, api.webTools.screenshotForTool, {
 						runId,
 						claimId,
 						jobId,
@@ -1003,7 +1021,7 @@ describe('screenshotForTool', () => {
 		const scrape = mockScrape({ screenshot: 'data:image/png;base64,abc' });
 		try {
 			await expect(
-				asUser.action(api.webTools.screenshotForTool, {
+				queuedAction(asUser, api.webTools.screenshotForTool, {
 					runId,
 					claimId,
 					jobId,
@@ -1025,7 +1043,7 @@ describe('screenshotForTool', () => {
 		});
 		try {
 			await expect(
-				asUser.action(api.webTools.screenshotForTool, {
+				queuedAction(asUser, api.webTools.screenshotForTool, {
 					runId,
 					claimId,
 					jobId,
@@ -1046,7 +1064,7 @@ describe('screenshotForTool', () => {
 			.mockRejectedValue(firecrawlApiError(404));
 		try {
 			await expect(
-				asUser.action(api.webTools.screenshotForTool, {
+				queuedAction(asUser, api.webTools.screenshotForTool, {
 					runId,
 					claimId,
 					jobId,

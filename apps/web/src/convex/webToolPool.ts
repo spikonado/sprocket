@@ -1,19 +1,15 @@
 import { Workpool, vOnCompleteArgs, type WorkId } from '@convex-dev/workpool';
 import { v } from 'convex/values';
 import { components, internal } from '@convex/_generated/api';
-import {
-	internalMutation,
-	internalQuery,
-	type MutationCtx,
-	type QueryCtx
-} from '@convex/_generated/server';
-import type { Doc, Id } from '@convex/_generated/dataModel';
-import { getExecutionRun } from '@convex/lib/auth';
+import { internalMutation, type MutationCtx } from '@convex/_generated/server';
+import type { Id } from '@convex/_generated/dataModel';
 import { applyExecutorJobFailure, applyExecutorJobSuccess } from '@convex/lib/executorJobs';
 import { registeredParseStorage } from '@convex/lib/hostedParse';
 import { isSettledExecutorJobStatus } from '@convex/lib/runs';
-import { isRunFinalStatus, vExecutorJobPayload } from '@convex/lib/validators';
-import { ownsActiveRunClaim } from '@convex/lib/runLease';
+import { vExecutorJobPayload } from '@convex/lib/validators';
+import { claimedJobForActiveRun } from '@convex/lib/claimedWebJob';
+import { firecrawlScrapePool } from '@convex/lib/firecrawlPools';
+import { cancelFirecrawlRequests } from '@convex/firecrawlRequests';
 
 export const webToolWorkpool = new Workpool(components.webToolWorkpool, {
 	maxParallelism: 4,
@@ -34,27 +30,6 @@ const vWebToolJobSnapshot = v.union(
 		payload: vExecutorJobPayload
 	})
 );
-
-async function claimedJobForActiveRun(
-	ctx: MutationCtx | QueryCtx,
-	args: { jobId: Id<'executorJobs'>; runId: Id<'runs'>; claimId: string }
-): Promise<{ job: Doc<'executorJobs'>; run: Doc<'runs'> } | null> {
-	const job = await ctx.db.get('executorJobs', args.jobId);
-	if (!job || job.runId !== args.runId) {
-		return null;
-	}
-	if (isSettledExecutorJobStatus(job.status)) {
-		return null;
-	}
-	const run = await ctx.db.get('runs', args.runId);
-	if (!run || isRunFinalStatus(run.status) || run.cancellationRequestedAt !== undefined) {
-		return null;
-	}
-	if (!ownsActiveRunClaim(run, args.claimId, Date.now())) {
-		return null;
-	}
-	return { job, run };
-}
 
 export function isCloudWebToolKind(kind: string): kind is 'web_search' {
 	return kind === 'web_search';
@@ -84,6 +59,7 @@ export async function enqueueWebToolJob(
 const CANCEL_PAGE_SIZE = 32;
 
 export async function cancelWebToolWork(ctx: MutationCtx, runId: Id<'runs'>): Promise<void> {
+	await cancelFirecrawlRequests(ctx, runId);
 	let afterSequence = -1;
 	for (;;) {
 		const jobs = await ctx.db
@@ -101,7 +77,9 @@ export async function cancelWebToolWork(ctx: MutationCtx, runId: Id<'runs'>): Pr
 			}
 			try {
 				// SAFETY: cloudWorkId is the WorkId returned by enqueueAction.
-				await webToolWorkpool.cancel(ctx, job.cloudWorkId as WorkId);
+				await (
+					job.cloudWorkPool === 'firecrawlScrape' ? firecrawlScrapePool : webToolWorkpool
+				).cancel(ctx, job.cloudWorkId as WorkId);
 			} catch {
 				// Best-effort; callbacks are fenced on job/claim state.
 			}
@@ -114,7 +92,7 @@ export async function cancelWebToolWork(ctx: MutationCtx, runId: Id<'runs'>): Pr
 	}
 }
 
-export const getWebToolJob = internalQuery({
+export const getWebToolJob = internalMutation({
 	args: vWebToolContext.fields,
 	returns: vWebToolJobSnapshot,
 	handler: async (ctx, args) => {
@@ -123,62 +101,6 @@ export const getWebToolJob = internalQuery({
 			return null;
 		}
 		return { kind: active.job.kind, payload: active.job.payload };
-	}
-});
-
-const vLocalJobArgs = {
-	...vWebToolContext.fields,
-	executionSecret: v.string()
-};
-
-async function claimedLocalWebJob<K extends 'scrape_url' | 'screenshot_url'>(
-	ctx: QueryCtx,
-	args: {
-		jobId: Id<'executorJobs'>;
-		runId: Id<'runs'>;
-		claimId: string;
-		executionSecret: string;
-	},
-	kind: K
-): Promise<{ kind: K; payload: Doc<'executorJobs'>['payload'] } | null> {
-	await getExecutionRun(ctx, args.runId, args.executionSecret);
-	const active = await claimedJobForActiveRun(ctx, args);
-	if (
-		!active ||
-		active.job.kind !== kind ||
-		active.job.status !== 'claimed' ||
-		active.job.cloudWorkId !== undefined
-	) {
-		return null;
-	}
-	return { kind, payload: active.job.payload };
-}
-
-export const getLocalScrapeJob = internalQuery({
-	args: vLocalJobArgs,
-	returns: v.union(
-		v.null(),
-		v.object({
-			kind: v.literal('scrape_url'),
-			payload: vExecutorJobPayload
-		})
-	),
-	handler: async (ctx, args) => {
-		return await claimedLocalWebJob(ctx, args, 'scrape_url');
-	}
-});
-
-export const getLocalScreenshotJob = internalQuery({
-	args: vLocalJobArgs,
-	returns: v.union(
-		v.null(),
-		v.object({
-			kind: v.literal('screenshot_url'),
-			payload: vExecutorJobPayload
-		})
-	),
-	handler: async (ctx, args) => {
-		return await claimedLocalWebJob(ctx, args, 'screenshot_url');
 	}
 });
 

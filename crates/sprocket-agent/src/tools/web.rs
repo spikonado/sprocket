@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::context::{AgentToolContext, tool_error, tool_failure};
-use super::job::{execute_cloud_tool_job, execute_tool_job_with_id, run_convex_tool_action};
+use super::job::{execute_cloud_tool_job, execute_tool_job_with_id};
 use super::parse_file::{
     MAX_PARSE_FILE_IMAGE_BYTES, decode_image_info, persist_image_bytes, replay_image_tool_output,
 };
@@ -153,7 +153,7 @@ impl rig::tool::Tool for ScrapeUrlTool {
                     ("claimId".to_string(), self.0.claim_id.clone().into()),
                     ("jobId".to_string(), job_id.into()),
                 ]);
-                let result = run_convex_tool_action(&self.0.runtime, cancellation.clone(), "webTools:scrapeForTool", action_args).await?;
+                let result = super::firecrawl::run(&self.0.runtime, cancellation.clone(), action_args, "scrape").await?;
                 super::scrape_files::localize_scrape(result, &cancellation, saved_file).await.map_err(tool_error)
             },
         )
@@ -207,11 +207,11 @@ impl rig::tool::Tool for ScreenshotUrlTool {
                     ("claimId".to_string(), self.0.claim_id.clone().into()),
                     ("jobId".to_string(), job_id.into()),
                 ]);
-                let result = run_convex_tool_action(
+                let result = super::firecrawl::run(
                     &self.0.runtime,
                     cancellation.clone(),
-                    "webTools:screenshotForTool",
                     action_args,
+                    "screenshot",
                 )
                 .await?;
                 tokio::select! {

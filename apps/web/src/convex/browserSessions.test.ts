@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '@convex/_generated/api';
 import {
 	createQueuedRun,
@@ -7,113 +7,88 @@ import {
 	type ConvexTestInstance
 } from './test.setup';
 
-async function seedRun(t: ConvexTestInstance, subject: string) {
-	const { asUser, threadId } = await seedOwnedThread(t, subject);
-	const created = await createQueuedRun(
-		t,
-		asUser,
-		threadId,
-		`sub-${Math.random()}`,
-		`secret-${Math.random()}`,
-		'Browse'
+async function insertSession(
+	t: ConvexTestInstance,
+	args: {
+		threadId: Awaited<ReturnType<typeof seedOwnedThread>>['threadId'];
+		userId: string;
+		runId: Awaited<ReturnType<typeof createQueuedRun>>['runId'];
+		closing?: boolean;
+		humanControl?: boolean;
+	}
+) {
+	const startedAt = Date.now();
+	const id = await t.run((ctx) =>
+		ctx.db.insert('browserSessions', {
+			threadId: args.threadId,
+			userId: args.userId,
+			profileName: 'profile',
+			saveChanges: true,
+			lastUsedRunId: args.runId,
+			startedAt,
+			expiresAt: startedAt + 3_600_000,
+			sessionId: 'fc-1',
+			liveViewUrl: 'https://view.example/firecrawl',
+			interactiveLiveViewUrl: 'https://view.example/interactive',
+			operationExpiresAt: 0,
+			closing: args.closing ?? false,
+			humanControl: args.humanControl
+		})
 	);
-	return { asUser, threadId, runId: created.runId, userId: subject };
+	return { id, startedAt };
 }
 
+afterEach(() => vi.useRealTimers());
+
 describe('browserSessions', () => {
-	it('creates a session row and returns it for the owning user', async () => {
+	it('only lets the session owner stop it and leaves the run untouched', async () => {
+		vi.useFakeTimers();
 		const t = initConvexTest();
-		const { threadId, runId, userId } = await seedRun(t, 'user_browser_a');
-
-		const id = await t.mutation(internal.browserSessions.upsertForThread, {
-			threadId,
-			runId,
-			userId,
-			browserbaseSessionId: 'bb-1'
-		});
-
-		const session = await t.query(internal.browserSessions.getForThread, { threadId, userId });
-		expect(session).toMatchObject({
-			_id: id,
-			threadId,
-			runId,
-			userId,
-			browserbaseSessionId: 'bb-1'
-		});
-	});
-
-	it('replaces the session on re-upsert, keeping one row per thread', async () => {
-		const t = initConvexTest();
-		const { threadId, runId, userId } = await seedRun(t, 'user_browser_b');
-
-		const firstId = await t.mutation(internal.browserSessions.upsertForThread, {
-			threadId,
-			runId,
-			userId,
-			browserbaseSessionId: 'bb-old'
-		});
-		const first = await t.query(internal.browserSessions.getForThread, { threadId, userId });
-		await new Promise((resolve) => setTimeout(resolve, 5));
-
-		const secondId = await t.mutation(internal.browserSessions.upsertForThread, {
-			threadId,
-			runId,
-			userId,
-			browserbaseSessionId: 'bb-new'
-		});
-
-		expect(secondId).toBe(firstId);
-		const session = await t.query(internal.browserSessions.getForThread, { threadId, userId });
-		expect(session?.browserbaseSessionId).toBe('bb-new');
-		expect(session?.startedAt).toBeGreaterThan(first?.startedAt ?? 0);
-
-		const rows = await t.run(async (ctx) => await ctx.db.query('browserSessions').collect());
-		expect(rows.filter((row) => row.threadId === threadId)).toHaveLength(1);
-	});
-
-	it('hides the session from other users and other threads', async () => {
-		const t = initConvexTest();
-		const { threadId, runId, userId } = await seedRun(t, 'user_browser_c');
-		await t.mutation(internal.browserSessions.upsertForThread, {
-			threadId,
-			runId,
-			userId,
-			browserbaseSessionId: 'bb-1'
-		});
-
-		const other = await seedRun(t, 'user_browser_d');
+		const { asUser, threadId } = await seedOwnedThread(t, 'browser-owner');
+		const other = await seedOwnedThread(t, 'browser-stranger');
+		const { runId } = await createQueuedRun(t, asUser, threadId, 'sub', 'secret', 'Browse');
+		const { id } = await insertSession(t, { threadId, userId: 'browser-owner', runId });
+		const run = await t.run((ctx) => ctx.db.get('runs', runId));
 		await expect(
-			t.query(internal.browserSessions.getForThread, { threadId, userId: other.userId })
-		).resolves.toBeNull();
-		await expect(
-			t.query(internal.browserSessions.getForThread, {
-				threadId: other.threadId,
-				userId: other.userId
-			})
-		).resolves.toBeNull();
+			other.asUser.mutation(api.browserSessions.stop, { id, providerSessionId: 'fc-1' })
+		).rejects.toThrow('Thread not found.');
+		expect((await t.run((ctx) => ctx.db.get('browserSessions', id)))?.closing).toBe(false);
+		await asUser.mutation(api.browserSessions.stop, { id, providerSessionId: 'fc-1' });
+		await asUser.mutation(api.browserSessions.stop, { id, providerSessionId: 'fc-1' });
+		expect(await asUser.query(api.browserSessions.liveViewForThread, { threadId })).toMatchObject({
+			id,
+			ended: true,
+			url: null,
+			interactiveUrl: null
+		});
+		expect(await t.run((ctx) => ctx.db.get('runs', runId))).toEqual(run);
 	});
 
-	it('serves the live view state to the thread owner only', async () => {
+	it('serves Firecrawl live-view fields to the thread owner only', async () => {
 		const t = initConvexTest();
-		const { asUser, threadId, runId, userId } = await seedRun(t, 'user_browser_live');
+		const { asUser, threadId } = await seedOwnedThread(t, 'user_browser_live');
+		const { runId } = await createQueuedRun(t, asUser, threadId, 'sub', 'secret', 'Browse');
+		const { id, startedAt } = await insertSession(t, {
+			threadId,
+			userId: 'user_browser_live',
+			runId,
+			humanControl: true
+		});
 
 		await expect(
 			asUser.query(api.browserSessions.liveViewForThread, { threadId })
-		).resolves.toBeNull();
-
-		await t.mutation(internal.browserSessions.upsertForThread, {
+		).resolves.toEqual({
+			id,
+			providerSessionId: 'fc-1',
+			url: 'https://view.example/firecrawl',
+			interactiveUrl: 'https://view.example/interactive',
+			saving: true,
+			humanControl: true,
+			ended: false,
 			threadId,
-			runId,
-			userId,
-			browserbaseSessionId: 'bb-1',
-			liveViewUrl: 'https://live.browserbase.test/full'
-		});
-
-		const live = await asUser.query(api.browserSessions.liveViewForThread, { threadId });
-		expect(live).toEqual({
-			url: 'https://live.browserbase.test/full',
+			expiresAt: startedAt + 3_600_000,
 			lastUsedRunId: runId,
-			startedAt: expect.any(Number)
+			startedAt
 		});
 
 		const other = await seedOwnedThread(t, 'user_browser_other');
@@ -122,106 +97,44 @@ describe('browserSessions', () => {
 		).rejects.toThrow('Thread not found.');
 	});
 
-	it('clears the stale live view URL when the session rotates without one', async () => {
+	it('distinguishes missing sessions from ended sessions without exposing ended URLs', async () => {
 		const t = initConvexTest();
-		const { threadId, runId, userId } = await seedRun(t, 'user_browser_rotate');
-		await t.mutation(internal.browserSessions.upsertForThread, {
+		const { asUser, threadId } = await seedOwnedThread(t, 'user_browser_missing');
+		const { runId } = await createQueuedRun(t, asUser, threadId, 'sub', 'secret', 'Browse');
+
+		await expect(
+			asUser.query(api.browserSessions.liveViewForThread, { threadId })
+		).resolves.toBeNull();
+
+		await insertSession(t, {
 			threadId,
+			userId: 'user_browser_missing',
 			runId,
-			userId,
-			browserbaseSessionId: 'bb-old',
-			liveViewUrl: 'https://live.browserbase.test/old'
+			closing: true
 		});
-
-		await t.mutation(internal.browserSessions.upsertForThread, {
-			threadId,
-			runId,
-			userId,
-			browserbaseSessionId: 'bb-new'
-		});
-
-		const session = await t.query(internal.browserSessions.getForThread, { threadId, userId });
-		expect(session?.browserbaseSessionId).toBe('bb-new');
-		expect(session?.liveViewUrl).toBeUndefined();
-
-		// A stale backfill for the rotated-away session must not stamp its URL
-		// onto the new session's row.
-		await t.mutation(internal.browserSessions.setLiveViewUrl, {
-			threadId,
-			browserbaseSessionId: 'bb-old',
-			liveViewUrl: 'https://live.browserbase.test/stale'
-		});
-		expect(
-			(await t.query(internal.browserSessions.getForThread, { threadId, userId }))?.liveViewUrl
-		).toBeUndefined();
-
-		await t.mutation(internal.browserSessions.setLiveViewUrl, {
-			threadId,
-			browserbaseSessionId: 'bb-new',
-			liveViewUrl: 'https://live.browserbase.test/new'
-		});
-		const backfilled = await t.query(internal.browserSessions.getForThread, {
-			threadId,
-			userId
-		});
-		expect(backfilled?.liveViewUrl).toBe('https://live.browserbase.test/new');
-		// Backfill does not refresh startedAt; it is not new agent activity.
-		expect(backfilled?.startedAt).toBe(session?.startedAt);
-
-		// An existing URL is never overwritten by the backfill path.
-		await t.mutation(internal.browserSessions.setLiveViewUrl, {
-			threadId,
-			browserbaseSessionId: 'bb-new',
-			liveViewUrl: 'https://live.browserbase.test/other'
-		});
-		const unchanged = await t.query(internal.browserSessions.getForThread, {
-			threadId,
-			userId
-		});
-		expect(unchanged?.liveViewUrl).toBe('https://live.browserbase.test/new');
+		await expect(
+			asUser.query(api.browserSessions.liveViewForThread, { threadId })
+		).resolves.toMatchObject({ ended: true, url: null, interactiveUrl: null, lastUsedRunId: null });
 	});
 
-	it('tracks the run that last used the browser session', async () => {
+	it('publishes the ended state when the backend hard-expiry mutation runs', async () => {
+		vi.useFakeTimers();
 		const t = initConvexTest();
-		const first = await seedRun(t, 'user_browser_touch');
-		await t.mutation(internal.browserSessions.upsertForThread, {
-			threadId: first.threadId,
-			runId: first.runId,
-			userId: first.userId,
-			browserbaseSessionId: 'bb-1'
+		const { asUser, threadId } = await seedOwnedThread(t, 'user_browser_expiry');
+		const { runId } = await createQueuedRun(t, asUser, threadId, 'sub', 'secret', 'Browse');
+		const { id, startedAt } = await insertSession(t, {
+			threadId,
+			userId: 'user_browser_expiry',
+			runId
 		});
-
-		let live = await first.asUser.query(api.browserSessions.liveViewForThread, {
-			threadId: first.threadId
-		});
-		expect(live?.lastUsedRunId).toBe(first.runId);
-
-		// A later run in the same thread reuses the session; touching it moves
-		// lastUsedRunId without disturbing the session row.
-		await t.run(async (ctx) => await ctx.db.patch('runs', first.runId, { status: 'completed' }));
-		const secondRun = await createQueuedRun(
-			t,
-			first.asUser,
-			first.threadId,
-			`sub-${Math.random()}`,
-			`secret-${Math.random()}`,
-			'Browse more'
-		);
-		await t.mutation(internal.browserSessions.touchForThread, {
-			threadId: first.threadId,
-			runId: secondRun.runId
-		});
-
-		live = await first.asUser.query(api.browserSessions.liveViewForThread, {
-			threadId: first.threadId
-		});
-		expect(live?.lastUsedRunId).toBe(secondRun.runId);
-
-		const session = await t.query(internal.browserSessions.getForThread, {
-			threadId: first.threadId,
-			userId: first.userId
-		});
-		expect(session?.browserbaseSessionId).toBe('bb-1');
-		expect(session?.runId).toBe(first.runId);
+		await t.mutation(internal.browserSessions.expire, { id });
+		await expect(
+			asUser.query(api.browserSessions.liveViewForThread, { threadId })
+		).resolves.toMatchObject({ ended: false });
+		vi.setSystemTime(startedAt + 3_600_000);
+		await t.mutation(internal.browserSessions.expire, { id });
+		await expect(
+			asUser.query(api.browserSessions.liveViewForThread, { threadId })
+		).resolves.toMatchObject({ ended: true, url: null, interactiveUrl: null, lastUsedRunId: null });
 	});
 });

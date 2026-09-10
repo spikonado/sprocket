@@ -26,6 +26,7 @@
 	import CalmCentered from '$lib/components/home/calm-centered.svelte';
 	import PromptComposer from '$lib/components/home/prompt-composer.svelte';
 	import SettingsAccount from '$lib/components/home/settings-account.svelte';
+	import SettingsBrowser from '$lib/components/home/settings-browser.svelte';
 	import SettingsArchived from '$lib/components/home/settings-archived.svelte';
 	import SettingsPayments from '$lib/components/home/settings-payments.svelte';
 	import SettingsSidebar, { type SettingsPage } from '$lib/components/home/settings-sidebar.svelte';
@@ -2415,6 +2416,8 @@
 						/>
 					{:else if settingsPage === 'usage'}
 						<SettingsUsage />
+					{:else if settingsPage === 'browser'}
+						<SettingsBrowser />
 					{:else if settingsPage === 'payments'}
 						<SettingsPayments />
 					{:else}

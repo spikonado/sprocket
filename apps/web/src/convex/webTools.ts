@@ -15,6 +15,8 @@ import {
 import { RUN_NO_LONGER_ACTIVE, toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { unsupportedClient } from '@convex/lib/unsupportedClient';
 import { NonRetryableError } from '@convex-dev/workpool';
+import { runFirecrawlRequest } from '@convex/lib/firecrawlQueue';
+import type { Doc } from '@convex/_generated/dataModel';
 
 const firecrawl = new FirecrawlClient(components.firecrawl);
 const exa = new ExaClient(components.exa);
@@ -178,16 +180,6 @@ function webSearchFromPayload(payload: ExecutorJobPayload): WebSearchJobArgs {
 	return { query, numResults: payload.numResults };
 }
 
-type LocalScrapeJob = {
-	kind: 'scrape_url';
-	payload: ExecutorJobPayload;
-} | null;
-
-type LocalScreenshotJob = {
-	kind: 'screenshot_url';
-	payload: ExecutorJobPayload;
-} | null;
-
 function requireHttpUrl(urlValue: string): URL {
 	let url: URL;
 	try {
@@ -239,23 +231,6 @@ async function requestFirecrawlScrape(
 		throwHttpFailure(`This webpage returned a ${statusCode} error.`, statusCode);
 	}
 	return parsed.data;
-}
-
-async function scrapeClaimedUrl(ctx: ActionCtx, job: LocalScrapeJob): Promise<ScrapedPage> {
-	if (!job || job.kind !== 'scrape_url') {
-		throw new NonRetryableError(RUN_NO_LONGER_ACTIVE);
-	}
-	return await fetchScrape(ctx, urlFromPayload(job.payload));
-}
-
-async function screenshotClaimedUrl(
-	ctx: ActionCtx,
-	job: LocalScreenshotJob
-): Promise<Infer<typeof vScreenshotUrlTransport>> {
-	if (!job || job.kind !== 'screenshot_url') {
-		throw new NonRetryableError(RUN_NO_LONGER_ACTIVE);
-	}
-	return await fetchScreenshot(ctx, urlFromPayload(job.payload));
 }
 
 async function fetchScrape(ctx: ActionCtx, urlValue: string): Promise<ScrapedPage> {
@@ -415,7 +390,7 @@ export const executeWebSearch = internalAction({
 	args: executeArgs,
 	returns: vWebSearchResult,
 	handler: async (ctx, args): Promise<Infer<typeof vWebSearchResult>> => {
-		const job = await ctx.runQuery(internal.webToolPool.getWebToolJob, args);
+		const job = await ctx.runMutation(internal.webToolPool.getWebToolJob, args);
 		if (!job || job.kind !== 'web_search') {
 			throw new NonRetryableError(RUN_NO_LONGER_ACTIVE);
 		}
@@ -434,8 +409,7 @@ export const scrapeForTool = action({
 	returns: vScrapeUrlTransport,
 	handler: async (ctx, args): Promise<Infer<typeof vScrapeUrlTransport>> => {
 		try {
-			const job: LocalScrapeJob = await ctx.runQuery(internal.webToolPool.getLocalScrapeJob, args);
-			return await localScrapeTransport(ctx, await scrapeClaimedUrl(ctx, job));
+			return await runFirecrawlRequest(ctx, { ...args, kind: 'scrape' }, vScrapeUrlTransport);
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
@@ -452,13 +426,28 @@ export const screenshotForTool = action({
 	returns: vScreenshotUrlTransport,
 	handler: async (ctx, args): Promise<Infer<typeof vScreenshotUrlTransport>> => {
 		try {
-			const job: LocalScreenshotJob = await ctx.runQuery(
-				internal.webToolPool.getLocalScreenshotJob,
-				args
+			return await runFirecrawlRequest(
+				ctx,
+				{ ...args, kind: 'screenshot' },
+				vScreenshotUrlTransport
 			);
-			return await screenshotClaimedUrl(ctx, job);
 		} catch (error) {
 			throw toAgentToolConvexError(error instanceof Error ? error : new Error(String(error)));
 		}
 	}
 });
+
+export async function executeQueuedScrape(ctx: ActionCtx, request: Doc<'firecrawlRequests'>) {
+	const job = request.jobId
+		? await ctx.runMutation(internal.firecrawlRequests.scrapeJob, {
+				jobId: request.jobId,
+				runId: request.runId,
+				claimId: request.claimId
+			})
+		: null;
+	if (!job || job.kind !== `${request.kind}_url`) throw new NonRetryableError(RUN_NO_LONGER_ACTIVE);
+	if (request.kind === 'scrape') {
+		return await localScrapeTransport(ctx, await fetchScrape(ctx, urlFromPayload(job.payload)));
+	}
+	return await fetchScreenshot(ctx, urlFromPayload(job.payload));
+}

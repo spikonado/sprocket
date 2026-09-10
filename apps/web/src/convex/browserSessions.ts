@@ -1,48 +1,33 @@
-import { v } from 'convex/values';
-import type { Id } from '@convex/_generated/dataModel';
-import { internalMutation, internalQuery, query } from '@convex/_generated/server';
+import { ConvexError, v } from 'convex/values';
+import {
+	paginationOptsValidator,
+	paginationResultValidator,
+	type PaginationResult
+} from 'convex/server';
+import type { Doc } from '@convex/_generated/dataModel';
+import { internal } from '@convex/_generated/api';
+import { internalMutation, internalQuery, mutation, query } from '@convex/_generated/server';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
+import { isRunClaimLeaseActive } from '@convex/lib/runLease';
+import schema from '@convex/schema';
 
-type BrowserSessionUpsertPatch = {
-	runId: Id<'runs'>;
-	lastUsedRunId: Id<'runs'>;
-	userId: string;
-	browserbaseSessionId: string;
-	startedAt: number;
-	liveViewUrl?: string;
-};
-
-const browserSessionDoc = v.object({
-	_id: v.id('browserSessions'),
-	_creationTime: v.number(),
-	threadId: v.id('threadRecords'),
-	runId: v.id('runs'),
-	lastUsedRunId: v.id('runs'),
-	userId: v.string(),
-	browserbaseSessionId: v.string(),
-	liveViewUrl: v.optional(v.string()),
-	startedAt: v.number()
-});
-
-export const getForThread = internalQuery({
-	args: { threadId: v.id('threadRecords'), userId: v.string() },
-	returns: v.union(browserSessionDoc, v.null()),
-	handler: async (ctx, args) => {
-		const session = await ctx.db
-			.query('browserSessions')
-			.withIndex('by_thread', (query) => query.eq('threadId', args.threadId))
-			.first();
-		return session?.userId === args.userId ? session : null;
-	}
-});
+const OPERATION_LEASE_MS = 180_000;
 
 /** The browser live-view state shown in the thread's side panel. */
 export const liveViewForThread = query({
 	args: { threadId: v.id('threadRecords') },
 	returns: v.union(
 		v.object({
+			id: v.id('browserSessions'),
+			providerSessionId: v.union(v.string(), v.null()),
 			url: v.union(v.string(), v.null()),
+			interactiveUrl: v.union(v.string(), v.null()),
+			saving: v.boolean(),
+			humanControl: v.boolean(),
+			ended: v.boolean(),
+			threadId: v.id('threadRecords'),
+			expiresAt: v.number(),
 			/** Run that most recently drove the browser; the client compares it
 			 * against the active run for liveness and auto-open. */
 			lastUsedRunId: v.union(v.id('runs'), v.null()),
@@ -55,99 +40,362 @@ export const liveViewForThread = query({
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 		const session = await ctx.db
 			.query('browserSessions')
-			.withIndex('by_thread', (query) => query.eq('threadId', args.threadId))
-			.first();
+			.withIndex('by_threadId', (q) => q.eq('threadId', args.threadId))
+			.unique();
 		if (!session) return null;
 		return {
-			url: session.liveViewUrl ?? null,
-			lastUsedRunId: session.lastUsedRunId,
+			id: session._id,
+			providerSessionId: session.sessionId ?? null,
+			url: session.closing ? null : (session.liveViewUrl ?? null),
+			interactiveUrl: session.closing ? null : (session.interactiveLiveViewUrl ?? null),
+			saving: session.saveChanges,
+			humanControl: session.humanControl ?? false,
+			ended: session.closing,
+			threadId: session.threadId,
+			expiresAt: session.expiresAt,
+			lastUsedRunId: session.closing ? null : session.lastUsedRunId,
 			startedAt: session.startedAt
 		};
 	}
 });
 
-/** Record the live Browserbase session for a thread, replacing any prior one.
- * Transactional, so concurrent runs in a thread can't leave duplicate rows
- * pointing at different sessions. runId tracks which run (re)created it. */
-export const upsertForThread = internalMutation({
-	args: {
-		threadId: v.id('threadRecords'),
-		runId: v.id('runs'),
-		userId: v.string(),
-		browserbaseSessionId: v.string(),
-		liveViewUrl: v.optional(v.string())
-	},
-	returns: v.id('browserSessions'),
-	handler: async (ctx, args) => {
-		const existing = await ctx.db
-			.query('browserSessions')
-			.withIndex('by_thread', (query) => query.eq('threadId', args.threadId))
-			.first();
-		if (existing) {
-			// A rotated session must not keep the dead session's URL when its own
-			// live view URL is not known yet: patching undefined clears the field.
-			const rotated = existing.browserbaseSessionId !== args.browserbaseSessionId;
-			const patch: BrowserSessionUpsertPatch = {
-				runId: args.runId,
-				lastUsedRunId: args.runId,
-				userId: args.userId,
-				browserbaseSessionId: args.browserbaseSessionId,
-				startedAt: Date.now()
-			};
-			if (args.liveViewUrl || rotated) patch.liveViewUrl = args.liveViewUrl;
-			await ctx.db.patch('browserSessions', existing._id, patch);
-			return existing._id;
-		}
-		return await ctx.db.insert('browserSessions', {
-			...args,
-			lastUsedRunId: args.runId,
-			startedAt: Date.now()
+export const stop = mutation({
+	args: { id: v.id('browserSessions'), providerSessionId: v.union(v.string(), v.null()) },
+	returns: v.null(),
+	handler: async (ctx, { id, providerSessionId }) => {
+		const userId = await getUserId(ctx);
+		const session = await ctx.db.get('browserSessions', id);
+		if (!session) return null;
+		await getOwnedThreadRecord(ctx.db, userId, session.threadId);
+		if (session.closing || (session.sessionId ?? null) !== providerSessionId) return null;
+		await ctx.db.patch('browserSessions', id, {
+			closing: true,
+			operationId: undefined,
+			operationExpiresAt: 0
 		});
+		await ctx.scheduler.runAfter(0, internal.firecrawlBrowser.close, { id });
+		return null;
 	}
 });
 
-/** Record that `runId` used the thread's browser session. Unlike the session
- * (re)create signal, this fires on reuse too. It's how the client learns the
- * agent started browsing in a run that kept the previous session. */
-export const touchForThread = internalMutation({
-	args: { threadId: v.id('threadRecords'), runId: v.id('runs') },
-	returns: v.null(),
+export const acquire = internalMutation({
+	args: {
+		threadId: v.id('threadRecords'),
+		userId: v.string(),
+		runId: v.id('runs'),
+		claimId: v.string(),
+		operationId: v.string(),
+		enforce_saving: v.optional(v.boolean())
+	},
+	returns: schema.doc('browserSessions'),
 	handler: async (ctx, args) => {
+		const now = Date.now();
+		const run = await ctx.db.get('runs', args.runId);
+		if (
+			!run ||
+			run.cancellationRequestedAt !== undefined ||
+			run.userId !== args.userId ||
+			run.threadId !== args.threadId ||
+			run.claimId !== args.claimId ||
+			!isRunClaimLeaseActive(run, now)
+		) {
+			throw new ConvexError('The run claim is no longer active.');
+		}
 		const existing = await ctx.db
 			.query('browserSessions')
-			.withIndex('by_thread', (query) => query.eq('threadId', args.threadId))
-			.first();
-		if (existing && existing.lastUsedRunId !== args.runId) {
-			await ctx.db.patch('browserSessions', existing._id, { lastUsedRunId: args.runId });
+			.withIndex('by_threadId', (q) => q.eq('threadId', args.threadId))
+			.unique();
+		let profile = await ctx.db
+			.query('browserProfiles')
+			.withIndex('by_userId', (q) => q.eq('userId', args.userId))
+			.unique();
+		if (args.enforce_saving && profile?.savingEnabled === false) {
+			throw new ConvexError(
+				"Saving can't be enforced because browser saving is disabled in Settings. Ask the user to enable it in Agent's Browser settings."
+			);
+		}
+		if (existing) {
+			if (profile?.name !== existing.profileName) {
+				throw new ConvexError(
+					'browser_reset: This browser is being closed after a profile reset. Retry shortly.'
+				);
+			}
+			if (existing.closing || existing.expiresAt <= now) {
+				throw new ConvexError('The browser is closing. Retry shortly.');
+			}
+			if (existing.humanControl)
+				throw new ConvexError(
+					'The user has control of this browser. Ask them to give control back before browsing.'
+				);
+			if (existing.operationId && existing.operationExpiresAt > now) {
+				throw new ConvexError(
+					"browser_busy: Another action is using this conversation's browser. Retry after it finishes."
+				);
+			}
+			if (!existing.sessionId) {
+				throw new ConvexError(
+					'browser_starting: Session creation has not completed. Retry shortly.'
+				);
+			}
+			await ctx.db.patch('browserSessions', existing._id, {
+				operationId: args.operationId,
+				operationExpiresAt: now + OPERATION_LEASE_MS,
+				lastUsedRunId: args.runId
+			});
+			return {
+				...existing,
+				operationId: args.operationId,
+				operationExpiresAt: now + OPERATION_LEASE_MS,
+				lastUsedRunId: args.runId
+			};
+		}
+		if (!profile) {
+			const id = await ctx.db.insert('browserProfiles', {
+				userId: args.userId,
+				name: `sprocket-${crypto.randomUUID()}`,
+				savingEnabled: true
+			});
+			profile = await ctx.db.get('browserProfiles', id);
+		}
+		if (!profile) throw new Error('Browser profile was not created.');
+		const sessions = await ctx.db
+			.query('browserSessions')
+			.withIndex('by_userId', (q) => q.eq('userId', args.userId))
+			.take(100);
+		if (sessions.length >= 100)
+			throw new ConvexError(
+				'Too many browser sessions. Close an existing session before opening another.'
+			);
+		const id = await ctx.db.insert('browserSessions', {
+			threadId: args.threadId,
+			userId: args.userId,
+			profileName: profile.name,
+			saveChanges: profile.savingEnabled,
+			lastUsedRunId: args.runId,
+			startedAt: now,
+			expiresAt: now + 3_600_000,
+			operationId: args.operationId,
+			operationExpiresAt: now + OPERATION_LEASE_MS,
+			closing: false
+		});
+		await ctx.scheduler.runAfter(OPERATION_LEASE_MS, internal.browserSessions.recoverCreation, {
+			id
+		});
+		const session = await ctx.db.get('browserSessions', id);
+		if (!session) throw new Error('Browser session was not reserved.');
+		return session;
+	}
+});
+
+export const attach = internalMutation({
+	args: {
+		id: v.id('browserSessions'),
+		operationId: v.string(),
+		claimId: v.string(),
+		sessionId: v.string(),
+		saveChanges: v.boolean(),
+		startedAt: v.number(),
+		expiresAt: v.number(),
+		liveViewUrl: v.optional(v.string()),
+		interactiveLiveViewUrl: v.optional(v.string())
+	},
+	returns: v.boolean(),
+	handler: async (ctx, { id, operationId, claimId, ...remote }) => {
+		const now = Date.now();
+		const session = await ctx.db.get('browserSessions', id);
+		const profile = session
+			? await ctx.db
+					.query('browserProfiles')
+					.withIndex('by_userId', (q) => q.eq('userId', session.userId))
+					.unique()
+			: null;
+		const run = session ? await ctx.db.get('runs', session.lastUsedRunId) : null;
+		if (
+			!session ||
+			session.operationId !== operationId ||
+			session.closing ||
+			session.operationExpiresAt <= now ||
+			session.expiresAt <= now ||
+			profile?.name !== session.profileName ||
+			(remote.saveChanges && !profile?.savingEnabled) ||
+			!run ||
+			run.claimId !== claimId ||
+			run.cancellationRequestedAt !== undefined ||
+			!isRunClaimLeaseActive(run, now)
+		) {
+			await ctx.scheduler.runAfter(0, internal.firecrawlBrowser.closeDetached, {
+				sessionId: remote.sessionId,
+				expiresAt: remote.expiresAt
+			});
+			return false;
+		}
+		await ctx.db.patch('browserSessions', id, {
+			...remote,
+			liveViewUrl: remote.liveViewUrl,
+			interactiveLiveViewUrl: remote.interactiveLiveViewUrl,
+			attachedAt: now
+		});
+		if (session.sessionId && session.sessionId !== remote.sessionId) {
+			await ctx.scheduler.runAfter(0, internal.firecrawlBrowser.closeDetached, {
+				sessionId: session.sessionId,
+				expiresAt: session.expiresAt
+			});
+		}
+		await ctx.scheduler.runAt(remote.expiresAt, internal.browserSessions.expire, { id });
+		return true;
+	}
+});
+
+export const discardUnattached = internalMutation({
+	args: { id: v.id('browserSessions'), sessionId: v.string(), expiresAt: v.number() },
+	returns: v.null(),
+	handler: async (ctx, { id, ...remote }) => {
+		const session = await ctx.db.get('browserSessions', id);
+		if (session?.sessionId !== remote.sessionId) {
+			await ctx.scheduler.runAfter(0, internal.firecrawlBrowser.closeDetached, remote);
 		}
 		return null;
 	}
 });
 
-/** Backfill the live view URL for the thread's current session without
- * touching startedAt. A new session signals fresh agent activity (the side
- * panel auto-opens); a backfilled URL for the same session must not. */
-export const setLiveViewUrl = internalMutation({
+export const release = internalMutation({
 	args: {
-		threadId: v.id('threadRecords'),
-		browserbaseSessionId: v.string(),
-		liveViewUrl: v.string()
+		id: v.id('browserSessions'),
+		operationId: v.string(),
+		destroyed: v.optional(v.boolean())
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const existing = await ctx.db
-			.query('browserSessions')
-			.withIndex('by_thread', (query) => query.eq('threadId', args.threadId))
-			.first();
-		// The session may have rotated while the URL was being fetched; stamping
-		// the old session's URL onto the new row would point the live view at a
-		// dead browser.
+		const session = await ctx.db.get('browserSessions', args.id);
+		if (session?.operationId !== args.operationId) return null;
+		if (args.destroyed || !session.sessionId) {
+			await ctx.db.delete('browserSessions', args.id);
+		} else {
+			await ctx.db.patch('browserSessions', args.id, {
+				operationId: undefined,
+				operationExpiresAt: 0
+			});
+		}
+		return null;
+	}
+});
+
+export const beforeExecute = internalMutation({
+	args: {
+		id: v.id('browserSessions'),
+		operationId: v.string(),
+		runId: v.id('runs'),
+		claimId: v.string()
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const session = await ctx.db.get('browserSessions', args.id);
+		const run = await ctx.db.get('runs', args.runId);
 		if (
-			existing &&
-			existing.browserbaseSessionId === args.browserbaseSessionId &&
-			!existing.liveViewUrl
+			!session ||
+			session.closing ||
+			session.humanControl ||
+			session.expiresAt <= Date.now() ||
+			session.operationId !== args.operationId ||
+			session.operationExpiresAt <= Date.now() ||
+			!run ||
+			run.cancellationRequestedAt !== undefined ||
+			run.claimId !== args.claimId ||
+			!isRunClaimLeaseActive(run, Date.now())
 		) {
-			await ctx.db.patch('browserSessions', existing._id, { liveViewUrl: args.liveViewUrl });
+			throw new ConvexError('The browser or run changed before execution. No action ran.');
+		}
+		await ctx.db.patch('browserSessions', args.id, {
+			operationExpiresAt: Date.now() + OPERATION_LEASE_MS
+		});
+		return null;
+	}
+});
+
+export const recoverCreation = internalMutation({
+	args: { id: v.id('browserSessions') },
+	returns: v.null(),
+	handler: async (ctx, { id }) => {
+		const session = await ctx.db.get('browserSessions', id);
+		if (session && !session.sessionId && session.operationExpiresAt <= Date.now()) {
+			await ctx.db.delete('browserSessions', id);
+		}
+		return null;
+	}
+});
+
+export const quarantine = internalMutation({
+	args: { id: v.id('browserSessions'), operationId: v.string() },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const session = await ctx.db.get('browserSessions', args.id);
+		if (session?.operationId === args.operationId) {
+			await ctx.db.patch('browserSessions', args.id, { closing: true });
+			await ctx.scheduler.runAfter(0, internal.firecrawlBrowser.close, { id: args.id });
+		}
+		return null;
+	}
+});
+
+export const expire = internalMutation({
+	args: { id: v.id('browserSessions') },
+	returns: v.null(),
+	handler: async (ctx, { id }) => {
+		const session = await ctx.db.get('browserSessions', id);
+		if (session && session.expiresAt <= Date.now()) {
+			await ctx.db.patch('browserSessions', id, { closing: true });
+			await ctx.scheduler.runAfter(0, internal.firecrawlBrowser.close, { id });
+		}
+		return null;
+	}
+});
+
+export const claimClose = internalMutation({
+	args: { id: v.id('browserSessions'), operationId: v.string() },
+	returns: v.union(schema.doc('browserSessions'), v.null()),
+	handler: async (ctx, args) => {
+		const session = await ctx.db.get('browserSessions', args.id);
+		if (!session) return null;
+		if (session.operationId && session.operationExpiresAt > Date.now()) {
+			await ctx.scheduler.runAt(session.operationExpiresAt, internal.firecrawlBrowser.close, {
+				id: args.id
+			});
+			return null;
+		}
+		await ctx.db.patch('browserSessions', args.id, {
+			closing: true,
+			operationId: args.operationId,
+			operationExpiresAt: Date.now() + OPERATION_LEASE_MS
+		});
+		await ctx.scheduler.runAfter(OPERATION_LEASE_MS, internal.firecrawlBrowser.close, {
+			id: args.id
+		});
+		return session;
+	}
+});
+
+export const list = internalQuery({
+	args: { paginationOpts: paginationOptsValidator },
+	returns: paginationResultValidator(schema.doc('browserSessions')),
+	handler: async (ctx, args): Promise<PaginationResult<Doc<'browserSessions'>>> =>
+		await ctx.db.query('browserSessions').paginate(args.paginationOpts)
+});
+
+export const reconcile = internalMutation({
+	args: { ids: v.array(v.id('browserSessions')), before: v.number() },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		for (const id of args.ids) {
+			const session = await ctx.db.get('browserSessions', id);
+			if (
+				session &&
+				session.attachedAt !== undefined &&
+				session.attachedAt < args.before &&
+				session.sessionId &&
+				(!session.operationId || session.operationExpiresAt <= args.before)
+			) {
+				await ctx.db.delete('browserSessions', id);
+			}
 		}
 		return null;
 	}
