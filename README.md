@@ -132,6 +132,11 @@ bun run build
 prek run -a
 ```
 
+The default Nix development shell runs Rust builds through
+[Kache](https://kunobi.ninja/docs/kache). Its local cache is shared by all
+worktrees. Run Rust commands that use this repository's `target` directory from
+the Nix shell, and use `kache stats` to inspect cache usage.
+
 Create a local Electron installer package with:
 
 ```sh
