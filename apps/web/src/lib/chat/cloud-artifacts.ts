@@ -4,7 +4,10 @@ import type { LocalArtifact } from '$lib/types/sprocket';
 import type { ArtifactWatchState } from './artifacts';
 
 type ArtifactPage = FunctionReturnType<typeof api.artifacts.listArtifacts>;
-export type CloudArtifactScope = FunctionArgs<typeof api.artifacts.getArtifactState> & {
+export type CloudArtifactScope = Pick<
+	FunctionArgs<typeof api.artifacts.listArtifacts>,
+	'repositoryKey' | 'threadId'
+> & {
 	userId: string;
 };
 type CloudArtifactClient = {
@@ -14,7 +17,7 @@ type CloudArtifactClient = {
 	) => Promise<ArtifactPage>;
 	onUpdate: (
 		query: typeof api.artifacts.getArtifactState,
-		args: FunctionArgs<typeof api.artifacts.getArtifactState>,
+		args: Pick<FunctionArgs<typeof api.artifacts.getArtifactState>, 'repositoryKey'>,
 		onUpdate: (revision: number) => void,
 		onError: (error: Error) => void
 	) => () => void;
@@ -66,7 +69,7 @@ export function watchCloudArtifacts(
 	}
 	const unsubscribe = client.onUpdate(
 		api.artifacts.getArtifactState,
-		queryScope,
+		{ repositoryKey: scope.repositoryKey },
 		() => {
 			clearTimeout(retry);
 			void refresh(++generation);

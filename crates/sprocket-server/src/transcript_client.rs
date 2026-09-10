@@ -71,27 +71,23 @@ impl UserConvexClient {
         self.client.subscribe("threads:listRecent", args).await
     }
 
-    pub async fn artifact_revision(
+    pub async fn subscribe_artifact_state(
         &self,
         repository_key: &str,
-        thread_id: Option<&str>,
-    ) -> anyhow::Result<u64> {
-        let revision: f64 = tokio::time::timeout(
-            Duration::from_secs(10),
-            self.query_json(
+    ) -> anyhow::Result<QuerySubscription> {
+        self.client
+            .subscribe(
                 "artifacts:getArtifactState",
-                artifacts_list_args(repository_key, thread_id),
-            ),
-        )
-        .await??;
-        Ok(revision as u64)
+                artifacts_list_args(repository_key, None),
+            )
+            .await
     }
 
     pub(crate) async fn list_artifacts(
         &self,
         repository_key: &str,
         thread_id: Option<&str>,
-    ) -> anyhow::Result<Vec<crate::artifact_watch::RemoteArtifact>> {
+    ) -> anyhow::Result<ArtifactSnapshot> {
         let mut args = artifacts_list_args(repository_key, thread_id);
         let mut artifacts = Vec::new();
         let mut revision = None;
@@ -108,7 +104,10 @@ impl UserConvexClient {
             revision = Some(page.revision);
             artifacts.extend(page.page);
             if page.is_done {
-                return Ok(artifacts);
+                return Ok(ArtifactSnapshot {
+                    artifacts,
+                    revision: page.revision,
+                });
             }
             let cursor = Value::String(page.continue_cursor);
             if args.get("cursor") == Some(&cursor) {
@@ -194,6 +193,11 @@ fn thread_id_args(thread_id: &str) -> BTreeMap<String, Value> {
     let mut args = BTreeMap::new();
     args.insert("threadId".to_string(), thread_id.to_string().into());
     args
+}
+
+pub(crate) struct ArtifactSnapshot {
+    pub artifacts: Vec<crate::artifact_watch::RemoteArtifact>,
+    pub revision: u64,
 }
 
 #[derive(Deserialize)]
