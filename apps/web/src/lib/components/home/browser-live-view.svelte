@@ -21,7 +21,8 @@
 	let actionError = $state<string | null>(null);
 
 	const threadId = $derived(liveView?.threadId);
-	const sessionId = $derived(liveView?.id);
+	const sessionRecordId = $derived(liveView?.id);
+	const providerSessionId = $derived(liveView?.providerSessionId ?? null);
 	const humanControl = $derived(liveView?.humanControl === true);
 	const passiveUrl = $derived(liveView?.url ?? null);
 	const interactiveUrl = $derived(liveView?.interactiveUrl ?? null);
@@ -44,7 +45,8 @@
 	);
 
 	$effect(() => {
-		void sessionId;
+		void sessionRecordId;
+		void providerSessionId;
 		actionError = null;
 	});
 
@@ -63,13 +65,14 @@
 
 	async function setControl(enabled: boolean) {
 		if (threadId == null || controlDisabled) return;
-		const id = sessionId;
+		const id = sessionRecordId;
+		const providerId = providerSessionId;
 		pending = 'control';
 		actionError = null;
 		try {
 			await setHumanControl({ threadId, enabled });
 		} catch (error) {
-			if (sessionId === id)
+			if (sessionRecordId === id && providerSessionId === providerId)
 				actionError = catchMessage(
 					error,
 					enabled ? 'Couldn’t take control.' : 'Couldn’t give control back.'
@@ -80,14 +83,16 @@
 	}
 
 	async function stopBrowser() {
-		if (sessionId == null || ended || pending !== null) return;
-		const id = sessionId;
+		if (sessionRecordId == null || ended || pending !== null) return;
+		const id = sessionRecordId;
+		const providerId = providerSessionId;
 		pending = 'stop';
 		actionError = null;
 		try {
-			await stopSession({ id });
+			await stopSession({ id, providerSessionId: providerId });
 		} catch (error) {
-			if (sessionId === id) actionError = catchMessage(error, 'Couldn’t stop the browser session.');
+			if (sessionRecordId === id && providerSessionId === providerId)
+				actionError = catchMessage(error, 'Couldn’t stop the browser session.');
 		} finally {
 			pending = null;
 		}

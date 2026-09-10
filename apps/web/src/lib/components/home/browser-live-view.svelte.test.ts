@@ -16,33 +16,43 @@ afterEach(async () => {
 	await closeConvex();
 });
 
-it('stops the displayed session, prevents duplicate requests, and shows an ended view', async () => {
-	const client = initConvex('https://example.convex.cloud', { disabled: true });
-	const result = Promise.withResolvers<null>();
-	const mutation = vi.spyOn(client, 'mutation').mockReturnValue(result.promise);
-	const props = $state({ active: true, liveView: session(Date.now() + 60_000) });
-	const component = mount(BrowserLiveView, { target: document.body, props });
-	cleanup = () => unmount(component);
-	flushSync();
-	const button = document.querySelector<HTMLButtonElement>(
-		'button[aria-label="Stop browser session"]'
-	);
-	expect(button).not.toBeNull();
-	button!.click();
-	flushSync();
-	expect(button!.disabled).toBe(true);
-	expect(button!.getAttribute('aria-busy')).toBe('true');
-	button!.click();
-	expect(mutation).toHaveBeenCalledTimes(1);
-	expect(getFunctionName(mutation.mock.calls[0][0])).toBe('browserSessions:stop');
-	expect(mutation.mock.calls[0][1]).toEqual({ id: props.liveView.id });
-	result.resolve(null);
-	await tick();
-	props.liveView.ended = true;
-	flushSync();
-	expect(document.querySelector('iframe, button')).toBeNull();
-	expect(document.body.textContent).toContain('Browser session ended.');
-});
+it.each(['provider-session', null])(
+	'stops the displayed provider session %s, prevents duplicate requests, and shows an ended view',
+	async (providerSessionId) => {
+		const client = initConvex('https://example.convex.cloud', { disabled: true });
+		const result = Promise.withResolvers<null>();
+		const mutation = vi.spyOn(client, 'mutation').mockReturnValue(result.promise);
+		const props = $state({
+			active: true,
+			liveView: { ...session(Date.now() + 60_000), providerSessionId }
+		});
+		if (providerSessionId === null) {
+			props.liveView.url = null;
+			props.liveView.interactiveUrl = null;
+		}
+		const component = mount(BrowserLiveView, { target: document.body, props });
+		cleanup = () => unmount(component);
+		flushSync();
+		const button = document.querySelector<HTMLButtonElement>(
+			'button[aria-label="Stop browser session"]'
+		);
+		expect(button).not.toBeNull();
+		button!.click();
+		flushSync();
+		expect(button!.disabled).toBe(true);
+		expect(button!.getAttribute('aria-busy')).toBe('true');
+		button!.click();
+		expect(mutation).toHaveBeenCalledTimes(1);
+		expect(getFunctionName(mutation.mock.calls[0][0])).toBe('browserSessions:stop');
+		expect(mutation.mock.calls[0][1]).toEqual({ id: props.liveView.id, providerSessionId });
+		result.resolve(null);
+		await tick();
+		props.liveView.ended = true;
+		flushSync();
+		expect(document.querySelector('iframe, button')).toBeNull();
+		expect(document.body.textContent).toContain('Browser session ended.');
+	}
+);
 
 it('keeps the session visible and allows retry when stopping fails', async () => {
 	const client = initConvex('https://example.convex.cloud', { disabled: true });
@@ -68,6 +78,7 @@ function session(expiresAt: number, ended = false): BrowserLiveViewState {
 	return {
 		// SAFETY: This ID is only used by the mounted test component.
 		id: 'session' as Id<'browserSessions'>,
+		providerSessionId: 'provider-session',
 		url: 'https://example.com/passive',
 		interactiveUrl: 'https://example.com/interactive',
 		saving: true,
@@ -80,6 +91,39 @@ function session(expiresAt: number, ended = false): BrowserLiveViewState {
 		startedAt: expiresAt - 3_600_000
 	};
 }
+
+it.each([true, false])(
+	'does not show stop errors from the previous provider session, rejectedBeforeReplacement=%s',
+	async (rejectedBeforeReplacement) => {
+		const client = initConvex('https://example.convex.cloud', { disabled: true });
+		const result = Promise.withResolvers<null>();
+		vi.spyOn(client, 'mutation').mockReturnValue(result.promise);
+		const props = $state({ active: true, liveView: session(Date.now() + 60_000) });
+		const component = mount(BrowserLiveView, { target: document.body, props });
+		cleanup = () => unmount(component);
+		flushSync();
+		document.querySelector<HTMLButtonElement>('button[aria-label="Stop browser session"]')!.click();
+		if (rejectedBeforeReplacement) {
+			result.reject(new Error('Connection lost'));
+			await tick();
+			flushSync();
+			expect(document.querySelector('[role="alert"]')?.textContent).toContain('Connection lost');
+		}
+		props.liveView.providerSessionId = 'replacement-session';
+		flushSync();
+		if (!rejectedBeforeReplacement) {
+			result.reject(new Error('Connection lost'));
+			await tick();
+			flushSync();
+		}
+		expect(document.querySelector('[role="alert"]')).toBeNull();
+		expect(
+			document.querySelector<HTMLButtonElement>('button[aria-label="Stop browser session"]')!
+				.disabled
+		).toBe(false);
+		expect(document.querySelector('iframe')).not.toBeNull();
+	}
+);
 
 it.each([true, false])(
 	'does not load an ended session when reopening the panel, with URLs=%s',

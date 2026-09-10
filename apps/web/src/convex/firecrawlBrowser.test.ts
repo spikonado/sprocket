@@ -236,7 +236,10 @@ describe('Firecrawl browser lifecycle', () => {
 		}
 		fetch.mockImplementationOnce(async () => {
 			const session = await t.run((ctx) => ctx.db.query('browserSessions').unique());
-			await asUser.mutation(api.browserSessions.stop, { id: session!._id });
+			await asUser.mutation(api.browserSessions.stop, {
+				id: session!._id,
+				providerSessionId: session!.sessionId ?? null
+			});
 			return new Response(JSON.stringify({ success: true, id: 'late-session' }));
 		});
 		await expect(
@@ -267,7 +270,10 @@ describe('Firecrawl browser lifecycle', () => {
 		await t.action(api.browserAgent.interact, args);
 		const session = await t.run((ctx) => ctx.db.query('browserSessions').unique());
 		fetch.mockImplementationOnce(async () => {
-			await asUser.mutation(api.browserSessions.stop, { id: session!._id });
+			await asUser.mutation(api.browserSessions.stop, {
+				id: session!._id,
+				providerSessionId: session!.sessionId ?? null
+			});
 			throw new Error('Browser disconnected');
 		});
 		await expect(t.action(api.browserAgent.interact, args)).rejects.toThrow(
@@ -282,9 +288,80 @@ describe('Firecrawl browser lifecycle', () => {
 		await t.action(api.browserAgent.interact, args);
 		const next = await t.run((ctx) => ctx.db.query('browserSessions').unique());
 		expect(next?.sessionId).toBe('session-2');
-		await asUser.mutation(api.browserSessions.stop, { id: session!._id });
+		await asUser.mutation(api.browserSessions.stop, {
+			id: session!._id,
+			providerSessionId: session!.sessionId ?? null
+		});
 		expect((await t.run((ctx) => ctx.db.get('browserSessions', next!._id)))?.closing).toBe(false);
 	});
+
+	it.each(['initial attachment', 'saving upgrade'])(
+		'ignores a delayed stop after %s on the same row',
+		async (transition) => {
+			vi.useFakeTimers();
+			const fetch = remote();
+			const t = initConvexTest();
+			const { asUser, userId, threadId, runId, claimId, executionSecret } = await fixture(t);
+			const args = { runId, claimId, executionSecret, command: 'get url' };
+			const replacing = transition === 'saving upgrade';
+			if (replacing) {
+				fetch.mockResolvedValueOnce(new Response('{}', { status: 409 }));
+				await t.action(api.browserAgent.interact, args);
+			} else {
+				await t.mutation(internal.browserSessions.acquire, {
+					userId,
+					threadId,
+					runId,
+					claimId,
+					operationId: 'creating'
+				});
+			}
+			const displayed = await asUser.query(api.browserSessions.liveViewForThread, { threadId });
+			expect(displayed!.providerSessionId).toBe(replacing ? 'session-1' : null);
+			if (replacing) {
+				await t.action(api.browserAgent.interact, { ...args, enforce_saving: true });
+			} else {
+				expect(
+					await t.mutation(internal.browserSessions.attach, {
+						id: displayed!.id,
+						operationId: 'creating',
+						claimId,
+						sessionId: 'session-2',
+						saveChanges: true,
+						startedAt: displayed!.startedAt,
+						expiresAt: displayed!.expiresAt
+					})
+				).toBe(true);
+			}
+			const attached = await t.run((ctx) => ctx.db.get('browserSessions', displayed!.id));
+			expect(attached).toMatchObject({
+				sessionId: 'session-2',
+				saveChanges: true,
+				closing: false,
+				startedAt: displayed!.startedAt
+			});
+			await asUser.mutation(api.browserSessions.stop, {
+				id: displayed!.id,
+				providerSessionId: displayed!.providerSessionId
+			});
+			await vi.advanceTimersByTimeAsync(0);
+			await t.finishInProgressScheduledFunctions();
+			expect(await t.run((ctx) => ctx.db.get('browserSessions', displayed!.id))).toEqual(attached);
+			expect(
+				fetch.mock.calls.filter(([, options]) => options.method === 'DELETE').map(([url]) => url)
+			).toEqual(replacing ? ['https://api.firecrawl.dev/v2/interact/session-1'] : []);
+			const current = await asUser.query(api.browserSessions.liveViewForThread, { threadId });
+			await asUser.mutation(api.browserSessions.stop, {
+				id: current!.id,
+				providerSessionId: current!.providerSessionId
+			});
+			await vi.advanceTimersByTimeAsync(0);
+			await t.finishInProgressScheduledFunctions();
+			expect(await t.run((ctx) => ctx.db.get('browserSessions', displayed!.id))).toBeNull();
+			expect(fetch.mock.lastCall?.[0]).toBe('https://api.firecrawl.dev/v2/interact/session-2');
+			expect(fetch.mock.lastCall?.[1].method).toBe('DELETE');
+		}
+	);
 
 	it('maps the advertised help command to CLI help', async () => {
 		const fetch = remote();

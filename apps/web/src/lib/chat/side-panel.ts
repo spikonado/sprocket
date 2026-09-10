@@ -24,6 +24,7 @@ export const DEFAULT_SIDE_PANEL_SNAPSHOT: SidePanelSnapshot = {
 /** Live-view state for the thread's shared browser session. */
 export type BrowserLiveViewState = {
 	id: Id<'browserSessions'>;
+	providerSessionId: string | null;
 	/** Embeddable watch-only live view URL; null while it is being set up. */
 	url: string | null;
 	/** Interactive variant. Load it only after humanControl is true. */

@@ -49,12 +49,12 @@ describe('browserSessions', () => {
 		const { runId } = await createQueuedRun(t, asUser, threadId, 'sub', 'secret', 'Browse');
 		const { id } = await insertSession(t, { threadId, userId: 'browser-owner', runId });
 		const run = await t.run((ctx) => ctx.db.get('runs', runId));
-		await expect(other.asUser.mutation(api.browserSessions.stop, { id })).rejects.toThrow(
-			'Thread not found.'
-		);
+		await expect(
+			other.asUser.mutation(api.browserSessions.stop, { id, providerSessionId: 'fc-1' })
+		).rejects.toThrow('Thread not found.');
 		expect((await t.run((ctx) => ctx.db.get('browserSessions', id)))?.closing).toBe(false);
-		await asUser.mutation(api.browserSessions.stop, { id });
-		await asUser.mutation(api.browserSessions.stop, { id });
+		await asUser.mutation(api.browserSessions.stop, { id, providerSessionId: 'fc-1' });
+		await asUser.mutation(api.browserSessions.stop, { id, providerSessionId: 'fc-1' });
 		expect(await asUser.query(api.browserSessions.liveViewForThread, { threadId })).toMatchObject({
 			id,
 			ended: true,
@@ -79,6 +79,7 @@ describe('browserSessions', () => {
 			asUser.query(api.browserSessions.liveViewForThread, { threadId })
 		).resolves.toEqual({
 			id,
+			providerSessionId: 'fc-1',
 			url: 'https://view.example/firecrawl',
 			interactiveUrl: 'https://view.example/interactive',
 			saving: true,
