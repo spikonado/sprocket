@@ -97,7 +97,7 @@ impl CommandSessionManager {
         cancellation.ensure_active()?;
         let mut child = process
             .spawn()
-            .with_context(|| format!("failed to start command in {}", cwd.display()))?;
+            .with_context(|| format!("failed to start shell \"{shell}\" in {}", cwd.display()))?;
         let process_id = child.id();
         let (stdin, stdin_requests) = mpsc::channel(STDIN_QUEUE_CAPACITY);
         let stdin_task = tokio::spawn(write_command_input(child.stdin.take(), stdin_requests));
@@ -663,6 +663,33 @@ mod tests {
 
     use super::{CommandSessionManager, WorkspaceCancellation, default_command_shell};
     use crate::test_support::temp_workspace;
+
+    #[tokio::test]
+    async fn exec_command_reports_the_shell_and_workdir_when_spawn_fails() {
+        let root = temp_workspace();
+        let shell = root.join("missing-shell");
+        let sessions = CommandSessionManager::new(root.clone());
+        let error = sessions
+            .exec_command(
+                WorkspaceCancellation::new(),
+                "echo hello",
+                ".",
+                shell.to_str().unwrap(),
+                5_000,
+                5_000,
+                20_000,
+            )
+            .await
+            .expect_err("a missing shell must not fall back to another executable");
+
+        assert!(error.to_string().contains(shell.to_str().unwrap()));
+        assert!(error.to_string().contains(root.to_str().unwrap()));
+        assert_eq!(
+            error.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::NotFound
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[tokio::test]
     async fn exec_command_defaults_to_workspace_root() {

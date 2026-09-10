@@ -25,7 +25,6 @@ pub struct RunAgentRequest {
     pub reasoning_effort: String,
     pub service_tier: String,
     pub workspace_path: String,
-    pub transcript_root: std::path::PathBuf,
     pub installation_id: String,
     pub continuation_of_run_id: Option<String>,
 }

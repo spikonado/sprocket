@@ -818,7 +818,11 @@ async fn load_prior_history(
     })
 }
 
-pub async fn run_agent(run: AgentRun, live: Arc<LiveCompletionHub>) -> anyhow::Result<()> {
+pub async fn run_agent(
+    run: AgentRun,
+    live: Arc<LiveCompletionHub>,
+    store: Arc<TranscriptStore>,
+) -> anyhow::Result<()> {
     let AgentRun {
         request,
         runtime,
@@ -843,7 +847,6 @@ pub async fn run_agent(run: AgentRun, live: Arc<LiveCompletionHub>) -> anyhow::R
             Err(error) => return abort_before_start(&runtime, &run_id, error).await,
         };
 
-    let store = TranscriptStore::new(request.transcript_root.clone());
     let prepare_history = load_prior_history(
         &runtime,
         &store,
