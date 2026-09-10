@@ -24,6 +24,7 @@ fn is_false(value: &bool) -> bool {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct BrowserInteractArgs {
+    /// Full agent-browser command, including the `agent-browser` prefix.
     command: String,
     /// Set to true to ensure that cookies and login state that you change are preserved across the user's conversations with other agents in Sprocket. Recommended when you know for sure you are going to be changing login state on websites.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -50,14 +51,32 @@ struct BrowserScreenshotResult {
 /// the transcript loses the image block and the size cap that comes with it.
 fn screenshot_subcommand(command: &str) -> bool {
     let mut tokens = command.split_whitespace();
-    if tokens.next() == Some("agent-browser") {
-        return tokens.next() == Some("screenshot");
-    }
-    command.split_whitespace().next() == Some("screenshot")
+    tokens.next() == Some("agent-browser") && tokens.next() == Some("screenshot")
 }
 
 fn is_json_command(command: &str) -> bool {
     command.trim_start().starts_with('{')
+}
+
+fn has_agent_browser_prefix(command: &str) -> bool {
+    command.split_whitespace().next() == Some("agent-browser")
+}
+
+fn validate_browser_command(command: &str) -> Result<(), &'static str> {
+    if is_json_command(command) {
+        return Err(
+            "command must be a plain agent-browser command string like 'agent-browser open https://example.com' or 'agent-browser snapshot -i', not JSON.",
+        );
+    }
+    if !has_agent_browser_prefix(command) {
+        return Err(
+            "command must start with `agent-browser`, for example `agent-browser open https://example.com`.",
+        );
+    }
+    if screenshot_subcommand(command) {
+        return Err("Use the browser_screenshot tool instead of `agent-browser screenshot`.");
+    }
+    Ok(())
 }
 
 impl rig::tool::Tool for BrowserInteractTool {
@@ -67,7 +86,7 @@ impl rig::tool::Tool for BrowserInteractTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Run an agent-browser (a CLI tool) command in a persistent browser session in the cloud. Omit the `agent-browser` prefix. Run `help` to learn more about the CLI. This session may retain cookies and login state on websites used by the user with other agents in Sprocket.".to_string()
+        "Run an agent-browser CLI command in a persistent browser session in the cloud. Every command must start with the `agent-browser` prefix. Run `agent-browser help` to learn more about the CLI. This session may retain cookies and login state on websites used by the user with other agents in Sprocket.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -79,19 +98,8 @@ impl rig::tool::Tool for BrowserInteractTool {
         _context: &mut rig::tool::ToolContext,
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
+        validate_browser_command(&args.command).map_err(tool_failure)?;
         let payload = serde_json::to_value(&args).map_err(|e| tool_error(e.into()))?;
-        if is_json_command(&args.command) {
-            return Err(tool_failure(
-                "command must be a plain agent-browser command string like 'open https://example.com' or 'snapshot -i', not JSON."
-                    .to_string(),
-            ));
-        }
-        if screenshot_subcommand(&args.command) {
-            return Err(tool_failure(
-                "Use the browser_screenshot tool instead of `agent-browser screenshot`."
-                    .to_string(),
-            ));
-        }
         let action_args = action_args_from_payload(&self.0.run_id, &self.0.claim_id, &payload)?;
         execute_tool_job(
             &self.0.runtime,
@@ -224,23 +232,58 @@ mod tests {
 
     #[test]
     fn json_object_commands_are_detected_for_guidance_errors() {
-        assert!(is_json_command(r#"{"instruction": "go to robu.in"}"#));
-        assert!(is_json_command("  {\"startUrl\": \"https://x\"}"));
-        assert!(!is_json_command("open https://example.com"));
-        assert!(!is_json_command("snapshot -i"));
+        for command in [
+            r#"{"instruction": "go to robu.in"}"#,
+            "  {\"startUrl\": \"https://x\"}",
+        ] {
+            assert_eq!(
+                validate_browser_command(command),
+                Err(
+                    "command must be a plain agent-browser command string like 'agent-browser open https://example.com' or 'agent-browser snapshot -i', not JSON."
+                )
+            );
+        }
     }
 
     #[test]
-    fn screenshot_subcommand_is_detected_with_or_without_cli_prefix() {
-        assert!(screenshot_subcommand("screenshot"));
-        assert!(screenshot_subcommand("screenshot --full-page"));
-        assert!(screenshot_subcommand("agent-browser screenshot"));
-        assert!(!screenshot_subcommand("snapshot -i"));
-        assert!(!screenshot_subcommand("agent-browser snapshot"));
-        assert!(!screenshot_subcommand("open https://example.com"));
-        // Only the dedicated subcommand is routed away; other commands may
-        // legitimately mention the word in an argument.
-        assert!(!screenshot_subcommand("find text \"screenshot\" click"));
+    fn agent_browser_prefix_is_required() {
+        assert_eq!(validate_browser_command("agent-browser help"), Ok(()));
+        assert_eq!(
+            validate_browser_command("  agent-browser snapshot -i"),
+            Ok(())
+        );
+        for command in [
+            "help",
+            "browser open https://example.com",
+            "agent-browserish help",
+        ] {
+            assert_eq!(
+                validate_browser_command(command),
+                Err(
+                    "command must start with `agent-browser`, for example `agent-browser open https://example.com`."
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn screenshot_subcommand_is_detected_after_cli_prefix() {
+        for command in [
+            "agent-browser screenshot",
+            "agent-browser screenshot --full-page",
+        ] {
+            assert_eq!(
+                validate_browser_command(command),
+                Err("Use the browser_screenshot tool instead of `agent-browser screenshot`.")
+            );
+        }
+        for command in [
+            "agent-browser snapshot",
+            "agent-browser open https://example.com",
+            "agent-browser find text \"screenshot\" click",
+        ] {
+            assert_eq!(validate_browser_command(command), Ok(()));
+        }
     }
 
     fn png() -> Vec<u8> {
@@ -402,12 +445,12 @@ mod tests {
     #[test]
     fn saving_enforcement_is_opt_in_and_only_on_interact() {
         let interact: BrowserInteractArgs =
-            serde_json::from_value(serde_json::json!({ "command": "snapshot -i" }))
+            serde_json::from_value(serde_json::json!({ "command": "agent-browser snapshot -i" }))
                 .expect("minimal interact args");
         assert!(!interact.enforce_saving);
         assert_eq!(
             serde_json::to_value(&interact).unwrap(),
-            serde_json::json!({ "command": "snapshot -i" })
+            serde_json::json!({ "command": "agent-browser snapshot -i" })
         );
 
         let screenshot: BrowserScreenshotArgs =
@@ -418,16 +461,22 @@ mod tests {
         );
 
         let interact = BrowserInteractArgs {
-            command: "help".to_string(),
+            command: "agent-browser help".to_string(),
             enforce_saving: true,
         };
         let payload = serde_json::to_value(interact).unwrap();
-        assert_eq!(payload, json!({"command": "help", "enforce_saving": true}));
+        assert_eq!(
+            payload,
+            json!({"command": "agent-browser help", "enforce_saving": true})
+        );
         let args = action_args_from_payload("run-1", "claim-1", &payload).unwrap();
         assert_eq!(args.get("enforce_saving"), Some(&Value::Boolean(true)));
         let schema = json!(schemars::schema_for!(BrowserInteractArgs));
         assert!(schema["properties"].get("disable_saving").is_none());
-        assert!(schema["properties"]["command"].get("description").is_none());
+        assert_eq!(
+            schema["properties"]["command"]["description"],
+            "Full agent-browser command, including the `agent-browser` prefix."
+        );
         assert_eq!(schema["required"], json!(["command"]));
         let screenshot_schema = json!(schemars::schema_for!(BrowserScreenshotArgs));
         assert!(
@@ -437,7 +486,7 @@ mod tests {
         );
         assert!(
             serde_json::from_value::<BrowserInteractArgs>(
-                json!({"command": "help", "disable_saving": true})
+                json!({"command": "agent-browser help", "disable_saving": true})
             )
             .is_err()
         );
