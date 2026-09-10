@@ -86,7 +86,7 @@ impl rig::tool::Tool for BrowserInteractTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Run an agent-browser CLI command in a persistent browser session in the cloud. Every command must start with the `agent-browser` prefix. Run `agent-browser help` to learn more about the CLI. This session may retain cookies and login state on websites used by the user with other agents in Sprocket.".to_string()
+        "Run an agent-browser CLI command in a persistent browser session in the cloud. Run `agent-browser help` to learn more about the CLI. This session may retain cookies and login state on websites used by the user with other agents in Sprocket.".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
