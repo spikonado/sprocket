@@ -137,6 +137,14 @@ impl rig::tool::Tool for ScrapeUrlTool {
             &self.0.tool_call_tracker,
             payload,
             |cancellation, job_id| async move {
+                if let Some(raw_url) = super::github_url::github_raw_url(&url) {
+                    let result = super::github_url::fetch_github_file(raw_url, self.0.supports_images, &cache_dir, &cancellation).await.map_err(tool_error)?;
+                    return if result.get("outputType").and_then(serde_json::Value::as_str) == Some("image") {
+                        Ok(result)
+                    } else {
+                        super::scrape_files::localize_scrape(result, &cancellation, saved_file).await.map_err(tool_error)
+                    };
+                }
                 let image = tokio::select! {
                     biased;
                     _ = cancellation.cancelled() => return Err(super::context::cancelled_error()),
@@ -291,10 +299,18 @@ async fn download_image(
         );
         bytes.extend_from_slice(&chunk);
     }
-    let (media_type, width, height) = decode_image_info(&bytes)?;
-    let path = persist_image_bytes(cache_dir, &bytes, &media_type).await?;
+    persist_web_image(&bytes, response.url(), cache_dir).await
+}
+
+pub(super) async fn persist_web_image(
+    bytes: &[u8],
+    url: &reqwest::Url,
+    cache_dir: &Path,
+) -> anyhow::Result<serde_json::Value> {
+    let (media_type, width, height) = decode_image_info(bytes)?;
+    let path = persist_image_bytes(cache_dir, bytes, &media_type).await?;
     Ok(json!({
-        "outputType": "image", "url": response.url().as_str(),
+        "outputType": "image", "url": url.as_str(),
         "path": path,
         "mediaType": media_type.to_mime_type(), "byteSize": bytes.len(), "width": width, "height": height,
     }))

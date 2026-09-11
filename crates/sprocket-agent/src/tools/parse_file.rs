@@ -26,7 +26,7 @@ pub(crate) const MAX_PARSE_FILE_IMAGE_PIXELS: u32 = 36_000_000;
 pub(crate) const MAX_PARSE_FILE_PREVIEW_CHARS: usize = 20_000;
 const MAX_PARSE_FILE_DOCUMENT_BYTES: u64 = 64 * 1024 * 1024;
 
-const IMAGE_SNIFF_BYTES: usize = 16;
+pub(super) const IMAGE_SNIFF_BYTES: usize = 16;
 
 #[derive(Clone)]
 pub(crate) struct ParseFileTool(pub(super) AgentToolContext);
@@ -396,23 +396,26 @@ fn convert_non_image_blocking(
         .with_context(|| format!("failed to read {}", path.display()))?;
     ensure_document_size(bytes.len() as u64)?;
     ensure_not_cancelled(&cancellation)?;
+    let (text, format) = convert_file_bytes(bytes, &path)?;
+    persist_parsed_text(&cache_dir, &text, format, &cancellation)
+}
+
+pub(super) fn convert_file_bytes(
+    bytes: Vec<u8>,
+    path: &Path,
+) -> anyhow::Result<(String, &'static str)> {
     anyhow::ensure!(!bytes.is_empty(), "file is empty");
-    if let Some(format) = detect_anydoc_format(&bytes, &path) {
+    if let Some(format) = detect_anydoc_format(&bytes, path) {
         let markdown = anydoc::to_markdown_bytes(&bytes, format)
             .map_err(|error| LocalConversionFailed(map_anydoc_error(error).to_string()))?;
-        return persist_parsed_text(
-            &cache_dir,
-            &markdown,
-            anydoc_format_name(format),
-            &cancellation,
-        );
+        return Ok((markdown, anydoc_format_name(format)));
     }
     let text = String::from_utf8(bytes)
         .map_err(|_| LocalConversionFailed(unsupported_file_error().to_string()))?;
     if text.contains('\0') {
         return Err(LocalConversionFailed(unsupported_file_error().to_string()).into());
     }
-    persist_parsed_text(&cache_dir, &text, "text", &cancellation)
+    Ok((text, "text"))
 }
 
 pub(super) async fn persist_image_bytes(

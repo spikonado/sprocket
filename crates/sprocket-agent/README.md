@@ -53,6 +53,18 @@ Convex component does not expose parsing.
 
 `scrape_url` downloads supported raster images and returns their pixels
 to image-capable models. Short text scrapes are not saved locally.
+GitHub repository file URLs using `/blob/`, `/raw/`, or `/blame/` map to
+`raw.githubusercontent.com` before any image or Markdown probe. Direct raw URLs
+use this route too. The mapping preserves refs, encoded paths, and query
+parameters, and drops line anchors. Rust reads source files as UTF-8, converts
+supported documents with AnyDoc, and returns supported images through the
+existing image cache. This route never calls Firecrawl, even after a download
+or parsing failure. It has a 30-second download timeout, five-redirect limit,
+and 64 MiB download limit. Image signatures lower the download limit to 20 MiB
+during streaming, regardless of the response's content type. Image decoding
+retains the existing model limits.
+Repository landing pages, directories, and issue pages keep normal scraping.
+
 For extensionless paths, the agent first requests the URL path with `.md`
 appended, preserving query parameters and dropping the fragment. It removes
 trailing slashes before checking the last path segment. Paths with any file

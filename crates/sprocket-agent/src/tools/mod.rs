@@ -3,6 +3,7 @@ mod browser;
 mod commands;
 mod context;
 mod firecrawl;
+mod github_url;
 mod hosted_parse;
 mod job;
 mod mandates;
