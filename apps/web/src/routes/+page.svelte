@@ -213,6 +213,7 @@
 		selectedModel?: CatalogModelId;
 		submissionId?: string;
 		continuationOfRunId?: Id<'runs'>;
+		autoSubmit?: boolean;
 	};
 	let desktopApi = $state<DesktopApi | null>(null);
 	let desktopApiResolved = $state(false);
@@ -228,6 +229,7 @@
 	let selectedQuestionOptionId = $state<string | null>(null);
 	let answeringAgentQuestion = $state(false);
 	let composerContinuationOfRunId = $state<Id<'runs'> | null>(null);
+	let autoSubmitComposerContinuation = $state(false);
 	let composerAttachments = $state<ComposerAttachment[]>([]);
 	let currentError = $state<string | null>(null);
 	const submittingPromptScopes = new SvelteMap<string, number>();
@@ -1573,7 +1575,8 @@
 	async function submitAgentQuestionAnswer() {
 		const question = pendingAgentQuestion;
 		const threadId = currentThreadId;
-		if (!question || !threadId || answeringAgentQuestion) {
+		const userId = getCurrentUserId();
+		if (!question || !threadId || !userId || answeringAgentQuestion) {
 			return;
 		}
 		if (!selectedQuestionOptionId && !prompt.trim()) {
@@ -1585,6 +1588,13 @@
 		const submittedPrompt = prompt;
 		const submittedOptionId = selectedQuestionOptionId;
 		const answerText = submittedPrompt.trim();
+		const submittedAttachments = composerAttachments.map((attachment) => ({ ...attachment }));
+		const submittedStorageIds = submittedAttachments.flatMap((attachment) =>
+			attachment.storageId ? [attachment.storageId] : []
+		);
+		const submittedModel = selectedModel;
+		const submittedReasoningEffort = selectedReasoningEffort;
+		const submittedFastMode = fastMode;
 		let continuationPrompt: string | null = null;
 		let continuationOfRunId: Id<'runs'> | undefined;
 		prompt = '';
@@ -1616,7 +1626,21 @@
 		} finally {
 			answeringAgentQuestion = false;
 		}
-		if (continuationPrompt !== null && currentThreadId === threadId) {
+		if (continuationPrompt !== null && currentThreadId !== threadId) {
+			storeComposerRecovery(userId, `thread:${threadId}`, {
+				message: 'Continuing from your answer when you return to this thread.',
+				prompt: continuationPrompt,
+				attachments: submittedAttachments,
+				storageIds: submittedStorageIds,
+				reasoningEffort: submittedReasoningEffort,
+				fastMode: submittedFastMode,
+				selectedModel: submittedModel,
+				continuationOfRunId,
+				autoSubmit: true
+			});
+			return;
+		}
+		if (continuationPrompt !== null) {
 			composerContinuationOfRunId = continuationOfRunId ?? null;
 			prompt = continuationPrompt;
 			await submitPrompt({ answeredQuestionId: question.questionId, continuationOfRunId });
@@ -1907,6 +1931,7 @@
 					clearComposerAttachments({ discard: false });
 					if (composerContinuationOfRunId === submittedContinuationOfRunId) {
 						composerContinuationOfRunId = null;
+						autoSubmitComposerContinuation = false;
 					}
 				},
 				threadId: threadId ?? undefined,
@@ -2050,6 +2075,7 @@
 		projectSelectionGeneration += 1;
 		prompt = '';
 		composerContinuationOfRunId = null;
+		autoSubmitComposerContinuation = false;
 		clearComposerAttachments({
 			discard: true,
 			userId: previousUserId,
@@ -2124,6 +2150,7 @@
 		if (threadId === lastSyncedComposerThreadId) return;
 		lastSyncedComposerThreadId = threadId;
 		composerContinuationOfRunId = null;
+		autoSubmitComposerContinuation = false;
 		if (!thread) return;
 		selectedModel = thread.selectedModel;
 		selectedReasoningEffort = thread.reasoningEffort;
@@ -2142,6 +2169,9 @@
 		if (!recovery) {
 			return;
 		}
+		if (recovery.autoSubmit && prompt !== '' && prompt !== recovery.prompt) {
+			return;
+		}
 
 		composerRecoveries.delete(recoveryKey);
 		const canRestorePrompt = prompt === '';
@@ -2157,6 +2187,8 @@
 		}
 		if (prompt === recovery.prompt) {
 			composerContinuationOfRunId = recovery.continuationOfRunId ?? null;
+			autoSubmitComposerContinuation =
+				recovery.autoSubmit === true && recovery.continuationOfRunId !== undefined;
 			if (
 				recovery.submissionId &&
 				(recovery.prompt || recovery.storageIds?.length) &&
@@ -2176,6 +2208,22 @@
 		}
 
 		currentError = recovery.message;
+	});
+
+	$effect(() => {
+		if (
+			!autoSubmitComposerContinuation ||
+			!composerContinuationOfRunId ||
+			!canSend ||
+			pendingAgentQuestion ||
+			!desktopApi ||
+			!prompt.trim() ||
+			composerAttachments.some((attachment) => attachment.status !== 'ready')
+		) {
+			return;
+		}
+		autoSubmitComposerContinuation = false;
+		void submitPrompt();
 	});
 
 	$effect(() => {
