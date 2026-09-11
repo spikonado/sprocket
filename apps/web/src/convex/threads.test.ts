@@ -22,6 +22,21 @@ describe('threads local-cache commands', () => {
 });
 
 describe('threads.listRecent', () => {
+	it('normalizes stored service tiers while the Fast mode migration runs', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		await t.run((ctx) =>
+			ctx.db.patch('threadRecords', threadId, { fastMode: undefined, serviceTier: 'fast' })
+		);
+
+		const records = await asUser.query(api.threads.listRecent, {});
+		const selected = await asUser.query(api.threads.getByThreadId, { threadId });
+		expect(records[0]?.fastMode).toBe(true);
+		expect(records[0]).not.toHaveProperty('serviceTier');
+		expect(selected.fastMode).toBe(true);
+		expect(selected).not.toHaveProperty('serviceTier');
+	});
+
 	it('returns the latest 15 records for only the authenticated user', async () => {
 		const t = initConvexTest();
 		const { asUser, subject } = await seedOwnedThread(t, 'user_alice');

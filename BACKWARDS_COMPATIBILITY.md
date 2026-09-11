@@ -4,14 +4,12 @@ We ship breaking changes ahead of our users' installed clients and keep the old 
 
 Current as of 2026-09-11.
 
-## Fast mode
+## Fast mode schema migration
 
-Current clients store and send `fastMode`. Older clients and stored
-`threadRecords` and `runs` use `serviceTier` with `standard` or `fast`. Convex
-accepts either input, resolves old values to `fastMode`, and temporarily
-dual-writes both fields. Agent context responses include the old field for
-released agents. The desktop server also accepts old run requests and thread
-caches.
+Stored `threadRecords` and `runs` may use `serviceTier` with `standard` or
+`fast`. Current code writes only `fastMode`. Convex keeps the stored field in
+the schema while the migration runs and normalizes records read before the
+backfill finishes. Current client APIs do not accept or return `serviceTier`.
 
 An hourly cron starts the idempotent backfill after deployment. The manual
 runner remains available for operator recovery:
@@ -20,10 +18,9 @@ runner remains available for operator recovery:
 bunx convex run migrations:runFastModeBackfill --prod
 ```
 
-Remove the old validators, input fallbacks, response field, dual-writes, and
-desktop parsing after all released clients that require `serviceTier` have aged
-out. Before removing them, rerun the backfill and verify that every
-`threadRecords` and `runs` row has `fastMode`.
+Remove `serviceTier` from the schema and the read normalization after the
+backfill reports completion and every `threadRecords` and `runs` row has
+`fastMode` with no remaining `serviceTier` field.
 
 ## Production rollout cleanup
 

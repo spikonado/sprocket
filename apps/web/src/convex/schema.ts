@@ -17,7 +17,6 @@ import {
 	vExecutorJobPayload,
 	vExecutorJobResult,
 	vExecutorJobStatus,
-	vLegacyServiceTier,
 	vReasoningEffort,
 	vRunStatus,
 	vSubscriptionStatus,
@@ -27,6 +26,8 @@ import {
 	vTranscriptPromptBody,
 	vTranscriptToolBody
 } from '@convex/lib/validators';
+
+const vStoredServiceTier = v.union(v.literal('standard'), v.literal('fast'));
 
 export default defineSchema({
 	users: defineTable({
@@ -103,7 +104,7 @@ export default defineSchema({
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
 		fastMode: v.optional(v.boolean()),
-		serviceTier: v.optional(vLegacyServiceTier),
+		serviceTier: v.optional(vStoredServiceTier),
 		contextSummary: v.optional(v.string()),
 		// Legacy previous-run cutoff for released agents. Transcript reads use
 		// contextSummaryThroughPartNumber when that field is present.
@@ -154,7 +155,7 @@ export default defineSchema({
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
 		fastMode: v.optional(v.boolean()),
-		serviceTier: v.optional(vLegacyServiceTier),
+		serviceTier: v.optional(vStoredServiceTier),
 		catalogVersion: v.optional(v.string()),
 		completionTransport: v.optional(v.union(v.literal('convex-action'), v.literal('gateway'))),
 		gatewayProtocolVersion: v.optional(v.number()),

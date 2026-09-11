@@ -255,7 +255,7 @@ describe('watchLiveCompletion', () => {
 });
 
 describe('thread cache local API', () => {
-	it('parses historical snapshot threads without status and watch status events', async () => {
+	it('parses snapshot threads without status and watch status events', async () => {
 		const snapshot = {
 			threads: [
 				{
@@ -267,7 +267,7 @@ describe('thread cache local API', () => {
 					title: 'Hello',
 					selectedModel: 'gpt-5.6-sol',
 					reasoningEffort: 'medium',
-					serviceTier: 'standard',
+					fastMode: false,
 					lastMessageAt: 10
 				},
 				{
@@ -322,7 +322,7 @@ describe('thread cache local API', () => {
 					title: 'Hello',
 					selectedModel: 'gpt-5.6-sol',
 					reasoningEffort: 'medium',
-					serviceTier: 'standard',
+					fastMode: false,
 					lastMessageAt: 10
 				},
 				{

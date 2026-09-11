@@ -12,8 +12,6 @@ function literals<const TValues extends readonly string[]>(values: TValues) {
 
 export const vReasoningEffort = v.union(...literals(reasoningEffortIds));
 
-export const vLegacyServiceTier = v.union(v.literal('standard'), v.literal('fast'));
-
 export const vSubscriptionTier = v.union(...literals(subscriptionTierIds));
 
 export const vSubscriptionStatus = v.union(

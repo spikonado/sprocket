@@ -24,7 +24,7 @@ import { startRunLifecycle } from '@convex/runLifecycle';
 import { getPromptPart } from '@convex/lib/transcriptParts';
 import { recordPromptTranscript } from '@convex/lib/transcriptWrites';
 import { isRunFinalStatus, type vReasoningEffort } from '@convex/lib/validators';
-import { legacyServiceTierForFastMode, resolveFastMode } from '@convex/lib/fastMode';
+import { fastModeForStoredRecord } from '@convex/lib/fastMode';
 
 export type QueuedRunRequest = {
 	userId: string;
@@ -110,7 +110,6 @@ export async function createQueuedRunRecord(
 			selectedModel: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
 			fastMode: args.fastMode,
-			serviceTier: legacyServiceTierForFastMode(args.fastMode),
 			lastMessageAt: now
 		});
 		await ctx.db.insert('threadUsage', { threadId, userId: args.userId });
@@ -161,7 +160,6 @@ export async function createQueuedRunRecord(
 		selectedModel: args.selectedModel,
 		reasoningEffort: args.reasoningEffort,
 		fastMode: args.fastMode,
-		serviceTier: legacyServiceTierForFastMode(args.fastMode),
 		startedAt: Date.now(),
 		...gatewayFields
 	};
@@ -199,7 +197,6 @@ export async function createQueuedRunRecord(
 		selectedModel: args.selectedModel,
 		reasoningEffort: args.reasoningEffort,
 		fastMode: args.fastMode,
-		serviceTier: legacyServiceTierForFastMode(args.fastMode),
 		lastMessageAt: continuationOfRunId ? threadRecord.lastMessageAt : Date.now()
 	};
 	await ctx.db.patch('threadRecords', threadRecord._id, threadUpdates);
@@ -229,7 +226,7 @@ async function reconcileExistingQueuedRun(
 			existingThread.repositoryKey !== args.repositoryKey.trim()) ||
 		existingRun.selectedModel !== args.selectedModel ||
 		existingRun.reasoningEffort !== args.reasoningEffort ||
-		resolveFastMode(existingRun) !== args.fastMode ||
+		fastModeForStoredRecord(existingRun) !== args.fastMode ||
 		!existingRun.completionStreamStateId ||
 		!continuationMatches
 	) {
@@ -325,7 +322,7 @@ export async function finalizeFailedQueuedStart(
 		(args.threadId !== undefined && run.threadId !== args.threadId) ||
 		run.selectedModel !== args.selectedModel ||
 		run.reasoningEffort !== args.reasoningEffort ||
-		resolveFastMode(run) !== args.fastMode
+		fastModeForStoredRecord(run) !== args.fastMode
 	) {
 		return 'standDown';
 	}

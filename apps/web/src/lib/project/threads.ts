@@ -34,7 +34,7 @@ export function threadRecordToSummary(record: Doc<'threadRecords'>): ThreadSumma
 		title: record.title ?? 'New thread',
 		selectedModel: record.selectedModel,
 		reasoningEffort: record.reasoningEffort,
-		fastMode: record.fastMode ?? record.serviceTier === 'fast',
+		fastMode: record.fastMode ?? false,
 		lastMessageAt: record.lastMessageAt,
 		threadStatus: record.archivedAt === undefined ? 'active' : 'archived',
 		status: record.status ?? 'completed'

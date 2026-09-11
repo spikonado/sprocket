@@ -23,14 +23,7 @@ pub struct CachedThreadRecord {
     pub title: Option<String>,
     pub selected_model: String,
     pub reasoning_effort: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fast_mode: Option<bool>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        rename = "serviceTier"
-    )]
-    pub legacy_service_tier: Option<String>,
+    pub fast_mode: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_summary: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -109,8 +102,7 @@ mod tests {
             title: Some("Thread".into()),
             selected_model: "gpt-5.6-sol".into(),
             reasoning_effort: "medium".into(),
-            fast_mode: Some(false),
-            legacy_service_tier: None,
+            fast_mode: false,
             context_summary: None,
             context_summary_through_run_id: None,
             last_message_at: 10.0,
@@ -147,15 +139,5 @@ mod tests {
         assert_eq!(store.load().await.unwrap().unwrap().user_id, "user-a");
 
         let _ = tokio::fs::remove_dir_all(dir).await;
-    }
-
-    #[test]
-    fn accepts_legacy_thread_records() {
-        let mut legacy = serde_json::to_value(record("thread-1")).unwrap();
-        legacy.as_object_mut().unwrap().remove("fastMode");
-        legacy["serviceTier"] = "fast".into();
-        let parsed: CachedThreadRecord = serde_json::from_value(legacy).unwrap();
-        assert_eq!(parsed.fast_mode, None);
-        assert_eq!(parsed.legacy_service_tier.as_deref(), Some("fast"));
     }
 }

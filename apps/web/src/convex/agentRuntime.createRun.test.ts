@@ -29,15 +29,15 @@ describe('agentRuntime.insertGatewayRun', () => {
 			userId,
 			repositoryKey: 'alpha',
 			status: 'queued',
-			fastMode: false,
-			serviceTier: 'standard'
+			fastMode: false
 		});
 		expect(run).toMatchObject({
 			threadId: created.threadId,
 			status: 'queued',
-			fastMode: false,
-			serviceTier: 'standard'
+			fastMode: false
 		});
+		expect(thread).not.toHaveProperty('serviceTier');
+		expect(run).not.toHaveProperty('serviceTier');
 	});
 
 	it('rejects an empty prompt with no images', async () => {

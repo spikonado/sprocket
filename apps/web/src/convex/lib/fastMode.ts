@@ -1,12 +1,15 @@
-export type LegacyServiceTier = 'standard' | 'fast';
+type StoredServiceTier = 'standard' | 'fast';
 
-export function resolveFastMode(value: {
+export function fastModeForStoredRecord(value: {
 	fastMode?: boolean;
-	serviceTier?: LegacyServiceTier;
+	serviceTier?: StoredServiceTier;
 }): boolean {
 	return value.fastMode ?? value.serviceTier === 'fast';
 }
 
-export function legacyServiceTierForFastMode(fastMode: boolean): LegacyServiceTier {
-	return fastMode ? 'fast' : 'standard';
+export function normalizeStoredFastMode<
+	T extends { fastMode?: boolean; serviceTier?: StoredServiceTier }
+>(value: T): Omit<T, 'fastMode' | 'serviceTier'> & { fastMode: boolean } {
+	const { fastMode, serviceTier, ...record } = value;
+	return { ...record, fastMode: fastMode ?? serviceTier === 'fast' };
 }

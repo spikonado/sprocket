@@ -374,7 +374,7 @@ describe('agentRuntime context accounting', () => {
 		});
 		expect(context.run.selectedModel).toBe('gateway-only-model');
 		expect(context.run.fastMode).toBe(true);
-		expect(context.run.serviceTier).toBe('fast');
+		expect(context.run).not.toHaveProperty('serviceTier');
 	});
 
 	it('getContext returns last provider-reported contextTokens', async () => {

@@ -39,6 +39,8 @@ describe('Fast mode backfill', () => {
 		}));
 		expect(migrated.thread?.fastMode).toBe(true);
 		expect(migrated.run?.fastMode).toBe(false);
+		expect(migrated.thread).not.toHaveProperty('serviceTier');
+		expect(migrated.run).not.toHaveProperty('serviceTier');
 	});
 
 	it('runs automatically and records completion', async () => {
@@ -66,6 +68,7 @@ describe('Fast mode backfill', () => {
 					.unique()
 			}));
 			expect(result.thread?.fastMode).toBe(true);
+			expect(result.thread).not.toHaveProperty('serviceTier');
 			expect(result.schedule?.startedAt).toBeDefined();
 			expect(result.schedule?.completedAt).toBeDefined();
 		} finally {

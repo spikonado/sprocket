@@ -62,22 +62,4 @@ describe('gateway quota', () => {
 		const run = await t.run(async (ctx) => ctx.db.get('runs', created.runId));
 		expect(run?.gatewayProtocolVersion).toBe(1);
 	});
-
-	it('maps a legacy fast service tier onto Fast mode', async () => {
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
-		const created = await asUser.action(api.agentRuntime.createGatewayRun, {
-			submissionId: 'legacy-fast-run',
-			threadId,
-			prompt: 'Ship it quickly',
-			storageIds: [],
-			selectedModel: 'gpt-5.6-sol',
-			reasoningEffort: 'medium',
-			serviceTier: 'fast',
-			executionSecret: 'legacy-fast-secret'
-		});
-
-		const run = await t.run(async (ctx) => ctx.db.get('runs', created.runId));
-		expect(run?.fastMode).toBe(true);
-	});
 });

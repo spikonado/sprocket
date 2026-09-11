@@ -37,7 +37,7 @@ import {
 } from '@convex/lib/agentErrors';
 import { unsupportedClient } from '@convex/lib/unsupportedClient';
 import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
-import { legacyServiceTierForFastMode, resolveFastMode } from '@convex/lib/fastMode';
+import { normalizeStoredFastMode } from '@convex/lib/fastMode';
 import {
 	createQueuedRunRecord,
 	finalizeFailedQueuedStart,
@@ -60,7 +60,6 @@ import {
 	isRunFinalStatus,
 	vCurrentExecutorJobKind,
 	vCurrentExecutorJobPayload,
-	vLegacyServiceTier,
 	vReasoningEffort,
 	vRunFinalStatus,
 	vRunStatus,
@@ -140,8 +139,7 @@ export const createGatewayRun = action({
 		storageIds: v.array(v.id('_storage')),
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
-		fastMode: v.optional(v.boolean()),
-		serviceTier: v.optional(vLegacyServiceTier),
+		fastMode: v.boolean(),
 		executionSecret: v.string(),
 		agentVersion: v.optional(v.string()),
 		machineId: v.optional(v.string()),
@@ -155,7 +153,6 @@ export const createGatewayRun = action({
 			storageIds: args.storageIds
 		});
 		const gatewayUrl = modelGatewayUrl();
-		const fastMode = resolveFastMode(args);
 		const request: QueuedRunRequest = {
 			userId,
 			submissionId: args.submissionId,
@@ -165,7 +162,7 @@ export const createGatewayRun = action({
 			imageUploadIds,
 			selectedModel: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
-			fastMode,
+			fastMode: args.fastMode,
 			executionSecret: args.executionSecret,
 			protocolVersion: GATEWAY_PROTOCOL_VERSION,
 			agentVersion: args.agentVersion,
@@ -271,13 +268,8 @@ function getContextResult(args: {
 	prompt: string;
 	contextTokens: number | undefined;
 }): Infer<typeof vGetContextResult> {
-	const fastMode = resolveFastMode(args.run);
 	const result: Infer<typeof vGetContextResult> = {
-		run: {
-			...args.run,
-			fastMode,
-			serviceTier: legacyServiceTierForFastMode(fastMode)
-		},
+		run: normalizeStoredFastMode(args.run),
 		prompt: args.prompt
 	};
 	if (args.contextTokens !== undefined) {
@@ -579,8 +571,7 @@ export const finalizeFailedStart = mutation({
 		storageIds: v.array(v.id('_storage')),
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
-		fastMode: v.optional(v.boolean()),
-		serviceTier: v.optional(vLegacyServiceTier),
+		fastMode: v.boolean(),
 		text: v.string(),
 		lastError: v.string(),
 		executionSecret: v.string()
@@ -591,10 +582,7 @@ export const finalizeFailedStart = mutation({
 	// stage, so the caller stops without terminalizing it.
 	returns: v.union(v.literal('finalized'), v.literal('pending'), v.literal('standDown')),
 	handler: async (ctx, args) => {
-		return await finalizeFailedQueuedStart(ctx, {
-			...args,
-			fastMode: resolveFastMode(args)
-		});
+		return await finalizeFailedQueuedStart(ctx, args);
 	}
 });
 

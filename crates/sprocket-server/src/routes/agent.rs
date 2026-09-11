@@ -42,20 +42,10 @@ struct RunAgentApiRequest {
     storage_ids: Vec<String>,
     selected_model: String,
     reasoning_effort: String,
-    #[serde(default)]
-    fast_mode: Option<bool>,
-    #[serde(default, rename = "serviceTier")]
-    legacy_service_tier: Option<String>,
+    fast_mode: bool,
     workspace_path: String,
     #[serde(default)]
     continuation_of_run_id: Option<String>,
-}
-
-impl RunAgentApiRequest {
-    fn fast_mode(&self) -> bool {
-        self.fast_mode
-            .unwrap_or_else(|| self.legacy_service_tier.as_deref() == Some("fast"))
-    }
 }
 
 #[derive(serde::Serialize)]
@@ -109,7 +99,6 @@ async fn run_agent_handler(
     let auth_token_fetcher = state
         .native_auth
         .auth_token_fetcher_for_user(payload.user_id.clone());
-    let fast_mode = payload.fast_mode();
     let request = RunAgentRequest {
         deployment_url: state.convex_deployment_url.clone(),
         auth_token_fetcher: auth_token_fetcher.clone(),
@@ -121,7 +110,7 @@ async fn run_agent_handler(
         storage_ids: payload.storage_ids,
         selected_model: payload.selected_model,
         reasoning_effort: payload.reasoning_effort,
-        fast_mode,
+        fast_mode: payload.fast_mode,
         workspace_path,
         installation_id: state.machine_identity.installation_id.clone(),
         continuation_of_run_id: payload.continuation_of_run_id,
@@ -351,6 +340,7 @@ mod tests {
             "storageIds": [],
             "selectedModel": "gpt-5.6-sol",
             "reasoningEffort": "medium",
+            "fastMode": false,
             "workspacePath": "/workspace"
         })
     }
@@ -359,22 +349,15 @@ mod tests {
     fn accepts_fast_mode_requests() {
         let mut json = base_request();
         json["fastMode"] = true.into();
-        assert!(request(json).fast_mode());
+        assert!(request(json).fast_mode);
     }
 
     #[test]
-    fn accepts_legacy_service_tier_requests() {
+    fn requires_fast_mode() {
         let mut json = base_request();
+        json.as_object_mut().unwrap().remove("fastMode");
         json["serviceTier"] = "fast".into();
-        assert!(request(json).fast_mode());
-    }
-
-    #[test]
-    fn fast_mode_takes_precedence_over_the_legacy_field() {
-        let mut json = base_request();
-        json["fastMode"] = false.into();
-        json["serviceTier"] = "fast".into();
-        assert!(!request(json).fast_mode());
+        assert!(serde_json::from_value::<RunAgentApiRequest>(json).is_err());
     }
 
     struct DropSignal(Arc<AtomicBool>);

@@ -2087,7 +2087,7 @@
 		if (!thread) return;
 		selectedModel = thread.selectedModel;
 		selectedReasoningEffort = thread.reasoningEffort;
-		fastMode = thread.fastMode ?? thread.serviceTier === 'fast';
+		fastMode = thread.fastMode ?? false;
 	});
 
 	$effect(() => {

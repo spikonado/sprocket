@@ -116,16 +116,22 @@ export const backfillMissingThreadStatus = migrations.define({
 export const backfillThreadFastMode = migrations.define({
 	table: 'threadRecords',
 	migrateOne: (_ctx, thread) => {
-		if (thread.fastMode !== undefined) return;
-		return { fastMode: thread.serviceTier === 'fast' };
+		if (thread.fastMode !== undefined && thread.serviceTier === undefined) return;
+		return {
+			fastMode: thread.fastMode ?? thread.serviceTier === 'fast',
+			serviceTier: undefined
+		};
 	}
 });
 
 export const backfillRunFastMode = migrations.define({
 	table: 'runs',
 	migrateOne: (_ctx, run) => {
-		if (run.fastMode !== undefined) return;
-		return { fastMode: run.serviceTier === 'fast' };
+		if (run.fastMode !== undefined && run.serviceTier === undefined) return;
+		return {
+			fastMode: run.fastMode ?? run.serviceTier === 'fast',
+			serviceTier: undefined
+		};
 	}
 });
 
