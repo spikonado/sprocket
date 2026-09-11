@@ -1785,6 +1785,7 @@
 				fastMode: submittedFastMode,
 				selectedModel: submittedModel,
 				continuationOfRunId: submittedContinuationOfRunId,
+				autoSubmit: false,
 				submissionId:
 					!selectedThreadId && recoveryScope === originatingRecoveryScope
 						? threadSubmissionId
