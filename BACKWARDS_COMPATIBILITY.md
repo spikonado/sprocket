@@ -4,6 +4,27 @@ We ship breaking changes ahead of our users' installed clients and keep the old 
 
 Current as of 2026-09-11.
 
+## Fast mode
+
+Current clients store and send `fastMode`. Older clients and stored
+`threadRecords` and `runs` use `serviceTier` with `standard` or `fast`. Convex
+accepts either input, resolves old values to `fastMode`, and temporarily
+dual-writes both fields. Agent context responses include the old field for
+released agents. The desktop server also accepts old run requests and thread
+caches.
+
+An hourly cron starts the idempotent backfill after deployment. The manual
+runner remains available for operator recovery:
+
+```sh
+bunx convex run migrations:runFastModeBackfill --prod
+```
+
+Remove the old validators, input fallbacks, response field, dual-writes, and
+desktop parsing after all released clients that require `serviceTier` have aged
+out. Before removing them, rerun the backfill and verify that every
+`threadRecords` and `runs` row has `fastMode`.
+
 ## Production rollout cleanup
 
 PR #345 removed stored project tables, project references, run fields,

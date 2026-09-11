@@ -11,7 +11,7 @@ export type CatalogModel = {
 	autoHandoffTokenLimit: number;
 	reasoningEfforts: readonly string[];
 	defaultReasoningEffort: string;
-	serviceTiers: readonly string[];
+	supportsFastMode: boolean;
 	usagePolicy?: UsagePolicy;
 };
 
@@ -19,12 +19,11 @@ export type CatalogModel = {
 export type ModelCatalog = {
 	defaultModelId: string;
 	defaultReasoningEffort: string;
-	defaultServiceTier: string;
 	models: readonly CatalogModel[];
 	tierAllowedModels: Readonly<Record<SubscriptionTier, readonly string[]>>;
-	tierAllowedServiceTiers: Readonly<Record<SubscriptionTier, readonly string[]>>;
+	tierAllowsFastMode: Readonly<Record<SubscriptionTier, boolean>>;
 	modelLockUpgradeMessage: string;
-	serviceTierLockUpgradeMessage: string;
+	fastModeLockUpgradeMessage: string;
 	protocolVersion?: number;
 	catalogVersion?: string;
 };

@@ -96,7 +96,7 @@ export async function seedThreadRecord(
 			repositoryKey,
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
-			serviceTier: 'standard',
+			fastMode: false,
 			lastMessageAt: Date.now()
 		});
 		await ctx.db.insert('threadUsage', {
@@ -112,7 +112,7 @@ export async function seedThreadRecord(
 			completionAttemptSeq: 0,
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
-			serviceTier: 'standard',
+			fastMode: false,
 			startedAt: Date.now(),
 			completedAt: Date.now()
 		});
@@ -131,7 +131,7 @@ export async function insertQueuedRun(
 		imageUploadIds?: Id<'imageUploads'>[];
 		selectedModel?: string;
 		reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
-		serviceTier?: 'standard' | 'fast';
+		fastMode?: boolean;
 		machineId?: string;
 		continuationOfRunId?: Id<'runs'>;
 	}
@@ -145,7 +145,7 @@ export async function insertQueuedRun(
 		imageUploadIds: args.imageUploadIds ?? [],
 		selectedModel: args.selectedModel ?? 'gpt-5.6-sol',
 		reasoningEffort: args.reasoningEffort ?? 'medium',
-		serviceTier: args.serviceTier ?? 'standard',
+		fastMode: args.fastMode ?? false,
 		executionSecret: args.executionSecret,
 		protocolVersion: 1,
 		machineId: args.machineId

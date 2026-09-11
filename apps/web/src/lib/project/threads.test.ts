@@ -14,7 +14,7 @@ import {
 	type PendingAgentLaunch,
 	type PendingAgentLaunches
 } from '$lib/project/threads';
-import { defaultModelId, defaultReasoningEffort, defaultServiceTier } from '$convex/lib/models';
+import { defaultModelId, defaultReasoningEffort } from '$convex/lib/models';
 import type { Id } from '$convex/_generated/dataModel';
 import type { ThreadSummary, Project } from '$lib/types/sprocket';
 
@@ -54,7 +54,7 @@ function makeThreadSummary(overrides: Partial<ThreadSummary> = {}): ThreadSummar
 		title: 'Thread',
 		selectedModel: overrides.selectedModel ?? defaultModelId,
 		reasoningEffort: overrides.reasoningEffort ?? defaultReasoningEffort,
-		serviceTier: overrides.serviceTier ?? defaultServiceTier,
+		fastMode: overrides.fastMode ?? false,
 		lastMessageAt: 0,
 		threadStatus: 'active',
 		status: 'completed',

@@ -338,7 +338,7 @@ in the Rust agent and Convex backend together.
 | `packages/`                  | Shared JavaScript configuration       |
 
 The AI gateway (`spikonado/ai-gateway`) is a separate private repository. Its
-public origin is `https://ai-gateway.spikonado.com`, with Responses and catalog
+public origin is `https://ai-gateway.spikonado.com`, with Responses API and catalog
 routes under `/api/`.
 
 ## Build and deployment

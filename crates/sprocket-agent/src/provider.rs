@@ -49,30 +49,6 @@ fn classify_provider_error(error: &(impl std::fmt::Display + ?Sized)) -> Provide
     ProviderErrorDisposition::Failed
 }
 
-fn openai_additional_params(
-    reasoning_effort: &str,
-    service_tier: &str,
-) -> anyhow::Result<serde_json::Value> {
-    let reasoning_effort = serde_json::from_value::<openai::responses_api::ReasoningEffort>(
-        serde_json::Value::String(reasoning_effort.to_string()),
-    )?;
-    let service_tier = if service_tier == "standard" {
-        None
-    } else {
-        Some(serde_json::from_value::<
-            openai::responses_api::OpenAIServiceTier,
-        >(serde_json::Value::String(
-            service_tier.to_string(),
-        ))?)
-    };
-    Ok(openai::responses_api::AdditionalParameters {
-        reasoning: Some(openai::responses_api::Reasoning::new().with_effort(reasoning_effort)),
-        service_tier,
-        ..Default::default()
-    }
-    .to_json())
-}
-
 fn incomplete_completion_error(reason: Option<&FinishReason>) -> Option<anyhow::Error> {
     match reason {
         Some(FinishReason::Length) => Some(anyhow!(
@@ -106,7 +82,7 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) workspace_root: PathBuf,
     pub(crate) skills: Arc<[WorkspaceSkill]>,
     pub(crate) reasoning_effort: String,
-    pub(crate) service_tier: String,
+    pub(crate) fast_mode: bool,
     pub(crate) context_budget: ContextBudget,
     pub(crate) supports_images: bool,
     pub(crate) transcript_dir: PathBuf,
@@ -175,16 +151,25 @@ where
     C: CompletionClient + AgentClientExt,
     C::CompletionModel: 'static,
 {
-    let additional_params =
-        match openai_additional_params(&request.reasoning_effort, &request.service_tier) {
-            Ok(params) => params,
-            Err(error) => {
-                return AgentProviderResult::Failed {
-                    text: String::new(),
-                    error: error.context("invalid OpenAI Responses parameters"),
-                };
-            }
-        };
+    let reasoning_effort = match serde_json::from_value::<openai::responses_api::ReasoningEffort>(
+        serde_json::Value::String(request.reasoning_effort.clone()),
+    ) {
+        Ok(reasoning_effort) => reasoning_effort,
+        Err(error) => {
+            return AgentProviderResult::Failed {
+                text: String::new(),
+                error: anyhow!("invalid OpenAI Responses API reasoning effort: {error}"),
+            };
+        }
+    };
+    let additional_params = openai::responses_api::AdditionalParameters {
+        reasoning: Some(openai::responses_api::Reasoning::new().with_effort(reasoning_effort)),
+        service_tier: request
+            .fast_mode
+            .then(|| openai::responses_api::OpenAIServiceTier::Other("fast".to_string())),
+        ..Default::default()
+    }
+    .to_json();
     let tool_call_tracker = ToolCallTracker::default();
     let tools = agent_tools(
         runtime.clone(),

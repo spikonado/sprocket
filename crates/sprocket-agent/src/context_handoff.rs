@@ -210,7 +210,7 @@ impl AgentHook for ContextHandoffHook {
     }
 }
 
-// Responses input_tokens includes cached input; output_tokens includes reasoning.
+// Responses API input_tokens includes cached input; output_tokens includes reasoning.
 fn context_tokens(usage: Usage) -> u64 {
     usage.input_tokens.saturating_add(usage.output_tokens)
 }

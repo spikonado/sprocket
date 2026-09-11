@@ -14,7 +14,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
-			serviceTier: 'standard',
+			fastMode: false,
 			executionSecret: 'new-thread-secret',
 			protocolVersion: 1
 		});
@@ -25,8 +25,19 @@ describe('agentRuntime.insertGatewayRun', () => {
 				ctx.db.get('runs', created.runId)
 			])
 		);
-		expect(thread).toMatchObject({ userId, repositoryKey: 'alpha', status: 'queued' });
-		expect(run).toMatchObject({ threadId: created.threadId, status: 'queued' });
+		expect(thread).toMatchObject({
+			userId,
+			repositoryKey: 'alpha',
+			status: 'queued',
+			fastMode: false,
+			serviceTier: 'standard'
+		});
+		expect(run).toMatchObject({
+			threadId: created.threadId,
+			status: 'queued',
+			fastMode: false,
+			serviceTier: 'standard'
+		});
 	});
 
 	it('rejects an empty prompt with no images', async () => {
@@ -41,7 +52,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 				imageUploadIds: [],
 				selectedModel: 'gpt-5.6-sol',
 				reasoningEffort: 'medium',
-				serviceTier: 'standard',
+				fastMode: false,
 				executionSecret: 'empty-prompt-secret'
 			})
 		).rejects.toThrow('Message cannot be empty.');
@@ -68,7 +79,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			imageUploadIds: [imageUploadId],
 			selectedModel: 'gpt-5.6-sol' as const,
 			reasoningEffort: 'medium' as const,
-			serviceTier: 'standard' as const,
+			fastMode: false,
 			executionSecret: 'idempotent-secret'
 		};
 
@@ -125,7 +136,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
-			serviceTier: 'standard',
+			fastMode: false,
 			executionSecret
 		});
 
@@ -175,7 +186,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol' as const,
 			reasoningEffort: 'medium' as const,
-			serviceTier: 'standard' as const
+			fastMode: false
 		};
 		const created = await insertQueuedRun(t, asUser, {
 			...args,
@@ -207,7 +218,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			prompt: 'Reconcile me',
 			selectedModel: 'gpt-5.6-sol' as const,
 			reasoningEffort: 'medium' as const,
-			serviceTier: 'standard' as const
+			fastMode: false
 		};
 		const created = await insertQueuedRun(t, asUser, {
 			...args,
@@ -240,7 +251,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 				storageIds: [],
 				selectedModel: 'gpt-5.6-sol',
 				reasoningEffort: 'medium',
-				serviceTier: 'standard',
+				fastMode: false,
 				executionSecret: 'some-secret',
 				text: 'Run failed before the model started.',
 				lastError: 'startup timed out'
@@ -257,7 +268,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			prompt: 'Two launches, one submission',
 			selectedModel: 'gpt-5.6-sol' as const,
 			reasoningEffort: 'medium' as const,
-			serviceTier: 'standard' as const
+			fastMode: false
 		};
 		await insertQueuedRun(t, asUser, {
 			...args,
@@ -286,7 +297,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			prompt: 'Two launches, one submission',
 			selectedModel: 'gpt-5.6-sol' as const,
 			reasoningEffort: 'medium' as const,
-			serviceTier: 'standard' as const
+			fastMode: false
 		};
 		const created = await insertQueuedRun(t, asUser, {
 			...args,
@@ -320,7 +331,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			prompt: 'Already running',
 			selectedModel: 'gpt-5.6-sol' as const,
 			reasoningEffort: 'medium' as const,
-			serviceTier: 'standard' as const
+			fastMode: false
 		};
 		const created = await insertQueuedRun(t, asUser, {
 			...args,
@@ -366,7 +377,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 				imageUploadIds: [],
 				selectedModel: 'gpt-5.6-sol',
 				reasoningEffort: 'medium',
-				serviceTier: 'standard',
+				fastMode: false,
 				executionSecret: 'intruder-secret'
 			})
 		).rejects.toThrow('Submission belongs to a different executor.');
@@ -383,7 +394,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
-			serviceTier: 'standard',
+			fastMode: false,
 			executionSecret: 'active-first-secret'
 		});
 
@@ -395,7 +406,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 				imageUploadIds: [],
 				selectedModel: 'gpt-5.6-sol',
 				reasoningEffort: 'medium',
-				serviceTier: 'standard',
+				fastMode: false,
 				executionSecret: 'active-second-secret'
 			})
 		).rejects.toThrow('Finish or cancel the active run before sending another message.');
@@ -422,7 +433,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
-			serviceTier: 'standard',
+			fastMode: false,
 			executionSecret: 'after-abandoned-secret'
 		});
 		expect(next.created).toBe(true);
@@ -462,7 +473,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 				imageUploadIds: [],
 				selectedModel: 'gpt-5.6-sol',
 				reasoningEffort: 'medium',
-				serviceTier: 'standard',
+				fastMode: false,
 				executionSecret: 'during-active-claim-secret'
 			})
 		).rejects.toThrow('Finish or cancel the active run before sending another message.');
@@ -479,7 +490,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
-			serviceTier: 'standard',
+			fastMode: false,
 			executionSecret: 'completed-first-secret'
 		});
 		await t.run(async (ctx) => {
@@ -493,7 +504,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			imageUploadIds: [],
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
-			serviceTier: 'standard',
+			fastMode: false,
 			executionSecret: 'completed-second-secret'
 		});
 		expect(second.created).toBe(true);
@@ -537,7 +548,7 @@ describe('agentRuntime.createGatewayRun attachment identity', () => {
 			storageIds: [storageId],
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
-			serviceTier: 'standard',
+			fastMode: false,
 			executionSecret: 'storage-ids-secret'
 		});
 		expect(created.promptPart?.prompt?.imageUploads).toEqual([
@@ -561,7 +572,7 @@ describe('agentRuntime.createGatewayRun attachment identity', () => {
 				storageIds: [storageId],
 				selectedModel: 'gpt-5.6-sol',
 				reasoningEffort: 'medium',
-				serviceTier: 'standard',
+				fastMode: false,
 				executionSecret: 'storage-ids-secret',
 				text: 'Run failed before the model started.',
 				lastError: 'startup timed out'
@@ -592,7 +603,7 @@ describe('agentRuntime.createGatewayRun attachment identity', () => {
 			storageIds: [file.storageId],
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
-			serviceTier: 'standard',
+			fastMode: false,
 			executionSecret: 'legacy-ids-secret'
 		});
 		expect(created.promptPart?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
@@ -615,7 +626,7 @@ describe('agentRuntime.createGatewayRun attachment identity', () => {
 			storageIds: [file.storageId],
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
-			serviceTier: 'standard',
+			fastMode: false,
 			executionSecret: 'legacy-ids-secret'
 		});
 		expect(retried.runId).toBe(created.runId);

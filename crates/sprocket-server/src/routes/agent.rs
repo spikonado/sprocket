@@ -42,10 +42,20 @@ struct RunAgentApiRequest {
     storage_ids: Vec<String>,
     selected_model: String,
     reasoning_effort: String,
-    service_tier: String,
+    #[serde(default)]
+    fast_mode: Option<bool>,
+    #[serde(default, rename = "serviceTier")]
+    legacy_service_tier: Option<String>,
     workspace_path: String,
     #[serde(default)]
     continuation_of_run_id: Option<String>,
+}
+
+impl RunAgentApiRequest {
+    fn fast_mode(&self) -> bool {
+        self.fast_mode
+            .unwrap_or_else(|| self.legacy_service_tier.as_deref() == Some("fast"))
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -99,6 +109,7 @@ async fn run_agent_handler(
     let auth_token_fetcher = state
         .native_auth
         .auth_token_fetcher_for_user(payload.user_id.clone());
+    let fast_mode = payload.fast_mode();
     let request = RunAgentRequest {
         deployment_url: state.convex_deployment_url.clone(),
         auth_token_fetcher: auth_token_fetcher.clone(),
@@ -110,7 +121,7 @@ async fn run_agent_handler(
         storage_ids: payload.storage_ids,
         selected_model: payload.selected_model,
         reasoning_effort: payload.reasoning_effort,
-        service_tier: payload.service_tier,
+        fast_mode,
         workspace_path,
         installation_id: state.machine_identity.installation_id.clone(),
         continuation_of_run_id: payload.continuation_of_run_id,
@@ -327,6 +338,44 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use super::*;
+
+    fn request(json: serde_json::Value) -> RunAgentApiRequest {
+        serde_json::from_value(json).expect("valid agent request")
+    }
+
+    fn base_request() -> serde_json::Value {
+        serde_json::json!({
+            "userId": "user-1",
+            "submissionId": "submission-1",
+            "prompt": "Build it",
+            "storageIds": [],
+            "selectedModel": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "workspacePath": "/workspace"
+        })
+    }
+
+    #[test]
+    fn accepts_fast_mode_requests() {
+        let mut json = base_request();
+        json["fastMode"] = true.into();
+        assert!(request(json).fast_mode());
+    }
+
+    #[test]
+    fn accepts_legacy_service_tier_requests() {
+        let mut json = base_request();
+        json["serviceTier"] = "fast".into();
+        assert!(request(json).fast_mode());
+    }
+
+    #[test]
+    fn fast_mode_takes_precedence_over_the_legacy_field() {
+        let mut json = base_request();
+        json["fastMode"] = false.into();
+        json["serviceTier"] = "fast".into();
+        assert!(!request(json).fast_mode());
+    }
 
     struct DropSignal(Arc<AtomicBool>);
 

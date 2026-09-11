@@ -1,4 +1,4 @@
-//! Rig runner context handoff against a local Responses SSE fixture.
+//! Rig runner context handoff against a local Responses API SSE fixture.
 
 use std::collections::VecDeque;
 use std::io::{Read, Write};

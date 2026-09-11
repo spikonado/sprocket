@@ -150,10 +150,7 @@ impl RuntimeClient {
             "reasoningEffort".to_string(),
             request.reasoning_effort.clone().into(),
         );
-        args.insert(
-            "serviceTier".to_string(),
-            request.service_tier.clone().into(),
-        );
+        args.insert("fastMode".to_string(), request.fast_mode.into());
         args.insert(
             "agentVersion".to_string(),
             env!("CARGO_PKG_VERSION").to_string().into(),
@@ -284,10 +281,7 @@ impl RuntimeClient {
             "reasoningEffort".to_string(),
             request.reasoning_effort.clone().into(),
         );
-        args.insert(
-            "serviceTier".to_string(),
-            request.service_tier.clone().into(),
-        );
+        args.insert("fastMode".to_string(), request.fast_mode.into());
         args.insert("text".to_string(), text.to_string().into());
         args.insert("lastError".to_string(), last_error.to_string().into());
         self.mutation_json("agentRuntime:finalizeFailedStart", args)

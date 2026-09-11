@@ -6,6 +6,7 @@ import { v } from 'convex/values';
 
 export const AUTOMATIC_CLEANUP_DELAY_MS = 48 * 60 * 60 * 1_000;
 const PRODUCTION_ROLLOUT_CLEANUP = 'production-rollout-cleanup-2026-09';
+const FAST_MODE_BACKFILL = 'fast-mode-backfill-2026-09';
 
 export const migrations = new Migrations(components.migrations, {
 	schema,
@@ -27,6 +28,43 @@ const productionRolloutCleanupMigrations = [
 ];
 
 export const runProductionRolloutCleanup = migrations.runner(productionRolloutCleanupMigrations);
+
+const fastModeBackfillMigrations = [
+	internal.migrations.backfillThreadFastMode,
+	internal.migrations.backfillRunFastMode
+];
+
+export const runFastModeBackfill = migrations.runner(fastModeBackfillMigrations);
+
+export const runFastModeBackfillAutomatically = internalMutation({
+	args: {},
+	returns: v.null(),
+	handler: async (ctx) => {
+		const now = Date.now();
+		let schedule = await ctx.db
+			.query('migrationSchedules')
+			.withIndex('by_name', (query) => query.eq('name', FAST_MODE_BACKFILL))
+			.unique();
+		if (!schedule) {
+			const scheduleId = await ctx.db.insert('migrationSchedules', {
+				name: FAST_MODE_BACKFILL,
+				notBefore: now,
+				startedAt: now
+			});
+			schedule = await ctx.db.get('migrationSchedules', scheduleId);
+		}
+		if (!schedule || schedule.completedAt !== undefined) return null;
+
+		const statuses = await migrations.getStatus(ctx, { migrations: fastModeBackfillMigrations });
+		if (statuses.every((status) => status.isDone)) {
+			await ctx.db.patch('migrationSchedules', schedule._id, { completedAt: now });
+			return null;
+		}
+
+		await migrations.runSerially(ctx, fastModeBackfillMigrations);
+		return null;
+	}
+});
 
 export const runProductionRolloutCleanupAutomatically = internalMutation({
 	args: {},
@@ -72,6 +110,22 @@ export const backfillMissingThreadStatus = migrations.define({
 			.order('desc')
 			.first();
 		return { status: latestRun?.status ?? 'completed' };
+	}
+});
+
+export const backfillThreadFastMode = migrations.define({
+	table: 'threadRecords',
+	migrateOne: (_ctx, thread) => {
+		if (thread.fastMode !== undefined) return;
+		return { fastMode: thread.serviceTier === 'fast' };
+	}
+});
+
+export const backfillRunFastMode = migrations.define({
+	table: 'runs',
+	migrateOne: (_ctx, run) => {
+		if (run.fastMode !== undefined) return;
+		return { fastMode: run.serviceTier === 'fast' };
 	}
 });
 

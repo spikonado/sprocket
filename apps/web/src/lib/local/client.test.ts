@@ -269,6 +269,18 @@ describe('thread cache local API', () => {
 					reasoningEffort: 'medium',
 					serviceTier: 'standard',
 					lastMessageAt: 10
+				},
+				{
+					_id: 'thread-2',
+					_creationTime: 2,
+					userId: 'user-1',
+					submissionId: 'submission-2',
+					repositoryKey: 'alpha',
+					title: 'Fast thread',
+					selectedModel: 'gpt-5.6-sol',
+					reasoningEffort: 'high',
+					fastMode: true,
+					lastMessageAt: 20
 				}
 			],
 			status: 'live',
@@ -312,12 +324,26 @@ describe('thread cache local API', () => {
 					reasoningEffort: 'medium',
 					serviceTier: 'standard',
 					lastMessageAt: 10
+				},
+				{
+					_id: 'thread-2',
+					_creationTime: 2,
+					userId: 'user-1',
+					submissionId: 'submission-2',
+					repositoryKey: 'alpha',
+					title: 'Fast thread',
+					selectedModel: 'gpt-5.6-sol',
+					reasoningEffort: 'high',
+					fastMode: true,
+					lastMessageAt: 20
 				}
 			],
 			status: 'live',
 			lastSyncedAt: 20
 		});
 		expect(threadRecordToSummary(parsedSnapshot.threads[0]!).status).toBe('completed');
+		expect(threadRecordToSummary(parsedSnapshot.threads[0]!).fastMode).toBe(false);
+		expect(threadRecordToSummary(parsedSnapshot.threads[1]!).fastMode).toBe(true);
 
 		const events: unknown[] = [];
 		await client.watchThreadCache(

@@ -26,7 +26,7 @@ const recoveredSubmission = {
 	prompt: 'Inspect the robot',
 	storageIds: [storageId('storage-1')],
 	reasoningEffort: 'medium' as const,
-	serviceTier: 'standard' as const,
+	fastMode: false,
 	selectedModel: 'gpt-5.6-sol' as const,
 	submissionId: 'recovered-id'
 };
@@ -73,7 +73,7 @@ function launchArgs(
 		storageIds: [storageId('storage-1')],
 		selectedModel: 'gpt-5.6-sol',
 		reasoningEffort: 'medium',
-		serviceTier: 'standard',
+		fastMode: false,
 		submissionId: 'submission-1',
 		workspacePath: '/workspaces/workspace-1',
 		...overrides
@@ -89,7 +89,7 @@ function resolveRecoveredSubmission(
 		prompt: recoveredSubmission.prompt,
 		storageIds: recoveredSubmission.storageIds,
 		reasoningEffort: recoveredSubmission.reasoningEffort,
-		serviceTier: recoveredSubmission.serviceTier,
+		fastMode: recoveredSubmission.fastMode,
 		recoveredSubmission,
 		selectedModel: recoveredSubmission.selectedModel,
 		...overrides
@@ -112,7 +112,7 @@ describe('launchAgentRun', () => {
 			selectedModel: 'gpt-5.6-sol',
 			submissionId: 'submission-1',
 			reasoningEffort: 'medium',
-			serviceTier: 'standard',
+			fastMode: false,
 			workspacePath: '/workspaces/workspace-1'
 		});
 		expect(onStarted).toHaveBeenCalledWith('run-1', 'thread-1');
@@ -139,7 +139,7 @@ describe('launchAgentRun', () => {
 			selectedModel: 'gpt-5.6-sol',
 			submissionId: 'submission-1',
 			reasoningEffort: 'medium',
-			serviceTier: 'standard',
+			fastMode: false,
 			workspacePath: '/workspaces/workspace-1',
 			continuationOfRunId: 'run-1'
 		});
@@ -161,7 +161,7 @@ describe('resolveSubmissionId', () => {
 		expect(resolveRecoveredSubmission()).toBe('recovered-id');
 		expect(resolveRecoveredSubmission({ prompt: 'Inspect and fix the robot' })).toBe('new-id');
 		expect(resolveRecoveredSubmission({ reasoningEffort: 'high' })).toBe('new-id');
-		expect(resolveRecoveredSubmission({ serviceTier: 'fast' })).toBe('new-id');
+		expect(resolveRecoveredSubmission({ fastMode: true })).toBe('new-id');
 	});
 
 	it('reuses a submission only when its attachments are unchanged', () => {

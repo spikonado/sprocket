@@ -774,7 +774,7 @@ pub async fn run_agent(
     eprintln!("sprocket-agent: loaded run context {}", run_id);
 
     let reasoning_effort = context.run.reasoning_effort.clone();
-    let service_tier = context.run.service_tier.clone();
+    let fast_mode = context.run.fast_mode;
     let capabilities =
         match catalog_capabilities_for_model(&gateway_url, &context.run.selected_model).await {
             Ok(budget) => budget,
@@ -913,7 +913,7 @@ pub async fn run_agent(
                     workspace_root,
                     skills,
                     reasoning_effort,
-                    service_tier,
+                    fast_mode,
                     context_budget: capabilities.context_budget,
                     supports_images: capabilities.supports_images,
                     transcript_dir: store.thread_dir(&context.run.user_id, &context.run.thread_id),

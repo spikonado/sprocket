@@ -23,7 +23,8 @@ import { assertThreadCanStartRun } from '@convex/lib/runs';
 import { startRunLifecycle } from '@convex/runLifecycle';
 import { getPromptPart } from '@convex/lib/transcriptParts';
 import { recordPromptTranscript } from '@convex/lib/transcriptWrites';
-import { isRunFinalStatus, type vReasoningEffort, type vServiceTier } from '@convex/lib/validators';
+import { isRunFinalStatus, type vReasoningEffort } from '@convex/lib/validators';
+import { legacyServiceTierForFastMode, resolveFastMode } from '@convex/lib/fastMode';
 
 export type QueuedRunRequest = {
 	userId: string;
@@ -34,7 +35,7 @@ export type QueuedRunRequest = {
 	imageUploadIds: Id<'imageUploads'>[];
 	selectedModel: string;
 	reasoningEffort: Infer<typeof vReasoningEffort>;
-	serviceTier: Infer<typeof vServiceTier>;
+	fastMode: boolean;
 	executionSecret: string;
 	protocolVersion: number;
 	agentVersion?: string;
@@ -108,7 +109,8 @@ export async function createQueuedRunRecord(
 			title: fallbackTitle,
 			selectedModel: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
-			serviceTier: args.serviceTier,
+			fastMode: args.fastMode,
+			serviceTier: legacyServiceTierForFastMode(args.fastMode),
 			lastMessageAt: now
 		});
 		await ctx.db.insert('threadUsage', { threadId, userId: args.userId });
@@ -158,7 +160,8 @@ export async function createQueuedRunRecord(
 		completionAttemptSeq: 0,
 		selectedModel: args.selectedModel,
 		reasoningEffort: args.reasoningEffort,
-		serviceTier: args.serviceTier,
+		fastMode: args.fastMode,
+		serviceTier: legacyServiceTierForFastMode(args.fastMode),
 		startedAt: Date.now(),
 		...gatewayFields
 	};
@@ -195,7 +198,8 @@ export async function createQueuedRunRecord(
 		title: threadRecord.title ?? fallbackTitle,
 		selectedModel: args.selectedModel,
 		reasoningEffort: args.reasoningEffort,
-		serviceTier: args.serviceTier,
+		fastMode: args.fastMode,
+		serviceTier: legacyServiceTierForFastMode(args.fastMode),
 		lastMessageAt: continuationOfRunId ? threadRecord.lastMessageAt : Date.now()
 	};
 	await ctx.db.patch('threadRecords', threadRecord._id, threadUpdates);
@@ -225,7 +229,7 @@ async function reconcileExistingQueuedRun(
 			existingThread.repositoryKey !== args.repositoryKey.trim()) ||
 		existingRun.selectedModel !== args.selectedModel ||
 		existingRun.reasoningEffort !== args.reasoningEffort ||
-		existingRun.serviceTier !== args.serviceTier ||
+		resolveFastMode(existingRun) !== args.fastMode ||
 		!existingRun.completionStreamStateId ||
 		!continuationMatches
 	) {
@@ -284,7 +288,7 @@ export async function finalizeFailedQueuedStart(
 		storageIds: Id<'_storage'>[];
 		selectedModel: string;
 		reasoningEffort: Infer<typeof vReasoningEffort>;
-		serviceTier: Infer<typeof vServiceTier>;
+		fastMode: boolean;
 		text: string;
 		lastError: string;
 		executionSecret: string;
@@ -321,7 +325,7 @@ export async function finalizeFailedQueuedStart(
 		(args.threadId !== undefined && run.threadId !== args.threadId) ||
 		run.selectedModel !== args.selectedModel ||
 		run.reasoningEffort !== args.reasoningEffort ||
-		run.serviceTier !== args.serviceTier
+		resolveFastMode(run) !== args.fastMode
 	) {
 		return 'standDown';
 	}

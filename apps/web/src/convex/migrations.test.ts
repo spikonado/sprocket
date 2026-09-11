@@ -9,6 +9,71 @@ const oneBatch = {
 	oneBatchOnly: true
 } as const;
 
+describe('Fast mode backfill', () => {
+	it('maps stored service tiers to the Fast mode boolean', async () => {
+		const t = initConvexTest();
+		const { threadId } = await seedOwnedThread(t);
+		const runId = await t.run(async (ctx) => {
+			const run = await ctx.db
+				.query('runs')
+				.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadId))
+				.unique();
+			if (!run) throw new Error('Missing test fixture.');
+			await ctx.db.patch('threadRecords', threadId, {
+				fastMode: undefined,
+				serviceTier: 'fast'
+			});
+			await ctx.db.patch('runs', run._id, {
+				fastMode: undefined,
+				serviceTier: 'standard'
+			});
+			return run._id;
+		});
+
+		await t.mutation(internal.migrations.backfillThreadFastMode, oneBatch);
+		await t.mutation(internal.migrations.backfillRunFastMode, oneBatch);
+
+		const migrated = await t.run(async (ctx) => ({
+			thread: await ctx.db.get('threadRecords', threadId),
+			run: await ctx.db.get('runs', runId)
+		}));
+		expect(migrated.thread?.fastMode).toBe(true);
+		expect(migrated.run?.fastMode).toBe(false);
+	});
+
+	it('runs automatically and records completion', async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(Date.UTC(2026, 8, 12));
+		try {
+			const t = initConvexTest();
+			const { threadId } = await seedOwnedThread(t);
+			await t.run(async (ctx) => {
+				await ctx.db.patch('threadRecords', threadId, {
+					fastMode: undefined,
+					serviceTier: 'fast'
+				});
+			});
+
+			await t.mutation(internal.migrations.runFastModeBackfillAutomatically, {});
+			await t.finishAllScheduledFunctions(vi.runAllTimers);
+			await t.mutation(internal.migrations.runFastModeBackfillAutomatically, {});
+
+			const result = await t.run(async (ctx) => ({
+				thread: await ctx.db.get('threadRecords', threadId),
+				schedule: await ctx.db
+					.query('migrationSchedules')
+					.withIndex('by_name', (query) => query.eq('name', 'fast-mode-backfill-2026-09'))
+					.unique()
+			}));
+			expect(result.thread?.fastMode).toBe(true);
+			expect(result.schedule?.startedAt).toBeDefined();
+			expect(result.schedule?.completedAt).toBeDefined();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+});
+
 describe('production rollout cleanup migrations', () => {
 	it('backfills thread status from the latest run and preserves runless threads', async () => {
 		const t = initConvexTest();

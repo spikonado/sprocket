@@ -8,7 +8,7 @@ import schema from '@convex/schema';
 import { vThreadWithUsageDoc } from '@convex/lib/docs';
 import { getThreadUsageValues } from '@convex/lib/threadUsage';
 import { unsupportedClient } from '@convex/lib/unsupportedClient';
-import { vReasoningEffort, vRunStatus, vServiceTier } from '@convex/lib/validators';
+import { vLegacyServiceTier, vReasoningEffort, vRunStatus } from '@convex/lib/validators';
 
 async function renameOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>, title: string) {
 	const trimmedTitle = title.trim();
@@ -70,7 +70,7 @@ export const create = mutation({
 		repositoryKey: v.string(),
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
-		serviceTier: vServiceTier
+		serviceTier: vLegacyServiceTier
 	},
 	returns: v.object({
 		threadId: v.id('threadRecords'),

@@ -25,7 +25,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			continuationOfRunId: parent.runId,
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'high' as const,
-			serviceTier: 'fast' as const
+			fastMode: true
 		};
 		const created = await insertQueuedRun(t, asUser, args);
 		expect(created).toMatchObject({ created: true, runId: expect.any(String) });
@@ -41,6 +41,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			continuationOfRunId: parent.runId,
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'high',
+			fastMode: true,
 			serviceTier: 'fast',
 			submissionId: 'sub-continue'
 		});
@@ -209,7 +210,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			prompt: '',
 			selectedModel: 'gpt-5.6-sol' as const,
 			reasoningEffort: 'medium' as const,
-			serviceTier: 'standard' as const
+			fastMode: false
 		};
 		const created = await insertQueuedRun(t, asUser, {
 			...args,

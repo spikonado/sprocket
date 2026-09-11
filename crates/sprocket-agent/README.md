@@ -18,7 +18,7 @@ An agent run:
 2. resolves the workspace and loads applicable instructions;
 3. reconstructs prior model history;
 4. acquires and renews ownership of the run;
-5. posts OpenAI Responses completions to the AI gateway and runs local tools; and
+5. posts OpenAI Responses API completions to the AI gateway and runs local tools; and
 6. records a terminal result.
 
 Creation is retryable through the submission identifier. The run claim prevents

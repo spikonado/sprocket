@@ -37,6 +37,7 @@ import {
 } from '@convex/lib/agentErrors';
 import { unsupportedClient } from '@convex/lib/unsupportedClient';
 import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
+import { legacyServiceTierForFastMode, resolveFastMode } from '@convex/lib/fastMode';
 import {
 	createQueuedRunRecord,
 	finalizeFailedQueuedStart,
@@ -59,8 +60,8 @@ import {
 	isRunFinalStatus,
 	vCurrentExecutorJobKind,
 	vCurrentExecutorJobPayload,
+	vLegacyServiceTier,
 	vReasoningEffort,
-	vServiceTier,
 	vRunFinalStatus,
 	vRunStatus,
 	vTranscriptCompletionItem
@@ -117,7 +118,7 @@ export const insertGatewayRun = internalMutation({
 		imageUploadIds: v.array(v.id('imageUploads')),
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
-		serviceTier: vServiceTier,
+		fastMode: v.boolean(),
 		executionSecret: v.string(),
 		protocolVersion: v.number(),
 		agentVersion: v.optional(v.string()),
@@ -139,7 +140,8 @@ export const createGatewayRun = action({
 		storageIds: v.array(v.id('_storage')),
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
-		serviceTier: vServiceTier,
+		fastMode: v.optional(v.boolean()),
+		serviceTier: v.optional(vLegacyServiceTier),
 		executionSecret: v.string(),
 		agentVersion: v.optional(v.string()),
 		machineId: v.optional(v.string()),
@@ -153,6 +155,7 @@ export const createGatewayRun = action({
 			storageIds: args.storageIds
 		});
 		const gatewayUrl = modelGatewayUrl();
+		const fastMode = resolveFastMode(args);
 		const request: QueuedRunRequest = {
 			userId,
 			submissionId: args.submissionId,
@@ -162,7 +165,7 @@ export const createGatewayRun = action({
 			imageUploadIds,
 			selectedModel: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
-			serviceTier: args.serviceTier,
+			fastMode,
 			executionSecret: args.executionSecret,
 			protocolVersion: GATEWAY_PROTOCOL_VERSION,
 			agentVersion: args.agentVersion,
@@ -268,8 +271,13 @@ function getContextResult(args: {
 	prompt: string;
 	contextTokens: number | undefined;
 }): Infer<typeof vGetContextResult> {
+	const fastMode = resolveFastMode(args.run);
 	const result: Infer<typeof vGetContextResult> = {
-		run: args.run,
+		run: {
+			...args.run,
+			fastMode,
+			serviceTier: legacyServiceTierForFastMode(fastMode)
+		},
 		prompt: args.prompt
 	};
 	if (args.contextTokens !== undefined) {
@@ -571,7 +579,8 @@ export const finalizeFailedStart = mutation({
 		storageIds: v.array(v.id('_storage')),
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
-		serviceTier: vServiceTier,
+		fastMode: v.optional(v.boolean()),
+		serviceTier: v.optional(vLegacyServiceTier),
 		text: v.string(),
 		lastError: v.string(),
 		executionSecret: v.string()
@@ -582,7 +591,10 @@ export const finalizeFailedStart = mutation({
 	// stage, so the caller stops without terminalizing it.
 	returns: v.union(v.literal('finalized'), v.literal('pending'), v.literal('standDown')),
 	handler: async (ctx, args) => {
-		return await finalizeFailedQueuedStart(ctx, args);
+		return await finalizeFailedQueuedStart(ctx, {
+			...args,
+			fastMode: resolveFastMode(args)
+		});
 	}
 });
 
