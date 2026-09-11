@@ -73,11 +73,32 @@ export default defineSchema({
 		startedAt: v.optional(v.number()),
 		completedAt: v.optional(v.number())
 	}).index('by_name', ['name']),
+	// Stored-only until the production rollout cleanup deletes old rows and references.
+	projects: defineTable({
+		userId: v.string(),
+		repositoryKey: v.string(),
+		displayName: v.string(),
+		lastHeartbeatAt: v.optional(v.number()),
+		connectedClientId: v.optional(v.string()),
+		nextExecutorSequence: v.number(),
+		lastSeenAt: v.number()
+	})
+		.index('by_userId', ['userId'])
+		.index('by_user_repositoryKey', ['userId', 'repositoryKey']),
+	projectConnections: defineTable({
+		projectId: v.id('projects'),
+		userId: v.string(),
+		clientId: v.string(),
+		lastHeartbeatAt: v.number()
+	})
+		.index('by_projectId', ['projectId'])
+		.index('by_userId', ['userId']),
 	threadRecords: defineTable({
 		userId: v.string(),
 		submissionId: v.string(),
 		status: v.optional(vRunStatus),
 		repositoryKey: v.string(),
+		projectId: v.optional(v.id('projects')),
 		title: v.optional(v.string()),
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
@@ -120,6 +141,7 @@ export default defineSchema({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
 		submissionId: v.string(),
+		projectId: v.optional(v.id('projects')),
 		status: vRunStatus,
 		// Hash of the bearer capability held only by the local executor.
 		executionSecretHash: v.string(),
@@ -131,15 +153,19 @@ export default defineSchema({
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
 		serviceTier: vServiceTier,
+		catalogVersion: v.optional(v.string()),
 		completionTransport: v.optional(v.union(v.literal('convex-action'), v.literal('gateway'))),
 		gatewayProtocolVersion: v.optional(v.number()),
 		agentVersion: v.optional(v.string()),
+		contextWindowTokens: v.optional(v.number()),
+		autoCompactTokenLimit: v.optional(v.number()),
 		startedAt: v.number(),
 		completedAt: v.optional(v.number()),
 		lastError: v.optional(v.string()),
 		cancellationRequestedAt: v.optional(v.number()),
 		cancellationDeadlineAt: v.optional(v.number()),
 		activeJobId: v.optional(v.id('executorJobs')),
+		promptMessageId: v.optional(v.string()),
 		completionStreamStateId: v.optional(v.id('completionStreamStates')),
 		lifecycleWorkflowId: v.optional(v.string())
 	})
@@ -152,7 +178,8 @@ export default defineSchema({
 	threadTranscriptStates: defineTable({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
-		totalParts: v.number()
+		totalParts: v.number(),
+		migratedAt: v.optional(v.number())
 	}).index('by_threadId', ['threadId']),
 	threadTranscriptParts: defineTable({
 		threadId: v.id('threadRecords'),
@@ -180,6 +207,7 @@ export default defineSchema({
 		name: v.string(),
 		mediaType: v.string(),
 		size: v.number(),
+		messageIds: v.optional(v.array(v.string())),
 		attached: v.boolean(),
 		threadId: v.optional(v.id('threadRecords')),
 		storageDeletedAt: v.optional(v.number())
@@ -243,6 +271,7 @@ export default defineSchema({
 	executorJobs: defineTable({
 		threadId: v.id('threadRecords'),
 		runId: v.id('runs'),
+		projectId: v.optional(v.id('projects')),
 		kind: vStoredExecutorJobKind,
 		callId: v.optional(v.string()),
 		// Set on jobs created after tool progress events. Legacy rows omit it;

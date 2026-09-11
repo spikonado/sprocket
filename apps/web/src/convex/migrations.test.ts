@@ -43,10 +43,23 @@ describe('production rollout cleanup migrations', () => {
 		expect(records.runless?.status).toBe('completed');
 	});
 
-	it('unsets fields retained for the rolling deployment', async () => {
+	it('removes data retained for the rolling deployment', async () => {
 		const t = initConvexTest();
 		const { threadId } = await seedOwnedThread(t);
 		const ids = await t.run(async (ctx) => {
+			const projectId = await ctx.db.insert('projects', {
+				userId: 'user_alice',
+				repositoryKey: 'alpha',
+				displayName: 'Alpha',
+				nextExecutorSequence: 1,
+				lastSeenAt: 1
+			});
+			const connectionId = await ctx.db.insert('projectConnections', {
+				projectId,
+				userId: 'user_alice',
+				clientId: 'legacy-client',
+				lastHeartbeatAt: 1
+			});
 			const run = await ctx.db
 				.query('runs')
 				.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadId))
@@ -56,14 +69,40 @@ describe('production rollout cleanup migrations', () => {
 				.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
 				.unique();
 			if (!run || !usage) throw new Error('Missing test fixture.');
-			await ctx.db.patch('runs', run._id, { completionTransport: 'convex-action' });
+			await ctx.db.patch('threadRecords', threadId, { projectId });
+			await ctx.db.patch('runs', run._id, {
+				projectId,
+				catalogVersion: 'legacy-catalog',
+				completionTransport: 'convex-action',
+				contextWindowTokens: 100_000,
+				autoCompactTokenLimit: 80_000,
+				promptMessageId: 'legacy-prompt'
+			});
 			await ctx.db.patch('threadUsage', usage._id, {
 				totalTokensProcessed: 42,
 				usageLedgerMigratedAt: 1
 			});
+			const transcriptStateId = await ctx.db.insert('threadTranscriptStates', {
+				threadId,
+				userId: 'user_alice',
+				totalParts: 1,
+				migratedAt: 1
+			});
+			const storageId = await ctx.storage.store(new Blob(['legacy-image']));
+			const uploadId = await ctx.db.insert('imageUploads', {
+				userId: 'user_alice',
+				storageId,
+				name: 'legacy.png',
+				mediaType: 'image/png',
+				size: 1,
+				messageIds: ['legacy-message'],
+				attached: true,
+				threadId
+			});
 			const jobId = await ctx.db.insert('executorJobs', {
 				threadId,
 				runId: run._id,
+				projectId,
 				kind: 'web_search',
 				payload: { query: 'compatibility' },
 				hidden: false,
@@ -72,22 +111,53 @@ describe('production rollout cleanup migrations', () => {
 				sequence: 0,
 				cloudWorkPool: 'firecrawlScrape'
 			});
-			return { runId: run._id, usageId: usage._id, jobId };
+			return {
+				projectId,
+				connectionId,
+				runId: run._id,
+				usageId: usage._id,
+				transcriptStateId,
+				uploadId,
+				jobId
+			};
 		});
 
+		await t.mutation(internal.migrations.removeThreadRecordProjectId, oneBatch);
 		await t.mutation(internal.migrations.removeRunCompletionTransport, oneBatch);
+		await t.mutation(internal.migrations.removeRunLegacyFields, oneBatch);
 		await t.mutation(internal.migrations.removeThreadUsageLegacyFields, oneBatch);
+		await t.mutation(internal.migrations.removeTranscriptStateMigratedAt, oneBatch);
+		await t.mutation(internal.migrations.removeImageUploadMessageIds, oneBatch);
 		await t.mutation(internal.migrations.removeExecutorJobCloudWorkPool, oneBatch);
+		await t.mutation(internal.migrations.removeExecutorJobProjectId, oneBatch);
+		await t.mutation(internal.migrations.deleteProjectConnections, oneBatch);
+		await t.mutation(internal.migrations.deleteProjects, oneBatch);
 
 		const migrated = await t.run(async (ctx) => ({
+			thread: await ctx.db.get('threadRecords', threadId),
 			run: await ctx.db.get('runs', ids.runId),
 			usage: await ctx.db.get('threadUsage', ids.usageId),
-			job: await ctx.db.get('executorJobs', ids.jobId)
+			transcriptState: await ctx.db.get('threadTranscriptStates', ids.transcriptStateId),
+			upload: await ctx.db.get('imageUploads', ids.uploadId),
+			job: await ctx.db.get('executorJobs', ids.jobId),
+			project: await ctx.db.get('projects', ids.projectId),
+			connection: await ctx.db.get('projectConnections', ids.connectionId)
 		}));
+		expect(migrated.thread?.projectId).toBeUndefined();
 		expect(migrated.run?.completionTransport).toBeUndefined();
+		expect(migrated.run?.projectId).toBeUndefined();
+		expect(migrated.run?.catalogVersion).toBeUndefined();
+		expect(migrated.run?.contextWindowTokens).toBeUndefined();
+		expect(migrated.run?.autoCompactTokenLimit).toBeUndefined();
+		expect(migrated.run?.promptMessageId).toBeUndefined();
 		expect(migrated.usage?.totalTokensProcessed).toBeUndefined();
 		expect(migrated.usage?.usageLedgerMigratedAt).toBeUndefined();
+		expect(migrated.transcriptState?.migratedAt).toBeUndefined();
+		expect(migrated.upload?.messageIds).toBeUndefined();
 		expect(migrated.job?.cloudWorkPool).toBeUndefined();
+		expect(migrated.job?.projectId).toBeUndefined();
+		expect(migrated.project).toBeNull();
+		expect(migrated.connection).toBeNull();
 	});
 
 	it('waits for prior writers and then runs the cleanup automatically', async () => {

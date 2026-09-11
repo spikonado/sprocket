@@ -6,12 +6,13 @@ Current as of 2026-09-11.
 
 ## Production rollout cleanup
 
-PR #345 removed several stored fields before its code had deployed and before
-production data had been rewritten. The production deployment that remained
-active after that failed rollout could still write those fields, so merely
-cleaning existing rows would race with active mutations. This release restores
-the old schema shapes and ships the cleanup migrations in
-`convex/migrations.ts`.
+PR #345 removed stored project tables, project references, run fields,
+transcript migration state, message references, usage fields, and executor work
+pool state before production data had been rewritten. The production deployment
+that remained active after that failed rollout could still write some of those
+fields. Cleaning existing rows immediately would race with those writers. This
+release restores every known shape from that removal that still needs stored
+data cleanup and ships the cleanup migrations in `convex/migrations.ts`.
 
 The hourly cron calls `runProductionRolloutCleanupAutomatically`. Its first call
 records a cleanup time 48 hours later. That delay exceeds the preceding
@@ -32,6 +33,21 @@ It marks a runless thread as `completed` rather than deleting user data. Remove
 the optional schema and parser handling, and the summary default, after the
 migration completes and a production scan finds no thread without `status`.
 
+### Legacy projects and references
+
+Production may still contain rows in `projects` and `projectConnections`, plus
+`projectId` on `threadRecords`, `runs`, and `executorJobs`. Current code uses
+`repositoryKey` and does not read or write these tables or references. Their
+validators exist only so the stored rows survive schema validation.
+
+`removeThreadRecordProjectId`, `removeRunLegacyFields`, and
+`removeExecutorJobProjectId` unset all project references. The serial runner
+then executes `deleteProjectConnections` before `deleteProjects`. Remove the
+three optional fields and the two table definitions only after all five
+migrations complete and production scans find no project reference, connection,
+or project row. The project table deletions must remain last so no stored
+reference outlives its target table.
+
 ### Run completion transport
 
 The preceding schema accepted `runs.completionTransport` with either
@@ -41,6 +57,17 @@ accepted so stored rows and writes made during the rollout validate.
 
 `removeRunCompletionTransport` unsets the field. Remove it from the schema after
 the migration completes and a production scan finds no run carrying it.
+
+### Run catalog snapshots
+
+Historical runs may contain `catalogVersion`, `contextWindowTokens`, and
+`autoCompactTokenLimit`. Current code gets model limits from the gateway catalog
+and does not read or write these stored snapshots. The fields remain optional
+only so historical runs validate.
+
+`removeRunLegacyFields` unsets all three fields. Remove them from the schema
+after that migration completes and a production scan finds no run carrying any
+of them.
 
 ### Usage ledger fields
 
@@ -53,6 +80,27 @@ rows and writes made during the rollout.
 
 `removeThreadUsageLegacyFields` unsets both fields. Remove them from the schema
 after the migration completes and a production scan finds neither field.
+
+### Numbered transcript migration marker
+
+`threadTranscriptStates.migratedAt` was left by the completed numbered
+transcript backfill. Current code does not read or write it, but production still
+has rows carrying it.
+
+`removeTranscriptStateMigratedAt` unsets the field. Remove it from the schema
+after the migration completes and a production scan finds no transcript state
+carrying it.
+
+### Thread-message references
+
+Historical runs and uploads may contain `runs.promptMessageId` and
+`imageUploads.messageIds`. Prompts and attachment metadata now live in
+`threadTranscriptParts`; current code does not read or write either old field.
+
+`removeRunLegacyFields` unsets `promptMessageId`, and
+`removeImageUploadMessageIds` unsets `messageIds`. Remove each field from the
+schema only after its migration completes and a production scan finds no stored
+value for that field.
 
 ### Executor work pool
 

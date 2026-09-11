@@ -14,9 +14,16 @@ export const migrations = new Migrations(components.migrations, {
 
 const productionRolloutCleanupMigrations = [
 	internal.migrations.backfillMissingThreadStatus,
+	internal.migrations.removeThreadRecordProjectId,
 	internal.migrations.removeRunCompletionTransport,
+	internal.migrations.removeRunLegacyFields,
 	internal.migrations.removeThreadUsageLegacyFields,
-	internal.migrations.removeExecutorJobCloudWorkPool
+	internal.migrations.removeTranscriptStateMigratedAt,
+	internal.migrations.removeImageUploadMessageIds,
+	internal.migrations.removeExecutorJobCloudWorkPool,
+	internal.migrations.removeExecutorJobProjectId,
+	internal.migrations.deleteProjectConnections,
+	internal.migrations.deleteProjects
 ];
 
 export const runProductionRolloutCleanup = migrations.runner(productionRolloutCleanupMigrations);
@@ -76,6 +83,36 @@ export const removeRunCompletionTransport = migrations.define({
 	}
 });
 
+export const removeThreadRecordProjectId = migrations.define({
+	table: 'threadRecords',
+	migrateOne: (_ctx, thread) => {
+		if (thread.projectId === undefined) return;
+		return { projectId: undefined };
+	}
+});
+
+export const removeRunLegacyFields = migrations.define({
+	table: 'runs',
+	migrateOne: (_ctx, run) => {
+		if (
+			run.projectId === undefined &&
+			run.catalogVersion === undefined &&
+			run.contextWindowTokens === undefined &&
+			run.autoCompactTokenLimit === undefined &&
+			run.promptMessageId === undefined
+		) {
+			return;
+		}
+		return {
+			projectId: undefined,
+			catalogVersion: undefined,
+			contextWindowTokens: undefined,
+			autoCompactTokenLimit: undefined,
+			promptMessageId: undefined
+		};
+	}
+});
+
 export const removeThreadUsageLegacyFields = migrations.define({
 	table: 'threadUsage',
 	migrateOne: (_ctx, usage) => {
@@ -86,10 +123,48 @@ export const removeThreadUsageLegacyFields = migrations.define({
 	}
 });
 
+export const removeTranscriptStateMigratedAt = migrations.define({
+	table: 'threadTranscriptStates',
+	migrateOne: (_ctx, state) => {
+		if (state.migratedAt === undefined) return;
+		return { migratedAt: undefined };
+	}
+});
+
+export const removeImageUploadMessageIds = migrations.define({
+	table: 'imageUploads',
+	migrateOne: (_ctx, upload) => {
+		if (upload.messageIds === undefined) return;
+		return { messageIds: undefined };
+	}
+});
+
 export const removeExecutorJobCloudWorkPool = migrations.define({
 	table: 'executorJobs',
 	migrateOne: (_ctx, job) => {
 		if (job.cloudWorkPool === undefined) return;
 		return { cloudWorkPool: undefined };
+	}
+});
+
+export const removeExecutorJobProjectId = migrations.define({
+	table: 'executorJobs',
+	migrateOne: (_ctx, job) => {
+		if (job.projectId === undefined) return;
+		return { projectId: undefined };
+	}
+});
+
+export const deleteProjectConnections = migrations.define({
+	table: 'projectConnections',
+	migrateOne: async (ctx, connection) => {
+		await ctx.db.delete('projectConnections', connection._id);
+	}
+});
+
+export const deleteProjects = migrations.define({
+	table: 'projects',
+	migrateOne: async (ctx, project) => {
+		await ctx.db.delete('projects', project._id);
 	}
 });
