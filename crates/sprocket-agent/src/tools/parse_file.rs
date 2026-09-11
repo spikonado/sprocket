@@ -26,7 +26,7 @@ pub(crate) const MAX_PARSE_FILE_IMAGE_PIXELS: u32 = 36_000_000;
 pub(crate) const MAX_PARSE_FILE_PREVIEW_CHARS: usize = 20_000;
 const MAX_PARSE_FILE_DOCUMENT_BYTES: u64 = 64 * 1024 * 1024;
 
-const IMAGE_SNIFF_BYTES: usize = 16;
+pub(super) const IMAGE_SNIFF_BYTES: usize = 16;
 
 #[derive(Clone)]
 pub(crate) struct ParseFileTool(pub(super) AgentToolContext);

@@ -6,7 +6,9 @@ use reqwest::Url;
 use serde_json::{Value, json};
 use sprocket_workspace::{WorkspaceCancellation, WorkspaceOperationCancelled};
 
-use super::parse_file::{convert_file_bytes, sniff_supported_image_format};
+use super::parse_file::{
+    IMAGE_SNIFF_BYTES, MAX_PARSE_FILE_IMAGE_BYTES, convert_file_bytes, sniff_supported_image_format,
+};
 use super::scrape_files::MAX_SCRAPE_BYTES;
 
 pub(super) fn github_raw_url(url: &Url) -> Option<Url> {
@@ -76,21 +78,30 @@ pub(super) async fn fetch_github_file(
 async fn download_file(
     client: &reqwest::Client,
     url: Url,
-    max_bytes: u64,
+    mut max_bytes: u64,
 ) -> anyhow::Result<(Url, Vec<u8>)> {
     let mut response = client.get(url).send().await?.error_for_status()?;
     anyhow::ensure!(
         response.status() == reqwest::StatusCode::OK,
         "expected a complete GitHub file response"
     );
+    let content_length = response.content_length();
     anyhow::ensure!(
-        response
-            .content_length()
-            .is_none_or(|size| size <= max_bytes),
+        content_length.is_none_or(|size| size <= max_bytes),
         "GitHub file exceeds the download limit"
     );
     let mut bytes = Vec::new();
+    let mut prefix = Vec::with_capacity(IMAGE_SNIFF_BYTES);
     while let Some(chunk) = response.chunk().await? {
+        let prefix_bytes = chunk.len().min(IMAGE_SNIFF_BYTES - prefix.len());
+        prefix.extend_from_slice(&chunk[..prefix_bytes]);
+        if sniff_supported_image_format(&prefix).is_some() {
+            max_bytes = max_bytes.min(MAX_PARSE_FILE_IMAGE_BYTES as u64);
+        }
+        anyhow::ensure!(
+            content_length.is_none_or(|size| size <= max_bytes),
+            "GitHub file exceeds the download limit"
+        );
         anyhow::ensure!(
             bytes.len().saturating_add(chunk.len()) as u64 <= max_bytes,
             "GitHub file exceeds the download limit"
@@ -331,6 +342,35 @@ mod tests {
             let (url, server) = serve(vec![bytes]).await;
             let error = download_file(&client, url, 8).await.unwrap_err();
             assert!(error.to_string().contains("download limit"));
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn image_limit_applies_during_download_even_without_an_image_content_type() {
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let signature = b"\x89PNG\r\n\x1a\n";
+        let declared = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            MAX_PARSE_FILE_IMAGE_BYTES + 1
+        );
+        let mut oversized = declared.into_bytes();
+        oversized.extend_from_slice(signature);
+
+        let mut chunked = b"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n".to_vec();
+        for byte in signature {
+            chunked.extend_from_slice(&[b'1', b'\r', b'\n', *byte, b'\r', b'\n']);
+        }
+        chunked.extend_from_slice(format!("{MAX_PARSE_FILE_IMAGE_BYTES:x}\r\n").as_bytes());
+        chunked.resize(chunked.len() + MAX_PARSE_FILE_IMAGE_BYTES, 0);
+        chunked.extend_from_slice(b"\r\n0\r\n\r\n");
+
+        for response in [oversized, chunked] {
+            let (url, server) = serve(vec![response]).await;
+            let error = download_file(&client, url, MAX_SCRAPE_BYTES)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("download limit"), "{error:#}");
             server.await.unwrap();
         }
     }

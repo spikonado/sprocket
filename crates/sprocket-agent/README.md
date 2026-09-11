@@ -60,7 +60,9 @@ parameters, and drops line anchors. Rust reads source files as UTF-8, converts
 supported documents with AnyDoc, and returns supported images through the
 existing image cache. This route never calls Firecrawl, even after a download
 or parsing failure. It has a 30-second download timeout, five-redirect limit,
-and 64 MiB download limit. Image decoding retains the existing model limits.
+and 64 MiB download limit. Image signatures lower the download limit to 20 MiB
+during streaming, regardless of the response's content type. Image decoding
+retains the existing model limits.
 Repository landing pages, directories, and issue pages keep normal scraping.
 
 For extensionless paths, the agent first requests the URL path with `.md`
