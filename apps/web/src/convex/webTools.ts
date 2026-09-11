@@ -102,7 +102,7 @@ export function scrapeHttpErrorStatus(error: Error): number | undefined {
 	return result.success ? result.data.status : undefined;
 }
 
-export function isCleanPageStatus(status: number): boolean {
+function isCleanPageStatus(status: number): boolean {
 	return status === 304 || (status >= 200 && status < 300);
 }
 
@@ -117,7 +117,7 @@ function throwHttpFailure(message: string, status: number, cause?: Error): never
 	throw new NonRetryableError(message, cause ? { cause } : undefined);
 }
 
-export function summaryFitsTransport(page: ScrapedPage): boolean {
+function summaryFitsTransport(page: ScrapedPage): boolean {
 	return (
 		JSON.stringify({
 			url: page.url,
@@ -127,7 +127,7 @@ export function summaryFitsTransport(page: ScrapedPage): boolean {
 	);
 }
 
-export function localInlineFits(page: ScrapedPage): boolean {
+function localInlineFits(page: ScrapedPage): boolean {
 	return (
 		page.images.length <= CONVEX_ARRAY_MAX_LENGTH &&
 		JSON.stringify(page).length <= SCRAPE_INLINE_MAX_CHARS

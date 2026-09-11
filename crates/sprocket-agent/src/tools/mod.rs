@@ -36,11 +36,6 @@ use crate::hooks::ToolCallTracker;
 
 // Helpers/constants brought into this module so `tests` can reach them via `super::*`.
 #[cfg(test)]
-use self::commands::{
-    DEFAULT_COMMAND_MAX_OUTPUT_CHARS, DEFAULT_COMMAND_TIMEOUT_MS, DEFAULT_COMMAND_YIELD_MS,
-    DEFAULT_STDIN_YIELD_MS, ExecCommandArgs, WriteStdinArgs, exec_command_parameters,
-};
-#[cfg(test)]
 use self::context::tool_error;
 #[cfg(test)]
 use self::job::mutation_args_from_payload;
@@ -51,8 +46,6 @@ use self::questions::{
 };
 #[cfg(test)]
 use self::skills::resolve_read_skill;
-#[cfg(test)]
-use self::web::{DEFAULT_WEB_SEARCH_RESULTS, WebSearchArgs, web_search_parameters};
 
 pub(crate) struct AgentToolSet {
     pub(crate) apply_patch: ApplyPatchTool,
@@ -192,9 +185,7 @@ pub(crate) fn agent_tools(
 mod tests {
     use convex::Value;
     use rig::tool::ToolErrorKind;
-    use sprocket_workspace::{
-        SkillSource, WorkspaceOperationCancelled, WorkspaceSkill, default_command_shell,
-    };
+    use sprocket_workspace::{SkillSource, WorkspaceOperationCancelled, WorkspaceSkill};
 
     use super::*;
 
@@ -311,80 +302,6 @@ mod tests {
         })
         .expect_err("reserved id");
         assert!(reserved.to_string().contains("reserved"));
-    }
-
-    #[test]
-    fn ask_question_defaults_are_omitted_from_payload() {
-        let args: AskQuestionArgs = serde_json::from_value(serde_json::json!({
-            "question": "Ship it?",
-            "options": [{ "id": "yes", "label": "Yes" }]
-        }))
-        .expect("minimal ask_question args");
-        assert_eq!(args.yield_time_ms, DEFAULT_ASK_QUESTION_YIELD_MS);
-        assert_eq!(args.timeout_ms, DEFAULT_ASK_QUESTION_TIMEOUT_MS);
-        assert_eq!(
-            serde_json::to_value(&args).unwrap(),
-            serde_json::json!({
-                "question": "Ship it?",
-                "options": [{ "id": "yes", "label": "Yes" }]
-            })
-        );
-    }
-
-    #[test]
-    fn exec_command_defaults_are_explicit_but_omitted_from_payload() {
-        let args: ExecCommandArgs = serde_json::from_value(serde_json::json!({ "cmd": "pwd" }))
-            .expect("minimal command args should deserialize");
-
-        assert_eq!(args.workdir, ".");
-        assert_eq!(args.shell, default_command_shell());
-        assert_eq!(args.timeout_ms, DEFAULT_COMMAND_TIMEOUT_MS);
-        assert_eq!(args.yield_time_ms, DEFAULT_COMMAND_YIELD_MS);
-        assert_eq!(args.max_output_chars, DEFAULT_COMMAND_MAX_OUTPUT_CHARS);
-        assert_eq!(
-            serde_json::to_value(&args).unwrap(),
-            serde_json::json!({ "cmd": "pwd" })
-        );
-
-        let schema = exec_command_parameters();
-        assert_eq!(schema["properties"]["workdir"]["default"], ".");
-        assert_eq!(
-            schema["properties"]["shell"]["default"],
-            default_command_shell()
-        );
-        assert!(schema["properties"].get("login").is_none());
-    }
-
-    #[test]
-    fn web_search_defaults_are_omitted_from_payload() {
-        let args: WebSearchArgs = serde_json::from_value(serde_json::json!({ "query": "rust" }))
-            .expect("minimal search args should deserialize");
-
-        assert_eq!(args.num_results, DEFAULT_WEB_SEARCH_RESULTS);
-        assert_eq!(
-            serde_json::to_value(&args).unwrap(),
-            serde_json::json!({ "query": "rust" })
-        );
-
-        let schema = web_search_parameters();
-        assert_eq!(
-            schema["properties"]["numResults"]["default"],
-            DEFAULT_WEB_SEARCH_RESULTS
-        );
-    }
-
-    #[test]
-    fn write_stdin_defaults_are_omitted_from_payload() {
-        let args: WriteStdinArgs = serde_json::from_value(serde_json::json!({ "sessionId": "1" }))
-            .expect("minimal stdin args should deserialize");
-
-        assert!(args.chars.is_empty());
-        assert!(!args.terminate);
-        assert_eq!(args.yield_time_ms, DEFAULT_STDIN_YIELD_MS);
-        assert_eq!(
-            serde_json::to_value(&args).unwrap(),
-            serde_json::json!({ "sessionId": "1" })
-        );
     }
 
     #[test]

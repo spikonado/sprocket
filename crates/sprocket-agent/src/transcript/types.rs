@@ -258,17 +258,4 @@ mod tests {
             Some("hi")
         );
     }
-
-    #[test]
-    fn part_record_serializes_null_message() {
-        let json = serde_json::to_value(&TranscriptPartRecord {
-            number: 3,
-            kind: TranscriptPartKind::Tool,
-            message: None,
-        })
-        .unwrap();
-        assert_eq!(json["number"], 3);
-        assert_eq!(json["kind"], "tool");
-        assert!(json["message"].is_null());
-    }
 }

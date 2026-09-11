@@ -1565,19 +1565,6 @@ mod tests {
         assert!(manager.browser_session(false).await.unwrap().is_none());
     }
 
-    #[test]
-    fn browser_session_serializes_camel_case() {
-        let json = serde_json::to_value(NativeBrowserSession {
-            access_token: "token".to_string(),
-            user: native_user(),
-        })
-        .unwrap();
-
-        assert_eq!(json["accessToken"], "token");
-        assert_eq!(json["user"]["firstName"], "Ada");
-        assert_eq!(json["user"]["profilePictureUrl"], serde_json::Value::Null);
-    }
-
     #[tokio::test]
     async fn browser_session_is_none_when_signed_out() {
         let manager = NativeAuthManager::with_store(

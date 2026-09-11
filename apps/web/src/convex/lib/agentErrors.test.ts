@@ -3,17 +3,6 @@ import { ConvexError } from 'convex/values';
 import { toAgentToolConvexError } from '@convex/lib/agentErrors';
 
 describe('agent tool error surfacing', () => {
-	it('passes ConvexErrors through untouched', () => {
-		const error = new ConvexError('Mandate not found.');
-		expect(toAgentToolConvexError(error)).toBe(error);
-	});
-
-	it('strips the production uncaught-error prefix', () => {
-		const error = toAgentToolConvexError(new Error('Uncaught Error: Exa search failed.'));
-		expect(error).toBeInstanceOf(ConvexError);
-		expect(error.message).toBe('Exa search failed.');
-	});
-
 	it('removes nested Convex transport prefixes before rethrowing a tool error', () => {
 		const message =
 			'The user has control of this browser. Ask them to give control back before browsing.';

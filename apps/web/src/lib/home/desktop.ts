@@ -8,7 +8,6 @@ import type {
 	ProjectAttachmentRequest,
 	RunState
 } from '$lib/types/sprocket';
-import { isClaimedRunStatus, isRunClaimLeaseActive } from '$convex/lib/runLease';
 import { RUN_ABANDONED_BY_AGENT } from '$convex/lib/agentErrors';
 import { isRunFinalStatus } from '$convex/lib/validators';
 import type { SelectedThreadLifecyclePhase } from '$convex/lib/runCancellation';
@@ -64,41 +63,7 @@ export function resolveSubmissionId(args: {
 		: args.newSubmissionId;
 }
 
-export function resolveDraftRunSubmissionId(args: {
-	freshSubmissionId: string;
-	submissionRunStatus: RunState['status'] | null;
-	threadSubmissionId: string;
-}) {
-	return args.submissionRunStatus && isRunFinalStatus(args.submissionRunStatus)
-		? args.freshSubmissionId
-		: args.threadSubmissionId;
-}
-
-export function isRunBlockingAgentLaunch(
-	run: Pick<RunState, 'status' | 'claimExpiresAt'> | null,
-	now: number
-): boolean {
-	if (!run) return false;
-	if (run.status === 'queued') return true;
-	return isRunClaimLeaseActive(run, now);
-}
-
 export type RunResumeKind = 'crash' | 'failed' | 'cancelled';
-
-export function runResumeKind(
-	run: Pick<RunState, 'status' | 'claimExpiresAt' | 'lastError'> | null,
-	now: number
-): RunResumeKind | null {
-	if (!run) return null;
-	if (run.status === 'cancelled') return 'cancelled';
-	if (run.status === 'failed') {
-		return run.lastError === RUN_ABANDONED_BY_AGENT ? 'crash' : 'failed';
-	}
-	if (isClaimedRunStatus(run.status) && !isRunClaimLeaseActive(run, now)) {
-		return 'crash';
-	}
-	return null;
-}
 
 export function lifecycleResumeKind(
 	phase: SelectedThreadLifecyclePhase,

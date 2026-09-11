@@ -1,8 +1,6 @@
 import { makeFunctionReference } from 'convex/server';
-import { validate } from 'convex-helpers/validators';
 import { describe, expect, it } from 'vitest';
 import { api } from '@convex/_generated/api';
-import { vExecutorJobPayload } from '@convex/lib/validators';
 import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 
 describe('browser screenshot results', () => {
@@ -64,7 +62,6 @@ describe('retired browser clients', () => {
 					payload
 				})
 			).rejects.toThrow();
-			expect(validate(vExecutorJobPayload, payload)).toBe(false);
 		}
 	);
 

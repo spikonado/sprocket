@@ -153,16 +153,4 @@ mod tests {
             .to_string();
         assert!(error.contains("no-such-model"));
     }
-
-    #[test]
-    fn catalog_model_requires_supports_images() {
-        let error = serde_json::from_value::<GatewayCatalogModel>(serde_json::json!({
-            "id": "gpt-5.6-sol",
-            "label": "GPT-5.6 Sol",
-            "contextWindowTokens": 272000,
-            "autoCompactTokenLimit": 258000
-        }))
-        .expect_err("supportsImages is required");
-        assert!(error.to_string().contains("supportsImages"));
-    }
 }

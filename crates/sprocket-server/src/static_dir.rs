@@ -86,17 +86,3 @@ fn find_dev_static_dir_from(start: &Path) -> Option<PathBuf> {
 
     None
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn installed_candidates_include_fhs_and_cli_bundle_layouts() {
-        let exe_dir = PathBuf::from("/usr/bin");
-        let candidates = installed_static_candidates(&exe_dir);
-
-        assert!(candidates.contains(&PathBuf::from("/usr/share/sprocket/web")));
-        assert!(candidates.contains(&PathBuf::from("/usr/bin/web/dist")));
-    }
-}

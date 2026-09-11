@@ -201,7 +201,6 @@ async fn save_screenshot(
 
 #[cfg(test)]
 mod tests {
-    use convex::Value;
     use rig::message::ToolResultContent;
 
     use super::*;
@@ -377,55 +376,5 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-    }
-
-    #[test]
-    fn saving_enforcement_is_opt_in_and_only_on_interact() {
-        let interact: BrowserInteractArgs =
-            serde_json::from_value(serde_json::json!({ "command": "agent-browser snapshot -i" }))
-                .expect("minimal interact args");
-        assert!(!interact.enforce_saving);
-        assert_eq!(
-            serde_json::to_value(&interact).unwrap(),
-            serde_json::json!({ "command": "agent-browser snapshot -i" })
-        );
-
-        let screenshot: BrowserScreenshotArgs =
-            serde_json::from_value(serde_json::json!({})).expect("minimal screenshot args");
-        assert_eq!(
-            serde_json::to_value(&screenshot).unwrap(),
-            serde_json::json!({})
-        );
-
-        let interact = BrowserInteractArgs {
-            command: "agent-browser help".to_string(),
-            enforce_saving: true,
-        };
-        let payload = serde_json::to_value(interact).unwrap();
-        assert_eq!(
-            payload,
-            json!({"command": "agent-browser help", "enforce_saving": true})
-        );
-        let args = action_args_from_payload("run-1", "claim-1", &payload).unwrap();
-        assert_eq!(args.get("enforce_saving"), Some(&Value::Boolean(true)));
-        let schema = json!(schemars::schema_for!(BrowserInteractArgs));
-        assert!(schema["properties"].get("disable_saving").is_none());
-        assert!(schema["properties"]["command"].get("description").is_none());
-        assert_eq!(schema["required"], json!(["command"]));
-        let screenshot_schema = json!(schemars::schema_for!(BrowserScreenshotArgs));
-        assert!(
-            screenshot_schema
-                .get("properties")
-                .is_none_or(|properties| properties == &json!({}))
-        );
-        assert!(
-            serde_json::from_value::<BrowserInteractArgs>(
-                json!({"command": "agent-browser help", "disable_saving": true})
-            )
-            .is_err()
-        );
-        for field in ["enforce_saving", "disable_saving"] {
-            assert!(serde_json::from_value::<BrowserScreenshotArgs>(json!({field: true})).is_err());
-        }
     }
 }

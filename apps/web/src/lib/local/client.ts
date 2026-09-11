@@ -79,11 +79,7 @@ const transcriptUploadResultSchema = z.union([
 	z.object({ error: z.string() })
 ]);
 
-export function transcriptUploadPath(args: {
-	userId: string;
-	name: string;
-	threadId?: string;
-}): string {
+function transcriptUploadPath(args: { userId: string; name: string; threadId?: string }): string {
 	let query = `userId=${encodeURIComponent(args.userId)}&name=${encodeURIComponent(args.name)}`;
 	if (args.threadId) {
 		query += `&threadId=${encodeURIComponent(args.threadId)}`;

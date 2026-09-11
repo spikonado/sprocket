@@ -87,7 +87,7 @@ export function assistantTimelinePartKey(
 }
 
 /** Use the unpartitioned group so running tools settling does not change the key. */
-export function assistantTimelineWorkSectionKey(block: AssistantTimelineWorkBlock): string {
+function assistantTimelineWorkSectionKey(block: AssistantTimelineWorkBlock): string {
 	if (block.type === 'reasoning') {
 		return assistantTimelinePartKey(block);
 	}

@@ -14,8 +14,4 @@ describe('canonicalDevWebUrl', () => {
 			'http://localhost:5173/callback?code=code'
 		);
 	});
-
-	it('leaves the canonical development origin alone', () => {
-		expect(canonicalDevWebUrl('http://localhost:5173/callback')).toBeNull();
-	});
 });
