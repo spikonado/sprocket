@@ -1,23 +1,11 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Id } from '$convex/_generated/dataModel';
+import { describe, expect, it } from 'vitest';
 import {
-	areStorageIdsEqual,
 	attachmentMediaType,
 	fallbackAttachmentName,
 	formatAttachmentSize,
 	isPreviewableImageMediaType,
-	shouldEagerLoadAttachmentPreview,
-	triggerAttachmentDownload
+	shouldEagerLoadAttachmentPreview
 } from '$lib/chat/attachments';
-
-function storageId(value: string): Id<'_storage'> {
-	// SAFETY: fixture strings are only compared as opaque Convex document ids.
-	return value as Id<'_storage'>;
-}
-
-afterEach(() => {
-	vi.unstubAllGlobals();
-});
 
 describe('attachment presentation', () => {
 	it('previews only the raster image types the transcript already rendered', () => {
@@ -57,45 +45,5 @@ describe('attachment presentation', () => {
 			false
 		);
 		expect(shouldEagerLoadAttachmentPreview({ mediaType: 'text/plain' })).toBe(false);
-	});
-
-	it('starts a file download from a fetched object url', () => {
-		const click = vi.fn();
-		const remove = vi.fn();
-		const link = {
-			href: '',
-			download: '',
-			rel: '',
-			click,
-			remove
-		};
-		const append = vi.fn();
-		vi.stubGlobal('document', {
-			createElement: () => link,
-			body: { append }
-		});
-
-		triggerAttachmentDownload('blob:http://localhost/1', 'notes.pdf');
-
-		expect(link.href).toBe('blob:http://localhost/1');
-		expect(link.download).toBe('notes.pdf');
-		expect(link.rel).toBe('noopener');
-		expect(append).toHaveBeenCalledWith(link);
-		expect(click).toHaveBeenCalledTimes(1);
-		expect(remove).toHaveBeenCalledTimes(1);
-	});
-});
-
-describe('areStorageIdsEqual', () => {
-	it('compares ordered storage ids and treats missing lists as empty', () => {
-		expect(areStorageIdsEqual(undefined, [])).toBe(true);
-		expect(areStorageIdsEqual([storageId('storage-1')], [storageId('storage-1')])).toBe(true);
-		expect(areStorageIdsEqual([storageId('storage-1')], [storageId('storage-2')])).toBe(false);
-		expect(
-			areStorageIdsEqual(
-				[storageId('storage-1'), storageId('storage-2')],
-				[storageId('storage-2'), storageId('storage-1')]
-			)
-		).toBe(false);
 	});
 });

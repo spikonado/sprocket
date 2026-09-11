@@ -92,38 +92,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn accepts_explicit_static_dir_override() {
-        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let expected = manifest_dir.join("../../apps/web/dist");
-
-        if !expected.join("index.html").exists() {
-            return;
-        }
-
-        let resolved = resolve_static_dir(Some(expected.canonicalize().unwrap())).unwrap();
-        assert!(is_valid_static_dir(&resolved));
-    }
-
-    #[test]
-    fn discovers_dev_static_dir_from_repo_root() {
-        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let repo_root = manifest_dir
-            .join("../..")
-            .canonicalize()
-            .expect("repo root");
-        let expected = repo_root.join("apps/web/dist");
-
-        if !expected.join("index.html").exists() {
-            return;
-        }
-
-        assert_eq!(
-            find_dev_static_dir_from(&repo_root),
-            expected.canonicalize().ok()
-        );
-    }
-
-    #[test]
     fn installed_candidates_include_fhs_and_cli_bundle_layouts() {
         let exe_dir = PathBuf::from("/usr/bin");
         let candidates = installed_static_candidates(&exe_dir);

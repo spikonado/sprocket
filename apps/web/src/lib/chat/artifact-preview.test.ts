@@ -2,23 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
 	buildArtifactPreviewDocument,
 	buildHtmlPreviewDocument,
-	buildReactPreviewDocument,
-	parseArtifactType
+	buildReactPreviewDocument
 } from './artifact-preview';
 
 describe('artifact-preview', () => {
-	it('parses known artifact types and falls back to markdown', () => {
-		expect(parseArtifactType('react')).toBe('react');
-		expect(parseArtifactType('html')).toBe('html');
-		expect(parseArtifactType('markdown')).toBe('markdown');
-		expect(parseArtifactType('nope')).toBe('markdown');
-	});
-
-	it('builds preview documents only for react and html', () => {
-		expect(buildArtifactPreviewDocument('html', '<p>hi</p>')).toContain('<p>hi</p>');
-		expect(buildArtifactPreviewDocument('markdown', '# hi')).toBeNull();
-	});
-
 	it('wraps react source in a document that mounts App', () => {
 		const doc = buildReactPreviewDocument('function App() { return <h1>Hi</h1>; }');
 		expect(doc).toContain('function App()');

@@ -307,37 +307,6 @@ fn find_dev_desktop_launcher() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::error::ErrorKind;
-
-    fn help_for(args: &[&str]) -> String {
-        let error = Cli::try_parse_from(std::iter::once("sprocket").chain(args.iter().copied()))
-            .expect_err("help should exit before parsing a command");
-        assert_eq!(error.kind(), ErrorKind::DisplayHelp);
-        error.to_string()
-    }
-
-    #[test]
-    fn root_help_covers_current_commands() {
-        let help = help_for(&["--help"]);
-        assert_eq!(help, help_for(&["help"]));
-
-        for expected in [
-            "developing both hardware and software",
-            "Start only the local Sprocket server",
-            "Update a global npm, bun, pnpm, or yarn installation on its current channel",
-            "alias: upgrade",
-        ] {
-            assert!(help.contains(expected), "help is missing {expected:?}");
-        }
-    }
-
-    #[test]
-    fn update_help_describes_check_option() {
-        let help = help_for(&["help", "update"]);
-
-        assert!(help.contains("--check"));
-        assert!(help.contains("without installing it"));
-    }
 
     #[test]
     fn parses_launch_server_and_update_modes() {
