@@ -10,6 +10,7 @@ import type {
 } from 'convex/server';
 import {
 	beginToolJob,
+	getContext,
 	isFinished,
 	registerCompletionAttempt,
 	renewClaim,
@@ -137,6 +138,18 @@ describe('run execution state', () => {
 			const query = vi.spyOn(ctx.db, 'query');
 			const get = vi.spyOn(ctx.db, 'get');
 			expect(await callHandler(api.agentRuntime.isFinished, isFinished, ctx, auth)).toBe(false);
+			const context = await callHandler(api.agentRuntime.getContext, getContext, ctx, auth);
+			expect(context.run._id).toBe(auth.runId);
+			expect(Object.keys(context.run).sort()).toEqual([
+				'_id',
+				'continuationOfRunId',
+				'fastMode',
+				'reasoningEffort',
+				'selectedModel',
+				'startedAt',
+				'threadId',
+				'userId'
+			]);
 			expect(
 				(
 					await callHandler(api.chat.selectedThreadLifecycle, selectedThreadLifecycle, ctx, {
@@ -178,9 +191,8 @@ describe('run execution state', () => {
 				});
 				await ctx.db.patch('threadRecords', threadId, { status: 'awaiting_executor' });
 			});
-			const queryArgs = { runId: auth.runId, executionSecret: auth.executionSecret };
 			expect(
-				(await asUser.query(api.agentRuntime.completionActor, queryArgs)).completionAttemptSeq
+				(await t.run((ctx) => getRunWithExecution(ctx.db, auth.runId)))?.completionAttemptSeq
 			).toBe(7);
 			await t.mutation(internal.migrations.runExecutionBackfillAutomatically, {});
 			await t.finishAllScheduledFunctions(vi.runAllTimers);
@@ -193,7 +205,7 @@ describe('run execution state', () => {
 				}
 				expect((await ctx.db.get('threadRecords', threadId))?.status).toBe('running');
 			});
-			expect((await asUser.query(api.agentRuntime.getContext, queryArgs)).run).toMatchObject({
+			expect(await t.run((ctx) => getRunWithExecution(ctx.db, auth.runId))).toMatchObject({
 				status: 'running',
 				claimId: auth.claimId,
 				claimExpiresAt: expiresAt,

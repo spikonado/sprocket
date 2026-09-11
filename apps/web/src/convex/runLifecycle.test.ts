@@ -80,7 +80,7 @@ describe('run lifecycle workflow', () => {
 		});
 		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
 			runId: created.runId,
-			expectedStatus: 'awaiting_executor',
+			expectedStatus: 'running',
 			expectedClaimId: 'claim-r',
 			text: 'done',
 			status: 'completed',

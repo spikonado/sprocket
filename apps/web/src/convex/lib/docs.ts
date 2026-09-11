@@ -63,7 +63,18 @@ export const vCustomerPortalResponse = v.object({
 });
 
 export const vGetContextResult = v.object({
-	run: schema.doc('runs').extend({ completionAttemptSeq: v.number() }),
+	run: schema
+		.doc('runs')
+		.pick(
+			'_id',
+			'threadId',
+			'userId',
+			'selectedModel',
+			'reasoningEffort',
+			'startedAt',
+			'continuationOfRunId'
+		)
+		.extend({ fastMode: v.boolean() }),
 	prompt: v.string(),
 	contextTokens: v.optional(v.number())
 });
@@ -74,7 +85,6 @@ export const vCompletionActor = v.object({
 	status: vRunStatus,
 	claimId: v.optional(v.string()),
 	claimExpiresAt: v.optional(v.number()),
-	completionAttemptSeq: v.number(),
 	streamSequence: v.number(),
 	streamAttemptId: v.optional(v.string())
 });

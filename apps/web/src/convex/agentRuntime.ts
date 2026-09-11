@@ -1,10 +1,11 @@
 import { action, internalMutation, mutation, query } from '@convex/_generated/server';
+import type { Doc } from '@convex/_generated/dataModel';
 import { internal } from '@convex/_generated/api';
 import schema from '@convex/schema';
 import { ConvexError, v, type Infer } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord } from '@convex/lib/access';
 import { getExecutionRun, getExecutionRunRecord, getUserId } from '@convex/lib/auth';
-import { patchRunExecution, type ExecutionRun } from '@convex/lib/runExecution';
+import { patchRunExecution } from '@convex/lib/runExecution';
 import { GATEWAY_PROTOCOL_VERSION } from '@convex/lib/gatewayProtocol';
 import { modelGatewayTokenSecret, modelGatewayUrl } from '@convex/lib/gatewayFetch';
 import { gatewayTokenExpiresAt, mintGatewayToken } from '@convex/lib/gatewayToken';
@@ -37,7 +38,7 @@ import {
 } from '@convex/lib/agentErrors';
 import { unsupportedClient } from '@convex/lib/unsupportedClient';
 import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
-import { normalizeStoredFastMode } from '@convex/lib/fastMode';
+import { fastModeForStoredRecord } from '@convex/lib/fastMode';
 import {
 	createQueuedRunRecord,
 	finalizeFailedQueuedStart,
@@ -260,12 +261,21 @@ export const renewClaim = mutation({
 });
 
 function getContextResult(args: {
-	run: ExecutionRun;
+	run: Doc<'runs'>;
 	prompt: string;
 	contextTokens: number | undefined;
 }): Infer<typeof vGetContextResult> {
 	const result: Infer<typeof vGetContextResult> = {
-		run: normalizeStoredFastMode(args.run),
+		run: {
+			_id: args.run._id,
+			threadId: args.run.threadId,
+			userId: args.run.userId,
+			selectedModel: args.run.selectedModel,
+			reasoningEffort: args.run.reasoningEffort,
+			fastMode: fastModeForStoredRecord(args.run),
+			startedAt: args.run.startedAt,
+			continuationOfRunId: args.run.continuationOfRunId
+		},
 		prompt: args.prompt
 	};
 	if (args.contextTokens !== undefined) {
@@ -281,7 +291,7 @@ export const getContext = query({
 	},
 	returns: vGetContextResult,
 	handler: async (ctx, args) => {
-		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
 		const contextTokens = await getThreadContextTokens(ctx, run.threadId);
 		const promptPart = await getPromptPart(ctx, run.threadId, run._id);
 		if (!promptPart?.prompt) {
@@ -328,7 +338,6 @@ export const completionActor = query({
 			userId,
 			threadId: run.threadId,
 			status: run.status,
-			completionAttemptSeq: run.completionAttemptSeq,
 			streamSequence: streamState.sequence
 		};
 		if (run.claimId) actor.claimId = run.claimId;

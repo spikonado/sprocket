@@ -301,8 +301,8 @@ the active tool job. The optional copies on `runs` are read only when no executi
 state exists. New runs create both records in one transaction. The first execution
 write on an older run moves its fields in the same transaction, and
 `migrations:runExecutionBackfill` backfills the remaining records automatically.
-Existing `getContext` and `completionActor` responses still include the current
-execution fields, so released agents do not need a protocol change.
+`getContext` returns only the current agent's run snapshot. Execution checks
+load the separate state; old caller response shapes are not preserved.
 
 Remove the legacy `runs` fields and fallback after `backfillRunExecution` completes
 on every deployment and all stored runs have execution state.
@@ -310,7 +310,7 @@ on every deployment and all stored runs have execution state.
 New runs stay `running` while tools execute. `awaiting_executor` remains accepted
 in schema and client validators for old database records and local transcript or
 thread caches. The backfill rewrites that status on runs and thread records.
-Finalization accepts either active status as an `expectedStatus` for released
-agents, while still checking their claim and lease.
-Remove the legacy status only after the backfills complete and released clients
-and their persisted caches no longer require it.
+Finalization treats `running` and `awaiting_executor` as aliases while still
+checking the claim and lease. Keep the alias until `awaiting_executor` is removed
+entirely, after the backfills complete and persisted local caches no longer
+require it.
