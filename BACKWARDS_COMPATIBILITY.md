@@ -4,6 +4,32 @@ We ship breaking changes ahead of our users' installed clients and keep the old 
 
 Current as of 2026-09-11.
 
+## Native run lifecycle scheduling
+
+New runs use `runLifecycle.checkRun` scheduled at the startup deadline or claim
+expiry. `runExecutionStates` owns the scheduled function ID and generation so
+timer updates do not invalidate thread-list subscriptions. Run finalization
+cancels the check and still performs terminal cleanup in its transaction.
+
+An hourly cron starts `migrateRunLifecycle`. It installs a native check for each
+active run before clearing `runs.lifecycleWorkflowId` in the same transaction.
+The existing Workflow then exits at its next `getWatchState` call. Completed runs
+need no new check. The migration is idempotent and also repairs active runs with
+no legacy workflow. To start the handoff immediately after deployment:
+
+```sh
+bunx convex run migrations:runNativeRunLifecycleMigration --prod
+```
+
+Keep the `workflow` component, its dependency and test registration, the optional
+`lifecycleWorkflowId` field, and the legacy `watchRun`, `getWatchState`,
+`abandonExpiredRun`, `reconcileTerminalPage`, and `finishLifecycle` functions until
+the migration completes on every deployment, no run retains a workflow ID, and
+no legacy workflow or scheduled workflow callback remains in progress. Preserve
+the old workflow's step order until then so stored journals can replay. After
+that gate passes, remove those functions, the component and dependency, and the
+migration runner and cron together. Do not remove the external-tool workpools.
+
 ## Fast mode schema migration
 
 Stored `threadRecords` and `runs` may use `serviceTier` with `standard` or

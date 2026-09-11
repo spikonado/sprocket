@@ -195,8 +195,7 @@ export async function createQueuedRunRecord(
 		lastMessageAt: recordsPrompt ? Date.now() : threadRecord.lastMessageAt
 	};
 	await ctx.db.patch('threadRecords', threadRecord._id, threadUpdates);
-	const lifecycleWorkflowId = await startRunLifecycle(ctx, runId);
-	await ctx.db.patch('runs', runId, { lifecycleWorkflowId });
+	await startRunLifecycle(ctx, runId);
 	return created;
 }
 
@@ -227,9 +226,8 @@ async function reconcileExistingQueuedRun(
 		throw new ConvexError('Submission belongs to a different or incomplete run.');
 	}
 
-	if (!existingRun.lifecycleWorkflowId && !isRunFinalStatus(existingRun.status)) {
-		const lifecycleWorkflowId = await startRunLifecycle(ctx, existingRun._id);
-		await ctx.db.patch('runs', existingRun._id, { lifecycleWorkflowId });
+	if (!isRunFinalStatus(existingRun.status)) {
+		await startRunLifecycle(ctx, existingRun._id);
 	}
 
 	const existingPrompt = await getPromptPart(ctx, existingRun.threadId, existingRun._id);

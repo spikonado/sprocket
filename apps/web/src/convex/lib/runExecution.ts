@@ -17,7 +17,7 @@ function executionFields(run: Doc<'runs'> | Doc<'runExecutionStates'>): Executio
 	};
 }
 
-async function findExecutionState(db: DatabaseReader, runId: Id<'runs'>) {
+export async function getRunExecutionState(db: DatabaseReader, runId: Id<'runs'>) {
 	return await db
 		.query('runExecutionStates')
 		.withIndex('by_runId', (query) => query.eq('runId', runId))
@@ -28,7 +28,7 @@ export async function withRunExecution(
 	db: DatabaseReader,
 	run: Doc<'runs'>
 ): Promise<ExecutionRun> {
-	const state = await findExecutionState(db, run._id);
+	const state = await getRunExecutionState(db, run._id);
 	return { ...run, ...executionFields(state ?? run) };
 }
 
@@ -44,7 +44,7 @@ export async function migrateRunExecution(
 	ctx: MutationCtx,
 	run: Doc<'runs'>
 ): Promise<Id<'runExecutionStates'>> {
-	const existing = await findExecutionState(ctx.db, run._id);
+	const existing = await getRunExecutionState(ctx.db, run._id);
 	const stateId =
 		existing?._id ??
 		(await ctx.db.insert('runExecutionStates', {
@@ -72,7 +72,7 @@ export async function patchRunExecution(
 	runId: Id<'runs'>,
 	patch: Partial<ExecutionFields>
 ): Promise<void> {
-	const state = await findExecutionState(ctx.db, runId);
+	const state = await getRunExecutionState(ctx.db, runId);
 	if (state) {
 		if (
 			('claimId' in patch && state.claimId !== patch.claimId) ||
