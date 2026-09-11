@@ -55,7 +55,11 @@ async function renderTranscript(messages: ThreadMessage[], viewportHeight = 600)
 		clientHeight: { get: () => viewportHeight },
 		scrollHeight: { get: () => Math.max(viewportHeight, messageElements().length * 300) },
 		scrollTop: {
-			get: () => scrollTop,
+			configurable: true,
+			get: () => {
+				scrollTop = Math.min(scrollTop, viewport.scrollHeight - viewport.clientHeight);
+				return scrollTop;
+			},
 			set: (top: number) => {
 				scrollTop = Math.max(0, Math.min(top, viewport.scrollHeight - viewport.clientHeight));
 			}
@@ -67,7 +71,7 @@ async function renderTranscript(messages: ThreadMessage[], viewportHeight = 600)
 		const index = messageElements().indexOf(this);
 		return new DOMRect(
 			0,
-			index < 0 ? 0 : index * 300 - scrollTop,
+			index < 0 ? 0 : index * 300 - viewport.scrollTop,
 			800,
 			index < 0 ? viewportHeight : 300
 		);
@@ -145,6 +149,88 @@ describe('transcript viewport paging', () => {
 		await settle();
 		expect(viewport.scrollTop).toBe(1500);
 	});
+
+	it.each(['wheel', 'touch', 'ArrowUp', 'PageUp', 'Home', 'Shift+Space'])(
+		'stops following on upward %s input before a scroll event, even without older pages',
+		async (input) => {
+			const { props, viewport, scrollTo } = await renderTranscript([1, 2, 3, 4, 5].map(message));
+			props.nextBefore = undefined;
+			await settle();
+			if (input === 'wheel') {
+				viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -10 }));
+			} else if (input === 'touch') {
+				for (const [type, clientY] of [
+					['touchstart', 100],
+					['touchmove', 110]
+				] as const) {
+					const event = new Event(type, { bubbles: true });
+					Object.defineProperty(event, 'touches', { value: [{ clientY }] });
+					viewport.dispatchEvent(event);
+				}
+			} else {
+				viewport.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: input === 'Shift+Space' ? ' ' : input,
+						shiftKey: input === 'Shift+Space',
+						bubbles: true
+					})
+				);
+			}
+			props.messages = [...props.messages, message(6)];
+			await settle();
+			resize();
+			expect(viewport.scrollTop).toBe(900);
+			expect(props.onLoadOlder).not.toHaveBeenCalled();
+			scrollTo(1200);
+			props.messages = [...props.messages, message(7)];
+			await settle();
+			expect(viewport.scrollTop).toBe(1500);
+		}
+	);
+
+	it('does not pull a small upward scroll back into the bottom tolerance', async () => {
+		const { props, viewport, scrollTo } = await renderTranscript([1, 2, 3, 4, 5].map(message));
+		scrollTo(890);
+		props.messages = [...props.messages, message(6)];
+		await settle();
+		resize();
+		expect(viewport.scrollTop).toBe(890);
+	});
+
+	it('respects a scrollbar move before its scroll event reaches the component', async () => {
+		const { props, viewport } = await renderTranscript([1, 2, 3, 4, 5].map(message));
+		viewport.scrollTop = 700;
+		resize();
+		expect(viewport.scrollTop).toBe(700);
+		props.messages = [...props.messages, message(6)];
+		await settle();
+		expect(viewport.scrollTop).toBe(700);
+	});
+
+	it('does not write the scroll position for a resize that leaves the bottom unchanged', async () => {
+		const { viewport } = await renderTranscript([1, 2, 3, 4].map(message));
+		const writeScrollTop = vi.spyOn(viewport, 'scrollTop', 'set');
+		resize();
+		resize();
+		expect(writeScrollTop).not.toHaveBeenCalled();
+	});
+
+	it.each([true, false])(
+		'preserves bottom-following state %s when shrinking content clamps the scroll position',
+		async (following) => {
+			const { props, viewport, scrollTo } = await renderTranscript([1, 2, 3, 4, 5].map(message));
+			if (!following) scrollTo(700);
+			props.messages = props.messages.slice(0, 3);
+			flushSync();
+			viewport.dispatchEvent(new Event('scroll'));
+			await settle();
+			resize();
+			expect(viewport.scrollTop).toBe(300);
+			props.messages = [...props.messages, message(4)];
+			await settle();
+			expect(viewport.scrollTop).toBe(following ? 600 : 300);
+		}
+	);
 
 	it('opens a newly mounted thread at the bottom rather than reusing the previous reading position', async () => {
 		const first = await renderTranscript([1, 2, 3, 4].map(message));

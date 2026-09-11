@@ -87,14 +87,19 @@
 	function updateStickToBottom() {
 		const viewport = scrollViewport;
 		if (!viewport || viewport.scrollTop === lastScrollTop) return;
+		const bottom = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
 		const movingUp = viewport.scrollTop < lastScrollTop;
+		const clampedToBottom = lastScrollTop > bottom && Math.abs(viewport.scrollTop - bottom) < 1;
 		lastScrollTop = viewport.scrollTop;
-		const distanceToBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
-		stickToBottom = distanceToBottom <= SCROLL_EPSILON_PX;
-		if (movingUp) loadOlderOnUpwardIntent();
+		// A shorter scroll range must preserve the reader's existing follow state.
+		if (clampedToBottom) return;
+		const distanceToBottom = bottom - viewport.scrollTop;
+		stickToBottom = !movingUp && distanceToBottom <= SCROLL_EPSILON_PX;
+		if (movingUp) handleUpwardIntent();
 	}
 
-	function loadOlderOnUpwardIntent() {
+	function handleUpwardIntent() {
+		stickToBottom = false;
 		const viewport = scrollViewport;
 		if (
 			viewport &&
@@ -103,7 +108,6 @@
 			viewport.clientHeight > 0 &&
 			viewport.scrollTop <= viewport.clientHeight
 		) {
-			stickToBottom = false;
 			onLoadOlder?.();
 		}
 	}
@@ -142,8 +146,13 @@
 		) {
 			return;
 		}
-		if (event.key === 'ArrowUp' || event.key === 'PageUp' || event.key === 'Home') {
-			loadOlderOnUpwardIntent();
+		if (
+			event.key === 'ArrowUp' ||
+			event.key === 'PageUp' ||
+			event.key === 'Home' ||
+			(event.key === ' ' && event.shiftKey)
+		) {
+			handleUpwardIntent();
 		}
 	}
 
@@ -206,11 +215,17 @@
 		if (!viewport || !stickToBottom) {
 			return;
 		}
-		setScrollTop(viewport, viewport.scrollHeight);
+		const bottom = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+		// A scrollbar drag can reach layout before its scroll event. Shrinking content also clamps scrollTop.
+		if (viewport.scrollTop + 1 < Math.min(lastScrollTop, bottom)) {
+			stickToBottom = false;
+			return;
+		}
+		setScrollTop(viewport, bottom);
 	}
 
 	function setScrollTop(viewport: HTMLDivElement, top: number) {
-		viewport.scrollTop = top;
+		if (viewport.scrollTop !== top) viewport.scrollTop = top;
 		lastScrollTop = viewport.scrollTop;
 	}
 
@@ -284,7 +299,7 @@
 		bind:this={scrollViewport}
 		onscroll={updateStickToBottom}
 		onwheel={(event) => {
-			if (event.deltaY < 0) loadOlderOnUpwardIntent();
+			if (event.deltaY < 0) handleUpwardIntent();
 		}}
 		onkeydown={handleHistoryKey}
 		ontouchstart={(event) => {
@@ -293,7 +308,7 @@
 		ontouchmove={(event) => {
 			const nextY = event.touches[0]?.clientY;
 			if (nextY !== undefined && touchY !== undefined && nextY > touchY) {
-				loadOlderOnUpwardIntent();
+				handleUpwardIntent();
 			}
 			touchY = nextY;
 		}}
@@ -608,10 +623,3 @@
 		viewerImage = null;
 	}}
 />
-
-<style>
-	[data-message-id] {
-		content-visibility: auto;
-		contain-intrinsic-size: auto 300px;
-	}
-</style>
