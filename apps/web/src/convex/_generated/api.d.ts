@@ -58,6 +58,7 @@ import type * as lib_runCreate from "../lib/runCreate.js";
 import type * as lib_runExecution from "../lib/runExecution.js";
 import type * as lib_runFinalize from "../lib/runFinalize.js";
 import type * as lib_runLease from "../lib/runLease.js";
+import type * as lib_runLifecycleSchedule from "../lib/runLifecycleSchedule.js";
 import type * as lib_runResume from "../lib/runResume.js";
 import type * as lib_runTerminal from "../lib/runTerminal.js";
 import type * as lib_runs from "../lib/runs.js";
@@ -144,6 +145,7 @@ declare const fullApi: ApiFromModules<{
   "lib/runExecution": typeof lib_runExecution;
   "lib/runFinalize": typeof lib_runFinalize;
   "lib/runLease": typeof lib_runLease;
+  "lib/runLifecycleSchedule": typeof lib_runLifecycleSchedule;
   "lib/runResume": typeof lib_runResume;
   "lib/runTerminal": typeof lib_runTerminal;
   "lib/runs": typeof lib_runs;

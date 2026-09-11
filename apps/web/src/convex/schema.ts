@@ -182,7 +182,9 @@ export default defineSchema({
 		claimId: v.optional(v.string()),
 		claimExpiresAt: v.optional(v.number()),
 		completionAttemptSeq: v.number(),
-		activeJobId: v.optional(v.id('executorJobs'))
+		activeJobId: v.optional(v.id('executorJobs')),
+		lifecycleCheckId: v.optional(v.id('_scheduled_functions')),
+		lifecycleGeneration: v.optional(v.number())
 	}).index('by_runId', ['runId']),
 	// Durable numbered transcript replica source. Kept off threadRecords so
 	// appends do not invalidate the thread list subscription.

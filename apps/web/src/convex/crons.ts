@@ -63,4 +63,11 @@ crons.interval(
 	{}
 );
 
+crons.interval(
+	'migrate run lifecycle scheduling',
+	{ hours: 1 },
+	internal.migrations.runNativeRunLifecycleMigrationAutomatically,
+	{}
+);
+
 export default crons;

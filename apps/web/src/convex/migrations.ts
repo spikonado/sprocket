@@ -4,6 +4,7 @@ import { internalMutation } from '@convex/_generated/server';
 import schema from '@convex/schema';
 import { v } from 'convex/values';
 import { migrateRunExecution } from '@convex/lib/runExecution';
+import { startRunLifecycle } from '@convex/runLifecycle';
 
 export const AUTOMATIC_CLEANUP_DELAY_MS = 48 * 60 * 60 * 1_000;
 const PRODUCTION_ROLLOUT_CLEANUP = 'production-rollout-cleanup-2026-09';
@@ -12,6 +13,31 @@ const FAST_MODE_BACKFILL = 'fast-mode-backfill-2026-09';
 export const migrations = new Migrations(components.migrations, {
 	schema,
 	internalMutation
+});
+
+const nativeRunLifecycleMigrations = [internal.migrations.migrateRunLifecycle];
+
+export const runNativeRunLifecycleMigration = migrations.runner(nativeRunLifecycleMigrations);
+
+export const runNativeRunLifecycleMigrationAutomatically = internalMutation({
+	args: {},
+	returns: v.null(),
+	handler: async (ctx) => {
+		const statuses = await migrations.getStatus(ctx, { migrations: nativeRunLifecycleMigrations });
+		if (!statuses.every((status) => status.isDone)) {
+			await migrations.runSerially(ctx, nativeRunLifecycleMigrations);
+		}
+		return null;
+	}
+});
+
+export const migrateRunLifecycle = migrations.define({
+	table: 'runs',
+	migrateOne: async (ctx, run) => {
+		await startRunLifecycle(ctx, run._id);
+		// The old workflow exits at its next getWatchState after the native check is durable.
+		if (run.lifecycleWorkflowId !== undefined) return { lifecycleWorkflowId: undefined };
+	}
 });
 
 const productionRolloutCleanupMigrations = [

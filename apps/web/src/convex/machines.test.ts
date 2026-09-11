@@ -136,6 +136,11 @@ describe('machines', () => {
 			prompt: 'Run locally',
 			machineId: machine.machineId
 		});
+		await asUser.mutation(api.agentRuntime.start, {
+			runId: run.runId,
+			executionSecret: 'run-secret',
+			claimId: 'machine-claim'
+		});
 
 		vi.advanceTimersByTime(90_001);
 		await asUser.mutation(api.machines.tryRegister, {

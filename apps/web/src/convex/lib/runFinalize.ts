@@ -9,6 +9,7 @@ import { resolveRequestedFinalizeStatus } from '@convex/lib/runCancellation';
 import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
 import { detachRunFromMachine } from '@convex/lib/machineRuns';
 import { getRunWithExecution, patchRunExecution } from '@convex/lib/runExecution';
+import { cancelRunLifecycleCheck } from '@convex/lib/runLifecycleSchedule';
 
 type FinalizeRunArgs = {
 	text: string;
@@ -50,6 +51,7 @@ export async function finalizeRunRecord(
 	const finalStatus = alreadyFinal ? run.status : resolveRequestedFinalizeStatus(run, args.status);
 	const completedAt = run.completedAt ?? Date.now();
 	const lastError = alreadyFinal ? run.lastError : args.lastError;
+	await cancelRunLifecycleCheck(ctx, run._id);
 	await cancelWebToolWork(ctx, run._id);
 	await detachRunFromMachine(ctx, run);
 

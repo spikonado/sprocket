@@ -1,19 +1,20 @@
-import { cancel, defineWorkflow, start, vWorkflowId, type WorkflowId } from '@convex-dev/workflow';
+import { defineWorkflow, vWorkflowId } from '@convex-dev/workflow';
 import { v } from 'convex/values';
-import { getRunWithExecution } from '@convex/lib/runExecution';
+import {
+	getRunExecutionState,
+	getRunWithExecution,
+	migrateRunExecution
+} from '@convex/lib/runExecution';
 import { components, internal } from '@convex/_generated/api';
 import { internalMutation, internalQuery, type MutationCtx } from '@convex/_generated/server';
 import type { Doc, Id } from '@convex/_generated/dataModel';
-import {
-	isClaimedRunStatus,
-	isRunClaimLeaseActive,
-	RUN_QUEUED_STARTUP_DEADLINE_MS
-} from '@convex/lib/runLease';
+import { RUN_QUEUED_STARTUP_DEADLINE_MS } from '@convex/lib/runLease';
 import { advanceTerminalCleanup } from '@convex/lib/runTerminal';
 import { finalizeRunRecord } from '@convex/lib/runFinalize';
 import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
 import { isRunFinalStatus } from '@convex/lib/validators';
 import { CANCELLATION_FORCE_AFTER_MS, isRunCancellationOpen } from '@convex/lib/runCancellation';
+import { runDeadline, scheduleRunLifecycleCheck } from '@convex/lib/runLifecycleSchedule';
 const MAX_SLEEP_MS = RUN_QUEUED_STARTUP_DEADLINE_MS;
 
 type RunWatchState =
@@ -22,36 +23,52 @@ type RunWatchState =
 	| { kind: 'wait'; waitMs: number };
 
 function watchStateForRun(run: Doc<'runs'>, now: number): RunWatchState {
-	if (isRunFinalStatus(run.status)) {
+	const deadline = runDeadline(run);
+	if (deadline === null) {
 		return { kind: 'terminal', completedAt: run.completedAt ?? now };
 	}
-	if (run.status === 'queued') {
-		const deadline = run.startedAt + RUN_QUEUED_STARTUP_DEADLINE_MS;
-		if (now >= deadline) {
-			return { kind: 'abandon' };
-		}
-		return { kind: 'wait', waitMs: Math.min(deadline - now, MAX_SLEEP_MS) };
-	}
-	if (isClaimedRunStatus(run.status)) {
-		if (!isRunClaimLeaseActive(run, now)) {
-			return { kind: 'abandon' };
-		}
-		const expiresAt = run.claimExpiresAt ?? now;
-		return { kind: 'wait', waitMs: Math.min(Math.max(expiresAt - now, 1), MAX_SLEEP_MS) };
-	}
-	return { kind: 'terminal', completedAt: run.completedAt ?? now };
+	if (now >= deadline) return { kind: 'abandon' };
+	return { kind: 'wait', waitMs: Math.min(deadline - now, MAX_SLEEP_MS) };
 }
 
-export async function startRunLifecycle(ctx: MutationCtx, runId: Id<'runs'>): Promise<WorkflowId> {
-	const deployment = await ctx.meta.getDeploymentMetadata();
-	// convex-test shares JS globals with the workflow runtime. Starting a
-	// workflow there deletes `process`/`crypto` and races later tests.
-	if (deployment.name === 'test' && deployment.class === 's16') {
-		// SAFETY: convex-test's dummy id is never passed to the workflow component.
-		return 'test-workflow' as WorkflowId;
+export async function startRunLifecycle(ctx: MutationCtx, runId: Id<'runs'>): Promise<void> {
+	const run = await ctx.db.get('runs', runId);
+	if (!run || isRunFinalStatus(run.status)) return;
+	const stateId = await migrateRunExecution(ctx, run);
+	const state = await ctx.db.get('runExecutionStates', stateId);
+	if (!state) throw new Error('Run execution state not found.');
+	if (state.lifecycleCheckId) {
+		const scheduled = await ctx.db.system.get('_scheduled_functions', state.lifecycleCheckId);
+		if (scheduled?.state.kind === 'pending') return;
 	}
-	return await start(ctx, internal.runLifecycle.watchRun, { runId }, { startAsync: true });
+	const deadline = runDeadline({ ...run, claimExpiresAt: state.claimExpiresAt });
+	if (deadline !== null) await scheduleRunLifecycleCheck(ctx, state, deadline);
 }
+
+export const checkRun = internalMutation({
+	args: { runId: v.id('runs'), generation: v.number() },
+	returns: v.null(),
+	handler: async (ctx, { runId, generation }) => {
+		const state = await getRunExecutionState(ctx.db, runId);
+		if (!state?.lifecycleCheckId || state.lifecycleGeneration !== generation) return null;
+		// Clear ownership before finalization so it cannot cancel this mutation's descendants.
+		await ctx.db.patch('runExecutionStates', state._id, { lifecycleCheckId: undefined });
+		const run = await getRunWithExecution(ctx.db, runId);
+		if (!run) return null;
+		const deadline = runDeadline(run);
+		if (deadline === null) return null;
+		if (deadline > Date.now()) {
+			await scheduleRunLifecycleCheck(ctx, state, deadline);
+		} else {
+			await finalizeRunRecord(ctx, run, {
+				text: RUN_ABANDONED_BY_AGENT,
+				status: 'failed',
+				lastError: RUN_ABANDONED_BY_AGENT
+			});
+		}
+		return null;
+	}
+});
 
 export async function requestRunCancellation(ctx: MutationCtx, run: Doc<'runs'>): Promise<boolean> {
 	if (isRunFinalStatus(run.status)) {
@@ -71,15 +88,6 @@ export async function requestRunCancellation(ctx: MutationCtx, run: Doc<'runs'>)
 	return true;
 }
 
-export async function cancelRunLifecycle(ctx: MutationCtx, workflowId: string): Promise<void> {
-	try {
-		// SAFETY: stored run ids come from workflow.start() or the convex-test dummy.
-		await cancel(ctx, components.workflow, workflowId as WorkflowId);
-	} catch {
-		// Already finished or never started.
-	}
-}
-
 export const getWatchState = internalQuery({
 	args: { runId: v.id('runs') },
 	returns: v.union(
@@ -90,7 +98,7 @@ export const getWatchState = internalQuery({
 	),
 	handler: async (ctx, args) => {
 		const run = await getRunWithExecution(ctx.db, args.runId);
-		if (!run) {
+		if (!run?.lifecycleWorkflowId) {
 			return { kind: 'missing' as const };
 		}
 		return watchStateForRun(run, Date.now());
