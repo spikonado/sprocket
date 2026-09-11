@@ -209,7 +209,9 @@ export const answer = mutation({
 			.collect();
 		const prompt = formatQuestionContinuationPrompt(
 			runQuestions.flatMap((entry) =>
-				entry.answer ? [{ question: entry.question, answer: entry.answer }] : []
+				entry.requiresContinuation && entry.answer
+					? [{ question: entry.question, answer: entry.answer }]
+					: []
 			)
 		);
 		return {

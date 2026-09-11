@@ -304,6 +304,7 @@ export default defineSchema({
 		options: v.array(vAskQuestionOption),
 		status: vAgentQuestionStatus,
 		answer: v.optional(vAskQuestionAnswer),
+		requiresContinuation: v.optional(v.boolean()),
 		createdAt: v.number(),
 		timeoutAt: v.number(),
 		answeredAt: v.optional(v.number()),

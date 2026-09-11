@@ -210,6 +210,52 @@ describe('agentQuestions', () => {
 		});
 	});
 
+	it('does not repeat answers consumed before the run finished', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
+		const { executionSecret, claimId, runId } = await startRun(t, threadId);
+
+		const consumed = await t.mutation(api.agentQuestions.create, {
+			runId,
+			claimId,
+			question: 'Which database?',
+			options: [{ id: 'postgres', label: 'PostgreSQL' }],
+			executionSecret
+		});
+		await asUser.mutation(api.agentQuestions.answer, {
+			threadId,
+			questionId: consumed.questionId,
+			optionId: 'postgres'
+		});
+		const pending = await t.mutation(api.agentQuestions.create, {
+			runId,
+			claimId,
+			question: 'Where should I deploy it?',
+			options: [{ id: 'fly', label: 'Fly.io' }],
+			executionSecret
+		});
+
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId,
+			text: '',
+			status: 'completed',
+			executionSecret
+		});
+
+		await expect(
+			asUser.mutation(api.agentQuestions.answer, {
+				threadId,
+				questionId: pending.questionId,
+				optionId: 'fly'
+			})
+		).resolves.toMatchObject({
+			continuation: {
+				runId,
+				prompt: 'Fly.io'
+			}
+		});
+	});
+
 	it('keeps pending questions after completion and aggregates their answers', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
