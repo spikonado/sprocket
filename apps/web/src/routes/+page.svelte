@@ -212,6 +212,7 @@
 		fastMode?: boolean;
 		selectedModel?: CatalogModelId;
 		submissionId?: string;
+		continuationOfRunId?: Id<'runs'>;
 	};
 	let desktopApi = $state<DesktopApi | null>(null);
 	let desktopApiResolved = $state(false);
@@ -226,6 +227,7 @@
 	let prompt = $state('');
 	let selectedQuestionOptionId = $state<string | null>(null);
 	let answeringAgentQuestion = $state(false);
+	let composerContinuationOfRunId = $state<Id<'runs'> | null>(null);
 	let composerAttachments = $state<ComposerAttachment[]>([]);
 	let currentError = $state<string | null>(null);
 	const submittingPromptScopes = new SvelteMap<string, number>();
@@ -239,6 +241,7 @@
 			fastMode: boolean;
 			selectedModel: CatalogModelId;
 			submissionId: string;
+			continuationOfRunId?: Id<'runs'>;
 		}
 	>();
 	const latestSubmissionSequencesByRecoveryScope = new SvelteMap<string, number>();
@@ -1583,6 +1586,7 @@
 		const submittedOptionId = selectedQuestionOptionId;
 		const answerText = submittedPrompt.trim();
 		let continuationPrompt: string | null = null;
+		let continuationOfRunId: Id<'runs'> | undefined;
 		prompt = '';
 		selectedQuestionOptionId = null;
 		try {
@@ -1593,11 +1597,13 @@
 				text: answerText || undefined
 			};
 			const result = await answerAgentQuestion(answer);
-			if (result.startContinuation) {
+			if (result.continuationOfRunId) {
 				continuationPrompt =
 					[result.question.answer?.optionLabel, result.question.answer?.text]
 						.filter((part): part is string => Boolean(part))
 						.join(': ') || 'Continue.';
+				continuationOfRunId = result.continuationOfRunId;
+				composerContinuationOfRunId = result.continuationOfRunId;
 			}
 		} catch (error) {
 			if (
@@ -1613,17 +1619,23 @@
 		}
 		if (continuationPrompt !== null) {
 			prompt = continuationPrompt;
-			await submitPrompt(question.questionId);
+			await submitPrompt({ answeredQuestionId: question.questionId, continuationOfRunId });
 		}
 	}
 
-	async function submitPrompt(answeredQuestionId?: Id<'agentQuestions'>) {
+	async function submitPrompt(options?: {
+		answeredQuestionId: Id<'agentQuestions'>;
+		continuationOfRunId: Id<'runs'> | undefined;
+	}) {
 		if (pendingAgentQuestion) {
-			if (answeredQuestionId && pendingAgentQuestion.questionId !== answeredQuestionId) {
+			if (
+				options?.answeredQuestionId &&
+				pendingAgentQuestion.questionId !== options.answeredQuestionId
+			) {
 				currentError = 'Answer the new agent question before continuing.';
 				return;
 			}
-			if (!answeredQuestionId) {
+			if (!options?.answeredQuestionId) {
 				await submitAgentQuestionAnswer();
 				return;
 			}
@@ -1689,6 +1701,8 @@
 		const submittedModel = selectedModel;
 		const submittedReasoningEffort = selectedReasoningEffort;
 		const submittedFastMode = fastMode;
+		const submittedContinuationOfRunId =
+			options?.continuationOfRunId ?? composerContinuationOfRunId ?? undefined;
 		const previousRunId = selectedThreadId ? (runState?.runId ?? null) : null;
 		let submissionScope = selectedThreadId
 			? `thread:${selectedThreadId}`
@@ -1706,6 +1720,7 @@
 				!selectedThreadId || !currentLifecycle || currentLifecycle.phase === 'idle'
 					? null
 					: {
+							runId: runState?.runId,
 							status: isLifecycleInProgress(currentLifecycle.phase) ? 'queued' : 'completed',
 							submissionId: currentRecoveredSubmission?.submissionId ?? ''
 						},
@@ -1714,6 +1729,7 @@
 			storageIds: submittedStorageIds,
 			reasoningEffort: submittedReasoningEffort,
 			fastMode: submittedFastMode,
+			continuationOfRunId: submittedContinuationOfRunId,
 			recoveredSubmission: recoveredSubmission
 				? {
 						...recoveredSubmission,
@@ -1744,6 +1760,7 @@
 				reasoningEffort: submittedReasoningEffort,
 				fastMode: submittedFastMode,
 				selectedModel: submittedModel,
+				continuationOfRunId: submittedContinuationOfRunId,
 				submissionId:
 					!selectedThreadId && recoveryScope === originatingRecoveryScope
 						? threadSubmissionId
@@ -1888,6 +1905,9 @@
 							remoteChangeNotices.set(createdThreadId, REMOTE_CHANGE_NOTICE);
 					}
 					clearComposerAttachments({ discard: false });
+					if (composerContinuationOfRunId === submittedContinuationOfRunId) {
+						composerContinuationOfRunId = null;
+					}
 				},
 				threadId: threadId ?? undefined,
 				repositoryKey: threadId ? undefined : submittedRepositoryKey,
@@ -1897,7 +1917,8 @@
 				submissionId: runSubmissionId,
 				reasoningEffort: submittedReasoningEffort,
 				fastMode: submittedFastMode,
-				workspacePath
+				workspacePath,
+				continuationOfRunId: submittedContinuationOfRunId
 			});
 		} catch (error) {
 			if (launchedThreadId && agentLaunchId !== null) {
@@ -2028,6 +2049,7 @@
 		threadSnapshotPullGeneration += 1;
 		projectSelectionGeneration += 1;
 		prompt = '';
+		composerContinuationOfRunId = null;
 		clearComposerAttachments({
 			discard: true,
 			userId: previousUserId,
@@ -2101,6 +2123,7 @@
 		const threadId = thread?._id ?? null;
 		if (threadId === lastSyncedComposerThreadId) return;
 		lastSyncedComposerThreadId = threadId;
+		composerContinuationOfRunId = null;
 		if (!thread) return;
 		selectedModel = thread.selectedModel;
 		selectedReasoningEffort = thread.reasoningEffort;
@@ -2133,6 +2156,7 @@
 			composerAttachments = recovery.attachments.map((attachment) => ({ ...attachment }));
 		}
 		if (prompt === recovery.prompt) {
+			composerContinuationOfRunId = recovery.continuationOfRunId ?? null;
 			if (
 				recovery.submissionId &&
 				(recovery.prompt || recovery.storageIds?.length) &&
@@ -2145,7 +2169,8 @@
 					reasoningEffort: recovery.reasoningEffort,
 					fastMode: recovery.fastMode ?? false,
 					selectedModel: recovery.selectedModel,
-					submissionId: recovery.submissionId
+					submissionId: recovery.submissionId,
+					continuationOfRunId: recovery.continuationOfRunId
 				});
 			}
 		}

@@ -16,7 +16,6 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			lastError: 'boom',
 			executionSecret: 'parent-secret'
 		});
-
 		const args = {
 			threadId,
 			submissionId: 'sub-continue',
@@ -59,7 +58,74 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 		expect(context.run.continuationOfRunId).toBe(parent.runId);
 	});
 
-	it('rejects active, completed, and non-latest parents', async () => {
+	it('creates a linked continuation with a visible prompt from a completed run', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const parent = await createQueuedRun(
+			t,
+			asUser,
+			threadId,
+			'sub-answered-parent',
+			'parent-secret'
+		);
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId: parent.runId,
+			text: '',
+			status: 'completed',
+			executionSecret: 'parent-secret'
+		});
+		await expect(
+			insertQueuedRun(t, asUser, {
+				threadId,
+				submissionId: 'sub-empty-completed-continuation',
+				executionSecret: 'empty-completed-continuation-secret',
+				prompt: '',
+				continuationOfRunId: parent.runId
+			})
+		).rejects.toThrow(RUN_CANNOT_CONTINUE);
+
+		const args = {
+			threadId,
+			submissionId: 'sub-answered-continuation',
+			executionSecret: 'answered-continuation-secret',
+			prompt: 'Ship it: include the release notes',
+			continuationOfRunId: parent.runId
+		};
+		const created = await insertQueuedRun(t, asUser, args);
+		expect(created).toMatchObject({
+			created: true,
+			promptPart: {
+				kind: 'prompt',
+				prompt: { text: args.prompt }
+			}
+		});
+		expect(await t.run(async (ctx) => ctx.db.get('runs', created.runId))).toMatchObject({
+			continuationOfRunId: parent.runId
+		});
+		expect(
+			await asUser.query(api.agentRuntime.getContext, {
+				runId: created.runId,
+				executionSecret: args.executionSecret
+			})
+		).toMatchObject({ prompt: args.prompt });
+
+		await expect(insertQueuedRun(t, asUser, args)).resolves.toMatchObject({
+			created: false,
+			runId: created.runId,
+			promptPart: { prompt: { text: args.prompt } }
+		});
+		await expect(
+			insertQueuedRun(t, asUser, { ...args, prompt: 'A different answer' })
+		).rejects.toThrow('Submission prompt does not match the existing run.');
+
+		const parts = await asUser.query(api.transcript.getParts, { threadId, numbers: [0, 1] });
+		expect(parts.parts.map((part) => [part.runId, part.prompt?.text])).toEqual([
+			[parent.runId, 'Do the thing'],
+			[created.runId, args.prompt]
+		]);
+	});
+
+	it('rejects active and non-latest parents', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);
 		const active = await createQueuedRun(t, asUser, threadId, 'sub-active', 'active-secret');
@@ -79,15 +145,6 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			status: 'completed',
 			executionSecret: 'active-secret'
 		});
-		await expect(
-			insertQueuedRun(t, asUser, {
-				threadId,
-				submissionId: 'sub-continue-completed',
-				executionSecret: 'continue-completed-secret',
-				prompt: '',
-				continuationOfRunId: active.runId
-			})
-		).rejects.toThrow(RUN_CANNOT_CONTINUE);
 
 		const failed = await createQueuedRun(t, asUser, threadId, 'sub-failed', 'failed-secret');
 		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {

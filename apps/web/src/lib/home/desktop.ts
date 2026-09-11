@@ -40,17 +40,22 @@ export function resolveSubmissionId(args: {
 		fastMode: AgentRunRequest['fastMode'];
 		selectedModel: AgentRunRequest['selectedModel'];
 		submissionId: string;
+		continuationOfRunId?: Id<'runs'>;
 	};
 	latestRun: {
+		runId?: Id<'runs'>;
 		status: RunState['status'];
 		submissionId: string;
 	} | null;
 	selectedModel: AgentRunRequest['selectedModel'];
+	continuationOfRunId?: Id<'runs'>;
 }) {
 	const recoveredSubmission = args.recoveredSubmission;
 	const latestRun = args.latestRun;
 	const canReuseRecoveredSubmission =
 		latestRun === null ||
+		(latestRun.runId !== undefined &&
+			latestRun.runId === recoveredSubmission?.continuationOfRunId) ||
 		(latestRun.submissionId === recoveredSubmission?.submissionId &&
 			!isRunFinalStatus(latestRun.status));
 	return canReuseRecoveredSubmission &&
@@ -58,6 +63,7 @@ export function resolveSubmissionId(args: {
 		recoveredSubmission.selectedModel === args.selectedModel &&
 		recoveredSubmission.reasoningEffort === args.reasoningEffort &&
 		recoveredSubmission.fastMode === args.fastMode &&
+		recoveredSubmission.continuationOfRunId === args.continuationOfRunId &&
 		areStorageIdsEqual(recoveredSubmission.storageIds, args.storageIds)
 		? recoveredSubmission.submissionId
 		: args.newSubmissionId;

@@ -140,7 +140,7 @@ export const answer = mutation({
 	},
 	returns: v.object({
 		question: vAgentQuestionSnapshot,
-		startContinuation: v.boolean()
+		continuationOfRunId: v.optional(v.id('runs'))
 	}),
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
@@ -184,13 +184,15 @@ export const answer = mutation({
 			.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', args.threadId))
 			.order('desc')
 			.first();
-		const startContinuation =
+		const continuationOfRunId =
 			nextQuestion === null &&
 			run !== null &&
 			latestRun?._id === run._id &&
 			isRunFinalStatus(run.status) &&
-			run.status !== 'cancelled';
-		return { question: snapshot, startContinuation };
+			run.status !== 'cancelled'
+				? run._id
+				: undefined;
+		return { question: snapshot, continuationOfRunId };
 	}
 });
 

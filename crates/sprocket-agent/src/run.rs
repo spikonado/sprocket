@@ -672,6 +672,14 @@ struct PriorHistory {
     current_prompt: Option<String>,
 }
 
+fn should_continue_without_prompt(
+    continue_from_finished_turns: bool,
+    is_continuation: bool,
+    prompt_text: &str,
+) -> bool {
+    continue_from_finished_turns || (is_continuation && prompt_text.is_empty())
+}
+
 async fn load_prior_history(
     runtime: &RuntimeClient,
     store: &TranscriptStore,
@@ -746,8 +754,7 @@ async fn load_prior_history(
             .and_then(|part| part.prompt.as_ref())
             .map(prompt_text_with_attachments),
         messages: deserialize_agent_history(history)?,
-        continue_from_finished_turns: context.run.continuation_of_run_id.is_some()
-            || current_run_had_context_handoff
+        continue_from_finished_turns: current_run_had_context_handoff
             || current_run_has_finished_turns(&parts, run_id),
     })
 }
@@ -848,21 +855,31 @@ pub async fn run_agent(
             &capabilities.label,
             &context.run.selected_model,
         );
-        Ok((prompt, provider, prompt_context, skills))
+        let continue_without_prompt = should_continue_without_prompt(
+            prior_history.continue_from_finished_turns,
+            is_continuation,
+            prompt_text,
+        );
+        Ok((
+            prompt,
+            provider,
+            prompt_context,
+            skills,
+            continue_without_prompt,
+        ))
     })();
 
-    let (prompt, provider, prompt_context, skills) = match prepared {
+    let (prompt, provider, prompt_context, skills, continue_without_prompt) = match prepared {
         Ok(values) => values,
         Err(error) => return abort_before_start(&runtime, &run_id, error).await,
     };
-    let prompt =
-        if prior_history.continue_from_finished_turns || request.continuation_of_run_id.is_some() {
-            Message::User {
-                content: vec![UserContent::text(CONTINUE_FROM_FINISHED_TURNS)],
-            }
-        } else {
-            prompt
-        };
+    let prompt = if continue_without_prompt {
+        Message::User {
+            content: vec![UserContent::text(CONTINUE_FROM_FINISHED_TURNS)],
+        }
+    } else {
+        prompt
+    };
 
     eprintln!("sprocket-agent: prepared assistant response {}", run_id);
 
@@ -918,9 +935,7 @@ pub async fn run_agent(
                     supports_images: capabilities.supports_images,
                     transcript_dir: store.thread_dir(&context.run.user_id, &context.run.thread_id),
                     context_tokens: context.context_tokens,
-                    defer_prompt_for_context_handoff: !prior_history.continue_from_finished_turns
-                        && context.run.continuation_of_run_id.is_none()
-                        && request.continuation_of_run_id.is_none(),
+                    defer_prompt_for_context_handoff: !continue_without_prompt,
                 },
             )
             .await;
@@ -956,10 +971,20 @@ mod tests {
         SkillSource, WorkspaceInstruction, WorkspaceInstructionSource, WorkspaceSkill,
     };
 
-    use super::{build_workspace_prompt_context, submission_owned_by_another_executor};
+    use super::{
+        build_workspace_prompt_context, should_continue_without_prompt,
+        submission_owned_by_another_executor,
+    };
 
     const MODEL_LABEL: &str = "GPT-5.6 Sol";
     const MODEL_ID: &str = "gpt-5.6-sol";
+
+    #[test]
+    fn prompted_continuations_use_their_user_prompt() {
+        assert!(!should_continue_without_prompt(false, true, "Ship it"));
+        assert!(should_continue_without_prompt(false, true, ""));
+        assert!(should_continue_without_prompt(true, true, "Ship it"));
+    }
 
     fn initial_context_text(message: &Message) -> &str {
         match message {

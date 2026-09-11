@@ -106,8 +106,7 @@ describe('agentQuestions', () => {
 					optionLabel: 'Two',
 					text: 'with detail'
 				}
-			},
-			startContinuation: false
+			}
 		});
 
 		expect(
@@ -218,8 +217,7 @@ describe('agentQuestions', () => {
 			question: {
 				status: 'answered',
 				answer: { optionId: 'yes', optionLabel: 'Yes' }
-			},
-			startContinuation: false
+			}
 		});
 		await expect(
 			asUser.mutation(api.agentQuestions.answer, {
@@ -232,7 +230,7 @@ describe('agentQuestions', () => {
 				status: 'answered',
 				answer: { optionId: 'ship', optionLabel: 'Ship it' }
 			},
-			startContinuation: true
+			continuationOfRunId: runId
 		});
 	});
 
@@ -276,8 +274,7 @@ describe('agentQuestions', () => {
 			question: {
 				status: 'answered',
 				answer: { optionId: 'old', optionLabel: 'Old' }
-			},
-			startContinuation: false
+			}
 		});
 
 		expect(
@@ -294,8 +291,7 @@ describe('agentQuestions', () => {
 			question: {
 				status: 'answered',
 				answer: { optionId: 'new', optionLabel: 'New' }
-			},
-			startContinuation: false
+			}
 		});
 		vi.useRealTimers();
 	});
