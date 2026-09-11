@@ -67,6 +67,12 @@ export default defineSchema({
 		userId: v.string(),
 		theme: v.union(v.literal('light'), v.literal('dark'))
 	}).index('by_userId', ['userId']),
+	migrationSchedules: defineTable({
+		name: v.string(),
+		notBefore: v.number(),
+		startedAt: v.optional(v.number()),
+		completedAt: v.optional(v.number())
+	}).index('by_name', ['name']),
 	threadRecords: defineTable({
 		userId: v.string(),
 		submissionId: v.string(),

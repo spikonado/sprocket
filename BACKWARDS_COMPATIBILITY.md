@@ -11,8 +11,14 @@ production data had been rewritten. The production deployment that remained
 active after that failed rollout could still write those fields, so merely
 cleaning existing rows would race with active mutations. This release restores
 the old schema shapes and ships the cleanup migrations in
-`convex/migrations.ts`. Do not run the cleanup runner until this release is live
-and work started by the preceding deployment has settled.
+`convex/migrations.ts`.
+
+The hourly cron calls `runProductionRolloutCleanupAutomatically`. Its first call
+records a cleanup time 48 hours later. That delay exceeds the preceding
+deployment's 36-hour gateway token lifetime and one-hour hosted parse lifetime,
+so its writers have expired before cleanup starts. Once the delay passes, the
+cron starts or resumes the migrations in order. It records completion after the
+migrations component reports that every migration finished.
 
 ### Thread status
 
@@ -59,8 +65,9 @@ store `firecrawlScrape` while this release rolls out.
 after the migration completes, all jobs started by the preceding deployment
 have settled, and a production scan finds no executor job carrying it.
 
-Once this release is live and the old work has settled, run the resumable
-cleanup from `apps/web`:
+The cleanup runs automatically. `runProductionRolloutCleanup` remains available
+for operator recovery, but it must not be called before the scheduled
+`notBefore` time in `migrationSchedules`:
 
 ```sh
 bunx convex run migrations:runProductionRolloutCleanup '{"dryRun":true}' --prod
@@ -69,7 +76,8 @@ bunx convex run migrations:runProductionRolloutCleanup --prod
 
 Keep the migration definitions until the runner reports completion. A later PR
 may tighten the schema and remove the read fallbacks only after the production
-scans described above pass.
+scans described above pass. That PR may also remove the cleanup cron and its
+`migrationSchedules` row and table.
 
 ## Stored executor jobs
 

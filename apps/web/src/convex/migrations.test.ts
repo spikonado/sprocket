@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { internal } from '@convex/_generated/api';
 import { initConvexTest, seedOwnedThread } from './test.setup';
+import { AUTOMATIC_CLEANUP_DELAY_MS } from './migrations';
 
 const oneBatch = {
 	cursor: null,
@@ -87,5 +88,60 @@ describe('production rollout cleanup migrations', () => {
 		expect(migrated.usage?.totalTokensProcessed).toBeUndefined();
 		expect(migrated.usage?.usageLedgerMigratedAt).toBeUndefined();
 		expect(migrated.job?.cloudWorkPool).toBeUndefined();
+	});
+
+	it('waits for prior writers and then runs the cleanup automatically', async () => {
+		vi.useFakeTimers();
+		const deployedAt = Date.UTC(2026, 8, 11);
+		vi.setSystemTime(deployedAt);
+		try {
+			const t = initConvexTest();
+			const { threadId } = await seedOwnedThread(t);
+			const runId = await t.run(async (ctx) => {
+				const run = await ctx.db
+					.query('runs')
+					.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadId))
+					.unique();
+				if (!run) throw new Error('Missing test fixture.');
+				await ctx.db.patch('threadRecords', threadId, { status: undefined });
+				await ctx.db.patch('runs', run._id, {
+					status: 'failed',
+					completionTransport: 'gateway'
+				});
+				return run._id;
+			});
+
+			await t.mutation(internal.migrations.runProductionRolloutCleanupAutomatically, {});
+			const schedule = await t.run((ctx) =>
+				ctx.db.query('migrationSchedules').withIndex('by_name').unique()
+			);
+			expect(schedule).toMatchObject({
+				notBefore: deployedAt + AUTOMATIC_CLEANUP_DELAY_MS
+			});
+			expect(schedule?.startedAt).toBeUndefined();
+
+			vi.setSystemTime(deployedAt + AUTOMATIC_CLEANUP_DELAY_MS - 1);
+			await t.mutation(internal.migrations.runProductionRolloutCleanupAutomatically, {});
+			expect((await t.run((ctx) => ctx.db.get('runs', runId)))?.completionTransport).toBe(
+				'gateway'
+			);
+
+			vi.setSystemTime(deployedAt + AUTOMATIC_CLEANUP_DELAY_MS);
+			await t.mutation(internal.migrations.runProductionRolloutCleanupAutomatically, {});
+			await t.finishAllScheduledFunctions(vi.runAllTimers);
+			await t.mutation(internal.migrations.runProductionRolloutCleanupAutomatically, {});
+
+			const migrated = await t.run(async (ctx) => ({
+				schedule: await ctx.db.query('migrationSchedules').withIndex('by_name').unique(),
+				thread: await ctx.db.get('threadRecords', threadId),
+				run: await ctx.db.get('runs', runId)
+			}));
+			expect(migrated.schedule?.startedAt).toBeDefined();
+			expect(migrated.schedule?.completedAt).toBeDefined();
+			expect(migrated.thread?.status).toBe('failed');
+			expect(migrated.run?.completionTransport).toBeUndefined();
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });
