@@ -174,7 +174,43 @@ describe('agentQuestions', () => {
 		expect(snapshot?.status).toBe('cancelled');
 	});
 
-	it('keeps pending questions after the run completes', async () => {
+	it('uses the answer as the continuation prompt for one terminal question', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
+		const { executionSecret, claimId, runId } = await startRun(t, threadId);
+
+		const question = await t.mutation(api.agentQuestions.create, {
+			runId,
+			claimId,
+			question: 'Which database?',
+			options: [{ id: 'postgres', label: 'PostgreSQL' }],
+			executionSecret
+		});
+
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId,
+			text: '',
+			status: 'failed',
+			lastError: 'Stopped before receiving the answer.',
+			executionSecret
+		});
+
+		await expect(
+			asUser.mutation(api.agentQuestions.answer, {
+				threadId,
+				questionId: question.questionId,
+				optionId: 'postgres',
+				text: 'Use the existing container'
+			})
+		).resolves.toMatchObject({
+			continuation: {
+				runId,
+				prompt: 'PostgreSQL: Use the existing container'
+			}
+		});
+	});
+
+	it('keeps pending questions after completion and aggregates their answers', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
 		const { executionSecret, claimId, runId } = await startRun(t, threadId);
@@ -207,30 +243,39 @@ describe('agentQuestions', () => {
 			questionId: first.questionId,
 			status: 'pending'
 		});
-		await expect(
-			asUser.mutation(api.agentQuestions.answer, {
-				threadId,
-				questionId: first.questionId,
-				optionId: 'yes'
-			})
-		).resolves.toMatchObject({
+		const firstAnswer = await asUser.mutation(api.agentQuestions.answer, {
+			threadId,
+			questionId: first.questionId,
+			optionId: 'yes'
+		});
+		expect(firstAnswer).toMatchObject({
 			question: {
 				status: 'answered',
 				answer: { optionId: 'yes', optionLabel: 'Yes' }
 			}
 		});
+		expect(firstAnswer).not.toHaveProperty('continuation');
 		await expect(
 			asUser.mutation(api.agentQuestions.answer, {
 				threadId,
 				questionId: second.questionId,
-				optionId: 'ship'
+				optionId: 'ship',
+				text: 'include the release notes'
 			})
 		).resolves.toMatchObject({
 			question: {
 				status: 'answered',
-				answer: { optionId: 'ship', optionLabel: 'Ship it' }
+				answer: {
+					optionId: 'ship',
+					optionLabel: 'Ship it',
+					text: 'include the release notes'
+				}
 			},
-			continuationOfRunId: runId
+			continuation: {
+				runId,
+				prompt:
+					'Answers to your questions:\n\n1. First open question?\n   Yes\n\n2. Second open question?\n   Ship it: include the release notes'
+			}
 		});
 	});
 

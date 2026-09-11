@@ -1607,12 +1607,9 @@
 				text: answerText || undefined
 			};
 			const result = await answerAgentQuestion(answer);
-			if (result.continuationOfRunId) {
-				continuationPrompt =
-					[result.question.answer?.optionLabel, result.question.answer?.text]
-						.filter((part): part is string => Boolean(part))
-						.join(': ') || 'Continue.';
-				continuationOfRunId = result.continuationOfRunId;
+			if (result.continuation) {
+				continuationPrompt = result.continuation.prompt;
+				continuationOfRunId = result.continuation.runId;
 			}
 		} catch (error) {
 			if (

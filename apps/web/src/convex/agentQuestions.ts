@@ -11,6 +11,7 @@ import { v, type Infer } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import {
 	finalizeQuestionOptions,
+	formatQuestionContinuationPrompt,
 	MAX_QUESTION_TIMEOUT_MS,
 	normalizeQuestionAnswer,
 	validateQuestionText
@@ -140,7 +141,12 @@ export const answer = mutation({
 	},
 	returns: v.object({
 		question: vAgentQuestionSnapshot,
-		continuationOfRunId: v.optional(v.id('runs'))
+		continuation: v.optional(
+			v.object({
+				runId: v.id('runs'),
+				prompt: v.string()
+			})
+		)
 	}),
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
@@ -192,7 +198,24 @@ export const answer = mutation({
 			run.status !== 'cancelled'
 				? run._id
 				: undefined;
-		return { question: snapshot, continuationOfRunId };
+		if (!continuationOfRunId) {
+			return { question: snapshot };
+		}
+
+		const runQuestions = await ctx.db
+			.query('agentQuestions')
+			.withIndex('by_runId_sequence', (query) => query.eq('runId', continuationOfRunId))
+			.order('asc')
+			.collect();
+		const prompt = formatQuestionContinuationPrompt(
+			runQuestions.flatMap((entry) =>
+				entry.answer ? [{ question: entry.question, answer: entry.answer }] : []
+			)
+		);
+		return {
+			question: snapshot,
+			continuation: { runId: continuationOfRunId, prompt }
+		};
 	}
 });
 
