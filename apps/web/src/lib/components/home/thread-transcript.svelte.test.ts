@@ -56,7 +56,10 @@ async function renderTranscript(messages: ThreadMessage[], viewportHeight = 600)
 		scrollHeight: { get: () => Math.max(viewportHeight, messageElements().length * 300) },
 		scrollTop: {
 			configurable: true,
-			get: () => Math.min(scrollTop, viewport.scrollHeight - viewport.clientHeight),
+			get: () => {
+				scrollTop = Math.min(scrollTop, viewport.scrollHeight - viewport.clientHeight);
+				return scrollTop;
+			},
 			set: (top: number) => {
 				scrollTop = Math.max(0, Math.min(top, viewport.scrollHeight - viewport.clientHeight));
 			}
@@ -215,6 +218,8 @@ describe('transcript viewport paging', () => {
 	it('keeps following when shrinking content clamps the scroll position', async () => {
 		const { props, viewport } = await renderTranscript([1, 2, 3, 4, 5].map(message));
 		props.messages = props.messages.slice(0, 3);
+		flushSync();
+		viewport.dispatchEvent(new Event('scroll'));
 		await settle();
 		resize();
 		expect(viewport.scrollTop).toBe(300);

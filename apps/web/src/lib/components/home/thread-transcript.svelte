@@ -87,9 +87,10 @@
 	function updateStickToBottom() {
 		const viewport = scrollViewport;
 		if (!viewport || viewport.scrollTop === lastScrollTop) return;
-		const movingUp = viewport.scrollTop < lastScrollTop;
+		const bottom = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+		const movingUp = viewport.scrollTop < Math.min(lastScrollTop, bottom);
 		lastScrollTop = viewport.scrollTop;
-		const distanceToBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+		const distanceToBottom = bottom - viewport.scrollTop;
 		stickToBottom = !movingUp && distanceToBottom <= SCROLL_EPSILON_PX;
 		if (movingUp) handleUpwardIntent();
 	}
