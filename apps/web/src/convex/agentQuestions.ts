@@ -11,6 +11,7 @@ import { v, type Infer } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import {
 	finalizeQuestionOptions,
+	formatQuestionContinuationPrompt,
 	MAX_QUESTION_TIMEOUT_MS,
 	normalizeQuestionAnswer,
 	validateQuestionText
@@ -19,7 +20,7 @@ import { getExecutionRun, getUserId } from '@convex/lib/auth';
 import { assertRunAcceptsModelCompletion, toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { vAgentQuestionSnapshot } from '@convex/lib/docs';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
-import { vAskQuestionOption } from '@convex/lib/validators';
+import { isRunFinalStatus, vAskQuestionOption } from '@convex/lib/validators';
 
 const DEFAULT_QUESTION_TIMEOUT_MS = 30 * 60 * 1000;
 const MIN_QUESTION_TIMEOUT_MS = 1_000;
@@ -54,53 +55,17 @@ async function nextThreadSequence(
 	return (latest?.sequence ?? 0) + 1;
 }
 
-async function listPendingQuestions(
+async function headPendingQuestion(
 	ctx: QueryCtx | MutationCtx,
 	threadId: Id<'threadRecords'>
-): Promise<Doc<'agentQuestions'>[]> {
+): Promise<Doc<'agentQuestions'> | null> {
 	return await ctx.db
 		.query('agentQuestions')
 		.withIndex('by_threadId_status_sequence', (query) =>
 			query.eq('threadId', threadId).eq('status', 'pending')
 		)
 		.order('asc')
-		.collect();
-}
-
-async function headPendingQuestion(
-	ctx: QueryCtx | MutationCtx,
-	threadId: Id<'threadRecords'>
-): Promise<Doc<'agentQuestions'> | null> {
-	const pending = await listPendingQuestions(ctx, threadId);
-	return pending[0] ?? null;
-}
-
-/** First pending question that has not yet reached timeoutAt (UI head). */
-async function headLivePendingQuestion(
-	ctx: QueryCtx | MutationCtx,
-	threadId: Id<'threadRecords'>,
-	now: number
-): Promise<Doc<'agentQuestions'> | null> {
-	const pending = await listPendingQuestions(ctx, threadId);
-	return pending.find((question) => question.timeoutAt > now) ?? null;
-}
-
-/** Mark past-due pending questions timedOut so FIFO can advance before the scheduler fires. */
-async function expireOverduePendingQuestions(
-	ctx: MutationCtx,
-	threadId: Id<'threadRecords'>,
-	now: number
-): Promise<void> {
-	const pending = await listPendingQuestions(ctx, threadId);
-	for (const question of pending) {
-		if (question.timeoutAt > now) {
-			continue;
-		}
-		await ctx.db.patch('agentQuestions', question._id, {
-			status: 'timedOut',
-			answeredAt: now
-		});
-	}
+		.first();
 }
 
 export const create = mutation({
@@ -174,13 +139,18 @@ export const answer = mutation({
 		optionId: v.optional(v.string()),
 		text: v.optional(v.string())
 	},
-	returns: vAgentQuestionSnapshot,
+	returns: v.object({
+		question: vAgentQuestionSnapshot,
+		continuation: v.optional(
+			v.object({
+				runId: v.id('runs'),
+				prompt: v.string()
+			})
+		)
+	}),
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
-
-		const now = Date.now();
-		await expireOverduePendingQuestions(ctx, args.threadId, now);
 
 		const question = await ctx.db.get('agentQuestions', args.questionId);
 		if (!question || question.threadId !== args.threadId) {
@@ -200,18 +170,54 @@ export const answer = mutation({
 			optionId: args.optionId,
 			text: args.text
 		});
+		const answeredAt = Date.now();
 		await ctx.db.patch('agentQuestions', question._id, {
 			status: 'answered',
 			answer,
-			answeredAt: now
+			answeredAt
 		});
 
-		return toSnapshot({
+		const snapshot = toSnapshot({
 			...question,
 			status: 'answered',
 			answer,
-			answeredAt: now
+			answeredAt
 		});
+		const nextQuestion = await headPendingQuestion(ctx, args.threadId);
+		const run = await ctx.db.get('runs', question.runId);
+		const latestRun = await ctx.db
+			.query('runs')
+			.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', args.threadId))
+			.order('desc')
+			.first();
+		const continuationOfRunId =
+			nextQuestion === null &&
+			run !== null &&
+			latestRun?._id === run._id &&
+			isRunFinalStatus(run.status) &&
+			run.status !== 'cancelled'
+				? run._id
+				: undefined;
+		if (!continuationOfRunId) {
+			return { question: snapshot };
+		}
+
+		const runQuestions = await ctx.db
+			.query('agentQuestions')
+			.withIndex('by_runId_sequence', (query) => query.eq('runId', continuationOfRunId))
+			.order('asc')
+			.collect();
+		const prompt = formatQuestionContinuationPrompt(
+			runQuestions.flatMap((entry) =>
+				entry.requiresContinuation && entry.answer
+					? [{ question: entry.question, answer: entry.answer }]
+					: []
+			)
+		);
+		return {
+			question: snapshot,
+			continuation: { runId: continuationOfRunId, prompt }
+		};
 	}
 });
 
@@ -256,14 +262,13 @@ export const getForExecutor = query({
 
 export const headPendingForThread = query({
 	args: {
-		threadId: v.id('threadRecords'),
-		now: v.number()
+		threadId: v.id('threadRecords')
 	},
 	returns: v.union(vAgentQuestionSnapshot, v.null()),
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
-		const head = await headLivePendingQuestion(ctx, args.threadId, args.now);
+		const head = await headPendingQuestion(ctx, args.threadId);
 		return head ? toSnapshot(head) : null;
 	}
 });

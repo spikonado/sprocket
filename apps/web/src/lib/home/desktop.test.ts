@@ -28,7 +28,8 @@ const recoveredSubmission = {
 	reasoningEffort: 'medium' as const,
 	fastMode: false,
 	selectedModel: 'gpt-5.6-sol' as const,
-	submissionId: 'recovered-id'
+	submissionId: 'recovered-id',
+	continuationOfRunId: runId('parent-run')
 };
 
 function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
@@ -90,6 +91,7 @@ function resolveRecoveredSubmission(
 		storageIds: recoveredSubmission.storageIds,
 		reasoningEffort: recoveredSubmission.reasoningEffort,
 		fastMode: recoveredSubmission.fastMode,
+		continuationOfRunId: recoveredSubmission.continuationOfRunId,
 		recoveredSubmission,
 		selectedModel: recoveredSubmission.selectedModel,
 		...overrides
@@ -162,6 +164,7 @@ describe('resolveSubmissionId', () => {
 		expect(resolveRecoveredSubmission({ prompt: 'Inspect and fix the robot' })).toBe('new-id');
 		expect(resolveRecoveredSubmission({ reasoningEffort: 'high' })).toBe('new-id');
 		expect(resolveRecoveredSubmission({ fastMode: true })).toBe('new-id');
+		expect(resolveRecoveredSubmission({ continuationOfRunId: undefined })).toBe('new-id');
 	});
 
 	it('reuses a submission only when its attachments are unchanged', () => {
@@ -174,12 +177,21 @@ describe('resolveSubmissionId', () => {
 		).toBe('new-id');
 	});
 
-	it('uses a fresh id when the visible latest submission has finished or supersedes recovery', () => {
+	it('reuses only for the expected parent or the same unfinished run', () => {
 		expect(
 			resolveRecoveredSubmission({
 				latestRun: { status: 'failed', submissionId: 'recovered-id' }
 			})
 		).toBe('new-id');
+		expect(
+			resolveRecoveredSubmission({
+				latestRun: {
+					runId: recoveredSubmission.continuationOfRunId,
+					status: 'completed',
+					submissionId: 'parent-id'
+				}
+			})
+		).toBe('recovered-id');
 		expect(
 			resolveRecoveredSubmission({
 				latestRun: { status: 'queued', submissionId: 'recovered-id' }

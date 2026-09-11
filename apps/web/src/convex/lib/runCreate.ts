@@ -72,9 +72,8 @@ export async function createQueuedRunRecord(
 	if (!continuationOfRunId && !prompt && args.imageUploadIds.length === 0) {
 		throw new Error('Message cannot be empty.');
 	}
-	const imageUploads = continuationOfRunId
-		? []
-		: await getOwnedImageUploads(ctx, args.userId, args.imageUploadIds);
+	const imageUploads = await getOwnedImageUploads(ctx, args.userId, args.imageUploadIds);
+	const recordsPrompt = !continuationOfRunId || Boolean(prompt) || imageUploads.length > 0;
 	const machineId = args.machineId;
 	let machine = null;
 	if (machineId) {
@@ -138,7 +137,7 @@ export async function createQueuedRunRecord(
 		assertThreadCanStartRun(latestRun?.status);
 	}
 	if (continuationOfRunId) {
-		assertContinuableParent(latestRun, continuationOfRunId);
+		assertContinuableParent(latestRun, continuationOfRunId, recordsPrompt);
 	}
 	if (machine && machine.runIds.length >= MAX_ACTIVE_MACHINE_RUNS) {
 		throw new Error('Machine has too many active runs.');
@@ -180,7 +179,7 @@ export async function createQueuedRunRecord(
 		threadId: threadRecord._id,
 		userId: args.userId
 	};
-	if (!continuationOfRunId) {
+	if (recordsPrompt) {
 		await markImageUploadsAttached(ctx, imageUploads, threadRecord._id);
 		created.promptPart = await recordPromptTranscript(ctx, {
 			threadId: threadRecord._id,
@@ -197,7 +196,7 @@ export async function createQueuedRunRecord(
 		selectedModel: args.selectedModel,
 		reasoningEffort: args.reasoningEffort,
 		fastMode: args.fastMode,
-		lastMessageAt: continuationOfRunId ? threadRecord.lastMessageAt : Date.now()
+		lastMessageAt: recordsPrompt ? Date.now() : threadRecord.lastMessageAt
 	};
 	await ctx.db.patch('threadRecords', threadRecord._id, threadUpdates);
 	const lifecycleWorkflowId = await startRunLifecycle(ctx, runId);
@@ -238,42 +237,41 @@ async function reconcileExistingQueuedRun(
 		await ctx.db.patch('runs', existingRun._id, { lifecycleWorkflowId });
 	}
 
-	if (args.continuationOfRunId) {
-		return {
-			created: false,
-			runId: existingRun._id,
-			threadId: existingRun.threadId,
-			userId: args.userId
-		};
-	}
-
 	const existingPrompt = await getPromptPart(ctx, existingRun.threadId, existingRun._id);
 	const requestedStorageIds = await storageIdsForImageUploadIds(ctx, args.imageUploadIds);
-	if (
-		!existingPrompt?.prompt ||
-		existingPrompt.prompt.text !== prompt ||
-		requestedStorageIds === null ||
-		!areStorageIdsEqual(
-			existingPrompt.prompt.imageUploads.map((upload) => upload.storageId),
-			requestedStorageIds
-		)
-	) {
+	const recordsPrompt =
+		!args.continuationOfRunId || Boolean(prompt) || args.imageUploadIds.length > 0;
+	if (recordsPrompt) {
+		if (
+			!existingPrompt?.prompt ||
+			existingPrompt.prompt.text !== prompt ||
+			requestedStorageIds === null ||
+			!areStorageIdsEqual(
+				existingPrompt.prompt.imageUploads.map((upload) => upload.storageId),
+				requestedStorageIds
+			)
+		) {
+			throw new Error('Submission prompt does not match the existing run.');
+		}
+	} else if (existingPrompt !== null || requestedStorageIds === null) {
 		throw new Error('Submission prompt does not match the existing run.');
 	}
-	const promptPart = await recordPromptTranscript(ctx, {
-		threadId: existingRun.threadId,
-		userId: args.userId,
-		runId: existingRun._id,
-		text: prompt,
-		imageUploadIds: args.imageUploadIds
-	});
-	return {
+	const reconciled: CreatedGatewayRun = {
 		created: false,
 		runId: existingRun._id,
 		threadId: existingRun.threadId,
-		userId: args.userId,
-		promptPart
+		userId: args.userId
 	};
+	if (recordsPrompt) {
+		reconciled.promptPart = await recordPromptTranscript(ctx, {
+			threadId: existingRun.threadId,
+			userId: args.userId,
+			runId: existingRun._id,
+			text: prompt,
+			imageUploadIds: args.imageUploadIds
+		});
+	}
+	return reconciled;
 }
 
 export async function finalizeFailedQueuedStart(
@@ -326,11 +324,13 @@ export async function finalizeFailedQueuedStart(
 	) {
 		return 'standDown';
 	}
-	if (!isContinuation) {
-		const promptPart = await getPromptPart(ctx, run.threadId, run._id);
+	const prompt = args.prompt.trim();
+	const promptPart = await getPromptPart(ctx, run.threadId, run._id);
+	const recordsPrompt = !isContinuation || Boolean(prompt) || args.storageIds.length > 0;
+	if (recordsPrompt) {
 		if (
 			!promptPart?.prompt ||
-			promptPart.prompt.text !== args.prompt.trim() ||
+			promptPart.prompt.text !== prompt ||
 			!areStorageIdsEqual(
 				promptPart.prompt.imageUploads.map((upload) => upload.storageId),
 				args.storageIds
@@ -338,6 +338,8 @@ export async function finalizeFailedQueuedStart(
 		) {
 			return 'standDown';
 		}
+	} else if (promptPart !== null) {
+		return 'standDown';
 	}
 	await finalizeRunRecord(ctx, run, {
 		text: args.text,

@@ -50,9 +50,14 @@ async function cancelExecutorJobsPage(
 	};
 }
 
-async function cancelPendingQuestionsPage(
+async function finalizePendingQuestionsPage(
 	ctx: MutationCtx,
-	args: { runId: Id<'runs'>; completedAt: number; afterSequence: number }
+	args: {
+		runId: Id<'runs'>;
+		runStatus: Infer<typeof vRunStatus>;
+		completedAt: number;
+		afterSequence: number;
+	}
 ): Promise<TerminalCleanupResult> {
 	const questions = await ctx.db
 		.query('agentQuestions')
@@ -61,10 +66,15 @@ async function cancelPendingQuestionsPage(
 		)
 		.take(TERMINAL_CLEANUP_PAGE_SIZE);
 	for (const question of questions) {
-		if (question.status === 'pending') {
+		if (question.status !== 'pending') continue;
+		if (args.runStatus === 'cancelled') {
 			await ctx.db.patch('agentQuestions', question._id, {
 				status: 'cancelled',
 				answeredAt: args.completedAt
+			});
+		} else {
+			await ctx.db.patch('agentQuestions', question._id, {
+				requiresContinuation: true
 			});
 		}
 	}
@@ -137,8 +147,9 @@ export async function advanceTerminalCleanup(
 			transcriptCursor: args.transcriptCursor
 		};
 	}
-	const questions = await cancelPendingQuestionsPage(ctx, {
+	const questions = await finalizePendingQuestionsPage(ctx, {
 		runId: args.run._id,
+		runStatus: args.run.status,
 		completedAt: args.completedAt,
 		afterSequence: args.questionCursor
 	});
