@@ -19,7 +19,7 @@ import { getExecutionRun, getUserId } from '@convex/lib/auth';
 import { assertRunAcceptsModelCompletion, toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { vAgentQuestionSnapshot } from '@convex/lib/docs';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
-import { vAskQuestionOption } from '@convex/lib/validators';
+import { isRunFinalStatus, vAskQuestionOption } from '@convex/lib/validators';
 
 const DEFAULT_QUESTION_TIMEOUT_MS = 30 * 60 * 1000;
 const MIN_QUESTION_TIMEOUT_MS = 1_000;
@@ -138,7 +138,10 @@ export const answer = mutation({
 		optionId: v.optional(v.string()),
 		text: v.optional(v.string())
 	},
-	returns: vAgentQuestionSnapshot,
+	returns: v.object({
+		question: vAgentQuestionSnapshot,
+		startContinuation: v.boolean()
+	}),
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
@@ -168,12 +171,26 @@ export const answer = mutation({
 			answeredAt
 		});
 
-		return toSnapshot({
+		const snapshot = toSnapshot({
 			...question,
 			status: 'answered',
 			answer,
 			answeredAt
 		});
+		const nextQuestion = await headPendingQuestion(ctx, args.threadId);
+		const run = await ctx.db.get('runs', question.runId);
+		const latestRun = await ctx.db
+			.query('runs')
+			.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', args.threadId))
+			.order('desc')
+			.first();
+		const startContinuation =
+			nextQuestion === null &&
+			run !== null &&
+			latestRun?._id === run._id &&
+			isRunFinalStatus(run.status) &&
+			run.status !== 'cancelled';
+		return { question: snapshot, startContinuation };
 	}
 });
 

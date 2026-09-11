@@ -99,12 +99,15 @@ describe('agentQuestions', () => {
 				text: 'with detail'
 			})
 		).resolves.toMatchObject({
-			status: 'answered',
-			answer: {
-				optionId: 'two',
-				optionLabel: 'Two',
-				text: 'with detail'
-			}
+			question: {
+				status: 'answered',
+				answer: {
+					optionId: 'two',
+					optionLabel: 'Two',
+					text: 'with detail'
+				}
+			},
+			startContinuation: false
 		});
 
 		expect(
@@ -177,11 +180,18 @@ describe('agentQuestions', () => {
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
 		const { executionSecret, claimId, runId } = await startRun(t, threadId);
 
-		const created = await t.mutation(api.agentQuestions.create, {
+		const first = await t.mutation(api.agentQuestions.create, {
 			runId,
 			claimId,
-			question: 'Still open?',
+			question: 'First open question?',
 			options: [{ id: 'yes', label: 'Yes' }],
+			executionSecret
+		});
+		const second = await t.mutation(api.agentQuestions.create, {
+			runId,
+			claimId,
+			question: 'Second open question?',
+			options: [{ id: 'ship', label: 'Ship it' }],
 			executionSecret
 		});
 
@@ -195,18 +205,34 @@ describe('agentQuestions', () => {
 		await expect(
 			asUser.query(api.agentQuestions.headPendingForThread, { threadId })
 		).resolves.toMatchObject({
-			questionId: created.questionId,
+			questionId: first.questionId,
 			status: 'pending'
 		});
 		await expect(
 			asUser.mutation(api.agentQuestions.answer, {
 				threadId,
-				questionId: created.questionId,
+				questionId: first.questionId,
 				optionId: 'yes'
 			})
 		).resolves.toMatchObject({
-			status: 'answered',
-			answer: { optionId: 'yes', optionLabel: 'Yes' }
+			question: {
+				status: 'answered',
+				answer: { optionId: 'yes', optionLabel: 'Yes' }
+			},
+			startContinuation: false
+		});
+		await expect(
+			asUser.mutation(api.agentQuestions.answer, {
+				threadId,
+				questionId: second.questionId,
+				optionId: 'ship'
+			})
+		).resolves.toMatchObject({
+			question: {
+				status: 'answered',
+				answer: { optionId: 'ship', optionLabel: 'Ship it' }
+			},
+			startContinuation: true
 		});
 	});
 
@@ -247,8 +273,11 @@ describe('agentQuestions', () => {
 				optionId: 'old'
 			})
 		).resolves.toMatchObject({
-			status: 'answered',
-			answer: { optionId: 'old', optionLabel: 'Old' }
+			question: {
+				status: 'answered',
+				answer: { optionId: 'old', optionLabel: 'Old' }
+			},
+			startContinuation: false
 		});
 
 		expect(
@@ -262,8 +291,11 @@ describe('agentQuestions', () => {
 				optionId: 'new'
 			})
 		).resolves.toMatchObject({
-			status: 'answered',
-			answer: { optionId: 'new', optionLabel: 'New' }
+			question: {
+				status: 'answered',
+				answer: { optionId: 'new', optionLabel: 'New' }
+			},
+			startContinuation: false
 		});
 		vi.useRealTimers();
 	});

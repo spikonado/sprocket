@@ -1582,6 +1582,7 @@
 		const submittedPrompt = prompt;
 		const submittedOptionId = selectedQuestionOptionId;
 		const answerText = submittedPrompt.trim();
+		let continuationPrompt: string | null = null;
 		prompt = '';
 		selectedQuestionOptionId = null;
 		try {
@@ -1591,7 +1592,13 @@
 				optionId: submittedOptionId ?? undefined,
 				text: answerText || undefined
 			};
-			await answerAgentQuestion(answer);
+			const result = await answerAgentQuestion(answer);
+			if (result.startContinuation) {
+				continuationPrompt =
+					[result.question.answer?.optionLabel, result.question.answer?.text]
+						.filter((part): part is string => Boolean(part))
+						.join(': ') || 'Continue.';
+			}
 		} catch (error) {
 			if (
 				currentThreadId === threadId &&
@@ -1604,12 +1611,22 @@
 		} finally {
 			answeringAgentQuestion = false;
 		}
+		if (continuationPrompt !== null) {
+			prompt = continuationPrompt;
+			await submitPrompt(question.questionId);
+		}
 	}
 
-	async function submitPrompt() {
+	async function submitPrompt(answeredQuestionId?: Id<'agentQuestions'>) {
 		if (pendingAgentQuestion) {
-			await submitAgentQuestionAnswer();
-			return;
+			if (answeredQuestionId && pendingAgentQuestion.questionId !== answeredQuestionId) {
+				currentError = 'Answer the new agent question before continuing.';
+				return;
+			}
+			if (!answeredQuestionId) {
+				await submitAgentQuestionAnswer();
+				return;
+			}
 		}
 
 		if (isSubmittingPrompt) {
