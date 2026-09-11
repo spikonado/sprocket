@@ -7747,7 +7747,7 @@ dependencies = [
 
 [[package]]
 name = "sprocket-agent"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "anydoc",
  "anyhow",
@@ -7772,7 +7772,7 @@ dependencies = [
 
 [[package]]
 name = "sprocket-cli"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "clap",
@@ -7787,7 +7787,7 @@ dependencies = [
 
 [[package]]
 name = "sprocket-convex"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -7800,7 +7800,7 @@ dependencies = [
 
 [[package]]
 name = "sprocket-server"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "axum",
@@ -7837,7 +7837,7 @@ dependencies = [
 
 [[package]]
 name = "sprocket-workspace"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "diffy",
