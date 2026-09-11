@@ -88,8 +88,11 @@
 		const viewport = scrollViewport;
 		if (!viewport || viewport.scrollTop === lastScrollTop) return;
 		const bottom = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
-		const movingUp = viewport.scrollTop < Math.min(lastScrollTop, bottom);
+		const movingUp = viewport.scrollTop < lastScrollTop;
+		const clampedToBottom = lastScrollTop > bottom && Math.abs(viewport.scrollTop - bottom) < 1;
 		lastScrollTop = viewport.scrollTop;
+		// A shorter scroll range must preserve the reader's existing follow state.
+		if (clampedToBottom) return;
 		const distanceToBottom = bottom - viewport.scrollTop;
 		stickToBottom = !movingUp && distanceToBottom <= SCROLL_EPSILON_PX;
 		if (movingUp) handleUpwardIntent();
@@ -214,7 +217,7 @@
 		}
 		const bottom = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
 		// A scrollbar drag can reach layout before its scroll event. Shrinking content also clamps scrollTop.
-		if (viewport.scrollTop < Math.min(lastScrollTop, bottom)) {
+		if (viewport.scrollTop + 1 < Math.min(lastScrollTop, bottom)) {
 			stickToBottom = false;
 			return;
 		}

@@ -215,18 +215,22 @@ describe('transcript viewport paging', () => {
 		expect(writeScrollTop).not.toHaveBeenCalled();
 	});
 
-	it('keeps following when shrinking content clamps the scroll position', async () => {
-		const { props, viewport } = await renderTranscript([1, 2, 3, 4, 5].map(message));
-		props.messages = props.messages.slice(0, 3);
-		flushSync();
-		viewport.dispatchEvent(new Event('scroll'));
-		await settle();
-		resize();
-		expect(viewport.scrollTop).toBe(300);
-		props.messages = [...props.messages, message(4)];
-		await settle();
-		expect(viewport.scrollTop).toBe(600);
-	});
+	it.each([true, false])(
+		'preserves bottom-following state %s when shrinking content clamps the scroll position',
+		async (following) => {
+			const { props, viewport, scrollTo } = await renderTranscript([1, 2, 3, 4, 5].map(message));
+			if (!following) scrollTo(700);
+			props.messages = props.messages.slice(0, 3);
+			flushSync();
+			viewport.dispatchEvent(new Event('scroll'));
+			await settle();
+			resize();
+			expect(viewport.scrollTop).toBe(300);
+			props.messages = [...props.messages, message(4)];
+			await settle();
+			expect(viewport.scrollTop).toBe(following ? 600 : 300);
+		}
+	);
 
 	it('opens a newly mounted thread at the bottom rather than reusing the previous reading position', async () => {
 		const first = await renderTranscript([1, 2, 3, 4].map(message));
