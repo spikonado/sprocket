@@ -2,22 +2,74 @@
 
 We ship breaking changes ahead of our users' installed clients and keep the old behavior working until those clients age out. That debt is easy to accumulate and easier to forget. This file lists every backwards-compatibility layer we currently ship, what it protects, how to remove it, and the signal that says removal is safe. When a removal PR merges, remove its entry from this document.
 
-Current as of 2026-09-10.
+Current as of 2026-09-11.
 
-## Production rollout fields
+## Production rollout cleanup
 
-The deployment before v0.3.5 writes `runs.completionTransport`,
-`threadUsage.totalTokensProcessed`, and `executorJobs.cloudWorkPool`. Those
-fields remain optional in the stored schema so traffic during a deployment
-cannot recreate data that blocks the next schema push. The usage table also
-accepts the old `usageLedgerMigratedAt` marker.
+PR #345 removed several stored fields before its code had deployed and before
+production data had been rewritten. The production deployment that remained
+active after that failed rollout could still write those fields, so merely
+cleaning existing rows would race with active mutations. This release restores
+the old schema shapes and ships the cleanup migrations in
+`convex/migrations.ts`. Do not run the cleanup runner until this release is live
+and work started by the preceding deployment has settled.
 
-Some historical `threadRecords` rows have no `status`. Readers treat a missing
-status as completed, and all current run lifecycle writes set it.
+### Thread status
 
-Remove these fields only after the code that stopped writing them is live, all
-in-flight work from the previous deployment has settled, and a production scan
-finds no rows carrying the retired fields or missing `threadRecords.status`.
+Production has historical `threadRecords` without `status`. Current run
+lifecycle code writes the field, but the thread cache must still ingest old
+rows. The schema and local cache parser therefore accept a missing value, and
+`threadRecordToSummary` treats it as `completed`.
+
+`backfillMissingThreadStatus` copies the latest run status onto each affected thread.
+It marks a runless thread as `completed` rather than deleting user data. Remove
+the optional schema and parser handling, and the summary default, after the
+migration completes and a production scan finds no thread without `status`.
+
+### Run completion transport
+
+The preceding schema accepted `runs.completionTransport` with either
+`convex-action` or `gateway`, and the preceding production writer still stores
+`gateway`. Current code neither reads nor writes this field. Both values remain
+accepted so stored rows and writes made during the rollout validate.
+
+`removeRunCompletionTransport` unsets the field. Remove it from the schema after
+the migration completes and a production scan finds no run carrying it.
+
+### Usage ledger fields
+
+The preceding production writer still dual-writes
+`threadUsage.totalTokensProcessed`. Current code calculates processed tokens
+from `threadUsageEvents` and the Aggregate component instead. The
+`usageLedgerMigratedAt` field is a marker left by the completed ledger backfill;
+current code does not read it. Both fields remain optional only to validate old
+rows and writes made during the rollout.
+
+`removeThreadUsageLegacyFields` unsets both fields. Remove them from the schema
+after the migration completes and a production scan finds neither field.
+
+### Executor work pool
+
+The preceding production code writes `executorJobs.cloudWorkPool` for hosted
+parse work and reads it to choose the cancellation pool. Current code no longer
+reads or writes it, but an in-flight job from the preceding deployment can still
+store `firecrawlScrape` while this release rolls out.
+
+`removeExecutorJobCloudWorkPool` unsets the field. Remove it from the schema
+after the migration completes, all jobs started by the preceding deployment
+have settled, and a production scan finds no executor job carrying it.
+
+Once this release is live and the old work has settled, run the resumable
+cleanup from `apps/web`:
+
+```sh
+bunx convex run migrations:runProductionRolloutCleanup '{"dryRun":true}' --prod
+bunx convex run migrations:runProductionRolloutCleanup --prod
+```
+
+Keep the migration definitions until the runner reports completion. A later PR
+may tighten the schema and remove the read fallbacks only after the production
+scans described above pass.
 
 ## Stored executor jobs
 

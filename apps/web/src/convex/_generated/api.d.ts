@@ -74,6 +74,7 @@ import type * as lib_validators from "../lib/validators.js";
 import type * as machineSessions from "../machineSessions.js";
 import type * as machines from "../machines.js";
 import type * as messages from "../messages.js";
+import type * as migrations from "../migrations.js";
 import type * as modelCatalog from "../modelCatalog.js";
 import type * as payments from "../payments.js";
 import type * as projects from "../projects.js";
@@ -159,6 +160,7 @@ declare const fullApi: ApiFromModules<{
   machineSessions: typeof machineSessions;
   machines: typeof machines;
   messages: typeof messages;
+  migrations: typeof migrations;
   modelCatalog: typeof modelCatalog;
   payments: typeof payments;
   projects: typeof projects;

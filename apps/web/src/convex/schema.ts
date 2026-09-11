@@ -125,7 +125,7 @@ export default defineSchema({
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
 		serviceTier: vServiceTier,
-		completionTransport: v.optional(v.literal('gateway')),
+		completionTransport: v.optional(v.union(v.literal('convex-action'), v.literal('gateway'))),
 		gatewayProtocolVersion: v.optional(v.number()),
 		agentVersion: v.optional(v.string()),
 		startedAt: v.number(),
