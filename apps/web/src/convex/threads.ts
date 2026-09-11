@@ -25,7 +25,7 @@ async function archiveOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'
 	const userId = await getUserId(ctx);
 	const record = await getOwnedThreadRecord(ctx.db, userId, threadId);
 
-	if (['queued', 'running', 'awaiting_executor'].includes(record.status)) {
+	if (record.status && ['queued', 'running', 'awaiting_executor'].includes(record.status)) {
 		throw new Error('Cannot archive a thread while a run is active.');
 	}
 

@@ -70,7 +70,7 @@ export default defineSchema({
 	threadRecords: defineTable({
 		userId: v.string(),
 		submissionId: v.string(),
-		status: vRunStatus,
+		status: v.optional(vRunStatus),
 		repositoryKey: v.string(),
 		title: v.optional(v.string()),
 		selectedModel: v.string(),
@@ -99,7 +99,9 @@ export default defineSchema({
 	threadUsage: defineTable({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
-		contextTokens: v.optional(v.number())
+		contextTokens: v.optional(v.number()),
+		totalTokensProcessed: v.optional(v.number()),
+		usageLedgerMigratedAt: v.optional(v.number())
 	}).index('by_threadId', ['threadId']),
 	threadUsageEvents: defineTable({
 		threadId: v.id('threadRecords'),
@@ -123,6 +125,7 @@ export default defineSchema({
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
 		serviceTier: vServiceTier,
+		completionTransport: v.optional(v.literal('gateway')),
 		gatewayProtocolVersion: v.optional(v.number()),
 		agentVersion: v.optional(v.string()),
 		startedAt: v.number(),
@@ -248,7 +251,8 @@ export default defineSchema({
 		result: v.optional(vExecutorJobResult),
 		error: v.optional(v.string()),
 		sequence: v.number(),
-		cloudWorkId: v.optional(v.string())
+		cloudWorkId: v.optional(v.string()),
+		cloudWorkPool: v.optional(v.literal('firecrawlScrape'))
 	})
 		.index('by_threadId_sequence', ['threadId', 'sequence'])
 		.index('by_runId_sequence', ['runId', 'sequence'])

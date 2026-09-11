@@ -37,7 +37,7 @@ export function threadRecordToSummary(record: Doc<'threadRecords'>): ThreadSumma
 		serviceTier: record.serviceTier,
 		lastMessageAt: record.lastMessageAt,
 		threadStatus: record.archivedAt === undefined ? 'active' : 'archived',
-		status: record.status
+		status: record.status ?? 'completed'
 	});
 }
 

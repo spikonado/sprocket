@@ -4,6 +4,21 @@ We ship breaking changes ahead of our users' installed clients and keep the old 
 
 Current as of 2026-09-10.
 
+## Production rollout fields
+
+The deployment before v0.3.5 writes `runs.completionTransport`,
+`threadUsage.totalTokensProcessed`, and `executorJobs.cloudWorkPool`. Those
+fields remain optional in the stored schema so traffic during a deployment
+cannot recreate data that blocks the next schema push. The usage table also
+accepts the old `usageLedgerMigratedAt` marker.
+
+Some historical `threadRecords` rows have no `status`. Readers treat a missing
+status as completed, and all current run lifecycle writes set it.
+
+Remove these fields only after the code that stopped writing them is live, all
+in-flight work from the previous deployment has settled, and a production scan
+finds no rows carrying the retired fields or missing `threadRecords.status`.
+
 ## Stored executor jobs
 
 ### Historical artifact tools
