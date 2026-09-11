@@ -241,15 +241,15 @@ impl GatewayRequestHook {
     }
 }
 
-/// Rig 0.42 OpenAI Responses keeps typed additional_params:
-/// `reasoning` and `service_tier`.
 pub(crate) fn gateway_additional_params(
     reasoning_effort: &str,
     service_tier: &str,
 ) -> serde_json::Value {
     serde_json::json!({
+        "include": ["reasoning.encrypted_content"],
         "reasoning": { "effort": reasoning_effort },
-        "service_tier": if service_tier == "fast" { "priority" } else { "standard" }
+        "service_tier": if service_tier == "fast" { "priority" } else { "default" },
+        "store": false
     })
 }
 
@@ -348,13 +348,15 @@ mod tests {
         assert_eq!(
             gateway_additional_params("high", "fast"),
             serde_json::json!({
+                "include": ["reasoning.encrypted_content"],
                 "reasoning": { "effort": "high" },
-                "service_tier": "priority"
+                "service_tier": "priority",
+                "store": false
             })
         );
         assert_eq!(
             gateway_additional_params("medium", "standard")["service_tier"],
-            "standard"
+            "default"
         );
     }
 

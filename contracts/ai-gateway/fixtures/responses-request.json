@@ -23,5 +23,5 @@
 		}
 	],
 	"reasoning": { "effort": "medium" },
-	"service_tier": "standard"
+	"service_tier": "default"
 }

@@ -106,49 +106,30 @@ pub async fn catalog_capabilities_for_model(
 mod tests {
     use super::*;
 
-    fn catalog_payload(supports_images: bool) -> GatewayModelsResponse {
-        serde_json::from_value(serde_json::json!({
-            "sprocket": {
-                "protocolVersion": 1,
-                "models": [
-                    {
-                        "id": "gpt-5.6-sol",
-                        "label": "GPT-5.6 Sol",
-                        "supportsImages": supports_images,
-                        "contextWindowTokens": 272000,
-                        "autoCompactTokenLimit": 258000
-                    },
-                    {
-                        "id": "deepseek-v4-pro-0813",
-                        "label": "DeepSeek V4 Pro",
-                        "supportsImages": false,
-                        "contextWindowTokens": 1000000,
-                        "autoCompactTokenLimit": 967000
-                    }
-                ]
-            }
-        }))
-        .expect("catalog payload")
+    fn catalog_payload() -> GatewayModelsResponse {
+        serde_json::from_str(include_str!(
+            "../../../contracts/ai-gateway/fixtures/catalog.json"
+        ))
+        .expect("catalog fixture")
     }
 
     #[test]
     fn fixture_reports_selected_model_metadata_from_one_payload() {
-        let vision =
-            select_catalog_model(catalog_payload(true), "gpt-5.6-sol").expect("vision model");
+        let vision = select_catalog_model(catalog_payload(), "gpt-5.6-sol").expect("vision model");
         assert!(vision.supports_images);
         assert_eq!(vision.label, "GPT-5.6 Sol");
         assert_eq!(vision.context_budget.context_window_tokens, 272000);
-        assert_eq!(vision.context_budget.auto_handoff_token_limit, 258000);
+        assert_eq!(vision.context_budget.auto_handoff_token_limit, 252000);
 
-        let text = select_catalog_model(catalog_payload(true), "deepseek-v4-pro-0813")
-            .expect("text model");
-        assert!(!text.supports_images);
-        assert_eq!(text.context_budget.context_window_tokens, 1_000_000);
+        let long_context =
+            select_catalog_model(catalog_payload(), "fable-5.1").expect("long-context model");
+        assert!(long_context.supports_images);
+        assert_eq!(long_context.context_budget.context_window_tokens, 1_000_000);
     }
 
     #[test]
     fn missing_catalog_model_is_an_error() {
-        let error = select_catalog_model(catalog_payload(true), "no-such-model")
+        let error = select_catalog_model(catalog_payload(), "no-such-model")
             .expect_err("unknown model")
             .to_string();
         assert!(error.contains("no-such-model"));

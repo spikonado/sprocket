@@ -2,41 +2,53 @@
 	"object": "list",
 	"data": [
 		{
-			"id": "deepseek-v4-pro-0813",
+			"id": "gpt-6-astra",
 			"object": "model",
 			"created": 0,
-			"owned_by": "deepseek"
+			"owned_by": "openai"
 		},
 		{
 			"id": "gpt-5.6-sol",
 			"object": "model",
 			"created": 0,
 			"owned_by": "openai"
+		},
+		{
+			"id": "gpt-5.6-luna",
+			"object": "model",
+			"created": 0,
+			"owned_by": "openai"
+		},
+		{
+			"id": "fable-5.1",
+			"object": "model",
+			"created": 0,
+			"owned_by": "anthropic"
 		}
 	],
 	"sprocket": {
 		"protocolVersion": 1,
-		"catalogVersion": "1",
-		"defaultModelId": "deepseek-v4-pro-0813",
-		"defaultReasoningEffort": "max",
+		"catalogVersion": "8",
+		"defaultModelId": "gpt-5.6-sol",
+		"defaultReasoningEffort": "high",
 		"defaultServiceTier": "standard",
 		"models": [
 			{
-				"id": "deepseek-v4-pro-0813",
-				"label": "DeepSeek V4 Pro",
-				"provider": "deepseek",
-				"supportsImages": false,
-				"contextWindowTokens": 1000000,
-				"autoCompactTokenLimit": 967000,
-				"reasoningEfforts": ["low", "high", "max"],
-				"defaultReasoningEffort": "max",
+				"id": "gpt-6-astra",
+				"label": "GPT-6 Astra",
+				"provider": "openai",
+				"supportsImages": true,
+				"contextWindowTokens": 272000,
+				"autoCompactTokenLimit": 252000,
+				"reasoningEfforts": ["low", "medium", "high", "xhigh"],
+				"defaultReasoningEffort": "medium",
 				"serviceTiers": ["standard"],
 				"usageWeights": {
-					"input": 0.00066,
-					"cacheRead": 0.00002,
-					"cacheWrite": 0,
-					"output": 0.00198,
-					"fastMultiplier": 1
+					"input": 0.01,
+					"cacheRead": 0.001,
+					"cacheWrite": 0.0125,
+					"output": 0.05,
+					"fastMultiplier": 2
 				}
 			},
 			{
@@ -45,9 +57,9 @@
 				"provider": "openai",
 				"supportsImages": true,
 				"contextWindowTokens": 272000,
-				"autoCompactTokenLimit": 258000,
-				"reasoningEfforts": ["none", "low", "medium", "high", "xhigh"],
-				"defaultReasoningEffort": "medium",
+				"autoCompactTokenLimit": 252000,
+				"reasoningEfforts": ["low", "medium", "high", "xhigh"],
+				"defaultReasoningEffort": "high",
 				"serviceTiers": ["standard"],
 				"usageWeights": {
 					"input": 0.005,
@@ -56,12 +68,48 @@
 					"output": 0.03,
 					"fastMultiplier": 2
 				}
+			},
+			{
+				"id": "gpt-5.6-luna",
+				"label": "GPT-5.6 Luna",
+				"provider": "openai",
+				"supportsImages": true,
+				"contextWindowTokens": 272000,
+				"autoCompactTokenLimit": 252000,
+				"reasoningEfforts": ["low", "medium", "high", "xhigh"],
+				"defaultReasoningEffort": "low",
+				"serviceTiers": ["standard"],
+				"usageWeights": {
+					"input": 0.0002,
+					"cacheRead": 0.00002,
+					"cacheWrite": 0.00025,
+					"output": 0.0012,
+					"fastMultiplier": 1
+				}
+			},
+			{
+				"id": "fable-5.1",
+				"label": "Fable 5.1",
+				"provider": "anthropic",
+				"supportsImages": true,
+				"contextWindowTokens": 1000000,
+				"autoCompactTokenLimit": 967000,
+				"reasoningEfforts": ["low", "medium", "high", "xhigh"],
+				"defaultReasoningEffort": "high",
+				"serviceTiers": ["standard"],
+				"usageWeights": {
+					"input": 0.01,
+					"cacheRead": 0.001,
+					"cacheWrite": 0.0125,
+					"output": 0.05,
+					"fastMultiplier": 1
+				}
 			}
 		],
 		"tierAllowedModels": {
-			"free": ["deepseek-v4-pro-0813"],
-			"pro": ["deepseek-v4-pro-0813", "gpt-5.6-sol"],
-			"admin": ["deepseek-v4-pro-0813", "gpt-5.6-sol"]
+			"free": ["gpt-5.6-sol", "gpt-5.6-luna"],
+			"pro": ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-luna", "fable-5.1"],
+			"admin": ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-luna", "fable-5.1"]
 		},
 		"tierAllowedServiceTiers": {
 			"free": ["standard"],
