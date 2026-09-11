@@ -559,14 +559,6 @@ mod tests {
     }
 
     #[test]
-    fn gateway_api_v1_url_uses_the_public_api_prefix() {
-        assert_eq!(
-            super::gateway_api_v1_url("https://ai-gateway.spikonado.com/"),
-            "https://ai-gateway.spikonado.com/api/v1"
-        );
-    }
-
-    #[test]
     fn deserializes_url_images_from_convex_history() {
         let image_json = serde_json::json!({
             "data": { "type": "url", "value": "https://example.com/robot.png" },

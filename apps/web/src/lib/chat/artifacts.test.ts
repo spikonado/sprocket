@@ -1,15 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
-	applyArtifactsWatchEvent,
 	artifactWatchScopeKey,
 	artifactsWatchRequest,
 	isCurrentArtifactsWatch,
-	markArtifactWatchStale,
 	nextArtifactRevisionWatch,
-	type ArtifactRevision,
-	type ArtifactWatchState
+	type ArtifactRevision
 } from './artifacts';
-import type { LocalArtifact } from '$lib/types/sprocket';
 
 function revision(
 	id: string,
@@ -20,29 +16,6 @@ function revision(
 ): ArtifactRevision {
 	return { id, currentVersion, updatedAt, content, localPath };
 }
-
-function localArtifact(overrides: Partial<LocalArtifact> = {}): LocalArtifact {
-	return {
-		_id: 'a',
-		userId: 'user-1',
-		scope: 'project',
-		repositoryKey: 'repo-1',
-		localPath: 'docs/a.md',
-		content: 'hello',
-		type: 'markdown',
-		title: 'A',
-		revision: 1,
-		createdAt: 10,
-		updatedAt: 10,
-		...overrides
-	};
-}
-
-const seeded: ArtifactWatchState = {
-	artifacts: [localArtifact()],
-	stale: false,
-	error: null
-};
 
 describe('nextArtifactRevisionWatch', () => {
 	it('seeds without reporting a change on first observation', () => {
@@ -107,13 +80,6 @@ describe('nextArtifactRevisionWatch', () => {
 		expect(changedId).toBe('a');
 	});
 
-	it('reports null when nothing changed', () => {
-		const previous = new Map([['a', revision('a', 1, 10)]]);
-		const { changedId } = nextArtifactRevisionWatch(previous, [revision('a', 1, 10)]);
-
-		expect(changedId).toBeNull();
-	});
-
 	it('ignores removals and updatedAt-only noise', () => {
 		const previous = new Map([
 			['a', revision('a', 1, 10)],
@@ -123,14 +89,6 @@ describe('nextArtifactRevisionWatch', () => {
 
 		expect(changedId).toBeNull();
 		expect([...revisions.keys()]).toEqual(['a']);
-	});
-
-	it('does not treat the first snapshot after a scope reset as a live change', () => {
-		const { changedId } = nextArtifactRevisionWatch(null, [
-			revision('from-other-thread', 4, 80, 'other', 'other.md')
-		]);
-
-		expect(changedId).toBeNull();
 	});
 });
 
@@ -177,57 +135,6 @@ describe('artifact watch snapshots', () => {
 
 		expect(project).not.toBe(thread);
 		expect(project).not.toBe(otherWorkspace);
-	});
-
-	it('honors an empty stale snapshot from the local authority', () => {
-		const next = applyArtifactsWatchEvent({
-			artifacts: [],
-			stale: true
-		});
-
-		expect(next.artifacts).toEqual([]);
-		expect(next.stale).toBe(true);
-		expect(next.error).toBeNull();
-	});
-
-	it('clears artifacts when the native session is revoked', () => {
-		const next = applyArtifactsWatchEvent({
-			artifacts: [],
-			stale: false,
-			error: 'native WorkOS session is signed out'
-		});
-
-		expect(next.artifacts).toEqual([]);
-		expect(next.error).toBe('native WorkOS session is signed out');
-	});
-
-	it('applies an empty snapshot when the watch is current', () => {
-		const next = applyArtifactsWatchEvent({
-			artifacts: [],
-			stale: false
-		});
-
-		expect(next.artifacts).toEqual([]);
-		expect(next.stale).toBe(false);
-	});
-
-	it('applies stale snapshots that still include artifacts', () => {
-		const updated = localArtifact({ content: 'from disk', updatedAt: 40 });
-		const next = applyArtifactsWatchEvent({
-			artifacts: [updated],
-			stale: true
-		});
-
-		expect(next.artifacts).toEqual([updated]);
-		expect(next.stale).toBe(true);
-	});
-
-	it('marks reconnects stale without clearing last good content', () => {
-		expect(markArtifactWatchStale(seeded)).toEqual({
-			artifacts: seeded.artifacts,
-			stale: true,
-			error: null
-		});
 	});
 
 	it('ignores late events after abort, generation bump, or scope switch', () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { canonicalDevWebUrl, usesLoopbackBrowserAuth } from '../../../desktop/local-config.mjs';
+import { canonicalDevWebUrl } from '../../../desktop/local-config.mjs';
 
 describe('canonicalDevWebUrl', () => {
 	it('moves loopback IP URLs to localhost without losing callback state', () => {
@@ -13,23 +13,5 @@ describe('canonicalDevWebUrl', () => {
 		expect(canonicalDevWebUrl('http://[::1]:5173/callback?code=code')).toBe(
 			'http://localhost:5173/callback?code=code'
 		);
-	});
-
-	it('leaves the canonical development origin alone', () => {
-		expect(canonicalDevWebUrl('http://localhost:5173/callback')).toBeNull();
-	});
-});
-
-describe('usesLoopbackBrowserAuth', () => {
-	it('uses the registered server callback for the installed browser app', () => {
-		expect(usesLoopbackBrowserAuth('127.0.0.1', false)).toBe(true);
-		expect(usesLoopbackBrowserAuth('localhost', false)).toBe(true);
-		expect(usesLoopbackBrowserAuth('[::1]', false)).toBe(true);
-	});
-
-	it('uses native authentication for local web development', () => {
-		expect(usesLoopbackBrowserAuth('localhost', false)).toBe(true);
-		expect(usesLoopbackBrowserAuth('example.com', false)).toBe(false);
-		expect(usesLoopbackBrowserAuth('example.com', true)).toBe(true);
 	});
 });

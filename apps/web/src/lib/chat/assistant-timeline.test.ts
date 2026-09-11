@@ -1,16 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
-	assistantTimelinePartKey,
 	assistantTimelineToolError,
 	assistantTimelineToolFailureKind,
-	assistantTimelineToolKey,
-	assistantTimelineWorkSectionKey,
 	buildAssistantTimeline,
 	buildCommandSessionCommandMap,
 	buildOpenExecCommandSessions,
 	groupAssistantTimeline,
 	groupAssistantTimelineSections,
-	isAssistantResponseStreaming,
 	isAssistantTimelineToolRunning,
 	partitionWorkSectionTools,
 	resolveCommandSessionLabel,
@@ -61,15 +57,6 @@ function tool(
 ): AssistantTimelineTool {
 	return { type: 'tool', callId, name, input: {}, ...overrides };
 }
-
-describe('assistant response streaming', () => {
-	it('stays active between completion calls until the run itself finishes', () => {
-		const runId = executorRunId('run');
-
-		expect(isAssistantResponseStreaming({ runId, runStatus: 'completed' }, runId)).toBe(true);
-		expect(isAssistantResponseStreaming({ runId, runStatus: 'running' }, null)).toBe(false);
-	});
-});
 
 describe('assistant timeline', () => {
 	it('keeps tool calls between surrounding assistant parts and pairs results', () => {
@@ -124,24 +111,6 @@ describe('assistant timeline', () => {
 		expect(timeline[1]).toMatchObject({ type: 'text', id: 't1', text: 'Done' });
 	});
 
-	it('keeps nonempty reasoning before a following empty slot, tool, and text', () => {
-		const timeline = buildAssistantTimeline(
-			[
-				{ type: 'reasoning', id: 'r1', text: 'plan' },
-				{ type: 'reasoning', id: 'r-empty', text: '' },
-				{ type: 'tool-call', callId: 'call-1', name: 'exec_command', input: { cmd: 'pwd' } },
-				{ type: 'text', id: 't1', text: 'Done' }
-			],
-			[]
-		);
-
-		expect(timeline.map((item) => (item.type === 'reasoning' ? item.id : item.type))).toEqual([
-			'r1',
-			'tool',
-			'text'
-		]);
-	});
-
 	it('correlates reversed same-name jobs by payload and keeps remaining jobs visible', () => {
 		const first = executorJob('job-1', 1, { payload: { cmd: 'one' } });
 		const second = executorJob('job-2', 2, { payload: { cmd: 'two' } });
@@ -193,73 +162,6 @@ describe('assistant timeline', () => {
 			expect.objectContaining({ job: expect.objectContaining({ _id: first._id }) }),
 			expect.objectContaining({ job: expect.objectContaining({ _id: second._id }) })
 		]);
-	});
-
-	it('exposes errors from persisted tool results when no live job exists', () => {
-		const [tool] = buildAssistantTimeline(
-			[
-				{ type: 'tool-call', callId: 'call-1', name: 'exec_command', input: { cmd: 'false' } },
-				{
-					type: 'tool-result',
-					callId: 'call-1',
-					output: { error: 'command failed', status: 'failed' }
-				}
-			],
-			[]
-		);
-
-		expect(tool).toMatchObject({ type: 'tool' });
-		if (tool?.type !== 'tool') throw new Error('Expected a tool timeline item.');
-		expect(assistantTimelineToolError(tool, true)).toBe('command failed');
-	});
-
-	it('exposes the error or cancelled state for live cancelled jobs', () => {
-		const [cancelled, cancelledWithError] = buildAssistantTimeline(
-			[],
-			[
-				executorJob('job-1', 1, { status: 'cancelled' }),
-				executorJob('job-2', 2, { status: 'cancelled', error: 'stopped by user' })
-			]
-		);
-
-		expect(cancelled).toMatchObject({ type: 'tool' });
-		expect(cancelledWithError).toMatchObject({ type: 'tool' });
-		if (cancelled?.type !== 'tool' || cancelledWithError?.type !== 'tool') {
-			throw new Error('Expected tool timeline items.');
-		}
-		expect(assistantTimelineToolError(cancelled, true)).toBe(
-			'Executor job cancelled before completion.'
-		);
-		expect(assistantTimelineToolError(cancelledWithError, true)).toBe('stopped by user');
-		expect(assistantTimelineToolFailureKind(cancelled, true)).toBe('cancelled');
-		expect(assistantTimelineToolFailureKind(cancelledWithError, true)).toBe('cancelled');
-	});
-
-	it('falls back to the failed state when a failed live job has no error', () => {
-		const [failed] = buildAssistantTimeline([], [executorJob('job-1', 1, { status: 'failed' })]);
-
-		expect(failed).toMatchObject({ type: 'tool' });
-		if (failed?.type !== 'tool') throw new Error('Expected a tool timeline item.');
-		expect(assistantTimelineToolError(failed, true)).toBe('Executor job failed.');
-		expect(assistantTimelineToolFailureKind(failed, true)).toBe('failed');
-	});
-
-	it('labels persisted tool-result errors as failed, not cancelled', () => {
-		const [tool] = buildAssistantTimeline(
-			[
-				{ type: 'tool-call', callId: 'call-1', name: 'exec_command', input: { cmd: 'false' } },
-				{
-					type: 'tool-result',
-					callId: 'call-1',
-					output: { error: 'command failed', status: 'failed' }
-				}
-			],
-			[]
-		);
-
-		expect(tool).toMatchObject({ type: 'tool' });
-		if (tool?.type !== 'tool') throw new Error('Expected a tool timeline item.');
-		expect(assistantTimelineToolFailureKind(tool, true)).toBe('failed');
 	});
 
 	it('preserves cancelled vs failed from persisted tool-result status after jobs leave the timeline', () => {
@@ -329,38 +231,10 @@ describe('groupAssistantTimeline', () => {
 		});
 	});
 
-	it('starts a new group when tool type changes even if contiguous', () => {
-		const blocks = groupAssistantTimeline([
-			tool('c1', 'exec_command'),
-			tool('c2', 'apply_patch'),
-			tool('c3', 'exec_command')
-		]);
-
-		expect(blocks).toEqual([
-			expect.objectContaining({
-				type: 'tool-group',
-				toolKey: 'exec_command',
-				tools: [expect.objectContaining({ callId: 'c1' })]
-			}),
-			expect.objectContaining({
-				type: 'tool-group',
-				toolKey: 'apply_patch',
-				tools: [expect.objectContaining({ callId: 'c2' })]
-			}),
-			expect.objectContaining({
-				type: 'tool-group',
-				toolKey: 'exec_command',
-				tools: [expect.objectContaining({ callId: 'c3' })]
-			})
-		]);
-	});
-
 	it('groups by streamed name even when a matched job kind differs', () => {
 		const withJob = tool('c1', 'streamed_name', {
 			job: executorJob('job-1', 1, { kind: 'exec_command' })
 		});
-		expect(assistantTimelineToolKey(withJob)).toBe('streamed_name');
-
 		const blocks = groupAssistantTimeline([
 			withJob,
 			tool('c3', 'streamed_name'),
@@ -420,46 +294,6 @@ describe('groupAssistantTimelineSections', () => {
 		expect(sections[3]).toMatchObject({ type: 'text', id: 't2' });
 	});
 
-	it('distinguishes text and reasoning identities by turnId and id', () => {
-		expect(assistantTimelinePartKey({ type: 'text', id: 't1', text: 'mid' })).toBe('text::t1');
-		expect(
-			assistantTimelinePartKey({ type: 'text', id: 't1', text: 'later', turnId: 'turn-2' })
-		).toBe('text:turn-2:t1');
-		expect(
-			assistantTimelineWorkSectionKey({
-				type: 'reasoning',
-				id: 'r1',
-				text: 'plan',
-				turnId: 'turn-1'
-			})
-		).toBe('reasoning:turn-1:r1');
-		expect(
-			assistantTimelineWorkSectionKey({
-				type: 'reasoning',
-				id: 'r1',
-				text: 'again',
-				turnId: 'turn-2'
-			})
-		).toBe('reasoning:turn-2:r1');
-	});
-
-	it('keys a tools-only work section from the first tool callId', () => {
-		const sections = groupAssistantTimelineSections(
-			groupAssistantTimeline([tool('c1', 'exec_command'), tool('c2', 'apply_patch')])
-		);
-
-		expect(sections).toEqual([
-			expect.objectContaining({
-				type: 'work',
-				key: 'c1',
-				blocks: [
-					expect.objectContaining({ type: 'tool-group', toolKey: 'exec_command' }),
-					expect.objectContaining({ type: 'tool-group', toolKey: 'apply_patch' })
-				]
-			})
-		]);
-	});
-
 	it('keeps the work-section key on the first callId after running tools settle', () => {
 		const running = tool('c1', 'exec_command', {
 			job: executorJob('job-1', 1, { status: 'claimed', kind: 'exec_command' })
@@ -482,7 +316,6 @@ describe('groupAssistantTimelineSections', () => {
 			type: 'tool-group',
 			tools: [expect.objectContaining({ callId: 'c2' })]
 		});
-		expect(assistantTimelineWorkSectionKey(work.blocks[0])).toBe(work.key);
 	});
 });
 

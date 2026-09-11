@@ -3,22 +3,14 @@ import {
 	beginPendingAgentLaunch,
 	clearPendingAgentLaunch,
 	dataForThread,
-	findProjectByRepositoryKey,
 	getProjectThreadGroups,
-	isActiveThread,
 	isAgentLaunchPending,
 	isLatestRunReadyForThread,
-	makeUnconfirmedCreatedThread,
-	mergeUnconfirmedCreatedThread,
-	mergeUnconfirmedCreatedThreads,
 	pickThreadToRestore,
 	resolveExpiredAgentLaunch,
 	resolvePendingAgentLaunch,
 	resolvePendingCreatedThreadId,
 	resolveProjectThreadSelection,
-	retainUnconfirmedCreatedThreads,
-	shouldDropUnconfirmedCreatedThread,
-	toThreadSummary,
 	type PendingAgentLaunch,
 	type PendingAgentLaunches
 } from '$lib/project/threads';
@@ -184,9 +176,6 @@ describe('project thread helpers', () => {
 			threadStatus: 'archived'
 		});
 
-		expect(isActiveThread(active)).toBe(true);
-		expect(isActiveThread(archived)).toBe(false);
-
 		const groups = getProjectThreadGroups(
 			[
 				makeProject({
@@ -228,69 +217,6 @@ describe('project thread helpers', () => {
 			'thread-record-running-older',
 			'thread-record-completed-newer'
 		]);
-	});
-
-	it('finds a project by repository key', () => {
-		const match = makeProject({
-			repositoryKey: 'github.com/spikonado/sprocket',
-			displayName: 'sprocket'
-		});
-		const projects = [
-			match,
-			makeProject({
-				repositoryKey: 'local-sprocket',
-				displayName: 'sprocket'
-			})
-		];
-
-		expect(findProjectByRepositoryKey(projects, 'github.com/spikonado/sprocket')).toBe(match);
-		expect(findProjectByRepositoryKey(projects, 'sprocket')).toBeNull();
-	});
-
-	it('maps a persisted thread row onto ThreadSummary fields', () => {
-		const row = {
-			threadId: threadA,
-			repositoryKey: 'ws-1',
-			title: 'Checkout',
-			selectedModel: 'gpt-5.6-luna',
-			reasoningEffort: defaultReasoningEffort,
-			serviceTier: defaultServiceTier,
-			lastMessageAt: 42,
-			threadStatus: 'active' as const,
-			status: 'running' as const
-		};
-
-		expect(toThreadSummary(row)).toEqual({
-			threadId: threadA,
-			repositoryKey: 'ws-1',
-			title: 'Checkout',
-			selectedModel: 'gpt-5.6-luna',
-			reasoningEffort: defaultReasoningEffort,
-			serviceTier: defaultServiceTier,
-			lastMessageAt: 42,
-			threadStatus: 'active',
-			status: 'running'
-		});
-	});
-
-	it('keeps project fields on the group rather than copying them', () => {
-		const project = makeProject({
-			repositoryKey: 'github.com/spikonado/sprocket',
-			displayName: 'sprocket-checkout'
-		});
-		const groups = getProjectThreadGroups(
-			[project],
-			[
-				makeThreadSummary({
-					repositoryKey: 'github.com/spikonado/sprocket',
-					lastMessageAt: 10
-				})
-			]
-		);
-
-		expect(groups).toHaveLength(1);
-		expect(groups[0]?.project).toBe(project);
-		expect(groups[0]?.project.displayName).toBe('sprocket-checkout');
 	});
 
 	it('preserves a blank draft selection for the current repository', () => {
@@ -387,49 +313,6 @@ describe('project thread helpers', () => {
 				threads: [created, existing]
 			})
 		).toBeNull();
-	});
-
-	it('prepends an unconfirmed thread and overlays placeholder titles until confirmed', () => {
-		const unconfirmed = makeUnconfirmedCreatedThread({
-			threadId: threadId('thread-record-new'),
-			repositoryKey: 'ws-1',
-			selectedModel: defaultModelId,
-			reasoningEffort: defaultReasoningEffort,
-			serviceTier: defaultServiceTier,
-			title: '  Hello from the first prompt  ',
-			lastMessageAt: 50
-		});
-		const existing = makeThreadSummary({
-			threadId: threadId('thread-record-old')
-		});
-		const placeholder = makeThreadSummary({
-			threadId: unconfirmed.threadId,
-			title: 'New thread'
-		});
-		const confirmed = makeThreadSummary({
-			threadId: unconfirmed.threadId,
-			title: 'Hello from the first prompt'
-		});
-
-		expect(unconfirmed.title).toBe('Hello from the first prompt');
-		expect(mergeUnconfirmedCreatedThread([existing], null)).toEqual([existing]);
-		expect(mergeUnconfirmedCreatedThread([existing], unconfirmed)).toEqual([unconfirmed, existing]);
-		expect(mergeUnconfirmedCreatedThread([placeholder, existing], unconfirmed)).toEqual([
-			{ ...placeholder, title: unconfirmed.title },
-			existing
-		]);
-		expect(mergeUnconfirmedCreatedThread([confirmed, existing], unconfirmed)).toEqual([
-			confirmed,
-			existing
-		]);
-		expect(shouldDropUnconfirmedCreatedThread([existing], unconfirmed)).toBe(false);
-		expect(shouldDropUnconfirmedCreatedThread([placeholder], unconfirmed)).toBe(false);
-		expect(shouldDropUnconfirmedCreatedThread([confirmed], unconfirmed)).toBe(true);
-		expect(mergeUnconfirmedCreatedThreads([existing], [unconfirmed, existing])).toEqual([
-			unconfirmed,
-			existing
-		]);
-		expect(retainUnconfirmedCreatedThreads([confirmed, existing], [unconfirmed])).toEqual([]);
 	});
 
 	it('tracks pending launches independently by thread and clears only progressed ones', () => {

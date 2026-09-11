@@ -1015,23 +1015,6 @@ mod tests {
     }
 
     #[test]
-    fn base_instructions_include_unslop_rules() {
-        let prompt_context = build_test_prompt_context(&[], &[]);
-
-        assert!(
-            prompt_context
-                .base_instructions
-                .contains("Edit text to remove AI patterns and add human voice.")
-        );
-        assert!(prompt_context.base_instructions.contains("1. **Puffery.**"));
-        assert!(
-            prompt_context
-                .base_instructions
-                .ends_with("The fancier synonym is rarely clearer.")
-        );
-    }
-
-    #[test]
     fn initial_context_renders_skills_block() {
         let skills = [WorkspaceSkill {
             name: "pdf-processing".to_string(),

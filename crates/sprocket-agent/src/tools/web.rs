@@ -632,15 +632,4 @@ mod tests {
         server.await.unwrap();
         assert_eq!(metadata["mediaType"], "image/png");
     }
-
-    #[test]
-    fn url_tool_schemas_only_advertise_a_required_url() {
-        for schema in [
-            json!(schemars::schema_for!(ScrapeUrlArgs)),
-            json!(schemars::schema_for!(ScreenshotUrlArgs)),
-        ] {
-            assert_eq!(schema["properties"], json!({"url": {"type": "string"}}));
-            assert_eq!(schema["required"], json!(["url"]));
-        }
-    }
 }

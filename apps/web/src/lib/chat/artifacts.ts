@@ -146,10 +146,6 @@ export function applyArtifactsWatchEvent(event: ArtifactsWatchEvent): ArtifactWa
 	};
 }
 
-export function markArtifactWatchStale(previous: ArtifactWatchState): ArtifactWatchState {
-	return { ...previous, stale: true };
-}
-
 export function mergeArtifactSources(
 	cloud: ArtifactWatchState,
 	local: ArtifactWatchState | null

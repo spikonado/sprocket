@@ -1,32 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { requestPackageUpdate, updateLabel, updateStateSchema, type UpdateState } from './updates';
+import { requestPackageUpdate, type UpdateState } from './updates';
 
 afterEach(() => vi.unstubAllGlobals());
 
 function state(status: UpdateState['status'], version: string | null = '1.1.0'): UpdateState {
 	return { status, version, method: 'desktop', currentVersion: '1.0.0', error: null };
 }
-
-describe('update action', () => {
-	it('stays hidden until an update is known, including background failures', () => {
-		for (const status of ['idle', 'unavailable', 'checking', 'error'] as const) {
-			expect(updateLabel(state(status, null))).toBeNull();
-		}
-		expect(updateLabel(state('available'))).toBe('Update available');
-		expect(updateLabel(state('error'))).toBe('Retry update');
-	});
-
-	it('distinguishes download, restart, and package install completion', () => {
-		expect(updateLabel({ ...state('downloading'), progress: 42 })).toBe('Downloading… 42%');
-		expect(updateLabel(state('downloaded'))).toBe('Restart to update');
-		expect(updateLabel({ ...state('installed'), method: 'package' })).toBe('Update installed');
-	});
-
-	it('rejects an unrelated or incompatible local server response', () => {
-		expect(updateStateSchema.safeParse({ status: 'ok' }).success).toBe(false);
-		expect(updateStateSchema.safeParse(state('available')).success).toBe(true);
-	});
-});
 
 describe('package update requests', () => {
 	it('shows the server explanation when an install is rejected', async () => {

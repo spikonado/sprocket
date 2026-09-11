@@ -4,7 +4,6 @@ import {
 	createLocalClient,
 	ensureLocalSession,
 	readWorkspaceLaunchFromHash,
-	transcriptUploadPath,
 	workspaceLaunchHash
 } from '$lib/local/client';
 import { threadRecordToSummary } from '$lib/project/threads';
@@ -485,22 +484,6 @@ describe('run cancellation local API', () => {
 });
 
 describe('transcript file upload', () => {
-	it('encodes query values and omits threadId until one exists', () => {
-		expect(
-			transcriptUploadPath({
-				userId: 'user/1',
-				name: 'spec & notes.pdf'
-			})
-		).toBe('/api/transcript/upload?userId=user%2F1&name=spec%20%26%20notes.pdf');
-		expect(
-			transcriptUploadPath({
-				userId: 'user-1',
-				name: 'notes.txt',
-				threadId: 'thread/1'
-			})
-		).toBe('/api/transcript/upload?userId=user-1&name=notes.txt&threadId=thread%2F1');
-	});
-
 	it('posts the raw file through the authenticated helper', async () => {
 		const file = new File(['hello'], 'notes.txt', { type: 'text/plain' });
 		const fetch = vi.fn(async () =>

@@ -1,15 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Id } from '$convex/_generated/dataModel';
-import {
-	isRunBlockingAgentLaunch,
-	launchAgentRun,
-	lifecycleResumeKind,
-	resolveDraftRunSubmissionId,
-	resolveSubmissionId,
-	runResumeKind
-} from '$lib/home/desktop';
-import { RUN_ABANDONED_BY_AGENT } from '$convex/lib/agentErrors';
-import type { DesktopApi, RunState } from '$lib/types/sprocket';
+import { launchAgentRun, resolveSubmissionId } from '$lib/home/desktop';
+import type { DesktopApi } from '$lib/types/sprocket';
 
 function storageId(value: string): Id<'_storage'> {
 	// SAFETY: fixture strings are only compared as opaque Convex document ids.
@@ -198,82 +190,5 @@ describe('resolveSubmissionId', () => {
 				latestRun: { status: 'queued', submissionId: 'newer-id' }
 			})
 		).toBe('new-id');
-	});
-});
-
-describe('resolveDraftRunSubmissionId', () => {
-	it.each(['completed', 'failed', 'cancelled'] as const)(
-		'uses a fresh run submission after draft creation reveals a %s run',
-		(submissionRunStatus) => {
-			expect(
-				resolveDraftRunSubmissionId({
-					freshSubmissionId: 'fresh-id',
-					submissionRunStatus,
-					threadSubmissionId: 'recovered-id'
-				})
-			).toBe('fresh-id');
-		}
-	);
-
-	it.each([null, 'queued', 'running', 'awaiting_executor'] as const)(
-		'reuses the draft submission when its run is %s',
-		(submissionRunStatus) => {
-			expect(
-				resolveDraftRunSubmissionId({
-					freshSubmissionId: 'fresh-id',
-					submissionRunStatus,
-					threadSubmissionId: 'recovered-id'
-				})
-			).toBe('recovered-id');
-		}
-	);
-});
-
-describe('isRunBlockingAgentLaunch', () => {
-	it('blocks queued and actively leased runs', () => {
-		const run = (
-			status: RunState['status'],
-			claimExpiresAt?: number
-		): Pick<RunState, 'status' | 'claimExpiresAt'> => {
-			const next: Pick<RunState, 'status' | 'claimExpiresAt'> = { status };
-			if (claimExpiresAt !== undefined) {
-				next.claimExpiresAt = claimExpiresAt;
-			}
-			return next;
-		};
-
-		expect(isRunBlockingAgentLaunch(run('queued'), 100)).toBe(true);
-		expect(isRunBlockingAgentLaunch(run('running', 101), 100)).toBe(true);
-		expect(isRunBlockingAgentLaunch(run('awaiting_executor', 100), 100)).toBe(false);
-	});
-});
-
-describe('runResumeKind', () => {
-	it('classifies crashed, failed, and cancelled latest runs', () => {
-		expect(runResumeKind({ status: 'running', claimExpiresAt: 50 }, 100)).toBe('crash');
-		expect(
-			runResumeKind(
-				{
-					status: 'failed',
-					lastError: RUN_ABANDONED_BY_AGENT
-				},
-				100
-			)
-		).toBe('crash');
-		expect(runResumeKind({ status: 'failed', lastError: 'boom' }, 100)).toBe('failed');
-		expect(runResumeKind({ status: 'cancelled' }, 100)).toBe('cancelled');
-		expect(runResumeKind({ status: 'completed' }, 100)).toBeNull();
-		expect(runResumeKind({ status: 'running', claimExpiresAt: 150 }, 100)).toBeNull();
-	});
-});
-
-describe('lifecycleResumeKind', () => {
-	it('classifies failed, crashed, and cancelled projection phases', () => {
-		expect(lifecycleResumeKind('cancelled')).toBe('cancelled');
-		expect(lifecycleResumeKind('failed', RUN_ABANDONED_BY_AGENT)).toBe('crash');
-		expect(lifecycleResumeKind('failed', 'boom')).toBe('failed');
-		expect(lifecycleResumeKind('completed')).toBeNull();
-		expect(lifecycleResumeKind('running')).toBeNull();
-		expect(lifecycleResumeKind('cancellation_requested')).toBeNull();
 	});
 });

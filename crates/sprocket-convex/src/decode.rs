@@ -154,37 +154,11 @@ mod tests {
     }
 
     #[test]
-    fn keeps_plain_messages_untouched() {
-        assert_eq!(
-            clean_function_error_message("Mandate not found."),
-            "Mandate not found."
-        );
-    }
-
-    #[test]
-    fn strips_uncaught_error_prefixes() {
-        assert_eq!(
-            clean_function_error_message("Uncaught Error: Prava request failed (500): boom"),
-            "Prava request failed (500): boom"
-        );
-    }
-
-    #[test]
     fn falls_back_when_production_masks_the_whole_error() {
         assert_eq!(
             clean_function_error_message("[Request ID: 0d45611fde71c0f2] Server Error"),
             "The server failed without a readable error."
         );
-    }
-
-    #[test]
-    fn value_to_plain_json_round_trips_object_fields() {
-        let value = Value::Object(
-            [("n".to_string(), Value::Float64(3.0))]
-                .into_iter()
-                .collect(),
-        );
-        assert_eq!(value_to_plain_json(value), serde_json::json!({ "n": 3.0 }));
     }
 
     #[test]

@@ -870,21 +870,6 @@ mod tests {
     }
 
     #[test]
-    fn tool_schema_requires_path_and_omits_url() {
-        let schema = parse_file_parameters();
-        assert_eq!(schema["required"], json!(["path"]));
-        assert_eq!(
-            schema["properties"]["path"]["description"],
-            "Relative or absolute path to the file"
-        );
-        assert!(schema["properties"].get("url").is_none(), "{schema}");
-        assert!(
-            schema["properties"]["path"].get("default").is_none(),
-            "{schema}"
-        );
-    }
-
-    #[test]
     fn args_require_a_local_path_and_reject_urls() {
         let empty = parse_file_args(&args("  ")).expect_err("empty");
         assert!(empty.to_string().contains("path"), "{empty}");

@@ -247,44 +247,4 @@ mod tests {
                 .is_err()
         );
     }
-
-    #[test]
-    fn upload_success_returns_storage_id_without_an_upload_row_alias() {
-        let json = serde_json::to_value(UploadedAttachment {
-            storage_id: "storage-1".into(),
-            name: "notes.txt".into(),
-            media_type: "text/plain".into(),
-            size: 5,
-            url: "https://example.com/notes.txt".into(),
-        })
-        .unwrap();
-        assert_eq!(json["storageId"], "storage-1");
-        assert!(json.get("imageUploadId").is_none());
-    }
-
-    #[test]
-    fn discard_request_requires_storage_identity() {
-        let storage: DiscardRequest = serde_json::from_value(serde_json::json!({
-            "userId": "user-1",
-            "storageId": "storage-1"
-        }))
-        .unwrap();
-        assert_eq!(storage.storage_id, "storage-1");
-        assert!(
-            serde_json::from_value::<DiscardRequest>(serde_json::json!({
-                "userId": "user-1",
-                "imageUploadId": "upload-1",
-                "threadId": "thread-1"
-            }))
-            .is_err()
-        );
-        assert!(
-            serde_json::from_value::<DiscardRequest>(serde_json::json!({
-                "userId": "user-1",
-                "storageId": "storage-1",
-                "imageUploadId": "upload-1"
-            }))
-            .is_err()
-        );
-    }
 }

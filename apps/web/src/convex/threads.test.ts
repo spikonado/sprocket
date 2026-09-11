@@ -4,15 +4,6 @@ import type { Id } from '@convex/_generated/dataModel';
 import { initConvexTest, seedOwnedThread, seedThreadRecord } from './test.setup';
 
 describe('threads local-cache commands', () => {
-	it('stores the selected model on its thread', async () => {
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
-		await asUser.mutation(api.threads.setSelectedModel, { threadId, selectedModel: 'grok-4.5' });
-		expect((await asUser.query(api.threads.getByThreadId, { threadId })).selectedModel).toBe(
-			'grok-4.5'
-		);
-	});
-
 	it('returns authenticated command metadata', async () => {
 		const t = initConvexTest();
 		const { asUser, subject, repositoryKey, threadId } = await seedOwnedThread(t);

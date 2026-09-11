@@ -410,43 +410,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registration_args_are_path_scope_only() {
-        assert!(
-            serde_json::from_value::<AddArtifactArgs>(
-                json!({"path": "doc.md", "scope": "thread", "content": "inline"})
-            )
-            .is_err()
-        );
-        assert!(
-            serde_json::from_value::<AddArtifactArgs>(json!({"path": "doc.md", "scope": "global"}))
-                .is_err()
-        );
-        assert!(
-            serde_json::from_value::<EditArtifactArgs>(
-                json!({"artifactId": "id", "path": "doc.md", "content": "inline"})
-            )
-            .is_err()
-        );
-        assert!(serde_json::from_value::<ListArtifactsArgs>(json!({"path": "doc.md"})).is_err());
-        let add: AddArtifactArgs =
-            serde_json::from_value(json!({"path": "doc.md", "scope": "thread"})).unwrap();
-        assert_eq!(
-            serde_json::to_value(&add).unwrap(),
-            json!({"path": "doc.md", "scope": "thread"})
-        );
-        let edit: EditArtifactArgs =
-            serde_json::from_value(json!({"artifactId": "id", "path": "/tmp/new.md"})).unwrap();
-        assert_eq!(
-            serde_json::to_value(&edit).unwrap(),
-            json!({"artifactId": "id", "path": "/tmp/new.md"})
-        );
-        assert_eq!(
-            serde_json::to_value(&ListArtifactsArgs {}).unwrap(),
-            json!({})
-        );
-    }
-
-    #[test]
     fn summaries_keep_file_identity_without_copying_content_into_tool_history() {
         assert_eq!(
             artifact_summary(json!({

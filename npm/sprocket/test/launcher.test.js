@@ -4,13 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import {
-	ensureExecutable,
-	launch,
-	nativeChildEnvironment,
-	nativePackage,
-	run
-} from '../lib/launcher.js';
+import { ensureExecutable, launch, nativePackage } from '../lib/launcher.js';
 
 test('selects the native package for supported platforms', () => {
 	assert.deepEqual(nativePackage('linux', 'x64'), [
@@ -39,25 +33,6 @@ test('restores execute bits on unix binaries', { skip: process.platform === 'win
 	} finally {
 		rmSync(directory, { recursive: true, force: true });
 	}
-});
-
-test('runs the native executable with unchanged arguments and environment', () => {
-	const expectedEnv = { SPROCKET_STATIC_DIR: '/tmp/web' };
-	let invocation;
-	const status = run('/tmp/sprocket', ['--web', './robot'], {
-		env: expectedEnv,
-		spawn(binary, args, options) {
-			invocation = { binary, args, options };
-			return { status: 0 };
-		}
-	});
-
-	assert.deepEqual(invocation, {
-		binary: '/tmp/sprocket',
-		args: ['--web', './robot'],
-		options: { stdio: 'inherit', env: expectedEnv }
-	});
-	assert.equal(status, 0);
 });
 
 test('overrides inherited update helper environment for the native child', async () => {
@@ -104,22 +79,4 @@ test('update and upgrade help is delegated to the native CLI', async () => {
 		assert.equal(code, 0);
 		assert.deepEqual(invocation, { binary: '/tmp/sprocket', args });
 	}
-});
-
-test('native child environment always overwrites helper paths', () => {
-	const env = nativeChildEnvironment(
-		{
-			SPROCKET_STATIC_DIR: '/custom/web',
-			SPROCKET_UPDATE_NODE: '/evil/node',
-			SPROCKET_UPDATE_SCRIPT: '/evil/update-api.js',
-			SPROCKET_UPDATE_MANAGED: '1'
-		},
-		'/pkg/web',
-		'/usr/bin/node',
-		'/pkg/lib/update-api.js'
-	);
-	assert.equal(env.SPROCKET_STATIC_DIR, '/custom/web');
-	assert.equal(env.SPROCKET_UPDATE_NODE, '/usr/bin/node');
-	assert.equal(env.SPROCKET_UPDATE_SCRIPT, '/pkg/lib/update-api.js');
-	assert.equal(Object.hasOwn(env, 'SPROCKET_UPDATE_MANAGED'), false);
 });

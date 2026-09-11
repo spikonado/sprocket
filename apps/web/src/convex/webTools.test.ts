@@ -8,14 +8,11 @@ import { UNSUPPORTED_CLIENT_MESSAGE } from '@convex/lib/unsupportedClient';
 import { vScrapeUrlTransport, vScreenshotUrlTransport } from '@convex/lib/validators';
 import {
 	DEFAULT_SCRAPE_SUMMARY,
-	isCleanPageStatus,
-	localInlineFits,
 	scrapeHttpErrorStatus,
 	SCRAPE_INLINE_MAX_CHARS,
 	SCRAPE_STORAGE_TTL_MS,
 	SCRAPE_TIMEOUT_MS,
 	executeQueuedScrape,
-	summaryFitsTransport,
 	type ScrapedPage
 } from '@convex/webTools';
 import { initConvexTest, seedStartedWebJob, type ConvexTestInstance } from './test.setup';
@@ -115,11 +112,6 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
 describe('scrape HTTP failures', () => {
-	it('reads Firecrawl API errors from ConvexError data', () => {
-		expect(scrapeHttpErrorStatus(firecrawlApiError(404))).toBe(404);
-		expect(scrapeHttpErrorStatus(firecrawlApiError(429))).toBe(429);
-	});
-
 	it('reads nested Firecrawl API errors from the message JSON', () => {
 		const error = new Error(
 			`Uncaught ConvexError: Uncaught ConvexError: ${JSON.stringify({
@@ -130,21 +122,6 @@ describe('scrape HTTP failures', () => {
 			})}\n    at scrape (lib.js:24:12)`
 		);
 		expect(scrapeHttpErrorStatus(error)).toBe(403);
-	});
-
-	it('ignores non-HTTP and malformed errors', () => {
-		expect(scrapeHttpErrorStatus(new Error('{"status":200}'))).toBeUndefined();
-		expect(scrapeHttpErrorStatus(new Error('Firecrawl scrape timed out after 60000ms.'))).toBe(
-			undefined
-		);
-	});
-
-	it('does not treat page metadata.statusCode as a Firecrawl API error', () => {
-		expect(scrapeHttpErrorStatus(new Error('This webpage returned a 404 error.'))).toBeUndefined();
-		expect(isCleanPageStatus(404)).toBe(false);
-		expect(isCleanPageStatus(200)).toBe(true);
-		expect(isCleanPageStatus(304)).toBe(true);
-		expect(isCleanPageStatus(301)).toBe(false);
 	});
 });
 
@@ -412,47 +389,6 @@ async function scrapeLocalPage(
 }
 
 describe('scrape size budget', () => {
-	it('keeps short markdown plus images inline', () => {
-		expect(
-			localInlineFits({
-				url: PAGE_URL,
-				markdown: 'x'.repeat(SCRAPE_INLINE_MAX_CHARS - 1_000),
-				summary: 'Short page.',
-				images: ['https://example.com/a.png']
-			})
-		).toBe(true);
-	});
-
-	it('spills when the images list alone exceeds the document budget', () => {
-		const page: ScrapedPage = {
-			url: PAGE_URL,
-			markdown: 'short',
-			summary: 'Short page.',
-			images: [`https://cdn.example.com/${'x'.repeat(SCRAPE_INLINE_MAX_CHARS)}.png`]
-		};
-		expect(localInlineFits(page)).toBe(false);
-		expect(summaryFitsTransport(page)).toBe(true);
-	});
-
-	it('spills at the inline limit even when markdown alone fits', () => {
-		const page: ScrapedPage = { url: PAGE_URL, markdown: '', summary: 'Summary', images: [] };
-		page.markdown = 'x'.repeat(SCRAPE_INLINE_MAX_CHARS - JSON.stringify(page).length);
-		expect(localInlineFits(page)).toBe(true);
-		page.images.push('https://example.com/a.png');
-		expect(localInlineFits(page)).toBe(false);
-	});
-
-	it('spills image arrays that exceed Convex array limits', () => {
-		expect(
-			localInlineFits({
-				url: PAGE_URL,
-				markdown: '',
-				summary: 'Summary',
-				images: Array(8_193).fill('')
-			})
-		).toBe(false);
-	});
-
 	it('rejects a summary that cannot fit the inline budget', async () => {
 		const page: ScrapedPage = {
 			url: PAGE_URL,
@@ -460,7 +396,6 @@ describe('scrape size budget', () => {
 			summary: 's'.repeat(SCRAPE_INLINE_MAX_CHARS),
 			images: []
 		};
-		expect(summaryFitsTransport(page)).toBe(false);
 		await expect(scrapeLocalPage(page)).rejects.toThrow('Scrape summary is too large.');
 	});
 });

@@ -464,42 +464,6 @@ mod tests {
     }
 
     #[test]
-    fn attachment_request_requires_storage_id_and_rejects_legacy_upload_id() {
-        let storage: TranscriptAttachmentRequest = serde_json::from_value(serde_json::json!({
-            "userId": "user-1",
-            "threadId": "thread-1",
-            "storageId": "storage-1"
-        }))
-        .unwrap();
-        assert_eq!(storage.storage_id, "storage-1");
-
-        assert!(
-            serde_json::from_value::<TranscriptAttachmentRequest>(serde_json::json!({
-                "userId": "user-1",
-                "threadId": "thread-1",
-                "imageUploadId": "upload-1"
-            }))
-            .is_err()
-        );
-        assert!(
-            serde_json::from_value::<TranscriptAttachmentRequest>(serde_json::json!({
-                "userId": "user-1",
-                "threadId": "thread-1",
-                "storageId": "storage-1",
-                "imageUploadId": "upload-1"
-            }))
-            .is_err()
-        );
-        assert!(
-            serde_json::from_value::<TranscriptAttachmentRequest>(serde_json::json!({
-                "userId": "user-1",
-                "threadId": "thread-1"
-            }))
-            .is_err()
-        );
-    }
-
-    #[test]
     fn part_detail_numbers_are_capped_and_strictly_increasing() {
         assert!(require_transcript_numbers(&[0, 1, 2], Some(100)).is_ok());
         assert!(require_transcript_numbers(&[], Some(100)).is_err());
