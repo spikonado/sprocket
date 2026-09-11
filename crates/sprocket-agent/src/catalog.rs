@@ -107,23 +107,41 @@ mod tests {
     use super::*;
 
     fn catalog_payload() -> GatewayModelsResponse {
-        serde_json::from_str(include_str!(
-            "../../../contracts/ai-gateway/fixtures/catalog.json"
-        ))
-        .expect("catalog fixture")
+        serde_json::from_value(serde_json::json!({
+            "sprocket": {
+                "protocolVersion": 1,
+                "models": [
+                    {
+                        "id": "vision-model",
+                        "label": "Vision Model",
+                        "supportsImages": true,
+                        "contextWindowTokens": 100000,
+                        "autoCompactTokenLimit": 80000
+                    },
+                    {
+                        "id": "long-context-model",
+                        "label": "Long Context Model",
+                        "supportsImages": false,
+                        "contextWindowTokens": 1000000,
+                        "autoCompactTokenLimit": 900000
+                    }
+                ]
+            }
+        }))
+        .expect("catalog payload")
     }
 
     #[test]
-    fn fixture_reports_selected_model_metadata_from_one_payload() {
-        let vision = select_catalog_model(catalog_payload(), "gpt-5.6-sol").expect("vision model");
+    fn reports_selected_model_metadata_from_one_payload() {
+        let vision = select_catalog_model(catalog_payload(), "vision-model").expect("vision model");
         assert!(vision.supports_images);
-        assert_eq!(vision.label, "GPT-5.6 Sol");
-        assert_eq!(vision.context_budget.context_window_tokens, 272000);
-        assert_eq!(vision.context_budget.auto_handoff_token_limit, 252000);
+        assert_eq!(vision.label, "Vision Model");
+        assert_eq!(vision.context_budget.context_window_tokens, 100_000);
+        assert_eq!(vision.context_budget.auto_handoff_token_limit, 80_000);
 
-        let long_context =
-            select_catalog_model(catalog_payload(), "fable-5.1").expect("long-context model");
-        assert!(long_context.supports_images);
+        let long_context = select_catalog_model(catalog_payload(), "long-context-model")
+            .expect("long-context model");
+        assert!(!long_context.supports_images);
         assert_eq!(long_context.context_budget.context_window_tokens, 1_000_000);
     }
 

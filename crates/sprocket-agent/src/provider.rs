@@ -14,7 +14,7 @@ use tokio::time::{sleep, timeout};
 
 use crate::context_handoff::{ContextHandoffHook, HANDOFF_PROMPT, context_summary_text};
 use crate::convex::RuntimeClient;
-use crate::hooks::{AgentPromptHook, GatewayRequestHook, ToolCallTracker};
+use crate::hooks::{AgentPromptHook, ToolCallTracker};
 use crate::live::{
     LiveAssistantPart, LiveAssistantParts, LiveCompletionHub, LiveCompletionOverlay,
     join_assistant_text_parts, now_ms,
@@ -47,6 +47,30 @@ fn classify_provider_error(error: &(impl std::fmt::Display + ?Sized)) -> Provide
         return ProviderErrorDisposition::Cancelled;
     }
     ProviderErrorDisposition::Failed
+}
+
+fn openai_additional_params(
+    reasoning_effort: &str,
+    service_tier: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let reasoning_effort = serde_json::from_value::<openai::responses_api::ReasoningEffort>(
+        serde_json::Value::String(reasoning_effort.to_string()),
+    )?;
+    let service_tier = if service_tier == "standard" {
+        None
+    } else {
+        Some(serde_json::from_value::<
+            openai::responses_api::OpenAIServiceTier,
+        >(serde_json::Value::String(
+            service_tier.to_string(),
+        ))?)
+    };
+    Ok(openai::responses_api::AdditionalParameters {
+        reasoning: Some(openai::responses_api::Reasoning::new().with_effort(reasoning_effort)),
+        service_tier,
+        ..Default::default()
+    }
+    .to_json())
 }
 
 fn incomplete_completion_error(reason: Option<&FinishReason>) -> Option<anyhow::Error> {
@@ -151,6 +175,16 @@ where
     C: CompletionClient + AgentClientExt,
     C::CompletionModel: 'static,
 {
+    let additional_params =
+        match openai_additional_params(&request.reasoning_effort, &request.service_tier) {
+            Ok(params) => params,
+            Err(error) => {
+                return AgentProviderResult::Failed {
+                    text: String::new(),
+                    error: error.context("invalid OpenAI Responses parameters"),
+                };
+            }
+        };
     let tool_call_tracker = ToolCallTracker::default();
     let tools = agent_tools(
         runtime.clone(),
@@ -173,6 +207,7 @@ where
     let agent = completion_client
         .agent(model)
         .preamble(&request.base_instructions)
+        .additional_params(additional_params)
         .tool(tools.apply_patch)
         .tool(tools.ask_question)
         .tool(tools.await_question)
@@ -233,11 +268,6 @@ where
 
     let prompt_hook = AgentPromptHook::new(tool_call_tracker);
     let initial_context: Arc<[Message]> = request.initial_context.into();
-    let gateway_hook = GatewayRequestHook::new(
-        request.reasoning_effort.clone(),
-        request.service_tier.clone(),
-    );
-
     let mut finished = match runtime.run_finished_subscription(&request.run_id).await {
         Ok(subscription) => subscription,
         Err(error) => {
@@ -270,7 +300,6 @@ where
                 .history(history)
                 .max_turns(AGENT_MAX_TURNS)
                 .add_hook(prompt_hook.clone())
-                .add_hook(gateway_hook.clone())
                 .add_hook(context_handoff_hook.clone())
                 .max_invalid_tool_call_retries(MAX_INVALID_TOOL_CALL_RETRIES)
                 .await;

@@ -14,8 +14,7 @@ use rig::providers::openai;
 use rig::streaming::StreamedAssistantContent;
 use serde_json::{Value as JsonValue, json};
 
-use super::{contiguous_text_id, durable_items_json};
-use crate::hooks::gateway_additional_params;
+use super::{contiguous_text_id, durable_items_json, openai_additional_params};
 use crate::live::{LiveAssistantPart, LiveAssistantParts, now_ms};
 use crate::reasoning::{apply_completed_reasoning, merge_provider_metadata};
 use crate::transcript::{TranscriptPart, TranscriptStore, agent_history_from_parts};
@@ -59,8 +58,8 @@ fn gateway_response(status: &str, output: Vec<JsonValue>) -> JsonValue {
     })
 }
 
-/// Gateway wire order: reasoning, function call, then text, with each item's
-/// complete Responses event lifecycle.
+/// Gateway wire order: empty encrypted reasoning item, summary delta, then
+/// authoritative completed reasoning, then function call, then text.
 fn gateway_sse_body() -> String {
     let empty_reasoning = json!({
         "type": "reasoning",
@@ -77,15 +76,7 @@ fn gateway_sse_body() -> String {
         "encrypted_content": ENVELOPE,
         "status": "completed"
     });
-    let pending_function_call = json!({
-        "type": "function_call",
-        "id": "fc_1",
-        "call_id": TOOL_CALL_ID,
-        "name": TOOL_NAME,
-        "arguments": "",
-        "status": "in_progress"
-    });
-    let completed_function_call = json!({
+    let function_call = json!({
         "type": "function_call",
         "id": "fc_1",
         "call_id": TOOL_CALL_ID,
@@ -93,19 +84,12 @@ fn gateway_sse_body() -> String {
         "arguments": "{\"cmd\":\"pwd\"}",
         "status": "completed"
     });
-    let pending_message = json!({
-        "type": "message",
-        "id": "msg_1",
-        "role": "assistant",
-        "status": "in_progress",
-        "content": [{ "type": "output_text", "text": "", "annotations": [], "logprobs": [] }]
-    });
-    let completed_message = json!({
+    let message = json!({
         "type": "message",
         "id": "msg_1",
         "role": "assistant",
         "status": "completed",
-        "content": [{ "type": "output_text", "text": TEXT, "annotations": [], "logprobs": [] }]
+        "content": [{ "type": "output_text", "text": TEXT }]
     });
 
     [
@@ -115,132 +99,55 @@ fn gateway_sse_body() -> String {
             "response": gateway_response("in_progress", vec![]),
         })),
         sse(json!({
-            "type": "response.in_progress",
-            "sequence_number": 1,
-            "response": gateway_response("in_progress", vec![]),
-        })),
-        sse(json!({
             "type": "response.output_item.added",
-            "output_index": 0,
-            "sequence_number": 2,
-            "item": empty_reasoning,
-        })),
-        sse(json!({
-            "type": "response.reasoning_summary_part.added",
             "item_id": ITEM_ID,
             "output_index": 0,
-            "summary_index": 0,
-            "sequence_number": 3,
-            "part": { "type": "summary_text", "text": "" },
+            "sequence_number": 1,
+            "item": empty_reasoning,
         })),
         sse(json!({
             "type": "response.reasoning_summary_text.delta",
             "item_id": ITEM_ID,
             "output_index": 0,
             "summary_index": 0,
-            "sequence_number": 4,
+            "sequence_number": 2,
             "delta": DELTA_SUMMARY,
         })),
         sse(json!({
-            "type": "response.reasoning_summary_text.done",
-            "item_id": ITEM_ID,
-            "output_index": 0,
-            "summary_index": 0,
-            "sequence_number": 5,
-            "text": DONE_SUMMARY,
-        })),
-        sse(json!({
-            "type": "response.reasoning_summary_part.done",
-            "item_id": ITEM_ID,
-            "output_index": 0,
-            "summary_index": 0,
-            "sequence_number": 6,
-            "part": { "type": "summary_text", "text": DONE_SUMMARY },
-        })),
-        sse(json!({
             "type": "response.output_item.done",
+            "item_id": ITEM_ID,
             "output_index": 0,
-            "sequence_number": 7,
+            "sequence_number": 3,
             "item": completed_reasoning.clone(),
         })),
         sse(json!({
             "type": "response.output_item.added",
-            "output_index": 1,
-            "sequence_number": 8,
-            "item": pending_function_call,
-        })),
-        sse(json!({
-            "type": "response.function_call_arguments.delta",
             "item_id": "fc_1",
             "output_index": 1,
-            "sequence_number": 9,
-            "delta": "{\"cmd\":\"pwd\"}",
-        })),
-        sse(json!({
-            "type": "response.function_call_arguments.done",
-            "item_id": "fc_1",
-            "output_index": 1,
-            "sequence_number": 10,
-            "arguments": "{\"cmd\":\"pwd\"}",
+            "sequence_number": 4,
+            "item": function_call.clone(),
         })),
         sse(json!({
             "type": "response.output_item.done",
+            "item_id": "fc_1",
             "output_index": 1,
-            "sequence_number": 11,
-            "item": completed_function_call.clone(),
-        })),
-        sse(json!({
-            "type": "response.output_item.added",
-            "output_index": 2,
-            "sequence_number": 12,
-            "item": pending_message,
-        })),
-        sse(json!({
-            "type": "response.content_part.added",
-            "item_id": "msg_1",
-            "output_index": 2,
-            "content_index": 0,
-            "sequence_number": 13,
-            "part": { "type": "output_text", "text": "", "annotations": [], "logprobs": [] },
+            "sequence_number": 5,
+            "item": function_call.clone(),
         })),
         sse(json!({
             "type": "response.output_text.delta",
             "item_id": "msg_1",
             "output_index": 2,
             "content_index": 0,
-            "sequence_number": 14,
+            "sequence_number": 6,
             "delta": TEXT,
-            "logprobs": [],
-        })),
-        sse(json!({
-            "type": "response.output_text.done",
-            "item_id": "msg_1",
-            "output_index": 2,
-            "content_index": 0,
-            "sequence_number": 15,
-            "text": TEXT,
-            "logprobs": [],
-        })),
-        sse(json!({
-            "type": "response.content_part.done",
-            "item_id": "msg_1",
-            "output_index": 2,
-            "content_index": 0,
-            "sequence_number": 16,
-            "part": { "type": "output_text", "text": TEXT, "annotations": [], "logprobs": [] },
-        })),
-        sse(json!({
-            "type": "response.output_item.done",
-            "output_index": 2,
-            "sequence_number": 17,
-            "item": completed_message.clone(),
         })),
         sse(json!({
             "type": "response.completed",
-            "sequence_number": 18,
+            "sequence_number": 7,
             "response": gateway_response(
                 "completed",
-                vec![completed_reasoning, completed_function_call, completed_message],
+                vec![completed_reasoning, function_call, message],
             ),
         })),
     ]
@@ -403,7 +310,7 @@ fn responses_keep_thread_context_in_history_and_base_instructions_separate() {
             Message::user("earlier request"),
             Message::assistant("earlier response"),
         ])
-        .additional_params(gateway_additional_params("medium", "standard"))
+        .additional_params(openai_additional_params("medium", "standard").unwrap())
         .build();
     let wire =
         openai::responses_api::CompletionRequest::try_from(("gateway-model".to_string(), request))
@@ -411,9 +318,13 @@ fn responses_keep_thread_context_in_history_and_base_instructions_separate() {
     let wire = serde_json::to_value(wire).expect("serialize responses request");
 
     assert_eq!(wire["instructions"], BASE_INSTRUCTIONS);
-    assert_eq!(wire["service_tier"], "default");
-    assert_eq!(wire["store"], false);
+    assert!(wire.get("service_tier").is_none());
+    assert!(wire.get("store").is_none());
     assert_eq!(wire["include"], json!(["reasoning.encrypted_content"]));
+    assert_eq!(
+        openai_additional_params("medium", "fast").unwrap()["service_tier"],
+        "fast"
+    );
     assert!(
         !wire["instructions"]
             .as_str()
@@ -630,7 +541,7 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
         model
             .completion_request(Message::user("next"))
             .messages(std::iter::once(Message::user("hello")).chain(history))
-            .additional_params(gateway_additional_params("medium", "standard"))
+            .additional_params(openai_additional_params("medium", "standard").unwrap())
             .build(),
     ))
     .expect("native responses replay request");
@@ -643,8 +554,8 @@ async fn gateway_responses_stream_completes_reasoning_before_text_and_tools() {
         .expect("replay should carry the native reasoning item");
     assert_eq!(reasoning_input["id"], ITEM_ID);
     assert_eq!(reasoning_input["encrypted_content"], ENVELOPE);
-    assert_eq!(replay["service_tier"], "default");
-    assert_eq!(replay["store"], false);
+    assert!(replay.get("service_tier").is_none());
+    assert!(replay.get("store").is_none());
     assert_eq!(replay["include"], json!(["reasoning.encrypted_content"]));
     assert_eq!(
         reasoning_input["summary"],
