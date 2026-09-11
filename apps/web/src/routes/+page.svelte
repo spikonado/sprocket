@@ -1603,7 +1603,6 @@
 						.filter((part): part is string => Boolean(part))
 						.join(': ') || 'Continue.';
 				continuationOfRunId = result.continuationOfRunId;
-				composerContinuationOfRunId = result.continuationOfRunId;
 			}
 		} catch (error) {
 			if (
@@ -1617,7 +1616,8 @@
 		} finally {
 			answeringAgentQuestion = false;
 		}
-		if (continuationPrompt !== null) {
+		if (continuationPrompt !== null && currentThreadId === threadId) {
+			composerContinuationOfRunId = continuationOfRunId ?? null;
 			prompt = continuationPrompt;
 			await submitPrompt({ answeredQuestionId: question.questionId, continuationOfRunId });
 		}
