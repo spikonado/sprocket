@@ -7,7 +7,7 @@ export type ThreadSummaryRow = {
 	title: string;
 	selectedModel: string;
 	reasoningEffort: ThreadSummary['reasoningEffort'];
-	serviceTier: ThreadSummary['serviceTier'];
+	fastMode: ThreadSummary['fastMode'];
 	lastMessageAt: number;
 	threadStatus: ThreadSummary['threadStatus'];
 	status: ThreadSummary['status'];
@@ -20,7 +20,7 @@ export function toThreadSummary(row: ThreadSummaryRow): ThreadSummary {
 		title: row.title,
 		selectedModel: row.selectedModel,
 		reasoningEffort: row.reasoningEffort,
-		serviceTier: row.serviceTier,
+		fastMode: row.fastMode,
 		lastMessageAt: row.lastMessageAt,
 		threadStatus: row.threadStatus,
 		status: row.status
@@ -34,7 +34,7 @@ export function threadRecordToSummary(record: Doc<'threadRecords'>): ThreadSumma
 		title: record.title ?? 'New thread',
 		selectedModel: record.selectedModel,
 		reasoningEffort: record.reasoningEffort,
-		serviceTier: record.serviceTier,
+		fastMode: record.fastMode ?? false,
 		lastMessageAt: record.lastMessageAt,
 		threadStatus: record.archivedAt === undefined ? 'active' : 'archived',
 		status: record.status ?? 'completed'

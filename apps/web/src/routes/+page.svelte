@@ -70,7 +70,7 @@
 		revokeAttachmentPreview,
 		type ComposerAttachment
 	} from '$lib/chat/attachments';
-	import { defaultModelId, defaultReasoningEffort, defaultServiceTier } from '$convex/lib/models';
+	import { defaultModelId, defaultReasoningEffort } from '$convex/lib/models';
 	import {
 		CATALOG_UNAVAILABLE_MESSAGE,
 		fetchGatewayModelCatalog,
@@ -209,7 +209,7 @@
 		attachments?: ComposerAttachment[];
 		storageIds?: Id<'_storage'>[];
 		reasoningEffort?: string;
-		serviceTier?: string;
+		fastMode?: boolean;
 		selectedModel?: CatalogModelId;
 		submissionId?: string;
 	};
@@ -222,7 +222,7 @@
 	// Seed from compiled defaults; composer effects adopt live catalog defaults once loaded.
 	let selectedModel = $state<CatalogModelId>(defaultModelId);
 	let selectedReasoningEffort = $state<string>(defaultReasoningEffort);
-	let selectedServiceTier = $state<string>(defaultServiceTier);
+	let fastMode = $state(false);
 	let prompt = $state('');
 	let selectedQuestionOptionId = $state<string | null>(null);
 	let answeringAgentQuestion = $state(false);
@@ -236,7 +236,7 @@
 			prompt: string;
 			storageIds: Id<'_storage'>[];
 			reasoningEffort: string;
-			serviceTier: string;
+			fastMode: boolean;
 			selectedModel: CatalogModelId;
 			submissionId: string;
 		}
@@ -1671,7 +1671,7 @@
 		);
 		const submittedModel = selectedModel;
 		const submittedReasoningEffort = selectedReasoningEffort;
-		const submittedServiceTier = selectedServiceTier;
+		const submittedFastMode = fastMode;
 		const previousRunId = selectedThreadId ? (runState?.runId ?? null) : null;
 		let submissionScope = selectedThreadId
 			? `thread:${selectedThreadId}`
@@ -1696,7 +1696,7 @@
 			prompt: submittedPrompt,
 			storageIds: submittedStorageIds,
 			reasoningEffort: submittedReasoningEffort,
-			serviceTier: submittedServiceTier,
+			fastMode: submittedFastMode,
 			recoveredSubmission: recoveredSubmission
 				? {
 						...recoveredSubmission,
@@ -1725,7 +1725,7 @@
 				attachments: submittedAttachments,
 				storageIds: submittedStorageIds,
 				reasoningEffort: submittedReasoningEffort,
-				serviceTier: submittedServiceTier,
+				fastMode: submittedFastMode,
 				selectedModel: submittedModel,
 				submissionId:
 					!selectedThreadId && recoveryScope === originatingRecoveryScope
@@ -1879,7 +1879,7 @@
 				selectedModel: submittedModel,
 				submissionId: runSubmissionId,
 				reasoningEffort: submittedReasoningEffort,
-				serviceTier: submittedServiceTier,
+				fastMode: submittedFastMode,
 				workspacePath
 			});
 		} catch (error) {
@@ -1975,7 +1975,7 @@
 				storageIds: [],
 				selectedModel,
 				reasoningEffort: selectedReasoningEffort,
-				serviceTier: selectedServiceTier,
+				fastMode,
 				submissionId: crypto.randomUUID(),
 				workspacePath,
 				continuationOfRunId: previousRunId
@@ -2019,7 +2019,7 @@
 		currentError = null;
 		selectedModel = modelCatalog?.defaultModelId ?? defaultModelId;
 		selectedReasoningEffort = modelCatalog?.defaultReasoningEffort ?? defaultReasoningEffort;
-		selectedServiceTier = modelCatalog?.defaultServiceTier ?? defaultServiceTier;
+		fastMode = false;
 		projectPickerOpen = false;
 		projectPickerReconnectWorkspacePath = null;
 		projectPickerExpectedDisplayName = undefined;
@@ -2087,7 +2087,7 @@
 		if (!thread) return;
 		selectedModel = thread.selectedModel;
 		selectedReasoningEffort = thread.reasoningEffort;
-		selectedServiceTier = thread.serviceTier;
+		fastMode = thread.fastMode ?? false;
 	});
 
 	$effect(() => {
@@ -2126,8 +2126,7 @@
 					prompt: recovery.prompt,
 					storageIds: recovery.storageIds ?? [],
 					reasoningEffort: recovery.reasoningEffort,
-					serviceTier:
-						recovery.serviceTier ?? modelCatalog?.defaultServiceTier ?? defaultServiceTier,
+					fastMode: recovery.fastMode ?? false,
 					selectedModel: recovery.selectedModel,
 					submissionId: recovery.submissionId
 				});
@@ -2495,7 +2494,7 @@
 							void persistSelectedModel(modelId);
 						}}
 						bind:selectedReasoningEffort
-						bind:selectedServiceTier
+						bind:fastMode
 						pendingQuestion={pendingAgentQuestion}
 						showContinueWorking={latestRunResumeKind != null}
 						onContinueWorking={() => {

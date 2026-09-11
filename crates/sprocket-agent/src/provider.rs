@@ -14,7 +14,7 @@ use tokio::time::{sleep, timeout};
 
 use crate::context_handoff::{ContextHandoffHook, HANDOFF_PROMPT, context_summary_text};
 use crate::convex::RuntimeClient;
-use crate::hooks::{AgentPromptHook, GatewayRequestHook, ToolCallTracker};
+use crate::hooks::{AgentPromptHook, ToolCallTracker};
 use crate::live::{
     LiveAssistantPart, LiveAssistantParts, LiveCompletionHub, LiveCompletionOverlay,
     join_assistant_text_parts, now_ms,
@@ -82,7 +82,7 @@ pub(crate) struct AgentProviderRequest {
     pub(crate) workspace_root: PathBuf,
     pub(crate) skills: Arc<[WorkspaceSkill]>,
     pub(crate) reasoning_effort: String,
-    pub(crate) service_tier: String,
+    pub(crate) fast_mode: bool,
     pub(crate) context_budget: ContextBudget,
     pub(crate) supports_images: bool,
     pub(crate) transcript_dir: PathBuf,
@@ -151,6 +151,25 @@ where
     C: CompletionClient + AgentClientExt,
     C::CompletionModel: 'static,
 {
+    let reasoning_effort = match serde_json::from_value::<openai::responses_api::ReasoningEffort>(
+        serde_json::Value::String(request.reasoning_effort.clone()),
+    ) {
+        Ok(reasoning_effort) => reasoning_effort,
+        Err(error) => {
+            return AgentProviderResult::Failed {
+                text: String::new(),
+                error: anyhow!("invalid OpenAI Responses API reasoning effort: {error}"),
+            };
+        }
+    };
+    let additional_params = openai::responses_api::AdditionalParameters {
+        reasoning: Some(openai::responses_api::Reasoning::new().with_effort(reasoning_effort)),
+        service_tier: request
+            .fast_mode
+            .then(|| openai::responses_api::OpenAIServiceTier::Other("fast".to_string())),
+        ..Default::default()
+    }
+    .to_json();
     let tool_call_tracker = ToolCallTracker::default();
     let tools = agent_tools(
         runtime.clone(),
@@ -173,6 +192,7 @@ where
     let agent = completion_client
         .agent(model)
         .preamble(&request.base_instructions)
+        .additional_params(additional_params)
         .tool(tools.apply_patch)
         .tool(tools.ask_question)
         .tool(tools.await_question)
@@ -233,11 +253,6 @@ where
 
     let prompt_hook = AgentPromptHook::new(tool_call_tracker);
     let initial_context: Arc<[Message]> = request.initial_context.into();
-    let gateway_hook = GatewayRequestHook::new(
-        request.reasoning_effort.clone(),
-        request.service_tier.clone(),
-    );
-
     let mut finished = match runtime.run_finished_subscription(&request.run_id).await {
         Ok(subscription) => subscription,
         Err(error) => {
@@ -270,7 +285,6 @@ where
                 .history(history)
                 .max_turns(AGENT_MAX_TURNS)
                 .add_hook(prompt_hook.clone())
-                .add_hook(gateway_hook.clone())
                 .add_hook(context_handoff_hook.clone())
                 .max_invalid_tool_call_retries(MAX_INVALID_TOOL_CALL_RETRIES)
                 .await;

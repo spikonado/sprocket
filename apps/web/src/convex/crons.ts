@@ -37,6 +37,13 @@ crons.interval(
 );
 
 crons.interval(
+	'backfill Fast mode',
+	{ hours: 1 },
+	internal.migrations.runFastModeBackfillAutomatically,
+	{}
+);
+
+crons.interval(
 	'reconcile Firecrawl browser sessions',
 	{ minutes: 1 },
 	internal.firecrawlBrowser.reconcile

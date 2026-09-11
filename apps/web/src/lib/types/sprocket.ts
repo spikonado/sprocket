@@ -31,7 +31,7 @@ export type ThreadSummary = {
 	title: string;
 	selectedModel: string;
 	reasoningEffort: string;
-	serviceTier: string;
+	fastMode: boolean;
 	lastMessageAt: number;
 	threadStatus: 'active' | 'archived';
 	status: RunState['status'];
@@ -69,7 +69,7 @@ export type RunState = {
 	claimExpiresAt?: number;
 	selectedModel: string;
 	reasoningEffort: string;
-	serviceTier: string;
+	fastMode: boolean;
 	startedAt: number;
 	completedAt?: number;
 	lastError?: string;
@@ -112,7 +112,7 @@ export type AgentRunRequest = {
 	storageIds: Id<'_storage'>[];
 	selectedModel: string;
 	reasoningEffort: string;
-	serviceTier: string;
+	fastMode: boolean;
 	workspacePath: string;
 	continuationOfRunId?: Id<'runs'>;
 };

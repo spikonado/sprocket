@@ -303,7 +303,7 @@ describe('agentRuntime context accounting', () => {
 				completionAttemptSeq: 0,
 				selectedModel: 'gpt-5.6-sol',
 				reasoningEffort: 'medium',
-				serviceTier: 'standard',
+				fastMode: false,
 				startedAt: Date.now() + 1_000,
 				completedAt: Date.now() + 1_001
 			});
@@ -364,6 +364,7 @@ describe('agentRuntime context accounting', () => {
 		await t.run(async (ctx) => {
 			await ctx.db.patch('runs', runId, {
 				selectedModel: 'gateway-only-model',
+				fastMode: undefined,
 				serviceTier: 'fast'
 			});
 		});
@@ -372,7 +373,8 @@ describe('agentRuntime context accounting', () => {
 			executionSecret
 		});
 		expect(context.run.selectedModel).toBe('gateway-only-model');
-		expect(context.run.serviceTier).toBe('fast');
+		expect(context.run.fastMode).toBe(true);
+		expect(context.run).not.toHaveProperty('serviceTier');
 	});
 
 	it('getContext returns last provider-reported contextTokens', async () => {

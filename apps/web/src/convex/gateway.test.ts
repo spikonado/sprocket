@@ -27,7 +27,7 @@ describe('gateway quota', () => {
 			storageIds: [],
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
-			serviceTier: 'standard',
+			fastMode: false,
 			executionSecret,
 			agentVersion: '0.3.2'
 		});

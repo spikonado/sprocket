@@ -142,7 +142,7 @@ const threadSummarySchema = z.object({
 	title: z.string().optional(),
 	selectedModel: z.string(),
 	reasoningEffort: z.enum(['none', 'low', 'medium', 'high', 'xhigh', 'max']),
-	serviceTier: z.enum(['standard', 'fast']),
+	fastMode: z.boolean(),
 	contextSummary: z.string().optional(),
 	contextSummaryThroughRunId: z.string().optional(),
 	lastMessageAt: z.number(),

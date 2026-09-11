@@ -99,7 +99,7 @@ describe('agentRuntime.start', () => {
 				completionAttemptSeq: 0,
 				selectedModel: 'gpt-5.6-sol',
 				reasoningEffort: 'medium',
-				serviceTier: 'standard',
+				fastMode: false,
 				startedAt: 2
 			});
 			await ctx.db.patch('threadRecords', threadId, { status: 'queued' });

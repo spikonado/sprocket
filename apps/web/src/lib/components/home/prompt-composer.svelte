@@ -5,7 +5,7 @@
 	import type { Id } from '$convex/_generated/dataModel';
 	import OptionSelector from '$lib/components/option-selector.svelte';
 	import ProviderLogo from '$lib/components/provider-logo.svelte';
-	import ReasoningServiceSelector from '$lib/components/reasoning-service-selector.svelte';
+	import ReasoningSelector from '$lib/components/reasoning-selector.svelte';
 	import { shouldSubmitComposerFromKeydown } from '$lib/chat/composer';
 	import { applySkillSelection, filterSkills, getActiveDollarQuery } from '$lib/chat/dollar-skills';
 	import type { SkillSummary } from '$lib/types/sprocket';
@@ -15,14 +15,13 @@
 		canSubmitQuestionAnswer,
 		type AgentQuestionOption
 	} from '$convex/lib/agentQuestions';
-	import { defaultModelId, defaultReasoningEffort, defaultServiceTier } from '$convex/lib/models';
+	import { defaultModelId, defaultReasoningEffort } from '$convex/lib/models';
 	import {
+		fastModeAccessForModelAndTier,
 		getCatalogModel,
 		isModelAllowedForTier,
 		modelOptionsForTier,
 		resolveModelForTier,
-		serviceTierOptionsForModelAndTier,
-		serviceTiersForModelAndTier,
 		type CatalogModelId,
 		type ModelCatalog
 	} from '$lib/chat/model-catalog';
@@ -46,7 +45,7 @@
 		selectedModel?: CatalogModelId;
 		onModelChange?: (modelId: CatalogModelId) => void;
 		selectedReasoningEffort?: string;
-		selectedServiceTier?: string;
+		fastMode?: boolean;
 		pendingQuestion?: PendingAgentQuestion | null;
 		showContinueWorking?: boolean;
 		onContinueWorking?: () => void;
@@ -80,7 +79,7 @@
 		selectedModel = $bindable(defaultModelId),
 		onModelChange,
 		selectedReasoningEffort = $bindable<string>(defaultReasoningEffort),
-		selectedServiceTier = $bindable<string>(defaultServiceTier),
+		fastMode = $bindable(false),
 		pendingQuestion = null,
 		showContinueWorking = false,
 		onContinueWorking,
@@ -109,15 +108,12 @@
 	const selectedCatalogModel = $derived(
 		modelCatalog ? getCatalogModel(modelCatalog, selectedModel) : undefined
 	);
-	const selectedServiceTierOptions = $derived(
-		modelCatalog && selectedCatalogModel
-			? serviceTierOptionsForModelAndTier(
-					modelCatalog,
-					subscriptionTier ?? 'free',
-					selectedCatalogModel
-				)
-			: undefined
-	);
+	const selectedFastModeAccess = $derived.by(() => {
+		if (!modelCatalog || !selectedCatalogModel) return undefined;
+		if (!selectedCatalogModel.supportsFastMode) return 'unsupported';
+		if (!subscriptionTier) return undefined;
+		return fastModeAccessForModelAndTier(modelCatalog, subscriptionTier, selectedCatalogModel);
+	});
 	// Block send until a catalog model is selected. If the usage query fails, keep send
 	// enabled for a known selection and let the backend enforce entitlements.
 	const canSubmitWithModel = $derived(
@@ -423,7 +419,7 @@
 		if (!selectedModel || !getCatalogModel(modelCatalog, selectedModel)) {
 			selectedModel = modelCatalog.defaultModelId;
 			selectedReasoningEffort = modelCatalog.defaultReasoningEffort;
-			selectedServiceTier = modelCatalog.defaultServiceTier;
+			fastMode = false;
 		}
 	});
 
@@ -440,14 +436,8 @@
 		}
 		const catalogModel = getCatalogModel(modelCatalog, allowedModel);
 		if (!catalogModel) return;
-		const allowedServiceTiers = serviceTiersForModelAndTier(
-			modelCatalog,
-			subscriptionTier,
-			catalogModel
-		);
-		if (!allowedServiceTiers.includes(selectedServiceTier)) {
-			selectedServiceTier = allowedServiceTiers[0] ?? modelCatalog.defaultServiceTier;
-		}
+		if (fastModeAccessForModelAndTier(modelCatalog, subscriptionTier, catalogModel) !== 'available')
+			fastMode = false;
 	});
 
 	$effect(() => {
@@ -783,11 +773,12 @@
 							<div class="bg-hover-fill-strong mx-1 hidden h-4 w-px shrink-0 sm:block"></div>
 
 							{#if selectedCatalogModel}
-								<ReasoningServiceSelector
+								<ReasoningSelector
 									model={selectedCatalogModel}
-									serviceTierOptions={selectedServiceTierOptions}
 									bind:reasoningEffort={selectedReasoningEffort}
-									bind:serviceTier={selectedServiceTier}
+									bind:fastMode
+									fastModeAccess={selectedFastModeAccess}
+									fastModeLockTooltip={modelCatalog?.fastModeLockUpgradeMessage}
 									disabled={composerLocked || answeringQuestion}
 									className="z-20 shrink-0"
 								/>

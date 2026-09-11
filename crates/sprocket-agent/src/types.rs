@@ -23,7 +23,7 @@ pub struct RunAgentRequest {
     pub storage_ids: Vec<String>,
     pub selected_model: String,
     pub reasoning_effort: String,
-    pub service_tier: String,
+    pub fast_mode: bool,
     pub workspace_path: String,
     pub installation_id: String,
     pub continuation_of_run_id: Option<String>,
@@ -177,7 +177,7 @@ pub struct RunSnapshot {
     pub user_id: String,
     pub selected_model: String,
     pub reasoning_effort: String,
-    pub service_tier: String,
+    pub fast_mode: bool,
     #[serde(deserialize_with = "deserialize_convex_u64")]
     pub started_at: u64,
     #[serde(default)]

@@ -37,6 +37,7 @@ import {
 } from '@convex/lib/agentErrors';
 import { unsupportedClient } from '@convex/lib/unsupportedClient';
 import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
+import { normalizeStoredFastMode } from '@convex/lib/fastMode';
 import {
 	createQueuedRunRecord,
 	finalizeFailedQueuedStart,
@@ -60,7 +61,6 @@ import {
 	vCurrentExecutorJobKind,
 	vCurrentExecutorJobPayload,
 	vReasoningEffort,
-	vServiceTier,
 	vRunFinalStatus,
 	vRunStatus,
 	vTranscriptCompletionItem
@@ -117,7 +117,7 @@ export const insertGatewayRun = internalMutation({
 		imageUploadIds: v.array(v.id('imageUploads')),
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
-		serviceTier: vServiceTier,
+		fastMode: v.boolean(),
 		executionSecret: v.string(),
 		protocolVersion: v.number(),
 		agentVersion: v.optional(v.string()),
@@ -139,7 +139,7 @@ export const createGatewayRun = action({
 		storageIds: v.array(v.id('_storage')),
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
-		serviceTier: vServiceTier,
+		fastMode: v.boolean(),
 		executionSecret: v.string(),
 		agentVersion: v.optional(v.string()),
 		machineId: v.optional(v.string()),
@@ -162,7 +162,7 @@ export const createGatewayRun = action({
 			imageUploadIds,
 			selectedModel: args.selectedModel,
 			reasoningEffort: args.reasoningEffort,
-			serviceTier: args.serviceTier,
+			fastMode: args.fastMode,
 			executionSecret: args.executionSecret,
 			protocolVersion: GATEWAY_PROTOCOL_VERSION,
 			agentVersion: args.agentVersion,
@@ -269,7 +269,7 @@ function getContextResult(args: {
 	contextTokens: number | undefined;
 }): Infer<typeof vGetContextResult> {
 	const result: Infer<typeof vGetContextResult> = {
-		run: args.run,
+		run: normalizeStoredFastMode(args.run),
 		prompt: args.prompt
 	};
 	if (args.contextTokens !== undefined) {
@@ -571,7 +571,7 @@ export const finalizeFailedStart = mutation({
 		storageIds: v.array(v.id('_storage')),
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
-		serviceTier: vServiceTier,
+		fastMode: v.boolean(),
 		text: v.string(),
 		lastError: v.string(),
 		executionSecret: v.string()

@@ -255,7 +255,7 @@ describe('watchLiveCompletion', () => {
 });
 
 describe('thread cache local API', () => {
-	it('parses historical snapshot threads without status and watch status events', async () => {
+	it('parses snapshot threads without status and watch status events', async () => {
 		const snapshot = {
 			threads: [
 				{
@@ -267,8 +267,20 @@ describe('thread cache local API', () => {
 					title: 'Hello',
 					selectedModel: 'gpt-5.6-sol',
 					reasoningEffort: 'medium',
-					serviceTier: 'standard',
+					fastMode: false,
 					lastMessageAt: 10
+				},
+				{
+					_id: 'thread-2',
+					_creationTime: 2,
+					userId: 'user-1',
+					submissionId: 'submission-2',
+					repositoryKey: 'alpha',
+					title: 'Fast thread',
+					selectedModel: 'gpt-5.6-sol',
+					reasoningEffort: 'high',
+					fastMode: true,
+					lastMessageAt: 20
 				}
 			],
 			status: 'live',
@@ -310,14 +322,28 @@ describe('thread cache local API', () => {
 					title: 'Hello',
 					selectedModel: 'gpt-5.6-sol',
 					reasoningEffort: 'medium',
-					serviceTier: 'standard',
+					fastMode: false,
 					lastMessageAt: 10
+				},
+				{
+					_id: 'thread-2',
+					_creationTime: 2,
+					userId: 'user-1',
+					submissionId: 'submission-2',
+					repositoryKey: 'alpha',
+					title: 'Fast thread',
+					selectedModel: 'gpt-5.6-sol',
+					reasoningEffort: 'high',
+					fastMode: true,
+					lastMessageAt: 20
 				}
 			],
 			status: 'live',
 			lastSyncedAt: 20
 		});
 		expect(threadRecordToSummary(parsedSnapshot.threads[0]!).status).toBe('completed');
+		expect(threadRecordToSummary(parsedSnapshot.threads[0]!).fastMode).toBe(false);
+		expect(threadRecordToSummary(parsedSnapshot.threads[1]!).fastMode).toBe(true);
 
 		const events: unknown[] = [];
 		await client.watchThreadCache(

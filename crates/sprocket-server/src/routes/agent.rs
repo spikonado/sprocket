@@ -42,7 +42,7 @@ struct RunAgentApiRequest {
     storage_ids: Vec<String>,
     selected_model: String,
     reasoning_effort: String,
-    service_tier: String,
+    fast_mode: bool,
     workspace_path: String,
     #[serde(default)]
     continuation_of_run_id: Option<String>,
@@ -110,7 +110,7 @@ async fn run_agent_handler(
         storage_ids: payload.storage_ids,
         selected_model: payload.selected_model,
         reasoning_effort: payload.reasoning_effort,
-        service_tier: payload.service_tier,
+        fast_mode: payload.fast_mode,
         workspace_path,
         installation_id: state.machine_identity.installation_id.clone(),
         continuation_of_run_id: payload.continuation_of_run_id,
@@ -327,6 +327,38 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use super::*;
+
+    fn request(json: serde_json::Value) -> RunAgentApiRequest {
+        serde_json::from_value(json).expect("valid agent request")
+    }
+
+    fn base_request() -> serde_json::Value {
+        serde_json::json!({
+            "userId": "user-1",
+            "submissionId": "submission-1",
+            "prompt": "Build it",
+            "storageIds": [],
+            "selectedModel": "gpt-5.6-sol",
+            "reasoningEffort": "medium",
+            "fastMode": false,
+            "workspacePath": "/workspace"
+        })
+    }
+
+    #[test]
+    fn accepts_fast_mode_requests() {
+        let mut json = base_request();
+        json["fastMode"] = true.into();
+        assert!(request(json).fast_mode);
+    }
+
+    #[test]
+    fn requires_fast_mode() {
+        let mut json = base_request();
+        json.as_object_mut().unwrap().remove("fastMode");
+        json["serviceTier"] = "fast".into();
+        assert!(serde_json::from_value::<RunAgentApiRequest>(json).is_err());
+    }
 
     struct DropSignal(Arc<AtomicBool>);
 

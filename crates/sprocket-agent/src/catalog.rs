@@ -106,24 +106,24 @@ pub async fn catalog_capabilities_for_model(
 mod tests {
     use super::*;
 
-    fn catalog_payload(supports_images: bool) -> GatewayModelsResponse {
+    fn catalog_payload() -> GatewayModelsResponse {
         serde_json::from_value(serde_json::json!({
             "sprocket": {
                 "protocolVersion": 1,
                 "models": [
                     {
-                        "id": "gpt-5.6-sol",
-                        "label": "GPT-5.6 Sol",
-                        "supportsImages": supports_images,
-                        "contextWindowTokens": 272000,
-                        "autoCompactTokenLimit": 258000
+                        "id": "vision-model",
+                        "label": "Vision Model",
+                        "supportsImages": true,
+                        "contextWindowTokens": 100000,
+                        "autoCompactTokenLimit": 80000
                     },
                     {
-                        "id": "deepseek-v4-pro-0813",
-                        "label": "DeepSeek V4 Pro",
+                        "id": "long-context-model",
+                        "label": "Long Context Model",
                         "supportsImages": false,
                         "contextWindowTokens": 1000000,
-                        "autoCompactTokenLimit": 967000
+                        "autoCompactTokenLimit": 900000
                     }
                 ]
             }
@@ -132,23 +132,22 @@ mod tests {
     }
 
     #[test]
-    fn fixture_reports_selected_model_metadata_from_one_payload() {
-        let vision =
-            select_catalog_model(catalog_payload(true), "gpt-5.6-sol").expect("vision model");
+    fn reports_selected_model_metadata_from_one_payload() {
+        let vision = select_catalog_model(catalog_payload(), "vision-model").expect("vision model");
         assert!(vision.supports_images);
-        assert_eq!(vision.label, "GPT-5.6 Sol");
-        assert_eq!(vision.context_budget.context_window_tokens, 272000);
-        assert_eq!(vision.context_budget.auto_handoff_token_limit, 258000);
+        assert_eq!(vision.label, "Vision Model");
+        assert_eq!(vision.context_budget.context_window_tokens, 100_000);
+        assert_eq!(vision.context_budget.auto_handoff_token_limit, 80_000);
 
-        let text = select_catalog_model(catalog_payload(true), "deepseek-v4-pro-0813")
-            .expect("text model");
-        assert!(!text.supports_images);
-        assert_eq!(text.context_budget.context_window_tokens, 1_000_000);
+        let long_context = select_catalog_model(catalog_payload(), "long-context-model")
+            .expect("long-context model");
+        assert!(!long_context.supports_images);
+        assert_eq!(long_context.context_budget.context_window_tokens, 1_000_000);
     }
 
     #[test]
     fn missing_catalog_model_is_an_error() {
-        let error = select_catalog_model(catalog_payload(true), "no-such-model")
+        let error = select_catalog_model(catalog_payload(), "no-such-model")
             .expect_err("unknown model")
             .to_string();
         assert!(error.contains("no-such-model"));

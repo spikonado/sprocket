@@ -4,6 +4,24 @@ We ship breaking changes ahead of our users' installed clients and keep the old 
 
 Current as of 2026-09-11.
 
+## Fast mode schema migration
+
+Stored `threadRecords` and `runs` may use `serviceTier` with `standard` or
+`fast`. Current code writes only `fastMode`. Convex keeps the stored field in
+the schema while the migration runs and normalizes records read before the
+backfill finishes. Current client APIs do not accept or return `serviceTier`.
+
+An hourly cron starts the idempotent backfill after deployment. The manual
+runner remains available for operator recovery:
+
+```sh
+bunx convex run migrations:runFastModeBackfill --prod
+```
+
+Remove `serviceTier` from the schema and the read normalization after the
+backfill reports completion and every `threadRecords` and `runs` row has
+`fastMode` with no remaining `serviceTier` field.
+
 ## Production rollout cleanup
 
 PR #345 removed stored project tables, project references, run fields,
