@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { patchRunExecution } from '@convex/lib/runExecution';
 import { api } from '@convex/_generated/api';
 import { RUN_ABANDONED_BY_AGENT } from '@convex/lib/agentErrors';
 import { ONLY_LATEST_RUN_CAN_CONTINUE, RUN_CANNOT_CONTINUE } from '@convex/lib/runResume';
@@ -222,7 +223,7 @@ describe('new-run continuation', { timeout: 30_000 }, () => {
 			executionSecret: 'abandoned-continue'
 		});
 		await t.run(async (ctx) => {
-			await ctx.db.patch('runs', abandoned.runId, { claimExpiresAt: Date.now() - 1 });
+			await patchRunExecution(ctx, abandoned.runId, { claimExpiresAt: Date.now() - 1 });
 		});
 
 		const continuation = await insertQueuedRun(t, asUser, {

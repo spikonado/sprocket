@@ -16,7 +16,7 @@ import {
 	normalizeQuestionAnswer,
 	validateQuestionText
 } from '@convex/lib/agentQuestions';
-import { getExecutionRun, getUserId } from '@convex/lib/auth';
+import { getExecutionRun, getExecutionRunRecord, getUserId } from '@convex/lib/auth';
 import { assertRunAcceptsModelCompletion, toAgentToolConvexError } from '@convex/lib/agentErrors';
 import { vAgentQuestionSnapshot } from '@convex/lib/docs';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
@@ -248,7 +248,7 @@ export const getForExecutor = query({
 	returns: v.union(vAgentQuestionSnapshot, v.null()),
 	handler: async (ctx, args) => {
 		try {
-			const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+			const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
 			const question = await ctx.db.get('agentQuestions', args.questionId);
 			if (!question || question.runId !== run._id) {
 				return null;

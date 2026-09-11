@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { patchRunExecution } from '@convex/lib/runExecution';
 import type { WorkId } from '@convex-dev/workpool';
 import { api, internal } from '@convex/_generated/api';
 import { initConvexTest, seedStartedWebJob } from './test.setup';
@@ -21,7 +22,7 @@ describe('web tool workpool fencing', () => {
 			expect(stored?.cloudWorkId).toEqual(expect.any(String));
 
 			await t.run(async (ctx) => {
-				await ctx.db.patch('runs', runId, { claimExpiresAt: Date.now() - 1 });
+				await patchRunExecution(ctx, runId, { claimExpiresAt: Date.now() - 1 });
 			});
 			await t.mutation(internal.webToolPool.completeWebTool, {
 				// SAFETY: Workpool onComplete only uses workId for its own bookkeeping.

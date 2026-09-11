@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { getRunWithExecution } from '@convex/lib/runExecution';
 import { api } from '@convex/_generated/api';
 import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 
@@ -38,7 +39,7 @@ describe('agentRuntime completion stream state', () => {
 			};
 		});
 		expect(
-			await t.run(async (ctx) => (await ctx.db.get('runs', runId))?.completionAttemptSeq)
+			await t.run(async (ctx) => (await getRunWithExecution(ctx.db, runId))?.completionAttemptSeq)
 		).toBe(1);
 		expect(stored.state).toMatchObject({
 			runId,

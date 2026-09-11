@@ -149,9 +149,10 @@ export default defineSchema({
 		executionSecretHash: v.string(),
 		machineId: v.optional(v.string()),
 		continuationOfRunId: v.optional(v.id('runs')),
+		// Legacy copies until the runExecutionStates backfill completes.
 		claimId: v.optional(v.string()),
 		claimExpiresAt: v.optional(v.number()),
-		completionAttemptSeq: v.number(),
+		completionAttemptSeq: v.optional(v.number()),
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
 		fastMode: v.optional(v.boolean()),
@@ -176,6 +177,13 @@ export default defineSchema({
 		.index('by_threadId_status_startedAt', ['threadId', 'status', 'startedAt'])
 		.index('by_executionSecretHash', ['executionSecretHash'])
 		.index('by_userId_submissionId', ['userId', 'submissionId']),
+	runExecutionStates: defineTable({
+		runId: v.id('runs'),
+		claimId: v.optional(v.string()),
+		claimExpiresAt: v.optional(v.number()),
+		completionAttemptSeq: v.number(),
+		activeJobId: v.optional(v.id('executorJobs'))
+	}).index('by_runId', ['runId']),
 	// Durable numbered transcript replica source. Kept off threadRecords so
 	// appends do not invalidate the thread list subscription.
 	threadTranscriptStates: defineTable({

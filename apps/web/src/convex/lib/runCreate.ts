@@ -25,6 +25,7 @@ import { getPromptPart } from '@convex/lib/transcriptParts';
 import { recordPromptTranscript } from '@convex/lib/transcriptWrites';
 import { isRunFinalStatus, type vReasoningEffort } from '@convex/lib/validators';
 import { fastModeForStoredRecord } from '@convex/lib/fastMode';
+import { withRunExecution } from '@convex/lib/runExecution';
 
 export type QueuedRunRequest = {
 	userId: string;
@@ -119,6 +120,7 @@ export async function createQueuedRunRecord(
 		.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadRecord._id))
 		.order('desc')
 		.first();
+	if (latestRun) latestRun = await withRunExecution(ctx.db, latestRun);
 	if (
 		latestRun &&
 		isClaimedRunStatus(latestRun.status) &&
@@ -155,7 +157,6 @@ export async function createQueuedRunRecord(
 		submissionId: args.submissionId,
 		status: 'queued' as const,
 		executionSecretHash: secretHash,
-		completionAttemptSeq: 0,
 		selectedModel: args.selectedModel,
 		reasoningEffort: args.reasoningEffort,
 		fastMode: args.fastMode,
@@ -165,6 +166,7 @@ export async function createQueuedRunRecord(
 	if (machineId) runRecord.machineId = machineId;
 	if (continuationOfRunId) runRecord.continuationOfRunId = continuationOfRunId;
 	const runId = await ctx.db.insert('runs', runRecord);
+	await ctx.db.insert('runExecutionStates', { runId, completionAttemptSeq: 0 });
 	if (machine) {
 		await attachRunToMachine(ctx, machine, runId);
 	}

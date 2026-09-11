@@ -1,6 +1,7 @@
 import { mutation, query, type MutationCtx } from '@convex/_generated/server';
 import type { Doc } from '@convex/_generated/dataModel';
 import { v, type Infer } from 'convex/values';
+import { getRunWithExecution } from '@convex/lib/runExecution';
 import { constantTimeEqual, executionSecretHash, getUserId } from '@convex/lib/auth';
 import {
 	getOwnedMachine,
@@ -54,7 +55,7 @@ async function failMachineRuns(ctx: MutationCtx, machine: Doc<'machines'>): Prom
 		throw new Error('Machine has too many active runs to stop safely.');
 	}
 	for (const runId of machine.runIds) {
-		const run = await ctx.db.get('runs', runId);
+		const run = await getRunWithExecution(ctx.db, runId);
 		if (run) {
 			await finalizeRunRecord(ctx, run, {
 				text: MACHINE_ENDED,

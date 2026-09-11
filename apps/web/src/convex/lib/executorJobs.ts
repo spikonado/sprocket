@@ -1,10 +1,9 @@
 import type { Doc } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
-import { executorFailureRunPatch } from '@convex/lib/runs';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
 import { recordToolTranscript } from '@convex/lib/transcriptWrites';
 import { isRunFinalStatus, type ExecutorJobResult } from '@convex/lib/validators';
-import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
+import { patchRunExecution } from '@convex/lib/runExecution';
 
 export async function applyExecutorJobSuccess(
 	ctx: MutationCtx,
@@ -44,7 +43,7 @@ export async function applyExecutorJobSuccess(
 		completedAt: Date.now()
 	});
 	if (args.run.activeJobId === args.job._id) {
-		await setRunAndThreadStatus(ctx, args.run, 'running', { activeJobId: undefined });
+		await patchRunExecution(ctx, args.run._id, { activeJobId: undefined });
 	}
 	await recordToolTranscript(ctx, {
 		threadId: args.run.threadId,
@@ -85,16 +84,12 @@ export async function applyExecutorJobFailure(
 		error: args.error,
 		completedAt
 	});
-	const runPatch =
-		args.run.cancellationRequestedAt !== undefined
-			? undefined
-			: executorFailureRunPatch({
-					runStatus: args.run.status,
-					activeJobId: args.run.activeJobId,
-					failedJobId: args.job._id
-				});
-	if (runPatch) {
-		await setRunAndThreadStatus(ctx, args.run, runPatch.status, runPatch);
+	if (
+		args.run.cancellationRequestedAt === undefined &&
+		!isRunFinalStatus(args.run.status) &&
+		args.run.activeJobId === args.job._id
+	) {
+		await patchRunExecution(ctx, args.run._id, { activeJobId: undefined });
 	}
 	await recordToolTranscript(ctx, {
 		threadId: args.run.threadId,

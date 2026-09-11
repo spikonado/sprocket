@@ -1,10 +1,11 @@
-import type { Doc } from '@convex/_generated/dataModel';
 import { action, internalMutation, mutation, query } from '@convex/_generated/server';
+import type { Doc } from '@convex/_generated/dataModel';
 import { internal } from '@convex/_generated/api';
 import schema from '@convex/schema';
 import { ConvexError, v, type Infer } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord } from '@convex/lib/access';
-import { getExecutionRun, getUserId } from '@convex/lib/auth';
+import { getExecutionRun, getExecutionRunRecord, getUserId } from '@convex/lib/auth';
+import { patchRunExecution } from '@convex/lib/runExecution';
 import { GATEWAY_PROTOCOL_VERSION } from '@convex/lib/gatewayProtocol';
 import { modelGatewayTokenSecret, modelGatewayUrl } from '@convex/lib/gatewayFetch';
 import { gatewayTokenExpiresAt, mintGatewayToken } from '@convex/lib/gatewayToken';
@@ -37,7 +38,7 @@ import {
 } from '@convex/lib/agentErrors';
 import { unsupportedClient } from '@convex/lib/unsupportedClient';
 import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
-import { normalizeStoredFastMode } from '@convex/lib/fastMode';
+import { fastModeForStoredRecord } from '@convex/lib/fastMode';
 import {
 	createQueuedRunRecord,
 	finalizeFailedQueuedStart,
@@ -69,10 +70,7 @@ import {
 type RunClaimPatch = {
 	claimId: string;
 	claimExpiresAt: number;
-	status: Doc<'runs'>['status'];
-	lastError: undefined;
 	completionAttemptSeq?: number;
-	activeJobId?: undefined;
 };
 
 /** Retired Convex createRun. Kept so older agents get an update message. */
@@ -229,12 +227,11 @@ export const start = mutation({
 
 		const claimPatch: RunClaimPatch = {
 			claimId: args.claimId,
-			claimExpiresAt: nextClaimExpiresAt,
-			status: isSameClaimRenewal ? run.status : 'running',
-			lastError: undefined
+			claimExpiresAt: nextClaimExpiresAt
 		};
 		if (!isSameClaimRenewal) claimPatch.completionAttemptSeq = 0;
-		await setRunAndThreadStatus(ctx, run, claimPatch.status, claimPatch);
+		await patchRunExecution(ctx, run._id, claimPatch);
+		await setRunAndThreadStatus(ctx, run, 'running', { lastError: undefined });
 
 		return { claimed: true, claimExpiresAt: nextClaimExpiresAt };
 	}
@@ -258,7 +255,7 @@ export const renewClaim = mutation({
 		}
 
 		const nextClaimExpiresAt = claimExpiresAt(Date.now());
-		await ctx.db.patch('runs', run._id, { claimExpiresAt: nextClaimExpiresAt });
+		await patchRunExecution(ctx, run._id, { claimExpiresAt: nextClaimExpiresAt });
 		return { renewed: true, claimExpiresAt: nextClaimExpiresAt };
 	}
 });
@@ -269,7 +266,16 @@ function getContextResult(args: {
 	contextTokens: number | undefined;
 }): Infer<typeof vGetContextResult> {
 	const result: Infer<typeof vGetContextResult> = {
-		run: normalizeStoredFastMode(args.run),
+		run: {
+			_id: args.run._id,
+			threadId: args.run.threadId,
+			userId: args.run.userId,
+			selectedModel: args.run.selectedModel,
+			reasoningEffort: args.run.reasoningEffort,
+			fastMode: fastModeForStoredRecord(args.run),
+			startedAt: args.run.startedAt,
+			continuationOfRunId: args.run.continuationOfRunId
+		},
 		prompt: args.prompt
 	};
 	if (args.contextTokens !== undefined) {
@@ -285,7 +291,7 @@ export const getContext = query({
 	},
 	returns: vGetContextResult,
 	handler: async (ctx, args) => {
-		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
 		const contextTokens = await getThreadContextTokens(ctx, run.threadId);
 		const promptPart = await getPromptPart(ctx, run.threadId, run._id);
 		if (!promptPart?.prompt) {
@@ -313,7 +319,7 @@ export const isFinished = query({
 	},
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
-		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
 		return isRunFinalStatus(run.status) || run.cancellationRequestedAt !== undefined;
 	}
 });
@@ -332,7 +338,6 @@ export const completionActor = query({
 			userId,
 			threadId: run.threadId,
 			status: run.status,
-			completionAttemptSeq: run.completionAttemptSeq,
 			streamSequence: streamState.sequence
 		};
 		if (run.claimId) actor.claimId = run.claimId;

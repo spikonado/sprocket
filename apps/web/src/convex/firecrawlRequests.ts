@@ -1,5 +1,6 @@
 import { vOnCompleteArgs, type WorkId } from '@convex-dev/workpool';
 import { ConvexError, v } from 'convex/values';
+import { getRunWithExecution } from '@convex/lib/runExecution';
 import { internal } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import {
@@ -41,7 +42,7 @@ async function activeRun(
 	ctx: MutationCtx,
 	request: Pick<Doc<'firecrawlRequests'>, 'runId' | 'claimId' | 'jobId' | 'kind'>
 ) {
-	const run = await ctx.db.get('runs', request.runId);
+	const run = await getRunWithExecution(ctx.db, request.runId);
 	if (
 		!run ||
 		run.cancellationRequestedAt !== undefined ||

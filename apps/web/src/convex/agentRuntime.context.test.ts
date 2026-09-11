@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { patchRunExecution } from '@convex/lib/runExecution';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { executionSecretHash } from '@convex/lib/auth';
@@ -138,7 +139,7 @@ describe('agentRuntime context accounting', () => {
 		});
 
 		await t.run(async (ctx) => {
-			await ctx.db.patch('runs', runId, { claimExpiresAt: Date.now() - 1 });
+			await patchRunExecution(ctx, runId, { claimExpiresAt: Date.now() - 1 });
 		});
 		await asUser.mutation(api.agentRuntime.start, {
 			runId,
@@ -947,7 +948,7 @@ describe('agentRuntime context accounting', () => {
 		});
 
 		await t.run(async (ctx) => {
-			await ctx.db.patch('runs', runId, { claimExpiresAt: Date.now() - 1 });
+			await patchRunExecution(ctx, runId, { claimExpiresAt: Date.now() - 1 });
 		});
 		await asUser.mutation(api.agentRuntime.start, {
 			runId,

@@ -1,7 +1,7 @@
 import { mutation, query } from '@convex/_generated/server';
 import { v } from 'convex/values';
 import type { Infer } from 'convex/values';
-import { getExecutionRun } from '@convex/lib/auth';
+import { getExecutionRun, getExecutionRunRecord } from '@convex/lib/auth';
 import { applyExecutorJobFailure, applyExecutorJobSuccess } from '@convex/lib/executorJobs';
 import { vExecutorJobResult, vExecutorJobStatus } from '@convex/lib/validators';
 import { toAgentToolConvexError } from '@convex/lib/agentErrors';
@@ -82,7 +82,7 @@ export const getJob = query({
 		})
 	),
 	handler: async (ctx, args) => {
-		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
 		const job = await ctx.db.get('executorJobs', args.jobId);
 		if (!job || job.runId !== run._id) {
 			return null;

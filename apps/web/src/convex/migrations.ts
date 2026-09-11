@@ -3,6 +3,7 @@ import { components, internal } from '@convex/_generated/api';
 import { internalMutation } from '@convex/_generated/server';
 import schema from '@convex/schema';
 import { v } from 'convex/values';
+import { migrateRunExecution } from '@convex/lib/runExecution';
 
 export const AUTOMATIC_CLEANUP_DELAY_MS = 48 * 60 * 60 * 1_000;
 const PRODUCTION_ROLLOUT_CLEANUP = 'production-rollout-cleanup-2026-09';
@@ -35,6 +36,42 @@ const fastModeBackfillMigrations = [
 ];
 
 export const runFastModeBackfill = migrations.runner(fastModeBackfillMigrations);
+
+const runExecutionBackfillMigrations = [
+	internal.migrations.backfillRunExecution,
+	internal.migrations.normalizeThreadRunningStatus
+];
+
+export const runExecutionBackfill = migrations.runner(runExecutionBackfillMigrations);
+
+export const runExecutionBackfillAutomatically = internalMutation({
+	args: {},
+	returns: v.null(),
+	handler: async (ctx) => {
+		const statuses = await migrations.getStatus(ctx, {
+			migrations: runExecutionBackfillMigrations
+		});
+		if (!statuses.every((status) => status.isDone)) {
+			await migrations.runSerially(ctx, runExecutionBackfillMigrations);
+		}
+		return null;
+	}
+});
+
+export const backfillRunExecution = migrations.define({
+	table: 'runs',
+	migrateOne: async (ctx, run) => {
+		await migrateRunExecution(ctx, run);
+		if (run.status === 'awaiting_executor') return { status: 'running' as const };
+	}
+});
+
+export const normalizeThreadRunningStatus = migrations.define({
+	table: 'threadRecords',
+	migrateOne: (_ctx, thread) => {
+		if (thread.status === 'awaiting_executor') return { status: 'running' as const };
+	}
+});
 
 export const runFastModeBackfillAutomatically = internalMutation({
 	args: {},
@@ -109,7 +146,8 @@ export const backfillMissingThreadStatus = migrations.define({
 			.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', thread._id))
 			.order('desc')
 			.first();
-		return { status: latestRun?.status ?? 'completed' };
+		const status = latestRun?.status ?? 'completed';
+		return { status: status === 'awaiting_executor' ? ('running' as const) : status };
 	}
 });
 

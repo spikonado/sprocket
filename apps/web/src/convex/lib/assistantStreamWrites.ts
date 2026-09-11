@@ -1,5 +1,6 @@
 import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
 import type { Doc } from '@convex/_generated/dataModel';
+import { patchRunExecution } from '@convex/lib/runExecution';
 
 export async function getCompletionStreamState(
 	ctx: MutationCtx | QueryCtx,
@@ -21,5 +22,5 @@ export async function registerCompletionAttemptForRun(
 	attemptSeq: number
 ): Promise<void> {
 	// Partial superseded turns are discarded on the agent side, not in Convex.
-	await ctx.db.patch('runs', run._id, { completionAttemptSeq: attemptSeq });
+	await patchRunExecution(ctx, run._id, { completionAttemptSeq: attemptSeq });
 }

@@ -1,6 +1,6 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
-import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
+import { patchRunExecution } from '@convex/lib/runExecution';
 import { newToolInvocationId } from '@convex/lib/transcriptParts';
 import { recordStartedToolTranscript } from '@convex/lib/transcriptWrites';
 import { enqueueWebToolJob, isCloudWebToolKind } from '@convex/webToolPool';
@@ -51,7 +51,7 @@ export async function beginExecutorJob(
 		});
 	}
 
-	await setRunAndThreadStatus(ctx, args.run, 'awaiting_executor', { activeJobId: jobId });
+	await patchRunExecution(ctx, args.run._id, { activeJobId: jobId });
 	await recordStartedToolTranscript(ctx, {
 		threadId: args.run.threadId,
 		userId: args.run.userId,
