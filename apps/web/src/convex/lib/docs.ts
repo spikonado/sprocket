@@ -84,9 +84,7 @@ export const vCompletionActor = v.object({
 	threadId: v.id('threadRecords'),
 	status: vRunStatus,
 	claimId: v.optional(v.string()),
-	claimExpiresAt: v.optional(v.number()),
-	streamSequence: v.number(),
-	streamAttemptId: v.optional(v.string())
+	claimExpiresAt: v.optional(v.number())
 });
 
 export {

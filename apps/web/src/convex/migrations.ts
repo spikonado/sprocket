@@ -44,6 +44,41 @@ const runExecutionBackfillMigrations = [
 
 export const runExecutionBackfill = migrations.runner(runExecutionBackfillMigrations);
 
+const completionStreamCleanupMigrations = [
+	internal.migrations.removeRunCompletionStreamStateId,
+	internal.migrations.deleteCompletionStreamStates
+];
+
+export const runCompletionStreamCleanup = migrations.runner(completionStreamCleanupMigrations);
+
+export const runCompletionStreamCleanupAutomatically = internalMutation({
+	args: {},
+	returns: v.null(),
+	handler: async (ctx) => {
+		const statuses = await migrations.getStatus(ctx, {
+			migrations: completionStreamCleanupMigrations
+		});
+		if (!statuses.every((status) => status.isDone)) {
+			await migrations.runSerially(ctx, completionStreamCleanupMigrations);
+		}
+		return null;
+	}
+});
+
+export const removeRunCompletionStreamStateId = migrations.define({
+	table: 'runs',
+	migrateOne: (_ctx, run) => {
+		if (run.completionStreamStateId !== undefined) return { completionStreamStateId: undefined };
+	}
+});
+
+export const deleteCompletionStreamStates = migrations.define({
+	table: 'completionStreamStates',
+	migrateOne: async (ctx, state) => {
+		await ctx.db.delete('completionStreamStates', state._id);
+	}
+});
+
 export const runExecutionBackfillAutomatically = internalMutation({
 	args: {},
 	returns: v.null(),

@@ -121,6 +121,8 @@ describe('agentRuntime.insertGatewayRun', () => {
 			status: 'queued',
 			submissionId: 'sub-1'
 		});
+		expect(run).not.toHaveProperty('completionStreamStateId');
+		expect(await t.run((ctx) => ctx.db.query('completionStreamStates').first())).toBeNull();
 		expect(await t.run(async (ctx) => ctx.db.get('imageUploads', imageUploadId))).toMatchObject({
 			attached: true
 		});
