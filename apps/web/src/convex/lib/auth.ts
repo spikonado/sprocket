@@ -6,6 +6,7 @@ import type {
 } from 'convex/server';
 import type { DataModel } from '@convex/_generated/dataModel';
 import type { Doc, Id } from '@convex/_generated/dataModel';
+import { withRunExecution, type ExecutionRun } from '@convex/lib/runExecution';
 
 export async function getUserId(
 	ctx: GenericActionCtx<DataModel> | GenericMutationCtx<DataModel> | GenericQueryCtx<DataModel>
@@ -119,6 +120,14 @@ export async function executionSecretHash(secret: string): Promise<string> {
 
 /** Authorize a run using the capability held by its local executor. */
 export async function getExecutionRun(
+	ctx: GenericMutationCtx<DataModel> | GenericQueryCtx<DataModel>,
+	runId: Id<'runs'>,
+	executionSecret: string
+): Promise<ExecutionRun> {
+	return await withRunExecution(ctx.db, await getExecutionRunRecord(ctx, runId, executionSecret));
+}
+
+export async function getExecutionRunRecord(
 	ctx: GenericMutationCtx<DataModel> | GenericQueryCtx<DataModel>,
 	runId: Id<'runs'>,
 	executionSecret: string

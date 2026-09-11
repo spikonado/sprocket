@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { patchRunExecution } from '@convex/lib/runExecution';
 import { ConvexError, type Infer } from 'convex/values';
 import { getFunctionName, type FunctionArgs } from 'convex/server';
 import { FirecrawlClient } from '@firecrawl/firecrawl-convex';
@@ -260,7 +261,7 @@ describe('queued scrape auth', () => {
 			payload: { url: PAGE_URL }
 		});
 		await t.run(async (ctx) => {
-			await ctx.db.patch('runs', runId, { claimExpiresAt: Date.now() - 1 });
+			await patchRunExecution(ctx, runId, { claimExpiresAt: Date.now() - 1 });
 		});
 		await expect(
 			queuedAction(asUser, api.webTools.scrapeForTool, {
@@ -749,7 +750,7 @@ describe('queued screenshot transport', () => {
 			executionSecret: 'expired-screenshot-secret'
 		});
 		await t.run(async (ctx) => {
-			await ctx.db.patch('runs', runId, { claimExpiresAt: Date.now() - 1 });
+			await patchRunExecution(ctx, runId, { claimExpiresAt: Date.now() - 1 });
 		});
 		const scrape = mockScrape({ screenshot: SCREENSHOT_URL });
 		try {

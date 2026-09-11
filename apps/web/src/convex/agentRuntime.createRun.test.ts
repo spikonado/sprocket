@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { getRunWithExecution, patchRunExecution } from '@convex/lib/runExecution';
 import { api, internal } from '@convex/_generated/api';
 import { createQueuedRun, initConvexTest, insertQueuedRun, seedOwnedThread } from './test.setup';
 
@@ -161,7 +162,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 
 		const expiredAt = await t.run(async (ctx) => {
 			const claimExpiresAt = Date.now() - 1;
-			await ctx.db.patch('runs', created.runId, { claimExpiresAt });
+			await patchRunExecution(ctx, created.runId, { claimExpiresAt });
 			return claimExpiresAt;
 		});
 		await expect(
@@ -172,7 +173,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			})
 		).resolves.toMatchObject({ renewed: false });
 		expect(
-			await t.run(async (ctx) => (await ctx.db.get('runs', created.runId))?.claimExpiresAt)
+			await t.run(async (ctx) => (await getRunWithExecution(ctx.db, created.runId))?.claimExpiresAt)
 		).toBe(expiredAt);
 	});
 
@@ -423,7 +424,7 @@ describe('agentRuntime.insertGatewayRun', () => {
 			executionSecret
 		});
 		await t.run(async (ctx) => {
-			await ctx.db.patch('runs', abandoned.runId, { claimExpiresAt: Date.now() - 1 });
+			await patchRunExecution(ctx, abandoned.runId, { claimExpiresAt: Date.now() - 1 });
 		});
 
 		const next = await insertQueuedRun(t, asUser, {

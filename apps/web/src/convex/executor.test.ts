@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { getRunWithExecution, patchRunExecution } from '@convex/lib/runExecution';
 import { api } from '@convex/_generated/api';
 import {
 	createQueuedRun,
@@ -53,7 +54,9 @@ async function seedRunWithJob(
 			sequence: 1
 		});
 		await ctx.db.patch('runs', created.runId, {
-			status: options.runStatus ?? 'awaiting_executor',
+			status: options.runStatus ?? 'running'
+		});
+		await patchRunExecution(ctx, created.runId, {
 			claimId,
 			claimExpiresAt: options.claimExpiresAt ?? Date.now() + 60_000,
 			activeJobId: options.activeJobMatches === false ? otherJobId : jobId
@@ -187,7 +190,7 @@ describe('executor', () => {
 		}
 	);
 
-	it('completes the active job and releases the run back to running', async () => {
+	it('completes the active job without changing the running status', async () => {
 		const t = initConvexTest();
 		const { asUser, runId, jobId, claimId, executionSecret } = await seedRunWithJob(t, {
 			executionSecret: 'executor-complete-secret'
@@ -205,7 +208,7 @@ describe('executor', () => {
 
 		const state = await t.run(async (ctx) => ({
 			job: await ctx.db.get('executorJobs', jobId),
-			run: await ctx.db.get('runs', runId)
+			run: await getRunWithExecution(ctx.db, runId)
 		}));
 		expect(state.job).toMatchObject({
 			status: 'completed',
@@ -326,22 +329,23 @@ describe('executor', () => {
 		expect(
 			await t.run(async (ctx) => ({
 				job: await ctx.db.get('executorJobs', matching.jobId),
-				run: await ctx.db.get('runs', matching.runId)
+				run: await getRunWithExecution(ctx.db, matching.runId)
 			}))
 		).toMatchObject({
 			job: { status: 'failed', error: 'boom' },
 			run: { status: 'running' }
 		});
 		expect(
-			(await t.run(async (ctx) => (await ctx.db.get('runs', matching.runId))?.activeJobId)) ??
-				undefined
+			(await t.run(
+				async (ctx) => (await getRunWithExecution(ctx.db, matching.runId))?.activeJobId
+			)) ?? undefined
 		).toBeUndefined();
 
 		const mismatched = await seedRunWithJob(t, {
 			activeJobMatches: false,
 			executionSecret: 'executor-fail-mismatch-secret'
 		});
-		const before = await t.run(async (ctx) => ctx.db.get('runs', mismatched.runId));
+		const before = await t.run(async (ctx) => getRunWithExecution(ctx.db, mismatched.runId));
 		await expect(
 			mismatched.asUser.mutation(api.executor.fail, {
 				jobId: mismatched.jobId,
@@ -351,7 +355,7 @@ describe('executor', () => {
 				executionSecret: mismatched.executionSecret
 			})
 		).resolves.toBe(true);
-		const after = await t.run(async (ctx) => ctx.db.get('runs', mismatched.runId));
+		const after = await t.run(async (ctx) => getRunWithExecution(ctx.db, mismatched.runId));
 		expect(after?.status).toBe(before?.status);
 		expect(after?.activeJobId).toBe(before?.activeJobId);
 		expect(
@@ -377,7 +381,7 @@ describe('executor', () => {
 		expect(
 			await t.run(async (ctx) => ({
 				jobStatus: (await ctx.db.get('executorJobs', completeCase.jobId))?.status,
-				activeJobId: (await ctx.db.get('runs', completeCase.runId))?.activeJobId
+				activeJobId: (await getRunWithExecution(ctx.db, completeCase.runId))?.activeJobId
 			}))
 		).toEqual({ jobStatus: 'claimed', activeJobId: completeCase.jobId });
 
@@ -397,7 +401,7 @@ describe('executor', () => {
 		expect(
 			await t.run(async (ctx) => ({
 				jobStatus: (await ctx.db.get('executorJobs', failCase.jobId))?.status,
-				activeJobId: (await ctx.db.get('runs', failCase.runId))?.activeJobId
+				activeJobId: (await getRunWithExecution(ctx.db, failCase.runId))?.activeJobId
 			}))
 		).toEqual({ jobStatus: 'claimed', activeJobId: failCase.jobId });
 	});

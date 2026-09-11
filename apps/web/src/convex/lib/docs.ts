@@ -63,7 +63,7 @@ export const vCustomerPortalResponse = v.object({
 });
 
 export const vGetContextResult = v.object({
-	run: schema.doc('runs'),
+	run: schema.doc('runs').extend({ completionAttemptSeq: v.number() }),
 	prompt: v.string(),
 	contextTokens: v.optional(v.number())
 });

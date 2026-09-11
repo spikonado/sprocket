@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { getRunWithExecution, patchRunExecution } from '@convex/lib/runExecution';
 import { api } from '@convex/_generated/api';
 import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 
@@ -50,7 +51,7 @@ describe('agentRuntime.start', () => {
 		expect(claimed.claimed).toBe(true);
 		expect(claimed.claimExpiresAt).toBeTypeOf('number');
 
-		const run = await t.run(async (ctx) => ctx.db.get('runs', runId));
+		const run = await t.run(async (ctx) => getRunWithExecution(ctx.db, runId));
 		expect(run).toMatchObject({
 			status: 'running',
 			claimId: 'claim-a',
@@ -65,7 +66,7 @@ describe('agentRuntime.start', () => {
 		expect(renewed.claimed).toBe(true);
 		expect(renewed.claimExpiresAt).toBeGreaterThanOrEqual(claimed.claimExpiresAt ?? 0);
 		expect(
-			await t.run(async (ctx) => (await ctx.db.get('runs', runId))?.completionAttemptSeq)
+			await t.run(async (ctx) => (await getRunWithExecution(ctx.db, runId))?.completionAttemptSeq)
 		).toBe(0);
 	});
 
@@ -179,7 +180,7 @@ describe('agentRuntime.start', () => {
 			executionSecret
 		});
 		await t.run(async (ctx) => {
-			await ctx.db.patch('runs', runId, { claimExpiresAt: Date.now() - 1 });
+			await patchRunExecution(ctx, runId, { claimExpiresAt: Date.now() - 1 });
 		});
 
 		await expect(
@@ -220,7 +221,7 @@ describe('agentRuntime.start', () => {
 		await asUser.mutation(api.agentRuntime.start, { claimId: 'claim-a', runId, executionSecret });
 
 		await t.run(async (ctx) => {
-			await ctx.db.patch('runs', runId, {
+			await patchRunExecution(ctx, runId, {
 				completionAttemptSeq: 4,
 				claimExpiresAt: Date.now() - 1
 			});
@@ -233,7 +234,7 @@ describe('agentRuntime.start', () => {
 				executionSecret
 			})
 		).resolves.toEqual({ claimed: false });
-		expect(await t.run(async (ctx) => ctx.db.get('runs', runId))).toMatchObject({
+		expect(await t.run(async (ctx) => getRunWithExecution(ctx.db, runId))).toMatchObject({
 			claimId: 'claim-a',
 			completionAttemptSeq: 4
 		});
@@ -250,7 +251,7 @@ describe('agentRuntime.start', () => {
 			executionSecret
 		});
 		await t.run(async (ctx) => {
-			await ctx.db.patch('runs', runId, {
+			await patchRunExecution(ctx, runId, {
 				completionAttemptSeq: 2,
 				claimExpiresAt: Date.now() - 1
 			});
@@ -264,7 +265,7 @@ describe('agentRuntime.start', () => {
 			})
 		).resolves.toEqual({ claimed: false });
 
-		const run = await t.run(async (ctx) => ctx.db.get('runs', runId));
+		const run = await t.run(async (ctx) => getRunWithExecution(ctx.db, runId));
 		expect(run).toMatchObject({
 			claimId: 'claim-a',
 			completionAttemptSeq: 2

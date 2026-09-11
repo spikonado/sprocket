@@ -1,5 +1,6 @@
 import { cancel, defineWorkflow, start, vWorkflowId, type WorkflowId } from '@convex-dev/workflow';
 import { v } from 'convex/values';
+import { getRunWithExecution } from '@convex/lib/runExecution';
 import { components, internal } from '@convex/_generated/api';
 import { internalMutation, internalQuery, type MutationCtx } from '@convex/_generated/server';
 import type { Doc, Id } from '@convex/_generated/dataModel';
@@ -88,7 +89,7 @@ export const getWatchState = internalQuery({
 		v.object({ kind: v.literal('wait'), waitMs: v.number() })
 	),
 	handler: async (ctx, args) => {
-		const run = await ctx.db.get('runs', args.runId);
+		const run = await getRunWithExecution(ctx.db, args.runId);
 		if (!run) {
 			return { kind: 'missing' as const };
 		}
@@ -100,7 +101,7 @@ export const abandonExpiredRun = internalMutation({
 	args: { runId: v.id('runs') },
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
-		const run = await ctx.db.get('runs', args.runId);
+		const run = await getRunWithExecution(ctx.db, args.runId);
 		if (!run || isRunFinalStatus(run.status)) {
 			return false;
 		}
@@ -120,7 +121,7 @@ export const forceCancelRun = internalMutation({
 	args: { runId: v.id('runs') },
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
-		const run = await ctx.db.get('runs', args.runId);
+		const run = await getRunWithExecution(ctx.db, args.runId);
 		if (!run || !isRunCancellationOpen(run)) {
 			return false;
 		}
@@ -149,7 +150,7 @@ export const reconcileTerminalPage = internalMutation({
 		transcriptCursor: v.number()
 	}),
 	handler: async (ctx, args) => {
-		const run = await ctx.db.get('runs', args.runId);
+		const run = await getRunWithExecution(ctx.db, args.runId);
 		if (!run) {
 			return {
 				done: true,

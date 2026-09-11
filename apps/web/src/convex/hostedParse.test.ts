@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { patchRunExecution } from '@convex/lib/runExecution';
 import type { WorkId } from '@convex-dev/workpool';
 import type { GenericDatabaseWriter, GenericDataModel, SystemDataModel } from 'convex/server';
 import { api, internal } from '@convex/_generated/api';
@@ -53,8 +54,7 @@ async function seedParseJob(
 			claimedAt: Date.now(),
 			sequence: 0
 		});
-		await ctx.db.patch('runs', created.runId, {
-			status: 'awaiting_executor',
+		await patchRunExecution(ctx, created.runId, {
 			activeJobId: jobId
 		});
 		return jobId;
@@ -500,7 +500,8 @@ describe('hostedParse', () => {
 			const resultId =
 				mode === 'skipped-result' ? undefined : await storeBlob(t, { bytes: 'late' });
 			await t.run(async (ctx) => {
-				if (mode === 'new-claim') await ctx.db.patch('runs', run.runId, { claimId: 'replacement' });
+				if (mode === 'new-claim')
+					await patchRunExecution(ctx, run.runId, { claimId: 'replacement' });
 				if (mode === 'settled-job')
 					await ctx.db.patch('executorJobs', run.jobId, { status: 'failed' });
 			});

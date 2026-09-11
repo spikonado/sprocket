@@ -1,4 +1,5 @@
 import { vOnCompleteArgs } from '@convex-dev/workpool';
+import { getRunWithExecution } from '@convex/lib/runExecution';
 import { ConvexError, v } from 'convex/values';
 import { internal } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
@@ -267,7 +268,7 @@ export const getParseWork = internalQuery({
 		if (isSettledExecutorJobStatus(job.status)) {
 			return null;
 		}
-		const run = await ctx.db.get('runs', args.runId);
+		const run = await getRunWithExecution(ctx.db, args.runId);
 		if (
 			!run ||
 			isRunFinalStatus(run.status) ||
@@ -295,7 +296,7 @@ export const completeHostedParse = internalMutation({
 			return null;
 		}
 		const job = await ctx.db.get('executorJobs', args.context.jobId);
-		const run = await ctx.db.get('runs', args.context.runId);
+		const run = await getRunWithExecution(ctx.db, args.context.runId);
 		const cancelled =
 			!job ||
 			job.runId !== args.context.runId ||

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { patchRunExecution } from '@convex/lib/runExecution';
 import { FirecrawlClient } from '@firecrawl/firecrawl-convex';
 import { api, internal } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
@@ -240,7 +241,7 @@ describe('Firecrawl request queue', () => {
 		const auth = await fixture(t, true);
 		const scrape = vi.spyOn(FirecrawlClient.prototype, 'scrape');
 		const id = await t.mutation(api.firecrawlRequests.start, { ...auth, kind: 'scrape' });
-		await t.run((ctx) => ctx.db.patch('runs', auth.runId, { claimId: 'replacement' }));
+		await t.run((ctx) => patchRunExecution(ctx, auth.runId, { claimId: 'replacement' }));
 		await vi.advanceTimersByTimeAsync(1_000);
 		await t.finishInProgressScheduledFunctions();
 		expect(scrape).not.toHaveBeenCalled();
@@ -263,13 +264,9 @@ describe('Firecrawl request queue', () => {
 			if (change === 'expire') await vi.advanceTimersByTimeAsync(REQUEST_TTL_MS);
 			else
 				await t.run((ctx) =>
-					ctx.db.patch(
-						'runs',
-						auth.runId,
-						change === 'cancel'
-							? { cancellationRequestedAt: Date.now() }
-							: { claimId: 'replacement' }
-					)
+					change === 'cancel'
+						? ctx.db.patch('runs', auth.runId, { cancellationRequestedAt: Date.now() })
+						: patchRunExecution(ctx, auth.runId, { claimId: 'replacement' })
 				);
 			gate.resolve({ markdown: 'Too late' });
 			await t.finishInProgressScheduledFunctions();

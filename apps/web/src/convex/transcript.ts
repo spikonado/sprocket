@@ -2,7 +2,7 @@ import { mutation, query, type MutationCtx, type QueryCtx } from '@convex/_gener
 import { v } from 'convex/values';
 import type { Id } from '@convex/_generated/dataModel';
 import { getOwnedThreadRecord } from '@convex/lib/access';
-import { getExecutionRun, getUserId } from '@convex/lib/auth';
+import { getExecutionRunRecord, getUserId } from '@convex/lib/auth';
 import { imageUploadByStorageId } from '@convex/lib/imageUploads';
 import {
 	vAttachmentFileDownloadResult,
@@ -99,7 +99,7 @@ export const getStateForRun = query({
 	},
 	returns: vTranscriptStateResult,
 	handler: async (ctx, args) => {
-		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
 		return await transcriptStateResult(ctx, run.threadId);
 	}
 });
@@ -112,7 +112,7 @@ export const getPartsForRun = query({
 	},
 	returns: vTranscriptPartsResult,
 	handler: async (ctx, args) => {
-		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
 		const parts = await transcriptPartsForClient(
 			ctx,
 			await loadTranscriptPartsByNumbers(ctx, run.threadId, args.numbers)

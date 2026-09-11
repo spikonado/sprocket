@@ -1,10 +1,10 @@
-import type { Doc } from '@convex/_generated/dataModel';
 import { action, internalMutation, mutation, query } from '@convex/_generated/server';
 import { internal } from '@convex/_generated/api';
 import schema from '@convex/schema';
 import { ConvexError, v, type Infer } from 'convex/values';
 import { getOwnedRun, getOwnedThreadRecord } from '@convex/lib/access';
-import { getExecutionRun, getUserId } from '@convex/lib/auth';
+import { getExecutionRun, getExecutionRunRecord, getUserId } from '@convex/lib/auth';
+import { patchRunExecution, type ExecutionRun } from '@convex/lib/runExecution';
 import { GATEWAY_PROTOCOL_VERSION } from '@convex/lib/gatewayProtocol';
 import { modelGatewayTokenSecret, modelGatewayUrl } from '@convex/lib/gatewayFetch';
 import { gatewayTokenExpiresAt, mintGatewayToken } from '@convex/lib/gatewayToken';
@@ -69,10 +69,7 @@ import {
 type RunClaimPatch = {
 	claimId: string;
 	claimExpiresAt: number;
-	status: Doc<'runs'>['status'];
-	lastError: undefined;
 	completionAttemptSeq?: number;
-	activeJobId?: undefined;
 };
 
 /** Retired Convex createRun. Kept so older agents get an update message. */
@@ -229,12 +226,11 @@ export const start = mutation({
 
 		const claimPatch: RunClaimPatch = {
 			claimId: args.claimId,
-			claimExpiresAt: nextClaimExpiresAt,
-			status: isSameClaimRenewal ? run.status : 'running',
-			lastError: undefined
+			claimExpiresAt: nextClaimExpiresAt
 		};
 		if (!isSameClaimRenewal) claimPatch.completionAttemptSeq = 0;
-		await setRunAndThreadStatus(ctx, run, claimPatch.status, claimPatch);
+		await patchRunExecution(ctx, run._id, claimPatch);
+		await setRunAndThreadStatus(ctx, run, 'running', { lastError: undefined });
 
 		return { claimed: true, claimExpiresAt: nextClaimExpiresAt };
 	}
@@ -258,13 +254,13 @@ export const renewClaim = mutation({
 		}
 
 		const nextClaimExpiresAt = claimExpiresAt(Date.now());
-		await ctx.db.patch('runs', run._id, { claimExpiresAt: nextClaimExpiresAt });
+		await patchRunExecution(ctx, run._id, { claimExpiresAt: nextClaimExpiresAt });
 		return { renewed: true, claimExpiresAt: nextClaimExpiresAt };
 	}
 });
 
 function getContextResult(args: {
-	run: Doc<'runs'>;
+	run: ExecutionRun;
 	prompt: string;
 	contextTokens: number | undefined;
 }): Infer<typeof vGetContextResult> {
@@ -313,7 +309,7 @@ export const isFinished = query({
 	},
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
-		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
+		const run = await getExecutionRunRecord(ctx, args.runId, args.executionSecret);
 		return isRunFinalStatus(run.status) || run.cancellationRequestedAt !== undefined;
 	}
 });

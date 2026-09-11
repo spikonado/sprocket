@@ -1,4 +1,5 @@
 import { ConvexError, v } from 'convex/values';
+import { getRunWithExecution } from '@convex/lib/runExecution';
 import {
 	paginationOptsValidator,
 	paginationResultValidator,
@@ -90,7 +91,7 @@ export const acquire = internalMutation({
 	returns: schema.doc('browserSessions'),
 	handler: async (ctx, args) => {
 		const now = Date.now();
-		const run = await ctx.db.get('runs', args.runId);
+		const run = await getRunWithExecution(ctx.db, args.runId);
 		if (
 			!run ||
 			run.cancellationRequestedAt !== undefined ||
@@ -209,7 +210,7 @@ export const attach = internalMutation({
 					.withIndex('by_userId', (q) => q.eq('userId', session.userId))
 					.unique()
 			: null;
-		const run = session ? await ctx.db.get('runs', session.lastUsedRunId) : null;
+		const run = session ? await getRunWithExecution(ctx.db, session.lastUsedRunId) : null;
 		if (
 			!session ||
 			session.operationId !== operationId ||
@@ -290,7 +291,7 @@ export const beforeExecute = internalMutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const session = await ctx.db.get('browserSessions', args.id);
-		const run = await ctx.db.get('runs', args.runId);
+		const run = await getRunWithExecution(ctx.db, args.runId);
 		if (
 			!session ||
 			session.closing ||
