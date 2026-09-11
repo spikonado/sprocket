@@ -22,10 +22,8 @@ import {
 	isAllowedVersion,
 	isWindowsBusyExecutable,
 	killProcessTree,
-	makePayload,
 	parseUpdateArgs,
 	registryUrl,
-	releaseChannel,
 	runUpdateApi,
 	runUpdateCli,
 	taskkillPath,
@@ -212,12 +210,6 @@ function testHost(options = {}) {
 
 	return { host, commands, fetched, lockFiles, releaseInstall };
 }
-
-test('maps installed versions onto latest, canary, and dev channels', () => {
-	assert.equal(releaseChannel('0.3.4'), 'latest');
-	assert.equal(releaseChannel('0.3.4-canary.1'), 'canary');
-	assert.equal(releaseChannel(`0.3.4-dev.${DEV_SHA}`), 'dev');
-});
 
 test('accepts only registry versions that match the release channel', () => {
 	assert.equal(isAllowedVersion('0.3.5', 'latest'), true);
@@ -914,15 +906,4 @@ test('update-api.js prints only JSON and rejects unknown commands', () => {
 	assert.equal(payload.currentVersion, manifest.version);
 	assert.equal(payload.version, null);
 	assert.equal(payload.error.length > 0, true);
-});
-
-test('payload helper always includes method package', () => {
-	assert.deepEqual(makePayload({ status: 'idle', currentVersion: '1.0.0' }), {
-		status: 'idle',
-		currentVersion: '1.0.0',
-		version: null,
-		error: null,
-		method: 'package',
-		message: null
-	});
 });

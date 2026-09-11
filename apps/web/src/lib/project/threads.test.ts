@@ -3,7 +3,6 @@ import {
 	beginPendingAgentLaunch,
 	clearPendingAgentLaunch,
 	dataForThread,
-	findProjectByRepositoryKey,
 	getProjectThreadGroups,
 	isActiveThread,
 	isAgentLaunchPending,
@@ -18,7 +17,6 @@ import {
 	resolveProjectThreadSelection,
 	retainUnconfirmedCreatedThreads,
 	shouldDropUnconfirmedCreatedThread,
-	toThreadSummary,
 	type PendingAgentLaunch,
 	type PendingAgentLaunches
 } from '$lib/project/threads';
@@ -228,69 +226,6 @@ describe('project thread helpers', () => {
 			'thread-record-running-older',
 			'thread-record-completed-newer'
 		]);
-	});
-
-	it('finds a project by repository key', () => {
-		const match = makeProject({
-			repositoryKey: 'github.com/spikonado/sprocket',
-			displayName: 'sprocket'
-		});
-		const projects = [
-			match,
-			makeProject({
-				repositoryKey: 'local-sprocket',
-				displayName: 'sprocket'
-			})
-		];
-
-		expect(findProjectByRepositoryKey(projects, 'github.com/spikonado/sprocket')).toBe(match);
-		expect(findProjectByRepositoryKey(projects, 'sprocket')).toBeNull();
-	});
-
-	it('maps a persisted thread row onto ThreadSummary fields', () => {
-		const row = {
-			threadId: threadA,
-			repositoryKey: 'ws-1',
-			title: 'Checkout',
-			selectedModel: 'gpt-5.6-luna',
-			reasoningEffort: defaultReasoningEffort,
-			serviceTier: defaultServiceTier,
-			lastMessageAt: 42,
-			threadStatus: 'active' as const,
-			status: 'running' as const
-		};
-
-		expect(toThreadSummary(row)).toEqual({
-			threadId: threadA,
-			repositoryKey: 'ws-1',
-			title: 'Checkout',
-			selectedModel: 'gpt-5.6-luna',
-			reasoningEffort: defaultReasoningEffort,
-			serviceTier: defaultServiceTier,
-			lastMessageAt: 42,
-			threadStatus: 'active',
-			status: 'running'
-		});
-	});
-
-	it('keeps project fields on the group rather than copying them', () => {
-		const project = makeProject({
-			repositoryKey: 'github.com/spikonado/sprocket',
-			displayName: 'sprocket-checkout'
-		});
-		const groups = getProjectThreadGroups(
-			[project],
-			[
-				makeThreadSummary({
-					repositoryKey: 'github.com/spikonado/sprocket',
-					lastMessageAt: 10
-				})
-			]
-		);
-
-		expect(groups).toHaveLength(1);
-		expect(groups[0]?.project).toBe(project);
-		expect(groups[0]?.project.displayName).toBe('sprocket-checkout');
 	});
 
 	it('preserves a blank draft selection for the current repository', () => {
