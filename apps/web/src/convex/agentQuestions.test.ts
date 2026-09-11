@@ -79,8 +79,7 @@ describe('agentQuestions', () => {
 		});
 
 		const head = await asUser.query(api.agentQuestions.headPendingForThread, {
-			threadId,
-			now: Date.now()
+			threadId
 		});
 		expect(head?.questionId).toBe(first.questionId);
 
@@ -111,8 +110,7 @@ describe('agentQuestions', () => {
 		expect(
 			(
 				await asUser.query(api.agentQuestions.headPendingForThread, {
-					threadId,
-					now: Date.now()
+					threadId
 				})
 			)?.questionId
 		).toBe(second.questionId);
@@ -146,7 +144,7 @@ describe('agentQuestions', () => {
 		vi.useRealTimers();
 	});
 
-	it('cancels pending questions when the run finalizes', async () => {
+	it('cancels pending questions when the run is cancelled', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
 		const { executionSecret, claimId, runId } = await startRun(t, threadId);
@@ -174,7 +172,45 @@ describe('agentQuestions', () => {
 		expect(snapshot?.status).toBe('cancelled');
 	});
 
-	it('expires overdue heads on answer so FIFO can advance before the scheduler', async () => {
+	it('keeps pending questions after the run completes', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t, 'user_alice');
+		const { executionSecret, claimId, runId } = await startRun(t, threadId);
+
+		const created = await t.mutation(api.agentQuestions.create, {
+			runId,
+			claimId,
+			question: 'Still open?',
+			options: [{ id: 'yes', label: 'Yes' }],
+			executionSecret
+		});
+
+		await asUser.mutation(api.agentRuntime.finalizeExecutorRun, {
+			runId,
+			text: '',
+			status: 'completed',
+			executionSecret
+		});
+
+		await expect(
+			asUser.query(api.agentQuestions.headPendingForThread, { threadId })
+		).resolves.toMatchObject({
+			questionId: created.questionId,
+			status: 'pending'
+		});
+		await expect(
+			asUser.mutation(api.agentQuestions.answer, {
+				threadId,
+				questionId: created.questionId,
+				optionId: 'yes'
+			})
+		).resolves.toMatchObject({
+			status: 'answered',
+			answer: { optionId: 'yes', optionLabel: 'Yes' }
+		});
+	});
+
+	it('keeps a pending head answerable until its timeout mutation runs', async () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date('2026-07-26T12:00:00.000Z'));
 		const t = initConvexTest();
@@ -201,13 +237,8 @@ describe('agentQuestions', () => {
 		vi.setSystemTime(new Date('2026-07-26T12:00:02.000Z'));
 
 		expect(
-			(
-				await asUser.query(api.agentQuestions.headPendingForThread, {
-					threadId,
-					now: Date.now()
-				})
-			)?.questionId
-		).toBe(next.questionId);
+			(await asUser.query(api.agentQuestions.headPendingForThread, { threadId }))?.questionId
+		).toBe(overdue.questionId);
 
 		await expect(
 			asUser.mutation(api.agentQuestions.answer, {
@@ -215,7 +246,14 @@ describe('agentQuestions', () => {
 				questionId: overdue.questionId,
 				optionId: 'old'
 			})
-		).rejects.toThrow(/no longer awaiting/);
+		).resolves.toMatchObject({
+			status: 'answered',
+			answer: { optionId: 'old', optionLabel: 'Old' }
+		});
+
+		expect(
+			(await asUser.query(api.agentQuestions.headPendingForThread, { threadId }))?.questionId
+		).toBe(next.questionId);
 
 		await expect(
 			asUser.mutation(api.agentQuestions.answer, {
@@ -227,14 +265,6 @@ describe('agentQuestions', () => {
 			status: 'answered',
 			answer: { optionId: 'new', optionLabel: 'New' }
 		});
-
-		const overdueSnapshot = await t.query(api.agentQuestions.getForExecutor, {
-			runId,
-			questionId: overdue.questionId,
-			executionSecret
-		});
-		expect(overdueSnapshot?.status).toBe('timedOut');
-
 		vi.useRealTimers();
 	});
 });

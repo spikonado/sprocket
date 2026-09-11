@@ -52,8 +52,16 @@ async function cancelExecutorJobsPage(
 
 async function cancelPendingQuestionsPage(
 	ctx: MutationCtx,
-	args: { runId: Id<'runs'>; completedAt: number; afterSequence: number }
+	args: {
+		runId: Id<'runs'>;
+		runStatus: Infer<typeof vRunStatus>;
+		completedAt: number;
+		afterSequence: number;
+	}
 ): Promise<TerminalCleanupResult> {
+	if (args.runStatus !== 'cancelled') {
+		return { done: true, nextSequence: args.afterSequence };
+	}
 	const questions = await ctx.db
 		.query('agentQuestions')
 		.withIndex('by_runId_sequence', (query) =>
@@ -139,6 +147,7 @@ export async function advanceTerminalCleanup(
 	}
 	const questions = await cancelPendingQuestionsPage(ctx, {
 		runId: args.run._id,
+		runStatus: args.run.status,
 		completedAt: args.completedAt,
 		afterSequence: args.questionCursor
 	});

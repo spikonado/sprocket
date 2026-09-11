@@ -54,53 +54,17 @@ async function nextThreadSequence(
 	return (latest?.sequence ?? 0) + 1;
 }
 
-async function listPendingQuestions(
+async function headPendingQuestion(
 	ctx: QueryCtx | MutationCtx,
 	threadId: Id<'threadRecords'>
-): Promise<Doc<'agentQuestions'>[]> {
+): Promise<Doc<'agentQuestions'> | null> {
 	return await ctx.db
 		.query('agentQuestions')
 		.withIndex('by_threadId_status_sequence', (query) =>
 			query.eq('threadId', threadId).eq('status', 'pending')
 		)
 		.order('asc')
-		.collect();
-}
-
-async function headPendingQuestion(
-	ctx: QueryCtx | MutationCtx,
-	threadId: Id<'threadRecords'>
-): Promise<Doc<'agentQuestions'> | null> {
-	const pending = await listPendingQuestions(ctx, threadId);
-	return pending[0] ?? null;
-}
-
-/** First pending question that has not yet reached timeoutAt (UI head). */
-async function headLivePendingQuestion(
-	ctx: QueryCtx | MutationCtx,
-	threadId: Id<'threadRecords'>,
-	now: number
-): Promise<Doc<'agentQuestions'> | null> {
-	const pending = await listPendingQuestions(ctx, threadId);
-	return pending.find((question) => question.timeoutAt > now) ?? null;
-}
-
-/** Mark past-due pending questions timedOut so FIFO can advance before the scheduler fires. */
-async function expireOverduePendingQuestions(
-	ctx: MutationCtx,
-	threadId: Id<'threadRecords'>,
-	now: number
-): Promise<void> {
-	const pending = await listPendingQuestions(ctx, threadId);
-	for (const question of pending) {
-		if (question.timeoutAt > now) {
-			continue;
-		}
-		await ctx.db.patch('agentQuestions', question._id, {
-			status: 'timedOut',
-			answeredAt: now
-		});
-	}
+		.first();
 }
 
 export const create = mutation({
@@ -179,9 +143,6 @@ export const answer = mutation({
 		const userId = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 
-		const now = Date.now();
-		await expireOverduePendingQuestions(ctx, args.threadId, now);
-
 		const question = await ctx.db.get('agentQuestions', args.questionId);
 		if (!question || question.threadId !== args.threadId) {
 			throw new Error('Question not found.');
@@ -200,17 +161,18 @@ export const answer = mutation({
 			optionId: args.optionId,
 			text: args.text
 		});
+		const answeredAt = Date.now();
 		await ctx.db.patch('agentQuestions', question._id, {
 			status: 'answered',
 			answer,
-			answeredAt: now
+			answeredAt
 		});
 
 		return toSnapshot({
 			...question,
 			status: 'answered',
 			answer,
-			answeredAt: now
+			answeredAt
 		});
 	}
 });
@@ -256,14 +218,13 @@ export const getForExecutor = query({
 
 export const headPendingForThread = query({
 	args: {
-		threadId: v.id('threadRecords'),
-		now: v.number()
+		threadId: v.id('threadRecords')
 	},
 	returns: v.union(vAgentQuestionSnapshot, v.null()),
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
-		const head = await headLivePendingQuestion(ctx, args.threadId, args.now);
+		const head = await headPendingQuestion(ctx, args.threadId);
 		return head ? toSnapshot(head) : null;
 	}
 });
