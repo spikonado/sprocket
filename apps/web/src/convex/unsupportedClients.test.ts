@@ -98,9 +98,6 @@ describe('retired client APIs', () => {
 			asUser.mutation(api.threads.rekeyRepository, { from: 'old', to: 'new' })
 		).rejects.toThrow(UNSUPPORTED_CLIENT_MESSAGE);
 
-		await expect(asUser.mutation(api.agentRuntime.mergeAssistantStreamEvents, {})).rejects.toThrow(
-			UNSUPPORTED_CLIENT_MESSAGE
-		);
 		const request = {
 			runId,
 			claimId: 'old-claim',

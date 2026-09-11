@@ -56,4 +56,11 @@ crons.interval(
 	internal.firecrawlBrowser.reconcile
 );
 
+crons.interval(
+	'remove obsolete completion stream state',
+	{ hours: 1 },
+	internal.migrations.runCompletionStreamCleanupAutomatically,
+	{}
+);
+
 export default crons;

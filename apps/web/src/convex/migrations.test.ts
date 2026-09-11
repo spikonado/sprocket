@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { internal } from '@convex/_generated/api';
-import { initConvexTest, seedOwnedThread } from './test.setup';
+import { api, internal } from '@convex/_generated/api';
+import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 import { AUTOMATIC_CLEANUP_DELAY_MS } from './migrations';
 
 const oneBatch = {
@@ -8,6 +8,98 @@ const oneBatch = {
 	dryRun: false,
 	oneBatchOnly: true
 } as const;
+
+describe('completion stream cleanup', () => {
+	it('removes pointers before deleting stream state and leaves run data intact', async () => {
+		const t = initConvexTest();
+		const { asUser, threadId } = await seedOwnedThread(t);
+		const executionSecret = 'stream-cleanup-secret';
+		const { runId } = await createQueuedRun(t, asUser, threadId, 'stream-cleanup', executionSecret);
+		await asUser.mutation(api.agentRuntime.start, {
+			runId,
+			executionSecret,
+			claimId: 'live-claim'
+		});
+		const before = await t.run(async (ctx) => {
+			const run = await ctx.db.get('runs', runId);
+			const stateId = await ctx.db.insert('completionStreamStates', {
+				runId,
+				userId: 'user_alice',
+				sequence: 12,
+				streamAttemptId: 'old-stream'
+			});
+			await ctx.db.patch('runs', runId, { completionStreamStateId: stateId });
+			return {
+				run,
+				stateId,
+				execution: await ctx.db
+					.query('runExecutionStates')
+					.withIndex('by_runId', (q) => q.eq('runId', runId))
+					.unique()
+			};
+		});
+		const transcript = await asUser.query(api.transcript.getParts, { threadId, numbers: [0] });
+		await t.mutation(internal.migrations.removeRunCompletionStreamStateId, oneBatch);
+		expect(await t.run((ctx) => ctx.db.get('runs', runId))).toEqual(before.run);
+		expect(
+			await t.run((ctx) => ctx.db.get('completionStreamStates', before.stateId))
+		).not.toBeNull();
+		await t.mutation(internal.migrations.deleteCompletionStreamStates, oneBatch);
+		await t.mutation(internal.migrations.removeRunCompletionStreamStateId, oneBatch);
+		await t.mutation(internal.migrations.deleteCompletionStreamStates, oneBatch);
+		expect(await t.run((ctx) => ctx.db.get('completionStreamStates', before.stateId))).toBeNull();
+		expect(
+			await t.run((ctx) =>
+				ctx.db
+					.query('runExecutionStates')
+					.withIndex('by_runId', (q) => q.eq('runId', runId))
+					.unique()
+			)
+		).toEqual(before.execution);
+		expect(await asUser.query(api.transcript.getParts, { threadId, numbers: [0] })).toEqual(
+			transcript
+		);
+		await expect(
+			asUser.query(api.agentRuntime.completionActor, { runId, executionSecret })
+		).resolves.toMatchObject({ claimId: 'live-claim', status: 'running' });
+	});
+
+	it('automatically deletes multiple batches including unreferenced rows', async () => {
+		vi.useFakeTimers();
+		try {
+			const t = initConvexTest();
+			const { asUser, threadId } = await seedOwnedThread(t);
+			const { runId } = await createQueuedRun(
+				t,
+				asUser,
+				threadId,
+				'stream-batches',
+				'stream-batches-secret'
+			);
+			await t.run(async (ctx) => {
+				for (let sequence = 0; sequence < 105; sequence++) {
+					const stateId = await ctx.db.insert('completionStreamStates', {
+						runId,
+						userId: 'user_alice',
+						sequence
+					});
+					if (sequence === 0)
+						await ctx.db.patch('runs', runId, { completionStreamStateId: stateId });
+				}
+			});
+			await t.mutation(internal.migrations.runCompletionStreamCleanupAutomatically, {});
+			await t.finishAllScheduledFunctions(vi.runAllTimers);
+			await t.mutation(internal.migrations.runCompletionStreamCleanupAutomatically, {});
+			await t.finishAllScheduledFunctions(vi.runAllTimers);
+			expect(await t.run((ctx) => ctx.db.get('runs', runId))).not.toHaveProperty(
+				'completionStreamStateId'
+			);
+			expect(await t.run((ctx) => ctx.db.query('completionStreamStates').first())).toBeNull();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+});
 
 describe('Fast mode backfill', () => {
 	it('maps stored service tiers to the Fast mode boolean', async () => {

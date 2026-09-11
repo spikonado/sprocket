@@ -170,11 +170,11 @@ export default defineSchema({
 		cancellationDeadlineAt: v.optional(v.number()),
 		activeJobId: v.optional(v.id('executorJobs')),
 		promptMessageId: v.optional(v.string()),
+		// Removed by the completion stream state cleanup migration.
 		completionStreamStateId: v.optional(v.id('completionStreamStates')),
 		lifecycleWorkflowId: v.optional(v.string())
 	})
 		.index('by_threadId_startedAt', ['threadId', 'startedAt'])
-		.index('by_threadId_status_startedAt', ['threadId', 'status', 'startedAt'])
 		.index('by_executionSecretHash', ['executionSecretHash'])
 		.index('by_userId_submissionId', ['userId', 'submissionId']),
 	runExecutionStates: defineTable({
@@ -206,6 +206,7 @@ export default defineSchema({
 		.index('by_threadId_and_number', ['threadId', 'number'])
 		.index('by_threadId_and_sourceKey', ['threadId', 'sourceKey'])
 		.index('by_threadId_and_runId_and_number', ['threadId', 'runId', 'number']),
+	// Retained only until the completion stream state cleanup migration finishes.
 	completionStreamStates: defineTable({
 		runId: v.id('runs'),
 		userId: v.string(),

@@ -8,6 +8,8 @@ export const RUN_CANCELLED_BY_USER = 'Run is cancelled.';
 
 export const RUN_NO_LONGER_ACTIVE = 'Run is no longer active.';
 
+export const COMPLETION_STREAM_SUPERSEDED = 'SPROCKET_COMPLETION_STREAM_SUPERSEDED';
+
 export const RUN_ABANDONED_BY_AGENT =
 	'The local agent stopped responding before this run finished.';
 

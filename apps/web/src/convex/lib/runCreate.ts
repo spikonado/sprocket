@@ -170,11 +170,6 @@ export async function createQueuedRunRecord(
 	if (machine) {
 		await attachRunToMachine(ctx, machine, runId);
 	}
-	const completionStreamStateId = await ctx.db.insert('completionStreamStates', {
-		runId,
-		userId: args.userId,
-		sequence: 0
-	});
 	const created: CreatedGatewayRun = {
 		created: true,
 		runId,
@@ -191,7 +186,6 @@ export async function createQueuedRunRecord(
 			imageUploadIds: args.imageUploadIds
 		});
 	}
-	await ctx.db.patch('runs', runId, { completionStreamStateId });
 	const threadUpdates = {
 		status: 'queued' as const,
 		title: threadRecord.title ?? fallbackTitle,
@@ -228,7 +222,6 @@ async function reconcileExistingQueuedRun(
 		existingRun.selectedModel !== args.selectedModel ||
 		existingRun.reasoningEffort !== args.reasoningEffort ||
 		fastModeForStoredRecord(existingRun) !== args.fastMode ||
-		!existingRun.completionStreamStateId ||
 		!continuationMatches
 	) {
 		throw new ConvexError('Submission belongs to a different or incomplete run.');

@@ -11,10 +11,6 @@ import { modelGatewayTokenSecret, modelGatewayUrl } from '@convex/lib/gatewayFet
 import { gatewayTokenExpiresAt, mintGatewayToken } from '@convex/lib/gatewayToken';
 import { vCompletionActor, vGetContextResult } from '@convex/lib/docs';
 import {
-	getCompletionStreamState,
-	registerCompletionAttemptForRun
-} from '@convex/lib/assistantStreamWrites';
-import {
 	contextHandoffKey,
 	existingThroughPartNumber,
 	throughPartNumberForHandoff
@@ -32,6 +28,7 @@ import {
 	recordSettledToolTranscripts
 } from '@convex/lib/transcriptWrites';
 import {
+	COMPLETION_STREAM_SUPERSEDED,
 	RUN_NO_LONGER_ACTIVE,
 	assertRunAcceptsModelCompletion,
 	toAgentToolConvexError
@@ -56,7 +53,6 @@ import {
 	isRunClaimLeaseActive,
 	ownsActiveRunClaim
 } from '@convex/lib/runLease';
-import { COMPLETION_STREAM_SUPERSEDED, vCompletionStreamEvent } from '@convex/lib/completionStream';
 import {
 	isRunFinalStatus,
 	vCurrentExecutorJobKind,
@@ -333,16 +329,13 @@ export const completionActor = query({
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		const userId = run.userId;
-		const streamState = await getCompletionStreamState(ctx, run);
 		const actor: Infer<typeof vCompletionActor> = {
 			userId,
 			threadId: run.threadId,
-			status: run.status,
-			streamSequence: streamState.sequence
+			status: run.status
 		};
 		if (run.claimId) actor.claimId = run.claimId;
 		if (run.claimExpiresAt) actor.claimExpiresAt = run.claimExpiresAt;
-		if (streamState.streamAttemptId) actor.streamAttemptId = streamState.streamAttemptId;
 		return actor;
 	}
 });
@@ -454,24 +447,7 @@ export const registerCompletionAttempt = mutation({
 		if (!canRegisterCompletionAttempt(run, args.claimId, args.attemptSeq)) {
 			throw new ConvexError(COMPLETION_STREAM_SUPERSEDED);
 		}
-		await registerCompletionAttemptForRun(ctx, run, args.attemptSeq);
-	}
-});
-
-/** Retired Convex live-token merge. Kept so older agents get an update message. */
-export const mergeAssistantStreamEvents = mutation({
-	args: {
-		runId: v.optional(v.id('runs')),
-		claimId: v.optional(v.string()),
-		attemptSeq: v.optional(v.number()),
-		streamId: v.optional(v.string()),
-		sequence: v.optional(v.number()),
-		events: v.optional(v.array(vCompletionStreamEvent)),
-		executionSecret: v.optional(v.string())
-	},
-	returns: v.null(),
-	handler: async () => {
-		unsupportedClient();
+		await patchRunExecution(ctx, run._id, { completionAttemptSeq: args.attemptSeq });
 	}
 });
 

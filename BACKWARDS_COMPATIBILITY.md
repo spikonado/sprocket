@@ -272,7 +272,6 @@ Current code does not use them.
 | -------------------------------------------------------------- | ------------------------------------------------------- |
 | `agentRuntime.createRun`                                       | Agent run creation before the gateway path              |
 | `agentRuntime.finalizeRun`                                     | User-authenticated agent run finalization               |
-| `agentRuntime.mergeAssistantStreamEvents`                      | Agents that streamed tokens onto `threadMessages`       |
 | `agentRuntime.reopenRun`                                       | Desktop UI that reopened a failed run in place          |
 | `agentRuntime.saveContextCompaction`                           | Agents that stored run-bounded context summaries        |
 | `chat.latestRunForThread`                                      | UI lifecycle from the latest Convex run document        |
@@ -314,3 +313,21 @@ Finalization treats `running` and `awaiting_executor` as aliases while still
 checking the claim and lease. Keep the alias until `awaiting_executor` is removed
 entirely, after the backfills complete and persisted local caches no longer
 require it.
+
+## Retired completion stream state
+
+Current code neither reads nor writes `runs.completionStreamStateId` or
+`completionStreamStates`. `completionActor` returns identity and lease fields,
+without the retired `streamSequence` and `streamAttemptId` response fields. The
+old live-token merge endpoint is gone. Current completion attempts still use
+`runExecutionStates`, and completed turns still use `threadTranscriptParts`.
+
+The hourly cron starts `migrations:runCompletionStreamCleanup`. It first removes
+all run pointers, then deletes stream-state rows in batches, including orphans.
+The manual runner can resume failed cleanup. This migration is independent of
+the older production rollout cleanup, which may have already finished.
+
+Keep the optional pointer and table schema until both migrations complete on
+every deployment and scans find no run pointer or stream-state row. Then remove
+those schema definitions, the migration functions, and their cron together.
+No Sprocket data-directory formats or readers change in this cleanup.
