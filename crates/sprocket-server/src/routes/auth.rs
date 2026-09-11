@@ -209,11 +209,7 @@ async fn desktop_login_callback(
 
         if let Some(callback_state) = callback_state {
             if let Err(fail_error) = state.native_auth.fail_login(callback_state, &message).await {
-                return desktop_login_html_response(
-                    StatusCode::BAD_REQUEST,
-                    "Sign-in failed",
-                    &fail_error.to_string(),
-                );
+                return desktop_login_error_response(StatusCode::BAD_REQUEST, &fail_error);
             }
         }
 
@@ -243,11 +239,7 @@ async fn desktop_login_callback(
     match state.native_auth.complete_login(code, callback_state).await {
         Ok((user, session_token)) => {
             if let Err(error) = state.auth.bind_session_user(&session_token, &user.id).await {
-                return desktop_login_html_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "Sign-in failed",
-                    &error.to_string(),
-                );
+                return desktop_login_error_response(StatusCode::INTERNAL_SERVER_ERROR, &error);
             }
             desktop_login_html_response(
                 StatusCode::OK,
@@ -255,11 +247,7 @@ async fn desktop_login_callback(
                 "Return to Sprocket. You can close this tab.",
             )
         }
-        Err(error) => desktop_login_html_response(
-            StatusCode::BAD_REQUEST,
-            "Sign-in failed",
-            &error.to_string(),
-        ),
+        Err(error) => desktop_login_error_response(StatusCode::BAD_REQUEST, &error),
     }
 }
 
@@ -384,6 +372,16 @@ fn desktop_bootstrap_response(state: &AppState) -> Json<DesktopBootstrapResponse
         desktop_login_callback_url: state.desktop_login_callback_url.clone(),
         pairing_credential: state.auth.pairing_credential().to_string(),
     })
+}
+
+fn desktop_login_error_response(status: StatusCode, error: &anyhow::Error) -> Response {
+    // Provider error causes can contain response bodies. Only expand credential-store errors.
+    let message = if error.downcast_ref::<keyring::Error>().is_some() {
+        format!("{error:#}")
+    } else {
+        error.to_string()
+    };
+    desktop_login_html_response(status, "Sign-in failed", &message)
 }
 
 fn desktop_login_html_response(status: StatusCode, title: &str, message: &str) -> Response {
@@ -544,6 +542,48 @@ mod tests {
         request
             .body(Body::from(r#"{"forceRefreshToken":false}"#))
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn login_error_preserves_credential_store_causes_and_escapes_html() {
+        let error = anyhow::Error::new(keyring::Error::NoStorageAccess(
+            std::io::Error::other("keyring <login> is locked & cannot be unlocked").into(),
+        ))
+        .context("failed to persist WorkOS refresh token");
+
+        let response = desktop_login_error_response(StatusCode::BAD_REQUEST, &error);
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let html = read_text(response).await;
+        assert!(html.contains("failed to persist WorkOS refresh token"));
+        assert!(html.contains("keyring &lt;login&gt; is locked &amp; cannot be unlocked"));
+        assert!(!html.contains("<login>"));
+    }
+
+    #[tokio::test]
+    async fn login_error_does_not_disclose_credential_bytes() {
+        let secret = "private-refresh-token";
+        let error = anyhow::Error::new(keyring::Error::BadEncoding(secret.as_bytes().to_vec()))
+            .context("failed to load WorkOS refresh token");
+
+        let response = desktop_login_error_response(StatusCode::BAD_REQUEST, &error);
+        let html = read_text(response).await;
+        assert!(html.contains("failed to load WorkOS refresh token"));
+        assert!(html.contains("Password data is not valid UTF-8"));
+        assert!(!html.contains(secret));
+        assert!(!html.contains(&format!("{:?}", secret.as_bytes())));
+    }
+
+    #[tokio::test]
+    async fn login_error_keeps_provider_causes_private() {
+        let error = anyhow::Error::new(workos::Error::Builder(
+            "private-authorization-code".to_string(),
+        ))
+        .context("WorkOS authorization-code exchange failed");
+
+        let response = desktop_login_error_response(StatusCode::BAD_REQUEST, &error);
+        let html = read_text(response).await;
+        assert!(html.contains("WorkOS authorization-code exchange failed"));
+        assert!(!html.contains("private-authorization-code"));
     }
 
     #[tokio::test]
