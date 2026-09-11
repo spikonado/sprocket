@@ -7,6 +7,7 @@ import {
 	transcriptUploadPath,
 	workspaceLaunchHash
 } from '$lib/local/client';
+import { threadRecordToSummary } from '$lib/project/threads';
 
 function threadRecordId(value: string): Id<'threadRecords'> {
 	// SAFETY: fixture strings are only compared as opaque Convex document ids.
@@ -255,7 +256,7 @@ describe('watchLiveCompletion', () => {
 });
 
 describe('thread cache local API', () => {
-	it('parses snapshot threads and watch status events', async () => {
+	it('parses historical snapshot threads without status and watch status events', async () => {
 		const snapshot = {
 			threads: [
 				{
@@ -268,8 +269,7 @@ describe('thread cache local API', () => {
 					selectedModel: 'gpt-5.6-sol',
 					reasoningEffort: 'medium',
 					serviceTier: 'standard',
-					lastMessageAt: 10,
-					status: 'completed'
+					lastMessageAt: 10
 				}
 			],
 			status: 'live',
@@ -299,7 +299,8 @@ describe('thread cache local API', () => {
 		);
 
 		const client = createLocalClient('http://127.0.0.1:7731');
-		expect(await client.fetchThreadSnapshot({ userId: 'user-1' })).toEqual({
+		const parsedSnapshot = await client.fetchThreadSnapshot({ userId: 'user-1' });
+		expect(parsedSnapshot).toEqual({
 			threads: [
 				{
 					_id: 'thread-1',
@@ -311,13 +312,13 @@ describe('thread cache local API', () => {
 					selectedModel: 'gpt-5.6-sol',
 					reasoningEffort: 'medium',
 					serviceTier: 'standard',
-					lastMessageAt: 10,
-					status: 'completed'
+					lastMessageAt: 10
 				}
 			],
 			status: 'live',
 			lastSyncedAt: 20
 		});
+		expect(threadRecordToSummary(parsedSnapshot.threads[0]!).status).toBe('completed');
 
 		const events: unknown[] = [];
 		await client.watchThreadCache(

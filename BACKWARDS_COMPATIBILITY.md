@@ -2,7 +2,82 @@
 
 We ship breaking changes ahead of our users' installed clients and keep the old behavior working until those clients age out. That debt is easy to accumulate and easier to forget. This file lists every backwards-compatibility layer we currently ship, what it protects, how to remove it, and the signal that says removal is safe. When a removal PR merges, remove its entry from this document.
 
-Current as of 2026-09-10.
+Current as of 2026-09-11.
+
+## Production rollout cleanup
+
+PR #345 removed several stored fields before its code had deployed and before
+production data had been rewritten. The production deployment that remained
+active after that failed rollout could still write those fields, so merely
+cleaning existing rows would race with active mutations. This release restores
+the old schema shapes and ships the cleanup migrations in
+`convex/migrations.ts`.
+
+The hourly cron calls `runProductionRolloutCleanupAutomatically`. Its first call
+records a cleanup time 48 hours later. That delay exceeds the preceding
+deployment's 36-hour gateway token lifetime and one-hour hosted parse lifetime,
+so its writers have expired before cleanup starts. Once the delay passes, the
+cron starts or resumes the migrations in order. It records completion after the
+migrations component reports that every migration finished.
+
+### Thread status
+
+Production has historical `threadRecords` without `status`. Current run
+lifecycle code writes the field, but the thread cache must still ingest old
+rows. The schema and local cache parser therefore accept a missing value, and
+`threadRecordToSummary` treats it as `completed`.
+
+`backfillMissingThreadStatus` copies the latest run status onto each affected thread.
+It marks a runless thread as `completed` rather than deleting user data. Remove
+the optional schema and parser handling, and the summary default, after the
+migration completes and a production scan finds no thread without `status`.
+
+### Run completion transport
+
+The preceding schema accepted `runs.completionTransport` with either
+`convex-action` or `gateway`, and the preceding production writer still stores
+`gateway`. Current code neither reads nor writes this field. Both values remain
+accepted so stored rows and writes made during the rollout validate.
+
+`removeRunCompletionTransport` unsets the field. Remove it from the schema after
+the migration completes and a production scan finds no run carrying it.
+
+### Usage ledger fields
+
+The preceding production writer still dual-writes
+`threadUsage.totalTokensProcessed`. Current code calculates processed tokens
+from `threadUsageEvents` and the Aggregate component instead. The
+`usageLedgerMigratedAt` field is a marker left by the completed ledger backfill;
+current code does not read it. Both fields remain optional only to validate old
+rows and writes made during the rollout.
+
+`removeThreadUsageLegacyFields` unsets both fields. Remove them from the schema
+after the migration completes and a production scan finds neither field.
+
+### Executor work pool
+
+The preceding production code writes `executorJobs.cloudWorkPool` for hosted
+parse work and reads it to choose the cancellation pool. Current code no longer
+reads or writes it, but an in-flight job from the preceding deployment can still
+store `firecrawlScrape` while this release rolls out.
+
+`removeExecutorJobCloudWorkPool` unsets the field. Remove it from the schema
+after the migration completes, all jobs started by the preceding deployment
+have settled, and a production scan finds no executor job carrying it.
+
+The cleanup runs automatically. `runProductionRolloutCleanup` remains available
+for operator recovery, but it must not be called before the scheduled
+`notBefore` time in `migrationSchedules`:
+
+```sh
+bunx convex run migrations:runProductionRolloutCleanup '{"dryRun":true}' --prod
+bunx convex run migrations:runProductionRolloutCleanup --prod
+```
+
+Keep the migration definitions until the runner reports completion. A later PR
+may tighten the schema and remove the read fallbacks only after the production
+scans described above pass. That PR may also remove the cleanup cron and its
+`migrationSchedules` row and table.
 
 ## Stored executor jobs
 

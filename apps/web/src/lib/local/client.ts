@@ -151,7 +151,9 @@ const threadSummarySchema = z.object({
 	contextSummaryThroughRunId: z.string().optional(),
 	lastMessageAt: z.number(),
 	archivedAt: z.number().optional(),
-	status: z.enum(['queued', 'running', 'awaiting_executor', 'completed', 'failed', 'cancelled'])
+	status: z
+		.enum(['queued', 'running', 'awaiting_executor', 'completed', 'failed', 'cancelled'])
+		.optional()
 });
 const threadCacheWatchEventSchema = z.object({
 	status: z.enum(['loading', 'live', 'reconnecting', 'offline', 'error']),

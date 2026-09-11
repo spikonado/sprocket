@@ -30,6 +30,13 @@ crons.interval(
 );
 
 crons.interval(
+	'run production rollout cleanup migrations',
+	{ hours: 1 },
+	internal.migrations.runProductionRolloutCleanupAutomatically,
+	{}
+);
+
+crons.interval(
 	'reconcile Firecrawl browser sessions',
 	{ minutes: 1 },
 	internal.firecrawlBrowser.reconcile
