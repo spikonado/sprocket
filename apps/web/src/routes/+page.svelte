@@ -577,7 +577,7 @@
 	let replicaLoading = $state(false);
 	let replicaError = $state<string | null>(null);
 	let replicaGeneration = 0;
-	let transcriptHistory: DisplayHistory | null = null;
+	let transcriptHistory = $state.raw<DisplayHistory | null>(null);
 	let transcriptAbort: AbortController | null = null;
 	let loadingOlderTranscript = $state(false);
 	let liveCompletion = $state.raw<LiveCompletionOverlay | null>(null);
