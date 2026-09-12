@@ -99,7 +99,7 @@
 		type PendingAgentLaunch,
 		type PendingAgentLaunches
 	} from '$lib/project/threads';
-	import { mergePagedTranscriptWithLive } from '$lib/project/transcript';
+	import { mergeLiveOverlays } from '$lib/project/transcript';
 	import { DisplayHistory, visibleDisplayMessages } from '$lib/project/display-history';
 	import type { TranscriptDisplayRow, TranscriptDetailCursor } from '$lib/types/sprocket';
 	import {
@@ -115,7 +115,7 @@
 		LiveCompletionOverlay,
 		ThreadCacheStatus,
 		ThreadCacheUserRequest,
-		ThreadMessage,
+		TranscriptMessage,
 		ThreadSummary,
 		ProjectAttachment
 	} from '$lib/types/sprocket';
@@ -569,7 +569,7 @@
 	const pendingAgentQuestion = $derived(
 		dataForThread(pendingAgentQuestionQuery.data, currentThreadId)
 	);
-	let replicaMessages = $state.raw<ThreadMessage[]>([]);
+	let replicaMessages = $state.raw<TranscriptDisplayRow[]>([]);
 	let replicaNextBefore = $state<number | null>(null);
 	let replicaWindowVersion = $state(0);
 	let replicaStale = $state(false);
@@ -629,18 +629,12 @@
 					{
 						userId,
 						threadId: watchedThreadId,
-						...request,
-						streams: [...pendingCompletions, ...(liveCompletion ? [liveCompletion] : [])]
-							.slice(0, 64)
-							.flatMap((live) =>
-								live.streamId ? [{ runId: live.runId, streamId: live.streamId }] : []
-							)
+						...request
 					},
 					ac.signal
 				),
 			() => {
 				if (ac.signal.aborted || replicaGeneration !== generation) return;
-				if (replicaWindowVersion !== history.windowVersion) pendingCompletions = [];
 				replicaMessages = history.messages;
 				replicaNextBefore = history.nextBefore ?? null;
 				replicaWindowVersion = history.windowVersion;
@@ -752,23 +746,25 @@
 		};
 	});
 
-	const visibleMessages = $derived.by((): ThreadMessage[] => {
+	$effect(() => {
+		const overlays = [...pendingCompletions, ...(liveCompletion ? [liveCompletion] : [])];
+		const history = transcriptHistory;
+		untrack(() => history?.setOverlays(overlays));
+	});
+
+	const visibleMessages = $derived.by((): TranscriptMessage[] => {
 		const userId = getCurrentUserId();
 		if (!currentThreadId || !userId || replicaThreadId !== currentThreadId) {
 			return [];
 		}
 		const overlays =
-			transcriptHistory?.unpersisted([
+			transcriptHistory?.visibleOverlays([
 				...pendingCompletions,
 				...(liveCompletion ? [liveCompletion] : [])
 			]) ?? [];
-		const messages = mergePagedTranscriptWithLive({
-			messages: [],
-			live: null,
-			pending: overlays,
-			userId,
-			threadId: currentThreadId
-		});
+		const messages = mergeLiveOverlays(
+			overlays.filter((overlay) => overlay.threadId === currentThreadId)
+		);
 		return [
 			...visibleDisplayMessages(replicaMessages, overlays),
 			...messages.map((message) =>

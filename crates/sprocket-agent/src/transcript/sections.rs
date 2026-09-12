@@ -98,6 +98,73 @@ pub struct WorkItem {
 }
 
 impl WorkItem {
+    pub(super) fn tool_event(part: &TranscriptPart) -> Option<Self> {
+        let tool = part.tool.as_ref()?;
+        if hidden_tool(&tool.name) {
+            return None;
+        }
+        let terminal = tool.status != "started";
+        let output = tool.output.as_ref();
+        let reported_running = output.and_then(|output| output["running"].as_bool());
+        Some(Self {
+            run_id: part.run_id.clone(),
+            section: String::new(),
+            source: WorkPosition {
+                part: part.number,
+                item: 0,
+            },
+            call_id: Some(tool.call_id.clone()),
+            name: Some(tool.name.clone()),
+            result_part: terminal.then_some(part.number),
+            tool_parts: BTreeSet::new(),
+            canonical: false,
+            started_at: (!terminal)
+                .then_some(part.created_at)
+                .flatten()
+                .map(|n| n as f64),
+            completed_at: terminal
+                .then_some(part.created_at)
+                .flatten()
+                .map(|n| n as f64),
+            session_id: output.and_then(|output| string(output, "sessionId")),
+            reported_running,
+            running: reported_running.unwrap_or(false),
+            approval: output
+                .filter(|_| tool.name == "mandate_setup")
+                .and_then(|output| string(output, "mandateId").zip(string(output, "approvalUrl"))),
+        })
+    }
+
+    pub(super) fn merge_event(&mut self, event: Self) {
+        self.started_at = self.started_at.or(event.started_at);
+        if self.result_part.is_none() && event.result_part.is_some() {
+            self.result_part = event.result_part;
+            self.completed_at = event.completed_at;
+            self.running = event.running;
+            self.reported_running = event.reported_running;
+            self.session_id = event.session_id.or(self.session_id.take());
+            self.approval = event.approval;
+        }
+    }
+
+    pub(super) fn session_update(&self) -> Option<WorkSession> {
+        let (result_part, running) = self.result_part.zip(self.reported_running)?;
+        Some(WorkSession {
+            result_part,
+            running,
+            completed_at: self.completed_at,
+        })
+    }
+
+    pub(super) fn apply_command_session(&mut self, session: &WorkSession) {
+        if self.name.as_deref() == Some("exec_command") {
+            self.running = session.running;
+            if !session.running {
+                self.completed_at = session.completed_at.or(self.completed_at);
+            }
+        }
+    }
+
     pub fn known_completion(&self) -> Option<f64> {
         self.completed_at
             .filter(|completed| self.started_at.is_none_or(|started| *completed >= started))
@@ -310,23 +377,9 @@ impl WorkEngine {
                 };
                 index.save_section(&section)?;
             }
-        } else if let Some(tool) = &part.tool {
+        } else if part.tool.is_some() {
             item.tool_parts.insert(part.number);
-            if tool.status == "started" {
-                item.started_at = item.started_at.or(part.created_at.map(|n| n as f64));
-            } else if item.result_part.is_none() {
-                item.result_part = Some(part.number);
-                item.completed_at = part.created_at.map(|n| n as f64);
-                if let Some(output) = &tool.output {
-                    item.reported_running = output.get("running").and_then(Value::as_bool);
-                    item.running = item.reported_running.unwrap_or(false);
-                    item.session_id = string(output, "sessionId").or(item.session_id);
-                    if name == "mandate_setup" {
-                        item.approval =
-                            string(output, "mandateId").zip(string(output, "approvalUrl"));
-                    }
-                }
-            }
+            item.merge_event(WorkItem::tool_event(part).expect("visible tool event"));
             self.link(index, at, &key, true)?;
         }
         if relocated {
@@ -348,38 +401,26 @@ impl WorkEngine {
             .filter(|_| matches!(name.as_str(), "exec_command" | "write_stdin"))
         {
             let mut current = index.session(&part.run_id, session)?;
-            if let Some((result_part, running)) = item.result_part.zip(item.reported_running) {
+            if let Some(value) = item.session_update() {
                 if current
                     .as_ref()
-                    .is_none_or(|current| current.result_part < result_part)
+                    .is_none_or(|current| current.result_part < value.result_part)
                 {
-                    let value = WorkSession {
-                        result_part,
-                        running,
-                        completed_at: item.completed_at,
-                    };
                     index.save_session(&part.run_id, session, &value)?;
                     current = Some(value);
                 }
             }
             if let Some(current) = current {
-                if item.name.as_deref() == Some("exec_command") {
-                    item.running = current.running;
-                    if !current.running {
-                        item.completed_at = current.completed_at.or(item.completed_at);
-                    }
-                }
-                for (other_id, mut other) in index.session_commands(&part.run_id, session)? {
+                let commands = index.session_commands(&part.run_id, session)?;
+                item.apply_command_session(&current);
+                for (other_id, mut other) in commands {
                     if other_id == id {
                         continue;
                     }
                     if other.running != current.running
                         || (!current.running && other.completed_at != current.completed_at)
                     {
-                        other.running = current.running;
-                        if !current.running {
-                            other.completed_at = current.completed_at.or(other.completed_at);
-                        }
+                        other.apply_command_session(&current);
                         index.save_item(&other_id, &other)?;
                         self.changed.insert(other.section);
                     }

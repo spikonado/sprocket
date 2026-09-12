@@ -33,25 +33,32 @@ pub struct WorkSnapshot {
 }
 
 impl WorkReplica {
+    fn is_corrupt(error: &anyhow::Error) -> bool {
+        matches!(error.downcast_ref::<rusqlite::Error>(),
+            Some(rusqlite::Error::SqliteFailure(failure,_)) if matches!(failure.code,
+                rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase))
+    }
+
+    fn rebuild(directory: PathBuf) -> anyhow::Result<Self> {
+        let preserved =
+            directory.with_file_name(format!("replica-corrupt-{}", uuid::Uuid::new_v4()));
+        std::fs::rename(&directory, &preserved).with_context(|| {
+            format!(
+                "could not preserve corrupt replica at {}",
+                preserved.display()
+            )
+        })?;
+        Self::open(directory)
+    }
+
     fn recover(directory: PathBuf) -> anyhow::Result<Self> {
         match Self::open(directory.clone()) {
             Ok(replica) => Ok(replica),
             Err(error) => {
-                let corrupt = matches!(error.downcast_ref::<rusqlite::Error>(),
-                    Some(rusqlite::Error::SqliteFailure(failure,_)) if matches!(failure.code,
-                        rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase));
-                if !corrupt {
+                if !Self::is_corrupt(&error) {
                     return Err(error);
                 }
-                let preserved =
-                    directory.with_file_name(format!("replica-corrupt-{}", uuid::Uuid::new_v4()));
-                std::fs::rename(&directory, &preserved).with_context(|| {
-                    format!(
-                        "could not preserve corrupt replica at {}",
-                        preserved.display()
-                    )
-                })?;
-                Self::open(directory)
+                Self::rebuild(directory)
             }
         }
     }
@@ -482,9 +489,18 @@ impl WorkReplica {
             })
             .optional()?
             .unwrap_or(0);
+        let through: WorkPosition = self.state("cloudThrough")?.unwrap_or_default();
+        let pending_membership: Option<u32> =
+            self.db
+                .query_row("SELECT MIN(start) FROM membership_refresh", [], |row| {
+                    row.get(0)
+                })?;
+        let ready_prefix = downloaded_prefix
+            .min(through.part)
+            .min(pending_membership.unwrap_or(total));
         let first_sequence = rows.first().and_then(|row| row["sequence"].as_u64());
         let missing_older = first_sequence.is_some_and(|sequence| {
-            sequence > 0 && u64::from(downloaded_prefix) * POSITION_STRIDE < sequence
+            sequence > 0 && u64::from(ready_prefix) * POSITION_STRIDE < sequence
         });
         let next = if more || missing_older {
             first_sequence
@@ -509,7 +525,6 @@ impl WorkReplica {
             }
         }
         let complete = self.state::<bool>("metadataComplete")?.unwrap_or(false);
-        let through: WorkPosition = self.state("cloudThrough")?.unwrap_or_default();
         let mut persisted = Vec::new();
         if complete {
             for (run, stream) in streams {
@@ -521,11 +536,14 @@ impl WorkReplica {
                 }
             }
         }
-        let indexing = !stale
-            && (!complete
-                || (rows.is_empty()
-                    && before > 0
-                    && (downloaded_prefix < total || through.part < total)));
+        let handoff_pending = persisted.len() < streams.len()
+            && (!complete || through.item != 0 || ready_prefix < through.part);
+        let indexing = handoff_pending
+            || (!stale && !complete)
+            || (rows.is_empty()
+                && before > 0
+                && (!complete
+                    || i64::from(ready_prefix) * i64::try_from(POSITION_STRIDE)? < before));
         let mut result = json!({"replicaId":self.state::<String>("replicaId")?,"rows":rows,"indexing":indexing,"stale":stale,"endSequence":end,"revision":generation,
             "persistedStreams":persisted,"changes":changes,"changesCursor":change_cursor,"moreChanges":more_changes});
         if let Some(next) = next {
@@ -610,6 +628,10 @@ impl WorkReplica {
 }
 
 impl TranscriptStore {
+    pub fn watch_work_replica_resets(&self) -> tokio::sync::broadcast::Receiver<(String, String)> {
+        self.replica_resets.subscribe()
+    }
+
     pub async fn prepare_work_replica(&self, user: &str, thread: &str) -> anyhow::Result<()> {
         let path = self.display_cache_path(user, thread, "replica")?;
         let guard = self.lock_thread(user, thread).await.lock_owned().await;
@@ -629,9 +651,18 @@ impl TranscriptStore {
         let path = self.display_cache_path(user, thread, "replica")?;
         let lock = self.lock_thread(user, thread).await;
         let guard = lock.lock_owned().await;
+        let resets = self.replica_resets.clone();
+        let scope = (user.to_owned(), thread.to_owned());
         tokio::task::spawn_blocking(move || {
             let _guard = guard;
-            operation(&mut WorkReplica::open(path)?)
+            let result = (|| operation(&mut WorkReplica::open(path.clone())?))();
+            if let Err(error) = &result {
+                if WorkReplica::is_corrupt(error) {
+                    WorkReplica::rebuild(path)?;
+                    let _ = resets.send(scope);
+                }
+            }
+            result
         })
         .await?
     }

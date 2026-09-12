@@ -5,7 +5,7 @@ use std::time::SystemTime;
 
 use anyhow::Context;
 use tokio::io::AsyncWriteExt;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, broadcast};
 
 use super::types::{TRANSCRIPT_CHUNK_SIZE, TranscriptPart, TranscriptState};
 
@@ -41,6 +41,7 @@ fn chunk_start(number: u32) -> u32 {
 pub struct TranscriptStore {
     root: PathBuf,
     locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    pub(super) replica_resets: broadcast::Sender<(String, String)>,
 }
 
 impl TranscriptStore {
@@ -48,6 +49,7 @@ impl TranscriptStore {
         Arc::new(Self {
             root,
             locks: Mutex::new(HashMap::new()),
+            replica_resets: broadcast::channel(16).0,
         })
     }
 

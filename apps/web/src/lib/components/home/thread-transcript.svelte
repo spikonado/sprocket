@@ -1,9 +1,7 @@
 <script lang="ts">
-	import { Check, Copy, LoaderCircle } from '@lucide/svelte';
+	import { Check, Copy } from '@lucide/svelte';
 	import { tick, untrack } from 'svelte';
 	import {
-		assistantTimelineToolError,
-		assistantTimelineToolFailureKind,
 		assistantTimelinePartKey,
 		buildAssistantTimeline,
 		buildCommandSessionCommandMap,
@@ -16,21 +14,13 @@
 		type AssistantTimelineTool,
 		type AssistantTimelineWorkBlock
 	} from '$lib/chat/assistant-timeline';
-	import { toolKindIcon, toolLogIcon } from '$lib/chat/tool-icons';
 	import { TranscriptSectionKeys } from '$lib/chat/transcript-section-keys';
-	import {
-		changedFileCount,
-		fullToolSummary,
-		toolGroupLabel,
-		toolItemSummary,
-		toolSummaryClass
-	} from '$lib/chat/tool-summaries';
 	import ChatMarkdown from '$lib/components/chat-markdown.svelte';
 	import ImageViewer, { type ViewerImage } from '$lib/components/image-viewer.svelte';
 	import TranscriptAttachment from '$lib/components/home/transcript-attachment.svelte';
 	import MandateApprovalForm from '$lib/components/home/mandate-approval-form.svelte';
 	import ReasoningDisclosure from '$lib/components/home/reasoning-disclosure.svelte';
-	import ToolCallsDisclosure from '$lib/components/home/tool-calls-disclosure.svelte';
+	import WorkTools from '$lib/components/home/work-tools.svelte';
 	import WorkDisclosure from '$lib/components/home/work-disclosure.svelte';
 	import WorkSectionDetails from '$lib/components/home/work-section-details.svelte';
 	import type {
@@ -40,14 +30,19 @@
 	} from '$lib/types/sprocket';
 	import { mandateApprovals } from '$lib/chat/mandate';
 	import { formatElapsedDuration } from '$lib/format';
-	import type { ExecutorJob, ThreadMessage, Project, MessageAttachment } from '$lib/types/sprocket';
+	import type {
+		ExecutorJob,
+		TranscriptMessage,
+		Project,
+		MessageAttachment
+	} from '$lib/types/sprocket';
 
 	type Props = {
 		currentError: string | null;
 		runError: string | null;
-		messages: ThreadMessage[];
+		messages: TranscriptMessage[];
 		actions: ExecutorJob[];
-		activeRunId: ThreadMessage['runId'] | null;
+		activeRunId: TranscriptMessage['runId'] | null;
 		project: Project | null;
 		remoteChangeNotice?: string | null;
 		onDismissRemoteChangeNotice?: () => void;
@@ -83,7 +78,7 @@
 		loadAttachment,
 		loadSectionDetails
 	}: Props = $props();
-	const firstPromptMessageId = $derived(messages.find((message) => message.type === 'prompt')?._id);
+	const firstPromptMessageId = $derived(messages.find((message) => message.kind === 'prompt')?.id);
 	let scrollViewport = $state<HTMLDivElement | null>(null);
 	let scrollContent = $state<HTMLDivElement | null>(null);
 	let stickToBottom = $state(true);
@@ -184,7 +179,11 @@
 	}
 
 	const sectionKeys = new TranscriptSectionKeys();
-	$effect.pre(() => sectionKeys.retain(messages.map((message) => message._id)));
+	$effect.pre(() =>
+		sectionKeys.retain(
+			messages.filter((message) => message.kind === 'live').map((message) => message.id)
+		)
+	);
 
 	const userMessageClass =
 		'user-bubble w-fit max-w-[33rem] rounded-xl border px-5 py-3.5 text-[15.5px] leading-7 text-foreground';
@@ -364,22 +363,22 @@
 				{/if}
 			{:else}
 				<div class="space-y-8 pb-14">
-					{#each messages as message (message._id)}
-						{#if message.type === 'prompt'}
+					{#each messages as message (message.id)}
+						{#if message.kind === 'prompt'}
 							<div
-								data-message-id={message._id}
-								data-transcript-anchor={message._id}
+								data-message-id={message.id}
+								data-transcript-anchor={message.id}
 								class="flex flex-col items-end gap-1.5"
 							>
-								{#if message.attachments.length}
+								{#if (message.attachments ?? []).length}
 									<ul
 										class="flex max-w-132 flex-wrap justify-end gap-2"
 										aria-label="Attached files"
 									>
-										{#each message.attachments as attachment (attachment.storageId)}
+										{#each message.attachments ?? [] as attachment (attachment.storageId)}
 											<li>
 												<TranscriptAttachment
-													{attachment}
+													attachment={{ ...attachment, url: null }}
 													{loadAttachment}
 													onOpen={(image) => {
 														viewerImage = image;
@@ -389,7 +388,7 @@
 										{/each}
 									</ul>
 								{/if}
-								{#if message.text || !message.attachments.length}
+								{#if message.text || !(message.attachments ?? []).length}
 									<div class={userMessageClass}>
 										<ChatMarkdown content={message.text || ' '} className="text-foreground" />
 									</div>
@@ -398,19 +397,19 @@
 									<button
 										type="button"
 										class="text-muted-foreground hover:text-muted-foreground inline-flex size-6 items-center justify-center rounded-md transition"
-										aria-label={copiedMessageId === message._id ? 'Copied' : 'Copy message'}
+										aria-label={copiedMessageId === message.id ? 'Copied' : 'Copy message'}
 										onclick={() => {
-											void copyUserMessage(message._id, message.text);
+											void copyUserMessage(message.id, message.text ?? '');
 										}}
 									>
-										{#if copiedMessageId === message._id}
+										{#if copiedMessageId === message.id}
 											<Check class="size-3.5" aria-hidden="true" />
 										{:else}
 											<Copy class="size-3.5" aria-hidden="true" />
 										{/if}
 									</button>
 								{/if}
-								{#if remoteChangeNotice && message._id === firstPromptMessageId}
+								{#if remoteChangeNotice && message.id === firstPromptMessageId}
 									<div
 										role="status"
 										class="w-full max-w-132 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-left text-sm text-amber-800 dark:text-amber-200"
@@ -430,11 +429,11 @@
 									</div>
 								{/if}
 							</div>
-						{:else if message.displayRow?.kind === 'work'}
-							{@const row = message.displayRow}
+						{:else if message.kind === 'work'}
+							{@const row = message}
 							{@const inProgress =
 								row.runId === activeRunId && (!row.closed || row.pendingTools > 0)}
-							<div data-message-id={message._id} data-transcript-anchor={message._id}>
+							<div data-message-id={message.id} data-transcript-anchor={message.id}>
 								<WorkDisclosure
 									{inProgress}
 									startedAtMs={row.startedAt}
@@ -445,47 +444,44 @@
 									{/if}
 								</WorkDisclosure>
 							</div>
-						{:else if message.displayRow?.kind === 'approval'}
-							{@const row = message.displayRow}
+						{:else if message.kind === 'approval'}
+							{@const row = message}
 							{#if row.mandateId && row.approvalUrl}
-								<div data-transcript-anchor={message._id}>
+								<div data-transcript-anchor={message.id}>
 									<MandateApprovalForm
 										approval={{ mandateId: row.mandateId, approvalUrl: row.approvalUrl }}
 									/>
 								</div>
 							{/if}
-						{:else}
-							{@const messageActions = message.displayRow
-								? []
-								: actions.filter(
-										(job) =>
-											job.runId === message.runId &&
-											message.parts.some(
-												(part) => part.type === 'tool-call' && part.callId === job.callId
-											)
-									)}
-							{@const timeline = buildAssistantTimeline(
-								message.parts,
-								messageActions,
-								message.detailsLoaded !== false
+						{:else if message.kind === 'text'}
+							<div data-message-id={message.id} data-transcript-anchor={message.id}>
+								<ChatMarkdown content={message.text || ' '} className="text-foreground" />
+							</div>
+						{:else if message.kind === 'live'}
+							{@const messageActions = actions.filter(
+								(job) =>
+									job.runId === message.runId &&
+									message.parts.some(
+										(part) => part.type === 'tool-call' && part.callId === job.callId
+									)
 							)}
+							{@const timeline = buildAssistantTimeline(message.parts, messageActions)}
 							{@const timelineTools = timeline.filter(
 								(item): item is AssistantTimelineTool => item.type === 'tool'
 							)}
 							{@const sessionCommands = buildCommandSessionCommandMap(timelineTools)}
 							{@const blocks = groupAssistantTimeline(timeline)}
 							{@const sections = sectionKeys.reconcile(
-								message._id,
+								message.id,
 								groupAssistantTimelineSections(blocks)
 							)}
-							{@const isStreaming =
-								!message.displayRow && isAssistantResponseStreaming(message, activeRunId)}
+							{@const isStreaming = isAssistantResponseStreaming(message, activeRunId)}
 							{@const openSessions = buildOpenExecCommandSessions(timelineTools, isStreaming)}
 							{@const hasPersistedAssistantContent = timeline.some(
 								(part) => part.type === 'text' || part.type === 'reasoning'
 							)}
 							<div
-								data-message-id={message._id}
+								data-message-id={message.id}
 								class="w-full min-w-0"
 								role={isStreaming ? 'log' : undefined}
 								aria-live={isStreaming ? 'polite' : undefined}
@@ -499,7 +495,7 @@
 									{#each sections as section, sectionIndex (section.renderKey)}
 										{#if section.type === 'text'}
 											<div
-												data-transcript-anchor={`${message._id}:${assistantTimelinePartKey(section)}`}
+												data-transcript-anchor={`${message.id}:${assistantTimelinePartKey(section)}`}
 											>
 												<ChatMarkdown content={section.text || ' '} className="text-foreground" />
 											</div>
@@ -527,7 +523,7 @@
 											{#if visibleBlocks.length > 0 || workInProgress || runningTools.length > 0}
 												<div
 													class="space-y-3"
-													data-transcript-anchor={`${message._id}:${section.renderKey}`}
+													data-transcript-anchor={`${message.id}:${section.renderKey}`}
 												>
 													<WorkDisclosure
 														inProgress={workInProgress}
@@ -545,63 +541,12 @@
 																	inProgress={reasoningInProgress}
 																/>
 															{:else}
-																<ToolCallsDisclosure
-																	label={toolGroupLabel(block.toolKey)}
-																	icon={toolKindIcon(block.toolKey)}
+																<WorkTools
 																	tools={block.tools}
-																	defaultExpanded={block.toolKey === 'apply_patch'
-																		? changedFileCount(block.tools) <= 2
-																		: undefined}
-																>
-																	{#snippet toolRow(tool)}
-																		{@const toolError = assistantTimelineToolError(
-																			tool,
-																			isStreaming
-																		)}
-																		{@const toolFailureKind = assistantTimelineToolFailureKind(
-																			tool,
-																			isStreaming
-																		)}
-																		{@const toolSummary = toolItemSummary(tool, sessionCommands)}
-																		{#if toolError && toolFailureKind}
-																			<details class="min-w-0">
-																				<summary
-																					class="min-w-0 cursor-pointer text-left"
-																					title={fullToolSummary(
-																						tool,
-																						isStreaming,
-																						sessionCommands
-																					)}
-																				>
-																					<span class={toolSummaryClass(tool)}>{toolSummary}</span>
-																					<span
-																						class={toolFailureKind === 'failed'
-																							? 'text-destructive'
-																							: 'text-amber-800 dark:text-amber-200'}
-																					>
-																						({toolFailureKind})
-																					</span>
-																				</summary>
-																				<p
-																					class="mt-1.5 text-xs leading-5 wrap-break-word whitespace-pre-wrap {toolFailureKind ===
-																					'failed'
-																						? 'text-destructive'
-																						: 'text-amber-800 dark:text-amber-200'}"
-																					role="status"
-																				>
-																					{toolError}
-																				</p>
-																			</details>
-																		{:else}
-																			<p
-																				class={`min-w-0 ${toolSummaryClass(tool)}`}
-																				title={fullToolSummary(tool, isStreaming, sessionCommands)}
-																			>
-																				{toolSummary}
-																			</p>
-																		{/if}
-																	{/snippet}
-																</ToolCallsDisclosure>
+																	toolKey={block.toolKey}
+																	inProgress={isStreaming}
+																	commands={sessionCommands}
+																/>
 															{/if}
 														{/each}
 													</WorkDisclosure>
@@ -609,28 +554,12 @@
 														<MandateApprovalForm {approval} />
 													{/each}
 													{#if runningTools.length > 0}
-														<ToolCallsDisclosure
-															label="Running"
-															icon={LoaderCircle}
-															iconClass="animate-spin"
+														<WorkTools
 															tools={runningTools}
-															defaultExpanded={true}
-														>
-															{#snippet toolRow(tool)}
-																{@const ToolIcon = toolLogIcon(tool)}
-																{@const toolSummary = toolItemSummary(tool, sessionCommands)}
-																<p
-																	class="flex min-w-0 items-start gap-1.5"
-																	title={`${toolSummary} (running)`}
-																>
-																	<ToolIcon
-																		class="text-muted-foreground mt-1.5 size-3 shrink-0"
-																		aria-hidden="true"
-																	/>
-																	<span class={toolSummaryClass(tool)}>{toolSummary}</span>
-																</p>
-															{/snippet}
-														</ToolCallsDisclosure>
+															running={true}
+															inProgress={isStreaming}
+															commands={sessionCommands}
+														/>
 													{/if}
 												</div>
 											{/if}

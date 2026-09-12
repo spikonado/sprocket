@@ -67,52 +67,8 @@ impl ReadIndex<'_> {
                 self.insert(&item, false)?;
             }
         }
-        if let Some(tool) = &part.tool {
-            if hidden_tool(&tool.name) {
-                return Ok(());
-            }
-            let terminal = tool.status != "started";
-            let item = WorkItem {
-                run_id: part.run_id.clone(),
-                section: String::new(),
-                source: WorkPosition {
-                    part: part.number,
-                    item: 0,
-                },
-                call_id: Some(tool.call_id.clone()),
-                name: Some(tool.name.clone()),
-                result_part: terminal.then_some(part.number),
-                tool_parts: BTreeSet::new(),
-                canonical: false,
-                started_at: (!terminal)
-                    .then_some(part.created_at)
-                    .flatten()
-                    .map(|n| n as f64),
-                completed_at: terminal
-                    .then_some(part.created_at)
-                    .flatten()
-                    .map(|n| n as f64),
-                session_id: tool
-                    .output
-                    .as_ref()
-                    .and_then(|output| string(output, "sessionId")),
-                running: tool
-                    .output
-                    .as_ref()
-                    .is_some_and(|output| output["running"] == true),
-                reported_running: tool
-                    .output
-                    .as_ref()
-                    .and_then(|output| output["running"].as_bool()),
-                approval: tool
-                    .output
-                    .as_ref()
-                    .filter(|_| tool.name == "mandate_setup")
-                    .and_then(|output| {
-                        string(output, "mandateId").zip(string(output, "approvalUrl"))
-                    }),
-            };
-            self.insert(&item, terminal)?;
+        if let Some(item) = WorkItem::tool_event(part) {
+            self.insert(&item, item.result_part.is_some())?;
         }
         self.0.execute("UPDATE source_refs AS result SET session=(
             SELECT call.session FROM source_refs call WHERE call.run=result.run AND call.call_id=result.call_id AND call.canonical=1 LIMIT 1)
@@ -249,12 +205,7 @@ impl ReadIndex<'_> {
                 .and_then(|event| event.started_at);
         }
         if let Some(result) = self.event(&item.run_id, call, true)? {
-            item.result_part = result.result_part;
-            item.completed_at = result.completed_at;
-            item.running = result.running;
-            item.reported_running = result.reported_running;
-            item.session_id = result.session_id.or(item.session_id.take());
-            item.approval = result.approval;
+            item.merge_event(result);
         }
         if matches!(item.name.as_deref(), Some("exec_command" | "write_stdin")) {
             if let Some(session) = &item.session_id {
@@ -269,8 +220,8 @@ impl ReadIndex<'_> {
                     let latest: WorkItem = serde_json::from_str(&body)?;
                     item.reported_running = latest.reported_running;
                     item.running = latest.running;
-                    if item.name.as_deref() == Some("exec_command") && !latest.running {
-                        item.completed_at = latest.completed_at.or(item.completed_at);
+                    if let Some(session) = latest.session_update() {
+                        item.apply_command_session(&session);
                     }
                 }
             }

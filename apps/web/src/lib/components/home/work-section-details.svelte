@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { LoaderCircle } from '@lucide/svelte';
 	import type {
 		TranscriptDisplayDetails,
 		TranscriptDisplayRow,
@@ -11,13 +10,10 @@
 		buildCommandSessionCommandMap,
 		buildOpenExecCommandSessions,
 		partitionWorkSectionTools,
-		groupAssistantTimeline,
-		assistantTimelineToolError
+		groupAssistantTimeline
 	} from '$lib/chat/assistant-timeline';
-	import { toolGroupLabel, toolItemSummary, fullToolSummary } from '$lib/chat/tool-summaries';
-	import { toolKindIcon } from '$lib/chat/tool-icons';
 	import ReasoningDisclosure from './reasoning-disclosure.svelte';
-	import ToolCallsDisclosure from './tool-calls-disclosure.svelte';
+	import WorkTools from './work-tools.svelte';
 
 	let {
 		row,
@@ -106,35 +102,11 @@
 			{#if block.type === 'reasoning'}
 				<ReasoningDisclosure text={block.text} inProgress={false} />
 			{:else if block.type === 'tool-group'}
-				<ToolCallsDisclosure
-					label={toolGroupLabel(block.toolKey)}
-					icon={toolKindIcon(block.toolKey)}
-					tools={block.tools}
-				>
-					{#snippet toolRow(tool)}
-						{@const toolError = assistantTimelineToolError(tool, inProgress)}
-						<p title={fullToolSummary(tool, inProgress, commands)}>
-							{toolItemSummary(tool, commands)}
-						</p>
-						{#if toolError}<p class="text-destructive" role="status">{toolError}</p>{/if}
-					{/snippet}
-				</ToolCallsDisclosure>
+				<WorkTools tools={block.tools} toolKey={block.toolKey} {inProgress} {commands} />
 			{/if}
 		{/each}
 		{#if partitioned.runningTools.length}
-			<ToolCallsDisclosure
-				label="Running"
-				icon={LoaderCircle}
-				iconClass="animate-spin"
-				tools={partitioned.runningTools}
-				defaultExpanded={true}
-			>
-				{#snippet toolRow(tool)}
-					<p title={fullToolSummary(tool, inProgress, commands)}>
-						{toolItemSummary(tool, commands)}
-					</p>
-				{/snippet}
-			</ToolCallsDisclosure>
+			<WorkTools tools={partitioned.runningTools} running={true} {inProgress} {commands} />
 		{/if}
 	</div>
 	{#if page?.previousBefore !== undefined || page?.nextAfter !== undefined}

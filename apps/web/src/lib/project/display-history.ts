@@ -1,44 +1,32 @@
 import type {
 	LiveCompletionOverlay,
-	ThreadMessage,
 	TranscriptDisplayPage,
 	TranscriptDisplayRow,
 	TranscriptChangeCursor
 } from '$lib/types/sprocket';
 
-type PageRequest = { before?: number; limit: number; changesAfter?: TranscriptChangeCursor };
+type Stream = TranscriptDisplayPage['persistedStreams'][number];
+type PageRequest = {
+	before?: number;
+	limit: number;
+	changesAfter?: TranscriptChangeCursor;
+	streams?: Stream[];
+};
+
+function streamKey(stream: { runId: string; streamId?: string }) {
+	return `${stream.runId}:${stream.streamId}`;
+}
 
 export function visibleDisplayMessages(
-	messages: ThreadMessage[],
+	messages: TranscriptDisplayRow[],
 	overlays: LiveCompletionOverlay[]
 ) {
 	const liveRuns = new Set(overlays.map((overlay) => overlay.runId));
-	return messages.filter(
-		(message) => !message.displayRow?.provisional || !liveRuns.has(message.runId)
-	);
-}
-
-function messageForRow(row: TranscriptDisplayRow): ThreadMessage {
-	return {
-		_id: row.id,
-		threadId: row.threadId,
-		runId: row.runId,
-		userId: '',
-		type: row.kind === 'prompt' ? 'prompt' : 'response',
-		text: row.text ?? '',
-		attachments: (row.attachments ?? []).map((attachment) => ({ ...attachment, url: null })),
-		parts:
-			row.kind === 'text'
-				? [{ type: 'text', id: row.id, text: row.text ?? '', startedAt: row.startedAt }]
-				: [],
-		runStatus: 'completed',
-		runStartedAt: 0,
-		displayRow: row
-	};
+	return messages.filter((message) => !message.provisional || !liveRuns.has(message.runId));
 }
 
 export class DisplayHistory {
-	messages: ThreadMessage[] = [];
+	messages: TranscriptDisplayRow[] = [];
 	nextBefore: number | undefined;
 	loading = true;
 	loadingOlder = false;
@@ -50,8 +38,10 @@ export class DisplayHistory {
 	private refreshPending = false;
 	private olderPending = false;
 	private retry: ReturnType<typeof setTimeout> | undefined;
-	private rows = new Map<number, ThreadMessage>();
+	private rows = new Map<number, TranscriptDisplayRow>();
 	private persistedStreams = new Set<string>();
+	private checkedStreams = new Set<string>();
+	private overlays: LiveCompletionOverlay[] = [];
 	private revision = 0;
 	private replicaId: string | undefined;
 	private changesCursor: TranscriptChangeCursor | undefined;
@@ -67,9 +57,32 @@ export class DisplayHistory {
 	}
 
 	unpersisted(overlays: LiveCompletionOverlay[]) {
-		return overlays.filter(
-			(overlay) => !this.persistedStreams.has(`${overlay.runId}:${overlay.streamId}`)
+		return overlays.filter((overlay) => !this.persistedStreams.has(streamKey(overlay)));
+	}
+
+	visibleOverlays(overlays: LiveCompletionOverlay[]) {
+		return this.unpersisted(overlays).filter(
+			(overlay) => !overlay.streamId || this.checkedStreams.has(streamKey(overlay))
 		);
+	}
+
+	setOverlays(overlays: LiveCompletionOverlay[]) {
+		const previous = new Set(this.overlays.map(streamKey));
+		this.overlays = overlays;
+		const retained = new Set(overlays.map(streamKey));
+		for (const key of this.checkedStreams) if (!retained.has(key)) this.checkedStreams.delete(key);
+		if (overlays.some((overlay) => !previous.has(streamKey(overlay)))) void this.refresh();
+	}
+
+	private streamRequest() {
+		const unique = new Map<string, Stream>();
+		for (const overlay of this.unpersisted(this.overlays)) {
+			if (overlay.streamId)
+				unique.set(streamKey(overlay), { runId: overlay.runId, streamId: overlay.streamId });
+			if (unique.size === 64) break;
+		}
+		const streams = [...unique.values()];
+		return streams.length ? { streams } : {};
 	}
 
 	async refresh() {
@@ -84,9 +97,11 @@ export class DisplayHistory {
 		try {
 			do {
 				this.refreshPending = false;
+				const streamRequest = this.streamRequest();
 				const page = await this.fetchPage({
 					limit: 12,
-					changesAfter: this.changesCursor
+					changesAfter: this.changesCursor,
+					...streamRequest
 				});
 				if (this.stopped) return;
 				if (this.replicaId !== page.replicaId) {
@@ -94,6 +109,7 @@ export class DisplayHistory {
 					this.rows.clear();
 					this.messages = [];
 					this.persistedStreams.clear();
+					this.checkedStreams.clear();
 					this.changesCursor = undefined;
 					this.nextBefore = undefined;
 					this.revision = 0;
@@ -102,6 +118,8 @@ export class DisplayHistory {
 					this.changed();
 				}
 				if (page.indexing) {
+					this.stale = page.stale;
+					this.changed();
 					this.retry = setTimeout(() => void this.refresh(), 500);
 					break;
 				}
@@ -112,16 +130,24 @@ export class DisplayHistory {
 					break;
 				}
 				const lower = page.nextBefore ?? 0;
-				const newest = this.messages.at(-1)?.displayRow?.sequence;
+				const newest = this.messages.at(-1)?.sequence;
 				if (newest !== undefined && newest < lower) {
 					this.rows.clear();
 					this.windowVersion += 1;
 				}
-				if (!this.rows.size || lower === 0) this.nextBefore = page.nextBefore;
+				if (!this.rows.size || lower === 0 || lower <= (this.messages[0]?.sequence ?? 0))
+					this.nextBefore = page.nextBefore;
 				for (const number of this.rows.keys()) if (number >= lower) this.rows.delete(number);
 				this.commit(page);
+				for (const stream of streamRequest.streams ?? [])
+					this.checkedStreams.add(streamKey(stream));
 				this.changesCursor = page.changesCursor;
 				this.refreshPending ||= page.moreChanges;
+				this.refreshPending ||=
+					page.persistedStreams.length > 0 &&
+					this.unpersisted(this.overlays).some(
+						(overlay) => overlay.streamId && !this.checkedStreams.has(streamKey(overlay))
+					);
 				canLoadOlder = true;
 				this.loading = false;
 				this.error = null;
@@ -156,7 +182,7 @@ export class DisplayHistory {
 		this.loadingOlder = true;
 		this.changed();
 		try {
-			const page = await this.fetchPage({ before, limit: 40 });
+			const page = await this.fetchPage({ before, limit: 40, ...this.streamRequest() });
 			if (this.stopped || version !== this.windowVersion) return;
 			if (this.replicaId !== page.replicaId) {
 				void this.refresh();
@@ -169,6 +195,11 @@ export class DisplayHistory {
 			}
 			if (page.revision < this.revision) {
 				this.stale = true;
+				return;
+			}
+			if (page.persistedStreams.some((stream) => !this.persistedStreams.has(streamKey(stream)))) {
+				this.olderPending = true;
+				void this.refresh();
 				return;
 			}
 			if (page.nextBefore !== undefined && page.nextBefore >= before)
@@ -184,27 +215,22 @@ export class DisplayHistory {
 	}
 
 	private commit(page: TranscriptDisplayPage) {
-		const previous = new Map(this.messages.map((message) => [message._id, message]));
-		const firstLoaded = this.rows.size ? this.messages[0]?.displayRow?.sequence : undefined;
+		const previous = new Map(this.messages.map((message) => [message.id, message]));
+		const firstLoaded = this.rows.size ? this.messages[0]?.sequence : undefined;
 		for (const change of page.changes) {
 			const existing = previous.get(change.id);
-			if (!existing?.displayRow) {
+			if (!existing) {
 				if (change.row && firstLoaded !== undefined && change.row.sequence >= firstLoaded)
-					this.rows.set(change.row.sequence, messageForRow(change.row));
+					this.rows.set(change.row.sequence, change.row);
 				continue;
 			}
-			if (!change.row) this.rows.delete(existing.displayRow.sequence);
-			else if (change.row.revision > existing.displayRow.revision)
-				this.rows.set(change.row.sequence, messageForRow(change.row));
+			if (!change.row) this.rows.delete(existing.sequence);
+			else if (change.row.revision > existing.revision)
+				this.rows.set(change.row.sequence, change.row);
 		}
 		for (const row of page.rows) {
 			const existing = this.rows.get(row.sequence) ?? previous.get(row.id);
-			this.rows.set(
-				row.sequence,
-				existing?.displayRow && existing.displayRow.revision >= row.revision
-					? existing
-					: messageForRow(row)
-			);
+			this.rows.set(row.sequence, existing && existing.revision >= row.revision ? existing : row);
 		}
 		const messages = [...this.rows.entries()]
 			.sort(([left], [right]) => left - right)

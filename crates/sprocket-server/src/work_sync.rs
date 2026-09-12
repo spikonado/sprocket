@@ -9,9 +9,11 @@ use sprocket_agent::{
     sections::{WorkMembership, WorkPosition, WorkSection},
 };
 use sprocket_convex::decode_labeled_function_result;
-use tokio::sync::{Notify, watch};
+use tokio::sync::{Notify, broadcast, watch};
 
 use crate::transcript_client::UserConvexClient;
+
+mod metadata;
 
 #[derive(Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -105,88 +107,24 @@ impl<F: Fn(u32) + Send + Sync> WorkSync<'_, F> {
             let (function, args) = feed.request(&self.thread);
             subscriptions.insert(feed, self.client.subscribe(function, args).await?);
         }
-        let mut previous: BTreeMap<Feed, FunctionResult> = BTreeMap::new();
-        let mut previous_complete = None;
+        let mut metadata = metadata::Metadata::default();
         while let Some(results) = updates.next().await {
-            let Some(state_result) = results.get(subscriptions[&Feed::State].id()) else {
+            let Some(metadata::Update {
+                state,
+                snapshot,
+                mut add,
+                remove,
+            }) = metadata.apply(
+                subscriptions
+                    .iter()
+                    .map(|(feed, subscription)| {
+                        (feed.clone(), results.get(subscription.id()).cloned())
+                    })
+                    .collect(),
+            )?
+            else {
                 continue;
             };
-            let state: WorkState =
-                decode_labeled_function_result(state_result.clone(), "transcriptSections:state")?;
-            let mut add = Vec::new();
-            let mut remove = Vec::new();
-            let mut snapshot = WorkSnapshot {
-                through: state.through,
-                total: state.total_parts,
-                complete: add.is_empty(),
-                active_run_id: state.active_run_id.clone(),
-                sections: Vec::new(),
-                memberships: Vec::new(),
-                membership_pages: Vec::new(),
-            };
-            let mut changed = false;
-            for (feed, subscription) in &subscriptions {
-                let Some(result) = results.get(subscription.id()) else {
-                    if !matches!(feed, Feed::Memberships(_)) {
-                        snapshot.complete = false;
-                    }
-                    continue;
-                };
-                if previous.get(feed) == Some(result) {
-                    continue;
-                }
-                changed = true;
-                match feed {
-                    Feed::State => {}
-                    Feed::Sections { after, before } => {
-                        let page: SectionPage = decode_labeled_function_result(
-                            result.clone(),
-                            "transcriptSections:sections",
-                        )?;
-                        if let Some(split) = page.split {
-                            snapshot.complete = false;
-                            remove.push(feed.clone());
-                            add.push(Feed::Sections {
-                                after: after.clone(),
-                                before: Some(split.clone()),
-                            });
-                            add.push(Feed::Sections {
-                                after: split,
-                                before: before.clone(),
-                            });
-                            continue;
-                        }
-                        snapshot.sections.push(SectionPartition {
-                            after: after.clone(),
-                            before: before.clone(),
-                            sections: page.rows,
-                        });
-                    }
-                    Feed::Memberships(start) => {
-                        let parts: Vec<MembershipPart> = decode_labeled_function_result(
-                            result.clone(),
-                            "transcriptSections:memberships",
-                        )?;
-                        snapshot
-                            .memberships
-                            .extend(parts.into_iter().filter_map(|part| {
-                                part.work.map(|work| WorkMembership {
-                                    number: part.number,
-                                    processed: work.processed,
-                                    ranges: work.ranges,
-                                    section_key: work.section_key,
-                                })
-                            }));
-                        snapshot.membership_pages.push(*start);
-                        remove.push(feed.clone());
-                    }
-                }
-                previous.insert(feed.clone(), result.clone());
-            }
-            if !changed && previous_complete == Some(snapshot.complete) {
-                continue;
-            }
-            previous_complete = Some(snapshot.complete);
             let stale = !snapshot.complete;
             let thread = self.thread.clone();
             let pending = self
@@ -213,7 +151,6 @@ impl<F: Fn(u32) + Send + Sync> WorkSync<'_, F> {
             state_tx.send_replace(state);
             for feed in remove {
                 subscriptions.remove(&feed);
-                previous.remove(&feed);
             }
             for start in pending {
                 let feed = Feed::Memberships(start);
@@ -365,6 +302,19 @@ impl<F: Fn(u32) + Send + Sync> WorkSync<'_, F> {
     }
 }
 
+async fn wait_for_reset(
+    mut resets: broadcast::Receiver<(String, String)>,
+    user: &str,
+    thread: &str,
+) -> anyhow::Result<()> {
+    loop {
+        match resets.recv().await {
+            Ok((reset_user, reset_thread)) if reset_user != user || reset_thread != thread => {}
+            _ => anyhow::bail!("transcript replica reset; restarting synchronization"),
+        }
+    }
+}
+
 pub(crate) async fn synchronize(
     client: UserConvexClient,
     store: Arc<TranscriptStore>,
@@ -372,6 +322,7 @@ pub(crate) async fn synchronize(
     thread: String,
     changed: impl Fn(u32) + Send + Sync,
 ) -> anyhow::Result<()> {
+    let resets = store.watch_work_replica_resets();
     store.prepare_work_replica(&user, &thread).await?;
     let sync = WorkSync {
         client,
@@ -382,10 +333,38 @@ pub(crate) async fn synchronize(
         downloaded: Notify::new(),
     };
     let (states, state_rx) = watch::channel(WorkState::default());
-    tokio::try_join!(
-        sync.metadata(states),
-        sync.download(state_rx.clone()),
-        sync.process(state_rx)
-    )?;
+    tokio::select! {
+        result = async {
+            tokio::try_join!(sync.metadata(states), sync.download(state_rx.clone()), sync.process(state_rx))
+        } => { result?; }
+        result = wait_for_reset(resets, &sync.user, &sync.thread) => { return result; }
+    }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::poll;
+    use std::task::Poll;
+
+    #[tokio::test]
+    async fn idle_sync_restarts_only_for_its_replica_or_missed_resets() {
+        let (resets, receiver) = broadcast::channel(1);
+        let waiting = wait_for_reset(receiver, "user", "thread");
+        tokio::pin!(waiting);
+        assert!(poll!(&mut waiting).is_pending());
+        resets.send(("other-user".into(), "thread".into())).unwrap();
+        assert!(poll!(&mut waiting).is_pending());
+        resets.send(("user".into(), "other-thread".into())).unwrap();
+        assert!(poll!(&mut waiting).is_pending());
+        resets.send(("user".into(), "thread".into())).unwrap();
+        assert!(matches!(poll!(&mut waiting), Poll::Ready(Err(_))));
+
+        let receiver = resets.subscribe();
+        for _ in 0..2 {
+            resets.send(("other-user".into(), "thread".into())).unwrap();
+        }
+        assert!(wait_for_reset(receiver, "user", "thread").await.is_err());
+    }
 }

@@ -6,7 +6,7 @@ import {
 } from '$convex/lib/assistantParts';
 import { isJsonObject, type JsonValue } from '$convex/lib/json';
 import { jsonBoolean, jsonObjectString } from '$lib/chat/json-fields';
-import type { ExecutorJob, ThreadMessage } from '$lib/types/sprocket';
+import type { ExecutorJob, LiveTranscriptMessage } from '$lib/types/sprocket';
 
 export type AssistantTimelineTool = {
 	type: 'tool';
@@ -43,8 +43,8 @@ export type AssistantTimelineSection =
 export type AssistantTimelineToolFailureKind = 'cancelled' | 'failed' | 'interrupted';
 
 export function isAssistantResponseStreaming(
-	message: Pick<ThreadMessage, 'runId' | 'runStatus'>,
-	activeRunId: ThreadMessage['runId'] | null
+	message: Pick<LiveTranscriptMessage, 'runId' | 'runStatus'>,
+	activeRunId: LiveTranscriptMessage['runId'] | null
 ): boolean {
 	return message.runId === activeRunId;
 }
@@ -361,8 +361,7 @@ export function assistantTimelineToolError(
 
 export function buildAssistantTimeline(
 	parts: AssistantPart[],
-	jobs: ExecutorJob[],
-	detailsLoaded = true
+	jobs: ExecutorJob[]
 ): AssistantTimelineItem[] {
 	const resultsByCallId = new Map(
 		parts
@@ -393,10 +392,6 @@ export function buildAssistantTimeline(
 
 	for (const part of parts) {
 		if (part.type === 'tool-result') continue;
-		if (part.type === 'reasoning' && !detailsLoaded) {
-			timeline.push(part);
-			continue;
-		}
 		if (part.type === 'reasoning' || part.type === 'text') {
 			if (part.text.trim().length > 0) timeline.push(part);
 			continue;

@@ -93,6 +93,158 @@ fn reasoning(text: &str) -> Value {
     json!({"type":"reasoning","text":text,"startedAt":100,"completedAt":200,"providerMetadata":{"secret":"ciphertext"}})
 }
 
+#[test]
+fn delayed_memberships_do_not_exhaust_downloaded_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+    let parts: Vec<_> = (0..20)
+        .map(|number| {
+            completion(
+                number,
+                vec![json!({"type":"text","text":format!("Answer {number}")})],
+            )
+        })
+        .collect();
+    replica.save_parts("thread", &parts).unwrap();
+    let mut cloud = Cloud::default();
+    cloud.process(&mut replica);
+    let mut snapshot = cloud.snapshot(20);
+    snapshot
+        .memberships
+        .retain(|membership| membership.number >= 16);
+    snapshot.membership_pages = vec![16];
+    replica.save_snapshot("thread", snapshot).unwrap();
+    let page = replica.page(None, 12, None, &[], false).unwrap();
+    assert_eq!(page["nextBefore"], 16 * super::sections::POSITION_STRIDE);
+    for stale in [false, true] {
+        let older = replica
+            .page(page["nextBefore"].as_u64(), 40, None, &[], stale)
+            .unwrap();
+        assert_eq!(older["indexing"], true);
+    }
+    replica.save_snapshot("thread", cloud.snapshot(20)).unwrap();
+    let older = replica
+        .page(page["nextBefore"].as_u64(), 40, None, &[], false)
+        .unwrap();
+    assert_eq!(older["rows"].as_array().unwrap().len(), 16);
+    assert!(older["nextBefore"].is_null());
+}
+
+#[test]
+fn live_handoffs_wait_for_complete_parts_and_memberships_even_while_offline() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+    replica
+        .save_parts(
+            "thread",
+            &[completion(
+                0,
+                vec![
+                    json!({"type":"text","text":"Visible answer"}),
+                    json!({"type":"tool-call","callId":"a","name":"read","input":{}}),
+                    reasoning("Still processing"),
+                ],
+            )],
+        )
+        .unwrap();
+    let streams = [("run".into(), "stream-0".into())];
+    let mut cloud = Cloud::default();
+    let batch = replica.advance(WorkPosition::default()).unwrap().unwrap();
+    cloud.apply(&batch);
+    replica.acknowledge_batch(batch.through).unwrap();
+    replica.save_snapshot("thread", cloud.snapshot(1)).unwrap();
+    for stale in [false, true] {
+        let page = replica.page(None, 12, None, &streams, stale).unwrap();
+        assert_eq!(page["indexing"], true);
+        assert!(page["persistedStreams"].as_array().unwrap().is_empty());
+    }
+    cloud.process(&mut replica);
+    let mut snapshot = cloud.snapshot(1);
+    snapshot.memberships.clear();
+    snapshot.membership_pages.clear();
+    replica.save_snapshot("thread", snapshot).unwrap();
+    assert_eq!(
+        replica.page(None, 12, None, &streams, false).unwrap()["indexing"],
+        true
+    );
+    replica.save_snapshot("thread", cloud.snapshot(1)).unwrap();
+    let page = replica.page(None, 12, None, &streams, false).unwrap();
+    assert_eq!(page["indexing"], false);
+    assert_eq!(page["persistedStreams"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn corrupt_data_pages_preserve_raw_history_and_notify_synchronizers() {
+    use std::io::{Seek, SeekFrom, Write};
+    let root = tempfile::tempdir().unwrap();
+    let store = super::TranscriptStore::new(root.path().to_owned());
+    let part = completion(0, vec![reasoning("cached")]);
+    store
+        .append_parts("user", "thread", &[part.clone()])
+        .await
+        .unwrap();
+    store
+        .with_work_replica("user", "thread", move |replica| {
+            replica.save_parts("thread", &[part])
+        })
+        .await
+        .unwrap();
+    let mut resets = store.watch_work_replica_resets();
+    let database = root
+        .path()
+        .join("user/thread/display-v1/replica/history.sqlite3");
+    let db = rusqlite::Connection::open(&database).unwrap();
+    let root_page: u32 = db
+        .query_row(
+            "SELECT rootpage FROM sqlite_master WHERE name='parts'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let page_size: u32 = db
+        .query_row("PRAGMA page_size", [], |row| row.get(0))
+        .unwrap();
+    drop(db);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&database)
+        .unwrap();
+    file.seek(SeekFrom::Start(
+        u64::from(root_page - 1) * u64::from(page_size),
+    ))
+    .unwrap();
+    file.write_all(&[0xff]).unwrap();
+    drop(file);
+    store.prepare_work_replica("user", "thread").await.unwrap();
+    assert!(
+        store
+            .with_work_replica("user", "thread", |replica| replica.has_part(0))
+            .await
+            .is_err()
+    );
+    assert_eq!(resets.try_recv().unwrap(), ("user".into(), "thread".into()));
+    assert!(
+        !store
+            .with_work_replica("user", "thread", |replica| replica.has_part(0))
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        store
+            .read_parts("user", "thread", &[0])
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        std::fs::read_dir(root.path().join("user/thread/display-v1"))
+            .unwrap()
+            .count(),
+        2
+    );
+}
+
 #[derive(Default)]
 struct Cloud {
     through: WorkPosition,
@@ -358,12 +510,15 @@ fn saved_rows_remain_readable_offline_after_an_interrupted_metadata_split() {
         replica.page(None, 12, None, &[], false).unwrap()["indexing"],
         true
     );
-    let saved = replica
-        .page(None, 12, None, &[("run".into(), "stream-0".into())], true)
-        .unwrap();
+    let saved = replica.page(None, 12, None, &[], true).unwrap();
     assert_eq!(saved["indexing"], false);
     assert_eq!(saved["rows"][0]["id"], "work-0-0");
     assert!(saved["persistedStreams"].as_array().unwrap().is_empty());
+    let handoff = replica
+        .page(None, 12, None, &[("run".into(), "stream-0".into())], true)
+        .unwrap();
+    assert_eq!(handoff["indexing"], true);
+    assert!(handoff["persistedStreams"].as_array().unwrap().is_empty());
     let details = replica
         .details("work-0-0", None, None, false, 5, true)
         .unwrap();

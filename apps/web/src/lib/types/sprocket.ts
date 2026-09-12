@@ -86,24 +86,13 @@ export type MessageAttachment = {
 	url: string | null;
 };
 
-export type ThreadMessage = {
-	displayRow?: TranscriptDisplayRow;
-	_id: string;
-	_creationTime?: number;
-	threadId: Id<'threadRecords'>;
-	runId: Id<'runs'>;
-	userId: string;
-	type: 'prompt' | 'response';
-	text: string;
-	attachments: MessageAttachment[];
-	parts: AssistantPart[];
-	runStatus: Infer<typeof vRunStatus>;
-	runStartedAt: number;
+export type LiveTranscriptMessage = Omit<LiveCompletionOverlay, 'streamId'> & {
+	kind: 'live';
+	id: string;
 	runCompletedAt?: number;
-	sourceNumbers?: number[];
-	streamIds?: string[];
-	detailsLoaded?: boolean;
 };
+
+export type TranscriptMessage = TranscriptDisplayRow | LiveTranscriptMessage;
 
 export type AgentRunRequest = {
 	userId: string;
