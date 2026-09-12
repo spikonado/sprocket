@@ -27,6 +27,18 @@ fn safe_segment(value: &str) -> String {
         .collect()
 }
 
+fn display_cache_segment(value: &str) -> anyhow::Result<&str> {
+    if value.is_empty()
+        || value.contains("..")
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'(' | b')'))
+    {
+        anyhow::bail!("invalid transcript display cache component");
+    }
+    Ok(value)
+}
+
 fn chunk_start(number: u32) -> u32 {
     number / TRANSCRIPT_CHUNK_SIZE * TRANSCRIPT_CHUNK_SIZE
 }
@@ -54,12 +66,9 @@ impl TranscriptStore {
         thread_id: &str,
         key: &str,
     ) -> anyhow::Result<Option<JsonValue>> {
+        let path = self.display_cache_path(user_id, thread_id, key)?;
         let lock = self.lock_thread(user_id, thread_id).await;
         let _guard = lock.lock().await;
-        let path = self
-            .thread_dir(user_id, thread_id)
-            .join("display-v1")
-            .join(safe_segment(key));
         match tokio::fs::read(path).await {
             Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -74,11 +83,13 @@ impl TranscriptStore {
         key: &str,
         value: &JsonValue,
     ) -> anyhow::Result<()> {
+        let path = self.display_cache_path(user_id, thread_id, key)?;
+        let directory = path
+            .parent()
+            .context("display cache path has no directory")?;
         let lock = self.lock_thread(user_id, thread_id).await;
         let _guard = lock.lock().await;
-        let directory = self.thread_dir(user_id, thread_id).join("display-v1");
-        tokio::fs::create_dir_all(&directory).await?;
-        let path = directory.join(safe_segment(key));
+        tokio::fs::create_dir_all(directory).await?;
         if let Ok(bytes) = tokio::fs::read(&path).await {
             if let Ok(previous) = serde_json::from_slice::<JsonValue>(&bytes) {
                 if previous.get("revision").and_then(JsonValue::as_f64)
@@ -88,10 +99,24 @@ impl TranscriptStore {
                 }
             }
         }
-        let temp = tempfile::NamedTempFile::new_in(&directory)?;
+        let temp = tempfile::NamedTempFile::new_in(directory)?;
         tokio::fs::write(temp.path(), serde_json::to_vec(value)?).await?;
         temp.persist(path)?;
         Ok(())
+    }
+
+    fn display_cache_path(
+        &self,
+        user_id: &str,
+        thread_id: &str,
+        key: &str,
+    ) -> anyhow::Result<PathBuf> {
+        Ok(self
+            .root
+            .join(display_cache_segment(user_id)?)
+            .join(display_cache_segment(thread_id)?)
+            .join("display-v1")
+            .join(display_cache_segment(key)?))
     }
 
     pub fn thread_dir(&self, user_id: &str, thread_id: &str) -> PathBuf {
@@ -1158,6 +1183,85 @@ mod tests {
     use crate::transcript::types::{
         TranscriptCompletionBody, TranscriptPartKind, TranscriptPromptBody, UNKNOWN_RUN_STARTED_AT,
     };
+
+    #[tokio::test]
+    async fn display_cache_rejects_unsafe_components_before_reading_or_writing() {
+        let root = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::new(root.path().join("replica"));
+        let page = serde_json::json!({ "revision": 1 });
+        for invalid in [
+            "",
+            ".",
+            "..",
+            "../other",
+            "/absolute",
+            "a/b",
+            "a\\b",
+            "C:\\other",
+            "C:other",
+            "name.ext",
+            "name ",
+            "nul\0byte",
+            "a\nb",
+            "a%2fb",
+        ] {
+            for (user, thread, key) in [
+                (invalid, "thread", "page"),
+                ("user", invalid, "page"),
+                ("user", "thread", invalid),
+            ] {
+                assert!(store.display_cache(user, thread, key).await.is_err());
+                assert!(
+                    store
+                        .save_display_cache(user, thread, key, &page)
+                        .await
+                        .is_err()
+                );
+            }
+        }
+        assert!(!store.root().exists());
+    }
+
+    #[tokio::test]
+    async fn display_cache_does_not_alias_rejected_components_to_existing_files() {
+        let root = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::new(root.path().to_path_buf());
+        let page = serde_json::json!({ "revision": 1 });
+        store
+            .save_display_cache("user", "thread", "a_b", &page)
+            .await
+            .unwrap();
+        assert!(store.display_cache("user", "thread", "a/b").await.is_err());
+        assert!(
+            store
+                .save_display_cache("user", "thread", "a.b", &page)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            store.display_cache("user", "thread", "a_b").await.unwrap(),
+            Some(page)
+        );
+    }
+
+    #[test]
+    fn display_cache_preserves_existing_page_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::new(root.path().to_path_buf());
+        for key in [
+            "page-None-12",
+            "page-Some(40)-40",
+            "details-row_1-Some(2)-None-false-5",
+        ] {
+            assert_eq!(
+                store.display_cache_path("user_1", "thread-1", key).unwrap(),
+                store
+                    .thread_dir("user_1", "thread-1")
+                    .join("display-v1")
+                    .join(key)
+            );
+        }
+    }
 
     #[tokio::test]
     async fn display_cache_keeps_newer_pages_and_is_scoped_to_the_replica() {
