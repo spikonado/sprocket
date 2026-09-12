@@ -643,8 +643,10 @@
 		<button
 			role="menuitem"
 			onclick={() => {
-				for (const row of targets)
-					if (row.lastCompletedAt) visited[row._id] = row.lastCompletedAt - 1;
+				for (const row of targets) {
+					const latestActivity = Math.max(row.lastCompletedAt ?? 0, row.wokeAt ?? 0);
+					if (latestActivity) visited[row._id] = latestActivity - 1;
+				}
 				menu = null;
 			}}>Mark unread</button
 		>

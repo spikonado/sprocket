@@ -70,6 +70,26 @@ async function settle() {
 	flushSync();
 }
 
+it.each([undefined, 100])(
+	'marks a wake event unread with completion timestamp %s',
+	async (lastCompletedAt) => {
+		localStorage.setItem('sprocket:inbox:alice', JSON.stringify({ visited: { thread: 200 } }));
+		const input = props([{ ...thread('active'), lastCompletedAt, wokeAt: 200 }]);
+		component = mount(InboxSidebar, { target: document.body, props: input });
+		await settle();
+		expect(document.querySelector('.inbox-status')).toBeNull();
+		document.querySelector<HTMLButtonElement>('[aria-label="Actions for thread"]')!.click();
+		await settle();
+		[...document.querySelectorAll<HTMLButtonElement>('.inbox-context-menu button')]
+			.find((button) => button.textContent?.trim() === 'Mark unread')!
+			.click();
+		await settle();
+		expect(document.querySelector('.inbox-status')?.textContent).toBe('Woke');
+		expect(localStorage.getItem('sprocket:inbox:alice')).toContain('"thread":199');
+		expect(input.onChange).not.toHaveBeenCalled();
+	}
+);
+
 it('renders without selecting a thread and protects pinned actions', async () => {
 	const input = props([thread('pinned')]);
 	component = mount(InboxSidebar, { target: document.body, props: input });
