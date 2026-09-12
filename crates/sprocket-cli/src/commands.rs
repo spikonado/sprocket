@@ -11,7 +11,7 @@ use sprocket_server::ServerConfig;
 use sprocket_server::cli_protocol::*;
 
 use connection::Connection;
-use output::{Output, OutputFormat};
+use output::Output;
 
 #[derive(Debug, Args)]
 pub(crate) struct RunArgs {
@@ -38,12 +38,6 @@ pub(crate) struct RunArgs {
     fast: bool,
     #[arg(long)]
     no_fast: bool,
-    /// Return one JSON result instead of text
-    #[arg(long, conflicts_with = "stream_json")]
-    json: bool,
-    /// Stream newline-delimited JSON events
-    #[arg(long)]
-    stream_json: bool,
     /// Cancel after a duration such as 30s, 10m, or 2h
     #[arg(long, value_parser = parse_duration)]
     timeout: Option<Duration>,
@@ -113,14 +107,7 @@ fn runtime() -> anyhow::Result<tokio::runtime::Runtime> {
 }
 
 pub(crate) fn run(args: RunArgs) -> anyhow::Result<u8> {
-    let format = if args.stream_json {
-        OutputFormat::StreamJson
-    } else if args.json {
-        OutputFormat::Json
-    } else {
-        OutputFormat::Text
-    };
-    let mut output = Output::new(format);
+    let mut output = Output::new();
     let result = runtime()?.block_on(async {
         let prompt = prompt(&args)?;
         let directory = args
@@ -166,7 +153,6 @@ async fn run_connected(
             None
         },
     };
-    output.submitting(&connection.client_id);
     let interrupted = {
         let operation = execute_run(connection, &request, output);
         tokio::pin!(operation);
@@ -181,7 +167,6 @@ async fn run_connected(
             } => 124,
         }
     };
-    output.interrupted(interrupted);
     if let Err(error) = connection
         .call::<bool>("cancel", &connection.client_request())
         .await

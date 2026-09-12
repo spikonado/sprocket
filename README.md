@@ -53,8 +53,8 @@ sprocket login
 sprocket run "Fix the failing tests"
 sprocket run --directory ./robot "Check the motor driver wiring"
 sprocket run --thread <thread-id> "Add regression coverage"
-sprocket run --prompt-file task.md --json
-cat task.md | sprocket run --prompt-file - --stream-json
+sprocket run --prompt-file task.md
+cat task.md | sprocket run --prompt-file -
 ```
 
 `login` prints a URL and code. You can approve the code in a browser on another
@@ -73,15 +73,9 @@ belong to the same repository and have no active run. Concurrent invocations may
 edit the same directory. Supply separate worktrees when you need isolation.
 
 The command waits for completion. Progress goes to stderr and the final answer
-goes to stdout. `--json` emits one result with `submissionId`, `runId`, `threadId`,
-`status`, `answer`, `error`, and `terminationReason`. The submission ID identifies
-the request even when the server's acknowledgment is lost. The termination reason
-is `timeout`, `signal`, or null. Only a completed run has a final answer.
-`--stream-json` emits newline-delimited `started`,
-`transcript`, `live`, and `result` events. Live events replace the previous live
-snapshot; transcript events carry committed prompt and completion parts with
-stable part numbers. The app retains the full tool-result history. The final
-result is authoritative, not a live snapshot disappearing.
+goes to stdout. Run and thread transcripts remain in the local Sprocket data
+directory and appear in the app. A follow-up reads the existing thread as agent
+context but only reports progress and the final answer for its new run.
 
 The CLI waits on local output notifications. The server reads committed
 completions from its local transcript cache and receives the confirmed terminal

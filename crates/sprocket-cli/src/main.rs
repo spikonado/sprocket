@@ -362,12 +362,9 @@ mod tests {
             Cli::try_parse_from(["sprocket", "run", "task", "--prompt-file", "task.md"]).is_err()
         );
         assert!(Cli::try_parse_from(["sprocket", "run", "--prompt-file", "-"]).is_ok());
-        assert!(
-            Cli::try_parse_from(["sprocket", "run", "task", "--directory", ".", "--json"]).is_ok()
-        );
-        assert!(
-            Cli::try_parse_from(["sprocket", "run", "task", "--json", "--stream-json"]).is_err()
-        );
+        assert!(Cli::try_parse_from(["sprocket", "run", "task", "--directory", "."]).is_ok());
+        assert!(Cli::try_parse_from(["sprocket", "run", "task", "--json"]).is_err());
+        assert!(Cli::try_parse_from(["sprocket", "run", "task", "--stream-json"]).is_err());
         assert!(Cli::try_parse_from(["sprocket", "run", "task", "--fast", "--no-fast"]).is_err());
     }
 

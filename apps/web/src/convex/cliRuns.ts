@@ -4,7 +4,6 @@ import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
 import { modelGatewayUrl } from '@convex/lib/gatewayFetch';
 import { getSubscriptionTier } from '@convex/lib/tiers';
-import { fastModeForStoredRecord } from '@convex/lib/fastMode';
 import { isRunFinalStatus } from '@convex/lib/validators';
 
 export const context = query({
@@ -43,7 +42,7 @@ export const context = query({
 						repositoryKey: record.repositoryKey,
 						selectedModel: record.selectedModel,
 						reasoningEffort: record.reasoningEffort,
-						fastMode: fastModeForStoredRecord(record),
+						fastMode: record.fastMode,
 						activeRunId: latest && !isRunFinalStatus(latest.status) ? latest._id : null
 					}
 				: null

@@ -1,17 +1,9 @@
 use std::collections::HashSet;
 use std::io::Write;
 
-use sprocket_server::cli_protocol::{CliResult, CliRunSnapshot, RunStarted};
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum OutputFormat {
-    Text,
-    Json,
-    StreamJson,
-}
+use sprocket_server::cli_protocol::{CliRunSnapshot, RunStarted};
 
 pub(super) struct Output {
-    format: OutputFormat,
     started: Option<RunStarted>,
     after_part: i64,
     after_revision: Option<u64>,
@@ -19,14 +11,11 @@ pub(super) struct Output {
     tools: HashSet<String>,
     live: Option<serde_json::Value>,
     finished: bool,
-    submission_id: Option<String>,
-    termination_reason: Option<String>,
 }
 
 impl Output {
-    pub fn new(format: OutputFormat) -> Self {
+    pub fn new() -> Self {
         Self {
-            format,
             started: None,
             after_part: -1,
             after_revision: None,
@@ -34,8 +23,6 @@ impl Output {
             tools: HashSet::new(),
             live: None,
             finished: false,
-            submission_id: None,
-            termination_reason: None,
         }
     }
 
@@ -50,22 +37,8 @@ impl Output {
         self.after_revision
     }
 
-    pub fn submitting(&mut self, client_id: &str) {
-        self.submission_id = Some(format!("cli:{client_id}"));
-    }
-
-    pub fn interrupted(&mut self, code: u8) {
-        self.termination_reason = Some(if code == 124 { "timeout" } else { "signal" }.into());
-    }
-
     pub fn start(&mut self, started: RunStarted) -> anyhow::Result<()> {
-        if self.format == OutputFormat::StreamJson {
-            json_line(
-                &serde_json::json!({"type": "started", "runId": started.run_id, "threadId": started.thread_id}),
-            )?;
-        } else {
-            eprintln!("Thread {} | Run {}", started.thread_id, started.run_id);
-        }
+        eprintln!("Thread {} | Run {}", started.thread_id, started.run_id);
         self.started = Some(started);
         Ok(())
     }
@@ -92,9 +65,6 @@ impl Output {
                     self.tool_progress(item);
                 }
             }
-            if self.format == OutputFormat::StreamJson {
-                json_line(&serde_json::json!({"type": "transcript", "part": part}))?;
-            }
             self.after_part = i64::from(part.number);
         }
         self.after_revision = (!snapshot.has_more).then_some(snapshot.revision);
@@ -112,18 +82,12 @@ impl Output {
                     }
                 }
             }
-            if self.format == OutputFormat::StreamJson {
-                json_line(&serde_json::json!({"type": "live", "live": live}))?;
-            }
             self.live = live;
         }
         Ok(())
     }
 
     fn tool_progress(&mut self, item: &serde_json::Value) {
-        if self.format == OutputFormat::StreamJson {
-            return;
-        }
         let Some(call_id) = item.get("callId").and_then(|id| id.as_str()) else {
             return;
         };
@@ -139,82 +103,25 @@ impl Output {
         if self.finished {
             return Ok(());
         }
-        let result = CliResult {
-            submission_id: self.submission_id.clone(),
-            termination_reason: self.termination_reason.clone(),
-            run_id: self.started.as_ref().map(|started| started.run_id.clone()),
-            thread_id: self
-                .started
-                .as_ref()
-                .map(|started| started.thread_id.clone()),
-            answer: if status == "completed" {
-                self.answer.clone()
-            } else {
-                String::new()
-            },
-            status,
-            error,
-        };
-        write_result(&mut std::io::stdout().lock(), self.format, &result)?;
-        if self.format == OutputFormat::Text {
-            if let Some(error) = &result.error {
-                eprintln!("{error}");
-            }
+        if status == "completed" && !self.answer.is_empty() {
+            let mut stdout = std::io::stdout().lock();
+            writeln!(stdout, "{}", self.answer)?;
+            stdout.flush()?;
+        }
+        if let Some(error) = error {
+            eprintln!("{error}");
         }
         self.finished = true;
         Ok(())
     }
 
     pub fn failure(&mut self, error: String) -> anyhow::Result<()> {
-        self.finish(
-            if self.submission_id.is_some() {
-                "unknown"
-            } else {
-                "failed"
-            }
-            .into(),
-            Some(error),
-        )
+        self.finish("failed".into(), Some(error))
     }
 
     pub fn unknown(&mut self, error: String) -> anyhow::Result<()> {
         self.finish("unknown".into(), Some(error))
     }
-}
-
-fn json_line(value: &impl serde::Serialize) -> anyhow::Result<()> {
-    let mut stdout = std::io::stdout().lock();
-    serde_json::to_writer(&mut stdout, value)?;
-    writeln!(stdout)?;
-    stdout.flush()?;
-    Ok(())
-}
-
-fn write_result(
-    writer: &mut impl Write,
-    format: OutputFormat,
-    result: &CliResult,
-) -> anyhow::Result<()> {
-    match format {
-        OutputFormat::Text => {
-            if !result.answer.is_empty() {
-                writeln!(writer, "{}", result.answer)?;
-            }
-        }
-        OutputFormat::Json => {
-            serde_json::to_writer(&mut *writer, result)?;
-            writeln!(writer)?;
-        }
-        OutputFormat::StreamJson => {
-            serde_json::to_writer(
-                &mut *writer,
-                &serde_json::json!({"type": "result", "result": result}),
-            )?;
-            writeln!(writer)?;
-        }
-    }
-    writer.flush()?;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -231,7 +138,7 @@ mod tests {
 
     #[test]
     fn final_answer_comes_from_the_confirmed_result_not_transcript_commentary() {
-        let mut output = Output::new(OutputFormat::Text);
+        let mut output = Output::new();
         output.started = Some(RunStarted {
             run_id: "run".into(),
             thread_id: "thread".into(),
@@ -261,7 +168,7 @@ mod tests {
 
     #[test]
     fn rejects_another_runs_transcript_without_advancing_cursor() {
-        let mut output = Output::new(OutputFormat::Text);
+        let mut output = Output::new();
         output.started = Some(RunStarted {
             run_id: "run".into(),
             thread_id: "thread".into(),
@@ -272,25 +179,5 @@ mod tests {
         }]));
         assert!(output.update(&page).is_err());
         assert_eq!(output.after_part(), -1);
-    }
-
-    #[test]
-    fn json_result_is_one_line_even_when_answer_has_newlines() {
-        let result = CliResult {
-            submission_id: Some("cli:request".into()),
-            termination_reason: None,
-            run_id: Some("run".into()),
-            thread_id: Some("thread".into()),
-            status: "completed".into(),
-            answer: "first\nsecond".into(),
-            error: None,
-        };
-        let mut bytes = Vec::new();
-        write_result(&mut bytes, OutputFormat::Json, &result).unwrap();
-        assert_eq!(bytes.iter().filter(|byte| **byte == b'\n').count(), 1);
-        assert_eq!(
-            serde_json::from_slice::<CliResult>(&bytes).unwrap().answer,
-            result.answer
-        );
     }
 }

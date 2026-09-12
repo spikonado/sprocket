@@ -136,15 +136,3 @@ pub struct CliRunSnapshot {
     pub execution_finished: bool,
     pub live: Option<sprocket_agent::LiveCompletionOverlay>,
 }
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CliResult {
-    pub submission_id: Option<String>,
-    pub termination_reason: Option<String>,
-    pub run_id: Option<String>,
-    pub thread_id: Option<String>,
-    pub status: String,
-    pub answer: String,
-    pub error: Option<String>,
-}

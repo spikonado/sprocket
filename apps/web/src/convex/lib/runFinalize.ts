@@ -33,7 +33,7 @@ export const vExecutorFinalizationResult = v.union(
 
 export async function executorFinalizationResult(
 	ctx: MutationCtx,
-	run: Doc<'runs'>,
+	run: ExecutionRun,
 	accepted: boolean,
 	includeOutput: boolean | undefined
 ) {
