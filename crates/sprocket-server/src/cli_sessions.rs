@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -13,7 +12,6 @@ const STARTUP_GRACE: Duration = Duration::from_secs(30);
 
 #[derive(Default)]
 pub(crate) struct Submission {
-    pub rpc: Option<crate::transcript_client::UserConvexClient>,
     pub request: Option<CliRunRequest>,
     pub result: Option<Result<RunStarted, String>>,
     pub user_id: Option<String>,
@@ -23,7 +21,7 @@ pub(crate) struct CliSession {
     pub session_token: String,
     pub cancellation: WorkspaceCancellation,
     pub submission: AsyncMutex<Submission>,
-    pub execution_finished: Arc<AtomicBool>,
+    pub output: Arc<sprocket_agent::RunOutput>,
 }
 
 struct ClientLease {
@@ -92,7 +90,7 @@ impl ServerLifetime {
                     session_token: session_token.to_owned(),
                     cancellation: WorkspaceCancellation::new(),
                     submission: AsyncMutex::new(Submission::default()),
-                    execution_finished: Arc::new(AtomicBool::new(false)),
+                    output: Arc::new(sprocket_agent::RunOutput::default()),
                 }),
             },
         );

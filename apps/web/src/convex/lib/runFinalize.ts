@@ -1,6 +1,6 @@
 import type { MutationCtx } from '@convex/_generated/server';
-import type { Infer } from 'convex/values';
-import { isRunFinalStatus, type vRunFinalStatus, type vRunStatus } from '@convex/lib/validators';
+import { v, type Infer } from 'convex/values';
+import { isRunFinalStatus, vRunFinalStatus, type vRunStatus } from '@convex/lib/validators';
 import { reconcileTerminalRunPages } from '@convex/lib/runTerminal';
 import { cancelWebToolWork } from '@convex/webToolPool';
 import { isClaimedRunStatus, isRunClaimLeaseActive } from '@convex/lib/runLease';
@@ -19,6 +19,34 @@ type FinalizeRunArgs = {
 	status: Infer<typeof vRunFinalStatus>;
 	lastError?: string;
 };
+
+export const vExecutorFinalizationResult = v.union(
+	v.boolean(),
+	v.object({
+		accepted: v.boolean(),
+		outcome: v.union(
+			v.null(),
+			v.object({ status: vRunFinalStatus, error: v.union(v.null(), v.string()) })
+		)
+	})
+);
+
+export async function executorFinalizationResult(
+	ctx: MutationCtx,
+	run: Doc<'runs'>,
+	accepted: boolean,
+	includeOutput: boolean | undefined
+) {
+	if (!includeOutput) return accepted;
+	const finalized = accepted ? await ctx.db.get('runs', run._id) : run;
+	return {
+		accepted,
+		outcome:
+			finalized && isRunFinalStatus(finalized.status)
+				? { status: finalized.status, error: finalized.lastError ?? null }
+				: null
+	};
+}
 
 type FinalizeExpectationArgs = {
 	expectedStatus?: Infer<typeof vRunStatus>;

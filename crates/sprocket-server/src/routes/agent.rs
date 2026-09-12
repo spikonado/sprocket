@@ -1,7 +1,6 @@
 use std::convert::Infallible;
 use std::future::Future;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, anyhow};
@@ -31,12 +30,12 @@ use crate::routes::api_error::ApiError;
 const AGENT_START_TIMEOUT: Duration = Duration::from_secs(20);
 const AGENT_START_CLEANUP_TIMEOUT: Duration = Duration::from_secs(12);
 
-struct FinishedOnDrop(Option<Arc<AtomicBool>>);
+struct FinishedOnDrop(Option<Arc<sprocket_agent::RunOutput>>);
 
 impl Drop for FinishedOnDrop {
     fn drop(&mut self) {
         if let Some(finished) = &self.0 {
-            finished.store(true, Ordering::Release);
+            finished.finish(None);
         }
     }
 }
@@ -84,7 +83,7 @@ pub(crate) async fn launch_agent(
     payload: RunAgentApiRequest,
     allow_interaction: bool,
     cancellation: sprocket_workspace::WorkspaceCancellation,
-    finished: Option<Arc<AtomicBool>>,
+    output: Option<Arc<sprocket_agent::RunOutput>>,
 ) -> Result<RunStarted, ApiError> {
     let guard = state.lifetime.run_guard().map_err(ApiError::bad_request)?;
     state
@@ -147,7 +146,7 @@ pub(crate) async fn launch_agent(
     // still either run or durably reconcile the submitted run.
     tokio::spawn(async move {
         let _guard = guard;
-        let _finished = FinishedOnDrop(finished);
+        let _finished = FinishedOnDrop(output.clone());
         let run = await_agent_start(
             start_agent_run(request),
             AGENT_START_TIMEOUT,
@@ -161,7 +160,11 @@ pub(crate) async fn launch_agent(
         .await;
 
         match run {
-            Ok(run) => {
+            Ok(mut run) => {
+                if let Some(output) = &output {
+                    run.observe_output(Arc::clone(output), Arc::clone(&transcript))
+                        .await;
+                }
                 let run_id = run.run_id().to_string();
                 let thread_id = run.thread_id().to_string();
                 let user_id = run.user_id().to_string();
@@ -225,6 +228,9 @@ pub(crate) async fn launch_agent(
                 }
                 drop(artifact_watch);
                 drop(transcript_watch);
+                if let Some(output) = &output {
+                    output.finish(result.as_ref().err().map(ToString::to_string));
+                }
                 if let Err(error) = result {
                     eprintln!("sprocket-server: agent run failed: {error:#}");
                 }

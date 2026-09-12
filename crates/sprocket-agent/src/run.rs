@@ -60,6 +60,23 @@ pub struct AgentRun {
 }
 
 impl AgentRun {
+    pub async fn observe_output(
+        &mut self,
+        output: Arc<crate::RunOutput>,
+        store: Arc<TranscriptStore>,
+    ) {
+        output.initialize(
+            store,
+            self.user_id.clone(),
+            self.request.thread_id.clone(),
+            self.run_id.clone(),
+        );
+        if let Some(part) = &self.prompt_part {
+            output.record_part(part.clone()).await;
+        }
+        self.runtime.output = Some(output);
+    }
+
     pub fn run_id(&self) -> &str {
         &self.run_id
     }

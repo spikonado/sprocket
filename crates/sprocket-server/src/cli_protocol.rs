@@ -116,14 +116,17 @@ pub struct RunStarted {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CliPollRequest {
+pub struct CliOutputRequest {
     pub client_id: String,
     pub after_part: i64,
+    pub after_revision: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliRunSnapshot {
+    pub revision: u64,
+    pub answer: String,
     pub run_id: String,
     pub thread_id: String,
     pub status: String,

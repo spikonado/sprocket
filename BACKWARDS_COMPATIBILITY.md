@@ -3,15 +3,22 @@
 ## CLI authentication and run control
 
 CLI protocol version 1 adds local `/api/cli/*` endpoints and the authenticated
-`cliRuns:context` and `cliRuns:snapshot` queries. Existing app launch, native login,
+`cliRuns:context` query. Existing app launch, native login,
 and agent-run endpoints keep their request formats and interactive tool set.
-Deploy the backend queries before releasing the new CLI. Older local servers
+Deploy the backend query and finalization response support before releasing the new CLI. Older local servers
 return an update-and-restart error rather than receiving a fallback run request.
 
 CLI discovery and bootstrap proofs bind to a random server-process ID. The CLI
 never sends the reusable pairing credential over HTTP. CLI sessions stay in
 memory and cannot resume after a server restart. Existing app pairing and
 persisted app sessions keep their formats.
+
+`agentRuntime:finalizeExecutorRun` and `agentRuntime:finalizeClaimFailure` accept
+optional `includeOutput`. CLI executors use it to receive the committed terminal
+status in the mutation acknowledgment, including cancellation races. Requests
+without it retain the boolean response. Keep this response compatibility until
+all supported installed executors request the structured result. No stored-data
+migration is needed. `cliRuns:snapshot` was removed before the CLI release.
 
 Profiles without a credential-store selection continue using the existing
 deployment-and-data-directory-scoped keyring entry. No credentials are copied to

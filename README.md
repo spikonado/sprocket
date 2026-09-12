@@ -79,8 +79,15 @@ the request even when the server's acknowledgment is lost. The termination reaso
 is `timeout`, `signal`, or null. Only a completed run has a final answer.
 `--stream-json` emits newline-delimited `started`,
 `transcript`, `live`, and `result` events. Live events replace the previous live
-snapshot; transcript events carry stable part numbers. The final result is
-authoritative, not a live snapshot disappearing.
+snapshot; transcript events carry committed prompt and completion parts with
+stable part numbers. The app retains the full tool-result history. The final
+result is authoritative, not a live snapshot disappearing.
+
+The CLI waits on local output notifications. The server reads committed
+completions from its local transcript cache and receives the confirmed terminal
+status in the existing run-finalization response. It does not poll Convex or
+open another Convex subscription to display CLI output. An idle local output
+request renews after 15 seconds without a backend request.
 
 `--model`, `--reasoning`, `--fast`, and `--no-fast` override model settings. New
 threads use the catalog defaults with fast mode off; existing threads inherit

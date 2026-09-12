@@ -217,28 +217,20 @@ async fn execute_run(
     loop {
         let snapshot: CliRunSnapshot = connection
             .retry(
-                "poll",
-                &CliPollRequest {
+                "output",
+                &CliOutputRequest {
                     client_id: connection.client_id.clone(),
                     after_part: output.after_part(),
+                    after_revision: output.after_revision(),
                 },
             )
             .await?;
-        let done = snapshot.execution_finished
-            && !snapshot.has_more
-            && matches!(
-                snapshot.status.as_str(),
-                "completed" | "failed" | "cancelled"
-            );
-        let has_more = snapshot.has_more;
+        let done = snapshot.execution_finished && !snapshot.has_more;
         output.update(&snapshot)?;
         if done {
             let code = if snapshot.status == "completed" { 0 } else { 1 };
             output.finish(snapshot.status, snapshot.error)?;
             return Ok(code);
-        }
-        if !has_more {
-            tokio::time::sleep(Duration::from_millis(500)).await;
         }
     }
 }

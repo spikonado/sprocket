@@ -699,7 +699,7 @@ impl TranscriptSink {
     fn publish(&mut self) {
         self.unpublished = 0;
         self.last_publish = Instant::now();
-        self.live.publish(LiveCompletionOverlay {
+        let overlay = LiveCompletionOverlay {
             thread_id: self.thread_id.clone(),
             run_id: self.run_id.clone(),
             run_status: "running".to_string(),
@@ -707,7 +707,11 @@ impl TranscriptSink {
             text: join_assistant_text_parts(&self.parts.parts),
             parts: visible_live_parts(&self.parts.parts),
             run_started_at: self.run_started_at,
-        });
+        };
+        self.live.publish(overlay);
+        if let Some(output) = &self.runtime.output {
+            output.notify_live_update();
+        }
     }
 
     fn apply_text_delta(
@@ -742,6 +746,9 @@ impl Drop for TranscriptSink {
     fn drop(&mut self) {
         self.publish_if_needed(true);
         self.live.clear(&self.thread_id);
+        if let Some(output) = &self.runtime.output {
+            output.notify_live_update();
+        }
     }
 }
 

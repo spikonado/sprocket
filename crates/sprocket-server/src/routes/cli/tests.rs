@@ -4,6 +4,68 @@ use axum::http::Request;
 use tower::ServiceExt;
 
 #[tokio::test]
+async fn output_waits_for_local_execution_and_never_needs_a_backend_connection() {
+    let (_directory, state, token, request) = fixture().await;
+    let client = state.lifetime.client(&request.client_id, &token).unwrap();
+    client.output.initialize(
+        Arc::clone(&state.transcript),
+        "user".into(),
+        "thread".into(),
+        "run".into(),
+    );
+    state.auth.bind_session_user(&token, "user").await.unwrap();
+    {
+        let mut submission = client.submission.lock().await;
+        submission.user_id = Some("user".into());
+        submission.result = Some(Ok(RunStarted {
+            run_id: "run".into(),
+            thread_id: "thread".into(),
+        }));
+    }
+    let request = CliOutputRequest {
+        client_id: request.client_id,
+        after_part: -1,
+        after_revision: None,
+    };
+    let first = call(&state, &token, "output", &request, "127.0.0.1:1000").await;
+    assert_eq!(first.0, StatusCode::OK);
+    assert_eq!(first.1["status"], "running");
+    let mut request = request;
+    request.after_revision = first.1["revision"].as_u64();
+    let terminal = {
+        let waiting = call(&state, &token, "output", &request, "127.0.0.1:1000");
+        tokio::pin!(waiting);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut waiting)
+                .await
+                .is_err()
+        );
+        client
+            .output
+            .finish(Some("unconfirmed finalization".into()));
+        tokio::time::timeout(Duration::from_secs(1), waiting)
+            .await
+            .unwrap()
+    };
+    assert_eq!(terminal.0, StatusCode::OK);
+    assert_eq!(terminal.1["status"], "unknown");
+    assert_eq!(terminal.1["executionFinished"], true);
+    assert_eq!(terminal.1["answer"], "");
+    request.after_revision = None;
+    state
+        .auth
+        .bind_session_user(&token, "other-user")
+        .await
+        .unwrap();
+    assert_eq!(
+        call(&state, &token, "output", &request, "127.0.0.1:1000")
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+#[tokio::test]
 async fn signed_bootstrap_and_cli_sessions_cannot_be_replayed_after_server_restart() {
     let (directory, mut state, _, run) = fixture().await;
     let challenge = "fresh-challenge";

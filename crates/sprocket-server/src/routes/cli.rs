@@ -5,7 +5,6 @@ mod tests;
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -36,7 +35,7 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/cli/auth", post(auth_status))
         .route("/cli/logout", post(logout))
         .route("/cli/run", post(start))
-        .route("/cli/poll", post(poll))
+        .route("/cli/output", post(output))
         .route("/cli/cancel", post(cancel))
 }
 
@@ -267,9 +266,8 @@ async fn start(
             }
         };
         let result = match result {
-            Ok((payload, rpc)) => {
+            Ok(payload) => {
                 submission.user_id = Some(payload.user_id.clone());
-                submission.rpc = Some(rpc);
                 if client.cancellation.is_cancelled() {
                     Err(anyhow::anyhow!("CLI run was cancelled before submission"))
                 } else {
@@ -278,7 +276,7 @@ async fn start(
                         payload,
                         false,
                         client.cancellation.clone(),
-                        Some(Arc::clone(&client.execution_finished)),
+                        Some(Arc::clone(&client.output)),
                     )
                     .await
                     .map_err(anyhow::Error::from)
@@ -333,7 +331,7 @@ async fn prepare_run(
     state: &AppState,
     client: &CliSession,
     request: &CliRunRequest,
-) -> anyhow::Result<(RunAgentApiRequest, UserConvexClient)> {
+) -> anyhow::Result<RunAgentApiRequest> {
     anyhow::ensure!(!request.prompt.trim().is_empty(), "prompt is empty");
     let user = state
         .native_auth
@@ -374,46 +372,32 @@ async fn prepare_run(
         }
     }
     let settings = models::resolve(&context, request).await?;
-    Ok((
-        RunAgentApiRequest {
-            user_id: user.id,
-            submission_id: format!("cli:{}", request.client_id),
-            thread_id: request.thread_id.clone(),
-            repository_key: request
-                .thread_id
-                .is_none()
-                .then_some(attachment.repository_key),
-            prompt: request.prompt.clone(),
-            storage_ids: Vec::new(),
-            selected_model: settings.model,
-            reasoning_effort: settings.reasoning,
-            fast_mode: settings.fast,
-            workspace_path: attachment.workspace_path,
-            continuation_of_run_id: None,
-        },
-        rpc,
-    ))
+    Ok(RunAgentApiRequest {
+        user_id: user.id,
+        submission_id: format!("cli:{}", request.client_id),
+        thread_id: request.thread_id.clone(),
+        repository_key: request
+            .thread_id
+            .is_none()
+            .then_some(attachment.repository_key),
+        prompt: request.prompt.clone(),
+        storage_ids: Vec::new(),
+        selected_model: settings.model,
+        reasoning_effort: settings.reasoning,
+        fast_mode: settings.fast,
+        workspace_path: attachment.workspace_path,
+        continuation_of_run_id: None,
+    })
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Snapshot {
-    run_id: String,
-    thread_id: String,
-    status: String,
-    error: Option<String>,
-    parts: Vec<sprocket_agent::TranscriptPart>,
-    has_more: bool,
-}
-
-async fn poll(
+async fn output(
     State(state): State<AppState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-    Json(request): Json<CliPollRequest>,
+    Json(request): Json<CliOutputRequest>,
 ) -> Result<Json<CliRunSnapshot>, ApiError> {
     let client = client_session(&state, peer, &headers, &request.client_id).await?;
-    let (started, user_id, rpc) = {
+    let (started, user_id) = {
         let submission = client.submission.lock().await;
         let started = submission
             .result
@@ -421,53 +405,46 @@ async fn poll(
             .and_then(|result| result.as_ref().ok())
             .cloned()
             .ok_or_else(|| ApiError::bad_request(anyhow::anyhow!("CLI run has not started")))?;
-        (
-            started,
-            submission.user_id.clone().unwrap_or_default(),
-            submission
-                .rpc
-                .clone()
-                .ok_or_else(|| ApiError::internal(anyhow::anyhow!("run connection is missing")))?,
-        )
+        (started, submission.user_id.clone().unwrap_or_default())
     };
     state
-        .native_auth
-        .require_user(&user_id)
+        .auth
+        .require_session_user(&client.session_token, &user_id)
         .await
         .map_err(ApiError::unauthorized)?;
-    let snapshot: Snapshot = tokio::time::timeout(
-        Duration::from_secs(15),
-        rpc.query(
-            "cliRuns:snapshot",
-            BTreeMap::from([
-                ("runId".into(), Value::String(started.run_id.clone())),
-                (
-                    "afterPart".into(),
-                    Value::Float64(request.after_part as f64),
-                ),
-            ]),
-        ),
-    )
-    .await
-    .map_err(|_| {
-        ApiError::with_status(
-            StatusCode::GATEWAY_TIMEOUT,
-            anyhow::anyhow!("run snapshot timed out"),
-        )
-    })?
-    .map_err(ApiError::internal)?;
+    let mut changed = client.output.subscribe();
+    let revision = *changed.borrow_and_update();
+    if request.after_revision == Some(revision) {
+        let _ = tokio::time::timeout(Duration::from_secs(15), changed.changed()).await;
+    }
+    state
+        .auth
+        .require_session_user(&client.session_token, &user_id)
+        .await
+        .map_err(ApiError::unauthorized)?;
+    let snapshot = client
+        .output
+        .page(request.after_part)
+        .await
+        .map_err(ApiError::bad_request)?;
     let live = state
         .live_completions
         .snapshot(&started.thread_id)
         .filter(|live| live.run_id == started.run_id);
     Ok(Json(CliRunSnapshot {
-        run_id: snapshot.run_id,
-        thread_id: snapshot.thread_id,
-        status: snapshot.status,
-        error: snapshot.error,
+        run_id: started.run_id,
+        thread_id: started.thread_id,
+        revision: snapshot.revision,
+        answer: snapshot.answer,
+        status: snapshot
+            .outcome
+            .as_ref()
+            .map(|outcome| outcome.status.clone())
+            .unwrap_or_else(|| "running".into()),
+        error: snapshot.outcome.and_then(|outcome| outcome.error),
         parts: snapshot.parts,
         has_more: snapshot.has_more,
-        execution_finished: client.execution_finished.load(Ordering::Acquire),
+        execution_finished: snapshot.finished,
         live,
     }))
 }

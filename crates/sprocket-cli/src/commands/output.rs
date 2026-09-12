@@ -14,6 +14,7 @@ pub(super) struct Output {
     format: OutputFormat,
     started: Option<RunStarted>,
     after_part: i64,
+    after_revision: Option<u64>,
     answer: String,
     tools: HashSet<String>,
     live: Option<serde_json::Value>,
@@ -28,6 +29,7 @@ impl Output {
             format,
             started: None,
             after_part: -1,
+            after_revision: None,
             answer: String::new(),
             tools: HashSet::new(),
             live: None,
@@ -42,6 +44,10 @@ impl Output {
     }
     pub fn after_part(&self) -> i64 {
         self.after_part
+    }
+
+    pub fn after_revision(&self) -> Option<u64> {
+        self.after_revision
     }
 
     pub fn submitting(&mut self, client_id: &str) {
@@ -82,32 +88,17 @@ impl Output {
                 "transcript part belongs to another run"
             );
             if let Some(completion) = &part.completion {
-                self.answer = completion
-                    .items
-                    .iter()
-                    .filter(|item| {
-                        item.get("type").and_then(|value| value.as_str()) == Some("text")
-                    })
-                    .filter_map(|item| item.get("text").and_then(|value| value.as_str()))
-                    .collect::<Vec<_>>()
-                    .join("");
-                if completion.items.iter().any(|item| {
-                    item.get("type").and_then(|value| value.as_str()) == Some("tool-call")
-                }) {
-                    self.answer.clear();
-                }
                 for item in &completion.items {
                     self.tool_progress(item);
                 }
-            }
-            if part.tool.is_some() {
-                self.answer.clear();
             }
             if self.format == OutputFormat::StreamJson {
                 json_line(&serde_json::json!({"type": "transcript", "part": part}))?;
             }
             self.after_part = i64::from(part.number);
         }
+        self.after_revision = (!snapshot.has_more).then_some(snapshot.revision);
+        self.answer = snapshot.answer.clone();
         let live = snapshot
             .live
             .as_ref()
@@ -234,11 +225,12 @@ mod tests {
         serde_json::from_value(serde_json::json!({
             "runId": "run", "threadId": "thread", "status": "running",
             "error": null, "parts": parts, "hasMore": false, "executionFinished": false, "live": null,
+            "revision": 1, "answer": "",
         })).unwrap()
     }
 
     #[test]
-    fn final_answer_excludes_tool_commentary_and_replayed_parts() {
+    fn final_answer_comes_from_the_confirmed_result_not_transcript_commentary() {
         let mut output = Output::new(OutputFormat::Text);
         output.started = Some(RunStarted {
             run_id: "run".into(),
@@ -254,16 +246,17 @@ mod tests {
             "number": 3, "sourceKey": "three", "kind": "completion", "runId": "run",
             "completion": {"items": [{"type": "reasoning", "text": "private"}, {"type": "text", "text": "Done."}]}
         }]))).unwrap();
-        output.update(&commentary).unwrap();
-        assert_eq!(output.answer, "Done.");
-        assert_eq!(output.after_part(), 3);
-        output
-            .update(&snapshot(serde_json::json!([{
-                "number": 4, "sourceKey": "four", "kind": "completion", "runId": "run",
-                "completion": {"items": []}
-            }])))
-            .unwrap();
         assert!(output.answer.is_empty());
+        assert_eq!(output.after_part(), 3);
+        let mut result = snapshot(serde_json::json!([]));
+        result.answer = "Confirmed answer.".into();
+        result.execution_finished = true;
+        output.update(&result).unwrap();
+        assert_eq!(output.answer, "Confirmed answer.");
+        assert_eq!(output.after_revision(), Some(result.revision));
+        result.has_more = true;
+        output.update(&result).unwrap();
+        assert_eq!(output.after_revision(), None);
     }
 
     #[test]
