@@ -46,6 +46,61 @@ To always open a tab in your browser when using Sprocket, use the `--web` flag:
 sprocket --web
 ```
 
+### Run an agent from the CLI
+
+```sh
+sprocket login
+sprocket run "Fix the failing tests"
+sprocket run --directory ./robot "Check the motor driver wiring"
+sprocket run --thread <thread-id> "Add regression coverage"
+sprocket run --prompt-file task.md --json
+cat task.md | sprocket run --prompt-file - --stream-json
+```
+
+`login` prints a URL and code. You can approve the code in a browser on another
+machine, including when the CLI runs over SSH. Desktop, local browser, and CLI
+clients share one login per Sprocket data directory and backend environment.
+Hosted website sessions and sessions on other machines remain independent.
+
+Credentials use the OS credential store by default. On a headless machine without
+one, explicitly select `sprocket login --credential-store file`. This stores an
+unencrypted refresh token in the profile's private credential file. `sprocket
+logout` clears the shared local login. `run` never prompts for authentication.
+
+Each invocation creates an app-visible thread unless you pass `--thread`. The
+agent works in the current directory or `--directory`. Existing threads must
+belong to the same repository and have no active run. Concurrent invocations may
+edit the same directory. Supply separate worktrees when you need isolation.
+
+The command waits for completion. Progress goes to stderr and the final answer
+goes to stdout. `--json` emits one result with `submissionId`, `runId`, `threadId`,
+`status`, `answer`, `error`, and `terminationReason`. The submission ID identifies
+the request even when the server's acknowledgment is lost. The termination reason
+is `timeout`, `signal`, or null. Only a completed run has a final answer.
+`--stream-json` emits newline-delimited `started`,
+`transcript`, `live`, and `result` events. Live events replace the previous live
+snapshot; transcript events carry stable part numbers. The final result is
+authoritative, not a live snapshot disappearing.
+
+`--model`, `--reasoning`, `--fast`, and `--no-fast` override model settings. New
+threads use the catalog defaults with fast mode off; existing threads inherit
+their settings. Unsupported choices fail without substitution.
+
+Ctrl+C, termination, SSH hangup, and `--timeout 10m` request cancellation. If the
+CLI disappears, its server requests cancellation after a 60-second heartbeat
+grace period. A cancellation request does not prove cancellation completed;
+unconfirmed outcomes report `unknown`. Exit zero means normal run completion,
+not that the agent accomplished the task. Failures return nonzero, a deadline
+returns 124, and Ctrl+C returns 130.
+
+The CLI reuses a local server or starts one without opening the app. Servers it
+starts shut down after their clients and active runs finish. An open local app
+also keeps its server alive. Independently started servers remain running.
+
+CLI runs omit `ask_question`, `await_question`, and `mandate_setup`. They do not
+add special instructions about interaction. Interactive questions and credentials
+for disposable CI runners are not supported yet.
+
 ### Workspaces
 
 Pass a directory to open or reconnect that workspace in a new thread:

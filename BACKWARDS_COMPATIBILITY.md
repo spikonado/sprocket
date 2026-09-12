@@ -1,5 +1,28 @@
 # Backwards compatibility
 
+## CLI authentication and run control
+
+CLI protocol version 1 adds local `/api/cli/*` endpoints and the authenticated
+`cliRuns:context` and `cliRuns:snapshot` queries. Existing app launch, native login,
+and agent-run endpoints keep their request formats and interactive tool set.
+Deploy the backend queries before releasing the new CLI. Older local servers
+return an update-and-restart error rather than receiving a fallback run request.
+
+Profiles without a credential-store selection continue using the existing
+deployment-and-data-directory-scoped keyring entry. No credentials are copied to
+file storage automatically. The keyring default has no removal gate; it remains
+the default storage backend.
+
+Older apps do not subscribe to `/api/auth/changes`; their existing session-token
+reads still observe the shared login. Keep those endpoints until all supported
+installed apps use the session-change subscription. Native tokens remain
+restricted to the existing local-app endpoint; CLI control uses local pairing
+sessions and never returns refresh tokens.
+
+New servers take an exclusive data-directory lock. Stop older server processes
+before upgrading a profile, since those binaries do not take that lock. Separate
+profiles must use separate data directories.
+
 We ship breaking changes ahead of our users' installed clients and keep the old behavior working until those clients age out. That debt is easy to accumulate and easier to forget. This file lists every backwards-compatibility layer we currently ship, what it protects, how to remove it, and the signal that says removal is safe. When a removal PR merges, remove its entry from this document.
 
 ## Stored transcript work metadata

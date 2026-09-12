@@ -70,6 +70,8 @@ pub(crate) struct AgentProvider {
 }
 
 pub(crate) struct AgentProviderRequest {
+    pub(crate) allow_interaction: bool,
+    pub(crate) cancellation: sprocket_workspace::WorkspaceCancellation,
     pub(crate) run_id: String,
     pub(crate) claim_id: String,
     pub(crate) thread_id: String,
@@ -194,8 +196,6 @@ where
         .preamble(&request.base_instructions)
         .additional_params(additional_params)
         .tool(tools.apply_patch)
-        .tool(tools.ask_question)
-        .tool(tools.await_question)
         .tool(tools.exec_command)
         .tool(tools.read_skill)
         .tool(tools.scrape_url)
@@ -207,13 +207,20 @@ where
         .tool(tools.save_artifact)
         .tool(tools.browser_interact)
         .tool(tools.browser_screenshot)
-        .tool(tools.mandate_setup)
         .tool(tools.mandate_status)
         .tool(tools.mandate_list)
         .tool(tools.mandate_charge)
         .tool(tools.mandate_report)
         .tool(tools.parse_file)
         .tool(context_handoff_hook.tool());
+    let agent = if request.allow_interaction {
+        agent
+            .tool(tools.ask_question)
+            .tool(tools.await_question)
+            .tool(tools.mandate_setup)
+    } else {
+        agent
+    };
     let agent = if request.supports_images {
         agent.tool(tools.screenshot_url)
     } else {
@@ -291,6 +298,11 @@ where
             loop {
                 tokio::select! {
                     biased;
+                    _ = request.cancellation.cancelled() => {
+                        break 'agent_run AgentProviderResult::Cancelled {
+                            text: if final_text.is_empty() { streamed_text } else { final_text },
+                        };
+                    }
                     _ = sleep(transcript.publish_delay()), if transcript.has_unpublished() => {
                         transcript.publish_if_needed(true);
                     }

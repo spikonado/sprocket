@@ -804,6 +804,10 @@ pub async fn run_agent(
         loop {
             tokio::select! {
                 biased;
+                _ = request.cancellation.cancelled() => {
+                    runtime.finalize_queued_run(&run_id, "", RunFinalStatus::Cancelled.as_str(), None).await?;
+                    return Ok(());
+                }
                 update = updates.next() => {
                     match update.map(RuntimeClient::decode_run_finished_update) {
                         Some(Ok(true)) => return Ok(()),
@@ -887,6 +891,11 @@ pub async fn run_agent(
         return Ok(());
     };
 
+    if request.cancellation.is_cancelled() {
+        acknowledge_stop(&runtime, &run_id, &claim_id).await?;
+        return Ok(());
+    }
+
     eprintln!("sprocket-agent: selected provider gateway for run {run_id}");
 
     match timeout(RUN_CLAIM_ATTEMPT_TIMEOUT, runtime.run_finished(&run_id)).await {
@@ -912,6 +921,8 @@ pub async fn run_agent(
             .run(
                 runtime.clone(),
                 AgentProviderRequest {
+                    allow_interaction: request.allow_interaction,
+                    cancellation: request.cancellation,
                     run_id: run_id.clone(),
                     claim_id: claim_id.clone(),
                     thread_id: request.thread_id.clone(),

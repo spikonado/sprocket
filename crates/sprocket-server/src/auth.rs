@@ -10,7 +10,7 @@ use cookie::{Cookie, SameSite};
 use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
-use tokio::sync::RwLock;
+use tokio::sync::{OwnedRwLockWriteGuard, RwLock};
 use uuid::Uuid;
 
 use crate::config::SESSION_COOKIE_NAME;
@@ -44,7 +44,7 @@ pub struct BootstrapResponse {
 pub struct AuthState {
     data_dir: PathBuf,
     pairing_credential: String,
-    sessions: RwLock<HashMap<String, SessionRecord>>,
+    sessions: Arc<RwLock<HashMap<String, SessionRecord>>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -97,7 +97,7 @@ impl AuthState {
         Ok(Arc::new(Self {
             data_dir: data_dir.to_path_buf(),
             pairing_credential,
-            sessions: RwLock::new(sessions),
+            sessions: Arc::new(RwLock::new(sessions)),
         }))
     }
 
@@ -151,12 +151,7 @@ impl AuthState {
         };
 
         if session_is_expired(&session) {
-            let snapshot = {
-                let mut sessions = self.sessions.write().await;
-                sessions.remove(session_token);
-                sessions_snapshot(&sessions)
-            };
-            if let Err(error) = self.save_sessions(snapshot).await {
+            if let Err(error) = self.end_session(session_token).await {
                 tracing::warn!("failed to persist expired session removal: {error}");
             }
             return AuthSessionResponse {
@@ -175,7 +170,9 @@ impl AuthState {
         self.verify_pairing_credential(credential)?;
 
         let session_token = Uuid::new_v4().to_string();
-        self.sessions.write().await.insert(
+        let mut sessions = Arc::clone(&self.sessions).write_owned().await;
+        sessions.retain(|_, session| !session_is_expired(session));
+        sessions.insert(
             session_token.clone(),
             SessionRecord {
                 role: "owner".to_string(),
@@ -183,7 +180,7 @@ impl AuthState {
                 user_id: None,
             },
         );
-        self.persist_sessions().await?;
+        self.save_sessions(sessions).await?;
 
         Ok((
             BootstrapResponse {
@@ -208,18 +205,26 @@ impl AuthState {
         session_token: &str,
         user_id: &str,
     ) -> anyhow::Result<()> {
-        let snapshot = {
-            let mut sessions = self.sessions.write().await;
-            let session = sessions
-                .get_mut(session_token)
-                .ok_or_else(|| anyhow::anyhow!("authentication required"))?;
-            if session_is_expired(session) {
-                anyhow::bail!("authentication required");
-            }
-            session.user_id = Some(user_id.to_string());
-            sessions_snapshot(&sessions)
-        };
-        self.save_sessions(snapshot).await
+        let mut sessions = Arc::clone(&self.sessions).write_owned().await;
+        let session = sessions
+            .get_mut(session_token)
+            .ok_or_else(|| anyhow::anyhow!("authentication required"))?;
+        if session_is_expired(session) {
+            anyhow::bail!("authentication required");
+        }
+        if session.user_id.as_deref() == Some(user_id) {
+            return Ok(());
+        }
+        session.user_id = Some(user_id.to_string());
+        self.save_sessions(sessions).await
+    }
+
+    pub(crate) async fn bind_all_sessions(&self, user_id: Option<&str>) -> anyhow::Result<()> {
+        let mut sessions = Arc::clone(&self.sessions).write_owned().await;
+        for session in sessions.values_mut() {
+            session.user_id = user_id.map(str::to_owned);
+        }
+        self.save_sessions(sessions).await
     }
 
     pub async fn require_session_user(
@@ -247,18 +252,26 @@ impl AuthState {
             .is_some_and(|session| !session_is_expired(session) && session.user_id.is_some())
     }
 
-    async fn persist_sessions(&self) -> anyhow::Result<()> {
-        let snapshot = {
-            let sessions = self.sessions.read().await;
-            sessions_snapshot(&sessions)
-        };
-        self.save_sessions(snapshot).await
+    pub(crate) async fn end_session(&self, token: &str) -> anyhow::Result<()> {
+        let mut sessions = Arc::clone(&self.sessions).write_owned().await;
+        if sessions.remove(token).is_some() {
+            self.save_sessions(sessions).await?;
+        }
+        Ok(())
     }
 
-    async fn save_sessions(&self, snapshot: Vec<PersistedSessionRecord>) -> anyhow::Result<()> {
+    async fn save_sessions(
+        &self,
+        sessions: OwnedRwLockWriteGuard<HashMap<String, SessionRecord>>,
+    ) -> anyhow::Result<()> {
         let sessions_path = self.data_dir.join(SESSIONS_FILE);
-        let payload = serde_json::to_string_pretty(&snapshot)?;
-        tokio::fs::write(sessions_path, payload).await?;
+        tokio::task::spawn_blocking(move || {
+            let payload = serde_json::to_vec(&sessions_snapshot(&sessions))?;
+            let result = crate::profile::write_private_file(&sessions_path, &payload);
+            drop(sessions);
+            result
+        })
+        .await??;
         Ok(())
     }
 }
@@ -276,10 +289,16 @@ fn load_or_create_pairing_credential(data_dir: &Path) -> anyhow::Result<String> 
         Uuid::new_v4()
     ));
 
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&tmp_path)?;
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&tmp_path)?;
+    #[cfg(windows)]
+    crate::profile::restrict_windows_file(&tmp_path)?;
     file.write_all(format!("{credential}\n").as_bytes())?;
     file.sync_all()?;
     drop(file);
@@ -490,6 +509,43 @@ fn session_is_expired(session: &SessionRecord) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cancelled_request_keeps_session_writes_serialized_until_persistence_finishes() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .max_blocking_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let directory = tempfile::tempdir().unwrap();
+            let state = super::AuthState::load(directory.path()).unwrap();
+            let (release, blocked) = std::sync::mpsc::channel();
+            let (ready, started) = tokio::sync::oneshot::channel();
+            let blocker = tokio::task::spawn_blocking(move || {
+                ready.send(()).unwrap();
+                blocked.recv().unwrap();
+            });
+            started.await.unwrap();
+            let (saving, queued) = tokio::sync::oneshot::channel();
+            let writer = std::sync::Arc::clone(&state);
+            let request = tokio::spawn(async move {
+                let sessions = std::sync::Arc::clone(&writer.sessions).write_owned().await;
+                saving.send(()).unwrap();
+                writer.save_sessions(sessions).await
+            });
+            queued.await.unwrap();
+            request.abort();
+            let _ = request.await;
+            let locked = state.sessions.try_write().is_err();
+            release.send(()).unwrap();
+            blocker.await.unwrap();
+            let _finished = state.sessions.read().await;
+            assert!(locked);
+            assert!(directory.path().join(super::SESSIONS_FILE).is_file());
+        });
+    }
+
     use super::*;
     use std::thread;
 

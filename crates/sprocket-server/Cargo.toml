@@ -41,6 +41,9 @@ workos = "3.4.0"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.186"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization"] }
+
 [build-dependencies]
 dotenvy = "0.15.7"
 
