@@ -97,12 +97,12 @@ describe('agentRuntime.start', () => {
 				submissionId: 'sub-newer',
 				status: 'queued',
 				executionSecretHash: 'newer-fixture',
-				completionAttemptSeq: 0,
 				selectedModel: 'gpt-5.6-sol',
 				reasoningEffort: 'medium',
 				fastMode: false,
 				startedAt: 2
 			});
+			await ctx.db.insert('runExecutionStates', { runId, completionAttemptSeq: 0 });
 			await ctx.db.patch('threadRecords', threadId, { status: 'queued' });
 			return runId;
 		});

@@ -9,7 +9,6 @@ import { vThreadWithUsageDoc } from '@convex/lib/docs';
 import { getThreadUsageValues } from '@convex/lib/threadUsage';
 import { unsupportedClient } from '@convex/lib/unsupportedClient';
 import { vReasoningEffort, vRunStatus } from '@convex/lib/validators';
-import { normalizeStoredFastMode } from '@convex/lib/fastMode';
 
 async function renameOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>, title: string) {
 	const trimmedTitle = title.trim();
@@ -124,13 +123,11 @@ export const listRecent = query({
 			.order('desc')
 			.take(15);
 		if (!args.selectedThreadId || recent.some((thread) => thread._id === args.selectedThreadId)) {
-			return recent.map(normalizeStoredFastMode);
+			return recent;
 		}
 
 		const selected = await ctx.db.get('threadRecords', args.selectedThreadId);
-		return (selected?.userId === userId ? [...recent, selected] : recent).map(
-			normalizeStoredFastMode
-		);
+		return selected?.userId === userId ? [...recent, selected] : recent;
 	}
 });
 
@@ -143,7 +140,7 @@ export const getByThreadId = query({
 		const userId = await getUserId(ctx);
 		const thread = await getOwnedThreadRecord(ctx.db, userId, args.threadId);
 		const usage = await getThreadUsageValues(ctx, thread);
-		return { ...normalizeStoredFastMode(thread), ...usage };
+		return { ...thread, ...usage };
 	}
 });
 

@@ -6,7 +6,6 @@ import dodopayments from '@dodopayments/convex/convex.config';
 import exa from '@exalabs/convex-exa/convex.config';
 import migrations from '@convex-dev/migrations/convex.config';
 import aggregate from '@convex-dev/aggregate/convex.config';
-import workflow from '@convex-dev/workflow/convex.config';
 import actionRetrier from '@convex-dev/action-retrier/convex.config';
 import workpool from '@convex-dev/workpool/convex.config';
 
@@ -34,7 +33,6 @@ app.use(rateLimiter);
 app.use(dodopayments);
 app.use(migrations);
 app.use(aggregate);
-app.use(workflow);
 app.use(actionRetrier);
 app.use(workpool, { name: 'webToolWorkpool' });
 app.use(workpool, { name: 'firecrawlScrapeWorkpool' });

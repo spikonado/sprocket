@@ -296,19 +296,19 @@ describe('agentRuntime context accounting', () => {
 			executionSecret: secondSecret
 		});
 		await t.run(async (ctx) => {
-			await ctx.db.insert('runs', {
+			const runId = await ctx.db.insert('runs', {
 				threadId,
 				userId: 'user_alice',
 				submissionId: 'context-concurrent-later',
 				status: 'completed',
 				executionSecretHash: await executionSecretHash('context-concurrent-later-secret'),
-				completionAttemptSeq: 0,
 				selectedModel: 'gpt-5.6-sol',
 				reasoningEffort: 'medium',
 				fastMode: false,
 				startedAt: Date.now() + 1_000,
 				completedAt: Date.now() + 1_001
 			});
+			await ctx.db.insert('runExecutionStates', { runId, completionAttemptSeq: 0 });
 		});
 		await t.run(async (ctx) => {
 			await ctx.db.patch('threadRecords', threadId, {
@@ -366,8 +366,7 @@ describe('agentRuntime context accounting', () => {
 		await t.run(async (ctx) => {
 			await ctx.db.patch('runs', runId, {
 				selectedModel: 'gateway-only-model',
-				fastMode: undefined,
-				serviceTier: 'fast'
+				fastMode: true
 			});
 		});
 		const context = await asUser.query(api.agentRuntime.getContext, {
@@ -376,7 +375,6 @@ describe('agentRuntime context accounting', () => {
 		});
 		expect(context.run.selectedModel).toBe('gateway-only-model');
 		expect(context.run.fastMode).toBe(true);
-		expect(context.run).not.toHaveProperty('serviceTier');
 	});
 
 	it('getContext returns last provider-reported contextTokens', async () => {

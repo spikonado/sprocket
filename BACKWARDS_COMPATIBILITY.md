@@ -12,50 +12,6 @@ Keep support for missing metadata until every retained transcript has complete
 membership and its checkpoint covers all parts. Remove only that fallback after
 the gate passes; the processor remains responsible for new transcript parts.
 
-## Native run lifecycle scheduling
-
-New runs use `runLifecycle.checkRun` scheduled at the startup deadline or claim
-expiry. `runExecutionStates` owns the scheduled function ID and generation so
-timer updates do not invalidate thread-list subscriptions. Run finalization
-cancels the check and still performs terminal cleanup in its transaction.
-
-An hourly cron starts `migrateRunLifecycle`. It installs a native check for each
-active run before clearing `runs.lifecycleWorkflowId` in the same transaction.
-The existing Workflow then exits at its next `getWatchState` call. Completed runs
-need no new check. The migration is idempotent and also repairs active runs with
-no legacy workflow. To start the handoff immediately after deployment:
-
-```sh
-bunx convex run migrations:runNativeRunLifecycleMigration --prod
-```
-
-Keep the `workflow` component, its dependency and test registration, the optional
-`lifecycleWorkflowId` field, and the legacy `watchRun`, `getWatchState`,
-`abandonExpiredRun`, `reconcileTerminalPage`, and `finishLifecycle` functions until
-the migration completes on every deployment, no run retains a workflow ID, and
-no legacy workflow or scheduled workflow callback remains in progress. Preserve
-the old workflow's step order until then so stored journals can replay. After
-that gate passes, remove those functions, the component and dependency, and the
-migration runner and cron together. Do not remove the external-tool workpools.
-
-## Fast mode schema migration
-
-Stored `threadRecords` and `runs` may use `serviceTier` with `standard` or
-`fast`. Current code writes only `fastMode`. Convex keeps the stored field in
-the schema while the migration runs and normalizes records read before the
-backfill finishes. Current client APIs do not accept or return `serviceTier`.
-
-An hourly cron starts the idempotent backfill after deployment. The manual
-runner remains available for operator recovery:
-
-```sh
-bunx convex run migrations:runFastModeBackfill --prod
-```
-
-Remove `serviceTier` from the schema and the read normalization after the
-backfill reports completion and every `threadRecords` and `runs` row has
-`fastMode` with no remaining `serviceTier` field.
-
 ## Production rollout cleanup
 
 PR #345 removed stored project tables, project references, run fields,
@@ -327,41 +283,11 @@ Current code does not use them.
 Remove a stub when its retired function name no longer needs to return the
 upgrade message.
 
-## Run execution state
-
-`runExecutionStates` owns claim IDs, lease expiry, completion attempt numbers, and
-the active tool job. The optional copies on `runs` are read only when no execution
-state exists. New runs create both records in one transaction. The first execution
-write on an older run moves its fields in the same transaction, and
-`migrations:runExecutionBackfill` backfills the remaining records automatically.
-`getContext` returns only the current agent's run snapshot. Execution checks
-load the separate state; old caller response shapes are not preserved.
-
-Remove the legacy `runs` fields and fallback after `backfillRunExecution` completes
-on every deployment and all stored runs have execution state.
+## Legacy run status
 
 New runs stay `running` while tools execute. `awaiting_executor` remains accepted
 in schema and client validators for old database records and local transcript or
-thread caches. The backfill rewrites that status on runs and thread records.
+thread caches. The completed backfill rewrote that status on runs and thread records.
 Finalization treats `running` and `awaiting_executor` as aliases while still
 checking the claim and lease. Keep the alias until `awaiting_executor` is removed
-entirely, after the backfills complete and persisted local caches no longer
-require it.
-
-## Retired completion stream state
-
-Current code neither reads nor writes `runs.completionStreamStateId` or
-`completionStreamStates`. `completionActor` returns identity and lease fields,
-without the retired `streamSequence` and `streamAttemptId` response fields. The
-old live-token merge endpoint is gone. Current completion attempts still use
-`runExecutionStates`, and completed turns still use `threadTranscriptParts`.
-
-The hourly cron starts `migrations:runCompletionStreamCleanup`. It first removes
-all run pointers, then deletes stream-state rows in batches, including orphans.
-The manual runner can resume failed cleanup. This migration is independent of
-the older production rollout cleanup, which may have already finished.
-
-Keep the optional pointer and table schema until both migrations complete on
-every deployment and scans find no run pointer or stream-state row. Then remove
-those schema definitions, the migration functions, and their cron together.
-No Sprocket data-directory formats or readers change in this cleanup.
+entirely and persisted local caches no longer require it.

@@ -24,7 +24,6 @@ import { startRunLifecycle } from '@convex/runLifecycle';
 import { getPromptPart } from '@convex/lib/transcriptParts';
 import { recordPromptTranscript } from '@convex/lib/transcriptWrites';
 import { isRunFinalStatus, type vReasoningEffort } from '@convex/lib/validators';
-import { fastModeForStoredRecord } from '@convex/lib/fastMode';
 import { withRunExecution } from '@convex/lib/runExecution';
 
 export type QueuedRunRequest = {
@@ -115,12 +114,12 @@ export async function createQueuedRunRecord(
 		await ctx.db.insert('threadUsage', { threadId, userId: args.userId });
 		threadRecord = (await ctx.db.get('threadRecords', threadId))!;
 	}
-	let latestRun = await ctx.db
+	const latestRunRecord = await ctx.db
 		.query('runs')
 		.withIndex('by_threadId_startedAt', (query) => query.eq('threadId', threadRecord._id))
 		.order('desc')
 		.first();
-	if (latestRun) latestRun = await withRunExecution(ctx.db, latestRun);
+	let latestRun = latestRunRecord ? await withRunExecution(ctx.db, latestRunRecord) : null;
 	if (
 		latestRun &&
 		isClaimedRunStatus(latestRun.status) &&
@@ -131,7 +130,8 @@ export async function createQueuedRunRecord(
 			status: 'failed',
 			lastError: RUN_ABANDONED_BY_AGENT
 		});
-		latestRun = (await ctx.db.get('runs', latestRun._id)) ?? latestRun;
+		const finalizedRun = await ctx.db.get('runs', latestRun._id);
+		if (finalizedRun) latestRun = await withRunExecution(ctx.db, finalizedRun);
 		if (machine) {
 			machine = (await ctx.db.get('machines', machine._id)) ?? machine;
 		}
@@ -220,7 +220,7 @@ async function reconcileExistingQueuedRun(
 			existingThread.repositoryKey !== args.repositoryKey.trim()) ||
 		existingRun.selectedModel !== args.selectedModel ||
 		existingRun.reasoningEffort !== args.reasoningEffort ||
-		fastModeForStoredRecord(existingRun) !== args.fastMode ||
+		existingRun.fastMode !== args.fastMode ||
 		!continuationMatches
 	) {
 		throw new ConvexError('Submission belongs to a different or incomplete run.');
@@ -313,7 +313,7 @@ export async function finalizeFailedQueuedStart(
 		(args.threadId !== undefined && run.threadId !== args.threadId) ||
 		run.selectedModel !== args.selectedModel ||
 		run.reasoningEffort !== args.reasoningEffort ||
-		fastModeForStoredRecord(run) !== args.fastMode
+		run.fastMode !== args.fastMode
 	) {
 		return 'standDown';
 	}
@@ -334,7 +334,7 @@ export async function finalizeFailedQueuedStart(
 	} else if (promptPart !== null) {
 		return 'standDown';
 	}
-	await finalizeRunRecord(ctx, run, {
+	await finalizeRunRecord(ctx, await withRunExecution(ctx.db, run), {
 		text: args.text,
 		status: 'failed',
 		lastError: args.lastError

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { api, internal } from '@convex/_generated/api';
+import { api } from '@convex/_generated/api';
 import type { MutationCtx } from '@convex/_generated/server';
 import type {
 	FunctionArgs,
@@ -18,11 +18,7 @@ import {
 } from '@convex/agentRuntime';
 import { selectedThreadLifecycle } from '@convex/chat';
 import { complete, fail, getJob } from '@convex/executor';
-import {
-	getRunWithExecution,
-	migrateRunExecution,
-	patchRunExecution
-} from '@convex/lib/runExecution';
+import { getRunWithExecution, patchRunExecution } from '@convex/lib/runExecution';
 import { createQueuedRun, initConvexTest, seedOwnedThread } from './test.setup';
 
 function callHandler<Ref extends FunctionReference<'query' | 'mutation'>>(
@@ -52,7 +48,7 @@ async function startedRun() {
 }
 
 describe('run execution state', () => {
-	it('does not write subscribed run or thread records during tools, attempts, or renewals', async () => {
+	it('does not write subscribed run or thread records during execution updates', async () => {
 		const { t, asUser, threadId, auth } = await startedRun();
 		await t.run(async (ctx) => {
 			const patch = vi.spyOn(ctx.db, 'patch');
@@ -165,116 +161,22 @@ describe('run execution state', () => {
 		});
 	});
 
-	it('automatically backfills live legacy runs without losing claims or active jobs', async () => {
-		vi.useFakeTimers();
-		try {
-			const { t, asUser, threadId, auth } = await startedRun();
-			const { jobId } = await asUser.mutation(api.agentRuntime.beginToolJob, {
-				...auth,
-				kind: 'exec_command',
-				payload: { cmd: 'true' }
-			});
-			const expiresAt = Date.now() + 120_000;
-			await t.run(async (ctx) => {
-				const state = await ctx.db
-					.query('runExecutionStates')
-					.withIndex('by_runId', (q) => q.eq('runId', auth.runId))
-					.unique();
-				if (!state) throw new Error('Missing execution state.');
-				await ctx.db.delete('runExecutionStates', state._id);
-				await ctx.db.patch('runs', auth.runId, {
-					status: 'awaiting_executor',
-					claimId: auth.claimId,
-					claimExpiresAt: expiresAt,
-					completionAttemptSeq: 7,
-					activeJobId: jobId
-				});
-				await ctx.db.patch('threadRecords', threadId, { status: 'awaiting_executor' });
-			});
-			expect(
-				(await t.run((ctx) => getRunWithExecution(ctx.db, auth.runId)))?.completionAttemptSeq
-			).toBe(7);
-			await t.mutation(internal.migrations.runExecutionBackfillAutomatically, {});
-			await t.finishAllScheduledFunctions(vi.runAllTimers);
-			await t.mutation(internal.migrations.runExecutionBackfillAutomatically, {});
-			await t.run(async (ctx) => {
-				const run = await ctx.db.get('runs', auth.runId);
-				expect(run?.status).toBe('running');
-				for (const field of ['claimId', 'claimExpiresAt', 'completionAttemptSeq', 'activeJobId']) {
-					expect(run).not.toHaveProperty(field);
-				}
-				expect((await ctx.db.get('threadRecords', threadId))?.status).toBe('running');
-			});
-			expect(await t.run((ctx) => getRunWithExecution(ctx.db, auth.runId))).toMatchObject({
-				status: 'running',
-				claimId: auth.claimId,
-				claimExpiresAt: expiresAt,
-				completionAttemptSeq: 7,
-				activeJobId: jobId
-			});
-			await expect(
-				asUser.mutation(api.agentRuntime.registerCompletionAttempt, {
-					...auth,
-					attemptSeq: 7
-				})
-			).rejects.toThrow();
-			await asUser.mutation(api.agentRuntime.registerCompletionAttempt, { ...auth, attemptSeq: 8 });
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	it('keeps execution state authoritative when a backfill encounters legacy copies', async () => {
+	it('fails instead of recreating a missing execution state', async () => {
 		const { t, auth } = await startedRun();
 		await t.run(async (ctx) => {
-			await patchRunExecution(ctx, auth.runId, {
-				completionAttemptSeq: 9,
-				claimExpiresAt: undefined
-			});
-			await ctx.db.patch('runs', auth.runId, {
-				claimId: 'obsolete',
-				claimExpiresAt: Date.now() + 120_000,
-				completionAttemptSeq: 1
-			});
-			const run = await ctx.db.get('runs', auth.runId);
-			if (!run) throw new Error('Missing run.');
-			await migrateRunExecution(ctx, run);
-			await migrateRunExecution(ctx, run);
-			expect(await getRunWithExecution(ctx.db, auth.runId)).toMatchObject({
-				claimId: auth.claimId,
-				completionAttemptSeq: 9,
-				claimExpiresAt: undefined
-			});
-			expect(
-				await ctx.db
-					.query('runExecutionStates')
-					.withIndex('by_runId', (q) => q.eq('runId', auth.runId))
-					.take(2)
-			).toHaveLength(1);
-		});
-		await expect(t.mutation(api.agentRuntime.renewClaim, auth)).resolves.toEqual({
-			renewed: false
-		});
-	});
-
-	it('moves legacy fields on the first execution write without resetting the attempt', async () => {
-		const t = initConvexTest();
-		const { threadId } = await seedOwnedThread(t);
-		await t.run(async (ctx) => {
-			const run = await ctx.db
-				.query('runs')
-				.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', threadId))
+			const state = await ctx.db
+				.query('runExecutionStates')
+				.withIndex('by_runId', (query) => query.eq('runId', auth.runId))
 				.unique();
-			if (!run) throw new Error('Missing legacy run.');
-			await ctx.db.patch('runs', run._id, { claimId: 'legacy', completionAttemptSeq: 3 });
-			await patchRunExecution(ctx, run._id, { claimExpiresAt: 123 });
-			expect(await getRunWithExecution(ctx.db, run._id)).toMatchObject({
-				claimId: 'legacy',
-				completionAttemptSeq: 3,
-				claimExpiresAt: 123
-			});
-			expect(await ctx.db.get('runs', run._id)).not.toHaveProperty('claimId');
-			expect(await ctx.db.get('runs', run._id)).not.toHaveProperty('completionAttemptSeq');
+			if (!state) throw new Error('Missing execution state fixture.');
+			await ctx.db.delete('runExecutionStates', state._id);
+
+			await expect(getRunWithExecution(ctx.db, auth.runId)).rejects.toThrow(
+				'Run execution state not found.'
+			);
+			await expect(patchRunExecution(ctx, auth.runId, { completionAttemptSeq: 2 })).rejects.toThrow(
+				'Run execution state not found.'
+			);
 		});
 	});
 });

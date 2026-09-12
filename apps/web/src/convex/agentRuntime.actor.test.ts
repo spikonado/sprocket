@@ -29,19 +29,14 @@ describe('agentRuntime completion actor', () => {
 			executionSecret
 		});
 
-		const stored = await t.run(async (ctx) => ({
-			run: await ctx.db.get('runs', runId),
-			state: await ctx.db.query('completionStreamStates').first()
-		}));
+		const stored = await t.run(async (ctx) => ctx.db.get('runs', runId));
 		expect(
 			await t.run(async (ctx) => (await getRunWithExecution(ctx.db, runId))?.completionAttemptSeq)
 		).toBe(1);
-		expect(stored.run).not.toHaveProperty('completionStreamStateId');
-		expect(stored.state).toBeNull();
 		expect(
 			await asUser.query(api.agentRuntime.completionActor, { runId, executionSecret })
 		).toEqual({
-			userId: stored.run?.userId,
+			userId: stored?.userId,
 			threadId,
 			status: 'running',
 			claimId: 'claim-stream',
@@ -53,36 +48,5 @@ describe('agentRuntime completion actor', () => {
 				executionSecret: 'wrong-secret'
 			})
 		).rejects.toThrow('Run not found.');
-	});
-
-	it('ignores a dangling legacy stream pointer', async () => {
-		const t = initConvexTest();
-		const { asUser, threadId } = await seedOwnedThread(t);
-		const executionSecret = 'dangling-stream-secret';
-		const { runId } = await createQueuedRun(
-			t,
-			asUser,
-			threadId,
-			'dangling-stream',
-			executionSecret
-		);
-		await t.run(async (ctx) => {
-			const stateId = await ctx.db.insert('completionStreamStates', {
-				runId,
-				userId: 'user_alice',
-				sequence: 9,
-				streamAttemptId: 'retired'
-			});
-			await ctx.db.patch('runs', runId, { completionStreamStateId: stateId });
-			await ctx.db.delete('completionStreamStates', stateId);
-		});
-		await expect(
-			asUser.query(api.agentRuntime.completionActor, {
-				runId,
-				executionSecret
-			})
-		).resolves.toEqual({ userId: 'user_alice', threadId, status: 'queued' });
-		const context = await asUser.query(api.agentRuntime.getContext, { runId, executionSecret });
-		expect(context.run).not.toHaveProperty('completionStreamStateId');
 	});
 });
