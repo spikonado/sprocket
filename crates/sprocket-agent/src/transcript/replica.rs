@@ -521,10 +521,11 @@ impl WorkReplica {
                 }
             }
         }
-        let indexing = !complete
-            || (rows.is_empty()
-                && before > 0
-                && (downloaded_prefix < total || through.part < total));
+        let indexing = !stale
+            && (!complete
+                || (rows.is_empty()
+                    && before > 0
+                    && (downloaded_prefix < total || through.part < total)));
         let mut result = json!({"replicaId":self.state::<String>("replicaId")?,"rows":rows,"indexing":indexing,"stale":stale,"endSequence":end,"revision":generation,
             "persistedStreams":persisted,"changes":changes,"changesCursor":change_cursor,"moreChanges":more_changes});
         if let Some(next) = next {
@@ -579,7 +580,7 @@ impl WorkReplica {
                 .flatten();
             parts.extend(WorkEngine::detail(item, &source, result.as_ref()));
         }
-        let mut page = json!({"parts":parts,"indexing":!complete && items.is_empty(),"stale":stale,"revision":self.generation()?});
+        let mut page = json!({"parts":parts,"indexing":!complete && items.is_empty() && !stale,"stale":stale,"revision":self.generation()?});
         if let Some(first) = items.first() {
             let sequence = i64::try_from(first.source.sequence())?;
             if !index.page(section, -1, sequence, true, 1)?.is_empty()

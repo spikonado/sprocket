@@ -338,6 +338,40 @@ fn details_page_in_both_directions_and_survive_reopening_offline() {
 }
 
 #[test]
+fn saved_rows_remain_readable_offline_after_an_interrupted_metadata_split() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+    replica
+        .save_parts("thread", &[completion(0, vec![reasoning("saved")])])
+        .unwrap();
+    let mut cloud = Cloud::default();
+    cloud.process(&mut replica);
+    replica.save_snapshot("thread", cloud.snapshot(1)).unwrap();
+    let mut partial = cloud.snapshot(1);
+    partial.complete = false;
+    partial.sections.clear();
+    partial.memberships.clear();
+    replica.save_snapshot("thread", partial).unwrap();
+    drop(replica);
+    let replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+    assert_eq!(
+        replica.page(None, 12, None, &[], false).unwrap()["indexing"],
+        true
+    );
+    let saved = replica
+        .page(None, 12, None, &[("run".into(), "stream-0".into())], true)
+        .unwrap();
+    assert_eq!(saved["indexing"], false);
+    assert_eq!(saved["rows"][0]["id"], "work-0-0");
+    assert!(saved["persistedStreams"].as_array().unwrap().is_empty());
+    let details = replica
+        .details("work-0-0", None, None, false, 5, true)
+        .unwrap();
+    assert_eq!(details["parts"][0]["text"], "saved");
+    assert_eq!(details["stale"], true);
+}
+
+#[test]
 fn polling_finishes_the_original_command_across_a_text_boundary() {
     let dir = tempfile::tempdir().unwrap();
     let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
