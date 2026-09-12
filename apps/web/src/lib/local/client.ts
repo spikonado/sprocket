@@ -7,10 +7,7 @@ import type {
 	LiveCompletionOverlay,
 	LiveCompletionWatchEvent,
 	LocalArtifact,
-	LocalTranscriptPage,
-	LocalTranscriptPart,
 	ProjectAttachment,
-	ThreadMessage,
 	ThreadCacheSnapshot,
 	ThreadCacheUserRequest,
 	ThreadCacheWatchEvent,
@@ -87,22 +84,6 @@ function transcriptUploadPath(args: { userId: string; name: string; threadId?: s
 	return `/api/transcript/upload?${query}`;
 }
 
-const transcriptMessageSchema = z.object({
-	id: z.string(),
-	threadId: z.string(),
-	runId: z.string(),
-	userId: z.string(),
-	type: z.enum(['prompt', 'response']),
-	text: z.string(),
-	attachments: z.array(localTranscriptAttachmentSchema),
-	parts: z.array(z.unknown()),
-	runStatus: z.enum(['queued', 'running', 'awaiting_executor', 'completed', 'failed', 'cancelled']),
-	runStartedAt: z.int(),
-	sourceNumbers: z.array(z.int()),
-	streamIds: z.array(z.string()),
-	detailsLoaded: z.boolean()
-});
-
 const displayRowSchema = z
 	.object({
 		id: z.string(),
@@ -160,19 +141,6 @@ const displayDetailsSchema = z.object({
 	previousBefore: z.int().nonnegative().optional(),
 	revision: z.int().nonnegative(),
 	stale: z.boolean()
-});
-const localTranscriptPartSchema = z.object({
-	number: z.int().nonnegative(),
-	kind: z.enum(['prompt', 'completion', 'tool']),
-	message: transcriptMessageSchema.nullable()
-});
-const localTranscriptPageSchema = z.object({
-	threadId: z.string(),
-	totalParts: z.int(),
-	historyFromNumber: z.int(),
-	stale: z.boolean(),
-	parts: z.array(localTranscriptPartSchema),
-	nextBefore: z.int().optional()
 });
 const transcriptWatchEventSchema = z.object({
 	eventType: z.string(),
@@ -250,54 +218,6 @@ function parseProjectAttachment(
 	attachment: z.infer<typeof projectAttachmentSchema>
 ): ProjectAttachment {
 	return attachment;
-}
-
-function parseLocalTranscriptPage(
-	page: z.infer<typeof localTranscriptPageSchema>
-): LocalTranscriptPage {
-	return {
-		threadId: asConvexId(page.threadId),
-		totalParts: page.totalParts,
-		historyFromNumber: page.historyFromNumber,
-		stale: page.stale,
-		nextBefore: page.nextBefore,
-		parts: page.parts.map(parseLocalTranscriptPart)
-	};
-}
-
-function parseLocalTranscriptPart(
-	part: z.infer<typeof localTranscriptPartSchema>
-): LocalTranscriptPart {
-	return {
-		number: part.number,
-		kind: part.kind,
-		message: part.message ? parseTranscriptMessage(part.message) : null
-	};
-}
-
-function parseTranscriptMessage(message: z.infer<typeof transcriptMessageSchema>): ThreadMessage {
-	return {
-		_id: message.id,
-		threadId: asConvexId(message.threadId),
-		runId: asConvexId(message.runId),
-		userId: message.userId,
-		type: message.type,
-		text: message.text,
-		attachments: message.attachments.map((attachment) => ({
-			storageId: asConvexId<'_storage'>(attachment.storageId),
-			name: attachment.name,
-			mediaType: attachment.mediaType,
-			size: attachment.size,
-			url: attachment.url ?? null
-		})),
-		// SAFETY: the local Rust API emits transcript parts in the shared assistant-part shape.
-		parts: message.parts as AssistantPart[],
-		runStatus: message.runStatus,
-		runStartedAt: message.runStartedAt,
-		sourceNumbers: message.sourceNumbers,
-		streamIds: message.streamIds,
-		detailsLoaded: message.detailsLoaded
-	};
 }
 
 function parseLiveCompletionOverlay(
@@ -638,11 +558,6 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 		});
 
 		if (!response.ok) {
-			if (response.status === 404 && pathname.startsWith('/api/transcript/display')) {
-				throw new Error('Update Sprocket on the connected machine to load conversation history.', {
-					cause: 'display-history-unavailable'
-				});
-			}
 			try {
 				const payload = await parseJsonResponse(response, errorPayloadSchema);
 				throw new Error(payload.error ?? `Local request failed (${response.status}).`);
@@ -709,14 +624,6 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 			});
 			return { runId: asConvexId(result.runId), threadId: asConvexId(result.threadId) };
 		},
-		fetchTranscriptPage: async (requestBody, signal) => {
-			const page = await request('/api/transcript/parts', localTranscriptPageSchema, {
-				method: 'POST',
-				body: JSON.stringify(requestBody),
-				signal
-			});
-			return parseLocalTranscriptPage(page);
-		},
 		fetchTranscriptDisplay: async (requestBody, signal) =>
 			await request('/api/transcript/display', displayPageSchema, {
 				method: 'POST',
@@ -732,14 +639,6 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 			// SAFETY: the authenticated display API validates parts with vAssistantMessagePart.
 			return { ...page, parts: page.parts as AssistantPart[] };
 		},
-		fetchTranscriptDetails: async (requestBody, signal) =>
-			(
-				await request('/api/transcript/part-details', z.array(localTranscriptPartSchema), {
-					method: 'POST',
-					body: JSON.stringify(requestBody),
-					signal
-				})
-			).map(parseLocalTranscriptPart),
 		watchTranscript: async (requestBody, handlers) => {
 			await postSse(`${baseUrl}/api/transcript/watch`, requestBody, handlers.signal, (data) => {
 				const parsed = transcriptWatchEventSchema.safeParse(JSON.parse(data));

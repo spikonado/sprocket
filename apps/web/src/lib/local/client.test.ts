@@ -64,19 +64,7 @@ describe('workspace launch fragments', () => {
 	});
 });
 
-describe('projected transcript pages', () => {
-	it('asks for an upgrade when the connected server lacks display history', async () => {
-		vi.stubGlobal(
-			'fetch',
-			vi.fn(async () => new Response(null, { status: 404 }))
-		);
-		await expect(
-			createLocalClient('http://127.0.0.1:7731').fetchTranscriptDisplay({
-				userId: 'user-1',
-				threadId: threadRecordId('thread-1')
-			})
-		).rejects.toMatchObject({ cause: 'display-history-unavailable' });
-	});
+describe('display transcript pages', () => {
 	it('cancels an in-flight page request when its thread is left', async () => {
 		const fetch = vi.fn(
 			(_url: string, init: RequestInit) =>
@@ -86,112 +74,110 @@ describe('projected transcript pages', () => {
 		);
 		vi.stubGlobal('fetch', fetch);
 		const controller = new AbortController();
-		const pending = createLocalClient('http://127.0.0.1:7731').fetchTranscriptPage(
+		const pending = createLocalClient('http://127.0.0.1:7731').fetchTranscriptDisplay(
 			{ userId: 'user-1', threadId: threadRecordId('thread-1'), limit: 12 },
 			controller.signal
 		);
 		controller.abort();
 		await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
 		expect(fetch).toHaveBeenCalledWith(
-			'http://127.0.0.1:7731/api/transcript/parts',
+			'http://127.0.0.1:7731/api/transcript/display',
 			expect.objectContaining({ signal: controller.signal })
 		);
 	});
 
-	it('uses the part-bounded endpoint without falling back to message paging', async () => {
-		const message = {
-			id: 'response:run-1',
+	it('preserves display cursors, stream acknowledgements, and row changes', async () => {
+		const row = {
+			id: 'row-499',
 			threadId: 'thread-1',
 			runId: 'run-1',
-			userId: 'user-1',
-			type: 'response',
+			sequence: 499,
+			kind: 'text',
 			text: 'Last completion',
 			attachments: [],
-			parts: [{ type: 'text', id: 'text-499', text: 'Last completion' }],
-			runStatus: 'completed',
-			runStartedAt: 1,
-			sourceNumbers: [499],
-			streamIds: ['stream-499'],
-			detailsLoaded: false
+			itemCount: 0,
+			pendingTools: 0,
+			closed: true,
+			revision: 500
 		};
-		const parts = [
-			{ number: 498, kind: 'completion', message: null },
-			{ number: 499, kind: 'completion', message }
-		];
-		const fetch = vi.fn(async () =>
-			Response.json({
-				threadId: 'thread-1',
-				totalParts: 500,
-				historyFromNumber: 498,
-				stale: false,
-				parts,
-				nextBefore: 498
-			})
-		);
+		const response = {
+			rows: [row],
+			indexing: false,
+			stale: false,
+			nextBefore: 499,
+			endSequence: 500,
+			revision: 500,
+			persistedStreams: [{ runId: 'run-1', streamId: 'stream-499' }],
+			changes: [
+				{ id: row.id, row },
+				{ id: 'row-1', row: null }
+			],
+			changesCursor: { revision: 500, sequence: -1 },
+			moreChanges: false
+		};
+		const fetch = vi.fn(async () => Response.json(response));
 		vi.stubGlobal('fetch', fetch);
-		const page = await createLocalClient('http://127.0.0.1:7731').fetchTranscriptPage({
+		const request = {
 			userId: 'user-1',
 			threadId: threadRecordId('thread-1'),
-			limit: 12
-		});
-		expect(page.nextBefore).toBe(498);
-		expect(page.parts).toEqual([
-			parts[0],
-			{ ...parts[1], message: { ...message, id: undefined, _id: message.id } }
-		]);
+			before: 500,
+			limit: 12,
+			streams: [{ runId: runId('run-1'), streamId: 'stream-499' }],
+			changesAfter: { revision: 490, sequence: 12 }
+		};
+		const page = await createLocalClient('http://127.0.0.1:7731').fetchTranscriptDisplay(request);
+		expect(page).toEqual(response);
 		expect(fetch).toHaveBeenCalledWith(
-			'http://127.0.0.1:7731/api/transcript/parts',
-			expect.objectContaining({ method: 'POST' })
+			'http://127.0.0.1:7731/api/transcript/display',
+			expect.objectContaining({ method: 'POST', body: JSON.stringify(request) })
 		);
 	});
 
 	it('maps storageId attachment metadata and ignores leftover imageUploadId', async () => {
 		const fetch = vi.fn(async () =>
 			Response.json({
-				threadId: 'thread-1',
-				totalParts: 1,
-				historyFromNumber: 0,
+				indexing: false,
 				stale: false,
-				parts: [
+				endSequence: 1,
+				revision: 1,
+				persistedStreams: [],
+				changes: [],
+				changesCursor: { revision: 1, sequence: -1 },
+				moreChanges: false,
+				rows: [
 					{
-						number: 0,
+						id: 'row-1',
+						threadId: 'thread-1',
+						runId: 'run-1',
+						sequence: 0,
 						kind: 'prompt',
-						message: {
-							id: 'prompt:1',
-							threadId: 'thread-1',
-							runId: 'run-1',
-							userId: 'user-1',
-							type: 'prompt',
-							text: 'Inspect this',
-							attachments: [
-								{
-									imageUploadId: 'upload-1',
-									storageId: 'storage-1',
-									name: 'shot.png',
-									mediaType: 'image/png',
-									size: 12,
-									url: 'http://127.0.0.1:7731/files/shot.png'
-								}
-							],
-							parts: [],
-							runStatus: 'completed',
-							runStartedAt: 1,
-							sourceNumbers: [0],
-							streamIds: [],
-							detailsLoaded: true
-						}
+						text: 'Inspect this',
+						itemCount: 0,
+						pendingTools: 0,
+						closed: true,
+						revision: 1,
+						attachments: [
+							{
+								imageUploadId: 'upload-1',
+								storageId: 'storage-1',
+								name: 'shot.png',
+								mediaType: 'image/png',
+								size: 12,
+								url: 'http://127.0.0.1:7731/files/shot.png'
+							}
+						]
 					}
 				]
 			})
 		);
 		vi.stubGlobal('fetch', fetch);
 
-		const page = await createLocalClient('http://127.0.0.1:7731').fetchTranscriptPage({
+		const page = await createLocalClient('http://127.0.0.1:7731').fetchTranscriptDisplay({
 			userId: 'user-1',
 			threadId: threadRecordId('thread-1')
 		});
 
-		expect(page.parts[0]?.message?.attachments).toEqual([
+		expect(page.rows[0]?.attachments).toEqual([
 			{
 				storageId: 'storage-1',
 				name: 'shot.png',
@@ -202,20 +188,33 @@ describe('projected transcript pages', () => {
 		]);
 	});
 
-	it('requests cancellable per-part details and preserves non-display part numbers', async () => {
-		const fetch = vi.fn(async () =>
-			Response.json([{ number: 498, kind: 'completion', message: null }])
-		);
+	it('requests cancellable section details and preserves item cursors', async () => {
+		const response = {
+			parts: [{ type: 'reasoning', id: 'reasoning-6', text: 'Checking the result' }],
+			indexing: false,
+			nextAfter: 10,
+			previousBefore: 6,
+			revision: 500,
+			stale: true
+		};
+		const fetch = vi.fn(async () => Response.json(response));
 		vi.stubGlobal('fetch', fetch);
 		const controller = new AbortController();
-		const request = { userId: 'user-1', threadId: threadRecordId('thread-1'), numbers: [498] };
-		const details = await createLocalClient('http://127.0.0.1:7731').fetchTranscriptDetails(
+		const request = {
+			userId: 'user-1',
+			threadId: threadRecordId('thread-1'),
+			// SAFETY: the fixture ID is only serialized for the mocked local API.
+			rowId: 'row-1' as Id<'threadTranscriptDisplayRows'>,
+			after: 5,
+			limit: 5
+		};
+		const details = await createLocalClient('http://127.0.0.1:7731').fetchTranscriptDisplayDetails(
 			request,
 			controller.signal
 		);
-		expect(details).toEqual([{ number: 498, kind: 'completion', message: null }]);
+		expect(details).toEqual(response);
 		expect(fetch).toHaveBeenCalledWith(
-			'http://127.0.0.1:7731/api/transcript/part-details',
+			'http://127.0.0.1:7731/api/transcript/display-details',
 			expect.objectContaining({
 				method: 'POST',
 				body: JSON.stringify(request),

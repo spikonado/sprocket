@@ -124,29 +124,6 @@ export type AgentRunStart = {
 	threadId: Id<'threadRecords'>;
 };
 
-export type LocalTranscriptAttachment = {
-	storageId: Id<'_storage'>;
-	name: string;
-	mediaType: string;
-	size: number;
-	url?: string;
-};
-
-export type LocalTranscriptPart = {
-	number: number;
-	kind: 'prompt' | 'completion' | 'tool';
-	message: ThreadMessage | null;
-};
-
-export type LocalTranscriptPage = {
-	threadId: Id<'threadRecords'>;
-	totalParts: number;
-	historyFromNumber: number;
-	stale: boolean;
-	parts: LocalTranscriptPart[];
-	nextBefore?: number;
-};
-
 export type LiveCompletionOverlay = {
 	threadId: Id<'threadRecords'>;
 	runId: Id<'runs'>;
@@ -210,15 +187,6 @@ export type TranscriptScopeRequest = {
 	threadId: Id<'threadRecords'>;
 };
 
-export type TranscriptPageRequest = {
-	userId: string;
-	threadId: Id<'threadRecords'>;
-	before?: number;
-	limit?: number;
-};
-
-export type TranscriptDetailsRequest = TranscriptScopeRequest & { numbers: number[] };
-
 export type TranscriptDisplayRow = Infer<typeof displayRowValidator>;
 export type TranscriptDisplayPage = {
 	rows: TranscriptDisplayRow[];
@@ -234,7 +202,9 @@ export type TranscriptDisplayPage = {
 };
 export type TranscriptChangeCursor = { revision: number; sequence: number };
 export type TranscriptDisplayStream = { runId: Id<'runs'>; streamId: string };
-export type TranscriptDisplayRequest = TranscriptPageRequest & {
+export type TranscriptDisplayRequest = TranscriptScopeRequest & {
+	before?: number;
+	limit?: number;
 	streams?: TranscriptDisplayStream[];
 	changesAfter?: TranscriptChangeCursor;
 };
@@ -317,10 +287,6 @@ export type DesktopApi = {
 	listProjectAttachments: () => Promise<ProjectAttachment[]>;
 	attachProject: (attachment: ProjectAttachmentRequest) => Promise<ProjectAttachment>;
 	runAgent: (request: AgentRunRequest) => Promise<AgentRunStart>;
-	fetchTranscriptPage: (
-		request: TranscriptPageRequest,
-		signal?: AbortSignal
-	) => Promise<LocalTranscriptPage>;
 	fetchTranscriptDisplay: (
 		request: TranscriptDisplayRequest,
 		signal?: AbortSignal
@@ -329,10 +295,6 @@ export type DesktopApi = {
 		request: TranscriptDisplayDetailsRequest,
 		signal?: AbortSignal
 	) => Promise<TranscriptDisplayDetails>;
-	fetchTranscriptDetails: (
-		request: TranscriptDetailsRequest,
-		signal?: AbortSignal
-	) => Promise<LocalTranscriptPart[]>;
 	watchTranscript: (
 		request: TranscriptScopeRequest,
 		handlers: {

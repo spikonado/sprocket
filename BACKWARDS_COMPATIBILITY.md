@@ -4,11 +4,11 @@
 
 New UIs use `/api/transcript/display` and `/api/transcript/display-details`. The cloud stores display rows and section-item references separately from the numbered transcript used for agent replay. Closed work sections contain no reasoning bodies or tool payloads. Detail pages contain at most five items.
 
-Released clients retain `/api/transcript/parts`, `/api/transcript/part-details`, and the existing Convex transcript functions. The raw transcript schema and local `parts` cache remain unchanged. Remove these UI endpoints only after all supported desktop and web clients use display history. Do not remove the raw transcript APIs needed for agent replay.
+The UI and local server always run matching versions. The old `/api/transcript/parts` and `/api/transcript/part-details` UI endpoints are removed. The raw transcript schema, local `parts` cache, and Convex transcript APIs remain for agent replay.
 
 `backfillTranscriptDisplay` schedules bounded, resumable indexing for existing transcripts. The hourly migration starts it automatically, and opening an unindexed thread starts its own backfill. New appends schedule the same indexer. Indexing has a durable part-and-item cursor, and retries do not duplicate rows. The UI waits for indexing rather than presenting partial work durations. Keep the backfill until every retained transcript has a display index.
 
-The local server caches successful display and detail pages under `display-v1` for offline reads. These derived pages can be deleted and rebuilt. Clearing a transcript replica also removes its display cache. Deploy the additive Convex schema and functions before releasing the new server and UI. A new UI connected to a server without these endpoints asks the user to update that machine instead of retrying indefinitely. Retain that notice until all supported servers have the display endpoints.
+The local server caches successful display and detail pages under `display-v1` for offline reads. These derived pages can be deleted and rebuilt. Clearing a transcript replica also removes its display cache. Deploy the additive Convex schema and functions before releasing the new server and UI.
 
 We ship breaking changes ahead of our users' installed clients and keep the old behavior working until those clients age out. That debt is easy to accumulate and easier to forget. This file lists every backwards-compatibility layer we currently ship, what it protects, how to remove it, and the signal that says removal is safe. When a removal PR merges, remove its entry from this document.
 

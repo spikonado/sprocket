@@ -68,16 +68,29 @@ describe('DisplayHistory', () => {
 		history.stop();
 	});
 
-	it('shows the server upgrade requirement instead of retrying an unsupported endpoint', async () => {
+	it('retries a failed initial load and clears the error after recovery', async () => {
+		vi.useFakeTimers();
 		const fetch = vi
 			.fn()
-			.mockRejectedValue(new Error('Update Sprocket.', { cause: 'display-history-unavailable' }));
+			.mockRejectedValueOnce(new Error('offline'))
+			.mockResolvedValue(page([row(1)]));
 		const history = new DisplayHistory(fetch, () => {});
-		await history.refresh();
-		await history.refresh();
-		expect(history.error).toBe('Update Sprocket.');
-		expect(fetch).toHaveBeenCalledTimes(1);
+		try {
+			await history.refresh();
+			expect(history.error).toBe('Could not load conversation history.');
+			expect(history.stale).toBe(true);
+			expect(history.loading).toBe(false);
+			await vi.advanceTimersByTimeAsync(2_000);
+			expect(fetch).toHaveBeenCalledTimes(2);
+			expect(history.error).toBeNull();
+			expect(history.stale).toBe(false);
+			expect(history.messages.map((message) => message._id)).toEqual(['row-1']);
+		} finally {
+			history.stop();
+			vi.useRealTimers();
+		}
 	});
+
 	it('updates and deletes loaded sections outside the recent window', async () => {
 		const updated = row(1, 200);
 		const fetch = vi

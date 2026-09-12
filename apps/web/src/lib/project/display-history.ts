@@ -114,16 +114,10 @@ export class DisplayHistory {
 				this.error = null;
 				this.changed();
 			} while (this.refreshPending && !this.stopped);
-		} catch (error) {
+		} catch {
 			if (!this.stopped) {
 				this.stale = true;
 				this.loading = false;
-				if (error instanceof Error && error.cause === 'display-history-unavailable') {
-					this.error = error.message;
-					this.stop();
-					this.changed();
-					return;
-				}
 				this.error = this.messages.length ? null : 'Could not load conversation history.';
 				this.changed();
 				this.retry = setTimeout(() => void this.refresh(), 2_000);
