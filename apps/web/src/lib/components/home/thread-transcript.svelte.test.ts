@@ -62,7 +62,7 @@ async function renderTranscript(messages: TranscriptMessage[], viewportHeight = 
 	});
 	const component = mount(ThreadTranscript, { target: document.body, props });
 	cleanup = () => unmount(component);
-	const viewport = document.querySelector<HTMLDivElement>('.overflow-auto');
+	const viewport = document.querySelector<HTMLDivElement>('[aria-label="Conversation history"]');
 	if (!viewport) throw new Error('Missing transcript viewport');
 	const messageElements = () => [
 		...viewport.querySelectorAll<HTMLElement>('[data-transcript-anchor]')
@@ -130,6 +130,14 @@ afterEach(async () => {
 });
 
 describe('transcript viewport paging', () => {
+	it('scrolls vertically without allowing the transcript viewport to scroll horizontally', async () => {
+		const { viewport } = await renderTranscript([message(1)]);
+
+		expect(viewport.classList.contains('overflow-y-auto')).toBe(true);
+		expect(viewport.classList.contains('overflow-x-hidden')).toBe(true);
+		expect(viewport.classList.contains('overflow-auto')).toBe(false);
+	});
+
 	it.each(['live', 'persisted'] as const)(
 		'uses the same patch and failure disclosures for %s tools',
 		async (kind) => {
