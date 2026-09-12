@@ -92,6 +92,7 @@ pub struct WorkItem {
     pub started_at: Option<f64>,
     pub completed_at: Option<f64>,
     pub session_id: Option<String>,
+    pub reported_running: Option<bool>,
     pub running: bool,
     pub approval: Option<(String, String)>,
 }
@@ -286,6 +287,7 @@ impl WorkEngine {
             started_at: None,
             completed_at: None,
             session_id: None,
+            reported_running: None,
             running: false,
             approval: None,
         });
@@ -316,10 +318,8 @@ impl WorkEngine {
                 item.result_part = Some(part.number);
                 item.completed_at = part.created_at.map(|n| n as f64);
                 if let Some(output) = &tool.output {
-                    item.running = output
-                        .get("running")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false);
+                    item.reported_running = output.get("running").and_then(Value::as_bool);
+                    item.running = item.reported_running.unwrap_or(false);
                     item.session_id = string(output, "sessionId").or(item.session_id);
                     if name == "mandate_setup" {
                         item.approval =
@@ -348,14 +348,14 @@ impl WorkEngine {
             .filter(|_| matches!(name.as_str(), "exec_command" | "write_stdin"))
         {
             let mut current = index.session(&part.run_id, session)?;
-            if let Some(result_part) = item.result_part {
+            if let Some((result_part, running)) = item.result_part.zip(item.reported_running) {
                 if current
                     .as_ref()
                     .is_none_or(|current| current.result_part < result_part)
                 {
                     let value = WorkSession {
                         result_part,
-                        running: item.running,
+                        running,
                         completed_at: item.completed_at,
                     };
                     index.save_session(&part.run_id, session, &value)?;
@@ -465,6 +465,7 @@ impl WorkEngine {
                                 started_at: timing(value, "startedAt"),
                                 completed_at: timing(value, "completedAt"),
                                 session_id: None,
+                                reported_running: None,
                                 running: false,
                                 approval: None,
                             },
@@ -589,8 +590,13 @@ impl WorkEngine {
         }
         if let Some(tool) = result.and_then(|part| part.tool.as_ref()) {
             let mut output = tool.output.clone().unwrap_or(Value::Null);
-            if let Some(object) = output.as_object_mut().filter(|_| item.session_id.is_some()) {
-                object.insert("running".into(), item.running.into());
+            let running = match item.name.as_deref() {
+                Some("exec_command") => Some(item.running),
+                Some("write_stdin") => item.reported_running,
+                _ => None,
+            };
+            if let Some((object, running)) = output.as_object_mut().zip(running) {
+                object.insert("running".into(), running.into());
             }
             parts.push(json!({"type":"tool-result", "callId":tool.call_id, "name":tool.name, "output":output, "completedAt":item.known_completion()}));
         }

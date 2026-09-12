@@ -420,6 +420,71 @@ fn polling_finishes_the_original_command_across_a_text_boundary() {
 }
 
 #[test]
+fn completed_polls_do_not_report_a_running_command_as_finished() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut writer = WorkReplica::open(dir.path().to_owned()).unwrap();
+    let parts = [
+        completion(
+            0,
+            vec![json!({"type":"tool-call","callId":"exec","name":"exec_command","input":{}})],
+        ),
+        tool(
+            1,
+            "exec",
+            "exec_command",
+            "completed",
+            json!({"sessionId":"session","running":true}),
+        ),
+        completion(
+            2,
+            vec![
+                json!({"type":"tool-call","callId":"poll","name":"write_stdin","input":{"sessionId":"session"}}),
+            ],
+        ),
+        tool(
+            3,
+            "poll",
+            "write_stdin",
+            "completed",
+            json!({"running":true}),
+        ),
+        completion(
+            4,
+            vec![
+                json!({"type":"tool-call","callId":"failed","name":"write_stdin","input":{"sessionId":"session"}}),
+            ],
+        ),
+        tool(
+            5,
+            "failed",
+            "write_stdin",
+            "failed",
+            json!({"error":"temporary failure","status":"failed"}),
+        ),
+    ];
+    writer.save_parts("thread", &parts).unwrap();
+    let mut cloud = Cloud::default();
+    cloud.process(&mut writer);
+    assert_eq!(cloud.sections["work-0-0"].pending_tools, 1);
+    let reader_dir = tempfile::tempdir().unwrap();
+    let mut reader = WorkReplica::open(reader_dir.path().to_owned()).unwrap();
+    reader.save_snapshot("thread", cloud.snapshot(6)).unwrap();
+    for part in parts.iter().rev() {
+        reader
+            .save_parts("thread", std::slice::from_ref(part))
+            .unwrap();
+    }
+    let detail = reader
+        .details("work-0-0", None, None, false, 5, false)
+        .unwrap();
+    assert_eq!(detail["parts"][1]["output"]["running"], true);
+    assert_eq!(detail["parts"][3]["output"]["running"], true);
+    assert_eq!(detail["parts"][3]["completedAt"], 1003.0);
+    assert_eq!(detail["parts"][5]["output"]["running"], true);
+    assert_eq!(detail["parts"][5]["output"]["error"], "temporary failure");
+}
+
+#[test]
 fn a_terminal_run_closes_unanswered_tools_without_inventing_a_duration() {
     let dir = tempfile::tempdir().unwrap();
     let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();

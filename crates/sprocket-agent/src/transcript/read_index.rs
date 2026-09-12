@@ -61,6 +61,7 @@ impl ReadIndex<'_> {
                         .get("input")
                         .and_then(|input| string(input, "sessionId")),
                     running: false,
+                    reported_running: None,
                     approval: None,
                 };
                 self.insert(&item, false)?;
@@ -99,6 +100,10 @@ impl ReadIndex<'_> {
                     .output
                     .as_ref()
                     .is_some_and(|output| output["running"] == true),
+                reported_running: tool
+                    .output
+                    .as_ref()
+                    .and_then(|output| output["running"].as_bool()),
                 approval: tool
                     .output
                     .as_ref()
@@ -247,21 +252,24 @@ impl ReadIndex<'_> {
             item.result_part = result.result_part;
             item.completed_at = result.completed_at;
             item.running = result.running;
+            item.reported_running = result.reported_running;
             item.session_id = result.session_id.or(item.session_id.take());
             item.approval = result.approval;
         }
-        if item.name.as_deref() == Some("exec_command") {
+        if matches!(item.name.as_deref(), Some("exec_command" | "write_stdin")) {
             if let Some(session) = &item.session_id {
                 let body: Option<String> = self.0.query_row(
                     "SELECT body FROM source_refs s WHERE run=? AND session=? AND terminal=1
                     AND json_extract(body,'$.name') IN ('exec_command','write_stdin')
+                    AND json_extract(body,'$.reported_running') IS NOT NULL
                     AND NOT EXISTS (SELECT 1 FROM source_refs earlier WHERE earlier.run=s.run AND earlier.call_id=s.call_id AND earlier.terminal=1 AND earlier.sequence<s.sequence)
                     ORDER BY sequence DESC LIMIT 1",
                     params![item.run_id,session], |row| row.get(0)).optional()?;
                 if let Some(body) = body {
                     let latest: WorkItem = serde_json::from_str(&body)?;
+                    item.reported_running = latest.reported_running;
                     item.running = latest.running;
-                    if !latest.running {
+                    if item.name.as_deref() == Some("exec_command") && !latest.running {
                         item.completed_at = latest.completed_at.or(item.completed_at);
                     }
                 }
