@@ -318,7 +318,7 @@
 <div class="relative min-h-0 flex-1">
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (Keyboard users must be able to page history even when it does not overflow.) -->
 	<div
-		class="hide-scrollbar h-full overflow-auto"
+		class="hide-scrollbar h-full overflow-x-hidden overflow-y-auto"
 		role="region"
 		aria-label="Conversation history"
 		tabindex="0"
