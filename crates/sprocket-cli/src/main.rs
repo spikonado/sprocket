@@ -372,6 +372,15 @@ mod tests {
                 ..
             }))
         ));
+        let escaped = Cli::try_parse_from(["sprocket", "run", "--", "models"]).unwrap();
+        assert!(matches!(
+            escaped.command,
+            Some(Commands::Run(commands::RunArgs {
+                prompt: Some(prompt),
+                command: None,
+                ..
+            })) if prompt == "models"
+        ));
         assert!(Cli::try_parse_from(["sprocket", "run", "task", "--json"]).is_err());
         assert!(Cli::try_parse_from(["sprocket", "run", "task", "--stream-json"]).is_err());
         assert!(Cli::try_parse_from(["sprocket", "run", "task", "--fast", "--no-fast"]).is_err());

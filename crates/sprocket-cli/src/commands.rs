@@ -16,9 +16,9 @@ use output::Output;
 #[derive(Debug, Args)]
 #[command(arg_required_else_help = true)]
 pub(crate) struct RunArgs {
-    /// Task to send to the agent
+    /// Task to send to the agent. Use -- before a task named "models"
     #[arg(conflicts_with = "prompt_file")]
-    prompt: Option<String>,
+    pub(crate) prompt: Option<String>,
     /// Read the prompt from a UTF-8 file, or - for stdin
     #[arg(long)]
     prompt_file: Option<PathBuf>,

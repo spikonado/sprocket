@@ -94,12 +94,17 @@ fn available_for_tier(catalog: Catalog, tier: &str) -> anyhow::Result<CliModelsR
             default_reasoning_effort: model.default_reasoning_effort,
         })
         .collect();
-    anyhow::ensure!(
-        !models.is_empty(),
-        "no models are available for this account"
-    );
+    let first = models
+        .first()
+        .context("no models are available for this account")?;
+    let default_model_id = models
+        .iter()
+        .find(|model| model.id == catalog.default_model_id)
+        .unwrap_or(first)
+        .id
+        .clone();
     Ok(CliModelsResponse {
-        default_model_id: catalog.default_model_id,
+        default_model_id,
         models,
     })
 }
@@ -178,7 +183,7 @@ mod tests {
                 {"id": "default", "label": "Default", "reasoningEfforts": ["medium", "high"], "defaultReasoningEffort": "high", "serviceTiers": ["standard", "fast"]},
                 {"id": "paid", "label": "Paid", "reasoningEfforts": ["max"], "defaultReasoningEffort": "max", "serviceTiers": ["standard"]}
             ],
-            "tierAllowedModels": {"free": ["default"]}, "tierAllowedServiceTiers": {"free": ["standard"]}
+            "tierAllowedModels": {"free": ["default"], "paid": ["paid"]}, "tierAllowedServiceTiers": {"free": ["standard"]}
         })).unwrap()
     }
 
@@ -223,6 +228,8 @@ mod tests {
                 default_reasoning_effort: "high".into(),
             }]
         );
+        let paid = available_for_tier(catalog(), "paid").unwrap();
+        assert_eq!(paid.default_model_id, "paid");
         assert!(available_for_tier(catalog(), "unknown").is_err());
     }
 }
