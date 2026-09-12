@@ -51,60 +51,12 @@ sprocket --web
 ```sh
 sprocket login
 sprocket run "Fix the failing tests"
-sprocket run --directory ./robot "Check the motor driver wiring"
 sprocket run --thread <thread-id> "Add regression coverage"
-sprocket run --prompt-file task.md
-cat task.md | sprocket run --prompt-file -
 ```
 
-`login` prints a URL and code. You can approve the code in a browser on another
-machine, including when the CLI runs over SSH. Desktop, local browser, and CLI
-clients share one login per Sprocket data directory and backend environment.
-Hosted website sessions and sessions on other machines remain independent.
-
-Credentials use the OS credential store by default. On a headless machine without
-one, explicitly select `sprocket login --credential-store file`. This stores an
-unencrypted refresh token in the profile's private credential file. `sprocket
-logout` clears the shared local login. `run` never prompts for authentication.
-
-Each invocation creates an app-visible thread unless you pass `--thread`. The
-agent works in the current directory or `--directory`. Existing threads must
-belong to the same repository and have no active run. Concurrent invocations may
-edit the same directory. Supply separate worktrees when you need isolation.
-
-The command waits for completion. Progress goes to stderr and the final answer
-goes to stdout. Run and thread transcripts remain in the local Sprocket data
-directory and appear in the app. A follow-up reads the existing thread as agent
-context but only reports progress and the final answer for its new run.
-
-The CLI waits on local output notifications. The server reads committed
-completions from its local transcript cache and receives the confirmed terminal
-status in the existing run-finalization response. It does not poll Convex or
-open another Convex subscription to display CLI output. An idle local output
-request renews after 15 seconds without a backend request.
-
-If local transcript delivery fails, the result preserves any confirmed run
-status and final answer. It also includes the local output error and exits
-nonzero, since the transcript stream may be incomplete.
-
-`--model`, `--reasoning`, `--fast`, and `--no-fast` override model settings. New
-threads use the catalog defaults with fast mode off; existing threads inherit
-their settings. Unsupported choices fail without substitution.
-
-Ctrl+C, termination, SSH hangup, and `--timeout 10m` request cancellation. If the
-CLI disappears, its server requests cancellation after a 60-second heartbeat
-grace period. A cancellation request does not prove cancellation completed;
-unconfirmed outcomes report `unknown`. Exit zero means normal run completion,
-not that the agent accomplished the task. Failures return nonzero, a deadline
-returns 124, and Ctrl+C returns 130.
-
-The CLI reuses a local server or starts one without opening the app. Servers it
-starts shut down after their clients and active runs finish. An open local app
-also keeps its server alive. Independently started servers remain running.
-
-CLI runs omit `ask_question`, `await_question`, and `mandate_setup`. They do not
-add special instructions about interaction. Interactive questions and credentials
-for disposable CI runners are not supported yet.
+Inline prompts, `--prompt-file`, and stdin report only the current run. `--thread`
+uses its history as context without replaying it. Progress goes to stderr, the
+final answer to stdout, and full transcripts remain in the data directory and app.
 
 ### Workspaces
 
