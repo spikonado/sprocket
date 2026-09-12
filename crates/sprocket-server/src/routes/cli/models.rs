@@ -79,34 +79,48 @@ fn validate(catalog: &Catalog) -> anyhow::Result<()> {
 
 fn available_for_tier(catalog: Catalog, tier: &str) -> anyhow::Result<CliModelsResponse> {
     validate(&catalog)?;
-    let allowed = catalog
-        .tier_allowed_models
-        .get(tier)
-        .context("model catalog does not define this account tier")?;
+    let allowed = allowed_models(&catalog, tier)?;
+    let default_model_id = default_model_for_tier(&catalog, allowed)?.id.clone();
     let models: Vec<CliModel> = catalog
         .models
-        .into_iter()
+        .iter()
         .filter(|model| allowed.contains(&model.id))
         .map(|model| CliModel {
-            id: model.id,
-            label: model.label,
-            reasoning_efforts: model.reasoning_efforts,
-            default_reasoning_effort: model.default_reasoning_effort,
+            id: model.id.clone(),
+            label: model.label.clone(),
+            reasoning_efforts: model.reasoning_efforts.clone(),
+            default_reasoning_effort: model.default_reasoning_effort.clone(),
         })
         .collect();
-    let first = models
-        .first()
-        .context("no models are available for this account")?;
-    let default_model_id = models
-        .iter()
-        .find(|model| model.id == catalog.default_model_id)
-        .unwrap_or(first)
-        .id
-        .clone();
     Ok(CliModelsResponse {
         default_model_id,
         models,
     })
+}
+
+fn allowed_models<'a>(catalog: &'a Catalog, tier: &str) -> anyhow::Result<&'a [String]> {
+    catalog
+        .tier_allowed_models
+        .get(tier)
+        .map(Vec::as_slice)
+        .context("model catalog does not define this account tier")
+}
+
+fn default_model_for_tier<'a>(
+    catalog: &'a Catalog,
+    allowed: &[String],
+) -> anyhow::Result<&'a Model> {
+    catalog
+        .models
+        .iter()
+        .find(|model| model.id == catalog.default_model_id && allowed.contains(&model.id))
+        .or_else(|| {
+            catalog
+                .models
+                .iter()
+                .find(|model| allowed.contains(&model.id))
+        })
+        .context("no models are available for this account")
 }
 
 fn select(
@@ -115,26 +129,19 @@ fn select(
     request: &CliRunRequest,
 ) -> anyhow::Result<Settings> {
     validate(&catalog)?;
-    let model = request
-        .model
-        .clone()
-        .or_else(|| {
-            context
-                .thread
-                .as_ref()
-                .map(|thread| thread.selected_model.clone())
-        })
-        .unwrap_or(catalog.default_model_id);
-    let reasoning = request
-        .reasoning
-        .clone()
-        .or_else(|| {
-            context
-                .thread
-                .as_ref()
-                .map(|thread| thread.reasoning_effort.clone())
-        })
-        .unwrap_or(catalog.default_reasoning_effort);
+    let inherited_model = request.model.clone().or_else(|| {
+        context
+            .thread
+            .as_ref()
+            .map(|thread| thread.selected_model.clone())
+    });
+    let allowed = allowed_models(&catalog, &context.tier)?;
+    let uses_tier_fallback =
+        inherited_model.is_none() && !allowed.contains(&catalog.default_model_id);
+    let model = match inherited_model {
+        Some(model) => model,
+        None => default_model_for_tier(&catalog, allowed)?.id.clone(),
+    };
     let fast = request
         .fast
         .or_else(|| context.thread.as_ref().map(|thread| thread.fast_mode))
@@ -145,12 +152,25 @@ fn select(
         .find(|entry| entry.id == model)
         .with_context(|| format!("unknown model {model}"))?;
     anyhow::ensure!(
-        catalog
-            .tier_allowed_models
-            .get(&context.tier)
-            .is_some_and(|models| models.contains(&model)),
+        allowed.contains(&model),
         "model {model} is unavailable for this account"
     );
+    let reasoning = request
+        .reasoning
+        .clone()
+        .or_else(|| {
+            context
+                .thread
+                .as_ref()
+                .map(|thread| thread.reasoning_effort.clone())
+        })
+        .unwrap_or_else(|| {
+            if uses_tier_fallback {
+                entry.default_reasoning_effort.clone()
+            } else {
+                catalog.default_reasoning_effort.clone()
+            }
+        });
     anyhow::ensure!(
         entry.reasoning_efforts.contains(&reasoning),
         "reasoning level {reasoning} is unavailable for {model}"
@@ -216,7 +236,7 @@ mod tests {
     }
 
     #[test]
-    fn lists_only_models_available_to_the_account() {
+    fn tier_filtering_uses_the_same_default_for_listing_and_runs() {
         let response = available_for_tier(catalog(), "free").unwrap();
         assert_eq!(response.default_model_id, "default");
         assert_eq!(
@@ -230,6 +250,29 @@ mod tests {
         );
         let paid = available_for_tier(catalog(), "paid").unwrap();
         assert_eq!(paid.default_model_id, "paid");
+
+        let settings = select(
+            catalog(),
+            &RunContext {
+                user_id: "user".into(),
+                gateway_url: String::new(),
+                tier: "paid".into(),
+                thread: None,
+            },
+            &CliRunRequest {
+                client_id: "client".into(),
+                prompt: "task".into(),
+                directory: "/tmp".into(),
+                thread_id: None,
+                model: None,
+                reasoning: None,
+                fast: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(settings.model, "paid");
+        assert_eq!(settings.reasoning, "max");
+
         assert!(available_for_tier(catalog(), "unknown").is_err());
     }
 }
