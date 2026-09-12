@@ -17,7 +17,6 @@
 		"@convex-dev/aggregate": "^0.2.2",
 		"@convex-dev/migrations": "^0.3.6",
 		"@convex-dev/rate-limiter": "^0.3.2",
-		"@convex-dev/workflow": "^0.4.6",
 		"@convex-dev/workpool": "^0.4.10",
 		"@dodopayments/convex": "^0.2.15",
 		"@exalabs/convex-exa": "^0.1.1",

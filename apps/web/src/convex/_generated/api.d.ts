@@ -38,7 +38,6 @@ import type * as lib_claimedWebJob from "../lib/claimedWebJob.js";
 import type * as lib_contextHandoff from "../lib/contextHandoff.js";
 import type * as lib_docs from "../lib/docs.js";
 import type * as lib_executorJobs from "../lib/executorJobs.js";
-import type * as lib_fastMode from "../lib/fastMode.js";
 import type * as lib_firecrawlPools from "../lib/firecrawlPools.js";
 import type * as lib_gatewayFetch from "../lib/gatewayFetch.js";
 import type * as lib_gatewayProtocol from "../lib/gatewayProtocol.js";
@@ -128,7 +127,6 @@ declare const fullApi: ApiFromModules<{
   "lib/contextHandoff": typeof lib_contextHandoff;
   "lib/docs": typeof lib_docs;
   "lib/executorJobs": typeof lib_executorJobs;
-  "lib/fastMode": typeof lib_fastMode;
   "lib/firecrawlPools": typeof lib_firecrawlPools;
   "lib/gatewayFetch": typeof lib_gatewayFetch;
   "lib/gatewayProtocol": typeof lib_gatewayProtocol;
@@ -215,7 +213,6 @@ export declare const components: {
   dodopayments: import("@dodopayments/convex/_generated/component.js").ComponentApi<"dodopayments">;
   migrations: import("@convex-dev/migrations/_generated/component.js").ComponentApi<"migrations">;
   aggregate: import("@convex-dev/aggregate/_generated/component.js").ComponentApi<"aggregate">;
-  workflow: import("@convex-dev/workflow/_generated/component.js").ComponentApi<"workflow">;
   actionRetrier: import("@convex-dev/action-retrier/_generated/component.js").ComponentApi<"actionRetrier">;
   webToolWorkpool: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"webToolWorkpool">;
   firecrawlScrapeWorkpool: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"firecrawlScrapeWorkpool">;

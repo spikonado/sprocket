@@ -1,4 +1,3 @@
-import type { Doc } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
 import type { Infer } from 'convex/values';
 import { isRunFinalStatus, type vRunFinalStatus, type vRunStatus } from '@convex/lib/validators';
@@ -8,7 +7,11 @@ import { isClaimedRunStatus, isRunClaimLeaseActive } from '@convex/lib/runLease'
 import { resolveRequestedFinalizeStatus } from '@convex/lib/runCancellation';
 import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
 import { detachRunFromMachine } from '@convex/lib/machineRuns';
-import { getRunWithExecution, patchRunExecution } from '@convex/lib/runExecution';
+import {
+	getRunWithExecution,
+	patchRunExecution,
+	type ExecutionRun
+} from '@convex/lib/runExecution';
 import { cancelRunLifecycleCheck } from '@convex/lib/runLifecycleSchedule';
 
 type FinalizeRunArgs = {
@@ -23,7 +26,7 @@ type FinalizeExpectationArgs = {
 };
 
 export function matchesFinalizeExpectations(
-	run: Doc<'runs'>,
+	run: ExecutionRun,
 	args: FinalizeExpectationArgs
 ): boolean {
 	if (
@@ -44,7 +47,7 @@ export function matchesFinalizeExpectations(
 
 export async function finalizeRunRecord(
 	ctx: MutationCtx,
-	run: Doc<'runs'>,
+	run: ExecutionRun,
 	args: FinalizeRunArgs
 ): Promise<boolean> {
 	const alreadyFinal = isRunFinalStatus(run.status);

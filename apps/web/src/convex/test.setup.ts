@@ -5,7 +5,6 @@ import rateLimiterTest from '@convex-dev/rate-limiter/test';
 import exaTest from '@exalabs/convex-exa/test';
 import migrationsTest from '@convex-dev/migrations/test';
 import aggregateTest from '@convex-dev/aggregate/test';
-import workflowTest from '@convex-dev/workflow/test';
 import actionRetrierTest from '@convex-dev/action-retrier/test';
 import workpoolTest from '@convex-dev/workpool/test';
 import { convexTest, type TestConvex } from 'convex-test';
@@ -43,7 +42,6 @@ export function initConvexTest(): ConvexTestInstance {
 	exaTest.register(backend);
 	migrationsTest.register(backend);
 	aggregateTest.register(backend);
-	workflowTest.register(backend);
 	actionRetrierTest.register(backend);
 	workpoolTest.register(backend, 'webToolWorkpool');
 	workpoolTest.register(backend, 'firecrawlScrapeWorkpool');
@@ -103,19 +101,19 @@ export async function seedThreadRecord(
 			threadId,
 			userId
 		});
-		await ctx.db.insert('runs', {
+		const runId = await ctx.db.insert('runs', {
 			threadId,
 			userId,
 			submissionId,
 			status: 'completed',
 			executionSecretHash: 'fixture',
-			completionAttemptSeq: 0,
 			selectedModel: 'gpt-5.6-sol',
 			reasoningEffort: 'medium',
 			fastMode: false,
 			startedAt: Date.now(),
 			completedAt: Date.now()
 		});
+		await ctx.db.insert('runExecutionStates', { runId, completionAttemptSeq: 0 });
 		return threadId;
 	});
 }

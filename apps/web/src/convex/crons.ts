@@ -37,37 +37,9 @@ crons.interval(
 );
 
 crons.interval(
-	'backfill Fast mode',
-	{ hours: 1 },
-	internal.migrations.runFastModeBackfillAutomatically,
-	{}
-);
-
-crons.interval(
-	'backfill run execution state',
-	{ hours: 1 },
-	internal.migrations.runExecutionBackfillAutomatically,
-	{}
-);
-
-crons.interval(
 	'reconcile Firecrawl browser sessions',
 	{ minutes: 1 },
 	internal.firecrawlBrowser.reconcile
-);
-
-crons.interval(
-	'remove obsolete completion stream state',
-	{ hours: 1 },
-	internal.migrations.runCompletionStreamCleanupAutomatically,
-	{}
-);
-
-crons.interval(
-	'migrate run lifecycle scheduling',
-	{ hours: 1 },
-	internal.migrations.runNativeRunLifecycleMigrationAutomatically,
-	{}
 );
 
 export default crons;

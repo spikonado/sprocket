@@ -3,13 +3,13 @@ import type { MutationCtx } from '@convex/_generated/server';
 import { ownsActiveRunClaim } from '@convex/lib/runLease';
 import { recordToolTranscript } from '@convex/lib/transcriptWrites';
 import { isRunFinalStatus, type ExecutorJobResult } from '@convex/lib/validators';
-import { patchRunExecution } from '@convex/lib/runExecution';
+import { patchRunExecution, type ExecutionRun } from '@convex/lib/runExecution';
 
 export async function applyExecutorJobSuccess(
 	ctx: MutationCtx,
 	args: {
 		job: Doc<'executorJobs'>;
-		run: Doc<'runs'>;
+		run: ExecutionRun;
 		result: ExecutorJobResult;
 		claimId: string;
 	}
@@ -58,7 +58,7 @@ export async function applyExecutorJobFailure(
 	ctx: MutationCtx,
 	args: {
 		job: Doc<'executorJobs'>;
-		run: Doc<'runs'>;
+		run: ExecutionRun;
 		error: string;
 		claimId: string;
 	}

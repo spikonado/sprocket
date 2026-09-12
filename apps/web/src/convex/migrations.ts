@@ -3,41 +3,13 @@ import { components, internal } from '@convex/_generated/api';
 import { internalMutation } from '@convex/_generated/server';
 import schema from '@convex/schema';
 import { v } from 'convex/values';
-import { migrateRunExecution } from '@convex/lib/runExecution';
-import { startRunLifecycle } from '@convex/runLifecycle';
 
 export const AUTOMATIC_CLEANUP_DELAY_MS = 48 * 60 * 60 * 1_000;
 const PRODUCTION_ROLLOUT_CLEANUP = 'production-rollout-cleanup-2026-09';
-const FAST_MODE_BACKFILL = 'fast-mode-backfill-2026-09';
 
 export const migrations = new Migrations(components.migrations, {
 	schema,
 	internalMutation
-});
-
-const nativeRunLifecycleMigrations = [internal.migrations.migrateRunLifecycle];
-
-export const runNativeRunLifecycleMigration = migrations.runner(nativeRunLifecycleMigrations);
-
-export const runNativeRunLifecycleMigrationAutomatically = internalMutation({
-	args: {},
-	returns: v.null(),
-	handler: async (ctx) => {
-		const statuses = await migrations.getStatus(ctx, { migrations: nativeRunLifecycleMigrations });
-		if (!statuses.every((status) => status.isDone)) {
-			await migrations.runSerially(ctx, nativeRunLifecycleMigrations);
-		}
-		return null;
-	}
-});
-
-export const migrateRunLifecycle = migrations.define({
-	table: 'runs',
-	migrateOne: async (ctx, run) => {
-		await startRunLifecycle(ctx, run._id);
-		// The old workflow exits at its next getWatchState after the native check is durable.
-		if (run.lifecycleWorkflowId !== undefined) return { lifecycleWorkflowId: undefined };
-	}
 });
 
 const productionRolloutCleanupMigrations = [
@@ -55,114 +27,6 @@ const productionRolloutCleanupMigrations = [
 ];
 
 export const runProductionRolloutCleanup = migrations.runner(productionRolloutCleanupMigrations);
-
-const fastModeBackfillMigrations = [
-	internal.migrations.backfillThreadFastMode,
-	internal.migrations.backfillRunFastMode
-];
-
-export const runFastModeBackfill = migrations.runner(fastModeBackfillMigrations);
-
-const runExecutionBackfillMigrations = [
-	internal.migrations.backfillRunExecution,
-	internal.migrations.normalizeThreadRunningStatus
-];
-
-export const runExecutionBackfill = migrations.runner(runExecutionBackfillMigrations);
-
-const completionStreamCleanupMigrations = [
-	internal.migrations.removeRunCompletionStreamStateId,
-	internal.migrations.deleteCompletionStreamStates
-];
-
-export const runCompletionStreamCleanup = migrations.runner(completionStreamCleanupMigrations);
-
-export const runCompletionStreamCleanupAutomatically = internalMutation({
-	args: {},
-	returns: v.null(),
-	handler: async (ctx) => {
-		const statuses = await migrations.getStatus(ctx, {
-			migrations: completionStreamCleanupMigrations
-		});
-		if (!statuses.every((status) => status.isDone)) {
-			await migrations.runSerially(ctx, completionStreamCleanupMigrations);
-		}
-		return null;
-	}
-});
-
-export const removeRunCompletionStreamStateId = migrations.define({
-	table: 'runs',
-	migrateOne: (_ctx, run) => {
-		if (run.completionStreamStateId !== undefined) return { completionStreamStateId: undefined };
-	}
-});
-
-export const deleteCompletionStreamStates = migrations.define({
-	table: 'completionStreamStates',
-	migrateOne: async (ctx, state) => {
-		await ctx.db.delete('completionStreamStates', state._id);
-	}
-});
-
-export const runExecutionBackfillAutomatically = internalMutation({
-	args: {},
-	returns: v.null(),
-	handler: async (ctx) => {
-		const statuses = await migrations.getStatus(ctx, {
-			migrations: runExecutionBackfillMigrations
-		});
-		if (!statuses.every((status) => status.isDone)) {
-			await migrations.runSerially(ctx, runExecutionBackfillMigrations);
-		}
-		return null;
-	}
-});
-
-export const backfillRunExecution = migrations.define({
-	table: 'runs',
-	migrateOne: async (ctx, run) => {
-		await migrateRunExecution(ctx, run);
-		if (run.status === 'awaiting_executor') return { status: 'running' as const };
-	}
-});
-
-export const normalizeThreadRunningStatus = migrations.define({
-	table: 'threadRecords',
-	migrateOne: (_ctx, thread) => {
-		if (thread.status === 'awaiting_executor') return { status: 'running' as const };
-	}
-});
-
-export const runFastModeBackfillAutomatically = internalMutation({
-	args: {},
-	returns: v.null(),
-	handler: async (ctx) => {
-		const now = Date.now();
-		let schedule = await ctx.db
-			.query('migrationSchedules')
-			.withIndex('by_name', (query) => query.eq('name', FAST_MODE_BACKFILL))
-			.unique();
-		if (!schedule) {
-			const scheduleId = await ctx.db.insert('migrationSchedules', {
-				name: FAST_MODE_BACKFILL,
-				notBefore: now,
-				startedAt: now
-			});
-			schedule = await ctx.db.get('migrationSchedules', scheduleId);
-		}
-		if (!schedule || schedule.completedAt !== undefined) return null;
-
-		const statuses = await migrations.getStatus(ctx, { migrations: fastModeBackfillMigrations });
-		if (statuses.every((status) => status.isDone)) {
-			await ctx.db.patch('migrationSchedules', schedule._id, { completedAt: now });
-			return null;
-		}
-
-		await migrations.runSerially(ctx, fastModeBackfillMigrations);
-		return null;
-	}
-});
 
 export const runProductionRolloutCleanupAutomatically = internalMutation({
 	args: {},
@@ -209,28 +73,6 @@ export const backfillMissingThreadStatus = migrations.define({
 			.first();
 		const status = latestRun?.status ?? 'completed';
 		return { status: status === 'awaiting_executor' ? ('running' as const) : status };
-	}
-});
-
-export const backfillThreadFastMode = migrations.define({
-	table: 'threadRecords',
-	migrateOne: (_ctx, thread) => {
-		if (thread.fastMode !== undefined && thread.serviceTier === undefined) return;
-		return {
-			fastMode: thread.fastMode ?? thread.serviceTier === 'fast',
-			serviceTier: undefined
-		};
-	}
-});
-
-export const backfillRunFastMode = migrations.define({
-	table: 'runs',
-	migrateOne: (_ctx, run) => {
-		if (run.fastMode !== undefined && run.serviceTier === undefined) return;
-		return {
-			fastMode: run.fastMode ?? run.serviceTier === 'fast',
-			serviceTier: undefined
-		};
 	}
 });
 

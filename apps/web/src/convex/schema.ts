@@ -28,8 +28,6 @@ import {
 	vTranscriptToolBody
 } from '@convex/lib/validators';
 
-const vStoredServiceTier = v.union(v.literal('standard'), v.literal('fast'));
-
 export default defineSchema({
 	users: defineTable({
 		// WorkOS JWT subject; every owned table stores this value as `userId`.
@@ -104,8 +102,7 @@ export default defineSchema({
 		title: v.optional(v.string()),
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
-		fastMode: v.optional(v.boolean()),
-		serviceTier: v.optional(vStoredServiceTier),
+		fastMode: v.boolean(),
 		contextSummary: v.optional(v.string()),
 		// Legacy previous-run cutoff for released agents. Transcript reads use
 		// contextSummaryThroughPartNumber when that field is present.
@@ -150,14 +147,9 @@ export default defineSchema({
 		executionSecretHash: v.string(),
 		machineId: v.optional(v.string()),
 		continuationOfRunId: v.optional(v.id('runs')),
-		// Legacy copies until the runExecutionStates backfill completes.
-		claimId: v.optional(v.string()),
-		claimExpiresAt: v.optional(v.number()),
-		completionAttemptSeq: v.optional(v.number()),
 		selectedModel: v.string(),
 		reasoningEffort: vReasoningEffort,
-		fastMode: v.optional(v.boolean()),
-		serviceTier: v.optional(vStoredServiceTier),
+		fastMode: v.boolean(),
 		catalogVersion: v.optional(v.string()),
 		completionTransport: v.optional(v.union(v.literal('convex-action'), v.literal('gateway'))),
 		gatewayProtocolVersion: v.optional(v.number()),
@@ -169,11 +161,7 @@ export default defineSchema({
 		lastError: v.optional(v.string()),
 		cancellationRequestedAt: v.optional(v.number()),
 		cancellationDeadlineAt: v.optional(v.number()),
-		activeJobId: v.optional(v.id('executorJobs')),
-		promptMessageId: v.optional(v.string()),
-		// Removed by the completion stream state cleanup migration.
-		completionStreamStateId: v.optional(v.id('completionStreamStates')),
-		lifecycleWorkflowId: v.optional(v.string())
+		promptMessageId: v.optional(v.string())
 	})
 		.index('by_threadId_startedAt', ['threadId', 'startedAt'])
 		.index('by_executionSecretHash', ['executionSecretHash'])
@@ -216,13 +204,6 @@ export default defineSchema({
 		linkedParts: v.number(),
 		...workSectionFields
 	}).index('by_threadId_and_key', ['threadId', 'key']),
-	// Retained only until the completion stream state cleanup migration finishes.
-	completionStreamStates: defineTable({
-		runId: v.id('runs'),
-		userId: v.string(),
-		sequence: v.number(),
-		streamAttemptId: v.optional(v.string())
-	}),
 	imageUploads: defineTable({
 		userId: v.string(),
 		storageId: v.id('_storage'),

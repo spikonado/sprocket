@@ -35,7 +35,6 @@ import {
 } from '@convex/lib/agentErrors';
 import { unsupportedClient } from '@convex/lib/unsupportedClient';
 import { setRunAndThreadStatus } from '@convex/lib/threadRunStatus';
-import { fastModeForStoredRecord } from '@convex/lib/fastMode';
 import {
 	createQueuedRunRecord,
 	finalizeFailedQueuedStart,
@@ -270,7 +269,7 @@ function getContextResult(args: {
 			userId: args.run.userId,
 			selectedModel: args.run.selectedModel,
 			reasoningEffort: args.run.reasoningEffort,
-			fastMode: fastModeForStoredRecord(args.run),
+			fastMode: args.run.fastMode,
 			startedAt: args.run.startedAt,
 			continuationOfRunId: args.run.continuationOfRunId
 		},

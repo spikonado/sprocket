@@ -4,7 +4,9 @@ import type { MutationCtx } from '@convex/_generated/server';
 import { getRunExecutionState } from '@convex/lib/runExecution';
 import { isClaimedRunStatus, RUN_QUEUED_STARTUP_DEADLINE_MS } from '@convex/lib/runLease';
 
-export function runDeadline(run: Doc<'runs'>): number | null {
+export function runDeadline(
+	run: Pick<Doc<'runs'>, 'status' | 'startedAt'> & { claimExpiresAt?: number }
+): number | null {
 	if (run.status === 'queued') return run.startedAt + RUN_QUEUED_STARTUP_DEADLINE_MS;
 	if (isClaimedRunStatus(run.status)) return run.claimExpiresAt ?? 0;
 	return null;
