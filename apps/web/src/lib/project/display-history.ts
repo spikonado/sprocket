@@ -53,6 +53,7 @@ export class DisplayHistory {
 	private rows = new Map<number, ThreadMessage>();
 	private persistedStreams = new Set<string>();
 	private revision = 0;
+	private replicaId: string | undefined;
 	private changesCursor: TranscriptChangeCursor | undefined;
 
 	constructor(
@@ -88,6 +89,18 @@ export class DisplayHistory {
 					changesAfter: this.changesCursor
 				});
 				if (this.stopped) return;
+				if (this.replicaId !== page.replicaId) {
+					if (this.replicaId !== undefined) this.windowVersion += 1;
+					this.rows.clear();
+					this.messages = [];
+					this.persistedStreams.clear();
+					this.changesCursor = undefined;
+					this.nextBefore = undefined;
+					this.revision = 0;
+					this.replicaId = page.replicaId;
+					this.loading = true;
+					this.changed();
+				}
 				if (page.indexing) {
 					this.retry = setTimeout(() => void this.refresh(), 500);
 					break;
@@ -145,6 +158,10 @@ export class DisplayHistory {
 		try {
 			const page = await this.fetchPage({ before, limit: 40 });
 			if (this.stopped || version !== this.windowVersion) return;
+			if (this.replicaId !== page.replicaId) {
+				void this.refresh();
+				return;
+			}
 			if (page.indexing) {
 				this.olderPending = true;
 				void this.refresh();
@@ -168,9 +185,14 @@ export class DisplayHistory {
 
 	private commit(page: TranscriptDisplayPage) {
 		const previous = new Map(this.messages.map((message) => [message._id, message]));
+		const firstLoaded = this.rows.size ? this.messages[0]?.displayRow?.sequence : undefined;
 		for (const change of page.changes) {
 			const existing = previous.get(change.id);
-			if (!existing?.displayRow) continue;
+			if (!existing?.displayRow) {
+				if (change.row && firstLoaded !== undefined && change.row.sequence >= firstLoaded)
+					this.rows.set(change.row.sequence, messageForRow(change.row));
+				continue;
+			}
 			if (!change.row) this.rows.delete(existing.displayRow.sequence);
 			else if (change.row.revision > existing.displayRow.revision)
 				this.rows.set(change.row.sequence, messageForRow(change.row));

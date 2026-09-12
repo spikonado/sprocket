@@ -189,6 +189,7 @@ export type TranscriptScopeRequest = {
 
 export type TranscriptDisplayRow = Infer<typeof displayRowValidator>;
 export type TranscriptDisplayPage = {
+	replicaId: string;
 	rows: TranscriptDisplayRow[];
 	indexing: boolean;
 	stale: boolean;

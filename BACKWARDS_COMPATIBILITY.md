@@ -1,14 +1,14 @@
 # Backwards compatibility
 
-## Display-oriented transcript history
+## Stored transcript work metadata
 
-New UIs use `/api/transcript/display` and `/api/transcript/display-details`. The cloud stores display rows and section-item references separately from the numbered transcript used for agent replay. Closed work sections contain no reasoning bodies or tool payloads. Detail pages contain at most five items.
+Existing conversations keep their numbered transcript bodies for replay. Opening a thread starts the shared Rust work-section processor when its metadata is missing. It writes section summaries to `threadTranscriptWorkSections` and item-range membership to `threadTranscriptParts.work`. `threadTranscriptStates.workThrough` records the part-and-item checkpoint. Retries resume there without duplicating section rows. There is no TypeScript backfill or scheduled grouping function.
 
-The UI and local server always run matching versions. The old `/api/transcript/parts` and `/api/transcript/part-details` UI endpoints are removed. The raw transcript schema, local `parts` cache, and Convex transcript APIs remain for agent replay.
+Keep the missing-metadata read path until every retained transcript has complete membership and its checkpoint covers all parts. The Rust processor also handles new transcript parts, so it remains after the historical migration finishes.
 
-`backfillTranscriptDisplay` schedules bounded, resumable indexing for existing transcripts. The hourly migration starts it automatically, and opening an unindexed thread starts its own backfill. New appends schedule the same indexer. Indexing has a durable part-and-item cursor, and retries do not duplicate rows. The UI waits for indexing rather than presenting partial work durations. Keep the backfill until every retained transcript has a display index.
+The local replica imports existing JSONL transcript bodies instead of downloading them again. SQLite stores mutable section and membership metadata, grouping checkpoints, and local paging indexes. Raw bodies remain append-only. Opening a thread downloads missing transcript bodies newest first, including reasoning and tool outputs. Attachment file bytes are separate. Display and detail requests read local storage only.
 
-The local server caches successful display and detail pages under `display-v1` for offline reads. These derived pages can be deleted and rebuilt. Clearing a transcript replica also removes its display cache. Deploy the additive Convex schema and functions before releasing the new server and UI.
+Each membership stores one deterministic section key. Convex maintains a standalone-part reference count on each section to reject deletion while references remain. This needs no new index on historical transcript parts. Membership sync uses a durable local queue with at most four active eight-part queries. Checkpoint changes enqueue newly processed parts. Removing a provisional section also enqueues its old references, so delayed canonical calls repair previously downloaded memberships after reconnecting.
 
 We ship breaking changes ahead of our users' installed clients and keep the old behavior working until those clients age out. That debt is easy to accumulate and easier to forget. This file lists every backwards-compatibility layer we currently ship, what it protects, how to remove it, and the signal that says removal is safe. When a removal PR merges, remove its entry from this document.
 

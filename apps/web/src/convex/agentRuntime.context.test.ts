@@ -50,6 +50,7 @@ async function finalizeTextCompletion(
 		executionSecret: args.executionSecret
 	});
 	return await asUser.mutation(api.agentRuntime.finalizeCompletionCall, {
+		transcriptProtocol: 2,
 		runId: args.runId,
 		claimId: args.claimId,
 		attemptSeq: args.attemptSeq,

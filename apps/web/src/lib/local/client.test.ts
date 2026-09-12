@@ -113,6 +113,7 @@ describe('display transcript pages', () => {
 				{ id: 'row-1', row: null }
 			],
 			changesCursor: { revision: 500, sequence: -1 },
+			replicaId: 'replica',
 			moreChanges: false
 		};
 		const fetch = vi.fn(async () => Response.json(response));
@@ -143,6 +144,7 @@ describe('display transcript pages', () => {
 				persistedStreams: [],
 				changes: [],
 				changesCursor: { revision: 1, sequence: -1 },
+				replicaId: 'replica',
 				moreChanges: false,
 				rows: [
 					{
@@ -203,8 +205,7 @@ describe('display transcript pages', () => {
 		const request = {
 			userId: 'user-1',
 			threadId: threadRecordId('thread-1'),
-			// SAFETY: the fixture ID is only serialized for the mocked local API.
-			rowId: 'row-1' as Id<'threadTranscriptDisplayRows'>,
+			rowId: 'row-1',
 			after: 5,
 			limit: 5
 		};

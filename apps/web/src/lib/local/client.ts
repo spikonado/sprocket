@@ -105,7 +105,6 @@ const displayRowSchema = z
 	})
 	.transform((row) => ({
 		...row,
-		id: asConvexId<'threadTranscriptDisplayRows'>(row.id),
 		threadId: asConvexId<'threadRecords'>(row.threadId),
 		runId: asConvexId<'runs'>(row.runId),
 		attachments: row.attachments?.map((attachment) => ({
@@ -115,6 +114,7 @@ const displayRowSchema = z
 	}));
 
 const displayPageSchema = z.object({
+	replicaId: z.string(),
 	rows: z.array(displayRowSchema),
 	indexing: z.boolean(),
 	stale: z.boolean(),
@@ -126,7 +126,7 @@ const displayPageSchema = z.object({
 	),
 	changes: z.array(
 		z.object({
-			id: z.string().transform((id) => asConvexId<'threadTranscriptDisplayRows'>(id)),
+			id: z.string(),
 			row: displayRowSchema.nullable()
 		})
 	),
@@ -636,7 +636,7 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				body: JSON.stringify(requestBody),
 				signal
 			});
-			// SAFETY: the authenticated display API validates parts with vAssistantMessagePart.
+			// SAFETY: Rust projects stored vAssistantMessagePart variants without provider metadata.
 			return { ...page, parts: page.parts as AssistantPart[] };
 		},
 		watchTranscript: async (requestBody, handlers) => {

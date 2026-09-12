@@ -27,6 +27,7 @@ function row(sequence: number, revision = sequence): TranscriptDisplayRow {
 
 function page(rows: TranscriptDisplayRow[], nextBefore?: number): TranscriptDisplayPage {
 	return {
+		replicaId: 'replica',
 		rows,
 		nextBefore,
 		indexing: false,
@@ -41,6 +42,36 @@ function page(rows: TranscriptDisplayRow[], nextBefore?: number): TranscriptDisp
 }
 
 describe('DisplayHistory', () => {
+	it('accepts a rebuilt local replica whose counter starts below the previous copy', async () => {
+		const fetch = vi
+			.fn()
+			.mockResolvedValueOnce(page([row(50)], 50))
+			.mockResolvedValueOnce({ ...page([row(1, 1)]), replicaId: 'rebuilt', revision: 1 });
+		const history = new DisplayHistory(fetch, () => {});
+		await history.refresh();
+		await history.refresh();
+		expect(history.messages.map((message) => message.displayRow?.sequence)).toEqual([1]);
+		expect(history.windowVersion).toBe(1);
+		history.stop();
+	});
+
+	it('inserts background-downloaded text into an already loaded older window', async () => {
+		const added = { ...row(25, 101), kind: 'text' as const, text: 'Downloaded later' };
+		const fetch = vi
+			.fn()
+			.mockResolvedValueOnce(page([row(10), row(50)], 10))
+			.mockResolvedValueOnce({
+				...page([row(50)], 50),
+				revision: 101,
+				changes: [{ id: added.id, row: added }]
+			});
+		const history = new DisplayHistory(fetch, () => {});
+		await history.refresh();
+		await history.refresh();
+		expect(history.messages.map((message) => message.displayRow?.sequence)).toEqual([10, 25, 50]);
+		history.stop();
+	});
+
 	it('retains a live completion until the display index acknowledges its stream', async () => {
 		const live: LiveCompletionOverlay = {
 			threadId: row(0).threadId,

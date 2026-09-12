@@ -28,6 +28,6 @@ export const displayRowFields = {
 };
 
 export const displayRowValidator = v.object({
-	id: v.id('threadTranscriptDisplayRows'),
+	id: v.string(),
 	...displayRowFields
 });

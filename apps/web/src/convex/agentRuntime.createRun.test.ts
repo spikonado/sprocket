@@ -546,6 +546,7 @@ describe('agentRuntime.createGatewayRun attachment identity', () => {
 
 		const created = await asUser.action(api.agentRuntime.createGatewayRun, {
 			submissionId: 'storage-ids-run',
+			transcriptProtocol: 2,
 			threadId,
 			prompt: 'Hello',
 			storageIds: [storageId],
@@ -601,6 +602,7 @@ describe('agentRuntime.createGatewayRun attachment identity', () => {
 
 		const created = await asUser.action(api.agentRuntime.createGatewayRun, {
 			submissionId: 'legacy-ids-run',
+			transcriptProtocol: 2,
 			threadId,
 			prompt: 'Hello',
 			storageIds: [file.storageId],
@@ -623,6 +625,7 @@ describe('agentRuntime.createGatewayRun attachment identity', () => {
 			});
 		});
 		const retried = await asUser.action(api.agentRuntime.createGatewayRun, {
+			transcriptProtocol: 2,
 			submissionId: 'legacy-ids-run',
 			threadId,
 			prompt: 'Hello',

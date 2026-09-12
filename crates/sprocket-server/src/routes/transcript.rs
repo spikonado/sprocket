@@ -128,25 +128,7 @@ async fn display_handler(
     {
         return Err(ApiError::bad_request(anyhow!("invalid display page limit")));
     }
-    let mut args = std::collections::BTreeMap::new();
-    args.insert("threadId".to_string(), payload.thread_id.clone().into());
-    args.insert("limit".to_string(), convex::Value::Float64(limit as f64));
-    args.insert(
-        "streams".to_string(),
-        convex::Value::Array(
-            payload
-                .streams
-                .into_iter()
-                .map(|stream| {
-                    convex::Value::Object(std::collections::BTreeMap::from([
-                        ("runId".to_string(), stream.run_id.into()),
-                        ("streamId".to_string(), stream.stream_id.into()),
-                    ]))
-                })
-                .collect(),
-        ),
-    );
-    if let Some(cursor) = payload.changes_after {
+    if let Some(cursor) = &payload.changes_after {
         if cursor.revision > 9_007_199_254_740_991
             || !(-1..=9_007_199_254_740_991).contains(&cursor.sequence)
         {
@@ -154,34 +136,27 @@ async fn display_handler(
                 "invalid display change cursor"
             )));
         }
-        args.insert(
-            "changesAfter".to_string(),
-            convex::Value::Object(std::collections::BTreeMap::from([
-                (
-                    "revision".to_string(),
-                    convex::Value::Float64(cursor.revision as f64),
-                ),
-                (
-                    "sequence".to_string(),
-                    convex::Value::Float64(cursor.sequence as f64),
-                ),
-            ])),
-        );
     }
-    if let Some(before) = payload.before {
-        args.insert("before".to_string(), convex::Value::Float64(before as f64));
-    }
-    let key = format!("page-{:?}-{limit}", payload.before);
-    display_query(
-        &state,
-        &payload.user_id,
-        &payload.thread_id,
-        "transcriptDisplay:page",
-        args,
-        &key,
-    )
-    .await
-    .map(Json)
+    let changes = payload.changes_after.map(|c| (c.revision, c.sequence));
+    let streams = payload
+        .streams
+        .into_iter()
+        .map(|s| (s.run_id, s.stream_id))
+        .collect::<Vec<_>>();
+    let stale = state
+        .transcript
+        .load_state(&payload.user_id, &payload.thread_id)
+        .await
+        .map_err(ApiError::internal)?
+        .stale;
+    state
+        .transcript
+        .with_work_replica(&payload.user_id, &payload.thread_id, move |replica| {
+            replica.page(payload.before, limit, changes, &streams, stale)
+        })
+        .await
+        .map(Json)
+        .map_err(ApiError::internal)
 }
 
 async fn display_details_handler(
@@ -204,182 +179,27 @@ async fn display_details_handler(
             "invalid display detail page"
         )));
     }
-    let mut args = std::collections::BTreeMap::new();
-    args.insert("threadId".to_string(), payload.thread_id.clone().into());
-    args.insert("rowId".to_string(), payload.row_id.clone().into());
-    args.insert("limit".to_string(), convex::Value::Float64(limit as f64));
-    if let Some(after) = payload.after {
-        args.insert("after".to_string(), convex::Value::Float64(after as f64));
-    }
-    if let Some(before) = payload.before {
-        args.insert("before".to_string(), convex::Value::Float64(before as f64));
-    }
-    if let Some(latest) = payload.latest {
-        args.insert("latest".to_string(), convex::Value::Boolean(latest));
-    }
-    let key = format!(
-        "details-{}-{:?}-{:?}-{}-{limit}",
-        payload.row_id,
-        payload.after,
-        payload.before,
-        payload.latest.unwrap_or(false)
-    );
-    display_query(
-        &state,
-        &payload.user_id,
-        &payload.thread_id,
-        "transcriptDisplay:details",
-        args,
-        &key,
-    )
-    .await
-    .map(Json)
-}
-
-async fn display_query(
-    state: &AppState,
-    user_id: &str,
-    thread_id: &str,
-    function: &str,
-    args: std::collections::BTreeMap<String, convex::Value>,
-    key: &str,
-) -> Result<serde_json::Value, ApiError> {
-    let changes_after = match args.get("changesAfter") {
-        Some(convex::Value::Object(cursor)) => {
-            match (cursor.get("revision"), cursor.get("sequence")) {
-                (
-                    Some(convex::Value::Float64(revision)),
-                    Some(convex::Value::Float64(sequence)),
-                ) => Some((*revision, *sequence)),
-                _ => None,
-            }
-        }
-        _ => None,
-    };
-    let cached = state
+    let stale = state
         .transcript
-        .display_cache(user_id, thread_id, key)
+        .load_state(&payload.user_id, &payload.thread_id)
         .await
-        .ok()
-        .flatten()
-        .filter(serde_json::Value::is_object);
-    if let Some(value) = cached.as_ref() {
-        if let Ok(local) = state.transcript.load_state(user_id, thread_id).await {
-            let no_streams = args
-                .get("streams")
-                .and_then(|value| match value {
-                    convex::Value::Array(streams) => Some(streams.is_empty()),
-                    _ => None,
-                })
-                .unwrap_or(true);
-            let age = value
-                .get("cachedAt")
-                .and_then(serde_json::Value::as_u64)
-                .map(|saved| unix_seconds().saturating_sub(saved));
-            let current_page = !local.stale
-                && age.is_some_and(|age| age < 2)
-                && function == "transcriptDisplay:page"
-                && no_streams
-                && value
-                    .get("revision")
-                    .and_then(serde_json::Value::as_f64)
-                    .is_some_and(|revision| {
-                        revision >= f64::from(local.remote_total_parts)
-                            && changes_after.is_none_or(|(after, sequence)| {
-                                after == revision && sequence == -1.0
-                            })
-                    });
-            if current_page {
-                let mut value = value.clone();
-                value["stale"] = local.stale.into();
-                if function == "transcriptDisplay:page" {
-                    keep_cached_change_cursor(&mut value, changes_after);
-                }
-                return Ok(value);
-            }
-        }
-    }
-    let remote = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        let client = UserConvexClient::connect_with_fetcher(
-            &state.convex_deployment_url,
-            state
-                .native_auth
-                .auth_token_fetcher_for_user(user_id.to_string()),
-        )
-        .await?;
-        let value = client.query::<serde_json::Value>(function, args).await?;
-        if function == "transcriptDisplay:page"
-            && value.get("indexing").and_then(serde_json::Value::as_bool) == Some(true)
-        {
-            client
-                .mutate::<serde_json::Value>(
-                    "transcriptDisplay:prepare",
-                    std::collections::BTreeMap::from([(
-                        "threadId".to_string(),
-                        thread_id.to_string().into(),
-                    )]),
-                )
-                .await?;
-        }
-        Ok::<_, anyhow::Error>(value)
-    })
-    .await;
-    match remote {
-        Ok(Ok(mut value)) => {
-            if !value.is_object() {
-                return Err(ApiError::internal(anyhow!(
-                    "invalid display history response"
-                )));
-            }
-            value["stale"] = false.into();
-            value["cachedAt"] = unix_seconds().into();
-            if value.get("indexing").and_then(serde_json::Value::as_bool) != Some(true) {
-                if let Err(error) = state
-                    .transcript
-                    .save_display_cache(user_id, thread_id, key, &value)
-                    .await
-                {
-                    tracing::warn!("failed to cache display history: {error:#}");
-                }
-            }
-            Ok(value)
-        }
-        error => {
-            if let Some(mut cached) = cached {
-                cached["stale"] = true.into();
-                if function == "transcriptDisplay:page" {
-                    keep_cached_change_cursor(&mut cached, changes_after);
-                }
-                return Ok(cached);
-            }
-            Err(ApiError::internal_with(
-                "failed to load display history",
-                anyhow!("{error:?}"),
-            ))
-        }
-    }
-}
-
-fn keep_cached_change_cursor(value: &mut serde_json::Value, after: Option<(f64, f64)>) {
-    let (revision, sequence) = after.unwrap_or_else(|| {
-        (
-            value
-                .get("revision")
-                .and_then(serde_json::Value::as_f64)
-                .unwrap_or(0.0),
-            -1.0,
-        )
-    });
-    value["changes"] = serde_json::json!([]);
-    value["changesCursor"] = serde_json::json!({ "revision": revision, "sequence": sequence });
-    value["moreChanges"] = false.into();
-}
-
-fn unix_seconds() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
+        .map_err(ApiError::internal)?
+        .stale;
+    state
+        .transcript
+        .with_work_replica(&payload.user_id, &payload.thread_id, move |replica| {
+            replica.details(
+                &payload.row_id,
+                payload.after,
+                payload.before,
+                payload.latest.unwrap_or(false),
+                limit,
+                stale,
+            )
+        })
+        .await
+        .map(Json)
+        .map_err(ApiError::internal)
 }
 
 async fn require_user(state: &AppState, user_id: &str) -> Result<(), ApiError> {
@@ -587,17 +407,6 @@ async fn attachment_response(
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn cached_pages_do_not_acknowledge_unseen_changes() {
-        let mut page = serde_json::json!({ "revision": 40, "changes": [{ "id": "new" }], "changesCursor": { "revision": 40, "sequence": -1 }, "moreChanges": true });
-        super::keep_cached_change_cursor(&mut page, Some((20.0, 64.0)));
-        assert_eq!(page["changes"], serde_json::json!([]));
-        assert_eq!(
-            page["changesCursor"],
-            serde_json::json!({ "revision": 20.0, "sequence": 64.0 })
-        );
-        assert_eq!(page["moreChanges"], false);
-    }
     use super::*;
     use serde::de::DeserializeOwned;
 

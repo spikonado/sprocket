@@ -14,6 +14,7 @@ mod thread_cache;
 mod thread_sync;
 mod transcript_client;
 mod transcript_watch;
+mod work_sync;
 
 pub use config::{DEFAULT_DEV_WEB_URL, DEFAULT_PORT, SESSION_COOKIE_NAME, ServerConfig};
 use static_dir::is_valid_static_dir;

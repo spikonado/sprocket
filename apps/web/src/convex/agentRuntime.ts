@@ -126,6 +126,7 @@ export const insertGatewayRun = internalMutation({
 
 export const createGatewayRun = action({
 	args: {
+		transcriptProtocol: v.optional(v.literal(2)),
 		submissionId: v.string(),
 		threadId: v.optional(v.id('threadRecords')),
 		repositoryKey: v.optional(v.string()),
@@ -141,6 +142,7 @@ export const createGatewayRun = action({
 	},
 	returns: vCreateGatewayRunResult,
 	handler: async (ctx, args): Promise<Infer<typeof vCreateGatewayRunResult>> => {
+		if (args.transcriptProtocol !== 2) unsupportedClient();
 		const userId = await getUserId(ctx);
 		const imageUploadIds = await ctx.runQuery(internal.imageUploads.ownedIdsForStorageIds, {
 			userId,
@@ -453,6 +455,7 @@ export const registerCompletionAttempt = mutation({
 
 export const finalizeCompletionCall = mutation({
 	args: {
+		transcriptProtocol: v.optional(v.literal(2)),
 		runId: v.id('runs'),
 		claimId: v.string(),
 		attemptSeq: v.number(),
@@ -462,6 +465,7 @@ export const finalizeCompletionCall = mutation({
 	},
 	returns: v.union(v.number(), v.null()),
 	handler: async (ctx, args) => {
+		if (args.transcriptProtocol !== 2) unsupportedClient();
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
 		assertRunAcceptsModelCompletion(run);
 		if (!isRunClaimLeaseActive(run, Date.now())) {

@@ -4,13 +4,6 @@ import { internal } from '@convex/_generated/api';
 const crons = cronJobs();
 
 crons.interval(
-	'backfill transcript display history',
-	{ hours: 1 },
-	internal.migrations.runTranscriptDisplayBackfillAutomatically,
-	{}
-);
-
-crons.interval(
 	'clean up abandoned image uploads',
 	{ hours: 1 },
 	internal.imageUploads.cleanupOrphans
