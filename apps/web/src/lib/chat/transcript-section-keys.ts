@@ -1,4 +1,14 @@
-import { assistantTimelinePartKey, type AssistantTimelineSection } from './assistant-timeline';
+import {
+	assistantTimelinePartKey,
+	type AssistantTimelineSection,
+	type AssistantTimelineWorkBlock
+} from './assistant-timeline';
+
+function blockMembers(block: AssistantTimelineWorkBlock) {
+	return block.type === 'reasoning'
+		? [assistantTimelinePartKey(block)]
+		: block.tools.map((tool) => `tool:${tool.callId}`);
+}
 
 export class TranscriptSectionKeys {
 	private messages = new Map<string, Map<string, string>>();
@@ -12,18 +22,30 @@ export class TranscriptSectionKeys {
 	}
 
 	reconcile(messageId: string, sections: AssistantTimelineSection[]) {
+		const keys = this.reconcileMembers(
+			messageId,
+			sections.map((section) =>
+				section.type === 'text'
+					? [assistantTimelinePartKey(section)]
+					: section.blocks.flatMap(blockMembers)
+			)
+		);
+		return sections.map((section, index) => ({
+			...section,
+			renderKey: section.type === 'text' ? assistantTimelinePartKey(section) : keys[index]
+		}));
+	}
+
+	reconcileBlocks(messageId: string, blocks: AssistantTimelineWorkBlock[]) {
+		const keys = this.reconcileMembers(messageId, blocks.map(blockMembers));
+		return blocks.map((block, index) => ({ block, renderKey: keys[index] }));
+	}
+
+	private reconcileMembers(messageId: string, groups: string[][]) {
 		const previous = this.messages.get(messageId);
 		const next = new Map<string, string>();
 		const claimed = new Set<string>();
-		const keyed = sections.map((section) => {
-			if (section.type === 'text') {
-				return { ...section, renderKey: assistantTimelinePartKey(section) };
-			}
-			const members = section.blocks.flatMap((block) =>
-				block.type === 'reasoning'
-					? [assistantTimelinePartKey(block)]
-					: block.tools.map((tool) => `tool:${tool.callId}`)
-			);
+		const keyed = groups.map((members) => {
 			// Parts can arrive at either end; a split must not reuse one key for both sections.
 			const existing = members
 				.map((member) => previous?.get(member))
@@ -31,7 +53,7 @@ export class TranscriptSectionKeys {
 			const renderKey = existing ?? `work:${this.nextId++}`;
 			claimed.add(renderKey);
 			for (const member of members) next.set(member, renderKey);
-			return { ...section, renderKey };
+			return renderKey;
 		});
 		this.messages.set(messageId, next);
 		return keyed;

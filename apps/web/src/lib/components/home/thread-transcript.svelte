@@ -239,7 +239,9 @@
 	}
 
 	function firstVisibleAnchor(viewport: HTMLDivElement) {
-		const elements = viewport.querySelectorAll<HTMLElement>('[data-transcript-anchor]');
+		const elements = [
+			...viewport.querySelectorAll<HTMLElement>('[data-transcript-anchor], [data-work-detail]')
+		].filter((element) => !element.querySelector('[data-work-detail]'));
 		const top = viewport.getBoundingClientRect().top;
 		let low = 0;
 		let high = elements.length;
@@ -249,6 +251,21 @@
 			else high = mid;
 		}
 		return elements[low];
+	}
+
+	function beforeDetailChange(follow: boolean) {
+		if (!follow) stickToBottom = false;
+		const viewport = scrollViewport;
+		const anchor = viewport && !stickToBottom ? firstVisibleAnchor(viewport) : undefined;
+		const offset = anchor?.getBoundingClientRect().top;
+		const top = viewport?.scrollTop;
+		return () => {
+			if (!viewport || viewport !== scrollViewport) return;
+			if (stickToBottom) scrollToBottom();
+			else if (anchor?.isConnected && offset !== undefined && viewport.scrollTop === top) {
+				setScrollTop(viewport, viewport.scrollTop + anchor.getBoundingClientRect().top - offset);
+			}
+		};
 	}
 
 	$effect.pre(() => {
@@ -440,7 +457,13 @@
 									completedAtMs={row.completedAt}
 								>
 									{#if loadSectionDetails}
-										<WorkSectionDetails {row} load={loadSectionDetails} {inProgress} />
+										<WorkSectionDetails
+											{row}
+											load={loadSectionDetails}
+											{inProgress}
+											viewport={scrollViewport}
+											beforeChange={beforeDetailChange}
+										/>
 									{/if}
 								</WorkDisclosure>
 							</div>
