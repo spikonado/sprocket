@@ -1,18 +1,18 @@
 # Backwards compatibility
 
-## Stored transcript work metadata
-
-Existing conversations keep their numbered transcript bodies for replay. Opening a thread starts the shared Rust work-section processor when its metadata is missing. It writes section summaries to `threadTranscriptWorkSections` and item-range membership to `threadTranscriptParts.work`. `threadTranscriptStates.workThrough` records the part-and-item checkpoint. Retries resume there without duplicating section rows. There is no TypeScript backfill or scheduled grouping function.
-
-Keep the missing-metadata read path until every retained transcript has complete membership and its checkpoint covers all parts. The Rust processor also handles new transcript parts, so it remains after the historical migration finishes.
-
-The local replica imports existing JSONL transcript bodies instead of downloading them again. SQLite stores mutable section and membership metadata, grouping checkpoints, and local paging indexes. Raw bodies remain append-only. Opening a thread downloads missing transcript bodies newest first, including reasoning and tool outputs. Attachment file bytes are separate. Display and detail requests read local storage only.
-
-Each membership stores one deterministic section key. Convex maintains a standalone-part reference count on each section to reject deletion while references remain. This needs no new index on historical transcript parts. Membership sync uses a durable local queue with at most four active eight-part queries. Checkpoint changes enqueue newly processed parts. Removing a provisional section also enqueues its old references, so delayed canonical calls repair previously downloaded memberships after reconnecting.
-
 We ship breaking changes ahead of our users' installed clients and keep the old behavior working until those clients age out. That debt is easy to accumulate and easier to forget. This file lists every backwards-compatibility layer we currently ship, what it protects, how to remove it, and the signal that says removal is safe. When a removal PR merges, remove its entry from this document.
 
 Current as of 2026-09-11.
+
+## Stored transcript work metadata
+
+Historical transcripts may lack `threadTranscriptParts.work` and
+`threadTranscriptStates.workThrough`. Opening a thread fills missing work metadata
+with the Rust processor without changing its raw transcript bodies.
+
+Keep support for missing metadata until every retained transcript has complete
+membership and its checkpoint covers all parts. Remove only that fallback after
+the gate passes; the processor remains responsible for new transcript parts.
 
 ## Native run lifecycle scheduling
 
