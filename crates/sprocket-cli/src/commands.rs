@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Context;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser};
 use sprocket_server::ServerConfig;
 use sprocket_server::cli_protocol::*;
 
@@ -16,7 +16,7 @@ use output::Output;
 #[derive(Debug, Args)]
 #[command(arg_required_else_help = true)]
 pub(crate) struct RunArgs {
-    /// Task to send to the agent. Use -- before a task named "models"
+    /// Task to send to the agent
     #[arg(conflicts_with = "prompt_file")]
     pub(crate) prompt: Option<String>,
     /// Read the prompt from a UTF-8 file, or - for stdin
@@ -39,14 +39,22 @@ pub(crate) struct RunArgs {
     /// Cancel after a duration such as 30s, 10m, or 2h
     #[arg(long, value_parser = parse_duration)]
     timeout: Option<Duration>,
-    #[command(subcommand)]
-    pub(crate) command: Option<RunCommand>,
-}
-
-#[derive(Debug, Subcommand)]
-pub(crate) enum RunCommand {
     /// List models available to this account and their reasoning efforts
-    Models,
+    #[arg(
+        long,
+        conflicts_with_all = [
+            "prompt",
+            "prompt_file",
+            "directory",
+            "thread",
+            "model",
+            "reasoning",
+            "fast",
+            "no_fast",
+            "timeout"
+        ]
+    )]
+    pub(crate) list_models: bool,
 }
 
 #[derive(Debug, Args)]
@@ -113,19 +121,7 @@ fn runtime() -> anyhow::Result<tokio::runtime::Runtime> {
 }
 
 pub(crate) fn run(args: RunArgs) -> anyhow::Result<u8> {
-    if matches!(args.command, Some(RunCommand::Models)) {
-        anyhow::ensure!(
-            args.prompt.is_none()
-                && args.prompt_file.is_none()
-                && args.directory.is_none()
-                && args.thread.is_none()
-                && args.model.is_none()
-                && args.reasoning.is_none()
-                && !args.fast
-                && !args.no_fast
-                && args.timeout.is_none(),
-            "`sprocket run models` does not accept agent run options"
-        );
+    if args.list_models {
         return list_models();
     }
     let mut output = Output::new();
@@ -426,28 +422,6 @@ mod tests {
         assert_eq!(
             models_text(&response),
             "model-a - Model A (default)\n  Reasoning: low, high (default)\nmodel-b - Model B\n  Reasoning: max (default)\n"
-        );
-    }
-
-    #[test]
-    fn models_rejects_agent_run_options() {
-        let args = RunArgs {
-            prompt: None,
-            prompt_file: None,
-            directory: None,
-            thread: Some("thread".into()),
-            model: None,
-            reasoning: None,
-            fast: false,
-            no_fast: false,
-            timeout: None,
-            command: Some(RunCommand::Models),
-        };
-        assert!(
-            run(args)
-                .unwrap_err()
-                .to_string()
-                .contains("does not accept")
         );
     }
 }
