@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Context;
-use clap::{Args, Parser};
+use clap::{Args, Parser, Subcommand};
 use sprocket_server::ServerConfig;
 use sprocket_server::cli_protocol::*;
 
@@ -14,12 +14,10 @@ use connection::Connection;
 use output::Output;
 
 #[derive(Debug, Args)]
+#[command(arg_required_else_help = true)]
 pub(crate) struct RunArgs {
     /// Task to send to the agent
-    #[arg(
-        required_unless_present = "prompt_file",
-        conflicts_with = "prompt_file"
-    )]
+    #[arg(conflicts_with = "prompt_file")]
     prompt: Option<String>,
     /// Read the prompt from a UTF-8 file, or - for stdin
     #[arg(long)]
@@ -41,6 +39,14 @@ pub(crate) struct RunArgs {
     /// Cancel after a duration such as 30s, 10m, or 2h
     #[arg(long, value_parser = parse_duration)]
     timeout: Option<Duration>,
+    #[command(subcommand)]
+    pub(crate) command: Option<RunCommand>,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum RunCommand {
+    /// List models available to this account and their reasoning efforts
+    Models,
 }
 
 #[derive(Debug, Args)]
@@ -107,6 +113,21 @@ fn runtime() -> anyhow::Result<tokio::runtime::Runtime> {
 }
 
 pub(crate) fn run(args: RunArgs) -> anyhow::Result<u8> {
+    if matches!(args.command, Some(RunCommand::Models)) {
+        anyhow::ensure!(
+            args.prompt.is_none()
+                && args.prompt_file.is_none()
+                && args.directory.is_none()
+                && args.thread.is_none()
+                && args.model.is_none()
+                && args.reasoning.is_none()
+                && !args.fast
+                && !args.no_fast
+                && args.timeout.is_none(),
+            "`sprocket run models` does not accept agent run options"
+        );
+        return list_models();
+    }
     let mut output = Output::new();
     let result = runtime()?.block_on(async {
         let prompt = prompt(&args)?;
@@ -128,6 +149,52 @@ pub(crate) fn run(args: RunArgs) -> anyhow::Result<u8> {
             Ok(1)
         }
     }
+}
+
+fn list_models() -> anyhow::Result<u8> {
+    runtime()?.block_on(async {
+        let connection = Connection::open(ServerConfig::try_parse_from(["sprocket"])?).await?;
+        let result = async {
+            require_login(&connection).await?;
+            let response: CliModelsResponse = connection
+                .call("models", &connection.client_request())
+                .await?;
+            print!("{}", models_text(&response));
+            Ok(0)
+        }
+        .await;
+        connection.close().await;
+        result
+    })
+}
+
+fn models_text(response: &CliModelsResponse) -> String {
+    let mut output = String::new();
+    for model in &response.models {
+        let default_model = if model.id == response.default_model_id {
+            " (default)"
+        } else {
+            ""
+        };
+        output.push_str(&format!(
+            "{} - {}{}\n",
+            model.id, model.label, default_model
+        ));
+        let efforts = model
+            .reasoning_efforts
+            .iter()
+            .map(|effort| {
+                if effort == &model.default_reasoning_effort {
+                    format!("{effort} (default)")
+                } else {
+                    effort.clone()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        output.push_str(&format!("  Reasoning: {efforts}\n"));
+    }
+    output
 }
 
 async fn run_connected(
@@ -335,5 +402,52 @@ mod tests {
         for value in ["0", "-1", "1.5s", "1d", "18446744073709551615h"] {
             assert!(parse_duration(value).is_err(), "{value}");
         }
+    }
+
+    #[test]
+    fn model_list_marks_model_and_reasoning_defaults() {
+        let response = CliModelsResponse {
+            default_model_id: "model-a".into(),
+            models: vec![
+                CliModel {
+                    id: "model-a".into(),
+                    label: "Model A".into(),
+                    reasoning_efforts: vec!["low".into(), "high".into()],
+                    default_reasoning_effort: "high".into(),
+                },
+                CliModel {
+                    id: "model-b".into(),
+                    label: "Model B".into(),
+                    reasoning_efforts: vec!["max".into()],
+                    default_reasoning_effort: "max".into(),
+                },
+            ],
+        };
+        assert_eq!(
+            models_text(&response),
+            "model-a - Model A (default)\n  Reasoning: low, high (default)\nmodel-b - Model B\n  Reasoning: max (default)\n"
+        );
+    }
+
+    #[test]
+    fn models_rejects_agent_run_options() {
+        let args = RunArgs {
+            prompt: None,
+            prompt_file: None,
+            directory: None,
+            thread: Some("thread".into()),
+            model: None,
+            reasoning: None,
+            fast: false,
+            no_fast: false,
+            timeout: None,
+            command: Some(RunCommand::Models),
+        };
+        assert!(
+            run(args)
+                .unwrap_err()
+                .to_string()
+                .contains("does not accept")
+        );
     }
 }

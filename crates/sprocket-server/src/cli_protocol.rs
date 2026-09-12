@@ -107,6 +107,22 @@ pub struct CliRunRequest {
     pub fast: Option<bool>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CliModel {
+    pub id: String,
+    pub label: String,
+    pub reasoning_efforts: Vec<String>,
+    pub default_reasoning_effort: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CliModelsResponse {
+    pub default_model_id: String,
+    pub models: Vec<CliModel>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunStarted {

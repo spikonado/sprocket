@@ -354,6 +354,7 @@ fn find_dev_desktop_launcher() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
 
     #[test]
     fn run_requires_one_explicit_prompt_source() {
@@ -363,9 +364,26 @@ mod tests {
         );
         assert!(Cli::try_parse_from(["sprocket", "run", "--prompt-file", "-"]).is_ok());
         assert!(Cli::try_parse_from(["sprocket", "run", "task", "--directory", "."]).is_ok());
+        let models = Cli::try_parse_from(["sprocket", "run", "models"]).unwrap();
+        assert!(matches!(
+            models.command,
+            Some(Commands::Run(commands::RunArgs {
+                command: Some(commands::RunCommand::Models),
+                ..
+            }))
+        ));
         assert!(Cli::try_parse_from(["sprocket", "run", "task", "--json"]).is_err());
         assert!(Cli::try_parse_from(["sprocket", "run", "task", "--stream-json"]).is_err());
         assert!(Cli::try_parse_from(["sprocket", "run", "task", "--fast", "--no-fast"]).is_err());
+    }
+
+    #[test]
+    fn run_help_lists_the_models_subcommand() {
+        let mut command = Cli::command();
+        let run = command.find_subcommand_mut("run").expect("run subcommand");
+        let help = run.render_long_help().to_string();
+        assert!(help.contains("models"), "{help}");
+        assert!(help.contains("reasoning efforts"), "{help}");
     }
 
     #[test]

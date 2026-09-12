@@ -34,6 +34,7 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/cli/login", post(login))
         .route("/cli/auth", post(auth_status))
         .route("/cli/logout", post(logout))
+        .route("/cli/models", post(list_models))
         .route("/cli/run", post(start))
         .route("/cli/output", post(output))
         .route("/cli/cancel", post(cancel))
@@ -235,6 +236,41 @@ async fn logout(
         .await
         .map_err(ApiError::bad_request)?;
     Ok(Json(true))
+}
+
+async fn list_models(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(request): Json<CliClientRequest>,
+) -> Result<Json<CliModelsResponse>, ApiError> {
+    let client = client_session(&state, peer, &headers, &request.client_id).await?;
+    let user = state
+        .native_auth
+        .browser_session(false)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(ApiError::authentication_required)?
+        .user;
+    state
+        .auth
+        .bind_session_user(&client.session_token, &user.id)
+        .await
+        .map_err(ApiError::internal)?;
+    let rpc = convex_client(&state, &user.id)
+        .await
+        .map_err(ApiError::internal)?;
+    let context: RunContext = tokio::time::timeout(
+        Duration::from_secs(20),
+        rpc.query("cliRuns:context", BTreeMap::new()),
+    )
+    .await
+    .map_err(|error| ApiError::internal(error.into()))?
+    .map_err(ApiError::internal)?;
+    let response = models::available(&context)
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(Json(response))
 }
 
 async fn start(

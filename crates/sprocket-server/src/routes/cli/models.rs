@@ -5,6 +5,7 @@ use anyhow::Context;
 use serde::Deserialize;
 
 use super::{CliRunRequest, RunContext};
+use crate::cli_protocol::{CliModel, CliModelsResponse};
 
 #[derive(Deserialize)]
 struct Response {
@@ -26,7 +27,9 @@ struct Catalog {
 #[serde(rename_all = "camelCase")]
 struct Model {
     id: String,
+    label: String,
     reasoning_efforts: Vec<String>,
+    default_reasoning_effort: String,
     service_tiers: Vec<String>,
 }
 
@@ -40,12 +43,21 @@ pub(super) async fn resolve(
     context: &RunContext,
     request: &CliRunRequest,
 ) -> anyhow::Result<Settings> {
+    let catalog = fetch(&context.gateway_url).await?;
+    select(catalog, context, request)
+}
+
+pub(super) async fn available(context: &RunContext) -> anyhow::Result<CliModelsResponse> {
+    available_for_tier(fetch(&context.gateway_url).await?, &context.tier)
+}
+
+async fn fetch(gateway_url: &str) -> anyhow::Result<Catalog> {
     let response: Response = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
         .build()?
         .get(format!(
             "{}/api/v1/models",
-            context.gateway_url.trim_end_matches('/')
+            gateway_url.trim_end_matches('/')
         ))
         .send()
         .await?
@@ -53,7 +65,43 @@ pub(super) async fn resolve(
         .json()
         .await
         .context("invalid model catalog")?;
-    select(response.sprocket, context, request)
+    validate(&response.sprocket)?;
+    Ok(response.sprocket)
+}
+
+fn validate(catalog: &Catalog) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        catalog.protocol_version == 1,
+        "unsupported model catalog protocol"
+    );
+    Ok(())
+}
+
+fn available_for_tier(catalog: Catalog, tier: &str) -> anyhow::Result<CliModelsResponse> {
+    validate(&catalog)?;
+    let allowed = catalog
+        .tier_allowed_models
+        .get(tier)
+        .context("model catalog does not define this account tier")?;
+    let models: Vec<CliModel> = catalog
+        .models
+        .into_iter()
+        .filter(|model| allowed.contains(&model.id))
+        .map(|model| CliModel {
+            id: model.id,
+            label: model.label,
+            reasoning_efforts: model.reasoning_efforts,
+            default_reasoning_effort: model.default_reasoning_effort,
+        })
+        .collect();
+    anyhow::ensure!(
+        !models.is_empty(),
+        "no models are available for this account"
+    );
+    Ok(CliModelsResponse {
+        default_model_id: catalog.default_model_id,
+        models,
+    })
 }
 
 fn select(
@@ -61,10 +109,7 @@ fn select(
     context: &RunContext,
     request: &CliRunRequest,
 ) -> anyhow::Result<Settings> {
-    anyhow::ensure!(
-        catalog.protocol_version == 1,
-        "unsupported model catalog protocol"
-    );
+    validate(&catalog)?;
     let model = request
         .model
         .clone()
@@ -129,7 +174,10 @@ mod tests {
     fn catalog() -> Catalog {
         serde_json::from_value(serde_json::json!({
             "protocolVersion": 1, "defaultModelId": "default", "defaultReasoningEffort": "high",
-            "models": [{"id": "default", "reasoningEfforts": ["high"], "serviceTiers": ["standard", "fast"]}],
+            "models": [
+                {"id": "default", "label": "Default", "reasoningEfforts": ["medium", "high"], "defaultReasoningEffort": "high", "serviceTiers": ["standard", "fast"]},
+                {"id": "paid", "label": "Paid", "reasoningEfforts": ["max"], "defaultReasoningEffort": "max", "serviceTiers": ["standard"]}
+            ],
             "tierAllowedModels": {"free": ["default"]}, "tierAllowedServiceTiers": {"free": ["standard"]}
         })).unwrap()
     }
@@ -160,5 +208,21 @@ mod tests {
         request.model = None;
         request.reasoning = Some("unsupported".into());
         assert!(select(catalog(), &context, &request).is_err());
+    }
+
+    #[test]
+    fn lists_only_models_available_to_the_account() {
+        let response = available_for_tier(catalog(), "free").unwrap();
+        assert_eq!(response.default_model_id, "default");
+        assert_eq!(
+            response.models,
+            [CliModel {
+                id: "default".into(),
+                label: "Default".into(),
+                reasoning_efforts: vec!["medium".into(), "high".into()],
+                default_reasoning_effort: "high".into(),
+            }]
+        );
+        assert!(available_for_tier(catalog(), "unknown").is_err());
     }
 }
