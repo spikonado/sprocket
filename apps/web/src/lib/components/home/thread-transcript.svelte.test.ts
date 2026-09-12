@@ -3,6 +3,7 @@ import { flushSync, mount, tick, unmount, type ComponentProps } from 'svelte';
 import type { Id } from '$convex/_generated/dataModel';
 import type {
 	TranscriptMessage,
+	TranscriptDisplayDetails,
 	TranscriptDisplayRow,
 	LiveTranscriptMessage
 } from '$lib/types/sprocket';
@@ -70,7 +71,10 @@ async function renderTranscript(messages: TranscriptMessage[], viewportHeight = 
 	// jsdom has no layout. Model fixed-height rows while exercising the real DOM and effects.
 	Object.defineProperties(viewport, {
 		clientHeight: { get: () => viewportHeight },
-		scrollHeight: { get: () => Math.max(viewportHeight, messageElements().length * 300) },
+		scrollHeight: {
+			configurable: true,
+			get: () => Math.max(viewportHeight, messageElements().length * 300)
+		},
 		scrollTop: {
 			configurable: true,
 			get: () => {
@@ -236,13 +240,26 @@ describe('transcript viewport paging', () => {
 		});
 		const first = summary(1);
 		const { props, viewport } = await renderTranscript([message(0), first, summary(2)]);
-		const load = vi.fn().mockResolvedValue({
-			parts: [{ type: 'reasoning', id: 'detail', text: 'Requested detail' }],
-			nextAfter: 5,
-			revision: 1,
-			stale: false,
-			indexing: false
+		let edgeVisible = false;
+		const geometry = vi.mocked(HTMLElement.prototype.getBoundingClientRect).getMockImplementation();
+		if (!geometry) throw new Error('Missing viewport geometry');
+		vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+			this: HTMLElement
+		) {
+			return this.hasAttribute('data-work-edge')
+				? new DOMRect(0, edgeVisible ? 500 : 1000, 800, 1)
+				: geometry.call(this);
 		});
+		const load = vi
+			.fn()
+			.mockResolvedValueOnce({
+				parts: [{ type: 'reasoning', id: 'detail', text: 'Requested detail' }],
+				nextAfter: 5,
+				revision: 1,
+				stale: false,
+				indexing: false
+			})
+			.mockImplementation(() => new Promise(() => {}));
 		props.loadSectionDetails = load;
 		await settle();
 		expect(load).not.toHaveBeenCalled();
@@ -259,10 +276,9 @@ describe('transcript viewport paging', () => {
 		expect(load).toHaveBeenCalledTimes(1);
 		expect(load.mock.calls[0][0].id).toBe(first.id);
 		expect(load.mock.calls[0][1]).toEqual({});
-		const next = [...viewport.querySelectorAll<HTMLButtonElement>('button')].find(
-			(button) => button.textContent === 'Next details'
-		);
-		next?.click();
+		expect(viewport.textContent).not.toMatch(/Next details|Previous details/);
+		edgeVisible = true;
+		viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: 10 }));
 		await settle();
 		expect(load.mock.calls[1][1]).toEqual({ after: 5 });
 		const signal: AbortSignal = load.mock.calls[1][2];
@@ -271,6 +287,101 @@ describe('transcript viewport paging', () => {
 		expect(signal.aborted).toBe(true);
 		expect(viewport.textContent).not.toContain('Next details');
 	});
+
+	it.each([false, true])(
+		'anchors the visible tool after prepending, including movement during the request: %s',
+		async (moveWhileLoading) => {
+			const work: TranscriptDisplayRow = {
+				...message(2),
+				id: 'work',
+				kind: 'work',
+				itemCount: 10,
+				closed: false
+			};
+			const { props, viewport, scrollTo } = await renderTranscript([
+				message(0),
+				message(1),
+				work,
+				message(3)
+			]);
+			props.nextBefore = undefined;
+			const rows = () =>
+				[...viewport.querySelectorAll<HTMLElement>('[data-work-detail]')].filter(
+					(element) => !element.querySelector('[data-work-detail]')
+				);
+			Object.defineProperty(viewport, 'scrollHeight', { get: () => 1200 + rows().length * 100 });
+			let olderVisible = false;
+			vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+				this: HTMLElement
+			) {
+				if (this === viewport) return new DOMRect(0, 0, 800, 600);
+				if (this.hasAttribute('data-work-edge'))
+					return new DOMRect(
+						0,
+						olderVisible && this.dataset.workEdge === 'older' ? 100 : 1000,
+						800,
+						1
+					);
+				const details = rows();
+				const detailIndex = details.indexOf(this);
+				if (detailIndex >= 0)
+					return new DOMRect(0, 650 + detailIndex * 100 - viewport.scrollTop, 800, 100);
+				const index = [...viewport.querySelectorAll('[data-transcript-anchor]')].indexOf(this);
+				return new DOMRect(
+					0,
+					index * 300 + (index === 3 ? details.length * 100 : 0) - viewport.scrollTop,
+					800,
+					300
+				);
+			});
+			function page(ids: number[], previousBefore?: number): TranscriptDisplayDetails {
+				return {
+					parts: ids.flatMap((id) => [
+						{
+							type: 'tool-call' as const,
+							callId: String(id),
+							name: 'exec_command',
+							input: { cmd: `echo ${id}` }
+						},
+						{ type: 'tool-result' as const, callId: String(id), name: 'exec_command', output: {} }
+					]),
+					previousBefore,
+					revision: 1,
+					indexing: false,
+					stale: false
+				};
+			}
+			let resolve!: (value: TranscriptDisplayDetails) => void;
+			const load = vi
+				.fn()
+				.mockResolvedValueOnce(page([6, 7], 6))
+				.mockImplementation(
+					() =>
+						new Promise<TranscriptDisplayDetails>((done) => {
+							resolve = done;
+						})
+				);
+			props.loadSectionDetails = load;
+			props.activeRunId = work.runId;
+			await settle();
+			expect(load).toHaveBeenCalledTimes(1);
+			scrollTo(700);
+			const anchor = rows()[0];
+			olderVisible = true;
+			viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -10 }));
+			await settle();
+			expect(load.mock.calls[1][1]).toEqual({ before: 6 });
+			if (moveWhileLoading) scrollTo(660);
+			const offset = anchor.getBoundingClientRect().top;
+			resolve(page([4, 5]));
+			await settle();
+			expect(anchor.isConnected).toBe(true);
+			expect(anchor.getBoundingClientRect().top).toBe(offset);
+			expect(viewport.scrollTop).toBe(moveWhileLoading ? 860 : 900);
+			resize();
+			expect(viewport.scrollTop).toBe(moveWhileLoading ? 860 : 900);
+		}
+	);
 
 	it('fills an initially empty thread after its first page arrives, and stops once it scrolls', async () => {
 		const { props, viewport } = await renderTranscript([]);

@@ -239,7 +239,9 @@
 	}
 
 	function firstVisibleAnchor(viewport: HTMLDivElement) {
-		const elements = viewport.querySelectorAll<HTMLElement>('[data-transcript-anchor]');
+		const elements = [
+			...viewport.querySelectorAll<HTMLElement>('[data-transcript-anchor], [data-work-detail]')
+		].filter((element) => !element.querySelector('[data-work-detail]'));
 		const top = viewport.getBoundingClientRect().top;
 		let low = 0;
 		let high = elements.length;
@@ -249,6 +251,21 @@
 			else high = mid;
 		}
 		return elements[low];
+	}
+
+	function beforeDetailChange(follow: boolean) {
+		if (!follow) stickToBottom = false;
+		const viewport = scrollViewport;
+		const anchor = viewport && !stickToBottom ? firstVisibleAnchor(viewport) : undefined;
+		const offset = anchor?.getBoundingClientRect().top;
+		const top = viewport?.scrollTop;
+		return () => {
+			if (!viewport || viewport !== scrollViewport) return;
+			if (stickToBottom) scrollToBottom();
+			else if (anchor?.isConnected && offset !== undefined && viewport.scrollTop === top) {
+				setScrollTop(viewport, viewport.scrollTop + anchor.getBoundingClientRect().top - offset);
+			}
+		};
 	}
 
 	$effect.pre(() => {
@@ -362,7 +379,7 @@
 					</div>
 				{/if}
 			{:else}
-				<div class="space-y-8 pb-14">
+				<div class="transcript-messages space-y-8 pb-14">
 					{#each messages as message (message.id)}
 						{#if message.kind === 'prompt'}
 							<div
@@ -433,14 +450,24 @@
 							{@const row = message}
 							{@const inProgress =
 								row.runId === activeRunId && (!row.closed || row.pendingTools > 0)}
-							<div data-message-id={message.id} data-transcript-anchor={message.id}>
+							<div
+								data-message-id={message.id}
+								data-transcript-anchor={message.id}
+								data-message-kind="work"
+							>
 								<WorkDisclosure
 									{inProgress}
 									startedAtMs={row.startedAt}
 									completedAtMs={row.completedAt}
 								>
 									{#if loadSectionDetails}
-										<WorkSectionDetails {row} load={loadSectionDetails} {inProgress} />
+										<WorkSectionDetails
+											{row}
+											load={loadSectionDetails}
+											{inProgress}
+											viewport={scrollViewport}
+											beforeChange={beforeDetailChange}
+										/>
 									{/if}
 								</WorkDisclosure>
 							</div>
@@ -454,7 +481,11 @@
 								</div>
 							{/if}
 						{:else if message.kind === 'text'}
-							<div data-message-id={message.id} data-transcript-anchor={message.id}>
+							<div
+								data-message-id={message.id}
+								data-transcript-anchor={message.id}
+								data-message-kind="text"
+							>
 								<ChatMarkdown content={message.text || ' '} className="text-foreground" />
 							</div>
 						{:else if message.kind === 'live'}
@@ -593,3 +624,10 @@
 		viewerImage = null;
 	}}
 />
+
+<style>
+	.transcript-messages > [data-message-kind='text']:has(+ [data-message-kind='work']),
+	.transcript-messages > [data-message-kind='work']:has(+ [data-message-kind='text']) {
+		margin-block-end: 0.5rem;
+	}
+</style>

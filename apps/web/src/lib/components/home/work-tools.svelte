@@ -19,12 +19,14 @@
 		tools,
 		toolKey = '',
 		running = false,
+		preserveExpansion = false,
 		inProgress,
 		commands
 	}: {
 		tools: AssistantTimelineTool[];
 		toolKey?: string;
 		running?: boolean;
+		preserveExpansion?: boolean;
 		inProgress: boolean;
 		commands: ReadonlyMap<string, string>;
 	} = $props();
@@ -35,6 +37,7 @@
 	icon={running ? LoaderCircle : toolKindIcon(toolKey)}
 	iconClass={running ? 'animate-spin' : undefined}
 	{tools}
+	{preserveExpansion}
 	defaultExpanded={running
 		? true
 		: toolKey === 'apply_patch'
