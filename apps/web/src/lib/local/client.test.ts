@@ -65,6 +65,18 @@ describe('workspace launch fragments', () => {
 });
 
 describe('projected transcript pages', () => {
+	it('asks for an upgrade when the connected server lacks display history', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => new Response(null, { status: 404 }))
+		);
+		await expect(
+			createLocalClient('http://127.0.0.1:7731').fetchTranscriptDisplay({
+				userId: 'user-1',
+				threadId: threadRecordId('thread-1')
+			})
+		).rejects.toMatchObject({ cause: 'display-history-unavailable' });
+	});
 	it('cancels an in-flight page request when its thread is left', async () => {
 		const fetch = vi.fn(
 			(_url: string, init: RequestInit) =>

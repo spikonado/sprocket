@@ -41,6 +41,8 @@ function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 		attachProject: unusedDesktopCall,
 		runAgent,
 		fetchTranscriptPage: unusedDesktopCall,
+		fetchTranscriptDisplay: unusedDesktopCall,
+		fetchTranscriptDisplayDetails: unusedDesktopCall,
 		fetchTranscriptDetails: unusedDesktopCall,
 		watchTranscript: unusedDesktopCall,
 		watchLiveCompletion: unusedDesktopCall,

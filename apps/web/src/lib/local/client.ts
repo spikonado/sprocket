@@ -102,6 +102,65 @@ const transcriptMessageSchema = z.object({
 	streamIds: z.array(z.string()),
 	detailsLoaded: z.boolean()
 });
+
+const displayRowSchema = z
+	.object({
+		id: z.string(),
+		threadId: z.string(),
+		runId: z.string(),
+		sequence: z.int().nonnegative(),
+		kind: z.enum(['prompt', 'text', 'work', 'approval']),
+		text: z.string().optional(),
+		attachments: z.array(localTranscriptAttachmentSchema).optional(),
+		mandateId: z.string().optional(),
+		approvalUrl: z.string().optional(),
+		itemCount: z.int().nonnegative(),
+		pendingTools: z.int().nonnegative(),
+		provisional: z.boolean().optional(),
+		startedAt: z.number().optional(),
+		completedAt: z.number().optional(),
+		closed: z.boolean(),
+		revision: z.int().nonnegative()
+	})
+	.transform((row) => ({
+		...row,
+		id: asConvexId<'threadTranscriptDisplayRows'>(row.id),
+		threadId: asConvexId<'threadRecords'>(row.threadId),
+		runId: asConvexId<'runs'>(row.runId),
+		attachments: row.attachments?.map((attachment) => ({
+			...attachment,
+			storageId: asConvexId<'_storage'>(attachment.storageId)
+		}))
+	}));
+
+const displayPageSchema = z.object({
+	rows: z.array(displayRowSchema),
+	indexing: z.boolean(),
+	stale: z.boolean(),
+	nextBefore: z.int().nonnegative().optional(),
+	endSequence: z.int().nonnegative(),
+	revision: z.int().nonnegative(),
+	persistedStreams: z.array(
+		z.object({ runId: z.string().transform((id) => asConvexId<'runs'>(id)), streamId: z.string() })
+	),
+	changes: z.array(
+		z.object({
+			id: z.string().transform((id) => asConvexId<'threadTranscriptDisplayRows'>(id)),
+			row: displayRowSchema.nullable()
+		})
+	),
+	changesCursor: z.object({ revision: z.int().nonnegative(), sequence: z.int().min(-1) }),
+	moreChanges: z.boolean()
+});
+
+const displayDetailsSchema = z.object({
+	parts: z.array(z.unknown()),
+	indexing: z.boolean(),
+	nextAfter: z.int().nonnegative().optional(),
+	previousBefore: z.int().nonnegative().optional(),
+	revision: z.int().nonnegative(),
+	stale: z.boolean()
+});
 const localTranscriptPartSchema = z.object({
 	number: z.int().nonnegative(),
 	kind: z.enum(['prompt', 'completion', 'tool']),
@@ -579,6 +638,11 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 		});
 
 		if (!response.ok) {
+			if (response.status === 404 && pathname.startsWith('/api/transcript/display')) {
+				throw new Error('Update Sprocket on the connected machine to load conversation history.', {
+					cause: 'display-history-unavailable'
+				});
+			}
 			try {
 				const payload = await parseJsonResponse(response, errorPayloadSchema);
 				throw new Error(payload.error ?? `Local request failed (${response.status}).`);
@@ -652,6 +716,21 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				signal
 			});
 			return parseLocalTranscriptPage(page);
+		},
+		fetchTranscriptDisplay: async (requestBody, signal) =>
+			await request('/api/transcript/display', displayPageSchema, {
+				method: 'POST',
+				body: JSON.stringify(requestBody),
+				signal
+			}),
+		fetchTranscriptDisplayDetails: async (requestBody, signal) => {
+			const page = await request('/api/transcript/display-details', displayDetailsSchema, {
+				method: 'POST',
+				body: JSON.stringify(requestBody),
+				signal
+			});
+			// SAFETY: the authenticated display API validates parts with vAssistantMessagePart.
+			return { ...page, parts: page.parts as AssistantPart[] };
 		},
 		fetchTranscriptDetails: async (requestBody, signal) =>
 			(

@@ -32,6 +32,12 @@
 	import ReasoningDisclosure from '$lib/components/home/reasoning-disclosure.svelte';
 	import ToolCallsDisclosure from '$lib/components/home/tool-calls-disclosure.svelte';
 	import WorkDisclosure from '$lib/components/home/work-disclosure.svelte';
+	import WorkSectionDetails from '$lib/components/home/work-section-details.svelte';
+	import type {
+		TranscriptDisplayRow,
+		TranscriptDisplayDetails,
+		TranscriptDetailCursor
+	} from '$lib/types/sprocket';
 	import { mandateApprovals } from '$lib/chat/mandate';
 	import { formatElapsedDuration } from '$lib/format';
 	import type { ExecutorJob, ThreadMessage, Project, MessageAttachment } from '$lib/types/sprocket';
@@ -51,7 +57,11 @@
 		nextBefore?: number;
 		onLoadOlder?: () => void;
 		loadAttachment?: (storageId: MessageAttachment['storageId']) => Promise<string | null>;
-		onLoadDetails?: (message: ThreadMessage) => Promise<void>;
+		loadSectionDetails?: (
+			row: TranscriptDisplayRow,
+			cursor: TranscriptDetailCursor,
+			signal: AbortSignal
+		) => Promise<TranscriptDisplayDetails>;
 	};
 
 	let {
@@ -71,7 +81,7 @@
 		nextBefore,
 		onLoadOlder,
 		loadAttachment,
-		onLoadDetails
+		loadSectionDetails
 	}: Props = $props();
 	const firstPromptMessageId = $derived(messages.find((message) => message.type === 'prompt')?._id);
 	let scrollViewport = $state<HTMLDivElement | null>(null);
@@ -420,8 +430,40 @@
 									</div>
 								{/if}
 							</div>
+						{:else if message.displayRow?.kind === 'work'}
+							{@const row = message.displayRow}
+							{@const inProgress =
+								row.runId === activeRunId && (!row.closed || row.pendingTools > 0)}
+							<div data-message-id={message._id} data-transcript-anchor={message._id}>
+								<WorkDisclosure
+									{inProgress}
+									startedAtMs={row.startedAt}
+									completedAtMs={row.completedAt}
+								>
+									{#if loadSectionDetails}
+										<WorkSectionDetails {row} load={loadSectionDetails} {inProgress} />
+									{/if}
+								</WorkDisclosure>
+							</div>
+						{:else if message.displayRow?.kind === 'approval'}
+							{@const row = message.displayRow}
+							{#if row.mandateId && row.approvalUrl}
+								<div data-transcript-anchor={message._id}>
+									<MandateApprovalForm
+										approval={{ mandateId: row.mandateId, approvalUrl: row.approvalUrl }}
+									/>
+								</div>
+							{/if}
 						{:else}
-							{@const messageActions = actions.filter((job) => job.runId === message.runId)}
+							{@const messageActions = message.displayRow
+								? []
+								: actions.filter(
+										(job) =>
+											job.runId === message.runId &&
+											message.parts.some(
+												(part) => part.type === 'tool-call' && part.callId === job.callId
+											)
+									)}
 							{@const timeline = buildAssistantTimeline(
 								message.parts,
 								messageActions,
@@ -436,7 +478,8 @@
 								message._id,
 								groupAssistantTimelineSections(blocks)
 							)}
-							{@const isStreaming = isAssistantResponseStreaming(message, activeRunId)}
+							{@const isStreaming =
+								!message.displayRow && isAssistantResponseStreaming(message, activeRunId)}
 							{@const openSessions = buildOpenExecCommandSessions(timelineTools, isStreaming)}
 							{@const hasPersistedAssistantContent = timeline.some(
 								(part) => part.type === 'text' || part.type === 'reasoning'
@@ -490,8 +533,6 @@
 														inProgress={workInProgress}
 														startedAtMs={timing.startedAtMs}
 														completedAtMs={timing.completedAtMs}
-														detailsKey={`${message.sourceNumbers?.join(',')}:${message.detailsLoaded}`}
-														onExpand={() => onLoadDetails?.(message)}
 													>
 														{#each visibleBlocks as block, blockIndex (`${block.type}-${block.type === 'tool-group' ? block.tools.map((tool) => tool.callId).join(',') : block.id}-${blockIndex}`)}
 															{#if block.type === 'reasoning'}

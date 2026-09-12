@@ -48,6 +48,52 @@ impl TranscriptStore {
         self.root.clone()
     }
 
+    pub async fn display_cache(
+        &self,
+        user_id: &str,
+        thread_id: &str,
+        key: &str,
+    ) -> anyhow::Result<Option<JsonValue>> {
+        let lock = self.lock_thread(user_id, thread_id).await;
+        let _guard = lock.lock().await;
+        let path = self
+            .thread_dir(user_id, thread_id)
+            .join("display-v1")
+            .join(safe_segment(key));
+        match tokio::fs::read(path).await {
+            Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    pub async fn save_display_cache(
+        &self,
+        user_id: &str,
+        thread_id: &str,
+        key: &str,
+        value: &JsonValue,
+    ) -> anyhow::Result<()> {
+        let lock = self.lock_thread(user_id, thread_id).await;
+        let _guard = lock.lock().await;
+        let directory = self.thread_dir(user_id, thread_id).join("display-v1");
+        tokio::fs::create_dir_all(&directory).await?;
+        let path = directory.join(safe_segment(key));
+        if let Ok(bytes) = tokio::fs::read(&path).await {
+            if let Ok(previous) = serde_json::from_slice::<JsonValue>(&bytes) {
+                if previous.get("revision").and_then(JsonValue::as_f64)
+                    > value.get("revision").and_then(JsonValue::as_f64)
+                {
+                    return Ok(());
+                }
+            }
+        }
+        let temp = tempfile::NamedTempFile::new_in(&directory)?;
+        tokio::fs::write(temp.path(), serde_json::to_vec(value)?).await?;
+        temp.persist(path)?;
+        Ok(())
+    }
+
     pub fn thread_dir(&self, user_id: &str, thread_id: &str) -> PathBuf {
         self.root
             .join(safe_segment(user_id))
@@ -1112,6 +1158,45 @@ mod tests {
     use crate::transcript::types::{
         TranscriptCompletionBody, TranscriptPartKind, TranscriptPromptBody, UNKNOWN_RUN_STARTED_AT,
     };
+
+    #[tokio::test]
+    async fn display_cache_keeps_newer_pages_and_is_scoped_to_the_replica() {
+        let root = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::new(root.path().to_path_buf());
+        let latest = serde_json::json!({ "revision": 10.0, "rows": [] });
+        store
+            .save_display_cache("user", "thread", "page", &latest)
+            .await
+            .unwrap();
+        store
+            .save_display_cache(
+                "user",
+                "thread",
+                "page",
+                &serde_json::json!({ "revision": 9 }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            store.display_cache("user", "thread", "page").await.unwrap(),
+            Some(latest)
+        );
+        assert!(
+            store
+                .display_cache("other", "thread", "page")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        store.clear_thread("user", "thread").await.unwrap();
+        assert!(
+            store
+                .display_cache("user", "thread", "page")
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
 
     fn prompt(number: u32, text: &str) -> TranscriptPart {
         TranscriptPart {

@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
+import { displayRowFields } from '@convex/lib/transcriptDisplayTypes';
 import {
 	vMandateChargeStatus,
 	vMandateFrequency,
@@ -208,6 +209,69 @@ export default defineSchema({
 		.index('by_threadId_and_number', ['threadId', 'number'])
 		.index('by_threadId_and_sourceKey', ['threadId', 'sourceKey'])
 		.index('by_threadId_and_runId_and_number', ['threadId', 'runId', 'number']),
+	threadTranscriptDisplayStates: defineTable({
+		threadId: v.id('threadRecords'),
+		throughNumber: v.number(),
+		throughIndex: v.number(),
+		nextSequence: v.number(),
+		tailRowId: v.optional(v.id('threadTranscriptDisplayRows')),
+		scheduledId: v.optional(v.id('_scheduled_functions'))
+	}).index('by_threadId', ['threadId']),
+	threadTranscriptDisplayStreams: defineTable({
+		threadId: v.id('threadRecords'),
+		runId: v.id('runs'),
+		streamId: v.string()
+	}).index('by_threadId_and_runId_and_streamId', ['threadId', 'runId', 'streamId']),
+	threadTranscriptDisplayChanges: defineTable({
+		threadId: v.id('threadRecords'),
+		rowId: v.id('threadTranscriptDisplayRows'),
+		sequence: v.number(),
+		revision: v.number(),
+		deleted: v.boolean()
+	})
+		.index('by_threadId_and_rowId', ['threadId', 'rowId'])
+		.index('by_threadId_and_revision_and_sequence', ['threadId', 'revision', 'sequence']),
+	threadTranscriptDisplaySessions: defineTable({
+		threadId: v.id('threadRecords'),
+		runId: v.id('runs'),
+		sessionId: v.string(),
+		execKey: v.optional(v.string()),
+		running: v.boolean(),
+		revision: v.number(),
+		completedAt: v.number()
+	}).index('by_threadId_and_runId_and_sessionId', ['threadId', 'runId', 'sessionId']),
+	threadTranscriptDisplayRows: defineTable({
+		...displayRowFields,
+		canonicalItems: v.number(),
+		missingStarts: v.number(),
+		missingEnds: v.number(),
+		endedAt: v.optional(v.number())
+	}).index('by_threadId_and_sequence', ['threadId', 'sequence']),
+	threadTranscriptDisplayItems: defineTable({
+		threadId: v.id('threadRecords'),
+		key: v.string(),
+		rowId: v.id('threadTranscriptDisplayRows'),
+		order: v.number(),
+		kind: v.union(v.literal('reasoning'), v.literal('tool')),
+		callId: v.optional(v.string()),
+		name: v.optional(v.string()),
+		sourcePartId: v.id('threadTranscriptParts'),
+		sourceIndex: v.optional(v.number()),
+		resultPartId: v.optional(v.id('threadTranscriptParts')),
+		resultRevision: v.optional(v.number()),
+		reportedRunning: v.optional(v.boolean()),
+		sessionId: v.optional(v.string()),
+		sessionRunning: v.optional(v.boolean()),
+		mandateId: v.optional(v.string()),
+		approvalUrl: v.optional(v.string()),
+		approvalRowId: v.optional(v.id('threadTranscriptDisplayRows')),
+		startedAt: v.optional(v.number()),
+		completedAt: v.optional(v.number())
+	})
+		.index('by_threadId_and_key', ['threadId', 'key'])
+		.index('by_rowId_and_order', ['rowId', 'order'])
+		.index('by_rowId_and_startedAt', ['rowId', 'startedAt'])
+		.index('by_rowId_and_completedAt', ['rowId', 'completedAt']),
 	// Retained only until the completion stream state cleanup migration finishes.
 	completionStreamStates: defineTable({
 		runId: v.id('runs'),

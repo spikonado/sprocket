@@ -1,5 +1,6 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
+import { displayState, scheduleDisplayBackfill } from '@convex/lib/transcriptDisplay';
 import type {
 	TranscriptCompletionBody,
 	TranscriptPromptBody,
@@ -155,6 +156,7 @@ export async function appendTranscriptPart(
 	if (!inserted) {
 		throw new Error('Failed to create transcript part.');
 	}
+	await scheduleDisplayBackfill(ctx, await displayState(ctx, args.threadId));
 	return { part: inserted, inserted: true };
 }
 

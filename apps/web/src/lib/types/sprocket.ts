@@ -1,6 +1,7 @@
 import type { Doc, Id } from '$convex/_generated/dataModel';
 import type { AssistantPart } from '$convex/lib/assistantParts';
 import type { Infer } from 'convex/values';
+import type { displayRowValidator } from '$convex/lib/transcriptDisplayTypes';
 import {
 	vExecutorJobKind,
 	vExecutorJobStatus,
@@ -86,6 +87,7 @@ export type MessageAttachment = {
 };
 
 export type ThreadMessage = {
+	displayRow?: TranscriptDisplayRow;
 	_id: string;
 	_creationTime?: number;
 	threadId: Id<'threadRecords'>;
@@ -217,6 +219,37 @@ export type TranscriptPageRequest = {
 
 export type TranscriptDetailsRequest = TranscriptScopeRequest & { numbers: number[] };
 
+export type TranscriptDisplayRow = Infer<typeof displayRowValidator>;
+export type TranscriptDisplayPage = {
+	rows: TranscriptDisplayRow[];
+	indexing: boolean;
+	stale: boolean;
+	nextBefore?: number;
+	endSequence: number;
+	revision: number;
+	persistedStreams: TranscriptDisplayStream[];
+	changes: Array<{ id: TranscriptDisplayRow['id']; row: TranscriptDisplayRow | null }>;
+	changesCursor: TranscriptChangeCursor;
+	moreChanges: boolean;
+};
+export type TranscriptChangeCursor = { revision: number; sequence: number };
+export type TranscriptDisplayStream = { runId: Id<'runs'>; streamId: string };
+export type TranscriptDisplayRequest = TranscriptPageRequest & {
+	streams?: TranscriptDisplayStream[];
+	changesAfter?: TranscriptChangeCursor;
+};
+export type TranscriptDisplayDetails = {
+	parts: AssistantPart[];
+	indexing: boolean;
+	nextAfter?: number;
+	previousBefore?: number;
+	revision: number;
+	stale: boolean;
+};
+export type TranscriptDetailCursor = { after?: number; before?: number; latest?: boolean };
+export type TranscriptDisplayDetailsRequest = TranscriptScopeRequest &
+	TranscriptDetailCursor & { rowId: TranscriptDisplayRow['id']; limit?: number };
+
 export type FilesystemBrowseEntry = {
 	name: string;
 	fullPath: string;
@@ -288,6 +321,14 @@ export type DesktopApi = {
 		request: TranscriptPageRequest,
 		signal?: AbortSignal
 	) => Promise<LocalTranscriptPage>;
+	fetchTranscriptDisplay: (
+		request: TranscriptDisplayRequest,
+		signal?: AbortSignal
+	) => Promise<TranscriptDisplayPage>;
+	fetchTranscriptDisplayDetails: (
+		request: TranscriptDisplayDetailsRequest,
+		signal?: AbortSignal
+	) => Promise<TranscriptDisplayDetails>;
 	fetchTranscriptDetails: (
 		request: TranscriptDetailsRequest,
 		signal?: AbortSignal

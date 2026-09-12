@@ -109,6 +109,68 @@ afterEach(async () => {
 });
 
 describe('transcript viewport paging', () => {
+	it('keeps long work sections as summaries and fetches a bounded page only after expansion', async () => {
+		const summary = (number: number): ThreadMessage => {
+			const prompt = message(number);
+			return {
+				...prompt,
+				_id: `work-${number}`,
+				type: 'response',
+				text: '',
+				displayRow: {
+					// SAFETY: fixture IDs never leave the mounted component.
+					id: `work-${number}` as NonNullable<ThreadMessage['displayRow']>['id'],
+					threadId: prompt.threadId,
+					runId: prompt.runId,
+					sequence: number,
+					kind: 'work',
+					itemCount: 4_000,
+					pendingTools: 0,
+					startedAt: 1_000,
+					completedAt: 3_001_000,
+					closed: true,
+					revision: 1
+				}
+			};
+		};
+		const first = summary(1);
+		const { props, viewport } = await renderTranscript([message(0), first, summary(2)]);
+		const load = vi.fn().mockResolvedValue({
+			parts: [{ type: 'reasoning', id: 'detail', text: 'Requested detail' }],
+			nextAfter: 5,
+			revision: 1,
+			stale: false,
+			indexing: false
+		});
+		props.loadSectionDetails = load;
+		await settle();
+		expect(load).not.toHaveBeenCalled();
+		expect(viewport.querySelectorAll('[data-transcript-anchor]')).toHaveLength(3);
+		const buttons = [...viewport.querySelectorAll<HTMLButtonElement>('button')].filter((button) =>
+			button.textContent?.includes('Worked for')
+		);
+		expect(buttons.map((button) => button.textContent?.trim())).toEqual([
+			'Worked for 50m 0s',
+			'Worked for 50m 0s'
+		]);
+		buttons[0].click();
+		await settle();
+		expect(load).toHaveBeenCalledTimes(1);
+		expect(load.mock.calls[0][0].id).toBe(first._id);
+		expect(load.mock.calls[0][1]).toEqual({});
+		const next = [...viewport.querySelectorAll<HTMLButtonElement>('button')].find(
+			(button) => button.textContent === 'Next details'
+		);
+		next?.click();
+		await settle();
+		expect(load.mock.calls[1][1]).toEqual({ after: 5 });
+		const signal: AbortSignal = load.mock.calls[1][2];
+		buttons[0].click();
+		await settle();
+		expect(signal.aborted).toBe(true);
+		expect(viewport.textContent).not.toContain('Next details');
+	});
+
 	it('fills an initially empty thread after its first page arrives, and stops once it scrolls', async () => {
 		const { props, viewport } = await renderTranscript([]);
 		expect(props.onLoadOlder).not.toHaveBeenCalled();

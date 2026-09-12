@@ -5,6 +5,7 @@ import schema from '@convex/schema';
 import { v } from 'convex/values';
 import { migrateRunExecution } from '@convex/lib/runExecution';
 import { startRunLifecycle } from '@convex/runLifecycle';
+import { displayState, scheduleDisplayBackfill } from '@convex/lib/transcriptDisplay';
 
 export const AUTOMATIC_CLEANUP_DELAY_MS = 48 * 60 * 60 * 1_000;
 const PRODUCTION_ROLLOUT_CLEANUP = 'production-rollout-cleanup-2026-09';
@@ -13,6 +14,29 @@ const FAST_MODE_BACKFILL = 'fast-mode-backfill-2026-09';
 export const migrations = new Migrations(components.migrations, {
 	schema,
 	internalMutation
+});
+
+export const backfillTranscriptDisplay = migrations.define({
+	table: 'threadTranscriptStates',
+	migrateOne: async (ctx, transcript) => {
+		await scheduleDisplayBackfill(ctx, await displayState(ctx, transcript.threadId));
+	}
+});
+
+export const runTranscriptDisplayBackfill = migrations.runner([
+	internal.migrations.backfillTranscriptDisplay
+]);
+
+export const runTranscriptDisplayBackfillAutomatically = internalMutation({
+	args: {},
+	returns: v.null(),
+	handler: async (ctx) => {
+		const migrationsToRun = [internal.migrations.backfillTranscriptDisplay];
+		const statuses = await migrations.getStatus(ctx, { migrations: migrationsToRun });
+		if (!statuses.every((status) => status.isDone))
+			await migrations.runSerially(ctx, migrationsToRun);
+		return null;
+	}
 });
 
 const nativeRunLifecycleMigrations = [internal.migrations.migrateRunLifecycle];
