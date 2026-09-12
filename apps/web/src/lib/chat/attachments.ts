@@ -17,6 +17,8 @@ export type ComposerAttachment = {
 	previewUrl?: string;
 	status: 'uploading' | 'ready' | 'error';
 	storageId?: Id<'_storage'>;
+	uploadedAt?: number;
+	fileSaved?: boolean;
 	error?: string;
 };
 

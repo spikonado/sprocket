@@ -68,6 +68,26 @@ pub fn routes() -> axum::Router<AppState> {
             axum::routing::delete(native_sign_out),
         )
         .route("/auth/native-session/token", post(native_session_token))
+        .route("/auth/offline-session", post(offline_session))
+}
+
+async fn offline_session(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Response, ApiError> {
+    if !peer.ip().is_loopback() || !is_loopback_same_origin(&headers) {
+        return Err(ApiError::authentication_required());
+    }
+    let token = require_session(&state.auth, &headers, &jar)
+        .await
+        .map_err(|_| ApiError::authentication_required())?;
+    Ok((
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(state.auth.offline_session_user(&token).await),
+    )
+        .into_response())
 }
 
 async fn session_changes(
@@ -277,7 +297,12 @@ async fn desktop_login_callback(
 
     match state.native_auth.complete_login(code, callback_state).await {
         Ok((user, session_token)) => {
-            if let Err(error) = state.auth.bind_session_user(&session_token, &user.id).await {
+            let generation = state.auth.account_generation();
+            if let Err(error) = state
+                .auth
+                .bind_session_user_at_generation(&session_token, &user.id, generation)
+                .await
+            {
                 return desktop_login_error_response(StatusCode::INTERNAL_SERVER_ERROR, &error);
             }
             desktop_login_html_response(
@@ -333,11 +358,13 @@ async fn native_sign_out(
     require_session(&state.auth, &headers, &jar)
         .await
         .map_err(|_| ApiError::authentication_required())?;
+    let sign_out = state.native_auth.sign_out().await;
     state
-        .native_auth
-        .sign_out()
+        .auth
+        .revoke_account_sessions()
         .await
-        .map_err(|error| ApiError::internal_with("failed to clear native session", error))?;
+        .map_err(ApiError::internal)?;
+    sign_out.map_err(|error| ApiError::internal_with("failed to clear native session", error))?;
     Ok(Json(DesktopLoginStartResponse { ok: true }))
 }
 
@@ -388,19 +415,18 @@ async fn native_session_token_response(
             )
         })?;
     if let Some(session) = &session {
-        if state.auth.session_has_user(&session_token).await {
-            state
-                .auth
-                .require_session_user(&session_token, &session.user.id)
-                .await
-                .map_err(|error| ApiError::with_status(StatusCode::CONFLICT, error))?;
-        } else {
-            state
-                .auth
-                .bind_session_user(&session_token, &session.user.id)
-                .await
-                .map_err(ApiError::internal)?;
-        }
+        let generation = state.auth.account_generation();
+        state
+            .auth
+            .bind_verified_session_user(&session_token, &session.user, generation)
+            .await
+            .map_err(|error| ApiError::with_status(StatusCode::CONFLICT, error))?;
+    } else {
+        state
+            .auth
+            .revoke_account_sessions()
+            .await
+            .map_err(ApiError::internal)?;
     }
     Ok(Json(session))
 }
@@ -570,6 +596,82 @@ mod tests {
     fn with_peer(mut request: Request<Body>, peer: SocketAddr) -> Request<Body> {
         request.extensions_mut().insert(ConnectInfo(peer));
         request
+    }
+
+    #[tokio::test]
+    async fn offline_cache_reads_require_the_local_account_and_stop_after_sign_out() {
+        let (state, token, _) = test_state(true).await;
+        let user = crate::native_auth::NativeUser {
+            id: "offline-user".into(),
+            email: "offline@example.com".into(),
+            first_name: None,
+            last_name: None,
+            profile_picture_url: None,
+        };
+        state
+            .auth
+            .bind_session_user_at_generation(&token, &user.id, state.auth.account_generation())
+            .await
+            .unwrap();
+        state
+            .auth
+            .bind_verified_session_user(&token, &user, state.auth.account_generation())
+            .await
+            .unwrap();
+        let app = router(state);
+        let request = |uri: &str, body: &str| {
+            with_peer(
+                Request::builder()
+                    .method("POST")
+                    .uri(uri)
+                    .header(header::HOST, "localhost:7731")
+                    .header(header::ORIGIN, "http://localhost:7731")
+                    .header(header::COOKIE, session_cookie(&token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_owned()))
+                    .unwrap(),
+                loopback_peer(),
+            )
+        };
+        let response = app
+            .clone()
+            .oneshot(request("/api/auth/offline-session", "{}"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(read_json(response).await["id"], user.id);
+        let response = app
+            .clone()
+            .oneshot(request(
+                "/api/threads/inbox-cache",
+                r#"{"userId":"offline-user"}"#,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = app
+            .clone()
+            .oneshot(request(
+                "/api/threads/inbox-cache",
+                r#"{"userId":"another-user"}"#,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let mut sign_out = request("/api/auth/native-session", "{}");
+        *sign_out.method_mut() = axum::http::Method::DELETE;
+        assert_eq!(
+            app.clone().oneshot(sign_out).await.unwrap().status(),
+            StatusCode::OK
+        );
+        let response = app
+            .oneshot(request(
+                "/api/threads/inbox-cache",
+                r#"{"userId":"offline-user"}"#,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
     fn native_token_request(session_token: Option<&str>, origin: &str) -> Request<Body> {

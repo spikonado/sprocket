@@ -25,6 +25,7 @@ const nativeTokenRequestSchema = z.object({ forceRefreshToken: z.boolean() });
 type NativeSessionTokenRequest = z.infer<typeof nativeTokenRequestSchema>;
 type TestJsonPayload =
 	| NativeSessionTokenRequest
+	| typeof nativeUser
 	| {
 			accessToken: string;
 			user: {
@@ -195,6 +196,35 @@ describe('installed and hosted auth', () => {
 			error: null
 		});
 	});
+
+	it('opens only the locally verified account after a cold offline start', async () => {
+		stubInstalledWindow();
+		stubFetch({
+			token: () => jsonResponse(503, { error: 'offline' }),
+			offlineSession: () => jsonResponse(200, nativeUser)
+		});
+		await initializeAuth(convexClient);
+		expect(get(authState)).toMatchObject({
+			isReady: true,
+			isLoading: false,
+			user: nativeUser,
+			nativeSession: 'offline'
+		});
+		await expect(getAccessToken()).rejects.toThrow('offline');
+		expect(get(authState).nativeSession).toBe('offline');
+	});
+
+	it.each([401, 409])(
+		'does not fall back to cached identity for a %s auth rejection',
+		async (status) => {
+			stubInstalledWindow();
+			const offlineSession = vi.fn(() => jsonResponse(200, nativeUser));
+			stubFetch({ token: () => jsonResponse(status, { error: 'rejected' }), offlineSession });
+			await initializeAuth(convexClient);
+			expect(offlineSession).not.toHaveBeenCalled();
+			expect(get(authState).user).toBeNull();
+		}
+	);
 
 	it('pairs the local session before asking for a native token', async () => {
 		stubInstalledWindow();
@@ -538,6 +568,7 @@ function unhandled(input: RequestInfo | URL, init?: RequestInit) {
 
 function stubFetch(handlers: {
 	token?: (request: NativeSessionTokenRequest) => Response | Promise<Response>;
+	offlineSession?: () => Response | Promise<Response>;
 	nativeSessionDelete?: () => Response | Promise<Response>;
 	desktopStart?: () => Response | Promise<Response>;
 	desktopResult?: () => Response | Promise<Response>;
@@ -546,6 +577,9 @@ function stubFetch(handlers: {
 	const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 		const url = requestUrl(input);
 		const method = (init?.method ?? 'GET').toUpperCase();
+		if (url.endsWith('/api/auth/offline-session') && method === 'POST') {
+			return handlers.offlineSession?.() ?? jsonResponse(200, null);
+		}
 		if (url.includes('/api/auth/native-session/token') && method === 'POST') {
 			const parsed = nativeTokenRequestSchema.safeParse(JSON.parse(String(init?.body ?? '{}')));
 			if (!parsed.success) {

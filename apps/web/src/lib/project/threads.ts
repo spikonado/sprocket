@@ -1,5 +1,5 @@
 import type { Doc, Id } from '$convex/_generated/dataModel';
-import type { Project, ThreadSummary, ProjectThreadGroup } from '$lib/types/sprocket';
+import type { Project, ThreadSummary } from '$lib/types/sprocket';
 
 export type ThreadSummaryRow = {
 	threadId: ThreadSummary['threadId'];
@@ -28,17 +28,24 @@ export function toThreadSummary(row: ThreadSummaryRow): ThreadSummary {
 }
 
 export function threadRecordToSummary(record: Doc<'threadRecords'>): ThreadSummary {
-	return toThreadSummary({
-		threadId: record._id,
-		repositoryKey: record.repositoryKey,
-		title: record.title ?? 'New thread',
-		selectedModel: record.selectedModel,
-		reasoningEffort: record.reasoningEffort,
-		fastMode: record.fastMode ?? false,
-		lastMessageAt: record.lastMessageAt,
-		threadStatus: record.archivedAt === undefined ? 'active' : 'archived',
-		status: record.status ?? 'completed'
-	});
+	return {
+		...toThreadSummary({
+			threadId: record._id,
+			repositoryKey: record.repositoryKey,
+			title: record.title ?? 'New thread',
+			selectedModel: record.selectedModel,
+			reasoningEffort: record.reasoningEffort,
+			fastMode: record.fastMode ?? false,
+			lastMessageAt: record.lastMessageAt,
+			threadStatus: record.archivedAt === undefined ? 'active' : 'archived',
+			status: record.status ?? 'completed'
+		}),
+		inboxState: record.inboxState ?? (record.archivedAt === undefined ? 'active' : 'settled'),
+		lastCompletedAt: record.lastCompletedAt,
+		hasPendingQuestion: record.hasPendingQuestion,
+		snoozedUntil: record.snoozedUntil,
+		wokeAt: record.wokeAt
+	};
 }
 
 export function findProjectByRepositoryKey<T extends Pick<Project, 'repositoryKey'>>(
@@ -61,58 +68,6 @@ export function findProjectByWorkspacePath<T extends Pick<Project, 'workspacePat
 	return projects.find((project) => project.workspacePath === workspacePath) ?? null;
 }
 
-export function isActiveThread(thread: Pick<ThreadSummary, 'threadStatus'>) {
-	return thread.threadStatus !== 'archived';
-}
-
-function buildProjectThreadGroup(project: Project, threads: ThreadSummary[]): ProjectThreadGroup {
-	const sortedThreads = sortThreadsRunningFirst(threads);
-	return {
-		project,
-		threads: sortedThreads,
-		activeThreadCount: countActiveThreads(sortedThreads)
-	};
-}
-
-export function getProjectThreadGroups(projects: Project[], threads: ThreadSummary[]) {
-	const threadsByRepositoryKey = new Map<string, ThreadSummary[]>();
-
-	for (const thread of threads.filter(isActiveThread)) {
-		const existing = threadsByRepositoryKey.get(thread.repositoryKey);
-		if (existing) {
-			existing.push(thread);
-			continue;
-		}
-		threadsByRepositoryKey.set(thread.repositoryKey, [thread]);
-	}
-
-	return projects.map((project) =>
-		buildProjectThreadGroup(project, threadsByRepositoryKey.get(project.repositoryKey) ?? [])
-	);
-}
-
-export function hasActiveRun(thread: Pick<ThreadSummary, 'status'>) {
-	return (
-		thread.status === 'queued' ||
-		thread.status === 'running' ||
-		thread.status === 'awaiting_executor'
-	);
-}
-
-function sortThreadsRunningFirst(threads: ThreadSummary[]) {
-	return [...threads].sort((left, right) => {
-		if (hasActiveRun(left) !== hasActiveRun(right)) {
-			return Number(hasActiveRun(right)) - Number(hasActiveRun(left));
-		}
-
-		return right.lastMessageAt - left.lastMessageAt;
-	});
-}
-
-function countActiveThreads(threads: ThreadSummary[]) {
-	return threads.filter(hasActiveRun).length;
-}
-
 export function findThreadById(
 	threads: ThreadSummary[],
 	threadId: Id<'threadRecords'> | null
@@ -122,24 +77,6 @@ export function findThreadById(
 	}
 
 	return threads.find((thread) => thread.threadId === threadId) ?? null;
-}
-
-/**
- * Session-restore target: the non-archived thread the user most recently
- * prompted or got a response in. Deliberately ignores run state. A
- * background run in another project should not hijack the session on load.
- */
-export function pickThreadToRestore(threads: ThreadSummary[]): ThreadSummary | null {
-	let latest: ThreadSummary | null = null;
-	for (const thread of threads) {
-		if (!isActiveThread(thread)) {
-			continue;
-		}
-		if (!latest || thread.lastMessageAt > latest.lastMessageAt) {
-			latest = thread;
-		}
-	}
-	return latest;
 }
 
 export function dataForThread<
@@ -274,24 +211,4 @@ export function resolveExpiredAgentLaunch(
 			latestStartedAt
 		)
 	};
-}
-
-export function resolveProjectThreadSelection(args: {
-	threads: ThreadSummary[];
-	currentThreadId: Id<'threadRecords'> | null;
-	currentWorkspacePath: string | null;
-	draftWorkspacePath: string | null;
-	pendingCreatedThreadId?: Id<'threadRecords'> | null;
-}) {
-	const { threads, currentThreadId, currentWorkspacePath, draftWorkspacePath } = args;
-
-	if (currentWorkspacePath && draftWorkspacePath === currentWorkspacePath) {
-		return null;
-	}
-
-	if (currentThreadId) {
-		return currentThreadId;
-	}
-
-	return threads[0]?.threadId ?? null;
 }

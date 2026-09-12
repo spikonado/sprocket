@@ -15,7 +15,7 @@ use tokio::sync::broadcast;
 
 use crate::AppState;
 use crate::routes::api_error::ApiError;
-use crate::thread_cache::CachedThreadRecord;
+use crate::thread_cache::{CachedInboxPage, CachedThreadRecord};
 use crate::thread_sync::{ThreadCacheEvent, ThreadCacheStatus};
 use crate::transcript_client::UserConvexClient;
 
@@ -32,6 +32,39 @@ struct ThreadCommandRequest {
     user_id: String,
     thread_id: String,
     title: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct InboxCacheRequest {
+    user_id: String,
+    records: Option<Vec<CachedThreadRecord>>,
+    cursor: Option<String>,
+}
+
+async fn inbox_cache_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(payload): Json<InboxCacheRequest>,
+) -> Result<Json<CachedInboxPage>, ApiError> {
+    crate::auth::require_session_user(&state.auth, &headers, &jar, &payload.user_id)
+        .await
+        .map_err(ApiError::unauthorized)?;
+    let store = &state.thread_cache.inbox_store;
+    if let Some(records) = payload.records {
+        store
+            .merge(&payload.user_id, records)
+            .await
+            .map_err(ApiError::bad_request)?;
+        return Ok(Json(CachedInboxPage::default()));
+    }
+    Ok(Json(
+        store
+            .load_inbox(&payload.user_id, payload.cursor.as_deref())
+            .await
+            .map_err(ApiError::internal)?,
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -80,6 +113,7 @@ struct ThreadCacheSnapshotResponse {
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/threads/register", post(register_handler))
+        .route("/threads/inbox-cache", post(inbox_cache_handler))
         .route("/threads/snapshot", post(snapshot_handler))
         .route("/threads/watch", post(watch_handler))
         .route("/threads/rename", post(rename_handler))

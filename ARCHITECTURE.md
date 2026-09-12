@@ -126,16 +126,46 @@ Sprocket deliberately separates cloud and machine-local state.
 | Artifact file reads, change detection, and preview feed                      | Local server         |
 | Model and authentication provider secrets                                    | Cloud deployment     |
 
-The local server owns this machine’s folder list and the account-isolated
-thread summary cache. Convex threads store a `repositoryKey`. When a folder is
-attached here, Rust watches that key’s active snapshot and writes it locally;
-archived threads download when the UI asks. The web app reads the cache, not
-`threads.listMine`. Folders that are not attached here stay hidden until they
-are added.
+The local server owns this machine's folder list. Convex threads store a
+`repositoryKey`, independently of local attachment. The inbox lists all account
+threads through four indexed Convex pagination subscriptions. Each section
+loads 25 records at a time. Multi-project filters merge ordered index streams,
+so jumping to Settled does not scan the preceding sections. Run status is a
+separate field from the mutually exclusive inbox state.
 
-Rename, archive, restore, rekey, and cancellation go through the local server
-so it can refresh the affected cache files before the UI reads them again.
-Thread creation and selected-thread lifecycle still talk to Convex directly.
+`patchInboxThread` updates state, sort priority, settle deadlines, and project
+counts transactionally. Counts change only when a thread changes section or
+repository, not on run heartbeats. Timers and terminal-run or question events
+wake snoozed threads. The maintenance job processes due settle deadlines in
+batches of 100. Settings, pins, snoozes, and settlement sync through Convex.
+
+The renderer sends observed summaries to Rust's authenticated inbox-cache
+endpoint in batches of 25. Rust atomically replaces one file per account and
+thread, using hashed path components, and reads cached history in pages of 100.
+This keeps cloud pagination separate from offline persistence. The legacy
+Rust recent-thread subscription still supplies selected-thread metadata to
+released clients, but it cannot overwrite the account-wide inbox cache.
+Cached rows are snapshots of observed history, not subscriptions to every
+unloaded thread. Offline counts describe the cached subset.
+
+Cache and transcript reads authorize against the persisted account-bound local
+session, without refreshing a cloud token. Cold offline startup obtains the
+previously verified user profile from a same-origin loopback endpoint. It does
+not authenticate cloud queries or writes. Sign-out revokes account-bound local
+sessions, and their normal 30-day expiry still applies.
+
+Rename and inbox state changes use authenticated Convex mutations. Rekey,
+cancellation, local execution, and transcript caching retain their local-server
+paths. Reading remote or cached history needs no local project attachment.
+Execution requires a connected folder with the matching repository key. A
+verified native account can read its cached workspace when cloud authentication
+is unavailable. The UI does not invoke server mutations while offline.
+
+The app opens a create screen, never the last selected thread. A device-local
+create draft and separate reply drafts use account-scoped local storage. File
+bytes live in IndexedDB until the user removes them or a submission succeeds.
+Expired draft uploads can then upload again without losing the local file.
+Filters, section collapse, read markers, and sidebar width are device-local.
 
 ### Artifacts and local bindings
 

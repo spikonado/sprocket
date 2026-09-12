@@ -9,6 +9,8 @@ import { vThreadWithUsageDoc } from '@convex/lib/docs';
 import { getThreadUsageValues } from '@convex/lib/threadUsage';
 import { unsupportedClient } from '@convex/lib/unsupportedClient';
 import { vReasoningEffort, vRunStatus } from '@convex/lib/validators';
+import { changeInboxState, patchInboxThread } from './lib/inbox';
+import { inboxState } from './lib/inboxState';
 
 async function renameOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>, title: string) {
 	const trimmedTitle = title.trim();
@@ -25,18 +27,14 @@ async function archiveOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'
 	const userId = await getUserId(ctx);
 	const record = await getOwnedThreadRecord(ctx.db, userId, threadId);
 
-	if (record.status && ['queued', 'running', 'awaiting_executor'].includes(record.status)) {
-		throw new Error('Cannot archive a thread while a run is active.');
-	}
-
-	await ctx.db.patch('threadRecords', threadId, { archivedAt: Date.now() });
+	await changeInboxState(ctx, record, 'settled');
 	return { userId, record };
 }
 
 async function restoreOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>) {
 	const userId = await getUserId(ctx);
 	const record = await getOwnedThreadRecord(ctx.db, userId, threadId);
-	await ctx.db.patch('threadRecords', threadId, { archivedAt: undefined });
+	if (inboxState(record) === 'settled') await changeInboxState(ctx, record, 'active');
 	return { userId, record };
 }
 
@@ -58,7 +56,7 @@ async function rekeyOwnedThreads(ctx: MutationCtx, fromArg: string, toArg: strin
 		)
 		.collect();
 	for (const thread of threads) {
-		await ctx.db.patch('threadRecords', thread._id, { repositoryKey: to });
+		await patchInboxThread(ctx, thread, { repositoryKey: to });
 	}
 	await rekeyOwnedArtifacts(ctx, userId, from, to);
 	return { userId, from, to, count: threads.length };
