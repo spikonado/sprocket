@@ -110,16 +110,17 @@ fn default_model_for_tier<'a>(
     catalog: &'a Catalog,
     allowed: &[String],
 ) -> anyhow::Result<&'a Model> {
+    let default_model_id = if allowed.contains(&catalog.default_model_id) {
+        &catalog.default_model_id
+    } else {
+        allowed
+            .first()
+            .context("no models are available for this account")?
+    };
     catalog
         .models
         .iter()
-        .find(|model| model.id == catalog.default_model_id && allowed.contains(&model.id))
-        .or_else(|| {
-            catalog
-                .models
-                .iter()
-                .find(|model| allowed.contains(&model.id))
-        })
+        .find(|model| model.id == *default_model_id)
         .context("no models are available for this account")
 }
 
@@ -201,9 +202,10 @@ mod tests {
             "protocolVersion": 1, "defaultModelId": "default", "defaultReasoningEffort": "high",
             "models": [
                 {"id": "default", "label": "Default", "reasoningEfforts": ["medium", "high"], "defaultReasoningEffort": "high", "serviceTiers": ["standard", "fast"]},
-                {"id": "paid", "label": "Paid", "reasoningEfforts": ["max"], "defaultReasoningEffort": "max", "serviceTiers": ["standard"]}
+                {"id": "paid", "label": "Paid", "reasoningEfforts": ["max"], "defaultReasoningEffort": "max", "serviceTiers": ["standard"]},
+                {"id": "paid-first", "label": "Paid First", "reasoningEfforts": ["xhigh"], "defaultReasoningEffort": "xhigh", "serviceTiers": ["standard"]}
             ],
-            "tierAllowedModels": {"free": ["default"], "paid": ["paid"]}, "tierAllowedServiceTiers": {"free": ["standard"]}
+            "tierAllowedModels": {"free": ["default"], "paid": ["paid-first", "paid"]}, "tierAllowedServiceTiers": {"free": ["standard"]}
         })).unwrap()
     }
 
@@ -249,7 +251,7 @@ mod tests {
             }]
         );
         let paid = available_for_tier(catalog(), "paid").unwrap();
-        assert_eq!(paid.default_model_id, "paid");
+        assert_eq!(paid.default_model_id, "paid-first");
 
         let settings = select(
             catalog(),
@@ -270,8 +272,8 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(settings.model, "paid");
-        assert_eq!(settings.reasoning, "max");
+        assert_eq!(settings.model, "paid-first");
+        assert_eq!(settings.reasoning, "xhigh");
 
         assert!(available_for_tier(catalog(), "unknown").is_err());
     }
