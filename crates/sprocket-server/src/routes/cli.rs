@@ -441,7 +441,10 @@ async fn output(
             .as_ref()
             .map(|outcome| outcome.status.clone())
             .unwrap_or_else(|| "running".into()),
-        error: snapshot.outcome.and_then(|outcome| outcome.error),
+        error: snapshot
+            .outcome
+            .and_then(|outcome| outcome.error)
+            .or(snapshot.output_error),
         parts: snapshot.parts,
         has_more: snapshot.has_more,
         execution_finished: snapshot.finished,

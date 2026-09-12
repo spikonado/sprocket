@@ -19,6 +19,7 @@ struct State {
     outcome: Option<RunOutcome>,
     finished: bool,
     error: Option<String>,
+    output_error: Option<String>,
     answer: String,
     revision: u64,
 }
@@ -43,6 +44,7 @@ pub struct RunOutputPage {
     pub finished: bool,
     pub outcome: Option<RunOutcome>,
     pub answer: String,
+    pub output_error: Option<String>,
 }
 
 impl Default for RunOutput {
@@ -102,27 +104,27 @@ impl RunOutput {
                 std::slice::from_ref(&part),
             )
             .await;
-        self.update(|state| match saved {
-            Ok(_) => {
-                if state.numbers.insert(part.number) {
-                    if let Some(completion) = &part.completion {
-                        state.answer = completion
-                            .items
-                            .iter()
-                            .filter(|item| item["type"] == "text")
-                            .filter_map(|item| item["text"].as_str())
-                            .collect();
-                        if completion
-                            .items
-                            .iter()
-                            .any(|item| item["type"] == "tool-call")
-                        {
-                            state.answer.clear();
-                        }
+        self.update(|state| {
+            if state.numbers.insert(part.number) {
+                if let Some(completion) = &part.completion {
+                    state.answer = completion
+                        .items
+                        .iter()
+                        .filter(|item| item["type"] == "text")
+                        .filter_map(|item| item["text"].as_str())
+                        .collect();
+                    if completion
+                        .items
+                        .iter()
+                        .any(|item| item["type"] == "tool-call")
+                    {
+                        state.answer.clear();
                     }
                 }
             }
-            Err(error) => state.error = Some(format!("Could not cache local run output: {error}")),
+            if let Err(error) = saved {
+                state.output_error = Some(format!("Could not cache local run output: {error}"));
+            }
         });
     }
 
@@ -135,10 +137,13 @@ impl RunOutput {
     }
 
     pub(crate) fn finalized(&self, outcome: RunOutcome, accepted: bool) {
-        if outcome.status == "completed" && !accepted {
-            return;
-        }
-        self.update(|state| state.outcome = Some(outcome));
+        self.update(|state| {
+            if outcome.status == "completed" && !accepted && state.outcome.is_none() {
+                state.answer.clear();
+                state.output_error = Some("The run completed without accepting this executor's finalization. Its final answer could not be confirmed.".into());
+            }
+            state.outcome = Some(outcome);
+        });
     }
 
     pub fn finish(&self, error: Option<String>) {
@@ -163,24 +168,21 @@ impl RunOutput {
             } else {
                 std::ops::Bound::Excluded(after_part as u32)
             };
-            let numbers: Vec<_> = state
-                .numbers
-                .range((lower, std::ops::Bound::Unbounded))
-                .copied()
-                .take(17)
-                .collect();
+            let numbers: Vec<_> = if state.output_error.is_none() {
+                state
+                    .numbers
+                    .range((lower, std::ops::Bound::Unbounded))
+                    .copied()
+                    .take(17)
+                    .collect()
+            } else {
+                Vec::new()
+            };
             let outcome = if state.finished {
-                Some(if let Some(error) = &state.error {
-                    RunOutcome {
-                        status: "unknown".into(),
-                        error: Some(error.clone()),
-                    }
-                } else {
-                    state.outcome.clone().unwrap_or(RunOutcome {
-                        status: "unknown".into(),
-                        error: None,
-                    })
-                })
+                Some(state.outcome.clone().unwrap_or(RunOutcome {
+                    status: "unknown".into(),
+                    error: state.error.clone(),
+                }))
             } else {
                 None
             };
@@ -199,18 +201,34 @@ impl RunOutput {
                 finished: state.finished,
                 outcome,
                 answer,
+                output_error: state.output_error.clone(),
             };
             (numbers.into_iter().take(16).collect::<Vec<_>>(), page)
         };
-        page.parts = scope
+        if page.output_error.is_some() || numbers.is_empty() {
+            return Ok(page);
+        }
+        let parts = scope
             .store
             .read_parts(&scope.user_id, &scope.thread_id, &numbers)
-            .await?;
-        anyhow::ensure!(
-            page.parts.len() == numbers.len()
-                && page.parts.iter().all(|part| part.run_id == scope.run_id),
-            "local run transcript is missing or belongs to another run"
-        );
+            .await
+            .and_then(|parts| {
+                anyhow::ensure!(
+                    parts.len() == numbers.len()
+                        && parts.iter().all(|part| part.run_id == scope.run_id),
+                    "local run transcript is missing or belongs to another run"
+                );
+                Ok(parts)
+            });
+        match parts {
+            Ok(parts) => page.parts = parts,
+            Err(error) => {
+                let error = format!("Could not read local run output: {error}");
+                self.update(|state| state.output_error = Some(error.clone()));
+                page.output_error = Some(error);
+                page.has_more = false;
+            }
+        }
         Ok(page)
     }
 }
@@ -375,7 +393,57 @@ mod tests {
         );
         output.finish(Some("claim ownership was lost".into()));
         let page = output.page(-1).await.unwrap();
-        assert_eq!(page.outcome.unwrap().status, "unknown");
+        assert_eq!(page.outcome.unwrap().status, "completed");
+        assert!(
+            page.output_error
+                .unwrap()
+                .contains("final answer could not be confirmed")
+        );
         assert!(page.answer.is_empty());
+    }
+
+    #[tokio::test]
+    async fn failed_cache_writes_preserve_the_acknowledged_answer_and_terminal_status() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let output = output(file.path());
+        output.record_part(completion(1, "Confirmed answer.")).await;
+        output.finalized(
+            RunOutcome {
+                status: "completed".into(),
+                error: None,
+            },
+            true,
+        );
+        output.finish(None);
+        let page = output.page(-1).await.unwrap();
+        assert_eq!(page.outcome.unwrap().status, "completed");
+        assert_eq!(page.answer, "Confirmed answer.");
+        assert!(page.output_error.unwrap().contains("Could not cache"));
+        assert!(page.parts.is_empty());
+        assert!(!page.has_more);
+    }
+
+    #[tokio::test]
+    async fn lost_cache_files_do_not_erase_a_confirmed_result_or_restart_paging() {
+        let directory = tempfile::tempdir().unwrap();
+        let output = output(directory.path());
+        output.record_part(completion(1, "Confirmed answer.")).await;
+        output.finalized(
+            RunOutcome {
+                status: "completed".into(),
+                error: None,
+            },
+            true,
+        );
+        output.finish(None);
+        tokio::fs::remove_dir_all(directory.path()).await.unwrap();
+        for _ in 0..2 {
+            let page = output.page(-1).await.unwrap();
+            assert_eq!(page.outcome.unwrap().status, "completed");
+            assert_eq!(page.answer, "Confirmed answer.");
+            assert!(page.output_error.unwrap().contains("Could not read"));
+            assert!(page.parts.is_empty());
+            assert!(!page.has_more);
+        }
     }
 }

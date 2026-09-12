@@ -89,6 +89,10 @@ status in the existing run-finalization response. It does not poll Convex or
 open another Convex subscription to display CLI output. An idle local output
 request renews after 15 seconds without a backend request.
 
+If local transcript delivery fails, the result preserves any confirmed run
+status and final answer. It also includes the local output error and exits
+nonzero, since the transcript stream may be incomplete.
+
 `--model`, `--reasoning`, `--fast`, and `--no-fast` override model settings. New
 threads use the catalog defaults with fast mode off; existing threads inherit
 their settings. Unsupported choices fail without substitution.

@@ -228,7 +228,11 @@ async fn execute_run(
         let done = snapshot.execution_finished && !snapshot.has_more;
         output.update(&snapshot)?;
         if done {
-            let code = if snapshot.status == "completed" { 0 } else { 1 };
+            let code = if snapshot.status == "completed" && snapshot.error.is_none() {
+                0
+            } else {
+                1
+            };
             output.finish(snapshot.status, snapshot.error)?;
             return Ok(code);
         }
