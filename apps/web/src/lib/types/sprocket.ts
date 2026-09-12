@@ -117,7 +117,7 @@ export type LiveCompletionOverlay = {
 	threadId: Id<'threadRecords'>;
 	runId: Id<'runs'>;
 	runStatus: Infer<typeof vRunStatus>;
-	streamId?: string;
+	streamId: string;
 	text: string;
 	parts: AssistantPart[];
 	runStartedAt: number;

@@ -265,10 +265,6 @@ Historical completion bodies may omit `streamId`, and older local transcript
 parts may omit `createdAt`. Readers leave stream identity and tool-event timing
 unknown when those fields are absent.
 
-Legacy live overlays may also omit `streamId`. The frontend displays them
-without waiting for stream acknowledgment. Remove this fallback when released
-agents that emit unidentified live overlays have aged out.
-
 Remove optional stored timing only after old rows and local replicas have aged
 out or been rewritten. Input validators may remain optional when current model
 providers do not supply a timestamp.

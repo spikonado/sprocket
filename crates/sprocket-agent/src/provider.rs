@@ -691,7 +691,7 @@ impl TranscriptSink {
             thread_id: self.thread_id.clone(),
             run_id: self.run_id.clone(),
             run_status: "running".to_string(),
-            stream_id: Some(self.stream_id.clone()),
+            stream_id: self.stream_id.clone(),
             text: join_assistant_text_parts(&self.parts.parts),
             parts: visible_live_parts(&self.parts.parts),
             run_started_at: self.run_started_at,

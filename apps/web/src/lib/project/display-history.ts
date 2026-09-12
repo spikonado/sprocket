@@ -13,7 +13,7 @@ type PageRequest = {
 	streams?: Stream[];
 };
 
-function streamKey(stream: { runId: string; streamId?: string }) {
+function streamKey(stream: Stream) {
 	return `${stream.runId}:${stream.streamId}`;
 }
 
@@ -61,8 +61,8 @@ export class DisplayHistory {
 	}
 
 	visibleOverlays(overlays: LiveCompletionOverlay[]) {
-		return this.unpersisted(overlays).filter(
-			(overlay) => !overlay.streamId || this.checkedStreams.has(streamKey(overlay))
+		return this.unpersisted(overlays).filter((overlay) =>
+			this.checkedStreams.has(streamKey(overlay))
 		);
 	}
 
@@ -77,8 +77,7 @@ export class DisplayHistory {
 	private streamRequest() {
 		const unique = new Map<string, Stream>();
 		for (const overlay of this.unpersisted(this.overlays)) {
-			if (overlay.streamId)
-				unique.set(streamKey(overlay), { runId: overlay.runId, streamId: overlay.streamId });
+			unique.set(streamKey(overlay), { runId: overlay.runId, streamId: overlay.streamId });
 			if (unique.size === 64) break;
 		}
 		const streams = [...unique.values()];
@@ -146,7 +145,7 @@ export class DisplayHistory {
 				this.refreshPending ||=
 					page.persistedStreams.length > 0 &&
 					this.unpersisted(this.overlays).some(
-						(overlay) => overlay.streamId && !this.checkedStreams.has(streamKey(overlay))
+						(overlay) => !this.checkedStreams.has(streamKey(overlay))
 					);
 				canLoadOlder = true;
 				this.loading = false;

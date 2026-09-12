@@ -226,7 +226,7 @@ describe('display transcript pages', () => {
 });
 
 describe('watchLiveCompletion', () => {
-	it('parses updated and cleared SSE events', async () => {
+	it('ignores unidentified overlays and parses updated and cleared SSE events', async () => {
 		const overlay = {
 			threadId: 'thread-1',
 			runId: 'run-1',
@@ -239,6 +239,13 @@ describe('watchLiveCompletion', () => {
 		const encoder = new TextEncoder();
 		const body = new ReadableStream({
 			start(controller) {
+				for (const streamId of [undefined, '']) {
+					controller.enqueue(
+						encoder.encode(
+							`data: ${JSON.stringify({ eventType: 'updated', live: { ...overlay, streamId } })}\n\n`
+						)
+					);
+				}
 				controller.enqueue(
 					encoder.encode(`data: ${JSON.stringify({ eventType: 'updated', live: overlay })}\n\n`)
 				);

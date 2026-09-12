@@ -151,7 +151,7 @@ const liveCompletionOverlaySchema = z.object({
 	threadId: z.string(),
 	runId: z.string(),
 	runStatus: z.enum(['queued', 'running', 'awaiting_executor', 'completed', 'failed', 'cancelled']),
-	streamId: z.string().optional(),
+	streamId: z.string().min(1),
 	text: z.string(),
 	parts: z.array(z.unknown()),
 	runStartedAt: z.int()
