@@ -3,9 +3,7 @@ use std::time::Duration;
 
 use convex::{FunctionResult, QuerySubscription, Value};
 use serde::Deserialize;
-use sprocket_agent::{
-    RemoteTranscriptState, TranscriptPart, TranscriptStore, fetch_missing_parts, parse_remote_parts,
-};
+use sprocket_agent::RemoteTranscriptState;
 use sprocket_convex::{AuthTokenFetcher, Client as ConvexClient, decode_labeled_function_result};
 use tokio::time::sleep;
 
@@ -15,6 +13,31 @@ pub struct UserConvexClient {
 }
 
 impl UserConvexClient {
+    pub async fn subscribe(
+        &self,
+        function: &str,
+        args: BTreeMap<String, Value>,
+    ) -> anyhow::Result<QuerySubscription> {
+        self.client.subscribe(function, args).await
+    }
+
+    pub async fn transcript_parts(
+        &self,
+        thread_id: &str,
+        numbers: &[u32],
+    ) -> anyhow::Result<Vec<sprocket_agent::TranscriptPart>> {
+        let mut args = thread_id_args(thread_id);
+        args.insert(
+            "numbers".into(),
+            Value::Array(
+                numbers
+                    .iter()
+                    .map(|n| Value::Float64(f64::from(*n)))
+                    .collect(),
+            ),
+        );
+        sprocket_agent::parse_remote_parts(self.query_json("transcript:getParts", args).await?)
+    }
     pub async fn connect_with_fetcher(
         deployment_url: &str,
         fetcher: AuthTokenFetcher,
@@ -35,29 +58,8 @@ impl UserConvexClient {
             .await
     }
 
-    pub async fn transcript_parts(
-        &self,
-        thread_id: &str,
-        numbers: &[u32],
-    ) -> anyhow::Result<Vec<TranscriptPart>> {
-        let mut args = thread_id_args(thread_id);
-        args.insert(
-            "numbers".to_string(),
-            Value::Array(
-                numbers
-                    .iter()
-                    .map(|number| Value::Float64(*number as f64))
-                    .collect(),
-            ),
-        );
-        let value: serde_json::Value = self.query_json("transcript:getParts", args).await?;
-        parse_remote_parts(value)
-    }
-
-    pub async fn subscribe_state(&self, thread_id: &str) -> anyhow::Result<QuerySubscription> {
-        self.client
-            .subscribe("transcript:getState", thread_id_args(thread_id))
-            .await
+    pub async fn watch_all(&self) -> anyhow::Result<convex::QuerySetSubscription> {
+        self.client.watch_all().await
     }
 
     pub async fn subscribe_recent_threads(
@@ -226,27 +228,6 @@ pub fn decode_thread_records_update(
     result: FunctionResult,
 ) -> anyhow::Result<Vec<crate::thread_cache::CachedThreadRecord>> {
     decode_labeled_function_result(result, "threads:listRecent")
-}
-
-pub fn decode_state_update(result: FunctionResult) -> anyhow::Result<RemoteTranscriptState> {
-    decode_labeled_function_result(result, "transcript:getState")
-}
-
-pub async fn sync_range(
-    store: &TranscriptStore,
-    client: &UserConvexClient,
-    user_id: &str,
-    thread_id: &str,
-    start: u32,
-    end_exclusive: u32,
-) -> anyhow::Result<()> {
-    fetch_missing_parts(store, user_id, thread_id, start, end_exclusive, |numbers| {
-        let client = client.clone();
-        let thread_id = thread_id.to_string();
-        async move { client.transcript_parts(&thread_id, &numbers).await }
-    })
-    .await?;
-    Ok(())
 }
 
 pub async fn retry_after_failure() {

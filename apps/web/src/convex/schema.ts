@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
+import { workPosition, workSectionFields, workMembership } from '@convex/lib/workSections';
 import {
 	vMandateChargeStatus,
 	vMandateFrequency,
@@ -192,6 +193,7 @@ export default defineSchema({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),
 		totalParts: v.number(),
+		workThrough: v.optional(workPosition),
 		migratedAt: v.optional(v.number())
 	}).index('by_threadId', ['threadId']),
 	threadTranscriptParts: defineTable({
@@ -203,11 +205,17 @@ export default defineSchema({
 		runId: v.id('runs'),
 		prompt: v.optional(vTranscriptPromptBody),
 		completion: v.optional(vTranscriptCompletionBody),
-		tool: v.optional(vTranscriptToolBody)
+		tool: v.optional(vTranscriptToolBody),
+		work: v.optional(workMembership)
 	})
 		.index('by_threadId_and_number', ['threadId', 'number'])
 		.index('by_threadId_and_sourceKey', ['threadId', 'sourceKey'])
 		.index('by_threadId_and_runId_and_number', ['threadId', 'runId', 'number']),
+	threadTranscriptWorkSections: defineTable({
+		threadId: v.id('threadRecords'),
+		linkedParts: v.number(),
+		...workSectionFields
+	}).index('by_threadId_and_key', ['threadId', 'key']),
 	// Retained only until the completion stream state cleanup migration finishes.
 	completionStreamStates: defineTable({
 		runId: v.id('runs'),

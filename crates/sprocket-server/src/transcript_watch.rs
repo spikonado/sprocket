@@ -1,13 +1,12 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use futures::StreamExt;
 use sprocket_agent::{RemoteTranscriptState, TranscriptStore, apply_remote_state};
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
 use crate::native_auth::NativeAuthManager;
-use crate::transcript_client::{UserConvexClient, decode_state_update, retry_after_failure};
+use crate::transcript_client::{UserConvexClient, retry_after_failure};
 
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -25,6 +24,7 @@ struct WatchKey {
 }
 
 struct WatchSlot {
+    id: uuid::Uuid,
     refs: usize,
     events: broadcast::Sender<TranscriptWatchEvent>,
     task: JoinHandle<()>,
@@ -52,6 +52,7 @@ pub struct TranscriptWatchers {
 pub struct TranscriptWatchSession {
     watchers: Arc<TranscriptWatchers>,
     key: WatchKey,
+    id: uuid::Uuid,
     rx: broadcast::Receiver<TranscriptWatchEvent>,
 }
 
@@ -131,10 +132,12 @@ impl TranscriptWatchers {
             return TranscriptWatchSession {
                 watchers: Arc::clone(self),
                 key,
+                id: slot.id,
                 rx: slot.events.subscribe(),
             };
         }
         let (events, rx) = broadcast::channel(16);
+        let id = uuid::Uuid::new_v4();
         let task = (self.start)(WatchStart {
             deployment_url: self.deployment_url.clone(),
             store: Arc::clone(&self.store),
@@ -146,6 +149,7 @@ impl TranscriptWatchers {
         inner.insert(
             key.clone(),
             WatchSlot {
+                id,
                 refs: 1,
                 events,
                 task,
@@ -154,15 +158,19 @@ impl TranscriptWatchers {
         TranscriptWatchSession {
             watchers: Arc::clone(self),
             key,
+            id,
             rx,
         }
     }
 
-    fn close(&self, key: &WatchKey) {
+    fn close(&self, key: &WatchKey, id: uuid::Uuid) {
         let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
         let Some(slot) = inner.get_mut(key) else {
             return;
         };
+        if slot.id != id {
+            return;
+        }
         slot.refs = slot.refs.saturating_sub(1);
         if slot.refs == 0 {
             if let Some(slot) = inner.remove(key) {
@@ -184,12 +192,32 @@ impl TranscriptWatchSession {
     pub fn receiver(&mut self) -> &mut broadcast::Receiver<TranscriptWatchEvent> {
         &mut self.rx
     }
+
+    pub async fn wait_for_run(&mut self, run_id: &str) -> anyhow::Result<()> {
+        loop {
+            let run = run_id.to_owned();
+            if self
+                .watchers
+                .store
+                .with_work_replica(&self.key.user_id, &self.key.thread_id, move |replica| {
+                    replica.run_synced(&run)
+                })
+                .await?
+            {
+                return Ok(());
+            }
+            match self.rx.recv().await {
+                Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
 }
 
 impl Drop for TranscriptWatchSession {
     fn drop(&mut self) {
         // Sync close so shutdown / no-runtime drops still release the slot.
-        self.watchers.close(&self.key);
+        self.watchers.close(&self.key, self.id);
     }
 }
 
@@ -237,14 +265,22 @@ async fn run_watch_loop(start: &WatchStart) -> anyhow::Result<()> {
     )
     .await?;
     let remote = client.ensure_migrated(&start.thread_id).await?;
-    apply_and_publish(start, &remote, false).await?;
+    apply_and_publish(start, &remote, true).await?;
 
-    let mut subscription = client.subscribe_state(&start.thread_id).await?;
-    while let Some(update) = subscription.next().await {
-        let remote = decode_state_update(update)?;
-        apply_and_publish(start, &remote, false).await?;
-    }
-    anyhow::bail!("transcript subscription ended")
+    crate::work_sync::synchronize(
+        client,
+        Arc::clone(&start.store),
+        start.user_id.clone(),
+        start.thread_id.clone(),
+        |total| {
+            let _ = start.events.send(TranscriptWatchEvent {
+                event_type: "updated",
+                total_parts: Some(total),
+                stale: false,
+            });
+        },
+    )
+    .await
 }
 
 async fn apply_and_publish(
@@ -342,6 +378,32 @@ mod tests {
         assert_eq!(event.total_parts, Some(4));
         assert!(event.stale);
         drop(session);
+        let _ = tokio::fs::remove_dir_all(dir).await;
+    }
+
+    #[tokio::test]
+    async fn closing_an_aborted_session_does_not_cancel_its_replacement() {
+        let dir = std::env::temp_dir().join(format!("sprocket-watch-{}", uuid::Uuid::new_v4()));
+        let watchers = TranscriptWatchers::with_starter(
+            "https://example.convex.cloud".into(),
+            TranscriptStore::new(dir.clone()),
+            native_auth(),
+            Arc::new(|_start| tokio::spawn(std::future::pending())),
+        );
+        let old = watchers.open("user", "thread").await;
+        watchers.abort_thread("user", "thread").await;
+        let mut replacement = watchers.open("user", "thread").await;
+        drop(old);
+        assert_eq!(watchers.active_count(), 1);
+        watchers
+            .notify_local_update("user", "thread", 7, false)
+            .await;
+        assert_eq!(
+            replacement.receiver().recv().await.unwrap().total_parts,
+            Some(7)
+        );
+        drop(replacement);
+        assert_eq!(watchers.active_count(), 0);
         let _ = tokio::fs::remove_dir_all(dir).await;
     }
 

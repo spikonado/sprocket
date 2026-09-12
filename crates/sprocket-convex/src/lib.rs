@@ -135,6 +135,10 @@ impl Client {
         .await
     }
 
+    pub async fn watch_all(&self) -> anyhow::Result<convex::QuerySetSubscription> {
+        Ok(self.connected_client().await?.watch_all())
+    }
+
     pub async fn mutation(
         &self,
         function: &str,

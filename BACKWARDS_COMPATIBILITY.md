@@ -2,7 +2,15 @@
 
 We ship breaking changes ahead of our users' installed clients and keep the old behavior working until those clients age out. That debt is easy to accumulate and easier to forget. This file lists every backwards-compatibility layer we currently ship, what it protects, how to remove it, and the signal that says removal is safe. When a removal PR merges, remove its entry from this document.
 
-Current as of 2026-09-11.
+## Stored transcript work metadata
+
+Historical transcripts may lack `threadTranscriptParts.work` and
+`threadTranscriptStates.workThrough`. Opening a thread fills missing work metadata
+with the Rust processor without changing its raw transcript bodies.
+
+Keep support for missing metadata until every retained transcript has complete
+membership and its checkpoint covers all parts. Remove only that fallback after
+the gate passes; the processor remains responsible for new transcript parts.
 
 ## Native run lifecycle scheduling
 

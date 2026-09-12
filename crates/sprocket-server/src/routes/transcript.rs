@@ -11,10 +11,7 @@ use axum::routing::post;
 use axum_extra::extract::CookieJar;
 use futures::stream::unfold;
 use serde::Deserialize;
-use sprocket_agent::{
-    AttachmentUnavailable, TRANSCRIPT_CHUNK_SIZE, TranscriptAttachmentMeta, cache_attachment,
-    parts_window,
-};
+use sprocket_agent::{AttachmentUnavailable, TranscriptAttachmentMeta, cache_attachment};
 use tokio::sync::broadcast;
 use tokio_util::io::ReaderStream;
 
@@ -33,30 +30,11 @@ struct TranscriptScope {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct TranscriptPartsRequest {
-    user_id: String,
-    #[serde(deserialize_with = "deserialize_thread_id")]
-    thread_id: String,
-    before: Option<u32>,
-    limit: Option<u32>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TranscriptAttachmentRequest {
     user_id: String,
     #[serde(deserialize_with = "deserialize_thread_id")]
     thread_id: String,
     storage_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct TranscriptDetailsRequest {
-    user_id: String,
-    #[serde(deserialize_with = "deserialize_thread_id")]
-    thread_id: String,
-    numbers: Vec<u32>,
 }
 
 fn deserialize_thread_id<'de, D: serde::Deserializer<'de>>(
@@ -77,9 +55,9 @@ fn deserialize_thread_id<'de, D: serde::Deserializer<'de>>(
 
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
-        .route("/transcript/parts", post(parts_handler))
+        .route("/transcript/display", post(display_handler))
+        .route("/transcript/display-details", post(display_details_handler))
         .route("/transcript/watch", post(watch_handler))
-        .route("/transcript/part-details", post(part_details_handler))
         .route("/transcript/clear", post(clear_handler))
         .route("/transcript/attachment", post(attachment_handler))
         .route(
@@ -92,40 +70,136 @@ pub fn routes() -> axum::Router<AppState> {
         )
 }
 
-async fn part_details_handler(
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DisplayDetailsRequest {
+    user_id: String,
+    #[serde(deserialize_with = "deserialize_thread_id")]
+    thread_id: String,
+    #[serde(deserialize_with = "deserialize_thread_id")]
+    row_id: String,
+    after: Option<u64>,
+    before: Option<u64>,
+    latest: Option<bool>,
+    limit: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DisplayStream {
+    #[serde(deserialize_with = "deserialize_thread_id")]
+    run_id: String,
+    stream_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DisplayChangeCursor {
+    revision: u64,
+    sequence: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DisplayRequest {
+    user_id: String,
+    #[serde(deserialize_with = "deserialize_thread_id")]
+    thread_id: String,
+    before: Option<u64>,
+    limit: Option<u32>,
+    #[serde(default)]
+    streams: Vec<DisplayStream>,
+    changes_after: Option<DisplayChangeCursor>,
+}
+
+async fn display_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     jar: CookieJar,
-    Json(payload): Json<TranscriptDetailsRequest>,
-) -> Result<Json<Vec<sprocket_agent::TranscriptPartRecord>>, ApiError> {
+    Json(payload): Json<DisplayRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
     require_session_user(&state, &headers, &jar, &payload.user_id).await?;
-    require_transcript_numbers(&payload.numbers, Some(TRANSCRIPT_CHUNK_SIZE as usize))?;
-    let records = state
+    let limit = payload.limit.unwrap_or(12);
+    if !(1..=40).contains(&limit)
+        || payload.streams.len() > 64
+        || payload
+            .before
+            .is_some_and(|before| before > 9_007_199_254_740_991)
+    {
+        return Err(ApiError::bad_request(anyhow!("invalid display page limit")));
+    }
+    if let Some(cursor) = &payload.changes_after {
+        if cursor.revision > 9_007_199_254_740_991
+            || !(-1..=9_007_199_254_740_991).contains(&cursor.sequence)
+        {
+            return Err(ApiError::bad_request(anyhow!(
+                "invalid display change cursor"
+            )));
+        }
+    }
+    let changes = payload.changes_after.map(|c| (c.revision, c.sequence));
+    let streams = payload
+        .streams
+        .into_iter()
+        .map(|s| (s.run_id, s.stream_id))
+        .collect::<Vec<_>>();
+    let stale = state
         .transcript
-        .part_details(&payload.user_id, &payload.thread_id, &payload.numbers)
+        .load_state(&payload.user_id, &payload.thread_id)
         .await
-        .map_err(|error| ApiError::internal_with("failed to read transcript part details", error))?
-        .ok_or_else(|| ApiError::bad_request(anyhow!("transcript parts not found")))?;
-    Ok(Json(records))
+        .map_err(ApiError::internal)?
+        .stale;
+    state
+        .transcript
+        .with_work_replica(&payload.user_id, &payload.thread_id, move |replica| {
+            replica.page(payload.before, limit, changes, &streams, stale)
+        })
+        .await
+        .map(Json)
+        .map_err(ApiError::internal)
 }
 
-fn require_transcript_numbers(numbers: &[u32], max_len: Option<usize>) -> Result<(), ApiError> {
-    if numbers.is_empty() {
+async fn display_details_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(payload): Json<DisplayDetailsRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
+    let limit = payload.limit.unwrap_or(5);
+    if !(1..=5).contains(&limit)
+        || [payload.after, payload.before]
+            .into_iter()
+            .flatten()
+            .any(|value| value > 9_007_199_254_740_991)
+        || (payload.after.is_some() && payload.before.is_some())
+        || (payload.latest == Some(true) && (payload.after.is_some() || payload.before.is_some()))
+    {
         return Err(ApiError::bad_request(anyhow!(
-            "invalid transcript detail range"
+            "invalid display detail page"
         )));
     }
-    if max_len.is_some_and(|max| numbers.len() > max) {
-        return Err(ApiError::bad_request(anyhow!(
-            "request at most {TRANSCRIPT_CHUNK_SIZE} transcript parts"
-        )));
-    }
-    if numbers.windows(2).any(|pair| pair[0] >= pair[1]) {
-        return Err(ApiError::bad_request(anyhow!(
-            "transcript detail numbers must be strictly increasing"
-        )));
-    }
-    Ok(())
+    let stale = state
+        .transcript
+        .load_state(&payload.user_id, &payload.thread_id)
+        .await
+        .map_err(ApiError::internal)?
+        .stale;
+    state
+        .transcript
+        .with_work_replica(&payload.user_id, &payload.thread_id, move |replica| {
+            replica.details(
+                &payload.row_id,
+                payload.after,
+                payload.before,
+                payload.latest.unwrap_or(false),
+                limit,
+                stale,
+            )
+        })
+        .await
+        .map(Json)
+        .map_err(ApiError::internal)
 }
 
 async fn require_user(state: &AppState, user_id: &str) -> Result<(), ApiError> {
@@ -146,106 +220,6 @@ async fn require_session_user(
         .await
         .map_err(ApiError::unauthorized)?;
     require_user(state, user_id).await
-}
-
-async fn parts_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(payload): Json<TranscriptPartsRequest>,
-) -> Result<Json<sprocket_agent::TranscriptPartsPage>, ApiError> {
-    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
-    let transcript_state =
-        load_transcript_state(&state, &payload.user_id, &payload.thread_id).await?;
-    let (start, end) = parts_window(
-        transcript_state.visible_end_exclusive(),
-        payload.before,
-        payload.limit,
-    );
-    if start < end
-        && !state
-            .transcript
-            .has_complete_range(&payload.user_id, &payload.thread_id, start, end)
-            .await
-            .map_err(|error| ApiError::internal_with("failed to inspect transcript parts", error))?
-    {
-        let client = UserConvexClient::connect_with_fetcher(
-            &state.convex_deployment_url,
-            state
-                .native_auth
-                .auth_token_fetcher_for_user(payload.user_id.clone()),
-        )
-        .await
-        .map_err(|error| {
-            ApiError::internal_with("failed to connect while loading transcript parts", error)
-        })?;
-        crate::transcript_client::sync_range(
-            &state.transcript,
-            &client,
-            &payload.user_id,
-            &payload.thread_id,
-            start,
-            end,
-        )
-        .await
-        .map_err(|error| ApiError::internal_with("failed to load transcript parts", error))?;
-        if !state
-            .transcript
-            .has_complete_range(&payload.user_id, &payload.thread_id, start, end)
-            .await
-            .map_err(|error| ApiError::internal_with("failed to inspect transcript parts", error))?
-        {
-            return Err(ApiError::internal_with(
-                "incomplete transcript history",
-                anyhow!("transcript parts are not yet available; retry the page"),
-            ));
-        }
-    }
-
-    // A watch update during the fetch must not shift this page to uncached parts.
-    let page = state
-        .transcript
-        .parts_page(
-            &payload.user_id,
-            &payload.thread_id,
-            Some(end),
-            payload.limit,
-        )
-        .await
-        .map_err(|error| ApiError::internal_with("failed to read transcript replica", error))?;
-    Ok(Json(page))
-}
-
-async fn load_transcript_state(
-    state: &AppState,
-    user_id: &str,
-    thread_id: &str,
-) -> Result<sprocket_agent::TranscriptState, ApiError> {
-    let transcript_state = state
-        .transcript
-        .load_state(user_id, thread_id)
-        .await
-        .map_err(|error| ApiError::internal_with("failed to read transcript state", error))?;
-    if transcript_state.visible_end_exclusive() > 0 {
-        return Ok(transcript_state);
-    }
-    let client = UserConvexClient::connect_with_fetcher(
-        &state.convex_deployment_url,
-        state
-            .native_auth
-            .auth_token_fetcher_for_user(user_id.to_string()),
-    )
-    .await
-    .map_err(|error| {
-        ApiError::internal_with("failed to connect while loading transcript", error)
-    })?;
-    let remote = client
-        .ensure_migrated(thread_id)
-        .await
-        .map_err(|error| ApiError::internal_with("failed to load transcript state", error))?;
-    sprocket_agent::apply_remote_state(&state.transcript, user_id, thread_id, &remote, false)
-        .await
-        .map_err(|error| ApiError::internal_with("failed to save transcript state", error))
 }
 
 async fn watch_handler(
@@ -451,25 +425,15 @@ mod tests {
         ] {
             let valid = thread_id == "thread-1";
             assert_eq!(parse::<TranscriptScope>(thread_id, json!({})), valid);
-            assert_eq!(parse::<TranscriptPartsRequest>(thread_id, json!({})), valid);
+            assert_eq!(parse::<DisplayRequest>(thread_id, json!({})), valid);
+            assert_eq!(
+                parse::<DisplayDetailsRequest>(thread_id, json!({ "rowId": "row-1" })),
+                valid
+            );
             assert_eq!(
                 parse::<TranscriptAttachmentRequest>(thread_id, json!({"storageId": "storage-1"})),
                 valid
             );
-            assert_eq!(
-                parse::<TranscriptDetailsRequest>(thread_id, json!({"numbers": [1]})),
-                valid
-            );
         }
-    }
-
-    #[test]
-    fn part_detail_numbers_are_capped_and_strictly_increasing() {
-        assert!(require_transcript_numbers(&[0, 1, 2], Some(100)).is_ok());
-        assert!(require_transcript_numbers(&[], Some(100)).is_err());
-        assert!(require_transcript_numbers(&[2, 1], Some(100)).is_err());
-        assert!(require_transcript_numbers(&[1, 1], Some(100)).is_err());
-        assert!(require_transcript_numbers(&(0..101).collect::<Vec<_>>(), Some(100)).is_err());
-        assert!(require_transcript_numbers(&(0..101).collect::<Vec<_>>(), None).is_ok());
     }
 }

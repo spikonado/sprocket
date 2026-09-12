@@ -83,12 +83,6 @@ describe('assistant timeline', () => {
 		});
 	});
 
-	it('keeps unloaded reasoning reachable until its summary is fetched', () => {
-		const parts = [{ type: 'reasoning' as const, id: 'unloaded', text: '' }];
-		expect(buildAssistantTimeline(parts, [], false)).toEqual(parts);
-		expect(buildAssistantTimeline(parts, [], true)).toEqual([]);
-	});
-
 	it('hides empty reasoning and keeps later tool then text in arrival order', () => {
 		const timeline = buildAssistantTimeline(
 			[

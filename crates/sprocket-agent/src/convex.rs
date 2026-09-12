@@ -141,6 +141,7 @@ impl RuntimeClient {
             args.insert("repositoryKey".to_string(), repository_key.clone().into());
         }
         args.insert("prompt".to_string(), request.prompt.clone().into());
+        args.insert("transcriptProtocol".into(), Value::Float64(2.0));
         args.insert("storageIds".to_string(), string_array(&request.storage_ids));
         args.insert(
             "selectedModel".to_string(),
@@ -247,6 +248,7 @@ impl RuntimeClient {
         let mut args = self.run_args_with_claim(run_id, claim_id);
         args.insert("attemptSeq".to_string(), Value::Float64(attempt_seq as f64));
         args.insert("streamId".to_string(), stream_id.to_string().into());
+        args.insert("transcriptProtocol".into(), Value::Float64(2.0));
         args.insert(
             "items".to_string(),
             Value::try_from(serde_json::Value::Array(items))?,

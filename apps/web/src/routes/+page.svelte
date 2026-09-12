@@ -99,8 +99,9 @@
 		type PendingAgentLaunch,
 		type PendingAgentLaunches
 	} from '$lib/project/threads';
-	import { historyHasLiveCompletion, mergePagedTranscriptWithLive } from '$lib/project/transcript';
-	import { TranscriptHistory } from '$lib/project/transcript-history';
+	import { mergeLiveOverlays } from '$lib/project/transcript';
+	import { DisplayHistory, visibleDisplayMessages } from '$lib/project/display-history';
+	import type { TranscriptDisplayRow, TranscriptDetailCursor } from '$lib/types/sprocket';
 	import {
 		clearLaunchHash,
 		readWorkspaceLaunchFromHash,
@@ -114,7 +115,7 @@
 		LiveCompletionOverlay,
 		ThreadCacheStatus,
 		ThreadCacheUserRequest,
-		ThreadMessage,
+		TranscriptMessage,
 		ThreadSummary,
 		ProjectAttachment
 	} from '$lib/types/sprocket';
@@ -568,7 +569,7 @@
 	const pendingAgentQuestion = $derived(
 		dataForThread(pendingAgentQuestionQuery.data, currentThreadId)
 	);
-	let replicaMessages = $state<ThreadMessage[]>([]);
+	let replicaMessages = $state.raw<TranscriptDisplayRow[]>([]);
 	let replicaNextBefore = $state<number | null>(null);
 	let replicaWindowVersion = $state(0);
 	let replicaStale = $state(false);
@@ -576,12 +577,11 @@
 	let replicaLoading = $state(false);
 	let replicaError = $state<string | null>(null);
 	let replicaGeneration = 0;
-	let transcriptHistory: TranscriptHistory | null = null;
+	let transcriptHistory = $state.raw<DisplayHistory | null>(null);
 	let transcriptAbort: AbortController | null = null;
 	let loadingOlderTranscript = $state(false);
-	const loadingTranscriptDetails = new SvelteMap<string, Promise<void>>();
-	let liveCompletion = $state<LiveCompletionOverlay | null>(null);
-	let pendingCompletions = $state<LiveCompletionOverlay[]>([]);
+	let liveCompletion = $state.raw<LiveCompletionOverlay | null>(null);
+	let pendingCompletions = $state.raw<LiveCompletionOverlay[]>([]);
 
 	function showReplicaForThread(threadId: Id<'threadRecords'> | null) {
 		replicaGeneration += 1;
@@ -590,7 +590,6 @@
 		transcriptHistory?.stop();
 		transcriptHistory = null;
 		loadingOlderTranscript = false;
-		loadingTranscriptDetails.clear();
 		replicaThreadId = threadId;
 		liveCompletion = null;
 		pendingCompletions = [];
@@ -624,12 +623,18 @@
 		const watchedThreadId = threadId;
 		transcriptAbort = ac;
 		const generation = replicaGeneration;
-		const history = new TranscriptHistory(
+		const history = new DisplayHistory(
 			(request) =>
-				api.fetchTranscriptPage({ userId, threadId: watchedThreadId, ...request }, ac.signal),
+				api.fetchTranscriptDisplay(
+					{
+						userId,
+						threadId: watchedThreadId,
+						...request
+					},
+					ac.signal
+				),
 			() => {
 				if (ac.signal.aborted || replicaGeneration !== generation) return;
-				if (replicaWindowVersion !== history.windowVersion) pendingCompletions = [];
 				replicaMessages = history.messages;
 				replicaNextBefore = history.nextBefore ?? null;
 				replicaWindowVersion = history.windowVersion;
@@ -637,9 +642,12 @@
 				replicaLoading = history.loading;
 				loadingOlderTranscript = history.loadingOlder;
 				replicaError = history.error;
-				pendingCompletions = pendingCompletions.filter(
-					(live) => !historyHasLiveCompletion(history.messages, live)
-				);
+				const pendingCount = pendingCompletions.length;
+				pendingCompletions = history
+					.unpersisted([...pendingCompletions, ...(liveCompletion ? [liveCompletion] : [])])
+					.filter((live) => live !== liveCompletion);
+				if (pendingCompletions.length > 0 && pendingCompletions.length < pendingCount)
+					void history.refresh();
 			}
 		);
 		transcriptHistory = history;
@@ -699,7 +707,7 @@
 									liveCompletion &&
 									(event.eventType === 'cleared' || event.live.streamId !== liveCompletion.streamId)
 								) {
-									if (!historyHasLiveCompletion(replicaMessages, liveCompletion)) {
+									if (transcriptHistory?.unpersisted([liveCompletion]).length) {
 										pendingCompletions = [...pendingCompletions, liveCompletion];
 									}
 									void transcriptHistory?.refresh();
@@ -738,23 +746,33 @@
 		};
 	});
 
-	const visibleMessages = $derived.by((): ThreadMessage[] => {
+	$effect(() => {
+		const overlays = [...pendingCompletions, ...(liveCompletion ? [liveCompletion] : [])];
+		const history = transcriptHistory;
+		untrack(() => history?.setOverlays(overlays));
+	});
+
+	const visibleMessages = $derived.by((): TranscriptMessage[] => {
 		const userId = getCurrentUserId();
 		if (!currentThreadId || !userId || replicaThreadId !== currentThreadId) {
 			return [];
 		}
-		const messages = mergePagedTranscriptWithLive({
-			messages: replicaMessages,
-			live: liveCompletion,
-			pending: pendingCompletions,
-			userId,
-			threadId: currentThreadId
-		});
-		return messages.map((message) =>
-			message.runId === runState?.runId
-				? { ...message, runStartedAt: runState.startedAt, runCompletedAt: runState.completedAt }
-				: message
+		const overlays =
+			transcriptHistory?.visibleOverlays([
+				...pendingCompletions,
+				...(liveCompletion ? [liveCompletion] : [])
+			]) ?? [];
+		const messages = mergeLiveOverlays(
+			overlays.filter((overlay) => overlay.threadId === currentThreadId)
 		);
+		return [
+			...visibleDisplayMessages(replicaMessages, overlays),
+			...messages.map((message) =>
+				message.runId === runState?.runId
+					? { ...message, runStartedAt: runState.startedAt, runCompletedAt: runState.completedAt }
+					: message
+			)
+		];
 	});
 
 	const currentProject = $derived.by<ProjectState | null>(() => {
@@ -1487,46 +1505,20 @@
 		return blob ? URL.createObjectURL(blob) : null;
 	}
 
-	async function loadTranscriptMessageDetails(message: ThreadMessage) {
+	async function loadTranscriptSectionDetails(
+		row: TranscriptDisplayRow,
+		cursor: TranscriptDetailCursor,
+		signal: AbortSignal
+	) {
 		const api = desktopApi;
 		const threadId = currentThreadId;
 		const userId = getCurrentUserId();
-		const history = transcriptHistory;
-		const signal = transcriptAbort?.signal;
-		const generation = replicaGeneration;
-		if (
-			!api ||
-			!threadId ||
-			!userId ||
-			!history ||
-			message.detailsLoaded ||
-			!message.sourceNumbers?.length
-		) {
-			return;
-		}
-		const numbers = history.detailsNumbers(message);
-		if (!numbers.length) return;
-		const key = `${generation}:${message._id}`;
-		const pending = loadingTranscriptDetails.get(key);
-		if (pending) {
-			await pending;
-			if (replicaGeneration === generation) await loadTranscriptMessageDetails(message);
-			return;
-		}
-		const request = (async () => {
-			for (let offset = 0; offset < numbers.length; offset += 100) {
-				if (replicaGeneration !== generation || signal?.aborted) return;
-				const details = await api.fetchTranscriptDetails(
-					{ userId, threadId, numbers: numbers.slice(offset, offset + 100) },
-					signal
-				);
-				if (replicaGeneration === generation) history.applyDetails(details);
-			}
-		})().finally(() => {
-			loadingTranscriptDetails.delete(key);
-		});
-		loadingTranscriptDetails.set(key, request);
-		return request;
+		if (!api || !threadId || !userId || row.threadId !== threadId)
+			throw new Error('Thread is no longer selected.');
+		return await api.fetchTranscriptDisplayDetails(
+			{ userId, threadId, rowId: row.id, ...cursor },
+			signal
+		);
 	}
 
 	async function archiveThread(threadId: Id<'threadRecords'>) {
@@ -2546,7 +2538,7 @@
 								void loadOlderTranscript();
 							}}
 							loadAttachment={loadTranscriptAttachment}
-							onLoadDetails={(message) => loadTranscriptMessageDetails(message)}
+							loadSectionDetails={loadTranscriptSectionDetails}
 						/>
 					{/key}
 

@@ -7,10 +7,7 @@ import type {
 	LiveCompletionOverlay,
 	LiveCompletionWatchEvent,
 	LocalArtifact,
-	LocalTranscriptPage,
-	LocalTranscriptPart,
 	ProjectAttachment,
-	ThreadMessage,
 	ThreadCacheSnapshot,
 	ThreadCacheUserRequest,
 	ThreadCacheWatchEvent,
@@ -87,33 +84,63 @@ function transcriptUploadPath(args: { userId: string; name: string; threadId?: s
 	return `/api/transcript/upload?${query}`;
 }
 
-const transcriptMessageSchema = z.object({
-	id: z.string(),
-	threadId: z.string(),
-	runId: z.string(),
-	userId: z.string(),
-	type: z.enum(['prompt', 'response']),
-	text: z.string(),
-	attachments: z.array(localTranscriptAttachmentSchema),
-	parts: z.array(z.unknown()),
-	runStatus: z.enum(['queued', 'running', 'awaiting_executor', 'completed', 'failed', 'cancelled']),
-	runStartedAt: z.int(),
-	sourceNumbers: z.array(z.int()),
-	streamIds: z.array(z.string()),
-	detailsLoaded: z.boolean()
-});
-const localTranscriptPartSchema = z.object({
-	number: z.int().nonnegative(),
-	kind: z.enum(['prompt', 'completion', 'tool']),
-	message: transcriptMessageSchema.nullable()
-});
-const localTranscriptPageSchema = z.object({
-	threadId: z.string(),
-	totalParts: z.int(),
-	historyFromNumber: z.int(),
+const displayRowSchema = z
+	.object({
+		id: z.string(),
+		threadId: z.string(),
+		runId: z.string(),
+		sequence: z.int().nonnegative(),
+		kind: z.enum(['prompt', 'text', 'work', 'approval']),
+		text: z.string().optional(),
+		attachments: z.array(localTranscriptAttachmentSchema).optional(),
+		mandateId: z.string().optional(),
+		approvalUrl: z.string().optional(),
+		itemCount: z.int().nonnegative(),
+		pendingTools: z.int().nonnegative(),
+		provisional: z.boolean().optional(),
+		startedAt: z.number().optional(),
+		completedAt: z.number().optional(),
+		closed: z.boolean(),
+		revision: z.int().nonnegative()
+	})
+	.transform((row) => ({
+		...row,
+		threadId: asConvexId<'threadRecords'>(row.threadId),
+		runId: asConvexId<'runs'>(row.runId),
+		attachments: row.attachments?.map((attachment) => ({
+			...attachment,
+			storageId: asConvexId<'_storage'>(attachment.storageId)
+		}))
+	}));
+
+const displayPageSchema = z.object({
+	replicaId: z.string(),
+	rows: z.array(displayRowSchema),
+	indexing: z.boolean(),
 	stale: z.boolean(),
-	parts: z.array(localTranscriptPartSchema),
-	nextBefore: z.int().optional()
+	nextBefore: z.int().nonnegative().optional(),
+	endSequence: z.int().nonnegative(),
+	revision: z.int().nonnegative(),
+	persistedStreams: z.array(
+		z.object({ runId: z.string().transform((id) => asConvexId<'runs'>(id)), streamId: z.string() })
+	),
+	changes: z.array(
+		z.object({
+			id: z.string(),
+			row: displayRowSchema.nullable()
+		})
+	),
+	changesCursor: z.object({ revision: z.int().nonnegative(), sequence: z.int().min(-1) }),
+	moreChanges: z.boolean()
+});
+
+const displayDetailsSchema = z.object({
+	parts: z.array(z.unknown()),
+	indexing: z.boolean(),
+	nextAfter: z.int().nonnegative().optional(),
+	previousBefore: z.int().nonnegative().optional(),
+	revision: z.int().nonnegative(),
+	stale: z.boolean()
 });
 const transcriptWatchEventSchema = z.object({
 	eventType: z.string(),
@@ -124,7 +151,7 @@ const liveCompletionOverlaySchema = z.object({
 	threadId: z.string(),
 	runId: z.string(),
 	runStatus: z.enum(['queued', 'running', 'awaiting_executor', 'completed', 'failed', 'cancelled']),
-	streamId: z.string().optional(),
+	streamId: z.string().min(1),
 	text: z.string(),
 	parts: z.array(z.unknown()),
 	runStartedAt: z.int()
@@ -191,54 +218,6 @@ function parseProjectAttachment(
 	attachment: z.infer<typeof projectAttachmentSchema>
 ): ProjectAttachment {
 	return attachment;
-}
-
-function parseLocalTranscriptPage(
-	page: z.infer<typeof localTranscriptPageSchema>
-): LocalTranscriptPage {
-	return {
-		threadId: asConvexId(page.threadId),
-		totalParts: page.totalParts,
-		historyFromNumber: page.historyFromNumber,
-		stale: page.stale,
-		nextBefore: page.nextBefore,
-		parts: page.parts.map(parseLocalTranscriptPart)
-	};
-}
-
-function parseLocalTranscriptPart(
-	part: z.infer<typeof localTranscriptPartSchema>
-): LocalTranscriptPart {
-	return {
-		number: part.number,
-		kind: part.kind,
-		message: part.message ? parseTranscriptMessage(part.message) : null
-	};
-}
-
-function parseTranscriptMessage(message: z.infer<typeof transcriptMessageSchema>): ThreadMessage {
-	return {
-		_id: message.id,
-		threadId: asConvexId(message.threadId),
-		runId: asConvexId(message.runId),
-		userId: message.userId,
-		type: message.type,
-		text: message.text,
-		attachments: message.attachments.map((attachment) => ({
-			storageId: asConvexId<'_storage'>(attachment.storageId),
-			name: attachment.name,
-			mediaType: attachment.mediaType,
-			size: attachment.size,
-			url: attachment.url ?? null
-		})),
-		// SAFETY: the local Rust API emits transcript parts in the shared assistant-part shape.
-		parts: message.parts as AssistantPart[],
-		runStatus: message.runStatus,
-		runStartedAt: message.runStartedAt,
-		sourceNumbers: message.sourceNumbers,
-		streamIds: message.streamIds,
-		detailsLoaded: message.detailsLoaded
-	};
 }
 
 function parseLiveCompletionOverlay(
@@ -645,22 +624,21 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 			});
 			return { runId: asConvexId(result.runId), threadId: asConvexId(result.threadId) };
 		},
-		fetchTranscriptPage: async (requestBody, signal) => {
-			const page = await request('/api/transcript/parts', localTranscriptPageSchema, {
+		fetchTranscriptDisplay: async (requestBody, signal) =>
+			await request('/api/transcript/display', displayPageSchema, {
+				method: 'POST',
+				body: JSON.stringify(requestBody),
+				signal
+			}),
+		fetchTranscriptDisplayDetails: async (requestBody, signal) => {
+			const page = await request('/api/transcript/display-details', displayDetailsSchema, {
 				method: 'POST',
 				body: JSON.stringify(requestBody),
 				signal
 			});
-			return parseLocalTranscriptPage(page);
+			// SAFETY: Rust projects stored vAssistantMessagePart variants without provider metadata.
+			return { ...page, parts: page.parts as AssistantPart[] };
 		},
-		fetchTranscriptDetails: async (requestBody, signal) =>
-			(
-				await request('/api/transcript/part-details', z.array(localTranscriptPartSchema), {
-					method: 'POST',
-					body: JSON.stringify(requestBody),
-					signal
-				})
-			).map(parseLocalTranscriptPart),
 		watchTranscript: async (requestBody, handlers) => {
 			await postSse(`${baseUrl}/api/transcript/watch`, requestBody, handlers.signal, (data) => {
 				const parsed = transcriptWatchEventSchema.safeParse(JSON.parse(data));

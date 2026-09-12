@@ -1,6 +1,7 @@
 import type { Doc, Id } from '$convex/_generated/dataModel';
 import type { AssistantPart } from '$convex/lib/assistantParts';
 import type { Infer } from 'convex/values';
+import type { displayRowValidator } from '$convex/lib/transcriptDisplayTypes';
 import {
 	vExecutorJobKind,
 	vExecutorJobStatus,
@@ -85,23 +86,13 @@ export type MessageAttachment = {
 	url: string | null;
 };
 
-export type ThreadMessage = {
-	_id: string;
-	_creationTime?: number;
-	threadId: Id<'threadRecords'>;
-	runId: Id<'runs'>;
-	userId: string;
-	type: 'prompt' | 'response';
-	text: string;
-	attachments: MessageAttachment[];
-	parts: AssistantPart[];
-	runStatus: Infer<typeof vRunStatus>;
-	runStartedAt: number;
+export type LiveTranscriptMessage = Omit<LiveCompletionOverlay, 'streamId'> & {
+	kind: 'live';
+	id: string;
 	runCompletedAt?: number;
-	sourceNumbers?: number[];
-	streamIds?: string[];
-	detailsLoaded?: boolean;
 };
+
+export type TranscriptMessage = TranscriptDisplayRow | LiveTranscriptMessage;
 
 export type AgentRunRequest = {
 	userId: string;
@@ -122,34 +113,11 @@ export type AgentRunStart = {
 	threadId: Id<'threadRecords'>;
 };
 
-export type LocalTranscriptAttachment = {
-	storageId: Id<'_storage'>;
-	name: string;
-	mediaType: string;
-	size: number;
-	url?: string;
-};
-
-export type LocalTranscriptPart = {
-	number: number;
-	kind: 'prompt' | 'completion' | 'tool';
-	message: ThreadMessage | null;
-};
-
-export type LocalTranscriptPage = {
-	threadId: Id<'threadRecords'>;
-	totalParts: number;
-	historyFromNumber: number;
-	stale: boolean;
-	parts: LocalTranscriptPart[];
-	nextBefore?: number;
-};
-
 export type LiveCompletionOverlay = {
 	threadId: Id<'threadRecords'>;
 	runId: Id<'runs'>;
 	runStatus: Infer<typeof vRunStatus>;
-	streamId?: string;
+	streamId: string;
 	text: string;
 	parts: AssistantPart[];
 	runStartedAt: number;
@@ -208,14 +176,39 @@ export type TranscriptScopeRequest = {
 	threadId: Id<'threadRecords'>;
 };
 
-export type TranscriptPageRequest = {
-	userId: string;
-	threadId: Id<'threadRecords'>;
+export type TranscriptDisplayRow = Infer<typeof displayRowValidator>;
+export type TranscriptDisplayPage = {
+	replicaId: string;
+	rows: TranscriptDisplayRow[];
+	indexing: boolean;
+	stale: boolean;
+	nextBefore?: number;
+	endSequence: number;
+	revision: number;
+	persistedStreams: TranscriptDisplayStream[];
+	changes: Array<{ id: TranscriptDisplayRow['id']; row: TranscriptDisplayRow | null }>;
+	changesCursor: TranscriptChangeCursor;
+	moreChanges: boolean;
+};
+export type TranscriptChangeCursor = { revision: number; sequence: number };
+export type TranscriptDisplayStream = { runId: Id<'runs'>; streamId: string };
+export type TranscriptDisplayRequest = TranscriptScopeRequest & {
 	before?: number;
 	limit?: number;
+	streams?: TranscriptDisplayStream[];
+	changesAfter?: TranscriptChangeCursor;
 };
-
-export type TranscriptDetailsRequest = TranscriptScopeRequest & { numbers: number[] };
+export type TranscriptDisplayDetails = {
+	parts: AssistantPart[];
+	indexing: boolean;
+	nextAfter?: number;
+	previousBefore?: number;
+	revision: number;
+	stale: boolean;
+};
+export type TranscriptDetailCursor = { after?: number; before?: number; latest?: boolean };
+export type TranscriptDisplayDetailsRequest = TranscriptScopeRequest &
+	TranscriptDetailCursor & { rowId: TranscriptDisplayRow['id']; limit?: number };
 
 export type FilesystemBrowseEntry = {
 	name: string;
@@ -284,14 +277,14 @@ export type DesktopApi = {
 	listProjectAttachments: () => Promise<ProjectAttachment[]>;
 	attachProject: (attachment: ProjectAttachmentRequest) => Promise<ProjectAttachment>;
 	runAgent: (request: AgentRunRequest) => Promise<AgentRunStart>;
-	fetchTranscriptPage: (
-		request: TranscriptPageRequest,
+	fetchTranscriptDisplay: (
+		request: TranscriptDisplayRequest,
 		signal?: AbortSignal
-	) => Promise<LocalTranscriptPage>;
-	fetchTranscriptDetails: (
-		request: TranscriptDetailsRequest,
+	) => Promise<TranscriptDisplayPage>;
+	fetchTranscriptDisplayDetails: (
+		request: TranscriptDisplayDetailsRequest,
 		signal?: AbortSignal
-	) => Promise<LocalTranscriptPart[]>;
+	) => Promise<TranscriptDisplayDetails>;
 	watchTranscript: (
 		request: TranscriptScopeRequest,
 		handlers: {

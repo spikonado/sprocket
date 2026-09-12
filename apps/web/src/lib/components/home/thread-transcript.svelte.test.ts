@@ -1,27 +1,44 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount, type ComponentProps } from 'svelte';
 import type { Id } from '$convex/_generated/dataModel';
-import type { ThreadMessage } from '$lib/types/sprocket';
+import type {
+	TranscriptMessage,
+	TranscriptDisplayRow,
+	LiveTranscriptMessage
+} from '$lib/types/sprocket';
 import ThreadTranscript from './thread-transcript.svelte';
 
 let cleanup: (() => Promise<void>) | undefined;
 let resize: () => void;
 
-function message(number: number): ThreadMessage {
+function message(number: number): TranscriptDisplayRow {
 	return {
-		_id: `prompt:${number}`,
+		id: `prompt:${number}`,
 		// SAFETY: Fixture IDs never leave the mounted component.
 		threadId: 'thread' as Id<'threadRecords'>,
 		// SAFETY: Fixture IDs never leave the mounted component.
 		runId: `run-${number}` as Id<'runs'>,
-		userId: 'user',
-		type: 'prompt',
+		kind: 'prompt',
 		text: `Message ${number}`,
-		parts: [],
 		attachments: [],
+		sequence: number,
+		itemCount: 0,
+		pendingTools: 0,
+		closed: true,
+		revision: 1
+	};
+}
+
+function liveMessage(): LiveTranscriptMessage {
+	return {
+		kind: 'live',
+		id: 'response:run',
+		threadId: message(3).threadId,
+		runId: message(3).runId,
 		runStatus: 'completed',
 		runStartedAt: 1,
-		sourceNumbers: [number]
+		text: '',
+		parts: []
 	};
 }
 
@@ -31,7 +48,7 @@ async function settle() {
 	await vi.advanceTimersByTimeAsync(16);
 }
 
-async function renderTranscript(messages: ThreadMessage[], viewportHeight = 600) {
+async function renderTranscript(messages: TranscriptMessage[], viewportHeight = 600) {
 	const props = $state<ComponentProps<typeof ThreadTranscript>>({
 		currentError: null,
 		runError: null,
@@ -109,6 +126,152 @@ afterEach(async () => {
 });
 
 describe('transcript viewport paging', () => {
+	it.each(['live', 'persisted'] as const)(
+		'uses the same patch and failure disclosures for %s tools',
+		async (kind) => {
+			const parts: LiveTranscriptMessage['parts'] = [
+				{
+					type: 'tool-call',
+					callId: 'patch',
+					name: 'apply_patch',
+					input: {
+						patch:
+							'*** Begin Patch\n*** Add File: a.txt\n+a\n*** Add File: b.txt\n+b\n*** Add File: c.txt\n+c\n*** End Patch'
+					}
+				},
+				{ type: 'tool-result', callId: 'patch', name: 'apply_patch', output: {} },
+				{
+					type: 'tool-call',
+					callId: 'cancelled',
+					name: 'exec_command',
+					input: { cmd: 'sleep 10' }
+				},
+				{
+					type: 'tool-result',
+					callId: 'cancelled',
+					name: 'exec_command',
+					output: { status: 'cancelled', error: 'stopped by user' }
+				},
+				{ type: 'tool-call', callId: 'interrupted', name: 'read_skill', input: { name: 'test' } }
+			];
+			const response: TranscriptMessage =
+				kind === 'live'
+					? { ...liveMessage(), parts }
+					: {
+							...message(3),
+							kind: 'work',
+							id: 'work-3',
+							itemCount: 3
+						};
+			const { props, viewport } = await renderTranscript([response]);
+			props.loadSectionDetails = vi
+				.fn()
+				.mockResolvedValue({ parts, revision: 1, stale: false, indexing: false });
+			await settle();
+			viewport.querySelector<HTMLButtonElement>('button[aria-expanded]')?.click();
+			await settle();
+			const patch = [...viewport.querySelectorAll('button')].find((button) =>
+				button.textContent?.includes('Changed Files')
+			);
+			expect(patch?.getAttribute('aria-expanded')).toBe('false');
+			const failures = [...viewport.querySelectorAll('details summary')];
+			expect(failures.map((summary) => summary.textContent)).toEqual([
+				expect.stringContaining('(cancelled)'),
+				expect.stringContaining('(interrupted)')
+			]);
+			expect(failures.every((summary) => summary.querySelector('.text-amber-800'))).toBe(true);
+			expect(viewport.querySelector('details [role="status"]')?.textContent).toBe(
+				'stopped by user'
+			);
+		}
+	);
+
+	it.each(['live', 'persisted'] as const)(
+		'shows an open running-command group for %s tools',
+		async (kind) => {
+			const parts: LiveTranscriptMessage['parts'] = [
+				{ type: 'tool-call', callId: 'command', name: 'exec_command', input: { cmd: 'sleep 10' } },
+				{
+					type: 'tool-result',
+					callId: 'command',
+					name: 'exec_command',
+					output: { sessionId: 'session', running: true }
+				}
+			];
+			const response: TranscriptMessage =
+				kind === 'live'
+					? { ...liveMessage(), runStatus: 'running', parts }
+					: {
+							...message(3),
+							kind: 'work',
+							id: 'work-3',
+							itemCount: 1,
+							closed: false,
+							pendingTools: 1
+						};
+			const { props, viewport } = await renderTranscript([response]);
+			props.activeRunId = response.runId;
+			props.loadSectionDetails = vi
+				.fn()
+				.mockResolvedValue({ parts, revision: 1, stale: false, indexing: false });
+			await settle();
+			const running = [...viewport.querySelectorAll('button')].find((button) =>
+				button.textContent?.includes('Running')
+			);
+			expect(running?.getAttribute('aria-expanded')).toBe('true');
+			expect(running?.querySelector('.animate-spin')).not.toBeNull();
+			expect(viewport.querySelector('[title="sleep 10 (running)"]')).not.toBeNull();
+		}
+	);
+
+	it('keeps long work sections as summaries and fetches a bounded page only after expansion', async () => {
+		const summary = (number: number): TranscriptDisplayRow => ({
+			...message(number),
+			id: `work-${number}`,
+			kind: 'work',
+			text: '',
+			itemCount: 4_000,
+			startedAt: 1_000,
+			completedAt: 3_001_000
+		});
+		const first = summary(1);
+		const { props, viewport } = await renderTranscript([message(0), first, summary(2)]);
+		const load = vi.fn().mockResolvedValue({
+			parts: [{ type: 'reasoning', id: 'detail', text: 'Requested detail' }],
+			nextAfter: 5,
+			revision: 1,
+			stale: false,
+			indexing: false
+		});
+		props.loadSectionDetails = load;
+		await settle();
+		expect(load).not.toHaveBeenCalled();
+		expect(viewport.querySelectorAll('[data-transcript-anchor]')).toHaveLength(3);
+		const buttons = [...viewport.querySelectorAll<HTMLButtonElement>('button')].filter((button) =>
+			button.textContent?.includes('Worked for')
+		);
+		expect(buttons.map((button) => button.textContent?.trim())).toEqual([
+			'Worked for 50m 0s',
+			'Worked for 50m 0s'
+		]);
+		buttons[0].click();
+		await settle();
+		expect(load).toHaveBeenCalledTimes(1);
+		expect(load.mock.calls[0][0].id).toBe(first.id);
+		expect(load.mock.calls[0][1]).toEqual({});
+		const next = [...viewport.querySelectorAll<HTMLButtonElement>('button')].find(
+			(button) => button.textContent === 'Next details'
+		);
+		next?.click();
+		await settle();
+		expect(load.mock.calls[1][1]).toEqual({ after: 5 });
+		const signal: AbortSignal = load.mock.calls[1][2];
+		buttons[0].click();
+		await settle();
+		expect(signal.aborted).toBe(true);
+		expect(viewport.textContent).not.toContain('Next details');
+	});
+
 	it('fills an initially empty thread after its first page arrives, and stops once it scrolls', async () => {
 		const { props, viewport } = await renderTranscript([]);
 		expect(props.onLoadOlder).not.toHaveBeenCalled();
@@ -324,10 +487,8 @@ describe('transcript viewport paging', () => {
 	});
 
 	it('preserves a text section when older parts are prepended inside the same response', async () => {
-		const response: ThreadMessage = {
-			...message(3),
-			_id: 'response:run',
-			type: 'response',
+		const response: LiveTranscriptMessage = {
+			...liveMessage(),
 			parts: [3, 4, 5, 6].map((number) => ({
 				type: 'text',
 				id: `text-${number}`,
@@ -368,10 +529,8 @@ describe('transcript viewport paging', () => {
 	});
 
 	it('keeps a work disclosure open when a page prepends parts into that section', async () => {
-		const response: ThreadMessage = {
-			...message(3),
-			_id: 'response:run',
-			type: 'response',
+		const response: LiveTranscriptMessage = {
+			...liveMessage(),
 			parts: [
 				{ type: 'reasoning', id: 'r3', text: 'Recent reasoning' },
 				{ type: 'text', id: 't4', text: 'Answer' }
@@ -399,10 +558,8 @@ describe('transcript viewport paging', () => {
 		async (split) => {
 			const first = { type: 'reasoning' as const, id: 'r1', text: 'First work' };
 			const second = { type: 'reasoning' as const, id: 'r2', text: 'Second work' };
-			const response: ThreadMessage = {
-				...message(3),
-				_id: 'response:run',
-				type: 'response',
+			const response: LiveTranscriptMessage = {
+				...liveMessage(),
 				parts: split ? [first, second] : [first]
 			};
 			const { props, viewport } = await renderTranscript([response]);

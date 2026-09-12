@@ -21,6 +21,7 @@ describe('gateway quota', () => {
 		const { asUser, threadId, subject } = await seedOwnedThread(t);
 		const executionSecret = 'gateway-secret';
 		const created = await asUser.action(api.agentRuntime.createGatewayRun, {
+			transcriptProtocol: 2,
 			submissionId: 'gateway-run',
 			threadId,
 			prompt: 'Ship it',
