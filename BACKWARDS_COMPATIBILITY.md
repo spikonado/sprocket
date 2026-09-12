@@ -8,6 +8,11 @@ and agent-run endpoints keep their request formats and interactive tool set.
 Deploy the backend queries before releasing the new CLI. Older local servers
 return an update-and-restart error rather than receiving a fallback run request.
 
+CLI discovery and bootstrap proofs bind to a random server-process ID. The CLI
+never sends the reusable pairing credential over HTTP. CLI sessions stay in
+memory and cannot resume after a server restart. Existing app pairing and
+persisted app sessions keep their formats.
+
 Profiles without a credential-store selection continue using the existing
 deployment-and-data-directory-scoped keyring entry. No credentials are copied to
 file storage automatically. The keyring default has no removal gate; it remains

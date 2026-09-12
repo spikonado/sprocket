@@ -3,10 +3,14 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use sprocket_server::cli_protocol::{CLI_PROTOCOL_VERSION, CliClientRequest, CliConnectRequest};
+use sprocket_server::cli_protocol::{
+    CLI_PROTOCOL_VERSION, CliBootstrapRequest, CliBootstrapResponse, CliClientRequest,
+    CliConnectRequest, CliDiscovery, cli_bootstrap_message, cli_bootstrap_response_message,
+    cli_discovery_message,
+};
 use sprocket_server::{
-    PairingProofRequest, PairingProofResponse, ServerConfig, pairing_proof_message,
-    read_pairing_credential, read_server_address, verify_pairing_proof,
+    PairingProofRequest, ServerConfig, read_pairing_credential, read_server_address,
+    sign_pairing_proof, verify_pairing_proof,
 };
 
 pub(super) struct Connection {
@@ -46,7 +50,7 @@ impl Connection {
             .timeout(Duration::from_secs(20))
             .build()?;
         validate_local_url(&config.listen_url())?;
-        let base_url = if let Some(url) = discover(&http, &config).await? {
+        let discovered = if let Some(url) = discover(&http, &config).await? {
             url
         } else {
             spawn_server(&config)?;
@@ -65,38 +69,32 @@ impl Connection {
         };
         let credential = read_pairing_credential(&config)?
             .context("local server pairing credential is missing")?;
-        let response = http
-            .post(format!("{base_url}/api/auth/bootstrap"))
-            .header(reqwest::header::ORIGIN, &base_url)
-            .json(&serde_json::json!({ "credential": credential }))
-            .send()
-            .await?;
-        anyhow::ensure!(
-            response.status().is_success(),
-            "could not pair with the local server"
-        );
-        let session_token = response
-            .headers()
-            .get_all(reqwest::header::SET_COOKIE)
-            .iter()
-            .filter_map(|value| value.to_str().ok())
-            .filter_map(|value| value.split(';').next())
-            .find_map(|value| value.strip_prefix("sprocket_session="))
-            .context("local server omitted the pairing session")?
-            .to_string();
+        let base_url = discovered.http_base_url;
+        let session_token = uuid::Uuid::new_v4().to_string();
         let client_id = uuid::Uuid::new_v4().to_string();
-        let _: bool = post(
-            &http,
-            &base_url,
-            &session_token,
-            "connect",
-            &CliConnectRequest {
+        let mut bootstrap = CliBootstrapRequest {
+            client: CliConnectRequest {
                 client_id: client_id.clone(),
                 protocol_version: CLI_PROTOCOL_VERSION,
                 deployment_url: config.resolve_convex_deployment_url()?,
             },
-        )
-        .await?;
+            session_token: session_token.clone(),
+            proof: Vec::new(),
+        };
+        bootstrap.proof = sign_pairing_proof(
+            &credential,
+            &cli_bootstrap_message(&discovered.instance_id, &base_url, &bootstrap),
+        )?;
+        let response: CliBootstrapResponse =
+            post(&http, &base_url, "", "bootstrap", &bootstrap).await?;
+        anyhow::ensure!(
+            verify_pairing_proof(
+                &credential,
+                &cli_bootstrap_response_message(&discovered.instance_id, &base_url, &bootstrap),
+                &response.proof
+            ),
+            "local server identity changed during pairing"
+        );
         let heartbeat = {
             let http = http.clone();
             let base_url = base_url.clone();
@@ -237,7 +235,10 @@ fn validate_local_url(value: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn discover(http: &reqwest::Client, config: &ServerConfig) -> anyhow::Result<Option<String>> {
+async fn discover(
+    http: &reqwest::Client,
+    config: &ServerConfig,
+) -> anyhow::Result<Option<CliDiscovery>> {
     let mut candidates = Vec::new();
     if let Some(address) = read_server_address(&config.resolve_data_dir())? {
         candidates.push(address);
@@ -249,7 +250,7 @@ async fn discover(http: &reqwest::Client, config: &ServerConfig) -> anyhow::Resu
         validate_local_url(&base_url)?;
         let challenge = uuid::Uuid::new_v4().to_string();
         let response = match http
-            .post(format!("{base_url}/api/auth/pairing-proof"))
+            .post(format!("{base_url}/api/cli/discovery"))
             .timeout(Duration::from_millis(750))
             .json(&PairingProofRequest {
                 challenge: challenge.clone(),
@@ -263,9 +264,9 @@ async fn discover(http: &reqwest::Client, config: &ServerConfig) -> anyhow::Resu
         };
         anyhow::ensure!(
             response.status().is_success(),
-            "{base_url} is occupied by an incompatible service"
+            "{base_url} is occupied by an incompatible service. Update and restart the local Sprocket server."
         );
-        let proof: PairingProofResponse = response
+        let proof: CliDiscovery = response
             .json()
             .await
             .context("invalid local server identity")?;
@@ -275,12 +276,12 @@ async fn discover(http: &reqwest::Client, config: &ServerConfig) -> anyhow::Resu
             proof.http_base_url.trim_end_matches('/') == base_url
                 && verify_pairing_proof(
                     &credential,
-                    &pairing_proof_message(&challenge, &proof.http_base_url, proof.web_ui_enabled),
+                    &cli_discovery_message(&challenge, &proof.instance_id, &proof.http_base_url),
                     &proof.proof
                 ),
             "local server identity does not match this Sprocket profile"
         );
-        return Ok(Some(base_url));
+        return Ok(Some(proof));
     }
     Ok(None)
 }

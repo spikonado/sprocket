@@ -454,7 +454,7 @@ pub fn read_pairing_credential(config: &ServerConfig) -> anyhow::Result<Option<S
     auth::read_pairing_credential(&config.resolve_data_dir())
 }
 
-pub use auth::verify_pairing_proof;
+pub use auth::{sign_pairing_proof, verify_pairing_proof};
 pub use repo_env::load_repo_env;
 
 #[cfg(test)]

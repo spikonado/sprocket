@@ -27,6 +27,8 @@ use crate::transcript_client::UserConvexClient;
 
 pub(crate) fn routes() -> Router<AppState> {
     Router::new()
+        .route("/cli/discovery", post(discovery))
+        .route("/cli/bootstrap", post(bootstrap))
         .route("/cli/connect", post(connect))
         .route("/cli/heartbeat", post(heartbeat))
         .route("/cli/release", post(release))
@@ -36,6 +38,63 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/cli/run", post(start))
         .route("/cli/poll", post(poll))
         .route("/cli/cancel", post(cancel))
+}
+
+async fn discovery(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(request): Json<crate::PairingProofRequest>,
+) -> Result<Json<CliDiscovery>, ApiError> {
+    if !peer.ip().is_loopback() {
+        return Err(ApiError::authentication_required());
+    }
+    let proof = state
+        .auth
+        .pairing_proof(&cli_discovery_message(
+            &request.challenge,
+            &state.auth.instance_id,
+            &state.http_base_url,
+        ))
+        .map_err(ApiError::internal)?;
+    Ok(Json(CliDiscovery {
+        instance_id: state.auth.instance_id.clone(),
+        http_base_url: state.http_base_url,
+        proof,
+    }))
+}
+
+async fn bootstrap(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(request): Json<CliBootstrapRequest>,
+) -> Result<Json<CliBootstrapResponse>, ApiError> {
+    if !peer.ip().is_loopback()
+        || uuid::Uuid::parse_str(&request.session_token).is_err()
+        || request.client.protocol_version != CLI_PROTOCOL_VERSION
+        || request.client.deployment_url.trim_end_matches('/')
+            != state.convex_deployment_url.trim_end_matches('/')
+        || !crate::verify_pairing_proof(
+            state.auth.pairing_credential(),
+            &cli_bootstrap_message(&state.auth.instance_id, &state.http_base_url, &request),
+            &request.proof,
+        )
+    {
+        return Err(ApiError::authentication_required());
+    }
+    let proof = state
+        .auth
+        .pairing_proof(&cli_bootstrap_response_message(
+            &state.auth.instance_id,
+            &state.http_base_url,
+            &request,
+        ))
+        .map_err(ApiError::internal)?;
+    state
+        .lifetime
+        .connect(&request.client.client_id, &request.session_token)
+        .map_err(ApiError::bad_request)?;
+    state.auth.create_cli_session(request.session_token).await;
+    Ok(Json(CliBootstrapResponse { proof }))
 }
 
 async fn session(

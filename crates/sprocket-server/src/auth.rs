@@ -42,6 +42,7 @@ pub struct BootstrapResponse {
 }
 
 pub struct AuthState {
+    pub(crate) instance_id: String,
     data_dir: PathBuf,
     pairing_credential: String,
     sessions: Arc<RwLock<HashMap<String, SessionRecord>>>,
@@ -73,6 +74,8 @@ pub fn peer_may_complete_desktop_login_callback(peer: std::net::SocketAddr) -> b
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SessionRecord {
+    #[serde(skip)]
+    ephemeral: bool,
     role: String,
     created_at: u64,
     #[serde(deserialize_with = "deserialize_session_user_id")]
@@ -95,6 +98,7 @@ impl AuthState {
         let sessions = load_sessions(&data_dir)?;
 
         Ok(Arc::new(Self {
+            instance_id: Uuid::new_v4().to_string(),
             data_dir: data_dir.to_path_buf(),
             pairing_credential,
             sessions: Arc::new(RwLock::new(sessions)),
@@ -115,10 +119,14 @@ impl AuthState {
     }
 
     pub fn pairing_proof(&self, message: &str) -> anyhow::Result<Vec<u8>> {
-        let mut mac = HmacSha256::new_from_slice(self.pairing_credential.as_bytes())?;
-        mac.update(message.as_bytes());
-        Ok(mac.finalize().into_bytes().to_vec())
+        sign_pairing_proof(&self.pairing_credential, message)
     }
+}
+
+pub fn sign_pairing_proof(credential: &str, message: &str) -> anyhow::Result<Vec<u8>> {
+    let mut mac = HmacSha256::new_from_slice(credential.as_bytes())?;
+    mac.update(message.as_bytes());
+    Ok(mac.finalize().into_bytes().to_vec())
 }
 
 /// Constant-time HMAC-SHA256 verification of a pairing proof.
@@ -131,6 +139,18 @@ pub fn verify_pairing_proof(credential: &str, message: &str, proof: &[u8]) -> bo
 }
 
 impl AuthState {
+    pub(crate) async fn create_cli_session(&self, token: String) {
+        self.sessions.write().await.insert(
+            token,
+            SessionRecord {
+                ephemeral: true,
+                role: "owner".into(),
+                created_at: crate::now_ms(),
+                user_id: None,
+            },
+        );
+    }
+
     pub async fn session_state(&self, session_token: Option<&str>) -> AuthSessionResponse {
         let Some(session_token) = session_token else {
             return AuthSessionResponse {
@@ -175,6 +195,7 @@ impl AuthState {
         sessions.insert(
             session_token.clone(),
             SessionRecord {
+                ephemeral: false,
                 role: "owner".to_string(),
                 created_at: crate::now_ms(),
                 user_id: None,
@@ -495,7 +516,7 @@ fn load_sessions(data_dir: &Path) -> anyhow::Result<HashMap<String, SessionRecor
 fn sessions_snapshot(sessions: &HashMap<String, SessionRecord>) -> Vec<PersistedSessionRecord> {
     sessions
         .iter()
-        .filter(|(_, session)| !session_is_expired(session))
+        .filter(|(_, session)| !session.ephemeral && !session_is_expired(session))
         .map(|(token, session)| PersistedSessionRecord {
             token: token.clone(),
             session: session.clone(),
