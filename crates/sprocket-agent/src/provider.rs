@@ -14,7 +14,7 @@ use tokio::time::{sleep, timeout};
 
 use crate::context_handoff::{ContextHandoffHook, HANDOFF_PROMPT, context_summary_text};
 use crate::convex::RuntimeClient;
-use crate::hooks::{AgentPromptHook, ToolCallTracker};
+use crate::hooks::{AgentPromptHook, ToolCallTracker, available_agent_tool_names};
 use crate::live::{
     LiveAssistantPart, LiveAssistantParts, LiveCompletionHub, LiveCompletionOverlay,
     join_assistant_text_parts, now_ms,
@@ -190,6 +190,7 @@ where
         request.context_budget.auto_handoff_token_limit,
         request.context_tokens,
         request.defer_prompt_for_context_handoff,
+        available_agent_tool_names(request.allow_interaction, request.supports_images),
     );
     let agent = completion_client
         .agent(model)

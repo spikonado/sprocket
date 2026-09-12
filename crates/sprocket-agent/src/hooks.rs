@@ -30,6 +30,21 @@ pub(crate) const AGENT_TOOL_NAMES: &[&str] = &[
     "write_stdin",
 ];
 
+pub(crate) fn available_agent_tool_names(
+    allow_interaction: bool,
+    supports_images: bool,
+) -> Vec<&'static str> {
+    AGENT_TOOL_NAMES
+        .iter()
+        .copied()
+        .filter(|name| {
+            (allow_interaction
+                || !matches!(*name, "ask_question" | "await_question" | "mandate_setup"))
+                && (supports_images || *name != "screenshot_url")
+        })
+        .collect()
+}
+
 #[derive(Clone, Debug)]
 struct TrackedToolCall {
     call_id: Option<String>,
@@ -250,6 +265,18 @@ mod tests {
         assert_repaired("apply-patch", "apply_patch");
         assert_repaired("writestdin", "write_stdin");
         assert_repaired("parse-file", "parse_file");
+    }
+
+    #[test]
+    fn available_tools_match_run_capabilities() {
+        let cli = available_agent_tool_names(false, false);
+        assert!(!cli.contains(&"ask_question"));
+        assert!(!cli.contains(&"await_question"));
+        assert!(!cli.contains(&"mandate_setup"));
+        assert!(!cli.contains(&"screenshot_url"));
+        assert!(cli.contains(&"exec_command"));
+
+        assert_eq!(available_agent_tool_names(true, true), AGENT_TOOL_NAMES);
     }
 
     #[test]
