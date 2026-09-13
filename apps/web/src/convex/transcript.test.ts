@@ -746,3 +746,40 @@ describe('transcript attachment identity', () => {
 		expect(current.parts[0]?.prompt?.imageUploads[0]).not.toHaveProperty('imageUploadId');
 	});
 });
+
+describe('duplicate transcript state rows', () => {
+	it('reads and collapses extras without throwing', async () => {
+		const t = initConvexTest();
+		const { asUser, subject, threadId } = await seedOwnedThread(t, 'user_dup_transcript');
+		await t.run(async (ctx) => {
+			await ctx.db.insert('threadTranscriptStates', {
+				threadId,
+				userId: subject,
+				totalParts: 1
+			});
+			await ctx.db.insert('threadTranscriptStates', {
+				threadId,
+				userId: subject,
+				totalParts: 3
+			});
+		});
+
+		expect(await asUser.query(api.transcript.getState, { threadId })).toMatchObject({
+			threadId,
+			totalParts: 3
+		});
+
+		await asUser.mutation(api.transcript.ensureMigrated, { threadId });
+		expect(await asUser.query(api.transcript.getState, { threadId })).toMatchObject({
+			totalParts: 3
+		});
+		const rows = await t.run(async (ctx) =>
+			ctx.db
+				.query('threadTranscriptStates')
+				.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
+				.collect()
+		);
+		expect(rows).toHaveLength(1);
+		expect(rows[0]?.totalParts).toBe(3);
+	});
+});
