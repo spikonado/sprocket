@@ -71,7 +71,7 @@ async fn bootstrap(
 ) -> Result<Json<CliBootstrapResponse>, ApiError> {
     if !peer.ip().is_loopback()
         || uuid::Uuid::parse_str(&request.session_token).is_err()
-        || request.client.protocol_version != CLI_PROTOCOL_VERSION
+        || request.client.client_version != sprocket_workspace::SPROCKET_VERSION
         || request.client.deployment_url.trim_end_matches('/')
             != state.convex_deployment_url.trim_end_matches('/')
         || !crate::verify_pairing_proof(
@@ -136,7 +136,7 @@ async fn connect(
     Json(request): Json<CliConnectRequest>,
 ) -> Result<Json<bool>, ApiError> {
     let token = session(&state, peer, &headers).await?;
-    if request.protocol_version != CLI_PROTOCOL_VERSION
+    if request.client_version != sprocket_workspace::SPROCKET_VERSION
         || request.deployment_url.trim_end_matches('/')
             != state.convex_deployment_url.trim_end_matches('/')
     {

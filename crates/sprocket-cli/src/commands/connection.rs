@@ -4,9 +4,8 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sprocket_server::cli_protocol::{
-    CLI_PROTOCOL_VERSION, CliBootstrapRequest, CliBootstrapResponse, CliClientRequest,
-    CliConnectRequest, CliDiscovery, cli_bootstrap_message, cli_bootstrap_response_message,
-    cli_discovery_message,
+    CliBootstrapRequest, CliBootstrapResponse, CliClientRequest, CliConnectRequest, CliDiscovery,
+    cli_bootstrap_message, cli_bootstrap_response_message, cli_discovery_message,
 };
 use sprocket_server::{
     PairingProofRequest, ServerConfig, read_pairing_credential, read_server_address,
@@ -75,7 +74,7 @@ impl Connection {
         let mut bootstrap = CliBootstrapRequest {
             client: CliConnectRequest {
                 client_id: client_id.clone(),
-                protocol_version: CLI_PROTOCOL_VERSION,
+                client_version: sprocket_workspace::SPROCKET_VERSION.to_string(),
                 deployment_url: config.resolve_convex_deployment_url()?,
             },
             session_token: session_token.clone(),

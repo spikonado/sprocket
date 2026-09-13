@@ -12,22 +12,17 @@ use sprocket_server::{
     browser_launch_url, load_repo_env, pairing_proof_message, read_pairing_credential, run,
     verify_pairing_proof,
 };
-use sprocket_workspace::resolve_workspace_root;
+use sprocket_workspace::{SPROCKET_VERSION, resolve_workspace_root};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 const DESKTOP_EXECUTABLE_ENV: &str = "SPROCKET_DESKTOP_EXECUTABLE";
 const DESKTOP_WORKSPACE_ARG: &str = "--sprocket-workspace";
-const VERSION: &str = match option_env!("SPROCKET_VERSION") {
-    Some(version) => version,
-    None => env!("CARGO_PKG_VERSION"),
-};
-
 #[derive(Debug, Parser)]
 #[command(
     name = "sprocket",
     about = "The best and only AI agent for developing both hardware and software",
-    version = VERSION,
+    version = SPROCKET_VERSION,
     arg_required_else_help = false
 )]
 struct Cli {

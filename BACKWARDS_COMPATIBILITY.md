@@ -2,11 +2,13 @@
 
 ## CLI authentication and run control
 
-CLI protocol version 1 adds local `/api/cli/*` endpoints. Existing app launch,
-native login, and agent-run endpoints keep their request formats and interactive
-tool set. Deploy the finalization response support before releasing the new CLI.
-Older local servers return an update-and-restart error rather than receiving a
-fallback run request.
+CLI clients send their exact semantic release version to local `/api/cli/*`
+endpoints. The local server rejects every mismatch, including canary identifiers
+and dev commit hashes, so a newly installed CLI cannot reuse a stale server.
+Existing app launch, native login, and agent-run endpoints keep their request
+formats and interactive tool set. Deploy the finalization response support before
+releasing the new CLI. Older local servers return an update-and-restart error
+rather than receiving a fallback run request.
 
 CLI discovery and bootstrap proofs bind to a random server-process ID. The CLI
 never sends the reusable pairing credential over HTTP. CLI sessions stay in

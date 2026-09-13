@@ -93,7 +93,7 @@ async fn signed_bootstrap_and_cli_sessions_cannot_be_replayed_after_server_resta
     let mut request = CliBootstrapRequest {
         client: CliConnectRequest {
             client_id: uuid::Uuid::new_v4().to_string(),
-            protocol_version: CLI_PROTOCOL_VERSION,
+            client_version: sprocket_workspace::SPROCKET_VERSION.to_string(),
             deployment_url: state.convex_deployment_url.clone(),
         },
         session_token: uuid::Uuid::new_v4().to_string(),
@@ -125,6 +125,29 @@ async fn signed_bootstrap_and_cli_sessions_cannot_be_replayed_after_server_resta
             .session_state(Some(&request.session_token))
             .await
             .authenticated
+    );
+    let mut incompatible = CliBootstrapRequest {
+        client: CliConnectRequest {
+            client_id: uuid::Uuid::new_v4().to_string(),
+            client_version: "999.0.0".into(),
+            deployment_url: state.convex_deployment_url.clone(),
+        },
+        session_token: uuid::Uuid::new_v4().to_string(),
+        proof: Vec::new(),
+    };
+    incompatible.proof = state
+        .auth
+        .pairing_proof(&cli_bootstrap_message(
+            &discovered.instance_id,
+            &discovered.http_base_url,
+            &incompatible,
+        ))
+        .unwrap();
+    assert_eq!(
+        call(&state, "", "bootstrap", &incompatible, "127.0.0.1:1000")
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
     );
     state.auth.bind_all_sessions(Some("user")).await.unwrap();
     assert!(
@@ -282,7 +305,7 @@ async fn cancellation_before_submission_is_cached_and_release_invalidates_pairin
 }
 
 #[tokio::test]
-async fn cli_control_requires_the_owning_local_session_and_matching_protocol() {
+async fn cli_control_requires_the_owning_local_session_and_matching_version() {
     let (_directory, state, token, request) = fixture().await;
     let client_request = CliClientRequest {
         client_id: request.client_id.clone(),
@@ -323,7 +346,7 @@ async fn cli_control_requires_the_owning_local_session_and_matching_protocol() {
             "connect",
             &CliConnectRequest {
                 client_id: request.client_id,
-                protocol_version: CLI_PROTOCOL_VERSION + 1,
+                client_version: "999.0.0".into(),
                 deployment_url: state.convex_deployment_url.clone(),
             },
             "127.0.0.1:1000"

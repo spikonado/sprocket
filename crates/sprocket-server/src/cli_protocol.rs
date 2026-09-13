@@ -1,8 +1,6 @@
 pub use crate::native_auth::{NativeLoginStatus as LoginStatus, NativeUser};
 use serde::{Deserialize, Serialize};
 
-pub const CLI_PROTOCOL_VERSION: u32 = 1;
-
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliDiscovery {
@@ -70,7 +68,7 @@ pub enum CredentialStore {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CliConnectRequest {
     pub client_id: String,
-    pub protocol_version: u32,
+    pub client_version: String,
     pub deployment_url: String,
 }
 
