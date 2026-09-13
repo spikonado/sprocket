@@ -104,6 +104,7 @@ let isSigningOut = false;
 let desktopSignInAttempt: DesktopSignInAttempt | null = null;
 let desktopLoginStartQueue: Promise<void> = Promise.resolve();
 let authGeneration = 0;
+let nativeAuthEvents: EventSource | null = null;
 let nativeTokenInflight: {
 	generation: number;
 	forceRefreshToken: boolean;
@@ -111,6 +112,8 @@ let nativeTokenInflight: {
 } | null = null;
 
 export function resetAuthRuntime() {
+	nativeAuthEvents?.close();
+	nativeAuthEvents = null;
 	clearConvexRecovery();
 	desktopSignInAttempt?.abort.abort();
 	desktopSignInAttempt = null;
@@ -349,6 +352,7 @@ export async function initializeAuth(convexClient: AuthBootstrapClient) {
 				return;
 			}
 			await initializeInstalledAuth(generation);
+			watchNativeAuthentication();
 			return;
 		}
 
@@ -367,6 +371,18 @@ export async function initializeAuth(convexClient: AuthBootstrapClient) {
 			error: error instanceof Error ? error.message : 'Failed to initialize authentication.'
 		}));
 	}
+}
+
+function watchNativeAuthentication() {
+	if (nativeAuthEvents || !globalThis.EventSource) return;
+	const events = new EventSource('/api/auth/changes');
+	nativeAuthEvents = events;
+	events.onmessage = () => {
+		if (nativeAuthEvents !== events || isSigningOut) return;
+		invalidateAuthGeneration();
+		const generation = authGeneration;
+		void initializeInstalledAuth(generation);
+	};
 }
 
 async function initializeHostedAuth() {

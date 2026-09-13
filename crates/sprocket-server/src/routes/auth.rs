@@ -54,6 +54,7 @@ struct NativeSessionTokenRequest {
 
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
+        .route("/auth/changes", get(session_changes))
         .route("/auth/session", get(session))
         .route("/auth/bootstrap", post(bootstrap))
         .route("/auth/pairing-proof", post(pairing_proof))
@@ -67,6 +68,44 @@ pub fn routes() -> axum::Router<AppState> {
             axum::routing::delete(native_sign_out),
         )
         .route("/auth/native-session/token", post(native_session_token))
+}
+
+async fn session_changes(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<
+    axum::response::Sse<
+        impl futures::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>,
+    >,
+    ApiError,
+> {
+    if !crate::auth::cookie_get_is_csrf_safe(&headers) {
+        return Err(ApiError::authentication_required());
+    }
+    require_session(&state.auth, &headers, &jar)
+        .await
+        .map_err(ApiError::unauthorized)?;
+    let receiver = state.native_auth.subscribe_changes();
+    let shutdown = state.lifetime.shutdown.clone();
+    let guard = state.lifetime.run_guard().map_err(ApiError::bad_request)?;
+    let stream = futures::stream::unfold(
+        (receiver, true, shutdown, guard),
+        |(mut receiver, initial, shutdown, guard)| async move {
+            if !initial {
+                tokio::select! {
+                    _ = shutdown.cancelled() => return None,
+                    changed = receiver.changed() => if changed.is_err() { return None; },
+                }
+            }
+            let generation = *receiver.borrow_and_update();
+            Some((
+                Ok(axum::response::sse::Event::default().data(generation.to_string())),
+                (receiver, false, shutdown, guard),
+            ))
+        },
+    );
+    Ok(axum::response::Sse::new(stream).keep_alive(axum::response::sse::KeepAlive::default()))
 }
 
 async fn session(
@@ -309,6 +348,10 @@ async fn native_session_token(
     jar: CookieJar,
     Json(payload): Json<NativeSessionTokenRequest>,
 ) -> Response {
+    let _activity = match state.lifetime.run_guard() {
+        Ok(guard) => guard,
+        Err(error) => return ApiError::bad_request(error).into_response(),
+    };
     let result = native_session_token_response(&state, peer, &headers, &jar, payload).await;
     let mut response = result.into_response();
     response
