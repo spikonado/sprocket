@@ -238,51 +238,56 @@ async fn discover(
     http: &reqwest::Client,
     config: &ServerConfig,
 ) -> anyhow::Result<Option<CliDiscovery>> {
-    let mut candidates = Vec::new();
-    if let Some(address) = read_server_address(&config.resolve_data_dir())? {
-        candidates.push(address);
+    let configured_address = config.listen_url();
+    if let Some(published_address) = read_server_address(&config.resolve_data_dir())?
+        && published_address != configured_address
+        && let Ok(Some(discovery)) = discover_at(http, config, &published_address).await
+    {
+        return Ok(Some(discovery));
     }
-    if !candidates.contains(&config.listen_url()) {
-        candidates.push(config.listen_url());
-    }
-    for base_url in candidates {
-        validate_local_url(&base_url)?;
-        let challenge = uuid::Uuid::new_v4().to_string();
-        let response = match http
-            .post(format!("{base_url}/api/cli/discovery"))
-            .timeout(Duration::from_millis(750))
-            .json(&PairingProofRequest {
-                challenge: challenge.clone(),
-            })
-            .send()
-            .await
-        {
-            Ok(response) => response,
-            Err(error) if error.is_connect() || error.is_timeout() => continue,
-            Err(error) => return Err(error.into()),
-        };
-        anyhow::ensure!(
-            response.status().is_success(),
-            "{base_url} is occupied by an incompatible service. Update and restart the local Sprocket server."
-        );
-        let proof: CliDiscovery = response
-            .json()
-            .await
-            .context("invalid local server identity")?;
-        let credential = read_pairing_credential(config)?
-            .context("local server uses a different Sprocket data directory")?;
-        anyhow::ensure!(
-            proof.http_base_url.trim_end_matches('/') == base_url
-                && verify_pairing_proof(
-                    &credential,
-                    &cli_discovery_message(&challenge, &proof.instance_id, &proof.http_base_url),
-                    &proof.proof
-                ),
-            "local server identity does not match this Sprocket profile"
-        );
-        return Ok(Some(proof));
-    }
-    Ok(None)
+    discover_at(http, config, &configured_address).await
+}
+
+async fn discover_at(
+    http: &reqwest::Client,
+    config: &ServerConfig,
+    base_url: &str,
+) -> anyhow::Result<Option<CliDiscovery>> {
+    validate_local_url(base_url)?;
+    let challenge = uuid::Uuid::new_v4().to_string();
+    let response = match http
+        .post(format!("{base_url}/api/cli/discovery"))
+        .timeout(Duration::from_millis(750))
+        .json(&PairingProofRequest {
+            challenge: challenge.clone(),
+        })
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(error) if error.is_connect() || error.is_timeout() => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    anyhow::ensure!(
+        response.status().is_success(),
+        "{base_url} is occupied by an incompatible service. Update and restart the local Sprocket server."
+    );
+    let proof: CliDiscovery = response
+        .json()
+        .await
+        .context("invalid local server identity")?;
+    let credential = read_pairing_credential(config)?
+        .context("local server uses a different Sprocket data directory")?;
+    anyhow::ensure!(
+        proof.http_base_url.trim_end_matches('/') == base_url
+            && verify_pairing_proof(
+                &credential,
+                &cli_discovery_message(&challenge, &proof.instance_id, &proof.http_base_url),
+                &proof.proof
+            ),
+        "local server identity does not match this Sprocket profile"
+    );
+    Ok(Some(proof))
 }
 
 fn spawn_server(config: &ServerConfig) -> anyhow::Result<()> {
@@ -345,6 +350,8 @@ fn spawn_server(config: &ServerConfig) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Write};
+
     use super::*;
 
     #[test]
@@ -365,5 +372,46 @@ mod tests {
         ] {
             assert!(validate_local_url(url).is_err());
         }
+    }
+
+    #[tokio::test]
+    async fn stale_published_service_does_not_block_configured_address() {
+        let stale_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let stale_address = format!("http://{}", stale_listener.local_addr().unwrap());
+        let stale_server = std::thread::spawn(move || {
+            let (mut stream, _) = stale_listener.accept().unwrap();
+            let mut request = [0; 1024];
+            let _ = stream.read(&mut request).unwrap();
+            stream
+                .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
+                .unwrap();
+        });
+        let unused_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let unused_port = unused_listener.local_addr().unwrap().port();
+        drop(unused_listener);
+        let data_dir = std::env::temp_dir().join(format!(
+            "sprocket-cli-discovery-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&data_dir).unwrap();
+        std::fs::write(
+            data_dir.join("server-address.json"),
+            serde_json::json!({ "url": stale_address }).to_string(),
+        )
+        .unwrap();
+        let config = ServerConfig {
+            host: "127.0.0.1".into(),
+            port: unused_port,
+            data_dir: Some(data_dir.clone()),
+            static_dir: None,
+            api_only: true,
+            convex_deployment_url: None,
+        };
+        let http = reqwest::Client::builder().no_proxy().build().unwrap();
+
+        assert!(discover(&http, &config).await.unwrap().is_none());
+
+        stale_server.join().unwrap();
+        std::fs::remove_dir_all(data_dir).unwrap();
     }
 }

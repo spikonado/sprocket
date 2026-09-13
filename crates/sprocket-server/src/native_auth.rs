@@ -710,7 +710,7 @@ impl NativeAuthManager {
     }
 
     async fn accept_login(&self, response: AuthenticateResponse) -> anyhow::Result<NativeUser> {
-        let result = self.accept_authentication(response).await;
+        let user = self.accept_new_login(response).await?;
         let mut session = self.session.lock().await;
         session.login_generation = session.login_generation.wrapping_add(1);
         let invalidated =
@@ -723,12 +723,26 @@ impl NativeAuthManager {
             attempt.cancel.cancel();
             attempt.result = Some(Err(invalidated.into()));
         }
-        result
+        Ok(user)
+    }
+
+    async fn accept_new_login(&self, response: AuthenticateResponse) -> anyhow::Result<NativeUser> {
+        self.accept_authentication_with_persistence(response, true)
+            .await
     }
 
     async fn accept_authentication(
         &self,
         response: AuthenticateResponse,
+    ) -> anyhow::Result<NativeUser> {
+        self.accept_authentication_with_persistence(response, false)
+            .await
+    }
+
+    async fn accept_authentication_with_persistence(
+        &self,
+        response: AuthenticateResponse,
+        persist_before_acceptance: bool,
     ) -> anyhow::Result<NativeUser> {
         let user = NativeUser {
             id: response.user.id,
@@ -740,6 +754,9 @@ impl NativeAuthManager {
         let access_token = response.access_token.into_inner();
         let expires_at = jwt_expiration(&access_token)?;
         let refresh_token = response.refresh_token.into_inner();
+        if persist_before_acceptance {
+            self.save_refresh_token(refresh_token.clone()).await?;
+        }
         let changed = self
             .session
             .lock()
@@ -755,17 +772,16 @@ impl NativeAuthManager {
                 expires_at,
             });
             session.refresh_token = Some(refresh_token);
-            session.refresh_token_persisted = false;
+            session.refresh_token_persisted = persist_before_acceptance;
             session.refresh_generation = session.refresh_generation.wrapping_add(1);
             session.user = Some(user.clone());
             session.login_errors.clear();
             session.suppress_persisted_resume = false;
         }
-        let saved = self.flush_refresh_token().await;
+        self.flush_refresh_token().await?;
         if changed {
             self.publish_session_change(Some(&user.id)).await?;
         }
-        saved?;
         Ok(user)
     }
 
@@ -1482,6 +1498,49 @@ mod tests {
             manager.access_token(false).await.unwrap(),
             expected_access_token
         );
+    }
+
+    #[tokio::test]
+    async fn failed_login_persistence_does_not_change_local_sessions() {
+        let store = MemoryRefreshTokenStore::with_token("refresh-old");
+        let mut manager = manager_with_response(
+            Arc::clone(&store),
+            StatusCode::BAD_REQUEST,
+            serde_json::Value::Null,
+        )
+        .await;
+        let directory = tempfile::tempdir().unwrap();
+        let local = crate::auth::AuthState::load(directory.path()).unwrap();
+        let (_, local_session) = local.bootstrap(local.pairing_credential()).await.unwrap();
+        local
+            .bind_session_user(&local_session, "user_old")
+            .await
+            .unwrap();
+        Arc::get_mut(&mut manager).unwrap().local_sessions = Some(Arc::clone(&local));
+        let changes = manager.subscribe_changes();
+        let login_generation = manager.session.lock().await.login_generation;
+        store.fail_save.store(true, Ordering::SeqCst);
+
+        let error = manager
+            .accept_login(authentication_response(
+                access_token(unix_time_secs() + 3_600),
+                "refresh-new",
+            ))
+            .await
+            .expect_err("failed persistence must reject the login");
+
+        assert!(error.to_string().contains("credential store unavailable"));
+        assert_eq!(store.token().as_deref(), Some("refresh-old"));
+        assert!(manager.session.lock().await.user.is_none());
+        assert_eq!(
+            manager.session.lock().await.login_generation,
+            login_generation
+        );
+        assert!(!changes.has_changed().unwrap());
+        local
+            .require_session_user(&local_session, "user_old")
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
