@@ -110,17 +110,15 @@ fn default_model_for_tier<'a>(
     catalog: &'a Catalog,
     allowed: &[String],
 ) -> anyhow::Result<&'a Model> {
-    let default_model_id = if allowed.contains(&catalog.default_model_id) {
-        &catalog.default_model_id
-    } else {
-        allowed
-            .first()
-            .context("no models are available for this account")?
-    };
     catalog
         .models
         .iter()
-        .find(|model| model.id == *default_model_id)
+        .find(|model| model.id == catalog.default_model_id && allowed.contains(&model.id))
+        .or_else(|| {
+            allowed
+                .iter()
+                .find_map(|id| catalog.models.iter().find(|model| model.id == *id))
+        })
         .context("no models are available for this account")
 }
 
@@ -205,7 +203,7 @@ mod tests {
                 {"id": "paid", "label": "Paid", "reasoningEfforts": ["max"], "defaultReasoningEffort": "max", "serviceTiers": ["standard"]},
                 {"id": "paid-first", "label": "Paid First", "reasoningEfforts": ["xhigh"], "defaultReasoningEffort": "xhigh", "serviceTiers": ["standard"]}
             ],
-            "tierAllowedModels": {"free": ["default"], "paid": ["paid-first", "paid"]}, "tierAllowedServiceTiers": {"free": ["standard"]}
+            "tierAllowedModels": {"free": ["default"], "paid": ["stale", "paid-first", "paid"]}, "tierAllowedServiceTiers": {"free": ["standard"]}
         })).unwrap()
     }
 
