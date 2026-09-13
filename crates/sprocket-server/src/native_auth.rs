@@ -1,3 +1,6 @@
+mod credentials;
+mod device;
+
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::path::Path;
@@ -11,7 +14,7 @@ use convex::{FunctionResult, Value};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sprocket_convex::{AuthSignedOut, AuthTokenFetcher, Client as ConvexClient};
-use tokio::sync::{Mutex, OnceCell};
+use tokio::sync::{Mutex, OnceCell, watch};
 use tokio::time::timeout;
 use workos::helpers::AuthKitAuthorizationUrlParams;
 use workos::resources::user_management::{
@@ -34,7 +37,7 @@ pub(crate) struct NativeAuthConfig {
     pub workos_client_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct NativeUser {
     pub id: String,
@@ -60,9 +63,9 @@ impl std::fmt::Debug for NativeBrowserSession {
     }
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(tag = "status", rename_all = "camelCase")]
-pub(crate) enum NativeLoginStatus {
+pub enum NativeLoginStatus {
     SignedOut,
     Pending,
     Authenticated { user: NativeUser },
@@ -85,6 +88,9 @@ pub(crate) enum NativeLoginFlow {
 }
 
 trait RefreshTokenStore: Send + Sync {
+    fn select(&self, _store: crate::cli_protocol::CredentialStore) -> anyhow::Result<()> {
+        anyhow::bail!("credential-store selection is unavailable")
+    }
     fn load(&self) -> anyhow::Result<Option<String>>;
     fn save(&self, refresh_token: &str) -> anyhow::Result<()>;
     fn clear(&self) -> anyhow::Result<()>;
@@ -181,6 +187,7 @@ struct AccessToken {
 }
 
 struct NativeSession {
+    devices: HashMap<String, device::PendingDeviceLogin>,
     pending: PendingLogins,
     access_token: Option<AccessToken>,
     refresh_token: Option<String>,
@@ -189,12 +196,13 @@ struct NativeSession {
     user: Option<NativeUser>,
     login_errors: HashMap<String, String>,
     suppress_persisted_resume: bool,
-    sign_out_generation: u64,
+    login_generation: u64,
 }
 
 impl Default for NativeSession {
     fn default() -> Self {
         Self {
+            devices: HashMap::new(),
             pending: PendingLogins::default(),
             access_token: None,
             refresh_token: None,
@@ -203,7 +211,7 @@ impl Default for NativeSession {
             user: None,
             login_errors: HashMap::new(),
             suppress_persisted_resume: false,
-            sign_out_generation: 0,
+            login_generation: 0,
         }
     }
 }
@@ -219,6 +227,8 @@ impl NativeSession {
 }
 
 pub(crate) struct NativeAuthManager {
+    changes: watch::Sender<u64>,
+    local_sessions: Option<Arc<crate::auth::AuthState>>,
     deployment_url: Option<String>,
     client: OnceCell<WorkOsClient>,
     callback_url: String,
@@ -228,9 +238,19 @@ pub(crate) struct NativeAuthManager {
 }
 
 impl NativeAuthManager {
-    pub fn new(deployment_url: String, callback_url: String, data_dir: &Path) -> Arc<Self> {
-        let refresh_tokens = Arc::new(KeyringRefreshTokenStore::new(&deployment_url, data_dir));
+    pub fn new(
+        deployment_url: String,
+        callback_url: String,
+        data_dir: &Path,
+        local_sessions: Arc<crate::auth::AuthState>,
+    ) -> Arc<Self> {
+        let refresh_tokens = Arc::new(credentials::ProfileCredentials::new(
+            &deployment_url,
+            data_dir,
+        ));
         Arc::new(Self {
+            changes: watch::channel(0).0,
+            local_sessions: Some(local_sessions),
             deployment_url: Some(deployment_url),
             client: OnceCell::new(),
             callback_url,
@@ -249,6 +269,8 @@ impl NativeAuthManager {
         let client_cell = OnceCell::new();
         assert!(client_cell.set(client).is_ok());
         Arc::new(Self {
+            changes: watch::channel(0).0,
+            local_sessions: None,
             deployment_url: None,
             client: client_cell,
             callback_url,
@@ -332,6 +354,7 @@ impl NativeAuthManager {
                 ..Default::default()
             })
             .context("failed to build WorkOS authorization URL")?;
+        let _operation = self.credential_operation.lock().await;
         let mut session = self.session.lock().await;
         purge_expired_logins(&mut session.pending);
         if let Some(previous_state) = session.pending.by_session.remove(session_token) {
@@ -377,7 +400,7 @@ impl NativeAuthManager {
     ) -> anyhow::Result<(NativeUser, String)> {
         let code = required_callback_value(code, "authorization code")?;
         let state = required_callback_value(state, "desktop login state")?;
-        let (code_verifier, pending_session_token, sign_out_generation) = {
+        let (code_verifier, pending_session_token, login_generation) = {
             let mut session = self.session.lock().await;
             purge_expired_logins(&mut session.pending);
             let pending = session
@@ -389,13 +412,13 @@ impl NativeAuthManager {
             (
                 pending.code_verifier,
                 pending.session_token,
-                session.sign_out_generation,
+                session.login_generation,
             )
         };
 
         let _credential_operation = self.credential_operation.lock().await;
-        if self.session.lock().await.sign_out_generation != sign_out_generation {
-            anyhow::bail!("desktop login attempt was invalidated by sign-out");
+        if self.session.lock().await.login_generation != login_generation {
+            anyhow::bail!("desktop login attempt was invalidated by another sign-in or sign-out");
         }
         let mut params = AuthenticateWithCodeParams::new(code);
         params.code_verifier = Some(code_verifier);
@@ -407,7 +430,7 @@ impl NativeAuthManager {
             .await
         {
             Ok(response) => self
-                .accept_authentication(response)
+                .accept_login(response)
                 .await
                 .map(|user| (user, pending_session_token)),
             Err(error) => {
@@ -494,17 +517,20 @@ impl NativeAuthManager {
 
     async fn sign_out_inner(&self) -> anyhow::Result<()> {
         let _credential_operation = self.credential_operation.lock().await;
-        let sign_out_generation = self
-            .session
-            .lock()
-            .await
-            .sign_out_generation
-            .wrapping_add(1);
+        let login_generation = self.session.lock().await.login_generation.wrapping_add(1);
         let mut session = NativeSession::default();
         session.suppress_persisted_resume = true;
-        session.sign_out_generation = sign_out_generation;
-        *self.session.lock().await = session;
-        self.clear_refresh_token().await
+        session.login_generation = login_generation;
+        {
+            let mut current = self.session.lock().await;
+            for attempt in current.devices.values() {
+                attempt.cancel.cancel();
+            }
+            *current = session;
+        }
+        let cleared = self.clear_refresh_token().await;
+        self.publish_session_change(None).await?;
+        cleared
     }
 
     pub fn auth_token_fetcher_for_user(
@@ -656,7 +682,9 @@ impl NativeAuthManager {
             }
             Err(error) if is_terminal_refresh_error(&error) => {
                 self.session.lock().await.clear_authenticated_state();
-                self.clear_refresh_token().await?;
+                let cleared = self.clear_refresh_token().await;
+                self.publish_session_change(None).await?;
+                cleared?;
                 Err(error).context(NATIVE_SESSION_EXPIRED)
             }
             Err(error) => {
@@ -681,9 +709,40 @@ impl NativeAuthManager {
         }
     }
 
+    async fn accept_login(&self, response: AuthenticateResponse) -> anyhow::Result<NativeUser> {
+        let user = self.accept_new_login(response).await?;
+        let mut session = self.session.lock().await;
+        session.login_generation = session.login_generation.wrapping_add(1);
+        let invalidated =
+            "Another sign-in completed. Start sign-in again if you want to switch accounts.";
+        let pending = std::mem::take(&mut session.pending);
+        for token in pending.by_session.into_keys() {
+            session.login_errors.insert(token, invalidated.into());
+        }
+        for attempt in session.devices.values_mut() {
+            attempt.cancel.cancel();
+            attempt.result = Some(Err(invalidated.into()));
+        }
+        Ok(user)
+    }
+
+    async fn accept_new_login(&self, response: AuthenticateResponse) -> anyhow::Result<NativeUser> {
+        self.accept_authentication_with_persistence(response, true)
+            .await
+    }
+
     async fn accept_authentication(
         &self,
         response: AuthenticateResponse,
+    ) -> anyhow::Result<NativeUser> {
+        self.accept_authentication_with_persistence(response, false)
+            .await
+    }
+
+    async fn accept_authentication_with_persistence(
+        &self,
+        response: AuthenticateResponse,
+        persist_before_acceptance: bool,
     ) -> anyhow::Result<NativeUser> {
         let user = NativeUser {
             id: response.user.id,
@@ -695,6 +754,17 @@ impl NativeAuthManager {
         let access_token = response.access_token.into_inner();
         let expires_at = jwt_expiration(&access_token)?;
         let refresh_token = response.refresh_token.into_inner();
+        if persist_before_acceptance {
+            self.save_refresh_token(refresh_token.clone()).await?;
+        }
+        let changed = self
+            .session
+            .lock()
+            .await
+            .user
+            .as_ref()
+            .map(|user| user.id.as_str())
+            != Some(user.id.as_str());
         {
             let mut session = self.session.lock().await;
             session.access_token = Some(AccessToken {
@@ -702,14 +772,31 @@ impl NativeAuthManager {
                 expires_at,
             });
             session.refresh_token = Some(refresh_token);
-            session.refresh_token_persisted = false;
+            session.refresh_token_persisted = persist_before_acceptance;
             session.refresh_generation = session.refresh_generation.wrapping_add(1);
             session.user = Some(user.clone());
             session.login_errors.clear();
             session.suppress_persisted_resume = false;
         }
         self.flush_refresh_token().await?;
+        if changed {
+            self.publish_session_change(Some(&user.id)).await?;
+        }
         Ok(user)
+    }
+
+    pub fn subscribe_changes(&self) -> watch::Receiver<u64> {
+        self.changes.subscribe()
+    }
+
+    async fn publish_session_change(&self, user_id: Option<&str>) -> anyhow::Result<()> {
+        let result = match &self.local_sessions {
+            Some(sessions) => sessions.bind_all_sessions(user_id).await,
+            None => Ok(()),
+        };
+        self.changes
+            .send_modify(|generation| *generation = generation.wrapping_add(1));
+        result
     }
 
     async fn load_refresh_token(&self) -> anyhow::Result<Option<String>> {
@@ -1052,7 +1139,12 @@ mod tests {
     where
         H: Fn(serde_json::Value) -> (StatusCode, serde_json::Value) + Clone + Send + Sync + 'static,
     {
-        let app = axum::Router::new().route(
+        let app = axum::Router::new().route("/user_management/authorize/device", post(|| async {
+            Json(serde_json::json!({
+                "device_code": "private-device-code", "user_code": "ABCD-EFGH",
+                "verification_uri": "https://auth.example.test/device", "expires_in": 300, "interval": 1
+            }))
+        })).route(
             "/user_management/authenticate",
             post(move |Json(body): Json<serde_json::Value>| {
                 let handler = handler.clone();
@@ -1089,11 +1181,139 @@ mod tests {
         manager_with_handler(store, move |_| (status, body.clone())).await
     }
 
+    #[tokio::test]
+    async fn credential_selection_cannot_skip_a_persisted_login() {
+        let store = MemoryRefreshTokenStore::with_token("persisted");
+        let manager =
+            manager_with_response(store.clone(), StatusCode::OK, serde_json::Value::Null).await;
+        let error = manager
+            .select_credential_store(crate::cli_protocol::CredentialStore::File)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("sign out"));
+        assert_eq!(store.token().as_deref(), Some("persisted"));
+    }
+
+    #[tokio::test]
+    async fn accepting_a_login_invalidates_other_pending_browser_and_device_flows() {
+        let manager = manager_with_response(
+            MemoryRefreshTokenStore::empty(),
+            StatusCode::BAD_REQUEST,
+            serde_json::Value::Null,
+        )
+        .await;
+        let pending = manager
+            .start_login("browser", NativeLoginFlow::SignIn)
+            .await
+            .unwrap();
+        manager.start_device_login("cli".into()).await.unwrap();
+        let generation = manager.session.lock().await.login_generation;
+        manager
+            .accept_login(authentication_response(
+                access_token(unix_time_secs() + 3600),
+                "fresh",
+            ))
+            .await
+            .unwrap();
+        assert!(
+            manager
+                .complete_login("stale", &pending.login_id)
+                .await
+                .is_err()
+        );
+        assert!(matches!(
+            manager.device_status("cli").await,
+            NativeLoginStatus::Failed { .. }
+        ));
+        assert_ne!(manager.session.lock().await.login_generation, generation);
+    }
+
     fn config_result(client_id: Value) -> FunctionResult {
         FunctionResult::Value(Value::Object(BTreeMap::from([(
             "workosClientId".to_string(),
             client_id,
         )])))
+    }
+
+    #[tokio::test]
+    async fn device_login_uses_the_shared_session_and_never_discloses_the_device_secret() {
+        let store = MemoryRefreshTokenStore::empty();
+        let response = serde_json::to_value(authentication_response(
+            access_token(unix_time_secs() + 3600),
+            "device-refresh",
+        ))
+        .unwrap();
+        let mut manager = manager_with_response(store.clone(), StatusCode::OK, response).await;
+        let directory = tempfile::tempdir().unwrap();
+        let local = crate::auth::AuthState::load(directory.path()).unwrap();
+        let (_, desktop_session) = local.bootstrap(local.pairing_credential()).await.unwrap();
+        let (_, browser_session) = local.bootstrap(local.pairing_credential()).await.unwrap();
+        Arc::get_mut(&mut manager).unwrap().local_sessions = Some(Arc::clone(&local));
+        let mut changes = manager.subscribe_changes();
+        let login = manager
+            .start_device_login("cli-session".into())
+            .await
+            .unwrap();
+        assert!(
+            !serde_json::to_string(&login)
+                .unwrap()
+                .contains("private-device-code")
+        );
+        tokio::time::timeout(Duration::from_secs(5), changes.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        let session = manager.browser_session(false).await.unwrap().unwrap();
+        local
+            .require_session_user(&desktop_session, &session.user.id)
+            .await
+            .unwrap();
+        local
+            .require_session_user(&browser_session, &session.user.id)
+            .await
+            .unwrap();
+        assert_eq!(
+            store.token.lock().unwrap().as_deref(),
+            Some("device-refresh")
+        );
+        assert!(
+            matches!(manager.device_status("cli-session").await, NativeLoginStatus::Authenticated { user } if user.id == session.user.id)
+        );
+        manager.sign_out().await.unwrap();
+        assert!(manager.browser_session(false).await.unwrap().is_none());
+        assert!(
+            local
+                .require_session_user(&desktop_session, &session.user.id)
+                .await
+                .is_err()
+        );
+        assert!(
+            local
+                .require_session_user(&browser_session, &session.user.id)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelled_device_login_cannot_restore_a_session() {
+        let store = MemoryRefreshTokenStore::empty();
+        let manager = manager_with_response(
+            store.clone(),
+            StatusCode::BAD_REQUEST,
+            serde_json::json!({"error": "authorization_pending"}),
+        )
+        .await;
+        manager
+            .start_device_login("cli-session".into())
+            .await
+            .unwrap();
+        manager.cancel_device_login("cli-session").await;
+        assert!(matches!(
+            manager.device_status("cli-session").await,
+            NativeLoginStatus::SignedOut
+        ));
+        assert!(store.token.lock().unwrap().is_none());
     }
 
     #[tokio::test]
@@ -1278,6 +1498,49 @@ mod tests {
             manager.access_token(false).await.unwrap(),
             expected_access_token
         );
+    }
+
+    #[tokio::test]
+    async fn failed_login_persistence_does_not_change_local_sessions() {
+        let store = MemoryRefreshTokenStore::with_token("refresh-old");
+        let mut manager = manager_with_response(
+            Arc::clone(&store),
+            StatusCode::BAD_REQUEST,
+            serde_json::Value::Null,
+        )
+        .await;
+        let directory = tempfile::tempdir().unwrap();
+        let local = crate::auth::AuthState::load(directory.path()).unwrap();
+        let (_, local_session) = local.bootstrap(local.pairing_credential()).await.unwrap();
+        local
+            .bind_session_user(&local_session, "user_old")
+            .await
+            .unwrap();
+        Arc::get_mut(&mut manager).unwrap().local_sessions = Some(Arc::clone(&local));
+        let changes = manager.subscribe_changes();
+        let login_generation = manager.session.lock().await.login_generation;
+        store.fail_save.store(true, Ordering::SeqCst);
+
+        let error = manager
+            .accept_login(authentication_response(
+                access_token(unix_time_secs() + 3_600),
+                "refresh-new",
+            ))
+            .await
+            .expect_err("failed persistence must reject the login");
+
+        assert!(error.to_string().contains("credential store unavailable"));
+        assert_eq!(store.token().as_deref(), Some("refresh-old"));
+        assert!(manager.session.lock().await.user.is_none());
+        assert_eq!(
+            manager.session.lock().await.login_generation,
+            login_generation
+        );
+        assert!(!changes.has_changed().unwrap());
+        local
+            .require_session_user(&local_session, "user_old")
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

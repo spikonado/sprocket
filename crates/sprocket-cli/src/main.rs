@@ -1,3 +1,5 @@
+mod commands;
+
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -16,6 +18,7 @@ use uuid::Uuid;
 
 const DESKTOP_EXECUTABLE_ENV: &str = "SPROCKET_DESKTOP_EXECUTABLE";
 const DESKTOP_WORKSPACE_ARG: &str = "--sprocket-workspace";
+
 #[derive(Debug, Parser)]
 #[command(
     name = "sprocket",
@@ -38,6 +41,11 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Sign in using a browser on any device
+    Login(commands::LoginArgs),
+
+    /// Sign out of this local profile in the app and CLI
+    Logout,
     /// Start only the local Sprocket server
     Serve(ServeArgs),
 
@@ -48,6 +56,8 @@ enum Commands {
 
 #[derive(Debug, Args)]
 struct ServeArgs {
+    #[arg(long, hide = true)]
+    cli_temporary: bool,
     #[command(flatten)]
     server: ServerConfig,
 
@@ -63,13 +73,24 @@ struct UpdateArgs {
     check: bool,
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> std::process::ExitCode {
+    match entry() {
+        Ok(code) => std::process::ExitCode::from(code),
+        Err(error) => {
+            eprintln!("{error:#}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn entry() -> anyhow::Result<u8> {
     // SAFETY: this runs before the Tokio runtime is constructed.
     unsafe {
         load_repo_env();
     }
 
     tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
         .with_env_filter(
             EnvFilter::from_default_env().add_directive("sprocket_server=error".parse()?),
         )
@@ -82,6 +103,20 @@ fn main() -> anyhow::Result<()> {
         .map(resolve_launch_workspace)
         .transpose()?;
     match cli.command {
+        Some(Commands::Login(args)) => {
+            anyhow::ensure!(
+                !cli.web && workspace_path.is_none(),
+                "login does not accept app launch arguments"
+            );
+            return commands::login(args);
+        }
+        Some(Commands::Logout) => {
+            anyhow::ensure!(
+                !cli.web && workspace_path.is_none(),
+                "logout does not accept app launch arguments"
+            );
+            return commands::logout();
+        }
         Some(Commands::Serve(serve)) => {
             if cli.web {
                 anyhow::bail!("`--web` cannot be combined with `serve`; run `sprocket --web`");
@@ -89,18 +124,18 @@ fn main() -> anyhow::Result<()> {
             if workspace_path.is_some() {
                 anyhow::bail!("a workspace directory cannot be combined with `serve`");
             }
-            serve_local(serve.server, serve.quiet, false, None)
+            serve_local(serve.server, serve.quiet, false, None, serve.cli_temporary)
         }
         Some(Commands::Update(_)) => {
             anyhow::bail!("`sprocket update` requires the @spikonado/sprocket package launcher")
         }
         None if cli.web => {
             let server = ServerConfig::try_parse_from(["sprocket"])?;
-            serve_local(server, false, true, workspace_path)
+            serve_local(server, false, true, workspace_path, false)
         }
         None => {
             if launch_desktop(workspace_path.as_deref())? {
-                return Ok(());
+                return Ok(0);
             }
 
             eprintln!(
@@ -108,9 +143,10 @@ fn main() -> anyhow::Result<()> {
                  Note: This has no impact on Sprocket's capabilities or performance."
             );
             let server = ServerConfig::try_parse_from(["sprocket"])?;
-            serve_local(server, false, true, workspace_path)
+            serve_local(server, false, true, workspace_path, false)
         }
-    }
+    }?;
+    Ok(0)
 }
 
 fn resolve_launch_workspace(path: &Path) -> anyhow::Result<String> {
@@ -128,6 +164,7 @@ fn serve_local(
     quiet: bool,
     open_browser: bool,
     workspace_path: Option<String>,
+    temporary: bool,
 ) -> anyhow::Result<()> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -149,6 +186,7 @@ fn serve_local(
             run(
                 server,
                 RunOptions {
+                    temporary,
                     quiet,
                     open_browser,
                     workspace_path,
@@ -323,6 +361,13 @@ mod tests {
         assert!(!server.web);
         assert!(server.directory.is_none());
         assert!(matches!(server.command, Some(Commands::Serve(_))));
+
+        let login =
+            Cli::try_parse_from(["sprocket", "login", "--credential-store", "file"]).unwrap();
+        assert!(matches!(login.command, Some(Commands::Login(_))));
+
+        let logout = Cli::try_parse_from(["sprocket", "logout"]).unwrap();
+        assert!(matches!(logout.command, Some(Commands::Logout)));
 
         let update = Cli::try_parse_from(["sprocket", "upgrade", "--check"]).unwrap();
         assert!(matches!(

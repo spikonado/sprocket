@@ -1,10 +1,13 @@
 mod artifact_watch;
 mod auth;
+pub mod cli_protocol;
+mod cli_sessions;
 mod config;
 mod machine_identity;
 mod machines;
 mod native_auth;
 mod package_update;
+mod profile;
 mod project_attachments;
 pub mod repo_env;
 mod routes;
@@ -17,6 +20,7 @@ mod transcript_watch;
 mod work_sync;
 
 pub use config::{DEFAULT_DEV_WEB_URL, DEFAULT_PORT, SESSION_COOKIE_NAME, ServerConfig};
+pub use profile::read_server_address;
 use static_dir::is_valid_static_dir;
 pub use static_dir::{INSTALLED_WEB_DIR, resolve_static_dir};
 
@@ -50,6 +54,7 @@ pub struct RunOptions {
     pub quiet: bool,
     pub open_browser: bool,
     pub workspace_path: Option<String>,
+    pub temporary: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -86,6 +91,7 @@ impl StartupInfo {
 
 #[derive(Clone)]
 pub struct AppState {
+    pub(crate) lifetime: Arc<cli_sessions::ServerLifetime>,
     pub auth: Arc<auth::AuthState>,
     pub(crate) native_auth: Arc<native_auth::NativeAuthManager>,
     pub project_attachments: Arc<project_attachments::ProjectAttachmentStore>,
@@ -135,6 +141,7 @@ impl AppState {
         let machine_identity =
             Arc::new(machine_identity::MachineIdentity::load(&data_dir).expect("machine identity"));
         Self {
+            lifetime: cli_sessions::ServerLifetime::new(false),
             auth,
             native_auth: Arc::clone(&native_auth),
             project_attachments,
@@ -165,6 +172,7 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .merge(routes::health::routes())
         .merge(routes::config::routes())
         .merge(routes::auth::routes())
+        .merge(routes::cli::routes())
         .merge(routes::workspace::routes())
         .merge(routes::agent::routes())
         .merge(routes::transcript::routes())
@@ -183,12 +191,15 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
 pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()> {
     let convex_deployment_url = config.resolve_convex_deployment_url()?;
     let data_dir = config.resolve_data_dir();
+    let profile = profile::ProfileLock::acquire(&data_dir)?;
+    let auth = auth::AuthState::load(&data_dir)?;
     let native_auth = native_auth::NativeAuthManager::new(
         convex_deployment_url.clone(),
         auth::desktop_login_callback_url(config.port),
         &data_dir,
+        Arc::clone(&auth),
     );
-    let auth = auth::AuthState::load(&data_dir)?;
+    let lifetime = cli_sessions::ServerLifetime::new(options.temporary);
     let machine_identity = Arc::new(machine_identity::MachineIdentity::load(&data_dir)?);
     let machines = machines::MachineManager::new(
         convex_deployment_url.clone(),
@@ -226,8 +237,9 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         .map(|value| Arc::new(Mutex::new(Some(value))));
 
     let state = AppState {
+        lifetime: Arc::clone(&lifetime),
         auth,
-        native_auth,
+        native_auth: Arc::clone(&native_auth),
         project_attachments,
         transcript,
         transcript_watchers,
@@ -278,6 +290,8 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         startup.print_startup(dev_web_url.as_deref());
     }
 
+    profile.publish(http_base_url.clone())?;
+
     if options.open_browser {
         let open_target =
             startup.browser_url(dev_web_url.as_deref().unwrap_or(&startup.listen_url));
@@ -301,18 +315,41 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
             }
         }
     });
+    let lease_auth = Arc::clone(&state.auth);
     let router = build_router(state, static_dir);
     let shutdown_machines = Arc::clone(&machines);
 
-    let result = axum::serve(
+    let shutdown = lifetime.shutdown.clone();
+    let server = axum::serve(
         listener,
         router.into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(async move {
-        shutdown_signal().await;
+        tokio::select! {
+            _ = shutdown_signal() => {},
+            _ = async {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    let (stop, expired) = lifetime.tick(std::time::Instant::now());
+                    for session in expired {
+                        native_auth.cancel_device_login(&session).await;
+                        let _ = lease_auth.end_session(&session).await;
+                    }
+                    if stop { break; }
+                }
+            } => {},
+        }
+        lifetime.shutdown.cancel();
         shutdown_machines.stop_registration();
     })
-    .await;
+    .into_future();
+    tokio::pin!(server);
+    let result = tokio::select! {
+        result = &mut server => result,
+        _ = shutdown.cancelled() => {
+            tokio::time::timeout(Duration::from_secs(10), &mut server).await.unwrap_or(Ok(()))
+        }
+    };
     cleanup.abort();
     let _ = cleanup.await;
     machines.shutdown().await;
@@ -417,7 +454,7 @@ pub fn read_pairing_credential(config: &ServerConfig) -> anyhow::Result<Option<S
     auth::read_pairing_credential(&config.resolve_data_dir())
 }
 
-pub use auth::verify_pairing_proof;
+pub use auth::{sign_pairing_proof, verify_pairing_proof};
 pub use repo_env::load_repo_env;
 
 #[cfg(test)]

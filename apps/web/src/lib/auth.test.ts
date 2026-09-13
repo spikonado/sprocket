@@ -142,6 +142,36 @@ describe('installed and hosted auth', () => {
 		vi.unstubAllGlobals();
 	});
 
+	it('observes login and logout from another local client without creating a browser session', async () => {
+		stubInstalledWindow();
+		const connections: FakeEvents[] = [];
+		class FakeEvents {
+			onmessage: (() => void) | null = null;
+			close = vi.fn();
+			constructor() {
+				connections.push(this);
+			}
+		}
+		vi.stubGlobal('EventSource', FakeEvents);
+		let signedIn = false;
+		stubFetch({
+			token: () =>
+				jsonResponse(200, signedIn ? { accessToken: 'native-token', user: nativeUser } : null)
+		});
+		await initializeAuth(convexClient);
+		const events = connections[0];
+		if (!events) throw new Error('missing auth subscription');
+		signedIn = true;
+		events.onmessage?.();
+		await vi.waitFor(() => expect(get(authState).user?.id).toBe(nativeUser.id));
+		signedIn = false;
+		events.onmessage?.();
+		await vi.waitFor(() => expect(get(authState).user).toBeNull());
+		expect(createAuthKitClient).not.toHaveBeenCalled();
+		resetAuthRuntime();
+		expect(events.close).toHaveBeenCalledOnce();
+	});
+
 	it('resumes an installed native session without AuthKit JS', async () => {
 		stubInstalledWindow();
 		const fetch = stubFetch({

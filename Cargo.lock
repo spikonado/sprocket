@@ -7836,6 +7836,8 @@ dependencies = [
  "clap",
  "open",
  "reqwest 0.13.4",
+ "serde",
+ "serde_json",
  "sprocket-server",
  "sprocket-workspace",
  "tokio",
@@ -7890,6 +7892,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "windows-sys 0.61.2",
  "workos",
 ]
 
