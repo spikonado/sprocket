@@ -13,6 +13,8 @@ pub(crate) fn gateway_api_v1_url(gateway_url: &str) -> String {
 
 #[derive(Clone)]
 pub struct RunAgentRequest {
+    pub allow_interaction: bool,
+    pub cancellation: sprocket_workspace::WorkspaceCancellation,
     pub deployment_url: String,
     pub auth_token_fetcher: AuthTokenFetcher,
     pub execution_secret: String,

@@ -92,3 +92,61 @@ pub struct DeviceLoginResponse {
     pub user_code: String,
     pub expires_in: u64,
 }
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CliRunRequest {
+    pub client_id: String,
+    pub prompt: String,
+    pub directory: String,
+    pub thread_id: Option<String>,
+    pub model: Option<String>,
+    pub reasoning: Option<String>,
+    pub fast: Option<bool>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CliModel {
+    pub id: String,
+    pub label: String,
+    pub reasoning_efforts: Vec<String>,
+    pub default_reasoning_effort: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CliModelsResponse {
+    pub default_model_id: String,
+    pub models: Vec<CliModel>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunStarted {
+    pub run_id: String,
+    pub thread_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CliOutputRequest {
+    pub client_id: String,
+    pub after_part: i64,
+    pub after_revision: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliRunSnapshot {
+    pub revision: u64,
+    pub answer: String,
+    pub run_id: String,
+    pub thread_id: String,
+    pub status: String,
+    pub error: Option<String>,
+    pub parts: Vec<sprocket_agent::TranscriptPart>,
+    pub has_more: bool,
+    pub execution_finished: bool,
+    pub live: Option<sprocket_agent::LiveCompletionOverlay>,
+}

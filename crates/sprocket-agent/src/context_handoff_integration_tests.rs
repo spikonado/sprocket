@@ -20,7 +20,7 @@ use super::{
     ContextHandoffHook, HANDOFF_PROMPT, HANDOFF_REQUESTED, HandoffRequest, HandoffTool,
     context_summary_text,
 };
-use crate::hooks::AGENT_TOOL_NAMES;
+use crate::hooks::{AGENT_TOOL_NAMES, available_agent_tool_names};
 
 const MODEL: &str = "gateway-model";
 const OLD_CONTEXT: &str = "UNIQUE_OLD_CONTEXT xyz-arm-bus";
@@ -356,6 +356,14 @@ fn stub_tool(name: &'static str) -> DynamicTool {
 }
 
 fn test_agent(base_url: &str, hook: &ContextHandoffHook) -> rig::Agent {
+    test_agent_with_tools(base_url, hook, AGENT_TOOL_NAMES)
+}
+
+fn test_agent_with_tools(
+    base_url: &str,
+    hook: &ContextHandoffHook,
+    tool_names: &[&'static str],
+) -> rig::Agent {
     let client = openai::Client::builder()
         .api_key("test-key")
         .base_url(base_url)
@@ -365,10 +373,30 @@ fn test_agent(base_url: &str, hook: &ContextHandoffHook) -> rig::Agent {
         .agent(MODEL)
         .preamble("context handoff fixture")
         .tool(hook.tool());
-    for name in AGENT_TOOL_NAMES {
+    for name in tool_names {
         builder = builder.dynamic_tool(stub_tool(name));
     }
     builder.build()
+}
+
+#[tokio::test]
+async fn noninteractive_turn_only_activates_registered_tools() {
+    let (base_url, server) = spawn_responses_sse(vec![text_sse("done", 4, 4)]);
+    let active_tools = available_agent_tool_names(false, true);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, false, active_tools.clone());
+    let agent = test_agent_with_tools(&base_url, &hook, &active_tools);
+
+    match drive(&agent, &hook, Message::user("work"), Vec::new()).await {
+        DriveEnd::Finished(text) => assert_eq!(text, "done"),
+        other => panic!("noninteractive turn should complete, got {other:?}"),
+    }
+
+    let captured = server.join().expect("responses mock thread");
+    assert_eq!(captured.len(), 1);
+    let advertised = advertised_tools(&parse_request(&captured[0]));
+    assert!(!advertised.contains(&"ask_question".to_string()));
+    assert!(!advertised.contains(&"await_question".to_string()));
+    assert!(!advertised.contains(&"mandate_setup".to_string()));
 }
 
 fn parse_request(body: &[u8]) -> JsonValue {
@@ -523,7 +551,7 @@ fn take_handoff(hook: &ContextHandoffHook) -> HandoffRequest {
 #[tokio::test]
 async fn unsolicited_handoff_is_not_executed_or_emitted_as_a_tool_call() {
     let (base_url, server) = spawn_responses_sse(vec![handoff_document_sse(FIRST_SUMMARY)]);
-    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, true);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, true, AGENT_TOOL_NAMES.to_vec());
     let agent = test_agent(&base_url, &hook);
     tokio::time::timeout(DRIVE_TIMEOUT, async {
         let mut stream = agent
@@ -562,7 +590,7 @@ async fn over_budget_turn_is_replaced_by_the_hidden_handoff_prompt() {
         handoff_document_sse(FIRST_SUMMARY),
         text_sse("continued from handoff", 4, 4),
     ]);
-    let hook = ContextHandoffHook::new(OVER_LIMIT, OVER_LIMIT, true);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, OVER_LIMIT, true, AGENT_TOOL_NAMES.to_vec());
     let agent = test_agent(&base_url, &hook);
     let history = vec![Message::user(OLD_CONTEXT)];
     let prompt = Message::user(DEFERRED_PROMPT);
@@ -653,7 +681,7 @@ async fn mid_run_handoff_keeps_the_pending_tool_result() {
         exec_command_sse(80, 20),
         handoff_document_sse(FIRST_SUMMARY),
     ]);
-    let hook = ContextHandoffHook::new(50, 0, false);
+    let hook = ContextHandoffHook::new(50, 0, false, AGENT_TOOL_NAMES.to_vec());
     let agent = test_agent(&base_url, &hook);
     let history = vec![Message::user(OLD_CONTEXT)];
     let prompt = Message::user("run pwd");
@@ -729,7 +757,7 @@ async fn context_handoff_repeats_after_restart() {
         exec_command_sse(90, 20),
         handoff_document_sse(SECOND_SUMMARY),
     ]);
-    let hook = ContextHandoffHook::new(OVER_LIMIT, OVER_LIMIT, true);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, OVER_LIMIT, true, AGENT_TOOL_NAMES.to_vec());
     let agent = test_agent(&base_url, &hook);
     let prompt = Message::user(DEFERRED_PROMPT);
 
@@ -801,7 +829,7 @@ async fn context_handoff_repeats_after_restart() {
 #[tokio::test]
 async fn empty_handoff_document_is_rejected() {
     let (base_url, server) = spawn_responses_sse(vec![handoff_document_sse("   ")]);
-    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, false);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, false, AGENT_TOOL_NAMES.to_vec());
     let agent = test_agent(&base_url, &hook);
     hook.start_handoff();
 
@@ -819,7 +847,7 @@ async fn empty_handoff_document_is_rejected() {
 #[tokio::test]
 async fn truncated_handoff_turn_is_rejected() {
     let (base_url, server) = spawn_responses_sse(vec![truncated_handoff_sse()]);
-    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, false);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, false, AGENT_TOOL_NAMES.to_vec());
     let agent = test_agent(&base_url, &hook);
     hook.start_handoff();
 
@@ -834,7 +862,7 @@ async fn truncated_handoff_turn_is_rejected() {
 #[tokio::test]
 async fn text_only_handoff_turn_is_rejected() {
     let (base_url, server) = spawn_responses_sse(vec![text_sse("I will summarise in prose", 8, 8)]);
-    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, false);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, false, AGENT_TOOL_NAMES.to_vec());
     let agent = test_agent(&base_url, &hook);
     hook.start_handoff();
 
@@ -849,7 +877,7 @@ async fn text_only_handoff_turn_is_rejected() {
 #[tokio::test]
 async fn two_handoff_tool_calls_are_rejected() {
     let (base_url, server) = spawn_responses_sse(vec![two_tool_calls_sse()]);
-    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, false);
+    let hook = ContextHandoffHook::new(OVER_LIMIT, 0, false, AGENT_TOOL_NAMES.to_vec());
     let agent = test_agent(&base_url, &hook);
     hook.start_handoff();
 

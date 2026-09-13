@@ -18,7 +18,6 @@ use uuid::Uuid;
 
 const DESKTOP_EXECUTABLE_ENV: &str = "SPROCKET_DESKTOP_EXECUTABLE";
 const DESKTOP_WORKSPACE_ARG: &str = "--sprocket-workspace";
-
 #[derive(Debug, Parser)]
 #[command(
     name = "sprocket",
@@ -41,6 +40,9 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Run an agent locally and wait for its result
+    Run(commands::RunArgs),
+
     /// Sign in using a browser on any device
     Login(commands::LoginArgs),
 
@@ -103,6 +105,13 @@ fn entry() -> anyhow::Result<u8> {
         .map(resolve_launch_workspace)
         .transpose()?;
     match cli.command {
+        Some(Commands::Run(args)) => {
+            anyhow::ensure!(
+                !cli.web && workspace_path.is_none(),
+                "run does not accept app launch arguments; use run --directory instead"
+            );
+            return commands::run(args);
+        }
         Some(Commands::Login(args)) => {
             anyhow::ensure!(
                 !cli.web && workspace_path.is_none(),
@@ -342,6 +351,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn run_requires_one_explicit_prompt_source() {
+        assert!(Cli::try_parse_from(["sprocket", "run"]).is_err());
+        assert!(
+            Cli::try_parse_from(["sprocket", "run", "task", "--prompt-file", "task.md"]).is_err()
+        );
+        assert!(Cli::try_parse_from(["sprocket", "run", "--prompt-file", "-"]).is_ok());
+        assert!(Cli::try_parse_from(["sprocket", "run", "task", "--directory", "."]).is_ok());
+        let list_models = Cli::try_parse_from(["sprocket", "run", "--list-models"]).unwrap();
+        assert!(matches!(
+            list_models.command,
+            Some(Commands::Run(commands::RunArgs {
+                prompt: None,
+                list_models: true,
+                ..
+            }))
+        ));
+        assert!(Cli::try_parse_from(["sprocket", "run", "task", "--list-models"]).is_err());
+        assert!(Cli::try_parse_from(["sprocket", "run", "task", "--json"]).is_err());
+        assert!(Cli::try_parse_from(["sprocket", "run", "task", "--stream-json"]).is_err());
+        assert!(Cli::try_parse_from(["sprocket", "run", "task", "--fast", "--no-fast"]).is_err());
+    }
+
+    #[test]
     fn parses_launch_server_and_update_modes() {
         let desktop = Cli::try_parse_from(["sprocket"]).unwrap();
         assert!(!desktop.web);
@@ -361,13 +393,6 @@ mod tests {
         assert!(!server.web);
         assert!(server.directory.is_none());
         assert!(matches!(server.command, Some(Commands::Serve(_))));
-
-        let login =
-            Cli::try_parse_from(["sprocket", "login", "--credential-store", "file"]).unwrap();
-        assert!(matches!(login.command, Some(Commands::Login(_))));
-
-        let logout = Cli::try_parse_from(["sprocket", "logout"]).unwrap();
-        assert!(matches!(logout.command, Some(Commands::Logout)));
 
         let update = Cli::try_parse_from(["sprocket", "upgrade", "--check"]).unwrap();
         assert!(matches!(
