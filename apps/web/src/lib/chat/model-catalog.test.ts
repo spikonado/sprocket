@@ -24,11 +24,13 @@ const catalogPayload = {
 		tierAllowedModels: {
 			free: ['model-small'],
 			pro: ['model-small'],
+			max: ['model-small'],
 			admin: ['model-small']
 		},
 		tierAllowedServiceTiers: {
 			free: ['standard'],
 			pro: ['standard', 'fast'],
+			max: ['standard', 'fast'],
 			admin: ['standard', 'fast']
 		},
 		modelLockUpgradeMessage: 'Upgrade to use this model',
@@ -52,9 +54,15 @@ describe('gateway model catalog', () => {
 		);
 		expect(catalog.models[0]).not.toHaveProperty('autoCompactTokenLimit');
 		expect(catalog.models[0].supportsFastMode).toBe(true);
-		expect(catalog.tierAllowsFastMode).toEqual({ free: false, pro: true, admin: true });
+		expect(catalog.tierAllowsFastMode).toEqual({
+			free: false,
+			pro: true,
+			max: true,
+			admin: true
+		});
 		expect(fastModeAccessForModelAndTier(catalog, 'free', catalog.models[0])).toBe('locked');
 		expect(fastModeAccessForModelAndTier(catalog, 'pro', catalog.models[0])).toBe('available');
+		expect(fastModeAccessForModelAndTier(catalog, 'max', catalog.models[0])).toBe('available');
 	});
 
 	it('does not expose Fast mode when the model omits the fast gateway tier', async () => {
@@ -68,5 +76,32 @@ describe('gateway model catalog', () => {
 		const catalog = await fetchGatewayModelCatalog('https://ai-gateway.spikonado.com');
 		expect(catalog.models[0].supportsFastMode).toBe(false);
 		expect(fastModeAccessForModelAndTier(catalog, 'pro', catalog.models[0])).toBe('unsupported');
+	});
+
+	it('uses Pro model access for Max with an older gateway catalog', async () => {
+		const payload = {
+			...catalogPayload,
+			sprocket: {
+				...catalogPayload.sprocket,
+				tierAllowedModels: {
+					free: ['model-small'],
+					pro: ['model-small'],
+					admin: ['model-small']
+				},
+				tierAllowedServiceTiers: {
+					free: ['standard'],
+					pro: ['standard', 'fast'],
+					admin: ['standard', 'fast']
+				}
+			}
+		};
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => new Response(JSON.stringify(payload), { status: 200 }))
+		);
+
+		const catalog = await fetchGatewayModelCatalog('https://ai-gateway.spikonado.com');
+		expect(catalog.tierAllowedModels.max).toEqual(catalogPayload.sprocket.tierAllowedModels.pro);
+		expect(catalog.tierAllowsFastMode.max).toBe(true);
 	});
 });

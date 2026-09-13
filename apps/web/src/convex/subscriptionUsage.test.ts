@@ -3,6 +3,28 @@ import { api, internal } from '@convex/_generated/api';
 import { initConvexTest } from './test.setup';
 
 describe('subscription and usage backend', () => {
+	it('gives Max $170 of weekly usage and $500 of monthly usage', async () => {
+		const t = initConvexTest();
+		const userId = 'user_max';
+		await t.run(async (ctx) => {
+			await ctx.db.insert('subscriptions', {
+				userId,
+				tier: 'max',
+				dodoSubscriptionId: 'sub_max',
+				dodoProductId: 'prod_max',
+				status: 'active',
+				eventAt: 1
+			});
+		});
+
+		const usage = await t.withIdentity({ subject: userId }).query(api.usage.getMyUsage, {});
+		expect(usage.tier).toBe('max');
+		expect(usage.meters[0]?.windows).toEqual([
+			{ period: 'weekly', used: 0, limit: 170_000, resetsAt: null },
+			{ period: 'monthly', used: 0, limit: 500_000, resetsAt: null }
+		]);
+	});
+
 	it('reports usage overdraft and preserves it', async () => {
 		const t = initConvexTest();
 		const userId = 'user_usage';
