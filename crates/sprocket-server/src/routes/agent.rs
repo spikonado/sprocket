@@ -207,6 +207,9 @@ pub(crate) async fn launch_agent(
                 let _ = start_result_sender.send(Ok((run_id.clone(), thread_id.clone())));
                 let mut transcript_watch = transcript_watchers.open(&user_id, &thread_id).await;
                 let result = run_agent(run, live, transcript).await;
+                if let Some(output) = &output {
+                    output.finish(result.as_ref().err().map(ToString::to_string));
+                }
                 match tokio::time::timeout(
                     std::time::Duration::from_secs(30),
                     transcript_watch.wait_for_run(&run_id),
@@ -228,9 +231,6 @@ pub(crate) async fn launch_agent(
                 }
                 drop(artifact_watch);
                 drop(transcript_watch);
-                if let Some(output) = &output {
-                    output.finish(result.as_ref().err().map(ToString::to_string));
-                }
                 if let Err(error) = result {
                     eprintln!("sprocket-server: agent run failed: {error:#}");
                 }

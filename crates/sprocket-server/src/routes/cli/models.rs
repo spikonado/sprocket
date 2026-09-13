@@ -140,6 +140,7 @@ fn select(
     request: &CliRunRequest,
 ) -> anyhow::Result<Settings> {
     validate(&catalog)?;
+    let model_overridden = request.model.is_some();
     let inherited_model = request.model.clone().or_else(|| {
         context
             .thread
@@ -170,13 +171,17 @@ fn select(
         .reasoning
         .clone()
         .or_else(|| {
-            context
-                .thread
-                .as_ref()
-                .map(|thread| thread.reasoning_effort.clone())
+            if model_overridden {
+                None
+            } else {
+                context
+                    .thread
+                    .as_ref()
+                    .map(|thread| thread.reasoning_effort.clone())
+            }
         })
         .unwrap_or_else(|| {
-            if uses_tier_fallback {
+            if model_overridden || uses_tier_fallback {
                 entry.default_reasoning_effort.clone()
             } else {
                 catalog.default_reasoning_effort.clone()
@@ -284,5 +289,35 @@ mod tests {
         assert_eq!(settings.reasoning, "xhigh");
 
         assert!(available_for_tier(catalog(), "unknown").is_err());
+    }
+
+    #[test]
+    fn model_override_uses_the_selected_models_reasoning_default() {
+        let settings = select(
+            catalog(),
+            &RunContext {
+                gateway_url: String::new(),
+                tier: "paid".into(),
+                thread: Some(super::super::ThreadSettings {
+                    repository_key: "repo".into(),
+                    selected_model: "default".into(),
+                    reasoning_effort: "high".into(),
+                    fast_mode: false,
+                }),
+            },
+            &CliRunRequest {
+                client_id: "client".into(),
+                prompt: "task".into(),
+                directory: "/tmp".into(),
+                thread_id: Some("thread".into()),
+                model: Some("paid".into()),
+                reasoning: None,
+                fast: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(settings.model, "paid");
+        assert_eq!(settings.reasoning, "max");
     }
 }
