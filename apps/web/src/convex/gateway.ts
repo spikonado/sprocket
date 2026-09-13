@@ -3,10 +3,11 @@ import { mutation } from '@convex/_generated/server';
 import { modelGatewayTokenSecret } from '@convex/lib/gatewayFetch';
 import { verifyGatewayToken } from '@convex/lib/gatewayToken';
 import { applyGatewayUsageCharge, gatewayQuotaStatus } from '@convex/lib/rateLimits';
+import { vSubscriptionTier } from '@convex/lib/validators';
 
 const vQuota = v.object({
 	userId: v.string(),
-	tier: v.union(v.literal('free'), v.literal('pro'), v.literal('admin')),
+	tier: vSubscriptionTier,
 	exhausted: v.boolean(),
 	message: v.optional(v.string())
 });
