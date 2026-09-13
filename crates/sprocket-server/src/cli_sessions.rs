@@ -3,12 +3,25 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use sprocket_workspace::WorkspaceCancellation;
+use tokio::sync::Mutex as AsyncMutex;
+
+use crate::cli_protocol::{CliRunRequest, RunStarted};
 
 const CLIENT_GRACE: Duration = Duration::from_secs(60);
 const STARTUP_GRACE: Duration = Duration::from_secs(30);
 
+#[derive(Default)]
+pub(crate) struct Submission {
+    pub request: Option<CliRunRequest>,
+    pub result: Option<Result<RunStarted, String>>,
+    pub user_id: Option<String>,
+}
+
 pub(crate) struct CliSession {
     pub session_token: String,
+    pub cancellation: WorkspaceCancellation,
+    pub submission: AsyncMutex<Submission>,
+    pub output: Arc<sprocket_agent::RunOutput>,
 }
 
 struct ClientLease {
@@ -75,6 +88,9 @@ impl ServerLifetime {
                 expires_at: Instant::now() + CLIENT_GRACE,
                 session: Arc::new(CliSession {
                     session_token: session_token.to_owned(),
+                    cancellation: WorkspaceCancellation::new(),
+                    submission: AsyncMutex::new(Submission::default()),
+                    output: Arc::new(sprocket_agent::RunOutput::default()),
                 }),
             },
         );
@@ -86,7 +102,7 @@ impl ServerLifetime {
         let lease = state
             .clients
             .get_mut(client_id)
-            .ok_or_else(|| anyhow::anyhow!("CLI session was lost; retry the command"))?;
+            .ok_or_else(|| anyhow::anyhow!("CLI session was lost; the run was not resubmitted"))?;
         anyhow::ensure!(
             lease.session.session_token == session_token,
             "CLI client belongs to another session"
@@ -106,6 +122,7 @@ impl ServerLifetime {
                 lease.session.session_token == session_token,
                 "CLI client belongs to another session"
             );
+            lease.session.cancellation.cancel();
             state.clients.remove(client_id);
         }
         Ok(())
@@ -125,6 +142,7 @@ impl ServerLifetime {
             if lease.expires_at > now {
                 return true;
             }
+            lease.session.cancellation.cancel();
             expired.push(lease.session.session_token.clone());
             false
         });
@@ -153,31 +171,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn temporary_server_waits_for_all_clients_and_activity() {
+    fn temporary_server_waits_for_all_clients_and_runs() {
         let lifetime = ServerLifetime::new(true);
         let first = uuid::Uuid::new_v4().to_string();
         let second = uuid::Uuid::new_v4().to_string();
         lifetime.connect(&first, "a").unwrap();
         lifetime.connect(&second, "b").unwrap();
-        let activity = lifetime.run_guard().unwrap();
+        let run = lifetime.run_guard().unwrap();
         lifetime.release(&first, "a").unwrap();
         assert!(!lifetime.tick(Instant::now()).0);
         lifetime.release(&second, "b").unwrap();
         assert!(!lifetime.tick(Instant::now()).0);
-        drop(activity);
+        drop(run);
         assert!(lifetime.tick(Instant::now()).0);
         assert!(lifetime.connect(&first, "a").is_err());
     }
 
     #[test]
-    fn expired_clients_do_not_stop_a_shared_server() {
+    fn lost_clients_cancel_their_run_but_not_the_shared_server() {
         let lifetime = ServerLifetime::new(false);
         let id = uuid::Uuid::new_v4().to_string();
         lifetime.connect(&id, "a").unwrap();
+        let client = lifetime.client(&id, "a").unwrap();
         assert!(lifetime.client(&id, "b").is_err());
         let (stop, expired) = lifetime.tick(Instant::now() + CLIENT_GRACE);
         assert!(!stop);
         assert_eq!(expired, ["a"]);
+        assert!(client.cancellation.is_cancelled());
         assert!(lifetime.client(&id, "a").is_err());
     }
 }

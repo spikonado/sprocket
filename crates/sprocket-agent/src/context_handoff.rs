@@ -1,6 +1,5 @@
 use std::sync::{Arc, Mutex};
 
-use crate::hooks::AGENT_TOOL_NAMES;
 use rig::agent::{
     AgentHook, CompletionCallAction, CompletionCallEvent, HookContext, ModelTurnAction,
     ModelTurnFinished, RequestPatch, StepEventKind,
@@ -39,7 +38,12 @@ struct HandoffState {
 }
 
 impl HandoffState {
-    fn prepare(&mut self, event: CompletionCallEvent<'_>, limit: u64) -> CompletionCallAction {
+    fn prepare(
+        &mut self,
+        event: CompletionCallEvent<'_>,
+        limit: u64,
+        active_tools: &[&'static str],
+    ) -> CompletionCallAction {
         if self.writing {
             return CompletionCallAction::patch(
                 RequestPatch::new()
@@ -64,9 +68,7 @@ impl HandoffState {
             return CompletionCallAction::stop(HANDOFF_REQUESTED);
         }
         self.first_call = false;
-        CompletionCallAction::patch(
-            RequestPatch::new().active_tools(AGENT_TOOL_NAMES.iter().copied()),
-        )
+        CompletionCallAction::patch(RequestPatch::new().active_tools(active_tools.iter().copied()))
     }
 
     fn submit(&mut self, document: String) -> Result<(), ToolExecutionError> {
@@ -86,13 +88,20 @@ impl HandoffState {
 #[derive(Clone)]
 pub(crate) struct ContextHandoffHook {
     token_limit: u64,
+    active_tools: Arc<[&'static str]>,
     state: Arc<Mutex<HandoffState>>,
 }
 
 impl ContextHandoffHook {
-    pub(crate) fn new(token_limit: u64, context_tokens: u64, defer_prompt: bool) -> Self {
+    pub(crate) fn new(
+        token_limit: u64,
+        context_tokens: u64,
+        defer_prompt: bool,
+        active_tools: Vec<&'static str>,
+    ) -> Self {
         Self {
             token_limit,
+            active_tools: active_tools.into(),
             state: Arc::new(Mutex::new(HandoffState {
                 context_tokens,
                 first_call: true,
@@ -164,7 +173,7 @@ impl AgentHook for ContextHandoffHook {
                         "The agent reached its completion call limit.",
                     );
                 }
-                let action = state.prepare(event, self.token_limit);
+                let action = state.prepare(event, self.token_limit, &self.active_tools);
                 if !matches!(action, CompletionCallAction::Stop(_)) {
                     state.calls += 1;
                 }
@@ -277,7 +286,7 @@ mod tests {
 
     #[test]
     fn missing_usage_preserves_the_last_observation_until_restart() {
-        let hook = ContextHandoffHook::new(100, 120, true);
+        let hook = ContextHandoffHook::new(100, 120, true, vec!["exec_command"]);
         assert_eq!(hook.record_usage(Usage::default()), 0);
         assert_eq!(hook.state.lock().unwrap().context_tokens, 120);
         hook.restart();
@@ -301,7 +310,8 @@ mod tests {
                     prompt: &prompt,
                     turn: 1
                 },
-                100
+                100,
+                &["exec_command"],
             ),
             CompletionCallAction::Stop(_)
         ));
@@ -326,6 +336,7 @@ mod tests {
                 turn: 2,
             },
             100,
+            &["exec_command"],
         );
         let request = state.request.unwrap();
         assert_eq!(request.history, vec![history[0].clone(), prompt]);
@@ -345,7 +356,8 @@ mod tests {
                     prompt: &prompt,
                     turn: 1
                 },
-                100
+                100,
+                &["exec_command"],
             ),
             CompletionCallAction::Patch(_)
         ));

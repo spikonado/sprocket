@@ -46,6 +46,18 @@ To always open a tab in your browser when using Sprocket, use the `--web` flag:
 sprocket --web
 ```
 
+### Run an agent from the CLI
+
+```sh
+sprocket login
+sprocket run "Fix the failing tests"
+sprocket run --thread <thread-id> "Add regression coverage"
+```
+
+Inline prompts, `--prompt-file`, and stdin report only the current run. `--thread`
+uses its history as context without replaying it. Progress goes to stderr, the
+final answer to stdout, and full transcripts remain in the data directory and app.
+
 ### Workspaces
 
 Pass a directory to open or reconnect that workspace in a new thread:

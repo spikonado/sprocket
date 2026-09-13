@@ -5,6 +5,7 @@ mod context_handoff;
 mod convex;
 mod hooks;
 mod live;
+mod output;
 mod provider;
 mod reasoning;
 mod run;
@@ -17,6 +18,7 @@ pub use live::{
     LiveAssistantPart, LiveCompletionHub, LiveCompletionOverlay, LiveCompletionSubscription,
     LiveCompletionWatchEvent,
 };
+pub use output::{RunOutcome, RunOutput};
 pub use run::{AgentRun, finalize_failed_start, run_agent, start_agent_run};
 pub use sprocket_convex::AuthTokenFetcher;
 pub use transcript::sections;

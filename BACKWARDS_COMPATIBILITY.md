@@ -1,18 +1,30 @@
 # Backwards compatibility
 
-## CLI authentication
+## CLI authentication and run control
 
 CLI clients send their exact semantic release version to local `/api/cli/*`
 endpoints. The local server rejects every mismatch, including canary identifiers
 and dev commit hashes, so a newly installed CLI cannot reuse a stale server.
 Existing app launch, native login, and agent-run endpoints keep their request
-formats. Older local servers return an update-and-restart error rather than
-receiving a fallback authentication request.
+formats and interactive tool set. Deploy the finalization response support before
+releasing the new CLI. Older local servers return an update-and-restart error
+rather than receiving a fallback run request.
 
 CLI discovery and bootstrap proofs bind to a random server-process ID. The CLI
 never sends the reusable pairing credential over HTTP. CLI sessions stay in
 memory and cannot resume after a server restart. Existing app pairing and
 persisted app sessions keep their formats.
+
+`agentRuntime:finalizeExecutorRun` and `agentRuntime:finalizeClaimFailure` accept
+optional `includeOutput`. Without it, the mutation returns only whether that
+executor's finalization was accepted. With it, the same transaction also returns
+the run's committed terminal status and error. This matters when cancellation or
+another executor wins the finalization race: the CLI reports the state Convex
+committed rather than the state its executor tried to write. The response does
+not contain model text; the CLI reads that from the local transcript cache.
+Requests without `includeOutput` retain the boolean response. Keep this response
+compatibility until all supported installed executors request the structured
+result. No stored-data migration is needed.
 
 Profiles without a credential-store selection continue using the existing
 deployment-and-data-directory-scoped keyring entry. No credentials are copied to

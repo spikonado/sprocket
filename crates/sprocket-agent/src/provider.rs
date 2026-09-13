@@ -14,7 +14,7 @@ use tokio::time::{sleep, timeout};
 
 use crate::context_handoff::{ContextHandoffHook, HANDOFF_PROMPT, context_summary_text};
 use crate::convex::RuntimeClient;
-use crate::hooks::{AgentPromptHook, ToolCallTracker};
+use crate::hooks::{AgentPromptHook, ToolCallTracker, available_agent_tool_names};
 use crate::live::{
     LiveAssistantPart, LiveAssistantParts, LiveCompletionHub, LiveCompletionOverlay,
     join_assistant_text_parts, now_ms,
@@ -70,6 +70,8 @@ pub(crate) struct AgentProvider {
 }
 
 pub(crate) struct AgentProviderRequest {
+    pub(crate) allow_interaction: bool,
+    pub(crate) cancellation: sprocket_workspace::WorkspaceCancellation,
     pub(crate) run_id: String,
     pub(crate) claim_id: String,
     pub(crate) thread_id: String,
@@ -188,14 +190,13 @@ where
         request.context_budget.auto_handoff_token_limit,
         request.context_tokens,
         request.defer_prompt_for_context_handoff,
+        available_agent_tool_names(request.allow_interaction, request.supports_images),
     );
     let agent = completion_client
         .agent(model)
         .preamble(&request.base_instructions)
         .additional_params(additional_params)
         .tool(tools.apply_patch)
-        .tool(tools.ask_question)
-        .tool(tools.await_question)
         .tool(tools.exec_command)
         .tool(tools.read_skill)
         .tool(tools.scrape_url)
@@ -207,13 +208,20 @@ where
         .tool(tools.save_artifact)
         .tool(tools.browser_interact)
         .tool(tools.browser_screenshot)
-        .tool(tools.mandate_setup)
         .tool(tools.mandate_status)
         .tool(tools.mandate_list)
         .tool(tools.mandate_charge)
         .tool(tools.mandate_report)
         .tool(tools.parse_file)
         .tool(context_handoff_hook.tool());
+    let agent = if request.allow_interaction {
+        agent
+            .tool(tools.ask_question)
+            .tool(tools.await_question)
+            .tool(tools.mandate_setup)
+    } else {
+        agent
+    };
     let agent = if request.supports_images {
         agent.tool(tools.screenshot_url)
     } else {
@@ -291,6 +299,11 @@ where
             loop {
                 tokio::select! {
                     biased;
+                    _ = request.cancellation.cancelled() => {
+                        break 'agent_run AgentProviderResult::Cancelled {
+                            text: if final_text.is_empty() { streamed_text } else { final_text },
+                        };
+                    }
                     _ = sleep(transcript.publish_delay()), if transcript.has_unpublished() => {
                         transcript.publish_if_needed(true);
                     }
@@ -687,7 +700,7 @@ impl TranscriptSink {
     fn publish(&mut self) {
         self.unpublished = 0;
         self.last_publish = Instant::now();
-        self.live.publish(LiveCompletionOverlay {
+        let overlay = LiveCompletionOverlay {
             thread_id: self.thread_id.clone(),
             run_id: self.run_id.clone(),
             run_status: "running".to_string(),
@@ -695,7 +708,11 @@ impl TranscriptSink {
             text: join_assistant_text_parts(&self.parts.parts),
             parts: visible_live_parts(&self.parts.parts),
             run_started_at: self.run_started_at,
-        });
+        };
+        self.live.publish(overlay);
+        if let Some(output) = &self.runtime.output {
+            output.notify_live_update();
+        }
     }
 
     fn apply_text_delta(
@@ -730,6 +747,9 @@ impl Drop for TranscriptSink {
     fn drop(&mut self) {
         self.publish_if_needed(true);
         self.live.clear(&self.thread_id);
+        if let Some(output) = &self.runtime.output {
+            output.notify_live_update();
+        }
     }
 }
 

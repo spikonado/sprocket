@@ -14,6 +14,12 @@ use crate::types::{
 const CREATE_RUN_MAX_ATTEMPTS: usize = 3;
 const CREATE_RUN_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
 
+#[derive(Deserialize)]
+#[serde(transparent)]
+struct CompletionPartNumber(
+    #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u32")] u32,
+);
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum FailedStartCleanup {
@@ -24,6 +30,7 @@ pub(crate) enum FailedStartCleanup {
 
 #[derive(Clone)]
 pub(crate) struct RuntimeClient {
+    pub(crate) output: Option<std::sync::Arc<crate::RunOutput>>,
     pub(crate) client: ConvexRpcClient,
     execution_secret: String,
 }
@@ -43,6 +50,7 @@ impl RuntimeClient {
             request.thread_id
         );
         Ok(Self {
+            output: None,
             client,
             execution_secret: request.execution_secret.clone(),
         })
@@ -245,6 +253,7 @@ impl RuntimeClient {
         stream_id: &str,
         items: Vec<serde_json::Value>,
     ) -> anyhow::Result<()> {
+        let local_items = self.output.as_ref().map(|_| items.clone());
         let mut args = self.run_args_with_claim(run_id, claim_id);
         args.insert("attemptSeq".to_string(), Value::Float64(attempt_seq as f64));
         args.insert("streamId".to_string(), stream_id.to_string().into());
@@ -253,9 +262,33 @@ impl RuntimeClient {
             "items".to_string(),
             Value::try_from(serde_json::Value::Array(items))?,
         );
-        let _: serde_json::Value = self
+        let number: Option<CompletionPartNumber> = self
             .mutation_json("agentRuntime:finalizeCompletionCall", args)
             .await?;
+        if local_items.as_ref().is_some_and(Vec::is_empty) {
+            if let Some(output) = &self.output {
+                output.empty_completion();
+            }
+        }
+        if let (Some(output), Some(CompletionPartNumber(number)), Some(items)) =
+            (&self.output, number, local_items)
+        {
+            output
+                .record_part(crate::TranscriptPart {
+                    number,
+                    source_key: format!("completion:{run_id}:{stream_id}"),
+                    kind: crate::TranscriptPartKind::Completion,
+                    run_id: run_id.into(),
+                    created_at: None,
+                    prompt: None,
+                    tool: None,
+                    completion: Some(crate::transcript::types::TranscriptCompletionBody {
+                        stream_id: Some(stream_id.into()),
+                        items,
+                    }),
+                })
+                .await;
+        }
         Ok(())
     }
 
@@ -300,7 +333,7 @@ impl RuntimeClient {
         let mut args = self.run_args_with_claim(run_id, claim_id);
         args.insert("text".to_string(), text.to_string().into());
         args.insert("lastError".to_string(), last_error.to_string().into());
-        self.mutation_json("agentRuntime:finalizeClaimFailure", args)
+        self.finalize_mutation("agentRuntime:finalizeClaimFailure", args)
             .await
     }
 
@@ -439,8 +472,29 @@ impl RuntimeClient {
         if let Some(last_error) = last_error {
             args.insert("lastError".to_string(), last_error.to_string().into());
         }
-        self.mutation_json("agentRuntime:finalizeExecutorRun", args)
+        self.finalize_mutation("agentRuntime:finalizeExecutorRun", args)
             .await
+    }
+
+    async fn finalize_mutation(
+        &self,
+        function: &str,
+        mut args: BTreeMap<String, Value>,
+    ) -> anyhow::Result<bool> {
+        let Some(output) = &self.output else {
+            return self.mutation_json(function, args).await;
+        };
+        args.insert("includeOutput".into(), Value::Boolean(true));
+        #[derive(Deserialize)]
+        struct Response {
+            accepted: bool,
+            outcome: Option<crate::RunOutcome>,
+        }
+        let response: Response = self.mutation_json(function, args).await?;
+        if let Some(outcome) = response.outcome {
+            output.finalized(outcome, response.accepted);
+        }
+        Ok(response.accepted)
     }
 
     fn run_args(&self, run_id: &str) -> BTreeMap<String, Value> {
@@ -465,4 +519,32 @@ impl RuntimeClient {
 
 fn string_array(ids: &[String]) -> Value {
     Value::Array(ids.iter().cloned().map(Value::from).collect())
+}
+
+#[cfg(test)]
+mod output_tests {
+    use super::*;
+
+    #[test]
+    fn completion_acknowledgments_decode_convex_numbers_and_null() {
+        let number: Option<CompletionPartNumber> = decode_function_result(
+            FunctionResult::Value(Value::Float64(7.0)),
+            "finalizeCompletionCall",
+        )
+        .unwrap();
+        assert_eq!(number.unwrap().0, 7);
+        let empty: Option<CompletionPartNumber> =
+            decode_function_result(FunctionResult::Value(Value::Null), "finalizeCompletionCall")
+                .unwrap();
+        assert!(empty.is_none());
+        for value in [-1.0, 0.5, f64::from(u32::MAX) + 1.0] {
+            assert!(
+                decode_function_result::<Option<CompletionPartNumber>>(
+                    FunctionResult::Value(Value::Float64(value)),
+                    "finalizeCompletionCall"
+                )
+                .is_err()
+            );
+        }
+    }
 }

@@ -24,35 +24,39 @@ use uuid::Uuid;
 
 use crate::AppState;
 use crate::auth::require_session_user;
+use crate::cli_protocol::RunStarted;
 use crate::routes::api_error::ApiError;
 
 const AGENT_START_TIMEOUT: Duration = Duration::from_secs(20);
 const AGENT_START_CLEANUP_TIMEOUT: Duration = Duration::from_secs(12);
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct RunAgentApiRequest {
-    user_id: String,
-    submission_id: String,
-    #[serde(default)]
-    thread_id: Option<String>,
-    #[serde(default)]
-    repository_key: Option<String>,
-    prompt: String,
-    storage_ids: Vec<String>,
-    selected_model: String,
-    reasoning_effort: String,
-    fast_mode: bool,
-    workspace_path: String,
-    #[serde(default)]
-    continuation_of_run_id: Option<String>,
+struct FinishedOnDrop(Option<Arc<sprocket_agent::RunOutput>>);
+
+impl Drop for FinishedOnDrop {
+    fn drop(&mut self) {
+        if let Some(finished) = &self.0 {
+            finished.finish(None);
+        }
+    }
 }
 
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct RunAgentStartResponse {
-    run_id: String,
-    thread_id: String,
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct RunAgentApiRequest {
+    pub user_id: String,
+    pub submission_id: String,
+    #[serde(default)]
+    pub thread_id: Option<String>,
+    #[serde(default)]
+    pub repository_key: Option<String>,
+    pub prompt: String,
+    pub storage_ids: Vec<String>,
+    pub selected_model: String,
+    pub reasoning_effort: String,
+    pub fast_mode: bool,
+    pub workspace_path: String,
+    #[serde(default)]
+    pub continuation_of_run_id: Option<String>,
 }
 
 pub fn routes() -> axum::Router<AppState> {
@@ -66,10 +70,22 @@ async fn run_agent_handler(
     headers: HeaderMap,
     jar: CookieJar,
     Json(payload): Json<RunAgentApiRequest>,
-) -> Result<(StatusCode, Json<RunAgentStartResponse>), ApiError> {
+) -> Result<(StatusCode, Json<RunStarted>), ApiError> {
     require_session_user(&state.auth, &headers, &jar, &payload.user_id)
         .await
         .map_err(ApiError::unauthorized)?;
+    let started = launch_agent(state, payload, true, Default::default(), None).await?;
+    Ok((StatusCode::ACCEPTED, Json(started)))
+}
+
+pub(crate) async fn launch_agent(
+    state: AppState,
+    payload: RunAgentApiRequest,
+    allow_interaction: bool,
+    cancellation: sprocket_workspace::WorkspaceCancellation,
+    output: Option<Arc<sprocket_agent::RunOutput>>,
+) -> Result<RunStarted, ApiError> {
+    let guard = state.lifetime.run_guard().map_err(ApiError::bad_request)?;
     state
         .native_auth
         .require_user(&payload.user_id)
@@ -100,6 +116,8 @@ async fn run_agent_handler(
         .native_auth
         .auth_token_fetcher_for_user(payload.user_id.clone());
     let request = RunAgentRequest {
+        allow_interaction,
+        cancellation,
         deployment_url: state.convex_deployment_url.clone(),
         auth_token_fetcher: auth_token_fetcher.clone(),
         execution_secret: format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple()),
@@ -127,6 +145,8 @@ async fn run_agent_handler(
     // may drop this handler when the browser closes the tab; the executor must
     // still either run or durably reconcile the submitted run.
     tokio::spawn(async move {
+        let _guard = guard;
+        let _finished = FinishedOnDrop(output.clone());
         let run = await_agent_start(
             start_agent_run(request),
             AGENT_START_TIMEOUT,
@@ -140,7 +160,11 @@ async fn run_agent_handler(
         .await;
 
         match run {
-            Ok(run) => {
+            Ok(mut run) => {
+                if let Some(output) = &output {
+                    run.observe_output(Arc::clone(output), Arc::clone(&transcript))
+                        .await;
+                }
                 let run_id = run.run_id().to_string();
                 let thread_id = run.thread_id().to_string();
                 let user_id = run.user_id().to_string();
@@ -204,6 +228,9 @@ async fn run_agent_handler(
                 }
                 drop(artifact_watch);
                 drop(transcript_watch);
+                if let Some(output) = &output {
+                    output.finish(result.as_ref().err().map(ToString::to_string));
+                }
                 if let Err(error) = result {
                     eprintln!("sprocket-server: agent run failed: {error:#}");
                 }
@@ -226,10 +253,7 @@ async fn run_agent_handler(
             )
         })?
         .map_err(|error| ApiError::internal_with("failed to start agent run", anyhow!(error)))?;
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(RunAgentStartResponse { run_id, thread_id }),
-    ))
+    Ok(RunStarted { run_id, thread_id })
 }
 
 #[derive(Debug, Deserialize)]

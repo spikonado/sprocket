@@ -21,7 +21,12 @@ import {
 	recordThreadUsageEvent,
 	usageEventId
 } from '@convex/lib/threadUsage';
-import { finalizeRunRecord, matchesFinalizeExpectations } from '@convex/lib/runFinalize';
+import {
+	executorFinalizationResult,
+	finalizeRunRecord,
+	matchesFinalizeExpectations,
+	vExecutorFinalizationResult
+} from '@convex/lib/runFinalize';
 import { requestRunCancellation } from './runLifecycle';
 import {
 	recordCompletionTranscript,
@@ -529,6 +534,7 @@ export const reopenRun = mutation({
 
 export const finalizeExecutorRun = mutation({
 	args: {
+		includeOutput: v.optional(v.boolean()),
 		expectedStatus: v.optional(vRunStatus),
 		expectedClaimId: v.optional(v.string()),
 		runId: v.id('runs'),
@@ -537,13 +543,12 @@ export const finalizeExecutorRun = mutation({
 		lastError: v.optional(v.string()),
 		executionSecret: v.string()
 	},
-	returns: v.boolean(),
+	returns: vExecutorFinalizationResult,
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		if (!matchesFinalizeExpectations(run, args)) {
-			return false;
-		}
-		return finalizeRunRecord(ctx, run, args);
+		const accepted =
+			matchesFinalizeExpectations(run, args) && (await finalizeRunRecord(ctx, run, args));
+		return executorFinalizationResult(ctx, run, accepted, args.includeOutput);
 	}
 });
 
@@ -572,23 +577,24 @@ export const finalizeFailedStart = mutation({
 
 export const finalizeClaimFailure = mutation({
 	args: {
+		includeOutput: v.optional(v.boolean()),
 		claimId: v.string(),
 		runId: v.id('runs'),
 		text: v.string(),
 		lastError: v.string(),
 		executionSecret: v.string()
 	},
-	returns: v.boolean(),
+	returns: vExecutorFinalizationResult,
 	handler: async (ctx, args) => {
 		const run = await getExecutionRun(ctx, args.runId, args.executionSecret);
-		if (!canFinalizeAfterClaimFailure(run, args.claimId)) {
-			return false;
-		}
-		return finalizeRunRecord(ctx, run, {
-			text: args.text,
-			status: 'failed',
-			lastError: args.lastError
-		});
+		const accepted =
+			canFinalizeAfterClaimFailure(run, args.claimId) &&
+			(await finalizeRunRecord(ctx, run, {
+				text: args.text,
+				status: 'failed',
+				lastError: args.lastError
+			}));
+		return executorFinalizationResult(ctx, run, accepted, args.includeOutput);
 	}
 });
 

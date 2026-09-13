@@ -4,8 +4,70 @@ use axum::http::Request;
 use tower::ServiceExt;
 
 #[tokio::test]
+async fn output_waits_for_local_execution_and_never_needs_a_backend_connection() {
+    let (_directory, state, token, request) = fixture().await;
+    let client = state.lifetime.client(&request.client_id, &token).unwrap();
+    client.output.initialize(
+        Arc::clone(&state.transcript),
+        "user".into(),
+        "thread".into(),
+        "run".into(),
+    );
+    state.auth.bind_session_user(&token, "user").await.unwrap();
+    {
+        let mut submission = client.submission.lock().await;
+        submission.user_id = Some("user".into());
+        submission.result = Some(Ok(RunStarted {
+            run_id: "run".into(),
+            thread_id: "thread".into(),
+        }));
+    }
+    let request = CliOutputRequest {
+        client_id: request.client_id,
+        after_part: -1,
+        after_revision: None,
+    };
+    let first = call(&state, &token, "output", &request, "127.0.0.1:1000").await;
+    assert_eq!(first.0, StatusCode::OK);
+    assert_eq!(first.1["status"], "running");
+    let mut request = request;
+    request.after_revision = first.1["revision"].as_u64();
+    let terminal = {
+        let waiting = call(&state, &token, "output", &request, "127.0.0.1:1000");
+        tokio::pin!(waiting);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut waiting)
+                .await
+                .is_err()
+        );
+        client
+            .output
+            .finish(Some("unconfirmed finalization".into()));
+        tokio::time::timeout(Duration::from_secs(1), waiting)
+            .await
+            .unwrap()
+    };
+    assert_eq!(terminal.0, StatusCode::OK);
+    assert_eq!(terminal.1["status"], "unknown");
+    assert_eq!(terminal.1["executionFinished"], true);
+    assert_eq!(terminal.1["answer"], "");
+    request.after_revision = None;
+    state
+        .auth
+        .bind_session_user(&token, "other-user")
+        .await
+        .unwrap();
+    assert_eq!(
+        call(&state, &token, "output", &request, "127.0.0.1:1000")
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+#[tokio::test]
 async fn signed_bootstrap_and_cli_sessions_cannot_be_replayed_after_server_restart() {
-    let (directory, mut state, _, existing) = fixture().await;
+    let (directory, mut state, _, run) = fixture().await;
     let challenge = "fresh-challenge";
     let (status, discovered) = call(
         &state,
@@ -93,13 +155,15 @@ async fn signed_bootstrap_and_cli_sessions_cannot_be_replayed_after_server_resta
             .unwrap()
             .contains(&request.session_token)
     );
-    request.client.client_id = existing.client_id;
+    let original_client_id = request.client.client_id.clone();
+    request.client.client_id = run.client_id;
     assert_eq!(
         call(&state, "", "bootstrap", &request, "127.0.0.1:1000")
             .await
             .0,
         StatusCode::UNAUTHORIZED
     );
+    request.client.client_id = original_client_id;
     state.auth = crate::auth::AuthState::load(directory.path()).unwrap();
     assert_ne!(state.auth.instance_id, discovered.instance_id);
     assert!(
@@ -117,7 +181,7 @@ async fn signed_bootstrap_and_cli_sessions_cannot_be_replayed_after_server_resta
     );
 }
 
-async fn fixture() -> (tempfile::TempDir, AppState, String, CliClientRequest) {
+async fn fixture() -> (tempfile::TempDir, AppState, String, CliRunRequest) {
     let directory = tempfile::tempdir().unwrap();
     let auth = crate::auth::AuthState::load(directory.path()).unwrap();
     let (_, token) = auth.bootstrap(auth.pairing_credential()).await.unwrap();
@@ -134,8 +198,14 @@ async fn fixture() -> (tempfile::TempDir, AppState, String, CliClientRequest) {
         true,
         crate::package_update::PackageUpdateManager::disabled(),
     );
-    let request = CliClientRequest {
+    let request = CliRunRequest {
         client_id: uuid::Uuid::new_v4().to_string(),
+        prompt: "task".into(),
+        directory: directory.path().display().to_string(),
+        thread_id: None,
+        model: None,
+        reasoning: None,
+        fast: None,
     };
     state.lifetime.connect(&request.client_id, &token).unwrap();
     (directory, state, token, request)
@@ -169,12 +239,87 @@ async fn call(
 }
 
 #[tokio::test]
-async fn cli_control_requires_the_owning_local_session_and_matching_version() {
+async fn concurrent_retries_recover_the_same_submission_and_reject_argument_changes() {
     let (_directory, state, token, request) = fixture().await;
+    let client = state.lifetime.client(&request.client_id, &token).unwrap();
+    {
+        let mut submission = client.submission.lock().await;
+        submission.request = Some(request.clone());
+        submission.result = Some(Ok(RunStarted {
+            run_id: "run".into(),
+            thread_id: "thread".into(),
+        }));
+    }
+    let (first, second) = tokio::join!(
+        call(&state, &token, "run", &request, "127.0.0.1:1000"),
+        call(&state, &token, "run", &request, "127.0.0.1:1001"),
+    );
+    assert_eq!(first, second);
+    assert_eq!(first.0, StatusCode::OK);
+    assert_eq!(first.1["runId"], "run");
+    let mut changed = request;
+    changed.prompt = "different task".into();
     assert_eq!(
-        call(&state, &token, "heartbeat", &request, "192.168.1.10:1000")
+        call(&state, &token, "run", &changed, "127.0.0.1:1000")
             .await
             .0,
+        StatusCode::BAD_REQUEST
+    );
+}
+
+#[tokio::test]
+async fn cancellation_before_submission_is_cached_and_release_invalidates_pairing() {
+    let (_directory, state, token, request) = fixture().await;
+    let client_request = CliClientRequest {
+        client_id: request.client_id.clone(),
+    };
+    assert_eq!(
+        call(&state, &token, "cancel", &client_request, "127.0.0.1:1000")
+            .await
+            .0,
+        StatusCode::OK
+    );
+    let first = call(&state, &token, "run", &request, "127.0.0.1:1000").await;
+    let second = call(&state, &token, "run", &request, "127.0.0.1:1000").await;
+    assert_eq!(first, second);
+    assert_eq!(first.0, StatusCode::BAD_REQUEST);
+    assert!(first.1["error"].as_str().unwrap().contains("cancelled"));
+    assert_eq!(
+        call(&state, &token, "release", &client_request, "127.0.0.1:1000")
+            .await
+            .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(
+            &state,
+            &token,
+            "heartbeat",
+            &client_request,
+            "127.0.0.1:1000"
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+#[tokio::test]
+async fn cli_control_requires_the_owning_local_session_and_matching_version() {
+    let (_directory, state, token, request) = fixture().await;
+    let client_request = CliClientRequest {
+        client_id: request.client_id.clone(),
+    };
+    assert_eq!(
+        call(
+            &state,
+            &token,
+            "cancel",
+            &client_request,
+            "192.168.1.10:1000"
+        )
+        .await
+        .0,
         StatusCode::FORBIDDEN
     );
     let (_, other_token) = state
@@ -186,8 +331,8 @@ async fn cli_control_requires_the_owning_local_session_and_matching_version() {
         call(
             &state,
             &other_token,
-            "heartbeat",
-            &request,
+            "cancel",
+            &client_request,
             "127.0.0.1:1000"
         )
         .await
