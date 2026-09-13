@@ -16,6 +16,11 @@ mod text;
 mod unified_diff;
 mod workspace;
 
+pub const SPROCKET_VERSION: &str = match option_env!("SPROCKET_VERSION") {
+    Some(version) => version,
+    None => env!("CARGO_PKG_VERSION"),
+};
+
 pub use agents::{WorkspaceInstruction, WorkspaceInstructionSource, load_workspace_instructions};
 pub use artifacts::{ArtifactContentType, ArtifactFile, MAX_ARTIFACT_BYTES, read_artifact_file};
 pub use browse::{
