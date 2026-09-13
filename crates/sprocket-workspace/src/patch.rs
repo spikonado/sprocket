@@ -2,7 +2,9 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::Permissions;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock, Weak};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
 use diffy::patch_set::{FileOperation, ParseOptions, PatchKind, PatchSet};
@@ -635,10 +637,298 @@ async fn write_new_file(
 }
 
 async fn replace_file(path: &Path, contents: &[u8], permissions: Permissions) -> Result<()> {
-    tokio::fs::remove_file(path)
+    // Write the full replacement beside the target first. A crash mid-write
+    // must not leave the original deleted with nothing in its place.
+    // Use a unique sibling name so we never delete a user's `*.sprocket-tmp`
+    // (or a recoverable `*.sprocket-bak` from an earlier failed replace).
+    //
+    // Windows replace moves the original to `*.sprocket-bak.*` before installing
+    // the staged file; if that process dies mid-way, restore the backup first.
+    recover_stranded_sprocket_bak(path).await?;
+    // Drop leftovers while the target exists. Otherwise a crash after install
+    // but before the success-path sweep can leave an old bak beside the file;
+    // the next replace would then create a second bak and recovery could compare
+    // stamps from different boots.
+    discard_sprocket_bak_siblings(path).await?;
+
+    let tmp = stage_unique_sibling(path, "tmp", contents, Some(permissions)).await?;
+
+    match tokio::fs::rename(&tmp, path).await {
+        Ok(()) => {
+            let _ = discard_sprocket_bak_siblings(path).await;
+            Ok(())
+        }
+        Err(error) => {
+            #[cfg(windows)]
+            {
+                // Windows rename won't overwrite. Move the original aside first so
+                // a failed install can restore it instead of deleting in place.
+                if error.kind() == std::io::ErrorKind::AlreadyExists {
+                    return replace_existing_windows(path, &tmp).await;
+                }
+            }
+            let _ = tokio::fs::remove_file(&tmp).await;
+            Err(error).with_context(|| format!("failed to replace {}", path.display()))
+        }
+    }
+}
+
+fn unique_sibling_path(path: &Path, kind: &str) -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let instance = sprocket_instance_id();
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let nanos = monotonic_nanos();
+    let mut name = path
+        .file_name()
+        .map(|name| name.to_os_string())
+        .unwrap_or_else(|| "file".into());
+    name.push(format!(".sprocket-{kind}.{instance}.{seq}.{nanos}"));
+    path.with_file_name(name)
+}
+
+fn unix_nanos() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0)
+}
+
+/// Ranking stamp for sibling names. Wall time can step backward, which would
+/// make a later write lose a cross-instance comparison. Monotonic time does not.
+fn monotonic_nanos() -> u128 {
+    #[cfg(unix)]
+    {
+        let mut ts = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        // SAFETY: `ts` is a valid timespec out-pointer.
+        if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) } == 0 {
+            let sec = (ts.tv_sec as i128).max(0) as u128;
+            let nsec = (ts.tv_nsec as i128).max(0) as u128;
+            return sec.saturating_mul(1_000_000_000).saturating_add(nsec);
+        }
+    }
+    #[cfg(windows)]
+    {
+        let mut frequency = 0i64;
+        let mut count = 0i64;
+        // SAFETY: both calls write through valid i64 out-pointers.
+        if unsafe { QueryPerformanceFrequency(&mut frequency) } != 0
+            && frequency > 0
+            && unsafe { QueryPerformanceCounter(&mut count) } != 0
+            && count >= 0
+        {
+            return (count as u128).saturating_mul(1_000_000_000) / (frequency as u128);
+        }
+    }
+    unix_nanos()
+}
+
+#[cfg(windows)]
+unsafe extern "system" {
+    fn QueryPerformanceCounter(performance_count: *mut i64) -> i32;
+    fn QueryPerformanceFrequency(frequency: *mut i64) -> i32;
+}
+
+/// Stable for one process lifetime. Mixes first-staging wall time with the OS
+/// pid so a later process that reuses that pid does not share a grouping key
+/// with leftover siblings from the previous occupant.
+fn sprocket_instance_id() -> u128 {
+    static ID: OnceLock<u128> = OnceLock::new();
+    *ID.get_or_init(|| (unix_nanos() << 32) | u128::from(std::process::id()))
+}
+
+async fn stage_unique_sibling(
+    path: &Path,
+    kind: &str,
+    contents: &[u8],
+    permissions: Option<Permissions>,
+) -> Result<PathBuf> {
+    let mut last_error = None;
+    for _ in 0..16 {
+        let candidate = unique_sibling_path(path, kind);
+        if tokio::fs::try_exists(&candidate).await.unwrap_or(false) {
+            continue;
+        }
+        match write_new_file(&candidate, contents, permissions.clone()).await {
+            Ok(()) => return Ok(candidate),
+            Err(error) => {
+                let already_exists = error.chain().any(|cause| {
+                    cause
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|io_error| {
+                            io_error.kind() == std::io::ErrorKind::AlreadyExists
+                        })
+                });
+                if already_exists {
+                    last_error = Some(error);
+                    continue;
+                }
+                // create_new succeeded and a later write step failed. Remove our
+                // partial sibling instead of treating it as a name collision.
+                let _ = tokio::fs::remove_file(&candidate).await;
+                return Err(error).with_context(|| {
+                    format!("failed to stage replacement for {}", path.display())
+                });
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| anyhow!("failed to allocate staging path")))
+        .with_context(|| format!("failed to stage replacement for {}", path.display()))
+}
+
+/// Restore `{name}.sprocket-bak.*` when `path` is missing after an interrupted replace.
+///
+/// Unselected generated backups are removed after the chosen file is restored so
+/// a later boot cannot rank a leftover against a new monotonic stamp.
+async fn recover_stranded_sprocket_bak(path: &Path) -> Result<()> {
+    if tokio::fs::try_exists(path).await.unwrap_or(false) {
+        return Ok(());
+    }
+    let found = list_sprocket_bak_siblings(path).await?;
+    let Some(bak) =
+        select_newest_sprocket_sibling(found.iter().map(|(key, bak)| (*key, bak.clone())))
+    else {
+        return Ok(());
+    };
+    tokio::fs::rename(&bak, path)
         .await
-        .with_context(|| format!("failed to replace {}", path.display()))?;
-    write_new_file(path, contents, Some(permissions)).await
+        .with_context(|| format!("failed to restore stranded backup for {}", path.display()))?;
+    for (_, leftover) in found {
+        if leftover != bak {
+            let _ = tokio::fs::remove_file(&leftover).await;
+        }
+    }
+    Ok(())
+}
+
+/// Parsed `{file_name}.sprocket-{kind}.{instance}.{seq}.{nanos}` key.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SprocketSiblingKey {
+    nanos: u128,
+    seq: u64,
+    instance: u128,
+}
+
+fn parse_sprocket_sibling(name: &str, file_name: &str, kind: &str) -> Option<SprocketSiblingKey> {
+    let prefix = format!("{file_name}.sprocket-{kind}.");
+    let rest = name.strip_prefix(&prefix)?;
+    let mut parts = rest.split('.');
+    let instance = parts.next()?.parse().ok()?;
+    let seq = parts.next()?.parse().ok()?;
+    let nanos = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(SprocketSiblingKey {
+        nanos,
+        seq,
+        instance,
+    })
+}
+
+/// Newest sibling is unique even when same-instance seq order and cross-instance
+/// stamps would not form a pairwise ranking. Keep the latest seq per process
+/// instance, then pick the latest monotonic stamp among those winners.
+fn select_newest_sprocket_sibling<T>(
+    items: impl IntoIterator<Item = (SprocketSiblingKey, T)>,
+) -> Option<T> {
+    let mut newest_by_instance: HashMap<u128, (SprocketSiblingKey, T)> = HashMap::new();
+    for (key, value) in items {
+        if newest_by_instance
+            .get(&key.instance)
+            .is_none_or(|(best, _)| (key.seq, key.nanos) > (best.seq, best.nanos))
+        {
+            newest_by_instance.insert(key.instance, (key, value));
+        }
+    }
+    newest_by_instance
+        .into_values()
+        .max_by_key(|(key, _)| (key.nanos, key.instance))
+        .map(|(_, value)| value)
+}
+
+async fn list_sprocket_bak_siblings(path: &Path) -> Result<Vec<(SprocketSiblingKey, PathBuf)>> {
+    let Some(parent) = path.parent() else {
+        return Ok(Vec::new());
+    };
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return Ok(Vec::new());
+    };
+    let mut entries = match tokio::fs::read_dir(parent).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to list {}", parent.display()));
+        }
+    };
+
+    let mut found = Vec::new();
+    while let Some(entry) = entries.next_entry().await? {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let Some(key) = parse_sprocket_sibling(name, file_name, "bak") else {
+            continue;
+        };
+        if !entry.file_type().await?.is_file() {
+            continue;
+        }
+        found.push((key, entry.path()));
+    }
+    Ok(found)
+}
+
+async fn discard_sprocket_bak_siblings(path: &Path) -> Result<()> {
+    let found = list_sprocket_bak_siblings(path).await?;
+    for (_, bak) in found {
+        match tokio::fs::remove_file(&bak).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("failed to discard leftover backup {}", bak.display())
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+async fn replace_existing_windows(path: &Path, tmp: &Path) -> Result<()> {
+    // Never clear a pre-existing backup name; allocate a unique sibling instead.
+    let bak = unique_sibling_path(path, "bak");
+
+    match tokio::fs::rename(path, &bak).await {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            let _ = tokio::fs::remove_file(tmp).await;
+            return Err(error).with_context(|| format!("failed to replace {}", path.display()));
+        }
+    }
+
+    match tokio::fs::rename(tmp, path).await {
+        Ok(()) => {
+            let _ = discard_sprocket_bak_siblings(path).await;
+            Ok(())
+        }
+        Err(error) => {
+            match tokio::fs::rename(&bak, path).await {
+                Ok(()) => {
+                    let _ = tokio::fs::remove_file(tmp).await;
+                }
+                Err(_) => {
+                    // Leave bak + tmp so nothing is silently discarded.
+                    // A later replace_file will restore bak if `path` is still missing.
+                }
+            }
+            Err(error).with_context(|| format!("failed to replace {}", path.display()))
+        }
+    }
 }
 
 async fn file_permissions(path: &Path) -> Result<Permissions> {
@@ -658,16 +948,13 @@ async fn restore_snapshot(snapshot: &PatchSnapshot) -> Result<()> {
     let mut errors = Vec::new();
     for (path, file_snapshot) in &snapshot.files {
         let result = match file_snapshot {
-            Some(snapshot) => {
-                async {
-                    match tokio::fs::remove_file(path).await {
-                        Ok(()) => {}
-                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                        Err(error) => return Err(error.into()),
-                    }
-                    write_new_file(path, &snapshot.contents, Some(snapshot.permissions.clone()))
-                        .await
-                }
+            Some(file_snapshot) => {
+                // Same crash-safe replace as apply: never delete then rewrite.
+                replace_file(
+                    path,
+                    &file_snapshot.contents,
+                    file_snapshot.permissions.clone(),
+                )
                 .await
             }
             None => match tokio::fs::remove_file(path).await {
@@ -728,11 +1015,201 @@ mod tests {
     use std::fs;
     use std::sync::Mutex;
 
-    use super::{apply_workspace_patch, write_new_file};
+    use super::{
+        SprocketSiblingKey, apply_workspace_patch, recover_stranded_sprocket_bak, replace_file,
+        select_newest_sprocket_sibling, write_new_file,
+    };
     use crate::commands::{WorkspaceCancellation, WorkspaceOperationCancelled};
     use crate::test_support::temp_workspace;
 
     static HOME_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn same_process_bak_prefers_later_seq_if_clock_jumps_back() {
+        let older = SprocketSiblingKey {
+            nanos: 200,
+            seq: 1,
+            instance: 10,
+        };
+        let newer = SprocketSiblingKey {
+            nanos: 50,
+            seq: 2,
+            instance: 10,
+        };
+        assert_eq!(
+            select_newest_sprocket_sibling([(older, "old"), (newer, "new")]),
+            Some("new")
+        );
+    }
+
+    #[test]
+    fn mixed_instance_bak_selection_is_order_independent() {
+        let a = SprocketSiblingKey {
+            nanos: 10,
+            seq: 2,
+            instance: 1,
+        };
+        let b = SprocketSiblingKey {
+            nanos: 20,
+            seq: 1,
+            instance: 1,
+        };
+        let c = SprocketSiblingKey {
+            nanos: 15,
+            seq: 0,
+            instance: 2,
+        };
+        let keys = [a, b, c];
+        assert_eq!(
+            select_newest_sprocket_sibling(keys.into_iter().map(|key| (key, key))),
+            Some(c)
+        );
+        assert_eq!(
+            select_newest_sprocket_sibling(keys.into_iter().rev().map(|key| (key, key))),
+            Some(c)
+        );
+    }
+
+    #[test]
+    fn reused_pid_bak_prefers_later_process_timestamp() {
+        // Two process lifetimes can share an OS pid. Their instance ids differ,
+        // so a leftover high-seq backup from the earlier occupant must lose to
+        // a seq-0 backup from the later process.
+        let leftover = SprocketSiblingKey {
+            nanos: 100,
+            seq: 5,
+            instance: 10,
+        };
+        let current = SprocketSiblingKey {
+            nanos: 200,
+            seq: 0,
+            instance: 11,
+        };
+        assert_eq!(
+            select_newest_sprocket_sibling([(leftover, "stale"), (current, "fresh")]),
+            Some("fresh")
+        );
+    }
+
+    #[test]
+    fn equal_timestamp_prefers_later_instance_not_higher_seq() {
+        let leftover = SprocketSiblingKey {
+            nanos: 100,
+            seq: 5,
+            instance: 10,
+        };
+        let current = SprocketSiblingKey {
+            nanos: 100,
+            seq: 0,
+            instance: 11,
+        };
+        assert_eq!(
+            select_newest_sprocket_sibling([(leftover, "stale"), (current, "fresh")]),
+            Some("fresh")
+        );
+    }
+
+    #[tokio::test]
+    async fn restores_stranded_sprocket_bak_before_replace() {
+        let root = temp_workspace();
+        let target = root.join("file.txt");
+        let bak = root.join("file.txt.sprocket-bak.1.2.3");
+        fs::write(&bak, "original\n").unwrap();
+        assert!(!target.exists());
+
+        recover_stranded_sprocket_bak(&target)
+            .await
+            .expect("stranded bak should restore");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "original\n");
+        assert!(!bak.exists());
+
+        replace_file(
+            &target,
+            b"replacement\n",
+            fs::metadata(&target).unwrap().permissions(),
+        )
+        .await
+        .expect("replace after recovery");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "replacement\n");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn recovery_ignores_non_format_sprocket_bak_siblings() {
+        let root = temp_workspace();
+        let target = root.join("file.txt");
+        let user_notes = root.join("file.txt.sprocket-bak.notes");
+        let stale = root.join("file.txt.sprocket-bak.1.1.100");
+        let newest = root.join("file.txt.sprocket-bak.1.2.200");
+        fs::write(&user_notes, "user notes\n").unwrap();
+        fs::write(&stale, "stale original\n").unwrap();
+        fs::write(&newest, "latest original\n").unwrap();
+        assert!(!target.exists());
+
+        recover_stranded_sprocket_bak(&target)
+            .await
+            .expect("valid bak should restore");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "latest original\n");
+        assert!(!newest.exists());
+        assert_eq!(fs::read_to_string(&user_notes).unwrap(), "user notes\n");
+        assert!(!stale.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn recovery_prefers_later_instance_over_leftover_high_seq() {
+        let root = temp_workspace();
+        let target = root.join("file.txt");
+        let leftover = root.join("file.txt.sprocket-bak.10.5.100");
+        let current = root.join("file.txt.sprocket-bak.11.0.200");
+        fs::write(&leftover, "stale original\n").unwrap();
+        fs::write(&current, "latest original\n").unwrap();
+        assert!(!target.exists());
+
+        recover_stranded_sprocket_bak(&target)
+            .await
+            .expect("later instance should restore");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "latest original\n");
+        assert!(!current.exists());
+        assert!(!leftover.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn replace_discards_leftover_bak_while_target_exists() {
+        let root = temp_workspace();
+        let target = root.join("file.txt");
+        let leftover = root.join("file.txt.sprocket-bak.1.0.9");
+        fs::write(&target, "current\n").unwrap();
+        fs::write(&leftover, "old bak\n").unwrap();
+
+        replace_file(
+            &target,
+            b"next\n",
+            fs::metadata(&target).unwrap().permissions(),
+        )
+        .await
+        .expect("replace should ignore leftover bak");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "next\n");
+        assert!(!leftover.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn recovery_does_not_promote_unrelated_prefix_matches() {
+        let root = temp_workspace();
+        let target = root.join("file.txt");
+        let decoy = root.join("file.txt.sprocket-bak.user-notes");
+        fs::write(&decoy, "do not restore me\n").unwrap();
+        assert!(!target.exists());
+
+        recover_stranded_sprocket_bak(&target)
+            .await
+            .expect("unrelated sibling should be ignored");
+        assert!(!target.exists());
+        assert_eq!(fs::read_to_string(&decoy).unwrap(), "do not restore me\n");
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[tokio::test]
     async fn applies_begin_patch_format() {
