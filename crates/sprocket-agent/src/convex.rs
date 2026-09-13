@@ -154,7 +154,7 @@ impl RuntimeClient {
         args.insert("fastMode".to_string(), request.fast_mode.into());
         args.insert(
             "agentVersion".to_string(),
-            env!("CARGO_PKG_VERSION").to_string().into(),
+            sprocket_workspace::SPROCKET_VERSION.to_string().into(),
         );
         args.insert(
             "machineId".to_string(),

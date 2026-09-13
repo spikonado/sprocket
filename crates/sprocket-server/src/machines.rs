@@ -271,7 +271,7 @@ impl MachineManager {
             ("hostname".into(), self.identity.hostname.clone().into()),
             (
                 "appVersion".into(),
-                env!("CARGO_PKG_VERSION").to_string().into(),
+                sprocket_workspace::SPROCKET_VERSION.to_string().into(),
             ),
         ])
     }
