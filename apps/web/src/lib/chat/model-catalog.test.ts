@@ -77,31 +77,4 @@ describe('gateway model catalog', () => {
 		expect(catalog.models[0].supportsFastMode).toBe(false);
 		expect(fastModeAccessForModelAndTier(catalog, 'pro', catalog.models[0])).toBe('unsupported');
 	});
-
-	it('uses Pro model access for Max with an older gateway catalog', async () => {
-		const payload = {
-			...catalogPayload,
-			sprocket: {
-				...catalogPayload.sprocket,
-				tierAllowedModels: {
-					free: ['model-small'],
-					pro: ['model-small'],
-					admin: ['model-small']
-				},
-				tierAllowedServiceTiers: {
-					free: ['standard'],
-					pro: ['standard', 'fast'],
-					admin: ['standard', 'fast']
-				}
-			}
-		};
-		vi.stubGlobal(
-			'fetch',
-			vi.fn(async () => new Response(JSON.stringify(payload), { status: 200 }))
-		);
-
-		const catalog = await fetchGatewayModelCatalog('https://ai-gateway.spikonado.com');
-		expect(catalog.tierAllowedModels.max).toEqual(catalogPayload.sprocket.tierAllowedModels.pro);
-		expect(catalog.tierAllowsFastMode.max).toBe(true);
-	});
 });

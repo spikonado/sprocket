@@ -118,13 +118,13 @@ const gatewayModelsResponseSchema = z.object({
 		tierAllowedModels: z.object({
 			free: z.array(z.string()),
 			pro: z.array(z.string()),
-			max: z.array(z.string()).optional(),
+			max: z.array(z.string()),
 			admin: z.array(z.string())
 		}),
 		tierAllowedServiceTiers: z.object({
 			free: z.array(z.string()),
 			pro: z.array(z.string()),
-			max: z.array(z.string()).optional(),
+			max: z.array(z.string()),
 			admin: z.array(z.string())
 		}),
 		modelLockUpgradeMessage: z.string().min(1),
@@ -158,16 +158,11 @@ function catalogFromGatewayPayload(
 			supportsFastMode: model.serviceTiers.includes('fast'),
 			usagePolicy: model.usagePolicy
 		})),
-		tierAllowedModels: {
-			...sprocket.tierAllowedModels,
-			max: sprocket.tierAllowedModels.max ?? sprocket.tierAllowedModels.pro
-		},
+		tierAllowedModels: sprocket.tierAllowedModels,
 		tierAllowsFastMode: {
 			free: sprocket.tierAllowedServiceTiers.free.includes('fast'),
 			pro: sprocket.tierAllowedServiceTiers.pro.includes('fast'),
-			max: (sprocket.tierAllowedServiceTiers.max ?? sprocket.tierAllowedServiceTiers.pro).includes(
-				'fast'
-			),
+			max: sprocket.tierAllowedServiceTiers.max.includes('fast'),
 			admin: sprocket.tierAllowedServiceTiers.admin.includes('fast')
 		},
 		modelLockUpgradeMessage: sprocket.modelLockUpgradeMessage,
