@@ -1,6 +1,7 @@
 import { DodoPayments } from '@dodopayments/convex';
 import type { ComponentApi } from '@dodopayments/convex/_generated/component';
 import { components, internal } from '@convex/_generated/api';
+import type { Doc } from '@convex/_generated/dataModel';
 import { v } from 'convex/values';
 import {
 	action,
@@ -8,7 +9,9 @@ import {
 	internalMutation,
 	internalQuery,
 	mutation,
-	query
+	query,
+	type MutationCtx,
+	type QueryCtx
 } from '@convex/_generated/server';
 import { ensureCurrentUser, getUserId } from '@convex/lib/auth';
 import { vCheckoutResponse, vCustomerPortalResponse } from '@convex/lib/docs';
@@ -21,14 +24,34 @@ import {
 import { vSubscriptionStatus, vSubscriptionTier } from '@convex/lib/validators';
 import schema from '@convex/schema';
 
+async function listBillingCustomers(
+	ctx: QueryCtx | MutationCtx,
+	userId: string
+): Promise<Doc<'billingCustomers'>[]> {
+	return await ctx.db
+		.query('billingCustomers')
+		.withIndex('by_userId', (q) => q.eq('userId', userId))
+		.collect();
+}
+
+/** Mutation-only: collapse concurrent identify/upsert races onto one row. */
+async function getBillingCustomerExclusive(
+	ctx: MutationCtx,
+	userId: string
+): Promise<Doc<'billingCustomers'> | null> {
+	const rows = await listBillingCustomers(ctx, userId);
+	const keep = rows[0] ?? null;
+	if (!keep) return null;
+	for (const row of rows) {
+		if (row._id !== keep._id) await ctx.db.delete('billingCustomers', row._id);
+	}
+	return keep;
+}
+
 export const getBillingCustomer = internalQuery({
 	args: { userId: v.string() },
 	returns: v.union(schema.doc('billingCustomers'), v.null()),
-	handler: async (ctx, { userId }) =>
-		ctx.db
-			.query('billingCustomers')
-			.withIndex('by_userId', (q) => q.eq('userId', userId))
-			.unique()
+	handler: async (ctx, { userId }) => (await listBillingCustomers(ctx, userId))[0] ?? null
 });
 
 const dodo: DodoPayments = new DodoPayments(
@@ -111,10 +134,7 @@ export const upsertSubscription = internalMutation({
 		const existing = await getSubscriptionDocExclusive(ctx, args.userId);
 
 		const syncBillingCustomer = async () => {
-			const customer = await ctx.db
-				.query('billingCustomers')
-				.withIndex('by_userId', (q) => q.eq('userId', args.userId))
-				.unique();
+			const customer = await getBillingCustomerExclusive(ctx, args.userId);
 			if (customer)
 				await ctx.db.patch('billingCustomers', customer._id, {
 					dodoCustomerId: args.dodoCustomerId
