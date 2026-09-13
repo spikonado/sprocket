@@ -10,24 +10,25 @@
 	import SidebarTopActions from '$lib/components/home/sidebar-top-actions.svelte';
 	import type { SprocketTheme } from '$lib/theme';
 
-	export type SettingsPage = 'account' | 'usage' | 'browser' | 'payments' | 'archived';
+	export type SettingsPage = 'account' | 'usage' | 'browser' | 'payments' | 'inbox';
 
 	type Props = {
 		activePage: SettingsPage;
+		online: boolean;
 		theme: SprocketTheme;
 		onThemeChange: (theme: SprocketTheme) => void;
 		onBack: () => void;
 		onNavigate: (page: SettingsPage) => void;
 	};
 
-	let { activePage, theme, onThemeChange, onBack, onNavigate }: Props = $props();
+	let { activePage, theme, onThemeChange, onBack, onNavigate, online }: Props = $props();
 
 	const navItems: ReadonlyArray<{ id: SettingsPage; label: string; icon: typeof UserRound }> = [
 		{ id: 'account', label: 'Account', icon: UserRound },
 		{ id: 'usage', label: 'Usage', icon: ChartNoAxesColumn },
 		{ id: 'browser', label: "Agent's Browser", icon: Globe },
 		{ id: 'payments', label: 'Payments', icon: CreditCard },
-		{ id: 'archived', label: 'Archived Threads', icon: Archive }
+		{ id: 'inbox', label: 'Thread inbox', icon: Archive }
 	];
 
 	const navItemClass =
@@ -47,7 +48,7 @@
 				<ArrowLeft class="size-3.5" aria-hidden="true" />
 				Back
 			</button>
-			<SidebarTopActions {theme} {onThemeChange} />
+			<SidebarTopActions {theme} {onThemeChange} disabled={!online} />
 		</div>
 
 		<nav

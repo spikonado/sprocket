@@ -1,4 +1,5 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
+import { patchInboxThread } from './inbox';
 import type { MutationCtx } from '@convex/_generated/server';
 import { cancelExecutorJobsForTerminalRun } from '@convex/lib/runs';
 import { recordToolTranscript } from '@convex/lib/transcriptWrites';
@@ -79,6 +80,16 @@ async function finalizePendingQuestionsPage(
 		}
 	}
 	const last = questions.at(-1);
+	if (last && args.runStatus === 'cancelled') {
+		const thread = await ctx.db.get('threadRecords', last.threadId);
+		const pending = await ctx.db
+			.query('agentQuestions')
+			.withIndex('by_threadId_status_sequence', (q) =>
+				q.eq('threadId', last.threadId).eq('status', 'pending')
+			)
+			.first();
+		if (thread) await patchInboxThread(ctx, thread, { hasPendingQuestion: pending !== null });
+	}
 	return {
 		done: questions.length < TERMINAL_CLEANUP_PAGE_SIZE,
 		nextSequence: last?.sequence ?? args.afterSequence

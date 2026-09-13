@@ -19,7 +19,8 @@ type AuthStatus = {
 	isWaitingForBrowserSignIn: boolean;
 	browserSignInUrl: string | null;
 	user: AuthUser | null;
-	nativeSession: 'notRequired' | 'loading' | 'ready' | 'missing' | 'mismatch' | 'unavailable';
+	nativeSession:
+		'notRequired' | 'loading' | 'ready' | 'offline' | 'missing' | 'mismatch' | 'unavailable';
 	error: string | null;
 };
 
@@ -413,6 +414,34 @@ async function initializeHostedAuth() {
 async function initializeInstalledAuth(generation: number) {
 	const outcome = await requestNativeSessionToken(false, generation);
 	if (generation !== authGeneration) return;
+	if (outcome.kind === 'transient') {
+		try {
+			const response = await fetch('/api/auth/offline-session', {
+				method: 'POST',
+				credentials: 'include',
+				signal: AbortSignal.timeout(5_000)
+			});
+			const parsed = nativeAuthUserSchema
+				.nullable()
+				.safeParse(response.ok ? await response.json() : null);
+			if (generation !== authGeneration) return;
+			const current = get(authState);
+			if (parsed.success && parsed.data && (!current.user || current.user.id === parsed.data.id)) {
+				authState.set({
+					...current,
+					isLoading: false,
+					isReady: true,
+					user: toAuthUser(parsed.data),
+					nativeSession: 'offline',
+					error: null
+				});
+				return;
+			}
+		} catch {
+			/* A local session must be verified before exposing cached account data. */
+		}
+	}
+	if (generation !== authGeneration) return;
 	applyNativeInitializeOutcome(outcome);
 }
 
@@ -489,10 +518,7 @@ export async function reconcileNativeAuthentication() {
 	if (!isInstalledApp()) {
 		return;
 	}
-	const generation = authGeneration;
-	const outcome = await requestNativeSessionToken(false, generation);
-	if (generation !== authGeneration) return;
-	applyNativeInitializeOutcome(outcome);
+	await initializeInstalledAuth(authGeneration);
 }
 
 async function requestNativeSessionToken(

@@ -3,6 +3,7 @@
 	import { api } from '$convex/_generated/api';
 	import Button from '$lib/components/ui/button/button.svelte';
 	import { convexClientErrorMessage } from '$lib/convex-error';
+	let { online = true }: { online?: boolean } = $props();
 
 	const convexAuth = useAuth();
 	const profileQuery = useQuery(api.browserProfiles.getMine, () =>
@@ -17,7 +18,7 @@
 
 	const loaded = $derived(profileQuery.data !== undefined);
 	const savingEnabled = $derived(profileQuery.data?.savingEnabled ?? true);
-	const controlsDisabled = $derived(!loaded || pending);
+	const controlsDisabled = $derived(!online || !loaded || pending);
 
 	function catchMessage<T>(error: T, fallback: string): string {
 		return (error instanceof Error && convexClientErrorMessage(error)) || fallback;
@@ -57,6 +58,9 @@
 	</header>
 
 	<div class="min-h-0 flex-1 overflow-y-auto px-6 py-8">
+		{#if !online}<p class="text-muted-foreground mb-6 text-sm">
+				Reconnect to change browser settings.
+			</p>{/if}
 		<div class="max-w-xl space-y-8">
 			<div class="flex items-center justify-between gap-4">
 				<p class="text-foreground text-[15px]">Save cookies and login state</p>

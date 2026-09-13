@@ -118,7 +118,9 @@ async fn display_handler(
     jar: CookieJar,
     Json(payload): Json<DisplayRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
+    crate::auth::require_session_user(&state.auth, &headers, &jar, &payload.user_id)
+        .await
+        .map_err(ApiError::unauthorized)?;
     let limit = payload.limit.unwrap_or(12);
     if !(1..=40).contains(&limit)
         || payload.streams.len() > 64
@@ -165,7 +167,9 @@ async fn display_details_handler(
     jar: CookieJar,
     Json(payload): Json<DisplayDetailsRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
+    crate::auth::require_session_user(&state.auth, &headers, &jar, &payload.user_id)
+        .await
+        .map_err(ApiError::unauthorized)?;
     let limit = payload.limit.unwrap_or(5);
     if !(1..=5).contains(&limit)
         || [payload.after, payload.before]
@@ -283,7 +287,9 @@ async fn attachment_handler(
     jar: CookieJar,
     Json(payload): Json<TranscriptAttachmentRequest>,
 ) -> Result<Response, ApiError> {
-    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
+    crate::auth::require_session_user(&state.auth, &headers, &jar, &payload.user_id)
+        .await
+        .map_err(ApiError::unauthorized)?;
     if let Some(response) = serve_cached_attachment(
         &state,
         &payload.user_id,

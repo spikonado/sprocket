@@ -1,4 +1,6 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
+import { patchInboxThread } from './inbox';
+import { inboxState } from './inboxState';
 import type { MutationCtx } from '@convex/_generated/server';
 import { ConvexError, type Infer } from 'convex/values';
 import { getOwnedThreadRecord } from '@convex/lib/access';
@@ -188,13 +190,19 @@ export async function createQueuedRunRecord(
 	}
 	const threadUpdates = {
 		status: 'queued' as const,
+		lastRunStartedAt: runRecord.startedAt,
 		title: threadRecord.title ?? fallbackTitle,
 		selectedModel: args.selectedModel,
 		reasoningEffort: args.reasoningEffort,
 		fastMode: args.fastMode,
 		lastMessageAt: recordsPrompt ? Date.now() : threadRecord.lastMessageAt
 	};
-	await ctx.db.patch('threadRecords', threadRecord._id, threadUpdates);
+	await patchInboxThread(ctx, threadRecord, {
+		...threadUpdates,
+		inboxState:
+			recordsPrompt && inboxState(threadRecord) !== 'pinned' ? 'active' : inboxState(threadRecord),
+		inboxActiveAt: recordsPrompt ? Date.now() : threadRecord.inboxActiveAt
+	});
 	await startRunLifecycle(ctx, runId);
 	return created;
 }

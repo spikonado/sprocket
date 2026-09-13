@@ -174,6 +174,13 @@ const threadSummarySchema = z.object({
 	contextSummaryThroughRunId: z.string().optional(),
 	lastMessageAt: z.number(),
 	archivedAt: z.number().optional(),
+	inboxState: z.enum(['active', 'pinned', 'snoozed', 'settled']).optional(),
+	inboxRunning: z.boolean().optional(),
+	lastCompletedAt: z.number().optional(),
+	lastRunStartedAt: z.number().optional(),
+	hasPendingQuestion: z.boolean().optional(),
+	snoozedUntil: z.number().optional(),
+	wokeAt: z.number().optional(),
 	status: z
 		.enum(['queued', 'running', 'awaiting_executor', 'completed', 'failed', 'cancelled'])
 		.optional()
@@ -731,6 +738,26 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 					body: JSON.stringify(requestBody)
 				})
 			),
+		inboxCache: async (requestBody) => {
+			const page = await request(
+				'/api/threads/inbox-cache',
+				z.object({ records: z.array(threadSummarySchema), cursor: z.string().nullable() }),
+				{
+					method: 'POST',
+					body: JSON.stringify({
+						...requestBody,
+						records: requestBody.records?.map((record) =>
+							threadSummarySchema.parse({
+								...record,
+								fastMode: record.fastMode ?? false,
+								contextSummary: undefined
+							})
+						)
+					})
+				}
+			);
+			return { ...page, records: page.records.map(parseThreadRecord) };
+		},
 		watchThreadCache: async (requestBody, handlers) => {
 			await postSse(`${baseUrl}/api/threads/watch`, requestBody, handlers.signal, (data) => {
 				const parsed = threadCacheWatchEventSchema.safeParse(JSON.parse(data));

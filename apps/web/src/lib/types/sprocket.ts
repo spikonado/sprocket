@@ -36,12 +36,11 @@ export type ThreadSummary = {
 	lastMessageAt: number;
 	threadStatus: 'active' | 'archived';
 	status: RunState['status'];
-};
-
-export type ProjectThreadGroup = {
-	project: Project;
-	threads: ThreadSummary[];
-	activeThreadCount: number;
+	inboxState?: 'active' | 'pinned' | 'snoozed' | 'settled';
+	lastCompletedAt?: number;
+	hasPendingQuestion?: boolean;
+	snoozedUntil?: number;
+	wokeAt?: number;
 };
 
 export type ExecutorJob = {
@@ -307,6 +306,11 @@ export type DesktopApi = {
 	discardTranscriptAttachment: (request: TranscriptDiscardRequest) => Promise<boolean>;
 	registerThreadCache: (request: ThreadCacheUserRequest) => Promise<ThreadCacheWatchEvent>;
 	fetchThreadSnapshot: (request: ThreadCacheUserRequest) => Promise<ThreadCacheSnapshot>;
+	inboxCache: (request: {
+		userId: string;
+		records?: Doc<'threadRecords'>[];
+		cursor?: string;
+	}) => Promise<{ records: Doc<'threadRecords'>[]; cursor: string | null }>;
 	watchThreadCache: (
 		request: ThreadCacheUserRequest,
 		handlers: {

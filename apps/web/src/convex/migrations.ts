@@ -3,6 +3,7 @@ import { components, internal } from '@convex/_generated/api';
 import { internalMutation } from '@convex/_generated/server';
 import schema from '@convex/schema';
 import { v } from 'convex/values';
+import { patchInboxThread } from './lib/inbox';
 
 export const AUTOMATIC_CLEANUP_DELAY_MS = 48 * 60 * 60 * 1_000;
 const PRODUCTION_ROLLOUT_CLEANUP = 'production-rollout-cleanup-2026-09';
@@ -10,6 +11,27 @@ const PRODUCTION_ROLLOUT_CLEANUP = 'production-rollout-cleanup-2026-09';
 export const migrations = new Migrations(components.migrations, {
 	schema,
 	internalMutation
+});
+
+export const backfillInbox = migrations.define({
+	table: 'threadRecords',
+	migrateOne: async (ctx, thread) => {
+		if (thread.inboxState !== undefined) return;
+		await patchInboxThread(ctx, thread, {});
+	}
+});
+
+export const runInboxMigration = migrations.runner([internal.migrations.backfillInbox]);
+
+export const runInboxMigrationAutomatically = internalMutation({
+	args: {},
+	returns: v.null(),
+	handler: async (ctx) => {
+		const steps = [internal.migrations.backfillInbox];
+		const statuses = await migrations.getStatus(ctx, { migrations: steps });
+		if (!statuses.every((status) => status.isDone)) await migrations.runSerially(ctx, steps);
+		return null;
+	}
 });
 
 const productionRolloutCleanupMigrations = [
@@ -72,7 +94,10 @@ export const backfillMissingThreadStatus = migrations.define({
 			.order('desc')
 			.first();
 		const status = latestRun?.status ?? 'completed';
-		return { status: status === 'awaiting_executor' ? ('running' as const) : status };
+		await patchInboxThread(ctx, thread, {
+			status: status === 'awaiting_executor' ? 'running' : status,
+			lastCompletedAt: latestRun?.completedAt
+		});
 	}
 });
 
