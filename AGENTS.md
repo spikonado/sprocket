@@ -61,7 +61,6 @@ All of these are core priorities; try your best to achieve all of them without h
 - Do the deep dives and figure out what needs to be done, and delegate the rest accordingly and as needed to subagents.
 - Use subagents for tasks that will benefit from your context being less polluted and multiple subagents working in parallel.
 - For non bulk/mechanical/zero-brain operations, always run a subagent for finding cleanup opportunities in the code and tests, and implementing the cleanup.
-- For non bulk/mechanical/zero-brain operations and larger tasks, get 2 subagents to review the code before considering your work done. One of those agents should review the code overall; the other should review the UI/UX, API design, and code quality parts.
 
 ### Subagent prompting
 
