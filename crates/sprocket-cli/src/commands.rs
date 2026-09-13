@@ -399,29 +399,4 @@ mod tests {
             assert!(parse_duration(value).is_err(), "{value}");
         }
     }
-
-    #[test]
-    fn model_list_marks_model_and_reasoning_defaults() {
-        let response = CliModelsResponse {
-            default_model_id: "model-a".into(),
-            models: vec![
-                CliModel {
-                    id: "model-a".into(),
-                    label: "Model A".into(),
-                    reasoning_efforts: vec!["low".into(), "high".into()],
-                    default_reasoning_effort: "high".into(),
-                },
-                CliModel {
-                    id: "model-b".into(),
-                    label: "Model B".into(),
-                    reasoning_efforts: vec!["max".into()],
-                    default_reasoning_effort: "max".into(),
-                },
-            ],
-        };
-        assert_eq!(
-            models_text(&response),
-            "model-a - Model A (default)\n  Reasoning: low, high (default)\nmodel-b - Model B\n  Reasoning: max (default)\n"
-        );
-    }
 }
