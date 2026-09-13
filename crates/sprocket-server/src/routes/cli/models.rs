@@ -39,6 +39,18 @@ pub(super) struct Settings {
     pub fast: bool,
 }
 
+pub(super) fn gateway_url() -> anyhow::Result<String> {
+    let url = std::env::var("PUBLIC_MODEL_GATEWAY_URL")
+        .ok()
+        .filter(|url| !url.trim().is_empty())
+        .or_else(|| {
+            crate::repo_env::compile_time_env_var("PUBLIC_MODEL_GATEWAY_URL").map(str::to_owned)
+        })
+        .filter(|url| !url.trim().is_empty())
+        .context("PUBLIC_MODEL_GATEWAY_URL must be set for model discovery")?;
+    Ok(url.trim().trim_end_matches('/').to_owned())
+}
+
 pub(super) async fn resolve(
     context: &RunContext,
     request: &CliRunRequest,
@@ -210,7 +222,6 @@ mod tests {
     #[test]
     fn defaults_do_not_enable_fast_and_invalid_overrides_never_fall_back() {
         let context = RunContext {
-            user_id: "user".into(),
             gateway_url: String::new(),
             tier: "free".into(),
             thread: None,
@@ -254,7 +265,6 @@ mod tests {
         let settings = select(
             catalog(),
             &RunContext {
-                user_id: "user".into(),
                 gateway_url: String::new(),
                 tier: "paid".into(),
                 thread: None,

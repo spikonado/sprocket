@@ -18,7 +18,6 @@ import type * as browserCapacity from "../browserCapacity.js";
 import type * as browserProfiles from "../browserProfiles.js";
 import type * as browserSessions from "../browserSessions.js";
 import type * as chat from "../chat.js";
-import type * as cliRuns from "../cliRuns.js";
 import type * as completion from "../completion.js";
 import type * as crons from "../crons.js";
 import type * as executor from "../executor.js";
@@ -108,7 +107,6 @@ declare const fullApi: ApiFromModules<{
   browserProfiles: typeof browserProfiles;
   browserSessions: typeof browserSessions;
   chat: typeof chat;
-  cliRuns: typeof cliRuns;
   completion: typeof completion;
   crons: typeof crons;
   executor: typeof executor;

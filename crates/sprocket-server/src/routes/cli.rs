@@ -22,6 +22,7 @@ use crate::cli_sessions::CliSession;
 use crate::project_attachments::{AttachProjectRequest, repository_key_matches};
 use crate::routes::agent::{RunAgentApiRequest, launch_agent};
 use crate::routes::api_error::ApiError;
+use crate::thread_cache::CachedThreadRecord;
 use crate::transcript_client::UserConvexClient;
 
 pub(crate) fn routes() -> Router<AppState> {
@@ -260,13 +261,10 @@ async fn list_models(
     let rpc = convex_client(&state, &user.id)
         .await
         .map_err(ApiError::internal)?;
-    let context: RunContext = tokio::time::timeout(
-        Duration::from_secs(20),
-        rpc.query("cliRuns:context", BTreeMap::new()),
-    )
-    .await
-    .map_err(|error| ApiError::internal(error.into()))?
-    .map_err(ApiError::internal)?;
+    let context = tokio::time::timeout(Duration::from_secs(20), run_context(&rpc, None))
+        .await
+        .map_err(|error| ApiError::internal(error.into()))?
+        .map_err(ApiError::internal)?;
     let response = models::available(&context)
         .await
         .map_err(ApiError::internal)?;
@@ -336,7 +334,6 @@ async fn start(
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RunContext {
-    user_id: String,
     gateway_url: String,
     tier: String,
     thread: Option<ThreadSettings>,
@@ -349,7 +346,11 @@ struct ThreadSettings {
     selected_model: String,
     reasoning_effort: String,
     fast_mode: bool,
-    active_run_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct Subscription {
+    tier: String,
 }
 
 async fn convex_client(state: &AppState, user_id: &str) -> anyhow::Result<UserConvexClient> {
@@ -361,6 +362,42 @@ async fn convex_client(state: &AppState, user_id: &str) -> anyhow::Result<UserCo
             .auth_token_fetcher_for_user(user_id.to_owned()),
     )
     .await
+}
+
+async fn run_context(
+    rpc: &UserConvexClient,
+    thread_id: Option<&str>,
+) -> anyhow::Result<RunContext> {
+    let subscription: Subscription = rpc
+        .query("billing:getMySubscription", BTreeMap::new())
+        .await?;
+    let thread = match thread_id {
+        Some(thread_id) => {
+            let args = BTreeMap::from([(
+                "selectedThreadId".into(),
+                Value::String(thread_id.to_owned()),
+            )]);
+            let threads: Vec<CachedThreadRecord> = rpc.query("threads:listRecent", args).await?;
+            let thread = threads
+                .into_iter()
+                .find(|thread| thread.id == thread_id)
+                .context("thread not found")?;
+            Some(ThreadSettings {
+                repository_key: thread
+                    .repository_key
+                    .context("thread has no repository key")?,
+                selected_model: thread.selected_model,
+                reasoning_effort: thread.reasoning_effort,
+                fast_mode: thread.fast_mode,
+            })
+        }
+        None => None,
+    };
+    Ok(RunContext {
+        gateway_url: models::gateway_url()?,
+        tier: subscription.tier,
+        thread,
+    })
 }
 
 async fn prepare_run(
@@ -380,17 +417,11 @@ async fn prepare_run(
         .bind_session_user(&client.session_token, &user.id)
         .await?;
     let rpc = convex_client(state, &user.id).await?;
-    let args = request
-        .thread_id
-        .as_ref()
-        .map(|id| BTreeMap::from([("threadId".into(), Value::String(id.clone()))]))
-        .unwrap_or_default();
-    let context: RunContext =
-        tokio::time::timeout(Duration::from_secs(20), rpc.query("cliRuns:context", args)).await??;
-    anyhow::ensure!(
-        context.user_id == user.id,
-        "run account changed during preparation"
-    );
+    let context = tokio::time::timeout(
+        Duration::from_secs(20),
+        run_context(&rpc, request.thread_id.as_deref()),
+    )
+    .await??;
     let attachment = state
         .project_attachments
         .attach(AttachProjectRequest {
@@ -403,9 +434,6 @@ async fn prepare_run(
             repository_key_matches(&attachment, &thread.repository_key),
             "thread belongs to a different repository"
         );
-        if let Some(active) = &thread.active_run_id {
-            anyhow::bail!("thread already has active run {active}");
-        }
     }
     let settings = models::resolve(&context, request).await?;
     Ok(RunAgentApiRequest {
