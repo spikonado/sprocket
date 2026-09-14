@@ -103,6 +103,6 @@
 	"devDependencies": {
 		"electron": "^44.0.0",
 		"electron-builder": "^26.15.3",
-		"js-yaml": "^4.1.0"
+		"js-yaml": "^5.0.0"
 	}
 }
