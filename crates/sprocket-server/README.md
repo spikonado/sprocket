@@ -29,9 +29,10 @@ session data, an internal process-pairing credential, and this machine’s folde
 those threads onto local folders whose key matches.
 
 Local authorization and cloud authentication are separate. A browser may create
-an unbound session through loopback HTTP or same-origin HTTPS. Plain remote HTTP
-is rejected. That session permits native login but not machine-facing
-operations. Rust owns one WorkOS session for
+an unbound session through loopback HTTP or same-origin HTTPS from a reverse
+proxy connected over loopback. Plain remote HTTP and direct non-loopback
+connections are rejected. That session permits native login but not
+machine-facing operations. Rust owns one WorkOS session for
 the installed renderer, agent runs, and machine registration. Hosted web pages
 use AuthKit JS instead. Rust keeps the access token in memory and stores its refresh
 token in the operating system credential store. It scopes the credential by

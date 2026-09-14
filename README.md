@@ -43,7 +43,8 @@ Open the HTTPS URL printed by Tailscale. Remote browser sign-in uses WorkOS
 device authorization and accepts only the account already signed in by
 `sprocket login` on the host. Signing out in that browser revokes its browser
 session without signing the host out. Plain remote HTTP is rejected. Other
-reverse proxies must preserve the browser-facing `Host` header.
+reverse proxies must connect to Sprocket over loopback and preserve the
+browser-facing `Host` header.
 
 ### Desktop app
 

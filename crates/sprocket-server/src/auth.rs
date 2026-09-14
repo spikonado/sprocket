@@ -193,15 +193,15 @@ impl AuthState {
             .count()
             >= MAX_PERSISTED_BROWSER_SESSIONS
         {
-            let oldest_unbound = sessions
+            let oldest_browser = sessions
                 .iter()
-                .filter(|(_, session)| !session.ephemeral && session.user_id.is_none())
-                .min_by_key(|(_, session)| session.created_at)
+                .filter(|(_, session)| !session.ephemeral)
+                .min_by_key(|(_, session)| (session.user_id.is_some(), session.created_at))
                 .map(|(token, _)| token.clone());
-            let Some(oldest_unbound) = oldest_unbound else {
-                anyhow::bail!("too many active browser sessions");
+            let Some(oldest_browser) = oldest_browser else {
+                break;
             };
-            sessions.remove(&oldest_unbound);
+            sessions.remove(&oldest_browser);
         }
         sessions.insert(
             session_token.clone(),
@@ -514,7 +514,7 @@ pub(crate) fn browser_connection(
     let origin = headers.get(header::ORIGIN)?.to_str().ok()?;
     let url = url::Url::parse(origin).ok()?;
     match url.scheme() {
-        "https" => Some(BrowserConnection::Https),
+        "https" if peer.ip().is_loopback() => Some(BrowserConnection::Https),
         "http" if peer.ip().is_loopback() && origin_host_is_loopback(headers) => {
             Some(BrowserConnection::Loopback)
         }
@@ -751,6 +751,50 @@ mod tests {
         let reloaded = AuthState::load(&temp_dir).expect("reloaded auth state");
         let session = reloaded.session_state(Some(&session_token)).await;
         assert!(session.authenticated);
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[tokio::test]
+    async fn bootstrap_evicts_unbound_then_oldest_bound_sessions_at_capacity() {
+        let temp_dir = std::env::temp_dir().join(format!("sprocket-auth-test-{}", Uuid::new_v4()));
+        let auth = AuthState::load(&temp_dir).expect("auth state");
+        let now = crate::now_ms();
+        {
+            let mut sessions = auth.sessions.write().await;
+            for index in 0..(MAX_PERSISTED_BROWSER_SESSIONS - 1) {
+                sessions.insert(
+                    format!("bound-{index}"),
+                    SessionRecord {
+                        ephemeral: false,
+                        local_browser: false,
+                        role: "owner".into(),
+                        created_at: now.saturating_sub(10_000 - index as u64),
+                        user_id: Some("user-1".into()),
+                    },
+                );
+            }
+            sessions.insert(
+                "unbound".into(),
+                SessionRecord {
+                    ephemeral: false,
+                    local_browser: false,
+                    role: "owner".into(),
+                    created_at: now.saturating_sub(20_000),
+                    user_id: None,
+                },
+            );
+        }
+
+        let (_, first_new) = auth.bootstrap_browser_session(false).await.unwrap();
+        assert!(!auth.session_state(Some("unbound")).await.authenticated);
+        assert!(auth.session_state(Some("bound-0")).await.authenticated);
+
+        auth.bind_session_user(&first_new, "user-1").await.unwrap();
+        auth.bootstrap_browser_session(false).await.unwrap();
+        assert!(!auth.session_state(Some("bound-0")).await.authenticated);
+        assert!(auth.session_state(Some("bound-1")).await.authenticated);
+        assert!(auth.session_state(Some(&first_new)).await.authenticated);
 
         let _ = fs::remove_dir_all(temp_dir);
     }

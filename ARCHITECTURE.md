@@ -56,7 +56,8 @@ WorkOS establishes cloud user identity. Installed clients share one Rust-owned
 WorkOS session across the renderer, agent runs, and machine registration.
 Hosted web clients use AuthKit JS. The machine-served web app accepts loopback
 HTTP and same-origin HTTPS, including TLS terminated by a reverse proxy such as
-Tailscale Serve. The Rust-owned WorkOS session must bind a persistent browser
+Tailscale Serve. HTTPS proxy connections must reach the server through its
+loopback listener. The Rust-owned WorkOS session must bind a persistent browser
 session to a user before it can access machine-facing APIs. Remote HTTPS clients
 use a separate WorkOS device flow and must authenticate as the current host
 owner. CLI sessions remain ephemeral and use signed process-pairing proofs.

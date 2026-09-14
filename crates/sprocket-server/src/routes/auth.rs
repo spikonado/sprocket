@@ -796,6 +796,11 @@ mod tests {
                 loopback_peer(),
             ),
             ("127.0.0.1:7731", "http://127.0.0.1:7731", lan_peer()),
+            (
+                "machine.tailnet.ts.net",
+                "https://machine.tailnet.ts.net",
+                lan_peer(),
+            ),
         ] {
             let response = app
                 .clone()
@@ -815,7 +820,7 @@ mod tests {
             .clone()
             .oneshot(with_peer(
                 bootstrap_request("machine.tailnet.ts.net", "https://machine.tailnet.ts.net"),
-                lan_peer(),
+                loopback_peer(),
             ))
             .await
             .unwrap();
@@ -876,7 +881,7 @@ mod tests {
                     .header(header::COOKIE, session_cookie(&remote_session))
                     .body(Body::empty())
                     .unwrap(),
-                lan_peer(),
+                loopback_peer(),
             ))
             .await
             .unwrap();
@@ -912,7 +917,7 @@ mod tests {
                     .header(header::COOKIE, session_cookie(&remote_session))
                     .body(Body::empty())
                     .unwrap(),
-                lan_peer(),
+                loopback_peer(),
             ))
             .await
             .unwrap();
@@ -938,7 +943,7 @@ mod tests {
                     .header(header::COOKIE, session_cookie(&remote_session))
                     .body(Body::empty())
                     .unwrap(),
-                lan_peer(),
+                loopback_peer(),
             ))
             .await
             .unwrap();
@@ -1128,7 +1133,7 @@ mod tests {
 
         let unbound = app
             .clone()
-            .oneshot(with_peer(request(&remote_session), lan_peer()))
+            .oneshot(with_peer(request(&remote_session), loopback_peer()))
             .await
             .unwrap();
         assert_eq!(unbound.status(), StatusCode::UNAUTHORIZED);
@@ -1138,7 +1143,7 @@ mod tests {
             .unwrap();
         let accepted = app
             .clone()
-            .oneshot(with_peer(request(&remote_session), lan_peer()))
+            .oneshot(with_peer(request(&remote_session), loopback_peer()))
             .await
             .unwrap();
         assert_eq!(accepted.status(), StatusCode::OK);
@@ -1151,7 +1156,7 @@ mod tests {
             .await
             .unwrap();
         let mismatched = app
-            .oneshot(with_peer(request(&remote_session), lan_peer()))
+            .oneshot(with_peer(request(&remote_session), loopback_peer()))
             .await
             .unwrap();
         assert_eq!(mismatched.status(), StatusCode::UNAUTHORIZED);
@@ -1184,8 +1189,9 @@ mod tests {
             header::ORIGIN,
             "https://attacker.example:7731".parse().unwrap(),
         );
+        assert_eq!(browser_connection(&headers, lan_peer()), None);
         assert_eq!(
-            browser_connection(&headers, lan_peer()),
+            browser_connection(&headers, loopback_peer()),
             Some(BrowserConnection::Https)
         );
     }
