@@ -12,7 +12,7 @@ impl SqlWorkIndex<'_> {
             "CREATE TABLE IF NOT EXISTS work_sections (
                 key TEXT PRIMARY KEY, body TEXT NOT NULL, run TEXT NOT NULL, settled INTEGER NOT NULL DEFAULT 0,
                 count INTEGER NOT NULL DEFAULT 0, pending INTEGER NOT NULL DEFAULT 0,
-                canonical INTEGER NOT NULL DEFAULT 0,
+                canonical INTEGER NOT NULL DEFAULT 0, boundary REAL,
                 missing_start INTEGER NOT NULL DEFAULT 0, missing_end INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS work_sections_settled_run_key ON work_sections(settled,run,key);
@@ -28,6 +28,15 @@ impl SqlWorkIndex<'_> {
             CREATE TABLE IF NOT EXISTS work_memberships (number INTEGER PRIMARY KEY, body TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS work_sessions (run TEXT NOT NULL, session TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(run, session));"
         )?;
+        let has_boundary = db
+            .prepare("PRAGMA table_info(work_sections)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<Vec<_>, _>>()?
+            .iter()
+            .any(|column| column == "boundary");
+        if !has_boundary {
+            db.execute("ALTER TABLE work_sections ADD COLUMN boundary REAL", [])?;
+        }
         Ok(())
     }
 
@@ -71,6 +80,15 @@ impl WorkIndex for SqlWorkIndex<'_> {
         Ok(())
     }
 
+    fn save_completion_boundary(&self, key: &str, completed_at: f64) -> anyhow::Result<()> {
+        let changed = self.0.execute(
+            "UPDATE work_sections SET boundary=MAX(COALESCE(boundary, ?), ?) WHERE key=?",
+            params![completed_at, completed_at, key],
+        )?;
+        anyhow::ensure!(changed == 1, "work section missing");
+        Ok(())
+    }
+
     fn remove_section(&self, key: &str) -> anyhow::Result<()> {
         self.0
             .execute("DELETE FROM work_sections WHERE key=? AND count=0", [key])?;
@@ -79,9 +97,9 @@ impl WorkIndex for SqlWorkIndex<'_> {
 
     fn summarize(&self, key: &str) -> anyhow::Result<Option<WorkSection>> {
         let mut section = self.section(key)?.context("work section missing")?;
-        let (count, pending, canonical, missing_start, missing_end): (u32,u32,u32,u32,u32) = self.0.query_row(
-            "SELECT count,pending,canonical,missing_start,missing_end FROM work_sections WHERE key=?", [key],
-            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?)))?;
+        let (count, pending, canonical, missing_start, missing_end, boundary): (u32,u32,u32,u32,u32,Option<f64>) = self.0.query_row(
+            "SELECT count,pending,canonical,missing_start,missing_end,boundary FROM work_sections WHERE key=?", [key],
+            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?)))?;
         if count == 0 {
             return Ok(None);
         }
@@ -103,12 +121,25 @@ impl WorkIndex for SqlWorkIndex<'_> {
         } else {
             None
         };
-        section.completed_at = if missing_end == 0 && pending == 0 {
-            self.0.query_row(
-                "SELECT completed FROM work_items WHERE section=? ORDER BY completed DESC LIMIT 1",
-                [key],
-                |row| row.get(0),
-            )?
+        section.completed_at = if missing_start == 0 && pending == 0 {
+            let completed: Option<f64> = if missing_end == 0 {
+                self.0.query_row(
+                    "SELECT completed FROM work_items WHERE section=? ORDER BY completed DESC LIMIT 1",
+                    [key],
+                    |row| row.get(0),
+                )?
+            } else {
+                None
+            };
+            match (completed, boundary) {
+                (Some(completed), Some(boundary)) => Some(completed.max(boundary)),
+                (completed, boundary) => completed.or(boundary),
+            }
+            .filter(|completed| {
+                section
+                    .started_at
+                    .is_none_or(|started| *completed >= started)
+            })
         } else {
             None
         };

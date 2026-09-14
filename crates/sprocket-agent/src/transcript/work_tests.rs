@@ -373,6 +373,174 @@ fn an_early_result_moves_to_its_canonical_call_without_losing_links() {
 }
 
 #[test]
+fn early_tool_events_extend_open_work_without_splitting_or_losing_timing() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+    let mut cloud = Cloud::default();
+    replica
+        .save_parts("thread", &[completion(0, vec![reasoning("first")])])
+        .unwrap();
+    cloud.process(&mut replica);
+
+    replica
+        .save_parts(
+            "thread",
+            &[
+                tool(1, "call", "read", "started", Value::Null),
+                tool(2, "call", "read", "completed", json!({"value":7})),
+            ],
+        )
+        .unwrap();
+    cloud.process(&mut replica);
+    assert_eq!(cloud.sections.keys().collect::<Vec<_>>(), vec!["work-0-0"]);
+    assert_eq!(cloud.sections["work-0-0"].started_at, Some(100.0));
+    assert_eq!(cloud.sections["work-0-0"].completed_at, Some(1002.0));
+
+    replica
+        .save_parts(
+            "thread",
+            &[completion(
+                3,
+                vec![json!({
+                    "type":"tool-call","callId":"call","name":"read","input":{},"startedAt":1200
+                })],
+            )],
+        )
+        .unwrap();
+    cloud.process(&mut replica);
+    assert_eq!(cloud.sections.keys().collect::<Vec<_>>(), vec!["work-0-0"]);
+    assert_eq!(cloud.sections["work-0-0"].item_count, 2);
+    assert_eq!(cloud.sections["work-0-0"].completed_at, Some(1002.0));
+    assert_eq!(
+        cloud.memberships[&1].section_key.as_deref(),
+        Some("work-0-0")
+    );
+}
+
+#[test]
+fn early_tool_events_move_after_text_when_the_canonical_call_arrives() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+    let mut cloud = Cloud::default();
+    replica
+        .save_parts(
+            "thread",
+            &[
+                completion(0, vec![reasoning("first")]),
+                tool(1, "call", "read", "completed", json!({"value":7})),
+            ],
+        )
+        .unwrap();
+    cloud.process(&mut replica);
+    assert_eq!(cloud.sections.keys().collect::<Vec<_>>(), vec!["work-0-0"]);
+
+    replica
+        .save_parts(
+            "thread",
+            &[completion(
+                2,
+                vec![
+                    json!({"type":"text","text":"Between"}),
+                    json!({"type":"tool-call","callId":"call","name":"read","input":{}}),
+                ],
+            )],
+        )
+        .unwrap();
+    cloud.process(&mut replica);
+    assert_eq!(
+        cloud.sections.keys().collect::<Vec<_>>(),
+        vec!["work-0-0", "work-2-1"]
+    );
+    assert_eq!(cloud.sections["work-0-0"].item_count, 1);
+    assert_eq!(cloud.sections["work-2-1"].item_count, 1);
+    assert_eq!(
+        cloud.memberships[&1].section_key.as_deref(),
+        Some("work-2-1")
+    );
+}
+
+#[test]
+fn text_boundary_preserves_a_completed_section_duration() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+    replica
+        .save_parts(
+            "thread",
+            &[completion(
+                0,
+                vec![
+                    json!({"type":"reasoning","id":"reasoning","text":"First","startedAt":100}),
+                    json!({"type":"text","id":"answer","text":"Visible","startedAt":500}),
+                ],
+            )],
+        )
+        .unwrap();
+    let mut cloud = Cloud::default();
+    cloud.process(&mut replica);
+
+    assert!(cloud.sections["work-0-0"].closed);
+    assert_eq!(cloud.sections["work-0-0"].started_at, Some(100.0));
+    assert_eq!(cloud.sections["work-0-0"].completed_at, Some(500.0));
+}
+
+#[test]
+fn text_boundary_waits_for_pending_tools_and_uses_the_later_result() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+    replica
+        .save_parts(
+            "thread",
+            &[completion(
+                0,
+                vec![
+                    json!({"type":"tool-call","callId":"call","name":"read","input":{},"startedAt":100}),
+                    json!({"type":"text","id":"answer","text":"Visible","startedAt":500}),
+                ],
+            )],
+        )
+        .unwrap();
+    let mut cloud = Cloud::default();
+    cloud.process(&mut replica);
+    assert_eq!(cloud.sections["work-0-0"].pending_tools, 1);
+    assert_eq!(cloud.sections["work-0-0"].completed_at, None);
+
+    replica
+        .save_parts(
+            "thread",
+            &[tool(1, "call", "read", "completed", json!({"value":7}))],
+        )
+        .unwrap();
+    cloud.process(&mut replica);
+    assert_eq!(cloud.sections["work-0-0"].pending_tools, 0);
+    assert_eq!(cloud.sections["work-0-0"].completed_at, Some(1001.0));
+}
+
+#[test]
+fn existing_work_indexes_add_completion_boundaries_on_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("history.sqlite3");
+    let db = rusqlite::Connection::open(&database).unwrap();
+    db.execute_batch(
+        "CREATE TABLE work_sections (
+            key TEXT PRIMARY KEY, body TEXT NOT NULL, run TEXT NOT NULL,
+            settled INTEGER NOT NULL DEFAULT 0, count INTEGER NOT NULL DEFAULT 0,
+            pending INTEGER NOT NULL DEFAULT 0, canonical INTEGER NOT NULL DEFAULT 0,
+            missing_start INTEGER NOT NULL DEFAULT 0, missing_end INTEGER NOT NULL DEFAULT 0
+        );",
+    )
+    .unwrap();
+    drop(db);
+
+    let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+    replica
+        .save_parts("thread", &[completion(0, vec![reasoning("migrated")])])
+        .unwrap();
+    let mut cloud = Cloud::default();
+    cloud.process(&mut replica);
+    assert_eq!(cloud.sections.len(), 1);
+}
+
+#[test]
 fn restart_retries_the_outbox_then_continues_at_the_item_checkpoint() {
     let dir = tempfile::tempdir().unwrap();
     let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
@@ -774,7 +942,7 @@ fn downloading_a_result_refreshes_a_previously_downloaded_section_summary() {
 }
 
 #[test]
-fn canonical_tool_timing_does_not_report_a_negative_duration() {
+fn canonical_tool_timing_keeps_an_earlier_event_start() {
     let dir = tempfile::tempdir().unwrap();
     let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
     replica.save_parts("thread",&[
@@ -784,14 +952,14 @@ fn canonical_tool_timing_does_not_report_a_negative_duration() {
     ]).unwrap();
     let mut cloud = Cloud::default();
     cloud.process(&mut replica);
-    assert_eq!(cloud.sections["work-2-0"].started_at, Some(1200.0));
-    assert_eq!(cloud.sections["work-2-0"].completed_at, None);
+    assert_eq!(cloud.sections["work-2-0"].started_at, Some(1000.0));
+    assert_eq!(cloud.sections["work-2-0"].completed_at, Some(1001.0));
     replica.save_snapshot("thread", cloud.snapshot(3)).unwrap();
     let details = replica
         .details("work-2-0", None, None, false, 5, false)
         .unwrap();
-    assert_eq!(details["parts"][0]["startedAt"], 1200.0);
-    assert!(details["parts"][1]["completedAt"].is_null());
+    assert_eq!(details["parts"][0]["startedAt"], 1000.0);
+    assert_eq!(details["parts"][1]["completedAt"], 1001.0);
 }
 
 #[test]
