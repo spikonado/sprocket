@@ -1,9 +1,15 @@
+import { untrack } from 'svelte';
+
 export function createInProgressDisclosure(getInProgress: () => boolean) {
 	let manuallyExpanded = $state(false);
 	let manuallyCollapsed = $state(false);
+	let previousInProgress = untrack(getInProgress);
 
 	$effect(() => {
-		if (getInProgress()) {
+		const inProgress = getInProgress();
+		if (inProgress === previousInProgress) return;
+		previousInProgress = inProgress;
+		if (inProgress) {
 			manuallyCollapsed = false;
 		} else {
 			manuallyExpanded = false;

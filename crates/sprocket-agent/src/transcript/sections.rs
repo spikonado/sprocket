@@ -136,7 +136,7 @@ impl WorkItem {
     }
 
     pub(super) fn merge_event(&mut self, event: Self) {
-        self.started_at = self.started_at.or(event.started_at);
+        self.started_at = earliest_timing(self.started_at, event.started_at);
         if self.result_part.is_none() && event.result_part.is_some() {
             self.result_part = event.result_part;
             self.completed_at = event.completed_at;
@@ -181,6 +181,7 @@ pub struct WorkSession {
 pub trait WorkIndex {
     fn section(&self, key: &str) -> anyhow::Result<Option<WorkSection>>;
     fn save_section(&self, section: &WorkSection) -> anyhow::Result<()>;
+    fn save_completion_boundary(&self, key: &str, completed_at: f64) -> anyhow::Result<()>;
     fn remove_section(&self, key: &str) -> anyhow::Result<()>;
     fn summarize(&self, key: &str) -> anyhow::Result<Option<WorkSection>>;
     fn item(&self, id: &str) -> anyhow::Result<Option<WorkItem>>;
@@ -214,6 +215,13 @@ pub(super) fn timing(value: &Value, key: &str) -> Option<f64> {
         .filter(|n| n.is_finite() && *n >= 0.0)
 }
 
+pub(super) fn earliest_timing(left: Option<f64>, right: Option<f64>) -> Option<f64> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(left.min(right)),
+        (left, right) => left.or(right),
+    }
+}
+
 pub(super) fn hidden_tool(name: &str) -> bool {
     matches!(
         name,
@@ -222,11 +230,18 @@ pub(super) fn hidden_tool(name: &str) -> bool {
 }
 
 impl WorkEngine {
-    fn close_tail(&mut self, index: &impl WorkIndex) -> anyhow::Result<()> {
+    fn close_tail(
+        &mut self,
+        index: &impl WorkIndex,
+        completed_at: Option<f64>,
+    ) -> anyhow::Result<()> {
         if let Some(key) = self.tail.take() {
             if let Some(mut section) = index.section(&key)? {
                 section.closed = true;
                 index.save_section(&section)?;
+                if let Some(completed_at) = completed_at {
+                    index.save_completion_boundary(&key, completed_at)?;
+                }
                 self.changed.insert(key);
             }
         }
@@ -240,16 +255,15 @@ impl WorkEngine {
         at: WorkPosition,
         provisional: bool,
     ) -> anyhow::Result<String> {
+        if let Some(key) = &self.tail
+            && index.section(key)?.is_some_and(|section| {
+                section.run_id == run && !section.closed && !section.provisional
+            })
+        {
+            return Ok(key.clone());
+        }
         if !provisional {
-            if let Some(key) = &self.tail {
-                if index
-                    .section(key)?
-                    .is_some_and(|s| s.run_id == run && !s.closed && !s.provisional)
-                {
-                    return Ok(key.clone());
-                }
-            }
-            self.close_tail(index)?;
+            self.close_tail(index, None)?;
         }
         let key = at.key();
         if index.section(&key)?.is_none() {
@@ -364,7 +378,7 @@ impl WorkEngine {
         if let Some(call) = call {
             item.canonical = true;
             item.source = at;
-            item.started_at = timing(call, "startedAt").or(item.started_at);
+            item.started_at = earliest_timing(item.started_at, timing(call, "startedAt"));
             item.session_id = call
                 .get("input")
                 .and_then(|input| string(input, "sessionId"))
@@ -454,7 +468,7 @@ impl WorkEngine {
         let end = count.min(self.through.item as usize + limit);
         if let Some(key) = &self.tail {
             if index.section(key)?.is_some_and(|s| s.run_id != part.run_id) {
-                self.close_tail(index)?;
+                self.close_tail(index, None)?;
             }
         }
         for offset in self.through.item as usize..end {
@@ -463,7 +477,7 @@ impl WorkEngine {
                 item: offset as u32,
             };
             if part.prompt.is_some() {
-                self.close_tail(index)?;
+                self.close_tail(index, None)?;
             }
             if part.tool.is_some() {
                 self.tool(index, part, at, None)?;
@@ -476,7 +490,7 @@ impl WorkEngine {
                             .and_then(Value::as_str)
                             .is_some_and(|s| !s.trim().is_empty()) =>
                     {
-                        self.close_tail(index)?
+                        self.close_tail(index, timing(value, "startedAt"))?
                     }
                     Some("reasoning")
                         if value

@@ -229,6 +229,21 @@ been rewritten.
 
 ## Stored transcript formats
 
+### Local work index completion boundaries
+
+Local work replicas created before completion boundaries were added lack the
+`work_sections.boundary` column. `SqlWorkIndex::initialize` checks the local
+SQLite schema and adds the column when needed. This upgrades a derived local
+cache; it does not migrate cloud transcript data.
+
+Keep the `PRAGMA table_info` and `ALTER TABLE` fallback while the app can open
+`display-v1` work replicas. Release age alone is not a safe removal signal
+because a device can retain an older replica while skipping releases. Remove
+the fallback and the `existing_work_indexes_add_completion_boundaries_on_open`
+test after work replicas move to a new cache namespace and the app no longer
+opens `display-v1`. Keep the `boundary` column because current work indexing
+uses it.
+
 ### Local transcript state
 
 Early local `state.json` files may omit `downloadedRanges` or `stale`. The

@@ -236,6 +236,95 @@ describe('transcript viewport paging', () => {
 		}
 	);
 
+	it('continues persisted work in the same disclosure while the next model turn streams', async () => {
+		const work: TranscriptDisplayRow = {
+			...message(3),
+			kind: 'work',
+			id: 'work-3',
+			closed: false,
+			startedAt: 1_000,
+			itemCount: 1
+		};
+		const live: LiveTranscriptMessage = {
+			...liveMessage(),
+			runStatus: 'running',
+			parts: [
+				{
+					type: 'reasoning',
+					id: 'live-reasoning',
+					text: 'Current reasoning',
+					startedAt: 2_000,
+					completedAt: 2_500
+				}
+			]
+		};
+		const { props, viewport } = await renderTranscript([work, live]);
+		props.activeRunId = live.runId;
+		props.loadSectionDetails = vi.fn().mockResolvedValue({
+			parts: [
+				{
+					type: 'reasoning',
+					id: 'saved-reasoning',
+					text: 'Saved reasoning',
+					startedAt: 1_000,
+					completedAt: 1_500
+				}
+			],
+			revision: 1,
+			stale: false,
+			indexing: false
+		});
+		await settle();
+
+		const workButtons = [...viewport.querySelectorAll<HTMLButtonElement>('button')].filter(
+			(button) => button.textContent?.trim().startsWith('Working')
+		);
+		expect(workButtons).toHaveLength(1);
+		expect(viewport.textContent).toContain('Current reasoning');
+	});
+
+	it('starts a new disclosure when streamed model text separates work', async () => {
+		const work: TranscriptDisplayRow = {
+			...message(3),
+			kind: 'work',
+			id: 'work-3',
+			closed: false,
+			startedAt: 1_000,
+			itemCount: 1
+		};
+		const live: LiveTranscriptMessage = {
+			...liveMessage(),
+			runStatus: 'running',
+			parts: [
+				{
+					type: 'text',
+					id: 'boundary',
+					text: 'Visible boundary',
+					startedAt: 3_000,
+					completedAt: 3_500
+				},
+				{
+					type: 'reasoning',
+					id: 'after-boundary',
+					text: 'More work',
+					startedAt: 4_000,
+					completedAt: 4_500
+				}
+			]
+		};
+		const { props, viewport } = await renderTranscript([work, live]);
+		props.activeRunId = live.runId;
+		await settle();
+
+		const workLabels = [...viewport.querySelectorAll<HTMLButtonElement>('button')]
+			.map((button) => button.textContent?.trim() ?? '')
+			.filter((label) => label.startsWith('Work'));
+		expect(workLabels[0]).toBe('Worked for 2s');
+		expect(workLabels[1]).toMatch(/^Working/);
+		expect(workLabels).toHaveLength(2);
+		expect(viewport.textContent).toContain('Visible boundary');
+	});
+
 	it('keeps long work sections as summaries and fetches a bounded page only after expansion', async () => {
 		const summary = (number: number): TranscriptDisplayRow => ({
 			...message(number),

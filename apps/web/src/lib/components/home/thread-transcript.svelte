@@ -26,7 +26,8 @@
 	import type {
 		TranscriptDisplayRow,
 		TranscriptDisplayDetails,
-		TranscriptDetailCursor
+		TranscriptDetailCursor,
+		LiveTranscriptMessage
 	} from '$lib/types/sprocket';
 	import { mandateApprovals } from '$lib/chat/mandate';
 	import { formatElapsedDuration } from '$lib/format';
@@ -179,6 +180,88 @@
 	}
 
 	const sectionKeys = new TranscriptSectionKeys();
+	type LiveSection = ReturnType<TranscriptSectionKeys['reconcile']>[number];
+	type LiveWorkSection = Extract<LiveSection, { type: 'work' }>;
+	type LiveRenderState = ReturnType<typeof liveRenderState>;
+	type LiveWorkState = ReturnType<typeof liveWorkState>;
+
+	function liveRenderState(message: LiveTranscriptMessage) {
+		const messageActions = actions.filter(
+			(job) =>
+				job.runId === message.runId &&
+				message.parts.some((part) => part.type === 'tool-call' && part.callId === job.callId)
+		);
+		const timeline = buildAssistantTimeline(message.parts, messageActions);
+		const tools = timeline.filter((item): item is AssistantTimelineTool => item.type === 'tool');
+		const sections = sectionKeys.reconcile(
+			message.id,
+			groupAssistantTimelineSections(groupAssistantTimeline(timeline))
+		);
+		const isStreaming = isAssistantResponseStreaming(message, activeRunId);
+		return {
+			timeline,
+			sections,
+			isStreaming,
+			commands: buildCommandSessionCommandMap(tools),
+			openSessions: buildOpenExecCommandSessions(tools, isStreaming)
+		};
+	}
+
+	function liveWorkState(state: LiveRenderState, section: LiveWorkSection, sectionIndex: number) {
+		const { settledBlocks, runningTools } = partitionWorkSectionTools(
+			section.blocks,
+			state.isStreaming,
+			state.openSessions
+		);
+		const visibleBlocks = settledBlocks.filter(isVisibleWorkBlock);
+		const workInProgress =
+			state.isStreaming && (sectionIndex === state.sections.length - 1 || runningTools.length > 0);
+		const nextSection = state.sections[sectionIndex + 1];
+		return {
+			visibleBlocks,
+			runningTools,
+			workInProgress,
+			approvals: visibleBlocks.flatMap((block) =>
+				block.type === 'tool-group' ? mandateApprovals(block.tools) : []
+			),
+			timing: workSectionTimingAnchor(section, {
+				inProgress: workInProgress,
+				endedAt: nextSection?.type === 'text' ? (nextSection.startedAt ?? undefined) : undefined
+			})
+		};
+	}
+
+	function followingLiveState(messageIndex: number, runId: TranscriptDisplayRow['runId']) {
+		for (const message of messages.slice(messageIndex + 1)) {
+			if (message.kind === 'approval' && message.runId === runId) continue;
+			return message.kind === 'live' && message.runId === runId
+				? liveRenderState(message)
+				: undefined;
+		}
+		return undefined;
+	}
+
+	function followsOpenPersistedWork(messageIndex: number, runId: LiveTranscriptMessage['runId']) {
+		for (let index = messageIndex - 1; index >= 0; index -= 1) {
+			const message = messages[index];
+			if (message.kind === 'approval' && message.runId === runId) continue;
+			return message.kind === 'work' && message.runId === runId && !message.closed;
+		}
+		return false;
+	}
+
+	function earlierTimestamp(left: number | undefined, right: number | undefined) {
+		if (left === undefined) return right;
+		if (right === undefined) return left;
+		return Math.min(left, right);
+	}
+
+	function laterTimestamp(left: number | undefined, right: number | undefined) {
+		if (left === undefined) return right;
+		if (right === undefined) return left;
+		return Math.max(left, right);
+	}
+
 	$effect.pre(() =>
 		sectionKeys.retain(
 			messages.filter((message) => message.kind === 'live').map((message) => message.id)
@@ -315,6 +398,25 @@
 	});
 </script>
 
+{#snippet liveWorkBlocks(work: LiveWorkState, state: LiveRenderState)}
+	{#each work.visibleBlocks as block, blockIndex (`${block.type}-${block.type === 'tool-group' ? block.tools.map((tool) => tool.callId).join(',') : block.id}-${blockIndex}`)}
+		{#if block.type === 'reasoning'}
+			{@const reasoningInProgress =
+				work.workInProgress &&
+				work.runningTools.length === 0 &&
+				blockIndex === work.visibleBlocks.length - 1}
+			<ReasoningDisclosure text={block.text} inProgress={reasoningInProgress} />
+		{:else}
+			<WorkTools
+				tools={block.tools}
+				toolKey={block.toolKey}
+				inProgress={state.isStreaming}
+				commands={state.commands}
+			/>
+		{/if}
+	{/each}
+{/snippet}
+
 <div class="relative min-h-0 flex-1">
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (Keyboard users must be able to page history even when it does not overflow.) -->
 	<div
@@ -380,7 +482,7 @@
 				{/if}
 			{:else}
 				<div class="transcript-messages space-y-8 pb-14">
-					{#each messages as message (message.id)}
+					{#each messages as message, messageIndex (message.id)}
 						{#if message.kind === 'prompt'}
 							<div
 								data-message-id={message.id}
@@ -448,18 +550,33 @@
 							</div>
 						{:else if message.kind === 'work'}
 							{@const row = message}
-							{@const inProgress =
-								row.runId === activeRunId && (!row.closed || row.pendingTools > 0)}
+							{@const followingLive = !row.closed
+								? followingLiveState(messageIndex, row.runId)
+								: undefined}
+							{@const firstLiveSection = followingLive?.sections[0]}
+							{@const continuation =
+								followingLive && firstLiveSection?.type === 'work'
+									? liveWorkState(followingLive, firstLiveSection, 0)
+									: undefined}
+							{@const inProgress = continuation
+								? continuation.workInProgress
+								: firstLiveSection?.type === 'text'
+									? false
+									: row.runId === activeRunId && (!row.closed || row.pendingTools > 0)}
+							{@const startedAt = earlierTimestamp(row.startedAt, continuation?.timing.startedAtMs)}
+							{@const completedAt = laterTimestamp(
+								row.completedAt,
+								continuation?.timing.completedAtMs ??
+									(firstLiveSection?.type === 'text'
+										? (firstLiveSection.startedAt ?? undefined)
+										: undefined)
+							)}
 							<div
 								data-message-id={message.id}
 								data-transcript-anchor={message.id}
 								data-message-kind="work"
 							>
-								<WorkDisclosure
-									{inProgress}
-									startedAtMs={row.startedAt}
-									completedAtMs={row.completedAt}
-								>
+								<WorkDisclosure {inProgress} startedAtMs={startedAt} completedAtMs={completedAt}>
 									{#if loadSectionDetails}
 										<WorkSectionDetails
 											{row}
@@ -468,6 +585,9 @@
 											viewport={scrollViewport}
 											beforeChange={beforeDetailChange}
 										/>
+									{/if}
+									{#if continuation && followingLive}
+										{@render liveWorkBlocks(continuation, followingLive)}
 									{/if}
 								</WorkDisclosure>
 							</div>
@@ -489,41 +609,24 @@
 								<ChatMarkdown content={message.text || ' '} className="text-foreground" />
 							</div>
 						{:else if message.kind === 'live'}
-							{@const messageActions = actions.filter(
-								(job) =>
-									job.runId === message.runId &&
-									message.parts.some(
-										(part) => part.type === 'tool-call' && part.callId === job.callId
-									)
-							)}
-							{@const timeline = buildAssistantTimeline(message.parts, messageActions)}
-							{@const timelineTools = timeline.filter(
-								(item): item is AssistantTimelineTool => item.type === 'tool'
-							)}
-							{@const sessionCommands = buildCommandSessionCommandMap(timelineTools)}
-							{@const blocks = groupAssistantTimeline(timeline)}
-							{@const sections = sectionKeys.reconcile(
-								message.id,
-								groupAssistantTimelineSections(blocks)
-							)}
-							{@const isStreaming = isAssistantResponseStreaming(message, activeRunId)}
-							{@const openSessions = buildOpenExecCommandSessions(timelineTools, isStreaming)}
-							{@const hasPersistedAssistantContent = timeline.some(
+							{@const live = liveRenderState(message)}
+							{@const continuesPreviousWork = followsOpenPersistedWork(messageIndex, message.runId)}
+							{@const hasPersistedAssistantContent = live.timeline.some(
 								(part) => part.type === 'text' || part.type === 'reasoning'
 							)}
 							<div
 								data-message-id={message.id}
 								class="w-full min-w-0"
-								role={isStreaming ? 'log' : undefined}
-								aria-live={isStreaming ? 'polite' : undefined}
+								role={live.isStreaming ? 'log' : undefined}
+								aria-live={live.isStreaming ? 'polite' : undefined}
 								aria-atomic="false"
 								aria-relevant="additions text"
 							>
 								<div class="space-y-3">
-									{#if !hasPersistedAssistantContent && (message.text || (isStreaming && timeline.length === 0))}
+									{#if !hasPersistedAssistantContent && (message.text || (live.isStreaming && live.timeline.length === 0))}
 										<ChatMarkdown content={message.text || '...'} className="text-foreground" />
 									{/if}
-									{#each sections as section, sectionIndex (section.renderKey)}
+									{#each live.sections as section, sectionIndex (section.renderKey)}
 										{#if section.type === 'text'}
 											<div
 												data-transcript-anchor={`${message.id}:${assistantTimelinePartKey(section)}`}
@@ -531,72 +634,37 @@
 												<ChatMarkdown content={section.text || ' '} className="text-foreground" />
 											</div>
 										{:else}
-											{@const { settledBlocks, runningTools } = partitionWorkSectionTools(
-												section.blocks,
-												isStreaming,
-												openSessions
-											)}
-											{@const visibleBlocks = settledBlocks.filter(isVisibleWorkBlock)}
-											{@const sectionMandateApprovals = visibleBlocks.flatMap((block) =>
-												block.type === 'tool-group' ? mandateApprovals(block.tools) : []
-											)}
-											{@const workInProgress =
-												isStreaming &&
-												(sectionIndex === sections.length - 1 || runningTools.length > 0)}
-											{@const nextSection = sections[sectionIndex + 1]}
-											{@const timing = workSectionTimingAnchor(section, {
-												inProgress: workInProgress,
-												endedAt:
-													nextSection?.type === 'text'
-														? (nextSection.startedAt ?? undefined)
-														: undefined
-											})}
-											{#if visibleBlocks.length > 0 || workInProgress || runningTools.length > 0}
+											{@const work = liveWorkState(live, section, sectionIndex)}
+											{#if work.visibleBlocks.length > 0 || work.workInProgress || work.runningTools.length > 0}
 												<div
 													class="space-y-3"
 													data-transcript-anchor={`${message.id}:${section.renderKey}`}
 												>
-													<WorkDisclosure
-														inProgress={workInProgress}
-														startedAtMs={timing.startedAtMs}
-														completedAtMs={timing.completedAtMs}
-													>
-														{#each visibleBlocks as block, blockIndex (`${block.type}-${block.type === 'tool-group' ? block.tools.map((tool) => tool.callId).join(',') : block.id}-${blockIndex}`)}
-															{#if block.type === 'reasoning'}
-																{@const reasoningInProgress =
-																	workInProgress &&
-																	runningTools.length === 0 &&
-																	blockIndex === visibleBlocks.length - 1}
-																<ReasoningDisclosure
-																	text={block.text}
-																	inProgress={reasoningInProgress}
-																/>
-															{:else}
-																<WorkTools
-																	tools={block.tools}
-																	toolKey={block.toolKey}
-																	inProgress={isStreaming}
-																	commands={sessionCommands}
-																/>
-															{/if}
-														{/each}
-													</WorkDisclosure>
-													{#each sectionMandateApprovals as approval (approval.mandateId)}
+													{#if !(continuesPreviousWork && sectionIndex === 0)}
+														<WorkDisclosure
+															inProgress={work.workInProgress}
+															startedAtMs={work.timing.startedAtMs}
+															completedAtMs={work.timing.completedAtMs}
+														>
+															{@render liveWorkBlocks(work, live)}
+														</WorkDisclosure>
+													{/if}
+													{#each work.approvals as approval (approval.mandateId)}
 														<MandateApprovalForm {approval} />
 													{/each}
-													{#if runningTools.length > 0}
+													{#if work.runningTools.length > 0}
 														<WorkTools
-															tools={runningTools}
+															tools={work.runningTools}
 															running={true}
-															inProgress={isStreaming}
-															commands={sessionCommands}
+															inProgress={live.isStreaming}
+															commands={live.commands}
 														/>
 													{/if}
 												</div>
 											{/if}
 										{/if}
 									{/each}
-									{#if !isStreaming && message.runStartedAt > 0 && message.runCompletedAt !== undefined}
+									{#if !live.isStreaming && message.runStartedAt > 0 && message.runCompletedAt !== undefined}
 										<p class="text-muted-foreground text-sm">
 											Worked for {formatElapsedDuration(
 												Math.max(

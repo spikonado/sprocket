@@ -3,7 +3,9 @@ use std::collections::BTreeSet;
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::TranscriptPart;
-use super::sections::{WorkItem, WorkMembership, WorkPosition, hidden_tool, string, timing};
+use super::sections::{
+    WorkItem, WorkMembership, WorkPosition, earliest_timing, hidden_tool, string, timing,
+};
 
 pub(super) struct ReadIndex<'a>(pub &'a Connection);
 
@@ -199,11 +201,11 @@ impl ReadIndex<'_> {
         let Some(call) = &item.call_id else {
             return Ok(());
         };
-        if item.started_at.is_none() {
-            item.started_at = self
-                .event(&item.run_id, call, false)?
-                .and_then(|event| event.started_at);
-        }
+        item.started_at = earliest_timing(
+            item.started_at,
+            self.event(&item.run_id, call, false)?
+                .and_then(|event| event.started_at),
+        );
         if let Some(result) = self.event(&item.run_id, call, true)? {
             item.merge_event(result);
         }
