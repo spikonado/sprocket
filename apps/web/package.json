@@ -45,7 +45,7 @@
 		"@tailwindcss/vite": "^4.2.4",
 		"@types/node": "^26.0.0",
 		"@typescript/native": "npm:typescript@7.0.2",
-		"convex-test": "^0.0.56",
+		"convex-test": "^0.0.58",
 		"eslint": "^10.0.0",
 		"jsdom": "^30.0.1",
 		"svelte": "^5.55.5",
