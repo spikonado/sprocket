@@ -484,6 +484,28 @@ fn text_boundary_preserves_a_completed_section_duration() {
 }
 
 #[test]
+fn completed_timing_survives_a_missing_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+    replica
+        .save_parts(
+            "thread",
+            &[completion(
+                0,
+                vec![json!({
+                    "type":"reasoning","text":"Finished","completedAt":200
+                })],
+            )],
+        )
+        .unwrap();
+    let mut cloud = Cloud::default();
+    cloud.process(&mut replica);
+
+    assert_eq!(cloud.sections["work-0-0"].started_at, None);
+    assert_eq!(cloud.sections["work-0-0"].completed_at, Some(200.0));
+}
+
+#[test]
 fn text_boundary_waits_for_pending_tools_and_uses_the_later_result() {
     let dir = tempfile::tempdir().unwrap();
     let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();

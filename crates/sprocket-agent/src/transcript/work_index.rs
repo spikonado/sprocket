@@ -121,7 +121,7 @@ impl WorkIndex for SqlWorkIndex<'_> {
         } else {
             None
         };
-        section.completed_at = if missing_start == 0 && pending == 0 {
+        section.completed_at = if pending == 0 {
             let completed: Option<f64> = if missing_end == 0 {
                 self.0.query_row(
                     "SELECT completed FROM work_items WHERE section=? ORDER BY completed DESC LIMIT 1",
