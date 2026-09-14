@@ -94,6 +94,7 @@
 		isAgentLaunchPending,
 		isLatestRunReadyForThread,
 		resolveExpiredAgentLaunch,
+		resolveInitialDraftSelection,
 		resolvePendingAgentLaunch,
 		resolvePendingCreatedThreadId,
 		resolveProjectThreadSelection,
@@ -2220,22 +2221,22 @@
 	});
 
 	$effect(() => {
-		if (
-			hasResolvedInitialSelection ||
-			!initialProjectLaunchResolved ||
-			pendingProjectLaunches.length > 0 ||
-			projectLaunchInFlight
-		) {
-			return;
-		}
-
-		if (!hasLoadedDesktopProjectAttachments || !signedInUserId) {
+		const selection = resolveInitialDraftSelection({
+			hasResolvedInitialSelection,
+			initialProjectLaunchResolved,
+			hasPendingProjectLaunches: pendingProjectLaunches.length > 0,
+			projectLaunchInFlight,
+			hasLoadedProjects: hasLoadedDesktopProjectAttachments,
+			signedInUserId,
+			projects
+		});
+		if (!selection) {
 			return;
 		}
 
 		hasResolvedInitialSelection = true;
-		if (projects[0]) {
-			const workspacePath = projects[0].workspacePath;
+		if (selection.workspacePath) {
+			const workspacePath = selection.workspacePath;
 			setProjectSelection(workspacePath, null, true, true);
 			const selectionGeneration = projectSelectionGeneration;
 			untrack(() => {

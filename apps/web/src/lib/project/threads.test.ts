@@ -7,6 +7,7 @@ import {
 	isAgentLaunchPending,
 	isLatestRunReadyForThread,
 	resolveExpiredAgentLaunch,
+	resolveInitialDraftSelection,
 	resolvePendingAgentLaunch,
 	resolvePendingCreatedThreadId,
 	resolveProjectThreadSelection,
@@ -201,6 +202,38 @@ describe('project thread helpers', () => {
 				currentThreadId: null,
 				currentWorkspacePath: '/workspaces/ws-1',
 				draftWorkspacePath: '/workspaces/ws-1'
+			})
+		).toBeNull();
+	});
+
+	it('opens a blank draft once startup projects load and keeps it when threads arrive', () => {
+		const project = makeProject();
+		const startup = {
+			hasResolvedInitialSelection: false,
+			initialProjectLaunchResolved: true,
+			hasPendingProjectLaunches: false,
+			projectLaunchInFlight: false,
+			hasLoadedProjects: false,
+			signedInUserId: 'user-1',
+			projects: [project]
+		};
+
+		expect(resolveInitialDraftSelection(startup)).toBeNull();
+		const selection = resolveInitialDraftSelection({ ...startup, hasLoadedProjects: true });
+		expect(selection).toEqual({ workspacePath: project.workspacePath });
+		expect(
+			resolveInitialDraftSelection({
+				...startup,
+				hasLoadedProjects: true,
+				hasResolvedInitialSelection: true
+			})
+		).toBeNull();
+		expect(
+			resolveProjectThreadSelection({
+				threads: [makeThreadSummary()],
+				currentThreadId: null,
+				currentWorkspacePath: selection?.workspacePath ?? null,
+				draftWorkspacePath: selection?.workspacePath ?? null
 			})
 		).toBeNull();
 	});

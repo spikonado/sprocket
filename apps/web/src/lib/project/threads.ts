@@ -124,6 +124,29 @@ export function findThreadById(
 	return threads.find((thread) => thread.threadId === threadId) ?? null;
 }
 
+export function resolveInitialDraftSelection(args: {
+	hasResolvedInitialSelection: boolean;
+	initialProjectLaunchResolved: boolean;
+	hasPendingProjectLaunches: boolean;
+	projectLaunchInFlight: boolean;
+	hasLoadedProjects: boolean;
+	signedInUserId: string | null;
+	projects: Pick<Project, 'workspacePath'>[];
+}): { workspacePath: string | null } | null {
+	if (
+		args.hasResolvedInitialSelection ||
+		!args.initialProjectLaunchResolved ||
+		args.hasPendingProjectLaunches ||
+		args.projectLaunchInFlight ||
+		!args.hasLoadedProjects ||
+		!args.signedInUserId
+	) {
+		return null;
+	}
+
+	return { workspacePath: args.projects[0]?.workspacePath ?? null };
+}
+
 export function dataForThread<
 	T extends { threadId?: Id<'threadRecords'>; _id?: Id<'threadRecords'> }
 >(data: T | null | undefined, threadId: Id<'threadRecords'> | null): T | null {
