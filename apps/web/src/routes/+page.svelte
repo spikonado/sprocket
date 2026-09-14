@@ -1,8 +1,25 @@
 <script lang="ts">
-	import { onMount, untrack } from 'svelte';
+	import { onMount, tick, untrack } from 'svelte';
+	import { z } from 'zod';
 	import { elapsedSeconds, tickingNow } from '$lib/chat/elapsed-time';
 	import { page } from '$app/state';
-	import { PanelRight } from '@lucide/svelte';
+	import { PanelRight, PanelLeft } from '@lucide/svelte';
+	import '$lib/components/home/inbox.css';
+	import InboxSidebar from '$lib/components/home/inbox-sidebar.svelte';
+	import CreateThreadHeading from '$lib/components/home/create-thread-heading.svelte';
+	import SettingsInbox from '$lib/components/home/settings-inbox.svelte';
+	import { useInbox } from '$lib/project/inbox.svelte';
+	import { createProjectDefault } from '$lib/project/inbox';
+	import { inboxState, type InboxState } from '$convex/lib/inboxState';
+	import {
+		composerDraftKey,
+		completeComposerDraft,
+		loadComposerDraft,
+		saveComposerDraft,
+		updateDraftAttachment,
+		type ComposerDraft
+	} from '$lib/chat/composer-drafts';
+	import { saveDraftFile, loadDraftFile, deleteDraftFile } from '$lib/chat/draft-files';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import { useAuth, useConvexClient, useMutation, useQuery } from 'convex-svelte';
 	import { watchCloudArtifacts, type CloudArtifactScope } from '$lib/chat/cloud-artifacts';
@@ -27,7 +44,6 @@
 	import PromptComposer from '$lib/components/home/prompt-composer.svelte';
 	import SettingsAccount from '$lib/components/home/settings-account.svelte';
 	import SettingsBrowser from '$lib/components/home/settings-browser.svelte';
-	import SettingsArchived from '$lib/components/home/settings-archived.svelte';
 	import SettingsPayments from '$lib/components/home/settings-payments.svelte';
 	import SettingsSidebar, { type SettingsPage } from '$lib/components/home/settings-sidebar.svelte';
 	import SettingsUsage from '$lib/components/home/settings-usage.svelte';
@@ -49,7 +65,6 @@
 	} from '$lib/chat/artifacts';
 	import { DEFAULT_SIDE_PANEL_SNAPSHOT, type SidePanelSnapshot } from '$lib/chat/side-panel';
 	import ProjectPicker, { type ProjectSelection } from '$lib/components/home/project-picker.svelte';
-	import ProjectSidebar from '$lib/components/home/project-sidebar.svelte';
 	import Button from '$lib/components/ui/button/button.svelte';
 	import {
 		attachLocalProject as attachLocalProjectForPath,
@@ -58,7 +73,6 @@
 		refreshDesktopProjectAttachments as refreshDesktopProjectAttachmentsFromDesktop,
 		projectFromAttachment,
 		resolveSubmissionId,
-		verifyProjectAttachment as verifyProjectAttachmentForExecution,
 		type ProjectState
 	} from '$lib/home/desktop';
 	import { formatElapsedDuration } from '$lib/format';
@@ -86,15 +100,11 @@
 		findThreadById,
 		findProjectByRepositoryKey,
 		findProjectByWorkspacePath,
-		getProjectThreadGroups,
-		isActiveThread,
 		isAgentLaunchPending,
 		isLatestRunReadyForThread,
-		pickThreadToRestore,
 		resolveExpiredAgentLaunch,
 		resolvePendingAgentLaunch,
 		resolvePendingCreatedThreadId,
-		resolveProjectThreadSelection,
 		threadRecordToSummary,
 		type PendingAgentLaunch,
 		type PendingAgentLaunches
@@ -116,7 +126,6 @@
 		ThreadCacheStatus,
 		ThreadCacheUserRequest,
 		TranscriptMessage,
-		ThreadSummary,
 		ProjectAttachment
 	} from '$lib/types/sprocket';
 
@@ -142,6 +151,13 @@
 			($authState.nativeSession === 'notRequired' || $authState.nativeSession === 'ready') &&
 			!convexAuth.isLoading &&
 			convexAuth.isAuthenticated
+	);
+	const workspaceReadable = $derived(
+		authReady ||
+			($authState.isReady &&
+				!$authState.isLoading &&
+				isSignedIn &&
+				($authState.nativeSession === 'ready' || $authState.nativeSession === 'offline'))
 	);
 	const authConnectionFailed = $derived(
 		isSignedIn &&
@@ -170,6 +186,150 @@
 	const setThreadSelectedModel = useMutation(api.threads.setSelectedModel);
 	const answerAgentQuestion = useMutation(api.agentQuestions.answer);
 	const setThemePreference = useMutation(api.uiPreferences.setTheme);
+	const changeInboxState = useMutation(api.inbox.changeState);
+	const renameInboxThread = useMutation(api.threads.renameForLocalCache);
+	let sidebarOpen = $state(true);
+	let viewportWidth = $state(0);
+	async function openSidebar() {
+		sidebarOpen = true;
+		await tick();
+		document.querySelector<HTMLButtonElement>('.inbox-sidebar-host button')?.focus();
+	}
+	async function closeSidebar() {
+		sidebarOpen = false;
+		await tick();
+		document.querySelector<HTMLButtonElement>('[aria-label="Open sidebar"]')?.focus();
+	}
+	let sidebarWidth = $state(300);
+	let projectFilter = $state<string[]>([]);
+	let recentProjects = $state<string[]>([]);
+	const inbox = useInbox({
+		userId: () => signedInUserId,
+		enabled: () => getAuthenticatedQueryArgs() !== 'skip',
+		cacheReady: () => workspaceReadable,
+		projects: () => projectFilter,
+		desktop: () => desktopApi
+	});
+	$effect(() => {
+		const userId = signedInUserId;
+		untrack(() => {
+			try {
+				recentProjects = z
+					.array(z.string())
+					.parse(JSON.parse(localStorage.getItem(`sprocket:recent-projects:${userId}`) ?? '[]'));
+			} catch {
+				recentProjects = [];
+			}
+			try {
+				projectFilter = z
+					.array(z.string())
+					.max(100)
+					.parse(JSON.parse(localStorage.getItem(`sprocket:inbox-filter:${userId}`) ?? '[]'));
+			} catch {
+				projectFilter = [];
+			}
+		});
+	});
+	function filterProjects(keys: string[]) {
+		projectFilter = keys;
+		try {
+			localStorage.setItem(`sprocket:inbox-filter:${signedInUserId}`, JSON.stringify(keys));
+		} catch {
+			/* Filtering works without local storage. */
+		}
+	}
+	function chooseDraftProject(key: string) {
+		const project = findProjectByRepositoryKey(projects, key);
+		if (!project) return;
+		currentThreadId = null;
+		currentRepositoryKey = key;
+		currentWorkspacePath = project.workspacePath || null;
+		draftWorkspacePath = currentWorkspacePath;
+		projectSelectionGeneration += 1;
+		rememberProject(key);
+	}
+	function rememberProject(key: string) {
+		recentProjects = [key, ...recentProjects.filter((previous) => previous !== key)];
+		try {
+			localStorage.setItem(
+				`sprocket:recent-projects:${signedInUserId}`,
+				JSON.stringify(recentProjects)
+			);
+		} catch {
+			/* Navigation still works without device storage. */
+		}
+	}
+	function openCreateThread() {
+		const saved = signedInUserId ? loadComposerDraft(composerDraftKey(signedInUserId, null)) : null;
+		const recent = [
+			...recentProjects,
+			...Object.values(desktopProjectAttachmentsByPath)
+				.sort((a, b) => b.lastUsedAt - a.lastUsedAt)
+				.map((attachment) => attachment.repositoryKey)
+		];
+		if (saved?.repositoryKey && (saved.prompt || saved.attachments.length))
+			recent.unshift(saved.repositoryKey);
+		const available = projects.map((project) => project.repositoryKey);
+		if (saved?.repositoryKey) available.push(saved.repositoryKey);
+		const key = createProjectDefault(available, projectFilter, recent);
+		currentThreadId = null;
+		pendingCreatedThreadId = null;
+		currentError = null;
+		settingsOpen = false;
+		projectSelectionGeneration += 1;
+		if (key) {
+			currentRepositoryKey = key;
+			currentWorkspacePath = findProjectByRepositoryKey(projects, key)?.workspacePath || null;
+			draftWorkspacePath = currentWorkspacePath;
+		} else {
+			currentRepositoryKey = null;
+			currentWorkspacePath = null;
+			draftWorkspacePath = null;
+		}
+		if (matchMedia('(max-width: 767px)').matches) sidebarOpen = false;
+		void tick().then(() =>
+			document.querySelector<HTMLTextAreaElement>('.composer-draft textarea')?.focus()
+		);
+	}
+	function openInboxThread(thread: Doc<'threadRecords'>) {
+		inbox.remember(thread);
+		rememberProject(thread.repositoryKey);
+		const project = findProjectByRepositoryKey(projects, thread.repositoryKey);
+		currentRepositoryKey = thread.repositoryKey;
+		currentWorkspacePath = project?.workspacePath || null;
+		currentThreadId = thread._id;
+		draftWorkspacePath = null;
+		settingsOpen = false;
+		currentError = null;
+		projectSelectionGeneration += 1;
+		if (matchMedia('(max-width: 767px)').matches) sidebarOpen = false;
+	}
+	async function updateInboxThread(
+		thread: Doc<'threadRecords'>,
+		state: InboxState,
+		snoozedUntil?: number,
+		undo = false
+	) {
+		if (!inbox.online) throw new Error('Reconnect before changing thread state.');
+		const generation = projectSelectionGeneration;
+		const userId = signedInUserId;
+		const record = await changeInboxState({
+			threadId: thread._id,
+			state,
+			snoozedUntil,
+			expectedState: inboxState(thread),
+			expectedSnoozedUntil: thread.snoozedUntil ?? null
+		});
+		inbox.remember(record);
+		if (
+			!undo &&
+			generation === projectSelectionGeneration &&
+			userId === signedInUserId &&
+			currentThreadId === thread._id &&
+			(state === 'settled' || state === 'snoozed')
+		)
+			openCreateThread();
+	}
 	const ensureMySubscription = useMutation(api.billing.ensureMySubscription);
 	let modelCatalog = $state<ModelCatalog | undefined>(undefined);
 	let catalogError = $state<string | null>(null);
@@ -252,14 +412,11 @@
 	let nextAgentLaunchId = 0;
 	let nextSubmissionSequence = 0;
 	let hasResolvedInitialSelection = $state(false);
-	let restoredWorkspacePathToAttach = $state<string | null>(null);
-	let lastSyncedComposerThreadId: Id<'threadRecords'> | null = null;
 	let projectSelectionGeneration = $state(0);
 	let pendingCreatedThreadId = $state<Id<'threadRecords'> | null>(null);
 	let desktopProjectAttachmentsByPath = $state<Record<string, ProjectAttachment>>({});
 	let hasLoadedDesktopProjectAttachments = $state(false);
 	let desktopProjectAttachmentsGeneration = 0;
-	let threadSnapshotReady = $state(false);
 	let threadCacheStatus = $state<ThreadCacheStatus>('loading');
 	let threadSnapshotThreads = $state<Doc<'threadRecords'>[]>([]);
 	let threadCacheGeneration = 0;
@@ -268,6 +425,7 @@
 	let projectPickerOpen = $state(false);
 	let projectPickerMode = $state<'add' | 'reconnect'>('add');
 	let projectPickerExpectedDisplayName = $state<string | undefined>(undefined);
+	let projectPickerExpectedRepositoryKey = $state<string | null>(null);
 	let projectPickerReconnectWorkspacePath = $state<string | null>(null);
 	let settingsOpen = $state(false);
 	let settingsPage = $state<SettingsPage>('account');
@@ -292,6 +450,11 @@
 		);
 		return true;
 	}
+	function updateOwnedAttachment(key: string, localId: string, patch: Partial<ComposerAttachment>) {
+		return loadedDraftKey === key
+			? updateComposerAttachment(localId, patch)
+			: updateDraftAttachment(key, localId, patch);
+	}
 
 	function discardComposerUpload(args: {
 		api?: DesktopApi | null;
@@ -299,6 +462,7 @@
 		threadId?: Id<'threadRecords'> | null;
 		storageId: Id<'_storage'>;
 	}) {
+		if (!inbox.online) return;
 		try {
 			const api = args.api ?? desktopApi;
 			const userId = args.userId ?? getCurrentUserId();
@@ -317,17 +481,23 @@
 		}
 	}
 
-	async function uploadComposerAttachment(localId: string, file: File, name: string) {
+	const uploadingAttachments = new SvelteSet<string>();
+	async function uploadComposerAttachment(
+		attachment: ComposerAttachment,
+		key: string,
+		userId: string,
+		threadId: Id<'threadRecords'> | null
+	) {
+		const { localId, name } = attachment;
 		const api = desktopApi;
-		const userId = getCurrentUserId();
-		const threadId = currentThreadId;
 		try {
 			if (!api) {
 				throw new Error(localServerRequiredMessage);
 			}
-			if (!userId) {
-				throw new Error('Sign in to attach files.');
-			}
+			const blob = await loadDraftFile(userId, localId);
+			if (!blob) throw new Error('Attach this file again. Its local copy is unavailable.');
+			if (getCurrentUserId() !== userId || !inbox.online) return;
+			const file = new File([blob], name, { type: attachment.mediaType });
 			const registered = await api.uploadTranscriptAttachment({
 				userId,
 				name,
@@ -337,10 +507,9 @@
 			if ('error' in registered) {
 				throw new Error(registered.error);
 			}
-			const attachment = composerAttachments.find((entry) => entry.localId === localId);
-			revokeAttachmentPreview(attachment?.previewUrl);
-			const stillAttached = updateComposerAttachment(localId, {
+			const stillAttached = updateOwnedAttachment(key, localId, {
 				status: 'ready',
+				uploadedAt: Date.now(),
 				storageId: registered.storageId,
 				name: registered.name,
 				mediaType: registered.mediaType,
@@ -357,15 +526,43 @@
 			}
 		} catch (error) {
 			const message = error instanceof Error ? error.message : 'Upload failed.';
-			updateComposerAttachment(localId, {
+			updateOwnedAttachment(key, localId, {
 				status: 'error',
 				error: message
 			});
-			currentError = message;
+			if (loadedDraftKey === key) currentError = message;
+		} finally {
+			uploadingAttachments.delete(localId);
 		}
 	}
+	$effect(() => {
+		const userId = signedInUserId;
+		const threadId = currentThreadId;
+		const attachments = composerAttachments;
+		if (!userId || !inbox.online) return;
+		untrack(() => {
+			for (const attachment of attachments) {
+				if (
+					attachment.status !== 'uploading' ||
+					!attachment.fileSaved ||
+					uploadingAttachments.has(attachment.localId)
+				)
+					continue;
+				uploadingAttachments.add(attachment.localId);
+				void uploadComposerAttachment(
+					attachment,
+					composerDraftKey(userId, threadId),
+					userId,
+					threadId
+				);
+			}
+		});
+	});
 
 	function addComposerAttachments(files: File[]) {
+		const userId = signedInUserId;
+		if (!userId) return;
+		const key = composerDraftKey(userId, currentThreadId);
 		for (const file of files) {
 			const localId = crypto.randomUUID();
 			const name = fallbackAttachmentName(file);
@@ -383,7 +580,17 @@
 					status: 'uploading'
 				}
 			];
-			void uploadComposerAttachment(localId, file, name);
+			void saveDraftFile(userId, localId, file)
+				.then(() => {
+					if (!updateOwnedAttachment(key, localId, { fileSaved: true }))
+						void deleteDraftFile(userId, localId).catch(() => {});
+				})
+				.catch(() =>
+					updateOwnedAttachment(key, localId, {
+						status: 'error',
+						error: 'Could not save this file locally. Attach it again.'
+					})
+				);
 		}
 	}
 
@@ -393,6 +600,7 @@
 			return;
 		}
 		revokeAttachmentPreview(attachment.previewUrl);
+		if (signedInUserId) void deleteDraftFile(signedInUserId, localId).catch(() => {});
 		composerAttachments = composerAttachments.filter((entry) => entry.localId !== localId);
 		if (attachment.storageId) {
 			discardComposerUpload({
@@ -412,6 +620,7 @@
 		const discardThreadId = options.threadId === undefined ? currentThreadId : options.threadId;
 		for (const attachment of composerAttachments) {
 			revokeAttachmentPreview(attachment.previewUrl);
+			if (discardUserId) void deleteDraftFile(discardUserId, attachment.localId).catch(() => {});
 			if (options.discard && attachment.storageId) {
 				discardComposerUpload({
 					userId: discardUserId,
@@ -423,9 +632,79 @@
 		composerAttachments = [];
 	}
 
-	function getComposerScope(threadId: Id<'threadRecords'> | null, workspacePath: string | null) {
-		return threadId ? `thread:${threadId}` : workspacePath ? `draft:${workspacePath}` : null;
+	function getComposerScope(threadId: Id<'threadRecords'> | null) {
+		return threadId ? `thread:${threadId}` : 'draft';
 	}
+	let loadedDraftKey: string | null = null;
+	let loadedDraftRepository: string | null = null;
+	let draftPersistenceError = $state(false);
+	let draftSubmission = $state<ComposerDraft['submission']>();
+	function composerDraftSnapshot(): ComposerDraft {
+		return {
+			prompt,
+			submission: draftSubmission,
+			selectedModel,
+			reasoningEffort: selectedReasoningEffort,
+			fastMode,
+			repositoryKey: currentRepositoryKey,
+			attachments: composerAttachments.map((attachment) => ({
+				...attachment,
+				previewUrl: undefined
+			}))
+		};
+	}
+	$effect.pre(() => {
+		const key =
+			signedInUserId && selectionUserId === signedInUserId
+				? composerDraftKey(signedInUserId, currentThreadId)
+				: null;
+		const repository = currentRepositoryKey;
+		untrack(() => {
+			if (loadedDraftKey === key) {
+				loadedDraftRepository = repository;
+				return;
+			}
+			if (loadedDraftKey)
+				saveComposerDraft(loadedDraftKey, {
+					...composerDraftSnapshot(),
+					repositoryKey: loadedDraftRepository
+				});
+			loadedDraftKey = key;
+			loadedDraftRepository = repository;
+			const draft = key ? loadComposerDraft(key) : null;
+			const thread =
+				inbox.records.find((record) => record._id === currentThreadId) ??
+				threadSnapshotThreads.find((record) => record._id === currentThreadId);
+			draftSubmission = draft?.submission;
+			if (!currentThreadId && !repository && draft?.repositoryKey)
+				currentRepositoryKey = draft.repositoryKey;
+			for (const attachment of composerAttachments) revokeAttachmentPreview(attachment.previewUrl);
+			prompt = draft?.prompt ?? '';
+			composerAttachments = draft?.attachments ?? [];
+			selectedModel =
+				draft?.selectedModel ??
+				thread?.selectedModel ??
+				modelCatalog?.defaultModelId ??
+				defaultModelId;
+			selectedReasoningEffort =
+				draft?.reasoningEffort ??
+				thread?.reasoningEffort ??
+				modelCatalog?.defaultReasoningEffort ??
+				defaultReasoningEffort;
+			fastMode = draft?.fastMode ?? thread?.fastMode ?? false;
+			composerContinuationOfRunId = null;
+			autoSubmitComposerContinuation = false;
+		});
+	});
+	$effect(() => {
+		const key = signedInUserId ? composerDraftKey(signedInUserId, currentThreadId) : null;
+		const draft = composerDraftSnapshot();
+		if (!key || key !== loadedDraftKey) return;
+		const timer = setTimeout(() => {
+			draftPersistenceError = !saveComposerDraft(key, draft);
+		}, 300);
+		return () => clearTimeout(timer);
+	});
 
 	function clearSubmittingPrompt(scope: string, submissionSequence: number) {
 		if (submittingPromptScopes.get(scope) === submissionSequence) {
@@ -492,6 +771,10 @@
 	});
 
 	async function handleThemeChange(theme: SprocketTheme) {
+		if (!inbox.online) {
+			currentError = 'Reconnect before changing account settings.';
+			return;
+		}
 		const previous = workspaceTheme;
 		const generation = ++themeSaveGeneration;
 		pendingTheme = theme;
@@ -546,12 +829,37 @@
 
 		return null;
 	});
-	const projects = $derived.by<ProjectState[]>(() =>
-		Object.values(desktopProjectAttachmentsByPath)
-			.sort((left, right) => right.lastUsedAt - left.lastUsedAt)
-			.map(projectFromAttachment)
+	const projects = $derived.by<ProjectState[]>(() => {
+		const byKey = new SvelteMap<string, ProjectState>();
+		for (const attachment of Object.values(desktopProjectAttachmentsByPath).sort(
+			(a, b) => b.lastUsedAt - a.lastUsedAt
+		)) {
+			if (!byKey.has(attachment.repositoryKey))
+				byKey.set(attachment.repositoryKey, projectFromAttachment(attachment));
+		}
+		for (const record of [...inbox.projects, ...inbox.records]) {
+			if (!byKey.has(record.repositoryKey))
+				byKey.set(record.repositoryKey, {
+					repositoryKey: record.repositoryKey,
+					displayName: record.repositoryKey.split('/').at(-1) || record.repositoryKey,
+					workspacePath: '',
+					localAttachmentAvailability: 'unavailable',
+					localAttachmentError: 'Project not connected here.'
+				});
+		}
+		return [...byKey.values()];
+	});
+	const threads = $derived(
+		[
+			...new Map(
+				[
+					...threadSnapshotThreads,
+					...inbox.records,
+					...(activeThreadQuery.data ? [activeThreadQuery.data] : [])
+				].map((thread) => [thread._id, thread])
+			).values()
+		].map(threadRecordToSummary)
 	);
-	const threads = $derived(threadSnapshotThreads.map(threadRecordToSummary));
 	const currentActiveThread = $derived(dataForThread(activeThreadQuery.data, currentThreadId));
 	const contextUsage = $derived.by(() => {
 		const model = modelCatalog
@@ -804,18 +1112,6 @@
 		};
 	});
 
-	const currentProjectThreads = $derived.by<ThreadSummary[]>(() => {
-		if (!currentProject?.repositoryKey) {
-			return [];
-		}
-
-		return threads
-			.filter(
-				(thread) => thread.repositoryKey === currentProject.repositoryKey && isActiveThread(thread)
-			)
-			.sort((left, right) => right.lastMessageAt - left.lastMessageAt);
-	});
-
 	const runState = $derived(currentLifecycle?.run ?? null);
 	const visibleActions: ExecutorJob[] = [];
 	let artifactWatchGeneration = 0;
@@ -1007,7 +1303,7 @@
 	const fullscreenArtifact = $derived(
 		threadArtifacts.find((artifact) => artifact.key === artifactFullscreenKey) ?? null
 	);
-	const currentComposerScope = $derived(getComposerScope(currentThreadId, currentProjectPath));
+	const currentComposerScope = $derived(getComposerScope(currentThreadId));
 	const currentRecoveredSubmission = $derived.by(() => {
 		const userId = getCurrentUserId();
 		if (!userId || !currentComposerScope) return undefined;
@@ -1027,7 +1323,6 @@
 	const runElapsedSeconds = $derived(
 		isRunInProgress ? elapsedSeconds(runState?.startedAt, tickingNow()) : undefined
 	);
-	const groupedProjectThreads = $derived(getProjectThreadGroups(projects, threads));
 	const hasPendingAgentLaunch = $derived(
 		isAgentLaunchPending(pendingAgentLaunches, currentThreadId)
 	);
@@ -1049,6 +1344,7 @@
 	const canSend = $derived(
 		Boolean(
 			currentProjectPath &&
+			inbox.online &&
 			currentProject?.localAttachmentAvailability === 'available' &&
 			!isSubmittingPrompt &&
 			!answeringAgentQuestion &&
@@ -1143,9 +1439,6 @@
 		lastSyncedAt: number | null;
 	}) {
 		threadCacheStatus = event.status;
-		if (event.status !== 'loading') {
-			threadSnapshotReady = true;
-		}
 	}
 
 	async function pullThreadSnapshot(userId: string) {
@@ -1223,7 +1516,6 @@
 					return;
 				}
 				threadCacheStatus = 'error';
-				threadSnapshotReady = true;
 				currentError = error instanceof Error ? error.message : 'Could not sync threads.';
 			}
 		})();
@@ -1293,28 +1585,10 @@
 		return attachment;
 	}
 
-	function openProject(
-		workspacePath: string,
-		selection: { threadId?: Id<'threadRecords'> | null; draft?: boolean } = {}
-	) {
-		const project = findProjectByWorkspacePath(projects, workspacePath);
-		if (!project) {
-			currentError = 'Choose a project first.';
-			return;
-		}
-
-		setProjectSelection(workspacePath, selection.threadId, selection.draft);
-		const selectionGeneration = projectSelectionGeneration;
-		void verifyProject(project.workspacePath).catch((error) => {
-			if (selectionGeneration === projectSelectionGeneration) {
-				currentError = error instanceof Error ? error.message : 'Failed to attach project.';
-			}
-		});
-	}
-
 	function openProjectPicker(
 		mode: 'add' | 'reconnect' = 'add',
-		workspacePath: string | null = null
+		workspacePath: string | null = null,
+		repositoryKey: string | null = null
 	) {
 		if (!desktopApi) {
 			currentError = localServerRequiredMessage;
@@ -1323,10 +1597,8 @@
 
 		projectPickerMode = mode;
 		projectPickerReconnectWorkspacePath = workspacePath;
-		const reconnectProject =
-			mode === 'reconnect' && workspacePath
-				? findProjectByWorkspacePath(projects, workspacePath)
-				: undefined;
+		projectPickerExpectedRepositoryKey = repositoryKey;
+		const reconnectProject = findProjectByRepositoryKey(projects, repositoryKey);
 		projectPickerExpectedDisplayName = reconnectProject?.displayName;
 		projectPickerOpen = true;
 		currentError = null;
@@ -1344,12 +1616,21 @@
 		}
 
 		try {
-			if (projectPickerMode === 'reconnect' && projectPickerReconnectWorkspacePath) {
-				await reconnectProjectSelection(
-					selection,
-					projectPickerReconnectWorkspacePath,
-					pickerUserId
+			if (projectPickerMode === 'reconnect' && projectPickerExpectedRepositoryKey) {
+				if (selection.repositoryKey !== projectPickerExpectedRepositoryKey) {
+					throw new Error(
+						`Choose a folder for ${projectPickerExpectedRepositoryKey}. This folder belongs to ${selection.repositoryKey}.`
+					);
+				}
+				const generation = projectSelectionGeneration;
+				const selectedThreadId = currentThreadId;
+				await attachLocalProject(
+					selection.workspacePath,
+					projectPickerReconnectWorkspacePath ?? undefined
 				);
+				if (getCurrentUserId() === pickerUserId && generation === projectSelectionGeneration) {
+					setProjectSelection(selection.workspacePath, selectedThreadId, !selectedThreadId);
+				}
 				return;
 			}
 
@@ -1369,37 +1650,6 @@
 			return;
 		}
 		setProjectSelection(selection.workspacePath, null, true);
-		currentError = null;
-	}
-
-	async function reconnectProjectSelection(
-		selection: ProjectSelection,
-		previousWorkspacePath: string,
-		expectedUserId: string
-	) {
-		const previousProject = findProjectByWorkspacePath(projects, previousWorkspacePath);
-		await attachLocalProject(
-			selection.workspacePath,
-			previousWorkspacePath === selection.workspacePath ? undefined : previousWorkspacePath
-		);
-		if (getCurrentUserId() !== expectedUserId) {
-			return;
-		}
-		if (
-			previousProject &&
-			previousProject.repositoryKey !== selection.repositoryKey &&
-			getAuthenticatedQueryArgs() !== 'skip' &&
-			!projects.some(
-				(project) =>
-					project.workspacePath !== selection.workspacePath &&
-					project.repositoryKey === previousProject.repositoryKey
-			)
-		) {
-			await rekeyLocalRepository(previousProject.repositoryKey, selection.repositoryKey);
-		}
-		const keepThread =
-			previousProject?.repositoryKey === selection.repositoryKey ? currentThreadId : null;
-		setProjectSelection(selection.workspacePath, keepThread);
 		currentError = null;
 	}
 
@@ -1435,22 +1685,10 @@
 		await addProjectSelection(selection, userId);
 	}
 
-	async function verifyProject(workspacePath: string) {
-		await verifyProjectAttachmentForExecution({
-			desktopApi,
-			refreshDesktopProjectAttachments,
-			workspacePath
-		});
-	}
-
-	function reconnectProject(workspacePath: string) {
-		openProjectPicker('reconnect', workspacePath);
-	}
-
 	async function persistSelectedModel(modelId: CatalogModelId) {
 		const threadId = currentThreadId;
 		const userId = getCurrentUserId();
-		if (!threadId || !userId) {
+		if (!threadId || !userId || !inbox.online) {
 			return;
 		}
 
@@ -1464,25 +1702,6 @@
 				currentError =
 					error instanceof Error ? error.message : 'Failed to save the selected model.';
 			}
-		}
-	}
-
-	function startThreadDraftForProject(workspacePath: string) {
-		openProject(workspacePath, { draft: true });
-	}
-
-	function selectThread(thread: ThreadSummary, workspacePath: string) {
-		openProject(workspacePath, { threadId: thread.threadId });
-	}
-
-	async function renameThread(threadId: Id<'threadRecords'>, title: string) {
-		try {
-			const { api, userId } = localThreadCommandContext();
-			const cacheSynchronized = await api.renameThread({ userId, threadId, title });
-			if (!cacheSynchronized) threadCacheStatus = 'reconnecting';
-			await pullThreadSnapshot(userId);
-		} catch (error) {
-			currentError = error instanceof Error ? error.message : 'Failed to rename thread.';
 		}
 	}
 
@@ -1521,50 +1740,8 @@
 		);
 	}
 
-	async function archiveThread(threadId: Id<'threadRecords'>) {
-		const archiveUserId = getCurrentUserId();
-		try {
-			const { api, userId } = localThreadCommandContext();
-			const cacheSynchronized = await api.archiveThread({ userId, threadId });
-			if (!cacheSynchronized) threadCacheStatus = 'reconnecting';
-			await pullThreadSnapshot(userId);
-			if (archiveUserId) {
-				clearComposerRecovery(archiveUserId, `thread:${threadId}`);
-				const api = desktopApi;
-				if (api) {
-					await api.clearTranscriptReplica({
-						userId: archiveUserId,
-						threadId
-					});
-				}
-			}
-			if (getCurrentUserId() === archiveUserId) {
-				if (currentThreadId === threadId) {
-					currentThreadId = null;
-					projectSelectionGeneration += 1;
-				}
-				currentError = null;
-			}
-		} catch (error) {
-			if (getCurrentUserId() !== archiveUserId) {
-				return;
-			}
-			currentError = error instanceof Error ? error.message : 'Failed to archive thread.';
-		}
-	}
-
-	async function restoreThread(threadId: Id<'threadRecords'>) {
-		try {
-			const { api, userId } = localThreadCommandContext();
-			const cacheSynchronized = await api.restoreThread({ userId, threadId });
-			if (!cacheSynchronized) threadCacheStatus = 'reconnecting';
-			await pullThreadSnapshot(userId);
-		} catch (error) {
-			currentError = error instanceof Error ? error.message : 'Failed to restore thread.';
-		}
-	}
-
 	async function submitAgentQuestionAnswer() {
+		if (!inbox.online) return;
 		const question = pendingAgentQuestion;
 		const threadId = currentThreadId;
 		const userId = getCurrentUserId();
@@ -1640,6 +1817,29 @@
 		answeredQuestionId: Id<'agentQuestions'>;
 		continuationOfRunId: Id<'runs'> | undefined;
 	}) {
+		if (!inbox.online) return;
+		if (
+			composerAttachments.some(
+				(attachment) =>
+					attachment.uploadedAt && Date.now() - attachment.uploadedAt >= 23 * 3_600_000
+			)
+		) {
+			composerAttachments = composerAttachments.map((attachment) =>
+				attachment.uploadedAt && Date.now() - attachment.uploadedAt >= 23 * 3_600_000
+					? {
+							...attachment,
+							status: attachment.fileSaved ? 'uploading' : 'error',
+							storageId: undefined,
+							uploadedAt: undefined,
+							error: attachment.fileSaved
+								? undefined
+								: 'Attach this file again. Its local copy is unavailable.'
+						}
+					: attachment
+			);
+			currentError = 'Refreshing file uploads. Send again when the files are ready.';
+			return;
+		}
 		if (pendingAgentQuestion) {
 			if (
 				options?.answeredQuestionId &&
@@ -1717,9 +1917,9 @@
 		const submittedContinuationOfRunId =
 			options?.continuationOfRunId ?? composerContinuationOfRunId ?? undefined;
 		const previousRunId = selectedThreadId ? (runState?.runId ?? null) : null;
-		let submissionScope = selectedThreadId
-			? `thread:${selectedThreadId}`
-			: `draft:${workspacePath}`;
+		const submissionScope = getComposerScope(selectedThreadId);
+		const submittedDraftKey = composerDraftKey(submittedUserId, selectedThreadId);
+		const selectionGeneration = projectSelectionGeneration;
 		const originatingRecoveryScope = submissionScope;
 		let recoveryScope = originatingRecoveryScope;
 		const originatingRecoveryKey = getComposerRecoveryKey(
@@ -1728,6 +1928,17 @@
 		);
 		const recoveredSubmission = recoveredSubmissionIds.get(originatingRecoveryKey);
 		const freshSubmissionId = crypto.randomUUID();
+		const fingerprint = () =>
+			JSON.stringify([
+				submittedRepositoryKey,
+				submittedPrompt,
+				submittedStorageIds,
+				submittedModel,
+				submittedReasoningEffort,
+				submittedFastMode,
+				submittedContinuationOfRunId
+			]);
+		const submissionFingerprint = fingerprint();
 		const threadSubmissionId = resolveSubmissionId({
 			latestRun:
 				!selectedThreadId || !currentLifecycle || currentLifecycle.phase === 'idle'
@@ -1737,21 +1948,28 @@
 							status: isLifecycleInProgress(currentLifecycle.phase) ? 'queued' : 'completed',
 							submissionId: currentRecoveredSubmission?.submissionId ?? ''
 						},
-			newSubmissionId: freshSubmissionId,
+			newSubmissionId:
+				draftSubmission?.fingerprint === submissionFingerprint
+					? draftSubmission.id
+					: freshSubmissionId,
 			prompt: submittedPrompt,
 			storageIds: submittedStorageIds,
 			reasoningEffort: submittedReasoningEffort,
 			fastMode: submittedFastMode,
 			continuationOfRunId: submittedContinuationOfRunId,
-			recoveredSubmission: recoveredSubmission
-				? {
-						...recoveredSubmission,
-						selectedModel: recoveredSubmission.selectedModel
-					}
-				: undefined,
+			recoveredSubmission:
+				recoveredSubmission &&
+				(selectedThreadId || draftSubmission?.fingerprint === submissionFingerprint)
+					? {
+							...recoveredSubmission,
+							selectedModel: recoveredSubmission.selectedModel
+						}
+					: undefined,
 			selectedModel: submittedModel
 		});
 		const runSubmissionId = threadSubmissionId;
+		draftSubmission = { id: threadSubmissionId, fingerprint: submissionFingerprint };
+		saveComposerDraft(submittedDraftKey, composerDraftSnapshot());
 		clearComposerRecovery(submittedUserId, originatingRecoveryScope);
 		let launchedThreadId: Id<'threadRecords'> | null = null;
 		let agentLaunchId: number | null = null;
@@ -1798,7 +2016,6 @@
 			clearSubmittingPrompt(submissionScope, submissionSequence);
 			latestSubmissionSequencesByRecoveryScope.delete(submissionTrackingKey);
 		}, agentLaunchTimeoutMs);
-		prompt = '';
 		currentError = null;
 		submittingPromptScopes.set(submissionScope, submissionSequence);
 
@@ -1824,8 +2041,26 @@
 					if (!isSubmissionCurrent()) {
 						return;
 					}
+					const previousRepositoryKey = submittedRepositoryKey;
 					submittedRepositoryKey = resolution.repositoryKey;
-					currentRepositoryKey = resolution.repositoryKey;
+					if (projectSelectionGeneration === selectionGeneration)
+						currentRepositoryKey = resolution.repositoryKey;
+					const submission = { id: threadSubmissionId, fingerprint: fingerprint() };
+					if (loadedDraftKey === submittedDraftKey) {
+						draftSubmission = submission;
+						saveComposerDraft(submittedDraftKey, composerDraftSnapshot());
+					} else {
+						const draft = loadComposerDraft(submittedDraftKey);
+						if (draft)
+							saveComposerDraft(submittedDraftKey, {
+								...draft,
+								submission,
+								repositoryKey:
+									draft.repositoryKey === previousRepositoryKey
+										? submittedRepositoryKey
+										: draft.repositoryKey
+							});
+					}
 					repositoryKeyChanged = true;
 				}
 			}
@@ -1908,18 +2143,57 @@
 				},
 				onStarted: (_runId, createdThreadId) => {
 					if (!isSubmissionCurrent() || !isSubmittedUserCurrent()) return;
+					const draft =
+						loadedDraftKey === submittedDraftKey
+							? { ...composerDraftSnapshot(), attachments: composerAttachments }
+							: loadComposerDraft(submittedDraftKey);
+					const remaining = draft
+						? completeComposerDraft(draft, {
+								prompt: submittedPrompt,
+								attachments: submittedAttachments,
+								repositoryKey: submittedRepositoryKey
+							})
+						: null;
+					if (remaining) {
+						saveComposerDraft(submittedDraftKey, remaining);
+						if (loadedDraftKey === submittedDraftKey) {
+							prompt = remaining.prompt;
+							draftSubmission = remaining.submission;
+							composerAttachments = remaining.attachments;
+						}
+					}
+					for (const attachment of submittedAttachments) {
+						if (remaining?.attachments.some((entry) => entry.localId === attachment.localId))
+							continue;
+						revokeAttachmentPreview(attachment.previewUrl);
+						void deleteDraftFile(submittedUserId, attachment.localId).catch(() => {});
+					}
 					if (!selectedThreadId) {
 						launchedThreadId = createdThreadId;
-						pendingCreatedThreadId = createdThreadId;
-						projectSelectionGeneration += 1;
-						currentThreadId = createdThreadId;
-						draftWorkspacePath = null;
+						const replyKey = composerDraftKey(submittedUserId, createdThreadId);
+						if (!loadComposerDraft(replyKey))
+							saveComposerDraft(replyKey, {
+								prompt: '',
+								attachments: [],
+								repositoryKey: submittedRepositoryKey,
+								selectedModel: submittedModel,
+								reasoningEffort: submittedReasoningEffort,
+								fastMode: submittedFastMode
+							});
+						if (projectSelectionGeneration === selectionGeneration) {
+							pendingCreatedThreadId = createdThreadId;
+							projectSelectionGeneration += 1;
+							currentThreadId = createdThreadId;
+							draftWorkspacePath = null;
+						}
 						void pullThreadSnapshot(submittedUserId);
 						if (repositoryKeyChanged)
 							remoteChangeNotices.set(createdThreadId, REMOTE_CHANGE_NOTICE);
 					}
-					clearComposerAttachments({ discard: false });
-					if (composerContinuationOfRunId === submittedContinuationOfRunId) {
+					if (
+						loadedDraftKey === submittedDraftKey &&
+						composerContinuationOfRunId === submittedContinuationOfRunId
+					) {
 						composerContinuationOfRunId = null;
 						autoSubmitComposerContinuation = false;
 					}
@@ -1965,6 +2239,7 @@
 	}
 
 	async function cancelRun() {
+		if (!inbox.online) return;
 		if (!runState?.runId || !isRunInProgress) {
 			return;
 		}
@@ -1981,6 +2256,7 @@
 	}
 
 	async function continueWorking() {
+		if (!inbox.online) return;
 		if (
 			!latestRunResumeKind ||
 			!runState ||
@@ -2045,8 +2321,6 @@
 			return;
 		}
 
-		const previousUserId = selectionUserId;
-		const previousThreadId = currentThreadId;
 		selectionUserId = userId;
 		hasResolvedInitialSelection = false;
 		currentWorkspacePath = null;
@@ -2055,26 +2329,14 @@
 		draftWorkspacePath = null;
 		pendingCreatedThreadId = null;
 		pendingAgentLaunches = {};
-		restoredWorkspacePathToAttach = null;
 		ensureSubscriptionAttemptedFor = null;
-		lastSyncedComposerThreadId = null;
-		threadSnapshotReady = false;
 		threadCacheStatus = 'loading';
 		threadSnapshotThreads = [];
 		threadSnapshotPullGeneration += 1;
 		projectSelectionGeneration += 1;
-		prompt = '';
 		composerContinuationOfRunId = null;
 		autoSubmitComposerContinuation = false;
-		clearComposerAttachments({
-			discard: true,
-			userId: previousUserId,
-			threadId: previousThreadId
-		});
 		currentError = null;
-		selectedModel = modelCatalog?.defaultModelId ?? defaultModelId;
-		selectedReasoningEffort = modelCatalog?.defaultReasoningEffort ?? defaultReasoningEffort;
-		fastMode = false;
 		projectPickerOpen = false;
 		projectPickerReconnectWorkspacePath = null;
 		projectPickerExpectedDisplayName = undefined;
@@ -2117,7 +2379,6 @@
 		pendingProjectLaunches = pendingProjectLaunches.slice(1);
 		projectLaunchInFlight = true;
 		hasResolvedInitialSelection = true;
-		restoredWorkspacePathToAttach = null;
 		projectPickerOpen = false;
 		settingsOpen = false;
 		currentError = null;
@@ -2135,21 +2396,8 @@
 	});
 
 	$effect(() => {
-		const thread = currentActiveThread;
-		const threadId = thread?._id ?? null;
-		if (threadId === lastSyncedComposerThreadId) return;
-		lastSyncedComposerThreadId = threadId;
-		composerContinuationOfRunId = null;
-		autoSubmitComposerContinuation = false;
-		if (!thread) return;
-		selectedModel = thread.selectedModel;
-		selectedReasoningEffort = thread.reasoningEffort;
-		fastMode = thread.fastMode ?? false;
-	});
-
-	$effect(() => {
 		const userId = getCurrentUserId();
-		const recoveryScope = getComposerScope(currentThreadId, currentProjectPath);
+		const recoveryScope = getComposerScope(currentThreadId);
 		if (!userId || !recoveryScope) {
 			return;
 		}
@@ -2226,49 +2474,12 @@
 			return;
 		}
 
-		if (!hasLoadedDesktopProjectAttachments || !threadSnapshotReady) {
+		if (!hasLoadedDesktopProjectAttachments || !signedInUserId) {
 			return;
 		}
 
 		hasResolvedInitialSelection = true;
-		const localRepositoryKeys = new Set(projects.map((project) => project.repositoryKey));
-		const restoredThread = pickThreadToRestore(
-			threads.filter((thread) => localRepositoryKeys.has(thread.repositoryKey))
-		);
-		if (restoredThread) {
-			const restoredProject = findProjectByRepositoryKey(projects, restoredThread.repositoryKey);
-			if (restoredProject) {
-				setProjectSelection(restoredProject.workspacePath, restoredThread.threadId, false, true);
-				restoredWorkspacePathToAttach = restoredProject.workspacePath;
-				return;
-			}
-		}
-
-		if (projects[0]) {
-			setProjectSelection(projects[0].workspacePath, null, false, true);
-			restoredWorkspacePathToAttach = projects[0].workspacePath;
-		}
-	});
-
-	$effect(() => {
-		const workspacePath = restoredWorkspacePathToAttach;
-		if (!workspacePath || !desktopApi || !hasLoadedDesktopProjectAttachments) {
-			return;
-		}
-
-		const project = findProjectByWorkspacePath(projects, workspacePath);
-		if (!project) {
-			restoredWorkspacePathToAttach = null;
-			return;
-		}
-
-		restoredWorkspacePathToAttach = null;
-		const selectionGeneration = projectSelectionGeneration;
-		void verifyProject(workspacePath).catch((error) => {
-			if (selectionGeneration === projectSelectionGeneration) {
-				currentError = error instanceof Error ? error.message : 'Failed to attach project.';
-			}
-		});
+		untrack(openCreateThread);
 	});
 
 	$effect(() => {
@@ -2277,37 +2488,17 @@
 			currentProject?.repositoryKey === activeThreadSummary?.repositoryKey
 				? currentProject
 				: findProjectByRepositoryKey(projects, activeThreadSummary?.repositoryKey);
-		if (threadProject && threadProject.workspacePath !== currentWorkspacePath) {
+		if (
+			currentThreadId &&
+			threadProject?.workspacePath &&
+			threadProject.workspacePath !== currentWorkspacePath
+		) {
 			setProjectSelection(
 				threadProject.workspacePath,
 				currentThreadId,
 				draftWorkspacePath === threadProject.workspacePath
 			);
 		}
-	});
-
-	$effect(() => {
-		const threads = currentProjectThreads;
-		if (!hasResolvedInitialSelection || !currentWorkspacePath) {
-			return;
-		}
-
-		const nextThreadId = resolveProjectThreadSelection({
-			threads,
-			currentThreadId,
-			currentWorkspacePath,
-			draftWorkspacePath
-		});
-		if (nextThreadId === currentThreadId) {
-			return;
-		}
-
-		setProjectSelection(
-			currentWorkspacePath,
-			nextThreadId,
-			draftWorkspacePath === currentWorkspacePath,
-			true
-		);
 	});
 
 	$effect(() => {
@@ -2327,6 +2518,19 @@
 	});
 
 	onMount(() => {
+		const saveDraftBeforeExit = () => {
+			if (loadedDraftKey) saveComposerDraft(loadedDraftKey, composerDraftSnapshot());
+		};
+		window.addEventListener('beforeunload', saveDraftBeforeExit);
+		sidebarOpen = !matchMedia('(max-width: 767px)').matches;
+		try {
+			sidebarWidth = Math.max(
+				240,
+				Math.min(440, Number(localStorage.getItem('sprocket:inbox-width')) || 300)
+			);
+		} catch {
+			/* Use the default width when storage is unavailable. */
+		}
 		void loadModelCatalog();
 		const bridge = window.sprocketDesktopBridge;
 		const unsubscribeWorkspaceLaunch = bridge?.onWorkspaceLaunch
@@ -2363,9 +2567,15 @@
 				desktopApiResolved = true;
 			});
 
-		return () => unsubscribeWorkspaceLaunch?.();
+		return () => {
+			saveDraftBeforeExit();
+			window.removeEventListener('beforeunload', saveDraftBeforeExit);
+			unsubscribeWorkspaceLaunch?.();
+		};
 	});
 </script>
+
+<svelte:window bind:innerWidth={viewportWidth} />
 
 <svelte:head>
 	<title>Sprocket</title>
@@ -2386,7 +2596,7 @@
 			<Button href={resolve('/pair')}>Open pairing</Button>
 		{/snippet}
 	</CalmCentered>
-{:else if !authReady}
+{:else if !workspaceReadable}
 	<div class="bg-background h-screen overflow-hidden">
 		<AuthGate
 			authState={{
@@ -2419,59 +2629,107 @@
 {:else}
 	<div class="relative h-screen overflow-hidden">
 		<div
-			class="app-workspace-shell grid h-screen grid-cols-[292px_minmax(0,1fr)] overflow-hidden {!settingsOpen &&
+			class="app-workspace-shell inbox-layout {!settingsOpen &&
 			sidePanel.open &&
 			!sidePanel.expanded
 				? 'pr-[20rem]'
 				: ''}"
+			class:sidebar-hidden={!sidebarOpen}
+			style:--inbox-width={`${sidebarWidth}px`}
 			inert={fullscreenArtifact || (sidePanel.open && sidePanel.expanded) ? true : undefined}
 		>
-			{#if settingsOpen}
-				<SettingsSidebar
-					activePage={settingsPage}
-					theme={workspaceTheme}
-					onThemeChange={(theme) => void handleThemeChange(theme)}
-					onBack={() => {
-						settingsOpen = false;
-						settingsPage = 'account';
+			{#if sidebarOpen}<button
+					class="fixed inset-0 z-[140] bg-black/40 md:hidden"
+					aria-label="Close sidebar"
+					onclick={() => void closeSidebar()}
+				></button>{/if}
+			<div class="inbox-sidebar-host" inert={!sidebarOpen}>
+				{#if settingsOpen}
+					<SettingsSidebar
+						online={inbox.online}
+						activePage={settingsPage}
+						theme={workspaceTheme}
+						onThemeChange={(theme) => void handleThemeChange(theme)}
+						onBack={() => {
+							projectSelectionGeneration += 1;
+							settingsOpen = false;
+							settingsPage = 'account';
+						}}
+						onNavigate={(page) => {
+							settingsPage = page;
+							if (matchMedia('(max-width: 767px)').matches) sidebarOpen = false;
+						}}
+					/>
+				{:else}
+					{#key signedInUserId}<InboxSidebar
+							sections={inbox.sections}
+							{projects}
+							selectedProjects={projectFilter}
+							{currentThreadId}
+							userId={signedInUserId ?? ''}
+							online={inbox.online}
+							migrating={inbox.migrating}
+							error={inbox.error}
+							theme={workspaceTheme}
+							onThemeChange={(theme) => void handleThemeChange(theme)}
+							onFilter={filterProjects}
+							onSelect={openInboxThread}
+							onNew={openCreateThread}
+							onAddProject={() => openProjectPicker('add')}
+							onSettings={() => {
+								projectSelectionGeneration += 1;
+								settingsPage = 'inbox';
+								settingsOpen = true;
+								if (matchMedia('(max-width: 767px)').matches) sidebarOpen = false;
+							}}
+							onClose={() => void closeSidebar()}
+							onChange={updateInboxThread}
+							onRename={async (thread, title) => {
+								if (!inbox.online) throw new Error('Reconnect before renaming.');
+								await renameInboxThread({ threadId: thread._id, title });
+							}}
+						/>{/key}
+				{/if}
+				<button
+					type="button"
+					class="inbox-resize"
+					aria-label={`Resize sidebar, ${sidebarWidth} pixels. Use left and right arrows.`}
+					onkeydown={(event) => {
+						if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+							event.preventDefault();
+							sidebarWidth = Math.max(
+								240,
+								Math.min(440, sidebarWidth + (event.key === 'ArrowLeft' ? -10 : 10))
+							);
+						}
 					}}
-					onNavigate={(page) => {
-						settingsPage = page;
+					onpointerdown={(event) => {
+						event.currentTarget.setPointerCapture(event.pointerId);
 					}}
-				/>
-			{:else}
-				<ProjectSidebar
-					{currentWorkspacePath}
-					{currentThreadId}
-					groups={groupedProjectThreads}
-					{pendingAgentLaunches}
-					theme={workspaceTheme}
-					onThemeChange={(theme) => void handleThemeChange(theme)}
-					onAddProject={() => {
-						openProjectPicker('add');
+					onpointermove={(event) => {
+						if (event.currentTarget.hasPointerCapture(event.pointerId))
+							sidebarWidth = Math.max(240, Math.min(440, event.clientX));
 					}}
-					onReconnectProject={(workspacePath) => {
-						void reconnectProject(workspacePath);
+					onpointerup={(event) => {
+						event.currentTarget.releasePointerCapture(event.pointerId);
+						try {
+							localStorage.setItem('sprocket:inbox-width', String(sidebarWidth));
+						} catch {
+							/* Width remains usable without persistence. */
+						}
 					}}
-					onOpenSettings={() => {
-						settingsPage = 'account';
-						settingsOpen = true;
-					}}
-					onStartThreadDraft={startThreadDraftForProject}
-					onSelectThread={selectThread}
-					onSelectProject={(workspacePath) => {
-						openProject(workspacePath);
-					}}
-					onRenameThread={(threadId, title) => {
-						void renameThread(threadId, title);
-					}}
-					onArchiveThread={(threadId) => {
-						void archiveThread(threadId);
-					}}
-				/>
-			{/if}
+				></button>
+			</div>
 
-			<main class="relative flex h-screen min-h-0 min-w-0 flex-col overflow-hidden">
+			<main
+				class="relative flex h-screen min-h-0 min-w-0 flex-col overflow-hidden"
+				inert={sidebarOpen && viewportWidth < 768}
+			>
+				{#if !sidebarOpen}<button
+						class="inbox-icon absolute top-3 left-3 z-50"
+						aria-label="Open sidebar"
+						onclick={() => void openSidebar()}><PanelLeft size={18} /></button
+					>{/if}
 				{#if !settingsOpen && !sidePanel.open}
 					<button
 						type="button"
@@ -2485,118 +2743,158 @@
 					</button>
 				{/if}
 				{#if settingsOpen}
-					{#if settingsPage === 'archived'}
-						<SettingsArchived
-							{threads}
-							{projects}
-							onRestore={(threadId) => {
-								void restoreThread(threadId);
-							}}
+					{#if settingsPage === 'inbox'}
+						<SettingsInbox
+							online={inbox.online}
+							days={uiPreferencesQuery.data?.autoSettleDays === undefined
+								? 7
+								: uiPreferencesQuery.data.autoSettleDays}
 						/>
 					{:else if settingsPage === 'usage'}
 						<SettingsUsage />
 					{:else if settingsPage === 'browser'}
-						<SettingsBrowser />
+						<SettingsBrowser online={inbox.online} />
 					{:else if settingsPage === 'payments'}
-						<SettingsPayments />
+						<SettingsPayments online={inbox.online} />
 					{:else}
 						<SettingsAccount user={$authState.user} onSignOut={() => void signOut()} />
 					{/if}
 				{:else}
-					{#key `${currentThreadId}:${replicaWindowVersion}`}
-						<ThreadTranscript
-							currentError={replicaError ??
-								currentError ??
-								$authState.error ??
-								(queryError instanceof Error ? convexClientErrorMessage(queryError) : null) ??
-								(threadCacheStatus === 'error' ? 'Could not sync threads.' : null) ??
-								(threadCacheStatus === 'offline' ? 'Thread sync is offline.' : null) ??
-								null}
-							runError={latestRunResumeKind ? null : (runState?.lastError ?? null)}
-							messages={visibleMessages}
-							actions={visibleActions}
-							activeRunId={isRunInProgress ? (runState?.runId ?? null) : null}
-							project={currentProject}
-							remoteChangeNotice={currentThreadId
-								? (remoteChangeNotices.get(currentThreadId) ?? null)
-								: null}
-							onDismissRemoteChangeNotice={() => {
-								if (currentThreadId) {
-									remoteChangeNotices.delete(currentThreadId);
-								}
-							}}
-							stale={replicaStale}
-							loadingOlder={loadingOlderTranscript}
-							nextBefore={replicaNextBefore ?? undefined}
-							emptyStateMessage={currentThreadId &&
-							(replicaLoading || replicaThreadId !== currentThreadId)
-								? ''
-								: currentProject
-									? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
-									: 'Add a project to begin.'}
-							onLoadOlder={() => {
-								void loadOlderTranscript();
-							}}
-							loadAttachment={loadTranscriptAttachment}
-							loadSectionDetails={loadTranscriptSectionDetails}
-						/>
-					{/key}
-
-					{#if catalogError}
-						<div
-							role="alert"
-							class="text-destructive mb-3 flex items-center justify-between gap-3 rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-sm"
-						>
-							<span>{CATALOG_UNAVAILABLE_MESSAGE}</span>
-							<Button
-								variant="outline"
-								className="h-8 px-3"
-								disabled={catalogLoading}
-								onclick={() => {
-									void loadModelCatalog();
+					{#if currentThreadId}
+						{#key `${currentThreadId}:${replicaWindowVersion}`}
+							<ThreadTranscript
+								currentError={replicaError ??
+									currentError ??
+									$authState.error ??
+									(queryError instanceof Error ? convexClientErrorMessage(queryError) : null) ??
+									(threadCacheStatus === 'error' ? 'Could not sync threads.' : null) ??
+									(threadCacheStatus === 'offline' ? 'Thread sync is offline.' : null) ??
+									null}
+								runError={latestRunResumeKind ? null : (runState?.lastError ?? null)}
+								messages={visibleMessages}
+								actions={visibleActions}
+								activeRunId={isRunInProgress ? (runState?.runId ?? null) : null}
+								project={currentProject}
+								remoteChangeNotice={currentThreadId
+									? (remoteChangeNotices.get(currentThreadId) ?? null)
+									: null}
+								onDismissRemoteChangeNotice={() => {
+									if (currentThreadId) {
+										remoteChangeNotices.delete(currentThreadId);
+									}
 								}}
-							>
-								{catalogLoading ? 'Retrying…' : 'Retry'}
-							</Button>
-						</div>
-					{:else if catalogLoading && !modelCatalog}
-						<div class="text-muted-foreground mb-3 text-sm">Loading models…</div>
+								stale={replicaStale}
+								loadingOlder={loadingOlderTranscript}
+								nextBefore={replicaNextBefore ?? undefined}
+								emptyStateMessage={currentThreadId &&
+								(replicaLoading || replicaThreadId !== currentThreadId)
+									? ''
+									: currentProject
+										? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
+										: 'Add a project to begin.'}
+								onLoadOlder={() => {
+									void loadOlderTranscript();
+								}}
+								loadAttachment={loadTranscriptAttachment}
+								loadSectionDetails={loadTranscriptSectionDetails}
+							/>
+						{/key}
 					{/if}
+					<div class={!currentThreadId ? 'inbox-create' : ''}>
+						{#if !currentThreadId}<CreateThreadHeading
+								{projects}
+								repositoryKey={currentRepositoryKey}
+								onProject={chooseDraftProject}
+								onAddProject={() => openProjectPicker('add')}
+							/>{/if}
+						{#if currentProject?.localAttachmentAvailability === 'unavailable'}<p
+								class="inbox-create-message"
+							>
+								Project not connected here. <button
+									onclick={() =>
+										openProjectPicker('reconnect', currentWorkspacePath, currentRepositoryKey)}
+									>Connect a local folder</button
+								> to start local work.
+							</p>{/if}
+						{#if !currentThreadId && currentError}<p
+								class="inbox-create-message text-destructive"
+								role="alert"
+							>
+								{currentError}
+							</p>{/if}
 
-					<PromptComposer
-						bind:prompt
-						attachments={composerAttachments}
-						onAttachFiles={addComposerAttachments}
-						onRemoveAttachment={removeComposerAttachment}
-						{modelCatalog}
-						bind:selectedModel
-						onModelChange={(modelId) => {
-							void persistSelectedModel(modelId);
-						}}
-						bind:selectedReasoningEffort
-						bind:fastMode
-						pendingQuestion={pendingAgentQuestion}
-						showContinueWorking={latestRunResumeKind != null}
-						onContinueWorking={() => {
-							void continueWorking();
-						}}
-						bind:selectedQuestionOptionId
-						{canSend}
-						isSubmitting={isSubmittingPrompt || hasPendingAgentLaunch || answeringAgentQuestion}
-						isStarting={hasPendingAgentLaunch}
-						{isRunning}
-						elapsedLabel={runElapsedSeconds === undefined
-							? null
-							: formatElapsedDuration(runElapsedSeconds)}
-						{contextUsage}
-						projectSkills={composerProjectSkills}
-						onSubmit={() => {
-							void submitPrompt();
-						}}
-						onCancel={() => {
-							void cancelRun();
-						}}
-					/>
+						{#if catalogError}
+							<div
+								role="alert"
+								class="text-destructive mb-3 flex items-center justify-between gap-3 rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-sm"
+							>
+								<span>{CATALOG_UNAVAILABLE_MESSAGE}</span>
+								<Button
+									variant="outline"
+									className="h-8 px-3"
+									disabled={catalogLoading}
+									onclick={() => {
+										void loadModelCatalog();
+									}}
+								>
+									{catalogLoading ? 'Retrying…' : 'Retry'}
+								</Button>
+							</div>
+						{:else if catalogLoading && !modelCatalog}
+							<div class="text-muted-foreground mb-3 text-sm">Loading models…</div>
+						{/if}
+
+						<div class={!currentThreadId ? 'composer-draft' : ''}>
+							<PromptComposer
+								bind:prompt
+								attachments={composerAttachments}
+								onAttachFiles={addComposerAttachments}
+								onRemoveAttachment={removeComposerAttachment}
+								{modelCatalog}
+								bind:selectedModel
+								onModelChange={(modelId) => {
+									void persistSelectedModel(modelId);
+								}}
+								bind:selectedReasoningEffort
+								bind:fastMode
+								pendingQuestion={pendingAgentQuestion}
+								showContinueWorking={inbox.online && latestRunResumeKind != null}
+								onContinueWorking={() => {
+									void continueWorking();
+								}}
+								bind:selectedQuestionOptionId
+								{canSend}
+								isSubmitting={isSubmittingPrompt || hasPendingAgentLaunch || answeringAgentQuestion}
+								isStarting={hasPendingAgentLaunch}
+								isRunning={inbox.online && isRunning}
+								elapsedLabel={runElapsedSeconds === undefined
+									? null
+									: formatElapsedDuration(runElapsedSeconds)}
+								{contextUsage}
+								projectSkills={composerProjectSkills}
+								onSubmit={() => {
+									void submitPrompt();
+								}}
+								onCancel={() => {
+									void cancelRun();
+								}}
+							/>
+						</div>
+						{#if !currentThreadId && (prompt || composerAttachments.length)}<div
+								class="inbox-create-message"
+							>
+								<button
+									onclick={() => {
+										prompt = '';
+										draftSubmission = undefined;
+										clearComposerAttachments({ discard: true });
+									}}>Clear draft</button
+								>
+							</div>{/if}
+						{#if draftPersistenceError}<p class="inbox-create-message" role="alert">
+								Draft changes are only saved for this session. Local storage is unavailable.
+							</p>{/if}
+					</div>
 				{/if}
 			</main>
 		</div>

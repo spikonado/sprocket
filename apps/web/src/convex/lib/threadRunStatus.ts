@@ -2,6 +2,8 @@ import type { Doc } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
 import type { Infer } from 'convex/values';
 import type { vRunStatus } from '@convex/lib/validators';
+import { patchInboxThread, wakeInboxThread } from './inbox';
+import { inboxState, runningStatus } from './inboxState';
 
 export async function setRunAndThreadStatus(
 	ctx: MutationCtx,
@@ -29,7 +31,22 @@ export async function setRunAndThreadStatus(
 	]);
 	if (!latestRun || !thread) return;
 	const threadStatus = latestRun.status === 'awaiting_executor' ? 'running' : latestRun.status;
-	if (thread.status !== threadStatus) {
-		await ctx.db.patch('threadRecords', run.threadId, { status: threadStatus });
+	const lastCompletedAt = latestRun.completedAt ?? thread.lastCompletedAt;
+	if (
+		thread.status !== threadStatus ||
+		thread.lastCompletedAt !== lastCompletedAt ||
+		thread.lastRunStartedAt !== latestRun.startedAt
+	) {
+		const terminalEvent =
+			latestRun._id === current._id &&
+			!runningStatus(threadStatus) &&
+			(current.status !== nextStatus || current.completedAt !== latestRun.completedAt);
+		const wake = inboxState(thread) === 'snoozed' && terminalEvent;
+		await patchInboxThread(ctx, thread, {
+			status: threadStatus,
+			lastRunStartedAt: latestRun.startedAt,
+			lastCompletedAt
+		});
+		if (wake) await wakeInboxThread(ctx, thread);
 	}
 }

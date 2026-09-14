@@ -1,4 +1,5 @@
 import { defineSchema, defineTable } from 'convex/server';
+import { vInboxState } from './lib/inboxState';
 import { v } from 'convex/values';
 import { workPosition, workSectionFields, workMembership } from '@convex/lib/workSections';
 import {
@@ -65,7 +66,8 @@ export default defineSchema({
 	}).index('by_userId', ['userId']),
 	uiPreferences: defineTable({
 		userId: v.string(),
-		theme: v.union(v.literal('light'), v.literal('dark'))
+		theme: v.union(v.literal('light'), v.literal('dark')),
+		autoSettleDays: v.optional(v.union(v.number(), v.null()))
 	}).index('by_userId', ['userId']),
 	migrationSchedules: defineTable({
 		name: v.string(),
@@ -112,8 +114,32 @@ export default defineSchema({
 		// runId:claimId:attemptSeq that wrote the current part-number cutoff.
 		contextSummaryHandoffKey: v.optional(v.string()),
 		lastMessageAt: v.number(),
-		archivedAt: v.optional(v.number())
+		archivedAt: v.optional(v.number()),
+		inboxState: v.optional(vInboxState),
+		inboxRunning: v.optional(v.boolean()),
+		inboxActiveAt: v.optional(v.number()),
+		inboxAutoSettleAt: v.optional(v.number()),
+		lastCompletedAt: v.optional(v.number()),
+		lastRunStartedAt: v.optional(v.number()),
+		hasPendingQuestion: v.optional(v.boolean()),
+		snoozedUntil: v.optional(v.number()),
+		wokeAt: v.optional(v.number())
 	})
+		.index('by_userId_and_inboxState_and_inboxRunning_and_lastMessageAt', [
+			'userId',
+			'inboxState',
+			'inboxRunning',
+			'lastMessageAt'
+		])
+		.index('by_inboxState_and_snoozedUntil', ['inboxState', 'snoozedUntil'])
+		.index('by_inboxState_and_inboxAutoSettleAt', ['inboxState', 'inboxAutoSettleAt'])
+		.index('by_userId_repositoryKey_inboxState_inboxRunning_lastMessageAt', [
+			'userId',
+			'repositoryKey',
+			'inboxState',
+			'inboxRunning',
+			'lastMessageAt'
+		])
 		.index('by_userId_submissionId', ['userId', 'submissionId'])
 		.index('by_userId_lastMessageAt', ['userId', 'lastMessageAt'])
 		.index('by_userId_repositoryKey', ['userId', 'repositoryKey'])
@@ -123,6 +149,14 @@ export default defineSchema({
 			'archivedAt',
 			'lastMessageAt'
 		]),
+	inboxProjects: defineTable({
+		userId: v.string(),
+		repositoryKey: v.string(),
+		active: v.number(),
+		pinned: v.number(),
+		snoozed: v.number(),
+		settled: v.number()
+	}).index('by_userId_and_repositoryKey', ['userId', 'repositoryKey']),
 	threadUsage: defineTable({
 		threadId: v.id('threadRecords'),
 		userId: v.string(),

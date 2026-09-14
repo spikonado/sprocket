@@ -1,4 +1,5 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
+import { patchInboxThread, wakeInboxThread } from './lib/inbox';
 import { internal } from '@convex/_generated/api';
 import {
 	internalMutation,
@@ -102,6 +103,11 @@ export const create = mutation({
 				Math.max(MIN_QUESTION_TIMEOUT_MS, Math.floor(args.timeoutMs ?? DEFAULT_QUESTION_TIMEOUT_MS))
 			);
 			const createdAt = Date.now();
+			const thread = await ctx.db.get('threadRecords', run.threadId);
+			if (thread) {
+				await patchInboxThread(ctx, thread, { hasPendingQuestion: true });
+				await wakeInboxThread(ctx, thread, createdAt);
+			}
 			const timeoutAt = createdAt + timeoutMs;
 			const sequence = await nextThreadSequence(ctx, run.threadId);
 
@@ -184,6 +190,8 @@ export const answer = mutation({
 			answeredAt
 		});
 		const nextQuestion = await headPendingQuestion(ctx, args.threadId);
+		const thread = await ctx.db.get('threadRecords', args.threadId);
+		if (thread) await patchInboxThread(ctx, thread, { hasPendingQuestion: nextQuestion !== null });
 		const run = await ctx.db.get('runs', question.runId);
 		const latestRun = await ctx.db
 			.query('runs')
@@ -235,6 +243,11 @@ export const timeout = internalMutation({
 			status: 'timedOut',
 			answeredAt: Date.now()
 		});
+		const thread = await ctx.db.get('threadRecords', question.threadId);
+		if (thread)
+			await patchInboxThread(ctx, thread, {
+				hasPendingQuestion: (await headPendingQuestion(ctx, question.threadId)) !== null
+			});
 		return null;
 	}
 });

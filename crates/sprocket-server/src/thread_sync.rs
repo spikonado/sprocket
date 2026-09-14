@@ -39,6 +39,7 @@ struct CacheInner {
 pub struct ThreadCacheSync {
     deployment_url: String,
     store: Arc<ThreadCacheStore>,
+    pub(crate) inbox_store: Arc<ThreadCacheStore>,
     native_auth: Arc<NativeAuthManager>,
     inner: Mutex<CacheInner>,
     events: broadcast::Sender<ThreadCacheEvent>,
@@ -57,6 +58,7 @@ impl ThreadCacheSync {
         let (events, _) = broadcast::channel(32);
         Arc::new(Self {
             deployment_url,
+            inbox_store: store.inbox_store(),
             store,
             native_auth,
             inner: Mutex::new(CacheInner {

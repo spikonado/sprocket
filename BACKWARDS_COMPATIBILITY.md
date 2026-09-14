@@ -53,6 +53,64 @@ Keep support for missing metadata until every retained transcript has complete
 membership and its checkpoint covers all parts. Remove only that fallback after
 the gate passes; the processor remains responsible for new transcript parts.
 
+## Thread inbox and archived history
+
+`threadRecords.inboxState` replaces the archive flag with `active`, `pinned`,
+`snoozed`, or `settled`. `patchInboxThread` writes the legacy `archivedAt` flag
+for settled threads and clears it for every other state. Released local clients
+can still call `archiveForLocalCache` and `restoreForLocalCache`. Those commands
+now settle and unsettle, with the same pin, active-run, and pending-question
+protections as the new inbox API. Legacy restore ignores threads that are not
+settled, so a stale client cannot remove a pin or snooze. Settling never deletes
+transcripts or drafts.
+
+The minute cron starts the resumable `backfillInbox` migration. It initializes
+state, latest run start and completion, pending-question metadata, indexed deadlines, and
+per-project counts in the same transaction. Archive timestamps become settled
+state. Unarchived history becomes active without a new inactivity grace period.
+The five-minute maintenance job can settle old eligible history immediately
+after backfill. Its default window is seven days, measured from the latest
+prompt, completion, or explicit wake. Users can change or disable that window.
+Records touched before backfill initialize through the same writer. Repeated
+migration calls do not count them twice.
+
+To start the migration manually after deployment:
+
+```sh
+bunx convex run migrations:runInboxMigration --prod
+```
+
+Check the migration component's status and verify that no thread has a missing
+`inboxState` before removing `backfillInbox`, its runner and cron, or the optional
+state fallback. The UI reports preparation while old rows remain. Do not remove
+`archivedAt`, the archive/restore endpoints, their indexes, or Rust's legacy
+recent-thread cache until supported released clients no longer call them. The
+new account-wide cache lives in a separate directory so old recent snapshots
+cannot erase its history.
+
+New inbox indexes in this change are not staged and backfill during deployment.
+For a large production table,
+deploy these index declarations with `staged: true` before deploying the inbox
+functions. Wait for index backfill, then deploy this change without the staged
+flag. A staged index cannot serve inbox queries.
+
+Local `sessions.json` records now optionally include the verified native user
+profile. Older sessions remain valid, but cold offline startup needs one online
+token exchange to save that profile. Keep accepting profile-less account
+bindings until older clients have aged out and their sessions have expired or
+refreshed. Unbound pairing sessions always omit the profile. Local sessions expire
+after 30 days. Sign-out and an authoritative native sign-out response revoke
+all local account bindings, including offline reads, without removing the
+pairing session needed to sign in again. A generation check prevents a pending
+token response from restoring a revoked binding. Unbound pairing sessions do
+not grant access to account caches. The new offline-session endpoint
+returns no cloud token and does not renew local-session expiry.
+
+The app always opens the create screen. No current UI reads or writes a saved
+thread selection. `uiPreferences.setLastThread` remains an update-required stub
+for obsolete clients, not a restoration path. Remove the stub only when those
+clients have aged out.
+
 ## Production rollout cleanup
 
 PR #345 removed stored project tables, project references, run fields,

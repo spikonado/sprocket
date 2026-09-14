@@ -3,6 +3,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::http::{HeaderMap, header};
 use axum_extra::extract::CookieJar;
@@ -14,6 +15,7 @@ use tokio::sync::{OwnedRwLockWriteGuard, RwLock};
 use uuid::Uuid;
 
 use crate::config::SESSION_COOKIE_NAME;
+use crate::native_auth::NativeUser;
 
 const PAIRING_CREDENTIAL_FILE: &str = "pairing-credential";
 const SESSIONS_FILE: &str = "sessions.json";
@@ -46,6 +48,7 @@ pub struct AuthState {
     data_dir: PathBuf,
     pairing_credential: String,
     sessions: Arc<RwLock<HashMap<String, SessionRecord>>>,
+    account_generation: AtomicU64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -80,6 +83,8 @@ struct SessionRecord {
     created_at: u64,
     #[serde(deserialize_with = "deserialize_session_user_id")]
     user_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    user: Option<NativeUser>,
 }
 
 fn deserialize_session_user_id<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
@@ -102,6 +107,7 @@ impl AuthState {
             data_dir: data_dir.to_path_buf(),
             pairing_credential,
             sessions: Arc::new(RwLock::new(sessions)),
+            account_generation: AtomicU64::new(0),
         }))
     }
 
@@ -147,6 +153,7 @@ impl AuthState {
                 role: "owner".into(),
                 created_at: crate::now_ms(),
                 user_id: None,
+                user: None,
             },
         );
     }
@@ -199,6 +206,7 @@ impl AuthState {
                 role: "owner".to_string(),
                 created_at: crate::now_ms(),
                 user_id: None,
+                user: None,
             },
         );
         self.save_sessions(sessions).await?;
@@ -226,7 +234,20 @@ impl AuthState {
         session_token: &str,
         user_id: &str,
     ) -> anyhow::Result<()> {
+        self.bind_session_user_at_generation(session_token, user_id, self.account_generation())
+            .await
+    }
+
+    pub(crate) async fn bind_session_user_at_generation(
+        &self,
+        session_token: &str,
+        user_id: &str,
+        generation: u64,
+    ) -> anyhow::Result<()> {
         let mut sessions = Arc::clone(&self.sessions).write_owned().await;
+        if generation != self.account_generation() {
+            anyhow::bail!("local account session changed");
+        }
         let session = sessions
             .get_mut(session_token)
             .ok_or_else(|| anyhow::anyhow!("authentication required"))?;
@@ -236,14 +257,75 @@ impl AuthState {
         if session.user_id.as_deref() == Some(user_id) {
             return Ok(());
         }
+        session.user = None;
         session.user_id = Some(user_id.to_string());
         self.save_sessions(sessions).await
     }
 
     pub(crate) async fn bind_all_sessions(&self, user_id: Option<&str>) -> anyhow::Result<()> {
         let mut sessions = Arc::clone(&self.sessions).write_owned().await;
+        if sessions
+            .values()
+            .any(|session| session.user_id.is_some() && session.user_id.as_deref() != user_id)
+        {
+            self.account_generation.fetch_add(1, Ordering::SeqCst);
+        }
         for session in sessions.values_mut() {
+            if session.user_id.as_deref() != user_id {
+                session.user = None;
+            }
             session.user_id = user_id.map(str::to_owned);
+        }
+        self.save_sessions(sessions).await
+    }
+
+    pub fn account_generation(&self) -> u64 {
+        self.account_generation.load(Ordering::SeqCst)
+    }
+
+    pub async fn bind_verified_session_user(
+        &self,
+        session_token: &str,
+        user: &NativeUser,
+        generation: u64,
+    ) -> anyhow::Result<()> {
+        let mut sessions = Arc::clone(&self.sessions).write_owned().await;
+        if generation != self.account_generation() {
+            anyhow::bail!("local account session changed");
+        }
+        let session = sessions
+            .get_mut(session_token)
+            .filter(|session| !session_is_expired(session))
+            .ok_or_else(|| anyhow::anyhow!("authentication required"))?;
+        if session.user_id.as_ref().is_some_and(|id| id != &user.id) {
+            anyhow::bail!("local session belongs to a different user");
+        }
+        if session.user.as_ref() == Some(user) {
+            return Ok(());
+        }
+        session.user_id = Some(user.id.clone());
+        session.user = Some(user.clone());
+        self.save_sessions(sessions).await
+    }
+
+    pub async fn offline_session_user(&self, session_token: &str) -> Option<NativeUser> {
+        let sessions = self.sessions.read().await;
+        let session = sessions
+            .get(session_token)
+            .filter(|session| !session_is_expired(session))?;
+        session
+            .user
+            .as_ref()
+            .filter(|user| session.user_id.as_deref() == Some(&user.id))
+            .cloned()
+    }
+
+    pub async fn revoke_account_sessions(&self) -> anyhow::Result<()> {
+        let mut sessions = Arc::clone(&self.sessions).write_owned().await;
+        self.account_generation.fetch_add(1, Ordering::SeqCst);
+        for session in sessions.values_mut() {
+            session.user_id = None;
+            session.user = None;
         }
         self.save_sessions(sessions).await
     }
@@ -714,6 +796,61 @@ mod tests {
             .require_session_user(&session_token, "user-1")
             .await
             .unwrap();
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[tokio::test]
+    async fn offline_identity_survives_restart_but_not_rebinding_expiry_or_sign_out() {
+        let temp_dir = std::env::temp_dir().join(format!("sprocket-auth-test-{}", Uuid::new_v4()));
+        let auth = AuthState::load(&temp_dir).unwrap();
+        let (_, token) = auth.bootstrap(auth.pairing_credential()).await.unwrap();
+        let user = NativeUser {
+            id: "user-a".into(),
+            email: "a@example.com".into(),
+            first_name: None,
+            last_name: None,
+            profile_picture_url: None,
+        };
+        auth.bind_verified_session_user(&token, &user, auth.account_generation())
+            .await
+            .unwrap();
+        let auth = AuthState::load(&temp_dir).unwrap();
+        assert_eq!(auth.offline_session_user(&token).await, Some(user.clone()));
+        auth.bind_session_user(&token, "user-b").await.unwrap();
+        assert_eq!(auth.offline_session_user(&token).await, None);
+        assert!(
+            auth.bind_verified_session_user(&token, &user, auth.account_generation())
+                .await
+                .is_err()
+        );
+        auth.bind_session_user(&token, &user.id).await.unwrap();
+        auth.bind_verified_session_user(&token, &user, auth.account_generation())
+            .await
+            .unwrap();
+        auth.sessions
+            .write()
+            .await
+            .get_mut(&token)
+            .unwrap()
+            .created_at = 0;
+        assert_eq!(auth.offline_session_user(&token).await, None);
+        auth.sessions
+            .write()
+            .await
+            .get_mut(&token)
+            .unwrap()
+            .created_at = crate::now_ms();
+        let generation = auth.account_generation();
+        auth.revoke_account_sessions().await.unwrap();
+        assert!(
+            auth.bind_verified_session_user(&token, &user, generation)
+                .await
+                .is_err()
+        );
+        let auth = AuthState::load(&temp_dir).unwrap();
+        assert_eq!(auth.offline_session_user(&token).await, None);
+        assert!(auth.require_session_user(&token, &user.id).await.is_err());
+        assert!(auth.session_state(Some(&token)).await.authenticated);
         let _ = fs::remove_dir_all(temp_dir);
     }
 

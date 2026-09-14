@@ -7,6 +7,7 @@
 	import MandateApprovalForm from '$lib/components/home/mandate-approval-form.svelte';
 	import Button from '$lib/components/ui/button/button.svelte';
 	import { convexClientErrorMessage } from '$lib/convex-error';
+	let { online = true }: { online?: boolean } = $props();
 
 	type MandateFrequency = 'one_time' | 'weekly' | 'monthly' | 'yearly';
 	type MandateScope = 'listed' | 'any';
@@ -104,6 +105,7 @@
 	});
 
 	async function refreshMandates() {
+		if (!online) return;
 		mandatesLoading = true;
 		mandatesError = null;
 		try {
@@ -129,6 +131,7 @@
 
 	async function submitMandateSetup(event: Event) {
 		event.preventDefault();
+		if (!online || setupSubmitting) return;
 		setupSubmitting = true;
 		setupError = null;
 		pendingApproval = null;
@@ -160,7 +163,7 @@
 	}
 
 	async function runLifecycle(mandate: MandateRow, action: LifecycleAction) {
-		if (!mandate.mandateId || lifecycleBusyId !== null) return;
+		if (!online || !mandate.mandateId || lifecycleBusyId !== null) return;
 		lifecycleBusyId = mandate.pravaMandateId;
 		lifecycleBusyAction = action;
 		mandatesError = null;
@@ -185,7 +188,10 @@
 	</header>
 
 	<div class="min-h-0 flex-1 overflow-y-auto px-6 py-8">
-		<div class="max-w-xl space-y-10">
+		{#if !online}<p class="text-muted-foreground mb-6 text-sm">
+				Reconnect to change payment settings.
+			</p>{/if}
+		<fieldset disabled={!online} class="max-w-xl space-y-10">
 			<div>
 				<p class="text-muted-foreground font-mono text-[11px] tracking-[0.18em] uppercase">
 					Set up a spending mandate
@@ -358,6 +364,6 @@
 					</ul>
 				{/if}
 			</div>
-		</div>
+		</fieldset>
 	</div>
 </section>

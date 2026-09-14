@@ -3,6 +3,15 @@ import { internal } from '@convex/_generated/api';
 
 const crons = cronJobs();
 
+crons.interval('maintain thread inbox', { minutes: 5 }, internal.inbox.maintain, {});
+crons.interval(
+	'migrate thread inbox',
+	{ minutes: 1 },
+	internal.migrations.runInboxMigrationAutomatically,
+	{}
+);
+crons.interval('wake snoozed threads', { minutes: 1 }, internal.inbox.wakeDue, {});
+
 crons.interval(
 	'clean up abandoned image uploads',
 	{ hours: 1 },

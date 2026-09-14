@@ -3,20 +3,17 @@ import {
 	beginPendingAgentLaunch,
 	clearPendingAgentLaunch,
 	dataForThread,
-	getProjectThreadGroups,
 	isAgentLaunchPending,
 	isLatestRunReadyForThread,
-	pickThreadToRestore,
 	resolveExpiredAgentLaunch,
 	resolvePendingAgentLaunch,
 	resolvePendingCreatedThreadId,
-	resolveProjectThreadSelection,
 	type PendingAgentLaunch,
 	type PendingAgentLaunches
 } from '$lib/project/threads';
 import { defaultModelId, defaultReasoningEffort } from '$convex/lib/models';
 import type { Id } from '$convex/_generated/dataModel';
-import type { ThreadSummary, Project } from '$lib/types/sprocket';
+import type { ThreadSummary } from '$lib/types/sprocket';
 
 type RunId = Id<'runs'>;
 
@@ -36,16 +33,6 @@ const runA1 = runId('run-a-1');
 const runA2 = runId('run-a-2');
 const runB1 = runId('run-b-1');
 const runB2 = runId('run-b-2');
-
-function makeProject(overrides: Partial<Project> = {}): Project {
-	const repositoryKey = overrides.repositoryKey ?? overrides.displayName ?? 'ws-1';
-	return {
-		repositoryKey,
-		displayName: 'Project',
-		workspacePath: `/workspaces/${repositoryKey}`,
-		...overrides
-	};
-}
 
 function makeThreadSummary(overrides: Partial<ThreadSummary> = {}): ThreadSummary {
 	return {
@@ -78,210 +65,6 @@ function beginLaunch(
 }
 
 describe('project thread helpers', () => {
-	it('groups threads by repository key and hides keys that are not local', () => {
-		const groups = getProjectThreadGroups(
-			[
-				makeProject({
-					repositoryKey: 'github.com/spikonado/sprocket',
-					displayName: 'sprocket',
-					workspacePath: '/workspaces/sprocket'
-				}),
-				makeProject({
-					repositoryKey: 'local-sprocket',
-					displayName: 'sprocket',
-					workspacePath: '/workspaces/local'
-				})
-			],
-			[
-				makeThreadSummary({
-					repositoryKey: 'github.com/spikonado/sprocket',
-					lastMessageAt: 10
-				}),
-				makeThreadSummary({
-					threadId: threadId('thread-record-2'),
-					repositoryKey: 'stale',
-					lastMessageAt: 20
-				}),
-				makeThreadSummary({
-					threadId: threadId('thread-record-3'),
-					repositoryKey: 'local-sprocket',
-					lastMessageAt: 30
-				})
-			]
-		);
-
-		expect(groups).toHaveLength(2);
-		expect(
-			groups.find((group) => group.project.workspacePath === '/workspaces/sprocket')?.threads
-		).toHaveLength(1);
-		expect(
-			groups.find((group) => group.project.workspacePath === '/workspaces/local')?.threads
-		).toHaveLength(1);
-	});
-
-	it('keeps projects in their given order regardless of thread activity', () => {
-		const groups = getProjectThreadGroups(
-			[
-				makeProject({ repositoryKey: 'ws-older', displayName: 'older' }),
-				makeProject({ repositoryKey: 'ws-newer', displayName: 'newer' })
-			],
-			[
-				makeThreadSummary({
-					repositoryKey: 'ws-older',
-					lastMessageAt: 100
-				}),
-				makeThreadSummary({
-					repositoryKey: 'ws-newer',
-					lastMessageAt: 1
-				})
-			]
-		);
-
-		expect(groups.map((group) => group.project.repositoryKey)).toEqual(['ws-older', 'ws-newer']);
-	});
-
-	it('restores the most recently active thread, ignoring run state', () => {
-		const runningOlder = makeThreadSummary({
-			threadId: threadId('thread-record-running'),
-			lastMessageAt: 10,
-			status: 'running'
-		});
-		const idleNewer = makeThreadSummary({
-			threadId: threadId('thread-record-idle'),
-			lastMessageAt: 20
-		});
-		const archivedNewest = makeThreadSummary({
-			threadId: threadId('thread-record-archived'),
-			lastMessageAt: 30,
-			threadStatus: 'archived'
-		});
-
-		// Running-first sidebar order must not leak into session restore.
-		expect(pickThreadToRestore([runningOlder, idleNewer, archivedNewest])?.threadId).toBe(
-			'thread-record-idle'
-		);
-		expect(pickThreadToRestore([archivedNewest])).toBeNull();
-		expect(pickThreadToRestore([])).toBeNull();
-	});
-
-	it('excludes archived threads from project groups', () => {
-		const active = makeThreadSummary({
-			repositoryKey: 'sprocket',
-			lastMessageAt: 10
-		});
-		const archived = makeThreadSummary({
-			threadId: threadId('thread-record-2'),
-			repositoryKey: 'sprocket',
-			lastMessageAt: 20,
-			threadStatus: 'archived'
-		});
-
-		const groups = getProjectThreadGroups(
-			[
-				makeProject({
-					repositoryKey: 'sprocket',
-					displayName: 'sprocket'
-				})
-			],
-			[active, archived]
-		);
-
-		expect(groups).toHaveLength(1);
-		expect(groups[0]?.threads).toHaveLength(1);
-		expect(groups[0]?.threads[0]?.threadId).toBe('thread-record-1');
-	});
-
-	it('lists running threads before newer completed threads in each project', () => {
-		const groups = getProjectThreadGroups(
-			[makeProject({ repositoryKey: 'ws-1' })],
-			[
-				makeThreadSummary({
-					threadId: threadId('thread-record-completed-newer'),
-					lastMessageAt: 30
-				}),
-				makeThreadSummary({
-					threadId: threadId('thread-record-running-older'),
-					lastMessageAt: 10,
-					status: 'running'
-				}),
-				makeThreadSummary({
-					threadId: threadId('thread-record-running-newer'),
-					lastMessageAt: 20,
-					status: 'running'
-				})
-			]
-		);
-
-		expect(groups[0]?.threads.map((thread) => thread.threadId)).toEqual([
-			'thread-record-running-newer',
-			'thread-record-running-older',
-			'thread-record-completed-newer'
-		]);
-	});
-
-	it('preserves a blank draft selection for the current repository', () => {
-		expect(
-			resolveProjectThreadSelection({
-				threads: [makeThreadSummary()],
-				currentThreadId: null,
-				currentWorkspacePath: '/workspaces/ws-1',
-				draftWorkspacePath: '/workspaces/ws-1'
-			})
-		).toBeNull();
-	});
-
-	it('preserves a newly created thread id before the reactive list includes it', () => {
-		const existing = makeThreadSummary({
-			threadId: threadId('thread-record-old'),
-			lastMessageAt: 20
-		});
-		const pendingThreadId = threadId('thread-record-new');
-
-		expect(
-			resolveProjectThreadSelection({
-				threads: [existing],
-				currentThreadId: pendingThreadId,
-				currentWorkspacePath: '/workspaces/ws-1',
-				draftWorkspacePath: null,
-				pendingCreatedThreadId: pendingThreadId
-			})
-		).toBe(pendingThreadId);
-	});
-
-	it('preserves the selected thread while the cache fetches a record outside the recent list', () => {
-		const newest = makeThreadSummary({
-			threadId: threadId('thread-record-newest'),
-			lastMessageAt: 30
-		});
-		const selected = threadId('thread-record-older');
-
-		expect(
-			resolveProjectThreadSelection({
-				threads: [newest],
-				currentThreadId: selected,
-				currentWorkspacePath: '/workspaces/ws-1',
-				draftWorkspacePath: null,
-				pendingCreatedThreadId: null
-			})
-		).toBe(selected);
-	});
-
-	it('falls back to the newest thread only after the current id is cleared', () => {
-		const newest = makeThreadSummary({
-			threadId: threadId('thread-record-newest'),
-			lastMessageAt: 30
-		});
-
-		expect(
-			resolveProjectThreadSelection({
-				threads: [newest],
-				currentThreadId: null,
-				currentWorkspacePath: '/workspaces/ws-1',
-				draftWorkspacePath: null
-			})
-		).toBe(newest.threadId);
-	});
-
 	it('keeps a created id pinned through unrelated list updates until the thread appears', () => {
 		const existing = makeThreadSummary({
 			threadId: threadId('thread-record-old')

@@ -35,6 +35,7 @@ const recoveredSubmission = {
 function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 	return {
 		browseFilesystem: unusedDesktopCall,
+		inboxCache: unusedDesktopCall,
 		listWorkspaceSkills: unusedDesktopCall,
 		resolveWorkspacePath: unusedDesktopCall,
 		listProjectAttachments: unusedDesktopCall,
