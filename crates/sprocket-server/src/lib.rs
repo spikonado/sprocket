@@ -60,18 +60,13 @@ pub struct RunOptions {
 #[derive(Debug, Clone)]
 pub struct StartupInfo {
     pub listen_url: String,
-    pub pairing_credential: String,
     pub web_ui_enabled: bool,
     pub workspace_path: Option<String>,
 }
 
 impl StartupInfo {
     pub fn browser_url(&self, base_url: &str) -> String {
-        browser_launch_url(
-            base_url,
-            &self.pairing_credential,
-            self.workspace_path.as_deref(),
-        )
+        browser_launch_url(base_url, self.workspace_path.as_deref())
     }
 
     pub fn print_startup(&self, dev_web_url: Option<&str>) {
@@ -79,7 +74,7 @@ impl StartupInfo {
             eprintln!("Sprocket API is running at {}", self.listen_url);
             eprintln!("Open the web app (Vite dev server):");
             eprintln!("{dev_web_url}");
-            eprintln!("Pair in the browser if needed:");
+            eprintln!("Open in your browser:");
             eprintln!("{}", self.browser_url(dev_web_url));
             return;
         }
@@ -206,7 +201,6 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
         Arc::clone(&native_auth),
         Arc::clone(&machine_identity),
     );
-    let pairing_credential = auth.pairing_credential().to_string();
     let project_attachments = project_attachments::ProjectAttachmentStore::new(data_dir.clone());
     let transcript = TranscriptStore::new(data_dir.join("transcripts"));
     let transcript_watchers = TranscriptWatchers::new(
@@ -259,7 +253,6 @@ pub async fn run(config: ServerConfig, options: RunOptions) -> anyhow::Result<()
 
     let startup = StartupInfo {
         listen_url: config.listen_url(),
-        pairing_credential,
         web_ui_enabled,
         workspace_path: options.workspace_path.clone(),
     };
@@ -415,21 +408,18 @@ fn default_dev_web_url() -> Option<String> {
         .or_else(|| Some(config::DEFAULT_DEV_WEB_URL.to_string()))
 }
 
-pub fn browser_launch_url(
-    base_url: &str,
-    pairing_credential: &str,
-    workspace_path: Option<&str>,
-) -> String {
+pub fn browser_launch_url(base_url: &str, workspace_path: Option<&str>) -> String {
     let mut fragment = url::form_urlencoded::Serializer::new(String::new());
-    fragment.append_pair("token", pairing_credential);
     if let Some(workspace_path) = workspace_path {
         fragment.append_pair("workspace", workspace_path);
     }
-    format!(
-        "{}/pair#{}",
-        base_url.trim_end_matches('/'),
-        fragment.finish()
-    )
+    let fragment = fragment.finish();
+    let base_url = base_url.trim_end_matches('/');
+    if fragment.is_empty() {
+        base_url.to_string()
+    } else {
+        format!("{base_url}/#{fragment}")
+    }
 }
 
 pub fn pairing_proof_message(challenge: &str, http_base_url: &str, web_ui_enabled: bool) -> String {
@@ -464,8 +454,16 @@ mod tests {
     #[test]
     fn browser_launch_url_encodes_the_workspace() {
         assert_eq!(
-            browser_launch_url("http://localhost:5173/", "secret", Some("/robot & tools")),
-            "http://localhost:5173/pair#token=secret&workspace=%2Frobot+%26+tools"
+            browser_launch_url("http://localhost:5173/", Some("/robot & tools")),
+            "http://localhost:5173/#workspace=%2Frobot+%26+tools"
+        );
+    }
+
+    #[test]
+    fn browser_launch_url_contains_no_pairing_material() {
+        assert_eq!(
+            browser_launch_url("http://127.0.0.1:17731", None),
+            "http://127.0.0.1:17731"
         );
     }
 }

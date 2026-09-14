@@ -17,7 +17,6 @@ const defaultServerPort = isDevelopment ? DEV_API_PORT : INSTALLED_APP_PORT;
 const serverPort = Number(process.env.SPROCKET_PORT ?? defaultServerPort);
 // Native AuthKit callbacks use the loopback IP; localhost is the canonical web-dev origin.
 const serverHost = '127.0.0.1';
-const desktopLoginCallbackUrl = `http://${serverHost}:${serverPort}/api/auth/desktop-login/callback`;
 const devRendererUrl = process.env.SPROCKET_ELECTRON_RENDERER_URL ?? DEV_WEB_URL;
 const rendererUrl = isDevelopment ? devRendererUrl : `http://${serverHost}:${serverPort}`;
 const rendererOrigin = new URL(rendererUrl).origin;
@@ -25,8 +24,6 @@ const preloadEntry = path.join(__dirname, 'preload.cjs');
 
 let serverProcess = null;
 let serverBaseUrl = null;
-let serverPairingCredential = null;
-let serverDesktopLoginCallbackUrl = null;
 let mainWindowRef = null;
 let serverReadyPromise = null;
 let isQuitting = false;
@@ -94,14 +91,8 @@ function parseDesktopBootstrap(value) {
 	if (!isPlainObject(value)) {
 		return null;
 	}
-	const pairingCredential = parseNonEmptyString(value.pairingCredential);
-	if (pairingCredential === null) {
-		return null;
-	}
 	return {
-		pairingCredential,
-		httpBaseUrl: parseNonEmptyString(value.httpBaseUrl),
-		desktopLoginCallbackUrl: parseNonEmptyString(value.desktopLoginCallbackUrl)
+		httpBaseUrl: parseNonEmptyString(value.httpBaseUrl)
 	};
 }
 
@@ -232,8 +223,6 @@ async function attachToRunningServer(baseUrl, dataDir) {
 	}
 
 	serverBaseUrl = pairingProof.httpBaseUrl;
-	serverPairingCredential = pairingCredential;
-	serverDesktopLoginCallbackUrl = desktopLoginCallbackUrl;
 	return true;
 }
 
@@ -337,10 +326,7 @@ async function startLocalServer() {
 	if (bootstrap === null) {
 		throw new Error('Failed to load desktop bootstrap details from the local server.');
 	}
-	serverPairingCredential = bootstrap.pairingCredential;
 	serverBaseUrl = bootstrap.httpBaseUrl ?? serverBaseUrl;
-	serverDesktopLoginCallbackUrl = bootstrap.desktopLoginCallbackUrl ?? desktopLoginCallbackUrl;
-
 	return serverBaseUrl;
 }
 
@@ -471,19 +457,6 @@ function createMainWindow() {
 		mainWindow.webContents.openDevTools({ mode: 'detach' });
 	}
 }
-
-ipcMain.handle('sprocket:get-local-bootstrap', (event) => {
-	requireTrustedRenderer(event);
-	if (!serverBaseUrl || !serverPairingCredential) {
-		throw new Error('Local server bootstrap is unavailable.');
-	}
-
-	return {
-		httpBaseUrl: serverBaseUrl,
-		desktopLoginCallbackUrl: serverDesktopLoginCallbackUrl ?? desktopLoginCallbackUrl,
-		pairingCredential: serverPairingCredential
-	};
-});
 
 ipcMain.handle('sprocket:take-workspace-launch', (event) => {
 	requireTrustedRenderer(event);

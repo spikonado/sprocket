@@ -8,7 +8,7 @@ use axum::routing::{get, post};
 use axum_extra::extract::CookieJar;
 
 use crate::AppState;
-use crate::auth::{cookie_get_is_csrf_safe, cookie_request_is_loopback_csrf_safe, require_session};
+use crate::auth::{cookie_request_is_loopback_csrf_safe, require_session};
 use crate::package_update::PackageUpdateSnapshot;
 use crate::routes::api_error::ApiError;
 
@@ -46,9 +46,6 @@ async fn require_update_read(
     require_session(&state.auth, headers, jar)
         .await
         .map_err(|_| ApiError::authentication_required())?;
-    if !cookie_get_is_csrf_safe(headers) {
-        return Err(cross_origin_rejected());
-    }
     Ok(())
 }
 
@@ -70,13 +67,6 @@ async fn require_update_install(
         ));
     }
     Ok(())
-}
-
-fn cross_origin_rejected() -> ApiError {
-    ApiError::with_status(
-        StatusCode::FORBIDDEN,
-        anyhow::anyhow!("cross-origin request rejected"),
-    )
 }
 
 fn update_response(snapshot: PackageUpdateSnapshot) -> Response {
@@ -107,8 +97,13 @@ mod tests {
             std::env::temp_dir().join(format!("sprocket-update-route-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
         let auth = auth::AuthState::load(&temp_dir).expect("auth state");
-        let credential = auth.pairing_credential().to_string();
-        let (_, session_token) = auth.bootstrap(&credential).await.expect("bootstrap");
+        let (_, session_token) = auth
+            .bootstrap_browser_session(true)
+            .await
+            .expect("bootstrap");
+        auth.bind_session_user(&session_token, "test-user")
+            .await
+            .unwrap();
         let native_auth = crate::native_auth::NativeAuthManager::configured_for_test(
             crate::native_auth::NativeAuthConfig {
                 workos_client_id: "client_test".to_string(),
@@ -211,7 +206,7 @@ mod tests {
             ))
             .await
             .unwrap();
-        assert_eq!(cross_origin.status(), StatusCode::FORBIDDEN);
+        assert_eq!(cross_origin.status(), StatusCode::UNAUTHORIZED);
 
         let ok = app
             .oneshot(status_request(
@@ -258,7 +253,7 @@ mod tests {
             ))
             .await
             .unwrap();
-        assert_eq!(cross_origin.status(), StatusCode::FORBIDDEN);
+        assert_eq!(cross_origin.status(), StatusCode::UNAUTHORIZED);
 
         let lan = app
             .oneshot(with_peer(
@@ -324,8 +319,13 @@ mod process_tests {
     async fn test_state(package_updates: Arc<PackageUpdateManager>) -> (AppState, String, TempDir) {
         let temp_dir = TempDir::new();
         let auth = auth::AuthState::load(&temp_dir.0).expect("auth state");
-        let credential = auth.pairing_credential().to_string();
-        let (_, session_token) = auth.bootstrap(&credential).await.expect("bootstrap");
+        let (_, session_token) = auth
+            .bootstrap_browser_session(true)
+            .await
+            .expect("bootstrap");
+        auth.bind_session_user(&session_token, "test-user")
+            .await
+            .unwrap();
         let native_auth = crate::native_auth::NativeAuthManager::configured_for_test(
             crate::native_auth::NativeAuthConfig {
                 workos_client_id: "client_test".to_string(),

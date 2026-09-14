@@ -5,15 +5,30 @@
 CLI clients send their exact semantic release version to local `/api/cli/*`
 endpoints. The local server rejects every mismatch, including canary identifiers
 and dev commit hashes, so a newly installed CLI cannot reuse a stale server.
-Existing app launch, native login, and agent-run endpoints keep their request
-formats and interactive tool set. Deploy the finalization response support before
+Native login and agent-run endpoints keep their request formats and interactive
+tool set. Deploy the finalization response support before
 releasing the new CLI. Older local servers return an update-and-restart error
 rather than receiving a fallback run request.
 
 CLI discovery and bootstrap proofs bind to a random server-process ID. The CLI
 never sends the reusable pairing credential over HTTP. CLI sessions stay in
-memory and cannot resume after a server restart. Existing app pairing and
-persisted app sessions keep their formats.
+memory and cannot resume after a server restart. Bound persisted browser
+sessions keep working. `/api/auth/bootstrap` ignores request bodies so released
+browser clients that still send the old credential-shaped JSON can bootstrap,
+but the server neither reads nor verifies that credential. Remove body tolerance
+after released clients no longer send it.
+
+`GET /api/auth/desktop-login/result` remains available to loopback sessions for
+older browser bundles. New clients use POST so the HTTPS route can require an
+Origin header. The desktop bootstrap response also includes the fixed string
+`not-required` under its old `pairingCredential` field. Older Electron bundles
+require a nonempty value but the server ignores it. Remove both shims after all
+older desktop and browser bundles have aged out.
+
+Session records created before remote HTTPS support have no `localBrowser`
+field. The server treats them as local browser sessions because remote browser
+sessions did not exist in those releases. Remove this default after all 30-day
+browser sessions created by older releases have expired.
 
 `agentRuntime:finalizeExecutorRun` and `agentRuntime:finalizeClaimFailure` accept
 optional `includeOutput`. Without it, the mutation returns only whether that

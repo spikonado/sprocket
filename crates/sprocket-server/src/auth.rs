@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Write};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -19,6 +20,7 @@ const PAIRING_CREDENTIAL_FILE: &str = "pairing-credential";
 const SESSIONS_FILE: &str = "sessions.json";
 const SESSION_MAX_AGE_SECS: i64 = 60 * 60 * 24 * 30;
 const SESSION_MAX_AGE_MS: u64 = SESSION_MAX_AGE_SECS as u64 * 1000;
+const MAX_PERSISTED_BROWSER_SESSIONS: usize = 256;
 type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Debug, Clone, Serialize)]
@@ -26,12 +28,6 @@ type HmacSha256 = Hmac<Sha256>;
 pub struct AuthSessionResponse {
     pub authenticated: bool,
     pub role: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BootstrapRequest {
-    pub credential: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -76,10 +72,16 @@ pub fn peer_may_complete_desktop_login_callback(peer: std::net::SocketAddr) -> b
 struct SessionRecord {
     #[serde(skip)]
     ephemeral: bool,
+    #[serde(default = "default_local_browser")]
+    local_browser: bool,
     role: String,
     created_at: u64,
     #[serde(deserialize_with = "deserialize_session_user_id")]
     user_id: Option<String>,
+}
+
+fn default_local_browser() -> bool {
+    true
 }
 
 fn deserialize_session_user_id<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
@@ -109,15 +111,6 @@ impl AuthState {
         &self.pairing_credential
     }
 
-    pub fn verify_pairing_credential(&self, credential: &str) -> anyhow::Result<()> {
-        if credential.trim() != self.pairing_credential {
-            anyhow::bail!(
-                "invalid pairing credential; use the token printed by your running Sprocket server"
-            );
-        }
-        Ok(())
-    }
-
     pub fn pairing_proof(&self, message: &str) -> anyhow::Result<Vec<u8>> {
         sign_pairing_proof(&self.pairing_credential, message)
     }
@@ -144,6 +137,7 @@ impl AuthState {
             token,
             SessionRecord {
                 ephemeral: true,
+                local_browser: true,
                 role: "owner".into(),
                 created_at: crate::now_ms(),
                 user_id: None,
@@ -186,16 +180,34 @@ impl AuthState {
         }
     }
 
-    pub async fn bootstrap(&self, credential: &str) -> anyhow::Result<(BootstrapResponse, String)> {
-        self.verify_pairing_credential(credential)?;
-
+    pub async fn bootstrap_browser_session(
+        &self,
+        local_browser: bool,
+    ) -> anyhow::Result<(BootstrapResponse, String)> {
         let session_token = Uuid::new_v4().to_string();
         let mut sessions = Arc::clone(&self.sessions).write_owned().await;
         sessions.retain(|_, session| !session_is_expired(session));
+        while sessions
+            .values()
+            .filter(|session| !session.ephemeral)
+            .count()
+            >= MAX_PERSISTED_BROWSER_SESSIONS
+        {
+            let oldest_unbound = sessions
+                .iter()
+                .filter(|(_, session)| !session.ephemeral && session.user_id.is_none())
+                .min_by_key(|(_, session)| session.created_at)
+                .map(|(token, _)| token.clone());
+            let Some(oldest_unbound) = oldest_unbound else {
+                anyhow::bail!("too many active browser sessions");
+            };
+            sessions.remove(&oldest_unbound);
+        }
         sessions.insert(
             session_token.clone(),
             SessionRecord {
                 ephemeral: false,
+                local_browser,
                 role: "owner".to_string(),
                 created_at: crate::now_ms(),
                 user_id: None,
@@ -212,12 +224,23 @@ impl AuthState {
         ))
     }
 
-    pub fn make_session_cookie(session_token: &str) -> Cookie<'static> {
+    pub fn make_session_cookie(session_token: &str, secure: bool) -> Cookie<'static> {
         Cookie::build((SESSION_COOKIE_NAME, session_token.to_string()))
             .http_only(true)
             .path("/")
             .same_site(SameSite::Lax)
+            .secure(secure)
             .max_age(cookie::time::Duration::seconds(SESSION_MAX_AGE_SECS))
+            .build()
+    }
+
+    pub fn expire_session_cookie(secure: bool) -> Cookie<'static> {
+        Cookie::build((SESSION_COOKIE_NAME, String::new()))
+            .http_only(true)
+            .path("/")
+            .same_site(SameSite::Lax)
+            .secure(secure)
+            .max_age(cookie::time::Duration::ZERO)
             .build()
     }
 
@@ -240,12 +263,27 @@ impl AuthState {
         self.save_sessions(sessions).await
     }
 
-    pub(crate) async fn bind_all_sessions(&self, user_id: Option<&str>) -> anyhow::Result<()> {
+    pub(crate) async fn sync_sessions_with_owner(
+        &self,
+        user_id: Option<&str>,
+    ) -> anyhow::Result<()> {
         let mut sessions = Arc::clone(&self.sessions).write_owned().await;
         for session in sessions.values_mut() {
-            session.user_id = user_id.map(str::to_owned);
+            if session.ephemeral || session.local_browser {
+                session.user_id = user_id.map(str::to_owned);
+            } else if session.user_id.as_deref() != user_id {
+                session.user_id = None;
+            }
         }
         self.save_sessions(sessions).await
+    }
+
+    pub async fn session_is_local_browser(&self, session_token: &str) -> bool {
+        self.sessions
+            .read()
+            .await
+            .get(session_token)
+            .is_some_and(|session| !session_is_expired(session) && session.local_browser)
     }
 
     pub async fn require_session_user(
@@ -271,6 +309,16 @@ impl AuthState {
             .await
             .get(session_token)
             .is_some_and(|session| !session_is_expired(session) && session.user_id.is_some())
+    }
+
+    async fn session_may_access_machine(&self, session_token: &str) -> bool {
+        self.sessions
+            .read()
+            .await
+            .get(session_token)
+            .is_some_and(|session| {
+                !session_is_expired(session) && (session.ephemeral || session.user_id.is_some())
+            })
     }
 
     pub(crate) async fn end_session(&self, token: &str) -> anyhow::Result<()> {
@@ -423,7 +471,13 @@ pub(crate) fn origin_matches_host(headers: &HeaderMap) -> bool {
     let Ok(url) = url::Url::parse(origin) else {
         return false;
     };
-    matches!(url.scheme(), "http" | "https") && origin == format!("{}://{host}", url.scheme())
+    if !matches!(url.scheme(), "http" | "https") || origin != url.origin().ascii_serialization() {
+        return false;
+    }
+    let Ok(expected) = url::Url::parse(&format!("{}://{host}", url.scheme())) else {
+        return false;
+    };
+    url.origin() == expected.origin()
 }
 
 pub(crate) fn origin_host_is_loopback(headers: &HeaderMap) -> bool {
@@ -436,7 +490,36 @@ pub(crate) fn origin_host_is_loopback(headers: &HeaderMap) -> bool {
     let Ok(url) = url::Url::parse(origin) else {
         return false;
     };
-    matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))
+    match url.host() {
+        Some(url::Host::Ipv4(address)) => address.is_loopback(),
+        Some(url::Host::Ipv6(address)) => address.is_loopback(),
+        Some(url::Host::Domain("localhost")) => true,
+        _ => false,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BrowserConnection {
+    Loopback,
+    Https,
+}
+
+pub(crate) fn browser_connection(
+    headers: &HeaderMap,
+    peer: SocketAddr,
+) -> Option<BrowserConnection> {
+    if !origin_matches_host(headers) {
+        return None;
+    }
+    let origin = headers.get(header::ORIGIN)?.to_str().ok()?;
+    let url = url::Url::parse(origin).ok()?;
+    match url.scheme() {
+        "https" => Some(BrowserConnection::Https),
+        "http" if peer.ip().is_loopback() && origin_host_is_loopback(headers) => {
+            Some(BrowserConnection::Loopback)
+        }
+        _ => None,
+    }
 }
 
 pub(crate) fn cookie_request_is_csrf_safe(headers: &HeaderMap) -> bool {
@@ -468,10 +551,28 @@ pub async fn require_session(
     headers: &HeaderMap,
     jar: &CookieJar,
 ) -> anyhow::Result<String> {
+    if !cookie_get_is_csrf_safe(headers) {
+        anyhow::bail!("authentication required");
+    }
     let session_token = extract_session_token(headers, jar)
         .ok_or_else(|| anyhow::anyhow!("authentication required"))?;
-    let session = auth.session_state(Some(&session_token)).await;
-    if !session.authenticated {
+    if !auth.session_may_access_machine(&session_token).await {
+        anyhow::bail!("authentication required");
+    }
+    Ok(session_token)
+}
+
+pub async fn require_bootstrap_session(
+    auth: &AuthState,
+    headers: &HeaderMap,
+    jar: &CookieJar,
+) -> anyhow::Result<String> {
+    if !cookie_get_is_csrf_safe(headers) {
+        anyhow::bail!("authentication required");
+    }
+    let session_token = extract_session_token(headers, jar)
+        .ok_or_else(|| anyhow::anyhow!("authentication required"))?;
+    if !auth.session_state(Some(&session_token)).await.authenticated {
         anyhow::bail!("authentication required");
     }
     Ok(session_token)
@@ -625,10 +726,8 @@ mod tests {
     async fn bootstrap_creates_authenticated_session() {
         let temp_dir = std::env::temp_dir().join(format!("sprocket-auth-test-{}", Uuid::new_v4()));
         let auth = AuthState::load(&temp_dir).expect("auth state");
-        let credential = auth.pairing_credential().to_string();
-
         let (response, session_token) = auth
-            .bootstrap(&credential)
+            .bootstrap_browser_session(true)
             .await
             .expect("bootstrap should succeed");
         assert!(response.authenticated);
@@ -644,10 +743,8 @@ mod tests {
     async fn bootstrap_persists_authenticated_session() {
         let temp_dir = std::env::temp_dir().join(format!("sprocket-auth-test-{}", Uuid::new_v4()));
         let auth = AuthState::load(&temp_dir).expect("auth state");
-        let credential = auth.pairing_credential().to_string();
-
         let (_, session_token) = auth
-            .bootstrap(&credential)
+            .bootstrap_browser_session(true)
             .await
             .expect("bootstrap should succeed");
 
@@ -655,6 +752,27 @@ mod tests {
         let session = reloaded.session_state(Some(&session_token)).await;
         assert!(session.authenticated);
 
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[tokio::test]
+    async fn ephemeral_cli_sessions_may_access_machine_routes_without_a_user() {
+        let temp_dir = std::env::temp_dir().join(format!("sprocket-auth-test-{}", Uuid::new_v4()));
+        let auth = AuthState::load(&temp_dir).expect("auth state");
+        let token = Uuid::new_v4().to_string();
+        auth.create_cli_session(token.clone()).await;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            format!("Bearer {token}").parse().unwrap(),
+        );
+
+        assert_eq!(
+            require_session(&auth, &headers, &CookieJar::new())
+                .await
+                .unwrap(),
+            token
+        );
         let _ = fs::remove_dir_all(temp_dir);
     }
 
@@ -680,11 +798,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn treats_sessions_from_older_versions_as_local_browser_sessions() {
+        let temp_dir = std::env::temp_dir().join(format!("sprocket-auth-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&temp_dir).unwrap();
+        fs::write(
+            temp_dir.join(SESSIONS_FILE),
+            serde_json::json!([{
+                "token": "old-session",
+                "role": "owner",
+                "createdAt": crate::now_ms(),
+                "userId": "user-1"
+            }])
+            .to_string(),
+        )
+        .unwrap();
+
+        let auth = AuthState::load(&temp_dir).expect("auth state");
+        assert!(auth.session_is_local_browser("old-session").await);
+        auth.sync_sessions_with_owner(Some("user-2")).await.unwrap();
+        auth.require_session_user("old-session", "user-2")
+            .await
+            .unwrap();
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[tokio::test]
     async fn account_scoped_access_requires_the_bound_session_user() {
         let temp_dir = std::env::temp_dir().join(format!("sprocket-auth-test-{}", Uuid::new_v4()));
         let auth = AuthState::load(&temp_dir).expect("auth state");
         let (_, session_token) = auth
-            .bootstrap(auth.pairing_credential())
+            .bootstrap_browser_session(true)
             .await
             .expect("bootstrap should succeed");
 
@@ -792,5 +936,20 @@ mod tests {
         headers.insert(header::AUTHORIZATION, "Bearer secret".parse().unwrap());
         assert!(cookie_request_is_csrf_safe(&headers));
         assert!(cookie_request_is_loopback_csrf_safe(&headers));
+    }
+
+    #[test]
+    fn origin_matching_normalizes_default_ports_but_rejects_paths() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, "machine.example:443".parse().unwrap());
+        headers.insert(header::ORIGIN, "https://machine.example".parse().unwrap());
+        assert!(origin_matches_host(&headers));
+
+        headers.insert(header::ORIGIN, "https://machine.example/".parse().unwrap());
+        assert!(!origin_matches_host(&headers));
+
+        headers.insert(header::HOST, "127.0.0.1:80".parse().unwrap());
+        headers.insert(header::ORIGIN, "http://127.0.0.1".parse().unwrap());
+        assert!(origin_matches_host(&headers));
     }
 }

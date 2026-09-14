@@ -4,8 +4,8 @@ import { canonicalDevWebUrl } from '../../../desktop/local-config.mjs';
 
 describe('canonicalDevWebUrl', () => {
 	it('moves loopback IP URLs to localhost without losing callback state', () => {
-		expect(canonicalDevWebUrl('http://127.0.0.1:5173/callback?code=code#pairing-token')).toBe(
-			'http://localhost:5173/callback?code=code#pairing-token'
+		expect(canonicalDevWebUrl('http://127.0.0.1:5173/callback?code=code#workspace=%2Frepo')).toBe(
+			'http://localhost:5173/callback?code=code#workspace=%2Frepo'
 		);
 	});
 

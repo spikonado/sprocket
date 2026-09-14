@@ -10,7 +10,7 @@ export const DEV_API_URL = `http://${DEV_API_HOST}:${DEV_API_PORT}`;
 export const DEV_WEB_URL = `http://${DEV_HOST}:${WEB_DEV_PORT}`;
 
 /**
- * Keep browser auth, pairing cookies, and PKCE state on one development origin.
+ * Keep browser auth, local session cookies, and PKCE state on one development origin.
  * @param {string} currentUrl
  * @returns {string | null}
  */

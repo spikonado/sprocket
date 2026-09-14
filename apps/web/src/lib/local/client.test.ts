@@ -27,28 +27,28 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 });
 
-describe('local pairing', () => {
-	it("shares startup pairing so auth and the local API do not replace each other's cookie", async () => {
+describe('local session bootstrap', () => {
+	it("shares startup bootstrap so auth and the local API do not replace each other's cookie", async () => {
 		vi.stubGlobal('window', { location: { hash: '' } });
-		const fetch = vi.fn(async (url: string) => {
+		const fetch = vi.fn(async (url: string, init?: RequestInit) => {
 			if (url.endsWith('/api/auth/session')) {
 				return Response.json({ authenticated: false });
 			}
+			expect(init).toEqual({ method: 'POST', credentials: 'include' });
 			return Response.json({ authenticated: true });
 		});
 		vi.stubGlobal('fetch', fetch);
-		const bootstrap = { httpBaseUrl: 'http://localhost:17731', pairingCredential: 'test' };
 		await Promise.all([
-			ensureLocalSession(bootstrap.httpBaseUrl, bootstrap),
-			ensureLocalSession(bootstrap.httpBaseUrl, bootstrap)
+			ensureLocalSession('http://localhost:17731'),
+			ensureLocalSession('http://localhost:17731')
 		]);
 		expect(fetch.mock.calls.map(([url]) => url)).toEqual([
-			`${bootstrap.httpBaseUrl}/api/auth/session`,
-			`${bootstrap.httpBaseUrl}/api/auth/bootstrap`
+			'http://localhost:17731/api/auth/session',
+			'http://localhost:17731/api/auth/bootstrap'
 		]);
 
 		fetch.mockClear();
-		await ensureLocalSession(bootstrap.httpBaseUrl, bootstrap);
+		await ensureLocalSession('http://localhost:17731');
 		expect(fetch).toHaveBeenCalledTimes(2);
 	});
 });

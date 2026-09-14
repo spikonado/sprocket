@@ -11,7 +11,6 @@ contextBridge.exposeInMainWorld('sprocketDesktopBridge', {
 			return () => ipcRenderer.removeListener('sprocket:update-state', listener);
 		}
 	},
-	getLocalBootstrap: () => ipcRenderer.invoke('sprocket:get-local-bootstrap'),
 	takeWorkspaceLaunch: () => ipcRenderer.invoke('sprocket:take-workspace-launch'),
 	onWorkspaceLaunch: (callback) => {
 		const listener = () => callback();

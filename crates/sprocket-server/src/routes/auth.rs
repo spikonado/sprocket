@@ -9,9 +9,9 @@ use axum_extra::extract::CookieJar;
 use serde::Deserialize;
 
 use crate::auth::{
-    AuthSessionResponse, AuthState, BootstrapRequest, BootstrapResponse, DesktopLoginStartResponse,
-    extract_session_token, origin_host_is_loopback, origin_matches_host,
-    peer_may_complete_desktop_login_callback, require_session,
+    AuthSessionResponse, AuthState, BootstrapResponse, BrowserConnection,
+    DesktopLoginStartResponse, browser_connection, extract_session_token,
+    peer_may_complete_desktop_login_callback, require_bootstrap_session,
 };
 use crate::native_auth::{NativeLoginFlow, NativeLoginStart, NativeLoginStatus};
 use crate::routes::api_error::ApiError;
@@ -24,7 +24,7 @@ const DESKTOP_BOOTSTRAP_TOKEN_HEADER: &str = "x-sprocket-desktop-bootstrap-token
 struct DesktopBootstrapResponse {
     http_base_url: String,
     desktop_login_callback_url: String,
-    pairing_credential: String,
+    pairing_credential: &'static str,
 }
 
 #[derive(Debug, Deserialize)]
@@ -55,13 +55,19 @@ struct NativeSessionTokenRequest {
 pub fn routes() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/auth/changes", get(session_changes))
-        .route("/auth/session", get(session))
+        .route(
+            "/auth/session",
+            get(session).delete(browser_session_sign_out),
+        )
         .route("/auth/bootstrap", post(bootstrap))
         .route("/auth/pairing-proof", post(pairing_proof))
         .route("/auth/desktop-bootstrap", get(desktop_bootstrap))
         .route("/auth/desktop-login/start", post(desktop_login_start))
         .route("/auth/desktop-login/callback", get(desktop_login_callback))
-        .route("/auth/desktop-login/result", get(desktop_login_result))
+        .route(
+            "/auth/desktop-login/result",
+            get(desktop_login_result_legacy).post(desktop_login_result),
+        )
         .route("/auth/desktop-login/cancel", post(desktop_login_cancel))
         .route(
             "/auth/native-session",
@@ -80,12 +86,14 @@ async fn session_changes(
     >,
     ApiError,
 > {
-    if !crate::auth::cookie_get_is_csrf_safe(&headers) {
-        return Err(ApiError::authentication_required());
-    }
-    require_session(&state.auth, &headers, &jar)
+    let session_token = require_bootstrap_session(&state.auth, &headers, &jar)
         .await
         .map_err(ApiError::unauthorized)?;
+    if !state.auth.session_is_local_browser(&session_token).await
+        && !state.auth.session_has_user(&session_token).await
+    {
+        return Err(ApiError::authentication_required());
+    }
     let receiver = state.native_auth.subscribe_changes();
     let shutdown = state.lifetime.shutdown.clone();
     let guard = state.lifetime.run_guard().map_err(ApiError::bad_request)?;
@@ -119,16 +127,24 @@ async fn session(
 
 async fn bootstrap(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     jar: CookieJar,
-    Json(payload): Json<BootstrapRequest>,
 ) -> Result<(StatusCode, CookieJar, Json<BootstrapResponse>), ApiError> {
+    let Some(connection) = browser_connection(&headers, peer) else {
+        return Err(ApiError::with_status(
+            StatusCode::FORBIDDEN,
+            anyhow::anyhow!("browser access requires loopback HTTP or same-origin HTTPS"),
+        ));
+    };
     let (response, session_token) = state
         .auth
-        .bootstrap(&payload.credential)
+        .bootstrap_browser_session(connection == BrowserConnection::Loopback)
         .await
         .map_err(ApiError::bad_request)?;
 
-    let cookie = AuthState::make_session_cookie(&session_token);
+    let cookie =
+        AuthState::make_session_cookie(&session_token, connection == BrowserConnection::Https);
     let mut jar = jar;
     jar = jar.add(cookie);
 
@@ -187,28 +203,36 @@ async fn desktop_bootstrap(
 
 async fn desktop_login_start(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     jar: CookieJar,
     Json(payload): Json<DesktopLoginStartRequest>,
 ) -> Result<Json<NativeLoginStart>, ApiError> {
-    let session_token = require_session(&state.auth, &headers, &jar)
-        .await
-        .map_err(|_| ApiError::authentication_required())?;
+    let (session_token, connection) = require_browser_session(&state, &headers, &jar, peer).await?;
 
-    if !state.loopback_desktop_login_supported {
-        return Err(ApiError::bad_request(anyhow::anyhow!(
-            "desktop browser sign-in requires the local server to accept 127.0.0.1 loopback connections; set SPROCKET_HOST to 127.0.0.1 or 0.0.0.0"
-        )));
+    let login = match connection {
+        BrowserConnection::Loopback => {
+            if !state.loopback_desktop_login_supported {
+                return Err(ApiError::bad_request(anyhow::anyhow!(
+                    "browser sign-in requires the local server to accept 127.0.0.1 loopback connections; set SPROCKET_HOST to 127.0.0.1 or 0.0.0.0"
+                )));
+            }
+            state
+                .native_auth
+                .start_login(
+                    &session_token,
+                    payload.flow.unwrap_or(NativeLoginFlow::SignIn),
+                )
+                .await
+        }
+        BrowserConnection::Https => {
+            state
+                .native_auth
+                .start_remote_device_login(session_token)
+                .await
+        }
     }
-
-    let login = state
-        .native_auth
-        .start_login(
-            &session_token,
-            payload.flow.unwrap_or(NativeLoginFlow::SignIn),
-        )
-        .await
-        .map_err(ApiError::bad_request)?;
+    .map_err(ApiError::bad_request)?;
 
     Ok(Json(login))
 }
@@ -292,15 +316,21 @@ async fn desktop_login_callback(
 
 async fn desktop_login_result(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     jar: CookieJar,
 ) -> Result<Json<NativeLoginStatus>, ApiError> {
-    let session_token = require_session(&state.auth, &headers, &jar)
-        .await
-        .map_err(|_| ApiError::authentication_required())?;
-
-    let status = state.native_auth.status(&session_token).await;
+    let (session_token, connection) = require_browser_session(&state, &headers, &jar, peer).await?;
+    let status = match connection {
+        BrowserConnection::Loopback => state.native_auth.status(&session_token).await,
+        BrowserConnection::Https => state
+            .native_auth
+            .complete_remote_device_login(&session_token)
+            .await
+            .map_err(ApiError::internal)?,
+    };
     if matches!(status, NativeLoginStatus::Authenticated { .. })
+        && connection == BrowserConnection::Loopback
         && !state.auth.session_has_user(&session_token).await
     {
         return Ok(Json(NativeLoginStatus::SignedOut));
@@ -308,37 +338,95 @@ async fn desktop_login_result(
     Ok(Json(status))
 }
 
+async fn desktop_login_result_legacy(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<Json<NativeLoginStatus>, ApiError> {
+    let session_token = require_bootstrap_session(&state.auth, &headers, &jar)
+        .await
+        .map_err(|_| ApiError::authentication_required())?;
+    if !peer.ip().is_loopback() || !state.auth.session_is_local_browser(&session_token).await {
+        return Err(ApiError::with_status(
+            StatusCode::FORBIDDEN,
+            anyhow::anyhow!("legacy browser sign-in status is only available over loopback"),
+        ));
+    }
+    Ok(Json(state.native_auth.status(&session_token).await))
+}
+
 async fn desktop_login_cancel(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     jar: CookieJar,
     Json(payload): Json<DesktopLoginCancelRequest>,
 ) -> Result<Json<DesktopLoginStartResponse>, ApiError> {
-    let session_token = require_session(&state.auth, &headers, &jar)
-        .await
-        .map_err(|_| ApiError::authentication_required())?;
-
-    state
-        .native_auth
-        .cancel_login(&session_token, payload.login_id.trim())
-        .await;
+    let (session_token, connection) = require_browser_session(&state, &headers, &jar, peer).await?;
+    match connection {
+        BrowserConnection::Loopback => {
+            state
+                .native_auth
+                .cancel_login(&session_token, payload.login_id.trim())
+                .await;
+        }
+        BrowserConnection::Https => {
+            let login_id = payload.login_id.trim();
+            state
+                .native_auth
+                .cancel_remote_device_login(
+                    &session_token,
+                    (!login_id.is_empty()).then_some(login_id),
+                )
+                .await;
+        }
+    }
     Ok(Json(DesktopLoginStartResponse { ok: true }))
 }
 
 async fn native_sign_out(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     jar: CookieJar,
 ) -> Result<Json<DesktopLoginStartResponse>, ApiError> {
-    require_session(&state.auth, &headers, &jar)
-        .await
-        .map_err(|_| ApiError::authentication_required())?;
+    let (_, connection) = require_browser_session(&state, &headers, &jar, peer).await?;
+    if connection != BrowserConnection::Loopback {
+        return Err(ApiError::with_status(
+            StatusCode::FORBIDDEN,
+            anyhow::anyhow!("host sign-out is only available from this machine"),
+        ));
+    }
     state
         .native_auth
         .sign_out()
         .await
         .map_err(|error| ApiError::internal_with("failed to clear native session", error))?;
     Ok(Json(DesktopLoginStartResponse { ok: true }))
+}
+
+async fn browser_session_sign_out(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Result<(CookieJar, Json<DesktopLoginStartResponse>), ApiError> {
+    let (session_token, connection) = require_browser_session(&state, &headers, &jar, peer).await?;
+    state.native_auth.cancel_device_login(&session_token).await;
+    state
+        .native_auth
+        .cancel_remote_device_login(&session_token, None)
+        .await;
+    state
+        .auth
+        .end_session(&session_token)
+        .await
+        .map_err(ApiError::internal)?;
+    let jar = jar.remove(AuthState::expire_session_cookie(
+        connection == BrowserConnection::Https,
+    ));
+    Ok((jar, Json(DesktopLoginStartResponse { ok: true })))
 }
 
 async fn native_session_token(
@@ -367,15 +455,11 @@ async fn native_session_token_response(
     jar: &CookieJar,
     payload: NativeSessionTokenRequest,
 ) -> Result<Json<Option<crate::native_auth::NativeBrowserSession>>, ApiError> {
-    if !peer.ip().is_loopback() || !is_loopback_same_origin(headers) {
-        return Err(ApiError::with_status(
-            StatusCode::FORBIDDEN,
-            anyhow::anyhow!("native tokens are only available to the local application"),
-        ));
+    let (session_token, connection) = require_browser_session(state, headers, jar, peer).await?;
+    if connection == BrowserConnection::Https && !state.auth.session_has_user(&session_token).await
+    {
+        return Err(ApiError::authentication_required());
     }
-    let session_token = require_session(&state.auth, headers, jar)
-        .await
-        .map_err(|_| ApiError::authentication_required())?;
     let session = state
         .native_auth
         .browser_session(payload.force_refresh_token)
@@ -388,7 +472,13 @@ async fn native_session_token_response(
             )
         })?;
     if let Some(session) = &session {
-        if state.auth.session_has_user(&session_token).await {
+        if connection == BrowserConnection::Https {
+            state
+                .auth
+                .require_session_user(&session_token, &session.user.id)
+                .await
+                .map_err(|_| ApiError::authentication_required())?;
+        } else if state.auth.session_has_user(&session_token).await {
             state
                 .auth
                 .require_session_user(&session_token, &session.user.id)
@@ -405,15 +495,43 @@ async fn native_session_token_response(
     Ok(Json(session))
 }
 
-fn is_loopback_same_origin(headers: &HeaderMap) -> bool {
-    origin_matches_host(headers) && origin_host_is_loopback(headers)
+async fn session_browser_connection(
+    state: &AppState,
+    headers: &HeaderMap,
+    peer: SocketAddr,
+    session_token: &str,
+) -> Result<BrowserConnection, ApiError> {
+    let connection = browser_connection(headers, peer).ok_or_else(|| {
+        ApiError::with_status(
+            StatusCode::FORBIDDEN,
+            anyhow::anyhow!("browser access requires loopback HTTP or same-origin HTTPS"),
+        )
+    })?;
+    let local_session = state.auth.session_is_local_browser(session_token).await;
+    if local_session != (connection == BrowserConnection::Loopback) {
+        return Err(ApiError::authentication_required());
+    }
+    Ok(connection)
+}
+
+async fn require_browser_session(
+    state: &AppState,
+    headers: &HeaderMap,
+    jar: &CookieJar,
+    peer: SocketAddr,
+) -> Result<(String, BrowserConnection), ApiError> {
+    let session_token = require_bootstrap_session(&state.auth, headers, jar)
+        .await
+        .map_err(|_| ApiError::authentication_required())?;
+    let connection = session_browser_connection(state, headers, peer, &session_token).await?;
+    Ok((session_token, connection))
 }
 
 fn desktop_bootstrap_response(state: &AppState) -> Json<DesktopBootstrapResponse> {
     Json(DesktopBootstrapResponse {
         http_base_url: state.http_base_url.clone(),
         desktop_login_callback_url: state.desktop_login_callback_url.clone(),
-        pairing_credential: state.auth.pairing_credential().to_string(),
+        pairing_credential: "not-required",
     })
 }
 
@@ -500,7 +618,10 @@ mod tests {
             std::env::temp_dir().join(format!("sprocket-auth-route-test-{}", Uuid::new_v4()));
         let auth = auth::AuthState::load(&temp_dir).expect("auth state");
         let credential = auth.pairing_credential().to_string();
-        let (_, session_token) = auth.bootstrap(&credential).await.expect("bootstrap");
+        let (_, session_token) = auth
+            .bootstrap_browser_session(true)
+            .await
+            .expect("bootstrap");
         let native_auth = crate::native_auth::NativeAuthManager::configured_for_test(
             crate::native_auth::NativeAuthConfig {
                 workos_client_id: "client_test".to_string(),
@@ -518,7 +639,30 @@ mod tests {
     }
 
     fn router(state: AppState) -> axum::Router {
-        crate::build_router(state, None)
+        crate::build_router(state, None).layer(axum::middleware::from_fn(
+            |mut request: Request<Body>, next: axum::middleware::Next| async move {
+                if !request.headers().contains_key(header::HOST) {
+                    request
+                        .headers_mut()
+                        .insert(header::HOST, "127.0.0.1:7731".parse().unwrap());
+                }
+                if !request.headers().contains_key(header::ORIGIN) {
+                    request
+                        .headers_mut()
+                        .insert(header::ORIGIN, "http://127.0.0.1:7731".parse().unwrap());
+                }
+                if request
+                    .extensions()
+                    .get::<ConnectInfo<SocketAddr>>()
+                    .is_none()
+                {
+                    request
+                        .extensions_mut()
+                        .insert(ConnectInfo(loopback_peer()));
+                }
+                next.run(request).await
+            },
+        ))
     }
 
     async fn read_json(response: axum::http::Response<Body>) -> serde_json::Value {
@@ -587,6 +731,240 @@ mod tests {
             .unwrap()
     }
 
+    fn bootstrap_request(host: &str, origin: &str) -> Request<Body> {
+        Request::builder()
+            .method("POST")
+            .uri("/api/auth/bootstrap")
+            .header(header::HOST, host)
+            .header(header::ORIGIN, origin)
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn bootstrap_accepts_loopback_http_and_same_origin_https_only() {
+        let (state, _, _) = test_state(true).await;
+        let app = router(state);
+
+        let accepted = app
+            .clone()
+            .oneshot(with_peer(
+                bootstrap_request("127.0.0.1:7731", "http://127.0.0.1:7731"),
+                loopback_peer(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(accepted.status(), StatusCode::OK);
+        let local_cookie = accepted.headers()[header::SET_COOKIE].to_str().unwrap();
+        assert!(!local_cookie.contains("Secure"));
+
+        let https = app
+            .clone()
+            .oneshot(with_peer(
+                bootstrap_request("machine.tailnet.ts.net", "https://machine.tailnet.ts.net"),
+                loopback_peer(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(https.status(), StatusCode::OK);
+        assert!(
+            https.headers()[header::SET_COOKIE]
+                .to_str()
+                .unwrap()
+                .contains("Secure")
+        );
+
+        let localhost = app
+            .clone()
+            .oneshot(with_peer(
+                bootstrap_request("localhost:7731", "http://localhost:7731"),
+                loopback_peer(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(localhost.status(), StatusCode::OK);
+
+        for (host, origin, peer) in [
+            (
+                "127.0.0.1:7731",
+                "https://attacker.example",
+                loopback_peer(),
+            ),
+            (
+                "machine.local:7731",
+                "http://machine.local:7731",
+                loopback_peer(),
+            ),
+            ("127.0.0.1:7731", "http://127.0.0.1:7731", lan_peer()),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(with_peer(bootstrap_request(host, origin), peer))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{host} {origin}");
+        }
+    }
+
+    #[tokio::test]
+    async fn unbound_remote_session_cannot_access_machine_routes() {
+        let (state, _, _) = test_state(true).await;
+        let auth = Arc::clone(&state.auth);
+        let app = router(state);
+        let bootstrap = app
+            .clone()
+            .oneshot(with_peer(
+                bootstrap_request("machine.tailnet.ts.net", "https://machine.tailnet.ts.net"),
+                lan_peer(),
+            ))
+            .await
+            .unwrap();
+        let cookie = bootstrap.headers()[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_string();
+        let session_token = cookie.split_once('=').unwrap().1.to_string();
+
+        let denied = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/workspace/projects")
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
+
+        auth.bind_session_user(&session_token, "user-a")
+            .await
+            .unwrap();
+        let accepted = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/workspace/projects")
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(accepted.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn unbound_remote_session_cannot_open_the_auth_event_stream() {
+        let (state, _, _) = test_state(true).await;
+        let (_, remote_session) = state
+            .auth
+            .bootstrap_browser_session(false)
+            .await
+            .expect("remote session");
+        let app = router(state);
+
+        let response = app
+            .oneshot(with_peer(
+                Request::builder()
+                    .uri("/api/auth/changes")
+                    .header(header::HOST, "machine.tailnet.ts.net")
+                    .header(header::ORIGIN, "https://machine.tailnet.ts.net")
+                    .header(header::COOKIE, session_cookie(&remote_session))
+                    .body(Body::empty())
+                    .unwrap(),
+                lan_peer(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn remote_browser_can_revoke_itself_but_cannot_sign_out_the_host() {
+        let (state, _, _) = test_state(true).await;
+        state.native_auth.authenticate_for_test("user-a").await;
+        let (_, remote_session) = state
+            .auth
+            .bootstrap_browser_session(false)
+            .await
+            .expect("remote session");
+        state
+            .auth
+            .bind_session_user(&remote_session, "user-a")
+            .await
+            .unwrap();
+        let auth = Arc::clone(&state.auth);
+        let native_auth = Arc::clone(&state.native_auth);
+        let app = router(state);
+
+        let host_sign_out = app
+            .clone()
+            .oneshot(with_peer(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/auth/native-session")
+                    .header(header::HOST, "machine.tailnet.ts.net")
+                    .header(header::ORIGIN, "https://machine.tailnet.ts.net")
+                    .header(header::COOKIE, session_cookie(&remote_session))
+                    .body(Body::empty())
+                    .unwrap(),
+                lan_peer(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(host_sign_out.status(), StatusCode::FORBIDDEN);
+        assert_eq!(
+            native_auth
+                .browser_session(false)
+                .await
+                .unwrap()
+                .unwrap()
+                .user
+                .id,
+            "user-a"
+        );
+
+        let browser_sign_out = app
+            .oneshot(with_peer(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/auth/session")
+                    .header(header::HOST, "machine.tailnet.ts.net")
+                    .header(header::ORIGIN, "https://machine.tailnet.ts.net")
+                    .header(header::COOKIE, session_cookie(&remote_session))
+                    .body(Body::empty())
+                    .unwrap(),
+                lan_peer(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(browser_sign_out.status(), StatusCode::OK);
+        let expired = browser_sign_out.headers()[header::SET_COOKIE]
+            .to_str()
+            .unwrap();
+        assert!(expired.contains("Secure"));
+        assert!(
+            !auth
+                .session_state(Some(&remote_session))
+                .await
+                .authenticated
+        );
+        assert_eq!(
+            native_auth
+                .browser_session(false)
+                .await
+                .unwrap()
+                .unwrap()
+                .user
+                .id,
+            "user-a"
+        );
+    }
+
     #[tokio::test]
     async fn login_error_preserves_credential_store_causes_and_escapes_html() {
         let error = anyhow::Error::new(keyring::Error::NoStorageAccess(
@@ -630,10 +1008,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn native_token_requires_pairing_and_does_not_cache_signed_out_response() {
+    async fn native_token_requires_a_browser_session_and_does_not_cache_signed_out_response() {
         let (state, session_token, _) = test_state(true).await;
         let app = router(state);
-        let unpaired = app
+        let unauthenticated = app
             .clone()
             .oneshot(with_peer(
                 native_token_request(None, "http://127.0.0.1:7731"),
@@ -641,8 +1019,8 @@ mod tests {
             ))
             .await
             .unwrap();
-        assert_eq!(unpaired.status(), StatusCode::UNAUTHORIZED);
-        assert_eq!(unpaired.headers()[header::CACHE_CONTROL], "no-store");
+        assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(unauthenticated.headers()[header::CACHE_CONTROL], "no-store");
 
         let signed_out = app
             .oneshot(with_peer(
@@ -657,7 +1035,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn native_token_rejects_cross_origin_and_remote_requests_even_when_paired() {
+    async fn native_token_rejects_cross_origin_and_plain_remote_http() {
         let (state, session_token, _) = test_state(true).await;
         let app = router(state);
         for origin in [
@@ -674,7 +1052,7 @@ mod tests {
                 ))
                 .await
                 .unwrap();
-            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{origin}");
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{origin}");
         }
 
         let mut request = native_token_request(Some(&session_token), "http://127.0.0.1:7731");
@@ -725,23 +1103,91 @@ mod tests {
             .unwrap();
     }
 
+    #[tokio::test]
+    async fn remote_native_token_requires_a_matching_bound_owner() {
+        let (state, _, _) = test_state(true).await;
+        state.native_auth.authenticate_for_test("user-a").await;
+        let (_, remote_session) = state
+            .auth
+            .bootstrap_browser_session(false)
+            .await
+            .expect("remote session");
+        let auth = Arc::clone(&state.auth);
+        let app = router(state);
+        let request = |session_token: &str| {
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth/native-session/token")
+                .header(header::HOST, "machine.tailnet.ts.net")
+                .header(header::ORIGIN, "https://machine.tailnet.ts.net")
+                .header(header::COOKIE, session_cookie(session_token))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"forceRefreshToken":false}"#))
+                .unwrap()
+        };
+
+        let unbound = app
+            .clone()
+            .oneshot(with_peer(request(&remote_session), lan_peer()))
+            .await
+            .unwrap();
+        assert_eq!(unbound.status(), StatusCode::UNAUTHORIZED);
+
+        auth.bind_session_user(&remote_session, "user-a")
+            .await
+            .unwrap();
+        let accepted = app
+            .clone()
+            .oneshot(with_peer(request(&remote_session), lan_peer()))
+            .await
+            .unwrap();
+        assert_eq!(accepted.status(), StatusCode::OK);
+        assert_eq!(
+            read_json(accepted).await["accessToken"],
+            "test-access-token"
+        );
+
+        auth.bind_session_user(&remote_session, "user-b")
+            .await
+            .unwrap();
+        let mismatched = app
+            .oneshot(with_peer(request(&remote_session), lan_peer()))
+            .await
+            .unwrap();
+        assert_eq!(mismatched.status(), StatusCode::UNAUTHORIZED);
+    }
+
     #[test]
-    fn token_origin_validation_rejects_missing_headers_and_dns_rebinding() {
+    fn browser_connection_rejects_missing_headers_and_plain_remote_http() {
         let mut headers = HeaderMap::new();
-        assert!(!is_loopback_same_origin(&headers));
+        assert_eq!(browser_connection(&headers, loopback_peer()), None);
         headers.insert(header::HOST, "localhost:5173".parse().unwrap());
-        assert!(!is_loopback_same_origin(&headers));
+        assert_eq!(browser_connection(&headers, loopback_peer()), None);
         headers.insert(header::ORIGIN, "http://localhost:5173".parse().unwrap());
-        assert!(is_loopback_same_origin(&headers));
+        assert_eq!(
+            browser_connection(&headers, loopback_peer()),
+            Some(BrowserConnection::Loopback)
+        );
         headers.insert(header::HOST, "[::1]:17731".parse().unwrap());
         headers.insert(header::ORIGIN, "http://[::1]:17731".parse().unwrap());
-        assert!(is_loopback_same_origin(&headers));
+        assert_eq!(
+            browser_connection(&headers, loopback_peer()),
+            Some(BrowserConnection::Loopback)
+        );
         headers.insert(header::HOST, "attacker.example:7731".parse().unwrap());
         headers.insert(
             header::ORIGIN,
             "http://attacker.example:7731".parse().unwrap(),
         );
-        assert!(!is_loopback_same_origin(&headers));
+        assert_eq!(browser_connection(&headers, loopback_peer()), None);
+        headers.insert(
+            header::ORIGIN,
+            "https://attacker.example:7731".parse().unwrap(),
+        );
+        assert_eq!(
+            browser_connection(&headers, lan_peer()),
+            Some(BrowserConnection::Https)
+        );
     }
 
     #[tokio::test]
@@ -773,6 +1219,30 @@ mod tests {
             &message,
             &proof
         ));
+    }
+
+    #[tokio::test]
+    async fn desktop_bootstrap_keeps_a_non_secret_legacy_pairing_field() {
+        let (mut state, _, credential) = test_state(true).await;
+        state.desktop_bootstrap_token = Some(Arc::new(tokio::sync::Mutex::new(Some(
+            "one-time-token".to_string(),
+        ))));
+        let app = router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/auth/desktop-bootstrap")
+                    .header(DESKTOP_BOOTSTRAP_TOKEN_HEADER, "one-time-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let payload = read_json(response).await;
+        assert_eq!(payload["pairingCredential"], "not-required");
+        assert_ne!(payload["pairingCredential"], credential);
     }
 
     #[tokio::test]
@@ -819,10 +1289,10 @@ mod tests {
 
     #[tokio::test]
     async fn concurrent_sessions_have_independent_pending_attempts() {
-        let (state, session_a, credential) = test_state(true).await;
+        let (state, session_a, _) = test_state(true).await;
         let (_, session_b) = state
             .auth
-            .bootstrap(&credential)
+            .bootstrap_browser_session(true)
             .await
             .expect("second session");
         let app = router(state);
@@ -835,6 +1305,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .method("POST")
                     .uri("/api/auth/desktop-login/result")
                     .header(header::COOKIE, session_cookie(&session_b))
                     .body(Body::empty())
@@ -847,6 +1318,7 @@ mod tests {
         let status_a = app
             .oneshot(
                 Request::builder()
+                    .method("POST")
                     .uri("/api/auth/desktop-login/result")
                     .header(header::COOKIE, session_cookie(&session_a))
                     .body(Body::empty())
@@ -923,6 +1395,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
+                    .method("POST")
                     .uri("/api/auth/desktop-login/result")
                     .header(header::COOKIE, session_cookie(&session_token))
                     .body(Body::empty())
@@ -1001,6 +1474,7 @@ mod tests {
         let result = app
             .oneshot(
                 Request::builder()
+                    .method("POST")
                     .uri("/api/auth/desktop-login/result")
                     .header(header::COOKIE, session_cookie(&session_token))
                     .body(Body::empty())
@@ -1040,6 +1514,7 @@ mod tests {
         let result = app
             .oneshot(
                 Request::builder()
+                    .method("POST")
                     .uri("/api/auth/desktop-login/result")
                     .header(header::COOKIE, session_cookie(&session_token))
                     .body(Body::empty())
@@ -1053,10 +1528,10 @@ mod tests {
 
     #[tokio::test]
     async fn start_generates_distinct_state_across_sessions() {
-        let (state, session_a, credential) = test_state(true).await;
+        let (state, session_a, _) = test_state(true).await;
         let (_, session_b) = state
             .auth
-            .bootstrap(&credential)
+            .bootstrap_browser_session(true)
             .await
             .expect("second session");
         let app = router(state);

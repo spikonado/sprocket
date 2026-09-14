@@ -16,19 +16,8 @@ import type {
 import type { TableNamesInDataModel } from 'convex/server';
 import { z } from 'zod';
 
-export type LocalBootstrap = {
-	httpBaseUrl: string;
-	desktopLoginCallbackUrl?: string;
-	pairingCredential: string;
-};
-
 const errorPayloadSchema = z.object({ error: z.string().optional() });
 const sessionSchema = z.object({ authenticated: z.boolean().optional() });
-const localBootstrapSchema = z.object({
-	httpBaseUrl: z.url(),
-	desktopLoginCallbackUrl: z.url().optional(),
-	pairingCredential: z.string()
-});
 const filesystemBrowseResultSchema = z.object({
 	parentPath: z.string(),
 	entries: z.array(z.object({ name: z.string(), fullPath: z.string() })),
@@ -391,10 +380,6 @@ function readLaunchHashParameter(name: string): string | null {
 	return new URLSearchParams(hash).get(name);
 }
 
-export function readPairingTokenFromHash(): string | null {
-	return readLaunchHashParameter('token');
-}
-
 export function readWorkspaceLaunchFromHash(): string | null {
 	return readLaunchHashParameter('workspace');
 }
@@ -413,17 +398,10 @@ export function clearLaunchHash() {
 	globalThis.window.history.replaceState(null, '', `${url.pathname}${url.search}`);
 }
 
-export async function bootstrapLocalSession(
-	baseUrl: string,
-	pairingCredential: string
-): Promise<void> {
+export async function bootstrapLocalSession(baseUrl: string): Promise<void> {
 	const response = await fetch(`${baseUrl}/api/auth/bootstrap`, {
 		method: 'POST',
-		headers: {
-			'content-type': 'application/json'
-		},
-		credentials: 'include',
-		body: JSON.stringify({ credential: pairingCredential })
+		credentials: 'include'
 	});
 
 	if (!response.ok) {
@@ -451,12 +429,12 @@ export async function hasLocalSession(baseUrl: string): Promise<boolean> {
 
 const localSessionRequests = new Map<string, Promise<void>>();
 
-export async function ensureLocalSession(baseUrl: string, bootstrap?: LocalBootstrap | null) {
+export async function ensureLocalSession(baseUrl: string) {
 	const pending = localSessionRequests.get(baseUrl);
 	if (pending) {
 		return await pending;
 	}
-	const request = establishLocalSession(baseUrl, bootstrap);
+	const request = establishLocalSession(baseUrl);
 	localSessionRequests.set(baseUrl, request);
 	try {
 		await request;
@@ -465,52 +443,12 @@ export async function ensureLocalSession(baseUrl: string, bootstrap?: LocalBoots
 	}
 }
 
-async function establishLocalSession(baseUrl: string, bootstrap?: LocalBootstrap | null) {
+async function establishLocalSession(baseUrl: string) {
 	if (await hasLocalSession(baseUrl)) {
 		return;
 	}
 
-	const hashToken = readPairingTokenFromHash();
-	if (hashToken) {
-		await bootstrapLocalSession(baseUrl, hashToken);
-		clearLaunchHash();
-		return;
-	}
-
-	if (bootstrap?.pairingCredential) {
-		await bootstrapLocalSession(baseUrl, bootstrap.pairingCredential);
-		return;
-	}
-
-	const localBootstrap = await fetchLocalBootstrap(baseUrl);
-	if (localBootstrap?.pairingCredential) {
-		await bootstrapLocalSession(baseUrl, localBootstrap.pairingCredential);
-		return;
-	}
-
-	throw new Error('Pair with your Sprocket server to continue.');
-}
-
-export async function fetchLocalBootstrap(baseUrl: string): Promise<LocalBootstrap | null> {
-	try {
-		const response = await fetch(`${baseUrl}/api/auth/desktop-bootstrap`);
-		if (!response.ok) {
-			return null;
-		}
-
-		const parsed = localBootstrapSchema.safeParse(await response.json());
-		return parsed.success ? parsed.data : null;
-	} catch {
-		return null;
-	}
-}
-
-export async function readDesktopBootstrap(baseUrl: string): Promise<LocalBootstrap | null> {
-	if (globalThis.window?.sprocketDesktopBridge?.getLocalBootstrap) {
-		return await globalThis.window.sprocketDesktopBridge.getLocalBootstrap();
-	}
-
-	return await fetchLocalBootstrap(baseUrl);
+	await bootstrapLocalSession(baseUrl);
 }
 
 async function parseJsonResponse<T>(response: Response, schema: z.ZodType<T>): Promise<T> {
@@ -786,7 +724,6 @@ export async function resolveDesktopApi(): Promise<DesktopApi> {
 		throw new Error('Unable to resolve the Sprocket server URL.');
 	}
 
-	const bootstrap = await readDesktopBootstrap(baseUrl);
-	await ensureLocalSession(baseUrl, bootstrap);
+	await ensureLocalSession(baseUrl);
 	return createLocalClient(baseUrl);
 }

@@ -20,6 +20,8 @@ See [ARCHITECTURE.md](../../ARCHITECTURE.md) for runtime topology and packaging.
 
 Server reuse is verified against local pairing state so a process on the
 expected port is not trusted merely because it responds like Sprocket.
+The pairing credential stays between local processes and is never placed in a
+browser URL. Browser sessions bootstrap through the server's loopback checks.
 
 All implementation currently lives in `src/main.rs`. Keep authentication,
 workspace execution, and agent behavior in their library crates rather than
