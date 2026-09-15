@@ -5,8 +5,7 @@
 	import { PanelRight } from '@lucide/svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import { useAuth, useConvexClient, useMutation, useQuery } from 'convex-svelte';
-	import { watchCloudArtifacts, type CloudArtifactScope } from '$lib/chat/cloud-artifacts';
-	import type { Doc, Id } from '$convex/_generated/dataModel';
+	import type { Id } from '$convex/_generated/dataModel';
 	import { api } from '$convex/_generated/api';
 	import {
 		advanceConvexAuthRetryPending,
@@ -36,20 +35,7 @@
 	import ThreadTranscript from '$lib/components/home/thread-transcript.svelte';
 	import SidePanel from '$lib/components/home/side-panel.svelte';
 	import ArtifactScreenFullscreen from '$lib/components/home/artifact-screen-fullscreen.svelte';
-	import {
-		EMPTY_ARTIFACT_WATCH_STATE,
-		applyArtifactsWatchEvent,
-		artifactEntryFromLocal,
-		artifactRevisionFromLocal,
-		artifactWatchScopeKey,
-		artifactsWatchRequest,
-		isCurrentArtifactsWatch,
-		mergeArtifactSources,
-		nextArtifactRevisionWatch,
-		type ArtifactRevision,
-		type ArtifactWatchState
-	} from '$lib/chat/artifacts';
-	import { DEFAULT_SIDE_PANEL_SNAPSHOT, type SidePanelSnapshot } from '$lib/chat/side-panel';
+	import { ArtifactPanel } from '$lib/home/artifact-panel.svelte';
 	import ProjectPicker, { type ProjectSelection } from '$lib/components/home/project-picker.svelte';
 	import ProjectSidebar from '$lib/components/home/project-sidebar.svelte';
 	import Button from '$lib/components/ui/button/button.svelte';
@@ -66,13 +52,8 @@
 	} from '$lib/home/desktop';
 	import { formatElapsedDuration } from '$lib/format';
 	import { convexClientErrorMessage } from '$lib/convex-error';
-	import {
-		attachmentMediaType,
-		fallbackAttachmentName,
-		isPreviewableImageMediaType,
-		revokeAttachmentPreview,
-		type ComposerAttachment
-	} from '$lib/chat/attachments';
+	import type { ComposerAttachment } from '$lib/chat/attachments';
+	import { ComposerAttachments } from '$lib/home/composer-attachments.svelte';
 	import { defaultModelId, defaultReasoningEffort } from '$convex/lib/models';
 	import {
 		CATALOG_UNAVAILABLE_MESSAGE,
@@ -102,8 +83,8 @@
 		type PendingAgentLaunch,
 		type PendingAgentLaunches
 	} from '$lib/project/threads';
-	import { mergeLiveOverlays } from '$lib/project/transcript';
-	import { DisplayHistory, visibleDisplayMessages } from '$lib/project/display-history';
+	import { TranscriptReplica } from '$lib/home/transcript-replica.svelte';
+	import { ThreadCache } from '$lib/home/thread-cache.svelte';
 	import type { TranscriptDisplayRow, TranscriptDetailCursor } from '$lib/types/sprocket';
 	import {
 		clearLaunchHash,
@@ -114,10 +95,6 @@
 	import type {
 		DesktopApi,
 		ExecutorJob,
-		LiveCompletionOverlay,
-		ThreadCacheStatus,
-		ThreadCacheUserRequest,
-		TranscriptMessage,
 		ThreadSummary,
 		ProjectAttachment
 	} from '$lib/types/sprocket';
@@ -233,8 +210,26 @@
 	let answeringAgentQuestion = $state(false);
 	let composerContinuationOfRunId = $state<Id<'runs'> | null>(null);
 	let autoSubmitComposerContinuation = $state(false);
-	let composerAttachments = $state<ComposerAttachment[]>([]);
 	let currentError = $state<string | null>(null);
+	const threadCache = new ThreadCache({
+		getApi: () => desktopApi,
+		getUserId: () => getCurrentUserId(),
+		getSelectedThreadId: () => currentThreadId,
+		onError: (message) => {
+			currentError = message;
+		}
+	});
+	const composerAttachments = new ComposerAttachments({
+		getContext: () => ({
+			api: desktopApi,
+			userId: getCurrentUserId(),
+			threadId: currentThreadId
+		}),
+		onError: (message) => {
+			currentError = message;
+		},
+		localServerRequiredMessage
+	});
 	const submittingPromptScopes = new SvelteMap<string, number>();
 	const composerRecoveries = new SvelteMap<string, ComposerRecovery>();
 	const recoveredSubmissionIds = new SvelteMap<
@@ -260,10 +255,6 @@
 	let desktopProjectAttachmentsByPath = $state<Record<string, ProjectAttachment>>({});
 	let hasLoadedDesktopProjectAttachments = $state(false);
 	let desktopProjectAttachmentsGeneration = 0;
-	let threadCacheStatus = $state<ThreadCacheStatus>('loading');
-	let threadSnapshotThreads = $state<Doc<'threadRecords'>[]>([]);
-	let threadCacheGeneration = 0;
-	let threadSnapshotPullGeneration = 0;
 	let selectionUserId = $state<string | null>(null);
 	let projectPickerOpen = $state(false);
 	let projectPickerMode = $state<'add' | 'reconnect'>('add');
@@ -276,152 +267,10 @@
 	let initialProjectLaunchResolved = $state(false);
 	let createThreadComposerElement = $state<HTMLElement | null>(null);
 	const remoteChangeNotices = new SvelteMap<Id<'threadRecords'>, string>();
-	let artifactFullscreenKey = $state<string | null>(null);
 	const REMOTE_CHANGE_NOTICE =
 		'This directory’s git remote changed. Existing threads now follow the new repository.';
 	function getCurrentUserId() {
 		return signedInUserId;
-	}
-
-	function updateComposerAttachment(localId: string, patch: Partial<ComposerAttachment>) {
-		const attachment = composerAttachments.find((entry) => entry.localId === localId);
-		if (!attachment) {
-			return false;
-		}
-		composerAttachments = composerAttachments.map((entry) =>
-			entry.localId === localId ? { ...entry, ...patch } : entry
-		);
-		return true;
-	}
-
-	function discardComposerUpload(args: {
-		api?: DesktopApi | null;
-		userId?: string | null;
-		threadId?: Id<'threadRecords'> | null;
-		storageId: Id<'_storage'>;
-	}) {
-		try {
-			const api = args.api ?? desktopApi;
-			const userId = args.userId ?? getCurrentUserId();
-			if (!api || !userId) {
-				return;
-			}
-			void api
-				.discardTranscriptAttachment({
-					userId,
-					storageId: args.storageId,
-					threadId: args.threadId ?? undefined
-				})
-				.catch(() => {});
-		} catch {
-			return;
-		}
-	}
-
-	async function uploadComposerAttachment(localId: string, file: File, name: string) {
-		const api = desktopApi;
-		const userId = getCurrentUserId();
-		const threadId = currentThreadId;
-		try {
-			if (!api) {
-				throw new Error(localServerRequiredMessage);
-			}
-			if (!userId) {
-				throw new Error('Sign in to attach files.');
-			}
-			const registered = await api.uploadTranscriptAttachment({
-				userId,
-				name,
-				file,
-				threadId: threadId ?? undefined
-			});
-			if ('error' in registered) {
-				throw new Error(registered.error);
-			}
-			const attachment = composerAttachments.find((entry) => entry.localId === localId);
-			revokeAttachmentPreview(attachment?.previewUrl);
-			const stillAttached = updateComposerAttachment(localId, {
-				status: 'ready',
-				storageId: registered.storageId,
-				name: registered.name,
-				mediaType: registered.mediaType,
-				size: registered.size,
-				previewUrl: isPreviewableImageMediaType(registered.mediaType) ? registered.url : undefined
-			});
-			if (!stillAttached) {
-				discardComposerUpload({
-					api,
-					userId,
-					threadId,
-					storageId: registered.storageId
-				});
-			}
-		} catch (error) {
-			const message = error instanceof Error ? error.message : 'Upload failed.';
-			updateComposerAttachment(localId, {
-				status: 'error',
-				error: message
-			});
-			currentError = message;
-		}
-	}
-
-	function addComposerAttachments(files: File[]) {
-		for (const file of files) {
-			const localId = crypto.randomUUID();
-			const name = fallbackAttachmentName(file);
-			const mediaType = attachmentMediaType(file.type);
-			composerAttachments = [
-				...composerAttachments,
-				{
-					localId,
-					name,
-					mediaType,
-					size: file.size,
-					previewUrl: isPreviewableImageMediaType(mediaType)
-						? URL.createObjectURL(file)
-						: undefined,
-					status: 'uploading'
-				}
-			];
-			void uploadComposerAttachment(localId, file, name);
-		}
-	}
-
-	function removeComposerAttachment(localId: string) {
-		const attachment = composerAttachments.find((entry) => entry.localId === localId);
-		if (!attachment) {
-			return;
-		}
-		revokeAttachmentPreview(attachment.previewUrl);
-		composerAttachments = composerAttachments.filter((entry) => entry.localId !== localId);
-		if (attachment.storageId) {
-			discardComposerUpload({
-				storageId: attachment.storageId,
-				userId: getCurrentUserId(),
-				threadId: currentThreadId
-			});
-		}
-	}
-
-	function clearComposerAttachments(options: {
-		discard: boolean;
-		userId?: string | null;
-		threadId?: Id<'threadRecords'> | null;
-	}) {
-		const discardUserId = options.userId === undefined ? getCurrentUserId() : options.userId;
-		const discardThreadId = options.threadId === undefined ? currentThreadId : options.threadId;
-		for (const attachment of composerAttachments) {
-			revokeAttachmentPreview(attachment.previewUrl);
-			if (options.discard && attachment.storageId) {
-				discardComposerUpload({
-					userId: discardUserId,
-					threadId: discardThreadId,
-					storageId: attachment.storageId
-				});
-			}
-		}
-		composerAttachments = [];
 	}
 
 	function getComposerScope(threadId: Id<'threadRecords'> | null, workspacePath: string | null) {
@@ -551,15 +400,15 @@
 		currentError ??
 			$authState.error ??
 			(queryError instanceof Error ? convexClientErrorMessage(queryError) : null) ??
-			(threadCacheStatus === 'error' ? 'Could not sync threads.' : null) ??
-			(threadCacheStatus === 'offline' ? 'Thread sync is offline.' : null)
+			(threadCache.status === 'error' ? 'Could not sync threads.' : null) ??
+			(threadCache.status === 'offline' ? 'Thread sync is offline.' : null)
 	);
 	const projects = $derived.by<ProjectState[]>(() =>
 		Object.values(desktopProjectAttachmentsByPath)
 			.sort((left, right) => right.lastUsedAt - left.lastUsedAt)
 			.map(projectFromAttachment)
 	);
-	const threads = $derived(threadSnapshotThreads.map(threadRecordToSummary));
+	const threads = $derived(threadCache.threads.map(threadRecordToSummary));
 	const currentActiveThread = $derived(dataForThread(activeThreadQuery.data, currentThreadId));
 	const contextUsage = $derived.by(() => {
 		const model = modelCatalog
@@ -574,47 +423,15 @@
 		};
 	});
 	const currentLifecycle = $derived(dataForThread(lifecycleQuery.data, currentThreadId));
+	const runState = $derived(currentLifecycle?.run ?? null);
 	const pendingAgentQuestion = $derived(
 		dataForThread(pendingAgentQuestionQuery.data, currentThreadId)
 	);
-	let replicaMessages = $state.raw<TranscriptDisplayRow[]>([]);
-	let replicaNextBefore = $state<number | null>(null);
-	let replicaWindowVersion = $state(0);
-	let replicaStale = $state(false);
-	let replicaThreadId = $state<Id<'threadRecords'> | null>(null);
-	let replicaLoading = $state(false);
-	let replicaError = $state<string | null>(null);
-	let replicaGeneration = 0;
-	let transcriptHistory = $state.raw<DisplayHistory | null>(null);
-	let transcriptAbort: AbortController | null = null;
-	let loadingOlderTranscript = $state(false);
-	let liveCompletion = $state.raw<LiveCompletionOverlay | null>(null);
-	let pendingCompletions = $state.raw<LiveCompletionOverlay[]>([]);
-
-	function showReplicaForThread(threadId: Id<'threadRecords'> | null) {
-		replicaGeneration += 1;
-		transcriptAbort?.abort();
-		transcriptAbort = null;
-		transcriptHistory?.stop();
-		transcriptHistory = null;
-		loadingOlderTranscript = false;
-		replicaThreadId = threadId;
-		liveCompletion = null;
-		pendingCompletions = [];
-		replicaError = null;
-		replicaMessages = [];
-		replicaNextBefore = null;
-		replicaWindowVersion = 0;
-		replicaStale = false;
-		replicaLoading = threadId !== null;
-	}
+	const transcript = new TranscriptReplica();
 
 	$effect.pre(() => {
 		const threadId = currentThreadId;
-		if (replicaThreadId === threadId) {
-			return;
-		}
-		untrack(() => showReplicaForThread(threadId));
+		if (transcript.threadId !== threadId) untrack(() => transcript.selectThread(threadId));
 	});
 
 	$effect(() => {
@@ -624,68 +441,13 @@
 			return;
 		}
 		const userId = untrack(() => getCurrentUserId());
-		if (!userId) {
-			return;
-		}
-		const ac = new AbortController();
-		const watchedThreadId = threadId;
-		transcriptAbort = ac;
-		const generation = replicaGeneration;
-		const history = new DisplayHistory(
-			(request) =>
-				api.fetchTranscriptDisplay(
-					{
-						userId,
-						threadId: watchedThreadId,
-						...request
-					},
-					ac.signal
-				),
-			() => {
-				if (ac.signal.aborted || replicaGeneration !== generation) return;
-				replicaMessages = history.messages;
-				replicaNextBefore = history.nextBefore ?? null;
-				replicaWindowVersion = history.windowVersion;
-				replicaStale = history.stale;
-				replicaLoading = history.loading;
-				loadingOlderTranscript = history.loadingOlder;
-				replicaError = history.error;
-				const pendingCount = pendingCompletions.length;
-				pendingCompletions = history
-					.unpersisted([...pendingCompletions, ...(liveCompletion ? [liveCompletion] : [])])
-					.filter((live) => live !== liveCompletion);
-				if (pendingCompletions.length > 0 && pendingCompletions.length < pendingCount)
-					void history.refresh();
-			}
-		);
-		transcriptHistory = history;
-		void history.refresh();
-		void (async () => {
-			while (!ac.signal.aborted) {
-				try {
-					await api.watchTranscript(
-						{ userId, threadId: watchedThreadId },
-						{
-							signal: ac.signal,
-							onEvent: (event) => {
-								if (ac.signal.aborted || currentThreadId !== watchedThreadId) {
-									return;
-								}
-								replicaStale = event.stale;
-								void history.refresh();
-							}
-						}
-					);
-				} catch {
-					if (!ac.signal.aborted) replicaStale = true;
-				}
-				if (!ac.signal.aborted) await new Promise((resolve) => setTimeout(resolve, 1_000));
-			}
-		})();
-		return () => {
-			ac.abort();
-			history.stop();
-		};
+		if (!userId) return;
+		return transcript.watchDisplay({
+			api,
+			userId,
+			threadId,
+			isCurrent: () => currentThreadId === threadId
+		});
 	});
 
 	$effect(() => {
@@ -695,93 +457,27 @@
 			return;
 		}
 		const userId = untrack(() => getCurrentUserId());
-		if (!userId) {
-			return;
-		}
-		const ac = new AbortController();
-		const watchedThreadId = threadId;
-		void (async () => {
-			while (!ac.signal.aborted) {
-				try {
-					await api.watchLiveCompletion(
-						{ userId, threadId: watchedThreadId },
-						{
-							signal: ac.signal,
-							onEvent: (event) => {
-								if (ac.signal.aborted || currentThreadId !== watchedThreadId) {
-									return;
-								}
-								if (
-									liveCompletion &&
-									(event.eventType === 'cleared' || event.live.streamId !== liveCompletion.streamId)
-								) {
-									if (transcriptHistory?.unpersisted([liveCompletion]).length) {
-										pendingCompletions = [...pendingCompletions, liveCompletion];
-									}
-									void transcriptHistory?.refresh();
-								}
-								if (event.eventType === 'updated') {
-									liveCompletion = event.live;
-								} else {
-									liveCompletion = null;
-								}
-							}
-						}
-					);
-				} catch {
-					if (ac.signal.aborted) {
-						return;
-					}
-				}
-				if (ac.signal.aborted) {
-					return;
-				}
-				await new Promise<void>((resolve) => {
-					const timer = setTimeout(resolve, 400);
-					ac.signal.addEventListener(
-						'abort',
-						() => {
-							clearTimeout(timer);
-							resolve();
-						},
-						{ once: true }
-					);
-				});
-			}
-		})();
-		return () => {
-			ac.abort();
-		};
+		if (!userId) return;
+		return transcript.watchLiveCompletion({
+			api,
+			userId,
+			threadId,
+			isCurrent: () => currentThreadId === threadId
+		});
 	});
 
 	$effect(() => {
-		const overlays = [...pendingCompletions, ...(liveCompletion ? [liveCompletion] : [])];
-		const history = transcriptHistory;
-		untrack(() => history?.setOverlays(overlays));
+		const overlays = transcript.overlays;
+		untrack(() => transcript.syncOverlays(overlays));
 	});
 
-	const visibleMessages = $derived.by((): TranscriptMessage[] => {
-		const userId = getCurrentUserId();
-		if (!currentThreadId || !userId || replicaThreadId !== currentThreadId) {
-			return [];
-		}
-		const overlays =
-			transcriptHistory?.visibleOverlays([
-				...pendingCompletions,
-				...(liveCompletion ? [liveCompletion] : [])
-			]) ?? [];
-		const messages = mergeLiveOverlays(
-			overlays.filter((overlay) => overlay.threadId === currentThreadId)
-		);
-		return [
-			...visibleDisplayMessages(replicaMessages, overlays),
-			...messages.map((message) =>
-				message.runId === runState?.runId
-					? { ...message, runStartedAt: runState.startedAt, runCompletedAt: runState.completedAt }
-					: message
-			)
-		];
-	});
+	const visibleMessages = $derived(
+		transcript.visibleMessages({
+			threadId: currentThreadId,
+			userId: getCurrentUserId(),
+			run: runState
+		})
+	);
 
 	const currentProject = $derived.by<ProjectState | null>(() => {
 		if (currentWorkspacePath) {
@@ -824,197 +520,53 @@
 			.sort((left, right) => right.lastMessageAt - left.lastMessageAt);
 	});
 
-	const runState = $derived(currentLifecycle?.run ?? null);
 	const visibleActions: ExecutorJob[] = [];
-	let artifactWatchGeneration = 0;
-	let artifactWatchState = $state<ArtifactWatchState>({ ...EMPTY_ARTIFACT_WATCH_STATE });
-	let artifactWatchHasSnapshot = $state(false);
-	let artifactWatchScope = $state<string | null>(null);
-	const threadArtifacts = $derived(artifactWatchState.artifacts.map(artifactEntryFromLocal));
-	// Panel state snapshots survive thread and project switches.
-	const sidePanelSnapshots = new SvelteMap<string, SidePanelSnapshot>();
-	let sidePanel = $state<SidePanelSnapshot>({ ...DEFAULT_SIDE_PANEL_SNAPSHOT });
-	let sidePanelScopeKey: string | null = null;
-	// Baseline for create/update detection; null means the next observation only seeds.
-	let artifactRevisionWatch: {
-		scopeKey: string;
-		revisions: Map<string, ArtifactRevision>;
-	} | null = null;
-	// Baseline for browser-activity detection; same seeding rule as artifacts.
-	let browserLiveViewWatch: {
-		threadId: Id<'threadRecords'>;
-		runId: Id<'runs'> | null;
-	} | null = null;
+	const artifactPanel = new ArtifactPanel();
 
 	$effect(() => {
-		const threadId = currentThreadId;
-		const repositoryKey = currentRepositoryKey;
-		const workspacePath = currentWorkspacePath;
-		const userId = signedInUserId;
-		const scopeKey =
-			userId && repositoryKey
-				? artifactWatchScopeKey({
-						userId,
-						repositoryKey,
-						workspacePath: workspacePath ?? '',
-						threadId
-					})
+		const scope =
+			signedInUserId && currentRepositoryKey
+				? {
+						userId: signedInUserId,
+						repositoryKey: currentRepositoryKey,
+						workspacePath: currentWorkspacePath ?? '',
+						threadId: currentThreadId
+					}
 				: null;
-		if (scopeKey === sidePanelScopeKey) return;
-		if (sidePanelScopeKey) {
-			sidePanelSnapshots.set(sidePanelScopeKey, sidePanel);
-		}
-		sidePanelScopeKey = scopeKey;
-		artifactFullscreenKey = null;
-		sidePanel = {
-			...((scopeKey && sidePanelSnapshots.get(scopeKey)) || DEFAULT_SIDE_PANEL_SNAPSHOT)
-		};
+		artifactPanel.selectScope(scope);
 	});
 
 	$effect(() => {
-		const localApi = desktopApi;
-		const repositoryKey = currentRepositoryKey;
-		const workspacePath = currentWorkspacePath;
-		const threadId = currentThreadId;
-		const userId = signedInUserId;
-		const cloudReady = convexAuth.isAuthenticated && !convexAuth.isLoading;
-		const generation = ++artifactWatchGeneration;
-		artifactWatchHasSnapshot = false;
-		artifactWatchState = { ...EMPTY_ARTIFACT_WATCH_STATE };
-		artifactRevisionWatch = null;
-		if (!repositoryKey || !userId) {
-			artifactWatchScope = null;
-			return;
-		}
-		const scope = {
-			userId,
-			repositoryKey,
-			workspacePath: workspacePath ?? '',
-			threadId
-		};
-		const scopeKey = artifactWatchScopeKey(scope);
-		artifactWatchScope = scopeKey;
-		const ac = new AbortController();
-		const request = artifactsWatchRequest(scope);
-		let cloud: ArtifactWatchState = { artifacts: [], stale: true, error: null };
-		let local: ArtifactWatchState | null = null;
-		const publish = () => {
-			if (ac.signal.aborted || generation !== artifactWatchGeneration) return;
-			artifactWatchState = mergeArtifactSources(cloud, local);
-			if (!artifactWatchState.stale || artifactWatchState.artifacts.length > 0)
-				artifactWatchHasSnapshot = true;
-		};
-		const cloudScope: CloudArtifactScope = { userId, repositoryKey };
-		if (threadId) cloudScope.threadId = threadId;
-		const stopCloud = cloudReady
-			? watchCloudArtifacts(artifactClient, cloudScope, (snapshot) => {
-					cloud = snapshot;
-					publish();
-				})
-			: () => {};
-		void (async () => {
-			while (localApi && workspacePath && !ac.signal.aborted) {
-				await localApi
-					.watchArtifacts(request, {
-						signal: ac.signal,
-						onEvent: (event) => {
-							if (
-								!isCurrentArtifactsWatch({
-									aborted: ac.signal.aborted,
-									generation,
-									currentGeneration: artifactWatchGeneration,
-									eventScopeKey: scopeKey,
-									currentScopeKey: artifactWatchScope
-								})
-							) {
-								return;
-							}
-							local = applyArtifactsWatchEvent(event);
-							publish();
-						}
-					})
-					.catch(() => undefined);
-				if (
-					!ac.signal.aborted &&
-					generation === artifactWatchGeneration &&
-					artifactWatchScope === scopeKey
-				) {
-					local = null;
-					publish();
-				}
-				if (!ac.signal.aborted) await new Promise((resolve) => setTimeout(resolve, 1_000));
-			}
-		})();
-		return () => {
-			ac.abort();
-			stopCloud();
-		};
+		const scope =
+			signedInUserId && currentRepositoryKey
+				? {
+						userId: signedInUserId,
+						repositoryKey: currentRepositoryKey,
+						workspacePath: currentWorkspacePath ?? '',
+						threadId: currentThreadId
+					}
+				: null;
+		return artifactPanel.watch({
+			localApi: desktopApi,
+			artifactClient,
+			cloudReady: convexAuth.isAuthenticated && !convexAuth.isLoading,
+			scope
+		});
 	});
 
 	$effect(() => {
-		const scopeKey = artifactWatchScope;
-		const hasSnapshot = artifactWatchHasSnapshot;
-		const artifacts = artifactWatchState.artifacts;
-		if (!scopeKey || !hasSnapshot) {
-			if (artifactRevisionWatch && artifactRevisionWatch.scopeKey !== scopeKey) {
-				artifactRevisionWatch = null;
-			}
-			return;
-		}
-		if (artifactRevisionWatch && artifactRevisionWatch.scopeKey !== scopeKey) {
-			artifactRevisionWatch = null;
-		}
-
-		const current = artifacts.map(artifactRevisionFromLocal);
-		const previous = artifactRevisionWatch?.revisions ?? null;
-		const { revisions, changedId } = nextArtifactRevisionWatch(previous, current);
-		artifactRevisionWatch = { scopeKey, revisions };
-
-		if (!changedId) return;
-		// Avoid depending on panel UI state for re-runs; only follow selection when
-		// opening or when the user is still on the list view.
-		const prior = untrack(() => sidePanel);
-		sidePanel = {
-			...prior,
-			open: true,
-			// Don't yank the user off the live view they deliberately opened.
-			tab: prior.open ? prior.tab : 'artifacts',
-			selectedKey: !prior.open || prior.selectedKey === null ? changedId : prior.selectedKey
-		};
+		artifactPanel.trackArtifactChanges();
 	});
 
-	// The agent started working with the browser tools when the session's
-	// lastUsedRunId becomes the currently active run: open the side panel
-	// straight onto the live view. Keying on the run (not session starts)
-	// catches runs that reuse the previous session, and doesn't re-open for
-	// mid-run session rotations or after the user closed the panel.
 	$effect(() => {
-		const threadId = currentThreadId;
-		const data = browserLiveViewQuery.data;
-		const activeRunId = isRunning ? (runState?.runId ?? null) : null;
-		if (!threadId) {
-			browserLiveViewWatch = null;
-			return;
-		}
-		if (browserLiveViewWatch && browserLiveViewWatch.threadId !== threadId) {
-			browserLiveViewWatch = null;
-		}
-		if (data === undefined) return;
-
-		const sessionRunId = data?.lastUsedRunId ?? null;
-		const previous = browserLiveViewWatch;
-		browserLiveViewWatch = { threadId, runId: sessionRunId };
-		if (sessionRunId === null || sessionRunId !== activeRunId) return;
-		if (previous && previous.runId === sessionRunId) return;
-
-		const prior = untrack(() => sidePanel);
-		if (prior.open && prior.tab === 'live') return;
-		sidePanel = { ...prior, open: true, tab: 'live' };
+		artifactPanel.trackBrowserActivity({
+			threadId: currentThreadId,
+			lastUsedRunId: browserLiveViewQuery.data?.lastUsedRunId,
+			activeRunId: isRunning ? (runState?.runId ?? null) : null,
+			loaded: browserLiveViewQuery.data !== undefined
+		});
 	});
 
-	const fullscreenArtifact = $derived(
-		threadArtifacts.find((artifact) => artifact.key === artifactFullscreenKey) ?? null
-	);
 	const currentComposerScope = $derived(getComposerScope(currentThreadId, currentProjectPath));
 	const currentRecoveredSubmission = $derived.by(() => {
 		const userId = getCurrentUserId();
@@ -1095,7 +647,7 @@
 		desktopProjectAttachmentsByPath = nextAttachments;
 		hasLoadedDesktopProjectAttachments = true;
 		await rekeyChangedLocalRepositories(nextAttachments);
-		await registerThreadCacheForCurrentUser();
+		await threadCache.register();
 	}
 
 	async function rekeyChangedLocalRepositories(next: Record<string, ProjectAttachment>) {
@@ -1143,97 +695,16 @@
 	async function rekeyLocalRepository(from: string, to: string) {
 		const { api, userId } = localThreadCommandContext();
 		await api.rekeyRepository({ userId, from, to });
-		await pullThreadSnapshot(userId);
-	}
-
-	function applyThreadCacheEvent(event: {
-		status: ThreadCacheStatus;
-		lastSyncedAt: number | null;
-	}) {
-		threadCacheStatus = event.status;
-	}
-
-	async function pullThreadSnapshot(userId: string) {
-		const api = desktopApi;
-		if (!api) {
-			return;
-		}
-		const generation = ++threadSnapshotPullGeneration;
-		const snapshot = await api.fetchThreadSnapshot({ userId });
-		if (generation !== threadSnapshotPullGeneration || getCurrentUserId() !== userId) {
-			return;
-		}
-		threadSnapshotThreads = snapshot.threads;
-		applyThreadCacheEvent(snapshot);
-	}
-
-	async function registerThreadCacheForCurrentUser(
-		selectedThreadId: Id<'threadRecords'> | null = currentThreadId
-	) {
-		const api = desktopApi;
-		const userId = getCurrentUserId();
-		if (!api || !userId) {
-			return;
-		}
-		if (getCurrentUserId() !== userId) {
-			return;
-		}
-		const request: ThreadCacheUserRequest = { userId };
-		if (selectedThreadId) {
-			request.selectedThreadId = selectedThreadId;
-		}
-		const event = await api.registerThreadCache(request);
-		if (getCurrentUserId() !== userId) {
-			return;
-		}
-		applyThreadCacheEvent(event);
-		await pullThreadSnapshot(userId);
+		await threadCache.pull(userId);
 	}
 
 	$effect(() => {
-		const api = desktopApi;
+		const hasDesktopApi = Boolean(desktopApi);
 		const userId = signedInUserId;
-		if (!api || !userId || !authReady) {
+		if (!hasDesktopApi || !userId || !authReady) {
 			return;
 		}
-		const generation = ++threadCacheGeneration;
-		const ac = new AbortController();
-		void (async () => {
-			try {
-				try {
-					await registerThreadCacheForCurrentUser();
-				} catch {
-					await pullThreadSnapshot(userId);
-				}
-				if (generation !== threadCacheGeneration || ac.signal.aborted) {
-					return;
-				}
-				await api.watchThreadCache(
-					{ userId },
-					{
-						signal: ac.signal,
-						onEvent: (event) => {
-							if (generation !== threadCacheGeneration || getCurrentUserId() !== userId) {
-								return;
-							}
-							applyThreadCacheEvent(event);
-							if (event.status === 'live' || event.status === 'reconnecting') {
-								void pullThreadSnapshot(userId);
-							}
-						}
-					}
-				);
-			} catch (error) {
-				if (generation !== threadCacheGeneration || getCurrentUserId() !== userId) {
-					return;
-				}
-				threadCacheStatus = 'error';
-				currentError = error instanceof Error ? error.message : 'Could not sync threads.';
-			}
-		})();
-		return () => {
-			ac.abort();
-		};
+		return threadCache.watch(userId);
 	});
 
 	$effect(() => {
@@ -1243,7 +714,7 @@
 		if (!api || !userId || !authReady) {
 			return;
 		}
-		void registerThreadCacheForCurrentUser(selectedThreadId).catch(() => {});
+		void threadCache.register(selectedThreadId).catch(() => {});
 	});
 
 	function applyProjectSelection(
@@ -1458,7 +929,7 @@
 		try {
 			await setThreadSelectedModel({ threadId, selectedModel: modelId });
 			if (getCurrentUserId() === userId) {
-				void pullThreadSnapshot(userId);
+				void threadCache.pull(userId);
 			}
 		} catch (error) {
 			if (currentThreadId === threadId && getCurrentUserId() === userId) {
@@ -1486,15 +957,15 @@
 		try {
 			const { api, userId } = localThreadCommandContext();
 			const cacheSynchronized = await api.renameThread({ userId, threadId, title });
-			if (!cacheSynchronized) threadCacheStatus = 'reconnecting';
-			await pullThreadSnapshot(userId);
+			if (!cacheSynchronized) threadCache.markReconnecting();
+			await threadCache.pull(userId);
 		} catch (error) {
 			currentError = error instanceof Error ? error.message : 'Failed to rename thread.';
 		}
 	}
 
 	async function loadOlderTranscript() {
-		await transcriptHistory?.loadOlder();
+		await transcript.loadOlder();
 	}
 
 	async function loadTranscriptAttachment(storageId: Id<'_storage'>) {
@@ -1533,8 +1004,8 @@
 		try {
 			const { api, userId } = localThreadCommandContext();
 			const cacheSynchronized = await api.archiveThread({ userId, threadId });
-			if (!cacheSynchronized) threadCacheStatus = 'reconnecting';
-			await pullThreadSnapshot(userId);
+			if (!cacheSynchronized) threadCache.markReconnecting();
+			await threadCache.pull(userId);
 			if (archiveUserId) {
 				clearComposerRecovery(archiveUserId, `thread:${threadId}`);
 				const api = desktopApi;
@@ -1564,8 +1035,8 @@
 		try {
 			const { api, userId } = localThreadCommandContext();
 			const cacheSynchronized = await api.restoreThread({ userId, threadId });
-			if (!cacheSynchronized) threadCacheStatus = 'reconnecting';
-			await pullThreadSnapshot(userId);
+			if (!cacheSynchronized) threadCache.markReconnecting();
+			await threadCache.pull(userId);
 		} catch (error) {
 			currentError = error instanceof Error ? error.message : 'Failed to restore thread.';
 		}
@@ -1587,7 +1058,7 @@
 		const submittedPrompt = prompt;
 		const submittedOptionId = selectedQuestionOptionId;
 		const answerText = submittedPrompt.trim();
-		const submittedAttachments = composerAttachments.map((attachment) => ({ ...attachment }));
+		const submittedAttachments = composerAttachments.snapshot();
 		const submittedStorageIds = submittedAttachments.flatMap((attachment) =>
 			attachment.storageId ? [attachment.storageId] : []
 		);
@@ -1665,11 +1136,11 @@
 			return;
 		}
 
-		if (!prompt.trim() && composerAttachments.length === 0) {
+		if (!prompt.trim() && composerAttachments.items.length === 0) {
 			return;
 		}
 
-		if (composerAttachments.some((attachment) => attachment.status !== 'ready')) {
+		if (composerAttachments.items.some((attachment) => attachment.status !== 'ready')) {
 			currentError = 'Wait for file uploads to finish, or remove failed files before sending.';
 			return;
 		}
@@ -1714,7 +1185,7 @@
 		}
 		const isSubmittedUserCurrent = () => getCurrentUserId() === submittedUserId;
 		const submittedPrompt = prompt.trim();
-		const submittedAttachments = composerAttachments.map((attachment) => ({ ...attachment }));
+		const submittedAttachments = composerAttachments.snapshot();
 		const submittedStorageIds = submittedAttachments.flatMap((attachment) =>
 			attachment.storageId ? [attachment.storageId] : []
 		);
@@ -1921,11 +1392,11 @@
 						projectSelectionGeneration += 1;
 						currentThreadId = createdThreadId;
 						draftWorkspacePath = null;
-						void pullThreadSnapshot(submittedUserId);
+						void threadCache.pull(submittedUserId);
 						if (repositoryKeyChanged)
 							remoteChangeNotices.set(createdThreadId, REMOTE_CHANGE_NOTICE);
 					}
-					clearComposerAttachments({ discard: false });
+					composerAttachments.clear({ discard: false });
 					if (composerContinuationOfRunId === submittedContinuationOfRunId) {
 						composerContinuationOfRunId = null;
 						autoSubmitComposerContinuation = false;
@@ -2064,14 +1535,12 @@
 		pendingAgentLaunches = {};
 		ensureSubscriptionAttemptedFor = null;
 		lastSyncedComposerThreadId = null;
-		threadCacheStatus = 'loading';
-		threadSnapshotThreads = [];
-		threadSnapshotPullGeneration += 1;
+		threadCache.reset();
 		projectSelectionGeneration += 1;
 		prompt = '';
 		composerContinuationOfRunId = null;
 		autoSubmitComposerContinuation = false;
-		clearComposerAttachments({
+		composerAttachments.clear({
 			discard: true,
 			userId: previousUserId,
 			threadId: previousThreadId
@@ -2083,11 +1552,7 @@
 		projectPickerOpen = false;
 		projectPickerReconnectWorkspacePath = null;
 		projectPickerExpectedDisplayName = undefined;
-		sidePanelSnapshots.clear();
-		sidePanelScopeKey = null;
-		sidePanel = { ...DEFAULT_SIDE_PANEL_SNAPSHOT };
-		artifactFullscreenKey = null;
-		artifactRevisionWatch = null;
+		artifactPanel.reset();
 	});
 
 	$effect(() => {
@@ -2097,7 +1562,7 @@
 
 		const nextPendingCreatedThreadId = resolvePendingCreatedThreadId({
 			pendingCreatedThreadId,
-			threads: threadSnapshotThreads.map(threadRecordToSummary)
+			threads: threadCache.threads.map(threadRecordToSummary)
 		});
 		if (nextPendingCreatedThreadId !== pendingCreatedThreadId) {
 			pendingCreatedThreadId = nextPendingCreatedThreadId;
@@ -2173,11 +1638,11 @@
 			prompt = recovery.prompt;
 		}
 		if (
-			composerAttachments.length === 0 &&
+			composerAttachments.items.length === 0 &&
 			recovery.attachments?.length &&
 			(canRestorePrompt || prompt === recovery.prompt)
 		) {
-			composerAttachments = recovery.attachments.map((attachment) => ({ ...attachment }));
+			composerAttachments.replace(recovery.attachments);
 		}
 		if (prompt === recovery.prompt) {
 			composerContinuationOfRunId = recovery.continuationOfRunId ?? null;
@@ -2212,7 +1677,7 @@
 			pendingAgentQuestion ||
 			!desktopApi ||
 			!prompt.trim() ||
-			composerAttachments.some((attachment) => attachment.status !== 'ready')
+			composerAttachments.items.some((attachment) => attachment.status !== 'ready')
 		) {
 			return;
 		}
@@ -2395,11 +1860,14 @@
 	<div class="relative h-screen overflow-hidden">
 		<div
 			class="app-workspace-shell grid h-screen grid-cols-[292px_minmax(0,1fr)] overflow-hidden {!settingsOpen &&
-			sidePanel.open &&
-			!sidePanel.expanded
+			artifactPanel.panel.open &&
+			!artifactPanel.panel.expanded
 				? 'pr-[20rem]'
 				: ''}"
-			inert={fullscreenArtifact || (sidePanel.open && sidePanel.expanded) ? true : undefined}
+			inert={artifactPanel.fullscreenArtifact ||
+			(artifactPanel.panel.open && artifactPanel.panel.expanded)
+				? true
+				: undefined}
 		>
 			{#if settingsOpen}
 				<SettingsSidebar
@@ -2444,12 +1912,12 @@
 			{/if}
 
 			<main class="relative flex h-screen min-h-0 min-w-0 flex-col overflow-hidden">
-				{#if !settingsOpen && !sidePanel.open}
+				{#if !settingsOpen && !artifactPanel.panel.open}
 					<button
 						type="button"
 						class="text-muted-foreground hover:text-foreground hover:bg-muted absolute top-3 right-3 z-100 inline-flex items-center justify-center rounded-md p-2 transition"
 						onclick={() => {
-							sidePanel = { ...sidePanel, open: true };
+							artifactPanel.update({ open: true });
 						}}
 						aria-label="Open side panel"
 					>
@@ -2476,14 +1944,14 @@
 					{/if}
 				{:else}
 					{#if currentThreadId}
-						{#key `${currentThreadId}:${replicaWindowVersion}`}
+						{#key `${currentThreadId}:${transcript.windowVersion}`}
 							<ThreadTranscript
-								currentError={replicaError ??
+								currentError={transcript.error ??
 									currentError ??
 									$authState.error ??
 									(queryError instanceof Error ? convexClientErrorMessage(queryError) : null) ??
-									(threadCacheStatus === 'error' ? 'Could not sync threads.' : null) ??
-									(threadCacheStatus === 'offline' ? 'Thread sync is offline.' : null) ??
+									(threadCache.status === 'error' ? 'Could not sync threads.' : null) ??
+									(threadCache.status === 'offline' ? 'Thread sync is offline.' : null) ??
 									null}
 								runError={latestRunResumeKind ? null : (runState?.lastError ?? null)}
 								messages={visibleMessages}
@@ -2498,11 +1966,11 @@
 										remoteChangeNotices.delete(currentThreadId);
 									}
 								}}
-								stale={replicaStale}
-								loadingOlder={loadingOlderTranscript}
-								nextBefore={replicaNextBefore ?? undefined}
+								stale={transcript.stale}
+								loadingOlder={transcript.loadingOlder}
+								nextBefore={transcript.nextBefore ?? undefined}
 								emptyStateMessage={currentThreadId &&
-								(replicaLoading || replicaThreadId !== currentThreadId)
+								(transcript.loading || transcript.threadId !== currentThreadId)
 									? 'Loading conversation history...'
 									: currentProject
 										? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
@@ -2570,9 +2038,9 @@
 						>
 							<PromptComposer
 								bind:prompt
-								attachments={composerAttachments}
-								onAttachFiles={addComposerAttachments}
-								onRemoveAttachment={removeComposerAttachment}
+								attachments={composerAttachments.items}
+								onAttachFiles={(files) => composerAttachments.add(files)}
+								onRemoveAttachment={(localId) => composerAttachments.remove(localId)}
 								{modelCatalog}
 								bind:selectedModel
 								onModelChange={(modelId) => {
@@ -2608,33 +2076,33 @@
 			</main>
 		</div>
 
-		{#if !settingsOpen && sidePanel.open}
+		{#if !settingsOpen && artifactPanel.panel.open}
 			<div
-				class={sidePanel.expanded
+				class={artifactPanel.panel.expanded
 					? 'bg-background fixed inset-0 z-50'
 					: 'absolute inset-y-0 right-0 z-40 w-[20rem]'}
-				inert={fullscreenArtifact ? true : undefined}
+				inert={artifactPanel.fullscreenArtifact ? true : undefined}
 			>
 				<SidePanel
-					artifacts={threadArtifacts}
-					selectedKey={sidePanel.selectedKey}
-					tab={sidePanel.tab}
+					artifacts={artifactPanel.artifacts}
+					selectedKey={artifactPanel.panel.selectedKey}
+					tab={artifactPanel.panel.tab}
 					liveView={currentThreadId ? browserLiveViewQuery.data : null}
 					liveActive={isRunning && browserLiveViewQuery.data?.lastUsedRunId === runState?.runId}
-					expanded={sidePanel.expanded}
-					stale={artifactWatchState.stale}
-					error={artifactWatchState.error}
+					expanded={artifactPanel.panel.expanded}
+					stale={artifactPanel.watchState.stale}
+					error={artifactPanel.watchState.error}
 					onSelect={(key) => {
-						sidePanel = { ...sidePanel, selectedKey: key };
+						artifactPanel.update({ selectedKey: key });
 					}}
 					onBack={() => {
-						sidePanel = { ...sidePanel, selectedKey: null };
+						artifactPanel.update({ selectedKey: null });
 					}}
 					onTabChange={(tab) => {
-						sidePanel = { ...sidePanel, tab };
+						artifactPanel.update({ tab });
 					}}
 					onOpenFullscreen={(key) => {
-						artifactFullscreenKey = key;
+						artifactPanel.fullscreenKey = key;
 						// Request in the click gesture so Firefox keeps true browser
 						// fullscreen; the overlay only observes/exits the session.
 						if (!document.fullscreenElement) {
@@ -2642,21 +2110,21 @@
 						}
 					}}
 					onToggleExpanded={() => {
-						sidePanel = { ...sidePanel, expanded: !sidePanel.expanded };
+						artifactPanel.update({ expanded: !artifactPanel.panel.expanded });
 					}}
 					onClose={() => {
-						sidePanel = { ...sidePanel, open: false, expanded: false };
+						artifactPanel.update({ open: false, expanded: false });
 					}}
 				/>
 			</div>
 		{/if}
 
-		{#if fullscreenArtifact}
+		{#if artifactPanel.fullscreenArtifact}
 			<!-- No {#key}: remounting would exit document fullscreen during artifact switches. -->
 			<ArtifactScreenFullscreen
-				artifact={fullscreenArtifact}
+				artifact={artifactPanel.fullscreenArtifact}
 				onClose={() => {
-					artifactFullscreenKey = null;
+					artifactPanel.fullscreenKey = null;
 				}}
 			/>
 		{/if}
