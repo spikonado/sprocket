@@ -473,29 +473,6 @@ describe('DisplayHistory', () => {
 		history.stop();
 	});
 
-	it('backs off when the server changes cursor does not advance', async () => {
-		vi.useFakeTimers();
-		const fetch = vi
-			.fn()
-			.mockResolvedValueOnce(page([row(1)]))
-			.mockResolvedValue({ ...page([row(1)]), revision: 101, moreChanges: true });
-		const history = new DisplayHistory(fetch, () => {});
-		try {
-			await history.refresh();
-			await history.refresh();
-			expect(fetch).toHaveBeenCalledTimes(2);
-			expect(history.stale).toBe(true);
-			fetch.mockResolvedValue({ ...page([row(1, 101)]), revision: 101 });
-			await vi.advanceTimersByTimeAsync(2_000);
-			expect(fetch).toHaveBeenCalledTimes(3);
-			expect(history.stale).toBe(false);
-			expect(history.messages[0].revision).toBe(101);
-		} finally {
-			history.stop();
-			vi.useRealTimers();
-		}
-	});
-
 	it('retains only a summary for a long section and preserves unchanged row identities', async () => {
 		const fetch = vi
 			.fn()

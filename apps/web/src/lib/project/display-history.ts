@@ -110,10 +110,9 @@ export class DisplayHistory {
 			do {
 				this.refreshPending = false;
 				const streamRequest = this.streamRequest();
-				const requestedChangesCursor = this.changesCursor;
 				const page = await this.fetchPage({
 					limit: 12,
-					changesAfter: requestedChangesCursor,
+					changesAfter: this.changesCursor,
 					...streamRequest
 				});
 				if (this.stopped) return;
@@ -171,17 +170,7 @@ export class DisplayHistory {
 				for (const stream of streamRequest.streams ?? [])
 					this.checkedStreams.add(streamKey(stream));
 				this.changesCursor = page.changesCursor;
-				if (page.moreChanges) {
-					const cursorAdvanced =
-						requestedChangesCursor === undefined ||
-						page.changesCursor.revision !== requestedChangesCursor.revision ||
-						page.changesCursor.sequence !== requestedChangesCursor.sequence;
-					this.refreshPending ||= cursorAdvanced;
-					if (!cursorAdvanced) {
-						this.stale = true;
-						this.retryRefresh(2_000);
-					}
-				}
+				this.refreshPending ||= page.moreChanges;
 				this.refreshPending ||=
 					page.persistedStreams.length > 0 &&
 					this.unpersisted(this.overlays).some(
