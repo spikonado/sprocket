@@ -21,19 +21,37 @@ async function renameOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>
 	return { userId, record };
 }
 
-async function archiveOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>) {
+async function settleOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>) {
 	const userId = await getUserId(ctx);
 	const record = await getOwnedThreadRecord(ctx.db, userId, threadId);
 
 	if (record.status && ['queued', 'running', 'awaiting_executor'].includes(record.status)) {
-		throw new Error('Cannot archive a thread while a run is active.');
+		throw new Error('Cannot settle a thread while a run is active.');
 	}
+	const pendingQuestion = await ctx.db
+		.query('agentQuestions')
+		.withIndex('by_threadId_status_sequence', (query) =>
+			query.eq('threadId', threadId).eq('status', 'pending')
+		)
+		.first();
+	if (pendingQuestion)
+		throw new Error('Cannot settle a thread while it is waiting for your answer.');
 
 	await ctx.db.patch('threadRecords', threadId, { archivedAt: Date.now() });
 	return { userId, record };
 }
 
-async function restoreOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>) {
+async function archiveOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>) {
+	const userId = await getUserId(ctx);
+	const record = await getOwnedThreadRecord(ctx.db, userId, threadId);
+	if (record.status && ['queued', 'running', 'awaiting_executor'].includes(record.status)) {
+		throw new Error('Cannot archive a thread while a run is active.');
+	}
+	await ctx.db.patch('threadRecords', threadId, { archivedAt: Date.now() });
+	return { userId, record };
+}
+
+async function unsettleOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>) {
 	const userId = await getUserId(ctx);
 	const record = await getOwnedThreadRecord(ctx.db, userId, threadId);
 	await ctx.db.patch('threadRecords', threadId, { archivedAt: undefined });
@@ -196,6 +214,17 @@ export const archiveForLocalCache = mutation({
 	}
 });
 
+export const settleForLocalCache = mutation({
+	args: {
+		threadId: v.id('threadRecords')
+	},
+	returns: v.object({ userId: v.string(), repositoryKey: v.string() }),
+	handler: async (ctx, args) => {
+		const { userId, record } = await settleOwnedThread(ctx, args.threadId);
+		return { userId, repositoryKey: record.repositoryKey };
+	}
+});
+
 /** Retired direct Convex command. Current clients use the local thread routes. */
 export const restore = mutation({
 	args: {
@@ -213,7 +242,18 @@ export const restoreForLocalCache = mutation({
 	},
 	returns: v.object({ userId: v.string(), repositoryKey: v.string() }),
 	handler: async (ctx, args) => {
-		const { userId, record } = await restoreOwnedThread(ctx, args.threadId);
+		const { userId, record } = await unsettleOwnedThread(ctx, args.threadId);
+		return { userId, repositoryKey: record.repositoryKey };
+	}
+});
+
+export const unsettleForLocalCache = mutation({
+	args: {
+		threadId: v.id('threadRecords')
+	},
+	returns: v.object({ userId: v.string(), repositoryKey: v.string() }),
+	handler: async (ctx, args) => {
+		const { userId, record } = await unsettleOwnedThread(ctx, args.threadId);
 		return { userId, repositoryKey: record.repositoryKey };
 	}
 });
