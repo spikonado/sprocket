@@ -442,7 +442,7 @@ async fn native_session_token_response(
     let (session_token, connection) = require_browser_session(state, headers, jar, peer).await?;
     if connection == BrowserConnection::Https && !state.auth.session_has_user(&session_token).await
     {
-        return Err(ApiError::authentication_required());
+        return Ok(Json(None));
     }
     let session = state
         .native_auth
@@ -1091,7 +1091,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn remote_native_token_requires_a_matching_bound_owner() {
+    async fn remote_native_token_is_empty_until_bound_to_the_matching_owner() {
         let (state, _, _) = test_state(true).await;
         state.native_auth.authenticate_for_test("user-a").await;
         let (_, remote_session) = state
@@ -1118,7 +1118,8 @@ mod tests {
             .oneshot(with_peer(request(&remote_session), loopback_peer()))
             .await
             .unwrap();
-        assert_eq!(unbound.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(unbound.status(), StatusCode::OK);
+        assert_eq!(read_json(unbound).await, serde_json::Value::Null);
 
         auth.bind_session_user(&remote_session, "user-a")
             .await
