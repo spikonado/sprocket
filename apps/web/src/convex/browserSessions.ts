@@ -5,15 +5,64 @@ import {
 	paginationResultValidator,
 	type PaginationResult
 } from 'convex/server';
-import type { Doc } from '@convex/_generated/dataModel';
+import type { Doc, Id } from '@convex/_generated/dataModel';
 import { internal } from '@convex/_generated/api';
-import { internalMutation, internalQuery, mutation, query } from '@convex/_generated/server';
+import {
+	internalMutation,
+	internalQuery,
+	mutation,
+	query,
+	type MutationCtx,
+	type QueryCtx
+} from '@convex/_generated/server';
 import { getOwnedThreadRecord } from '@convex/lib/access';
 import { getUserId } from '@convex/lib/auth';
 import { isRunClaimLeaseActive } from '@convex/lib/runLease';
 import schema from '@convex/schema';
 
 const OPERATION_LEASE_MS = 180_000;
+
+async function listBrowserSessions(
+	ctx: QueryCtx | MutationCtx,
+	threadId: Id<'threadRecords'>
+): Promise<Doc<'browserSessions'>[]> {
+	return await ctx.db
+		.query('browserSessions')
+		.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
+		.collect();
+}
+
+function pickBrowserSession(rows: Array<Doc<'browserSessions'>>): Doc<'browserSessions'> | null {
+	if (rows.length === 0) return null;
+	return [...rows].sort((a, b) => b.startedAt - a.startedAt || b._id.localeCompare(a._id))[0];
+}
+
+export async function getBrowserSession(
+	ctx: QueryCtx | MutationCtx,
+	threadId: Id<'threadRecords'>
+): Promise<Doc<'browserSessions'> | null> {
+	return pickBrowserSession(await listBrowserSessions(ctx, threadId));
+}
+
+export async function getBrowserSessionExclusive(
+	ctx: MutationCtx,
+	threadId: Id<'threadRecords'>
+): Promise<Doc<'browserSessions'> | null> {
+	const rows = await listBrowserSessions(ctx, threadId);
+	const keep = pickBrowserSession(rows);
+	if (!keep) return null;
+	for (const row of rows) {
+		if (row._id === keep._id) continue;
+		await ctx.db.delete('browserSessions', row._id);
+		if (row.sessionId && row.sessionId !== keep.sessionId) {
+			await ctx.scheduler.runAfter(0, internal.firecrawlBrowser.closeDetached, {
+				sessionId: row.sessionId,
+				expiresAt: row.expiresAt
+			});
+		}
+	}
+	return keep;
+}
 
 /** The browser live-view state shown in the thread's side panel. */
 export const liveViewForThread = query({
@@ -39,10 +88,7 @@ export const liveViewForThread = query({
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
-		const session = await ctx.db
-			.query('browserSessions')
-			.withIndex('by_threadId', (q) => q.eq('threadId', args.threadId))
-			.unique();
+		const session = await getBrowserSession(ctx, args.threadId);
 		if (!session) return null;
 		return {
 			id: session._id,
@@ -102,10 +148,7 @@ export const acquire = internalMutation({
 		) {
 			throw new ConvexError('The run claim is no longer active.');
 		}
-		const existing = await ctx.db
-			.query('browserSessions')
-			.withIndex('by_threadId', (q) => q.eq('threadId', args.threadId))
-			.unique();
+		const existing = await getBrowserSessionExclusive(ctx, args.threadId);
 		let profile = await ctx.db
 			.query('browserProfiles')
 			.withIndex('by_userId', (q) => q.eq('userId', args.userId))

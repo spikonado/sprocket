@@ -3,6 +3,7 @@ import { internal } from '@convex/_generated/api';
 import { mutation, query } from '@convex/_generated/server';
 import { getUserId } from '@convex/lib/auth';
 import { getOwnedThreadRecord } from '@convex/lib/access';
+import { getBrowserSessionExclusive } from '@convex/browserSessions';
 
 export const getMine = query({
 	args: {},
@@ -68,10 +69,7 @@ export const setHumanControl = mutation({
 	handler: async (ctx, args) => {
 		const userId = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, args.threadId);
-		const session = await ctx.db
-			.query('browserSessions')
-			.withIndex('by_threadId', (q) => q.eq('threadId', args.threadId))
-			.unique();
+		const session = await getBrowserSessionExclusive(ctx, args.threadId);
 		if (!session || session.closing || !session.sessionId || session.expiresAt <= Date.now())
 			throw new ConvexError('This browser session has ended.');
 		if (session.operationId && session.operationExpiresAt > Date.now())
