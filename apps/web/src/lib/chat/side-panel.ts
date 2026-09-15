@@ -1,7 +1,6 @@
 import type { Id } from '$convex/_generated/dataModel';
 
-/** The right sidebar shows the agent's browser live view alongside thread
- * artifacts; the live tab is selected automatically when browsing starts. */
+/** The right sidebar shows the agent's browser live view alongside thread artifacts. */
 export type SidePanelTab = 'live' | 'artifacts';
 
 /** Stored panel state, restored when revisiting a thread. */
@@ -38,8 +37,7 @@ export type BrowserLiveViewState = {
 	/** True after the user takes control; agent browser calls are blocked. */
 	humanControl: boolean;
 	threadId: Id<'threadRecords'>;
-	/** Run that most recently drove the browser; matched against the active run
-	 * for liveness and auto-open. */
+	/** Run that most recently drove the browser, matched against the active run for liveness. */
 	lastUsedRunId: Id<'runs'> | null;
 	/** Session (re)start time. */
 	startedAt: number;

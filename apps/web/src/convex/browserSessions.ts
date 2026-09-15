@@ -29,8 +29,7 @@ export const liveViewForThread = query({
 			ended: v.boolean(),
 			threadId: v.id('threadRecords'),
 			expiresAt: v.number(),
-			/** Run that most recently drove the browser; the client compares it
-			 * against the active run for liveness and auto-open. */
+			/** Run that most recently drove the browser; the client compares it to the active run. */
 			lastUsedRunId: v.union(v.id('runs'), v.null()),
 			startedAt: v.number()
 		}),

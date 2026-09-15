@@ -1,17 +1,13 @@
-import { untrack } from 'svelte';
 import { SvelteMap } from 'svelte/reactivity';
 import type { Id } from '$convex/_generated/dataModel';
 import {
 	EMPTY_ARTIFACT_WATCH_STATE,
 	applyArtifactsWatchEvent,
 	artifactEntryFromLocal,
-	artifactRevisionFromLocal,
 	artifactWatchScopeKey,
 	artifactsWatchRequest,
 	isCurrentArtifactsWatch,
 	mergeArtifactSources,
-	nextArtifactRevisionWatch,
-	type ArtifactRevision,
 	type ArtifactWatchState
 } from '$lib/chat/artifacts';
 import { watchCloudArtifacts, type CloudArtifactScope } from '$lib/chat/cloud-artifacts';
@@ -32,12 +28,9 @@ export class ArtifactPanel {
 	fullscreenKey = $state<string | null>(null);
 
 	#watchGeneration = 0;
-	#hasSnapshot = $state(false);
 	#watchScope = $state<string | null>(null);
 	#snapshots = new SvelteMap<string, SidePanelSnapshot>();
 	#panelScopeKey: string | null = null;
-	#revisionWatch: { scopeKey: string; revisions: Map<string, ArtifactRevision> } | null = null;
-	#browserWatch: { threadId: Id<'threadRecords'>; runId: Id<'runs'> | null } | null = null;
 
 	get artifacts() {
 		return this.watchState.artifacts.map(artifactEntryFromLocal);
@@ -65,9 +58,7 @@ export class ArtifactPanel {
 		scope: Scope | null;
 	}) {
 		const generation = ++this.#watchGeneration;
-		this.#hasSnapshot = false;
 		this.watchState = { ...EMPTY_ARTIFACT_WATCH_STATE };
-		this.#revisionWatch = null;
 		if (!args.scope) {
 			this.#watchScope = null;
 			return;
@@ -82,7 +73,6 @@ export class ArtifactPanel {
 		const publish = () => {
 			if (ac.signal.aborted || generation !== this.#watchGeneration) return;
 			this.watchState = mergeArtifactSources(cloud, local);
-			if (!this.watchState.stale || this.watchState.artifacts.length > 0) this.#hasSnapshot = true;
 		};
 		const cloudScope: CloudArtifactScope = {
 			userId: args.scope.userId,
@@ -110,64 +100,10 @@ export class ArtifactPanel {
 		};
 	}
 
-	trackArtifactChanges() {
-		const scopeKey = this.#watchScope;
-		if (!scopeKey || !this.#hasSnapshot) {
-			if (this.#revisionWatch && this.#revisionWatch.scopeKey !== scopeKey) {
-				this.#revisionWatch = null;
-			}
-			return;
-		}
-		if (this.#revisionWatch && this.#revisionWatch.scopeKey !== scopeKey) {
-			this.#revisionWatch = null;
-		}
-		const current = this.watchState.artifacts.map(artifactRevisionFromLocal);
-		const previous = this.#revisionWatch?.revisions ?? null;
-		const { revisions, changedId } = nextArtifactRevisionWatch(previous, current);
-		this.#revisionWatch = { scopeKey, revisions };
-		if (!changedId) return;
-
-		const prior = untrack(() => this.panel);
-		this.panel = {
-			...prior,
-			open: true,
-			tab: prior.open ? prior.tab : 'artifacts',
-			selectedKey: !prior.open || prior.selectedKey === null ? changedId : prior.selectedKey
-		};
-	}
-
-	trackBrowserActivity(args: {
-		threadId: Id<'threadRecords'> | null;
-		lastUsedRunId: Id<'runs'> | null | undefined;
-		activeRunId: Id<'runs'> | null;
-		loaded: boolean;
-	}) {
-		if (!args.threadId) {
-			this.#browserWatch = null;
-			return;
-		}
-		if (this.#browserWatch && this.#browserWatch.threadId !== args.threadId) {
-			this.#browserWatch = null;
-		}
-		if (!args.loaded) return;
-
-		const sessionRunId = args.lastUsedRunId ?? null;
-		const previous = this.#browserWatch;
-		this.#browserWatch = { threadId: args.threadId, runId: sessionRunId };
-		if (sessionRunId === null || sessionRunId !== args.activeRunId) return;
-		if (previous?.runId === sessionRunId) return;
-
-		const prior = untrack(() => this.panel);
-		if (prior.open && prior.tab === 'live') return;
-		this.panel = { ...prior, open: true, tab: 'live' };
-	}
-
 	reset() {
 		this.#snapshots.clear();
 		this.#panelScopeKey = null;
 		this.#watchScope = null;
-		this.#revisionWatch = null;
-		this.#browserWatch = null;
 		this.panel = { ...DEFAULT_SIDE_PANEL_SNAPSHOT };
 		this.fullscreenKey = null;
 	}
