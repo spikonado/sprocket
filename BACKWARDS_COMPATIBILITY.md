@@ -73,18 +73,6 @@ replacement store imports the old file before parsing the new format.
 
 ## Stored transcript work metadata
 
-`transcriptSections.commit` accepts finalization batches containing full section
-summaries from released clients. Those summaries come from local replay and may
-differ from stored sections when processor versions group tools or calculate
-timings differently. Finalization uses only the requested keys and run identity,
-closes the stored sections, and clears pending tools without replacing the stored
-summary. Missing keys are no-ops because replay may produce sections that another
-client never stored or already removed. Repeating finalization is safe.
-
-Keep accepting the full-summary finalization payload until every supported client
-uses a replacement contract. No stored data needs migration because finalization
-preserves the existing assignments and raw transcript bodies.
-
 Historical transcripts may lack `threadTranscriptParts.work` and
 `threadTranscriptStates.workThrough`. Opening a thread fills missing work metadata
 with the Rust processor without changing its raw transcript bodies.
