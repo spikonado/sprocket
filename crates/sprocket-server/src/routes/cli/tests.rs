@@ -149,7 +149,11 @@ async fn signed_bootstrap_and_cli_sessions_cannot_be_replayed_after_server_resta
             .0,
         StatusCode::UNAUTHORIZED
     );
-    state.auth.bind_all_sessions(Some("user")).await.unwrap();
+    state
+        .auth
+        .sync_sessions_with_owner(Some("user"))
+        .await
+        .unwrap();
     assert!(
         !std::fs::read_to_string(directory.path().join("sessions.json"))
             .unwrap()
@@ -184,7 +188,7 @@ async fn signed_bootstrap_and_cli_sessions_cannot_be_replayed_after_server_resta
 async fn fixture() -> (tempfile::TempDir, AppState, String, CliRunRequest) {
     let directory = tempfile::tempdir().unwrap();
     let auth = crate::auth::AuthState::load(directory.path()).unwrap();
-    let (_, token) = auth.bootstrap(auth.pairing_credential()).await.unwrap();
+    let (_, token) = auth.bootstrap_browser_session(true).await.unwrap();
     let native_auth = crate::native_auth::NativeAuthManager::configured_for_test(
         crate::native_auth::NativeAuthConfig {
             workos_client_id: "client_test".into(),
@@ -322,11 +326,7 @@ async fn cli_control_requires_the_owning_local_session_and_matching_version() {
         .0,
         StatusCode::FORBIDDEN
     );
-    let (_, other_token) = state
-        .auth
-        .bootstrap(state.auth.pairing_credential())
-        .await
-        .unwrap();
+    let (_, other_token) = state.auth.bootstrap_browser_session(true).await.unwrap();
     assert_eq!(
         call(
             &state,

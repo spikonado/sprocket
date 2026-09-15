@@ -19,7 +19,6 @@ import {
 
 const createAuthKitClient = vi.fn<AuthRuntime['createAuthKitClient']>();
 const ensureLocalSession = vi.fn<AuthRuntime['ensureLocalSession']>();
-const readDesktopBootstrap = vi.fn<AuthRuntime['readDesktopBootstrap']>();
 const resolveLocalApiBaseUrl = vi.fn<AuthRuntime['resolveLocalApiBaseUrl']>();
 const nativeTokenRequestSchema = z.object({ forceRefreshToken: z.boolean() });
 type NativeSessionTokenRequest = z.infer<typeof nativeTokenRequestSchema>;
@@ -112,10 +111,6 @@ describe('Convex auth dependencies', () => {
 });
 
 describe('installed and hosted auth', () => {
-	const bootstrap = {
-		httpBaseUrl: 'http://localhost:17731',
-		pairingCredential: 'pairing-secret'
-	};
 	const convexClient = {
 		query: vi.fn(async () => ({ workosClientId: 'client_123' }))
 	};
@@ -124,16 +119,13 @@ describe('installed and hosted auth', () => {
 		resetAuthRuntime();
 		createAuthKitClient.mockReset();
 		ensureLocalSession.mockReset();
-		readDesktopBootstrap.mockReset();
 		resolveLocalApiBaseUrl.mockReset();
 		convexClient.query.mockClear();
 		resolveLocalApiBaseUrl.mockReturnValue('http://localhost:17731');
-		readDesktopBootstrap.mockResolvedValue(bootstrap);
 		ensureLocalSession.mockResolvedValue(undefined);
 		setAuthRuntime({
 			createAuthKitClient,
 			resolveLocalApiBaseUrl,
-			readDesktopBootstrap,
 			ensureLocalSession
 		});
 	});
@@ -181,7 +173,7 @@ describe('installed and hosted auth', () => {
 		await initializeAuth(convexClient);
 
 		expect(createAuthKitClient).not.toHaveBeenCalled();
-		expect(ensureLocalSession).toHaveBeenCalledWith('http://localhost:17731', bootstrap);
+		expect(ensureLocalSession).toHaveBeenCalledWith('http://localhost:17731');
 		expect(fetch).toHaveBeenCalledWith(
 			'/api/auth/native-session/token',
 			expect.objectContaining({ method: 'POST', credentials: 'include' })
@@ -196,15 +188,40 @@ describe('installed and hosted auth', () => {
 		});
 	});
 
-	it('pairs the local session before asking for a native token', async () => {
+	it('uses machine auth for a remote HTTPS server', async () => {
+		stubRemoteWindow('https:');
+		resolveLocalApiBaseUrl.mockReturnValue('https://machine.tailnet.ts.net');
+		stubFetch({
+			token: () => jsonResponse(200, { accessToken: 'native-token', user: nativeUser })
+		});
+
+		await initializeAuth(convexClient, { machine: true });
+
+		expect(createAuthKitClient).not.toHaveBeenCalled();
+		expect(ensureLocalSession).toHaveBeenCalledWith('https://machine.tailnet.ts.net');
+		expect(get(authState)).toMatchObject({ user: nativeUser, nativeSession: 'ready' });
+	});
+
+	it('rejects remote machine auth over HTTP before creating a session', async () => {
+		stubRemoteWindow('http:');
+		resolveLocalApiBaseUrl.mockReturnValue('http://machine.local');
+		const fetch = stubFetch({});
+
+		await initializeAuth(convexClient, { machine: true });
+
+		expect(ensureLocalSession).not.toHaveBeenCalled();
+		expect(fetch).not.toHaveBeenCalled();
+		expect(get(authState)).toMatchObject({
+			nativeSession: 'unavailable',
+			error: 'Remote Sprocket access requires HTTPS.'
+		});
+	});
+
+	it('establishes the local session before asking for a native token', async () => {
 		stubInstalledWindow();
 		const order: string[] = [];
-		readDesktopBootstrap.mockImplementation(async () => {
-			order.push('bootstrap');
-			return bootstrap;
-		});
 		ensureLocalSession.mockImplementation(async () => {
-			order.push('pair');
+			order.push('local-session');
 		});
 		stubFetch({
 			token: () => {
@@ -215,7 +232,7 @@ describe('installed and hosted auth', () => {
 
 		await initializeAuth(convexClient);
 
-		expect(order).toEqual(['bootstrap', 'pair', 'token']);
+		expect(order).toEqual(['local-session', 'token']);
 		expect(get(authState).user).toBeNull();
 		expect(get(authState).nativeSession).toBe('notRequired');
 	});
@@ -290,7 +307,7 @@ describe('installed and hosted auth', () => {
 
 	it('signs in through PKCE then the native session without a second AuthKit redirect', async () => {
 		const { location } = stubInstalledWindow();
-		stubFetch({
+		const fetch = stubFetch({
 			desktopStart: () =>
 				jsonResponse(200, {
 					authorizationUrl: 'https://authkit.example/authorize',
@@ -314,6 +331,38 @@ describe('installed and hosted auth', () => {
 			isWaitingForBrowserSignIn: false,
 			error: null
 		});
+		expect(fetchMethodCalls(fetch, '/api/auth/desktop-login/result')).toEqual(['POST']);
+	});
+
+	it('revokes only the browser session and can sign in again remotely', async () => {
+		stubRemoteWindow('https:');
+		resolveLocalApiBaseUrl.mockReturnValue('https://machine.tailnet.ts.net');
+		const fetch = stubFetch({
+			token: () => jsonResponse(200, { accessToken: 'native-token', user: nativeUser }),
+			browserSessionDelete: () => jsonResponse(200, { ok: true }),
+			desktopStart: () =>
+				jsonResponse(200, {
+					authorizationUrl: 'https://authkit.example/device',
+					loginId: 'login-1'
+				}),
+			desktopResult: () =>
+				jsonResponse(200, {
+					status: 'authenticated',
+					user: { id: nativeUser.id, email: nativeUser.email }
+				})
+		});
+		await initializeAuth(convexClient, { machine: true });
+
+		await signOut();
+
+		expect(fetchMethodCalls(fetch, '/api/auth/session')).toEqual(['DELETE']);
+		expect(fetchMethodCalls(fetch, '/api/auth/native-session')).toEqual([]);
+		expect(get(authState).user).toBeNull();
+
+		await signIn();
+
+		expect(ensureLocalSession).toHaveBeenCalledTimes(2);
+		expect(get(authState).user).toEqual(nativeUser);
 	});
 
 	it('maps forceRefreshToken through the native session endpoint and does not persist the token', async () => {
@@ -437,7 +486,7 @@ describe('installed and hosted auth', () => {
 		});
 	});
 
-	it('surfaces pairing failure and account mismatch without treating them as signed out', async () => {
+	it('surfaces local-session failure and account mismatch without treating them as signed out', async () => {
 		stubInstalledWindow();
 		stubFetch({
 			token: () => jsonResponse(401, { error: 'authentication required' })
@@ -451,12 +500,10 @@ describe('installed and hosted auth', () => {
 
 		resetAuthRuntime();
 		resolveLocalApiBaseUrl.mockReturnValue('http://localhost:17731');
-		readDesktopBootstrap.mockResolvedValue(bootstrap);
 		ensureLocalSession.mockResolvedValue(undefined);
 		setAuthRuntime({
 			createAuthKitClient,
 			resolveLocalApiBaseUrl,
-			readDesktopBootstrap,
 			ensureLocalSession
 		});
 		stubInstalledWindow();
@@ -530,6 +577,12 @@ function tokenBodies(fetch: ReturnType<typeof stubFetch>) {
 	return bodies;
 }
 
+function fetchMethodCalls(fetch: ReturnType<typeof stubFetch>, path: string) {
+	return fetch.mock.calls
+		.filter(([input]) => requestUrl(input).endsWith(path))
+		.map(([, init]) => (init?.method ?? 'GET').toUpperCase());
+}
+
 function unhandled(input: RequestInfo | URL, init?: RequestInit) {
 	return jsonResponse(500, {
 		error: `unhandled ${init?.method ?? 'GET'} ${requestUrl(input)}`
@@ -539,6 +592,7 @@ function unhandled(input: RequestInfo | URL, init?: RequestInit) {
 function stubFetch(handlers: {
 	token?: (request: NativeSessionTokenRequest) => Response | Promise<Response>;
 	nativeSessionDelete?: () => Response | Promise<Response>;
+	browserSessionDelete?: () => Response | Promise<Response>;
 	desktopStart?: () => Response | Promise<Response>;
 	desktopResult?: () => Response | Promise<Response>;
 	desktopCancel?: () => Response | Promise<Response>;
@@ -556,10 +610,13 @@ function stubFetch(handlers: {
 		if (url.endsWith('/api/auth/native-session') && method === 'DELETE') {
 			return handlers.nativeSessionDelete?.() ?? unhandled(input, init);
 		}
+		if (url.endsWith('/api/auth/session') && method === 'DELETE') {
+			return handlers.browserSessionDelete?.() ?? unhandled(input, init);
+		}
 		if (url.includes('/api/auth/desktop-login/start') && method === 'POST') {
 			return handlers.desktopStart?.() ?? unhandled(input, init);
 		}
-		if (url.includes('/api/auth/desktop-login/result') && method === 'GET') {
+		if (url.includes('/api/auth/desktop-login/result') && method === 'POST') {
 			return handlers.desktopResult?.() ?? unhandled(input, init);
 		}
 		if (url.includes('/api/auth/desktop-login/cancel') && method === 'POST') {
@@ -579,15 +636,22 @@ function stubHostedWindow() {
 	return stubWindow('sprocket.dev');
 }
 
-function stubWindow(hostname: string) {
+function stubRemoteWindow(protocol: 'http:' | 'https:') {
+	return stubWindow('machine.tailnet.ts.net', protocol);
+}
+
+function stubWindow(hostname: string, requestedProtocol?: 'http:' | 'https:') {
 	const localStorage = {
 		getItem: vi.fn(),
 		setItem: vi.fn(),
 		removeItem: vi.fn()
 	};
-	const origin = hostname === 'localhost' ? 'http://localhost:17731' : `https://${hostname}`;
+	const protocol = requestedProtocol ?? (hostname === 'localhost' ? 'http:' : 'https:');
+	const origin =
+		hostname === 'localhost' ? `${protocol}//localhost:17731` : `${protocol}//${hostname}`;
 	const location = {
 		hostname,
+		protocol,
 		origin,
 		href: `${origin}/`,
 		replace: vi.fn()

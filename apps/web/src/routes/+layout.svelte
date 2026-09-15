@@ -36,7 +36,7 @@
 			return;
 		}
 
-		void initializeAuth(convexClient);
+		void initializeAuth(convexClient, { machine: data.machine });
 	});
 </script>
 

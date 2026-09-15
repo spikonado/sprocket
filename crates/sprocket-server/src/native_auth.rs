@@ -188,6 +188,7 @@ struct AccessToken {
 
 struct NativeSession {
     devices: HashMap<String, device::PendingDeviceLogin>,
+    remote_devices: HashMap<String, device::PendingDeviceLogin>,
     pending: PendingLogins,
     access_token: Option<AccessToken>,
     refresh_token: Option<String>,
@@ -203,6 +204,7 @@ impl Default for NativeSession {
     fn default() -> Self {
         Self {
             devices: HashMap::new(),
+            remote_devices: HashMap::new(),
             pending: PendingLogins::default(),
             access_token: None,
             refresh_token: None,
@@ -526,6 +528,9 @@ impl NativeAuthManager {
             for attempt in current.devices.values() {
                 attempt.cancel.cancel();
             }
+            for attempt in current.remote_devices.values() {
+                attempt.cancel.cancel();
+            }
             *current = session;
         }
         let cleared = self.clear_refresh_token().await;
@@ -723,6 +728,10 @@ impl NativeAuthManager {
             attempt.cancel.cancel();
             attempt.result = Some(Err(invalidated.into()));
         }
+        for attempt in session.remote_devices.values_mut() {
+            attempt.cancel.cancel();
+            attempt.result = Some(Err(invalidated.into()));
+        }
         Ok(user)
     }
 
@@ -791,7 +800,7 @@ impl NativeAuthManager {
 
     async fn publish_session_change(&self, user_id: Option<&str>) -> anyhow::Result<()> {
         let result = match &self.local_sessions {
-            Some(sessions) => sessions.bind_all_sessions(user_id).await,
+            Some(sessions) => sessions.sync_sessions_with_owner(user_id).await,
             None => Ok(()),
         };
         self.changes
@@ -1181,6 +1190,23 @@ mod tests {
         manager_with_handler(store, move |_| (status, body.clone())).await
     }
 
+    async fn wait_for_remote_device_status(
+        manager: &Arc<NativeAuthManager>,
+        session_token: &str,
+    ) -> NativeLoginStatus {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let status = manager.remote_device_status(session_token).await;
+                if !matches!(status, NativeLoginStatus::Pending) {
+                    return status;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("remote device login should finish")
+    }
+
     #[tokio::test]
     async fn credential_selection_cannot_skip_a_persisted_login() {
         let store = MemoryRefreshTokenStore::with_token("persisted");
@@ -1246,8 +1272,8 @@ mod tests {
         let mut manager = manager_with_response(store.clone(), StatusCode::OK, response).await;
         let directory = tempfile::tempdir().unwrap();
         let local = crate::auth::AuthState::load(directory.path()).unwrap();
-        let (_, desktop_session) = local.bootstrap(local.pairing_credential()).await.unwrap();
-        let (_, browser_session) = local.bootstrap(local.pairing_credential()).await.unwrap();
+        let (_, desktop_session) = local.bootstrap_browser_session(true).await.unwrap();
+        let (_, browser_session) = local.bootstrap_browser_session(true).await.unwrap();
         Arc::get_mut(&mut manager).unwrap().local_sessions = Some(Arc::clone(&local));
         let mut changes = manager.subscribe_changes();
         let login = manager
@@ -1293,6 +1319,180 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn remote_device_login_matches_the_host_owner_without_replacing_its_credentials() {
+        let store = MemoryRefreshTokenStore::empty();
+        let response = serde_json::to_value(authentication_response(
+            access_token(unix_time_secs() + 7_200),
+            "remote-refresh",
+        ))
+        .unwrap();
+        let mut manager = manager_with_response(store.clone(), StatusCode::OK, response).await;
+        let directory = tempfile::tempdir().unwrap();
+        let local = crate::auth::AuthState::load(directory.path()).unwrap();
+        let (_, browser_session) = local.bootstrap_browser_session(false).await.unwrap();
+        Arc::get_mut(&mut manager).unwrap().local_sessions = Some(Arc::clone(&local));
+        manager.authenticate_for_test("user_123").await;
+
+        let login = manager
+            .start_remote_device_login(browser_session.clone())
+            .await
+            .unwrap();
+        assert!(login.authorization_url.contains("ABCD-EFGH"));
+        assert!(matches!(
+            wait_for_remote_device_status(&manager, &browser_session).await,
+            NativeLoginStatus::Authenticated { user } if user.id == "user_123"
+        ));
+        assert!(matches!(
+            manager
+                .complete_remote_device_login(&browser_session)
+                .await
+                .unwrap(),
+            NativeLoginStatus::Authenticated { user } if user.id == "user_123"
+        ));
+        local
+            .require_session_user(&browser_session, "user_123")
+            .await
+            .unwrap();
+        assert!(matches!(
+            manager.remote_device_status(&browser_session).await,
+            NativeLoginStatus::SignedOut
+        ));
+
+        let host = manager.browser_session(false).await.unwrap().unwrap();
+        assert_eq!(host.user.id, "user_123");
+        assert_eq!(host.access_token, "test-access-token");
+        assert_eq!(store.token(), None);
+    }
+
+    #[tokio::test]
+    async fn remote_device_login_rejects_another_account_without_changing_the_host_owner() {
+        let store = MemoryRefreshTokenStore::empty();
+        let mut response = serde_json::to_value(authentication_response(
+            access_token(unix_time_secs() + 7_200),
+            "remote-refresh",
+        ))
+        .unwrap();
+        response["user"]["id"] = serde_json::Value::String("user_other".into());
+        let manager = manager_with_response(store.clone(), StatusCode::OK, response).await;
+        manager.authenticate_for_test("user_123").await;
+
+        manager
+            .start_remote_device_login("browser-session".into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            wait_for_remote_device_status(&manager, "browser-session").await,
+            NativeLoginStatus::Failed { error } if error.contains("same account")
+        ));
+
+        let host = manager.browser_session(false).await.unwrap().unwrap();
+        assert_eq!(host.user.id, "user_123");
+        assert_eq!(host.access_token, "test-access-token");
+        assert_eq!(store.token(), None);
+    }
+
+    #[tokio::test]
+    async fn remote_device_login_fails_if_the_host_owner_changes_while_polling() {
+        let store = MemoryRefreshTokenStore::empty();
+        let response = serde_json::to_value(authentication_response(
+            access_token(unix_time_secs() + 7_200),
+            "remote-refresh",
+        ))
+        .unwrap();
+        let manager =
+            manager_with_delayed_handler(store.clone(), Duration::from_millis(100), move |_| {
+                (StatusCode::OK, response.clone())
+            })
+            .await;
+        manager.authenticate_for_test("user_123").await;
+        manager
+            .start_remote_device_login("browser-session".into())
+            .await
+            .unwrap();
+
+        manager.authenticate_for_test("user_other").await;
+
+        assert!(matches!(
+            wait_for_remote_device_status(&manager, "browser-session").await,
+            NativeLoginStatus::Failed { error } if error.contains("same account")
+        ));
+        let host = manager.browser_session(false).await.unwrap().unwrap();
+        assert_eq!(host.user.id, "user_other");
+        assert_eq!(store.token(), None);
+    }
+
+    #[tokio::test]
+    async fn host_sign_out_cancels_remote_device_login() {
+        let store = MemoryRefreshTokenStore::empty();
+        let response = serde_json::to_value(authentication_response(
+            access_token(unix_time_secs() + 7_200),
+            "remote-refresh",
+        ))
+        .unwrap();
+        let manager = manager_with_delayed_handler(store, Duration::from_secs(1), move |_| {
+            (StatusCode::OK, response.clone())
+        })
+        .await;
+        manager.authenticate_for_test("user_123").await;
+        manager
+            .start_remote_device_login("browser-session".into())
+            .await
+            .unwrap();
+
+        manager.sign_out().await.unwrap();
+
+        assert!(matches!(
+            manager.remote_device_status("browser-session").await,
+            NativeLoginStatus::SignedOut
+        ));
+    }
+
+    #[tokio::test]
+    async fn remote_device_login_limit_counts_only_active_attempts_when_full() {
+        let response = serde_json::to_value(authentication_response(
+            access_token(unix_time_secs() + 7_200),
+            "remote-refresh",
+        ))
+        .unwrap();
+        let manager = manager_with_delayed_handler(
+            MemoryRefreshTokenStore::empty(),
+            Duration::from_secs(2),
+            move |_| (StatusCode::OK, response.clone()),
+        )
+        .await;
+        manager.authenticate_for_test("user_123").await;
+        for index in 0..32 {
+            manager
+                .start_remote_device_login(format!("browser-{index}"))
+                .await
+                .unwrap();
+        }
+
+        assert!(
+            manager
+                .start_remote_device_login("one-too-many".into())
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("too many remote sign-ins")
+        );
+
+        manager.cancel_remote_device_login("browser-0", None).await;
+        manager
+            .start_remote_device_login("replacement".into())
+            .await
+            .unwrap();
+        for index in 1..32 {
+            manager
+                .cancel_remote_device_login(&format!("browser-{index}"), None)
+                .await;
+        }
+        manager
+            .cancel_remote_device_login("replacement", None)
+            .await;
     }
 
     #[tokio::test]
@@ -1511,7 +1711,7 @@ mod tests {
         .await;
         let directory = tempfile::tempdir().unwrap();
         let local = crate::auth::AuthState::load(directory.path()).unwrap();
-        let (_, local_session) = local.bootstrap(local.pairing_credential()).await.unwrap();
+        let (_, local_session) = local.bootstrap_browser_session(true).await.unwrap();
         local
             .bind_session_user(&local_session, "user_old")
             .await

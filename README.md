@@ -26,6 +26,25 @@ npx @spikonado/sprocket
 ```
 
 The above runs Sprocket through your browser unless you have the desktop app installed.
+Browser launch URLs contain workspace navigation state only. The local server
+creates the browser session after checking the socket peer, Origin, and Host.
+
+### Remote browser access
+
+Keep Sprocket on its default loopback address and put an HTTPS reverse proxy in
+front of it. For example, Tailscale Serve can expose the local server inside
+your tailnet:
+
+```sh
+tailscale serve --bg http://127.0.0.1:17731
+```
+
+Open the HTTPS URL printed by Tailscale. Remote browser sign-in uses WorkOS
+device authorization and accepts only the account already signed in by
+`sprocket login` on the host. Signing out in that browser revokes its browser
+session without signing the host out. Plain remote HTTP is rejected. Other
+reverse proxies must connect to Sprocket over loopback and preserve the
+browser-facing `Host` header.
 
 ### Desktop app
 
@@ -85,15 +104,15 @@ Run `sprocket --help` or `sprocket serve --help` for all options.
 
 Common Sprocket server overrides are available as environment variables:
 
-| Variable                      | Purpose                                                             |
-| ----------------------------- | ------------------------------------------------------------------- |
-| `SPROCKET_DATA_DIR`           | Directory for pairing, sessions, and workspace state.               |
-| `SPROCKET_PORT`               | Local server port; defaults to `17731` for installed use.           |
-| `SPROCKET_HOST`               | Bind host; defaults to `127.0.0.1`.                                 |
-| `SPROCKET_DESKTOP_EXECUTABLE` | Full path to the desktop executable to be used by the Sprocket CLI. |
-| `PUBLIC_CONVEX_URL`           | Convex deployment used by the agent runtime.                        |
-| `PUBLIC_MODEL_GATEWAY_URL`    | Public AI gateway origin for the UI catalog (`GET /api/v1/models`). |
-| `SPROCKET_STATIC_DIR`         | Web build to serve instead of the bundled build.                    |
+| Variable                      | Purpose                                                                 |
+| ----------------------------- | ----------------------------------------------------------------------- |
+| `SPROCKET_DATA_DIR`           | Directory for internal process identity, sessions, and workspace state. |
+| `SPROCKET_PORT`               | Local server port; defaults to `17731` for installed use.               |
+| `SPROCKET_HOST`               | Bind host; defaults to `127.0.0.1`.                                     |
+| `SPROCKET_DESKTOP_EXECUTABLE` | Full path to the desktop executable to be used by the Sprocket CLI.     |
+| `PUBLIC_CONVEX_URL`           | Convex deployment used by the agent runtime.                            |
+| `PUBLIC_MODEL_GATEWAY_URL`    | Public AI gateway origin for the UI catalog (`GET /api/v1/models`).     |
+| `SPROCKET_STATIC_DIR`         | Web build to serve instead of the bundled build.                        |
 
 ## Development
 

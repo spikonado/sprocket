@@ -274,7 +274,7 @@ async fn open_running_web_app(
         );
     }
 
-    let target = browser_launch_url(&expected_base_url, &credential, workspace_path);
+    let target = browser_launch_url(&expected_base_url, workspace_path);
     eprintln!("Sprocket is already running. Opening it in your browser…");
     open::that_detached(&target)
         .with_context(|| format!("failed to open the browser; open {target} manually"))?;

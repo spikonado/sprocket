@@ -54,9 +54,15 @@ The system has three main planes:
 
 WorkOS establishes cloud user identity. Installed clients share one Rust-owned
 WorkOS session across the renderer, agent runs, and machine registration.
-Hosted web clients use AuthKit JS. A separate local
-pairing mechanism authorizes the browser or Electron renderer to access the
-machine-facing API.
+Hosted web clients use AuthKit JS. The machine-served web app accepts loopback
+HTTP and same-origin HTTPS, including TLS terminated by a reverse proxy such as
+Tailscale Serve. HTTPS proxy connections must reach the server through its
+loopback listener. The Rust-owned WorkOS session must bind a persistent browser
+session to a user before it can access machine-facing APIs. Remote HTTPS clients
+use a separate WorkOS device flow and must authenticate as the current host
+owner. CLI sessions remain ephemeral and use signed process-pairing proofs.
+Electron uses its own bootstrap token and the internal pairing credential to
+authenticate the server process.
 
 ## Component boundaries
 
@@ -116,7 +122,7 @@ Sprocket deliberately separates cloud and machine-local state.
 | Local folder list (`workspacePath` + `repositoryKey`)                        | Local server         |
 | Installation identity and this process’s machine credential                  | Local server         |
 | Machine presence                                                             | Convex               |
-| Pairing credential and local browser sessions                                | Local server         |
+| Internal process credential and browser sessions                             | Local server         |
 | Native WorkOS access token and user                                          | Local process memory |
 | Native WorkOS refresh token                                                  | OS credential store  |
 | Active commands, cancellation tokens, and run execution capabilities         | Local process memory |
@@ -252,9 +258,11 @@ Cloud and local authorization solve different problems:
 
 - **Browser cloud identity:** AuthKit JS owns the hosted web session. Installed
   renderers obtain short-lived access tokens from the Rust-owned session through
-  the paired, same-origin, loopback-only native token endpoint. Convex validates them
-  as JWTs (`apps/web/src/convex/auth.config.ts`) and checks ownership before
-  reading or changing user records.
+  the same-origin native token endpoint. Remote browser sessions must first
+  prove the same WorkOS identity through an isolated device authorization. That
+  flow does not replace the host session or persist its returned tokens. Convex
+  validates the host token as a JWT (`apps/web/src/convex/auth.config.ts`) and
+  checks ownership before reading or changing user records.
 - **Native cloud identity:** Rust owns the installed client's WorkOS authorization-code
   session. It generates PKCE and state, exchanges the
   code on the loopback callback, keeps the access token in memory, and stores
@@ -262,8 +270,12 @@ Cloud and local authorization solve different problems:
   public WorkOS client ID from the unauthenticated Convex query
   `authBootstrap:getClientConfig` when it first needs WorkOS. Convex being
   unavailable therefore does not prevent the local server from starting.
-- **Local authorization:** a machine-local pairing credential bootstraps a
-  local session used for filesystem, cache, and agent endpoints.
+- **Local authorization:** the browser bootstraps an unbound persistent session
+  over loopback HTTP or same-origin HTTPS. Native login endpoints accept that
+  session so WorkOS can bind it to a user. Plain remote HTTP is rejected.
+  Filesystem, cache, agent, and other machine-facing endpoints reject the
+  session until binding succeeds. The machine-local pairing credential remains
+  internal to CLI and Electron server authentication.
 - **Agent delegation:** the local server mints a random run-scoped execution
   secret when it starts a run. Convex stores only the hash. Executor
   queries and mutations authorize with that secret (`getExecutionRun`), not

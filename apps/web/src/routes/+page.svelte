@@ -107,7 +107,6 @@
 		readWorkspaceLaunchFromHash,
 		resolveDesktopApi
 	} from '$lib/local/client';
-	import { resolve } from '$app/paths';
 	import { applyTheme, resolveTheme, type SprocketTheme } from '$lib/theme';
 	import type {
 		DesktopApi,
@@ -2380,12 +2379,8 @@
 {:else if !desktopApi}
 	<CalmCentered
 		title="Connect to Sprocket"
-		description={currentError ?? 'Connect to your Sprocket server to continue.'}
-	>
-		{#snippet actions()}
-			<Button href={resolve('/pair')}>Open pairing</Button>
-		{/snippet}
-	</CalmCentered>
+		description={currentError ?? 'Open Sprocket from the desktop app or CLI to continue.'}
+	/>
 {:else if !authReady}
 	<div class="bg-background h-screen overflow-hidden">
 		<AuthGate
