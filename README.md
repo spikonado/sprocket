@@ -118,7 +118,7 @@ Common Sprocket server overrides are available as environment variables:
 
 ### Requirements
 
-- Bun 1.x, version 1.3.9 or newer
+- Bun 1.x, version 1.4.2 or newer
 - Node.js 24.x, version 24.14 or newer
 - A current stable Rust toolchain
 
