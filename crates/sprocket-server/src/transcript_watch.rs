@@ -265,7 +265,7 @@ async fn run_watch_loop(start: &WatchStart) -> anyhow::Result<()> {
     )
     .await?;
     let remote = client.ensure_migrated(&start.thread_id).await?;
-    apply_and_publish(start, &remote, true).await?;
+    apply_and_publish(start, &remote).await?;
 
     crate::work_sync::synchronize(
         client,
@@ -286,20 +286,19 @@ async fn run_watch_loop(start: &WatchStart) -> anyhow::Result<()> {
 async fn apply_and_publish(
     start: &WatchStart,
     remote: &RemoteTranscriptState,
-    stale: bool,
 ) -> anyhow::Result<()> {
     apply_remote_state(
         &start.store,
         &start.user_id,
         &start.thread_id,
         remote,
-        stale,
+        false,
     )
     .await?;
     let _ = start.events.send(TranscriptWatchEvent {
         event_type: "updated",
         total_parts: Some(remote.total_parts),
-        stale,
+        stale: false,
     });
     Ok(())
 }
@@ -408,10 +407,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn watch_metadata_does_not_fetch_part_bodies() {
+    async fn connected_watch_clears_stale_without_waiting_for_part_bodies() {
         let dir =
             std::env::temp_dir().join(format!("sprocket-watch-metadata-{}", uuid::Uuid::new_v4()));
         let store = TranscriptStore::new(dir.clone());
+        store
+            .update_state("user", "thread", |state| state.stale = true)
+            .await
+            .unwrap();
         let (events, mut rx) = broadcast::channel(8);
         let start = WatchStart {
             deployment_url: "https://example.convex.cloud".into(),
@@ -429,7 +432,6 @@ mod tests {
                 history_from_number: 0,
                 context_summary: None,
             },
-            false,
         )
         .await
         .unwrap();
@@ -440,6 +442,7 @@ mod tests {
 
         let state = store.load_state("user", "thread").await.unwrap();
         assert_eq!(state.remote_total_parts, 500);
+        assert!(!state.stale);
         assert!(state.downloaded_ranges.is_empty());
         assert_eq!(
             store

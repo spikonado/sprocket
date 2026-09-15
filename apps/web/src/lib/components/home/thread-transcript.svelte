@@ -468,8 +468,22 @@
 					role="status"
 					class="mb-6 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200"
 				>
-					Showing a local copy while Sprocket reconnects to history.
+					Reconnecting to conversation history.
 				</div>
+			{/if}
+
+			{#if nextBefore !== undefined && onLoadOlder}
+				<button
+					type="button"
+					class="text-muted-foreground hover:text-foreground mb-6 self-center text-sm disabled:opacity-50"
+					disabled={loadingOlder}
+					onclick={() => {
+						stickToBottom = false;
+						onLoadOlder?.();
+					}}
+				>
+					{loadingOlder ? 'Loading older messages...' : 'Load older messages'}
+				</button>
 			{/if}
 
 			{#if messages.length === 0}

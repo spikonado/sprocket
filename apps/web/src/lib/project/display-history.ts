@@ -56,6 +56,19 @@ export class DisplayHistory {
 		clearTimeout(this.retry);
 	}
 
+	private retryRefresh(delay: number) {
+		clearTimeout(this.retry);
+		this.retry = setTimeout(() => {
+			this.retry = undefined;
+			void this.refresh();
+		}, delay);
+	}
+
+	private retryOlder(delay: number) {
+		this.olderPending = true;
+		this.retryRefresh(delay);
+	}
+
 	unpersisted(overlays: LiveCompletionOverlay[]) {
 		return overlays.filter((overlay) => !this.persistedStreams.has(streamKey(overlay)));
 	}
@@ -97,9 +110,10 @@ export class DisplayHistory {
 			do {
 				this.refreshPending = false;
 				const streamRequest = this.streamRequest();
+				const requestedChangesCursor = this.changesCursor;
 				const page = await this.fetchPage({
 					limit: 12,
-					changesAfter: this.changesCursor,
+					changesAfter: requestedChangesCursor,
 					...streamRequest
 				});
 				if (this.stopped) return;
@@ -119,12 +133,17 @@ export class DisplayHistory {
 				if (page.indexing) {
 					this.stale = page.stale;
 					this.changed();
-					this.retry = setTimeout(() => void this.refresh(), 500);
+					this.retryRefresh(500);
 					break;
 				}
-				if (page.stale) this.retry = setTimeout(() => void this.refresh(), 2_000);
+				if (page.stale) this.retryRefresh(2_000);
+				else {
+					clearTimeout(this.retry);
+					this.retry = undefined;
+				}
 				if (page.revision < this.revision) {
 					this.stale = page.stale;
+					this.retryRefresh(500);
 					this.changed();
 					break;
 				}
@@ -134,14 +153,35 @@ export class DisplayHistory {
 					this.rows.clear();
 					this.windowVersion += 1;
 				}
-				if (!this.rows.size || lower === 0 || lower <= (this.messages[0]?.sequence ?? 0))
+				const firstLoaded = this.messages[0]?.sequence;
+				const hasNewRowsBeforeWindow =
+					firstLoaded !== undefined &&
+					page.changes.some(
+						(change) =>
+							change.row !== null &&
+							change.row.sequence < firstLoaded &&
+							!this.messages.some((message) => message.id === change.id)
+					);
+				if (!this.rows.size || lower === 0 || lower <= (firstLoaded ?? 0))
 					this.nextBefore = page.nextBefore;
+				else if (this.nextBefore === undefined && hasNewRowsBeforeWindow)
+					this.nextBefore = firstLoaded;
 				for (const number of this.rows.keys()) if (number >= lower) this.rows.delete(number);
 				this.commit(page);
 				for (const stream of streamRequest.streams ?? [])
 					this.checkedStreams.add(streamKey(stream));
 				this.changesCursor = page.changesCursor;
-				this.refreshPending ||= page.moreChanges;
+				if (page.moreChanges) {
+					const cursorAdvanced =
+						requestedChangesCursor === undefined ||
+						page.changesCursor.revision !== requestedChangesCursor.revision ||
+						page.changesCursor.sequence !== requestedChangesCursor.sequence;
+					this.refreshPending ||= cursorAdvanced;
+					if (!cursorAdvanced) {
+						this.stale = true;
+						this.retryRefresh(2_000);
+					}
+				}
 				this.refreshPending ||=
 					page.persistedStreams.length > 0 &&
 					this.unpersisted(this.overlays).some(
@@ -158,7 +198,7 @@ export class DisplayHistory {
 				this.loading = false;
 				this.error = this.messages.length ? null : 'Could not load conversation history.';
 				this.changed();
-				this.retry = setTimeout(() => void this.refresh(), 2_000);
+				this.retryRefresh(2_000);
 			}
 		} finally {
 			this.refreshing = false;
@@ -188,12 +228,11 @@ export class DisplayHistory {
 				return;
 			}
 			if (page.indexing) {
-				this.olderPending = true;
-				void this.refresh();
+				this.retryOlder(500);
 				return;
 			}
 			if (page.revision < this.revision) {
-				this.stale = true;
+				this.retryOlder(500);
 				return;
 			}
 			if (page.persistedStreams.some((stream) => !this.persistedStreams.has(streamKey(stream)))) {
@@ -203,10 +242,18 @@ export class DisplayHistory {
 			}
 			if (page.nextBefore !== undefined && page.nextBefore >= before)
 				throw new Error('History cursor did not advance.');
+			if (this.nextBefore !== before) {
+				if (this.nextBefore !== undefined) this.retryOlder(500);
+				return;
+			}
 			this.commit(page);
 			this.nextBefore = page.nextBefore;
+			if (page.stale) this.retryRefresh(2_000);
 		} catch {
-			if (!this.stopped && version === this.windowVersion) this.stale = true;
+			if (!this.stopped && version === this.windowVersion) {
+				this.stale = true;
+				this.retryOlder(2_000);
+			}
 		} finally {
 			this.loadingOlder = false;
 			if (!this.stopped) this.changed();
