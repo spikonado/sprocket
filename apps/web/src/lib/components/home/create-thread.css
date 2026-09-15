@@ -1,0 +1,228 @@
+.create-thread-screen {
+	display: flex;
+	flex: 1;
+	min-height: 0;
+	width: 100%;
+	max-width: 850px;
+	margin: auto;
+	flex-direction: column;
+	justify-content: center;
+}
+
+.create-thread-heading {
+	position: relative;
+	margin: 0 24px 26px;
+	text-align: center;
+	font-size: clamp(22px, 3vw, 30px);
+	font-weight: 400;
+	line-height: 1.5;
+	letter-spacing: -0.035em;
+}
+
+.create-thread-project-phrase {
+	display: inline-flex;
+	max-width: 100%;
+	min-width: 0;
+	align-items: baseline;
+	gap: 0.08em;
+	white-space: nowrap;
+	vertical-align: bottom;
+}
+
+.create-thread-project-control {
+	position: relative;
+	display: inline-flex;
+	min-width: 0;
+}
+
+.create-thread-project-trigger {
+	display: inline-flex;
+	min-width: 0;
+	max-width: min(19ch, calc(100vw - 5rem));
+	align-items: center;
+	gap: 0.22em;
+	border: 1px solid var(--hairline);
+	border-radius: 0.42em;
+	background: var(--hover-fill);
+	padding: 0 0.35em 0.04em 0.42em;
+	color: var(--foreground);
+	font: inherit;
+	letter-spacing: inherit;
+	line-height: 1.25;
+	vertical-align: baseline;
+	transition:
+		border-color 120ms ease,
+		background-color 120ms ease;
+}
+
+.create-thread-project-trigger:hover,
+.create-thread-project-trigger[aria-expanded='true'] {
+	border-color: color-mix(in oklab, var(--foreground) 22%, var(--hairline));
+	background: var(--hover-fill-strong);
+}
+
+.create-thread-project-trigger:focus-visible {
+	outline: 2px solid color-mix(in oklab, var(--foreground) 55%, transparent);
+	outline-offset: 3px;
+}
+
+.create-thread-project-trigger > span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.create-thread-project-trigger svg {
+	width: 0.58em;
+	height: 0.58em;
+	flex: none;
+	color: var(--muted-foreground);
+	transition: transform 120ms ease;
+}
+
+.create-thread-project-trigger svg.is-open {
+	transform: rotate(180deg);
+}
+
+.create-thread-project-menu {
+	position: absolute;
+	top: calc(100% + 8px);
+	left: 50%;
+	z-index: 50;
+	display: block;
+	width: min(17rem, calc(100vw - 2rem));
+	max-height: min(18rem, 60vh);
+	overflow: hidden;
+	transform: translateX(-50%);
+	border: 1px solid var(--hairline);
+	border-radius: 12px;
+	background: color-mix(in oklab, var(--popover) 96%, transparent);
+	box-shadow: 0 12px 32px rgb(0 0 0 / 14%);
+	color: var(--popover-foreground);
+	font-size: 14px;
+	font-weight: 400;
+	letter-spacing: normal;
+	line-height: 1.2;
+	text-align: left;
+	backdrop-filter: blur(16px);
+}
+
+.create-thread-project-options {
+	display: block;
+	max-height: min(13rem, 45vh);
+	overflow-y: auto;
+	padding: 5px;
+}
+
+.create-thread-project-options > button,
+.create-thread-project-menu-footer > button {
+	display: flex;
+	width: 100%;
+	min-width: 0;
+	align-items: center;
+	gap: 10px;
+	border-radius: 8px;
+	padding: 8px 10px;
+	font: inherit;
+	line-height: 1.2;
+	text-align: left;
+	outline: none;
+	transition: background-color 100ms ease;
+}
+
+.create-thread-project-options > button:hover,
+.create-thread-project-options > button.active,
+.create-thread-project-options > button:focus-visible,
+.create-thread-project-menu-footer > button:hover,
+.create-thread-project-menu-footer > button.active,
+.create-thread-project-menu-footer > button:focus-visible {
+	background: var(--hover-fill);
+}
+
+.create-thread-project-option-label {
+	display: block;
+	min-width: 0;
+	flex: 1;
+}
+
+.create-thread-project-option-label > span,
+.create-thread-project-option-label > small {
+	display: block;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.create-thread-project-option-label > span {
+	font-weight: 500;
+}
+
+.create-thread-project-option-label > small {
+	margin-top: 2px;
+	color: var(--muted-foreground);
+	font-family: var(--font-mono);
+	font-size: 12px;
+}
+
+.create-thread-project-options > button > svg {
+	width: 17px;
+	height: 17px;
+	flex: none;
+	color: var(--accent-strong);
+	opacity: 0;
+}
+
+.create-thread-project-options > button.selected > svg {
+	opacity: 1;
+}
+
+.create-thread-project-menu-footer {
+	display: block;
+	border-top: 1px solid var(--hairline);
+	padding: 5px;
+}
+
+.create-thread-project-menu-footer > button {
+	color: var(--muted-foreground);
+}
+
+.create-thread-project-menu-footer > button:hover,
+.create-thread-project-menu-footer > button:focus-visible {
+	color: var(--foreground);
+}
+
+.create-thread-project-menu-footer svg {
+	width: 17px;
+	height: 17px;
+	flex: none;
+}
+
+.create-thread-composer {
+	padding: 0 24px;
+}
+
+.create-thread-message {
+	margin: 12px 24px;
+	color: var(--muted-foreground);
+	font-size: 12px;
+	text-align: center;
+}
+
+.create-thread-message button {
+	text-decoration: underline;
+}
+
+@media (max-width: 767px) {
+	.create-thread-screen {
+		justify-content: flex-start;
+		padding-top: min(20dvh, 140px);
+	}
+
+	.create-thread-heading {
+		margin-bottom: 20px;
+	}
+
+	.create-thread-composer {
+		padding: 0 12px;
+	}
+}

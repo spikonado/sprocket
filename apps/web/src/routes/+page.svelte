@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, untrack } from 'svelte';
+	import { onMount, tick, untrack } from 'svelte';
 	import { elapsedSeconds, tickingNow } from '$lib/chat/elapsed-time';
 	import { page } from '$app/state';
 	import { PanelRight } from '@lucide/svelte';
@@ -25,6 +25,8 @@
 	import BrowserSignInOverlay from '$lib/components/home/browser-signin-overlay.svelte';
 	import CalmCentered from '$lib/components/home/calm-centered.svelte';
 	import PromptComposer from '$lib/components/home/prompt-composer.svelte';
+	import CreateThreadHeading from '$lib/components/home/create-thread-heading.svelte';
+	import '$lib/components/home/create-thread.css';
 	import SettingsAccount from '$lib/components/home/settings-account.svelte';
 	import SettingsBrowser from '$lib/components/home/settings-browser.svelte';
 	import SettingsArchived from '$lib/components/home/settings-archived.svelte';
@@ -91,8 +93,8 @@
 		isActiveThread,
 		isAgentLaunchPending,
 		isLatestRunReadyForThread,
-		pickThreadToRestore,
 		resolveExpiredAgentLaunch,
+		resolveInitialDraftSelection,
 		resolvePendingAgentLaunch,
 		resolvePendingCreatedThreadId,
 		resolveProjectThreadSelection,
@@ -252,14 +254,12 @@
 	let nextAgentLaunchId = 0;
 	let nextSubmissionSequence = 0;
 	let hasResolvedInitialSelection = $state(false);
-	let restoredWorkspacePathToAttach = $state<string | null>(null);
 	let lastSyncedComposerThreadId: Id<'threadRecords'> | null = null;
 	let projectSelectionGeneration = $state(0);
 	let pendingCreatedThreadId = $state<Id<'threadRecords'> | null>(null);
 	let desktopProjectAttachmentsByPath = $state<Record<string, ProjectAttachment>>({});
 	let hasLoadedDesktopProjectAttachments = $state(false);
 	let desktopProjectAttachmentsGeneration = 0;
-	let threadSnapshotReady = $state(false);
 	let threadCacheStatus = $state<ThreadCacheStatus>('loading');
 	let threadSnapshotThreads = $state<Doc<'threadRecords'>[]>([]);
 	let threadCacheGeneration = 0;
@@ -274,6 +274,7 @@
 	let pendingProjectLaunches = $state<string[]>([]);
 	let projectLaunchInFlight = $state(false);
 	let initialProjectLaunchResolved = $state(false);
+	let createThreadComposerElement = $state<HTMLElement | null>(null);
 	const remoteChangeNotices = new SvelteMap<Id<'threadRecords'>, string>();
 	let artifactFullscreenKey = $state<string | null>(null);
 	const REMOTE_CHANGE_NOTICE =
@@ -546,6 +547,13 @@
 
 		return null;
 	});
+	const createThreadError = $derived(
+		currentError ??
+			$authState.error ??
+			(queryError instanceof Error ? convexClientErrorMessage(queryError) : null) ??
+			(threadCacheStatus === 'error' ? 'Could not sync threads.' : null) ??
+			(threadCacheStatus === 'offline' ? 'Thread sync is offline.' : null)
+	);
 	const projects = $derived.by<ProjectState[]>(() =>
 		Object.values(desktopProjectAttachmentsByPath)
 			.sort((left, right) => right.lastUsedAt - left.lastUsedAt)
@@ -1143,9 +1151,6 @@
 		lastSyncedAt: number | null;
 	}) {
 		threadCacheStatus = event.status;
-		if (event.status !== 'loading') {
-			threadSnapshotReady = true;
-		}
 	}
 
 	async function pullThreadSnapshot(userId: string) {
@@ -1223,7 +1228,6 @@
 					return;
 				}
 				threadCacheStatus = 'error';
-				threadSnapshotReady = true;
 				currentError = error instanceof Error ? error.message : 'Could not sync threads.';
 			}
 		})();
@@ -1466,6 +1470,12 @@
 
 	function startThreadDraftForProject(workspacePath: string) {
 		openProject(workspacePath, { draft: true });
+		void focusCreateThreadComposer();
+	}
+
+	async function focusCreateThreadComposer() {
+		await tick();
+		createThreadComposerElement?.querySelector<HTMLTextAreaElement>('textarea')?.focus();
 	}
 
 	function selectThread(thread: ThreadSummary, workspacePath: string) {
@@ -2052,10 +2062,8 @@
 		draftWorkspacePath = null;
 		pendingCreatedThreadId = null;
 		pendingAgentLaunches = {};
-		restoredWorkspacePathToAttach = null;
 		ensureSubscriptionAttemptedFor = null;
 		lastSyncedComposerThreadId = null;
-		threadSnapshotReady = false;
 		threadCacheStatus = 'loading';
 		threadSnapshotThreads = [];
 		threadSnapshotPullGeneration += 1;
@@ -2114,7 +2122,6 @@
 		pendingProjectLaunches = pendingProjectLaunches.slice(1);
 		projectLaunchInFlight = true;
 		hasResolvedInitialSelection = true;
-		restoredWorkspacePathToAttach = null;
 		projectPickerOpen = false;
 		settingsOpen = false;
 		currentError = null;
@@ -2214,58 +2221,33 @@
 	});
 
 	$effect(() => {
-		if (
-			hasResolvedInitialSelection ||
-			!initialProjectLaunchResolved ||
-			pendingProjectLaunches.length > 0 ||
-			projectLaunchInFlight
-		) {
-			return;
-		}
-
-		if (!hasLoadedDesktopProjectAttachments || !threadSnapshotReady) {
+		const selection = resolveInitialDraftSelection({
+			hasResolvedInitialSelection,
+			initialProjectLaunchResolved,
+			hasPendingProjectLaunches: pendingProjectLaunches.length > 0,
+			projectLaunchInFlight,
+			hasLoadedProjects: hasLoadedDesktopProjectAttachments,
+			signedInUserId,
+			projects
+		});
+		if (!selection) {
 			return;
 		}
 
 		hasResolvedInitialSelection = true;
-		const localRepositoryKeys = new Set(projects.map((project) => project.repositoryKey));
-		const restoredThread = pickThreadToRestore(
-			threads.filter((thread) => localRepositoryKeys.has(thread.repositoryKey))
-		);
-		if (restoredThread) {
-			const restoredProject = findProjectByRepositoryKey(projects, restoredThread.repositoryKey);
-			if (restoredProject) {
-				setProjectSelection(restoredProject.workspacePath, restoredThread.threadId, false, true);
-				restoredWorkspacePathToAttach = restoredProject.workspacePath;
-				return;
-			}
+		if (selection.workspacePath) {
+			const workspacePath = selection.workspacePath;
+			setProjectSelection(workspacePath, null, true, true);
+			const selectionGeneration = projectSelectionGeneration;
+			untrack(() => {
+				void verifyProject(workspacePath).catch((error) => {
+					if (selectionGeneration === projectSelectionGeneration) {
+						currentError = error instanceof Error ? error.message : 'Failed to attach project.';
+					}
+				});
+				void focusCreateThreadComposer();
+			});
 		}
-
-		if (projects[0]) {
-			setProjectSelection(projects[0].workspacePath, null, false, true);
-			restoredWorkspacePathToAttach = projects[0].workspacePath;
-		}
-	});
-
-	$effect(() => {
-		const workspacePath = restoredWorkspacePathToAttach;
-		if (!workspacePath || !desktopApi || !hasLoadedDesktopProjectAttachments) {
-			return;
-		}
-
-		const project = findProjectByWorkspacePath(projects, workspacePath);
-		if (!project) {
-			restoredWorkspacePathToAttach = null;
-			return;
-		}
-
-		restoredWorkspacePathToAttach = null;
-		const selectionGeneration = projectSelectionGeneration;
-		void verifyProject(workspacePath).catch((error) => {
-			if (selectionGeneration === projectSelectionGeneration) {
-				currentError = error instanceof Error ? error.message : 'Failed to attach project.';
-			}
-		});
 	});
 
 	$effect(() => {
@@ -2440,9 +2422,6 @@
 					{pendingAgentLaunches}
 					theme={workspaceTheme}
 					onThemeChange={(theme) => void handleThemeChange(theme)}
-					onAddProject={() => {
-						openProjectPicker('add');
-					}}
 					onReconnectProject={(workspacePath) => {
 						void reconnectProject(workspacePath);
 					}}
@@ -2496,100 +2475,135 @@
 						<SettingsAccount user={$authState.user} onSignOut={() => void signOut()} />
 					{/if}
 				{:else}
-					{#key `${currentThreadId}:${replicaWindowVersion}`}
-						<ThreadTranscript
-							currentError={replicaError ??
-								currentError ??
-								$authState.error ??
-								(queryError instanceof Error ? convexClientErrorMessage(queryError) : null) ??
-								(threadCacheStatus === 'error' ? 'Could not sync threads.' : null) ??
-								(threadCacheStatus === 'offline' ? 'Thread sync is offline.' : null) ??
-								null}
-							runError={latestRunResumeKind ? null : (runState?.lastError ?? null)}
-							messages={visibleMessages}
-							actions={visibleActions}
-							activeRunId={isRunInProgress ? (runState?.runId ?? null) : null}
-							project={currentProject}
-							remoteChangeNotice={currentThreadId
-								? (remoteChangeNotices.get(currentThreadId) ?? null)
-								: null}
-							onDismissRemoteChangeNotice={() => {
-								if (currentThreadId) {
-									remoteChangeNotices.delete(currentThreadId);
-								}
-							}}
-							stale={replicaStale}
-							loadingOlder={loadingOlderTranscript}
-							nextBefore={replicaNextBefore ?? undefined}
-							emptyStateMessage={currentThreadId &&
-							(replicaLoading || replicaThreadId !== currentThreadId)
-								? 'Loading conversation history...'
-								: currentProject
-									? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
-									: 'Add a project to begin.'}
-							onLoadOlder={() => {
-								void loadOlderTranscript();
-							}}
-							loadAttachment={loadTranscriptAttachment}
-							loadSectionDetails={loadTranscriptSectionDetails}
-						/>
-					{/key}
-
-					{#if catalogError}
-						<div
-							role="alert"
-							class="text-destructive mb-3 flex items-center justify-between gap-3 rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-sm"
-						>
-							<span>{CATALOG_UNAVAILABLE_MESSAGE}</span>
-							<Button
-								variant="outline"
-								className="h-8 px-3"
-								disabled={catalogLoading}
-								onclick={() => {
-									void loadModelCatalog();
+					{#if currentThreadId}
+						{#key `${currentThreadId}:${replicaWindowVersion}`}
+							<ThreadTranscript
+								currentError={replicaError ??
+									currentError ??
+									$authState.error ??
+									(queryError instanceof Error ? convexClientErrorMessage(queryError) : null) ??
+									(threadCacheStatus === 'error' ? 'Could not sync threads.' : null) ??
+									(threadCacheStatus === 'offline' ? 'Thread sync is offline.' : null) ??
+									null}
+								runError={latestRunResumeKind ? null : (runState?.lastError ?? null)}
+								messages={visibleMessages}
+								actions={visibleActions}
+								activeRunId={isRunInProgress ? (runState?.runId ?? null) : null}
+								project={currentProject}
+								remoteChangeNotice={currentThreadId
+									? (remoteChangeNotices.get(currentThreadId) ?? null)
+									: null}
+								onDismissRemoteChangeNotice={() => {
+									if (currentThreadId) {
+										remoteChangeNotices.delete(currentThreadId);
+									}
 								}}
-							>
-								{catalogLoading ? 'Retrying…' : 'Retry'}
-							</Button>
-						</div>
-					{:else if catalogLoading && !modelCatalog}
-						<div class="text-muted-foreground mb-3 text-sm">Loading models…</div>
+								stale={replicaStale}
+								loadingOlder={loadingOlderTranscript}
+								nextBefore={replicaNextBefore ?? undefined}
+								emptyStateMessage={currentThreadId &&
+								(replicaLoading || replicaThreadId !== currentThreadId)
+									? 'Loading conversation history...'
+									: currentProject
+										? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
+										: 'Add a project to begin.'}
+								onLoadOlder={() => {
+									void loadOlderTranscript();
+								}}
+								loadAttachment={loadTranscriptAttachment}
+								loadSectionDetails={loadTranscriptSectionDetails}
+							/>
+						{/key}
 					{/if}
 
-					<PromptComposer
-						bind:prompt
-						attachments={composerAttachments}
-						onAttachFiles={addComposerAttachments}
-						onRemoveAttachment={removeComposerAttachment}
-						{modelCatalog}
-						bind:selectedModel
-						onModelChange={(modelId) => {
-							void persistSelectedModel(modelId);
-						}}
-						bind:selectedReasoningEffort
-						bind:fastMode
-						pendingQuestion={pendingAgentQuestion}
-						showContinueWorking={latestRunResumeKind != null}
-						onContinueWorking={() => {
-							void continueWorking();
-						}}
-						bind:selectedQuestionOptionId
-						{canSend}
-						isSubmitting={isSubmittingPrompt || hasPendingAgentLaunch || answeringAgentQuestion}
-						isStarting={hasPendingAgentLaunch}
-						{isRunning}
-						elapsedLabel={runElapsedSeconds === undefined
-							? null
-							: formatElapsedDuration(runElapsedSeconds)}
-						{contextUsage}
-						projectSkills={composerProjectSkills}
-						onSubmit={() => {
-							void submitPrompt();
-						}}
-						onCancel={() => {
-							void cancelRun();
-						}}
-					/>
+					<div class={!currentThreadId ? 'create-thread-screen' : ''}>
+						{#if !currentThreadId}
+							<CreateThreadHeading
+								{projects}
+								workspacePath={currentWorkspacePath}
+								onProject={startThreadDraftForProject}
+								onAddProject={() => openProjectPicker('add')}
+							/>
+							{#if currentProject?.localAttachmentAvailability === 'unavailable'}
+								<p class="create-thread-message">
+									Project not connected here.
+									<button
+										type="button"
+										onclick={() => {
+											if (currentWorkspacePath) reconnectProject(currentWorkspacePath);
+										}}>Connect a local folder</button
+									>
+									to start local work.
+								</p>
+							{/if}
+							{#if createThreadError}
+								<p class="create-thread-message text-destructive" role="alert">
+									{createThreadError}
+								</p>
+							{/if}
+						{/if}
+
+						{#if catalogError}
+							<div
+								role="alert"
+								class="text-destructive mb-3 flex items-center justify-between gap-3 rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-sm"
+							>
+								<span>{CATALOG_UNAVAILABLE_MESSAGE}</span>
+								<Button
+									variant="outline"
+									className="h-8 px-3"
+									disabled={catalogLoading}
+									onclick={() => {
+										void loadModelCatalog();
+									}}
+								>
+									{catalogLoading ? 'Retrying…' : 'Retry'}
+								</Button>
+							</div>
+						{:else if catalogLoading && !modelCatalog}
+							<div class="text-muted-foreground mb-3 text-sm">Loading models…</div>
+						{/if}
+
+						<div
+							bind:this={createThreadComposerElement}
+							class={!currentThreadId ? 'create-thread-composer' : ''}
+						>
+							<PromptComposer
+								bind:prompt
+								attachments={composerAttachments}
+								onAttachFiles={addComposerAttachments}
+								onRemoveAttachment={removeComposerAttachment}
+								{modelCatalog}
+								bind:selectedModel
+								onModelChange={(modelId) => {
+									void persistSelectedModel(modelId);
+								}}
+								bind:selectedReasoningEffort
+								bind:fastMode
+								pendingQuestion={pendingAgentQuestion}
+								showContinueWorking={latestRunResumeKind != null}
+								onContinueWorking={() => {
+									void continueWorking();
+								}}
+								bind:selectedQuestionOptionId
+								{canSend}
+								isSubmitting={isSubmittingPrompt || hasPendingAgentLaunch || answeringAgentQuestion}
+								isStarting={hasPendingAgentLaunch}
+								{isRunning}
+								elapsedLabel={runElapsedSeconds === undefined
+									? null
+									: formatElapsedDuration(runElapsedSeconds)}
+								{contextUsage}
+								projectSkills={composerProjectSkills}
+								onSubmit={() => {
+									void submitPrompt();
+								}}
+								onCancel={() => {
+									void cancelRun();
+								}}
+							/>
+						</div>
+					</div>
 				{/if}
 			</main>
 		</div>

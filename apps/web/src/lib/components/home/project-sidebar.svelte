@@ -15,7 +15,6 @@
 		pendingAgentLaunches?: PendingAgentLaunches;
 		theme: SprocketTheme;
 		onThemeChange: (theme: SprocketTheme) => void;
-		onAddProject: () => void;
 		onReconnectProject: (workspacePath: string) => void;
 		onOpenSettings: () => void;
 		onStartThreadDraft: (workspacePath: string) => void;
@@ -32,7 +31,6 @@
 		pendingAgentLaunches = {},
 		theme,
 		onThemeChange,
-		onAddProject,
 		onReconnectProject,
 		onOpenSettings,
 		onStartThreadDraft,
@@ -196,18 +194,7 @@
 			<SidebarTopActions {theme} {onThemeChange} />
 		</header>
 
-		<div class="px-3.5 pb-1">
-			<button type="button" class={sidebarActionButtonClass} onclick={onAddProject}>
-				<FolderOpen class={sidebarActionIconClass} aria-hidden="true" />
-				<span class="truncate">Create/Add Project</span>
-			</button>
-		</div>
-
 		<div class="hide-scrollbar min-h-0 flex-1 overflow-y-auto px-2.5 py-3">
-			<div class="mb-3 px-2">
-				<p class="text-muted-foreground text-[10px] tracking-[0.24em] uppercase">Projects</p>
-			</div>
-
 			{#if groups.length === 0}
 				<div
 					class="text-muted-foreground bg-hover-fill rounded-3xl border border-dashed border-[var(--hairline)] px-4 py-4 text-sm leading-6"

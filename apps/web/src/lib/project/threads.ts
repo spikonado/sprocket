@@ -124,22 +124,27 @@ export function findThreadById(
 	return threads.find((thread) => thread.threadId === threadId) ?? null;
 }
 
-/**
- * Session-restore target: the non-archived thread the user most recently
- * prompted or got a response in. Deliberately ignores run state. A
- * background run in another project should not hijack the session on load.
- */
-export function pickThreadToRestore(threads: ThreadSummary[]): ThreadSummary | null {
-	let latest: ThreadSummary | null = null;
-	for (const thread of threads) {
-		if (!isActiveThread(thread)) {
-			continue;
-		}
-		if (!latest || thread.lastMessageAt > latest.lastMessageAt) {
-			latest = thread;
-		}
+export function resolveInitialDraftSelection(args: {
+	hasResolvedInitialSelection: boolean;
+	initialProjectLaunchResolved: boolean;
+	hasPendingProjectLaunches: boolean;
+	projectLaunchInFlight: boolean;
+	hasLoadedProjects: boolean;
+	signedInUserId: string | null;
+	projects: Pick<Project, 'workspacePath'>[];
+}): { workspacePath: string | null } | null {
+	if (
+		args.hasResolvedInitialSelection ||
+		!args.initialProjectLaunchResolved ||
+		args.hasPendingProjectLaunches ||
+		args.projectLaunchInFlight ||
+		!args.hasLoadedProjects ||
+		!args.signedInUserId
+	) {
+		return null;
 	}
-	return latest;
+
+	return { workspacePath: args.projects[0]?.workspacePath ?? null };
 }
 
 export function dataForThread<
