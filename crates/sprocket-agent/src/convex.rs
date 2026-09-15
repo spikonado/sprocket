@@ -252,6 +252,9 @@ impl RuntimeClient {
         attempt_seq: u64,
         stream_id: &str,
         items: Vec<serde_json::Value>,
+        provider_response_id: Option<&str>,
+        provider_request_id: Option<&str>,
+        provider_message_id: Option<&str>,
     ) -> anyhow::Result<()> {
         let local_items = self.output.as_ref().map(|_| items.clone());
         let mut args = self.run_args_with_claim(run_id, claim_id);
@@ -262,6 +265,9 @@ impl RuntimeClient {
             "items".to_string(),
             Value::try_from(serde_json::Value::Array(items))?,
         );
+        insert_optional_string(&mut args, "providerResponseId", provider_response_id);
+        insert_optional_string(&mut args, "providerRequestId", provider_request_id);
+        insert_optional_string(&mut args, "providerMessageId", provider_message_id);
         let number: Option<CompletionPartNumber> = self
             .mutation_json("agentRuntime:finalizeCompletionCall", args)
             .await?;
@@ -519,6 +525,12 @@ impl RuntimeClient {
 
 fn string_array(ids: &[String]) -> Value {
     Value::Array(ids.iter().cloned().map(Value::from).collect())
+}
+
+fn insert_optional_string(args: &mut BTreeMap<String, Value>, key: &str, value: Option<&str>) {
+    if let Some(value) = value.filter(|value| !value.is_empty()) {
+        args.insert(key.to_string(), value.to_string().into());
+    }
 }
 
 #[cfg(test)]
