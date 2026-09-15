@@ -66,23 +66,53 @@ export function isTranscriptToolTerminalStatus(
 	return status === 'completed' || status === 'failed' || status === 'cancelled';
 }
 
+async function listTranscriptStates(
+	ctx: MutationCtx | QueryCtx,
+	threadId: Id<'threadRecords'>
+): Promise<Doc<'threadTranscriptStates'>[]> {
+	return await ctx.db
+		.query('threadTranscriptStates')
+		.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
+		.collect();
+}
+
+/** Earliest row wins so concurrent first-append duplicates converge. */
+function pickTranscriptState(
+	rows: Array<Doc<'threadTranscriptStates'>>
+): Doc<'threadTranscriptStates'> | null {
+	if (rows.length === 0) return null;
+	return [...rows].sort(
+		(a, b) => a._creationTime - b._creationTime || a._id.localeCompare(b._id)
+	)[0];
+}
+
 export async function getTranscriptState(
 	ctx: MutationCtx | QueryCtx,
 	threadId: Id<'threadRecords'>
 ): Promise<Doc<'threadTranscriptStates'> | null> {
-	return await ctx.db
-		.query('threadTranscriptStates')
-		.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
-		.unique();
+	const rows = await listTranscriptStates(ctx, threadId);
+	const keep = pickTranscriptState(rows);
+	if (!keep) return null;
+	const totalParts = Math.max(...rows.map((row) => row.totalParts));
+	if (keep.totalParts === totalParts) return keep;
+	return { ...keep, totalParts };
 }
 
 export async function getOrCreateTranscriptState(
 	ctx: MutationCtx,
 	args: { threadId: Id<'threadRecords'>; userId: string }
 ): Promise<Doc<'threadTranscriptStates'>> {
-	const existing = await getTranscriptState(ctx, args.threadId);
-	if (existing) {
-		return existing;
+	const rows = await listTranscriptStates(ctx, args.threadId);
+	const keep = pickTranscriptState(rows);
+	if (keep) {
+		const totalParts = Math.max(...rows.map((row) => row.totalParts));
+		if (keep.totalParts !== totalParts) {
+			await ctx.db.patch('threadTranscriptStates', keep._id, { totalParts });
+		}
+		for (const row of rows) {
+			if (row._id !== keep._id) await ctx.db.delete('threadTranscriptStates', row._id);
+		}
+		return (await ctx.db.get('threadTranscriptStates', keep._id)) ?? { ...keep, totalParts };
 	}
 	const stateId = await ctx.db.insert('threadTranscriptStates', {
 		threadId: args.threadId,
