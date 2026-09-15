@@ -101,8 +101,10 @@ describe('duplicate threadUsage rows', () => {
 		);
 		expect(rows).toHaveLength(1);
 		expect(rows[0]).toMatchObject({
-			totalTokensProcessed: 10,
 			contextTokens: 20
+		});
+		expect(await asUser.query(api.threads.getByThreadId, { threadId })).toMatchObject({
+			totalTokensProcessed: 1
 		});
 	});
 });
