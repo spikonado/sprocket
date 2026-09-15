@@ -24,22 +24,6 @@
 	color: var(--foreground);
 }
 
-.inbox-new {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	width: 100%;
-	padding: 10px 12px;
-	border: 1px solid var(--hairline);
-	border-radius: 9px;
-	background: var(--background);
-	font-weight: 500;
-}
-
-.inbox-new:hover {
-	background: var(--hover-fill);
-}
-
 .inbox-filter {
 	display: flex;
 	align-items: center;
@@ -75,23 +59,6 @@
 	text-align: left;
 }
 
-.inbox-jumps {
-	display: flex;
-	gap: 4px;
-	padding: 6px 4px 0;
-	font-size: 10px;
-	color: var(--muted-foreground);
-}
-
-.inbox-jumps button {
-	padding: 3px 4px;
-	border-radius: 4px;
-}
-
-.inbox-jumps button:hover {
-	background: var(--hover-fill);
-}
-
 .inbox-scroll {
 	flex: 1;
 	min-height: 0;
@@ -102,15 +69,7 @@
 }
 
 .inbox-section-heading {
-	position: sticky;
-	top: 0;
-	z-index: 5;
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	width: 100%;
 	padding: 12px 8px 8px;
-	background: var(--sidebar-bg);
 	font-size: 11px;
 	font-weight: 500;
 	color: var(--muted-foreground);
@@ -307,10 +266,6 @@
 	overflow: hidden;
 }
 
-.inbox-layout.sidebar-hidden {
-	grid-template-columns: 0 minmax(0, 1fr);
-}
-
 .inbox-sidebar-host {
 	position: relative;
 	min-height: 0;
@@ -345,8 +300,7 @@
 }
 
 @media (max-width: 767px) {
-	.inbox-layout,
-	.inbox-layout.sidebar-hidden {
+	.inbox-layout {
 		display: block;
 	}
 

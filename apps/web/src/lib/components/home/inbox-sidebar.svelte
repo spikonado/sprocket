@@ -5,7 +5,6 @@
 		ChevronDown,
 		FolderPlus,
 		MoreHorizontal,
-		PanelLeftClose,
 		Plus,
 		Settings,
 		X
@@ -35,7 +34,6 @@
 		onNew: () => void;
 		onAddProject: () => void;
 		onSettings: () => void;
-		onClose: () => void;
 		onChange: (thread: Thread, state: InboxState) => Promise<void>;
 		onRename: (thread: Thread, title: string) => Promise<void>;
 	};
@@ -53,7 +51,6 @@
 		onNew,
 		onAddProject,
 		onSettings,
-		onClose,
 		onChange,
 		onRename
 	}: Props = $props();
@@ -62,7 +59,6 @@
 		unsettled: 'Unsettled',
 		settled: 'Settled'
 	} satisfies Record<InboxState, string>;
-	let collapsed = $state<Partial<Record<InboxState, boolean>>>({});
 	let selected = $state<Id<'threadRecords'>[]>([]);
 	let anchor = $state<Id<'threadRecords'> | null>(null);
 	let dragging = $state<Thread | null>(null);
@@ -77,9 +73,7 @@
 	let renaming = $state(false);
 	let now = $state(Date.now());
 
-	const rows = $derived(
-		sections.flatMap((section) => (collapsed[section.state] ? [] : section.rows))
-	);
+	const rows = $derived(sections.flatMap((section) => section.rows));
 	const selectedRows = $derived(rows.filter((thread) => selected.includes(thread._id)));
 	const selectedUnsettled = $derived(selectedRows.filter((thread) => canChange(thread, 'settled')));
 	const selectedSettled = $derived(selectedRows.filter((thread) => canChange(thread, 'unsettled')));
@@ -201,12 +195,6 @@
 		dragging = null;
 	}
 
-	async function jump(state: InboxState) {
-		collapsed[state] = false;
-		await tick();
-		document.getElementById(`inbox-${state}`)?.scrollIntoView({ block: 'start' });
-	}
-
 	function closeMenu() {
 		const trigger = menuTrigger;
 		menu = null;
@@ -294,16 +282,11 @@
 	<header class="flex items-center gap-2 px-4 pt-4 pb-3">
 		<BrandMark size="sm" class="mr-auto" />
 		<SidebarTopActions {theme} {onThemeChange} />
-		<button class="inbox-icon" type="button" aria-label="Close sidebar" onclick={onClose}>
-			<PanelLeftClose size={16} />
-		</button>
 	</header>
 
 	<div class="px-3 pb-3">
-		<button class="inbox-new" type="button" onclick={onNew}>
-			<Plus size={17} />
-			<span>New thread</span>
-			<kbd class="ml-auto opacity-40">⌘ N</kbd>
+		<button class="inbox-menu-item" type="button" onclick={onNew}>
+			<Plus size={15} />New thread
 		</button>
 		<details class="relative mt-2">
 			<summary class="inbox-filter">
@@ -337,20 +320,6 @@
 				</button>
 			</div>
 		</details>
-		<nav class="inbox-jumps" aria-label="Jump to section">
-			{#each sections as section (section.state)}
-				<button
-					type="button"
-					onclick={() => void jump(section.state)}
-					ondragover={(event) => {
-						if (canDrop(section.state)) event.preventDefault();
-					}}
-					ondrop={(event) => dropThreads(event, section.state)}
-				>
-					{labels[section.state]}
-				</button>
-			{/each}
-		</nav>
 	</div>
 
 	{#if selectedRows.length}
@@ -388,95 +357,87 @@
 				ondrop={(event) => dropThreads(event, section.state)}
 				aria-label={labels[section.state]}
 			>
-				<button
-					type="button"
-					class="inbox-section-heading"
-					aria-expanded={!collapsed[section.state]}
-					onclick={() => (collapsed[section.state] = !collapsed[section.state])}
-				>
-					<ChevronDown size={12} class={collapsed[section.state] ? '-rotate-90' : ''} />
-					<span>{labels[section.state]}</span>
-				</button>
-				{#if !collapsed[section.state]}
-					{#each section.rows as thread (thread._id)}
-						{@const stateLabel = runStatus(thread)}
-						<div
-							class:inbox-row-selected={thread._id === currentThreadId ||
-								selected.includes(thread._id)}
-							class="inbox-row"
-							draggable={mutationsEnabled && !busy}
-							ondragstart={(event) => {
-								dragging = thread;
-								event.dataTransfer?.setData('text/plain', thread._id);
+				{#if section.state === 'settled'}
+					<h2 class="inbox-section-heading">Settled</h2>
+				{/if}
+				{#each section.rows as thread (thread._id)}
+					{@const stateLabel = runStatus(thread)}
+					<div
+						class:inbox-row-selected={thread._id === currentThreadId ||
+							selected.includes(thread._id)}
+						class="inbox-row"
+						draggable={mutationsEnabled && !busy}
+						ondragstart={(event) => {
+							dragging = thread;
+							event.dataTransfer?.setData('text/plain', thread._id);
+						}}
+						ondragend={() => (dragging = null)}
+						oncontextmenu={(event) => openMenu(event, thread)}
+						role="group"
+						aria-label={thread.title ?? 'New thread'}
+					>
+						<button
+							class="inbox-row-main"
+							type="button"
+							title={`${thread.title ?? 'New thread'}\n${projectName(thread)} · ${thread.selectedModel}\n${new Date(thread.lastMessageAt).toLocaleString()}`}
+							onclick={(event) => choose(event, thread)}
+							ondblclick={() => {
+								if (!mutationsEnabled || busy) return;
+								renameThread = thread;
+								renameTitle = thread.title ?? '';
+								renameDialog.showModal();
 							}}
-							ondragend={() => (dragging = null)}
-							oncontextmenu={(event) => openMenu(event, thread)}
-							role="group"
-							aria-label={thread.title ?? 'New thread'}
+							aria-current={thread._id === currentThreadId ? 'page' : undefined}
 						>
-							<button
-								class="inbox-row-main"
-								type="button"
-								title={`${thread.title ?? 'New thread'}\n${projectName(thread)} · ${thread.selectedModel}\n${new Date(thread.lastMessageAt).toLocaleString()}`}
-								onclick={(event) => choose(event, thread)}
-								ondblclick={() => {
-									if (!mutationsEnabled || busy) return;
-									renameThread = thread;
-									renameTitle = thread.title ?? '';
-									renameDialog.showModal();
-								}}
-								aria-current={thread._id === currentThreadId ? 'page' : undefined}
+							<span class="inbox-row-title"
+								><span class="truncate">{thread.title ?? 'New thread'}</span></span
 							>
-								<span class="inbox-row-title"
-									><span class="truncate">{thread.title ?? 'New thread'}</span></span
-								>
-								<span class="inbox-row-meta">
-									<span class="truncate">{projectName(thread)}</span>
-									<span class="truncate opacity-60">{thread.selectedModel}</span>
-								</span>
-								<span class="inbox-row-bottom">
-									{#if stateLabel}
-										<span
-											class:inbox-working={threadHasActiveRun(thread)}
-											class:inbox-attention={thread.status === 'failed'}
-											class="inbox-status">{stateLabel}</span
-										>
-									{/if}
-									<span class="ml-auto">{age(thread.lastMessageAt)}</span>
-								</span>
-							</button>
-							<div class="inbox-row-actions">
-								{#if section.state === 'unsettled'}
-									<button
-										class="inbox-icon"
-										type="button"
-										disabled={!mutationsEnabled || busy || !canChange(thread, 'settled')}
-										aria-label={`Settle ${thread.title ?? 'thread'}`}
-										onclick={() => void change([thread], 'settled')}><Check size={14} /></button
-									>
-								{:else}
-									<button
-										class="inbox-icon"
-										type="button"
-										disabled={!mutationsEnabled || busy}
-										aria-label={`Unsettle ${thread.title ?? 'thread'}`}
-										onclick={() => void change([thread], 'unsettled')}><Plus size={14} /></button
+							<span class="inbox-row-meta">
+								<span class="truncate">{projectName(thread)}</span>
+								<span class="truncate opacity-60">{thread.selectedModel}</span>
+							</span>
+							<span class="inbox-row-bottom">
+								{#if stateLabel}
+									<span
+										class:inbox-working={threadHasActiveRun(thread)}
+										class:inbox-attention={thread.status === 'failed'}
+										class="inbox-status">{stateLabel}</span
 									>
 								{/if}
+								<span class="ml-auto">{age(thread.lastMessageAt)}</span>
+							</span>
+						</button>
+						<div class="inbox-row-actions">
+							{#if section.state === 'unsettled'}
 								<button
 									class="inbox-icon"
 									type="button"
-									aria-label={`Actions for ${thread.title ?? 'thread'}`}
-									onclick={(event) => openMenu(event, thread)}><MoreHorizontal size={15} /></button
+									disabled={!mutationsEnabled || busy || !canChange(thread, 'settled')}
+									aria-label={`Settle ${thread.title ?? 'thread'}`}
+									onclick={() => void change([thread], 'settled')}><Check size={14} /></button
 								>
-							</div>
+							{:else}
+								<button
+									class="inbox-icon"
+									type="button"
+									disabled={!mutationsEnabled || busy}
+									aria-label={`Unsettle ${thread.title ?? 'thread'}`}
+									onclick={() => void change([thread], 'unsettled')}><Plus size={14} /></button
+								>
+							{/if}
+							<button
+								class="inbox-icon"
+								type="button"
+								aria-label={`Actions for ${thread.title ?? 'thread'}`}
+								onclick={(event) => openMenu(event, thread)}><MoreHorizontal size={15} /></button
+							>
 						</div>
-					{/each}
-					{#if section.rows.length === 0 && !section.loading && !section.error}
-						<p class="inbox-empty">No {labels[section.state].toLowerCase()} threads</p>
-					{/if}
-					<InboxLoadMore {section} />
+					</div>
+				{/each}
+				{#if section.rows.length === 0 && !section.loading && !section.error}
+					<p class="inbox-empty">No {labels[section.state].toLowerCase()} threads</p>
 				{/if}
+				<InboxLoadMore {section} />
 			</section>
 		{/each}
 	</div>
