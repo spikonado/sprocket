@@ -31,8 +31,11 @@ All of these are core priorities; try your best to achieve all of them without h
 
 - Don't be afraid to completely refactor existing code to improve on any of the priorities.
 - Make sure that changes are made in all the layers of the app when needed.
-- Ship breaking changes with backwards compatibility for already-released clients and stored data, and record every shim in `BACKWARDS_COMPATIBILITY.md` with its removal gate.
-- Remove compat only once that gate passes (clients age out, or a migration rewrites the data), and fold data migrations into the PR that introduces the breaking change instead of leaving debt behind.
+- Ship breaking changes with backwards compatibility for already-released clients, their sprocket data-dir, and data in the Convex deployment.
+- Record every shim in `BACKWARDS_COMPATIBILITY.md` with its removal gate.
+- For the above point, remember that the Rust server and the UI that connects with it can't have different versions.
+- Include data migrations in the PR that introduces the breaking change instead of leaving debt behind.
+- Remove compat only once that gate passes (clients age out, or a migration rewrites the data).
 
 ## Writing code
 
@@ -58,8 +61,7 @@ All of these are core priorities; try your best to achieve all of them without h
 
 ### Working on stuff, main agents only
 
-- Do the deep dives and figure out what needs to be done, and delegate the rest accordingly and as needed to subagents.
-- Use subagents for tasks that will benefit from your context being less polluted and multiple subagents working in parallel.
+- Use subagents for tasks that will benefit from your context being less polluted and you working with the subagents in parallel.
 - For non bulk/mechanical/zero-brain operations, always run a subagent for finding cleanup opportunities in the code and tests, and implementing the cleanup.
 
 ### Subagent prompting
