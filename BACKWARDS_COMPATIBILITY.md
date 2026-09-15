@@ -13,17 +13,7 @@ rather than receiving a fallback run request.
 CLI discovery and bootstrap proofs bind to a random server-process ID. The CLI
 never sends the reusable pairing credential over HTTP. CLI sessions stay in
 memory and cannot resume after a server restart. Bound persisted browser
-sessions keep working. `/api/auth/bootstrap` ignores request bodies so released
-browser clients that still send the old credential-shaped JSON can bootstrap,
-but the server neither reads nor verifies that credential. Remove body tolerance
-after released clients no longer send it.
-
-`GET /api/auth/desktop-login/result` remains available to loopback sessions for
-older browser bundles. New clients use POST so the HTTPS route can require an
-Origin header. The desktop bootstrap response also includes the fixed string
-`not-required` under its old `pairingCredential` field. Older Electron bundles
-require a nonempty value but the server ignores it. Remove both shims after all
-older desktop and browser bundles have aged out.
+sessions keep working.
 
 Session records created before remote HTTPS support have no `localBrowser`
 field. The server treats them as local browser sessions because remote browser
