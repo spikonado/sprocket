@@ -74,7 +74,6 @@ export async function applyWorkBatch(
 	if (!state) throw new Error('Transcript not found.');
 	const through = state.workThrough ?? { part: 0, item: 0 };
 	if (through.part !== batch.expected.part || through.item !== batch.expected.item) return false;
-	const finished = batch.finishedRunId !== undefined;
 	if (
 		batch.through.part < through.part ||
 		(batch.through.part === through.part && batch.through.item < through.item) ||
@@ -90,17 +89,6 @@ export async function applyWorkBatch(
 		new Set(batch.memberships.map((link) => link.number)).size !== batch.memberships.length
 	)
 		throw new Error('Duplicate work assignments.');
-	const parts = new Map<number, Doc<'threadTranscriptParts'> | null>();
-	const loadPart = async (number: number) => {
-		if (parts.has(number)) return parts.get(number) ?? null;
-		const part = await ctx.db
-			.query('threadTranscriptParts')
-			.withIndex('by_threadId_and_number', (q) => q.eq('threadId', threadId).eq('number', number))
-			.unique();
-		parts.set(number, part);
-		return part;
-	};
-	const input = finished ? null : await loadPart(through.part);
 	if (batch.finishedRunId !== undefined) {
 		const run = await ctx.db.get('runs', batch.finishedRunId);
 		if (
@@ -112,22 +100,49 @@ export async function applyWorkBatch(
 			!batch.sections.length
 		)
 			throw new Error('Invalid work finalization.');
-	} else {
-		if (!input) throw new Error('Work input not found.');
-		const itemCount = Math.max(1, input.completion?.items.length ?? 1);
-		if (
-			compare(batch.through, through) <= 0 ||
-			through.item >= itemCount ||
-			(batch.through.part === through.part && batch.through.item >= itemCount) ||
-			(batch.through.part > through.part && batch.through.item !== 0)
-		)
-			throw new Error('Invalid work checkpoint.');
-		const membership = batch.memberships.find((link) => link.number === input.number);
-		if (
-			membership?.processed !== (batch.through.part > through.part ? itemCount : batch.through.item)
-		)
-			throw new Error('Work checkpoint has no matching membership.');
+		for (const row of batch.sections) {
+			if (row.runId !== batch.finishedRunId || !row.closed || row.pendingTools !== 0)
+				throw new Error('Invalid finished work section.');
+			const old = await ctx.db
+				.query('threadTranscriptWorkSections')
+				.withIndex('by_threadId_and_key', (q) => q.eq('threadId', threadId).eq('key', row.key))
+				.unique();
+			if (!old) continue;
+			if (old.runId !== batch.finishedRunId) throw new Error('Invalid finished work section.');
+			if (old.closed && old.pendingTools === 0) continue;
+			await ctx.db.patch('threadTranscriptWorkSections', old._id, {
+				closed: true,
+				pendingTools: 0,
+				completedAt: old.pendingTools > 0 ? undefined : old.completedAt
+			});
+		}
+		return true;
 	}
+	const parts = new Map<number, Doc<'threadTranscriptParts'> | null>();
+	const loadPart = async (number: number) => {
+		if (parts.has(number)) return parts.get(number) ?? null;
+		const part = await ctx.db
+			.query('threadTranscriptParts')
+			.withIndex('by_threadId_and_number', (q) => q.eq('threadId', threadId).eq('number', number))
+			.unique();
+		parts.set(number, part);
+		return part;
+	};
+	const input = await loadPart(through.part);
+	if (!input) throw new Error('Work input not found.');
+	const itemCount = Math.max(1, input.completion?.items.length ?? 1);
+	if (
+		compare(batch.through, through) <= 0 ||
+		through.item >= itemCount ||
+		(batch.through.part === through.part && batch.through.item >= itemCount) ||
+		(batch.through.part > through.part && batch.through.item !== 0)
+	)
+		throw new Error('Invalid work checkpoint.');
+	const membership = batch.memberships.find((link) => link.number === input.number);
+	if (
+		membership?.processed !== (batch.through.part > through.part ? itemCount : batch.through.item)
+	)
+		throw new Error('Work checkpoint has no matching membership.');
 	const rows = new Map<string, Doc<'threadTranscriptWorkSections'> | null>();
 	const section = async (key: string) => {
 		if (rows.has(key)) return rows.get(key) ?? null;
@@ -187,18 +202,6 @@ export async function applyWorkBatch(
 			(row.provisional && (row.itemCount !== 1 || row.first.item !== 0 || !row.closed))
 		)
 			throw new Error('Invalid work section source.');
-		if (
-			finished &&
-			(!old ||
-				row.runId !== batch.finishedRunId ||
-				!row.closed ||
-				row.pendingTools !== 0 ||
-				compare(old.end, row.end) !== 0 ||
-				row.itemCount !== old.itemCount ||
-				row.startedAt !== old.startedAt ||
-				row.completedAt !== (old.pendingTools > 0 ? undefined : old.completedAt))
-		)
-			throw new Error('Invalid finished work section.');
 		if (old) {
 			await ctx.db.replace('threadTranscriptWorkSections', old._id, {
 				threadId,
