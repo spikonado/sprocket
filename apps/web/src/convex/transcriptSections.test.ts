@@ -67,6 +67,144 @@ async function fixture() {
 }
 
 describe('transcript work assignments', () => {
+	it.each([false, true])(
+		'resumes canonical tool relocation with a partial checkpoint: %s',
+		async (partial) => {
+			const { t, asUser, threadId, runId, subject, batch: initial } = await fixture();
+			await asUser.mutation(api.transcriptSections.commit, { threadId, batch: initial });
+			await t.run(async (ctx) => {
+				const state = await ctx.db.query('threadTranscriptStates').unique();
+				if (!state) throw new Error('Missing fixture state.');
+				await ctx.db.patch('threadTranscriptStates', state._id, { totalParts: 5 });
+				for (const number of [1, 2])
+					await ctx.db.insert('threadTranscriptParts', {
+						threadId,
+						userId: subject,
+						runId,
+						number,
+						sourceKey: `tool:${number}`,
+						kind: 'tool',
+						tool: { callId: 'call', name: 'read', status: number === 1 ? 'started' : 'completed' }
+					});
+				await ctx.db.insert('threadTranscriptParts', {
+					threadId,
+					userId: subject,
+					runId,
+					number: 3,
+					sourceKey: 'completion:call',
+					kind: 'completion',
+					completion: {
+						items: [
+							{ type: 'text', id: 'progress', text: 'Progress before the next tool call' },
+							{ type: 'tool-call', callId: 'call', name: 'read', input: {} }
+						]
+					}
+				});
+				await ctx.db.insert('threadTranscriptParts', {
+					threadId,
+					userId: subject,
+					runId,
+					number: 4,
+					sourceKey: 'completion:final',
+					kind: 'completion',
+					completion: {
+						items: [{ type: 'text', id: 'final', text: 'Previously unreachable history' }]
+					}
+				});
+			});
+			const old = initial.sections[1];
+			for (const number of [1, 2])
+				await asUser.mutation(api.transcriptSections.commit, {
+					threadId,
+					batch: {
+						expected: { part: number, item: 0 },
+						through: { part: number + 1, item: 0 },
+						removed: [],
+						sections: [{ ...old, itemCount: 2, pendingTools: number === 1 ? 1 : 0 }],
+						memberships: [{ number, processed: 1, ranges: [], sectionKey: old.key }]
+					}
+				});
+			const moved: Infer<typeof workBatch> = {
+				expected: { part: 3, item: partial ? 1 : 0 },
+				through: { part: 4, item: 0 },
+				removed: [],
+				sections: [
+					{ ...old, closed: true },
+					{ ...old, key: 'work-3-1', first: { part: 3, item: 1 }, end: { part: 3, item: 2 } }
+				],
+				memberships: [
+					{ number: 1, processed: 1, ranges: [], sectionKey: 'work-3-1' },
+					{ number: 2, processed: 1, ranges: [], sectionKey: 'work-3-1' },
+					{ number: 3, processed: 2, ranges: [{ start: 1, end: 2, sectionKey: 'work-3-1' }] }
+				]
+			};
+			if (partial)
+				await asUser.mutation(api.transcriptSections.commit, {
+					threadId,
+					batch: {
+						expected: { part: 3, item: 0 },
+						through: moved.expected,
+						removed: [],
+						sections: [{ ...old, closed: true, itemCount: 2 }],
+						memberships: [{ number: 3, processed: 1, ranges: [] }]
+					}
+				});
+			const replaceTool = async (callId: string, name: string) => {
+				await t.run(async (ctx) => {
+					const part = await ctx.db
+						.query('threadTranscriptParts')
+						.withIndex('by_threadId_and_number', (q) => q.eq('threadId', threadId).eq('number', 1))
+						.unique();
+					if (!part) throw new Error('Missing tool event.');
+					await ctx.db.patch('threadTranscriptParts', part._id, {
+						tool: { callId, name, status: 'started' }
+					});
+				});
+			};
+			for (const [callId, name] of [
+				['unrelated', 'read'],
+				['call', 'unrelated']
+			]) {
+				await replaceTool(callId, name);
+				await expect(
+					asUser.mutation(api.transcriptSections.commit, { threadId, batch: moved })
+				).rejects.toThrow('canonical call');
+			}
+			await replaceTool('call', 'read');
+			const unrelated = structuredClone(moved);
+			unrelated.memberships[0].sectionKey = 'work-0-0';
+			await expect(
+				asUser.mutation(api.transcriptSections.commit, { threadId, batch: unrelated })
+			).rejects.toThrow('canonical call');
+			expect((await asUser.query(api.transcriptSections.state, { threadId })).through).toEqual(
+				moved.expected
+			);
+			expect(await asUser.mutation(api.transcriptSections.commit, { threadId, batch: moved })).toBe(
+				true
+			);
+			expect(await asUser.mutation(api.transcriptSections.commit, { threadId, batch: moved })).toBe(
+				false
+			);
+			const rows = (await asUser.query(api.transcriptSections.sections, { threadId, after: '' }))
+				.rows;
+			expect(rows.find((row) => row.key === old.key)?.linkedParts).toBe(0);
+			expect(rows.find((row) => row.key === 'work-3-1')?.linkedParts).toBe(2);
+			await asUser.mutation(api.transcriptSections.commit, {
+				threadId,
+				batch: {
+					expected: moved.through,
+					through: { part: 5, item: 0 },
+					removed: [],
+					sections: [{ ...moved.sections[1], closed: true }],
+					memberships: [{ number: 4, processed: 1, ranges: [] }]
+				}
+			});
+			expect((await asUser.query(api.transcriptSections.state, { threadId })).through.part).toBe(5);
+			const parts = await asUser.query(api.transcriptSections.memberships, { threadId, start: 0 });
+			expect(parts.map((part) => part.work?.processed)).toEqual([3, 1, 1, 2, 1]);
+		}
+	);
+
 	it('atomically persists Rust assignments without changing raw completion items', async () => {
 		const { t, asUser, threadId, batch } = await fixture();
 		expect(await asUser.mutation(api.transcriptSections.commit, { threadId, batch })).toBe(true);

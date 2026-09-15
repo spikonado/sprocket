@@ -100,6 +100,7 @@ export async function applyWorkBatch(
 		parts.set(number, part);
 		return part;
 	};
+	const input = finished ? null : await loadPart(through.part);
 	if (batch.finishedRunId !== undefined) {
 		const run = await ctx.db.get('runs', batch.finishedRunId);
 		if (
@@ -112,7 +113,6 @@ export async function applyWorkBatch(
 		)
 			throw new Error('Invalid work finalization.');
 	} else {
-		const input = await loadPart(through.part);
 		if (!input) throw new Error('Work input not found.');
 		const itemCount = Math.max(1, input.completion?.items.length ?? 1);
 		if (
@@ -291,11 +291,13 @@ export async function applyWorkBatch(
 			if (part.work?.sectionKey !== undefined) {
 				const previous = await section(part.work.sectionKey);
 				if (
-					!previous?.provisional ||
-					!batch.removed.includes(previous.key) ||
-					work.sectionKey === undefined
+					!previous ||
+					work.sectionKey === undefined ||
+					(previous.provisional
+						? !batch.removed.includes(previous.key)
+						: !linksNewCanonicalTool(input, batch, part, work.sectionKey))
 				)
-					throw new Error('Only provisional tool membership can move.');
+					throw new Error('Tool membership can only move to its canonical call.');
 			} else if (link.number < through.part) {
 				throw new Error('Cannot rewrite processed tool membership.');
 			}
@@ -327,6 +329,31 @@ export async function applyWorkBatch(
 
 function compare(left: { part: number; item: number }, right: { part: number; item: number }) {
 	return left.part - right.part || left.item - right.item;
+}
+
+function linksNewCanonicalTool(
+	input: Doc<'threadTranscriptParts'> | null,
+	batch: Infer<typeof workBatch>,
+	part: Doc<'threadTranscriptParts'>,
+	sectionKey: string
+) {
+	const tool = part.tool;
+	if (!input || !tool || input.runId !== part.runId) return false;
+	const membership = batch.memberships.find((link) => link.number === input.number);
+	if (!membership) return false;
+	return (
+		input.completion?.items.some(
+			(item, offset) =>
+				offset >= batch.expected.item &&
+				offset < membership.processed &&
+				item.type === 'tool-call' &&
+				item.callId === tool.callId &&
+				item.name === tool.name &&
+				membership.ranges.some(
+					(range) => range.start <= offset && offset < range.end && range.sectionKey === sectionKey
+				)
+		) ?? false
+	);
 }
 
 export const commit = mutation({
