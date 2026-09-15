@@ -1,5 +1,5 @@
 import type { Doc, Id } from '$convex/_generated/dataModel';
-import type { Project, ThreadSummary, ProjectThreadGroup } from '$lib/types/sprocket';
+import type { Project, ThreadSummary } from '$lib/types/sprocket';
 
 export type ThreadSummaryRow = {
 	threadId: ThreadSummary['threadId'];
@@ -65,52 +65,12 @@ export function isActiveThread(thread: Pick<ThreadSummary, 'threadStatus'>) {
 	return thread.threadStatus !== 'archived';
 }
 
-function buildProjectThreadGroup(project: Project, threads: ThreadSummary[]): ProjectThreadGroup {
-	const sortedThreads = sortThreadsRunningFirst(threads);
-	return {
-		project,
-		threads: sortedThreads,
-		activeThreadCount: countActiveThreads(sortedThreads)
-	};
-}
-
-export function getProjectThreadGroups(projects: Project[], threads: ThreadSummary[]) {
-	const threadsByRepositoryKey = new Map<string, ThreadSummary[]>();
-
-	for (const thread of threads.filter(isActiveThread)) {
-		const existing = threadsByRepositoryKey.get(thread.repositoryKey);
-		if (existing) {
-			existing.push(thread);
-			continue;
-		}
-		threadsByRepositoryKey.set(thread.repositoryKey, [thread]);
-	}
-
-	return projects.map((project) =>
-		buildProjectThreadGroup(project, threadsByRepositoryKey.get(project.repositoryKey) ?? [])
-	);
-}
-
 export function hasActiveRun(thread: Pick<ThreadSummary, 'status'>) {
 	return (
 		thread.status === 'queued' ||
 		thread.status === 'running' ||
 		thread.status === 'awaiting_executor'
 	);
-}
-
-function sortThreadsRunningFirst(threads: ThreadSummary[]) {
-	return [...threads].sort((left, right) => {
-		if (hasActiveRun(left) !== hasActiveRun(right)) {
-			return Number(hasActiveRun(right)) - Number(hasActiveRun(left));
-		}
-
-		return right.lastMessageAt - left.lastMessageAt;
-	});
-}
-
-function countActiveThreads(threads: ThreadSummary[]) {
-	return threads.filter(hasActiveRun).length;
 }
 
 export function findThreadById(

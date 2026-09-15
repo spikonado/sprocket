@@ -2,10 +2,10 @@
 	import { onMount, tick, untrack } from 'svelte';
 	import { elapsedSeconds, tickingNow } from '$lib/chat/elapsed-time';
 	import { page } from '$app/state';
-	import { PanelRight } from '@lucide/svelte';
+	import { PanelLeft, PanelRight } from '@lucide/svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import { useAuth, useConvexClient, useMutation, useQuery } from 'convex-svelte';
-	import type { Id } from '$convex/_generated/dataModel';
+	import type { Doc, Id } from '$convex/_generated/dataModel';
 	import { api } from '$convex/_generated/api';
 	import {
 		advanceConvexAuthRetryPending,
@@ -26,9 +26,10 @@
 	import PromptComposer from '$lib/components/home/prompt-composer.svelte';
 	import CreateThreadHeading from '$lib/components/home/create-thread-heading.svelte';
 	import '$lib/components/home/create-thread.css';
+	import '$lib/components/home/inbox.css';
+	import InboxSidebar from '$lib/components/home/inbox-sidebar.svelte';
 	import SettingsAccount from '$lib/components/home/settings-account.svelte';
 	import SettingsBrowser from '$lib/components/home/settings-browser.svelte';
-	import SettingsArchived from '$lib/components/home/settings-archived.svelte';
 	import SettingsPayments from '$lib/components/home/settings-payments.svelte';
 	import SettingsSidebar, { type SettingsPage } from '$lib/components/home/settings-sidebar.svelte';
 	import SettingsUsage from '$lib/components/home/settings-usage.svelte';
@@ -37,7 +38,6 @@
 	import ArtifactScreenFullscreen from '$lib/components/home/artifact-screen-fullscreen.svelte';
 	import { ArtifactPanel } from '$lib/home/artifact-panel.svelte';
 	import ProjectPicker, { type ProjectSelection } from '$lib/components/home/project-picker.svelte';
-	import ProjectSidebar from '$lib/components/home/project-sidebar.svelte';
 	import Button from '$lib/components/ui/button/button.svelte';
 	import {
 		attachLocalProject as attachLocalProjectForPath,
@@ -70,7 +70,6 @@
 		findThreadById,
 		findProjectByRepositoryKey,
 		findProjectByWorkspacePath,
-		getProjectThreadGroups,
 		isActiveThread,
 		isAgentLaunchPending,
 		isLatestRunReadyForThread,
@@ -83,6 +82,8 @@
 		type PendingAgentLaunch,
 		type PendingAgentLaunches
 	} from '$lib/project/threads';
+	import { useThreadInbox } from '$lib/project/inbox.svelte';
+	import type { InboxState } from '$convex/lib/inboxState';
 	import { TranscriptReplica } from '$lib/home/transcript-replica.svelte';
 	import { ThreadCache } from '$lib/home/thread-cache.svelte';
 	import type { TranscriptDisplayRow, TranscriptDetailCursor } from '$lib/types/sprocket';
@@ -262,6 +263,10 @@
 	let projectPickerReconnectWorkspacePath = $state<string | null>(null);
 	let settingsOpen = $state(false);
 	let settingsPage = $state<SettingsPage>('account');
+	let sidebarOpen = $state(true);
+	let sidebarWidth = $state(300);
+	let viewportWidth = $state(0);
+	let projectFilter = $state<string[]>([]);
 	let pendingProjectLaunches = $state<string[]>([]);
 	let projectLaunchInFlight = $state(false);
 	let initialProjectLaunchResolved = $state(false);
@@ -408,6 +413,16 @@
 			.sort((left, right) => right.lastUsedAt - left.lastUsedAt)
 			.map(projectFromAttachment)
 	);
+	const inboxProjects = $derived([
+		...new Map(projects.map((project) => [project.repositoryKey, project])).values()
+	]);
+	const inboxProjectKeys = $derived(
+		projectFilter.length > 0 ? projectFilter : inboxProjects.map((project) => project.repositoryKey)
+	);
+	const inbox = useThreadInbox({
+		enabled: () => authReady,
+		projects: () => inboxProjectKeys
+	});
 	const threads = $derived(threadCache.threads.map(threadRecordToSummary));
 	const currentActiveThread = $derived(dataForThread(activeThreadQuery.data, currentThreadId));
 	const contextUsage = $derived.by(() => {
@@ -587,7 +602,6 @@
 	const runElapsedSeconds = $derived(
 		isRunInProgress ? elapsedSeconds(runState?.startedAt, tickingNow()) : undefined
 	);
-	const groupedProjectThreads = $derived(getProjectThreadGroups(projects, threads));
 	const hasPendingAgentLaunch = $derived(
 		isAgentLaunchPending(pendingAgentLaunches, currentThreadId)
 	);
@@ -944,6 +958,20 @@
 		void focusCreateThreadComposer();
 	}
 
+	function startThreadDraft() {
+		const current = findProjectByWorkspacePath(projects, currentWorkspacePath);
+		const project =
+			(current?.localAttachmentAvailability === 'available' ? current : null) ??
+			projects.find((candidate) => candidate.localAttachmentAvailability === 'available') ??
+			projects[0];
+		if (!project) {
+			openProjectPicker('add');
+			return;
+		}
+		startThreadDraftForProject(project.workspacePath);
+		if (matchMedia('(max-width: 767px)').matches) sidebarOpen = false;
+	}
+
 	async function focusCreateThreadComposer() {
 		await tick();
 		createThreadComposerElement?.querySelector<HTMLTextAreaElement>('textarea')?.focus();
@@ -951,6 +979,13 @@
 
 	function selectThread(thread: ThreadSummary, workspacePath: string) {
 		openProject(workspacePath, { threadId: thread.threadId });
+	}
+
+	function selectInboxThread(thread: Doc<'threadRecords'>) {
+		const project = findProjectByRepositoryKey(projects, thread.repositoryKey);
+		if (!project) return;
+		selectThread(threadRecordToSummary(thread), project.workspacePath);
+		if (matchMedia('(max-width: 767px)').matches) sidebarOpen = false;
 	}
 
 	async function renameThread(threadId: Id<'threadRecords'>, title: string) {
@@ -961,6 +996,7 @@
 			await threadCache.pull(userId);
 		} catch (error) {
 			currentError = error instanceof Error ? error.message : 'Failed to rename thread.';
+			throw error;
 		}
 	}
 
@@ -999,46 +1035,29 @@
 		);
 	}
 
-	async function archiveThread(threadId: Id<'threadRecords'>) {
-		const archiveUserId = getCurrentUserId();
+	async function changeInboxState(thread: Doc<'threadRecords'>, state: InboxState) {
+		const expectedUserId = getCurrentUserId();
 		try {
 			const { api, userId } = localThreadCommandContext();
-			const cacheSynchronized = await api.archiveThread({ userId, threadId });
+			const request = { userId, threadId: thread._id };
+			const cacheSynchronized =
+				state === 'settled' ? await api.settleThread(request) : await api.unsettleThread(request);
 			if (!cacheSynchronized) threadCache.markReconnecting();
 			await threadCache.pull(userId);
-			if (archiveUserId) {
-				clearComposerRecovery(archiveUserId, `thread:${threadId}`);
-				const api = desktopApi;
-				if (api) {
-					await api.clearTranscriptReplica({
-						userId: archiveUserId,
-						threadId
-					});
-				}
-			}
-			if (getCurrentUserId() === archiveUserId) {
-				if (currentThreadId === threadId) {
+			if (getCurrentUserId() === expectedUserId) {
+				if (state === 'settled' && currentThreadId === thread._id) {
 					currentThreadId = null;
+					draftWorkspacePath = currentWorkspacePath;
 					projectSelectionGeneration += 1;
 				}
 				currentError = null;
 			}
 		} catch (error) {
-			if (getCurrentUserId() !== archiveUserId) {
+			if (getCurrentUserId() !== expectedUserId) {
 				return;
 			}
-			currentError = error instanceof Error ? error.message : 'Failed to archive thread.';
-		}
-	}
-
-	async function restoreThread(threadId: Id<'threadRecords'>) {
-		try {
-			const { api, userId } = localThreadCommandContext();
-			const cacheSynchronized = await api.restoreThread({ userId, threadId });
-			if (!cacheSynchronized) threadCache.markReconnecting();
-			await threadCache.pull(userId);
-		} catch (error) {
-			currentError = error instanceof Error ? error.message : 'Failed to restore thread.';
+			currentError = error instanceof Error ? error.message : 'Failed to update thread.';
+			throw error;
 		}
 	}
 
@@ -1771,6 +1790,21 @@
 	});
 
 	onMount(() => {
+		const media = matchMedia('(max-width: 767px)');
+		sidebarOpen = !media.matches;
+		viewportWidth = window.innerWidth;
+		try {
+			sidebarWidth = Math.max(
+				240,
+				Math.min(440, Number(localStorage.getItem('sprocket:inbox-width')) || 300)
+			);
+		} catch {
+			sidebarWidth = 300;
+		}
+		const updateViewportWidth = () => {
+			viewportWidth = window.innerWidth;
+		};
+		window.addEventListener('resize', updateViewportWidth);
 		void loadModelCatalog();
 		const bridge = window.sprocketDesktopBridge;
 		const unsubscribeWorkspaceLaunch = bridge?.onWorkspaceLaunch
@@ -1807,8 +1841,31 @@
 				desktopApiResolved = true;
 			});
 
-		return () => unsubscribeWorkspaceLaunch?.();
+		return () => {
+			unsubscribeWorkspaceLaunch?.();
+			window.removeEventListener('resize', updateViewportWidth);
+		};
 	});
+
+	async function openSidebar() {
+		sidebarOpen = true;
+		await tick();
+		document.querySelector<HTMLButtonElement>('.inbox-sidebar-host button')?.focus();
+	}
+
+	async function closeSidebar() {
+		sidebarOpen = false;
+		await tick();
+		document.querySelector<HTMLButtonElement>('[aria-label="Open sidebar"]')?.focus();
+	}
+
+	function persistSidebarWidth() {
+		try {
+			localStorage.setItem('sprocket:inbox-width', String(sidebarWidth));
+		} catch (error) {
+			if (!(error instanceof DOMException)) throw error;
+		}
+	}
 </script>
 
 <svelte:head>
@@ -1859,59 +1916,102 @@
 {:else}
 	<div class="relative h-screen overflow-hidden">
 		<div
-			class="app-workspace-shell grid h-screen grid-cols-[292px_minmax(0,1fr)] overflow-hidden {!settingsOpen &&
+			class="app-workspace-shell inbox-layout {!settingsOpen &&
 			artifactPanel.panel.open &&
 			!artifactPanel.panel.expanded
 				? 'pr-[20rem]'
 				: ''}"
+			class:sidebar-hidden={!sidebarOpen}
+			style:--inbox-width={`${sidebarWidth}px`}
 			inert={artifactPanel.fullscreenArtifact ||
 			(artifactPanel.panel.open && artifactPanel.panel.expanded)
 				? true
 				: undefined}
 		>
-			{#if settingsOpen}
-				<SettingsSidebar
-					activePage={settingsPage}
-					theme={workspaceTheme}
-					onThemeChange={(theme) => void handleThemeChange(theme)}
-					onBack={() => {
-						settingsOpen = false;
-						settingsPage = 'account';
-					}}
-					onNavigate={(page) => {
-						settingsPage = page;
-					}}
-				/>
-			{:else}
-				<ProjectSidebar
-					{currentWorkspacePath}
-					{currentThreadId}
-					groups={groupedProjectThreads}
-					{pendingAgentLaunches}
-					theme={workspaceTheme}
-					onThemeChange={(theme) => void handleThemeChange(theme)}
-					onReconnectProject={(workspacePath) => {
-						void reconnectProject(workspacePath);
-					}}
-					onOpenSettings={() => {
-						settingsPage = 'account';
-						settingsOpen = true;
-					}}
-					onStartThreadDraft={startThreadDraftForProject}
-					onSelectThread={selectThread}
-					onSelectProject={(workspacePath) => {
-						openProject(workspacePath);
-					}}
-					onRenameThread={(threadId, title) => {
-						void renameThread(threadId, title);
-					}}
-					onArchiveThread={(threadId) => {
-						void archiveThread(threadId);
-					}}
-				/>
+			{#if sidebarOpen}
+				<button
+					class="fixed inset-0 z-[140] bg-black/40 md:hidden"
+					type="button"
+					aria-label="Close sidebar"
+					onclick={() => void closeSidebar()}
+				></button>
 			{/if}
+			<div class="inbox-sidebar-host" inert={!sidebarOpen}>
+				{#if settingsOpen}
+					<SettingsSidebar
+						activePage={settingsPage}
+						theme={workspaceTheme}
+						onThemeChange={(theme) => void handleThemeChange(theme)}
+						onBack={() => {
+							settingsOpen = false;
+							settingsPage = 'account';
+						}}
+						onNavigate={(nextPage) => {
+							settingsPage = nextPage;
+							if (matchMedia('(max-width: 767px)').matches) sidebarOpen = false;
+						}}
+					/>
+				{:else}
+					<InboxSidebar
+						sections={inbox.sections}
+						projects={inboxProjects}
+						selectedProjects={projectFilter}
+						{currentThreadId}
+						mutationsEnabled={threadCache.status !== 'offline' && threadCache.status !== 'error'}
+						theme={workspaceTheme}
+						onThemeChange={(theme) => void handleThemeChange(theme)}
+						onFilter={(keys) => (projectFilter = keys)}
+						onSelect={selectInboxThread}
+						onNew={startThreadDraft}
+						onAddProject={() => openProjectPicker('add')}
+						onSettings={() => {
+							settingsPage = 'account';
+							settingsOpen = true;
+						}}
+						onClose={() => void closeSidebar()}
+						onChange={changeInboxState}
+						onRename={(thread, title) => renameThread(thread._id, title)}
+					/>
+				{/if}
+				<button
+					class="inbox-resize"
+					type="button"
+					aria-label={`Resize sidebar, ${sidebarWidth} pixels. Use left and right arrows.`}
+					onkeydown={(event) => {
+						if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+							event.preventDefault();
+							sidebarWidth = Math.max(
+								240,
+								Math.min(440, sidebarWidth + (event.key === 'ArrowLeft' ? -10 : 10))
+							);
+							persistSidebarWidth();
+						}
+					}}
+					onpointerdown={(event) => event.currentTarget.setPointerCapture(event.pointerId)}
+					onpointermove={(event) => {
+						if (event.currentTarget.hasPointerCapture(event.pointerId))
+							sidebarWidth = Math.max(240, Math.min(440, event.clientX));
+					}}
+					onpointerup={(event) => {
+						event.currentTarget.releasePointerCapture(event.pointerId);
+						persistSidebarWidth();
+					}}
+					onpointercancel={persistSidebarWidth}
+				></button>
+			</div>
 
-			<main class="relative flex h-screen min-h-0 min-w-0 flex-col overflow-hidden">
+			<main
+				class="relative flex h-screen min-h-0 min-w-0 flex-col overflow-hidden"
+				inert={sidebarOpen && viewportWidth < 768}
+			>
+				{#if !sidebarOpen}
+					<button
+						class="inbox-icon absolute top-3 left-3 z-50"
+						type="button"
+						aria-label="Open sidebar"
+						onclick={() => void openSidebar()}><PanelLeft size={18} /></button
+					>
+				{/if}
 				{#if !settingsOpen && !artifactPanel.panel.open}
 					<button
 						type="button"
@@ -1925,15 +2025,7 @@
 					</button>
 				{/if}
 				{#if settingsOpen}
-					{#if settingsPage === 'archived'}
-						<SettingsArchived
-							{threads}
-							{projects}
-							onRestore={(threadId) => {
-								void restoreThread(threadId);
-							}}
-						/>
-					{:else if settingsPage === 'usage'}
+					{#if settingsPage === 'usage'}
 						<SettingsUsage />
 					{:else if settingsPage === 'browser'}
 						<SettingsBrowser />

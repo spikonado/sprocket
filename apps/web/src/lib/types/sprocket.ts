@@ -38,12 +38,6 @@ export type ThreadSummary = {
 	status: RunState['status'];
 };
 
-export type ProjectThreadGroup = {
-	project: Project;
-	threads: ThreadSummary[];
-	activeThreadCount: number;
-};
-
 export type ExecutorJob = {
 	_id: Id<'executorJobs'>;
 	threadId: Id<'threadRecords'>;
@@ -322,6 +316,8 @@ export type DesktopApi = {
 		}
 	) => Promise<void>;
 	renameThread: (request: ThreadCommandRequest & { title: string }) => Promise<boolean>;
+	settleThread: (request: ThreadCommandRequest) => Promise<boolean>;
+	unsettleThread: (request: ThreadCommandRequest) => Promise<boolean>;
 	archiveThread: (request: ThreadCommandRequest) => Promise<boolean>;
 	restoreThread: (request: ThreadCommandRequest) => Promise<boolean>;
 	rekeyRepository: (

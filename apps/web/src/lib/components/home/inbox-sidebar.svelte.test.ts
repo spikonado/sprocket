@@ -1,0 +1,114 @@
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { flushSync, mount, tick, unmount } from 'svelte';
+import type { Doc, Id } from '$convex/_generated/dataModel';
+import { INBOX_STATES } from '$convex/lib/inboxState';
+import InboxSidebar from './inbox-sidebar.svelte';
+
+let component: ReturnType<typeof mount>;
+
+beforeEach(() => {
+	vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
+	vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: false }));
+	Element.prototype.scrollIntoView = vi.fn();
+});
+afterEach(async () => {
+	if (component) await unmount(component);
+	document.body.replaceChildren();
+	vi.unstubAllGlobals();
+});
+
+function thread(settled = false, status: Doc<'threadRecords'>['status'] = 'completed') {
+	// SAFETY: fixture strings are only compared as opaque Convex document ids.
+	const record: Doc<'threadRecords'> = {
+		_id: 'thread' as Id<'threadRecords'>,
+		_creationTime: 1,
+		userId: 'alice',
+		repositoryKey: 'repo',
+		submissionId: 'submission',
+		selectedModel: 'model',
+		reasoningEffort: 'high' as const,
+		fastMode: false,
+		title: 'Thread',
+		lastMessageAt: Date.now(),
+		status
+	};
+	if (settled) record.archivedAt = Date.now();
+	return record;
+}
+
+function props(records: Doc<'threadRecords'>[]) {
+	return {
+		sections: INBOX_STATES.map((state) => ({
+			state,
+			rows: records.filter((row) => (row.archivedAt === undefined) === (state === 'unsettled')),
+			loading: false,
+			canLoadMore: false,
+			loadMore: vi.fn()
+		})),
+		projects: [{ repositoryKey: 'repo', displayName: 'Repository', workspacePath: '/repo' }],
+		selectedProjects: [],
+		currentThreadId: null,
+		mutationsEnabled: true,
+		theme: 'dark' as const,
+		onThemeChange: vi.fn(),
+		onFilter: vi.fn(),
+		onSelect: vi.fn(),
+		onNew: vi.fn(),
+		onAddProject: vi.fn(),
+		onSettings: vi.fn(),
+		onClose: vi.fn(),
+		onChange: vi.fn().mockResolvedValue(undefined),
+		onRename: vi.fn().mockResolvedValue(undefined)
+	};
+}
+
+async function render(records: Doc<'threadRecords'>[]) {
+	const input = props(records);
+	component = mount(InboxSidebar, { target: document.body, props: input });
+	flushSync();
+	await tick();
+	return input;
+}
+
+it('settles an idle thread without offering snooze actions', async () => {
+	const input = await render([thread()]);
+	document.querySelector<HTMLButtonElement>('[aria-label="Settle Thread"]')!.click();
+	await tick();
+
+	expect(input.onChange).toHaveBeenCalledWith(
+		expect.objectContaining({ _id: 'thread' }),
+		'settled'
+	);
+	expect(document.body.textContent).not.toContain('Snooze');
+});
+
+it('does not allow a running thread to settle', async () => {
+	const input = await render([thread(false, 'running')]);
+	const settleButton = document.querySelector<HTMLButtonElement>('[aria-label="Settle Thread"]')!;
+
+	expect(settleButton.disabled).toBe(true);
+	settleButton.click();
+	await tick();
+	expect(input.onChange).not.toHaveBeenCalled();
+});
+
+it('unsettles a settled thread', async () => {
+	const input = await render([thread(true)]);
+	document.querySelector<HTMLButtonElement>('[aria-label="Unsettle Thread"]')!.click();
+	await tick();
+
+	expect(input.onChange).toHaveBeenCalledWith(
+		expect.objectContaining({ _id: 'thread' }),
+		'unsettled'
+	);
+});
+it('keeps a failed settle visible without offering an undo', async () => {
+	const input = await render([thread()]);
+	input.onChange.mockRejectedValue(new Error('Changed elsewhere'));
+	document.querySelector<HTMLButtonElement>('[aria-label="Settle Thread"]')!.click();
+	await tick();
+	await tick();
+
+	expect(document.querySelector('.inbox-notice')?.textContent).toContain('Changed elsewhere');
+	expect(document.querySelector('.inbox-notice')?.textContent).not.toContain('Undo');
+});
