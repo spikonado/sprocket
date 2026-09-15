@@ -140,42 +140,51 @@ describe('browserSessions', () => {
 
 	it('collapses duplicate session rows onto the latest startedAt', async () => {
 		const t = initConvexTest();
-		const { asUser, threadId, runId, userId } = await seedRun(t, 'user_browser_dup');
+		const { asUser, threadId } = await seedOwnedThread(t, 'user_browser_dup');
+		const { runId } = await createQueuedRun(t, asUser, threadId, 'dup', 'secret', 'Browse');
 		await t.run(async (ctx) => {
 			await ctx.db.insert('browserSessions', {
 				threadId,
-				runId,
 				lastUsedRunId: runId,
-				userId,
-				browserbaseSessionId: 'bb-stale',
-				liveViewUrl: 'https://live.browserbase.test/stale',
-				startedAt: 1
+				userId: 'user_browser_dup',
+				profileName: 'profile',
+				saveChanges: true,
+				sessionId: 'fc-stale',
+				liveViewUrl: 'https://live.firecrawl.test/stale',
+				startedAt: 1,
+				expiresAt: Date.now() + 3_600_000,
+				operationExpiresAt: 0,
+				closing: false
 			});
 			await ctx.db.insert('browserSessions', {
 				threadId,
-				runId,
 				lastUsedRunId: runId,
-				userId,
-				browserbaseSessionId: 'bb-live',
-				liveViewUrl: 'https://live.browserbase.test/live',
-				startedAt: 2
+				userId: 'user_browser_dup',
+				profileName: 'profile',
+				saveChanges: true,
+				sessionId: 'fc-live',
+				liveViewUrl: 'https://live.firecrawl.test/live',
+				startedAt: 2,
+				expiresAt: Date.now() + 3_600_000,
+				operationExpiresAt: 0,
+				closing: false
 			});
 		});
 
 		const live = await asUser.query(api.browserSessions.liveViewForThread, { threadId });
 		expect(live).toMatchObject({
-			url: 'https://live.browserbase.test/live',
+			url: 'https://live.firecrawl.test/live',
 			startedAt: 2
 		});
 
-		await t.mutation(internal.browserSessions.touchForThread, { threadId, runId });
+		await asUser.mutation(api.browserProfiles.setHumanControl, { threadId, enabled: true });
 		const rows = await t.run(async (ctx) =>
 			ctx.db
 				.query('browserSessions')
-				.withIndex('by_thread', (query) => query.eq('threadId', threadId))
+				.withIndex('by_threadId', (query) => query.eq('threadId', threadId))
 				.collect()
 		);
 		expect(rows).toHaveLength(1);
-		expect(rows[0]?.browserbaseSessionId).toBe('bb-live');
+		expect(rows[0]).toMatchObject({ sessionId: 'fc-live', humanControl: true });
 	});
 });

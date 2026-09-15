@@ -37,14 +37,14 @@ function pickBrowserSession(rows: Array<Doc<'browserSessions'>>): Doc<'browserSe
 	return [...rows].sort((a, b) => b.startedAt - a.startedAt || b._id.localeCompare(a._id))[0];
 }
 
-async function getBrowserSession(
+export async function getBrowserSession(
 	ctx: QueryCtx | MutationCtx,
 	threadId: Id<'threadRecords'>
 ): Promise<Doc<'browserSessions'> | null> {
 	return pickBrowserSession(await listBrowserSessions(ctx, threadId));
 }
 
-async function getBrowserSessionExclusive(
+export async function getBrowserSessionExclusive(
 	ctx: MutationCtx,
 	threadId: Id<'threadRecords'>
 ): Promise<Doc<'browserSessions'> | null> {
