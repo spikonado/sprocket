@@ -21,4 +21,25 @@ describe('theme preferences', () => {
 		expect(await alice.query(api.uiPreferences.getMine, {})).toMatchObject({ theme: 'light' });
 		await expect(t.query(api.uiPreferences.getMine, {})).rejects.toThrow('Authentication required');
 	});
+
+	it('collapses duplicate preference rows without throwing', async () => {
+		const t = initConvexTest();
+		const alice = t.withIdentity({ subject: 'alice_dup' });
+		await t.run(async (ctx) => {
+			await ctx.db.insert('uiPreferences', { userId: 'alice_dup', theme: 'light' });
+			await ctx.db.insert('uiPreferences', { userId: 'alice_dup', theme: 'dark' });
+		});
+		expect(await alice.query(api.uiPreferences.getMine, {})).toMatchObject({ theme: 'light' });
+
+		const updated = await alice.mutation(api.uiPreferences.setTheme, { theme: 'dark' });
+		expect(updated?.theme).toBe('dark');
+		const rows = await t.run(async (ctx) =>
+			ctx.db
+				.query('uiPreferences')
+				.withIndex('by_userId', (query) => query.eq('userId', 'alice_dup'))
+				.collect()
+		);
+		expect(rows).toHaveLength(1);
+		expect(rows[0]?.theme).toBe('dark');
+	});
 });
