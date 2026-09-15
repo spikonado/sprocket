@@ -52,13 +52,13 @@ async function render(
 	const viewport = document.createElement('div');
 	document.body.append(viewport);
 	Object.defineProperty(viewport, 'clientHeight', { value: 600 });
-	const edges = { older: false, newer: visible };
+	const edges = { older: 3_000, newer: visible ? 300 : 3_000 };
 	vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
 		this: HTMLElement
 	) {
 		if (this === viewport) return new DOMRect(0, 0, 800, 600);
 		const edge = this.dataset.workEdge;
-		return new DOMRect(0, (edge === 'older' ? edges.older : edges.newer) ? 300 : 1000, 800, 1);
+		return new DOMRect(0, edge === 'older' ? edges.older : edges.newer, 800, 1);
 	});
 	const restore = vi.fn();
 	const props = $state<ComponentProps<typeof WorkSectionDetails>>({
@@ -124,7 +124,7 @@ describe('scrolling work details', () => {
 		const reasoning = viewport.querySelector<HTMLButtonElement>('button');
 		reasoning?.click();
 		await settle();
-		edges.newer = true;
+		edges.newer = 1_500;
 		intersection();
 		await settle();
 		expect(load.mock.calls[1][1]).toEqual({ after: 1 });
@@ -151,8 +151,8 @@ describe('scrolling work details', () => {
 		const originalTool = viewport.querySelector('[title="echo 6"]');
 		expect(originalTool).not.toBeNull();
 		expect(group?.getAttribute('aria-expanded')).toBe('true');
-		edges.older = true;
-		viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -10 }));
+		edges.older = -1_000;
+		intersection();
 		await settle();
 		expect(load.mock.calls[1][1]).toEqual({ before: 6 });
 		expect(viewport.querySelector('button')).toBe(group);
@@ -169,35 +169,20 @@ describe('scrolling work details', () => {
 		expect(group?.getAttribute('aria-expanded')).toBe('false');
 	});
 
-	it.each(['wheel', 'touch', 'scroll', 'ArrowDown', 'PageDown', 'End', ' '])(
-		'loads the visible edge after %s input',
-		async (input) => {
-			const load = vi
-				.fn()
-				.mockResolvedValueOnce(page([1], undefined, 1))
-				.mockResolvedValueOnce(page([2], 2));
-			const { viewport, edges } = await render(load);
-			edges.newer = true;
-			if (input === 'wheel') viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: 10 }));
-			else if (input === 'scroll') {
-				viewport.scrollTop = 100;
-				viewport.dispatchEvent(new Event('scroll'));
-			} else if (input === 'touch') {
-				for (const [type, clientY] of [
-					['touchstart', 100],
-					['touchmove', 90]
-				] as const) {
-					const event = new Event(type);
-					Object.defineProperty(event, 'touches', { value: [{ clientY }] });
-					viewport.dispatchEvent(event);
-				}
-			} else viewport.dispatchEvent(new KeyboardEvent('keydown', { key: input }));
-			await settle();
-			expect(load).toHaveBeenCalledTimes(2);
-		}
-	);
+	it('prefetches work three viewports before its unloaded edge becomes visible', async () => {
+		const load = vi
+			.fn()
+			.mockResolvedValueOnce(page([1], undefined, 1))
+			.mockResolvedValueOnce(page([2], 2));
+		const { viewport, edges } = await render(load);
+		edges.newer = 2_000;
+		intersection();
+		await settle();
+		expect(load).toHaveBeenCalledTimes(2);
+		expect(viewport.textContent).not.toMatch(/Scroll (up|down)/);
+	});
 
-	it('caps automatic filling when collapsed details do not make the section taller', async () => {
+	it('bounds lookahead when collapsed details do not make the section taller', async () => {
 		let id = 0;
 		const load = vi.fn().mockImplementation(async () => {
 			id += 1;
@@ -208,7 +193,8 @@ describe('scrolling work details', () => {
 		intersection();
 		await settle();
 		expect(load).toHaveBeenCalledTimes(3);
-		viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: 10 }));
+		viewport.scrollTop = 100;
+		viewport.dispatchEvent(new Event('scroll'));
 		await settle();
 		expect(load).toHaveBeenCalledTimes(5);
 		await cleanup?.();
@@ -247,7 +233,7 @@ describe('scrolling work details', () => {
 			.mockRejectedValueOnce(new Error('offline'))
 			.mockResolvedValueOnce(page([2], 2));
 		const { viewport, edges } = await render(load);
-		edges.newer = true;
+		edges.newer = 1_500;
 		intersection();
 		await settle();
 		expect(viewport.querySelectorAll('[data-work-detail]')).toHaveLength(1);
