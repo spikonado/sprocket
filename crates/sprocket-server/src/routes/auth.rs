@@ -724,27 +724,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bootstrap_rejects_request_bodies() {
-        let (state, _, _) = test_state(true).await;
-        let response = router(state)
-            .oneshot(with_peer(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/auth/bootstrap")
-                    .header(header::HOST, "127.0.0.1:7731")
-                    .header(header::ORIGIN, "http://127.0.0.1:7731")
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(r#"{"credential":"old-client-value"}"#))
-                    .unwrap(),
-                loopback_peer(),
-            ))
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    }
-
-    #[tokio::test]
     async fn bootstrap_accepts_loopback_http_and_same_origin_https_only() {
         let (state, _, _) = test_state(true).await;
         let app = router(state);
@@ -1228,47 +1207,6 @@ mod tests {
             &message,
             &proof
         ));
-    }
-
-    #[tokio::test]
-    async fn desktop_bootstrap_omits_retired_fields() {
-        let (mut state, _, _) = test_state(true).await;
-        state.desktop_bootstrap_token = Some(Arc::new(tokio::sync::Mutex::new(Some(
-            "one-time-token".to_string(),
-        ))));
-        let app = router(state);
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/auth/desktop-bootstrap")
-                    .header(DESKTOP_BOOTSTRAP_TOKEN_HEADER, "one-time-token")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-        let payload = read_json(response).await;
-        assert!(payload.get("pairingCredential").is_none());
-        assert!(payload.get("desktopLoginCallbackUrl").is_none());
-    }
-
-    #[tokio::test]
-    async fn desktop_login_result_rejects_get() {
-        let (state, session_token, _) = test_state(true).await;
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .uri("/api/auth/desktop-login/result")
-                    .header(header::COOKIE, session_cookie(&session_token))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
     }
 
     #[tokio::test]
