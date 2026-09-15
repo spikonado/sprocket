@@ -58,6 +58,7 @@
 		refreshDesktopProjectAttachments as refreshDesktopProjectAttachmentsFromDesktop,
 		projectFromAttachment,
 		resolveSubmissionId,
+		upsertDesktopProjectAttachment,
 		verifyProjectAttachment as verifyProjectAttachmentForExecution,
 		type ProjectState
 	} from '$lib/home/desktop';
@@ -1280,14 +1281,11 @@
 			replaceWorkspacePath
 		});
 		desktopProjectAttachmentsGeneration += 1;
-		const nextAttachments = {
-			...desktopProjectAttachmentsByPath,
-			[attachment.workspacePath]: attachment
-		};
-		if (replaceWorkspacePath && replaceWorkspacePath !== attachment.workspacePath) {
-			delete nextAttachments[replaceWorkspacePath];
-		}
-		desktopProjectAttachmentsByPath = nextAttachments;
+		desktopProjectAttachmentsByPath = upsertDesktopProjectAttachment(
+			desktopProjectAttachmentsByPath,
+			attachment,
+			replaceWorkspacePath
+		);
 		hasLoadedDesktopProjectAttachments = true;
 		return attachment;
 	}

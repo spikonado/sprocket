@@ -48,6 +48,29 @@ profiles must use separate data directories.
 
 We ship breaking changes ahead of our users' installed clients and keep the old behavior working until those clients age out. That debt is easy to accumulate and easier to forget. This file lists every backwards-compatibility layer we currently ship, what it protects, how to remove it, and the signal that says removal is safe. When a removal PR merges, remove its entry from this document.
 
+## Local project attachments
+
+Project attachment records written before PR #392 have no `attachmentKey` in
+the profile's `project-attachments.json`. The local server accepts those records
+with an empty key. On refresh it resolves available paths to the current remote,
+Git common-directory, or canonical-directory identity and rewrites the file.
+For unavailable paths, it recovers a remote identity only when the stored
+`repositoryKey`, `displayName`, and path basename provide enough evidence. An
+ambiguous record remains scoped to its stored path so migration cannot delete an
+unrelated local directory with the same name. Refresh also removes duplicate
+records after preferring an available path and then the first attached path.
+
+This is an in-place migration of a file inside each existing profile data
+directory. It does not create, rename, or scan legacy data directories.
+
+Keep the missing-`attachmentKey` deserialization default and unavailable-record
+inference while direct upgrades from releases predating PR #392 remain
+supported. Local profiles can remain offline across releases, so elapsed time is
+not a sufficient removal gate. Remove this compatibility only after either the
+minimum supported upgrade path guarantees that every unversioned
+`project-attachments.json` has passed through this migration, or a versioned
+replacement store imports the old file before parsing the new format.
+
 ## Stored transcript work metadata
 
 Historical transcripts may lack `threadTranscriptParts.work` and
