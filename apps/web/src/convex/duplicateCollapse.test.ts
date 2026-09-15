@@ -3,7 +3,7 @@ import { absorbDuplicateThread } from './lib/absorbDuplicateThread';
 import { initConvexTest, seedOwnedThread } from './test.setup';
 
 describe('absorbDuplicateThread', { timeout: 20_000 }, () => {
-	it('keeps surviving transcript numbers and does not double-count duplicate usage', async () => {
+	it('keeps dense transcript numbers and one usage row', async () => {
 		const t = initConvexTest();
 		const { threadId: keepId, subject } = await seedOwnedThread(t, 'user_alice');
 		const ids = await t.run(async (ctx) => {
@@ -14,7 +14,7 @@ describe('absorbDuplicateThread', { timeout: 20_000 }, () => {
 				repositoryKey: 'alpha',
 				selectedModel: 'gpt-5.6-sol',
 				reasoningEffort: 'medium',
-				serviceTier: 'standard',
+				fastMode: false,
 				lastMessageAt: Date.now()
 			});
 			const keepRun = await ctx.db
@@ -28,12 +28,15 @@ describe('absorbDuplicateThread', { timeout: 20_000 }, () => {
 				submissionId: 'dup-submission-run',
 				status: 'completed',
 				executionSecretHash: 'fixture',
-				completionAttemptSeq: 0,
 				selectedModel: 'gpt-5.6-sol',
 				reasoningEffort: 'medium',
-				serviceTier: 'standard',
+				fastMode: false,
 				startedAt: Date.now(),
 				completedAt: Date.now()
+			});
+			await ctx.db.insert('runExecutionStates', {
+				runId: dropRunId,
+				completionAttemptSeq: 0
 			});
 			await ctx.db.insert('threadTranscriptStates', {
 				threadId: keepId,
@@ -139,7 +142,7 @@ describe('absorbDuplicateThread', { timeout: 20_000 }, () => {
 			const usage = await ctx.db
 				.query('threadUsage')
 				.withIndex('by_threadId', (query) => query.eq('threadId', keepId))
-				.unique();
+				.collect();
 			const events = await ctx.db
 				.query('threadUsageEvents')
 				.withIndex('by_threadId_eventId', (query) => query.eq('threadId', keepId))
@@ -149,7 +152,7 @@ describe('absorbDuplicateThread', { timeout: 20_000 }, () => {
 				totalParts: state?.totalParts,
 				partCount: parts.length,
 				partNumbers: parts.map((part) => part.number).sort((a, b) => a - b),
-				totalTokensProcessed: usage?.totalTokensProcessed,
+				usageCount: usage.length,
 				eventCount: events.length,
 				dropped
 			};
@@ -160,6 +163,6 @@ describe('absorbDuplicateThread', { timeout: 20_000 }, () => {
 		expect(ids.partNumbers).toEqual([0, 1, 2]);
 		expect(ids.totalParts).toBe(3);
 		expect(ids.eventCount).toBe(2);
-		expect(ids.totalTokensProcessed).toBe(17);
+		expect(ids.usageCount).toBe(1);
 	});
 });

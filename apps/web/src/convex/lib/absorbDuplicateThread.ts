@@ -1,6 +1,6 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx } from '@convex/_generated/server';
-import { absorbDuplicateArtifact } from '@convex/lib/artifactAbsorb';
+import { internal } from '@convex/_generated/api';
 import { threadProcessedTokens } from '@convex/lib/threadUsage';
 
 function pickEarliestByCreation<T extends { _creationTime: number; _id: string }>(
@@ -58,6 +58,9 @@ export async function absorbDuplicateThread(
 	dropId: Id<'threadRecords'>
 ): Promise<void> {
 	if (keepId === dropId) return;
+	const keepThread = await ctx.db.get('threadRecords', keepId);
+	const dropThread = await ctx.db.get('threadRecords', dropId);
+	if (!keepThread || !dropThread) return;
 
 	const dropRuns = await ctx.db
 		.query('runs')
@@ -85,17 +88,33 @@ export async function absorbDuplicateThread(
 
 	const dropArtifacts = await ctx.db
 		.query('artifacts')
-		.withIndex('by_threadId', (query) => query.eq('threadId', dropId))
+		.withIndex('by_userId_and_repositoryKey_and_scope', (query) =>
+			query
+				.eq('userId', dropThread.userId)
+				.eq('repositoryKey', dropThread.repositoryKey)
+				.eq('scope', 'thread')
+		)
+		.filter((query) => query.eq(query.field('threadId'), dropId))
 		.collect();
 	for (const artifact of dropArtifacts) {
-		const clash = await ctx.db
+		const matchingArtifacts = await ctx.db
 			.query('artifacts')
-			.withIndex('by_threadId_title', (query) =>
-				query.eq('threadId', keepId).eq('title', artifact.title)
+			.withIndex('by_userId_and_registrationId', (query) =>
+				query.eq('userId', artifact.userId).eq('registrationId', artifact.registrationId)
 			)
-			.first();
+			.collect();
+		const clash = matchingArtifacts.find((candidate) => candidate._id !== artifact._id);
 		if (clash) {
-			await absorbDuplicateArtifact(ctx, clash._id, artifact._id);
+			if (artifact.updatedAt > clash.updatedAt) {
+				await ctx.db.patch('artifacts', clash._id, {
+					content: artifact.content,
+					type: artifact.type,
+					title: artifact.title,
+					revision: Math.max(clash.revision, artifact.revision),
+					updatedAt: artifact.updatedAt
+				});
+			}
+			await ctx.db.delete('artifacts', artifact._id);
 		} else {
 			await ctx.db.patch('artifacts', artifact._id, { threadId: keepId });
 		}
@@ -103,12 +122,12 @@ export async function absorbDuplicateThread(
 
 	const dropSessions = await ctx.db
 		.query('browserSessions')
-		.withIndex('by_thread', (query) => query.eq('threadId', dropId))
+		.withIndex('by_threadId', (query) => query.eq('threadId', dropId))
 		.collect();
 	for (const session of dropSessions) {
 		const keepSession = await ctx.db
 			.query('browserSessions')
-			.withIndex('by_thread', (query) => query.eq('threadId', keepId))
+			.withIndex('by_threadId', (query) => query.eq('threadId', keepId))
 			.first();
 		if (keepSession) {
 			const preferDrop =
@@ -117,18 +136,29 @@ export async function absorbDuplicateThread(
 					session._id.localeCompare(keepSession._id) > 0);
 			if (preferDrop) {
 				await ctx.db.patch('browserSessions', keepSession._id, {
-					runId: session.runId,
 					lastUsedRunId: session.lastUsedRunId,
-					browserbaseSessionId: session.browserbaseSessionId,
+					profileName: session.profileName,
+					saveChanges: session.saveChanges,
+					sessionId: session.sessionId,
 					liveViewUrl: session.liveViewUrl,
+					interactiveLiveViewUrl: session.interactiveLiveViewUrl,
+					expiresAt: session.expiresAt,
+					operationId: session.operationId,
+					operationExpiresAt: session.operationExpiresAt,
+					closing: session.closing,
+					humanControl: session.humanControl,
 					startedAt: session.startedAt
 				});
-			} else if (session.liveViewUrl && !keepSession.liveViewUrl) {
-				await ctx.db.patch('browserSessions', keepSession._id, {
-					liveViewUrl: session.liveViewUrl
+			}
+			const discarded = preferDrop ? keepSession : session;
+			const retained = preferDrop ? session : keepSession;
+			await ctx.db.delete('browserSessions', session._id);
+			if (discarded.sessionId && discarded.sessionId !== retained.sessionId) {
+				await ctx.scheduler.runAfter(0, internal.firecrawlBrowser.closeDetached, {
+					sessionId: discarded.sessionId,
+					expiresAt: discarded.expiresAt
 				});
 			}
-			await ctx.db.delete('browserSessions', session._id);
 		} else {
 			await ctx.db.patch('browserSessions', session._id, { threadId: keepId });
 		}
@@ -190,7 +220,6 @@ export async function absorbDuplicateThread(
 		});
 	}
 
-	let droppedDuplicateTokens = 0;
 	const dropEvents = await ctx.db
 		.query('threadUsageEvents')
 		.withIndex('by_threadId_eventId', (query) => query.eq('threadId', dropId))
@@ -203,7 +232,6 @@ export async function absorbDuplicateThread(
 			)
 			.first();
 		if (clash) {
-			droppedDuplicateTokens += event.processedTokens;
 			await threadProcessedTokens.deleteIfExists(ctx, event);
 			await ctx.db.delete('threadUsageEvents', event._id);
 			continue;
@@ -226,25 +254,17 @@ export async function absorbDuplicateThread(
 		.collect();
 	let keepUsage = pickEarliestByCreation(keepUsageRows);
 	if (keepUsage) {
-		const totalTokensProcessed = keepUsageRows.reduce(
-			(sum, row) => sum + row.totalTokensProcessed,
-			0
-		);
 		const contextTokens = [...keepUsageRows]
 			.sort((a, b) => a._creationTime - b._creationTime || a._id.localeCompare(b._id))
 			.reduce<number | undefined>(
 				(found, row) => (row.contextTokens !== undefined ? row.contextTokens : found),
 				keepUsage.contextTokens
 			);
-		if (
-			keepUsage.totalTokensProcessed !== totalTokensProcessed ||
-			keepUsage.contextTokens !== contextTokens
-		) {
+		if (keepUsage.contextTokens !== contextTokens) {
 			await ctx.db.patch('threadUsage', keepUsage._id, {
-				totalTokensProcessed,
 				contextTokens
 			});
-			keepUsage = { ...keepUsage, totalTokensProcessed, contextTokens };
+			keepUsage = { ...keepUsage, contextTokens };
 		}
 		for (const extra of keepUsageRows) {
 			if (extra._id !== keepUsage._id) await ctx.db.delete('threadUsage', extra._id);
@@ -252,26 +272,17 @@ export async function absorbDuplicateThread(
 	}
 	for (const row of dropUsageRows) {
 		if (keepUsage) {
-			const totalTokensProcessed = Math.max(
-				0,
-				keepUsage.totalTokensProcessed + row.totalTokensProcessed - droppedDuplicateTokens
-			);
-			droppedDuplicateTokens = 0;
 			const contextTokens = keepUsage.contextTokens ?? row.contextTokens;
 			await ctx.db.patch('threadUsage', keepUsage._id, {
-				totalTokensProcessed,
 				contextTokens
 			});
-			keepUsage = { ...keepUsage, totalTokensProcessed, contextTokens };
+			keepUsage = { ...keepUsage, contextTokens };
 			await ctx.db.delete('threadUsage', row._id);
 		} else {
-			const totalTokensProcessed = Math.max(0, row.totalTokensProcessed - droppedDuplicateTokens);
-			droppedDuplicateTokens = 0;
 			await ctx.db.patch('threadUsage', row._id, {
-				threadId: keepId,
-				totalTokensProcessed
+				threadId: keepId
 			});
-			keepUsage = { ...row, threadId: keepId, totalTokensProcessed };
+			keepUsage = { ...row, threadId: keepId };
 		}
 	}
 
