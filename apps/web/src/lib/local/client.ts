@@ -689,13 +689,13 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				method: 'POST',
 				body: JSON.stringify(requestBody)
 			}),
-		archiveThread: async (requestBody) =>
-			await request('/api/threads/archive', z.boolean(), {
+		settleThread: async (requestBody) =>
+			await request('/api/threads/settle', z.boolean(), {
 				method: 'POST',
 				body: JSON.stringify(requestBody)
 			}),
-		restoreThread: async (requestBody) =>
-			await request('/api/threads/restore', z.boolean(), {
+		unsettleThread: async (requestBody) =>
+			await request('/api/threads/unsettle', z.boolean(), {
 				method: 'POST',
 				body: JSON.stringify(requestBody)
 			}),

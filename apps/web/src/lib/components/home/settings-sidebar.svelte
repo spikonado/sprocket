@@ -1,16 +1,9 @@
 <script lang="ts">
-	import {
-		Archive,
-		ArrowLeft,
-		ChartNoAxesColumn,
-		CreditCard,
-		Globe,
-		UserRound
-	} from '@lucide/svelte';
+	import { ArrowLeft, ChartNoAxesColumn, CreditCard, Globe, UserRound } from '@lucide/svelte';
 	import SidebarTopActions from '$lib/components/home/sidebar-top-actions.svelte';
 	import type { SprocketTheme } from '$lib/theme';
 
-	export type SettingsPage = 'account' | 'usage' | 'browser' | 'payments' | 'archived';
+	export type SettingsPage = 'account' | 'usage' | 'browser' | 'payments';
 
 	type Props = {
 		activePage: SettingsPage;
@@ -26,8 +19,7 @@
 		{ id: 'account', label: 'Account', icon: UserRound },
 		{ id: 'usage', label: 'Usage', icon: ChartNoAxesColumn },
 		{ id: 'browser', label: "Agent's Browser", icon: Globe },
-		{ id: 'payments', label: 'Payments', icon: CreditCard },
-		{ id: 'archived', label: 'Archived Threads', icon: Archive }
+		{ id: 'payments', label: 'Payments', icon: CreditCard }
 	];
 
 	const navItemClass =

@@ -132,16 +132,16 @@ Sprocket deliberately separates cloud and machine-local state.
 | Artifact file reads, change detection, and preview feed                      | Local server         |
 | Model and authentication provider secrets                                    | Cloud deployment     |
 
-The local server owns this machine’s folder list and the account-isolated
-thread summary cache. Convex threads store a `repositoryKey`. When a folder is
-attached here, Rust watches that key’s active snapshot and writes it locally;
-archived threads download when the UI asks. The web app reads the cache, not
-`threads.listMine`. Folders that are not attached here stay hidden until they
-are added.
+The local server owns this machine's folder list and account-isolated thread
+summary cache. Convex threads store a `repositoryKey`. The global inbox queries
+Convex for unsettled and settled threads whose repository keys match folders
+attached on this machine. Folders that are not attached here stay hidden until
+they are added. The local cache still supplies project-scoped selection state,
+including a selected thread outside the recent active set.
 
-Rename, archive, restore, rekey, and cancellation go through the local server
-so it can refresh the affected cache files before the UI reads them again.
-Thread creation and selected-thread lifecycle still talk to Convex directly.
+Rename, settle, unsettle, rekey, and cancellation go through the local server
+so it can refresh affected cache files. Thread creation still talks to Convex
+directly.
 
 ### Artifacts and local bindings
 
