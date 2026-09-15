@@ -480,6 +480,43 @@ describe('transcript viewport paging', () => {
 		}
 	);
 
+	it('does not claim an empty thread has a local copy when reconnecting', async () => {
+		const { props, viewport } = await renderTranscript([]);
+		props.stale = true;
+		await settle();
+		expect(viewport.querySelector('[role="status"]')?.textContent).toContain(
+			'Reconnecting to conversation history.'
+		);
+		expect(viewport.textContent).not.toContain('local copy');
+	});
+
+	it('offers explicit older navigation after automatic loading stops', async () => {
+		const { props, viewport } = await renderTranscript([message(3)]);
+		expect(props.onLoadOlder).toHaveBeenCalledTimes(1);
+		props.nextBefore = 2;
+		await settle();
+		expect(props.onLoadOlder).toHaveBeenCalledTimes(2);
+		props.nextBefore = 1;
+		await settle();
+		expect(props.onLoadOlder).toHaveBeenCalledTimes(2);
+		const button = [...viewport.querySelectorAll('button')].find((button) =>
+			button.textContent.includes('Load older messages')
+		);
+		if (!button) throw new Error('Missing older history button');
+		button.click();
+		expect(props.onLoadOlder).toHaveBeenCalledTimes(3);
+		props.loadingOlder = true;
+		await settle();
+		expect(button.disabled).toBe(true);
+		expect(button.textContent).toContain('Loading older messages...');
+		button.click();
+		expect(props.onLoadOlder).toHaveBeenCalledTimes(3);
+		props.loadingOlder = false;
+		props.nextBefore = undefined;
+		await settle();
+		expect(button.isConnected).toBe(false);
+	});
+
 	it('fills an initially empty thread after its first page arrives, and stops once it scrolls', async () => {
 		const { props, viewport } = await renderTranscript([]);
 		expect(props.onLoadOlder).not.toHaveBeenCalled();

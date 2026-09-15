@@ -152,6 +152,34 @@ describe('DisplayHistory', () => {
 		history.stop();
 	});
 
+	it('restores an exhausted cursor when hydration adds rows below the loaded window', async () => {
+		const added = { ...row(5, 101), kind: 'text' as const, text: 'Downloaded later' };
+		const fetch = vi
+			.fn()
+			.mockResolvedValueOnce(page([row(60)], 60))
+			.mockResolvedValueOnce(page([row(10)]))
+			.mockResolvedValueOnce({
+				...page([row(60)], 60),
+				revision: 101,
+				changes: [{ id: added.id, row: added }]
+			})
+			.mockResolvedValueOnce({ ...page([added]), revision: 101 });
+		const history = new DisplayHistory(fetch, () => {});
+		await history.refresh();
+		await history.loadOlder();
+		expect(history.nextBefore).toBeUndefined();
+
+		await history.refresh();
+		expect(history.messages.map((message) => message.sequence)).toEqual([10, 60]);
+		expect(history.nextBefore).toBe(10);
+
+		await history.loadOlder();
+		expect(fetch.mock.calls[3][0].before).toBe(10);
+		expect(history.messages.map((message) => message.sequence)).toEqual([5, 10, 60]);
+		expect(history.nextBefore).toBeUndefined();
+		history.stop();
+	});
+
 	it('keeps the previous window and overlay until a partial completion can hand off atomically', async () => {
 		const live: LiveCompletionOverlay = {
 			threadId: row(0).threadId,
@@ -312,7 +340,96 @@ describe('DisplayHistory', () => {
 		history.stop();
 	});
 
-	it('rejects an older page that would reintroduce state from before a concurrent refresh', async () => {
+	it('retries an older page invalidated by a concurrent refresh without marking history offline', async () => {
+		vi.useFakeTimers();
+		let resolveOlder!: (page: TranscriptDisplayPage) => void;
+		const current = { ...page([row(40, 101)], 40), revision: 102 };
+		const fetch = vi
+			.fn()
+			.mockResolvedValueOnce(page([row(40)], 40))
+			.mockImplementationOnce(
+				() =>
+					new Promise<TranscriptDisplayPage>((resolve) => {
+						resolveOlder = resolve;
+					})
+			)
+			.mockResolvedValueOnce(current)
+			.mockResolvedValueOnce(current)
+			.mockResolvedValueOnce({ ...page([row(2, 102)]), revision: 102 });
+		const history = new DisplayHistory(fetch, () => {});
+		try {
+			await history.refresh();
+			const older = history.loadOlder();
+			await history.refresh();
+			resolveOlder(page([row(1)]));
+			await older;
+			expect(history.messages.map((message) => message.id)).toEqual(['row-40']);
+			expect(history.nextBefore).toBe(40);
+			expect(history.stale).toBe(false);
+			await vi.advanceTimersByTimeAsync(500);
+			expect(history.messages.map((message) => message.id)).toEqual(['row-2', 'row-40']);
+			expect(history.nextBefore).toBeUndefined();
+		} finally {
+			history.stop();
+			vi.useRealTimers();
+		}
+	});
+
+	it('waits between older indexing retries even when the recent page is ready', async () => {
+		vi.useFakeTimers();
+		let indexing = true;
+		const fetch = vi.fn(async ({ before }: { before?: number }) =>
+			before === undefined ? page([row(40)], 40) : { ...page(indexing ? [] : [row(1)]), indexing }
+		);
+		const history = new DisplayHistory(fetch, () => {});
+		try {
+			await history.refresh();
+			await history.loadOlder();
+			expect(fetch).toHaveBeenCalledTimes(2);
+			await vi.advanceTimersByTimeAsync(499);
+			expect(fetch).toHaveBeenCalledTimes(2);
+			await vi.advanceTimersByTimeAsync(1);
+			expect(fetch).toHaveBeenCalledTimes(4);
+			expect(history.nextBefore).toBe(40);
+			indexing = false;
+			await vi.advanceTimersByTimeAsync(500);
+			expect(fetch).toHaveBeenCalledTimes(6);
+			expect(history.messages.map((message) => message.sequence)).toEqual([1, 40]);
+			expect(history.nextBefore).toBeUndefined();
+		} finally {
+			history.stop();
+			vi.useRealTimers();
+		}
+	});
+
+	it.each([false, true])(
+		'retries failed older requests unless stopped, stopped=%s',
+		async (stop) => {
+			vi.useFakeTimers();
+			const fetch = vi
+				.fn()
+				.mockResolvedValueOnce(page([row(40)], 40))
+				.mockRejectedValueOnce(new Error('offline'))
+				.mockResolvedValueOnce(page([row(40)], 40))
+				.mockResolvedValueOnce(page([row(1)]));
+			const history = new DisplayHistory(fetch, () => {});
+			try {
+				await history.refresh();
+				await history.loadOlder();
+				expect(history.stale).toBe(true);
+				if (stop) history.stop();
+				await vi.advanceTimersByTimeAsync(2_000);
+				expect(fetch).toHaveBeenCalledTimes(stop ? 2 : 4);
+				expect(history.messages.map((message) => message.sequence)).toEqual(stop ? [40] : [1, 40]);
+				expect(history.stale).toBe(stop);
+			} finally {
+				history.stop();
+				vi.useRealTimers();
+			}
+		}
+	);
+
+	it('does not let an overlapping older request overwrite a cursor moved by refresh', async () => {
 		let resolveOlder!: (page: TranscriptDisplayPage) => void;
 		const fetch = vi
 			.fn()
@@ -323,16 +440,15 @@ describe('DisplayHistory', () => {
 						resolveOlder = resolve;
 					})
 			)
-			.mockResolvedValueOnce({ ...page([row(40, 101)], 40), revision: 102 });
+			.mockResolvedValueOnce(page([row(20), row(40)], 20));
 		const history = new DisplayHistory(fetch, () => {});
 		await history.refresh();
 		const older = history.loadOlder();
 		await history.refresh();
-		resolveOlder(page([row(1)]));
+		resolveOlder(page([row(30)], 30));
 		await older;
-		expect(history.messages.map((message) => message.id)).toEqual(['row-40']);
-		expect(history.nextBefore).toBe(40);
-		expect(history.stale).toBe(true);
+		expect(history.messages.map((message) => message.sequence)).toEqual([20, 40]);
+		expect(history.nextBefore).toBe(20);
 		history.stop();
 	});
 
@@ -356,6 +472,30 @@ describe('DisplayHistory', () => {
 		expect(history.messages[0].revision).toBe(101);
 		history.stop();
 	});
+
+	it('backs off when the server changes cursor does not advance', async () => {
+		vi.useFakeTimers();
+		const fetch = vi
+			.fn()
+			.mockResolvedValueOnce(page([row(1)]))
+			.mockResolvedValue({ ...page([row(1)]), revision: 101, moreChanges: true });
+		const history = new DisplayHistory(fetch, () => {});
+		try {
+			await history.refresh();
+			await history.refresh();
+			expect(fetch).toHaveBeenCalledTimes(2);
+			expect(history.stale).toBe(true);
+			fetch.mockResolvedValue({ ...page([row(1, 101)]), revision: 101 });
+			await vi.advanceTimersByTimeAsync(2_000);
+			expect(fetch).toHaveBeenCalledTimes(3);
+			expect(history.stale).toBe(false);
+			expect(history.messages[0].revision).toBe(101);
+		} finally {
+			history.stop();
+			vi.useRealTimers();
+		}
+	});
+
 	it('retains only a summary for a long section and preserves unchanged row identities', async () => {
 		const fetch = vi
 			.fn()

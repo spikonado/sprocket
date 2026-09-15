@@ -2523,7 +2523,7 @@
 							nextBefore={replicaNextBefore ?? undefined}
 							emptyStateMessage={currentThreadId &&
 							(replicaLoading || replicaThreadId !== currentThreadId)
-								? ''
+								? 'Loading conversation history...'
 								: currentProject
 									? 'Start a thread and ask Sprocket to inspect code, edit files, or run project commands.'
 									: 'Add a project to begin.'}

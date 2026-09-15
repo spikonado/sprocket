@@ -125,7 +125,6 @@ impl<F: Fn(u32) + Send + Sync> WorkSync<'_, F> {
             else {
                 continue;
             };
-            let stale = !snapshot.complete;
             let thread = self.thread.clone();
             let pending = self
                 .store
@@ -144,7 +143,7 @@ impl<F: Fn(u32) + Send + Sync> WorkSync<'_, F> {
                     history_from_number: state.history_from_number,
                     context_summary: state.context_summary.clone(),
                 },
-                stale,
+                false,
             )
             .await?;
             (self.changed)(state.total_parts);
