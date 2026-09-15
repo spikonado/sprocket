@@ -30,10 +30,6 @@ fn default_command_yield_ms() -> u64 {
     DEFAULT_COMMAND_YIELD_MS
 }
 
-fn default_max_output_chars() -> usize {
-    DEFAULT_COMMAND_MAX_OUTPUT_CHARS
-}
-
 fn default_stdin_yield_ms() -> u64 {
     DEFAULT_STDIN_YIELD_MS
 }
@@ -54,10 +50,6 @@ fn is_default_command_yield_ms(yield_time_ms: &u64) -> bool {
     *yield_time_ms == DEFAULT_COMMAND_YIELD_MS
 }
 
-fn is_default_max_output_chars(max_output_chars: &usize) -> bool {
-    *max_output_chars == DEFAULT_COMMAND_MAX_OUTPUT_CHARS
-}
-
 fn is_default_stdin_yield_ms(yield_time_ms: &u64) -> bool {
     *yield_time_ms == DEFAULT_STDIN_YIELD_MS
 }
@@ -72,7 +64,6 @@ pub(super) fn exec_command_parameters() -> serde_json::Value {
     schema["properties"]["shell"]["default"] = json!(default_command_shell());
     schema["properties"]["timeoutMs"]["default"] = json!(DEFAULT_COMMAND_TIMEOUT_MS);
     schema["properties"]["yieldTimeMs"]["default"] = json!(DEFAULT_COMMAND_YIELD_MS);
-    schema["properties"]["maxOutputChars"]["default"] = json!(DEFAULT_COMMAND_MAX_OUTPUT_CHARS);
     schema
 }
 
@@ -88,7 +79,7 @@ pub(super) fn write_stdin_parameters() -> serde_json::Value {
 pub(crate) struct ExecCommandArgs {
     /// Shell command to execute.
     pub(crate) cmd: String,
-    /// Working directory. Absolute paths and `~` may be anywhere on the machine; relative paths resolve from the project root. Defaults to `.`.
+    /// Working directory for this cmd. Absolute paths and `~` may be anywhere on the machine; relative paths resolve from the project root. Defaults to `.`.
     #[serde(
         default = "default_workdir",
         skip_serializing_if = "is_default_workdir"
@@ -118,19 +109,11 @@ pub(crate) struct ExecCommandArgs {
     )]
     #[schemars(default = "default_command_yield_ms")]
     pub(crate) yield_time_ms: u64,
-    /// Maximum combined output characters returned to the model.
-    #[serde(
-        rename = "maxOutputChars",
-        default = "default_max_output_chars",
-        skip_serializing_if = "is_default_max_output_chars"
-    )]
-    #[schemars(default = "default_max_output_chars")]
-    pub(crate) max_output_chars: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct WriteStdinArgs {
-    /// Running command session identifier returned by exec_command.
+    /// Command session identifier returned by exec_command. Completed results remain available until this agent run ends.
     #[serde(rename = "sessionId")]
     pub(crate) session_id: String,
     /// Characters to write to the command's standard input.
@@ -187,7 +170,7 @@ impl rig::tool::Tool for ExecCommandTool {
                         &args.shell,
                         args.timeout_ms,
                         args.yield_time_ms,
-                        args.max_output_chars,
+                        DEFAULT_COMMAND_MAX_OUTPUT_CHARS,
                     )
                     .await
                     .map_err(tool_error)?;
@@ -205,7 +188,7 @@ impl rig::tool::Tool for WriteStdinTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Write input to a running exec_command session, poll incremental output, wait for completion, or terminate the process tree."
+        "Write input to an exec_command session, poll incremental output, wait for completion, or terminate the process tree."
             .to_string()
     }
 
@@ -242,5 +225,43 @@ impl rig::tool::Tool for WriteStdinTool {
             },
         )
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exec_command_schema_does_not_expose_the_preview_limit() {
+        let schema = exec_command_parameters();
+        let properties = schema["properties"].as_object().unwrap();
+        assert_eq!(properties.len(), 5);
+        assert!(!properties.contains_key("maxOutputChars"));
+        assert!(
+            properties["workdir"]["description"]
+                .as_str()
+                .unwrap()
+                .starts_with("Working directory for this cmd")
+        );
+        assert_eq!(schema["required"], json!(["cmd"]));
+    }
+
+    #[test]
+    fn stdin_schema_still_requires_the_session_id() {
+        let schema = write_stdin_parameters();
+        assert_eq!(schema["required"], json!(["sessionId"]));
+        assert_eq!(schema["properties"]["sessionId"]["type"], "string");
+        assert!(serde_json::from_value::<WriteStdinArgs>(json!({})).is_err());
+    }
+
+    #[test]
+    fn old_preview_limits_are_not_replayed_as_tool_arguments() {
+        let args: ExecCommandArgs = serde_json::from_value(json!({
+            "cmd": "pwd",
+            "maxOutputChars": 1,
+        }))
+        .unwrap();
+        assert_eq!(serde_json::to_value(args).unwrap(), json!({"cmd": "pwd"}));
     }
 }
