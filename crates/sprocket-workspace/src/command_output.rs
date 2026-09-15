@@ -42,14 +42,7 @@ struct OutputEvent<'a> {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OutputPreview {
     pub output: String,
-    pub truncated: bool,
-    pub head_chars: usize,
-    pub output_bytes: u64,
-    pub omitted_bytes: u64,
-    pub omitted_lines: u64,
-    pub encoding_loss_bytes: u64,
-    pub total_output_bytes: u64,
-    pub log_path: String,
+    pub complete_log_path: String,
     pub events_path: String,
 }
 
@@ -59,7 +52,6 @@ pub(crate) struct CapturedOutput {
     log_path: String,
     events_path: String,
     sequence: u64,
-    total_bytes: u64,
     log_bytes: u64,
     limits: CommandOutputLimits,
     pending_utf8: Vec<u8>,
@@ -111,7 +103,6 @@ impl CapturedOutput {
             log_path,
             events_path,
             sequence: 0,
-            total_bytes: 0,
             log_bytes: 0,
             limits,
             pending_utf8: Vec::new(),
@@ -164,7 +155,6 @@ impl CapturedOutput {
             .await
             .context("failed to flush command output events")?;
         self.sequence += 1;
-        self.total_bytes += bytes.len() as u64;
         self.log_bytes += next_bytes;
         self.decode(bytes, false);
         Ok(())
@@ -190,8 +180,7 @@ impl CapturedOutput {
                         None if final_chunk => remaining.len(),
                         None => break,
                     };
-                    self.preview.push('\u{fffd}', invalid as u64);
-                    self.preview.encoding_loss_bytes += invalid as u64;
+                    self.preview.push('\u{fffd}');
                     remaining = &remaining[invalid..];
                 }
             }
@@ -220,20 +209,8 @@ impl CapturedOutput {
         let max_chars = self.preview.max_chars;
         let preview = std::mem::replace(&mut self.preview, PreviewBuffer::new(max_chars));
         OutputPreview {
-            output: preview
-                .head
-                .iter()
-                .chain(preview.tail.iter())
-                .map(|unit| unit.character)
-                .collect(),
-            truncated: preview.omitted_bytes != 0,
-            head_chars: preview.head.len(),
-            output_bytes: preview.output_bytes,
-            omitted_bytes: preview.omitted_bytes,
-            omitted_lines: preview.omitted_lines,
-            encoding_loss_bytes: preview.encoding_loss_bytes,
-            total_output_bytes: self.total_bytes,
-            log_path: self.log_path.clone(),
+            output: preview.render(),
+            complete_log_path: self.log_path.clone(),
             events_path: self.events_path.clone(),
         }
     }
@@ -251,19 +228,12 @@ async fn ensure_disk_reserve(path: PathBuf, next_bytes: u64, reserve: u64) -> Re
     Ok(())
 }
 
-struct PreviewCharacter {
-    character: char,
-    bytes: u64,
-}
-
 struct PreviewBuffer {
     max_chars: usize,
-    head: Vec<PreviewCharacter>,
-    tail: VecDeque<PreviewCharacter>,
-    output_bytes: u64,
-    omitted_bytes: u64,
-    omitted_lines: u64,
-    encoding_loss_bytes: u64,
+    head: Vec<char>,
+    tail: VecDeque<char>,
+    omitted_newlines: u64,
+    last_omitted: Option<char>,
 }
 
 impl PreviewBuffer {
@@ -272,30 +242,55 @@ impl PreviewBuffer {
             max_chars,
             head: Vec::new(),
             tail: VecDeque::new(),
-            output_bytes: 0,
-            omitted_bytes: 0,
-            omitted_lines: 0,
-            encoding_loss_bytes: 0,
+            omitted_newlines: 0,
+            last_omitted: None,
         }
     }
 
     fn push_text(&mut self, text: &str) {
         for character in text.chars() {
-            self.push(character, character.len_utf8() as u64);
+            self.push(character);
         }
     }
 
-    fn push(&mut self, character: char, bytes: u64) {
-        self.output_bytes += bytes;
-        let unit = PreviewCharacter { character, bytes };
+    fn push(&mut self, character: char) {
         if self.head.len() < self.max_chars.div_ceil(2) {
-            self.head.push(unit);
+            self.head.push(character);
         } else {
-            self.tail.push_back(unit);
+            self.tail.push_back(character);
             if self.tail.len() > self.max_chars / 2 {
                 let omitted = self.tail.pop_front().unwrap();
-                self.omitted_bytes += omitted.bytes;
-                self.omitted_lines += u64::from(omitted.character == '\n');
+                self.omitted_newlines += u64::from(omitted == '\n');
+                self.last_omitted = Some(omitted);
+            }
+        }
+    }
+
+    fn render(mut self) -> String {
+        if self.last_omitted.is_none() {
+            return self.head.into_iter().chain(self.tail).collect();
+        }
+        loop {
+            let lines = self.omitted_newlines + u64::from(self.last_omitted != Some('\n'));
+            let noun = if lines == 1 { "line" } else { "lines" };
+            let marker = format!("\n<{lines} {noun} omitted>\n");
+            let retained = self.head.len() + self.tail.len();
+            // A tiny internal limit must not cut the omission notice itself.
+            if retained == 0 || retained + marker.len() <= self.max_chars {
+                return self
+                    .head
+                    .into_iter()
+                    .chain(marker.chars())
+                    .chain(self.tail)
+                    .collect();
+            }
+            if self.head.len() > self.tail.len() {
+                let omitted = self.head.pop().unwrap();
+                self.omitted_newlines += u64::from(omitted == '\n');
+            } else {
+                let omitted = self.tail.pop_front().unwrap();
+                self.omitted_newlines += u64::from(omitted == '\n');
+                self.last_omitted = Some(omitted);
             }
         }
     }

@@ -142,7 +142,7 @@ impl CommandSessionManager {
         let session = Arc::new(CommandSession {
             id: session_id.clone(),
             command: command.to_string(),
-            cwd: cwd.to_string_lossy().to_string(),
+            workdir: cwd.to_string_lossy().to_string(),
             control,
             stdin,
             completion,
@@ -152,10 +152,15 @@ impl CommandSessionManager {
         self.sessions
             .lock()
             .await
-            .insert(session_id, session.clone());
+            .insert(session_id.clone(), session.clone());
 
-        self.observe_session(session, cancellation, yield_time_ms)
-            .await
+        let result = self
+            .observe_session(session, cancellation, yield_time_ms)
+            .await?;
+        Ok(CommandExecOutput {
+            session_id: result.running.then_some(session_id),
+            result,
+        })
     }
 
     pub async fn write_stdin(
@@ -165,7 +170,7 @@ impl CommandSessionManager {
         chars: &str,
         terminate: bool,
         yield_time_ms: u64,
-    ) -> Result<CommandExecOutput> {
+    ) -> Result<CommandStdinOutput> {
         let session = self
             .sessions
             .lock()
@@ -174,9 +179,33 @@ impl CommandSessionManager {
             .cloned()
             .ok_or_else(|| anyhow!("unknown command session: {session_id}"))?;
 
+        let result = self
+            .write_session(
+                session.clone(),
+                cancellation,
+                chars,
+                terminate,
+                yield_time_ms,
+            )
+            .await?;
+        Ok(CommandStdinOutput {
+            command: session.command.clone(),
+            workdir: session.workdir.clone(),
+            result,
+        })
+    }
+
+    async fn write_session(
+        &self,
+        session: Arc<CommandSession>,
+        cancellation: WorkspaceCancellation,
+        chars: &str,
+        terminate: bool,
+        yield_time_ms: u64,
+    ) -> Result<CommandOutput> {
         if let Err(error) = cancellation.ensure_active() {
             let _ = session.terminate();
-            self.sessions.lock().await.remove(session_id);
+            self.sessions.lock().await.remove(&session.id);
             return Err(error);
         }
 
@@ -238,7 +267,7 @@ impl CommandSessionManager {
         session: Arc<CommandSession>,
         cancellation: WorkspaceCancellation,
         yield_time_ms: u64,
-    ) -> Result<CommandExecOutput> {
+    ) -> Result<CommandOutput> {
         let completion = match wait_for_completion(
             &session,
             &cancellation,
@@ -262,7 +291,7 @@ impl CommandSessionManager {
         cancellation: WorkspaceCancellation,
         yield_time_ms: u64,
         write_error: anyhow::Error,
-    ) -> Result<CommandExecOutput> {
+    ) -> Result<CommandOutput> {
         match wait_for_completion(
             &session,
             &cancellation,
@@ -293,12 +322,12 @@ impl CommandSessionManager {
 struct CommandSession {
     id: String,
     command: String,
-    cwd: String,
+    workdir: String,
     control: mpsc::UnboundedSender<CommandControl>,
     stdin: mpsc::Sender<StdinRequest>,
     completion: watch::Receiver<Option<CommandCompletion>>,
     output: Arc<Mutex<CapturedOutput>>,
-    final_output: Mutex<Option<CommandExecOutput>>,
+    final_output: Mutex<Option<CommandOutput>>,
 }
 
 impl CommandSession {
@@ -325,7 +354,7 @@ impl CommandSession {
             .map_err(|_| anyhow!("command session {} is no longer running", self.id))
     }
 
-    async fn output(&self, completion: Option<CommandCompletion>) -> CommandExecOutput {
+    async fn output(&self, completion: Option<CommandCompletion>) -> CommandOutput {
         self.output_after_write(completion, None).await
     }
 
@@ -333,7 +362,7 @@ impl CommandSession {
         &self,
         completion: Option<CommandCompletion>,
         write_error: Option<String>,
-    ) -> CommandExecOutput {
+    ) -> CommandOutput {
         let mut final_output = self.final_output.lock().await;
         let mut output = match final_output.as_ref() {
             Some(output) => output.clone(),
@@ -352,7 +381,7 @@ impl CommandSession {
         output
     }
 
-    async fn snapshot_output(&self, completion: Option<CommandCompletion>) -> CommandExecOutput {
+    async fn snapshot_output(&self, completion: Option<CommandCompletion>) -> CommandOutput {
         let mut capture = self.output.lock().await;
         // Completion can arrive while this observer waits for the capture lock.
         let completion = completion.or_else(|| self.completion.borrow().clone());
@@ -360,23 +389,13 @@ impl CommandSession {
         let running = completion.is_none();
         let completion = completion.unwrap_or_default();
 
-        CommandExecOutput {
-            command: self.command.clone(),
-            cwd: self.cwd.clone(),
-            session_id: running.then(|| self.id.clone()),
+        CommandOutput {
             exit_code: completion.exit_code,
             success: completion.success,
             running,
             timed_out: completion.timed_out,
             output: preview.output,
-            truncated: preview.truncated,
-            head_chars: preview.head_chars,
-            output_bytes: preview.output_bytes,
-            omitted_bytes: preview.omitted_bytes,
-            omitted_lines: preview.omitted_lines,
-            encoding_loss_bytes: preview.encoding_loss_bytes,
-            total_output_bytes: preview.total_output_bytes,
-            log_path: preview.log_path,
+            complete_log_path: preview.complete_log_path,
             events_path: preview.events_path,
             error: completion.error,
         }
@@ -665,24 +684,31 @@ fn build_shell_command(command: &str, shell: &str) -> Command {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommandExecOutput {
-    pub command: String,
-    pub cwd: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    #[serde(flatten)]
+    pub result: CommandOutput,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandStdinOutput {
+    pub command: String,
+    pub workdir: String,
+    #[serde(flatten)]
+    pub result: CommandOutput,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
     pub success: bool,
     pub running: bool,
     pub timed_out: bool,
     pub output: String,
-    pub truncated: bool,
-    pub head_chars: usize,
-    pub output_bytes: u64,
-    pub omitted_bytes: u64,
-    pub omitted_lines: u64,
-    pub encoding_loss_bytes: u64,
-    pub total_output_bytes: u64,
-    pub log_path: String,
+    pub complete_log_path: String,
     pub events_path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -713,7 +739,89 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(output.output, "starting\nfailed\ncleaning up\n");
+        assert_eq!(output.result.output, "starting\nfailed\ncleaning up\n");
+        assert_eq!(
+            serde_json::to_value(&output).unwrap(),
+            serde_json::json!({
+                "exitCode": 0,
+                "success": true,
+                "running": false,
+                "timedOut": false,
+                "output": "starting\nfailed\ncleaning up\n",
+                "completeLogPath": output.result.complete_log_path,
+                "eventsPath": output.result.events_path,
+            })
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn exec_and_stdin_have_distinct_flat_output_contracts() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+        let command = "read value; printf '%s' \"$value\"";
+        let started = sessions
+            .exec_command(
+                WorkspaceCancellation::new(),
+                command,
+                ".",
+                &default_command_shell(),
+                5_000,
+                0,
+                20_000,
+            )
+            .await
+            .unwrap();
+        let id = started.session_id.as_deref().unwrap();
+        let log_path = &started.result.complete_log_path;
+        let events_path = &started.result.events_path;
+        assert_eq!(
+            serde_json::to_value(&started).unwrap(),
+            serde_json::json!({
+                "sessionId": id,
+                "success": false,
+                "running": true,
+                "timedOut": false,
+                "output": "",
+                "completeLogPath": log_path,
+                "eventsPath": events_path,
+            })
+        );
+        let running = sessions
+            .write_stdin(WorkspaceCancellation::new(), id, "", false, 0)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(running).unwrap(),
+            serde_json::json!({
+                "command": command,
+                "workdir": root.to_string_lossy(),
+                "success": false,
+                "running": true,
+                "timedOut": false,
+                "output": "",
+                "completeLogPath": log_path,
+                "eventsPath": events_path,
+            })
+        );
+        let finished = sessions
+            .write_stdin(WorkspaceCancellation::new(), id, "done\n", false, 5_000)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(finished).unwrap(),
+            serde_json::json!({
+                "command": command,
+                "workdir": root.to_string_lossy(),
+                "exitCode": 0,
+                "success": true,
+                "running": false,
+                "timedOut": false,
+                "output": "done",
+                "completeLogPath": log_path,
+                "eventsPath": events_path,
+            })
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -724,21 +832,21 @@ mod tests {
         let output = sessions
             .exec_command(
                 WorkspaceCancellation::new(),
-                "printf abcdefghij",
+                "printf abcdefghijklmnopqrstuvwxyz",
                 ".",
                 &default_command_shell(),
                 5_000,
                 5_000,
-                4,
+                22,
             )
             .await
             .unwrap();
 
-        assert_eq!(output.output, "abij");
-        assert!(output.truncated);
-        assert_eq!(output.output_bytes, 10);
-        assert_eq!(output.omitted_bytes, 6);
-        assert_eq!(fs::read(&output.log_path).unwrap(), b"abcdefghij");
+        assert_eq!(output.result.output, "ab\n<1 line omitted>\nyz");
+        assert_eq!(
+            fs::read(&output.result.complete_log_path).unwrap(),
+            b"abcdefghijklmnopqrstuvwxyz"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -754,18 +862,16 @@ mod tests {
                 &default_command_shell(),
                 20_000,
                 20_000,
-                8,
+                26,
             )
             .await
             .unwrap();
 
-        assert!(output.success, "{output:?}");
-        assert_eq!(output.output, "headtail");
-        assert_eq!(output.output_bytes, 2_100_008);
-        assert_eq!(output.omitted_bytes, 2_100_000);
+        assert!(output.result.success, "{output:?}");
+        assert_eq!(output.result.output, "head\n<1 line omitted>\ntail");
         sessions.stop_all().await;
         drop(sessions);
-        let bytes = fs::read(output.log_path).unwrap();
+        let bytes = fs::read(output.result.complete_log_path).unwrap();
         assert_eq!(bytes.len(), 2_100_008);
         assert!(bytes.starts_with(b"head"));
         assert!(bytes[4..2_100_004].iter().all(|byte| *byte == b'x'));
@@ -796,7 +902,7 @@ mod tests {
                 .await
                 .unwrap();
             loop {
-                if output.total_output_bytes == 10 {
+                if !output.result.output.is_empty() {
                     break output;
                 }
                 tokio::time::sleep(Duration::from_millis(5)).await;
@@ -808,18 +914,22 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(first.output, "abij");
-        assert_eq!(fs::read(&first.log_path).unwrap(), b"abcdefghij");
+        assert_eq!(first.result.output, "\n<1 line omitted>\n");
+        assert_eq!(
+            fs::read(&first.result.complete_log_path).unwrap(),
+            b"abcdefghij"
+        );
         let finished = sessions
             .write_stdin(WorkspaceCancellation::new(), &id, "go\n", false, 5_000)
             .await
             .unwrap();
-        assert_eq!(finished.output, "klst");
-        assert_eq!(finished.output_bytes, 10);
-        assert_eq!(finished.total_output_bytes, 20);
-        assert_eq!(finished.log_path, first.log_path);
+        assert_eq!(finished.result.output, "\n<1 line omitted>\n");
         assert_eq!(
-            fs::read(&finished.log_path).unwrap(),
+            finished.result.complete_log_path,
+            first.result.complete_log_path
+        );
+        assert_eq!(
+            fs::read(&finished.result.complete_log_path).unwrap(),
             b"abcdefghijklmnopqrst"
         );
         fs::remove_dir_all(root).unwrap();
@@ -893,11 +1003,15 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(!output.success);
-        assert!(!output.running);
-        assert!(!output.timed_out);
-        assert!(output.error.unwrap().contains("log quota"));
-        assert!(fs::read(output.log_path).unwrap().is_empty());
+        assert!(!output.result.success);
+        assert!(!output.result.running);
+        assert!(!output.result.timed_out);
+        assert!(output.result.error.unwrap().contains("log quota"));
+        assert!(
+            fs::read(output.result.complete_log_path)
+                .unwrap()
+                .is_empty()
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -968,15 +1082,15 @@ mod tests {
             sessions.write_stdin(WorkspaceCancellation::new(), &id, "", false, 5_000),
         );
         let finished = finished.unwrap();
-        assert_eq!(concurrent.unwrap().output, finished.output);
+        assert_eq!(concurrent.unwrap().result.output, finished.result.output);
         let repeated = sessions
             .write_stdin(WorkspaceCancellation::new(), &id, "", false, 0)
             .await
             .expect("completed results must remain available to later observers");
 
-        assert!(!repeated.running);
-        assert_eq!(repeated.output, finished.output);
-        assert_eq!(repeated.exit_code, finished.exit_code);
+        assert!(!repeated.result.running);
+        assert_eq!(repeated.result.output, finished.result.output);
+        assert_eq!(repeated.result.exit_code, finished.result.exit_code);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1024,8 +1138,13 @@ mod tests {
             .await
             .expect("command should succeed");
 
-        assert!(output.success);
-        assert!(output.output.contains(root.to_string_lossy().as_ref()));
+        assert!(output.result.success);
+        assert!(
+            output
+                .result
+                .output
+                .contains(root.to_string_lossy().as_ref())
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1047,8 +1166,8 @@ mod tests {
             .await
             .expect("outside workdir should be allowed");
 
-        assert!(output.success);
-        assert_eq!(output.cwd, parent.to_string_lossy());
+        assert!(output.result.success);
+        assert_eq!(output.result.output.trim(), parent.to_string_lossy());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1069,7 +1188,7 @@ mod tests {
             .await
             .expect("command should start");
 
-        assert!(started.running);
+        assert!(started.result.running);
         let finished = sessions
             .write_stdin(
                 WorkspaceCancellation::new(),
@@ -1081,9 +1200,12 @@ mod tests {
             .await
             .expect("command should finish");
 
-        assert!(!finished.running);
-        assert!(finished.success);
-        assert_eq!(format!("{}{}", started.output, finished.output), "startend");
+        assert!(!finished.result.running);
+        assert!(finished.result.success);
+        assert_eq!(
+            format!("{}{}", started.result.output, finished.result.output),
+            "startend"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1115,8 +1237,8 @@ mod tests {
             .await
             .expect("input should be delivered");
 
-        assert!(finished.success);
-        assert_eq!(finished.output, "got:hello");
+        assert!(finished.result.success);
+        assert_eq!(finished.result.output, "got:hello");
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1151,11 +1273,12 @@ mod tests {
         .expect("stdin backpressure must not block the command timeout")
         .expect("timed out command should return a result");
 
-        assert!(finished.timed_out);
-        assert!(!finished.success);
-        assert!(!finished.running);
+        assert!(finished.result.timed_out);
+        assert!(!finished.result.success);
+        assert!(!finished.result.running);
         assert!(
             finished
+                .result
                 .error
                 .as_deref()
                 .is_some_and(|error| error.contains("failed to write command stdin"))
@@ -1192,11 +1315,12 @@ mod tests {
             .await
             .expect("completed command should return its result");
 
-        assert_eq!(finished.exit_code, Some(0));
-        assert!(!finished.success);
-        assert!(!finished.running);
+        assert_eq!(finished.result.exit_code, Some(0));
+        assert!(!finished.result.success);
+        assert!(!finished.result.running);
         assert!(
             finished
+                .result
                 .error
                 .as_deref()
                 .is_some_and(|error| error.contains("failed to write command stdin"))
@@ -1276,8 +1400,8 @@ mod tests {
             .await
             .expect("command should terminate");
 
-        assert!(!finished.running);
-        assert!(!finished.success);
+        assert!(!finished.result.running);
+        assert!(!finished.result.success);
         tokio::time::sleep(Duration::from_millis(300)).await;
         assert!(!root.join("leaked.txt").exists());
         fs::remove_dir_all(root).unwrap();
@@ -1325,9 +1449,9 @@ mod tests {
             .await
             .expect("timed out command should return a result");
 
-        assert!(!output.running);
-        assert!(!output.success);
-        assert!(output.timed_out);
+        assert!(!output.result.running);
+        assert!(!output.result.success);
+        assert!(output.result.timed_out);
         tokio::time::sleep(Duration::from_millis(300)).await;
         assert!(!root.join("leaked.txt").exists());
         fs::remove_dir_all(root).unwrap();

@@ -79,7 +79,7 @@ pub(super) fn write_stdin_parameters() -> serde_json::Value {
 pub(crate) struct ExecCommandArgs {
     /// Shell command to execute.
     pub(crate) cmd: String,
-    /// Working directory. Absolute paths and `~` may be anywhere on the machine; relative paths resolve from the project root. Defaults to `.`.
+    /// Working directory for this cmd. Absolute paths and `~` may be anywhere on the machine; relative paths resolve from the project root. Defaults to `.`.
     #[serde(
         default = "default_workdir",
         skip_serializing_if = "is_default_workdir"
@@ -238,7 +238,21 @@ mod tests {
         let properties = schema["properties"].as_object().unwrap();
         assert_eq!(properties.len(), 5);
         assert!(!properties.contains_key("maxOutputChars"));
+        assert!(
+            properties["workdir"]["description"]
+                .as_str()
+                .unwrap()
+                .starts_with("Working directory for this cmd")
+        );
         assert_eq!(schema["required"], json!(["cmd"]));
+    }
+
+    #[test]
+    fn stdin_schema_still_requires_the_session_id() {
+        let schema = write_stdin_parameters();
+        assert_eq!(schema["required"], json!(["sessionId"]));
+        assert_eq!(schema["properties"]["sessionId"]["type"], "string");
+        assert!(serde_json::from_value::<WriteStdinArgs>(json!({})).is_err());
     }
 
     #[test]

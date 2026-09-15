@@ -17,7 +17,6 @@ async fn log_quota_counts_both_files_and_rejects_a_chunk_before_writing() {
     output.finish().await.unwrap();
     let preview = output.take_preview();
     assert_eq!(preview.output, "ok");
-    assert_eq!(preview.total_output_bytes, 2);
     assert_eq!(std::fs::read(&output.log_path).unwrap(), log);
     assert_eq!(std::fs::read(&output.events_path).unwrap(), events);
 }
@@ -38,27 +37,88 @@ async fn free_space_reserve_is_checked_again_before_appending() {
 }
 
 #[tokio::test]
-async fn preview_counts_omitted_raw_bytes_and_newlines() {
+async fn preview_marks_omitted_lines_and_preserves_the_full_log() {
     let root = tempfile::tempdir().unwrap();
-    let mut output = CapturedOutput::create(root.path(), 4).await.unwrap();
+    let mut output = CapturedOutput::create(root.path(), 40).await.unwrap();
+    let text = "a\n".repeat(50);
     output
-        .append(OutputChannel::Stdout, "aé\n中\nz!".as_bytes())
+        .append(OutputChannel::Stdout, text.as_bytes())
         .await
         .unwrap();
     output.finish().await.unwrap();
     let preview = output.take_preview();
-    assert_eq!(preview.output, "aéz!");
-    assert_eq!(preview.head_chars, 2);
-    assert_eq!(preview.output_bytes, 10);
-    assert_eq!(preview.total_output_bytes, 10);
-    assert_eq!(preview.omitted_bytes, 5);
-    assert_eq!(preview.omitted_lines, 2);
-    assert_eq!(preview.encoding_loss_bytes, 0);
-    assert!(preview.truncated);
     assert_eq!(
-        std::fs::read(&preview.log_path).unwrap(),
-        "aé\n中\nz!".as_bytes()
+        preview.output,
+        format!(
+            "{}\n<40 lines omitted>\n{}",
+            "a\n".repeat(5),
+            "a\n".repeat(5)
+        )
     );
+    assert_eq!(preview.output.chars().count(), 40);
+    assert_eq!(
+        std::fs::read(&preview.complete_log_path).unwrap(),
+        text.as_bytes()
+    );
+}
+
+#[test]
+fn untruncated_output_is_unchanged_at_the_limit() {
+    for text in ["", "short\n", &"é".repeat(30)] {
+        let mut preview = PreviewBuffer::new(30);
+        preview.push_text(text);
+        assert_eq!(preview.render(), text);
+    }
+}
+
+#[test]
+fn a_single_character_overflow_makes_room_for_the_whole_marker() {
+    let mut preview = PreviewBuffer::new(30);
+    preview.push_text(&format!("{}b", "a".repeat(30)));
+    assert_eq!(preview.render(), "aaaaaa\n<1 line omitted>\naaaaab");
+}
+
+#[test]
+fn omission_count_includes_characters_removed_to_fit_a_longer_count() {
+    let mut preview = PreviewBuffer::new(40);
+    preview.push_text(&"\n".repeat(120));
+    let output = preview.render();
+    assert_eq!(
+        output,
+        format!(
+            "{}\n<101 lines omitted>\n{}",
+            "\n".repeat(10),
+            "\n".repeat(9)
+        )
+    );
+    assert_eq!(output.chars().count(), 40);
+}
+
+#[test]
+fn unicode_preview_limits_count_characters_including_the_marker() {
+    let mut preview = PreviewBuffer::new(30);
+    preview.push_text(&"é".repeat(100));
+    let output = preview.render();
+    assert_eq!(
+        output,
+        format!("{}\n<1 line omitted>\n{}", "é".repeat(6), "é".repeat(6))
+    );
+    assert_eq!(output.chars().count(), 30);
+}
+
+#[tokio::test]
+async fn each_poll_gets_its_own_omission_notice() {
+    let root = tempfile::tempdir().unwrap();
+    let mut output = CapturedOutput::create(root.path(), 40).await.unwrap();
+    output
+        .append(OutputChannel::Stdout, &[b'\n'; 120])
+        .await
+        .unwrap();
+    assert!(output.take_preview().output.contains("<101 lines omitted>"));
+    output.append(OutputChannel::Stdout, b"next").await.unwrap();
+    assert_eq!(output.take_preview().output, "next");
+    assert_eq!(output.take_preview().output, "");
+    output.finish().await.unwrap();
 }
 
 #[tokio::test]
@@ -71,9 +131,6 @@ async fn utf8_split_across_reads_and_polls_is_not_replaced() {
         .unwrap();
     let first = output.take_preview();
     assert_eq!(first.output, "a");
-    assert_eq!(first.encoding_loss_bytes, 0);
-    assert_eq!(first.output_bytes, 1);
-    assert_eq!(first.total_output_bytes, 3);
     output
         .append(OutputChannel::Stdout, &[0x98, 0x80, b'b'])
         .await
@@ -81,25 +138,23 @@ async fn utf8_split_across_reads_and_polls_is_not_replaced() {
     output.finish().await.unwrap();
     let second = output.take_preview();
     assert_eq!(second.output, "😀b");
-    assert_eq!(second.encoding_loss_bytes, 0);
-    assert_eq!(first.output_bytes + second.output_bytes, 6);
-    assert_eq!(second.total_output_bytes, 6);
+    assert_eq!(
+        std::fs::read(second.complete_log_path).unwrap(),
+        "a😀b".as_bytes()
+    );
 }
 
 #[tokio::test]
 async fn invalid_bytes_and_unfinished_utf8_are_preserved_in_logs() {
     let root = tempfile::tempdir().unwrap();
     let bytes = [b'a', 0xff, 0xe2, 0x82];
-    let mut output = CapturedOutput::create(root.path(), 2).await.unwrap();
+    let mut output = CapturedOutput::create(root.path(), 20).await.unwrap();
     output.append(OutputChannel::Stderr, &bytes).await.unwrap();
     output.finish().await.unwrap();
     let preview = output.take_preview();
-    assert_eq!(preview.output, "a�");
-    assert_eq!(preview.output_bytes, 4);
-    assert_eq!(preview.encoding_loss_bytes, 3);
-    assert_eq!(preview.omitted_bytes, 1);
+    assert_eq!(preview.output, "a��");
     drop(output);
-    assert_eq!(std::fs::read(&preview.log_path).unwrap(), bytes);
+    assert_eq!(std::fs::read(&preview.complete_log_path).unwrap(), bytes);
     let events = std::fs::read_to_string(preview.events_path).unwrap();
     let event: serde_json::Value = serde_json::from_str(events.trim()).unwrap();
     assert_eq!(event["bytes"], serde_json::json!(bytes));
@@ -132,11 +187,11 @@ async fn events_record_observed_channel_order_without_inserted_newlines() {
         bytes.extend(serde_json::from_value::<Vec<u8>>(event["bytes"].clone()).unwrap());
     }
     assert_eq!(events[1]["channel"], "stderr");
-    assert_eq!(bytes, std::fs::read(&preview.log_path).unwrap());
+    assert_eq!(bytes, std::fs::read(&preview.complete_log_path).unwrap());
 }
 
 #[tokio::test]
-async fn zero_preview_limit_still_spools_every_byte() {
+async fn zero_preview_limit_keeps_the_notice_and_spools_every_byte() {
     let root = tempfile::tempdir().unwrap();
     let mut output = CapturedOutput::create(root.path(), 0).await.unwrap();
     output
@@ -145,12 +200,11 @@ async fn zero_preview_limit_still_spools_every_byte() {
         .unwrap();
     output.finish().await.unwrap();
     let preview = output.take_preview();
-    assert!(preview.output.is_empty());
-    assert!(preview.truncated);
-    assert_eq!(preview.output_bytes, 7);
-    assert_eq!(preview.omitted_bytes, 7);
-    assert_eq!(preview.omitted_lines, 1);
-    assert_eq!(std::fs::read(preview.log_path).unwrap(), b"one\ntwo");
+    assert_eq!(preview.output, "\n<2 lines omitted>\n");
+    assert_eq!(
+        std::fs::read(preview.complete_log_path).unwrap(),
+        b"one\ntwo"
+    );
 }
 
 #[test]
@@ -158,11 +212,15 @@ fn preview_memory_is_bounded_for_large_increments() {
     for limit in [0, 1, 2, 3, 100] {
         let mut buffer = PreviewBuffer::new(limit);
         for _ in 0..2_000_000 {
-            buffer.push('x', 1);
+            buffer.push('x');
         }
         assert_eq!(buffer.head.len() + buffer.tail.len(), limit);
-        assert_eq!(buffer.output_bytes, 2_000_000);
-        assert_eq!(buffer.omitted_bytes, 2_000_000 - limit as u64);
+        let preview = buffer.render();
+        assert!(preview.contains("<1 line omitted>"));
+        assert_eq!(
+            preview.chars().count(),
+            limit.max("\n<1 line omitted>\n".len())
+        );
     }
 }
 
@@ -173,7 +231,7 @@ async fn log_directory_is_private() {
     let root = tempfile::tempdir().unwrap();
     let mut output = CapturedOutput::create(root.path(), 10).await.unwrap();
     let preview = output.take_preview();
-    let directory = Path::new(&preview.log_path).parent().unwrap();
+    let directory = Path::new(&preview.complete_log_path).parent().unwrap();
     assert_eq!(
         std::fs::metadata(directory).unwrap().permissions().mode() & 0o777,
         0o700
@@ -196,7 +254,6 @@ async fn disk_write_failure_does_not_advance_preview() {
         assert!(output.append(OutputChannel::Stdout, b"lost").await.is_err());
         let preview = output.take_preview();
         assert_eq!(preview.output, "");
-        assert_eq!(preview.total_output_bytes, 0);
         assert!(output.finish().await.is_err());
         assert!(output.log.is_none());
         assert!(output.events.is_none());
