@@ -554,19 +554,6 @@
 		});
 	});
 
-	$effect(() => {
-		artifactPanel.trackArtifactChanges();
-	});
-
-	$effect(() => {
-		artifactPanel.trackBrowserActivity({
-			threadId: currentThreadId,
-			lastUsedRunId: browserLiveViewQuery.data?.lastUsedRunId,
-			activeRunId: isRunning ? (runState?.runId ?? null) : null,
-			loaded: browserLiveViewQuery.data !== undefined
-		});
-	});
-
 	const currentComposerScope = $derived(getComposerScope(currentThreadId, currentProjectPath));
 	const currentRecoveredSubmission = $derived.by(() => {
 		const userId = getCurrentUserId();

@@ -35,28 +35,6 @@ export const EMPTY_ARTIFACT_WATCH_STATE: ArtifactWatchState = {
 	error: null
 };
 
-/** Revision used to detect creates/updates for auto-opening the panel. */
-export type ArtifactRevision = {
-	id: string;
-	/** Cloud revision when present; local file writes may land before this bumps. */
-	currentVersion: number;
-	/** Rank key among concurrent changes; not part of equality. */
-	updatedAt: number;
-	/** Local file body; compared so edits are visible before cloud ack. */
-	content: string;
-	/** A retargeted path counts as a change even when content is identical. */
-	localPath?: string;
-};
-
-/**
- * Diffs the latest artifact revisions against a prior snapshot.
- * When `previous` is null (first observation for a scope), only seeds; never reports a change.
- */
-export type ArtifactRevisionWatch = {
-	revisions: Map<string, ArtifactRevision>;
-	changedId: string | null;
-};
-
 export function artifactWatchScopeKey(scope: ArtifactWatchScope): string {
 	return [scope.userId, scope.repositoryKey, scope.workspacePath, scope.threadId ?? ''].join('\0');
 }
@@ -83,45 +61,6 @@ export function artifactEntryFromLocal(artifact: LocalArtifact): ArtifactEntry {
 		scope: artifact.scope,
 		localError: artifact.localError
 	};
-}
-
-export function artifactRevisionFromLocal(artifact: LocalArtifact): ArtifactRevision {
-	return {
-		id: artifact._id,
-		currentVersion: artifact.revision,
-		updatedAt: artifact.updatedAt,
-		content: artifact.content,
-		localPath: artifact.localPath
-	};
-}
-
-function artifactIdentityChanged(prior: ArtifactRevision, artifact: ArtifactRevision) {
-	return prior.content !== artifact.content || prior.localPath !== artifact.localPath;
-}
-
-export function nextArtifactRevisionWatch(
-	previous: ReadonlyMap<string, ArtifactRevision> | null,
-	current: readonly ArtifactRevision[]
-): ArtifactRevisionWatch {
-	const revisions = new Map<string, ArtifactRevision>(
-		current.map((artifact) => [artifact.id, artifact])
-	);
-	if (previous === null) {
-		return { revisions, changedId: null };
-	}
-
-	let latestChange: ArtifactRevision | null = null;
-	for (const artifact of current) {
-		const prior = previous.get(artifact.id);
-		if (
-			(!prior || artifactIdentityChanged(prior, artifact)) &&
-			(!latestChange || artifact.updatedAt >= latestChange.updatedAt)
-		) {
-			latestChange = artifact;
-		}
-	}
-
-	return { revisions, changedId: latestChange?.id ?? null };
 }
 
 export function isCurrentArtifactsWatch(args: {
