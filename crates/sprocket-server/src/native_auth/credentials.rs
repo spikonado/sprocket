@@ -37,7 +37,7 @@ impl RefreshTokenStore for EmptyRefreshTokenStore {
 }
 
 pub(super) struct KeyringRefreshTokenStore {
-    pub(super) account: String,
+    account: String,
 }
 
 impl KeyringRefreshTokenStore {
@@ -54,6 +54,11 @@ impl KeyringRefreshTokenStore {
         Self {
             account: format!("{KEYRING_ACCOUNT_PREFIX}-{suffix}"),
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn account(&self) -> &str {
+        &self.account
     }
 
     fn entry(&self) -> anyhow::Result<keyring::Entry> {

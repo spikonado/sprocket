@@ -1452,9 +1452,9 @@ mod tests {
         let other_data_dir =
             KeyringRefreshTokenStore::new("https://first.convex.cloud", Path::new("/two"));
 
-        assert_eq!(first.account, same.account);
-        assert_ne!(first.account, other_deployment.account);
-        assert_ne!(first.account, other_data_dir.account);
+        assert_eq!(first.account(), same.account());
+        assert_ne!(first.account(), other_deployment.account());
+        assert_ne!(first.account(), other_data_dir.account());
     }
 
     #[tokio::test]
