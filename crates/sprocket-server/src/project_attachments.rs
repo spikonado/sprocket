@@ -357,6 +357,9 @@ fn attachment_is_preferred(
         _ => {}
     }
 
+    if candidate.availability != current.availability {
+        return candidate.availability == WorkspaceAvailability::Available;
+    }
     match candidate.last_used_at.cmp(&current.last_used_at) {
         Ordering::Equal => {
             candidate
@@ -422,6 +425,7 @@ fn mark_unavailable(
     error: &anyhow::Error,
 ) -> ProjectAttachmentRecord {
     let fallback_name = directory_name(&session.workspace_path);
+    let attachment_key = unavailable_attachment_key(&session);
     ProjectAttachmentRecord {
         availability: WorkspaceAvailability::Unavailable,
         last_validated_at: crate::now_ms(),
@@ -436,13 +440,22 @@ fn mark_unavailable(
         } else {
             session.display_name
         },
-        attachment_key: if session.attachment_key.is_empty() {
-            format!("directory:{}", session.workspace_path)
-        } else {
-            session.attachment_key
-        },
+        attachment_key,
         ..session
     }
+}
+
+fn unavailable_attachment_key(session: &ProjectAttachmentRecord) -> String {
+    if !session.attachment_key.is_empty() {
+        return session.attachment_key.clone();
+    }
+    if !session.repository_key.is_empty()
+        && !session.display_name.is_empty()
+        && session.repository_key != session.display_name
+    {
+        return format!("remote:{}", session.repository_key);
+    }
+    format!("directory:{}", session.workspace_path)
 }
 
 fn validate_session_path(session: ProjectAttachmentRecord) -> ProjectAttachmentRecord {
@@ -812,6 +825,67 @@ mod tests {
         .expect("parse attachments");
         assert_eq!(persisted.len(), 1);
         assert_eq!(persisted[0].workspace_path, first.to_string_lossy());
+    }
+
+    #[tokio::test]
+    async fn list_migrates_an_unavailable_legacy_duplicate() {
+        let temp_root = tempfile::tempdir().expect("temp dir");
+        let missing = temp_root.path().join("removed");
+        let available = temp_root.path().join("current");
+        let repository_key = "github.com/spikonado/sprocket";
+        init_repo_with_origin(&available, "https://github.com/spikonado/sprocket.git");
+        let mut missing_record = attachment_record(missing.to_string_lossy(), repository_key, 1);
+        missing_record.attachment_key.clear();
+        missing_record.display_name = "sprocket".to_string();
+        let mut available_record =
+            attachment_record(available.to_string_lossy(), repository_key, 2);
+        available_record.attachment_key.clear();
+        available_record.display_name = "sprocket".to_string();
+        fs::write(
+            temp_root.path().join(PROJECT_ATTACHMENTS_FILE),
+            serde_json::to_string(&vec![missing_record, available_record])
+                .expect("serialize attachments"),
+        )
+        .expect("write attachments");
+
+        let listed = ProjectAttachmentStore::new(temp_root.path().to_path_buf())
+            .list()
+            .await
+            .expect("list");
+
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].workspace_path, available.to_string_lossy());
+        assert_eq!(listed[0].availability, WorkspaceAvailability::Available);
+    }
+
+    #[tokio::test]
+    async fn list_keeps_unavailable_legacy_local_directories_with_the_same_name() {
+        let temp_root = tempfile::tempdir().expect("temp dir");
+        let first = temp_root.path().join("clients/project");
+        let second = temp_root.path().join("archive/project");
+        let mut first_record = attachment_record(first.to_string_lossy(), "project", 1);
+        first_record.attachment_key.clear();
+        first_record.display_name = "project".to_string();
+        let mut second_record = attachment_record(second.to_string_lossy(), "project", 2);
+        second_record.attachment_key.clear();
+        second_record.display_name = "project".to_string();
+        fs::write(
+            temp_root.path().join(PROJECT_ATTACHMENTS_FILE),
+            serde_json::to_string(&vec![first_record, second_record])
+                .expect("serialize attachments"),
+        )
+        .expect("write attachments");
+
+        let listed = ProjectAttachmentStore::new(temp_root.path().to_path_buf())
+            .list()
+            .await
+            .expect("list");
+
+        assert_eq!(listed.len(), 2);
+        assert!(listed.iter().all(|attachment| {
+            attachment.availability == WorkspaceAvailability::Unavailable
+                && attachment.attachment_key == format!("directory:{}", attachment.workspace_path)
+        }));
     }
 
     #[test]

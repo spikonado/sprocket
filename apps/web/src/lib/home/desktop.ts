@@ -126,6 +126,9 @@ export function launchAgentRun(args: {
 }
 
 function attachmentIsPreferred(candidate: ProjectAttachment, current: ProjectAttachment) {
+	if (candidate.availability !== current.availability) {
+		return candidate.availability === 'available';
+	}
 	if (candidate.lastUsedAt !== current.lastUsedAt) {
 		return candidate.lastUsedAt < current.lastUsedAt;
 	}

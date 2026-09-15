@@ -237,7 +237,7 @@ describe('local project attachments', () => {
 			projectAttachment('/worktrees/other', 'github.com/acme/other', 2)
 		]);
 
-		expect(Object.keys(indexed)).toEqual(['/worktrees/main', '/worktrees/removed']);
+		expect(Object.keys(indexed)).toEqual(['/worktrees/main', '/worktrees/other']);
 	});
 
 	it('selects the same directory when duplicate input order changes', () => {
