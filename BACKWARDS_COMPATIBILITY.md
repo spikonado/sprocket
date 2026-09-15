@@ -234,6 +234,20 @@ been rewritten.
 
 ## Stored transcript formats
 
+### Completion provider identity
+
+Stored completion bodies may include `providerResponseId`,
+`providerRequestId`, and `providerMessageId`. New agents copy non-empty values
+from the provider completion call. Missing and empty strings are omitted.
+
+`finalizeCompletionCall` keeps these arguments optional so released agents can
+still finalize. The stored fields also remain optional because historical
+completions lack them and providers may omit them. The local JSONL replica does
+not store these fields.
+
+Remove the mutation argument compatibility after all supported agents send all
+three keys. Do not require the stored fields while providers can omit them.
+
 ### Local work index completion boundaries
 
 Local work replicas created before completion boundaries were added lack the
