@@ -1,10 +1,100 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
+use sha2::{Digest, Sha256};
 
-use super::{KeyringRefreshTokenStore, RefreshTokenStore};
 use crate::cli_protocol::CredentialStore;
 use crate::profile::write_private_file;
+
+const KEYRING_SERVICE: &str = "dev.sprocket.native-auth";
+const KEYRING_ACCOUNT_PREFIX: &str = "workos-refresh-token";
+
+pub(super) trait RefreshTokenStore: Send + Sync {
+    fn select(&self, _store: CredentialStore) -> anyhow::Result<()> {
+        anyhow::bail!("credential-store selection is unavailable")
+    }
+    fn load(&self) -> anyhow::Result<Option<String>>;
+    fn save(&self, refresh_token: &str) -> anyhow::Result<()>;
+    fn clear(&self) -> anyhow::Result<()>;
+}
+
+#[cfg(test)]
+pub(super) struct EmptyRefreshTokenStore;
+
+#[cfg(test)]
+impl RefreshTokenStore for EmptyRefreshTokenStore {
+    fn load(&self) -> anyhow::Result<Option<String>> {
+        Ok(None)
+    }
+
+    fn save(&self, _refresh_token: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn clear(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+pub(super) struct KeyringRefreshTokenStore {
+    account: String,
+}
+
+impl KeyringRefreshTokenStore {
+    pub(super) fn new(deployment_url: &str, data_dir: &Path) -> Self {
+        let mut hasher = Sha256::new();
+        hasher.update(deployment_url.as_bytes());
+        hasher.update([0]);
+        hasher.update(data_dir.as_os_str().as_encoded_bytes());
+        let digest = hasher.finalize();
+        let suffix = digest[..16]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        Self {
+            account: format!("{KEYRING_ACCOUNT_PREFIX}-{suffix}"),
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn account(&self) -> &str {
+        &self.account
+    }
+
+    fn entry(&self) -> anyhow::Result<keyring::Entry> {
+        keyring::Entry::new(KEYRING_SERVICE, &self.account)
+            .context("failed to access the operating system credential store")
+    }
+}
+
+impl RefreshTokenStore for KeyringRefreshTokenStore {
+    fn load(&self) -> anyhow::Result<Option<String>> {
+        match self.entry()?.get_password() {
+            Ok(token) if token.trim().is_empty() => {
+                anyhow::bail!("stored WorkOS refresh token is empty")
+            }
+            Ok(token) => Ok(Some(token)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(error) => Err(error).context("failed to load WorkOS refresh token"),
+        }
+    }
+
+    fn save(&self, refresh_token: &str) -> anyhow::Result<()> {
+        if refresh_token.trim().is_empty() {
+            anyhow::bail!("refusing to persist an empty WorkOS refresh token");
+        }
+        self.entry()?
+            .set_password(refresh_token)
+            .context("failed to persist WorkOS refresh token")
+    }
+
+    fn clear(&self) -> anyhow::Result<()> {
+        match self.entry()?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(error) => Err(error).context("failed to delete WorkOS refresh token"),
+        }
+    }
+}
 
 pub(super) struct ProfileCredentials {
     keyring: KeyringRefreshTokenStore,
