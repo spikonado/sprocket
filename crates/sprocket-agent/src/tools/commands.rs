@@ -118,7 +118,7 @@ pub(crate) struct ExecCommandArgs {
     )]
     #[schemars(default = "default_command_yield_ms")]
     pub(crate) yield_time_ms: u64,
-    /// Maximum combined output characters returned to the model.
+    /// Maximum preview characters, capped at 80000. Truncated previews join the head and tail at headChars; omitted bytes remain in logPath.
     #[serde(
         rename = "maxOutputChars",
         default = "default_max_output_chars",
@@ -130,7 +130,7 @@ pub(crate) struct ExecCommandArgs {
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct WriteStdinArgs {
-    /// Running command session identifier returned by exec_command.
+    /// Command session identifier returned by exec_command. Completed results remain available until this agent run ends.
     #[serde(rename = "sessionId")]
     pub(crate) session_id: String,
     /// Characters to write to the command's standard input.
@@ -156,7 +156,7 @@ impl rig::tool::Tool for ExecCommandTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Run a shell command with full machine access. Long-running commands yield a sessionId for write_stdin polling and input."
+        "Run a shell command with full machine access. Long-running commands yield a sessionId for write_stdin polling and input. Output is a bounded head-and-tail preview in pipe-read order, not guaranteed cross-stream write order. When truncated, the gap is at headChars; omittedBytes and omittedLines count missing raw bytes and newline bytes. outputBytes counts decoded source bytes in this increment; totalOutputBytes includes any pending UTF-8 suffix. encodingLossBytes counts source bytes replaced in the preview. logPath contains the full raw output, and eventsPath contains sequenced JSONL events with channel, timestampMs, and raw byte arrays. Logs persist locally after the run."
             .to_string()
     }
 
@@ -205,7 +205,7 @@ impl rig::tool::Tool for WriteStdinTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Write input to a running exec_command session, poll incremental output, wait for completion, or terminate the process tree."
+        "Write input to an exec_command session, poll incremental output, wait for completion, or terminate the process tree. Repeated polls after completion replay the final increment until this agent run ends. Full output remains at logPath; truncated previews join head and tail at headChars."
             .to_string()
     }
 

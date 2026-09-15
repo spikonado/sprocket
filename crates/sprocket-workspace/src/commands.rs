@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use crate::command_output::{CapturedOutput, OutputChannel};
 use crate::paths::expand_home;
-use crate::text::limit_chars;
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Serialize;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
@@ -15,7 +15,6 @@ use tokio::sync::{Mutex, mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
 const MAX_COMMAND_MAX_OUTPUT_CHARS: usize = 80_000;
-const MAX_COMMAND_CAPTURE_BYTES: usize = 1_000_000;
 const MAX_COMMAND_YIELD_MS: u64 = 300_000;
 const PROCESS_POLL_INTERVAL_MS: u64 = 25;
 const STDIN_QUEUE_CAPACITY: usize = 8;
@@ -55,14 +54,16 @@ pub struct WorkspaceOperationCancelled;
 #[derive(Clone)]
 pub struct CommandSessionManager {
     workspace_root: PathBuf,
+    log_directory: PathBuf,
     sessions: Arc<Mutex<HashMap<String, Arc<CommandSession>>>>,
     next_session_id: Arc<AtomicU64>,
 }
 
 impl CommandSessionManager {
-    pub fn new(workspace_root: PathBuf) -> Self {
+    pub fn new(workspace_root: PathBuf, log_directory: PathBuf) -> Self {
         Self {
             workspace_root,
+            log_directory,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             next_session_id: Arc::new(AtomicU64::new(1)),
         }
@@ -84,6 +85,13 @@ impl CommandSessionManager {
         }
 
         let cwd = resolve_command_workdir(&self.workspace_root, workdir)?;
+        let output = Arc::new(Mutex::new(
+            CapturedOutput::create(
+                &self.log_directory,
+                max_output_chars.min(MAX_COMMAND_MAX_OUTPUT_CHARS),
+            )
+            .await?,
+        ));
         let mut process = build_shell_command(command, shell);
         process
             .current_dir(&cwd)
@@ -101,10 +109,11 @@ impl CommandSessionManager {
         let process_id = child.id();
         let (stdin, stdin_requests) = mpsc::channel(STDIN_QUEUE_CAPACITY);
         let stdin_task = tokio::spawn(write_command_input(child.stdin.take(), stdin_requests));
-        let stdout = Arc::new(Mutex::new(CapturedOutput::default()));
-        let stderr = Arc::new(Mutex::new(CapturedOutput::default()));
-        let stdout_task = tokio::spawn(capture_pipe(child.stdout.take(), stdout.clone()));
-        let stderr_task = tokio::spawn(capture_pipe(child.stderr.take(), stderr.clone()));
+        let capture_task = tokio::spawn(capture_pipes(
+            child.stdout.take().expect("stdout is piped"),
+            child.stderr.take().expect("stderr is piped"),
+            output.clone(),
+        ));
         let (control, controls) = mpsc::unbounded_channel();
         let (completion_sender, completion) = watch::channel(None);
         tokio::spawn(supervise_command(
@@ -113,8 +122,8 @@ impl CommandSessionManager {
             controls,
             completion_sender,
             stdin_task,
-            stdout_task,
-            stderr_task,
+            capture_task,
+            output.clone(),
             timeout_ms.max(1),
         ));
 
@@ -126,13 +135,11 @@ impl CommandSessionManager {
             id: session_id.clone(),
             command: command.to_string(),
             cwd: cwd.to_string_lossy().to_string(),
-            output_limit: max_output_chars.clamp(1, MAX_COMMAND_MAX_OUTPUT_CHARS),
             control,
             stdin,
             completion,
-            stdout,
-            stderr,
-            cursor: Mutex::new(OutputCursor::default()),
+            output,
+            final_output: Mutex::new(None),
         });
         self.sessions
             .lock()
@@ -157,7 +164,7 @@ impl CommandSessionManager {
             .await
             .get(session_id)
             .cloned()
-            .ok_or_else(|| anyhow!("unknown or completed command session: {session_id}"))?;
+            .ok_or_else(|| anyhow!("unknown command session: {session_id}"))?;
 
         if let Err(error) = cancellation.ensure_active() {
             let _ = session.terminate();
@@ -238,11 +245,7 @@ impl CommandSessionManager {
                 return Err(error);
             }
         };
-        let output = session.output(completion.clone()).await;
-        if completion.is_some() {
-            self.sessions.lock().await.remove(&session.id);
-        }
-        Ok(output)
+        Ok(session.output(completion).await)
     }
 
     async fn observe_after_write_error(
@@ -267,7 +270,6 @@ impl CommandSessionManager {
                     Some(completion_error) => format!("{completion_error}; {write_error}"),
                     None => write_error,
                 });
-                self.sessions.lock().await.remove(&session.id);
                 Ok(output)
             }
             Ok(None) => {
@@ -288,13 +290,11 @@ struct CommandSession {
     id: String,
     command: String,
     cwd: String,
-    output_limit: usize,
     control: mpsc::UnboundedSender<CommandControl>,
     stdin: mpsc::Sender<StdinRequest>,
     completion: watch::Receiver<Option<CommandCompletion>>,
-    stdout: Arc<Mutex<CapturedOutput>>,
-    stderr: Arc<Mutex<CapturedOutput>>,
-    cursor: Mutex<OutputCursor>,
+    output: Arc<Mutex<CapturedOutput>>,
+    final_output: Mutex<Option<CommandExecOutput>>,
 }
 
 impl CommandSession {
@@ -322,17 +322,18 @@ impl CommandSession {
     }
 
     async fn output(&self, completion: Option<CommandCompletion>) -> CommandExecOutput {
-        let mut cursor = self.cursor.lock().await;
-        let (stdout, stdout_truncated) = self.stdout.lock().await.read_from(&mut cursor.stdout);
-        let (stderr, stderr_truncated) = self.stderr.lock().await.read_from(&mut cursor.stderr);
-        let stdout = String::from_utf8_lossy(&stdout).to_string();
-        let stderr = String::from_utf8_lossy(&stderr).to_string();
-        let combined = combine_command_output(&stdout, &stderr);
-        let (output, limit_truncated) = limit_chars(&combined, self.output_limit);
+        let mut final_output = self.final_output.lock().await;
+        if let Some(output) = final_output.as_ref() {
+            return output.clone();
+        }
+        let mut capture = self.output.lock().await;
+        // Completion can arrive while this observer waits for the capture lock.
+        let completion = completion.or_else(|| self.completion.borrow().clone());
+        let preview = capture.take_preview();
         let running = completion.is_none();
         let completion = completion.unwrap_or_default();
 
-        CommandExecOutput {
+        let output = CommandExecOutput {
             command: self.command.clone(),
             cwd: self.cwd.clone(),
             session_id: running.then(|| self.id.clone()),
@@ -340,10 +341,22 @@ impl CommandSession {
             success: completion.success,
             running,
             timed_out: completion.timed_out,
-            output,
-            truncated: stdout_truncated || stderr_truncated || limit_truncated,
+            output: preview.output,
+            truncated: preview.truncated,
+            head_chars: preview.head_chars,
+            output_bytes: preview.output_bytes,
+            omitted_bytes: preview.omitted_bytes,
+            omitted_lines: preview.omitted_lines,
+            encoding_loss_bytes: preview.encoding_loss_bytes,
+            total_output_bytes: preview.total_output_bytes,
+            log_path: preview.log_path,
+            events_path: preview.events_path,
             error: completion.error,
+        };
+        if !running {
+            *final_output = Some(output.clone());
         }
+        output
     }
 }
 
@@ -362,38 +375,6 @@ struct CommandCompletion {
     success: bool,
     timed_out: bool,
     error: Option<String>,
-}
-
-#[derive(Default)]
-struct OutputCursor {
-    stdout: usize,
-    stderr: usize,
-}
-
-#[derive(Default)]
-struct CapturedOutput {
-    bytes: Vec<u8>,
-    dropped: usize,
-}
-
-impl CapturedOutput {
-    fn append(&mut self, chunk: &[u8]) {
-        self.bytes.extend_from_slice(chunk);
-        if self.bytes.len() > MAX_COMMAND_CAPTURE_BYTES {
-            let excess = self.bytes.len() - MAX_COMMAND_CAPTURE_BYTES;
-            self.bytes.drain(..excess);
-            self.dropped += excess;
-        }
-    }
-
-    fn read_from(&self, cursor: &mut usize) -> (Vec<u8>, bool) {
-        let truncated = *cursor < self.dropped;
-        let absolute_start = (*cursor).max(self.dropped);
-        let relative_start = absolute_start - self.dropped;
-        let output = self.bytes[relative_start..].to_vec();
-        *cursor = self.dropped + self.bytes.len();
-        (output, truncated)
-    }
 }
 
 async fn wait_for_completion(
@@ -430,17 +411,25 @@ async fn supervise_command(
     mut controls: mpsc::UnboundedReceiver<CommandControl>,
     completion: watch::Sender<Option<CommandCompletion>>,
     stdin_task: tokio::task::JoinHandle<()>,
-    stdout_task: tokio::task::JoinHandle<Result<()>>,
-    stderr_task: tokio::task::JoinHandle<Result<()>>,
+    mut capture_task: tokio::task::JoinHandle<Result<()>>,
+    output: Arc<Mutex<CapturedOutput>>,
     timeout_ms: u64,
 ) {
     let timeout = tokio::time::sleep(Duration::from_millis(timeout_ms));
     tokio::pin!(timeout);
     let mut poll = tokio::time::interval(Duration::from_millis(PROCESS_POLL_INTERVAL_MS));
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut capture_finished = false;
 
     let (status, timed_out, mut error) = loop {
         tokio::select! {
+            result = &mut capture_task, if !capture_finished => {
+                capture_finished = true;
+                if let Err(error) = result.context("command output task failed").and_then(|result| result) {
+                    let status = terminate_child(&mut child, process_id).await.ok();
+                    break (status, false, Some(format!("command output capture failed: {error:#}")));
+                }
+            },
             control = controls.recv() => match control {
                 Some(CommandControl::Terminate) | None => {
                     match terminate_child(&mut child, process_id).await {
@@ -471,11 +460,14 @@ async fn supervise_command(
         }
     };
 
-    if let Err(capture_error) = join_capture_task(stdout_task).await {
-        error.get_or_insert_with(|| capture_error.to_string());
+    if !capture_finished {
+        if let Err(capture_error) = join_capture_task(capture_task).await {
+            error
+                .get_or_insert_with(|| format!("command output capture failed: {capture_error:#}"));
+        }
     }
-    if let Err(capture_error) = join_capture_task(stderr_task).await {
-        error.get_or_insert_with(|| capture_error.to_string());
+    if let Err(capture_error) = output.lock().await.finish().await {
+        error.get_or_insert_with(|| format!("command output log failed: {capture_error:#}"));
     }
     let completed = CommandCompletion {
         exit_code: status.as_ref().and_then(ExitStatus::code),
@@ -507,21 +499,38 @@ async fn write_command_input(
     }
 }
 
-async fn capture_pipe<T>(pipe: Option<T>, output: Arc<Mutex<CapturedOutput>>) -> Result<()>
+async fn capture_pipes<O, E>(
+    mut stdout: O,
+    mut stderr: E,
+    output: Arc<Mutex<CapturedOutput>>,
+) -> Result<()>
 where
-    T: AsyncRead + Unpin,
+    O: AsyncRead + Unpin,
+    E: AsyncRead + Unpin,
 {
-    let Some(mut pipe) = pipe else {
-        return Ok(());
-    };
-    let mut buffer = [0_u8; 8_192];
-    loop {
-        let read = pipe.read(&mut buffer).await?;
-        if read == 0 {
-            return Ok(());
+    let mut stdout_buffer = [0_u8; 8_192];
+    let mut stderr_buffer = [0_u8; 8_192];
+    let mut stdout_open = true;
+    let mut stderr_open = true;
+    while stdout_open || stderr_open {
+        tokio::select! {
+            read = stdout.read(&mut stdout_buffer), if stdout_open => {
+                let read = read.context("failed to read command stdout")?;
+                stdout_open = read != 0;
+                if stdout_open {
+                    output.lock().await.append(OutputChannel::Stdout, &stdout_buffer[..read]).await?;
+                }
+            },
+            read = stderr.read(&mut stderr_buffer), if stderr_open => {
+                let read = read.context("failed to read command stderr")?;
+                stderr_open = read != 0;
+                if stderr_open {
+                    output.lock().await.append(OutputChannel::Stderr, &stderr_buffer[..read]).await?;
+                }
+            },
         }
-        output.lock().await.append(&buffer[..read]);
     }
+    Ok(())
 }
 
 async fn join_capture_task(mut task: tokio::task::JoinHandle<Result<()>>) -> Result<()> {
@@ -530,7 +539,9 @@ async fn join_capture_task(mut task: tokio::task::JoinHandle<Result<()>>) -> Res
         Err(_) => {
             task.abort();
             let _ = task.await;
-            Ok(())
+            bail!(
+                "command output did not reach EOF before the drain deadline; logs may be incomplete"
+            )
         }
     }
 }
@@ -628,17 +639,7 @@ fn build_shell_command(command: &str, shell: &str) -> Command {
     process
 }
 
-fn combine_command_output(stdout: &str, stderr: &str) -> String {
-    if stdout.is_empty() {
-        return stderr.to_string();
-    }
-    if stderr.is_empty() {
-        return stdout.to_string();
-    }
-    format!("{stdout}\n{stderr}")
-}
-
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommandExecOutput {
     pub command: String,
@@ -652,6 +653,14 @@ pub struct CommandExecOutput {
     pub timed_out: bool,
     pub output: String,
     pub truncated: bool,
+    pub head_chars: usize,
+    pub output_bytes: u64,
+    pub omitted_bytes: u64,
+    pub omitted_lines: u64,
+    pub encoding_loss_bytes: u64,
+    pub total_output_bytes: u64,
+    pub log_path: String,
+    pub events_path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -665,10 +674,241 @@ mod tests {
     use crate::test_support::temp_workspace;
 
     #[tokio::test]
+    async fn output_preserves_observed_stream_order() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+        let output = sessions
+            .exec_command(
+                WorkspaceCancellation::new(),
+                "printf 'starting\n'; sleep 0.1; printf 'failed\n' >&2; sleep 0.1; printf 'cleaning up\n'",
+                ".",
+                &default_command_shell(),
+                5_000,
+                5_000,
+                20_000,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(output.output, "starting\nfailed\ncleaning up\n");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn output_limit_keeps_head_and_tail() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+        let output = sessions
+            .exec_command(
+                WorkspaceCancellation::new(),
+                "printf abcdefghij",
+                ".",
+                &default_command_shell(),
+                5_000,
+                5_000,
+                4,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(output.output, "abij");
+        assert!(output.truncated);
+        assert_eq!(output.output_bytes, 10);
+        assert_eq!(output.omitted_bytes, 6);
+        assert_eq!(fs::read(&output.log_path).unwrap(), b"abcdefghij");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn large_output_survives_preview_limits_and_session_cleanup() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+        let output = sessions
+            .exec_command(
+                WorkspaceCancellation::new(),
+                "printf head; head -c 2100000 /dev/zero | tr '\\0' x; printf tail",
+                ".",
+                &default_command_shell(),
+                20_000,
+                20_000,
+                8,
+            )
+            .await
+            .unwrap();
+
+        assert!(output.success, "{output:?}");
+        assert_eq!(output.output, "headtail");
+        assert_eq!(output.output_bytes, 2_100_008);
+        assert_eq!(output.omitted_bytes, 2_100_000);
+        sessions.stop_all().await;
+        drop(sessions);
+        let bytes = fs::read(output.log_path).unwrap();
+        assert_eq!(bytes.len(), 2_100_008);
+        assert!(bytes.starts_with(b"head"));
+        assert!(bytes[4..2_100_004].iter().all(|byte| *byte == b'x'));
+        assert!(bytes.ends_with(b"tail"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn preview_truncation_does_not_discard_prior_increments() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+        let started = sessions
+            .exec_command(
+                WorkspaceCancellation::new(),
+                "read start; printf abcdefghij; read value; printf klmnopqrst",
+                ".",
+                &default_command_shell(),
+                5_000,
+                0,
+                4,
+            )
+            .await
+            .unwrap();
+        let id = started.session_id.unwrap();
+        let first = tokio::time::timeout(Duration::from_secs(2), async {
+            let mut output = sessions
+                .write_stdin(WorkspaceCancellation::new(), &id, "start\n", false, 0)
+                .await
+                .unwrap();
+            loop {
+                if output.total_output_bytes == 10 {
+                    break output;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                output = sessions
+                    .write_stdin(WorkspaceCancellation::new(), &id, "", false, 0)
+                    .await
+                    .unwrap();
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(first.output, "abij");
+        assert_eq!(fs::read(&first.log_path).unwrap(), b"abcdefghij");
+        let finished = sessions
+            .write_stdin(WorkspaceCancellation::new(), &id, "go\n", false, 5_000)
+            .await
+            .unwrap();
+        assert_eq!(finished.output, "klst");
+        assert_eq!(finished.output_bytes, 10);
+        assert_eq!(finished.total_output_bytes, 20);
+        assert_eq!(finished.log_path, first.log_path);
+        assert_eq!(
+            fs::read(&finished.log_path).unwrap(),
+            b"abcdefghijklmnopqrst"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn unavailable_log_directory_prevents_command_side_effects() {
+        let root = temp_workspace();
+        let log_directory = root.join("not-a-directory");
+        fs::write(&log_directory, "file").unwrap();
+        let sessions = CommandSessionManager::new(root.clone(), log_directory);
+        let error = sessions
+            .exec_command(
+                WorkspaceCancellation::new(),
+                "touch ran",
+                ".",
+                &default_command_shell(),
+                5_000,
+                5_000,
+                100,
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("log directory"));
+        assert!(!root.join("ran").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn unfinished_capture_is_an_error_not_successful_truncation() {
+        let task = tokio::spawn(std::future::pending::<anyhow::Result<()>>());
+        let error = super::join_capture_task(task).await.unwrap_err();
+        assert!(error.to_string().contains("logs may be incomplete"));
+    }
+
+    #[tokio::test]
+    async fn capture_failure_terminates_the_command_and_reports_failure() {
+        let root = temp_workspace();
+        let output = super::CapturedOutput::create(&root.join("logs"), 100)
+            .await
+            .unwrap();
+        let mut process =
+            super::build_shell_command("sleep 0.5; touch leaked", &default_command_shell());
+        process.current_dir(&root).kill_on_drop(true);
+        #[cfg(unix)]
+        process.process_group(0);
+        let child = process.spawn().unwrap();
+        let pid = child.id();
+        let (_control, controls) = tokio::sync::mpsc::unbounded_channel();
+        let (completion, mut completed) = tokio::sync::watch::channel(None);
+        let supervisor = tokio::spawn(super::supervise_command(
+            child,
+            pid,
+            controls,
+            completion,
+            tokio::spawn(std::future::pending()),
+            tokio::spawn(async { anyhow::bail!("injected log write failure") }),
+            std::sync::Arc::new(tokio::sync::Mutex::new(output)),
+            5_000,
+        ));
+        tokio::time::timeout(Duration::from_secs(2), completed.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        let result = completed.borrow().clone().unwrap();
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("injected log write failure"));
+        supervisor.await.unwrap();
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        assert!(!root.join("leaked").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn completed_session_can_be_observed_again() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
+        let started = sessions
+            .exec_command(
+                WorkspaceCancellation::new(),
+                "read value; printf '%s' \"$value\"",
+                ".",
+                &default_command_shell(),
+                5_000,
+                0,
+                20_000,
+            )
+            .await
+            .unwrap();
+        let id = started.session_id.unwrap();
+        let (finished, concurrent) = tokio::join!(
+            sessions.write_stdin(WorkspaceCancellation::new(), &id, "done\n", false, 5_000),
+            sessions.write_stdin(WorkspaceCancellation::new(), &id, "", false, 5_000),
+        );
+        let finished = finished.unwrap();
+        assert_eq!(concurrent.unwrap().output, finished.output);
+        let repeated = sessions
+            .write_stdin(WorkspaceCancellation::new(), &id, "", false, 0)
+            .await
+            .expect("completed results must remain available to later observers");
+
+        assert!(!repeated.running);
+        assert_eq!(repeated.output, finished.output);
+        assert_eq!(repeated.exit_code, finished.exit_code);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
     async fn exec_command_reports_the_shell_and_workdir_when_spawn_fails() {
         let root = temp_workspace();
         let shell = root.join("missing-shell");
-        let sessions = CommandSessionManager::new(root.clone());
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
         let error = sessions
             .exec_command(
                 WorkspaceCancellation::new(),
@@ -694,7 +934,7 @@ mod tests {
     #[tokio::test]
     async fn exec_command_defaults_to_workspace_root() {
         let root = temp_workspace();
-        let sessions = CommandSessionManager::new(root.clone());
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
         let output = sessions
             .exec_command(
                 WorkspaceCancellation::new(),
@@ -717,7 +957,7 @@ mod tests {
     async fn exec_command_allows_workdir_outside_workspace() {
         let root = temp_workspace();
         let parent = root.parent().unwrap().canonicalize().unwrap();
-        let sessions = CommandSessionManager::new(root.clone());
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
         let output = sessions
             .exec_command(
                 WorkspaceCancellation::new(),
@@ -739,7 +979,7 @@ mod tests {
     #[tokio::test]
     async fn long_command_yields_and_can_be_polled() {
         let root = temp_workspace();
-        let sessions = CommandSessionManager::new(root.clone());
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
         let started = sessions
             .exec_command(
                 WorkspaceCancellation::new(),
@@ -774,7 +1014,7 @@ mod tests {
     #[tokio::test]
     async fn write_stdin_sends_input_to_running_command() {
         let root = temp_workspace();
-        let sessions = CommandSessionManager::new(root.clone());
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
         let started = sessions
             .exec_command(
                 WorkspaceCancellation::new(),
@@ -807,7 +1047,7 @@ mod tests {
     #[tokio::test]
     async fn blocked_stdin_does_not_prevent_command_timeout() {
         let root = temp_workspace();
-        let sessions = CommandSessionManager::new(root.clone());
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
         let started = sessions
             .exec_command(
                 WorkspaceCancellation::new(),
@@ -850,7 +1090,7 @@ mod tests {
     #[tokio::test]
     async fn reports_input_dropped_during_normal_command_completion() {
         let root = temp_workspace();
-        let sessions = CommandSessionManager::new(root.clone());
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
         let started = sessions
             .exec_command(
                 WorkspaceCancellation::new(),
@@ -891,7 +1131,7 @@ mod tests {
     #[tokio::test]
     async fn cancelled_poll_removes_and_terminates_session() {
         let root = temp_workspace();
-        let sessions = CommandSessionManager::new(root.clone());
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
         let started = sessions
             .exec_command(
                 WorkspaceCancellation::new(),
@@ -921,7 +1161,7 @@ mod tests {
     #[tokio::test]
     async fn terminate_stops_running_command() {
         let root = temp_workspace();
-        let sessions = CommandSessionManager::new(root.clone());
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
         let started = sessions
             .exec_command(
                 WorkspaceCancellation::new(),
@@ -956,7 +1196,7 @@ mod tests {
     #[tokio::test]
     async fn terminate_all_clears_active_sessions() {
         let root = temp_workspace();
-        let sessions = CommandSessionManager::new(root.clone());
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
         let started = sessions
             .exec_command(
                 WorkspaceCancellation::new(),
@@ -981,7 +1221,7 @@ mod tests {
     #[tokio::test]
     async fn timeout_stops_running_command() {
         let root = temp_workspace();
-        let sessions = CommandSessionManager::new(root.clone());
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"));
         let output = sessions
             .exec_command(
                 WorkspaceCancellation::new(),

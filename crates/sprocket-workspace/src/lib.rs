@@ -3,6 +3,7 @@ mod apply_patch_format;
 mod artifacts;
 mod browse;
 mod builtin_skills;
+mod command_output;
 mod commands;
 mod git_repository;
 mod patch;
@@ -12,7 +13,6 @@ mod skill_name;
 mod skills;
 #[cfg(test)]
 mod test_support;
-mod text;
 mod unified_diff;
 mod workspace;
 

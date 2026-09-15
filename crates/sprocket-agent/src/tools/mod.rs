@@ -140,7 +140,8 @@ pub(crate) fn agent_tools(
     tool_call_tracker: ToolCallTracker,
     skills: Arc<[WorkspaceSkill]>,
 ) -> AgentToolSet {
-    let command_sessions = CommandSessionManager::new(workspace_root.clone());
+    let command_sessions =
+        CommandSessionManager::new(workspace_root.clone(), transcript_dir.join("command-logs"));
     let context = AgentToolContext::new(
         runtime,
         run_id,
