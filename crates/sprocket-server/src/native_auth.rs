@@ -12,7 +12,6 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use convex::{FunctionResult, Value};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use sprocket_convex::{AuthSignedOut, AuthTokenFetcher, Client as ConvexClient};
 use tokio::sync::{Mutex, OnceCell, watch};
 use tokio::time::timeout;
@@ -22,12 +21,14 @@ use workos::resources::user_management::{
 };
 use workos::{AuthenticateResponse, Client as WorkOsClient};
 
+#[cfg(test)]
+use credentials::{EmptyRefreshTokenStore, KeyringRefreshTokenStore};
+use credentials::{ProfileCredentials, RefreshTokenStore};
+
 const CLIENT_CONFIG_QUERY: &str = "authBootstrap:getClientConfig";
 const CLIENT_CONFIG_TIMEOUT: Duration = Duration::from_secs(15);
 const LOGIN_ATTEMPT_TTL: Duration = Duration::from_secs(5 * 60);
 const ACCESS_TOKEN_REFRESH_MARGIN_SECS: u64 = 60;
-const KEYRING_SERVICE: &str = "dev.sprocket.native-auth";
-const KEYRING_ACCOUNT_PREFIX: &str = "workos-refresh-token";
 const NATIVE_SESSION_SIGNED_OUT: &str = "native WorkOS session is signed out";
 const NATIVE_SESSION_EXPIRED: &str = "native WorkOS session expired";
 const NATIVE_SESSION_UNAVAILABLE: &str = "Native sign-in is temporarily unavailable. Try again.";
@@ -85,88 +86,6 @@ pub(crate) struct NativeLoginStart {
 pub(crate) enum NativeLoginFlow {
     SignIn,
     SignUp,
-}
-
-trait RefreshTokenStore: Send + Sync {
-    fn select(&self, _store: crate::cli_protocol::CredentialStore) -> anyhow::Result<()> {
-        anyhow::bail!("credential-store selection is unavailable")
-    }
-    fn load(&self) -> anyhow::Result<Option<String>>;
-    fn save(&self, refresh_token: &str) -> anyhow::Result<()>;
-    fn clear(&self) -> anyhow::Result<()>;
-}
-
-#[cfg(test)]
-struct EmptyRefreshTokenStore;
-
-#[cfg(test)]
-impl RefreshTokenStore for EmptyRefreshTokenStore {
-    fn load(&self) -> anyhow::Result<Option<String>> {
-        Ok(None)
-    }
-
-    fn save(&self, _refresh_token: &str) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    fn clear(&self) -> anyhow::Result<()> {
-        Ok(())
-    }
-}
-
-struct KeyringRefreshTokenStore {
-    account: String,
-}
-
-impl KeyringRefreshTokenStore {
-    fn new(deployment_url: &str, data_dir: &Path) -> Self {
-        let mut hasher = Sha256::new();
-        hasher.update(deployment_url.as_bytes());
-        hasher.update([0]);
-        hasher.update(data_dir.as_os_str().as_encoded_bytes());
-        let digest = hasher.finalize();
-        let suffix = digest[..16]
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
-        Self {
-            account: format!("{KEYRING_ACCOUNT_PREFIX}-{suffix}"),
-        }
-    }
-
-    fn entry(&self) -> anyhow::Result<keyring::Entry> {
-        keyring::Entry::new(KEYRING_SERVICE, &self.account)
-            .context("failed to access the operating system credential store")
-    }
-}
-
-impl RefreshTokenStore for KeyringRefreshTokenStore {
-    fn load(&self) -> anyhow::Result<Option<String>> {
-        match self.entry()?.get_password() {
-            Ok(token) if token.trim().is_empty() => {
-                anyhow::bail!("stored WorkOS refresh token is empty")
-            }
-            Ok(token) => Ok(Some(token)),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(error) => Err(error).context("failed to load WorkOS refresh token"),
-        }
-    }
-
-    fn save(&self, refresh_token: &str) -> anyhow::Result<()> {
-        if refresh_token.trim().is_empty() {
-            anyhow::bail!("refusing to persist an empty WorkOS refresh token");
-        }
-        self.entry()?
-            .set_password(refresh_token)
-            .context("failed to persist WorkOS refresh token")
-    }
-
-    fn clear(&self) -> anyhow::Result<()> {
-        match self.entry()?.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(error) => Err(error).context("failed to delete WorkOS refresh token"),
-        }
-    }
 }
 
 struct PendingLogin {
@@ -246,10 +165,7 @@ impl NativeAuthManager {
         data_dir: &Path,
         local_sessions: Arc<crate::auth::AuthState>,
     ) -> Arc<Self> {
-        let refresh_tokens = Arc::new(credentials::ProfileCredentials::new(
-            &deployment_url,
-            data_dir,
-        ));
+        let refresh_tokens = Arc::new(ProfileCredentials::new(&deployment_url, data_dir));
         Arc::new(Self {
             changes: watch::channel(0).0,
             local_sessions: Some(local_sessions),
