@@ -156,7 +156,7 @@ impl rig::tool::Tool for ExecCommandTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Run a shell command with full machine access. Long-running commands yield a sessionId for write_stdin polling and input. Output is a bounded head-and-tail preview in pipe-read order, not guaranteed cross-stream write order. When truncated, the gap is at headChars; omittedBytes and omittedLines count missing raw bytes and newline bytes. outputBytes counts decoded source bytes in this increment; totalOutputBytes includes any pending UTF-8 suffix. encodingLossBytes counts source bytes replaced in the preview. logPath contains the full raw output, and eventsPath contains sequenced JSONL events with channel, timestampMs, and raw byte arrays. Logs persist locally after the run."
+        "Run a shell command with full machine access. Long-running commands yield a sessionId for write_stdin polling and input. Output is a bounded head-and-tail preview in pipe-read order, not guaranteed cross-stream write order. When truncated, the gap is at headChars; omittedBytes and omittedLines count missing raw bytes and newline bytes. outputBytes counts decoded source bytes in this increment; totalOutputBytes includes any pending UTF-8 suffix. encodingLossBytes counts source bytes replaced in the preview. logPath contains raw output, and eventsPath contains sequenced JSONL events with channel, timestampMs, and raw byte arrays. Logs persist locally after the run. Capture fails explicitly if raw plus event logs exceed 64 MiB or would leave less than 256 MiB free; failed capture can leave only a prefix."
             .to_string()
     }
 

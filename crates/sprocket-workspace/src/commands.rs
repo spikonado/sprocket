@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use crate::command_output::{CapturedOutput, OutputChannel};
+use crate::command_output::{CapturedOutput, CommandOutputLimits, OutputChannel};
 use crate::paths::expand_home;
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Serialize;
@@ -55,6 +55,7 @@ pub struct WorkspaceOperationCancelled;
 pub struct CommandSessionManager {
     workspace_root: PathBuf,
     log_directory: PathBuf,
+    output_limits: CommandOutputLimits,
     sessions: Arc<Mutex<HashMap<String, Arc<CommandSession>>>>,
     next_session_id: Arc<AtomicU64>,
 }
@@ -64,9 +65,15 @@ impl CommandSessionManager {
         Self {
             workspace_root,
             log_directory,
+            output_limits: CommandOutputLimits::default(),
             sessions: Arc::new(Mutex::new(HashMap::new())),
             next_session_id: Arc::new(AtomicU64::new(1)),
         }
+    }
+
+    pub fn with_output_limits(mut self, limits: CommandOutputLimits) -> Self {
+        self.output_limits = limits;
+        self
     }
 
     pub async fn exec_command(
@@ -86,9 +93,10 @@ impl CommandSessionManager {
 
         let cwd = resolve_command_workdir(&self.workspace_root, workdir)?;
         let output = Arc::new(Mutex::new(
-            CapturedOutput::create(
+            CapturedOutput::create_with_limits(
                 &self.log_directory,
                 max_output_chars.min(MAX_COMMAND_MAX_OUTPUT_CHARS),
+                self.output_limits,
             )
             .await?,
         ));
@@ -263,14 +271,10 @@ impl CommandSessionManager {
         .await
         {
             Ok(Some(completion)) => {
-                let mut output = session.output(Some(completion)).await;
-                output.success = false;
                 let write_error = format!("failed to write command stdin: {write_error:#}");
-                output.error = Some(match output.error {
-                    Some(completion_error) => format!("{completion_error}; {write_error}"),
-                    None => write_error,
-                });
-                Ok(output)
+                Ok(session
+                    .output_after_write(Some(completion), Some(write_error))
+                    .await)
             }
             Ok(None) => {
                 let _ = session.terminate();
@@ -322,10 +326,33 @@ impl CommandSession {
     }
 
     async fn output(&self, completion: Option<CommandCompletion>) -> CommandExecOutput {
+        self.output_after_write(completion, None).await
+    }
+
+    async fn output_after_write(
+        &self,
+        completion: Option<CommandCompletion>,
+        write_error: Option<String>,
+    ) -> CommandExecOutput {
         let mut final_output = self.final_output.lock().await;
-        if let Some(output) = final_output.as_ref() {
-            return output.clone();
+        let mut output = match final_output.as_ref() {
+            Some(output) => output.clone(),
+            None => self.snapshot_output(completion).await,
+        };
+        if let Some(write_error) = write_error {
+            output.success = false;
+            output.error = Some(match output.error {
+                Some(completion_error) => format!("{completion_error}; {write_error}"),
+                None => write_error,
+            });
         }
+        if !output.running {
+            *final_output = Some(output.clone());
+        }
+        output
+    }
+
+    async fn snapshot_output(&self, completion: Option<CommandCompletion>) -> CommandExecOutput {
         let mut capture = self.output.lock().await;
         // Completion can arrive while this observer waits for the capture lock.
         let completion = completion.or_else(|| self.completion.borrow().clone());
@@ -333,7 +360,7 @@ impl CommandSession {
         let running = completion.is_none();
         let completion = completion.unwrap_or_default();
 
-        let output = CommandExecOutput {
+        CommandExecOutput {
             command: self.command.clone(),
             cwd: self.cwd.clone(),
             session_id: running.then(|| self.id.clone()),
@@ -352,11 +379,7 @@ impl CommandSession {
             log_path: preview.log_path,
             events_path: preview.events_path,
             error: completion.error,
-        };
-        if !running {
-            *final_output = Some(output.clone());
         }
-        output
     }
 }
 
@@ -826,6 +849,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn low_disk_space_prevents_command_side_effects() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"))
+            .with_output_limits(super::CommandOutputLimits {
+                min_free_disk_bytes: u64::MAX,
+                ..Default::default()
+            });
+        let error = sessions
+            .exec_command(
+                WorkspaceCancellation::new(),
+                "touch ran",
+                ".",
+                &default_command_shell(),
+                5_000,
+                5_000,
+                100,
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("free-space reserve"));
+        assert!(!root.join("ran").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn log_quota_terminates_capture_instead_of_reporting_success() {
+        let root = temp_workspace();
+        let sessions = CommandSessionManager::new(root.clone(), root.join("logs"))
+            .with_output_limits(super::CommandOutputLimits {
+                max_log_bytes: 4,
+                ..Default::default()
+            });
+        let output = sessions
+            .exec_command(
+                WorkspaceCancellation::new(),
+                "printf output; read value",
+                ".",
+                &default_command_shell(),
+                5_000,
+                5_000,
+                100,
+            )
+            .await
+            .unwrap();
+        assert!(!output.success);
+        assert!(!output.running);
+        assert!(!output.timed_out);
+        assert!(output.error.unwrap().contains("log quota"));
+        assert!(fs::read(output.log_path).unwrap().is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
     async fn unfinished_capture_is_an_error_not_successful_truncation() {
         let task = tokio::spawn(std::future::pending::<anyhow::Result<()>>());
         let error = super::join_capture_task(task).await.unwrap_err();
@@ -1124,6 +1200,20 @@ mod tests {
                 .error
                 .as_deref()
                 .is_some_and(|error| error.contains("failed to write command stdin"))
+        );
+        let replay = sessions
+            .write_stdin(
+                WorkspaceCancellation::new(),
+                started.session_id.as_deref().unwrap(),
+                "",
+                false,
+                0,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(replay).unwrap(),
+            serde_json::to_value(finished).unwrap()
         );
         fs::remove_dir_all(root).unwrap();
     }

@@ -28,13 +28,22 @@ truncation. Logs from failed capture can contain only a prefix, and their last
 event can be incomplete. A crash before completion does not promise synced logs.
 
 Logs survive session cleanup, agent-run completion, and application restart.
-They are local files, not uploaded artifacts. There is no automatic log expiry
-or disk quota in this change. They remain until the local transcript data or
-the command log directory is deleted. Full logs can contain secrets and can
-consume substantially more disk space than raw output because the event file
-also records every byte. If storage runs out, capture fails explicitly rather
-than discarding old output. Session quotas and log-retention policy are separate
-work from output correctness.
+They are local files, not uploaded artifacts. There is no automatic log expiry.
+They remain until the local transcript data or command log directory is deleted.
+Full logs can contain secrets. The event file also records every byte, so
+storage use exceeds the raw output size.
+
+By default, each command can write 64 MiB across both log files. Capture checks
+this quota and available filesystem space before each chunk. It fails before
+writing a chunk that would exceed the quota or leave less than 256 MiB free.
+Startup also checks the free-space reserve before launching the process.
+These failures stop the command and report that the logs contain only a prefix;
+they do not report successful preview truncation or delete earlier output.
+Executors can configure both thresholds with `CommandOutputLimits` and
+`CommandSessionManager::with_output_limits`. The free-space reserve is a
+best-effort check, not an OS quota or a reservation against concurrent writers.
+It also limits accumulation across runs without deleting older logs. Session
+quotas and automatic log-retention policy remain separate work.
 
 ## Preview fields
 
@@ -76,4 +85,4 @@ stdout/stderr reordering, prefix-only truncation, and immediate removal of
 completed results. Tests also cover output larger than the former capture
 buffers, persistence after cleanup, bounded preview memory, split and invalid
 UTF-8, zero-sized previews, omission counts, log-write failures, and capture
-drain failures.
+drain failures, log quotas, free-space checks, and replayed stdin-write errors.

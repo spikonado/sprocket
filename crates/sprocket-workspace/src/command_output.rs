@@ -1,11 +1,26 @@
 use std::collections::VecDeque;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
+
+#[derive(Clone, Copy, Debug)]
+pub struct CommandOutputLimits {
+    pub max_log_bytes: u64,
+    pub min_free_disk_bytes: u64,
+}
+
+impl Default for CommandOutputLimits {
+    fn default() -> Self {
+        Self {
+            max_log_bytes: 64 * 1024 * 1024,
+            min_free_disk_bytes: 256 * 1024 * 1024,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -45,16 +60,28 @@ pub(crate) struct CapturedOutput {
     events_path: String,
     sequence: u64,
     total_bytes: u64,
+    log_bytes: u64,
+    limits: CommandOutputLimits,
     pending_utf8: Vec<u8>,
     preview: PreviewBuffer,
 }
 
 impl CapturedOutput {
+    #[cfg(test)]
     pub(crate) async fn create(log_root: &Path, max_chars: usize) -> Result<Self> {
+        Self::create_with_limits(log_root, max_chars, CommandOutputLimits::default()).await
+    }
+
+    pub(crate) async fn create_with_limits(
+        log_root: &Path,
+        max_chars: usize,
+        limits: CommandOutputLimits,
+    ) -> Result<Self> {
         tokio::fs::create_dir_all(log_root)
             .await
             .context("failed to create command log directory")?;
         let log_root = tokio::fs::canonicalize(log_root).await?;
+        ensure_disk_reserve(log_root.clone(), 0, limits.min_free_disk_bytes).await?;
         let mut builder = tempfile::Builder::new();
         builder.prefix("command-");
         #[cfg(unix)]
@@ -85,6 +112,8 @@ impl CapturedOutput {
             events_path,
             sequence: 0,
             total_bytes: 0,
+            log_bytes: 0,
+            limits,
             pending_utf8: Vec::new(),
             preview: PreviewBuffer::new(max_chars),
         })
@@ -99,6 +128,21 @@ impl CapturedOutput {
         };
         let mut encoded = serde_json::to_vec(&event)?;
         encoded.push(b'\n');
+        let next_bytes = (bytes.len() + encoded.len()) as u64;
+        ensure!(
+            next_bytes <= self.limits.max_log_bytes.saturating_sub(self.log_bytes),
+            "command output log quota of {} bytes reached; logs contain only a prefix",
+            self.limits.max_log_bytes,
+        );
+        ensure_disk_reserve(
+            Path::new(&self.log_path)
+                .parent()
+                .expect("log has a directory")
+                .to_path_buf(),
+            next_bytes,
+            self.limits.min_free_disk_bytes,
+        )
+        .await?;
         let log = self.log.as_mut().context("command output log is closed")?;
         let events = self
             .events
@@ -121,6 +165,7 @@ impl CapturedOutput {
             .context("failed to flush command output events")?;
         self.sequence += 1;
         self.total_bytes += bytes.len() as u64;
+        self.log_bytes += next_bytes;
         self.decode(bytes, false);
         Ok(())
     }
@@ -192,6 +237,18 @@ impl CapturedOutput {
             events_path: self.events_path.clone(),
         }
     }
+}
+
+async fn ensure_disk_reserve(path: PathBuf, next_bytes: u64, reserve: u64) -> Result<()> {
+    let available = tokio::task::spawn_blocking(move || fs4::available_space(path))
+        .await
+        .context("command log disk-space check failed")?
+        .context("failed to read command log filesystem space")?;
+    ensure!(
+        available.saturating_sub(next_bytes) >= reserve && available >= next_bytes,
+        "command output would cross the free-space reserve of {reserve} bytes; logs contain only a prefix",
+    );
+    Ok(())
 }
 
 struct PreviewCharacter {

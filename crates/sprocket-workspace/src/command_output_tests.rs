@@ -1,6 +1,43 @@
 use super::*;
 
 #[tokio::test]
+async fn log_quota_counts_both_files_and_rejects_a_chunk_before_writing() {
+    let root = tempfile::tempdir().unwrap();
+    let mut output = CapturedOutput::create(root.path(), 20).await.unwrap();
+    output.append(OutputChannel::Stdout, b"ok").await.unwrap();
+    let log = std::fs::read(&output.log_path).unwrap();
+    let events = std::fs::read(&output.events_path).unwrap();
+    assert_eq!(output.log_bytes, (log.len() + events.len()) as u64);
+    output.limits.max_log_bytes = output.log_bytes + 3;
+    let error = output
+        .append(OutputChannel::Stderr, b"x")
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("log quota"));
+    output.finish().await.unwrap();
+    let preview = output.take_preview();
+    assert_eq!(preview.output, "ok");
+    assert_eq!(preview.total_output_bytes, 2);
+    assert_eq!(std::fs::read(&output.log_path).unwrap(), log);
+    assert_eq!(std::fs::read(&output.events_path).unwrap(), events);
+}
+
+#[tokio::test]
+async fn free_space_reserve_is_checked_again_before_appending() {
+    let root = tempfile::tempdir().unwrap();
+    let mut output = CapturedOutput::create(root.path(), 20).await.unwrap();
+    output.limits.min_free_disk_bytes = u64::MAX;
+    let error = output
+        .append(OutputChannel::Stdout, b"full")
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("free-space reserve"));
+    output.finish().await.unwrap();
+    assert!(std::fs::read(&output.log_path).unwrap().is_empty());
+    assert!(std::fs::read(&output.events_path).unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn preview_counts_omitted_raw_bytes_and_newlines() {
     let root = tempfile::tempdir().unwrap();
     let mut output = CapturedOutput::create(root.path(), 4).await.unwrap();

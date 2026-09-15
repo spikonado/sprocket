@@ -28,6 +28,7 @@ pub use browse::{
     resolve_or_create_workspace_root,
 };
 pub use builtin_skills::BUILTIN_SKILLS;
+pub use command_output::CommandOutputLimits;
 pub use commands::{
     CommandExecOutput, CommandSessionManager, WorkspaceCancellation, WorkspaceOperationCancelled,
     default_command_shell,
