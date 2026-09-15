@@ -125,12 +125,52 @@ export function launchAgentRun(args: {
 		});
 }
 
-function buildDesktopProjectAttachmentsByPath(
+function attachmentIsPreferred(candidate: ProjectAttachment, current: ProjectAttachment) {
+	if (candidate.availability !== current.availability) {
+		return candidate.availability === 'available';
+	}
+	if (candidate.lastUsedAt !== current.lastUsedAt) {
+		return candidate.lastUsedAt > current.lastUsedAt;
+	}
+	if (candidate.lastValidatedAt !== current.lastValidatedAt) {
+		return candidate.lastValidatedAt > current.lastValidatedAt;
+	}
+	return candidate.workspacePath > current.workspacePath;
+}
+
+export function buildDesktopProjectAttachmentsByPath(
 	desktopProjectAttachments: ProjectAttachment[]
 ): Record<string, ProjectAttachment> {
+	const attachmentsByRepository = new Map<string, ProjectAttachment>();
+	for (const attachment of desktopProjectAttachments) {
+		const current = attachmentsByRepository.get(attachment.repositoryKey);
+		if (!current || attachmentIsPreferred(attachment, current)) {
+			attachmentsByRepository.set(attachment.repositoryKey, attachment);
+		}
+	}
 	return Object.fromEntries(
-		desktopProjectAttachments.map((attachment) => [attachment.workspacePath, attachment])
+		[...attachmentsByRepository.values()].map((attachment) => [
+			attachment.workspacePath,
+			attachment
+		])
 	);
+}
+
+export function upsertDesktopProjectAttachment(
+	desktopProjectAttachmentsByPath: Record<string, ProjectAttachment>,
+	attachment: ProjectAttachment,
+	replaceWorkspacePath?: string
+): Record<string, ProjectAttachment> {
+	const nextAttachments = Object.fromEntries(
+		Object.entries(desktopProjectAttachmentsByPath).filter(
+			([workspacePath, existing]) =>
+				workspacePath !== replaceWorkspacePath &&
+				workspacePath !== attachment.workspacePath &&
+				existing.repositoryKey !== attachment.repositoryKey
+		)
+	);
+	nextAttachments[attachment.workspacePath] = attachment;
+	return nextAttachments;
 }
 
 export async function refreshDesktopProjectAttachments(desktopApi: DesktopApi | null) {

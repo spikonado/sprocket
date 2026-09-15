@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -58,7 +59,7 @@ pub struct ProjectAttachmentStore {
     data_dir: PathBuf,
     attachments: RwLock<HashMap<String, ProjectAttachmentRecord>>,
     loaded: RwLock<bool>,
-    refresh_lock: Mutex<()>,
+    update_lock: Mutex<()>,
 }
 
 impl ProjectAttachmentStore {
@@ -67,7 +68,7 @@ impl ProjectAttachmentStore {
             data_dir,
             attachments: RwLock::new(HashMap::new()),
             loaded: RwLock::new(false),
-            refresh_lock: Mutex::new(()),
+            update_lock: Mutex::new(()),
         })
     }
 
@@ -102,6 +103,7 @@ impl ProjectAttachmentStore {
             anyhow::bail!("workspace path is unavailable");
         }
 
+        let _update_guard = self.update_lock.lock().await;
         {
             let mut sessions = self.attachments.write().await;
             sessions.insert(validated.workspace_path.clone(), validated.clone());
@@ -113,6 +115,10 @@ impl ProjectAttachmentStore {
             {
                 sessions.remove(previous_path);
             }
+            deduplicate_repository_attachments(
+                &mut sessions,
+                Some(validated.workspace_path.as_str()),
+            );
         }
         self.save_to_disk().await?;
         Ok(validated)
@@ -190,7 +196,7 @@ impl ProjectAttachmentStore {
     }
 
     async fn refresh_all(&self) -> Result<()> {
-        let _refresh_guard = self.refresh_lock.lock().await;
+        let _update_guard = self.update_lock.lock().await;
         let snapshot: Vec<(String, ProjectAttachmentRecord)> = self
             .attachments
             .read()
@@ -224,6 +230,9 @@ impl ProjectAttachmentStore {
                 sessions.remove(&previous_key);
             }
             sessions.insert(refreshed.workspace_path.clone(), refreshed);
+        }
+        if deduplicate_repository_attachments(&mut sessions, None) {
+            changed = true;
         }
         drop(sessions);
 
@@ -265,6 +274,65 @@ impl ProjectAttachmentStore {
         for session in sessions {
             store.insert(session.workspace_path.clone(), session);
         }
+    }
+}
+
+fn deduplicate_repository_attachments(
+    attachments: &mut HashMap<String, ProjectAttachmentRecord>,
+    preferred_workspace_path: Option<&str>,
+) -> bool {
+    let mut winners = HashMap::<String, String>::new();
+
+    for (workspace_path, attachment) in attachments.iter() {
+        let Some(current_path) = winners.get(&attachment.repository_key) else {
+            winners.insert(attachment.repository_key.clone(), workspace_path.clone());
+            continue;
+        };
+        let current = &attachments[current_path];
+
+        if attachment_is_preferred(attachment, current, preferred_workspace_path) {
+            winners.insert(attachment.repository_key.clone(), workspace_path.clone());
+        }
+    }
+
+    let previous_len = attachments.len();
+    attachments.retain(|workspace_path, attachment| {
+        winners.get(&attachment.repository_key) == Some(workspace_path)
+    });
+    attachments.len() != previous_len
+}
+
+fn attachment_is_preferred(
+    candidate: &ProjectAttachmentRecord,
+    current: &ProjectAttachmentRecord,
+    preferred_workspace_path: Option<&str>,
+) -> bool {
+    match preferred_workspace_path {
+        Some(path) if candidate.workspace_path == path => return true,
+        Some(path) if current.workspace_path == path => return false,
+        _ => {}
+    }
+
+    let priority = (
+        candidate.availability == WorkspaceAvailability::Available,
+        candidate.last_used_at,
+        candidate.last_validated_at,
+    )
+        .cmp(&(
+            current.availability == WorkspaceAvailability::Available,
+            current.last_used_at,
+            current.last_validated_at,
+        ));
+
+    match priority {
+        Ordering::Equal => {
+            candidate
+                .workspace_path
+                .encode_utf16()
+                .cmp(current.workspace_path.encode_utf16())
+                == Ordering::Greater
+        }
+        ordering => ordering == Ordering::Greater,
     }
 }
 
@@ -392,6 +460,32 @@ mod tests {
     use super::*;
     use std::fs;
 
+    fn init_repo_with_origin(path: &std::path::Path, origin: &str) {
+        fs::create_dir_all(path).expect("project dir");
+        gix::init(path).expect("gix init");
+        let config_path = path.join(".git/config");
+        let mut config = fs::read_to_string(&config_path).expect("read config");
+        config.push_str(&format!("\n[remote \"origin\"]\n\turl = {origin}\n"));
+        fs::write(config_path, config).expect("write config");
+    }
+
+    fn attachment_record(
+        workspace_path: impl Into<String>,
+        repository_key: &str,
+        last_used_at: u64,
+    ) -> ProjectAttachmentRecord {
+        ProjectAttachmentRecord {
+            workspace_path: workspace_path.into(),
+            repository_key: repository_key.into(),
+            display_name: repository_key.into(),
+            availability: WorkspaceAvailability::Available,
+            last_validated_at: last_used_at,
+            last_used_at,
+            unavailable_reason: None,
+            previous_repository_key: None,
+        }
+    }
+
     #[tokio::test]
     async fn attach_and_list_project_attachment() {
         let temp_root =
@@ -494,6 +588,94 @@ mod tests {
         assert_eq!(listed[0].workspace_path, attached_second.workspace_path);
 
         let _ = fs::remove_dir_all(temp_root);
+    }
+
+    #[tokio::test]
+    async fn attach_replaces_another_worktree_for_the_same_repository() {
+        let temp_root = tempfile::tempdir().expect("temp dir");
+        let first = temp_root.path().join("main");
+        let second = temp_root.path().join("feature");
+        let origin = "https://github.com/spikonado/sprocket.git";
+        init_repo_with_origin(&first, origin);
+        init_repo_with_origin(&second, origin);
+        let store = ProjectAttachmentStore::new(temp_root.path().to_path_buf());
+
+        store
+            .attach(AttachProjectRequest {
+                workspace_path: first.to_string_lossy().to_string(),
+                replace_workspace_path: None,
+            })
+            .await
+            .expect("attach first worktree");
+        let attached_second = store
+            .attach(AttachProjectRequest {
+                workspace_path: second.to_string_lossy().to_string(),
+                replace_workspace_path: None,
+            })
+            .await
+            .expect("attach second worktree");
+
+        let listed = store.list().await.expect("list");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].workspace_path, attached_second.workspace_path);
+        assert_eq!(listed[0].repository_key, attached_second.repository_key);
+    }
+
+    #[tokio::test]
+    async fn list_migrates_duplicate_repository_attachments() {
+        let temp_root = tempfile::tempdir().expect("temp dir");
+        let first = temp_root.path().join("main");
+        let second = temp_root.path().join("feature");
+        let origin = "https://github.com/spikonado/sprocket.git";
+        init_repo_with_origin(&first, origin);
+        init_repo_with_origin(&second, origin);
+        fs::write(
+            temp_root.path().join(PROJECT_ATTACHMENTS_FILE),
+            serde_json::to_string(&vec![
+                attachment_record(first.to_string_lossy(), "github.com/spikonado/sprocket", 1),
+                attachment_record(second.to_string_lossy(), "github.com/spikonado/sprocket", 2),
+            ])
+            .expect("serialize attachments"),
+        )
+        .expect("write attachments");
+
+        let listed = ProjectAttachmentStore::new(temp_root.path().to_path_buf())
+            .list()
+            .await
+            .expect("list");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].workspace_path, second.to_string_lossy());
+
+        let persisted: Vec<ProjectAttachmentRecord> = serde_json::from_str(
+            &fs::read_to_string(temp_root.path().join(PROJECT_ATTACHMENTS_FILE))
+                .expect("read attachments"),
+        )
+        .expect("parse attachments");
+        assert_eq!(persisted.len(), 1);
+        assert_eq!(persisted[0].workspace_path, second.to_string_lossy());
+    }
+
+    #[test]
+    fn duplicate_winner_does_not_depend_on_hash_map_order() {
+        let earlier = attachment_record("/worktrees/earlier", "repository", 1);
+        let lexical_tie = attachment_record("/worktrees/z-last", "repository", 2);
+        let later = attachment_record("/worktrees/later", "repository", 2);
+
+        for records in [
+            [&earlier, &lexical_tie, &later],
+            [&later, &earlier, &lexical_tie],
+        ] {
+            let mut attachments = records
+                .into_iter()
+                .map(|record| (record.workspace_path.clone(), record.clone()))
+                .collect();
+
+            assert!(deduplicate_repository_attachments(&mut attachments, None));
+            assert_eq!(
+                attachments.keys().collect::<Vec<_>>(),
+                vec![&lexical_tie.workspace_path]
+            );
+        }
     }
 
     #[tokio::test]

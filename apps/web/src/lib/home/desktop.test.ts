@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Id } from '$convex/_generated/dataModel';
-import { launchAgentRun, resolveSubmissionId } from '$lib/home/desktop';
-import type { DesktopApi } from '$lib/types/sprocket';
+import {
+	buildDesktopProjectAttachmentsByPath,
+	launchAgentRun,
+	resolveSubmissionId,
+	upsertDesktopProjectAttachment
+} from '$lib/home/desktop';
+import type { DesktopApi, ProjectAttachment } from '$lib/types/sprocket';
 
 function storageId(value: string): Id<'_storage'> {
 	// SAFETY: fixture strings are only compared as opaque Convex document ids.
@@ -58,6 +63,22 @@ function createDesktopApi(runAgent: DesktopApi['runAgent']): DesktopApi {
 		rekeyRepository: unusedDesktopCall,
 		requestRunCancellation: unusedDesktopCall,
 		endAccountSession: unusedDesktopCall
+	};
+}
+
+function projectAttachment(
+	workspacePath: string,
+	repositoryKey: string,
+	lastUsedAt: number,
+	availability: ProjectAttachment['availability'] = 'available'
+): ProjectAttachment {
+	return {
+		workspacePath,
+		repositoryKey,
+		displayName: repositoryKey,
+		availability,
+		lastValidatedAt: lastUsedAt,
+		lastUsedAt
 	};
 }
 
@@ -202,5 +223,46 @@ describe('resolveSubmissionId', () => {
 				latestRun: { status: 'queued', submissionId: 'newer-id' }
 			})
 		).toBe('new-id');
+	});
+});
+
+describe('local project attachments', () => {
+	it('indexes one preferred directory per repository', () => {
+		const indexed = buildDesktopProjectAttachmentsByPath([
+			projectAttachment('/worktrees/main', 'github.com/acme/robot', 1),
+			projectAttachment('/worktrees/feature', 'github.com/acme/robot', 2),
+			projectAttachment('/worktrees/removed', 'github.com/acme/other', 3, 'unavailable'),
+			projectAttachment('/worktrees/other', 'github.com/acme/other', 1)
+		]);
+
+		expect(Object.keys(indexed)).toEqual(['/worktrees/feature', '/worktrees/other']);
+	});
+
+	it('selects the same directory when duplicate input order changes', () => {
+		const older = projectAttachment('/worktrees/older', 'github.com/acme/robot', 1);
+		const lexicalTie = projectAttachment('/worktrees/z-last', 'github.com/acme/robot', 2);
+		const newer = projectAttachment('/worktrees/newer', 'github.com/acme/robot', 2);
+
+		for (const attachments of [
+			[older, lexicalTie, newer],
+			[newer, older, lexicalTie]
+		]) {
+			expect(Object.keys(buildDesktopProjectAttachmentsByPath(attachments))).toEqual([
+				'/worktrees/z-last'
+			]);
+		}
+	});
+
+	it('replaces the displayed directory when the same repository is attached again', () => {
+		const current = {
+			'/worktrees/main': projectAttachment('/worktrees/main', 'github.com/acme/robot', 2),
+			'/projects/other': projectAttachment('/projects/other', 'github.com/acme/other', 1)
+		};
+		const feature = projectAttachment('/worktrees/feature', 'github.com/acme/robot', 3);
+
+		expect(upsertDesktopProjectAttachment(current, feature)).toEqual({
+			'/projects/other': current['/projects/other'],
+			'/worktrees/feature': feature
+		});
 	});
 });
