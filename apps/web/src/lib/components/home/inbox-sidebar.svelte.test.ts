@@ -56,7 +56,6 @@ function props(records: Doc<'threadRecords'>[]) {
 		onNew: vi.fn(),
 		onAddProject: vi.fn(),
 		onSettings: vi.fn(),
-		onClose: vi.fn(),
 		onChange: vi.fn().mockResolvedValue(undefined),
 		onRename: vi.fn().mockResolvedValue(undefined)
 	};
@@ -80,6 +79,26 @@ it('settles an idle thread without offering snooze actions', async () => {
 		'settled'
 	);
 	expect(document.body.textContent).not.toContain('Snooze');
+});
+
+it('renders simple navigation and non-collapsible sections', async () => {
+	const input = await render([thread(), thread(true)]);
+	const newThread = [...document.querySelectorAll<HTMLButtonElement>('.inbox-menu-item')].find(
+		(button) => button.textContent?.includes('New thread')
+	);
+
+	expect(newThread).toBeTruthy();
+	newThread?.click();
+	expect(input.onNew).toHaveBeenCalledOnce();
+	expect(document.querySelector('.inbox-jumps')).toBeNull();
+	expect(document.querySelector('[aria-label="Close sidebar"]')).toBeNull();
+	expect(document.querySelector('#inbox-unsettled .inbox-section-heading')).toBeNull();
+	expect(document.querySelector('#inbox-settled .inbox-section-heading')?.textContent).toBe(
+		'Settled'
+	);
+	expect(document.querySelector('#inbox-settled .inbox-section-heading')).not.toBeInstanceOf(
+		HTMLButtonElement
+	);
 });
 
 it('does not allow a running thread to settle', async () => {

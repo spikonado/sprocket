@@ -1941,7 +1941,7 @@
 					onclick={() => void closeSidebar()}
 				></button>
 			{/if}
-			<div class="inbox-sidebar-host" inert={!sidebarOpen}>
+			<div class="inbox-sidebar-host" inert={!sidebarOpen && viewportWidth < 768}>
 				{#if settingsOpen}
 					<SettingsSidebar
 						activePage={settingsPage}
@@ -1973,7 +1973,6 @@
 							settingsPage = 'account';
 							settingsOpen = true;
 						}}
-						onClose={() => void closeSidebar()}
 						onChange={changeInboxState}
 						onRename={(thread, title) => renameThread(thread._id, title)}
 					/>
@@ -2011,7 +2010,7 @@
 			>
 				{#if !sidebarOpen}
 					<button
-						class="inbox-icon absolute top-3 left-3 z-50"
+						class="inbox-icon absolute top-3 left-3 z-50 md:hidden"
 						type="button"
 						aria-label="Open sidebar"
 						onclick={() => void openSidebar()}><PanelLeft size={18} /></button
