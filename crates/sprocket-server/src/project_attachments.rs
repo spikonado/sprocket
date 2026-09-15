@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -11,7 +11,6 @@ use sprocket_workspace::{
 use tokio::sync::{Mutex, RwLock};
 
 const PROJECT_ATTACHMENTS_FILE: &str = "project-attachments.json";
-const LEGACY_DIRECTORY_ATTACHMENT_KEY_PREFIX: &str = "legacy-directory:";
 const STALE_UNAVAILABLE_WORKSPACE_MS: u64 = 1000 * 60 * 60 * 24 * 30;
 const MAX_PERSISTED_PROJECT_ATTACHMENTS: usize = 200;
 
@@ -104,7 +103,7 @@ impl ProjectAttachmentStore {
                 anyhow::bail!("Replacement workspace is not attached");
             }
             if let Some(existing) = sessions.values().find(|attachment| {
-                attachment_matches_resolved(attachment, &validated)
+                same_attachment_identity(attachment, &validated)
                     && match replace_workspace_path.as_deref() {
                         Some(previous_path) => attachment.workspace_path != previous_path,
                         None => attachment.workspace_path != validated.workspace_path,
@@ -140,7 +139,7 @@ impl ProjectAttachmentStore {
             let mut changed = deduplicate_repository_attachments(&mut attachments, None);
             let existing = attachments
                 .values()
-                .find(|attachment| attachment_matches_resolved(attachment, &resolved))
+                .find(|attachment| same_attachment_identity(attachment, &resolved))
                 .cloned();
 
             match existing {
@@ -322,52 +321,28 @@ fn deduplicate_repository_attachments(
     preferred_workspace_path: Option<&str>,
 ) -> bool {
     let mut winners = HashMap::<String, String>::new();
-    let remote_repository_keys = attachments
-        .values()
-        .filter_map(|attachment| {
-            attachment
-                .attachment_key
-                .strip_prefix("remote:")
-                .filter(|key| *key == attachment.repository_key)
-                .map(str::to_owned)
-        })
-        .collect::<HashSet<_>>();
 
     for (workspace_path, attachment) in attachments.iter() {
         if attachment.attachment_key.is_empty() {
             continue;
         }
-        let attachment_key = deduplication_key(attachment, &remote_repository_keys);
-        let Some(current_path) = winners.get(&attachment_key) else {
-            winners.insert(attachment_key, workspace_path.clone());
+        let Some(current_path) = winners.get(&attachment.attachment_key) else {
+            winners.insert(attachment.attachment_key.clone(), workspace_path.clone());
             continue;
         };
         let current = &attachments[current_path];
 
         if attachment_is_preferred(attachment, current, preferred_workspace_path) {
-            winners.insert(attachment_key, workspace_path.clone());
+            winners.insert(attachment.attachment_key.clone(), workspace_path.clone());
         }
     }
 
     let previous_len = attachments.len();
     attachments.retain(|workspace_path, attachment| {
-        let attachment_key = deduplication_key(attachment, &remote_repository_keys);
-        attachment_key.is_empty() || winners.get(&attachment_key) == Some(workspace_path)
+        attachment.attachment_key.is_empty()
+            || winners.get(&attachment.attachment_key) == Some(workspace_path)
     });
     attachments.len() != previous_len
-}
-
-fn deduplication_key(
-    attachment: &ProjectAttachmentRecord,
-    remote_repository_keys: &HashSet<String>,
-) -> String {
-    if is_ambiguous_legacy_attachment(attachment)
-        && remote_repository_keys.contains(&attachment.repository_key)
-    {
-        format!("remote:{}", attachment.repository_key)
-    } else {
-        attachment.attachment_key.clone()
-    }
 }
 
 fn same_attachment_identity(
@@ -375,21 +350,6 @@ fn same_attachment_identity(
     right: &ProjectAttachmentRecord,
 ) -> bool {
     !left.attachment_key.is_empty() && left.attachment_key == right.attachment_key
-}
-
-fn attachment_matches_resolved(
-    attachment: &ProjectAttachmentRecord,
-    resolved: &ProjectAttachmentRecord,
-) -> bool {
-    same_attachment_identity(attachment, resolved)
-        || (is_ambiguous_legacy_attachment(attachment)
-            && resolved.attachment_key == format!("remote:{}", attachment.repository_key))
-}
-
-fn is_ambiguous_legacy_attachment(attachment: &ProjectAttachmentRecord) -> bool {
-    attachment
-        .attachment_key
-        .starts_with(LEGACY_DIRECTORY_ATTACHMENT_KEY_PREFIX)
 }
 
 fn attachment_is_preferred(
@@ -495,16 +455,15 @@ fn unavailable_attachment_key(session: &ProjectAttachmentRecord) -> String {
     if !session.attachment_key.is_empty() {
         return session.attachment_key.clone();
     }
+    let fallback_name = directory_name(&session.workspace_path);
     if !session.repository_key.is_empty()
         && !session.display_name.is_empty()
-        && session.repository_key != session.display_name
+        && (session.repository_key != session.display_name
+            || session.repository_key != fallback_name)
     {
         return format!("remote:{}", session.repository_key);
     }
-    format!(
-        "{LEGACY_DIRECTORY_ATTACHMENT_KEY_PREFIX}{}",
-        session.workspace_path
-    )
+    format!("directory:{}", session.workspace_path)
 }
 
 fn validate_session_path(session: ProjectAttachmentRecord) -> ProjectAttachmentRecord {
@@ -986,19 +945,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_keeps_unavailable_legacy_local_directories_with_the_same_name() {
+    async fn list_keeps_legacy_local_directories_that_match_a_remote_key() {
         let temp_root = tempfile::tempdir().expect("temp dir");
         let first = temp_root.path().join("clients/project");
         let second = temp_root.path().join("archive/project");
+        let remote = temp_root.path().join("current");
+        init_repo_with_origin(&remote, "project.git");
         let mut first_record = attachment_record(first.to_string_lossy(), "project", 1);
         first_record.attachment_key.clear();
         first_record.display_name = "project".to_string();
         let mut second_record = attachment_record(second.to_string_lossy(), "project", 2);
         second_record.attachment_key.clear();
         second_record.display_name = "project".to_string();
+        let mut remote_record = attachment_record(remote.to_string_lossy(), "project", 3);
+        remote_record.attachment_key.clear();
+        remote_record.display_name = "project".to_string();
         fs::write(
             temp_root.path().join(PROJECT_ATTACHMENTS_FILE),
-            serde_json::to_string(&vec![first_record, second_record])
+            serde_json::to_string(&vec![first_record, second_record, remote_record])
                 .expect("serialize attachments"),
         )
         .expect("write attachments");
@@ -1008,11 +972,21 @@ mod tests {
             .await
             .expect("list");
 
-        assert_eq!(listed.len(), 2);
-        assert!(listed.iter().all(|attachment| {
-            attachment.availability == WorkspaceAvailability::Unavailable
-                && attachment.attachment_key
-                    == format!("legacy-directory:{}", attachment.workspace_path)
+        assert_eq!(listed.len(), 3);
+        assert_eq!(
+            listed
+                .iter()
+                .filter(|attachment| {
+                    attachment.availability == WorkspaceAvailability::Unavailable
+                        && attachment.attachment_key
+                            == format!("directory:{}", attachment.workspace_path)
+                })
+                .count(),
+            2
+        );
+        assert!(listed.iter().any(|attachment| {
+            attachment.availability == WorkspaceAvailability::Available
+                && attachment.attachment_key == "remote:project"
         }));
     }
 
