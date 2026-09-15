@@ -1,3 +1,4 @@
+mod attachment_store;
 mod history;
 mod read_index;
 mod replica;
