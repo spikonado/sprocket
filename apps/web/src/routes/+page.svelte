@@ -419,6 +419,11 @@
 	const inboxProjectKeys = $derived(
 		projectFilter.length > 0 ? projectFilter : inboxProjects.map((project) => project.repositoryKey)
 	);
+	$effect(() => {
+		const attachedKeys = new Set(inboxProjects.map((project) => project.repositoryKey));
+		const attachedFilter = projectFilter.filter((key) => attachedKeys.has(key));
+		if (attachedFilter.length !== projectFilter.length) projectFilter = attachedFilter;
+	});
 	const inbox = useThreadInbox({
 		enabled: () => authReady,
 		projects: () => inboxProjectKeys

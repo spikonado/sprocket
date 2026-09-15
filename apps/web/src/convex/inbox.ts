@@ -19,9 +19,6 @@ export const list = query({
 		if (repositoryKeys.length === 0) {
 			throw new Error('Choose at least one project.');
 		}
-		if (repositoryKeys.length > 100) {
-			throw new Error('Select at most 100 projects.');
-		}
 
 		const streams = repositoryKeys.map((repositoryKey) => {
 			const rows = stream(ctx.db, schema)
