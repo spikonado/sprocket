@@ -30,10 +30,6 @@ fn default_command_yield_ms() -> u64 {
     DEFAULT_COMMAND_YIELD_MS
 }
 
-fn default_max_output_chars() -> usize {
-    DEFAULT_COMMAND_MAX_OUTPUT_CHARS
-}
-
 fn default_stdin_yield_ms() -> u64 {
     DEFAULT_STDIN_YIELD_MS
 }
@@ -54,10 +50,6 @@ fn is_default_command_yield_ms(yield_time_ms: &u64) -> bool {
     *yield_time_ms == DEFAULT_COMMAND_YIELD_MS
 }
 
-fn is_default_max_output_chars(max_output_chars: &usize) -> bool {
-    *max_output_chars == DEFAULT_COMMAND_MAX_OUTPUT_CHARS
-}
-
 fn is_default_stdin_yield_ms(yield_time_ms: &u64) -> bool {
     *yield_time_ms == DEFAULT_STDIN_YIELD_MS
 }
@@ -72,7 +64,6 @@ pub(super) fn exec_command_parameters() -> serde_json::Value {
     schema["properties"]["shell"]["default"] = json!(default_command_shell());
     schema["properties"]["timeoutMs"]["default"] = json!(DEFAULT_COMMAND_TIMEOUT_MS);
     schema["properties"]["yieldTimeMs"]["default"] = json!(DEFAULT_COMMAND_YIELD_MS);
-    schema["properties"]["maxOutputChars"]["default"] = json!(DEFAULT_COMMAND_MAX_OUTPUT_CHARS);
     schema
 }
 
@@ -118,14 +109,6 @@ pub(crate) struct ExecCommandArgs {
     )]
     #[schemars(default = "default_command_yield_ms")]
     pub(crate) yield_time_ms: u64,
-    /// Maximum preview characters, capped at 80000. Truncated previews join the head and tail at headChars; omitted bytes remain in logPath.
-    #[serde(
-        rename = "maxOutputChars",
-        default = "default_max_output_chars",
-        skip_serializing_if = "is_default_max_output_chars"
-    )]
-    #[schemars(default = "default_max_output_chars")]
-    pub(crate) max_output_chars: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -156,7 +139,7 @@ impl rig::tool::Tool for ExecCommandTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Run a shell command with full machine access. Long-running commands yield a sessionId for write_stdin polling and input. Output is a bounded head-and-tail preview in pipe-read order, not guaranteed cross-stream write order. When truncated, the gap is at headChars; omittedBytes and omittedLines count missing raw bytes and newline bytes. outputBytes counts decoded source bytes in this increment; totalOutputBytes includes any pending UTF-8 suffix. encodingLossBytes counts source bytes replaced in the preview. logPath contains raw output, and eventsPath contains sequenced JSONL events with channel, timestampMs, and raw byte arrays. Logs persist locally after the run. Capture fails explicitly if raw plus event logs exceed 64 MiB or would leave less than 256 MiB free; failed capture can leave only a prefix."
+        "Run a shell command with full machine access. Long-running commands yield a sessionId for write_stdin polling and input. Output is a head-and-tail preview capped at 20000 Unicode characters in pipe-read order, not guaranteed cross-stream write order. When truncated, the gap is at headChars; omittedBytes and omittedLines count missing raw bytes and newline bytes. outputBytes counts decoded source bytes in this increment; totalOutputBytes includes any pending UTF-8 suffix. encodingLossBytes counts source bytes replaced in the preview. logPath contains raw output, and eventsPath contains sequenced JSONL events with channel, timestampMs, and raw byte arrays. Logs persist locally after the run. Capture fails explicitly if raw plus event logs exceed 64 MiB or would leave less than 256 MiB free; failed capture can leave only a prefix."
             .to_string()
     }
 
@@ -187,7 +170,7 @@ impl rig::tool::Tool for ExecCommandTool {
                         &args.shell,
                         args.timeout_ms,
                         args.yield_time_ms,
-                        args.max_output_chars,
+                        DEFAULT_COMMAND_MAX_OUTPUT_CHARS,
                     )
                     .await
                     .map_err(tool_error)?;
@@ -205,7 +188,7 @@ impl rig::tool::Tool for WriteStdinTool {
     type Output = serde_json::Value;
 
     fn description(&self) -> String {
-        "Write input to an exec_command session, poll incremental output, wait for completion, or terminate the process tree. Repeated polls after completion replay the final increment until this agent run ends. Full output remains at logPath; truncated previews join head and tail at headChars."
+        "Write input to an exec_command session, poll incremental output, wait for completion, or terminate the process tree. Repeated polls after completion replay the final increment until this agent run ends. Each preview is capped at 20000 Unicode characters. Full captured output remains at logPath; truncated previews join head and tail at headChars."
             .to_string()
     }
 
@@ -242,5 +225,29 @@ impl rig::tool::Tool for WriteStdinTool {
             },
         )
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exec_command_schema_does_not_expose_the_preview_limit() {
+        let schema = exec_command_parameters();
+        let properties = schema["properties"].as_object().unwrap();
+        assert_eq!(properties.len(), 5);
+        assert!(!properties.contains_key("maxOutputChars"));
+        assert_eq!(schema["required"], json!(["cmd"]));
+    }
+
+    #[test]
+    fn old_preview_limits_are_not_replayed_as_tool_arguments() {
+        let args: ExecCommandArgs = serde_json::from_value(json!({
+            "cmd": "pwd",
+            "maxOutputChars": 1,
+        }))
+        .unwrap();
+        assert_eq!(serde_json::to_value(args).unwrap(), json!({"cmd": "pwd"}));
     }
 }

@@ -1,15 +1,5 @@
 # Backwards compatibility
 
-## Command output logs
-
-Command results keep the existing `output`, `truncated`, lifecycle, and error
-fields. New results add preview byte counts, the head/tail split offset, and
-local log paths. Stored tool outputs are JSON values, so older transcript
-records need no migration. They remain readable without the new fields; output
-discarded by older runners cannot be recovered. There is no compatibility shim
-or removal gate for this additive result format. See `COMMAND_OUTPUT.md` for
-field and retention semantics.
-
 ## CLI authentication and run control
 
 CLI clients send their exact semantic release version to local `/api/cli/*`
