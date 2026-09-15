@@ -470,7 +470,7 @@
 		{/if}
 
 		{#if showContinueWorking && onContinueWorking}
-			<div class="mb-3 px-4">
+			<div class="mx-auto mb-3 w-full max-w-[48rem] px-4">
 				<button
 					type="button"
 					class="border-border bg-surface/80 text-foreground hover:bg-hover-fill rounded-full border px-3 py-1.5 text-[13px] font-medium transition"
