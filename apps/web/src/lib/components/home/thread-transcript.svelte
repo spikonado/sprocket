@@ -84,54 +84,53 @@
 	let stickToBottom = $state(true);
 	let lastScrollTop = 0;
 	let touchY: number | undefined;
-	let automaticPagesRemaining = 2;
-	let lastAutomaticBefore: number | undefined;
+	let requestedBefore: number | undefined;
+	let historyPrefetchPagesRemaining = 3;
 
 	const SCROLL_EPSILON_PX = 28;
+	const HISTORY_PREFETCH_VIEWPORTS = 3;
 
 	function updateStickToBottom() {
 		const viewport = scrollViewport;
-		if (!viewport || viewport.scrollTop === lastScrollTop) return;
+		if (!viewport) return;
+		if (viewport.scrollTop === lastScrollTop) {
+			prefetchOlderHistory();
+			return;
+		}
 		const bottom = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
 		const movingUp = viewport.scrollTop < lastScrollTop;
 		const clampedToBottom = lastScrollTop > bottom && Math.abs(viewport.scrollTop - bottom) < 1;
 		lastScrollTop = viewport.scrollTop;
+		historyPrefetchPagesRemaining = 3;
 		// A shorter scroll range must preserve the reader's existing follow state.
-		if (clampedToBottom) return;
-		const distanceToBottom = bottom - viewport.scrollTop;
-		stickToBottom = !movingUp && distanceToBottom <= SCROLL_EPSILON_PX;
-		if (movingUp) handleUpwardIntent();
-	}
-
-	function handleUpwardIntent() {
-		stickToBottom = false;
-		const viewport = scrollViewport;
-		if (
-			viewport &&
-			nextBefore !== undefined &&
-			!loadingOlder &&
-			viewport.clientHeight > 0 &&
-			viewport.scrollTop <= viewport.clientHeight
-		) {
-			onLoadOlder?.();
+		if (!clampedToBottom) {
+			const distanceToBottom = bottom - viewport.scrollTop;
+			stickToBottom = !movingUp && distanceToBottom <= SCROLL_EPSILON_PX;
+			if (movingUp) stopFollowing();
 		}
+		prefetchOlderHistory();
 	}
 
-	function fillViewport() {
+	function stopFollowing() {
+		stickToBottom = false;
+		historyPrefetchPagesRemaining = 3;
+		prefetchOlderHistory();
+	}
+
+	function prefetchOlderHistory() {
 		const viewport = scrollViewport;
 		if (
 			viewport &&
 			nextBefore !== undefined &&
-			nextBefore !== lastAutomaticBefore &&
+			nextBefore !== requestedBefore &&
 			!loadingOlder &&
 			onLoadOlder &&
-			automaticPagesRemaining > 0 &&
+			historyPrefetchPagesRemaining > 0 &&
 			viewport.clientHeight > 0 &&
-			viewport.scrollHeight <= viewport.clientHeight + SCROLL_EPSILON_PX
+			viewport.scrollTop <= viewport.clientHeight * HISTORY_PREFETCH_VIEWPORTS
 		) {
-			// Collapsed work can consume many pages without making the viewport taller.
-			automaticPagesRemaining -= 1;
-			lastAutomaticBefore = nextBefore;
+			historyPrefetchPagesRemaining -= 1;
+			requestedBefore = nextBefore;
 			onLoadOlder();
 		}
 	}
@@ -141,7 +140,16 @@
 		void nextBefore;
 		void loadingOlder;
 		void scrollViewport;
-		untrack(fillViewport);
+		let active = true;
+		untrack(
+			() =>
+				void tick().then(() => {
+					if (active) prefetchOlderHistory();
+				})
+		);
+		return () => {
+			active = false;
+		};
 	});
 
 	function handleHistoryKey(event: KeyboardEvent) {
@@ -157,7 +165,7 @@
 			event.key === 'Home' ||
 			(event.key === ' ' && event.shiftKey)
 		) {
-			handleUpwardIntent();
+			stopFollowing();
 		}
 	}
 
@@ -375,7 +383,7 @@
 
 		const observer = new ResizeObserver(() => {
 			scrollToBottom();
-			fillViewport();
+			prefetchOlderHistory();
 		});
 		observer.observe(viewport);
 		observer.observe(content);
@@ -414,7 +422,7 @@
 		bind:this={scrollViewport}
 		onscroll={updateStickToBottom}
 		onwheel={(event) => {
-			if (event.deltaY < 0) handleUpwardIntent();
+			if (event.deltaY < 0) stopFollowing();
 		}}
 		onkeydown={handleHistoryKey}
 		ontouchstart={(event) => {
@@ -423,7 +431,7 @@
 		ontouchmove={(event) => {
 			const nextY = event.touches[0]?.clientY;
 			if (nextY !== undefined && touchY !== undefined && nextY > touchY) {
-				handleUpwardIntent();
+				stopFollowing();
 			}
 			touchY = nextY;
 		}}
@@ -457,20 +465,6 @@
 				>
 					Reconnecting to conversation history.
 				</div>
-			{/if}
-
-			{#if nextBefore !== undefined && onLoadOlder}
-				<button
-					type="button"
-					class="text-muted-foreground hover:text-foreground mb-6 self-center text-sm disabled:opacity-50"
-					disabled={loadingOlder}
-					onclick={() => {
-						stickToBottom = false;
-						onLoadOlder?.();
-					}}
-				>
-					{loadingOlder ? 'Loading older messages...' : 'Load older messages'}
-				</button>
 			{/if}
 
 			{#if messages.length === 0}

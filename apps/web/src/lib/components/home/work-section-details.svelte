@@ -35,11 +35,24 @@
 		beforeChange: (follow: boolean) => () => void;
 	} = $props();
 	let version = $state(0);
+	let container = $state<HTMLDivElement>();
 	let top = $state<HTMLDivElement>();
 	let bottom = $state<HTMLDivElement>();
 	let lastTop = 0;
-	let automaticPages = 2;
 	let direction: 'older' | 'newer' = 'newer';
+	const stalledPages = { older: 0, newer: 0 };
+	const PREFETCH_VIEWPORTS = 3;
+	const MAX_STALLED_PREFETCH_PAGES = 2;
+
+	function distanceFromViewport(edge: HTMLDivElement | undefined) {
+		if (!viewport || !edge) return Number.POSITIVE_INFINITY;
+		const bounds = viewport.getBoundingClientRect();
+		const target = edge.getBoundingClientRect();
+		if (target.bottom < bounds.top) return bounds.top - target.bottom;
+		if (target.top > bounds.bottom) return target.top - bounds.bottom;
+		return 0;
+	}
+
 	const history = new WorkDetails(
 		untrack(() => inProgress),
 		(cursor, signal) => load(row, cursor, signal),
@@ -47,11 +60,18 @@
 			version += 1;
 		},
 		async (update, edge) => {
+			const previousDistance = edge
+				? distanceFromViewport(edge === 'older' ? top : bottom)
+				: undefined;
 			const restore = beforeChange(inProgress && edge !== 'older');
 			update();
 			await tick();
 			restore();
 			lastTop = viewport?.scrollTop ?? 0;
+			if (edge && previousDistance !== undefined) {
+				const nextDistance = distanceFromViewport(edge === 'older' ? top : bottom);
+				stalledPages[edge] = nextDistance <= previousDistance + 1 ? stalledPages[edge] + 1 : 0;
+			}
 		}
 	);
 	const details = $derived.by(() => {
@@ -78,102 +98,77 @@
 	const blockKeys = new TranscriptSectionKeys();
 	const settled = $derived(blockKeys.reconcileBlocks(row.id, partitioned.settledBlocks));
 
-	function loadVisible() {
+	function prefetchNearbyDetails() {
 		if (
 			!viewport ||
 			viewport.clientHeight <= 0 ||
-			automaticPages <= 0 ||
 			history.loading ||
 			history.error ||
 			history.indexing
 		)
 			return;
-		const edge = direction === 'older' ? top : bottom;
-		const cursor = direction === 'older' ? history.previousBefore : history.nextAfter;
-		if (!edge || cursor === undefined) return;
-		const bounds = viewport.getBoundingClientRect();
-		const target = edge.getBoundingClientRect();
-		if (target.bottom < bounds.top - 160 || target.top > bounds.bottom + 160) return;
-		automaticPages -= 1;
-		void history.more(direction);
+		const directions: Array<'older' | 'newer'> =
+			direction === 'older' ? ['older', 'newer'] : ['newer', 'older'];
+		for (const next of directions) {
+			const cursor = next === 'older' ? history.previousBefore : history.nextAfter;
+			if (cursor === undefined || stalledPages[next] >= MAX_STALLED_PREFETCH_PAGES) continue;
+			const edge = next === 'older' ? top : bottom;
+			if (distanceFromViewport(edge) > viewport.clientHeight * PREFETCH_VIEWPORTS) continue;
+			void history.more(next);
+			return;
+		}
 	}
 
 	$effect(() => {
 		void row.revision;
-		if (inProgress && direction === 'newer') automaticPages = 2;
+		if (inProgress) stalledPages.newer = 0;
 		untrack(() => void history.refresh());
 	});
 	$effect(() => () => history.stop());
 	$effect(() => {
 		void version;
-		untrack(loadVisible);
+		untrack(prefetchNearbyDetails);
 	});
 	$effect(() => {
 		const root = viewport;
 		if (!root || !top || !bottom) return;
 		lastTop = root.scrollTop;
-		function intent(next: 'older' | 'newer') {
-			direction = next;
-			automaticPages = 2;
-			loadVisible();
-		}
 		function scroll() {
 			if (!root || root.scrollTop === lastTop) return;
 			const next = root.scrollTop < lastTop ? 'older' : 'newer';
 			lastTop = root.scrollTop;
-			intent(next);
-		}
-		function wheel(event: WheelEvent) {
-			if (event.deltaY) intent(event.deltaY < 0 ? 'older' : 'newer');
-		}
-		function key(event: KeyboardEvent) {
-			if (
-				event.target instanceof Element &&
-				event.target.closest('input, textarea, button, [contenteditable="true"]')
-			)
-				return;
-			if (
-				['ArrowUp', 'PageUp', 'Home'].includes(event.key) ||
-				(event.key === ' ' && event.shiftKey)
-			)
-				intent('older');
-			if (
-				['ArrowDown', 'PageDown', 'End'].includes(event.key) ||
-				(event.key === ' ' && !event.shiftKey)
-			)
-				intent('newer');
-		}
-		let touchY: number | undefined;
-		function touch(event: TouchEvent) {
-			const y = event.touches[0]?.clientY;
-			if (event.type === 'touchmove' && y !== undefined && touchY !== undefined && y !== touchY)
-				intent(y > touchY ? 'older' : 'newer');
-			touchY = y;
+			direction = next;
+			stalledPages[next] = 0;
+			prefetchNearbyDetails();
 		}
 		const observer = globalThis.IntersectionObserver
-			? new IntersectionObserver(loadVisible, { root, rootMargin: '160px 0px' })
+			? new IntersectionObserver(prefetchNearbyDetails, {
+					root,
+					rootMargin: `${root.clientHeight * PREFETCH_VIEWPORTS}px 0px`
+				})
+			: undefined;
+		const resizeObserver = globalThis.ResizeObserver
+			? new ResizeObserver(() => {
+					stalledPages.older = 0;
+					stalledPages.newer = 0;
+					prefetchNearbyDetails();
+				})
 			: undefined;
 		observer?.observe(top);
 		observer?.observe(bottom);
+		if (container) resizeObserver?.observe(container);
+		resizeObserver?.observe(root);
 		root.addEventListener('scroll', scroll);
-		root.addEventListener('wheel', wheel, { passive: true });
-		root.addEventListener('keydown', key);
-		root.addEventListener('touchstart', touch, { passive: true });
-		root.addEventListener('touchmove', touch, { passive: true });
 		return () => {
 			observer?.disconnect();
+			resizeObserver?.disconnect();
 			root.removeEventListener('scroll', scroll);
-			root.removeEventListener('wheel', wheel);
-			root.removeEventListener('keydown', key);
-			root.removeEventListener('touchstart', touch);
-			root.removeEventListener('touchmove', touch);
 		};
 	});
 </script>
 
-<div aria-busy={details.loading || details.indexing}>
+<div bind:this={container} aria-busy={details.loading || details.indexing}>
 	<div bind:this={top} data-work-edge="older" class="h-px" aria-hidden="true"></div>
-	{#if details.previousBefore !== undefined}<p class="text-xs">Scroll up for earlier work.</p>{/if}
 	{#if details.stale}<p role="status">Showing saved details while reconnecting.</p>{/if}
 	<div class="space-y-2">
 		{#each settled as { block, renderKey } (renderKey)}
@@ -202,15 +197,14 @@
 			Could not load these details. <button
 				class="underline"
 				onclick={() => {
-					automaticPages = 2;
+					stalledPages.older = 0;
+					stalledPages.newer = 0;
 					void history.retryFailed();
 				}}>Retry</button
 			>
 		</p>
-	{:else if details.loading || details.indexing}
+	{:else if (details.loading || details.indexing) && details.parts.length === 0}
 		<p role="status">Loading details...</p>
-	{:else if details.nextAfter !== undefined}
-		<p class="text-xs">Scroll down for more work.</p>
 	{/if}
 	<div bind:this={bottom} data-work-edge="newer" class="h-px" aria-hidden="true"></div>
 </div>
