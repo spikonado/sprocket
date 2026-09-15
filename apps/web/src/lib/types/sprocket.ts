@@ -351,6 +351,7 @@ export type ProjectAttachmentRequest = {
 export type ProjectAttachment = {
 	workspacePath: string;
 	repositoryKey: string;
+	attachmentKey?: string;
 	displayName: string;
 	availability: LocalAttachmentAvailability;
 	lastValidatedAt: number;

@@ -70,11 +70,13 @@ function projectAttachment(
 	workspacePath: string,
 	repositoryKey: string,
 	lastUsedAt: number,
-	availability: ProjectAttachment['availability'] = 'available'
+	availability: ProjectAttachment['availability'] = 'available',
+	attachmentKey: string = `remote:${repositoryKey}`
 ): ProjectAttachment {
 	return {
 		workspacePath,
 		repositoryKey,
+		attachmentKey,
 		displayName: repositoryKey,
 		availability,
 		lastValidatedAt: lastUsedAt,
@@ -231,26 +233,35 @@ describe('local project attachments', () => {
 		const indexed = buildDesktopProjectAttachmentsByPath([
 			projectAttachment('/worktrees/main', 'github.com/acme/robot', 1),
 			projectAttachment('/worktrees/feature', 'github.com/acme/robot', 2),
-			projectAttachment('/worktrees/removed', 'github.com/acme/other', 3, 'unavailable'),
-			projectAttachment('/worktrees/other', 'github.com/acme/other', 1)
+			projectAttachment('/worktrees/removed', 'github.com/acme/other', 1, 'unavailable'),
+			projectAttachment('/worktrees/other', 'github.com/acme/other', 2)
 		]);
 
-		expect(Object.keys(indexed)).toEqual(['/worktrees/feature', '/worktrees/other']);
+		expect(Object.keys(indexed)).toEqual(['/worktrees/main', '/worktrees/removed']);
 	});
 
 	it('selects the same directory when duplicate input order changes', () => {
 		const older = projectAttachment('/worktrees/older', 'github.com/acme/robot', 1);
-		const lexicalTie = projectAttachment('/worktrees/z-last', 'github.com/acme/robot', 2);
-		const newer = projectAttachment('/worktrees/newer', 'github.com/acme/robot', 2);
+		const lexicalTie = projectAttachment('/worktrees/a-first', 'github.com/acme/robot', 1);
+		const newer = projectAttachment('/worktrees/newer', 'github.com/acme/robot', 1);
 
 		for (const attachments of [
 			[older, lexicalTie, newer],
 			[newer, older, lexicalTie]
 		]) {
 			expect(Object.keys(buildDesktopProjectAttachmentsByPath(attachments))).toEqual([
-				'/worktrees/z-last'
+				'/worktrees/a-first'
 			]);
 		}
+	});
+
+	it('keeps unrelated local directories with the same display repository key', () => {
+		const indexed = buildDesktopProjectAttachmentsByPath([
+			projectAttachment('/clients/acme', 'acme', 1, 'available', 'directory:/clients/acme'),
+			projectAttachment('/archive/acme', 'acme', 2, 'available', 'directory:/archive/acme')
+		]);
+
+		expect(Object.keys(indexed)).toEqual(['/clients/acme', '/archive/acme']);
 	});
 
 	it('replaces the displayed directory when the same repository is attached again', () => {

@@ -32,6 +32,12 @@ const AGENT_START_CLEANUP_TIMEOUT: Duration = Duration::from_secs(12);
 
 struct FinishedOnDrop(Option<Arc<sprocket_agent::RunOutput>>);
 
+#[derive(Clone, Copy)]
+pub(crate) enum WorkspaceAccess {
+    Attached,
+    RunDirectory,
+}
+
 impl Drop for FinishedOnDrop {
     fn drop(&mut self) {
         if let Some(finished) = &self.0 {
@@ -74,13 +80,22 @@ async fn run_agent_handler(
     require_session_user(&state.auth, &headers, &jar, &payload.user_id)
         .await
         .map_err(ApiError::unauthorized)?;
-    let started = launch_agent(state, payload, true, Default::default(), None).await?;
+    let started = launch_agent(
+        state,
+        payload,
+        WorkspaceAccess::Attached,
+        true,
+        Default::default(),
+        None,
+    )
+    .await?;
     Ok((StatusCode::ACCEPTED, Json(started)))
 }
 
 pub(crate) async fn launch_agent(
     state: AppState,
     payload: RunAgentApiRequest,
+    workspace_access: WorkspaceAccess,
     allow_interaction: bool,
     cancellation: sprocket_workspace::WorkspaceCancellation,
     output: Option<Arc<sprocket_agent::RunOutput>>,
@@ -92,11 +107,21 @@ pub(crate) async fn launch_agent(
         .await
         .map_err(ApiError::unauthorized)?;
 
-    let attachment = state
-        .project_attachments
-        .require_available_workspace(&payload.workspace_path)
-        .await
-        .map_err(ApiError::bad_request)?;
+    let attachment = match workspace_access {
+        WorkspaceAccess::Attached => {
+            state
+                .project_attachments
+                .require_available_workspace(&payload.workspace_path)
+                .await
+        }
+        WorkspaceAccess::RunDirectory => {
+            state
+                .project_attachments
+                .resolve_run_workspace(payload.workspace_path.clone())
+                .await
+        }
+    }
+    .map_err(ApiError::bad_request)?;
     let workspace_path = attachment.workspace_path.clone();
     let artifact_workspace_path = workspace_path.clone();
     let artifact_repository_key = payload

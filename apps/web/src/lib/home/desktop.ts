@@ -126,16 +126,10 @@ export function launchAgentRun(args: {
 }
 
 function attachmentIsPreferred(candidate: ProjectAttachment, current: ProjectAttachment) {
-	if (candidate.availability !== current.availability) {
-		return candidate.availability === 'available';
-	}
 	if (candidate.lastUsedAt !== current.lastUsedAt) {
-		return candidate.lastUsedAt > current.lastUsedAt;
+		return candidate.lastUsedAt < current.lastUsedAt;
 	}
-	if (candidate.lastValidatedAt !== current.lastValidatedAt) {
-		return candidate.lastValidatedAt > current.lastValidatedAt;
-	}
-	return candidate.workspacePath > current.workspacePath;
+	return candidate.workspacePath < current.workspacePath;
 }
 
 export function buildDesktopProjectAttachmentsByPath(
@@ -143,9 +137,10 @@ export function buildDesktopProjectAttachmentsByPath(
 ): Record<string, ProjectAttachment> {
 	const attachmentsByRepository = new Map<string, ProjectAttachment>();
 	for (const attachment of desktopProjectAttachments) {
-		const current = attachmentsByRepository.get(attachment.repositoryKey);
+		const attachmentKey = attachment.attachmentKey ?? `path:${attachment.workspacePath}`;
+		const current = attachmentsByRepository.get(attachmentKey);
 		if (!current || attachmentIsPreferred(attachment, current)) {
-			attachmentsByRepository.set(attachment.repositoryKey, attachment);
+			attachmentsByRepository.set(attachmentKey, attachment);
 		}
 	}
 	return Object.fromEntries(
@@ -166,7 +161,9 @@ export function upsertDesktopProjectAttachment(
 			([workspacePath, existing]) =>
 				workspacePath !== replaceWorkspacePath &&
 				workspacePath !== attachment.workspacePath &&
-				existing.repositoryKey !== attachment.repositoryKey
+				(existing.attachmentKey === undefined ||
+					attachment.attachmentKey === undefined ||
+					existing.attachmentKey !== attachment.attachmentKey)
 		)
 	);
 	nextAttachments[attachment.workspacePath] = attachment;
