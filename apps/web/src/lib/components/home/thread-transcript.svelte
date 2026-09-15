@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { Check, Copy } from '@lucide/svelte';
 	import { tick, untrack } from 'svelte';
 	import {
 		assistantTimelinePartKey,
@@ -17,7 +16,7 @@
 	import { TranscriptSectionKeys } from '$lib/chat/transcript-section-keys';
 	import ChatMarkdown from '$lib/components/chat-markdown.svelte';
 	import ImageViewer, { type ViewerImage } from '$lib/components/image-viewer.svelte';
-	import TranscriptAttachment from '$lib/components/home/transcript-attachment.svelte';
+	import TranscriptPromptMessage from '$lib/components/home/transcript-prompt-message.svelte';
 	import MandateApprovalForm from '$lib/components/home/mandate-approval-form.svelte';
 	import ReasoningDisclosure from '$lib/components/home/reasoning-disclosure.svelte';
 	import WorkTools from '$lib/components/home/work-tools.svelte';
@@ -268,11 +267,7 @@
 		)
 	);
 
-	const userMessageClass =
-		'user-bubble w-fit max-w-[33rem] rounded-xl border px-5 py-3.5 text-[15.5px] leading-7 text-foreground';
-
 	let viewerImage = $state<ViewerImage | null>(null);
-
 	let copiedMessageId = $state<string | null>(null);
 	let copiedTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -280,13 +275,9 @@
 		try {
 			await navigator.clipboard.writeText(text);
 			copiedMessageId = messageId;
-			if (copiedTimeout !== null) {
-				clearTimeout(copiedTimeout);
-			}
+			if (copiedTimeout !== null) clearTimeout(copiedTimeout);
 			copiedTimeout = setTimeout(() => {
-				if (copiedMessageId === messageId) {
-					copiedMessageId = null;
-				}
+				if (copiedMessageId === messageId) copiedMessageId = null;
 				copiedTimeout = null;
 			}, 1_500);
 		} catch {
@@ -294,12 +285,8 @@
 		}
 	}
 
-	$effect(() => {
-		return () => {
-			if (copiedTimeout !== null) {
-				clearTimeout(copiedTimeout);
-			}
-		};
+	$effect(() => () => {
+		if (copiedTimeout !== null) clearTimeout(copiedTimeout);
 	});
 
 	function scrollToBottom() {
@@ -498,70 +485,17 @@
 				<div class="transcript-messages space-y-8 pb-14">
 					{#each messages as message, messageIndex (message.id)}
 						{#if message.kind === 'prompt'}
-							<div
-								data-message-id={message.id}
-								data-transcript-anchor={message.id}
-								class="flex flex-col items-end gap-1.5"
-							>
-								{#if (message.attachments ?? []).length}
-									<ul
-										class="flex max-w-132 flex-wrap justify-end gap-2"
-										aria-label="Attached files"
-									>
-										{#each message.attachments ?? [] as attachment (attachment.storageId)}
-											<li>
-												<TranscriptAttachment
-													attachment={{ ...attachment, url: null }}
-													{loadAttachment}
-													onOpen={(image) => {
-														viewerImage = image;
-													}}
-												/>
-											</li>
-										{/each}
-									</ul>
-								{/if}
-								{#if message.text || !(message.attachments ?? []).length}
-									<div class={userMessageClass}>
-										<ChatMarkdown content={message.text || ' '} className="text-foreground" />
-									</div>
-								{/if}
-								{#if message.text}
-									<button
-										type="button"
-										class="text-muted-foreground hover:text-muted-foreground inline-flex size-6 items-center justify-center rounded-md transition"
-										aria-label={copiedMessageId === message.id ? 'Copied' : 'Copy message'}
-										onclick={() => {
-											void copyUserMessage(message.id, message.text ?? '');
-										}}
-									>
-										{#if copiedMessageId === message.id}
-											<Check class="size-3.5" aria-hidden="true" />
-										{:else}
-											<Copy class="size-3.5" aria-hidden="true" />
-										{/if}
-									</button>
-								{/if}
-								{#if remoteChangeNotice && message.id === firstPromptMessageId}
-									<div
-										role="status"
-										class="w-full max-w-132 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-left text-sm text-amber-800 dark:text-amber-200"
-									>
-										<div class="flex items-start justify-between gap-3">
-											<p class="min-w-0 flex-1 leading-6">{remoteChangeNotice}</p>
-											{#if onDismissRemoteChangeNotice}
-												<button
-													type="button"
-													class="shrink-0 text-xs font-medium tracking-[-0.01em] text-amber-800/80 underline-offset-2 hover:text-amber-900 hover:underline dark:text-amber-200/80 dark:hover:text-amber-100"
-													onclick={onDismissRemoteChangeNotice}
-												>
-													Dismiss
-												</button>
-											{/if}
-										</div>
-									</div>
-								{/if}
-							</div>
+							<TranscriptPromptMessage
+								{message}
+								copied={copiedMessageId === message.id}
+								remoteChangeNotice={message.id === firstPromptMessageId ? remoteChangeNotice : null}
+								{onDismissRemoteChangeNotice}
+								{loadAttachment}
+								onCopy={() => void copyUserMessage(message.id, message.text ?? '')}
+								onOpenImage={(image) => {
+									viewerImage = image;
+								}}
+							/>
 						{:else if message.kind === 'work'}
 							{@const row = message}
 							{@const followingLive = !row.closed
