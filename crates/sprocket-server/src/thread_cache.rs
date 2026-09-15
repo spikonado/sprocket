@@ -75,14 +75,11 @@ impl ThreadCacheStore {
             .parent()
             .expect("thread cache path always has a parent");
         tokio::fs::create_dir_all(parent).await?;
-        let temporary = self.path.with_extension("json.tmp");
         let cache = CachedThreads {
             user_id: user_id.to_string(),
             threads: records.to_vec(),
         };
-        tokio::fs::write(&temporary, serde_json::to_vec_pretty(&cache)?).await?;
-        tokio::fs::rename(temporary, &self.path).await?;
-        Ok(())
+        crate::write_atomic(&self.path, &serde_json::to_vec_pretty(&cache)?).await
     }
 }
 
