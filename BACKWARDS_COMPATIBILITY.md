@@ -48,14 +48,6 @@ profiles must use separate data directories.
 
 We ship breaking changes ahead of our users' installed clients and keep the old behavior working until those clients age out. That debt is easy to accumulate and easier to forget. This file lists every backwards-compatibility layer we currently ship, what it protects, how to remove it, and the signal that says removal is safe. When a removal PR merges, remove its entry from this document.
 
-## Archived thread commands
-
-The local server keeps `/api/threads/archive` and `/api/threads/restore`, and
-Convex keeps the matching `archiveForLocalCache` and `restoreForLocalCache`
-mutations, for installed clients released before the sidebar renamed archived
-threads to settled threads. Remove these aliases after every supported client
-uses the settle and unsettle commands.
-
 ## Local project attachments
 
 Project attachment records written before PR #392 have no `attachmentKey` in

@@ -140,8 +140,8 @@ they are added. The local cache still supplies project-scoped selection state,
 including a selected thread outside the recent active set.
 
 Rename, settle, unsettle, rekey, and cancellation go through the local server
-so it can refresh affected cache files. Archive and restore remain aliases for
-older clients. Thread creation still talks to Convex directly.
+so it can refresh affected cache files. Thread creation still talks to Convex
+directly.
 
 ### Artifacts and local bindings
 

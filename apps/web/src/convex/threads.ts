@@ -41,16 +41,6 @@ async function settleOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>
 	return { userId, record };
 }
 
-async function archiveOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>) {
-	const userId = await getUserId(ctx);
-	const record = await getOwnedThreadRecord(ctx.db, userId, threadId);
-	if (record.status && ['queued', 'running', 'awaiting_executor'].includes(record.status)) {
-		throw new Error('Cannot archive a thread while a run is active.');
-	}
-	await ctx.db.patch('threadRecords', threadId, { archivedAt: Date.now() });
-	return { userId, record };
-}
-
 async function unsettleOwnedThread(ctx: MutationCtx, threadId: Id<'threadRecords'>) {
 	const userId = await getUserId(ctx);
 	const record = await getOwnedThreadRecord(ctx.db, userId, threadId);
@@ -203,17 +193,6 @@ export const archive = mutation({
 	}
 });
 
-export const archiveForLocalCache = mutation({
-	args: {
-		threadId: v.id('threadRecords')
-	},
-	returns: v.object({ userId: v.string(), repositoryKey: v.string() }),
-	handler: async (ctx, args) => {
-		const { userId, record } = await archiveOwnedThread(ctx, args.threadId);
-		return { userId, repositoryKey: record.repositoryKey };
-	}
-});
-
 export const settleForLocalCache = mutation({
 	args: {
 		threadId: v.id('threadRecords')
@@ -233,17 +212,6 @@ export const restore = mutation({
 	returns: v.null(),
 	handler: async () => {
 		unsupportedClient();
-	}
-});
-
-export const restoreForLocalCache = mutation({
-	args: {
-		threadId: v.id('threadRecords')
-	},
-	returns: v.object({ userId: v.string(), repositoryKey: v.string() }),
-	handler: async (ctx, args) => {
-		const { userId, record } = await unsettleOwnedThread(ctx, args.threadId);
-		return { userId, repositoryKey: record.repositoryKey };
 	}
 });
 

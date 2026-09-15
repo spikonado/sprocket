@@ -699,16 +699,6 @@ export function createLocalClient(baseUrl: string): DesktopApi {
 				method: 'POST',
 				body: JSON.stringify(requestBody)
 			}),
-		archiveThread: async (requestBody) =>
-			await request('/api/threads/archive', z.boolean(), {
-				method: 'POST',
-				body: JSON.stringify(requestBody)
-			}),
-		restoreThread: async (requestBody) =>
-			await request('/api/threads/restore', z.boolean(), {
-				method: 'POST',
-				body: JSON.stringify(requestBody)
-			}),
 		rekeyRepository: async (requestBody) =>
 			await request('/api/threads/rekey', z.int(), {
 				method: 'POST',
