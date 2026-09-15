@@ -318,8 +318,6 @@ export type DesktopApi = {
 	renameThread: (request: ThreadCommandRequest & { title: string }) => Promise<boolean>;
 	settleThread: (request: ThreadCommandRequest) => Promise<boolean>;
 	unsettleThread: (request: ThreadCommandRequest) => Promise<boolean>;
-	archiveThread: (request: ThreadCommandRequest) => Promise<boolean>;
-	restoreThread: (request: ThreadCommandRequest) => Promise<boolean>;
 	rekeyRepository: (
 		request: ThreadCacheUserRequest & { from: string; to: string }
 	) => Promise<number>;

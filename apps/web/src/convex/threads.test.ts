@@ -10,11 +10,11 @@ describe('threads local-cache commands', () => {
 		expect(
 			await asUser.mutation(api.threads.renameForLocalCache, { threadId, title: 'Renamed locally' })
 		).toEqual({ userId: subject, repositoryKey });
-		expect(await asUser.mutation(api.threads.archiveForLocalCache, { threadId })).toEqual({
+		expect(await asUser.mutation(api.threads.settleForLocalCache, { threadId })).toEqual({
 			userId: subject,
 			repositoryKey
 		});
-		expect(await asUser.mutation(api.threads.restoreForLocalCache, { threadId })).toEqual({
+		expect(await asUser.mutation(api.threads.unsettleForLocalCache, { threadId })).toEqual({
 			userId: subject,
 			repositoryKey
 		});

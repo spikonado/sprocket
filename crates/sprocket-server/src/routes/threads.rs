@@ -85,8 +85,6 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/threads/rename", post(rename_handler))
         .route("/threads/settle", post(settle_handler))
         .route("/threads/unsettle", post(unsettle_handler))
-        .route("/threads/archive", post(archive_handler))
-        .route("/threads/restore", post(restore_handler))
         .route("/threads/rekey", post(rekey_handler))
         .route("/threads/lifecycle", post(lifecycle_handler))
         .route("/threads/cancel", post(cancel_handler))
@@ -162,15 +160,6 @@ async fn rename_handler(
     require_session_user(&state, &headers, &jar, &payload.user_id).await?;
     run_thread_command(&state, payload, "threads:renameForLocalCache").await
 }
-async fn archive_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(payload): Json<ThreadCommandRequest>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
-    run_thread_command(&state, payload, "threads:archiveForLocalCache").await
-}
 async fn settle_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -179,15 +168,6 @@ async fn settle_handler(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     require_session_user(&state, &headers, &jar, &payload.user_id).await?;
     run_thread_command(&state, payload, "threads:settleForLocalCache").await
-}
-async fn restore_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(payload): Json<ThreadCommandRequest>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    require_session_user(&state, &headers, &jar, &payload.user_id).await?;
-    run_thread_command(&state, payload, "threads:restoreForLocalCache").await
 }
 async fn unsettle_handler(
     State(state): State<AppState>,
