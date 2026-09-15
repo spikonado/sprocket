@@ -11,7 +11,11 @@ import {
 import { isSettledExecutorJobStatus } from '@convex/lib/runs';
 import { isCommandToolKind } from '@convex/lib/commandToolKinds';
 import { isJsonObject, isJsonString, type JsonObject, type JsonValue } from '@convex/lib/json';
-import type { TranscriptCompletionItem, TranscriptToolBody } from '@convex/lib/validators';
+import type {
+	TranscriptCompletionBody,
+	TranscriptCompletionItem,
+	TranscriptToolBody
+} from '@convex/lib/validators';
 import {
 	writeCompletionSectionData,
 	writeToolSectionData,
@@ -91,6 +95,9 @@ export async function recordCompletionTranscript(
 		runId: Id<'runs'>;
 		streamId: string;
 		items: TranscriptCompletionItem[];
+		providerResponseId?: string;
+		providerRequestId?: string;
+		providerMessageId?: string;
 		work: PersistedWork;
 		sections: { sectionKey: string; sectionOrdinal: number; closed: boolean }[];
 		toolInvocations: { callId: string; toolInvocationId: string; sectionKey?: string }[];
@@ -112,6 +119,13 @@ export async function recordCompletionTranscript(
 	});
 
 	const work = { ...args.work, toolInvocations };
+	const completion: TranscriptCompletionBody = {
+		streamId: args.streamId,
+		items: args.items
+	};
+	assignProviderId(completion, 'providerResponseId', args.providerResponseId);
+	assignProviderId(completion, 'providerRequestId', args.providerRequestId);
+	assignProviderId(completion, 'providerMessageId', args.providerMessageId);
 
 	const result = await appendTranscriptPart(ctx, {
 		threadId: args.threadId,
@@ -119,7 +133,7 @@ export async function recordCompletionTranscript(
 		sourceKey: completionSourceKey(args.runId, args.streamId),
 		kind: 'completion',
 		runId: args.runId,
-		completion: { streamId: args.streamId, items: args.items },
+		completion,
 		work
 	});
 
@@ -131,6 +145,15 @@ export async function recordCompletionTranscript(
 	});
 
 	return result.part;
+}
+
+function assignProviderId(
+	completion: TranscriptCompletionBody,
+	field: 'providerResponseId' | 'providerRequestId' | 'providerMessageId',
+	value: string | undefined
+): void {
+	if (value === undefined || value === '') return;
+	completion[field] = value;
 }
 
 export async function recordStartedToolTranscript(

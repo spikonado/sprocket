@@ -437,6 +437,7 @@ async fn run_with_completion_model(
                                 if context_handoff_hook.is_writing() => {}
                             Some(Ok(rig::agent::MultiTurnStreamItem::CompletionCall(call))) => {
                                 completed_attempt = Some(transcript.attempt_seq);
+                                transcript.note_provider_identity(&call);
                                 let tokens = context_handoff_hook.record_usage(call.usage);
                                 if context_handoff_hook.is_writing() {
                                     handoff_processed_tokens =
@@ -638,6 +639,9 @@ struct TranscriptSink {
     attempt_seq: u64,
     parts: LiveAssistantParts,
     provider_metadata: HashMap<String, serde_json::Value>,
+    provider_response_id: Option<String>,
+    provider_request_id: Option<String>,
+    provider_message_id: Option<String>,
     last_publish: Instant,
     unpublished: usize,
     streamed: bool,
@@ -669,6 +673,9 @@ impl TranscriptSink {
             attempt_seq: 1,
             parts: LiveAssistantParts::default(),
             provider_metadata: HashMap::new(),
+            provider_response_id: None,
+            provider_request_id: None,
+            provider_message_id: None,
             last_publish: Instant::now(),
             unpublished: 0,
             streamed: false,
@@ -738,9 +745,18 @@ impl TranscriptSink {
     fn reset_parts(&mut self) {
         self.parts.clear();
         self.provider_metadata.clear();
+        self.provider_response_id = None;
+        self.provider_request_id = None;
+        self.provider_message_id = None;
         self.unpublished = 0;
         self.streamed = false;
         self.usage_tokens = None;
+    }
+
+    fn note_provider_identity(&mut self, call: &rig::agent::CompletionCall) {
+        self.provider_response_id = call.response_id.clone();
+        self.provider_request_id = call.provider_request_id.clone();
+        self.provider_message_id = call.message_id.clone();
     }
 
     async fn finalize_turn(&mut self) -> anyhow::Result<()> {
@@ -754,6 +770,9 @@ impl TranscriptSink {
                 self.items_json(),
                 self.tool_call_tracker.completion_assignments(),
                 self.usage_tokens,
+                self.provider_response_id.as_deref(),
+                self.provider_request_id.as_deref(),
+                self.provider_message_id.as_deref(),
             )
             .await?;
         self.streamed = false;

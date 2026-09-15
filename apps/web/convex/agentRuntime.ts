@@ -531,6 +531,9 @@ export const finalizeCompletionCall = mutation({
 		attemptSeq: v.number(),
 		streamId: v.string(),
 		items: v.array(vTranscriptCompletionItem),
+		providerResponseId: v.optional(v.string()),
+		providerRequestId: v.optional(v.string()),
+		providerMessageId: v.optional(v.string()),
 		work: workMembership,
 		toolInvocations: v.array(
 			v.object({
@@ -543,8 +546,8 @@ export const finalizeCompletionCall = mutation({
 		usage: v.optional(
 			v.object({
 				contextTokens: v.number(),
-				processedTokens: v.number()
-			})
+			processedTokens: v.number()
+		})
 		),
 		executionSecret: v.string()
 	},
@@ -688,6 +691,9 @@ export const finalizeCompletionCall = mutation({
 			runId: run._id,
 			streamId: args.streamId,
 			items: args.items,
+			providerResponseId: args.providerResponseId,
+			providerRequestId: args.providerRequestId,
+			providerMessageId: args.providerMessageId,
 			work: args.work,
 			toolInvocations: args.toolInvocations,
 			sections: args.sections

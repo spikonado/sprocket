@@ -342,6 +342,9 @@ impl RuntimeClient {
         items: Vec<serde_json::Value>,
         assignments: crate::hooks::CompletionAssignments,
         usage_tokens: Option<u64>,
+        provider_response_id: Option<&str>,
+        provider_request_id: Option<&str>,
+        provider_message_id: Option<&str>,
     ) -> anyhow::Result<()> {
         let empty_completion = items.is_empty();
         let mut args = self.run_args_with_claim(run_id, claim_id);
@@ -373,6 +376,9 @@ impl RuntimeClient {
             );
         }
         let persisted: Option<PersistedTranscriptPart> = self
+        insert_optional_string(&mut args, "providerResponseId", provider_response_id);
+        insert_optional_string(&mut args, "providerRequestId", provider_request_id);
+        insert_optional_string(&mut args, "providerMessageId", provider_message_id);
             .mutation_json("agentRuntime:finalizeCompletionCall", args)
             .await?;
         if empty_completion {
@@ -606,6 +612,12 @@ impl RuntimeClient {
 
 fn string_array(ids: &[String]) -> Value {
     Value::Array(ids.iter().cloned().map(Value::from).collect())
+}
+
+fn insert_optional_string(args: &mut BTreeMap<String, Value>, key: &str, value: Option<&str>) {
+    if let Some(value) = value.filter(|value| !value.is_empty()) {
+        args.insert(key.to_string(), value.to_string().into());
+    }
 }
 
 #[cfg(test)]
