@@ -319,6 +319,124 @@ describe('transcript work assignments', () => {
 		).toBe(true);
 	});
 
+	it.each([0, 1])(
+		'finalizes stored sections despite replay differences with %s pending tools',
+		async (pendingTools) => {
+			const { t, asUser, threadId, runId, batch } = await fixture();
+			batch.sections[0].startedAt = 100;
+			batch.sections[0].completedAt = 200;
+			batch.sections[1].startedAt = 300;
+			batch.sections[1].pendingTools = pendingTools;
+			batch.sections[1].completedAt = pendingTools === 0 ? 400 : undefined;
+			await asUser.mutation(api.transcriptSections.commit, { threadId, batch });
+			await t.run(async (ctx) => {
+				await ctx.db.patch('runs', runId, { status: 'completed' });
+			});
+			const before = await asUser.query(api.transcriptSections.sections, { threadId, after: '' });
+			const finished = {
+				...batch,
+				expected: batch.through,
+				finishedRunId: runId,
+				memberships: [],
+				sections: batch.sections.map((row) => ({
+					...row,
+					closed: true,
+					pendingTools: 0,
+					itemCount: row.itemCount + 1,
+					end: batch.through,
+					startedAt: 50,
+					completedAt: 500
+				}))
+			};
+			for (let retry = 0; retry < 2; retry++) {
+				expect(
+					await asUser.mutation(api.transcriptSections.commit, { threadId, batch: finished })
+				).toBe(true);
+				expect(
+					(await asUser.query(api.transcriptSections.sections, { threadId, after: '' })).rows
+				).toEqual(before.rows.map((row) => ({ ...row, closed: true, pendingTools: 0 })));
+			}
+			expect((await asUser.query(api.transcriptSections.state, { threadId })).through).toEqual(
+				batch.through
+			);
+		}
+	);
+
+	it('ignores replay-only section keys without creating sections or rewriting memberships', async () => {
+		const { t, asUser, threadId, runId, batch } = await fixture();
+		await asUser.mutation(api.transcriptSections.commit, { threadId, batch });
+		await t.run(async (ctx) => {
+			await ctx.db.patch('runs', runId, { status: 'completed' });
+		});
+		const memberships = await asUser.query(api.transcriptSections.memberships, {
+			threadId,
+			start: 0
+		});
+		const finished = {
+			...batch,
+			expected: batch.through,
+			finishedRunId: runId,
+			memberships: [],
+			sections: [
+				{ ...batch.sections[1], closed: true },
+				{
+					...batch.sections[0],
+					key: 'work-0-1',
+					first: { part: 0, item: 1 },
+					end: { part: 0, item: 2 }
+				}
+			]
+		};
+		expect(
+			await asUser.mutation(api.transcriptSections.commit, { threadId, batch: finished })
+		).toBe(true);
+		expect(
+			(await asUser.query(api.transcriptSections.sections, { threadId, after: '' })).rows.map(
+				(row) => row.key
+			)
+		).toEqual(['work-0-0', 'work-0-2']);
+		expect(await asUser.query(api.transcriptSections.memberships, { threadId, start: 0 })).toEqual(
+			memberships
+		);
+	});
+
+	it('rejects finalizing a section stored for another run atomically', async () => {
+		const { t, asUser, threadId, runId, batch } = await fixture();
+		await asUser.mutation(api.transcriptSections.commit, { threadId, batch });
+		await t.run(async (ctx) => {
+			const run = await ctx.db.get('runs', runId);
+			if (!run) throw new Error('Missing fixture run.');
+			const { _id, _creationTime, ...body } = run;
+			const other = await ctx.db.insert('runs', {
+				...body,
+				submissionId: `${_id}-${_creationTime}-other`
+			});
+			const row = await ctx.db
+				.query('threadTranscriptWorkSections')
+				.withIndex('by_threadId_and_key', (q) => q.eq('threadId', threadId).eq('key', 'work-0-0'))
+				.unique();
+			if (!row) throw new Error('Missing fixture section.');
+			await ctx.db.patch('threadTranscriptWorkSections', row._id, { runId: other });
+			await ctx.db.patch('runs', runId, { status: 'completed' });
+		});
+		const before = await asUser.query(api.transcriptSections.sections, { threadId, after: '' });
+		await expect(
+			asUser.mutation(api.transcriptSections.commit, {
+				threadId,
+				batch: {
+					...batch,
+					expected: batch.through,
+					finishedRunId: runId,
+					memberships: [],
+					sections: batch.sections.toReversed().map((row) => ({ ...row, closed: true }))
+				}
+			})
+		).rejects.toThrow('Invalid finished work section');
+		expect(await asUser.query(api.transcriptSections.sections, { threadId, after: '' })).toEqual(
+			before
+		);
+	});
+
 	it('requires an explicit upgrade for the old completion write contract', async () => {
 		const { asUser, runId } = await fixture();
 		await expect(
