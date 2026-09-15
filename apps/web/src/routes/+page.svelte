@@ -2422,9 +2422,6 @@
 					{pendingAgentLaunches}
 					theme={workspaceTheme}
 					onThemeChange={(theme) => void handleThemeChange(theme)}
-					onAddProject={() => {
-						openProjectPicker('add');
-					}}
 					onReconnectProject={(workspacePath) => {
 						void reconnectProject(workspacePath);
 					}}

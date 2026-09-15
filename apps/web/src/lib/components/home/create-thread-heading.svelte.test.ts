@@ -43,18 +43,62 @@ describe('CreateThreadHeading', () => {
 			],
 			workspacePath: '/sprocket'
 		});
-		const select = document.querySelector<HTMLSelectElement>('select');
+		const trigger = document.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]');
 
-		expect(select).not.toBeNull();
-		expect(document.querySelector('.create-thread-project > span')?.textContent).toBe('Sprocket');
-		expect(Array.from(select!.options, (option) => option.text)).toContain('Sprocket (/other)');
-		select!.value = '/other';
-		select!.dispatchEvent(new Event('change', { bubbles: true }));
+		expect(document.querySelector('select')).toBeNull();
+		expect(trigger?.textContent).toContain('Sprocket');
+		trigger!.click();
+		flushSync();
+
+		const projectOptions = document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]');
+		expect(projectOptions).toHaveLength(2);
+		expect(projectOptions[0]?.getAttribute('aria-checked')).toBe('true');
+		expect(projectOptions[1]?.getAttribute('aria-label')).toBe('Sprocket, /other');
+		expect(projectOptions[1]?.textContent).toContain('/other');
+		projectOptions[1]!.click();
+		flushSync();
 		expect(props.onProject).toHaveBeenCalledWith('/other');
+		expect(document.querySelector('[role="menu"]')).toBeNull();
 
-		select!.value = '__add__';
-		select!.dispatchEvent(new Event('change', { bubbles: true }));
+		trigger!.click();
+		flushSync();
+		document.querySelector<HTMLButtonElement>('[role="menuitem"]')!.click();
 		expect(props.onAddProject).toHaveBeenCalledOnce();
-		expect(select!.value).toBe('/sprocket');
+	});
+
+	it('supports keyboard navigation and restores focus after Escape', async () => {
+		const props = renderHeading({
+			projects: [
+				{ repositoryKey: 'first', displayName: 'First', workspacePath: '/first' },
+				{ repositoryKey: 'second', displayName: 'Second', workspacePath: '/second' }
+			],
+			workspacePath: '/first'
+		});
+		const trigger = document.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!;
+
+		trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+		flushSync();
+		await Promise.resolve();
+
+		const projectOptions = document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]');
+		expect(document.activeElement).toBe(projectOptions[0]);
+		projectOptions[0]!.dispatchEvent(
+			new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })
+		);
+		await Promise.resolve();
+		expect(document.activeElement).toBe(projectOptions[1]);
+
+		projectOptions[1]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+		expect(props.onProject).toHaveBeenCalledWith('/second');
+		await Promise.resolve();
+		expect(document.activeElement).toBe(trigger);
+
+		trigger.click();
+		flushSync();
+		document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+		flushSync();
+		await Promise.resolve();
+		expect(trigger.getAttribute('aria-expanded')).toBe('false');
+		expect(document.activeElement).toBe(trigger);
 	});
 });
