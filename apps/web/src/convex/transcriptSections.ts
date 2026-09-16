@@ -4,7 +4,7 @@ import { v, type Infer } from 'convex/values';
 import { getOwnedThreadRecord } from './lib/access';
 import { getUserId } from './lib/auth';
 import { getOrCreateTranscriptState, getTranscriptState } from './lib/transcriptParts';
-import { checkPosition, workBatch } from './lib/workSections';
+import { checkPosition, workBatch, workPosition } from './lib/workSections';
 import { transcriptHistoryFromNumber } from './lib/contextHandoff';
 import { isRunFinalStatus } from './lib/validators';
 
@@ -13,11 +13,14 @@ export const state = query({
 	handler: async (ctx, { threadId }) => {
 		const thread = await getOwnedThreadRecord(ctx.db, await getUserId(ctx), threadId);
 		const transcript = await getTranscriptState(ctx, threadId);
-		const run = await ctx.db
-			.query('runs')
-			.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', threadId))
-			.order('desc')
-			.first();
+		const run =
+			thread.status !== undefined && isRunFinalStatus(thread.status)
+				? null
+				: await ctx.db
+						.query('runs')
+						.withIndex('by_threadId_startedAt', (q) => q.eq('threadId', threadId))
+						.order('desc')
+						.first();
 		return {
 			totalParts: transcript?.totalParts ?? 0,
 			through: transcript?.workThrough ?? { part: 0, item: 0 },
@@ -360,12 +363,22 @@ function linksNewCanonicalTool(
 }
 
 export const commit = mutation({
-	args: { threadId: v.id('threadRecords'), batch: workBatch },
-	returns: v.boolean(),
-	handler: async (ctx, { threadId, batch }) => {
+	args: {
+		threadId: v.id('threadRecords'),
+		batch: workBatch,
+		includeCheckpoint: v.optional(v.boolean())
+	},
+	returns: v.union(v.boolean(), v.object({ accepted: v.boolean(), through: workPosition })),
+	handler: async (ctx, { threadId, batch, includeCheckpoint }) => {
 		const userId = await getUserId(ctx);
 		await getOwnedThreadRecord(ctx.db, userId, threadId);
-		await getOrCreateTranscriptState(ctx, { threadId, userId });
-		return await applyWorkBatch(ctx, threadId, batch);
+		const state = await getOrCreateTranscriptState(ctx, { threadId, userId });
+		const accepted = await applyWorkBatch(ctx, threadId, batch);
+		return includeCheckpoint
+			? {
+					accepted,
+					through: accepted ? batch.through : (state.workThrough ?? { part: 0, item: 0 })
+				}
+			: accepted;
 	}
 });
