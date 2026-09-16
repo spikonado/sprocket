@@ -3,19 +3,23 @@
 	import {
 		Check,
 		ChevronDown,
+		Copy,
 		FolderPlus,
-		MoreHorizontal,
-		Plus,
+		RotateCcw,
+		Search,
 		Settings,
+		SquarePen,
 		X
 	} from '@lucide/svelte';
 	import type { Doc, Id } from '$convex/_generated/dataModel';
+	import type { CatalogModel } from '$convex/lib/uiModelCatalog';
 	import { inboxState, type InboxState } from '$convex/lib/inboxState';
 	import type { Project } from '$lib/types/sprocket';
 	import type { SprocketTheme } from '$lib/theme';
 	import type { InboxSectionData } from '$lib/project/inbox.svelte';
 	import { hasActiveRun } from '$lib/project/threads';
 	import BrandMark from '$lib/components/brand-mark.svelte';
+	import ProviderLogo from '$lib/components/provider-logo.svelte';
 	import AppUpdate from './app-update.svelte';
 	import InboxLoadMore from './inbox-load-more.svelte';
 	import SidebarTopActions from './sidebar-top-actions.svelte';
@@ -24,6 +28,7 @@
 	type Props = {
 		sections: InboxSectionData[];
 		projects: Project[];
+		models: readonly Pick<CatalogModel, 'id' | 'label' | 'provider'>[];
 		selectedProjects: string[];
 		currentThreadId: Id<'threadRecords'> | null;
 		mutationsEnabled: boolean;
@@ -41,6 +46,7 @@
 	let {
 		sections,
 		projects,
+		models,
 		selectedProjects,
 		currentThreadId,
 		mutationsEnabled,
@@ -59,26 +65,36 @@
 		unsettled: 'Unsettled',
 		settled: 'Settled'
 	} satisfies Record<InboxState, string>;
-	let selected = $state<Id<'threadRecords'>[]>([]);
-	let anchor = $state<Id<'threadRecords'> | null>(null);
 	let dragging = $state<Thread | null>(null);
 	let menu = $state<{ thread: Thread; x: number; y: number } | null>(null);
 	let menuTrigger: HTMLElement | null = null;
 	let notice = $state<string | null>(null);
 	let busy = $state(false);
-	let undo = $state<Array<{ thread: Thread; previous: InboxState }>>([]);
-	let renameDialog: HTMLDialogElement;
 	let renameThread = $state<Thread | null>(null);
 	let renameTitle = $state('');
-	let renaming = $state(false);
+	let renameInput = $state<HTMLInputElement | null>(null);
 	let now = $state(Date.now());
+	let projectMenuOpen = $state(false);
+	let projectSearch = $state('');
 
 	const rows = $derived(sections.flatMap((section) => section.rows));
-	const selectedRows = $derived(rows.filter((thread) => selected.includes(thread._id)));
-	const selectedUnsettled = $derived(selectedRows.filter((thread) => canChange(thread, 'settled')));
-	const selectedSettled = $derived(selectedRows.filter((thread) => canChange(thread, 'unsettled')));
-	const dragTargets = $derived(
-		dragging ? (selected.includes(dragging._id) ? selectedRows : [dragging]) : []
+	const filteredProjects = $derived(
+		projects.filter((project) =>
+			project.displayName.toLocaleLowerCase().includes(projectSearch.trim().toLocaleLowerCase())
+		)
+	);
+	const visibleSections = $derived(
+		sections.filter(
+			(section) => section.rows.length || section.loading || section.error || section.canLoadMore
+		)
+	);
+	const projectFilterLabel = $derived(
+		selectedProjects.length === 0
+			? 'All projects'
+			: selectedProjects.length === 1
+				? (projects.find((project) => project.repositoryKey === selectedProjects[0])?.displayName ??
+					'All projects')
+				: `${selectedProjects.length} projects`
 	);
 
 	onMount(() => {
@@ -89,9 +105,9 @@
 	});
 
 	$effect(() => {
-		const visibleIds = new Set(rows.map((thread) => thread._id));
-		const remaining = selected.filter((id) => visibleIds.has(id));
-		if (remaining.length !== selected.length) selected = remaining;
+		if (!renameThread || !renameInput) return;
+		renameInput.focus();
+		renameInput.select();
 	});
 
 	function projectName(thread: Thread) {
@@ -99,6 +115,22 @@
 			projects.find((project) => project.repositoryKey === thread.repositoryKey)?.displayName ??
 			thread.repositoryKey
 		);
+	}
+
+	function threadModel(thread: Thread) {
+		return models.find((model) => model.id === thread.selectedModel);
+	}
+
+	function filterProjects(keys: string[]) {
+		onFilter(keys);
+		projectMenuOpen = false;
+		projectSearch = '';
+	}
+
+	function addProject() {
+		projectMenuOpen = false;
+		projectSearch = '';
+		onAddProject();
 	}
 
 	function age(at: number) {
@@ -120,78 +152,66 @@
 		return hasActiveRun({ status: thread.status ?? 'completed' });
 	}
 
-	function choose(event: MouseEvent, thread: Thread) {
-		if (event.detail > 1) return;
-		if (event.shiftKey && anchor) {
-			const start = rows.findIndex((row) => row._id === anchor);
-			const end = rows.findIndex((row) => row._id === thread._id);
-			selected = rows.slice(Math.min(start, end), Math.max(start, end) + 1).map((row) => row._id);
-			return;
-		}
-		if (event.metaKey || event.ctrlKey) {
-			selected = selected.includes(thread._id)
-				? selected.filter((id) => id !== thread._id)
-				: [...selected, thread._id];
-			anchor = thread._id;
-			return;
-		}
-		selected = [];
-		anchor = thread._id;
+	function choose(thread: Thread) {
 		onSelect(thread);
+	}
+
+	function beginRename(thread: Thread) {
+		menu = null;
+		renameThread = thread;
+		renameTitle = thread.title ?? '';
+	}
+
+	function cancelRename() {
+		renameThread = null;
+		renameTitle = '';
+	}
+
+	async function commitRename() {
+		if (!renameThread) return;
+		const thread = renameThread;
+		const title = renameTitle.trim();
+		if (!title || title === (thread.title ?? '')) {
+			cancelRename();
+			return;
+		}
+		cancelRename();
+		try {
+			await onRename(thread, title);
+		} catch (error) {
+			notice = error instanceof Error ? error.message : 'Could not rename thread.';
+		}
 	}
 
 	function canChange(thread: Thread, state: InboxState) {
 		return inboxState(thread) !== state && (state !== 'settled' || !threadHasActiveRun(thread));
 	}
 
-	async function change(targets: Thread[], state: InboxState) {
+	async function change(thread: Thread, state: InboxState) {
 		if (!mutationsEnabled || busy) return;
 		closeMenu();
 		busy = true;
 		notice = null;
-		const completed: typeof undo = [];
-		const errors: string[] = [];
-		for (const thread of targets) {
-			if (!canChange(thread, state)) continue;
-			try {
-				await onChange(thread, state);
-				completed.push({ thread, previous: inboxState(thread) });
-			} catch (error) {
-				errors.push(error instanceof Error ? error.message : 'Could not update thread.');
-			}
+		if (!canChange(thread, state)) {
+			busy = false;
+			return;
 		}
-		undo = completed;
-		busy = false;
-		selected = [];
-		if (errors.length) notice = errors.join(' ');
-		else if (completed.length)
-			notice = `${completed.length === 1 ? 'Thread' : `${completed.length} threads`} updated.`;
-	}
-
-	async function undoChange() {
-		if (!mutationsEnabled || busy) return;
-		busy = true;
-		const changes = undo;
-		undo = [];
-		const errors: string[] = [];
-		for (const item of changes) {
-			try {
-				await onChange(item.thread, item.previous);
-			} catch (error) {
-				errors.push(error instanceof Error ? error.message : 'Could not undo change.');
-			}
+		try {
+			await onChange(thread, state);
+		} catch (error) {
+			notice = error instanceof Error ? error.message : 'Could not update thread.';
+		} finally {
+			busy = false;
 		}
-		notice = errors.length ? errors.join(' ') : 'Change undone.';
-		busy = false;
 	}
 
 	function canDrop(state: InboxState) {
-		return mutationsEnabled && !busy && dragTargets.some((thread) => canChange(thread, state));
+		return mutationsEnabled && !busy && dragging !== null && canChange(dragging, state);
 	}
 
 	function dropThreads(event: DragEvent, state: InboxState) {
 		event.preventDefault();
-		if (canDrop(state)) void change(dragTargets, state);
+		if (dragging && canDrop(state)) void change(dragging, state);
 		dragging = null;
 	}
 
@@ -244,7 +264,6 @@
 		if (event.defaultPrevented) return;
 		if (event.key === 'Escape') {
 			if (menu) closeMenu();
-			else if (selected.length) selected = [];
 			return;
 		}
 		if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'n') {
@@ -256,15 +275,6 @@
 			event.target.closest('input, textarea, [contenteditable="true"], dialog')
 		)
 			return;
-		if (
-			(event.metaKey || event.ctrlKey) &&
-			event.key.toLowerCase() === 'a' &&
-			event.target instanceof Element &&
-			event.target.closest('.inbox-sidebar')
-		) {
-			event.preventDefault();
-			selected = rows.map((row) => row._id);
-		}
 		if (event.altKey && ['ArrowUp', 'ArrowDown'].includes(event.key)) {
 			const index = rows.findIndex((thread) => thread._id === currentThreadId);
 			const row = rows[index + (event.key === 'ArrowDown' ? 1 : -1)];
@@ -286,69 +296,59 @@
 
 	<div class="px-3 pb-3">
 		<button class="inbox-menu-item" type="button" onclick={onNew}>
-			<Plus size={15} />New thread
+			<SquarePen size={15} />New thread
 		</button>
-		<details class="relative mt-2">
-			<summary class="inbox-filter">
-				{selectedProjects.length
-					? `${selectedProjects.length} project${selectedProjects.length === 1 ? '' : 's'}`
-					: 'All projects'}
-				<ChevronDown size={14} />
-			</summary>
-			<div class="inbox-project-menu">
-				<button class="inbox-menu-item" type="button" onclick={() => onFilter([])}>
-					All projects
-					{#if selectedProjects.length === 0}<Check size={14} />{/if}
-				</button>
-				{#each projects as project (project.repositoryKey)}
-					<label class="inbox-menu-item">
+		<div class="inbox-project-controls">
+			<details bind:open={projectMenuOpen}>
+				<summary class="inbox-filter">
+					<span class="truncate">{projectFilterLabel}</span>
+					<ChevronDown size={14} />
+				</summary>
+				<div class="inbox-project-menu">
+					<label class="inbox-project-search">
+						<Search size={14} />
 						<input
-							type="checkbox"
-							checked={selectedProjects.includes(project.repositoryKey)}
-							onchange={(event) =>
-								onFilter(
-									event.currentTarget.checked
-										? [...selectedProjects, project.repositoryKey]
-										: selectedProjects.filter((key) => key !== project.repositoryKey)
-								)}
+							bind:value={projectSearch}
+							aria-label="Search projects"
+							placeholder="Search projects"
 						/>
-						<span class="truncate">{project.displayName}</span>
 					</label>
-				{/each}
-				<button class="inbox-menu-item" type="button" onclick={onAddProject}>
-					<FolderPlus size={14} />Create/Add project
-				</button>
-			</div>
-		</details>
-	</div>
-
-	{#if selectedRows.length}
-		<div class="inbox-bulk">
-			<span>{selectedRows.length} selected</span>
-			{#if selectedUnsettled.length}
-				<button
-					type="button"
-					disabled={!mutationsEnabled || busy}
-					onclick={() => void change(selectedUnsettled, 'settled')}
-					>Settle {selectedUnsettled.length}</button
-				>
-			{/if}
-			{#if selectedSettled.length}
-				<button
-					type="button"
-					disabled={!mutationsEnabled || busy}
-					onclick={() => void change(selectedSettled, 'unsettled')}
-					>Unsettle {selectedSettled.length}</button
-				>
-			{/if}
-			<button type="button" aria-label="Clear selection" onclick={() => (selected = [])}>
-				<X size={14} />
+					<div class="inbox-project-list">
+						<button
+							class:inbox-project-selected={selectedProjects.length === 0}
+							class="inbox-project-option"
+							type="button"
+							aria-pressed={selectedProjects.length === 0}
+							onclick={() => filterProjects([])}>All projects</button
+						>
+						{#each filteredProjects as project (project.repositoryKey)}
+							<button
+								class:inbox-project-selected={selectedProjects.length === 1 &&
+									selectedProjects[0] === project.repositoryKey}
+								class="inbox-project-option"
+								type="button"
+								aria-pressed={selectedProjects.length === 1 &&
+									selectedProjects[0] === project.repositoryKey}
+								onclick={() => filterProjects([project.repositoryKey])}
+								>{project.displayName}</button
+							>
+						{/each}
+					</div>
+				</div>
+			</details>
+			<button
+				class="inbox-icon inbox-add-project-button"
+				type="button"
+				aria-label="Create or add project"
+				onclick={addProject}
+			>
+				<FolderPlus size={17} />
 			</button>
 		</div>
-	{/if}
+	</div>
 
 	<div class="inbox-scroll">
-		{#each sections as section (section.state)}
+		{#each visibleSections as section (section.state)}
 			<section
 				id={`inbox-${section.state}`}
 				ondragover={(event) => {
@@ -362,11 +362,12 @@
 				{/if}
 				{#each section.rows as thread (thread._id)}
 					{@const stateLabel = runStatus(thread)}
+					{@const model = threadModel(thread)}
+					{@const isRenaming = renameThread?._id === thread._id}
 					<div
-						class:inbox-row-selected={thread._id === currentThreadId ||
-							selected.includes(thread._id)}
+						class:inbox-row-selected={thread._id === currentThreadId}
 						class="inbox-row"
-						draggable={mutationsEnabled && !busy}
+						draggable={mutationsEnabled && !busy && !isRenaming}
 						ondragstart={(event) => {
 							dragging = thread;
 							event.dataTransfer?.setData('text/plain', thread._id);
@@ -376,22 +377,64 @@
 						role="group"
 						aria-label={thread.title ?? 'New thread'}
 					>
-						<button
-							class="inbox-row-main"
-							type="button"
-							title={`${thread.title ?? 'New thread'}\n${projectName(thread)}\n${new Date(thread.lastMessageAt).toLocaleString()}`}
-							onclick={(event) => choose(event, thread)}
-							ondblclick={() => {
-								if (!mutationsEnabled || busy) return;
-								renameThread = thread;
-								renameTitle = thread.title ?? '';
-								renameDialog.showModal();
-							}}
-							aria-current={thread._id === currentThreadId ? 'page' : undefined}
-						>
-							<span class="inbox-row-meta">
-								<span class="flex min-w-0 items-center gap-2">
+						{#if isRenaming}
+							<form
+								class="inbox-row-main"
+								onsubmit={(event) => {
+									event.preventDefault();
+									void commitRename();
+								}}
+							>
+								<span class="inbox-row-meta">
 									<span class="truncate">{projectName(thread)}</span>
+									<span class="inbox-row-age shrink-0">{age(thread.lastMessageAt)}</span>
+								</span>
+								<input
+									bind:this={renameInput}
+									bind:value={renameTitle}
+									class="inbox-row-rename-input"
+									aria-label="Rename thread"
+									maxlength="300"
+									onkeydown={(event) => {
+										if (event.key !== 'Escape') return;
+										event.preventDefault();
+										cancelRename();
+									}}
+									onblur={() => void commitRename()}
+								/>
+								<span class="inbox-row-model">
+									{#if model}
+										<ProviderLogo provider={model.provider} className="size-3.5 shrink-0" />
+										<span class="truncate">{model.label}</span>
+									{:else}
+										<span class="truncate">Unknown model</span>
+									{/if}
+								</span>
+							</form>
+						{:else}
+							<button
+								class="inbox-row-main"
+								type="button"
+								title={`${thread.title ?? 'New thread'}\n${projectName(thread)}\n${new Date(thread.lastMessageAt).toLocaleString()}`}
+								onclick={() => choose(thread)}
+								ondblclick={() => {
+									if (!mutationsEnabled || busy) return;
+									beginRename(thread);
+								}}
+								aria-current={thread._id === currentThreadId ? 'page' : undefined}
+							>
+								<span class="inbox-row-meta">
+									<span class="truncate">{projectName(thread)}</span>
+									<span class="inbox-row-age shrink-0">{age(thread.lastMessageAt)}</span>
+								</span>
+								<span class="inbox-row-title truncate">{thread.title ?? 'New thread'}</span>
+								<span class="inbox-row-model">
+									{#if model}
+										<ProviderLogo provider={model.provider} className="size-3.5 shrink-0" />
+										<span class="truncate">{model.label}</span>
+									{:else}
+										<span class="truncate">Unknown model</span>
+									{/if}
 									{#if stateLabel}
 										<span
 											class:inbox-working={threadHasActiveRun(thread)}
@@ -400,40 +443,29 @@
 										>
 									{/if}
 								</span>
-								<span class="shrink-0">{age(thread.lastMessageAt)}</span>
-							</span>
-							<span class="inbox-row-title truncate">{thread.title ?? 'New thread'}</span>
-						</button>
-						<div class="inbox-row-actions">
-							{#if section.state === 'unsettled'}
-								<button
-									class="inbox-icon"
-									type="button"
-									disabled={!mutationsEnabled || busy || !canChange(thread, 'settled')}
-									aria-label={`Settle ${thread.title ?? 'thread'}`}
-									onclick={() => void change([thread], 'settled')}><Check size={14} /></button
-								>
-							{:else}
-								<button
-									class="inbox-icon"
-									type="button"
-									disabled={!mutationsEnabled || busy}
-									aria-label={`Unsettle ${thread.title ?? 'thread'}`}
-									onclick={() => void change([thread], 'unsettled')}><Plus size={14} /></button
-								>
-							{/if}
-							<button
-								class="inbox-icon"
-								type="button"
-								aria-label={`Actions for ${thread.title ?? 'thread'}`}
-								onclick={(event) => openMenu(event, thread)}><MoreHorizontal size={15} /></button
-							>
-						</div>
+							</button>
+						{/if}
+						{#if !isRenaming}<div class="inbox-row-actions">
+								{#if section.state === 'unsettled'}
+									<button
+										class="inbox-icon inbox-row-state-action"
+										type="button"
+										disabled={!mutationsEnabled || busy || !canChange(thread, 'settled')}
+										aria-label={`Settle ${thread.title ?? 'thread'}`}
+										onclick={() => void change(thread, 'settled')}><Check size={14} /></button
+									>
+								{:else}
+									<button
+										class="inbox-icon inbox-row-state-action"
+										type="button"
+										disabled={!mutationsEnabled || busy}
+										aria-label={`Unsettle ${thread.title ?? 'thread'}`}
+										onclick={() => void change(thread, 'unsettled')}><RotateCcw size={14} /></button
+									>
+								{/if}
+							</div>{/if}
 					</div>
 				{/each}
-				{#if section.rows.length === 0 && !section.loading && !section.error}
-					<p class="inbox-empty">No {labels[section.state].toLowerCase()} threads</p>
-				{/if}
 				<InboxLoadMore {section} />
 			</section>
 		{/each}
@@ -442,22 +474,8 @@
 	{#if notice}
 		<div class="inbox-notice" role="status">
 			<span>{notice}</span>
-			{#if undo.length}
-				<button
-					type="button"
-					disabled={!mutationsEnabled || busy}
-					onclick={() => void undoChange()}
-				>
-					Undo
-				</button>
-			{/if}
-			<button
-				type="button"
-				aria-label="Dismiss notification"
-				onclick={() => {
-					notice = null;
-					undo = [];
-				}}><X size={13} /></button
+			<button type="button" aria-label="Dismiss notification" onclick={() => (notice = null)}
+				><X size={13} /></button
 			>
 		</div>
 	{/if}
@@ -472,7 +490,6 @@
 
 {#if menu}
 	{@const thread = menu.thread}
-	{@const targets = selected.includes(thread._id) ? selectedRows : [thread]}
 	<button
 		class="fixed inset-0 z-[200] cursor-default"
 		type="button"
@@ -491,38 +508,22 @@
 			<button
 				type="button"
 				role="menuitem"
-				disabled={!mutationsEnabled || busy || !targets.every((row) => canChange(row, 'settled'))}
-				onclick={() => void change(targets, 'settled')}><Check size={14} />Settle</button
+				disabled={!mutationsEnabled || busy || !canChange(thread, 'settled')}
+				onclick={() => void change(thread, 'settled')}><Check size={14} />Settle</button
 			>
 		{:else}
 			<button
 				type="button"
 				role="menuitem"
 				disabled={!mutationsEnabled || busy}
-				onclick={() => void change(targets, 'unsettled')}>Unsettle</button
+				onclick={() => void change(thread, 'unsettled')}><RotateCcw size={14} />Unsettle</button
 			>
 		{/if}
 		<button
 			type="button"
 			role="menuitem"
-			disabled={!mutationsEnabled || targets.length !== 1}
-			onclick={() => {
-				renameThread = thread;
-				renameTitle = thread.title ?? '';
-				menu = null;
-				renameDialog.showModal();
-			}}>Rename</button
-		>
-		<button
-			type="button"
-			role="menuitem"
-			onclick={() => {
-				selected = selected.includes(thread._id)
-					? selected.filter((id) => id !== thread._id)
-					: [...selected, thread._id];
-				anchor = thread._id;
-				menu = null;
-			}}>{selected.includes(thread._id) ? 'Deselect thread' : 'Select thread'}</button
+			disabled={!mutationsEnabled}
+			onclick={() => beginRename(thread)}><SquarePen size={14} />Rename</button
 		>
 		<button
 			type="button"
@@ -532,32 +533,7 @@
 					notice = 'Could not copy thread ID.';
 				});
 				menu = null;
-			}}>Copy thread ID</button
+			}}><Copy size={14} />Copy thread ID</button
 		>
 	</div>
 {/if}
-
-<dialog bind:this={renameDialog} class="inbox-dialog" onclose={() => (renameThread = null)}>
-	<form
-		onsubmit={async (event) => {
-			event.preventDefault();
-			if (!renameThread || !renameTitle.trim() || !mutationsEnabled || renaming) return;
-			renaming = true;
-			try {
-				await onRename(renameThread, renameTitle.trim());
-				renameDialog.close();
-			} catch (error) {
-				notice = error instanceof Error ? error.message : 'Could not rename thread.';
-			} finally {
-				renaming = false;
-			}
-		}}
-	>
-		<label for="inbox-rename">Rename thread</label>
-		<input id="inbox-rename" bind:value={renameTitle} required maxlength="300" />
-		<div class="mt-4 flex justify-end gap-3">
-			<button type="button" onclick={() => renameDialog.close()}>Cancel</button>
-			<button type="submit" disabled={!mutationsEnabled || renaming}>Save</button>
-		</div>
-	</form>
-</dialog>

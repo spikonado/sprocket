@@ -263,7 +263,6 @@
 	let settingsOpen = $state(false);
 	let settingsPage = $state<SettingsPage>('account');
 	let sidebarOpen = $state(true);
-	let sidebarWidth = $state(300);
 	let viewportWidth = $state(0);
 	let projectFilter = $state<string[]>([]);
 	let pendingProjectLaunches = $state<string[]>([]);
@@ -1772,14 +1771,6 @@
 		const media = matchMedia('(max-width: 767px)');
 		sidebarOpen = !media.matches;
 		viewportWidth = window.innerWidth;
-		try {
-			sidebarWidth = Math.max(
-				240,
-				Math.min(440, Number(localStorage.getItem('sprocket:inbox-width')) || 300)
-			);
-		} catch {
-			sidebarWidth = 300;
-		}
 		const updateViewportWidth = () => {
 			viewportWidth = window.innerWidth;
 		};
@@ -1837,14 +1828,6 @@
 		await tick();
 		document.querySelector<HTMLButtonElement>('[aria-label="Open sidebar"]')?.focus();
 	}
-
-	function persistSidebarWidth() {
-		try {
-			localStorage.setItem('sprocket:inbox-width', String(sidebarWidth));
-		} catch (error) {
-			if (!(error instanceof DOMException)) throw error;
-		}
-	}
 </script>
 
 <svelte:head>
@@ -1901,7 +1884,7 @@
 				? 'pr-[20rem]'
 				: ''}"
 			class:sidebar-hidden={!sidebarOpen}
-			style:--inbox-width={`${sidebarWidth}px`}
+			class:settings-open={settingsOpen}
 			inert={artifactPanel.fullscreenArtifact ||
 			(artifactPanel.panel.open && artifactPanel.panel.expanded)
 				? true
@@ -1934,6 +1917,7 @@
 					<InboxSidebar
 						sections={inbox.sections}
 						projects={inboxProjects}
+						models={modelCatalog?.models ?? []}
 						selectedProjects={projectFilter}
 						{currentThreadId}
 						mutationsEnabled={threadCache.status !== 'offline' && threadCache.status !== 'error'}
@@ -1951,31 +1935,6 @@
 						onRename={(thread, title) => renameThread(thread._id, title)}
 					/>
 				{/if}
-				<button
-					class="inbox-resize"
-					type="button"
-					aria-label={`Resize sidebar, ${sidebarWidth} pixels. Use left and right arrows.`}
-					onkeydown={(event) => {
-						if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-							event.preventDefault();
-							sidebarWidth = Math.max(
-								240,
-								Math.min(440, sidebarWidth + (event.key === 'ArrowLeft' ? -10 : 10))
-							);
-							persistSidebarWidth();
-						}
-					}}
-					onpointerdown={(event) => event.currentTarget.setPointerCapture(event.pointerId)}
-					onpointermove={(event) => {
-						if (event.currentTarget.hasPointerCapture(event.pointerId))
-							sidebarWidth = Math.max(240, Math.min(440, event.clientX));
-					}}
-					onpointerup={(event) => {
-						event.currentTarget.releasePointerCapture(event.pointerId);
-						persistSidebarWidth();
-					}}
-					onpointercancel={persistSidebarWidth}
-				></button>
 			</div>
 
 			<main
