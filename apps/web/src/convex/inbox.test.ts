@@ -57,6 +57,20 @@ describe('thread inbox', () => {
 		expect(result.page).toEqual([]);
 	});
 
+	it('rejects enough projects to exhaust query resources', async () => {
+		const t = initConvexTest();
+		const { asUser } = await seedOwnedThread(t);
+		const repositoryKeys = Array.from({ length: 201 }, (_, index) => `project-${index}`);
+
+		await expect(
+			asUser.query(api.inbox.list, {
+				state: 'unsettled',
+				repositoryKeys,
+				paginationOpts: { numItems: 10, cursor: null }
+			})
+		).rejects.toThrow('Choose at most 200 projects.');
+	});
+
 	it('settles and unsettles an idle thread', async () => {
 		const t = initConvexTest();
 		const { asUser, threadId } = await seedOwnedThread(t);

@@ -3,7 +3,7 @@ import { mergedStream, stream } from 'convex-helpers/server/stream';
 import { v } from 'convex/values';
 import { query } from './_generated/server';
 import { getUserId } from './lib/auth';
-import { vInboxState } from './lib/inboxState';
+import { MAX_INBOX_REPOSITORIES, vInboxState } from './lib/inboxState';
 import schema from './schema';
 
 export const list = query({
@@ -18,6 +18,9 @@ export const list = query({
 		const repositoryKeys = [...new Set(args.repositoryKeys)];
 		if (repositoryKeys.length === 0) {
 			throw new Error('Choose at least one project.');
+		}
+		if (repositoryKeys.length > MAX_INBOX_REPOSITORIES) {
+			throw new Error(`Choose at most ${MAX_INBOX_REPOSITORIES} projects.`);
 		}
 
 		const streams = repositoryKeys.map((repositoryKey) => {
