@@ -67,6 +67,40 @@ async function fixture() {
 }
 
 describe('transcript work assignments', () => {
+	it.each(['queued', 'running', 'completed', 'failed', 'cancelled', undefined] as const)(
+		'resolves the active run for thread status %s, including unmigrated threads',
+		async (status) => {
+			const { t, asUser, threadId, runId } = await fixture();
+			await t.run(async (ctx) => {
+				await ctx.db.patch('threadRecords', threadId, { status });
+				await ctx.db.patch('runs', runId, { status: status ?? 'running' });
+			});
+			const state = await asUser.query(api.transcriptSections.state, { threadId });
+			expect(state.activeRunId).toBe(
+				status === undefined || status === 'queued' || status === 'running' ? runId : null
+			);
+		}
+	);
+
+	it('returns the committed checkpoint on acceptance and conflict without changing legacy responses', async () => {
+		const { asUser, threadId, batch } = await fixture();
+		expect(
+			await asUser.mutation(api.transcriptSections.commit, {
+				threadId,
+				batch,
+				includeCheckpoint: true
+			})
+		).toEqual({ accepted: true, through: batch.through });
+		expect(
+			await asUser.mutation(api.transcriptSections.commit, {
+				threadId,
+				batch,
+				includeCheckpoint: true
+			})
+		).toEqual({ accepted: false, through: batch.through });
+		expect(await asUser.mutation(api.transcriptSections.commit, { threadId, batch })).toBe(false);
+	});
+
 	it.each([false, true])(
 		'resumes canonical tool relocation with a partial checkpoint: %s',
 		async (partial) => {
@@ -317,6 +351,13 @@ describe('transcript work assignments', () => {
 		expect(
 			await asUser.mutation(api.transcriptSections.commit, { threadId, batch: finished })
 		).toBe(true);
+		expect(
+			await asUser.mutation(api.transcriptSections.commit, {
+				threadId,
+				batch: finished,
+				includeCheckpoint: true
+			})
+		).toEqual({ accepted: true, through: batch.through });
 	});
 
 	it.each([0, 1])(

@@ -8,6 +8,7 @@ pub(super) struct Metadata {
 
 pub(super) struct Update {
     pub state: WorkState,
+    pub state_changed: bool,
     pub snapshot: WorkSnapshot,
     pub add: Vec<Feed>,
     pub remove: Vec<Feed>,
@@ -23,6 +24,7 @@ impl Metadata {
         };
         let state: WorkState =
             decode_labeled_function_result(result.clone(), "transcriptSections:state")?;
+        let state_changed = self.previous.get(&Feed::State) != Some(result);
         let mut snapshot = WorkSnapshot {
             through: state.through,
             total: state.total_parts,
@@ -102,6 +104,7 @@ impl Metadata {
         }
         Ok(Some(Update {
             state,
+            state_changed,
             snapshot,
             add,
             remove,
@@ -319,5 +322,30 @@ mod tests {
             .unwrap();
         assert!(completed.snapshot.complete);
         assert_eq!(completed.snapshot.sections.len(), 1);
+    }
+
+    #[test]
+    fn membership_updates_do_not_report_unchanged_state_as_changed() {
+        let mut metadata = Metadata::default();
+        let section_page = value(json!({"rows":[],"split":null}));
+        let initial = metadata
+            .apply(BTreeMap::from([
+                (Feed::State, state()),
+                (sections("", None), section_page.clone()),
+            ]))
+            .unwrap()
+            .unwrap();
+        assert!(initial.state_changed);
+
+        let membership = metadata
+            .apply(BTreeMap::from([
+                (Feed::State, state()),
+                (sections("", None), section_page),
+                (Feed::Memberships(16), membership(16, 20)),
+            ]))
+            .unwrap()
+            .unwrap();
+        assert!(!membership.state_changed);
+        assert_eq!(membership.snapshot.membership_pages, vec![16]);
     }
 }

@@ -73,6 +73,14 @@ replacement store imports the old file before parsing the new format.
 
 ## Stored transcript work metadata
 
+`transcriptSections:commit` accepts optional `includeCheckpoint`. New servers
+request the accepted flag and the transaction's work checkpoint together, so a
+competing indexer does not need a separate state query after a conflict. Requests
+without this flag keep the boolean response for installed servers. Deploy the
+Convex change before releasing the server. Remove the boolean response only when
+all supported installed servers request the checkpoint. No stored-data migration
+is needed.
+
 Historical transcripts may lack `threadTranscriptParts.work` and
 `threadTranscriptStates.workThrough`. Opening a thread fills missing work metadata
 with the Rust processor without changing its raw transcript bodies.

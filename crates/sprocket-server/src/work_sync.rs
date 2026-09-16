@@ -34,6 +34,12 @@ struct SectionPage {
 }
 
 #[derive(Deserialize)]
+struct CommitResult {
+    accepted: bool,
+    through: WorkPosition,
+}
+
+#[derive(Deserialize)]
 struct MembershipPart {
     #[serde(deserialize_with = "sprocket_convex::deserialize_convex_u32")]
     number: u32,
@@ -84,6 +90,15 @@ fn thread_args(thread: &str) -> BTreeMap<String, Value> {
     BTreeMap::from([("threadId".into(), thread.to_owned().into())])
 }
 
+fn pop_download_page(pending: &mut Vec<(u32, u32)>) -> Option<(u32, u32)> {
+    let (start, end) = pending.pop()?;
+    let lower = ((end - 1) / 4 * 4).max(start);
+    if lower > start {
+        pending.push((start, lower));
+    }
+    Some((lower, end))
+}
+
 struct WorkSync<'a, F> {
     client: UserConvexClient,
     store: Arc<TranscriptStore>,
@@ -111,6 +126,7 @@ impl<F: Fn(u32) + Send + Sync> WorkSync<'_, F> {
         while let Some(results) = updates.next().await {
             let Some(metadata::Update {
                 state,
+                state_changed,
                 snapshot,
                 mut add,
                 remove,
@@ -125,6 +141,9 @@ impl<F: Fn(u32) + Send + Sync> WorkSync<'_, F> {
             else {
                 continue;
             };
+            for feed in remove {
+                subscriptions.remove(&feed);
+            }
             let thread = self.thread.clone();
             let pending = self
                 .store
@@ -133,24 +152,23 @@ impl<F: Fn(u32) + Send + Sync> WorkSync<'_, F> {
                     replica.pending_membership_pages(4)
                 })
                 .await?;
-            apply_remote_state(
-                &self.store,
-                &self.user,
-                &self.thread,
-                &RemoteTranscriptState {
-                    thread_id: self.thread.clone(),
-                    total_parts: state.total_parts,
-                    history_from_number: state.history_from_number,
-                    context_summary: state.context_summary.clone(),
-                },
-                false,
-            )
-            .await?;
-            (self.changed)(state.total_parts);
-            state_tx.send_replace(state);
-            for feed in remove {
-                subscriptions.remove(&feed);
+            if state_changed {
+                apply_remote_state(
+                    &self.store,
+                    &self.user,
+                    &self.thread,
+                    &RemoteTranscriptState {
+                        thread_id: self.thread.clone(),
+                        total_parts: state.total_parts,
+                        history_from_number: state.history_from_number,
+                        context_summary: state.context_summary.clone(),
+                    },
+                    false,
+                )
+                .await?;
+                state_tx.send_replace(state.clone());
             }
+            (self.changed)(state.total_parts);
             for start in pending {
                 let feed = Feed::Memberships(start);
                 let active = subscriptions
@@ -163,6 +181,9 @@ impl<F: Fn(u32) + Send + Sync> WorkSync<'_, F> {
                 }
             }
             for feed in add {
+                if subscriptions.contains_key(&feed) {
+                    continue;
+                }
                 let (function, args) = feed.request(&self.thread);
                 subscriptions.insert(feed, self.client.subscribe(function, args).await?);
             }
@@ -179,14 +200,10 @@ impl<F: Fn(u32) + Send + Sync> WorkSync<'_, F> {
                 pending.push((seen_total, total));
                 seen_total = total;
             }
-            let Some((start, end)) = pending.pop() else {
+            let Some((lower, end)) = pop_download_page(&mut pending) else {
                 states.changed().await?;
                 continue;
             };
-            let lower = end.saturating_sub(4).max(start);
-            if lower > start {
-                pending.push((start, lower));
-            }
             let numbers = self
                 .store
                 .with_work_replica(&self.user, &self.thread, move |replica| {
@@ -269,24 +286,21 @@ impl<F: Fn(u32) + Send + Sync> WorkSync<'_, F> {
                     submitted.through = remote;
                 }
                 let mut args = thread_args(&self.thread);
+                args.insert("includeCheckpoint".into(), true.into());
                 args.insert(
                     "batch".into(),
                     Value::try_from(serde_json::to_value(&submitted)?)?,
                 );
-                let accepted: bool = self
+                let result: CommitResult = self
                     .client
                     .mutate("transcriptSections:commit", args)
                     .await?;
-                if !accepted {
-                    let current: WorkState = self
-                        .client
-                        .query("transcriptSections:state", thread_args(&self.thread))
-                        .await?;
+                if !result.accepted {
                     anyhow::ensure!(
-                        current.through > remote,
+                        result.through > remote,
                         "work checkpoint conflict did not advance"
                     );
-                    remote = current.through;
+                    remote = result.through;
                     continue;
                 }
                 remote = remote.max(batch.through);
@@ -346,6 +360,28 @@ mod tests {
     use super::*;
     use futures::poll;
     use std::task::Poll;
+
+    #[test]
+    fn historical_download_pages_do_not_shift_with_the_live_tail() {
+        for total in 13..=16 {
+            let mut pending = vec![(0, total)];
+            assert_eq!(pop_download_page(&mut pending), Some((12, total)));
+            for range in [(8, 12), (4, 8), (0, 4)] {
+                assert_eq!(pop_download_page(&mut pending), Some(range));
+            }
+            assert_eq!(pop_download_page(&mut pending), None);
+        }
+        let mut pending = vec![(3, 6)];
+        assert_eq!(pop_download_page(&mut pending), Some((4, 6)));
+        assert_eq!(pop_download_page(&mut pending), Some((3, 4)));
+        assert_eq!(pop_download_page(&mut pending), None);
+
+        let mut pending = vec![(u32::MAX - 1, u32::MAX)];
+        assert_eq!(
+            pop_download_page(&mut pending),
+            Some((u32::MAX - 1, u32::MAX))
+        );
+    }
 
     #[tokio::test]
     async fn idle_sync_restarts_only_for_its_replica_or_missed_resets() {
