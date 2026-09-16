@@ -287,9 +287,12 @@ impl ProjectAttachmentStore {
         let store_path = self.data_dir.join(PROJECT_ATTACHMENTS_FILE);
         let payload = {
             let sessions = self.attachments.read().await;
-            serde_json::to_string_pretty(&sessions.values().collect::<Vec<_>>())?
+            serde_json::to_vec_pretty(&sessions.values().collect::<Vec<_>>())?
         };
-        tokio::fs::write(store_path, payload).await?;
+        tokio::task::spawn_blocking(move || {
+            crate::profile::write_private_file(&store_path, &payload)
+        })
+        .await??;
         Ok(())
     }
 
