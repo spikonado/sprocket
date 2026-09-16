@@ -241,6 +241,7 @@ describe('transcript work assignments', () => {
 
 	it('atomically persists Rust assignments without changing raw completion items', async () => {
 		const { t, asUser, threadId, batch } = await fixture();
+		const before = await t.run(async (ctx) => ctx.db.query('threadTranscriptParts').collect());
 		expect(await asUser.mutation(api.transcriptSections.commit, { threadId, batch })).toBe(true);
 		const rows = await asUser.query(api.transcriptSections.sections, { threadId, after: '' });
 		expect(rows.rows).toHaveLength(2);
@@ -249,7 +250,16 @@ describe('transcript work assignments', () => {
 		const parts = await t.run(async (ctx) => await ctx.db.query('threadTranscriptParts').collect());
 		expect(parts[0].completion?.items).toHaveLength(3);
 		expect(parts[0].completion?.items[0].providerMetadata).toEqual({ secret: 'ciphertext' });
-		expect(parts[0].work?.ranges[0]).toEqual({ start: 0, end: 1, sectionKey: rows.rows[0].key });
+		expect(parts).toEqual(before);
+		const memberships = await asUser.query(api.transcriptSections.memberships, {
+			threadId,
+			start: 0
+		});
+		expect(memberships[0].work?.ranges[0]).toEqual({
+			start: 0,
+			end: 1,
+			sectionKey: rows.rows[0].key
+		});
 		expect((await asUser.query(api.transcriptSections.state, { threadId })).through).toEqual(
 			batch.through
 		);

@@ -1,5 +1,6 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { MutationCtx, QueryCtx } from '@convex/_generated/server';
+import { getTranscriptMembership } from '@convex/lib/transcriptMemberships';
 import type {
 	TranscriptCompletionBody,
 	TranscriptPromptBody,
@@ -258,7 +259,19 @@ export function stripLegacyAttachmentImageUploadIds(
 
 export async function transcriptPartsForClient(
 	ctx: MutationCtx | QueryCtx,
-	parts: Doc<'threadTranscriptParts'>[]
+	parts: Doc<'threadTranscriptParts'>[],
+	includeWork = true
 ): Promise<Doc<'threadTranscriptParts'>[]> {
-	return stripLegacyAttachmentImageUploadIds(await hydrateTranscriptPartUrls(ctx, parts));
+	const current = await Promise.all(
+		parts.map(async (part) => {
+			if (includeWork) {
+				const membership = await getTranscriptMembership(ctx, part.threadId, part.number);
+				return membership ? { ...part, work: membership.work } : part;
+			}
+			const raw = { ...part };
+			delete raw.work;
+			return raw;
+		})
+	);
+	return stripLegacyAttachmentImageUploadIds(await hydrateTranscriptPartUrls(ctx, current));
 }

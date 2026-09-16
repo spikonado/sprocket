@@ -3,6 +3,7 @@ import { components, internal } from '@convex/_generated/api';
 import { internalMutation } from '@convex/_generated/server';
 import schema from '@convex/schema';
 import { v } from 'convex/values';
+import { getTranscriptMembership, MEMBERSHIP_MIGRATION } from '@convex/lib/transcriptMemberships';
 
 export const AUTOMATIC_CLEANUP_DELAY_MS = 48 * 60 * 60 * 1_000;
 const PRODUCTION_ROLLOUT_CLEANUP = 'production-rollout-cleanup-2026-09';
@@ -10,6 +11,54 @@ const PRODUCTION_ROLLOUT_CLEANUP = 'production-rollout-cleanup-2026-09';
 export const migrations = new Migrations(components.migrations, {
 	schema,
 	internalMutation
+});
+
+export const moveTranscriptMemberships = migrations.define({
+	table: 'threadTranscriptParts',
+	batchSize: 4,
+	migrateOne: async (ctx, part) => {
+		if (!part.work) return;
+		if (!(await getTranscriptMembership(ctx, part.threadId, part.number))) {
+			await ctx.db.insert('threadTranscriptMemberships', {
+				threadId: part.threadId,
+				number: part.number,
+				work: part.work
+			});
+		}
+		return { work: undefined };
+	}
+});
+
+export const finishTranscriptMembershipMigration = migrations.define({
+	table: 'migrationSchedules',
+	customRange: (q) => q.withIndex('by_name', (q) => q.eq('name', MEMBERSHIP_MIGRATION)),
+	migrateOne: () => ({ completedAt: Date.now() })
+});
+
+export const runTranscriptMembershipMigration = internalMutation({
+	args: {},
+	returns: v.null(),
+	handler: async (ctx) => {
+		const schedule = await ctx.db
+			.query('migrationSchedules')
+			.withIndex('by_name', (q) => q.eq('name', MEMBERSHIP_MIGRATION))
+			.unique();
+		if (schedule?.completedAt !== undefined) return null;
+		if (!schedule) {
+			await ctx.db.insert('migrationSchedules', {
+				name: MEMBERSHIP_MIGRATION,
+				notBefore: Date.now(),
+				startedAt: Date.now()
+			});
+		} else if (schedule.startedAt === undefined) {
+			await ctx.db.patch('migrationSchedules', schedule._id, { startedAt: Date.now() });
+		}
+		await migrations.runSerially(ctx, [
+			internal.migrations.moveTranscriptMemberships,
+			internal.migrations.finishTranscriptMembershipMigration
+		]);
+		return null;
+	}
 });
 
 const productionRolloutCleanupMigrations = [

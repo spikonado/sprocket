@@ -1,12 +1,13 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use anyhow::Context;
 use convex::{FunctionResult, QuerySubscription, Value};
 use futures::StreamExt;
 use serde::Deserialize;
 use sprocket_agent::{
     RemoteTranscriptState, SectionPartition, TranscriptStore, WorkSnapshot, apply_remote_state,
-    sections::{WorkMembership, WorkPosition, WorkSection},
+    sections::{WorkBatch, WorkMembership, WorkPosition, WorkSection},
 };
 use sprocket_convex::decode_labeled_function_result;
 use tokio::sync::{Notify, broadcast, watch};
@@ -37,6 +38,56 @@ struct SectionPage {
 struct CommitResult {
     accepted: bool,
     through: WorkPosition,
+}
+
+const MAX_COMMIT_BATCHES: usize = 8;
+const MAX_COMMIT_PARTS: usize = 4;
+const MAX_COMMIT_SECTION_CHANGES: usize = 256;
+const MAX_COMMIT_MEMBERSHIPS: usize = 256;
+const MAX_COMMIT_JSON_BYTES: usize = 256 * 1024;
+
+fn grouped_commit_prefix(
+    batches: &[WorkBatch],
+    expected: WorkPosition,
+) -> anyhow::Result<Vec<WorkBatch>> {
+    let mut grouped = Vec::new();
+    let mut parts = BTreeSet::new();
+    let mut section_changes = 0;
+    let mut memberships = 0;
+    for batch in batches.iter().take(MAX_COMMIT_BATCHES) {
+        if batch.finished_run_id.is_some() {
+            break;
+        }
+        let mut candidate = batch.clone();
+        if grouped.is_empty() {
+            candidate.expected = expected;
+        }
+        let mut candidate_parts = parts.clone();
+        candidate_parts.insert(candidate.expected.part);
+        candidate_parts.extend(candidate.sections.iter().map(|section| section.first.part));
+        candidate_parts.extend(
+            candidate
+                .memberships
+                .iter()
+                .map(|membership| membership.number),
+        );
+        let candidate_section_changes =
+            section_changes + candidate.sections.len() + candidate.removed.len();
+        let candidate_memberships = memberships + candidate.memberships.len();
+        grouped.push(candidate);
+        let fits = candidate_parts.len() <= MAX_COMMIT_PARTS
+            && candidate_section_changes <= MAX_COMMIT_SECTION_CHANGES
+            && candidate_memberships <= MAX_COMMIT_MEMBERSHIPS
+            && serde_json::to_vec(&grouped)?.len() <= MAX_COMMIT_JSON_BYTES;
+        if !fits {
+            grouped.pop();
+            break;
+        }
+        parts = candidate_parts;
+        section_changes = candidate_section_changes;
+        memberships = candidate_memberships;
+    }
+    Ok(grouped)
 }
 
 #[derive(Deserialize)]
@@ -79,7 +130,7 @@ impl Feed {
             }
             Self::Memberships(start) => {
                 args.insert("start".into(), f64::from(*start).into());
-                "transcriptSections:memberships"
+                "transcriptSections:indexedMemberships"
             }
         };
         (function, args)
@@ -259,27 +310,49 @@ impl<F: Fn(u32) + Send + Sync> WorkSync<'_, F> {
         loop {
             let state = states.borrow_and_update().clone();
             remote = remote.max(state.through);
-            let Some(batch) = self
+            let batches = self
                 .store
                 .with_work_replica(&self.user, &self.thread, move |replica| {
-                    if let Some(batch) = replica.advance(remote)? {
-                        return Ok(Some(batch));
+                    let batches = replica.advance_batches(remote, MAX_COMMIT_BATCHES)?;
+                    if !batches.is_empty() {
+                        return Ok(batches);
                     }
                     if remote.part == state.total_parts && remote.item == 0 {
-                        return replica.finish_inactive(state.active_run_id.as_deref(), remote);
+                        return Ok(replica
+                            .finish_inactive(state.active_run_id.as_deref(), remote)?
+                            .into_iter()
+                            .collect());
                     }
-                    Ok(None)
+                    Ok(Vec::new())
                 })
-                .await?
-            else {
+                .await?;
+            if batches.is_empty() {
                 tokio::select! {
                     result = states.changed() => { result?; }
                     () = self.downloaded.notified() => {}
                 }
                 continue;
-            };
-            if batch.through > remote || batch.finished_run_id.is_some() {
-                anyhow::ensure!(batch.expected <= remote, "remote work checkpoint regressed");
+            }
+            if let Some(acknowledged) = batches
+                .iter()
+                .take_while(|batch| batch.through <= remote && batch.finished_run_id.is_none())
+                .last()
+            {
+                let through = acknowledged.through;
+                self.store
+                    .with_work_replica(&self.user, &self.thread, move |replica| {
+                        replica.acknowledge_batches(through)
+                    })
+                    .await?;
+                continue;
+            }
+            let pending = batches;
+            let batch = pending
+                .first()
+                .context("work batch queue unexpectedly empty")?;
+            anyhow::ensure!(batch.expected <= remote, "remote work checkpoint regressed");
+            let grouped = grouped_commit_prefix(&pending, remote)?;
+            let (result, acknowledged_through) = if grouped.is_empty() {
                 let mut submitted = batch.clone();
                 submitted.expected = remote;
                 if submitted.finished_run_id.is_some() {
@@ -295,19 +368,36 @@ impl<F: Fn(u32) + Send + Sync> WorkSync<'_, F> {
                     .client
                     .mutate("transcriptSections:commit", args)
                     .await?;
-                if !result.accepted {
-                    anyhow::ensure!(
-                        result.through > remote,
-                        "work checkpoint conflict did not advance"
-                    );
-                    remote = result.through;
-                    continue;
-                }
-                remote = remote.max(batch.through);
+                (result, batch.through)
+            } else {
+                let acknowledged = grouped.last().context("work batch group missing")?.through;
+                let mut args = thread_args(&self.thread);
+                args.insert(
+                    "batches".into(),
+                    Value::try_from(serde_json::to_value(&grouped)?)?,
+                );
+                let result: CommitResult = self
+                    .client
+                    .mutate("transcriptSections:commitBatches", args)
+                    .await?;
+                (result, acknowledged)
+            };
+            if !result.accepted {
+                anyhow::ensure!(
+                    result.through > remote,
+                    "work checkpoint conflict did not advance"
+                );
+                remote = result.through;
+                continue;
             }
+            anyhow::ensure!(
+                result.through >= acknowledged_through,
+                "accepted work commit returned an incomplete checkpoint"
+            );
+            remote = remote.max(result.through);
             self.store
                 .with_work_replica(&self.user, &self.thread, move |replica| {
-                    replica.acknowledge_batch(batch.through)
+                    replica.acknowledge_batches(acknowledged_through)
                 })
                 .await?;
             (self.changed)(states.borrow().total_parts);
@@ -361,6 +451,20 @@ mod tests {
     use futures::poll;
     use std::task::Poll;
 
+    fn batch(item: u32) -> WorkBatch {
+        WorkBatch {
+            expected: WorkPosition { part: 0, item },
+            through: WorkPosition {
+                part: 0,
+                item: item + 1,
+            },
+            sections: Vec::new(),
+            removed: Vec::new(),
+            memberships: Vec::new(),
+            finished_run_id: None,
+        }
+    }
+
     #[test]
     fn historical_download_pages_do_not_shift_with_the_live_tail() {
         for total in 13..=16 {
@@ -381,6 +485,90 @@ mod tests {
             pop_download_page(&mut pending),
             Some((u32::MAX - 1, u32::MAX))
         );
+    }
+
+    #[test]
+    fn ready_transcripts_require_fewer_commit_requests() {
+        use serde_json::json;
+        use sprocket_agent::{TranscriptPart, WorkReplica};
+
+        fn count_commits(parts: &[TranscriptPart], grouped: bool) -> usize {
+            let dir = tempfile::tempdir().unwrap();
+            let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+            replica.save_parts("thread", parts).unwrap();
+            let mut remote = WorkPosition::default();
+            let mut commits = 0;
+            loop {
+                let pending = replica
+                    .advance_batches(remote, if grouped { 8 } else { 1 })
+                    .unwrap();
+                if pending.is_empty() {
+                    break;
+                }
+                let submitted = if grouped {
+                    grouped_commit_prefix(&pending, remote).unwrap()
+                } else {
+                    pending
+                };
+                remote = submitted.last().unwrap().through;
+                replica.acknowledge_batches(remote).unwrap();
+                commits += 1;
+            }
+            commits
+        }
+
+        let parts: Vec<TranscriptPart> = (0..32).map(|number| serde_json::from_value(json!({
+            "number":number,"sourceKey":format!("completion:{number}"),"runId":"run","kind":"completion",
+            "completion":{"items":[{"type":"text","text":"Text"}]}
+        })).unwrap()).collect();
+        assert_eq!(count_commits(&parts, false), 32);
+        assert_eq!(count_commits(&parts, true), 8);
+
+        let calls: Vec<_> = (0..32)
+            .map(|number| {
+                json!({
+                    "type":"tool-call","callId":format!("call-{number}"),"name":"read","input":{}
+                })
+            })
+            .collect();
+        let part: TranscriptPart = serde_json::from_value(json!({
+            "number":0,"sourceKey":"completion:tools","runId":"run","kind":"completion",
+            "completion":{"items":calls}
+        }))
+        .unwrap();
+        assert_eq!(count_commits(std::slice::from_ref(&part), false), 32);
+        assert_eq!(count_commits(&[part], true), 4);
+    }
+
+    #[test]
+    fn grouped_commits_rebase_the_first_batch_after_a_mid_batch_conflict() {
+        let mut first = batch(0);
+        first.through.item = 4;
+        let backlog = vec![first, batch(4), batch(5), batch(6)];
+        let remote = WorkPosition { part: 0, item: 2 };
+        let grouped = grouped_commit_prefix(&backlog, remote).unwrap();
+        assert_eq!(grouped[0].expected, remote);
+        assert_eq!(grouped[0].through, backlog[0].through);
+        assert_eq!(grouped[1].expected, backlog[1].expected);
+    }
+
+    #[test]
+    fn grouping_stops_before_exceeding_the_raw_part_limit() {
+        let backlog: Vec<_> = (0..6)
+            .map(|part| WorkBatch {
+                expected: WorkPosition { part, item: 0 },
+                through: WorkPosition {
+                    part: part + 1,
+                    item: 0,
+                },
+                sections: Vec::new(),
+                removed: Vec::new(),
+                memberships: Vec::new(),
+                finished_run_id: None,
+            })
+            .collect();
+        let grouped = grouped_commit_prefix(&backlog, WorkPosition::default()).unwrap();
+        assert_eq!(grouped.len(), MAX_COMMIT_PARTS);
     }
 
     #[tokio::test]

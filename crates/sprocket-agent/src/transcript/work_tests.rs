@@ -594,6 +594,98 @@ fn restart_retries_the_outbox_then_continues_at_the_item_checkpoint() {
 }
 
 #[test]
+fn queued_batches_survive_reopen_and_resume_after_a_remote_conflict() {
+    let dir = tempfile::tempdir().unwrap();
+    let parts: Vec<_> = (0..12)
+        .map(|number| completion(number, vec![reasoning(&format!("part {number}"))]))
+        .collect();
+    let queued = {
+        let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+        replica.save_parts("thread", &parts).unwrap();
+        replica.advance_batches(WorkPosition::default(), 8).unwrap()
+    };
+    assert_eq!(queued.len(), 8);
+
+    let mut reopened = WorkReplica::open(dir.path().to_owned()).unwrap();
+    assert_eq!(
+        serde_json::to_value(reopened.pending_batches().unwrap()).unwrap(),
+        serde_json::to_value(&queued).unwrap()
+    );
+
+    let concurrent_through = queued[2].through;
+    reopened.acknowledge_batches(concurrent_through).unwrap();
+    drop(reopened);
+    let mut reopened = WorkReplica::open(dir.path().to_owned()).unwrap();
+    assert_eq!(reopened.pending_batches().unwrap().len(), 5);
+    let resumed = reopened.advance_batches(concurrent_through, 8).unwrap();
+    assert_eq!(resumed.len(), 8);
+    assert_eq!(resumed[0].expected, concurrent_through);
+    assert_eq!(resumed[0].through, queued[3].through);
+    assert_eq!(resumed.last().unwrap().through.part, 11);
+}
+
+#[test]
+fn legacy_single_batch_outbox_is_migrated_without_reindexing() {
+    let dir = tempfile::tempdir().unwrap();
+    let pending = {
+        let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+        replica
+            .save_parts("thread", &[completion(0, vec![reasoning("legacy")])])
+            .unwrap();
+        replica.advance(WorkPosition::default()).unwrap().unwrap()
+    };
+    let database = dir.path().join("history.sqlite3");
+    let db = rusqlite::Connection::open(&database).unwrap();
+    db.execute(
+        "UPDATE state SET key='pendingBatch', value=? WHERE key='pendingBatches'",
+        [serde_json::to_string(&pending).unwrap()],
+    )
+    .unwrap();
+    drop(db);
+
+    let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+    let migrated = replica.advance_batches(WorkPosition::default(), 8).unwrap();
+    assert_eq!(migrated.first().unwrap().through, pending.through);
+    assert_eq!(migrated.len(), 1);
+    replica.acknowledge_batches(pending.through).unwrap();
+    assert_ne!(
+        replica.pending_batch().unwrap().map(|batch| batch.through),
+        Some(pending.through)
+    );
+}
+
+#[test]
+fn failed_queue_expansion_preserves_the_existing_outbox_and_engine() {
+    let dir = tempfile::tempdir().unwrap();
+    let parts: Vec<_> = (0..3)
+        .map(|number| completion(number, vec![reasoning("work")]))
+        .collect();
+    let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+    replica.save_parts("thread", &parts).unwrap();
+    let original = replica.advance_batches(WorkPosition::default(), 1).unwrap();
+    let db = rusqlite::Connection::open(dir.path().join("history.sqlite3")).unwrap();
+    db.execute("UPDATE parts SET body='invalid json' WHERE number=2", [])
+        .unwrap();
+    assert!(replica.advance_batches(WorkPosition::default(), 8).is_err());
+    drop(replica);
+    let mut replica = WorkReplica::open(dir.path().to_owned()).unwrap();
+    assert_eq!(replica.through().unwrap(), original[0].through);
+    assert_eq!(
+        serde_json::to_value(replica.pending_batches().unwrap()).unwrap(),
+        serde_json::to_value(&original).unwrap()
+    );
+    db.execute(
+        "UPDATE parts SET body=? WHERE number=2",
+        [serde_json::to_string(&parts[2]).unwrap()],
+    )
+    .unwrap();
+    let recovered = replica.advance_batches(WorkPosition::default(), 8).unwrap();
+    assert_eq!(recovered.len(), 3);
+    assert_eq!(recovered[1].expected, original[0].through);
+    assert_eq!(recovered[2].through, WorkPosition { part: 3, item: 0 });
+}
+
+#[test]
 fn recent_details_use_downloaded_membership_without_replaying_old_parts() {
     let writer_dir = tempfile::tempdir().unwrap();
     let mut writer = WorkReplica::open(writer_dir.path().to_owned()).unwrap();

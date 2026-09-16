@@ -7,6 +7,11 @@ import { getOrCreateTranscriptState, getTranscriptState } from './lib/transcript
 import { checkPosition, workBatch, workPosition } from './lib/workSections';
 import { transcriptHistoryFromNumber } from './lib/contextHandoff';
 import { isRunFinalStatus } from './lib/validators';
+import {
+	legacyMembershipPage,
+	MEMBERSHIP_MIGRATION,
+	WorkBatchParts
+} from './lib/transcriptMemberships';
 
 export const state = query({
 	args: { threadId: v.id('threadRecords') },
@@ -52,24 +57,39 @@ export const memberships = query({
 	handler: async (ctx, { threadId, start }) => {
 		await getOwnedThreadRecord(ctx.db, await getUserId(ctx), threadId);
 		checkPosition({ part: start, item: 0 });
-		return (
-			await ctx.db
-				.query('threadTranscriptParts')
-				.withIndex('by_threadId_and_number', (q) =>
-					q
-						.eq('threadId', threadId)
-						.gte('number', start)
-						.lt('number', start + 8)
-				)
-				.take(8)
-		).map((part) => ({ number: part.number, work: part.work ?? null }));
+		return await legacyMembershipPage(ctx, threadId, start);
+	}
+});
+
+export const indexedMemberships = query({
+	args: { threadId: v.id('threadRecords'), start: v.number() },
+	handler: async (ctx, { threadId, start }) => {
+		await getOwnedThreadRecord(ctx.db, await getUserId(ctx), threadId);
+		checkPosition({ part: start, item: 0 });
+		const migration = await ctx.db
+			.query('migrationSchedules')
+			.withIndex('by_name', (q) => q.eq('name', MEMBERSHIP_MIGRATION))
+			.unique();
+		if (migration?.completedAt === undefined)
+			return await legacyMembershipPage(ctx, threadId, start);
+		const rows = await ctx.db
+			.query('threadTranscriptMemberships')
+			.withIndex('by_threadId_and_number', (q) =>
+				q
+					.eq('threadId', threadId)
+					.gte('number', start)
+					.lt('number', start + 8)
+			)
+			.take(8);
+		return rows.map(({ number, work }) => ({ number, work }));
 	}
 });
 
 export async function applyWorkBatch(
 	ctx: MutationCtx,
 	threadId: Id<'threadRecords'>,
-	batch: Infer<typeof workBatch>
+	batch: Infer<typeof workBatch>,
+	parts = new WorkBatchParts(ctx, threadId)
 ) {
 	checkPosition(batch.expected);
 	checkPosition(batch.through);
@@ -121,16 +141,7 @@ export async function applyWorkBatch(
 		}
 		return true;
 	}
-	const parts = new Map<number, Doc<'threadTranscriptParts'> | null>();
-	const loadPart = async (number: number) => {
-		if (parts.has(number)) return parts.get(number) ?? null;
-		const part = await ctx.db
-			.query('threadTranscriptParts')
-			.withIndex('by_threadId_and_number', (q) => q.eq('threadId', threadId).eq('number', number))
-			.unique();
-		parts.set(number, part);
-		return part;
-	};
+	const loadPart = (number: number) => parts.load(number);
 	const input = await loadPart(through.part);
 	if (!input) throw new Error('Work input not found.');
 	const itemCount = Math.max(1, input.completion?.items.length ?? 1);
@@ -319,7 +330,7 @@ export async function applyWorkBatch(
 				rows.set(key, { ...row, linkedParts });
 			}
 		}
-		await ctx.db.patch('threadTranscriptParts', part._id, { work });
+		await parts.save(part, work);
 	}
 	for (const key of batch.removed) {
 		const old = await section(key);
@@ -380,5 +391,48 @@ export const commit = mutation({
 					through: accepted ? batch.through : (state.workThrough ?? { part: 0, item: 0 })
 				}
 			: accepted;
+	}
+});
+
+export const commitBatches = mutation({
+	args: { threadId: v.id('threadRecords'), batches: v.array(workBatch) },
+	returns: v.object({ accepted: v.boolean(), through: workPosition }),
+	handler: async (ctx, { threadId, batches }) => {
+		const userId = await getUserId(ctx);
+		await getOwnedThreadRecord(ctx.db, userId, threadId);
+		if (
+			batches.length === 0 ||
+			batches.length > 8 ||
+			new TextEncoder().encode(JSON.stringify(batches)).byteLength > 256 * 1024
+		)
+			throw new Error('Invalid work batch group.');
+		const referencedParts = new Set<number>();
+		let sectionChanges = 0;
+		let membershipChanges = 0;
+		for (const [index, batch] of batches.entries()) {
+			checkPosition(batch.expected);
+			checkPosition(batch.through);
+			if (
+				batch.finishedRunId !== undefined ||
+				(index > 0 && compare(batch.expected, batches[index - 1].through) !== 0)
+			)
+				throw new Error('Work batches must be contiguous.');
+			referencedParts.add(batch.expected.part);
+			for (const section of batch.sections) referencedParts.add(section.first.part);
+			for (const membership of batch.memberships) referencedParts.add(membership.number);
+			sectionChanges += batch.sections.length + batch.removed.length;
+			membershipChanges += batch.memberships.length;
+		}
+		if (referencedParts.size > 4 || sectionChanges > 256 || membershipChanges > 256)
+			throw new Error('Work batch group exceeds transaction bounds.');
+		const state = await getOrCreateTranscriptState(ctx, { threadId, userId });
+		const through = state.workThrough ?? { part: 0, item: 0 };
+		if (compare(batches[0].expected, through) !== 0) return { accepted: false, through };
+		const parts = new WorkBatchParts(ctx, threadId);
+		for (const batch of batches) {
+			if (!(await applyWorkBatch(ctx, threadId, batch, parts)))
+				throw new Error('Work batch group checkpoint changed.');
+		}
+		return { accepted: true, through: batches[batches.length - 1].through };
 	}
 });

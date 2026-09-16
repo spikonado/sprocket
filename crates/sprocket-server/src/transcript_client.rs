@@ -27,6 +27,7 @@ impl UserConvexClient {
         numbers: &[u32],
     ) -> anyhow::Result<Vec<sprocket_agent::TranscriptPart>> {
         let mut args = thread_id_args(thread_id);
+        args.insert("includeWork".into(), false.into());
         args.insert(
             "numbers".into(),
             Value::Array(
