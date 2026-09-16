@@ -1,4 +1,7 @@
+import type { ArtifactsWatchRequest, TranscriptScopeRequest } from '$lib/types/sprocket';
 import { z } from 'zod';
+
+type LocalWatchRequest = TranscriptScopeRequest | ArtifactsWatchRequest;
 
 const errorPayloadSchema = z.object({ error: z.string().optional() });
 
@@ -141,7 +144,7 @@ export function createLocalTransport(baseUrl: string) {
 
 		async postEventStream(
 			pathname: string,
-			requestBody: unknown,
+			requestBody: LocalWatchRequest,
 			signal: AbortSignal,
 			onData: (data: string) => void
 		): Promise<void> {
