@@ -43,18 +43,32 @@ describe('thread inbox', () => {
 		expect(result.page.map((thread) => thread._id)).toEqual([threadId]);
 	});
 
-	it('accepts more than 100 attached projects in the global view', async () => {
+	it('accepts 200 distinct projects after removing duplicates', async () => {
 		const t = initConvexTest();
 		const { asUser } = await seedOwnedThread(t);
-		const repositoryKeys = Array.from({ length: 101 }, (_, index) => `project-${index}`);
+		const repositoryKeys = Array.from({ length: 200 }, (_, index) => `project-${index}`);
 
 		const result = await asUser.query(api.inbox.list, {
 			state: 'unsettled',
-			repositoryKeys,
+			repositoryKeys: [...repositoryKeys, ...repositoryKeys],
 			paginationOpts: { numItems: 10, cursor: null }
 		});
 
 		expect(result.page).toEqual([]);
+	});
+
+	it('rejects enough projects to exhaust query resources', async () => {
+		const t = initConvexTest();
+		const { asUser } = await seedOwnedThread(t);
+		const repositoryKeys = Array.from({ length: 201 }, (_, index) => `project-${index}`);
+
+		await expect(
+			asUser.query(api.inbox.list, {
+				state: 'unsettled',
+				repositoryKeys,
+				paginationOpts: { numItems: 10, cursor: null }
+			})
+		).rejects.toThrow('Choose at most 200 projects.');
 	});
 
 	it('settles and unsettles an idle thread', async () => {
