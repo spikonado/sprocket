@@ -8,6 +8,7 @@ description: Use when publishing, saving, or editing artifacts, including Markdo
 1. Write a UTF-8 file with the normal file tools. Use `.md` for Markdown, `.html` for HTML, or `.jsx` for React. Other text files render as Markdown. Keep the file at or below 500,000 bytes.
 2. Call `add_artifact` with `path` and `scope`. Relative paths resolve against the current workspace; absolute paths are also accepted. Use `"thread"` for work specific to this conversation or `"project"` for material shared across the project's threads.
 3. To revise the content, edit the file normally. Rust detects changes and updates the preview and cloud copy while the thread or project is active.
+4. In your response, put `artifact:<artifactId>` in its own paragraph for each artifact the user should see. Use the `artifactId` returned by the artifact tool, for example `artifact:ks73zzsnfj2najtd871p43f45s8ec23d`.
 
 `list_artifacts` returns IDs and metadata for this thread and its project. Artifacts can render from the cloud without a local file. To work on one locally, call `save_artifact` with `artifactId` and an absolute or workspace-relative `path`. This saves and binds the file so future edits sync. An existing destination must have identical content; otherwise choose another path.
 

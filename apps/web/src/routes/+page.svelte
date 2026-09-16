@@ -1932,6 +1932,14 @@
 								actions={visibleActions}
 								activeRunId={isRunInProgress ? (runState?.runId ?? null) : null}
 								project={currentProject}
+								artifacts={artifactPanel.artifacts}
+								onOpenArtifact={(artifactId) => {
+									artifactPanel.update({
+										open: true,
+										tab: 'artifacts',
+										selectedKey: artifactId
+									});
+								}}
 								remoteChangeNotice={currentThreadId
 									? (remoteChangeNotices.get(currentThreadId) ?? null)
 									: null}

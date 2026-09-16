@@ -29,6 +29,7 @@
 		LiveTranscriptMessage
 	} from '$lib/types/sprocket';
 	import { mandateApprovals } from '$lib/chat/mandate';
+	import type { ArtifactEntry } from '$lib/chat/artifacts';
 	import { formatElapsedDuration } from '$lib/format';
 	import type {
 		ExecutorJob,
@@ -57,6 +58,8 @@
 			cursor: TranscriptDetailCursor,
 			signal: AbortSignal
 		) => Promise<TranscriptDisplayDetails>;
+		artifacts?: ArtifactEntry[];
+		onOpenArtifact?: (artifactId: string) => void;
 	};
 
 	let {
@@ -76,7 +79,9 @@
 		nextBefore,
 		onLoadOlder,
 		loadAttachment,
-		loadSectionDetails
+		loadSectionDetails,
+		artifacts = [],
+		onOpenArtifact
 	}: Props = $props();
 	const firstPromptMessageId = $derived(messages.find((message) => message.kind === 'prompt')?.id);
 	let scrollViewport = $state<HTMLDivElement | null>(null);
@@ -548,7 +553,12 @@
 								data-transcript-anchor={message.id}
 								data-message-kind="text"
 							>
-								<ChatMarkdown content={message.text || ' '} className="text-foreground" />
+								<ChatMarkdown
+									content={message.text || ' '}
+									className="text-foreground"
+									{artifacts}
+									{onOpenArtifact}
+								/>
 							</div>
 						{:else if message.kind === 'live'}
 							{@const live = liveRenderState(message)}
@@ -566,14 +576,24 @@
 							>
 								<div class="space-y-3">
 									{#if !hasPersistedAssistantContent && (message.text || (live.isStreaming && live.timeline.length === 0))}
-										<ChatMarkdown content={message.text || '...'} className="text-foreground" />
+										<ChatMarkdown
+											content={message.text || '...'}
+											className="text-foreground"
+											{artifacts}
+											{onOpenArtifact}
+										/>
 									{/if}
 									{#each live.sections as section, sectionIndex (section.renderKey)}
 										{#if section.type === 'text'}
 											<div
 												data-transcript-anchor={`${message.id}:${assistantTimelinePartKey(section)}`}
 											>
-												<ChatMarkdown content={section.text || ' '} className="text-foreground" />
+												<ChatMarkdown
+													content={section.text || ' '}
+													className="text-foreground"
+													{artifacts}
+													{onOpenArtifact}
+												/>
 											</div>
 										{:else}
 											{@const work = liveWorkState(live, section, sectionIndex)}
