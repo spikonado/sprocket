@@ -108,6 +108,14 @@ it('renders simple navigation and non-collapsible sections', async () => {
 	expect(document.querySelector('[aria-label^="Actions for"]')).toBeNull();
 });
 
+it('starts a new thread with Alt+N', async () => {
+	const input = await render([]);
+
+	window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', altKey: true }));
+
+	expect(input.onNew).toHaveBeenCalledOnce();
+});
+
 it('does not render empty thread sections', async () => {
 	await render([]);
 
@@ -175,17 +183,28 @@ it('shows an icon for every thread menu action without selection controls', asyn
 	expect(document.body.textContent).not.toContain('Deselect thread');
 });
 
-it('opens the thread menu from the keyboard', async () => {
+it('opens the thread menu with the context menu key', async () => {
 	await render([thread()]);
 	const rowButton = document.querySelector<HTMLButtonElement>('.inbox-row-main')!;
 
-	rowButton.dispatchEvent(
-		new KeyboardEvent('keydown', { bubbles: true, key: 'F10', shiftKey: true })
-	);
+	rowButton.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ContextMenu' }));
 	await tick();
 
 	expect(document.querySelector('.inbox-context-menu')).toBeTruthy();
 	expect(document.activeElement?.getAttribute('role')).toBe('menuitem');
+});
+
+it('does not open the thread menu with Shift+F10', async () => {
+	await render([thread()]);
+	const rowButton = document.querySelector<HTMLButtonElement>('.inbox-row-main')!;
+
+	const allowed = rowButton.dispatchEvent(
+		new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'F10', shiftKey: true })
+	);
+	await tick();
+
+	expect(allowed).toBe(false);
+	expect(document.querySelector('.inbox-context-menu')).toBeNull();
 });
 
 it('renames a thread inline', async () => {

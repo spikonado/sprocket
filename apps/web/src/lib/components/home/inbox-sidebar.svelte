@@ -223,12 +223,13 @@
 	}
 
 	function openMenu(event: MouseEvent | KeyboardEvent, thread: Thread) {
-		if (
-			event instanceof KeyboardEvent &&
-			event.key !== 'ContextMenu' &&
-			!(event.shiftKey && event.key === 'F10')
-		)
-			return;
+		if (event instanceof KeyboardEvent) {
+			if (event.shiftKey && event.key === 'F10') {
+				event.preventDefault();
+				return;
+			}
+			if (event.key !== 'ContextMenu') return;
+		}
 		event.preventDefault();
 		menuTrigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
 		const rect = menuTrigger?.getBoundingClientRect();
@@ -274,7 +275,7 @@
 			if (menu) closeMenu();
 			return;
 		}
-		if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'n') {
+		if (event.altKey && event.key.toLowerCase() === 'n') {
 			event.preventDefault();
 			onNew();
 		}
