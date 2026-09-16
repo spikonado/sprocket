@@ -9,7 +9,6 @@
 	import AgentQuestion from '$lib/components/home/agent-question.svelte';
 	import ComposerAttachments from '$lib/components/home/composer-attachments.svelte';
 	import ComposerSkillMenu from '$lib/components/home/composer-skill-menu.svelte';
-	import ContextWindowIndicator from '$lib/components/home/context-window-indicator.svelte';
 	import { shouldSubmitComposerFromKeydown } from '$lib/chat/composer';
 	import { applySkillSelection, filterSkills, getActiveDollarQuery } from '$lib/chat/dollar-skills';
 	import type { SkillSummary } from '$lib/types/sprocket';
@@ -51,12 +50,6 @@
 		isStarting: boolean;
 		isRunning: boolean;
 		elapsedLabel: string | null;
-		contextUsage: {
-			inputTokens: number;
-			totalTokensProcessed: number;
-			contextWindowTokens: number;
-			autoHandoffTokenLimit: number;
-		};
 		/** Project-path skill loader; cache invalidates when `workspacePath` changes. */
 		projectSkills?: {
 			workspacePath: string | null;
@@ -85,7 +78,6 @@
 		isStarting,
 		isRunning,
 		elapsedLabel,
-		contextUsage,
 		projectSkills = null,
 		onSubmit,
 		onCancel
@@ -622,7 +614,6 @@
 						</div>
 
 						<div class="flex shrink-0 flex-nowrap items-center justify-end gap-2.5">
-							<ContextWindowIndicator {...contextUsage} />
 							{#if isRunning}
 								<button
 									type="button"
